@@ -145,9 +145,9 @@ cargo test
 ### Running WASM integration tests
 
 ```bash
-cd tests/playwright
-npm install
-npx playwright test
+cd apps/tests/wasm
+pnpm install
+pnpm exec playwright test
 ```
 
 ### Running with debug logs
@@ -177,7 +177,7 @@ docker-compose down
 │   ├── fts-control/
 │   │   └── web/            # Browser UI (Dioxus/WASM)
 │   └── tests/
-│       └── wasm/           # WASM integration test app
+│       └── wasm/           # WASM integration tests (Dioxus app + Playwright)
 ├── cells/
 │   ├── daw/
 │   │   ├── daw-proto/      # Service definitions
@@ -194,8 +194,6 @@ docker-compose down
 │   ├── cell-runtime/       # Cell process runtime
 │   ├── host-client/        # Shared host connection library
 │   └── integration-tests/  # Integration tests
-├── tests/
-│   └── playwright/         # WASM integration tests
 ├── flake.nix               # Nix development environment
 ├── docker-compose.yml      # Jaeger setup (full)
 ├── docker-compose.minimal.yml  # Jaeger setup (minimal)
