@@ -38,6 +38,18 @@ _default:
 @test:
     cargo xtask test
 
+# Run WASM integration tests with Playwright
+@playwright *args:
+    cargo xtask playwright {{ args }}
+
+# Run Playwright tests in UI mode (for debugging)
+@playwright-ui:
+    cargo xtask playwright --ui
+
+# Install Playwright and run tests
+@playwright-install:
+    cargo xtask playwright --install
+
 # Build all cells
 @build:
     cargo xtask build
@@ -70,3 +82,4 @@ alias b := build
 alias r := run
 alias dc := dodeca
 alias tr := tracey
+alias pw := playwright
