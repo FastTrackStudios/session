@@ -190,8 +190,9 @@ docker-compose down
 │   ├── session/
 │   │   └── session/        # Session cell
 │   └── hello-world/        # Example cell
-├── crates/
+├── modules/
 │   ├── cell-runtime/       # Cell process runtime
+│   ├── host-client/        # Shared host connection library
 │   └── integration-tests/  # Integration tests
 ├── tests/
 │   └── playwright/         # WASM integration tests
