@@ -34,9 +34,14 @@ _default:
 @dodeca-watch:
     cargo xtask dodeca watch
 
-# Run all tests
+# Run Rust tests
 @test:
     cargo xtask test
+
+# Run all tests (Rust + Playwright WASM integration)
+@test-all:
+    cargo xtask test
+    cargo xtask playwright
 
 # Run WASM integration tests with Playwright
 @playwright *args:
@@ -78,6 +83,7 @@ _default:
 
 # Aliases for convenience
 alias t := test
+alias ta := test-all
 alias b := build
 alias r := run
 alias dc := dodeca
