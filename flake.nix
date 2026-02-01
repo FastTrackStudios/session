@@ -93,12 +93,30 @@
           packages = {
             deps = cargoArtifacts;
 
-            # Main host binary
-            fasttrackstudio = craneLib.buildPackage (commonArgs // {
-              pname = "fasttrackstudio";
+            # Host runtime library
+            host-runtime = craneLib.buildPackage (commonArgs // {
+              pname = "host-runtime";
               version = rev;
               inherit cargoArtifacts;
-              cargoExtraArgs = "-p fasttrackstudio";
+              cargoExtraArgs = "-p host-runtime";
+              doCheck = false;
+            });
+
+            # Test extension host (uses daw-standalone)
+            test-extension = craneLib.buildPackage (commonArgs // {
+              pname = "test-extension";
+              version = rev;
+              inherit cargoArtifacts;
+              cargoExtraArgs = "-p test-extension";
+              doCheck = false;
+            });
+
+            # REAPER extension host (uses daw-reaper)
+            reaper-extension = craneLib.buildPackage (commonArgs // {
+              pname = "reaper-extension";
+              version = rev;
+              inherit cargoArtifacts;
+              cargoExtraArgs = "-p reaper-extension";
               doCheck = false;
             });
 
@@ -145,7 +163,7 @@
               doCheck = false;
             });
 
-            default = self'.packages.fasttrackstudio;
+            default = self'.packages.test-extension;
           };
 
           # ============================================================
