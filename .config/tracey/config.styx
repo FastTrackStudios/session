@@ -2,18 +2,17 @@
 
 specs (
     {
-        name daw
+        name hello-world
         prefix r
-        include (cells/daw/daw-proto/spec/**/*.md)
+        include (cells/hello-world/hello-world-proto/spec/**/*.md)
         impls (
             {
-                name daw-proto
-                include (cells/daw/daw-proto/src/**/*.rs)
+                name hello-world-proto
+                include (cells/hello-world/hello-world-proto/src/**/*.rs)
             }
             {
-                name daw-standalone
-                include (cells/daw/daw-standalone/src/**/*.rs)
-                test_include (cells/daw/daw-standalone/tests/**/*.rs)
+                name hello-world
+                include (cells/hello-world/hello-world/src/**/*.rs)
             }
         )
     }
