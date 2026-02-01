@@ -31,12 +31,10 @@ pnpm-lock.yaml
 .pnp.*
 
 # Playwright
-/test-results/
-/playwright-report/
-/blob-report/
-/playwright/.cache/
-tests/playwright/test-results/
-tests/playwright/playwright-report/
+**/test-results/
+**/playwright-report/
+**/blob-report/
+**/playwright/.cache/
 
 # =============================================================================
 # Dioxus / WASM
