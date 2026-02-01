@@ -7,7 +7,7 @@ fail-fast = true
 # Status level
 status-level = "pass"
 
-# Slow test warning threshold
+# Slow test warning threshold (default for unit tests)
 slow-timeout = { period = "2s", terminate-after = 2 }
 
 [profile.ci]
@@ -18,3 +18,12 @@ slow-timeout = { period = "30s", terminate-after = 3 }
 
 # Retry flaky tests in CI
 retries = 2
+
+# Integration tests need longer timeouts since they spawn processes
+[[profile.default.overrides]]
+filter = 'package(integration-tests)'
+slow-timeout = { period = "10s", terminate-after = 3 }
+
+[[profile.ci.overrides]]
+filter = 'package(integration-tests)'
+slow-timeout = { period = "30s", terminate-after = 3 }

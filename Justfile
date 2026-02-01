@@ -43,6 +43,10 @@ _default:
     cargo xtask test
     cargo xtask playwright
 
+# Run native integration tests (spawns test-extension)
+@integration:
+    cargo xtask integration
+
 # Run WASM integration tests with Playwright
 @playwright *args:
     cargo xtask playwright {{ args }}
@@ -84,6 +88,7 @@ _default:
 # Aliases for convenience
 alias t := test
 alias ta := test-all
+alias i := integration
 alias b := build
 alias r := run
 alias dc := dodeca
