@@ -94,3 +94,208 @@ alias r := run
 alias dc := dodeca
 alias tr := tracey
 alias pw := playwright
+
+# ============================================================================
+# REAPER Extension Development
+# ============================================================================
+
+# Build the REAPER extension
+build-extension:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Load .env file if it exists
+    if [ -f .env ]; then set -a; source .env; set +a; fi
+
+    BUILD_MODE="${BUILD_MODE:-debug}"
+
+    echo "🔧 Building REAPER extension (${BUILD_MODE})..."
+    if [[ "$BUILD_MODE" == "release" ]]; then
+        cargo build --package reaper-extension --release
+    else
+        cargo build --package reaper-extension
+    fi
+    echo "✅ Extension built"
+
+# Create symlink to extension in REAPER's UserPlugins (for development)
+link-extension: build-extension
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Load .env file if it exists
+    if [ -f .env ]; then set -a; source .env; set +a; fi
+
+    REAPER_PATH="${REAPER_PATH:-/Users/codywright/Music/FastTrackStudio/Reaper/FTS-TRACKS/}"
+    EXTENSION_DIR="$REAPER_PATH/UserPlugins"
+    BUILD_MODE="${BUILD_MODE:-debug}"
+    BUILD_DIR="target/$BUILD_MODE"
+
+    # Create UserPlugins directory if needed
+    mkdir -p "$EXTENSION_DIR"
+
+    # Find built extension (macOS = .dylib)
+    if [[ -f "$BUILD_DIR/libreaper_fts.dylib" ]]; then
+        EXTENSION_FILE="$BUILD_DIR/libreaper_fts.dylib"
+        TARGET_NAME="reaper_fts.dylib"
+    else
+        echo "❌ Error: Extension not found in $BUILD_DIR"
+        echo "💡 Expected: libreaper_fts.dylib"
+        exit 1
+    fi
+
+    # Remove existing symlink/file
+    rm -f "$EXTENSION_DIR/$TARGET_NAME"
+
+    # Create symlink with absolute path
+    ABS_PATH="$(cd "$(dirname "$EXTENSION_FILE")" && pwd)/$(basename "$EXTENSION_FILE")"
+    ln -s "$ABS_PATH" "$EXTENSION_DIR/$TARGET_NAME"
+
+    echo "🔗 Extension symlinked:"
+    echo "   Source: $ABS_PATH"
+    echo "   Target: $EXTENSION_DIR/$TARGET_NAME"
+
+# Remove extension from REAPER
+uninstall-extension:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -f .env ]; then set -a; source .env; set +a; fi
+
+    REAPER_PATH="${REAPER_PATH:-/Users/codywright/Music/FastTrackStudio/Reaper/FTS-TRACKS/}"
+    EXTENSION_DIR="$REAPER_PATH/UserPlugins"
+
+    rm -f "$EXTENSION_DIR/reaper_fts.dylib"
+    rm -f "$EXTENSION_DIR/libreaper_fts.dylib"
+
+    echo "🗑️  Extension removed from: $EXTENSION_DIR"
+
+# Launch REAPER (foreground, shows logs)
+launch-reaper:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -f .env ]; then set -a; source .env; set +a; fi
+
+    REAPER_EXECUTABLE="${REAPER_EXECUTABLE:-/Users/codywright/Music/FastTrackStudio/Reaper/FTS-TRACKS/FTS-LIVE.app/Contents/MacOS/REAPER}"
+
+    if [[ ! -f "$REAPER_EXECUTABLE" ]]; then
+        echo "❌ REAPER not found: $REAPER_EXECUTABLE"
+        exit 1
+    fi
+
+    echo "🚀 Launching REAPER..."
+    echo "📋 Logs will appear below. Press Ctrl+C to stop."
+    echo ""
+
+    # Change to app's Resources directory so REAPER finds its resources
+    APP_DIR="$(dirname "$(dirname "$(dirname "$REAPER_EXECUTABLE")")")"
+    cd "$APP_DIR/Contents/Resources"
+    exec "$REAPER_EXECUTABLE"
+
+# Build cells (session, daw-standalone, gateway-ws)
+build-cells:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -f .env ]; then set -a; source .env; set +a; fi
+
+    BUILD_MODE="${BUILD_MODE:-debug}"
+
+    echo "🔧 Building cells (${BUILD_MODE})..."
+    if [[ "$BUILD_MODE" == "release" ]]; then
+        cargo build -p session -p daw-reaper -p gateway-ws --release
+    else
+        cargo build -p session -p daw-reaper -p gateway-ws
+    fi
+    echo "✅ Cells built"
+
+# Symlink cells to Extensions/FTS2 directory
+link-cells: build-cells
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -f .env ]; then set -a; source .env; set +a; fi
+
+    REAPER_EXECUTABLE="${REAPER_EXECUTABLE:-/Users/codywright/Music/FastTrackStudio/Reaper/FTS-TRACKS/FTS-LIVE.app/Contents/MacOS/REAPER}"
+    BUILD_MODE="${BUILD_MODE:-debug}"
+    BUILD_DIR="target/$BUILD_MODE"
+
+    # Calculate path to Extensions/FTS2
+    # REAPER_EXECUTABLE: /path/to/FastTrackStudio/Reaper/FTS-TRACKS/FTS-LIVE.app/Contents/MacOS/REAPER
+    # APP_DIR:           /path/to/FastTrackStudio/Reaper/FTS-TRACKS/FTS-LIVE.app
+    # RESOURCE_DIR:      /path/to/FastTrackStudio/Reaper/FTS-TRACKS (REAPER resource dir)
+    # PARENT:            /path/to/FastTrackStudio/Reaper
+    # GRANDPARENT:       /path/to/FastTrackStudio
+    # CELLS_DIR:         /path/to/FastTrackStudio/Extensions/FTS2
+    APP_DIR="$(dirname "$(dirname "$(dirname "$REAPER_EXECUTABLE")")")"
+    RESOURCE_DIR="$(dirname "$APP_DIR")"
+    PARENT="$(dirname "$RESOURCE_DIR")"
+    GRANDPARENT="$(dirname "$PARENT")"
+    CELLS_DIR="$GRANDPARENT/Extensions/FTS2"
+
+    echo "📁 Cells directory: $CELLS_DIR"
+
+    # Create Extensions/FTS2 directory
+    mkdir -p "$CELLS_DIR"
+
+    # Symlink cells
+    echo ""
+    echo "🔗 Creating symlinks for cells..."
+
+    for cell in "session" "daw-reaper" "gateway-ws"; do
+        SOURCE="$(pwd)/$BUILD_DIR/$cell"
+        TARGET="$CELLS_DIR/$cell"
+
+        # Check if source exists
+        if [[ ! -f "$SOURCE" ]]; then
+            echo "⚠️  Skipping $cell (not built)"
+            continue
+        fi
+
+        # Remove old symlink if exists
+        if [[ -L "$TARGET" ]] || [[ -f "$TARGET" ]]; then
+            rm -f "$TARGET"
+        fi
+
+        # Create new symlink
+        ln -s "$SOURCE" "$TARGET"
+        echo "  ✅ $cell -> $TARGET"
+    done
+
+# Build, link extension, link cells, and launch REAPER for testing
+test-reaper: link-extension link-cells
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -f .env ]; then set -a; source .env; set +a; fi
+
+    REAPER_EXECUTABLE="${REAPER_EXECUTABLE:-/Users/codywright/Music/FastTrackStudio/Reaper/FTS-TRACKS/FTS-LIVE.app/Contents/MacOS/REAPER}"
+
+    echo ""
+    echo "✅ Extension and cells built and linked"
+    echo ""
+    echo "🚀 Launching REAPER..."
+    echo "📋 Logs will appear below. Press Ctrl+C to stop."
+    echo ""
+
+    APP_DIR="$(dirname "$(dirname "$(dirname "$REAPER_EXECUTABLE")")")"
+    cd "$APP_DIR/Contents/Resources"
+    exec "$REAPER_EXECUTABLE"
+
+# Show configured REAPER paths
+show-reaper-path:
+    #!/usr/bin/env bash
+    if [ -f .env ]; then set -a; source .env; set +a; fi
+
+    REAPER_PATH="${REAPER_PATH:-/Users/codywright/Music/FastTrackStudio/Reaper/FTS-TRACKS/}"
+    REAPER_EXECUTABLE="${REAPER_EXECUTABLE:-/Users/codywright/Music/FastTrackStudio/Reaper/FTS-TRACKS/FTS-LIVE.app/Contents/MacOS/REAPER}"
+
+    echo "📁 REAPER Path: $REAPER_PATH"
+    echo "📁 UserPlugins: $REAPER_PATH/UserPlugins"
+    echo "🎹 Executable:  $REAPER_EXECUTABLE"
+    echo ""
+
+    if [[ -d "$REAPER_PATH/UserPlugins" ]]; then
+        echo "Installed extensions:"
+        ls -la "$REAPER_PATH/UserPlugins" | grep -E "\.(so|dll|dylib)$" || echo "  (none)"
+    fi
