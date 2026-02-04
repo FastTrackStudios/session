@@ -262,8 +262,9 @@ link-cells: build-cells
         echo "  ✅ $cell -> $TARGET"
     done
 
-# Build, link extension, link cells, and launch REAPER for testing
-test-reaper: link-extension link-cells
+# Build, link extension, and launch REAPER for testing
+# Note: Cells (session, gateway-ws) are now managed by the fts-control desktop app
+test-reaper: link-extension
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -272,7 +273,9 @@ test-reaper: link-extension link-cells
     REAPER_EXECUTABLE="${REAPER_EXECUTABLE:-/Users/codywright/Music/FastTrackStudio/Reaper/FTS-TRACKS/FTS-LIVE.app/Contents/MacOS/REAPER}"
 
     echo ""
-    echo "✅ Extension and cells built and linked"
+    echo "✅ Extension built and linked"
+    echo "📡 Unix socket will be at: /tmp/fts-control.sock"
+    echo "💡 Run 'just run-desktop' in another terminal to start the control app"
     echo ""
     echo "🚀 Launching REAPER..."
     echo "📋 Logs will appear below. Press Ctrl+C to stop."
@@ -281,6 +284,14 @@ test-reaper: link-extension link-cells
     APP_DIR="$(dirname "$(dirname "$(dirname "$REAPER_EXECUTABLE")")")"
     cd "$APP_DIR/Contents/Resources"
     exec "$REAPER_EXECUTABLE"
+
+# Run the fts-control desktop app
+run-desktop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "🖥️  Building and running fts-control desktop..."
+    cargo run -p fts-control-desktop
 
 # Show configured REAPER paths
 show-reaper-path:
