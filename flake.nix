@@ -136,6 +136,31 @@
               doCheck = false;
             });
 
+            # FTS Control Desktop App
+            fts-control-desktop = craneLib.buildPackage (commonArgs // {
+              pname = "fts-control-desktop";
+              version = rev;
+              inherit cargoArtifacts;
+              buildPhaseCargoCommand = ''
+                cd apps/fts-control/desktop
+                dx build --release --platform desktop
+              '';
+              installPhaseCommand = ''
+                mkdir -p $out/bin
+                # On macOS, dx produces an .app bundle
+                if [ -d "apps/fts-control/desktop/target/dx/fts-control-desktop/release/macos" ]; then
+                  cp -r apps/fts-control/desktop/target/dx/fts-control-desktop/release/macos/* $out/
+                # On Linux, dx produces a binary
+                elif [ -f "apps/fts-control/desktop/target/dx/fts-control-desktop/release/fts-control-desktop" ]; then
+                  cp apps/fts-control/desktop/target/dx/fts-control-desktop/release/fts-control-desktop $out/bin/
+                # Fallback to standard cargo output
+                elif [ -f "target/release/fts-control-desktop" ]; then
+                  cp target/release/fts-control-desktop $out/bin/
+                fi
+              '';
+              doCheck = false;
+            });
+
             # DAW Standalone cell
             daw-standalone = craneLib.buildPackage (commonArgs // {
               pname = "daw-standalone";
