@@ -67,7 +67,7 @@ pnpm-lock.yaml
 *.swo
 *~
 .netrwhist
-tags
+/tags
 
 # Emacs
 *~
