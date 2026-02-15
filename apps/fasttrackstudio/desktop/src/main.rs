@@ -1,6 +1,5 @@
 use dioxus::prelude::*;
 
-
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
@@ -10,7 +9,6 @@ enum Route {
     #[route("/blog/:id")]
     Blog { id: i32 },
 }
-
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
@@ -53,7 +51,7 @@ pub fn Hero() -> Element {
 fn Home() -> Element {
     rsx! {
         Hero {}
-        
+
     }
 }
 
@@ -101,5 +99,3 @@ fn Navbar() -> Element {
         Outlet::<Route> {}
     }
 }
-
-
