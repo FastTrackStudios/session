@@ -94,10 +94,15 @@ alias r := run
 alias dc := dodeca
 alias tr := tracey
 alias pw := playwright
+alias rt := reaper-test
 
 # ============================================================================
 # REAPER Extension Development
 # ============================================================================
+
+# Run REAPER integration tests (builds extension, spawns REAPER, runs tests)
+reaper-test *ARGS:
+    cargo xtask reaper-test {{ARGS}}
 
 # Build the REAPER extension
 build-extension:
@@ -284,6 +289,51 @@ test-reaper: link-extension
     APP_DIR="$(dirname "$(dirname "$(dirname "$REAPER_EXECUTABLE")")")"
     cd "$APP_DIR/Contents/Resources"
     exec "$REAPER_EXECUTABLE"
+
+# Launch REAPER in the background, wait for socket, run signal integration tests, then quit REAPER.
+# Logs from REAPER stream live; test output follows. Use Ctrl+C to abort early.
+test-signal-reaper: link-extension
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -f .env ]; then set -a; source .env; set +a; fi
+
+    REAPER_EXECUTABLE="${REAPER_EXECUTABLE:-/Users/codywright/Music/FastTrackStudio/Reaper/FTS-TRACKS/FTS-LIVE.app/Contents/MacOS/REAPER}"
+    SOCKET_PATH="/tmp/fts-control.sock"
+    SOCKET_TIMEOUT=30
+
+    APP_DIR="$(dirname "$(dirname "$(dirname "$REAPER_EXECUTABLE")")")"
+
+    # Clean up any stale socket from a previous run
+    rm -f "$SOCKET_PATH"
+
+    echo ""
+    echo "🚀 Launching REAPER in background..."
+    cd "$APP_DIR/Contents/Resources"
+    "$REAPER_EXECUTABLE" &
+    REAPER_PID=$!
+    echo "   PID: $REAPER_PID"
+
+    # Ensure REAPER is killed when this script exits (Ctrl+C or test failure)
+    trap "echo ''; echo '🛑 Stopping REAPER (PID $REAPER_PID)...'; kill $REAPER_PID 2>/dev/null; wait $REAPER_PID 2>/dev/null; rm -f '$SOCKET_PATH'; echo 'Done.'" EXIT
+
+    echo "⏳ Waiting for socket at $SOCKET_PATH (up to ${SOCKET_TIMEOUT}s)..."
+    elapsed=0
+    while [ ! -S "$SOCKET_PATH" ]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+        if [ $elapsed -ge $SOCKET_TIMEOUT ]; then
+            echo "❌ Timed out waiting for $SOCKET_PATH"
+            exit 1
+        fi
+        echo -n "."
+    done
+    echo ""
+    echo "✅ Socket ready — running signal integration tests"
+    echo ""
+
+    # Run the tests (failures exit non-zero, which triggers the EXIT trap cleanly)
+    cargo test -p signal --test reaper_preset_loading -- --ignored --nocapture
 
 # Run the fts-control desktop app
 run-desktop:
