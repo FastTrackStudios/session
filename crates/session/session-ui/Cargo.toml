@@ -1,0 +1,37 @@
+[package]
+name = "session-ui"
+version = "0.1.0"
+edition = "2021"
+description = "Dioxus UI components for session management"
+
+[dependencies]
+# Session types and service clients
+session-proto = { workspace = true }
+
+# DAW types (for PlayState, etc.)
+daw-proto = { workspace = true }
+
+# Dock panel registration
+dock-dioxus = { path = "../../dock/dock-dioxus", default-features = false }
+dock-proto = { path = "../../dock/dock-proto" }
+
+# Dioxus UI framework
+dioxus = { version = "0.7.2", optional = true }
+
+# Icons
+lucide-dioxus = { version = "2", features = ["all-icons"] }
+
+# Logging
+tracing = "0.1"
+
+# Error handling
+eyre = "0.6"
+
+[features]
+default = ["web"]
+# Web/desktop (WebView-based) rendering
+web = ["dioxus", "dock-dioxus/web"]
+
+# WASM dependencies for timing
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Performance"] }

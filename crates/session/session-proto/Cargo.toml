@@ -1,0 +1,23 @@
+[package]
+name = "session-proto"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+roam.workspace = true
+actions-proto.workspace = true
+facet.workspace = true
+daw-proto = { path = "../../daw/daw-proto" }
+daw-control = { path = "../../daw/daw-control" }
+keyflow-proto = { path = "../../keyflow/keyflow-proto" }
+uuid = { version = "1", features = ["v4", "serde", "js"] }
+tracing = "0.1"
+futures = "0.3"
+
+# Non-WASM dependencies (tokio for async runtime)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["time"] }
+
+# WASM-specific dependencies for timers
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+gloo-timers = "0.3"
