@@ -24,9 +24,9 @@ tracing.workspace = true
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 rayon = "1"
-keyflow = { path = "../../keyflow/keyflow", features = ["text"] }
+keyflow = { workspace = true, features = ["text"] }
 smallvec = "1.13"
 rustc-hash = "2"
 
 [dev-dependencies]
-daw-standalone = { path = "../../daw/daw-standalone" }
+daw-standalone.workspace = true
