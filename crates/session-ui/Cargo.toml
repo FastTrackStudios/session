@@ -12,8 +12,8 @@ session-proto = { workspace = true }
 daw-proto = { workspace = true }
 
 # Dock panel registration
-dock-dioxus = { path = "../../dock/dock-dioxus", default-features = false }
-dock-proto = { path = "../../dock/dock-proto" }
+dock-dioxus = { workspace = true, default-features = false }
+dock-proto.workspace = true
 
 # Dioxus UI framework
 dioxus = { version = "0.7.2", optional = true }

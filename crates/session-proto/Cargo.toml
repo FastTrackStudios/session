@@ -7,9 +7,9 @@ edition = "2024"
 roam.workspace = true
 actions-proto.workspace = true
 facet.workspace = true
-daw-proto = { path = "../../daw/daw-proto" }
-daw-control = { path = "../../daw/daw-control" }
-keyflow-proto = { path = "../../keyflow/keyflow-proto" }
+daw-proto.workspace = true
+daw-control.workspace = true
+keyflow-proto.workspace = true
 uuid = { version = "1", features = ["v4", "serde", "js"] }
 tracing = "0.1"
 futures = "0.3"
