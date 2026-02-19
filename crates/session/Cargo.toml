@@ -1,0 +1,32 @@
+[package]
+name = "session"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "session"
+path = "src/lib.rs"
+
+[[bin]]
+name = "session"
+path = "src/main.rs"
+
+[dependencies]
+session-proto = { path = "../session-proto" }
+actions-proto.workspace = true
+daw-control.workspace = true
+daw-proto.workspace = true
+roam.workspace = true
+roam-telemetry.workspace = true
+tokio.workspace = true
+eyre.workspace = true
+tracing.workspace = true
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+rayon = "1"
+keyflow = { path = "../../keyflow/keyflow", features = ["text"] }
+smallvec = "1.13"
+rustc-hash = "2"
+
+[dev-dependencies]
+daw-standalone = { path = "../../daw/daw-standalone" }
