@@ -31,6 +31,8 @@ eyre = "0.6"
 default = ["web"]
 # Web/desktop (WebView-based) rendering
 web = ["dioxus", "dock-dioxus/web"]
+# GPU-accelerated native rendering (opt-in, requires dioxus_native)
+native = []
 
 # WASM dependencies for timing
 [target.'cfg(target_arch = "wasm32")'.dependencies]
