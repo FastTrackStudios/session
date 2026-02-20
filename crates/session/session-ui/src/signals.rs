@@ -404,6 +404,12 @@ impl Session {
             .expect("Session not initialized. Call Session::init() first.")
     }
 
+    /// Get the global Session instance if initialized, or `None`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn try_get() -> Option<&'static Session> {
+        GLOBAL_SESSION.get()
+    }
+
     /// Get the SetlistService client
     pub fn setlist(&self) -> &SetlistServiceClient {
         &self.setlist_client
