@@ -618,7 +618,6 @@ pub fn SegmentedProgressBar(
                     }
                     // Vertical line from comment to progress bar
                     div {
-                        key: "comment-line-{index}",
                         class: "absolute pointer-events-none z-40",
                         style: if let Some(ref color) = comment.color {
                             format!(
