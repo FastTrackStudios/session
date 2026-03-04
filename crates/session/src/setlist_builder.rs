@@ -58,13 +58,15 @@ impl SetlistBuilder {
         let mut songs = Vec::new();
         for (_idx, guid, result) in results {
             match result {
-                Ok(song) => {
-                    debug!(
-                        "  Song extracted: {} ({} sections)",
-                        song.name,
-                        song.sections.len()
-                    );
-                    songs.push(song);
+                Ok(project_songs) => {
+                    for song in &project_songs {
+                        debug!(
+                            "  Song extracted: {} ({} sections)",
+                            song.name,
+                            song.sections.len()
+                        );
+                    }
+                    songs.extend(project_songs);
                 }
                 Err(e) => {
                     warn!("  ✗ Failed to extract song from project {}: {}", guid, e);
@@ -84,6 +86,7 @@ impl SetlistBuilder {
         Ok(Setlist {
             id: None,
             name: Self::generate_setlist_name(&songs),
+            advance_mode: session_proto::AdvanceMode::default(),
             songs,
         })
     }
