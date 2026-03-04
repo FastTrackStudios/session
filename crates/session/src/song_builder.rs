@@ -16,7 +16,7 @@
 use daw_control::Project;
 use daw_proto::{Marker, Region};
 use session_proto::{Comment, Section, SectionType, Song};
-use tracing::{Level, debug};
+use tracing::{Level, debug, warn};
 use uuid::Uuid;
 
 /// Builder for extracting Song structure from DAW projects
@@ -28,22 +28,71 @@ fn position_to_seconds(pos: &daw_proto::Position) -> f64 {
 }
 
 impl SongBuilder {
-    /// Build a Song from a DAW project using daw-control API
+    /// Build one or more Songs from a DAW project.
     ///
-    /// Analyzes markers for SONGSTART/SONGEND, regions for sections,
-    /// and tempo map for tempo/time signature information.
-    pub async fn build(project: &Project) -> eyre::Result<Song> {
+    /// When the project contains multiple parent regions (each with ≥2 child regions),
+    /// each parent region is treated as a separate song (multi-song mode).
+    /// Otherwise the entire project is treated as a single song (backward-compatible).
+    pub async fn build(project: &Project) -> eyre::Result<Vec<Song>> {
         debug!("SongBuilder::build for project {}", project.guid());
 
         let markers_api = project.markers();
         let regions_api = project.regions();
         let (project_info, markers, regions) =
             tokio::try_join!(project.info(), markers_api.all(), regions_api.all())?;
-        let project_name = &project_info.name;
+        let tempo_map = project.tempo_map();
 
+        // Check for multi-song layout: multiple parent regions each containing ≥2 children
+        let song_regions = Self::find_song_regions(&regions);
+        if song_regions.len() >= 2 {
+            debug!(
+                "Multi-song mode: found {} song regions in project {}",
+                song_regions.len(),
+                project.guid()
+            );
+            let project_guid = project.guid().to_string();
+            let mut songs = Vec::with_capacity(song_regions.len());
+            for song_region in &song_regions {
+                match Self::build_song_from_region(
+                    &project_guid,
+                    song_region,
+                    &regions,
+                    &markers,
+                    &tempo_map,
+                )
+                .await
+                {
+                    Ok(song) => songs.push(song),
+                    Err(e) => {
+                        warn!(
+                            "Failed to build song from region '{}': {}",
+                            song_region.name, e
+                        );
+                    }
+                }
+            }
+            Ok(songs)
+        } else {
+            // Single-song mode: preserve exact backward compatibility
+            let song =
+                Self::build_single_song(project, &project_info.name, &markers, &regions, &tempo_map)
+                    .await?;
+            Ok(vec![song])
+        }
+    }
+
+    /// Build a single Song from the entire project (original build logic).
+    ///
+    /// Preserves exact backward compatibility for projects with zero or one song region.
+    async fn build_single_song(
+        project: &Project,
+        project_name: &str,
+        markers: &[Marker],
+        regions: &[Region],
+        tempo_map: &daw_control::TempoMap,
+    ) -> eyre::Result<Song> {
         // Parse song name and artist from project name
         let (song_name, _artist) = Self::parse_project_name(project_name);
-        let tempo_map = project.tempo_map();
 
         // Find special markers
         let count_in_marker = markers.iter().find(|m| Self::is_count_in_marker(&m.name));
@@ -95,7 +144,7 @@ impl SongBuilder {
             songend_marker.or_else(|| markers.iter().find(|m| m.name.starts_with("=SONGEND")));
 
         // Find the song region (if regions exist)
-        let song_region = Self::find_song_region(&regions);
+        let song_region = Self::find_song_region(regions);
 
         // Determine song bounds
         let (start_seconds, songend_seconds, end_seconds, count_in_seconds) =
@@ -165,13 +214,13 @@ impl SongBuilder {
 
         // Extract sections - prefer regions, fall back to markers
         let mut sections = if let Some(ref song_region) = song_region {
-            Self::extract_sections_from_song_region(&regions, song_region)?
+            Self::extract_sections_from_song_region(regions, song_region)?
         } else if !regions.is_empty() {
-            Self::extract_sections_from_regions(&regions, start_seconds, songend_seconds)?
+            Self::extract_sections_from_regions(regions, start_seconds, songend_seconds)?
         } else {
             // No regions - build sections from markers
             debug!("No regions found, building sections from markers");
-            Self::build_sections_from_markers(&markers, start_seconds, songend_seconds)?
+            Self::build_sections_from_markers(markers, start_seconds, songend_seconds)?
         };
 
         debug!("Extracted {} sections", sections.len());
@@ -369,7 +418,168 @@ impl SongBuilder {
             parsed_chart: None,
             detected_chords: Vec::new(),
             chart_fingerprint: None,
+            advance_mode: None,
         })
+    }
+
+    /// Build a Song from a specific parent region within a multi-song project.
+    ///
+    /// In multi-song mode, each parent region defines a song. Song name is parsed
+    /// from the region name using the "Title - Artist" convention. SONGSTART/SONGEND
+    /// markers are ignored; bounds come from the region's time range.
+    async fn build_song_from_region(
+        project_guid: &str,
+        song_region: &Region,
+        all_regions: &[Region],
+        all_markers: &[Marker],
+        tempo_map: &daw_control::TempoMap,
+    ) -> eyre::Result<Song> {
+        let (song_name, _artist) = Self::parse_project_name(&song_region.name);
+        let start_seconds = song_region.time_range.start_seconds();
+        let end_seconds = song_region.time_range.end_seconds();
+
+        debug!(
+            "build_song_from_region: '{}' start={:.3} end={:.3}",
+            song_name, start_seconds, end_seconds
+        );
+
+        // Extract sections from child regions within this song region
+        let mut sections = Self::extract_sections_from_song_region(all_regions, song_region)?;
+
+        // Check for COUNT-IN marker before this song region
+        let count_in_marker = all_markers.iter().find(|m| {
+            Self::is_count_in_marker(&m.name) && {
+                let pos = position_to_seconds(&m.position);
+                pos < start_seconds && pos >= start_seconds - 30.0 // reasonable max count-in
+            }
+        });
+
+        let count_in_seconds = count_in_marker.and_then(|m| {
+            let marker_time = position_to_seconds(&m.position);
+            if marker_time < start_seconds {
+                Some(start_seconds - marker_time)
+            } else {
+                None
+            }
+        });
+
+        // Add Count-In section if present
+        let song_start_seconds = if let Some(count_in_duration) = count_in_seconds {
+            if count_in_duration > 0.0 {
+                let count_in_start = start_seconds - count_in_duration;
+                let count_in_end = sections
+                    .first()
+                    .map(|s| s.start_seconds)
+                    .unwrap_or(start_seconds);
+                sections.insert(
+                    0,
+                    Section {
+                        id: None,
+                        name: "Count-In".to_string(),
+                        comment: None,
+                        section_type: SectionType::CountIn,
+                        start_seconds: count_in_start,
+                        end_seconds: count_in_end,
+                        number: None,
+                        color: None,
+                    },
+                );
+                count_in_start
+            } else {
+                start_seconds
+            }
+        } else {
+            start_seconds
+        };
+
+        // Get tempo and time signature at song start
+        let tempo = tempo_map.tempo_at(start_seconds).await.ok();
+        let time_sig = tempo_map
+            .time_signature_at(start_seconds)
+            .await
+            .ok()
+            .map(|(num, denom)| daw_proto::TimeSignature::new(num as u32, denom as u32));
+
+        let measure_positions = if let (Some(bpm), Some(ts)) = (tempo, time_sig) {
+            Self::calculate_measure_positions(song_start_seconds, end_seconds, bpm, ts)
+        } else {
+            Vec::new()
+        };
+
+        // Extract comment markers within this song region's bounds
+        let comments = Self::extract_comments_in_range(
+            all_markers,
+            song_start_seconds,
+            end_seconds,
+        );
+
+        Ok(Song {
+            id: Uuid::new_v4().to_string(),
+            name: song_name,
+            project_guid: project_guid.to_string(),
+            start_seconds: song_start_seconds,
+            end_seconds,
+            count_in_seconds,
+            sections,
+            comments,
+            tempo,
+            time_signature: time_sig,
+            measure_positions,
+            chart_text: None,
+            parsed_chart: None,
+            detected_chords: Vec::new(),
+            chart_fingerprint: None,
+            advance_mode: None,
+        })
+    }
+
+    /// Extract non-structural comment markers within a time range.
+    fn extract_comments_in_range(
+        markers: &[Marker],
+        start: f64,
+        end: f64,
+    ) -> Vec<Comment> {
+        let mut comments: Vec<Comment> = markers
+            .iter()
+            .filter(|m| {
+                let pos = position_to_seconds(&m.position);
+                let in_bounds = pos >= start && pos <= end;
+                let is_structural = Self::is_structural_marker(&m.name);
+                in_bounds && !is_structural
+            })
+            .map(|m| {
+                let is_count_in = Self::is_count_in_marker(&m.name);
+                let (text, section_only) = if m.name.trim().starts_with('>') {
+                    (
+                        m.name
+                            .trim()
+                            .strip_prefix('>')
+                            .unwrap_or(&m.name)
+                            .trim()
+                            .to_string(),
+                        true,
+                    )
+                } else {
+                    (m.name.clone(), false)
+                };
+                Comment {
+                    id: m.id,
+                    text,
+                    position_seconds: position_to_seconds(&m.position),
+                    color: m.color,
+                    is_count_in,
+                    section_only,
+                }
+            })
+            .collect();
+
+        comments.sort_by(|a, b| {
+            a.position_seconds
+                .partial_cmp(&b.position_seconds)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        comments
     }
 
     /// Parse project name to extract song title and artist
@@ -446,6 +656,59 @@ impl SongBuilder {
             || name == "=END"
             || name.starts_with("=SONGSTART")
             || name.starts_with("=SONGEND")
+    }
+
+    /// Find all regions that qualify as song regions (contain ≥2 child regions).
+    ///
+    /// Returns leaf-level parent regions only — a region that contains another
+    /// song-candidate region is considered a "grandparent" (e.g., a setlist wrapper)
+    /// and is filtered out. Results are sorted by start time.
+    fn find_song_regions(regions: &[Region]) -> Vec<&Region> {
+        // Step 1: Find all regions containing ≥2 children
+        let mut candidates: Vec<&Region> = regions
+            .iter()
+            .filter(|region| {
+                let contained_count = regions
+                    .iter()
+                    .filter(|r| {
+                        r.id != region.id
+                            && r.time_range.start_seconds() >= region.time_range.start_seconds()
+                            && r.time_range.end_seconds() <= region.time_range.end_seconds()
+                    })
+                    .count();
+                contained_count >= 2
+            })
+            .collect();
+
+        // Step 2: Remove grandparents — any candidate that contains another candidate.
+        // Collect IDs of grandparents first to avoid borrow conflict with retain.
+        let grandparent_ids: Vec<_> = candidates
+            .iter()
+            .filter(|candidate| {
+                candidates.iter().any(|other| {
+                    other.id != candidate.id
+                        && other.time_range.start_seconds()
+                            >= candidate.time_range.start_seconds()
+                        && other.time_range.end_seconds() <= candidate.time_range.end_seconds()
+                        && (other.time_range.start_seconds()
+                            > candidate.time_range.start_seconds()
+                            || other.time_range.end_seconds()
+                                < candidate.time_range.end_seconds())
+                })
+            })
+            .map(|r| r.id)
+            .collect();
+        candidates.retain(|r| !grandparent_ids.contains(&r.id));
+
+        // Step 3: Sort by start time
+        candidates.sort_by(|a, b| {
+            a.time_range
+                .start_seconds()
+                .partial_cmp(&b.time_range.start_seconds())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        candidates
     }
 
     /// Find the song region - the region that contains other regions (sections)

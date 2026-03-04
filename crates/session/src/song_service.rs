@@ -33,9 +33,10 @@ impl SongService for SongServiceImpl {
 
         info!("Got current project: {}", project.guid());
 
-        // Build song from project
+        // Build song(s) from project — return the first song
         match SongBuilder::build(&project).await {
-            Ok(song) => {
+            Ok(songs) => {
+                let song = songs.into_iter().next()?;
                 info!(
                     "SONG BUILT: {} ({} sections)",
                     song.name,
@@ -67,9 +68,10 @@ impl SongService for SongServiceImpl {
             }
         };
 
-        // Build song from project
+        // Build song(s) from project — return the first song
         match SongBuilder::build(&project).await {
-            Ok(song) => {
+            Ok(songs) => {
+                let song = songs.into_iter().next()?;
                 info!(
                     "SONG BUILT: {} ({} sections)",
                     song.name,

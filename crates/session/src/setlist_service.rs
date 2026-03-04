@@ -6,8 +6,8 @@ use roam::Tx;
 use roam::session::Context;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_proto::{
-    ActiveIndices, MeasureInfo, QueuedTarget, Section, Setlist, SetlistEvent, SetlistService, Song,
-    SongChartHydration, SongDetectedChord, SongTransportState,
+    ActiveIndices, AdvanceMode, MeasureInfo, QueuedTarget, Section, Setlist, SetlistEvent,
+    SetlistService, Song, SongChartHydration, SongDetectedChord, SongTransportState,
 };
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -206,7 +206,7 @@ impl SetlistServiceImpl {
                 .unwrap_or_else(|| current.project_guid.clone()),
             project,
         };
-        let rebuilt = self.build_song_with_cache(&load, Some(&current)).await?;
+        let rebuilt = self.build_songs_with_cache(&load, Some(&current)).await.into_iter().next()?;
         self.cache_chart_payload_for_song(&rebuilt).await;
         let mut rebuilt_light = rebuilt.clone();
         Self::strip_song_chart_payload(&mut rebuilt_light);
@@ -298,6 +298,7 @@ impl SetlistServiceImpl {
             parsed_chart: None,
             detected_chords: Vec::new(),
             chart_fingerprint: None,
+            advance_mode: None,
         }
     }
 
@@ -457,11 +458,11 @@ impl SetlistServiceImpl {
         loads
     }
 
-    async fn build_song_with_cache(
+    async fn build_songs_with_cache(
         &self,
         load: &ProjectLoad,
         existing_song: Option<&Song>,
-    ) -> Option<Song> {
+    ) -> Vec<Song> {
         let source_fingerprint = self.fetch_midi_source_fingerprint(&load.project).await;
 
         if let Some(cached) = self.song_cache.read().await.get(&load.guid).cloned() {
@@ -473,30 +474,40 @@ impl SetlistServiceImpl {
             if cached.project_name == load.project_name && fingerprint_matches {
                 let mut song = cached.song;
                 song.id = Self::make_song_id(existing_song, Some(&song), &load.guid);
-                return Some(song);
+                return vec![song];
             }
         }
 
         let chart_data = Self::fetch_midi_chart_data(&load.project).await;
 
         match SongBuilder::build(&load.project).await {
-            Ok(mut song) => {
-                song.id = Self::make_song_id(existing_song, None, &load.guid);
-                if let Some(data) = chart_data {
-                    Self::apply_chart_data(&mut song, data);
+            Ok(mut songs) => {
+                // Apply chart data and IDs to the first song; cache only the first song
+                if let Some(first_song) = songs.first_mut() {
+                    first_song.id =
+                        Self::make_song_id(existing_song, None, &load.guid);
+                    if let Some(data) = chart_data {
+                        Self::apply_chart_data(first_song, data);
+                    }
+                    self.cache_chart_payload_for_song(first_song).await;
+                    let mut cached_song = first_song.clone();
+                    Self::strip_song_chart_payload(&mut cached_song);
+                    self.song_cache.write().await.insert(
+                        load.guid.clone(),
+                        SongCacheEntry {
+                            project_name: load.project_name.clone(),
+                            chart_fingerprint: first_song.chart_fingerprint.clone(),
+                            song: cached_song,
+                        },
+                    );
                 }
-                self.cache_chart_payload_for_song(&song).await;
-                let mut cached_song = song.clone();
-                Self::strip_song_chart_payload(&mut cached_song);
-                self.song_cache.write().await.insert(
-                    load.guid.clone(),
-                    SongCacheEntry {
-                        project_name: load.project_name.clone(),
-                        chart_fingerprint: song.chart_fingerprint.clone(),
-                        song: cached_song,
-                    },
-                );
-                Some(song)
+                // Ensure remaining songs have unique IDs
+                for song in songs.iter_mut().skip(1) {
+                    if song.id.is_empty() {
+                        song.id = uuid::Uuid::new_v4().to_string();
+                    }
+                }
+                songs
             }
             Err(e) => {
                 warn!(
@@ -505,7 +516,7 @@ impl SetlistServiceImpl {
                     load.guid,
                     e
                 );
-                None
+                Vec::new()
             }
         }
     }
@@ -896,12 +907,33 @@ impl SetlistServiceImpl {
             };
         };
 
-        // Find the song that matches the current project
+        // Find the song that matches the current project and position.
+        // When multiple songs share a project GUID, resolve by playhead position.
         let song_data = setlist
             .songs
             .iter()
             .enumerate()
-            .find(|(_, song)| song.project_guid == current_guid);
+            .filter(|(_, song)| song.project_guid == current_guid)
+            .find(|(_, song)| position >= song.start_seconds && position < song.end_seconds)
+            .or_else(|| {
+                // Fallback: nearest song in the same project
+                setlist
+                    .songs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, song)| song.project_guid == current_guid)
+                    .min_by(|(_, a), (_, b)| {
+                        let dist_a = (position - a.start_seconds)
+                            .abs()
+                            .min((position - a.end_seconds).abs());
+                        let dist_b = (position - b.start_seconds)
+                            .abs()
+                            .min((position - b.end_seconds).abs());
+                        dist_a
+                            .partial_cmp(&dist_b)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+            });
 
         if let Some((song_index, song)) = song_data {
             // Calculate song progress
@@ -989,9 +1021,94 @@ impl SetlistServiceImpl {
     }
 
     /// Compute the seek position for a song: count-in position if available,
-    /// otherwise song start.
+    /// otherwise song start (SONGSTART marker).
+    ///
+    /// Song.start_seconds already includes the count-in offset (it's the count-in
+    /// start, not SONGSTART). So the SONGSTART position is:
+    ///   start_seconds + count_in_seconds
+    ///
+    /// We want to seek to start_seconds (the count-in position), but if that's
+    /// negative (count-in marker is before timeline origin), fall back to SONGSTART.
     fn song_seek_position(song: &Song) -> f64 {
-        song.start_seconds() - song.count_in_seconds.unwrap_or(0.0)
+        let count_in_pos = song.start_seconds();
+        if count_in_pos >= 0.0 {
+            count_in_pos
+        } else {
+            // Count-in is before timeline origin — fall back to SONGSTART
+            let songstart = song.start_seconds() + song.count_in_seconds.unwrap_or(0.0);
+            debug!(
+                "song_seek_position: count-in pos {:.2} is negative, falling back to SONGSTART {:.2}",
+                count_in_pos, songstart
+            );
+            songstart.max(0.0)
+        }
+    }
+
+    /// Navigate to a song by index without requiring an RPC Context.
+    /// Used by the transport loop for auto-advance.
+    async fn seek_to_song_internal(&self, song_index: usize) {
+        info!("seek_to_song_internal: song_index={}", song_index);
+
+        let daw = Daw::get();
+
+        let Some(skeleton) = self.get_song_internal(song_index).await else {
+            warn!("seek_to_song_internal: song {} not found", song_index);
+            return;
+        };
+
+        // Check if we're already on the correct project (skip tab switch for same-project songs)
+        let current_project = daw.current_project().await.ok();
+        let already_on_project = current_project
+            .as_ref()
+            .map(|p| p.guid().to_string() == skeleton.project_guid)
+            .unwrap_or(false);
+
+        if !already_on_project {
+            self.stop_previous_project_if_idle(&skeleton.project_guid)
+                .await;
+        }
+        self.set_active_song_id(&skeleton.id).await;
+
+        let project = if already_on_project {
+            current_project.unwrap()
+        } else {
+            match daw.select_project(&skeleton.project_guid).await {
+                Ok(project) => project,
+                Err(e) => {
+                    warn!(
+                        "seek_to_song_internal: failed to switch to project {}: {}",
+                        skeleton.project_guid, e
+                    );
+                    return;
+                }
+            }
+        };
+
+        let song = match tokio::time::timeout(
+            Duration::from_secs(5),
+            self.ensure_song_hydrated(song_index),
+        )
+        .await
+        {
+            Ok(Some(song)) => song,
+            _ => {
+                warn!(
+                    "seek_to_song_internal: hydration failed for song {} ({})",
+                    song_index, skeleton.name
+                );
+                return;
+            }
+        };
+
+        let transport = project.transport();
+        let seek_pos = Self::song_seek_position(&song);
+        if let Err(e) = transport.set_position(seek_pos).await {
+            warn!("seek_to_song_internal: failed to seek: {}", e);
+        }
+        // Start playback for auto-advance
+        if let Err(e) = transport.play().await {
+            warn!("seek_to_song_internal: failed to start playback: {}", e);
+        }
     }
 }
 
@@ -1128,69 +1245,103 @@ impl SetlistService for SetlistServiceImpl {
 
         let daw = Daw::get();
 
-        if let Some(song) = self.ensure_song_hydrated(index).await {
-            // Stop previous project if it's not actively playing
-            self.stop_previous_project_if_idle(&song.project_guid).await;
+        // Get the skeleton song first (no RPC, just reads from the setlist).
+        // This gives us the project GUID so we can switch tabs even if hydration fails.
+        let Some(skeleton) = self.get_song_internal(index).await else {
+            warn!("go_to_song: song {} not found in setlist", index);
+            return;
+        };
 
-            // Update the cached active song ID for fast playback commands
-            self.set_active_song_id(&song.id).await;
+        // Stop previous project if it's not actively playing
+        self.stop_previous_project_if_idle(&skeleton.project_guid)
+            .await;
 
-            // Switch to the correct project
-            match daw.select_project(&song.project_guid).await {
-                Ok(project) => {
-                    let transport = project.transport();
+        // Update the cached active song ID for fast playback commands
+        self.set_active_song_id(&skeleton.id).await;
 
-                    // Only seek if the project is NOT already playing
-                    // This preserves playback position when switching between songs
-                    let is_playing = transport.is_playing().await.unwrap_or(false);
-                    if !is_playing {
-                        let seek_pos = Self::song_seek_position(&song);
-                        if let Err(e) = transport.set_position(seek_pos).await {
-                            warn!("Failed to set position for song {}: {}", index, e);
-                        } else {
-                            info!(
-                                "Navigated to song {} ({}) at count-in ({:.2}s)",
-                                index, song.name, seek_pos
-                            );
-                        }
-                    } else {
-                        info!(
-                            "Song {} ({}) is already playing, preserving position",
-                            index, song.name
-                        );
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to switch to project {} for song {}: {}",
-                        song.project_guid, index, e
-                    );
-                }
+        // Switch to the correct project tab first — this must always happen
+        let project = match daw.select_project(&skeleton.project_guid).await {
+            Ok(project) => project,
+            Err(e) => {
+                warn!(
+                    "Failed to switch to project {} for song {}: {}",
+                    skeleton.project_guid, index, e
+                );
+                return;
+            }
+        };
+
+        // Now try to hydrate (best-effort, with timeout to prevent freezes)
+        let song = match tokio::time::timeout(
+            Duration::from_secs(5),
+            self.ensure_song_hydrated(index),
+        )
+        .await
+        {
+            Ok(Some(song)) => song,
+            Ok(None) => {
+                warn!(
+                    "go_to_song: hydration returned None for song {} ({}), staying on project tab",
+                    index, skeleton.name
+                );
+                return;
+            }
+            Err(_) => {
+                warn!(
+                    "go_to_song: hydration timed out for song {} ({}), staying on project tab",
+                    index, skeleton.name
+                );
+                return;
+            }
+        };
+
+        let transport = project.transport();
+
+        // Only seek if the project is NOT already playing
+        // This preserves playback position when switching between songs
+        let is_playing = transport.is_playing().await.unwrap_or(false);
+        if !is_playing {
+            let seek_pos = Self::song_seek_position(&song);
+            if let Err(e) = transport.set_position(seek_pos).await {
+                warn!("Failed to set position for song {}: {}", index, e);
             }
         }
+
+        // Log the actual cursor position after navigation
+        let actual_pos = transport.get_position().await.unwrap_or(f64::NAN);
+        info!(
+            "go_to_song: song {} ({}) — seek_target={:.2}s, actual_pos={:.2}s, is_playing={}",
+            index,
+            song.name,
+            Self::song_seek_position(&song),
+            actual_pos,
+            is_playing
+        );
     }
 
     async fn next_song(&self, _cx: &Context) {
-        debug!("next_song");
-
-        // Use cached indices for instant response (updated at 60Hz by polling loop)
         let active = self.get_cached_indices().await;
+        info!("next_song: cached song_index={:?}", active.song_index);
         if let Some(current_idx) = active.song_index {
             let next_idx = current_idx + 1;
             self.go_to_song(_cx, next_idx).await;
+        } else {
+            warn!("next_song: no active song index, cannot navigate");
         }
     }
 
     async fn previous_song(&self, _cx: &Context) {
-        debug!("previous_song");
-
-        // Use cached indices for instant response (updated at 60Hz by polling loop)
         let active = self.get_cached_indices().await;
+        info!("previous_song: cached song_index={:?}", active.song_index);
         if let Some(current_idx) = active.song_index {
             if current_idx > 0 {
                 let prev_idx = current_idx - 1;
                 self.go_to_song(_cx, prev_idx).await;
+            } else {
+                info!("previous_song: already at first song (index 0)");
             }
+        } else {
+            warn!("previous_song: no active song index, cannot navigate");
         }
     }
 
@@ -1353,47 +1504,89 @@ impl SetlistService for SetlistServiceImpl {
 
         let daw = Daw::get();
 
-        if let Some(song) = self.ensure_song_hydrated(song_index).await {
-            // Stop previous project if it's not actively playing
-            self.stop_previous_project_if_idle(&song.project_guid).await;
+        // Get the skeleton song first so we can switch tabs even if hydration fails.
+        let Some(skeleton) = self.get_song_internal(song_index).await else {
+            warn!("seek_to_song: song {} not found in setlist", song_index);
+            return;
+        };
 
-            // Update the cached active song ID for fast playback commands
-            self.set_active_song_id(&song.id).await;
+        // Check if we're already on the correct project (skip tab switch for same-project songs)
+        let current_project = daw.current_project().await.ok();
+        let already_on_project = current_project
+            .as_ref()
+            .map(|p| p.guid().to_string() == skeleton.project_guid)
+            .unwrap_or(false);
 
-            // Switch to the correct project
-            match daw.select_project(&song.project_guid).await {
-                Ok(project) => {
-                    let transport = project.transport();
+        // Only stop previous project if we're actually changing projects
+        if !already_on_project {
+            self.stop_previous_project_if_idle(&skeleton.project_guid)
+                .await;
+        }
 
-                    // Only seek if the project is NOT already playing
-                    let is_playing = transport.is_playing().await.unwrap_or(false);
-                    if is_playing {
-                        info!(
-                            "seek_to_song: project {} is already playing, preserving position",
-                            song.project_guid
-                        );
-                    } else {
-                        let seek_pos = Self::song_seek_position(&song);
-                        if let Err(e) = transport.set_position(seek_pos).await {
-                            warn!("Failed to seek to song {}: {}", song_index, e);
-                        } else {
-                            info!(
-                                "Seeked to song {} ({}) at count-in ({:.2}s)",
-                                song_index, song.name, seek_pos
-                            );
-                        }
-                    }
-                }
+        // Update the cached active song ID for fast playback commands
+        self.set_active_song_id(&skeleton.id).await;
+
+        // Switch to the correct project tab (or reuse if already there)
+        let project = if already_on_project {
+            current_project.unwrap()
+        } else {
+            match daw.select_project(&skeleton.project_guid).await {
+                Ok(project) => project,
                 Err(e) => {
                     warn!(
                         "Failed to switch to project {} for song {}: {}",
-                        song.project_guid, song_index, e
+                        skeleton.project_guid, song_index, e
                     );
+                    return;
                 }
             }
-        } else {
-            warn!("Song {} not found in setlist", song_index);
+        };
+
+        // Now try to hydrate (best-effort, with timeout to prevent freezes)
+        let song = match tokio::time::timeout(
+            Duration::from_secs(5),
+            self.ensure_song_hydrated(song_index),
+        )
+        .await
+        {
+            Ok(Some(song)) => song,
+            Ok(None) => {
+                warn!(
+                    "seek_to_song: hydration returned None for song {} ({}), staying on project tab",
+                    song_index, skeleton.name
+                );
+                return;
+            }
+            Err(_) => {
+                warn!(
+                    "seek_to_song: hydration timed out for song {} ({}), staying on project tab",
+                    song_index, skeleton.name
+                );
+                return;
+            }
+        };
+
+        let transport = project.transport();
+
+        // Only seek if the project is NOT already playing
+        let is_playing = transport.is_playing().await.unwrap_or(false);
+        if !is_playing {
+            let seek_pos = Self::song_seek_position(&song);
+            if let Err(e) = transport.set_position(seek_pos).await {
+                warn!("Failed to seek to song {}: {}", song_index, e);
+            }
         }
+
+        // Log the actual cursor position after navigation
+        let actual_pos = transport.get_position().await.unwrap_or(f64::NAN);
+        info!(
+            "seek_to_song: song {} ({}) — seek_target={:.2}s, actual_pos={:.2}s, is_playing={}",
+            song_index,
+            song.name,
+            Self::song_seek_position(&song),
+            actual_pos,
+            is_playing
+        );
     }
 
     async fn seek_to_section(&self, _cx: &Context, song_index: usize, section_index: usize) {
@@ -1705,6 +1898,7 @@ impl SetlistService for SetlistServiceImpl {
             let empty = Setlist {
                 id: None,
                 name: "Empty Setlist".to_string(),
+                advance_mode: AdvanceMode::default(),
                 songs: Vec::new(),
             };
             *self.setlist.write().await = Some(empty.clone());
@@ -1751,18 +1945,30 @@ impl SetlistService for SetlistServiceImpl {
             .and_then(|guid| project_loads.iter().position(|load| &load.guid == guid))
             .unwrap_or(0);
 
-        // Phase 1: focused song full details, all others names only.
+        // Phase 1: focused project full details, all others names only.
+        // A single project may produce multiple songs (multi-song mode).
         let mut songs = Vec::with_capacity(project_loads.len());
+        let mut focused_song_count = 0usize;
         for load in &project_loads {
             let existing_song = existing_songs_by_guid.get(&load.guid);
             let cached_song = cached_songs.get(&load.guid);
 
             if load.index == focused_index {
-                if let Some(song) = self.build_song_with_cache(load, existing_song).await {
-                    self.cache_chart_payload_for_song(&song).await;
-                    let mut song_light = song.clone();
-                    Self::strip_song_chart_payload(&mut song_light);
-                    songs.push(song_light);
+                let project_songs =
+                    self.build_songs_with_cache(load, existing_song).await;
+                if !project_songs.is_empty() {
+                    for song in &project_songs {
+                        self.cache_chart_payload_for_song(song).await;
+                    }
+                    let light_songs: Vec<Song> = project_songs
+                        .into_iter()
+                        .map(|mut s| {
+                            Self::strip_song_chart_payload(&mut s);
+                            s
+                        })
+                        .collect();
+                    focused_song_count = light_songs.len();
+                    songs.extend(light_songs);
                     continue;
                 }
             }
@@ -1775,13 +1981,20 @@ impl SetlistService for SetlistServiceImpl {
             ));
         }
 
+        // Compute the actual song index of the first focused song
+        let focused_song_start = project_loads
+            .iter()
+            .take_while(|l| l.index != focused_index)
+            .count(); // one placeholder per project before focused
+
         let setlist = Setlist {
             id: None,
             name: format!("Setlist - {}", chrono::Local::now().format("%Y-%m-%d")),
+            advance_mode: AdvanceMode::default(),
             songs,
         };
 
-        if let Some(active_song) = setlist.songs.get(focused_index) {
+        if let Some(active_song) = setlist.songs.get(focused_song_start) {
             *self.active_song_id.write().await = Some(active_song.id.clone());
             debug!(
                 "Set initial active song to: {} ({})",
@@ -1790,17 +2003,19 @@ impl SetlistService for SetlistServiceImpl {
         }
 
         debug!(
-            "Phase 1 complete: focused song ready, {} song names loaded",
+            "Phase 1 complete: focused project ready ({} songs), {} total songs loaded",
+            focused_song_count,
             setlist.songs.len()
         );
         *self.setlist.write().await = Some(setlist);
         self.notify_setlist_changed();
         if let Some(load) = project_loads.get(focused_index) {
-            self.emit_cached_chart_payload_for_song(focused_index, &load.guid)
+            self.emit_cached_chart_payload_for_song(focused_song_start, &load.guid)
                 .await;
         }
 
-        // Phase 2: hydrate remaining songs in background with bounded concurrency.
+        // Phase 2: hydrate remaining projects in background with bounded concurrency.
+        // Each project may produce multiple songs, so we splice by project_guid.
         let this = self.clone();
         tokio::spawn(async move {
             let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY));
@@ -1816,10 +2031,10 @@ impl SetlistService for SetlistServiceImpl {
                 let existing_song = existing_songs_by_guid.get(&load.guid).cloned();
                 join_set.spawn(async move {
                     let _permit = permit.acquire_owned().await.expect("semaphore closed");
-                    let song = this_clone
-                        .build_song_with_cache(&load, existing_song.as_ref())
+                    let songs = this_clone
+                        .build_songs_with_cache(&load, existing_song.as_ref())
                         .await;
-                    (load.index, load.guid, song)
+                    (load.guid, songs)
                 });
             }
 
@@ -1830,26 +2045,56 @@ impl SetlistService for SetlistServiceImpl {
                 }
 
                 match result {
-                    Ok((song_index, project_guid, Some(song))) => {
-                        this.cache_chart_payload_for_song(&song).await;
-                        let mut hydrated_song = song.clone();
-                        Self::strip_song_chart_payload(&mut hydrated_song);
-                        {
+                    Ok((project_guid, hydrated_songs)) if !hydrated_songs.is_empty() => {
+                        for song in &hydrated_songs {
+                            this.cache_chart_payload_for_song(song).await;
+                        }
+                        let light_songs: Vec<Song> = hydrated_songs
+                            .into_iter()
+                            .map(|mut s| {
+                                Self::strip_song_chart_payload(&mut s);
+                                s
+                            })
+                            .collect();
+
+                        // Replace the placeholder(s) for this project with hydrated songs.
+                        let emitted_songs = {
                             let mut guard = this.setlist.write().await;
                             let Some(ref mut current_setlist) = *guard else {
                                 return;
                             };
-                            if song_index >= current_setlist.songs.len() {
-                                continue;
-                            }
-                            current_setlist.songs[song_index] = hydrated_song.clone();
+                            // Find the range of songs belonging to this project
+                            let first = current_setlist
+                                .songs
+                                .iter()
+                                .position(|s| s.project_guid == project_guid);
+                            let Some(first_idx) = first else { continue };
+                            let count = current_setlist.songs[first_idx..]
+                                .iter()
+                                .take_while(|s| s.project_guid == project_guid)
+                                .count();
+                            // Splice: remove old range, insert new songs
+                            let end_idx = first_idx + count;
+                            let indexed_songs: Vec<(usize, Song)> = light_songs
+                                .into_iter()
+                                .enumerate()
+                                .map(|(i, s)| (first_idx + i, s))
+                                .collect();
+                            current_setlist
+                                .songs
+                                .splice(first_idx..end_idx, indexed_songs.iter().map(|(_, s)| s.clone()));
+                            indexed_songs
+                        };
+
+                        this.notify_setlist_changed();
+                        for (song_index, song) in &emitted_songs {
+                            let _ = this.hydration_tx.send((*song_index, song.clone()));
+                            this.emit_cached_chart_payload_for_song(*song_index, &project_guid)
+                                .await;
                         }
-                        let _ = this.hydration_tx.send((song_index, hydrated_song.clone()));
-                        this.emit_cached_chart_payload_for_song(song_index, &project_guid)
-                            .await;
                     }
-                    Ok((_song_index, _project_guid, None)) => {
-                        // Keep placeholder if build failed.
+                    Ok((_project_guid, _)) => {
+                        // Keep placeholder if build returned empty.
                     }
                     Err(e) => {
                         warn!("Song hydration worker failed: {}", e);
@@ -1919,12 +2164,14 @@ impl SetlistService for SetlistServiceImpl {
                 }
             }
 
-            // Build project GUID -> song index mapping (order is stable through hydration).
-            let mut guid_to_index: FxHashMap<String, usize> = songs
-                .iter()
-                .enumerate()
-                .map(|(idx, song)| (song.project_guid.clone(), idx))
-                .collect();
+            // Build project GUID -> song indices mapping (multiple songs may share a GUID).
+            let mut guid_to_indices: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+            for (idx, song) in songs.iter().enumerate() {
+                guid_to_indices
+                    .entry(song.project_guid.clone())
+                    .or_default()
+                    .push(idx);
+            }
             let mut song_id_to_index: FxHashMap<String, usize> = songs
                 .iter()
                 .enumerate()
@@ -2028,6 +2275,8 @@ impl SetlistService for SetlistServiceImpl {
             let mut chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
             let mut chart_probe_last_started =
                 Instant::now() - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS);
+            // Track which song index we already auto-advanced from, to prevent retriggering.
+            let mut auto_advance_triggered_for: Option<usize> = None;
 
             // Fully reactive loop - processes transport stream updates and periodic project checks
             let mut transport_rx = transport_rx;
@@ -2039,12 +2288,13 @@ impl SetlistService for SetlistServiceImpl {
                             break;
                         }
                         if let Some(setlist) = this.setlist.read().await.clone() {
-                            guid_to_index = setlist
-                                .songs
-                                .iter()
-                                .enumerate()
-                                .map(|(idx, song)| (song.project_guid.clone(), idx))
-                                .collect();
+                            guid_to_indices = FxHashMap::default();
+                            for (idx, song) in setlist.songs.iter().enumerate() {
+                                guid_to_indices
+                                    .entry(song.project_guid.clone())
+                                    .or_default()
+                                    .push(idx);
+                            }
                             song_id_to_index = setlist
                                 .songs
                                 .iter()
@@ -2120,62 +2370,100 @@ impl SetlistService for SetlistServiceImpl {
                             });
 
                             for proj_state in update.projects {
-                                if let Some(&song_index) = guid_to_index.get(&proj_state.project_guid) {
-                                    if let Some(song) = setlist_ref.songs.get(song_index) {
-                                        let is_playing = proj_state.transport.play_state
-                                            == daw_proto::PlayState::Playing
-                                            || proj_state.transport.play_state
-                                                == daw_proto::PlayState::Recording;
+                                if let Some(song_indices) = guid_to_indices.get(&proj_state.project_guid) {
+                                    let is_playing = proj_state.transport.play_state
+                                        == daw_proto::PlayState::Playing
+                                        || proj_state.transport.play_state
+                                            == daw_proto::PlayState::Recording;
 
-                                        // Use playhead position when playing, edit cursor when stopped
-                                        // The Position includes both time and musical position from REAPER's tempo map
-                                        let position = if is_playing {
-                                            proj_state.transport.playhead_position.clone()
-                                        } else {
-                                            proj_state.transport.edit_position.clone()
-                                        };
+                                    // Use playhead position when playing, edit cursor when stopped
+                                    let position = if is_playing {
+                                        proj_state.transport.playhead_position.clone()
+                                    } else {
+                                        proj_state.transport.edit_position.clone()
+                                    };
 
-                                        let song_transport = Self::calculate_song_transport(
-                                            song,
-                                            song_index,
-                                            position,
-                                            is_playing,
-                                            proj_state.transport.looping,
-                                            proj_state.transport.loop_region.clone(),
-                                            proj_state.transport.tempo.bpm(),
-                                            (
-                                                proj_state.transport.time_signature.numerator(),
-                                                proj_state.transport.time_signature.denominator(),
-                                            ),
-                                        );
+                                    let pos_secs = position
+                                        .time
+                                        .as_ref()
+                                        .map(|t| t.as_seconds())
+                                        .unwrap_or(0.0);
 
-                                        // Track section changes for this song (derived from transport data)
-                                        let current_section = song_transport.section_index;
-                                        let last_section =
-                                            last_section_by_song.get(&song_index).copied().flatten();
-
-                                        if current_section != last_section {
-                                            // Section changed for this song
-                                            if let Some(sec_idx) = last_section {
-                                                pending_section_events.push(SetlistEvent::SectionExited {
-                                                    song_index,
-                                                    section_index: sec_idx,
-                                                });
+                                    // Resolve which song the playhead is in (position-based)
+                                    let resolved_index = song_indices
+                                        .iter()
+                                        .copied()
+                                        .find(|&idx| {
+                                            if let Some(s) = setlist_ref.songs.get(idx) {
+                                                pos_secs >= s.start_seconds && pos_secs < s.end_seconds
+                                            } else {
+                                                false
                                             }
+                                        })
+                                        // Fallback: nearest song in this project
+                                        .or_else(|| {
+                                            song_indices
+                                                .iter()
+                                                .copied()
+                                                .min_by(|&a, &b| {
+                                                    let dist_a = setlist_ref.songs.get(a).map(|s| {
+                                                        (pos_secs - s.start_seconds).abs()
+                                                            .min((pos_secs - s.end_seconds).abs())
+                                                    }).unwrap_or(f64::MAX);
+                                                    let dist_b = setlist_ref.songs.get(b).map(|s| {
+                                                        (pos_secs - s.start_seconds).abs()
+                                                            .min((pos_secs - s.end_seconds).abs())
+                                                    }).unwrap_or(f64::MAX);
+                                                    dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+                                                })
+                                        });
 
-                                            if let Some(sec_idx) = current_section {
-                                                if let Some(section) = song.sections.get(sec_idx) {
-                                                    pending_section_events.push(SetlistEvent::SectionEntered {
-                                                        song_index,
-                                                        section_index: sec_idx,
-                                                        section: section.clone(),
-                                                    });
+                                    // Emit transport for all songs in this project
+                                    for &song_index in song_indices {
+                                        if let Some(song) = setlist_ref.songs.get(song_index) {
+                                            let song_transport = Self::calculate_song_transport(
+                                                song,
+                                                song_index,
+                                                position.clone(),
+                                                is_playing,
+                                                proj_state.transport.looping,
+                                                proj_state.transport.loop_region.clone(),
+                                                proj_state.transport.tempo.bpm(),
+                                                (
+                                                    proj_state.transport.time_signature.numerator(),
+                                                    proj_state.transport.time_signature.denominator(),
+                                                ),
+                                            );
+
+                                            // Track section changes only for the resolved active song
+                                            if Some(song_index) == resolved_index {
+                                                let current_section = song_transport.section_index;
+                                                let last_section =
+                                                    last_section_by_song.get(&song_index).copied().flatten();
+
+                                                if current_section != last_section {
+                                                    if let Some(sec_idx) = last_section {
+                                                        pending_section_events.push(SetlistEvent::SectionExited {
+                                                            song_index,
+                                                            section_index: sec_idx,
+                                                        });
+                                                    }
+
+                                                    if let Some(sec_idx) = current_section {
+                                                        if let Some(section) = song.sections.get(sec_idx) {
+                                                            pending_section_events.push(SetlistEvent::SectionEntered {
+                                                                song_index,
+                                                                section_index: sec_idx,
+                                                                section: section.clone(),
+                                                            });
+                                                        }
+                                                    }
+
+                                                    last_section_by_song.insert(song_index, current_section);
                                                 }
                                             }
-
-                                            last_section_by_song.insert(song_index, current_section);
+                                            song_transports.push(song_transport);
                                         }
-                                        song_transports.push(song_transport);
                                     }
                                 }
                             }
@@ -2245,6 +2533,50 @@ impl SetlistService for SetlistServiceImpl {
                                     >= Duration::from_millis(ACTIVE_INDICES_PROGRESS_EMIT_MS);
                                 let song_changed =
                                     current_indices.song_index != last_indices.song_index;
+
+                                // ── Auto-advance: when a song ends, optionally navigate to next ──
+                                if let Some(song_idx) = current_indices.song_index {
+                                    let near_end = current_indices
+                                        .song_progress
+                                        .map(|p| p >= 0.999)
+                                        .unwrap_or(false);
+                                    let stopped = !current_indices.is_playing;
+
+                                    if song_changed {
+                                        // Reset auto-advance guard when the song changes.
+                                        auto_advance_triggered_for = None;
+                                    }
+
+                                    if near_end
+                                        && stopped
+                                        && auto_advance_triggered_for != Some(song_idx)
+                                    {
+                                        // Extract advance decision under the read lock, then drop it
+                                        // before performing any async navigation.
+                                        let should_advance = {
+                                            let setlist = this.setlist.read().await;
+                                            setlist.as_ref().and_then(|sl| {
+                                                let song = sl.songs.get(song_idx)?;
+                                                let mode = song.effective_advance_mode(sl.advance_mode);
+                                                if mode == AdvanceMode::AutoPlay {
+                                                    let next_idx = song_idx + 1;
+                                                    (next_idx < sl.songs.len()).then_some(next_idx)
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                        };
+
+                                        if let Some(next_idx) = should_advance {
+                                            auto_advance_triggered_for = Some(song_idx);
+                                            info!(
+                                                "Auto-advance: song {} ended, advancing to song {}",
+                                                song_idx, next_idx
+                                            );
+                                            this.seek_to_song_internal(next_idx).await;
+                                        }
+                                    }
+                                }
 
                                 if structural_change || (progress_change && can_emit_progress) {
                                     if events
@@ -2367,37 +2699,40 @@ impl SetlistService for SetlistServiceImpl {
                             }
 
                             // Find the song that matches the new current project
-                            if let Some(&song_idx) = guid_to_index.get(&confirmed_guid) {
-                                // Update active song ID
-                                let song_id = {
-                                    let setlist_guard = this.setlist.read().await;
-                                    setlist_guard
-                                        .as_ref()
-                                        .and_then(|sl| sl.songs.get(song_idx))
-                                        .map(|song| song.id.clone())
-                                };
-                                if let Some(song_id) = song_id {
-                                    *this.active_song_id.write().await = Some(song_id);
+                            if guid_to_indices.contains_key(&confirmed_guid) {
+                                // Let calculate_active_indices resolve the correct
+                                // song by position (handles multi-song projects).
+                                let new_indices = this.calculate_active_indices().await;
+                                this.set_cached_indices(new_indices.clone()).await;
 
-                                    // Calculate and send new active indices
-                                    let new_indices = this.calculate_active_indices().await;
-                                    this.set_cached_indices(new_indices.clone()).await;
-
-                                    if new_indices != last_indices {
-                                        if events
-                                            .send(&SetlistEvent::ActiveIndicesChanged(new_indices.clone()))
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                        if new_indices.song_index != last_indices.song_index {
-                                            chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
-                                            chart_probe_last_started = Instant::now()
-                                                - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS);
-                                        }
-                                        last_indices = new_indices;
+                                // Update active song ID from resolved index
+                                if let Some(song_idx) = new_indices.song_index {
+                                    let song_id = {
+                                        let setlist_guard = this.setlist.read().await;
+                                        setlist_guard
+                                            .as_ref()
+                                            .and_then(|sl| sl.songs.get(song_idx))
+                                            .map(|song| song.id.clone())
+                                    };
+                                    if let Some(song_id) = song_id {
+                                        *this.active_song_id.write().await = Some(song_id);
                                     }
+                                }
+
+                                if new_indices != last_indices {
+                                    if events
+                                        .send(&SetlistEvent::ActiveIndicesChanged(new_indices.clone()))
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                    if new_indices.song_index != last_indices.song_index {
+                                        chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
+                                        chart_probe_last_started = Instant::now()
+                                            - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS);
+                                    }
+                                    last_indices = new_indices;
                                 }
                             }
 
