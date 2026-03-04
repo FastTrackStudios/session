@@ -6,6 +6,17 @@ use crate::song::Song;
 use daw_proto::TimeRange;
 use facet::Facet;
 
+/// Controls what happens when a song finishes playing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Facet)]
+#[repr(u8)]
+pub enum AdvanceMode {
+    /// Stop at the end of the song, wait for manual trigger.
+    #[default]
+    Wait,
+    /// Automatically start the next song when this one ends.
+    AutoPlay,
+}
+
 /// A queued navigation target
 ///
 /// Represents a pending seek/navigation that hasn't been confirmed yet.
@@ -43,6 +54,8 @@ pub struct Setlist {
     pub id: Option<String>,
     /// Setlist name
     pub name: String,
+    /// Default advance mode for all songs in this setlist.
+    pub advance_mode: AdvanceMode,
     /// Songs in the setlist (in order)
     pub songs: Vec<Song>,
 }
@@ -52,6 +65,7 @@ impl Default for Setlist {
         Self {
             id: None,
             name: String::new(),
+            advance_mode: AdvanceMode::default(),
             songs: Vec::new(),
         }
     }

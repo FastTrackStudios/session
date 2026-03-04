@@ -287,6 +287,8 @@ pub struct Song {
     pub detected_chords: Vec<SongDetectedChord>,
     /// Source fingerprint used for cache invalidation/live refresh
     pub chart_fingerprint: Option<String>,
+    /// Per-song advance mode override. `None` = use the setlist default.
+    pub advance_mode: Option<crate::setlist::AdvanceMode>,
 }
 
 impl std::fmt::Debug for Song {
@@ -315,6 +317,11 @@ impl std::fmt::Debug for Song {
 }
 
 impl Song {
+    /// Returns this song's advance mode, falling back to the provided setlist default.
+    pub fn effective_advance_mode(&self, default: crate::setlist::AdvanceMode) -> crate::setlist::AdvanceMode {
+        self.advance_mode.unwrap_or(default)
+    }
+
     /// Get the total duration of the song in seconds
     pub fn duration(&self) -> f64 {
         self.end_seconds - self.start_seconds

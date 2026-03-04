@@ -26,7 +26,7 @@ pub use services::{
     SetlistServiceDispatcher, SongService, SongServiceClient, SongServiceDispatcher,
     SongTransportState,
 };
-pub use setlist::{ActiveIndices, QueuedTarget, Setlist};
+pub use setlist::{ActiveIndices, AdvanceMode, QueuedTarget, Setlist};
 pub use song::{Comment, Section, SectionType, Song, SongChartHydration, SongDetectedChord};
 
 // Re-export position types from daw-proto for convenience
