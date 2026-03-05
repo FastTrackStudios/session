@@ -11,6 +11,9 @@ session-proto = { workspace = true }
 # DAW types (for PlayState, etc.)
 daw-proto = { workspace = true }
 
+# FTS UI components
+fts-ui.workspace = true
+
 # Dock panel registration
 dock-dioxus = { workspace = true, default-features = false }
 dock-proto.workspace = true

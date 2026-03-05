@@ -5,6 +5,7 @@
 
 use crate::prelude::*;
 use crate::signals::LATENCY_INFO;
+use fts_ui::prelude::NavTab;
 use lucide_dioxus::{CircleCheck, CircleX};
 
 /// Application version string
@@ -323,29 +324,3 @@ fn ConnectionStatusBadge(state: ConnectionState) -> Element {
     }
 }
 
-/// Navigation tab component
-#[component]
-fn NavTab(
-    label: String,
-    tab_id: String,
-    is_active: bool,
-    on_click: Option<Callback<String>>,
-) -> Element {
-    let active_class = if is_active {
-        "bg-primary text-primary-foreground"
-    } else {
-        "text-muted-foreground hover:text-foreground hover:bg-accent"
-    };
-
-    rsx! {
-        button {
-            class: "px-4 py-2 rounded-md font-medium text-sm transition-colors {active_class}",
-            onclick: move |_| {
-                if let Some(callback) = &on_click {
-                    callback.call(tab_id.clone());
-                }
-            },
-            "{label}"
-        }
-    }
-}
