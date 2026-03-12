@@ -3,7 +3,6 @@
 use crate::song_builder::SongBuilder;
 use daw_control::Daw;
 use roam::Tx;
-use roam::session::Context;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_proto::{
     ActiveIndices, AdvanceMode, MeasureInfo, QueuedTarget, Section, Setlist, SetlistEvent,
@@ -1117,12 +1116,12 @@ impl SetlistService for SetlistServiceImpl {
     // Query Methods
     // =========================================================================
 
-    async fn get_setlist(&self, _cx: &Context) -> Option<Setlist> {
+    async fn get_setlist(&self) -> Option<Setlist> {
         let setlist = self.setlist.read().await;
         setlist.clone()
     }
 
-    async fn get_songs(&self, _cx: &Context) -> Vec<Song> {
+    async fn get_songs(&self, ) -> Vec<Song> {
         let setlist = self.setlist.read().await;
         let Some(ref setlist) = *setlist else {
             return Vec::new();
@@ -1147,8 +1146,7 @@ impl SetlistService for SetlistServiceImpl {
 
     async fn get_section(
         &self,
-        _cx: &Context,
-        song_index: usize,
+                song_index: usize,
         section_index: usize,
     ) -> Option<Section> {
         let setlist = self.setlist.read().await;
@@ -1205,7 +1203,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn get_active_song(&self, _cx: &Context) -> Option<Song> {
+    async fn get_active_song(&self, ) -> Option<Song> {
         // Use cached indices for instant response (updated at 60Hz by polling loop)
         let active = self.get_cached_indices().await;
         let song_index = active.song_index?;
@@ -1213,7 +1211,7 @@ impl SetlistService for SetlistServiceImpl {
         setlist.as_ref()?.songs.get(song_index).cloned()
     }
 
-    async fn get_active_section(&self, _cx: &Context) -> Option<Section> {
+    async fn get_active_section(&self, ) -> Option<Section> {
         // Use cached indices for instant response (updated at 60Hz by polling loop)
         let active = self.get_cached_indices().await;
         let song_index = active.song_index?;
@@ -1319,7 +1317,7 @@ impl SetlistService for SetlistServiceImpl {
         );
     }
 
-    async fn next_song(&self, _cx: &Context) {
+    async fn next_song(&self, ) {
         let active = self.get_cached_indices().await;
         info!("next_song: cached song_index={:?}", active.song_index);
         if let Some(current_idx) = active.song_index {
@@ -1330,7 +1328,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn previous_song(&self, _cx: &Context) {
+    async fn previous_song(&self, ) {
         let active = self.get_cached_indices().await;
         info!("previous_song: cached song_index={:?}", active.song_index);
         if let Some(current_idx) = active.song_index {
@@ -1393,7 +1391,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn next_section(&self, _cx: &Context) {
+    async fn next_section(&self, ) {
         debug!("next_section");
 
         // Use cached indices for instant response (updated at 60Hz by polling loop)
@@ -1404,7 +1402,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn previous_section(&self, _cx: &Context) {
+    async fn previous_section(&self, ) {
         debug!("previous_section");
 
         // Use cached indices for instant response (updated at 60Hz by polling loop)
@@ -1636,8 +1634,7 @@ impl SetlistService for SetlistServiceImpl {
 
     async fn seek_to_musical_position(
         &self,
-        _cx: &Context,
-        song_index: usize,
+                song_index: usize,
         position: daw_proto::MusicalPosition,
     ) {
         debug!(
@@ -1732,7 +1729,7 @@ impl SetlistService for SetlistServiceImpl {
     // Playback Commands
     // =========================================================================
 
-    async fn toggle_playback(&self, _cx: &Context) {
+    async fn toggle_playback(&self, ) {
         debug!("toggle_playback");
 
         // Use cached active song ID for instant lookup (no RPC calls)
@@ -1753,7 +1750,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn play(&self, _cx: &Context) {
+    async fn play(&self, ) {
         debug!("play");
 
         // Use cached active song ID for instant lookup (no RPC calls)
@@ -1774,7 +1771,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn pause(&self, _cx: &Context) {
+    async fn pause(&self, ) {
         debug!("pause");
 
         // Use cached active song ID for instant lookup (no RPC calls)
@@ -1795,7 +1792,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn stop(&self, _cx: &Context) {
+    async fn stop(&self, ) {
         debug!("stop");
 
         // Use cached active song ID for instant lookup (no RPC calls)
@@ -1820,7 +1817,7 @@ impl SetlistService for SetlistServiceImpl {
     // Loop Control
     // =========================================================================
 
-    async fn toggle_song_loop(&self, _cx: &Context) {
+    async fn toggle_song_loop(&self, ) {
         debug!("toggle_song_loop");
 
         let daw = Daw::get();
@@ -1836,7 +1833,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn toggle_section_loop(&self, _cx: &Context) {
+    async fn toggle_section_loop(&self, ) {
         debug!("toggle_section_loop");
         // TODO: Implement section-specific loop using loop points
         warn!("toggle_section_loop not yet implemented");
@@ -1848,7 +1845,7 @@ impl SetlistService for SetlistServiceImpl {
         warn!("set_loop_region not yet implemented");
     }
 
-    async fn clear_loop(&self, _cx: &Context) {
+    async fn clear_loop(&self, ) {
         debug!("clear_loop");
 
         let daw = Daw::get();
@@ -1868,7 +1865,7 @@ impl SetlistService for SetlistServiceImpl {
     // Build/Refresh
     // =========================================================================
 
-    async fn build_from_open_projects(&self, _cx: &Context) {
+    async fn build_from_open_projects(&self, ) {
         debug!("Building setlist from open projects...");
 
         // Check if DAW is initialized (it may not be ready yet after cell startup)
@@ -2104,7 +2101,7 @@ impl SetlistService for SetlistServiceImpl {
         });
     }
 
-    async fn refresh(&self, _cx: &Context) {
+    async fn refresh(&self, ) {
         info!("Refreshing setlist...");
         self.build_from_open_projects(_cx).await;
     }
@@ -2876,7 +2873,7 @@ impl SetlistService for SetlistServiceImpl {
         });
     }
 
-    async fn get_audio_latency(&self, _cx: &Context) -> f64 {
+    async fn get_audio_latency(&self, ) -> f64 {
         let daw = Daw::get();
         daw.audio_engine()
             .get_output_latency_seconds()
@@ -2884,7 +2881,7 @@ impl SetlistService for SetlistServiceImpl {
             .unwrap_or(0.0)
     }
 
-    async fn get_audio_latency_info(&self, _cx: &Context) -> session_proto::AudioLatencyInfo {
+    async fn get_audio_latency_info(&self, ) -> session_proto::AudioLatencyInfo {
         let daw = Daw::get();
         match daw.audio_engine().get_state().await {
             Ok(state) => session_proto::AudioLatencyInfo {

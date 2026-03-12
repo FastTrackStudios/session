@@ -2,7 +2,6 @@
 
 use crate::song_builder::SongBuilder;
 use daw_control::Daw;
-use roam::session::Context;
 use session_proto::{Song, SongService};
 use tracing::{debug, info, warn};
 
@@ -17,7 +16,7 @@ impl SongServiceImpl {
 }
 
 impl SongService for SongServiceImpl {
-    async fn build_from_current_project(&self, _cx: &Context) -> Option<Song> {
+    async fn build_from_current_project(&self) -> Option<Song> {
         debug!("build_from_current_project called");
 
         let daw = Daw::get();
@@ -51,7 +50,7 @@ impl SongService for SongServiceImpl {
         }
     }
 
-    async fn get_song(&self, _cx: &Context, project_guid: String) -> Option<Song> {
+    async fn get_song(&self, project_guid: String) -> Option<Song> {
         info!(
             "SONG SERVICE: get_song called for project: {}",
             project_guid
