@@ -7,7 +7,6 @@ use daw_proto::ProjectContext;
 use daw_proto::marker::MarkerService;
 use daw_proto::region::RegionService;
 use daw_standalone::{StandaloneMarker, StandaloneProject, StandaloneRegion};
-use roam::Context;
 
 /// Create a test context for calling services directly
 fn test_context() -> Context {
@@ -54,7 +53,7 @@ async fn test_markers_per_project() {
 
     for project in &projects {
         let context = ProjectContext::Project(project.guid.clone());
-        let markers = marker_service.get_markers(&cx, context).await;
+        let markers = marker_service.get_markers(context).await;
 
         println!("\nProject: {} ({})", project.name, project.guid);
         println!("  Markers ({}):", markers.len());
@@ -101,8 +100,8 @@ async fn test_song_builder_marker_parsing() {
 
     for project in &projects {
         let context = ProjectContext::Project(project.guid.clone());
-        let markers = marker_service.get_markers(&cx, context.clone()).await;
-        let regions = region_service.get_regions(&cx, context).await;
+        let markers = marker_service.get_markers(context.clone()).await;
+        let regions = region_service.get_regions(context).await;
 
         println!("Project: {}", project.name);
 
@@ -191,7 +190,7 @@ async fn test_regions_per_project() {
 
     for project in &projects {
         let context = ProjectContext::Project(project.guid.clone());
-        let regions = region_service.get_regions(&cx, context).await;
+        let regions = region_service.get_regions(context).await;
 
         println!("\nProject: {} ({})", project.name, project.guid);
         println!("  Regions ({}):", regions.len());
