@@ -258,7 +258,7 @@ fn SidebarSongItemReactive(
                     tracing::info!("Calling seek_to_song({})", song_idx);
                     match Session::get().setlist().seek_to_song(song_idx).await {
                         Ok(_) => tracing::info!("seek_to_song({}) completed successfully", song_idx),
-                        Err(e) => tracing::error!("seek_to_song({}) failed: {}", song_idx, e),
+                        Err(e) => tracing::error!("seek_to_song({}) failed: {:?}", song_idx, e),
                     }
                 });
             }),

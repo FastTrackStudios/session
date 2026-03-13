@@ -24,7 +24,7 @@ pub mod song;
 pub use services::{
     AudioLatencyInfo, MeasureInfo, SetlistEvent, SetlistService, SetlistServiceClient,
     SetlistServiceDispatcher, SongService, SongServiceClient, SongServiceDispatcher,
-    SongTransportState,
+    SongTransportState, setlist_service_service_descriptor, song_service_service_descriptor,
 };
 pub use setlist::{ActiveIndices, AdvanceMode, QueuedTarget, Setlist};
 pub use song::{Comment, Section, SectionType, Song, SongChartHydration, SongDetectedChord};
