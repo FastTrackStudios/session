@@ -1121,7 +1121,7 @@ impl SetlistService for SetlistServiceImpl {
         setlist.clone()
     }
 
-    async fn get_songs(&self, ) -> Vec<Song> {
+    async fn get_songs(&self) -> Vec<Song> {
         let setlist = self.setlist.read().await;
         let Some(ref setlist) = *setlist else {
             return Vec::new();
@@ -1130,12 +1130,12 @@ impl SetlistService for SetlistServiceImpl {
         setlist.songs.clone()
     }
 
-    async fn get_song(&self, _cx: &Context, index: usize) -> Option<Song> {
+    async fn get_song(&self, index: usize) -> Option<Song> {
         let setlist = self.setlist.read().await;
         setlist.as_ref()?.songs.get(index).cloned()
     }
 
-    async fn get_sections(&self, _cx: &Context, song_index: usize) -> Vec<Section> {
+    async fn get_sections(&self, song_index: usize) -> Vec<Section> {
         let setlist = self.setlist.read().await;
         if let Some(song) = setlist.as_ref().and_then(|s| s.songs.get(song_index)) {
             song.sections.clone()
@@ -1154,7 +1154,7 @@ impl SetlistService for SetlistServiceImpl {
         song.sections.get(section_index).cloned()
     }
 
-    async fn get_measures(&self, _cx: &Context, song_index: usize) -> Vec<MeasureInfo> {
+    async fn get_measures(&self, song_index: usize) -> Vec<MeasureInfo> {
         let setlist = self.setlist.read().await;
         if let Some(song) = setlist.as_ref().and_then(|s| s.songs.get(song_index)) {
             // If we have pre-calculated measure positions, use them
@@ -1203,7 +1203,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn get_active_song(&self, ) -> Option<Song> {
+    async fn get_active_song(&self) -> Option<Song> {
         // Use cached indices for instant response (updated at 60Hz by polling loop)
         let active = self.get_cached_indices().await;
         let song_index = active.song_index?;
@@ -1211,7 +1211,7 @@ impl SetlistService for SetlistServiceImpl {
         setlist.as_ref()?.songs.get(song_index).cloned()
     }
 
-    async fn get_active_section(&self, ) -> Option<Section> {
+    async fn get_active_section(&self) -> Option<Section> {
         // Use cached indices for instant response (updated at 60Hz by polling loop)
         let active = self.get_cached_indices().await;
         let song_index = active.song_index?;
@@ -1221,13 +1221,13 @@ impl SetlistService for SetlistServiceImpl {
         song.sections.get(section_index).cloned()
     }
 
-    async fn get_song_at(&self, _cx: &Context, seconds: f64) -> Option<Song> {
+    async fn get_song_at(&self, seconds: f64) -> Option<Song> {
         let setlist = self.setlist.read().await;
         let (_, song) = setlist.as_ref()?.song_at(seconds)?;
         Some(song.clone())
     }
 
-    async fn get_section_at(&self, _cx: &Context, seconds: f64) -> Option<Section> {
+    async fn get_section_at(&self, seconds: f64) -> Option<Section> {
         let setlist = self.setlist.read().await;
         let (_, song) = setlist.as_ref()?.song_at(seconds)?;
         let (_, section) = song.section_at_position_with_index(seconds)?;
@@ -1238,7 +1238,7 @@ impl SetlistService for SetlistServiceImpl {
     // Navigation Commands
     // =========================================================================
 
-    async fn go_to_song(&self, _cx: &Context, index: usize) {
+    async fn go_to_song(&self, index: usize) {
         debug!("go_to_song: {}", index);
 
         let daw = Daw::get();
@@ -1317,24 +1317,24 @@ impl SetlistService for SetlistServiceImpl {
         );
     }
 
-    async fn next_song(&self, ) {
+    async fn next_song(&self) {
         let active = self.get_cached_indices().await;
         info!("next_song: cached song_index={:?}", active.song_index);
         if let Some(current_idx) = active.song_index {
             let next_idx = current_idx + 1;
-            self.go_to_song(_cx, next_idx).await;
+            self.go_to_song(next_idx).await;
         } else {
             warn!("next_song: no active song index, cannot navigate");
         }
     }
 
-    async fn previous_song(&self, ) {
+    async fn previous_song(&self) {
         let active = self.get_cached_indices().await;
         info!("previous_song: cached song_index={:?}", active.song_index);
         if let Some(current_idx) = active.song_index {
             if current_idx > 0 {
                 let prev_idx = current_idx - 1;
-                self.go_to_song(_cx, prev_idx).await;
+                self.go_to_song(prev_idx).await;
             } else {
                 info!("previous_song: already at first song (index 0)");
             }
@@ -1343,7 +1343,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn go_to_section(&self, _cx: &Context, index: usize) {
+    async fn go_to_section(&self, index: usize) {
         debug!("go_to_section: {}", index);
 
         let daw = Daw::get();
@@ -1391,18 +1391,18 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn next_section(&self, ) {
+    async fn next_section(&self) {
         debug!("next_section");
 
         // Use cached indices for instant response (updated at 60Hz by polling loop)
         let active = self.get_cached_indices().await;
         if let Some(section_idx) = active.section_index {
             let next_idx = section_idx + 1;
-            self.go_to_section(_cx, next_idx).await;
+            self.go_to_section(next_idx).await;
         }
     }
 
-    async fn previous_section(&self, ) {
+    async fn previous_section(&self) {
         debug!("previous_section");
 
         // Use cached indices for instant response (updated at 60Hz by polling loop)
@@ -1419,15 +1419,15 @@ impl SetlistService for SetlistServiceImpl {
             if at_section_start && section_idx > 0 {
                 // Already at the start, go to previous section
                 let prev_idx = section_idx - 1;
-                self.go_to_section(_cx, prev_idx).await;
+                self.go_to_section(prev_idx).await;
             } else {
                 // Not at start, go to beginning of current section
-                self.go_to_section(_cx, section_idx).await;
+                self.go_to_section(section_idx).await;
             }
         }
     }
 
-    async fn seek_to(&self, _cx: &Context, seconds: f64) {
+    async fn seek_to(&self, seconds: f64) {
         debug!("seek_to: {}", seconds);
 
         let daw = Daw::get();
@@ -1451,7 +1451,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn seek_to_time(&self, _cx: &Context, song_index: usize, seconds: f64) {
+    async fn seek_to_time(&self, song_index: usize, seconds: f64) {
         info!(
             "seek_to_time: song_index={}, seconds={}",
             song_index, seconds
@@ -1497,7 +1497,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn seek_to_song(&self, _cx: &Context, song_index: usize) {
+    async fn seek_to_song(&self, song_index: usize) {
         info!("seek_to_song called: song_index={}", song_index);
 
         let daw = Daw::get();
@@ -1587,7 +1587,7 @@ impl SetlistService for SetlistServiceImpl {
         );
     }
 
-    async fn seek_to_section(&self, _cx: &Context, song_index: usize, section_index: usize) {
+    async fn seek_to_section(&self, song_index: usize, section_index: usize) {
         debug!(
             "seek_to_section: song={}, section={}",
             song_index, section_index
@@ -1688,7 +1688,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn goto_measure(&self, _cx: &Context, song_index: usize, measure: i32) {
+    async fn goto_measure(&self, song_index: usize, measure: i32) {
         info!(
             "goto_measure: song_index={}, measure={}",
             song_index, measure
@@ -1729,7 +1729,7 @@ impl SetlistService for SetlistServiceImpl {
     // Playback Commands
     // =========================================================================
 
-    async fn toggle_playback(&self, ) {
+    async fn toggle_playback(&self) {
         debug!("toggle_playback");
 
         // Use cached active song ID for instant lookup (no RPC calls)
@@ -1750,7 +1750,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn play(&self, ) {
+    async fn play(&self) {
         debug!("play");
 
         // Use cached active song ID for instant lookup (no RPC calls)
@@ -1771,7 +1771,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn pause(&self, ) {
+    async fn pause(&self) {
         debug!("pause");
 
         // Use cached active song ID for instant lookup (no RPC calls)
@@ -1792,7 +1792,7 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn stop(&self, ) {
+    async fn stop(&self) {
         debug!("stop");
 
         // Use cached active song ID for instant lookup (no RPC calls)
@@ -1817,7 +1817,7 @@ impl SetlistService for SetlistServiceImpl {
     // Loop Control
     // =========================================================================
 
-    async fn toggle_song_loop(&self, ) {
+    async fn toggle_song_loop(&self) {
         debug!("toggle_song_loop");
 
         let daw = Daw::get();
@@ -1833,19 +1833,19 @@ impl SetlistService for SetlistServiceImpl {
         }
     }
 
-    async fn toggle_section_loop(&self, ) {
+    async fn toggle_section_loop(&self) {
         debug!("toggle_section_loop");
         // TODO: Implement section-specific loop using loop points
         warn!("toggle_section_loop not yet implemented");
     }
 
-    async fn set_loop_region(&self, _cx: &Context, _start_seconds: f64, _end_seconds: f64) {
+    async fn set_loop_region(&self, _start_seconds: f64, _end_seconds: f64) {
         debug!("set_loop_region: {} - {}", _start_seconds, _end_seconds);
         // TODO: Implement setting loop region
         warn!("set_loop_region not yet implemented");
     }
 
-    async fn clear_loop(&self, ) {
+    async fn clear_loop(&self) {
         debug!("clear_loop");
 
         let daw = Daw::get();
@@ -1865,7 +1865,7 @@ impl SetlistService for SetlistServiceImpl {
     // Build/Refresh
     // =========================================================================
 
-    async fn build_from_open_projects(&self, ) {
+    async fn build_from_open_projects(&self) {
         debug!("Building setlist from open projects...");
 
         // Check if DAW is initialized (it may not be ready yet after cell startup)
@@ -2101,16 +2101,16 @@ impl SetlistService for SetlistServiceImpl {
         });
     }
 
-    async fn refresh(&self, ) {
+    async fn refresh(&self) {
         info!("Refreshing setlist...");
-        self.build_from_open_projects(_cx).await;
+        self.build_from_open_projects().await;
     }
 
     // =========================================================================
     // Subscriptions
     // =========================================================================
 
-    async fn subscribe(&self, _cx: &Context, events: Tx<SetlistEvent>) {
+    async fn subscribe(&self, events: Tx<SetlistEvent>) {
         debug!("SetlistService::subscribe() - starting fully reactive event stream");
         // Clone self for the spawned task
         let this = self.clone();
@@ -2129,7 +2129,7 @@ impl SetlistService for SetlistServiceImpl {
                     songs = sl.songs.clone();
                     // Send initial setlist state
                     if events
-                        .send(&SetlistEvent::SetlistChanged(sl.clone()))
+                        .send(SetlistEvent::SetlistChanged(sl.clone()))
                         .await
                         .is_err()
                     {
@@ -2151,7 +2151,7 @@ impl SetlistService for SetlistServiceImpl {
                 for (index, song) in songs.iter().enumerate() {
                     if let Some(chart) = chart_cache.get(&song.project_guid).cloned() {
                         if events
-                            .send(&SetlistEvent::SongChartHydrated { index, chart })
+                            .send(SetlistEvent::SongChartHydrated { index, chart })
                             .await
                             .is_err()
                         {
@@ -2208,7 +2208,7 @@ impl SetlistService for SetlistServiceImpl {
                 }
             }
             if events
-                .send(&SetlistEvent::ActiveIndicesChanged(last_indices.clone()))
+                .send(SetlistEvent::ActiveIndicesChanged(last_indices.clone()))
                 .await
                 .is_err()
             {
@@ -2225,7 +2225,7 @@ impl SetlistService for SetlistServiceImpl {
                     .map(|transport| (transport.song_index, transport))
                     .collect();
             if events
-                .send(&SetlistEvent::TransportUpdate(initial_transports))
+                .send(SetlistEvent::TransportUpdate(initial_transports))
                 .await
                 .is_err()
             {
@@ -2299,7 +2299,7 @@ impl SetlistService for SetlistServiceImpl {
                                 .map(|(idx, song)| (song.id.clone(), idx))
                                 .collect();
                             if events
-                                .send(&SetlistEvent::SetlistChanged(setlist))
+                                .send(SetlistEvent::SetlistChanged(setlist))
                                 .await
                             .is_err()
                             {
@@ -2312,7 +2312,7 @@ impl SetlistService for SetlistServiceImpl {
                         match hydrated {
                             Ok((index, song)) => {
                                 if events
-                                    .send(&SetlistEvent::SongHydrated { index, song })
+                                    .send(SetlistEvent::SongHydrated { index, song })
                                     .await
                                     .is_err()
                                 {
@@ -2330,7 +2330,7 @@ impl SetlistService for SetlistServiceImpl {
                         match chart_hydrated {
                             Ok((index, chart)) => {
                                 if events
-                                    .send(&SetlistEvent::SongChartHydrated { index, chart })
+                                    .send(SetlistEvent::SongChartHydrated { index, chart })
                                     .await
                                     .is_err()
                                 {
@@ -2366,7 +2366,7 @@ impl SetlistService for SetlistServiceImpl {
                                 song_id_to_index.get(id).copied()
                             });
 
-                            for proj_state in update.projects {
+                            for proj_state in &update.projects {
                                 if let Some(song_indices) = guid_to_indices.get(&proj_state.project_guid) {
                                     let is_playing = proj_state.transport.play_state
                                         == daw_proto::PlayState::Playing
@@ -2468,7 +2468,7 @@ impl SetlistService for SetlistServiceImpl {
 
                         if !song_transports.is_empty() {
                             for section_event in pending_section_events {
-                                if events.send(&section_event).await.is_err() {
+                                if events.send(section_event).await.is_err() {
                                     break;
                                 }
                             }
@@ -2577,7 +2577,7 @@ impl SetlistService for SetlistServiceImpl {
 
                                 if structural_change || (progress_change && can_emit_progress) {
                                     if events
-                                        .send(&SetlistEvent::ActiveIndicesChanged(
+                                        .send(SetlistEvent::ActiveIndicesChanged(
                                             current_indices.clone(),
                                         ))
                                         .await
@@ -2615,7 +2615,7 @@ impl SetlistService for SetlistServiceImpl {
                             if changed_count > 0 {
                                 let changed_transports = changed_transports.into_vec();
                                 if events
-                                    .send(&SetlistEvent::TransportUpdate(changed_transports))
+                                    .send(SetlistEvent::TransportUpdate(changed_transports))
                                     .await
                                     .is_err()
                                 {
@@ -2718,7 +2718,7 @@ impl SetlistService for SetlistServiceImpl {
 
                                 if new_indices != last_indices {
                                     if events
-                                        .send(&SetlistEvent::ActiveIndicesChanged(new_indices.clone()))
+                                        .send(SetlistEvent::ActiveIndicesChanged(new_indices.clone()))
                                         .await
                                         .is_err()
                                     {
@@ -2836,7 +2836,7 @@ impl SetlistService for SetlistServiceImpl {
         });
     }
 
-    async fn subscribe_active(&self, _cx: &Context, indices: Tx<ActiveIndices>) {
+    async fn subscribe_active(&self, indices: Tx<ActiveIndices>) {
         info!("SetlistService::subscribe_active() - starting active indices stream");
 
         // Clone self for the spawned task
@@ -2846,7 +2846,7 @@ impl SetlistService for SetlistServiceImpl {
         tokio::spawn(async move {
             // Send initial state
             let mut last_indices = this.calculate_active_indices().await;
-            if indices.send(&last_indices).await.is_err() {
+            if indices.send(last_indices.clone()).await.is_err() {
                 debug!(
                     "SetlistService::subscribe_active() - client disconnected during initial send"
                 );
@@ -2861,7 +2861,7 @@ impl SetlistService for SetlistServiceImpl {
 
                 // Only send if something changed
                 if current_indices != last_indices {
-                    if indices.send(&current_indices).await.is_err() {
+                    if indices.send(current_indices.clone()).await.is_err() {
                         debug!("SetlistService::subscribe_active() - client disconnected");
                         break;
                     }
@@ -2873,7 +2873,7 @@ impl SetlistService for SetlistServiceImpl {
         });
     }
 
-    async fn get_audio_latency(&self, ) -> f64 {
+    async fn get_audio_latency(&self) -> f64 {
         let daw = Daw::get();
         daw.audio_engine()
             .get_output_latency_seconds()
@@ -2881,7 +2881,7 @@ impl SetlistService for SetlistServiceImpl {
             .unwrap_or(0.0)
     }
 
-    async fn get_audio_latency_info(&self, ) -> session_proto::AudioLatencyInfo {
+    async fn get_audio_latency_info(&self) -> session_proto::AudioLatencyInfo {
         let daw = Daw::get();
         match daw.audio_engine().get_state().await {
             Ok(state) => session_proto::AudioLatencyInfo {
