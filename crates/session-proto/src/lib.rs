@@ -9,6 +9,18 @@
 
 use roam::service;
 
+// ─── Typed IDs ─────────────────────────────────────────────────
+
+utils::typed_uuid_id!(
+    /// Unique identifier for a song in a session setlist.
+    SongId
+);
+
+utils::typed_uuid_id!(
+    /// Unique identifier for a section within a song.
+    SectionId
+);
+
 // Re-export DefinesActions for convenience - session implements this
 pub use actions_proto::{
     ActionCategory, ActionDefinition, ActionId, ActionResult, DefinesActions, DefinesActionsClient,
@@ -22,12 +34,15 @@ pub mod song;
 
 // Re-export common types
 pub use services::{
-    AudioLatencyInfo, MeasureInfo, SetlistEvent, SetlistService, SetlistServiceClient,
-    SetlistServiceDispatcher, SongService, SongServiceClient, SongServiceDispatcher,
-    SongTransportState, setlist_service_service_descriptor, song_service_service_descriptor,
+    AudioLatencyInfo, MeasureInfo, SessionServiceError, SetlistEvent, SetlistService,
+    SetlistServiceClient, SetlistServiceDispatcher, SongService, SongServiceClient,
+    SongServiceDispatcher, SongTransportState, setlist_service_service_descriptor,
+    song_service_service_descriptor,
 };
 pub use setlist::{ActiveIndices, AdvanceMode, QueuedTarget, Setlist};
 pub use song::{Comment, Section, SectionType, Song, SongChartHydration, SongDetectedChord};
+// Typed IDs are defined at crate root and re-exported here for convenience
+// (SongId and SectionId are already in scope from the definitions above)
 
 // Re-export position types from daw-proto for convenience
 pub use daw_proto::MusicalPosition;

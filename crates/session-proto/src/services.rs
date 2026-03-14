@@ -4,10 +4,60 @@
 
 use crate::setlist::{ActiveIndices, Setlist};
 use crate::song::{Section, Song, SongChartHydration};
+use crate::{SongId, SectionId};
 use daw_proto::MusicalPosition;
 use facet::Facet;
 use roam::Tx;
 use roam::service;
+use serde::{Deserialize, Serialize};
+
+// ─── SessionServiceError ────────────────────────────────────────
+
+/// Typed error for session service trait boundaries.
+///
+/// All methods return `Result<T, SessionServiceError>` using typed error variants
+/// for structured diagnostics.
+#[repr(C)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Facet, thiserror::Error)]
+pub enum SessionServiceError {
+    /// Entity not found by ID.
+    #[error("{entity} not found: {id}")]
+    NotFound { entity: String, id: String },
+
+    /// A DAW operation failed.
+    #[error("daw error: {0}")]
+    DawError(String),
+
+    /// Hydration (data enrichment) failed.
+    #[error("hydration error: {0}")]
+    HydrationError(String),
+
+    /// Catch-all for unexpected failures.
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+impl SessionServiceError {
+    /// Convenience for creating a NotFound error.
+    pub fn not_found(entity: impl Into<String>, id: impl ToString) -> Self {
+        Self::NotFound {
+            entity: entity.into(),
+            id: id.to_string(),
+        }
+    }
+}
+
+impl From<String> for SessionServiceError {
+    fn from(s: String) -> Self {
+        Self::Internal(s)
+    }
+}
+
+impl From<eyre::Report> for SessionServiceError {
+    fn from(e: eyre::Report) -> Self {
+        Self::Internal(format!("{e:#}"))
+    }
+}
 
 /// Measure information for RPC
 #[derive(Clone, Debug, PartialEq, Facet)]
@@ -77,9 +127,14 @@ pub enum SetlistEvent {
     /// Setlist was changed/rebuilt
     SetlistChanged(Setlist),
     /// A single song entry was hydrated/updated in-place
-    SongHydrated { index: usize, song: Song },
+    SongHydrated {
+        song_id: SongId,
+        index: usize,
+        song: Song,
+    },
     /// Chart/chord payload for a song was hydrated/updated.
     SongChartHydrated {
+        song_id: SongId,
         index: usize,
         chart: SongChartHydration,
     },
@@ -89,18 +144,29 @@ pub enum SetlistEvent {
     /// This is sent at 60Hz and includes state for ALL songs that have active projects
     TransportUpdate(Vec<SongTransportState>),
     /// Entered a new song
-    SongEntered { index: usize, song: Song },
+    SongEntered {
+        song_id: SongId,
+        index: usize,
+        song: Song,
+    },
     /// Exited a song
-    SongExited { index: usize },
+    SongExited {
+        song_id: SongId,
+        index: usize,
+    },
     /// Entered a new section
     SectionEntered {
+        song_id: SongId,
         song_index: usize,
+        section_id: SectionId,
         section_index: usize,
         section: Section,
     },
     /// Exited a section
     SectionExited {
+        song_id: SongId,
         song_index: usize,
+        section_id: SectionId,
         section_index: usize,
     },
     /// Position changed (legacy - prefer TransportUpdate)
@@ -122,13 +188,12 @@ pub trait SongService {
     /// to extract song structure including sections, tempo, and time signature.
     ///
     /// Returns None if no valid song structure is found.
-    async fn build_from_current_project(&self) -> Option<Song>;
+    async fn build_from_current_project(&self) -> Result<Song, SessionServiceError>;
 
     /// Get song information for a specific project by GUID
     ///
     /// Loads and analyzes the specified project to extract song information.
-    /// Returns None if the project doesn't exist or has no valid song structure.
-    async fn get_song(&self, project_guid: String) -> Option<Song>;
+    async fn get_song(&self, project_guid: String) -> Result<Song, SessionServiceError>;
 }
 
 /// Service for managing and controlling setlists
@@ -142,116 +207,116 @@ pub trait SetlistService {
     // =========================================================================
 
     /// Get the full setlist
-    async fn get_setlist(&self) -> Option<Setlist>;
+    async fn get_setlist(&self) -> Result<Setlist, SessionServiceError>;
 
     /// Get all songs in the setlist
-    async fn get_songs(&self) -> Vec<Song>;
+    async fn get_songs(&self) -> Result<Vec<Song>, SessionServiceError>;
 
     /// Get a specific song by index
-    async fn get_song(&self, index: usize) -> Option<Song>;
+    async fn get_song(&self, index: usize) -> Result<Song, SessionServiceError>;
 
     /// Get all sections for a specific song
-    async fn get_sections(&self, song_index: usize) -> Vec<Section>;
+    async fn get_sections(&self, song_index: usize) -> Result<Vec<Section>, SessionServiceError>;
 
     /// Get a specific section by song and section index
-    async fn get_section(&self, song_index: usize, section_index: usize) -> Option<Section>;
+    async fn get_section(&self, song_index: usize, section_index: usize) -> Result<Section, SessionServiceError>;
 
     /// Get measure information for a song
-    async fn get_measures(&self, song_index: usize) -> Vec<MeasureInfo>;
+    async fn get_measures(&self, song_index: usize) -> Result<Vec<MeasureInfo>, SessionServiceError>;
 
     // =========================================================================
     // Active State Queries
     // =========================================================================
 
     /// Get the currently active song
-    async fn get_active_song(&self) -> Option<Song>;
+    async fn get_active_song(&self) -> Result<Song, SessionServiceError>;
 
     /// Get the currently active section
-    async fn get_active_section(&self) -> Option<Section>;
+    async fn get_active_section(&self) -> Result<Section, SessionServiceError>;
 
     /// Get the song at a specific position in seconds
-    async fn get_song_at(&self, seconds: f64) -> Option<Song>;
+    async fn get_song_at(&self, seconds: f64) -> Result<Song, SessionServiceError>;
 
     /// Get the section at a specific position in seconds
-    async fn get_section_at(&self, seconds: f64) -> Option<Section>;
+    async fn get_section_at(&self, seconds: f64) -> Result<Section, SessionServiceError>;
 
     // =========================================================================
     // Navigation Commands
     // =========================================================================
 
     /// Navigate to a specific song by index
-    async fn go_to_song(&self, index: usize);
+    async fn go_to_song(&self, index: usize) -> Result<(), SessionServiceError>;
 
     /// Navigate to the next song in the setlist
-    async fn next_song(&self);
+    async fn next_song(&self) -> Result<(), SessionServiceError>;
 
     /// Navigate to the previous song in the setlist
-    async fn previous_song(&self);
+    async fn previous_song(&self) -> Result<(), SessionServiceError>;
 
     /// Navigate to a specific section within the current song
-    async fn go_to_section(&self, index: usize);
+    async fn go_to_section(&self, index: usize) -> Result<(), SessionServiceError>;
 
     /// Navigate to the next section in the current song
-    async fn next_section(&self);
+    async fn next_section(&self) -> Result<(), SessionServiceError>;
 
     /// Navigate to the previous section in the current song
-    async fn previous_section(&self);
+    async fn previous_section(&self) -> Result<(), SessionServiceError>;
 
     /// Seek to a specific time in the current song (song-relative seconds)
-    async fn seek_to(&self, seconds: f64);
+    async fn seek_to(&self, seconds: f64) -> Result<(), SessionServiceError>;
 
     /// Seek to a specific time within a song (absolute seconds from project start)
     ///
     /// This switches to the correct project and seeks to the specified time.
-    async fn seek_to_time(&self, song_index: usize, seconds: f64);
+    async fn seek_to_time(&self, song_index: usize, seconds: f64) -> Result<(), SessionServiceError>;
 
     /// Seek to a specific song by index (goes to song start)
-    async fn seek_to_song(&self, song_index: usize);
+    async fn seek_to_song(&self, song_index: usize) -> Result<(), SessionServiceError>;
 
     /// Seek to a specific section within a song
-    async fn seek_to_section(&self, song_index: usize, section_index: usize);
+    async fn seek_to_section(&self, song_index: usize, section_index: usize) -> Result<(), SessionServiceError>;
 
     /// Seek to a musical position within a song
     ///
     /// The position is relative to the song's start (measure 0 = first measure of the song).
-    async fn seek_to_musical_position(&self, song_index: usize, position: MusicalPosition);
+    async fn seek_to_musical_position(&self, song_index: usize, position: MusicalPosition) -> Result<(), SessionServiceError>;
 
     /// Seek to a specific measure within a song (0-indexed from song start)
     ///
     /// This switches to the correct project and seeks to the start of the specified measure.
-    async fn goto_measure(&self, song_index: usize, measure: i32);
+    async fn goto_measure(&self, song_index: usize, measure: i32) -> Result<(), SessionServiceError>;
 
     // =========================================================================
     // Playback Commands
     // =========================================================================
 
     /// Toggle playback (play/pause)
-    async fn toggle_playback(&self);
+    async fn toggle_playback(&self) -> Result<(), SessionServiceError>;
 
     /// Start playback
-    async fn play(&self);
+    async fn play(&self) -> Result<(), SessionServiceError>;
 
     /// Pause playback
-    async fn pause(&self);
+    async fn pause(&self) -> Result<(), SessionServiceError>;
 
     /// Stop playback
-    async fn stop(&self);
+    async fn stop(&self) -> Result<(), SessionServiceError>;
 
     // =========================================================================
     // Loop Control
     // =========================================================================
 
     /// Toggle looping for the current song
-    async fn toggle_song_loop(&self);
+    async fn toggle_song_loop(&self) -> Result<(), SessionServiceError>;
 
     /// Toggle looping for the current section
-    async fn toggle_section_loop(&self);
+    async fn toggle_section_loop(&self) -> Result<(), SessionServiceError>;
 
     /// Set a custom loop region
-    async fn set_loop_region(&self, start_seconds: f64, end_seconds: f64);
+    async fn set_loop_region(&self, start_seconds: f64, end_seconds: f64) -> Result<(), SessionServiceError>;
 
     /// Clear any active loop
-    async fn clear_loop(&self);
+    async fn clear_loop(&self) -> Result<(), SessionServiceError>;
 
     // =========================================================================
     // Build/Refresh
@@ -261,23 +326,23 @@ pub trait SetlistService {
     ///
     /// Scans all open projects, extracts song structures from each,
     /// and assembles them into a complete setlist.
-    async fn build_from_open_projects(&self);
+    async fn build_from_open_projects(&self) -> Result<(), SessionServiceError>;
 
     /// Refresh the setlist
     ///
     /// Rebuilds the setlist from open projects, updating any changes
     /// to song structures or project state.
-    async fn refresh(&self);
+    async fn refresh(&self) -> Result<(), SessionServiceError>;
 
     // =========================================================================
     // Subscriptions
     // =========================================================================
 
     /// Subscribe to setlist events
-    async fn subscribe(&self, events: Tx<SetlistEvent>);
+    async fn subscribe(&self, events: Tx<SetlistEvent>) -> Result<(), SessionServiceError>;
 
     /// Subscribe to active indices changes
-    async fn subscribe_active(&self, indices: Tx<ActiveIndices>);
+    async fn subscribe_active(&self, indices: Tx<ActiveIndices>) -> Result<(), SessionServiceError>;
 
     // =========================================================================
     // Audio Engine (proxy)
@@ -290,13 +355,13 @@ pub trait SetlistService {
     /// Clients can use this to compensate visual display during playback.
     ///
     /// Returns 0.0 if the audio engine is not running or unavailable.
-    async fn get_audio_latency(&self) -> f64;
+    async fn get_audio_latency(&self) -> Result<f64, SessionServiceError>;
 
     /// Get complete audio latency information
     ///
     /// Returns input/output latency, sample rate, and audio engine state.
     /// Useful for latency display badges.
-    async fn get_audio_latency_info(&self) -> AudioLatencyInfo;
+    async fn get_audio_latency_info(&self) -> Result<AudioLatencyInfo, SessionServiceError>;
 }
 
 /// Complete audio latency information for display

@@ -10,7 +10,11 @@ facet.workspace = true
 daw-proto.workspace = true
 daw-control.workspace = true
 keyflow-proto.workspace = true
-uuid = { version = "1", features = ["v4", "serde", "js"] }
+utils.workspace = true
+uuid = { version = "1", features = ["v4", "v7", "serde", "js"] }
+serde.workspace = true
+eyre.workspace = true
+thiserror.workspace = true
 tracing = "0.1"
 futures = "0.3"
 

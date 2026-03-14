@@ -6,6 +6,7 @@
 //! This module re-exports section types from keyflow-proto for consistency
 //! across the codebase, while providing session-specific wrappers where needed.
 
+use crate::{SectionId, SongId};
 use daw_proto::{Position, TimeSignature};
 use facet::Facet;
 
@@ -129,6 +130,8 @@ impl Comment {
 /// for UI rendering. For chart parsing, use `keyflow_proto::sections::Section` directly.
 #[derive(Clone, Debug, PartialEq, Facet)]
 pub struct Section {
+    /// Stable unique identifier for this section.
+    pub section_id: SectionId,
     /// DAW region/marker ID (if applicable)
     pub id: Option<u32>,
     /// Section name (e.g., "Verse 1", "Chorus") - without the comment portion
@@ -257,8 +260,8 @@ impl Section {
 /// and regions defining its internal structure (sections).
 #[derive(Clone, PartialEq, Facet)]
 pub struct Song {
-    /// Unique identifier for this song (UUID or custom string)
-    pub id: String,
+    /// Stable unique identifier for this song.
+    pub id: SongId,
     /// Song name
     pub name: String,
     /// DAW project GUID this song belongs to
