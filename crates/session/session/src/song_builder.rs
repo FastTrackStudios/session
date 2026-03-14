@@ -15,9 +15,8 @@
 
 use daw_control::Project;
 use daw_proto::{Marker, Region};
-use session_proto::{Comment, Section, SectionType, Song};
+use session_proto::{Comment, Section, SectionId, SectionType, Song, SongId};
 use tracing::{Level, debug, warn};
-use uuid::Uuid;
 
 /// Builder for extracting Song structure from DAW projects
 pub struct SongBuilder;
@@ -257,6 +256,7 @@ impl SongBuilder {
                 sections.insert(
                     0,
                     Section {
+                        section_id: SectionId::new(),
                         id: None,
                         name: "Count-In".to_string(),
                         comment: None,
@@ -290,6 +290,7 @@ impl SongBuilder {
                 end_section_start, end_seconds, end_section_start, songend_seconds
             );
             sections.push(Section {
+                section_id: SectionId::new(),
                 id: None,
                 name: "End".to_string(),
                 comment: None,
@@ -403,7 +404,7 @@ impl SongBuilder {
         }
 
         Ok(Song {
-            id: Uuid::new_v4().to_string(),
+            id: SongId::new(),
             name: song_name,
             project_guid: project.guid().to_string(),
             start_seconds: song_start_seconds,
@@ -474,6 +475,7 @@ impl SongBuilder {
                 sections.insert(
                     0,
                     Section {
+                        section_id: SectionId::new(),
                         id: None,
                         name: "Count-In".to_string(),
                         comment: None,
@@ -514,7 +516,7 @@ impl SongBuilder {
         );
 
         Ok(Song {
-            id: Uuid::new_v4().to_string(),
+            id: SongId::new(),
             name: song_name,
             project_guid: project_guid.to_string(),
             start_seconds: song_start_seconds,
@@ -775,6 +777,7 @@ impl SongBuilder {
                 Self::parse_section_name(&marker.name);
 
             sections.push(Section {
+                section_id: SectionId::new(),
                 id: marker.id,
                 name: clean_name,
                 comment,
@@ -807,6 +810,7 @@ impl SongBuilder {
             .map(|r| {
                 let (section_type, number, clean_name, comment) = Self::parse_section_name(&r.name);
                 Section {
+                    section_id: SectionId::new(),
                     id: r.id,
                     name: clean_name,
                     comment,
@@ -841,6 +845,7 @@ impl SongBuilder {
             .map(|r| {
                 let (section_type, number, clean_name, comment) = Self::parse_section_name(&r.name);
                 Section {
+                    section_id: SectionId::new(),
                     id: r.id,
                     name: clean_name,
                     comment,

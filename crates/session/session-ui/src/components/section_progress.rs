@@ -1,3 +1,8 @@
+//! Section progress bar — shows progress within the current section.
+//!
+//! Displays tempo markers, time signature changes, measure indicators,
+//! and comment markers as overlays on the section timeline.
+
 use crate::components::{
     CommentMarker, MeasureIndicator, ProgressSection, TempoCard, TempoMarkerData, TimeSignatureCard,
 };

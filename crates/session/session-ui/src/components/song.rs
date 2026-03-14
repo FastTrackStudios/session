@@ -1,3 +1,5 @@
+//! Song title display components for active and upcoming songs.
+
 use crate::prelude::*;
 
 /// Song title component displaying the currently active song

@@ -2,6 +2,7 @@
 //!
 //! Represents a setlist as a collection of songs with playback state tracking.
 
+use crate::SongId;
 use crate::song::Song;
 use daw_proto::TimeRange;
 use facet::Facet;
@@ -27,18 +28,25 @@ pub enum AdvanceMode {
 pub enum QueuedTarget {
     /// Queued navigation to a section
     Section {
+        song_id: SongId,
         song_index: usize,
         section_index: usize,
     },
     /// Queued navigation to a specific time position
     Time {
+        song_id: SongId,
         song_index: usize,
         position_seconds: f64,
     },
     /// Queued navigation to a measure
-    Measure { song_index: usize, measure: i32 },
+    Measure {
+        song_id: SongId,
+        song_index: usize,
+        measure: i32,
+    },
     /// Queued navigation to a comment marker
     Comment {
+        song_id: SongId,
         song_index: usize,
         position_seconds: f64,
     },
