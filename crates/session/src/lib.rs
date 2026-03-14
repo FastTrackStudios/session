@@ -20,6 +20,8 @@
 //! let song_dispatcher = SongServiceDispatcher::new(song);
 //! ```
 
+pub mod cache;
+pub mod event_bus;
 mod setlist_builder;
 mod setlist_service;
 mod song_builder;
