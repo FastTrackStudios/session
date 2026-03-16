@@ -1563,6 +1563,13 @@ impl SetlistService for SetlistServiceImpl {
         self.refresh_impl().await
     }
 
+    async fn generate_combined_setlist(
+        &self,
+        gap_measures: u32,
+    ) -> Result<String, SessionServiceError> {
+        self.generate_combined_setlist_impl(gap_measures).await
+    }
+
     // =========================================================================
     // Subscriptions — delegate to polling.rs
     // =========================================================================
@@ -1587,4 +1594,5 @@ impl SetlistService for SetlistServiceImpl {
     ) -> Result<session_proto::AudioLatencyInfo, SessionServiceError> {
         self.get_audio_latency_info_impl().await
     }
+
 }
