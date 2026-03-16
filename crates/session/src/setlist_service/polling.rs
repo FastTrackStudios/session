@@ -16,8 +16,10 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::{Semaphore, broadcast, mpsc};
+use moire::sync::{Semaphore, mpsc};
+use tokio::sync::broadcast::error::RecvError as BroadcastRecvError;
 use tokio::task::JoinSet;
+use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
 
 impl SetlistServiceImpl {
@@ -233,7 +235,7 @@ impl SetlistServiceImpl {
             return Vec::new();
         }
 
-        let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY));
+        let semaphore = Arc::new(Semaphore::new("session.setlist.polling.hydration", HYDRATION_CONCURRENCY));
         let mut join_set = JoinSet::new();
 
         for (song_index, song) in songs.into_iter().enumerate() {
@@ -602,15 +604,15 @@ impl SetlistServiceImpl {
             let mut project_check_interval =
                 tokio::time::interval(Duration::from_millis(500));
             project_check_interval
-                .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                .set_missed_tick_behavior(MissedTickBehavior::Skip);
             let mut active_hydration_interval =
                 tokio::time::interval(Duration::from_millis(ACTIVE_HYDRATION_TICK_MS));
             active_hydration_interval
-                .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                .set_missed_tick_behavior(MissedTickBehavior::Skip);
             let mut perf_log_interval = tokio::time::interval(Duration::from_secs(5));
-            perf_log_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            perf_log_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
             let (chart_probe_tx, mut chart_probe_rx) =
-                mpsc::unbounded_channel::<(Duration, bool)>();
+                mpsc::unbounded_channel::<(Duration, bool)>("session.setlist.polling.chart_probe");
             let chart_probe_inflight = Arc::new(AtomicBool::new(false));
 
             let mut transport_tick_count: u64 = 0;
@@ -671,10 +673,10 @@ impl SetlistServiceImpl {
                                     break;
                                 }
                             }
-                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            Err(BroadcastRecvError::Lagged(skipped)) => {
                                 debug!("Hydration update lagged by {} messages", skipped);
                             }
-                            Err(broadcast::error::RecvError::Closed) => break,
+                            Err(BroadcastRecvError::Closed) => break,
                         }
                     }
 
@@ -696,10 +698,10 @@ impl SetlistServiceImpl {
                                     break;
                                 }
                             }
-                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            Err(BroadcastRecvError::Lagged(skipped)) => {
                                 debug!("Chart hydration update lagged by {} messages", skipped);
                             }
-                            Err(broadcast::error::RecvError::Closed) => break,
+                            Err(BroadcastRecvError::Closed) => break,
                         }
                     }
 
@@ -1225,7 +1227,7 @@ impl SetlistServiceImpl {
 
             // Poll for changes at 60Hz (smooth updates during playback)
             loop {
-                tokio::time::sleep(Duration::from_micros(16667)).await;
+                moire::time::sleep(Duration::from_micros(16667)).await;
 
                 let current_indices = this.calculate_active_indices().await;
 
