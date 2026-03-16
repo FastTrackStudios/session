@@ -2,12 +2,12 @@
 //!
 //! Provides `Cache<K, V>` backed by `Arc<RwLock<FxHashMap<K, V>>>`
 //! with typed get/insert/invalidate operations. Designed to be
-//! `Send + Sync` for use across tokio tasks.
+//! `Send + Sync` for use across async tasks.
 
 use rustc_hash::FxHashMap;
 use std::hash::Hash;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use moire::sync::RwLock;
 
 /// A thread-safe, async-compatible cache backed by `FxHashMap`.
 ///
@@ -31,10 +31,19 @@ impl<K, V> Cache<K, V>
 where
     K: Eq + Hash,
 {
-    /// Create an empty cache.
+    /// Create an empty cache with no dashboard name.
+    ///
+    /// Prefer [`Cache::named`] when a descriptive name is available.
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(FxHashMap::default())),
+            inner: Arc::new(RwLock::new("session.cache", FxHashMap::default())),
+        }
+    }
+
+    /// Create an empty cache with a descriptive name for the moire dashboard.
+    pub fn named(name: &'static str) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(name, FxHashMap::default())),
         }
     }
 

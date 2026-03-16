@@ -94,7 +94,7 @@ impl SetlistServiceImpl {
             }
         };
 
-        let song = match tokio::time::timeout(
+        let song = match moire::time::timeout(
             Duration::from_secs(5),
             self.ensure_song_hydrated(song_index),
         )
@@ -157,7 +157,7 @@ impl SetlistServiceImpl {
         };
 
         // Now try to hydrate (best-effort, with timeout to prevent freezes)
-        let song = match tokio::time::timeout(
+        let song = match moire::time::timeout(
             Duration::from_secs(5),
             self.ensure_song_hydrated(index),
         )
@@ -447,7 +447,7 @@ impl SetlistServiceImpl {
         };
 
         // Now try to hydrate (best-effort, with timeout to prevent freezes)
-        let song = match tokio::time::timeout(
+        let song = match moire::time::timeout(
             Duration::from_secs(5),
             self.ensure_song_hydrated(song_index),
         )

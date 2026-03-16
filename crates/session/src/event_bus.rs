@@ -1,11 +1,12 @@
 //! Reusable event broadcasting abstractions.
 //!
-//! [`EventBus`] wraps `tokio::sync::broadcast` for multi-consumer event streaming.
-//! [`WatchBus`] wraps `tokio::sync::watch` for single-latest-value streaming.
+//! [`EventBus`] wraps `moire::sync::broadcast` for multi-consumer event streaming.
+//! [`WatchBus`] wraps `moire::sync::watch` for single-latest-value streaming.
 
-use tokio::sync::{broadcast, watch};
+use moire::sync::{broadcast, watch};
+use tokio::sync::watch as tokio_watch;
 
-/// Multi-consumer event bus backed by `tokio::sync::broadcast`.
+/// Multi-consumer event bus backed by `moire::sync::broadcast`.
 ///
 /// Each call to [`subscribe`](EventBus::subscribe) creates an independent receiver
 /// that will see all subsequent events emitted via [`emit`](EventBus::emit).
@@ -14,9 +15,9 @@ pub struct EventBus<T: Clone> {
 }
 
 impl<T: Clone> EventBus<T> {
-    /// Create a new event bus with the given channel capacity.
-    pub fn new(capacity: usize) -> Self {
-        let (tx, _) = broadcast::channel(capacity);
+    /// Create a new event bus with the given name and channel capacity.
+    pub fn new(name: &str, capacity: usize) -> Self {
+        let (tx, _) = broadcast::channel(name, capacity);
         Self { tx }
     }
 
@@ -33,7 +34,7 @@ impl<T: Clone> EventBus<T> {
     }
 }
 
-/// Single-value streaming bus backed by `tokio::sync::watch`.
+/// Single-value streaming bus backed by `moire::sync::watch`.
 ///
 /// Holds the latest value and lets any number of subscribers observe changes.
 pub struct WatchBus<T> {
@@ -42,9 +43,9 @@ pub struct WatchBus<T> {
 }
 
 impl<T: Clone> WatchBus<T> {
-    /// Create a new watch bus with the given initial value.
-    pub fn new(initial: T) -> Self {
-        let (tx, rx) = watch::channel(initial);
+    /// Create a new watch bus with the given name and initial value.
+    pub fn new(name: &str, initial: T) -> Self {
+        let (tx, rx) = watch::channel(name, initial);
         Self { tx, rx }
     }
 
@@ -59,7 +60,7 @@ impl<T: Clone> WatchBus<T> {
     }
 
     /// Borrow the current value.
-    pub fn borrow(&self) -> watch::Ref<'_, T> {
+    pub fn borrow(&self) -> tokio_watch::Ref<'_, T> {
         self.rx.borrow()
     }
 }

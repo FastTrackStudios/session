@@ -22,7 +22,7 @@ use session_proto::{
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use tokio::sync::RwLock;
+use moire::sync::RwLock;
 
 pub(crate) use hydration::SongCacheEntry;
 
@@ -75,18 +75,18 @@ pub struct SetlistServiceImpl {
 impl SetlistServiceImpl {
     pub fn new() -> Self {
         Self {
-            setlist: Arc::new(RwLock::new(None)),
-            active_song_id: Arc::new(RwLock::new(None)),
-            cached_indices: Arc::new(RwLock::new(ActiveIndices::default())),
-            queued_target: Arc::new(RwLock::new(None)),
-            setlist_update_bus: Arc::new(WatchBus::new(0_u64)),
+            setlist: Arc::new(RwLock::new("session.setlist", None)),
+            active_song_id: Arc::new(RwLock::new("session.setlist.active_song_id", None)),
+            cached_indices: Arc::new(RwLock::new("session.setlist.cached_indices", ActiveIndices::default())),
+            queued_target: Arc::new(RwLock::new("session.setlist.queued_target", None)),
+            setlist_update_bus: Arc::new(WatchBus::new("session.setlist.updates", 0_u64)),
             setlist_revision: Arc::new(AtomicU64::new(0)),
-            song_cache: Cache::new(),
-            hydration_bus: Arc::new(EventBus::new(1024)),
-            chart_hydration_bus: Arc::new(EventBus::new(1024)),
-            chart_cache: Cache::new(),
-            fingerprint_method_supported: Arc::new(RwLock::new(None)),
-            last_chart_refresh_attempt: Cache::new(),
+            song_cache: Cache::named("session.setlist.song_cache"),
+            hydration_bus: Arc::new(EventBus::new("session.setlist.hydration", 1024)),
+            chart_hydration_bus: Arc::new(EventBus::new("session.setlist.chart_hydration", 1024)),
+            chart_cache: Cache::named("session.setlist.chart_cache"),
+            fingerprint_method_supported: Arc::new(RwLock::new("session.setlist.fingerprint_supported", None)),
+            last_chart_refresh_attempt: Cache::named("session.setlist.chart_refresh_attempts"),
             build_generation: Arc::new(AtomicU64::new(0)),
         }
     }
