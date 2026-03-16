@@ -1,7 +1,7 @@
 //! SongService implementation — builds songs from the current DAW project.
 
 use crate::song_builder::SongBuilder;
-use daw_control::Daw;
+use daw::Daw;
 use session_proto::{SessionServiceError, Song, SongService};
 use tracing::{debug, info, warn};
 

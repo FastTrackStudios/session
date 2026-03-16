@@ -2,7 +2,7 @@
 //!
 //! These tests demonstrate how the session cell uses daw-control
 
-use daw_control::Daw;
+use daw::Daw;
 use std::time::Duration;
 
 /// Test that demonstrates the session using daw-control to call transport commands

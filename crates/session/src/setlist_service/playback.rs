@@ -1,7 +1,7 @@
 //! Playback commands: play, pause, stop, toggle, loop controls
 
 use super::SetlistServiceImpl;
-use daw_control::Daw;
+use daw::Daw;
 use session_proto::SessionServiceError;
 use tracing::{debug, warn};
 

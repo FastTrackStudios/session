@@ -4,7 +4,7 @@ use super::{
     SetlistServiceImpl, CHART_REFRESH_FALLBACK_POLL_MS, HYDRATION_CONCURRENCY, MIDI_TRACK_TAG,
 };
 use crate::song_builder::SongBuilder;
-use daw_control::Daw;
+use daw::Daw;
 use session_proto::{Song, SongChartHydration, SongDetectedChord, SongId};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,7 +22,7 @@ pub(crate) struct SongCacheEntry {
 #[derive(Clone)]
 pub(crate) struct ProjectLoad {
     pub(crate) index: usize,
-    pub(crate) project: daw_control::Project,
+    pub(crate) project: daw::Project,
     pub(crate) guid: String,
     pub(crate) project_name: String,
 }
@@ -133,7 +133,7 @@ impl SetlistServiceImpl {
         song.detected_chords.clear();
     }
 
-    fn map_detected_chords(chords: Vec<daw_proto::MidiDetectedChord>) -> Vec<SongDetectedChord> {
+    fn map_detected_chords(chords: Vec<daw::service::MidiDetectedChord>) -> Vec<SongDetectedChord> {
         chords
             .into_iter()
             .map(|chord| SongDetectedChord {
@@ -147,8 +147,8 @@ impl SetlistServiceImpl {
     }
 
     pub(crate) async fn fetch_midi_chart_data(
-        project: &daw_control::Project,
-    ) -> Option<daw_proto::MidiChartData> {
+        project: &daw::Project,
+    ) -> Option<daw::service::MidiChartData> {
         let track_tag = Some(MIDI_TRACK_TAG.to_string());
         match project.midi_analysis().generate_chart_data(track_tag).await {
             Ok(data) => Some(data),
@@ -165,7 +165,7 @@ impl SetlistServiceImpl {
 
     pub(crate) async fn fetch_midi_source_fingerprint(
         &self,
-        project: &daw_control::Project,
+        project: &daw::Project,
     ) -> Option<String> {
         let support_state = *self.fingerprint_method_supported.read().await;
         if support_state == Some(false) {
@@ -218,7 +218,7 @@ impl SetlistServiceImpl {
             .await
     }
 
-    pub(crate) fn apply_chart_data(song: &mut Song, chart_data: daw_proto::MidiChartData) {
+    pub(crate) fn apply_chart_data(song: &mut Song, chart_data: daw::service::MidiChartData) {
         song.chart_fingerprint = Some(chart_data.source_fingerprint);
         song.chart_text = Some(chart_data.chart_text);
         // Keep parsed_chart empty in session state to avoid cloning large chart
@@ -257,7 +257,7 @@ impl SetlistServiceImpl {
     }
 
     pub(crate) async fn fetch_project_loads(
-        projects: Vec<daw_control::Project>,
+        projects: Vec<daw::Project>,
     ) -> Vec<ProjectLoad> {
         let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY));
         let mut join_set = JoinSet::new();
