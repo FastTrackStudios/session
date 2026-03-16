@@ -14,8 +14,7 @@ path = "src/main.rs"
 [dependencies]
 session-proto = { path = "../session-proto" }
 actions-proto.workspace = true
-daw-control.workspace = true
-daw-proto.workspace = true
+daw.workspace = true
 roam.workspace = true
 tokio.workspace = true
 eyre.workspace = true
@@ -28,4 +27,4 @@ smallvec = "1.13"
 rustc-hash = "2"
 
 [dev-dependencies]
-daw-standalone.workspace = true
+daw = { workspace = true, features = ["standalone"] }

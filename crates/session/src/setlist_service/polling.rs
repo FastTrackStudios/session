@@ -5,7 +5,7 @@ use super::{
     ACTIVE_HYDRATION_TICK_MS, ACTIVE_INDICES_PROGRESS_EMIT_MS, HYDRATION_CONCURRENCY,
     PROJECT_SWITCH_DEBOUNCE_MS, TRANSPORT_PROGRESS_EPSILON, TRANSPORT_TIME_EPSILON_SECS,
 };
-use daw_control::Daw;
+use daw::Daw;
 use roam::Tx;
 use rustc_hash::FxHashMap;
 use session_proto::{
@@ -84,10 +84,10 @@ impl SetlistServiceImpl {
     pub(crate) fn calculate_song_transport(
         song: &Song,
         song_index: usize,
-        position: daw_proto::Position,
+        position: daw::service::Position,
         is_playing: bool,
         is_looping: bool,
-        loop_region: Option<daw_proto::LoopRegion>,
+        loop_region: Option<daw::service::LoopRegion>,
         tempo: f64,
         time_sig: (u32, u32),
     ) -> SongTransportState {
@@ -128,7 +128,7 @@ impl SetlistServiceImpl {
 
             // Check if loop region is within song bounds (with some tolerance)
             if region_end_relative > 0.0 && region_start_relative < song_duration {
-                Some(daw_proto::LoopRegion::new(
+                Some(daw::service::LoopRegion::new(
                     region_start_relative.max(0.0),
                     region_end_relative.min(song_duration),
                 ))
@@ -165,8 +165,8 @@ impl SetlistServiceImpl {
     }
 
     fn loop_region_changed(
-        prev: &Option<daw_proto::LoopRegion>,
-        next: &Option<daw_proto::LoopRegion>,
+        prev: &Option<daw::service::LoopRegion>,
+        next: &Option<daw::service::LoopRegion>,
     ) -> bool {
         match (prev, next) {
             (Some(a), Some(b)) => {
@@ -248,8 +248,8 @@ impl SetlistServiceImpl {
                         // Get full transport state in ONE RPC call
                         match transport.get_state().await {
                             Ok(state) => {
-                                let is_playing = state.play_state == daw_proto::PlayState::Playing
-                                    || state.play_state == daw_proto::PlayState::Recording;
+                                let is_playing = state.play_state == daw::service::PlayState::Playing
+                                    || state.play_state == daw::service::PlayState::Recording;
 
                                 // Use playhead position when playing, edit cursor when stopped
                                 // The Position includes both time and musical position from REAPER's tempo map
@@ -728,9 +728,9 @@ impl SetlistServiceImpl {
                             for proj_state in &update.projects {
                                 if let Some(song_indices) = guid_to_indices.get(&proj_state.project_guid) {
                                     let is_playing = proj_state.transport.play_state
-                                        == daw_proto::PlayState::Playing
+                                        == daw::service::PlayState::Playing
                                         || proj_state.transport.play_state
-                                            == daw_proto::PlayState::Recording;
+                                            == daw::service::PlayState::Recording;
 
                                     // Use playhead position when playing, edit cursor when stopped
                                     let position = if is_playing {
@@ -1052,7 +1052,7 @@ impl SetlistServiceImpl {
                                 if let Ok(prev_project) = daw.project(prev_guid).await {
                                     let transport = prev_project.transport();
                                     if let Ok(state) = transport.get_play_state().await {
-                                        if state == daw_proto::PlayState::Paused {
+                                        if state == daw::service::PlayState::Paused {
                                             // Stop the paused project
                                             debug!("Stopping paused project {}", prev_guid);
                                             let _ = transport.stop().await;
@@ -1345,7 +1345,7 @@ impl SetlistService for SetlistServiceImpl {
         if !song.measure_positions.is_empty() {
             let ts = song
                 .time_signature
-                .unwrap_or(daw_proto::TimeSignature::new(4, 4));
+                .unwrap_or(daw::service::TimeSignature::new(4, 4));
             return Ok(song
                 .measure_positions
                 .iter()
@@ -1362,7 +1362,7 @@ impl SetlistService for SetlistServiceImpl {
         // Otherwise, calculate measures from tempo and time signature
         let ts = song
             .time_signature
-            .unwrap_or(daw_proto::TimeSignature::new(4, 4));
+            .unwrap_or(daw::service::TimeSignature::new(4, 4));
         let tempo = song.tempo.unwrap_or(120.0);
 
         // Calculate measure duration in seconds
@@ -1495,7 +1495,7 @@ impl SetlistService for SetlistServiceImpl {
     async fn seek_to_musical_position(
         &self,
         song_index: usize,
-        position: daw_proto::MusicalPosition,
+        position: daw::service::MusicalPosition,
     ) -> Result<(), SessionServiceError> {
         self.seek_to_musical_position_impl(song_index, position)
             .await

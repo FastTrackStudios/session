@@ -13,8 +13,8 @@
 //! 2. **Markers**: When no regions exist, consecutive markers are used to define sections
 //!    Each marker defines the start of a section, ending at the next marker.
 
-use daw_control::Project;
-use daw_proto::{Marker, Region};
+use daw::Project;
+use daw::service::{Marker, Region};
 use session_proto::{Comment, Section, SectionId, SectionType, Song, SongId};
 use tracing::{Level, debug, warn};
 
@@ -22,7 +22,7 @@ use tracing::{Level, debug, warn};
 pub struct SongBuilder;
 
 /// Helper to get seconds from Position
-fn position_to_seconds(pos: &daw_proto::Position) -> f64 {
+fn position_to_seconds(pos: &daw::service::Position) -> f64 {
     pos.time.as_ref().map(|t| t.as_seconds()).unwrap_or(0.0)
 }
 
@@ -88,7 +88,7 @@ impl SongBuilder {
         project_name: &str,
         markers: &[Marker],
         regions: &[Region],
-        tempo_map: &daw_control::TempoMap,
+        tempo_map: &daw::TempoMap,
     ) -> eyre::Result<Song> {
         // Parse song name and artist from project name
         let (song_name, _artist) = Self::parse_project_name(project_name);
@@ -319,7 +319,7 @@ impl SongBuilder {
             .time_signature_at(start_seconds)
             .await
             .ok()
-            .map(|(num, denom)| daw_proto::TimeSignature::new(num as u32, denom as u32));
+            .map(|(num, denom)| daw::service::TimeSignature::new(num as u32, denom as u32));
 
         // Build measure positions if we have tempo and time signature
         let measure_positions = if let (Some(bpm), Some(ts)) = (tempo, time_sig) {
@@ -433,7 +433,7 @@ impl SongBuilder {
         song_region: &Region,
         all_regions: &[Region],
         all_markers: &[Marker],
-        tempo_map: &daw_control::TempoMap,
+        tempo_map: &daw::TempoMap,
     ) -> eyre::Result<Song> {
         let (song_name, _artist) = Self::parse_project_name(&song_region.name);
         let start_seconds = song_region.time_range.start_seconds();
@@ -500,7 +500,7 @@ impl SongBuilder {
             .time_signature_at(start_seconds)
             .await
             .ok()
-            .map(|(num, denom)| daw_proto::TimeSignature::new(num as u32, denom as u32));
+            .map(|(num, denom)| daw::service::TimeSignature::new(num as u32, denom as u32));
 
         let measure_positions = if let (Some(bpm), Some(ts)) = (tempo, time_sig) {
             Self::calculate_measure_positions(song_start_seconds, end_seconds, bpm, ts)
@@ -872,8 +872,8 @@ impl SongBuilder {
         start_seconds: f64,
         end_seconds: f64,
         bpm: f64,
-        ts: daw_proto::TimeSignature,
-    ) -> Vec<daw_proto::Position> {
+        ts: daw::service::TimeSignature,
+    ) -> Vec<daw::service::Position> {
         let beats_per_measure = ts.numerator() as f64;
         let seconds_per_beat = 60.0 / bpm;
         let measure_duration = beats_per_measure * seconds_per_beat;
@@ -884,7 +884,7 @@ impl SongBuilder {
         (0..measure_count)
             .map(|idx| {
                 let time_seconds = start_seconds + (idx as f64 * measure_duration);
-                daw_proto::Position::from_time(daw_proto::TimePosition::from_seconds(time_seconds))
+                daw::service::Position::from_time(daw::service::TimePosition::from_seconds(time_seconds))
             })
             .collect()
     }

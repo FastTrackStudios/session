@@ -7,8 +7,7 @@ edition = "2024"
 roam.workspace = true
 actions-proto.workspace = true
 facet.workspace = true
-daw-proto.workspace = true
-daw-control.workspace = true
+daw.workspace = true
 keyflow-proto.workspace = true
 utils.workspace = true
 uuid = { version = "1", features = ["v4", "v7", "serde", "js"] }

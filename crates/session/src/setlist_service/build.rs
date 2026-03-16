@@ -1,7 +1,7 @@
 //! Setlist assembly from open DAW projects
 
 use super::{SetlistServiceImpl, HYDRATION_CONCURRENCY};
-use daw_control::Daw;
+use daw::Daw;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_proto::{AdvanceMode, SessionServiceError, Setlist, Song};
 use std::sync::Arc;

@@ -9,7 +9,7 @@ description = "Dioxus UI components for session management"
 session-proto = { workspace = true }
 
 # DAW types (for PlayState, etc.)
-daw-proto = { workspace = true }
+daw = { workspace = true }
 
 # FTS UI components
 fts-ui.workspace = true

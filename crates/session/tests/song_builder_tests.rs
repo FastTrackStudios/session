@@ -3,10 +3,10 @@
 //! These tests verify that the SongBuilder correctly extracts songs from
 //! the mock project data in daw-standalone.
 
-use daw_proto::ProjectContext;
-use daw_proto::marker::MarkerService;
-use daw_proto::region::RegionService;
-use daw_standalone::{StandaloneMarker, StandaloneProject, StandaloneRegion};
+use daw::service::ProjectContext;
+use daw::service::marker::MarkerService;
+use daw::service::region::RegionService;
+use daw::standalone::{StandaloneMarker, StandaloneProject, StandaloneRegion};
 
 /// Create a test context for calling services directly
 fn test_context() -> Context {
@@ -22,7 +22,7 @@ fn test_context() -> Context {
 /// Test that StandaloneProject returns 3 projects
 #[tokio::test]
 async fn test_standalone_returns_three_projects() {
-    use daw_proto::ProjectService;
+    use daw::service::ProjectService;
 
     let project_service = StandaloneProject::new();
     let cx = test_context();
@@ -43,7 +43,7 @@ async fn test_standalone_returns_three_projects() {
 /// Test that markers are correctly associated with each project
 #[tokio::test]
 async fn test_markers_per_project() {
-    use daw_proto::ProjectService;
+    use daw::service::ProjectService;
 
     let project_service = StandaloneProject::new();
     let marker_service = StandaloneMarker::new();
@@ -87,7 +87,7 @@ async fn test_markers_per_project() {
 /// This simulates what SongBuilder does without the full daw-control layer
 #[tokio::test]
 async fn test_song_builder_marker_parsing() {
-    use daw_proto::ProjectService;
+    use daw::service::ProjectService;
 
     let project_service = StandaloneProject::new();
     let marker_service = StandaloneMarker::new();
@@ -180,7 +180,7 @@ async fn test_song_builder_marker_parsing() {
 /// Test that regions are correctly associated with each project
 #[tokio::test]
 async fn test_regions_per_project() {
-    use daw_proto::ProjectService;
+    use daw::service::ProjectService;
 
     let project_service = StandaloneProject::new();
     let region_service = StandaloneRegion::new();
