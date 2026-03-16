@@ -3,17 +3,17 @@
 //! Represents a song as a structured collection of sections derived from
 //! DAW markers and regions.
 //!
-//! This module re-exports section types from keyflow-proto for consistency
+//! This module re-exports section types from keyflow for consistency
 //! across the codebase, while providing session-specific wrappers where needed.
 
 use crate::{SectionId, SongId};
 use daw::service::{Position, TimeSignature};
 use facet::Facet;
 
-// Re-export section types from keyflow-proto as the single source of truth
-pub use keyflow_proto::Chart;
-pub use keyflow_proto::sections::SectionType;
-pub use keyflow_proto::sections::colors::{SectionColors, colors_for_section_type};
+// Re-export section types from keyflow as the single source of truth
+pub use keyflow::Chart;
+pub use keyflow::sections::SectionType;
+pub use keyflow::sections::colors::{SectionColors, colors_for_section_type};
 
 /// A comment marker within a song
 ///
@@ -127,7 +127,7 @@ impl Comment {
 /// They are typically extracted from DAW regions or marker pairs.
 ///
 /// This is a session-specific wrapper that provides direct access to time positions
-/// for UI rendering. For chart parsing, use `keyflow_proto::sections::Section` directly.
+/// for UI rendering. For chart parsing, use `keyflow::sections::Section` directly.
 #[derive(Clone, Debug, PartialEq, Facet)]
 pub struct Section {
     /// Stable unique identifier for this section.
