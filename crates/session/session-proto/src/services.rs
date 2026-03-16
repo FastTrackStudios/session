@@ -334,6 +334,19 @@ pub trait SetlistService {
     /// to song structures or project state.
     async fn refresh(&self) -> Result<(), SessionServiceError>;
 
+    /// Generate a combined setlist project from all open song projects.
+    ///
+    /// Scans open projects, skips any that are already combined setlists
+    /// (identified by ExtState `FTS/is_combined_setlist`), builds songs,
+    /// generates a combined RPP with configurable gap between songs,
+    /// and opens it as a new project tab.
+    ///
+    /// `gap_measures` — number of empty measures between songs (default: 2)
+    async fn generate_combined_setlist(
+        &self,
+        gap_measures: u32,
+    ) -> Result<String, SessionServiceError>;
+
     // =========================================================================
     // Subscriptions
     // =========================================================================

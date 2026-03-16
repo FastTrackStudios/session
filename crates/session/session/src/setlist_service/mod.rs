@@ -8,6 +8,7 @@
 //! - `polling` — Active indices calculation, transport streaming, subscriptions
 
 mod build;
+mod combined;
 mod hydration;
 mod navigation;
 mod playback;
