@@ -8,7 +8,7 @@ roam.workspace = true
 actions-proto.workspace = true
 facet.workspace = true
 daw.workspace = true
-keyflow-proto.workspace = true
+keyflow.workspace = true
 utils.workspace = true
 uuid = { version = "1", features = ["v4", "v7", "serde", "js"] }
 serde.workspace = true
