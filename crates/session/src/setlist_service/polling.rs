@@ -1248,7 +1248,7 @@ impl SetlistServiceImpl {
         let daw = Daw::get();
         Ok(daw
             .audio_engine()
-            .get_output_latency_seconds()
+            .output_latency_seconds()
             .await
             .unwrap_or(0.0))
     }
