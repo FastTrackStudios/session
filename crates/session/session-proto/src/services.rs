@@ -5,7 +5,7 @@
 use crate::setlist::{ActiveIndices, Setlist};
 use crate::song::{Section, Song, SongChartHydration};
 use crate::{SongId, SectionId};
-use daw_proto::MusicalPosition;
+use daw::service::MusicalPosition;
 use facet::Facet;
 use roam::Tx;
 use roam::service;
@@ -80,7 +80,7 @@ pub struct SongTransportState {
     /// Current position with time, musical, and MIDI representations
     /// The musical position comes from REAPER's tempo map and properly
     /// accounts for tempo and time signature changes throughout the project
-    pub position: daw_proto::Position,
+    pub position: daw::service::Position,
     /// Position as progress within the song (0.0 - 1.0)
     pub progress: f64,
     /// Current section index (if in a section)
@@ -93,7 +93,7 @@ pub struct SongTransportState {
     pub is_looping: bool,
     /// Loop region start/end in seconds (relative to song start)
     /// Only present when looping is enabled and loop points are set
-    pub loop_region: Option<daw_proto::LoopRegion>,
+    pub loop_region: Option<daw::service::LoopRegion>,
     /// Current tempo in BPM
     pub bpm: f64,
     /// Time signature numerator
@@ -106,7 +106,7 @@ impl Default for SongTransportState {
     fn default() -> Self {
         Self {
             song_index: 0,
-            position: daw_proto::Position::default(),
+            position: daw::service::Position::default(),
             progress: 0.0,
             section_index: None,
             section_progress: None,

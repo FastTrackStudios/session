@@ -184,7 +184,7 @@ pub struct MeasureIndicator {
     pub position_percent: f64,
     pub measure_number: i32,
     pub time_signature: Option<(u8, u8)>,
-    pub musical_position: daw_proto::MusicalPosition,
+    pub musical_position: daw::service::MusicalPosition,
 }
 
 /// Comment marker for displaying notes/reminders above the progress bar

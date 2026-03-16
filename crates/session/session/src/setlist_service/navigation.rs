@@ -1,7 +1,7 @@
 //! Navigation methods: go_to_song, next/previous song/section, seeking
 
 use super::SetlistServiceImpl;
-use daw_control::Daw;
+use daw::Daw;
 use session_proto::{QueuedTarget, SessionServiceError, Song};
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -17,7 +17,7 @@ impl SetlistServiceImpl {
                 if let Ok(prev_project) = daw.project(&prev.project_guid).await {
                     let transport = prev_project.transport();
                     if let Ok(state) = transport.get_play_state().await {
-                        if state != daw_proto::PlayState::Playing {
+                        if state != daw::service::PlayState::Playing {
                             debug!(
                                 "Stopping idle project {} (state={:?}) before switching",
                                 prev.project_guid, state
@@ -550,7 +550,7 @@ impl SetlistServiceImpl {
     pub(crate) async fn seek_to_musical_position_impl(
         &self,
         song_index: usize,
-        position: daw_proto::MusicalPosition,
+        position: daw::service::MusicalPosition,
     ) -> Result<(), SessionServiceError> {
         debug!(
             "seek_to_musical_position: song={}, position={}.{}.{}",

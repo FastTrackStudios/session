@@ -23,7 +23,7 @@ pub fn SectionProgressBar(
     #[props(default)] measure_indicators: Vec<MeasureIndicator>,
     #[props(default)] comment_markers: Vec<CommentMarker>,
     #[props(default)] song_key: Option<String>,
-    #[props(default)] on_measure_click: Option<Callback<daw_proto::MusicalPosition>>,
+    #[props(default)] on_measure_click: Option<Callback<daw::service::MusicalPosition>>,
     #[props(default)] on_comment_click: Option<Callback<f64>>,
     #[props(default)] queued_target: Option<QueuedTarget>,
 ) -> Element {

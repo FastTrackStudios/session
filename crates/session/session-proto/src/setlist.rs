@@ -4,7 +4,7 @@
 
 use crate::SongId;
 use crate::song::Song;
-use daw_proto::TimeRange;
+use daw::service::TimeRange;
 use facet::Facet;
 
 /// Controls what happens when a song finishes playing.
