@@ -8,7 +8,7 @@ use daw::Daw;
 use session_proto::{Song, SongChartHydration, SongDetectedChord, SongId};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Semaphore;
+use moire::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
@@ -259,7 +259,7 @@ impl SetlistServiceImpl {
     pub(crate) async fn fetch_project_loads(
         projects: Vec<daw::Project>,
     ) -> Vec<ProjectLoad> {
-        let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY));
+        let semaphore = Arc::new(Semaphore::new("session.setlist.hydration.fetch_projects", HYDRATION_CONCURRENCY));
         let mut join_set = JoinSet::new();
 
         for (index, project) in projects.into_iter().enumerate() {

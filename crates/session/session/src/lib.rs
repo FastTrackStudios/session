@@ -20,6 +20,10 @@
 //! let song_dispatcher = SongServiceDispatcher::new(song);
 //! ```
 
+// Re-export session-proto so app crates can use `session::` instead of `session_proto::` directly.
+pub use session_proto::*;
+pub use session_proto::{services, setlist, song};
+
 pub mod cache;
 pub mod event_bus;
 mod setlist_builder;
