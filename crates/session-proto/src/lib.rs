@@ -28,9 +28,12 @@ pub use actions_proto::{
 };
 
 // Domain modules
+pub mod offset_map;
+pub mod ruler_lanes;
 pub mod services;
 pub mod setlist;
 pub mod song;
+pub mod track_structure;
 
 // Re-export common types
 pub use services::{
@@ -39,7 +42,12 @@ pub use services::{
     SongServiceDispatcher, SongTransportState, setlist_service_service_descriptor,
     song_service_service_descriptor,
 };
+pub use offset_map::{SetlistOffsetMap, SongOffset};
 pub use setlist::{ActiveIndices, AdvanceMode, QueuedTarget, Setlist};
+pub use track_structure::{
+    GuideTrackRole, ReferenceStructure, SetlistTrackStructure, SongTrackMapping, TrackEntry,
+    TrackIdentity,
+};
 pub use song::{Comment, Section, SectionType, Song, SongChartHydration, SongDetectedChord};
 // Typed IDs are defined at crate root and re-exported here for convenience
 // (SongId and SectionId are already in scope from the definitions above)

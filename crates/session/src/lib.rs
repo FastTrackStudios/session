@@ -22,21 +22,34 @@
 
 // Re-export session-proto so app crates can use `session::` instead of `session_proto::` directly.
 pub use session_proto::*;
-pub use session_proto::{services, setlist, song};
+pub use session_proto::{offset_map, ruler_lanes, services, setlist, song, track_structure};
 
+// Server-side modules — these use moire::sync, tokio, and Daw::get() which
+// are not available on wasm32. The web app only needs session-proto types
+// (re-exported above) and the action declarations (below).
+#[cfg(not(target_arch = "wasm32"))]
 pub mod cache;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod event_bus;
+#[cfg(not(target_arch = "wasm32"))]
 mod setlist_builder;
+#[cfg(not(target_arch = "wasm32"))]
 mod setlist_service;
+#[cfg(not(target_arch = "wasm32"))]
 mod song_builder;
+#[cfg(not(target_arch = "wasm32"))]
 mod song_service;
 
 // Re-export service implementations for library use
+#[cfg(not(target_arch = "wasm32"))]
 pub use setlist_service::SetlistServiceImpl;
+#[cfg(not(target_arch = "wasm32"))]
 pub use song_service::SongServiceImpl;
 
 // Re-export builders for advanced use cases
+#[cfg(not(target_arch = "wasm32"))]
 pub use setlist_builder::SetlistBuilder;
+#[cfg(not(target_arch = "wasm32"))]
 pub use song_builder::SongBuilder;
 
 // Session action definitions — single source of truth.
