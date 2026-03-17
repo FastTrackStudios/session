@@ -15,6 +15,7 @@ use session_proto::routing_project::*;
 use session_proto::SessionServiceError;
 use tracing::info;
 
+// r[impl routing.project.ensure]
 /// Ensure the FTS routing project exists and is open. Returns the project GUID.
 ///
 /// Resolution order:
@@ -75,6 +76,7 @@ async fn find_open_routing_project(
     Ok(None)
 }
 
+// r[impl routing.project.structure]
 /// Create the routing project from scratch with the canonical FTS track hierarchy.
 async fn create_routing_project(
     daw: &Daw,

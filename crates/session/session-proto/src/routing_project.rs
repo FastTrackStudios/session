@@ -11,6 +11,7 @@ use facet::Facet;
 
 // ── Routing Channel ────────────────────────────────────────────────────────
 
+// r[impl routing.channel.definition]
 /// A routing channel — one stereo stem category.
 ///
 /// Each variant maps to a track in the routing project. Click/Guide channels
@@ -102,6 +103,7 @@ impl RoutingChannel {
 
 // ── Routing Group ──────────────────────────────────────────────────────────
 
+// r[impl routing.channel.groups]
 /// Which folder group a routing channel belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
 #[repr(u8)]
@@ -124,6 +126,7 @@ impl RoutingGroup {
 
 // ── Loopback Config ────────────────────────────────────────────────────────
 
+// r[impl routing.loopback.config]
 /// Configuration for mapping routing channels to hardware loopback pairs.
 ///
 /// REAPER's loopback channels start at a hardware-dependent offset.
@@ -174,6 +177,7 @@ impl LoopbackConfig {
 /// Filename for the routing project on disk.
 pub const ROUTING_PROJECT_FILENAME: &str = "FTS-Routing.RPP";
 
+// r[impl routing.project.extstate]
 /// ExtState section for routing project identification.
 pub const EXT_STATE_SECTION: &str = "FTS";
 
