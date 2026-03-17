@@ -171,6 +171,7 @@ pub async fn run(
 // Combine Command
 // ============================================================================
 
+// r[impl combined.cli.combine]
 /// Combine song RPP files into a single setlist project.
 ///
 /// When `trim` is true, each song is trimmed to its marker-defined bounds:
@@ -259,6 +260,7 @@ pub fn cmd_combine(input: &str, output: Option<&str>, gap_measures: u32, trim: b
 // Organize Lanes Command
 // ============================================================================
 
+// r[impl combined.cli.organize]
 /// Organize an RPP project into canonical FTS hierarchy.
 ///
 /// Restructures tracks into:
