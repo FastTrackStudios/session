@@ -29,6 +29,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use moire::sync::RwLock;
 
+use position_sync::PositionSyncBridge;
+
 pub(crate) use hydration::SongCacheEntry;
 
 pub(crate) const HYDRATION_CONCURRENCY: usize = 12;
@@ -75,6 +77,9 @@ pub struct SetlistServiceImpl {
     pub(crate) last_chart_refresh_attempt: Cache<String, Instant>,
     /// Monotonic build generation to cancel stale background hydration tasks
     pub(crate) build_generation: Arc<AtomicU64>,
+    /// Bidirectional position sync between song tabs and setlist tab.
+    /// None until a combined setlist is generated.
+    pub(crate) position_sync: Arc<RwLock<Option<PositionSyncBridge>>>,
 }
 
 impl SetlistServiceImpl {
@@ -93,6 +98,7 @@ impl SetlistServiceImpl {
             fingerprint_method_supported: Arc::new(RwLock::new("session.setlist.fingerprint_supported", None)),
             last_chart_refresh_attempt: Cache::named("session.setlist.chart_refresh_attempts"),
             build_generation: Arc::new(AtomicU64::new(0)),
+            position_sync: Arc::new(RwLock::new("session.setlist.position_sync", None)),
         }
     }
 
