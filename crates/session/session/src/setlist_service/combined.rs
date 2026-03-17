@@ -302,7 +302,7 @@ impl SetlistServiceImpl {
             }
 
             let bridge = super::position_sync::PositionSyncBridge::new(
-                offset_map,
+                offset_map.clone(),
                 Some(guid.clone()),
             );
             *self.position_sync.write().await = Some(bridge);
@@ -323,6 +323,43 @@ impl SetlistServiceImpl {
             });
 
             info!("Position sync bridge started for {} songs", song_guids.len());
+
+            // Also start the live DAW sync bridge (marker/region/item replication).
+            // Collect song project handles for binding.
+            let song_projects: Vec<(usize, daw::Project)> = {
+                let mut sp = Vec::new();
+                let all = daw.projects().await.unwrap_or_default();
+                for project in all {
+                    if project.guid() == guid {
+                        continue;
+                    }
+                    // Check song_index from ExtState
+                    let idx_str = project
+                        .ext_state()
+                        .get(SYNC_SECTION, SYNC_KEY_SONG_INDEX)
+                        .await
+                        .unwrap_or(None);
+                    if let Some(idx_str) = idx_str {
+                        if let Ok(idx) = idx_str.parse::<usize>() {
+                            sp.push((idx, project));
+                        }
+                    }
+                }
+                sp
+            };
+
+            if !song_projects.is_empty() {
+                let setlist_project = daw.project(&guid).await;
+                if let Ok(setlist_project) = setlist_project {
+                    let daw_sync = super::live_daw_sync::DawSyncBridge::new(
+                        setlist_project,
+                        song_projects,
+                        &offset_map,
+                    ).await;
+                    daw_sync.start().await;
+                    info!("Live DAW sync bridge started");
+                }
+            }
         }
 
         info!(
