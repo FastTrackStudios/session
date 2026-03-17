@@ -21,6 +21,7 @@ moire.workspace = true
 eyre.workspace = true
 tracing.workspace = true
 chrono = "0.4"
+utils.workspace = true
 uuid = { version = "1", features = ["v4"] }
 rayon = "1"
 keyflow = { workspace = true, features = ["text"] }

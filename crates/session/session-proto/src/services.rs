@@ -377,6 +377,21 @@ pub trait SetlistService {
     async fn get_audio_latency_info(&self) -> Result<AudioLatencyInfo, SessionServiceError>;
 }
 
+// =============================================================================
+// Web Client Push Service (desktop → browser)
+// =============================================================================
+
+/// Service implemented by web clients to receive pushed state from the desktop.
+///
+/// The desktop gateway calls these methods on each connected web client when
+/// session state changes. This avoids the need for roam channels (which don't
+/// work on WASM) by using regular bidirectional RPC instead.
+#[service]
+pub trait WebClientService {
+    /// Receive a setlist event pushed from the desktop.
+    async fn push_event(&self, event: SetlistEvent);
+}
+
 /// Complete audio latency information for display
 #[derive(Clone, Debug, Default, PartialEq, Facet)]
 pub struct AudioLatencyInfo {
