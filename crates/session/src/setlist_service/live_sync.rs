@@ -115,7 +115,17 @@ impl LiveSyncState {
             idx, event.song_name, project_diff.summary()
         );
 
-        // Now diff the NEW song against the setlist to find what needs updating
+        // Check if the change is structural (requires full regeneration)
+        if project_diff.is_structural() {
+            info!(
+                "Song {} ({}) has structural changes — triggering full setlist regeneration",
+                idx, event.song_name
+            );
+            self.song_snapshots[idx] = Some(new_song);
+            return self.regenerate_setlist();
+        }
+
+        // Incremental patch: diff the NEW song against the setlist
         let new_diff = diff::diff_projects_with_options(&new_song, &self.setlist_project, &diff_options);
 
         // Apply the diff to the setlist
@@ -130,14 +140,88 @@ impl LiveSyncState {
         self.song_snapshots[idx] = Some(new_song);
 
         // Write the updated setlist to disk
-        // TODO: use the RPP serializer once it's complete
-        // For now, log that we would write
-        info!(
-            "Setlist updated, would write to {}",
-            self.setlist_path.display()
-        );
+        self.write_setlist();
 
         true
+    }
+
+    /// Full setlist regeneration — re-reads all song RPPs and rebuilds the
+    /// combined setlist from scratch. Used when structural changes make
+    /// incremental patching insufficient.
+    fn regenerate_setlist(&mut self) -> bool {
+        use daw::file::setlist_rpp::{
+            build_song_infos_from_projects, concatenate_projects, measures_to_seconds,
+        };
+
+        // Re-read all song RPPs
+        let mut projects = Vec::new();
+        let mut names = Vec::new();
+        for (i, path) in self.song_paths.iter().enumerate() {
+            match read_project(path) {
+                Ok(project) => {
+                    projects.push(project.clone());
+                    names.push(format!("Song {}", i + 1));
+                    self.song_snapshots[i] = Some(project);
+                }
+                Err(e) => {
+                    warn!("Failed to re-read song {}: {}", path.display(), e);
+                    return false;
+                }
+            }
+        }
+
+        // Rebuild with 2-measure gap at 120 BPM (TODO: make configurable)
+        let gap = measures_to_seconds(2, 120.0, 4);
+        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        let song_infos = build_song_infos_from_projects(&projects, &name_refs, gap);
+        let combined = concatenate_projects(&projects, &song_infos);
+
+        // Update the offset map
+        use session_proto::offset_map::{SongOffset, SetlistOffsetMap};
+        use session_proto::SongId;
+        self.offset_map = SetlistOffsetMap {
+            songs: song_infos.iter().enumerate().map(|(i, si)| SongOffset {
+                index: i,
+                song_id: SongId::new(),
+                project_guid: String::new(),
+                global_start_seconds: si.global_start_seconds,
+                global_start_qn: si.global_start_seconds * 2.0,
+                duration_seconds: si.duration_seconds,
+                duration_qn: si.duration_seconds * 2.0,
+                count_in_seconds: 0.0,
+                start_tempo: 120.0,
+                start_time_sig: daw::service::TimeSignature::new(4, 4),
+            }).collect(),
+            total_seconds: song_infos.last()
+                .map(|s| s.global_start_seconds + s.duration_seconds)
+                .unwrap_or(0.0),
+            total_qn: 0.0,
+        };
+
+        self.setlist_project = combined;
+        self.write_setlist();
+
+        info!("Setlist regenerated from {} songs", projects.len());
+        true
+    }
+
+    /// Write the current setlist project to disk.
+    fn write_setlist(&self) {
+        use daw::file::setlist_rpp::project_to_rpp_text;
+
+        let rpp_text = project_to_rpp_text(&self.setlist_project);
+        match std::fs::write(&self.setlist_path, &rpp_text) {
+            Ok(()) => info!(
+                "Setlist written: {} ({} bytes)",
+                self.setlist_path.display(),
+                rpp_text.len()
+            ),
+            Err(e) => warn!(
+                "Failed to write setlist to {}: {}",
+                self.setlist_path.display(),
+                e
+            ),
+        }
     }
 }
 
