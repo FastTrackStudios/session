@@ -4,6 +4,9 @@
 *.pdb
 .DS_Store
 .direnv/
+.devenv/
+.devenv.flake.nix
+devenv.local.nix
 .env
 *.log
 *.swp

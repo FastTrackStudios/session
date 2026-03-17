@@ -1,0 +1,246 @@
+{
+  description = "FastTrackStudio DAW — cross-platform DAW control framework";
+
+  inputs = {
+    nixpkgs.url = "github:cachix/devenv-nixpkgs/rolling";
+    devenv.url = "github:cachix/devenv";
+    flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+    fts-flake.url = "github:FastTrackStudios/fts-flake";
+    fts-flake.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  nixConfig = {
+    extra-trusted-public-keys = [
+      "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw="
+      "fasttrackstudio.cachix.org-1:r7v7WXBeSZ7m5meL6w0wttnvsOltRvTpXeVNItcy9f4="
+    ];
+    extra-substituters = [
+      "https://devenv.cachix.org"
+      "https://fasttrackstudio.cachix.org"
+    ];
+  };
+
+  outputs =
+    {
+      self,
+      nixpkgs,
+      devenv,
+      flake-utils,
+      rust-overlay,
+      fts-flake,
+    } @ inputs:
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (
+      system:
+      let
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfreePredicate =
+            pkg:
+            builtins.elem (pkgs.lib.getName pkg) [
+              "reaper"
+            ];
+        };
+
+        # Get FTS packages for dev (with extensions + plugins) and CI (minimal)
+        ftsDev = fts-flake.lib.mkFtsPackages {
+          inherit pkgs;
+          cfg = fts-flake.presets.dev;
+        };
+        ftsCi = fts-flake.lib.mkFtsPackages {
+          inherit pkgs;
+          cfg = fts-flake.presets.ci;
+        };
+      in
+      {
+        devShells = {
+          # ── Default dev shell ─────────────────────────────────
+          default = devenv.lib.mkShell {
+            inherit inputs pkgs;
+            modules = [
+              (
+                { pkgs, config, ... }:
+                {
+                  cachix.pull = [ "fasttrackstudio" ];
+
+                  packages = [
+                    ftsDev.fts-test
+                    ftsDev.fts-gui
+                    ftsDev.reaper-fhs
+                    pkgs.pkg-config
+                    pkgs.openssl
+                  ];
+
+                  languages.rust = {
+                    enable = true;
+                    channel = "stable";
+                  };
+
+                  env = {
+                    FTS_REAPER_EXECUTABLE = "${ftsDev.reaper}/bin/reaper";
+                    FTS_REAPER_RESOURCES = "${ftsDev.reaper}/opt/REAPER";
+                  };
+
+                  # ── Scripts ───────────────────────────────────
+                  scripts = {
+                    daw-build.exec = "cargo build --workspace";
+                    daw-build.description = "Build the entire daw workspace";
+
+                    daw-test.exec = "cargo test --workspace";
+                    daw-test.description = "Run all unit tests";
+
+                    daw-smoke.exec = ''
+                      fts-test bash -c '
+                        "$FTS_REAPER_EXECUTABLE" -newinst -nosplash -ignoreerrors &
+                        RPID=$!
+                        sleep 3
+                        if kill -0 $RPID 2>/dev/null; then
+                          echo "REAPER running (PID $RPID) — smoke test passed"
+                          kill $RPID
+                        else
+                          echo "REAPER failed to start"
+                          exit 1
+                        fi
+                      '
+                    '';
+                    daw-smoke.description = "Quick REAPER headless smoke test";
+
+                    daw-integration.exec = ''
+                      fts-test bash -c '
+                        "$FTS_REAPER_EXECUTABLE" -newinst -nosplash -ignoreerrors &
+                        RPID=$!
+                        echo "Waiting for REAPER socket..."
+                        SOCK=""
+                        for i in $(seq 1 30); do
+                          SOCK=$(ls /tmp/fts-daw-*.sock 2>/dev/null | head -1)
+                          if [ -n "$SOCK" ]; then break; fi
+                          sleep 1
+                        done
+                        if [ -z "$SOCK" ]; then
+                          echo "No socket found after 30s"
+                          kill $RPID 2>/dev/null
+                          exit 1
+                        fi
+                        echo "Socket ready: $SOCK"
+                        cargo test -p daw-reaper --test reaper_connection -- --ignored --nocapture
+                        STATUS=$?
+                        kill $RPID 2>/dev/null
+                        exit $STATUS
+                      '
+                    '';
+                    daw-integration.description = "Run REAPER integration tests (headless)";
+
+                    daw-ci.exec = ''
+                      set -e
+                      echo "=== Unit tests ==="
+                      cargo test --workspace
+                      echo ""
+                      echo "=== Integration tests ==="
+                      daw-integration
+                      echo ""
+                      echo "=== All tests passed ==="
+                    '';
+                    daw-ci.description = "Run full test suite (unit + integration)";
+                  };
+
+                  # ── Claude Code integration ──────────────────
+                  claude.code = {
+                    enable = true;
+                    commands = {
+                      smoke = ''
+                        Run the REAPER headless smoke test
+
+                        ```bash
+                        daw-smoke
+                        ```
+                      '';
+                      integration = ''
+                        Run the REAPER integration test suite
+
+                        ```bash
+                        daw-integration
+                        ```
+                      '';
+                      build = ''
+                        Build the daw workspace
+
+                        ```bash
+                        daw-build
+                        ```
+                      '';
+                      test = ''
+                        Run unit tests
+
+                        ```bash
+                        daw-test
+                        ```
+                      '';
+                      ci = ''
+                        Run the full CI test suite (unit + integration)
+
+                        ```bash
+                        daw-ci
+                        ```
+                      '';
+                    };
+                  };
+
+                  git-hooks.hooks = {
+                    rustfmt.enable = true;
+                  };
+
+                  enterShell = ''
+                    echo ""
+                    echo "  daw dev shell (devenv + fts-flake)"
+                    echo "  ────────────────────────────────────────"
+                    echo "  daw-build         — cargo build --workspace"
+                    echo "  daw-test          — cargo test --workspace"
+                    echo "  daw-smoke         — REAPER headless smoke test"
+                    echo "  daw-integration   — REAPER integration tests"
+                    echo "  daw-ci            — full test suite"
+                    echo ""
+                    echo "  fts-test [cmd]    — headless FHS env"
+                    echo "  fts-gui           — launch REAPER with GUI"
+                    echo ""
+                    echo "  REAPER: ${ftsDev.reaper}/bin/reaper"
+                    echo ""
+                  '';
+                }
+              )
+            ];
+          };
+
+          # ── CI shell (minimal, no GUI, no plugins) ────────────
+          ci = devenv.lib.mkShell {
+            inherit inputs pkgs;
+            modules = [
+              (
+                { pkgs, ... }:
+                {
+                  cachix.pull = [ "fasttrackstudio" ];
+
+                  packages = [
+                    ftsCi.fts-test
+                    ftsCi.reaper-fhs
+                    pkgs.pkg-config
+                    pkgs.openssl
+                  ];
+
+                  languages.rust = {
+                    enable = true;
+                    channel = "stable";
+                  };
+
+                  env = {
+                    FTS_REAPER_EXECUTABLE = "${ftsCi.reaper}/bin/reaper";
+                    FTS_REAPER_RESOURCES = "${ftsCi.reaper}/opt/REAPER";
+                  };
+                }
+              )
+            ];
+          };
+        };
+      }
+    );
+}
