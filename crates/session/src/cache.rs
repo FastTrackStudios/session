@@ -4,10 +4,10 @@
 //! with typed get/insert/invalidate operations. Designed to be
 //! `Send + Sync` for use across async tasks.
 
+use moire::sync::RwLock;
 use rustc_hash::FxHashMap;
 use std::hash::Hash;
 use std::sync::Arc;
-use moire::sync::RwLock;
 
 /// A thread-safe, async-compatible cache backed by `FxHashMap`.
 ///

@@ -147,7 +147,7 @@ impl PositionSyncBridge {
             // Detect significant position change (not just playback advancing)
             let pos_delta = (pos - prev_pos).abs();
             let is_seek = !playing && pos_delta > 0.01 // Cursor moved while stopped
-                || playing && pos_delta > 1.0;          // Large jump while playing
+                || playing && pos_delta > 1.0; // Large jump while playing
 
             if is_seek && !self.suppression.is_suppressed(&guid) {
                 if guid == setlist_guid {

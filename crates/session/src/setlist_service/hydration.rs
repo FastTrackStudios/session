@@ -1,14 +1,14 @@
 //! Song hydration logic: cache lookups, chart extraction, fingerprint checking
 
 use super::{
-    SetlistServiceImpl, CHART_REFRESH_FALLBACK_POLL_MS, HYDRATION_CONCURRENCY, MIDI_TRACK_TAG,
+    CHART_REFRESH_FALLBACK_POLL_MS, HYDRATION_CONCURRENCY, MIDI_TRACK_TAG, SetlistServiceImpl,
 };
 use crate::song_builder::SongBuilder;
 use daw::Daw;
+use moire::sync::Semaphore;
 use session_proto::{Song, SongChartHydration, SongDetectedChord, SongId};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use moire::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
@@ -256,10 +256,11 @@ impl SetlistServiceImpl {
         }
     }
 
-    pub(crate) async fn fetch_project_loads(
-        projects: Vec<daw::Project>,
-    ) -> Vec<ProjectLoad> {
-        let semaphore = Arc::new(Semaphore::new("session.setlist.hydration.fetch_projects", HYDRATION_CONCURRENCY));
+    pub(crate) async fn fetch_project_loads(projects: Vec<daw::Project>) -> Vec<ProjectLoad> {
+        let semaphore = Arc::new(Semaphore::new(
+            "session.setlist.hydration.fetch_projects",
+            HYDRATION_CONCURRENCY,
+        ));
         let mut join_set = JoinSet::new();
 
         for (index, project) in projects.into_iter().enumerate() {
@@ -380,8 +381,7 @@ impl SetlistServiceImpl {
             (index, song.clone())
         };
 
-        let fingerprint_supported =
-            *self.fingerprint_method_supported.read().await != Some(false);
+        let fingerprint_supported = *self.fingerprint_method_supported.read().await != Some(false);
         if !fingerprint_supported
             && !self
                 .should_run_fallback_chart_refresh(&song_snapshot.project_guid)
