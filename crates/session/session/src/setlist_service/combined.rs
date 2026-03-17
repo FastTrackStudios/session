@@ -243,6 +243,88 @@ impl SetlistServiceImpl {
         }
 
         let guid = new_project.guid().to_string();
+
+        // ── 7. Start bidirectional position sync ────────────────────────
+        // Build offset map from song_infos and wire up the PositionSyncBridge.
+        {
+            use session_proto::offset_map::{SetlistOffsetMap, SongOffset};
+            use session_proto::SongId;
+
+            let offset_map = SetlistOffsetMap {
+                songs: song_infos.iter().enumerate().map(|(i, si)| SongOffset {
+                    index: i,
+                    song_id: SongId::new(),
+                    project_guid: String::new(), // Filled below from open projects
+                    global_start_seconds: si.global_start_seconds,
+                    global_start_qn: si.global_start_seconds * 2.0, // approximate
+                    duration_seconds: si.duration_seconds,
+                    duration_qn: si.duration_seconds * 2.0,
+                    count_in_seconds: 0.0,
+                    start_tempo: 120.0,
+                    start_time_sig: daw::service::TimeSignature::new(4, 4),
+                }).collect(),
+                total_seconds: song_infos.last()
+                    .map(|s| s.global_start_seconds + s.duration_seconds)
+                    .unwrap_or(0.0),
+                total_qn: 0.0,
+            };
+
+            // Fill in project GUIDs from the open song tabs
+            let all_projects = daw.projects().await.unwrap_or_default();
+            let mut song_guids: Vec<String> = Vec::new();
+            for project in &all_projects {
+                if project.guid() == guid {
+                    continue;
+                }
+                let is_combined = project
+                    .ext_state()
+                    .get(COMBINED_EXT_SECTION, COMBINED_EXT_KEY)
+                    .await
+                    .unwrap_or(None)
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                if is_combined {
+                    continue;
+                }
+                let info = match project.info().await {
+                    Ok(i) if !i.path.is_empty() => i,
+                    _ => continue,
+                };
+                song_guids.push(project.guid().to_string());
+            }
+
+            // Update offset map with actual GUIDs
+            let mut offset_map = offset_map;
+            for (i, song) in offset_map.songs.iter_mut().enumerate() {
+                if let Some(g) = song_guids.get(i) {
+                    song.project_guid = g.clone();
+                }
+            }
+
+            let bridge = super::position_sync::PositionSyncBridge::new(
+                offset_map,
+                Some(guid.clone()),
+            );
+            *self.position_sync.write().await = Some(bridge);
+
+            // Spawn the position sync tick loop
+            let position_sync = self.position_sync.clone();
+            moire::task::spawn(async move {
+                let daw = daw::Daw::get();
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(33)).await; // ~30Hz
+                    let mut guard = position_sync.write().await;
+                    if let Some(ref mut bridge) = *guard {
+                        bridge.tick(&daw).await;
+                    } else {
+                        break;
+                    }
+                }
+            });
+
+            info!("Position sync bridge started for {} songs", song_guids.len());
+        }
+
         info!(
             "Combined setlist opened: {} (setlist_id={}, {} songs tagged)",
             guid, setlist_id, song_idx
