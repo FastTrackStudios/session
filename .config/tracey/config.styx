@@ -1,0 +1,27 @@
+specs (
+    {
+        name daw
+        include (docs/spec/**/*.md)
+        impls (
+            {
+                name rust
+                include (
+                    crates/**/*.rs
+                    apps/**/*.rs
+                )
+                exclude (
+                    target/**
+                    **/tests/**
+                )
+            }
+            {
+                name tests
+                include (
+                    crates/**/tests/**/*.rs
+                    crates/**/src/**/*test*.rs
+                )
+                exclude (target/**)
+            }
+        )
+    }
+)
