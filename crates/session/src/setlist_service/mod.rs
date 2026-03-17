@@ -10,6 +10,7 @@
 mod build;
 mod combined;
 pub mod file_watcher;
+pub mod live_daw_sync;
 pub mod live_sync;
 mod hydration;
 mod navigation;
