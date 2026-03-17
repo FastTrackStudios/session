@@ -1,10 +1,20 @@
 //! Combined setlist generation — merges all open song projects into a single
 //! REAPER project with songs laid out sequentially on the timeline.
+//!
+//! Uses the `combine_rpp_files` pipeline from the daw crate to handle:
+//! - PREROLL/POSTROLL bounds resolution (trimming)
+//! - Guide track merging (Click, Loop, Count, Guide → shared header)
+//! - Per-song folder creation under TRACKS/
+//! - Tempo envelope concatenation
+//! - Marker/region offset + lane classification
+//!
+//! After the daw crate produces the combined RPP text, post-processing steps
+//! run via the Daw facade on the opened project:
+//! - Mark as combined setlist (ExtState)
+//! - Wire routing receives (future: when routing folder is added at RPP level)
 
 use crate::setlist_service::SetlistServiceImpl;
-use crate::song_builder::SongBuilder;
 use daw::Daw;
-use session_proto::offset_map::SetlistOffsetMap;
 use session_proto::SessionServiceError;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
@@ -13,18 +23,25 @@ use tracing::{debug, info, warn};
 const COMBINED_EXT_SECTION: &str = "FTS";
 const COMBINED_EXT_KEY: &str = "is_combined_setlist";
 
+/// ExtState keys for sync group identity.
+/// Written to every project tab involved in a setlist so they can find each other.
+const SYNC_SECTION: &str = "FTS_SYNC";
+const SYNC_KEY_SETLIST_ID: &str = "setlist_id";
+const SYNC_KEY_SONG_INDEX: &str = "song_index";
+const SYNC_KEY_SETLIST_PATH: &str = "setlist_path";
+const SYNC_KEY_SONG_COUNT: &str = "song_count";
+
 impl SetlistServiceImpl {
     /// Generate a combined setlist project from open song projects.
     ///
     /// Pipeline:
     /// 1. Save all open projects to disk
-    /// 2. Enumerate projects, skip combined setlists
-    /// 3. Read each song project's RPP file from disk
-    /// 4. Build offset map with gap between songs
-    /// 5. Concatenate into combined RPP
-    /// 6. Write combined RPP to disk
-    /// 7. Open it as a new REAPER tab
-    /// 8. Mark the new tab with ExtState so it's skipped next time
+    /// 2. Enumerate projects, skip combined setlists and routing projects
+    /// 3. Collect RPP file paths
+    /// 4. Combine via `combine_rpp_files` (handles bounds, guide merging, folders, tempo, markers)
+    /// 5. Write combined RPP to disk
+    /// 6. Open in REAPER as a new tab
+    /// 7. Post-process: mark as combined, wire routing receives
     ///
     /// Returns the GUID of the newly opened combined project.
     pub(crate) async fn generate_combined_setlist_impl(
@@ -48,8 +65,9 @@ impl SetlistServiceImpl {
             .await
             .map_err(|e| SessionServiceError::DawError(format!("Failed to list projects: {e}")))?;
 
-        let mut song_projects = Vec::new();
+        let mut rpp_paths = Vec::new();
         for project in &projects {
+            // Skip combined setlist projects
             let is_combined = project
                 .ext_state()
                 .get(COMBINED_EXT_SECTION, COMBINED_EXT_KEY)
@@ -60,6 +78,23 @@ impl SetlistServiceImpl {
 
             if is_combined {
                 debug!("Skipping combined setlist project: {}", project.guid());
+                continue;
+            }
+
+            // Skip routing projects
+            let is_routing = project
+                .ext_state()
+                .get(
+                    session_proto::routing_project::EXT_STATE_SECTION,
+                    session_proto::routing_project::EXT_STATE_KEY_IS_ROUTING,
+                )
+                .await
+                .unwrap_or(None)
+                .map(|v| v == "1")
+                .unwrap_or(false);
+
+            if is_routing {
+                debug!("Skipping routing project: {}", project.guid());
                 continue;
             }
 
@@ -74,10 +109,10 @@ impl SetlistServiceImpl {
                 continue;
             }
 
-            song_projects.push((project.clone(), info));
+            rpp_paths.push(PathBuf::from(&info.path));
         }
 
-        if song_projects.is_empty() {
+        if rpp_paths.is_empty() {
             return Err(SessionServiceError::Internal(
                 "No saved song projects found".to_string(),
             ));
@@ -85,72 +120,38 @@ impl SetlistServiceImpl {
 
         info!(
             "Generating combined setlist from {} projects",
-            song_projects.len()
+            rpp_paths.len()
         );
 
-        // ── 3. Build songs from each project (for metadata) ──────────
-        let mut songs = Vec::new();
-        let mut rpp_paths = Vec::new();
+        // ── 3. Combine RPP files using the daw crate pipeline ─────────
+        //
+        // This handles everything at the RPP level:
+        // - Resolves song bounds (PREROLL → POSTROLL priority chain)
+        // - Merges guide tracks (Click, Loop, Count, Guide) into shared header
+        // - Creates per-song folders under TRACKS/
+        // - Concatenates tempo envelopes with square-shape boundaries
+        // - Offsets markers/regions with lane classification
+        // - Resolves relative media paths to absolute
+        let options = daw::file::setlist_rpp::CombineOptions {
+            gap_measures,
+            trim_to_bounds: true,
+        };
+        let (combined_rpp, song_infos) =
+            daw::file::setlist_rpp::combine_rpp_files(&rpp_paths, &options).map_err(|e| {
+                SessionServiceError::Internal(format!("Failed to combine RPP files: {e}"))
+            })?;
 
-        for (project, info) in &song_projects {
-            match SongBuilder::build(project).await {
-                Ok(project_songs) => {
-                    for song in project_songs {
-                        debug!(
-                            "  Song: {} ({:.1}s, {:.0} BPM) from {}",
-                            song.name,
-                            song.duration(),
-                            song.tempo.unwrap_or(120.0),
-                            info.path,
-                        );
-                        songs.push(song);
-                    }
-                    rpp_paths.push(PathBuf::from(&info.path));
-                }
-                Err(e) => {
-                    warn!("Failed to extract songs from {}: {e}", info.name);
-                }
-            }
-        }
+        info!(
+            "Combined {} songs: {}",
+            song_infos.len(),
+            song_infos
+                .iter()
+                .map(|s| format!("{} ({:.1}s)", s.name, s.duration_seconds))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
 
-        if songs.is_empty() {
-            return Err(SessionServiceError::Internal(
-                "No songs found in any project".to_string(),
-            ));
-        }
-
-        // ── 4. Parse RPP files from disk ─────────────────────────────
-        let mut parsed_projects = Vec::new();
-        for path in &rpp_paths {
-            match daw::file::read_project(path) {
-                Ok(project) => parsed_projects.push(project),
-                Err(e) => {
-                    warn!("Failed to parse RPP file {}: {e}", path.display());
-                    return Err(SessionServiceError::Internal(format!(
-                        "Failed to parse {}: {e}",
-                        path.display()
-                    )));
-                }
-            }
-        }
-
-        // ── 5. Build offset map + song infos with gap ────────────────
-        let default_tempo = songs.first().and_then(|s| s.tempo).unwrap_or(120.0);
-        let gap_seconds = daw::file::setlist_rpp::measures_to_seconds(gap_measures, default_tempo, 4);
-
-        let song_entries: Vec<(&str, f64)> = songs
-            .iter()
-            .map(|s| (s.name.as_str(), s.duration()))
-            .collect();
-        let song_infos = daw::file::setlist_rpp::build_song_infos(&song_entries, gap_seconds);
-
-        // ── 6. Concatenate projects ──────────────────────────────────
-        let combined = daw::file::setlist_rpp::concatenate_projects(&parsed_projects, &song_infos);
-
-        // ── 7. Serialize and write combined RPP ──────────────────────
-        let rpp_text = daw::file::setlist_rpp::project_to_rpp_text(&combined);
-
-        // Write next to the first song's project file
+        // ── 4. Write combined RPP to disk ─────────────────────────────
         let output_dir = rpp_paths
             .first()
             .and_then(|p| p.parent())
@@ -158,7 +159,7 @@ impl SetlistServiceImpl {
             .unwrap_or_else(std::env::temp_dir);
         let output_path = output_dir.join("Combined Setlist.RPP");
 
-        std::fs::write(&output_path, &rpp_text).map_err(|e| {
+        std::fs::write(&output_path, &combined_rpp).map_err(|e| {
             SessionServiceError::Internal(format!(
                 "Failed to write combined RPP to {}: {e}",
                 output_path.display()
@@ -166,14 +167,12 @@ impl SetlistServiceImpl {
         })?;
 
         info!(
-            "Combined setlist RPP written: {} ({} tracks, {} markers/regions, {:.0} bytes)",
+            "Combined setlist RPP written: {} ({:.0} bytes)",
             output_path.display(),
-            combined.tracks.len(),
-            combined.markers_regions.all.len(),
-            rpp_text.len(),
+            combined_rpp.len(),
         );
 
-        // ── 8. Open in REAPER as a new tab ───────────────────────────
+        // ── 5. Open in REAPER as a new tab ────────────────────────────
         let new_project = daw
             .open_project(output_path.to_string_lossy().to_string())
             .await
@@ -181,14 +180,73 @@ impl SetlistServiceImpl {
                 SessionServiceError::DawError(format!("Failed to open combined setlist: {e}"))
             })?;
 
-        // Mark as combined setlist so we skip it next time
-        let _ = new_project
-            .ext_state()
-            .set(COMBINED_EXT_SECTION, COMBINED_EXT_KEY, "1", false)
-            .await;
+        // ── 6. Post-process: mark all projects with sync identity ──────
+        //
+        // Every project in the setlist gets a shared setlist_id so they
+        // can find each other for sync (within the same REAPER instance
+        // or across the network via mDNS).
+        let setlist_id = uuid::Uuid::new_v4().to_string();
+        let setlist_path_str = output_path.to_string_lossy().to_string();
+        let song_count = rpp_paths.len().to_string();
+
+        // Mark the combined setlist project
+        let ext = new_project.ext_state();
+        let _ = ext.set(COMBINED_EXT_SECTION, COMBINED_EXT_KEY, "1", false).await;
+        let _ = ext.set(SYNC_SECTION, SYNC_KEY_SETLIST_ID, &setlist_id, false).await;
+        let _ = ext.set(SYNC_SECTION, SYNC_KEY_SONG_COUNT, &song_count, false).await;
+        let _ = ext.set(SYNC_SECTION, SYNC_KEY_SETLIST_PATH, &setlist_path_str, false).await;
+
+        // Mark each individual song project with the same setlist_id + its index
+        let all_projects = daw.projects().await.unwrap_or_default();
+        let mut song_idx = 0u32;
+        for project in &all_projects {
+            if project.guid() == new_project.guid() {
+                continue;
+            }
+
+            let is_combined = project
+                .ext_state()
+                .get(COMBINED_EXT_SECTION, COMBINED_EXT_KEY)
+                .await
+                .unwrap_or(None)
+                .map(|v| v == "1")
+                .unwrap_or(false);
+            if is_combined {
+                continue;
+            }
+            let is_routing = project
+                .ext_state()
+                .get(
+                    session_proto::routing_project::EXT_STATE_SECTION,
+                    session_proto::routing_project::EXT_STATE_KEY_IS_ROUTING,
+                )
+                .await
+                .unwrap_or(None)
+                .map(|v| v == "1")
+                .unwrap_or(false);
+            if is_routing {
+                continue;
+            }
+
+            let info = match project.info().await {
+                Ok(i) if !i.path.is_empty() => i,
+                _ => continue,
+            };
+
+            let ext = project.ext_state();
+            let _ = ext.set(SYNC_SECTION, SYNC_KEY_SETLIST_ID, &setlist_id, false).await;
+            let _ = ext.set(SYNC_SECTION, SYNC_KEY_SONG_INDEX, &song_idx.to_string(), false).await;
+            let _ = ext.set(SYNC_SECTION, SYNC_KEY_SETLIST_PATH, &setlist_path_str, false).await;
+
+            debug!("Song {} ({}) tagged with setlist_id={}", song_idx, info.name, setlist_id);
+            song_idx += 1;
+        }
 
         let guid = new_project.guid().to_string();
-        info!("Combined setlist opened as project {}", guid);
+        info!(
+            "Combined setlist opened: {} (setlist_id={}, {} songs tagged)",
+            guid, setlist_id, song_idx
+        );
 
         Ok(guid)
     }
