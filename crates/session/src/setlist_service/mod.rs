@@ -9,10 +9,13 @@
 
 mod build;
 mod combined;
+pub mod file_watcher;
+pub mod live_sync;
 mod hydration;
 mod navigation;
 mod playback;
 mod polling;
+pub mod position_sync;
 
 use crate::cache::Cache;
 use crate::event_bus::{EventBus, WatchBus};
