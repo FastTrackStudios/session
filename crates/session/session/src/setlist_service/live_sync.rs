@@ -205,10 +205,11 @@ impl LiveSyncState {
         true
     }
 
-    /// Write the current setlist project to disk.
+    /// Write the current setlist project to disk, plus shell copies for each role.
     fn write_setlist(&self) {
-        use daw::file::setlist_rpp::project_to_rpp_text;
+        use daw::file::setlist_rpp::{generate_shell_copy, project_to_rpp_text};
 
+        // Write master setlist
         let rpp_text = project_to_rpp_text(&self.setlist_project);
         match std::fs::write(&self.setlist_path, &rpp_text) {
             Ok(()) => info!(
@@ -216,11 +217,35 @@ impl LiveSyncState {
                 self.setlist_path.display(),
                 rpp_text.len()
             ),
-            Err(e) => warn!(
-                "Failed to write setlist to {}: {}",
-                self.setlist_path.display(),
-                e
-            ),
+            Err(e) => {
+                warn!("Failed to write setlist to {}: {}", self.setlist_path.display(), e);
+                return;
+            }
+        }
+
+        // Regenerate shell copies for each role
+        let roles = &["Vocals", "Guitar", "Keys", "Drum Enhancement"];
+        let output_dir = self.setlist_path.parent().unwrap_or(std::path::Path::new("."));
+        let setlist_stem = self.setlist_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Setlist");
+
+        for role in roles {
+            let shell = generate_shell_copy(&self.setlist_project, role);
+            let shell_text = project_to_rpp_text(&shell);
+            let shell_path = output_dir.join(format!("{} - {}.RPP", role, setlist_stem));
+            match std::fs::write(&shell_path, &shell_text) {
+                Ok(()) => debug!(
+                    "Shell copy written: {} ({} bytes)",
+                    shell_path.display(),
+                    shell_text.len()
+                ),
+                Err(e) => warn!(
+                    "Failed to write shell copy {}: {}",
+                    shell_path.display(),
+                    e
+                ),
+            }
         }
     }
 }
