@@ -323,4 +323,3 @@ fn ConnectionStatusBadge(state: ConnectionState) -> Element {
         }
     }
 }
-

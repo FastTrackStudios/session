@@ -321,7 +321,10 @@ impl std::fmt::Debug for Song {
 
 impl Song {
     /// Returns this song's advance mode, falling back to the provided setlist default.
-    pub fn effective_advance_mode(&self, default: crate::setlist::AdvanceMode) -> crate::setlist::AdvanceMode {
+    pub fn effective_advance_mode(
+        &self,
+        default: crate::setlist::AdvanceMode,
+    ) -> crate::setlist::AdvanceMode {
         self.advance_mode.unwrap_or(default)
     }
 

@@ -89,7 +89,10 @@ impl CoreLane {
     }
 
     pub fn from_index(index: u32) -> Option<Self> {
-        Self::all().iter().find(|l| l.lane_index() == index).copied()
+        Self::all()
+            .iter()
+            .find(|l| l.lane_index() == index)
+            .copied()
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
@@ -230,20 +233,20 @@ pub fn classify_region_lane(name: &str) -> FtsLane {
 
     // Well-known section abbreviations → SECTIONS lane
     match upper.as_str() {
-        "VS" | "VERSE" | "CH" | "CHORUS" | "BR" | "BRIDGE" | "INTRO" | "OUTRO"
-        | "PRE-CH" | "PRE-CHORUS" | "PRECHORUS" | "SOLO" | "BREAKDOWN" | "INTERLUDE"
-        | "TAG" | "HOOK" | "INSTRUMENTAL" | "CODA" | "VAMP" | "TURNAROUND"
-        | "VERSE 1" | "VERSE 2" | "VERSE 3" | "VERSE 4"
-        | "CHORUS 1" | "CHORUS 2" | "CHORUS 3"
-        | "BRIDGE 1" | "BRIDGE 2" => {
+        "VS" | "VERSE" | "CH" | "CHORUS" | "BR" | "BRIDGE" | "INTRO" | "OUTRO" | "PRE-CH"
+        | "PRE-CHORUS" | "PRECHORUS" | "SOLO" | "BREAKDOWN" | "INTERLUDE" | "TAG" | "HOOK"
+        | "INSTRUMENTAL" | "CODA" | "VAMP" | "TURNAROUND" | "VERSE 1" | "VERSE 2" | "VERSE 3"
+        | "VERSE 4" | "CHORUS 1" | "CHORUS 2" | "CHORUS 3" | "BRIDGE 1" | "BRIDGE 2" => {
             return FtsLane::Core(CoreLane::Sections);
         }
         _ => {}
     }
 
     // Section abbreviations with numbers: "VS 1", "CH 2", etc.
-    if upper.starts_with("VS ") || upper.starts_with("CH ")
-        || upper.starts_with("BR ") || upper.starts_with("SOLO ")
+    if upper.starts_with("VS ")
+        || upper.starts_with("CH ")
+        || upper.starts_with("BR ")
+        || upper.starts_with("SOLO ")
     {
         return FtsLane::Core(CoreLane::Sections);
     }
@@ -294,22 +297,46 @@ mod tests {
 
     #[test]
     fn classify_structural_markers() {
-        assert_eq!(classify_marker_lane("SONGSTART"), FtsLane::Core(CoreLane::Marks));
-        assert_eq!(classify_marker_lane("SONGEND"), FtsLane::Core(CoreLane::Marks));
-        assert_eq!(classify_marker_lane("Count-In"), FtsLane::Core(CoreLane::Marks));
+        assert_eq!(
+            classify_marker_lane("SONGSTART"),
+            FtsLane::Core(CoreLane::Marks)
+        );
+        assert_eq!(
+            classify_marker_lane("SONGEND"),
+            FtsLane::Core(CoreLane::Marks)
+        );
+        assert_eq!(
+            classify_marker_lane("Count-In"),
+            FtsLane::Core(CoreLane::Marks)
+        );
     }
 
     #[test]
     fn classify_bound_markers() {
-        assert_eq!(classify_marker_lane("=START"), FtsLane::Core(CoreLane::StartEnd));
-        assert_eq!(classify_marker_lane("=END"), FtsLane::Core(CoreLane::StartEnd));
-        assert_eq!(classify_marker_lane("PREROLL"), FtsLane::Core(CoreLane::StartEnd));
+        assert_eq!(
+            classify_marker_lane("=START"),
+            FtsLane::Core(CoreLane::StartEnd)
+        );
+        assert_eq!(
+            classify_marker_lane("=END"),
+            FtsLane::Core(CoreLane::StartEnd)
+        );
+        assert_eq!(
+            classify_marker_lane("PREROLL"),
+            FtsLane::Core(CoreLane::StartEnd)
+        );
     }
 
     #[test]
     fn default_region_and_marker_lanes() {
-        let region_defaults: Vec<_> = CoreLane::all().iter().filter(|l| l.flags() & 8 != 0).collect();
-        let marker_defaults: Vec<_> = CoreLane::all().iter().filter(|l| l.flags() & 4 != 0).collect();
+        let region_defaults: Vec<_> = CoreLane::all()
+            .iter()
+            .filter(|l| l.flags() & 8 != 0)
+            .collect();
+        let marker_defaults: Vec<_> = CoreLane::all()
+            .iter()
+            .filter(|l| l.flags() & 4 != 0)
+            .collect();
         assert_eq!(region_defaults.len(), 1);
         assert_eq!(marker_defaults.len(), 1);
         assert_eq!(region_defaults[0].display_name(), "SECTIONS");

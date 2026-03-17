@@ -73,9 +73,14 @@ impl SongBuilder {
             Ok(songs)
         } else {
             // Single-song mode: preserve exact backward compatibility
-            let song =
-                Self::build_single_song(project, &project_info.name, &markers, &regions, &tempo_map)
-                    .await?;
+            let song = Self::build_single_song(
+                project,
+                &project_info.name,
+                &markers,
+                &regions,
+                &tempo_map,
+            )
+            .await?;
             Ok(vec![song])
         }
     }
@@ -149,81 +154,86 @@ impl SongBuilder {
         let song_region = Self::find_song_region(regions);
 
         // Determine song bounds
-        let (start_seconds, songend_seconds, end_seconds, count_in_seconds) =
-            if let (Some(start), Some(end)) = (start_marker, end_marker) {
-                let song_start = position_to_seconds(&start.position);
-                let song_end = position_to_seconds(&end.position);
-                let absolute_end = absolute_end_marker
-                    .map(|m| position_to_seconds(&m.position))
-                    .unwrap_or(song_end);
+        let (start_seconds, songend_seconds, end_seconds, count_in_seconds) = if let (
+            Some(start),
+            Some(end),
+        ) =
+            (start_marker, end_marker)
+        {
+            let song_start = position_to_seconds(&start.position);
+            let song_end = position_to_seconds(&end.position);
+            let absolute_end = absolute_end_marker
+                .map(|m| position_to_seconds(&m.position))
+                .unwrap_or(song_end);
 
-                // Use COUNT-IN marker first, fall back to =START
-                // COUNT-IN is more explicit about the count-in position
-                let count_in = if let Some(ci_marker) = count_in_marker.or(absolute_start_marker) {
-                    let ci_time = position_to_seconds(&ci_marker.position);
-                    debug!(
-                        "Count-in calculation: ci_marker={}, ci_time={}, song_start={}",
-                        ci_marker.name, ci_time, song_start
-                    );
-                    if ci_time < song_start {
-                        let duration = song_start - ci_time;
-                        debug!("Count-in duration: {}", duration);
-                        Some(duration)
-                    } else {
-                        debug!("Count-in marker is NOT before song_start, no count-in");
-                        None
-                    }
-                } else {
-                    debug!("No count-in or =START marker found");
-                    None
-                };
-
-                // Determine the outermost end position:
-                // POSTROLL > =END > SONGEND
-                let outer_end = postroll_marker
-                    .map(|m| position_to_seconds(&m.position))
-                    .or(Some(absolute_end))
-                    .unwrap();
-
-                // Snap outer end to the next barline
-                let snapped_end =
-                    Self::snap_to_next_barline(tempo_map, outer_end).await.unwrap_or(outer_end);
-
+            // Use COUNT-IN marker first, fall back to =START
+            // COUNT-IN is more explicit about the count-in position
+            let count_in = if let Some(ci_marker) = count_in_marker.or(absolute_start_marker) {
+                let ci_time = position_to_seconds(&ci_marker.position);
                 debug!(
-                    "Song bounds: start={}, songend={}, outer_end={}, snapped_end={}, count_in={:?}",
-                    song_start, song_end, outer_end, snapped_end, count_in
+                    "Count-in calculation: ci_marker={}, ci_time={}, song_start={}",
+                    ci_marker.name, ci_time, song_start
                 );
-                (song_start, song_end, snapped_end, count_in)
-            } else if let Some(ref song_region) = song_region {
-                let end = song_region.time_range.end_seconds();
-                let start = song_region.time_range.start_seconds();
-                let count_in = count_in_marker.and_then(|m| {
-                    let marker_time = position_to_seconds(&m.position);
-                    if marker_time < start {
-                        Some(start - marker_time)
-                    } else {
-                        None
-                    }
-                });
-                (start, end, end, count_in)
+                if ci_time < song_start {
+                    let duration = song_start - ci_time;
+                    debug!("Count-in duration: {}", duration);
+                    Some(duration)
+                } else {
+                    debug!("Count-in marker is NOT before song_start, no count-in");
+                    None
+                }
             } else {
-                // Fallback to entire project
-                let start = markers
-                    .iter()
-                    .map(|m| position_to_seconds(&m.position))
-                    .chain(regions.iter().map(|r| r.time_range.start_seconds()))
-                    .min_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap())
-                    .unwrap_or(0.0);
-
-                let end = markers
-                    .iter()
-                    .map(|m| position_to_seconds(&m.position))
-                    .chain(regions.iter().map(|r| r.time_range.end_seconds()))
-                    .max_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap())
-                    .unwrap_or(60.0);
-
-                (start, end, end, None)
+                debug!("No count-in or =START marker found");
+                None
             };
+
+            // Determine the outermost end position:
+            // POSTROLL > =END > SONGEND
+            let outer_end = postroll_marker
+                .map(|m| position_to_seconds(&m.position))
+                .or(Some(absolute_end))
+                .unwrap();
+
+            // Snap outer end to the next barline
+            let snapped_end = Self::snap_to_next_barline(tempo_map, outer_end)
+                .await
+                .unwrap_or(outer_end);
+
+            debug!(
+                "Song bounds: start={}, songend={}, outer_end={}, snapped_end={}, count_in={:?}",
+                song_start, song_end, outer_end, snapped_end, count_in
+            );
+            (song_start, song_end, snapped_end, count_in)
+        } else if let Some(ref song_region) = song_region {
+            let end = song_region.time_range.end_seconds();
+            let start = song_region.time_range.start_seconds();
+            let count_in = count_in_marker.and_then(|m| {
+                let marker_time = position_to_seconds(&m.position);
+                if marker_time < start {
+                    Some(start - marker_time)
+                } else {
+                    None
+                }
+            });
+            (start, end, end, count_in)
+        } else {
+            // Fallback to entire project
+            let start = markers
+                .iter()
+                .map(|m| position_to_seconds(&m.position))
+                .chain(regions.iter().map(|r| r.time_range.start_seconds()))
+                .min_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap())
+                .unwrap_or(0.0);
+
+            let end = markers
+                .iter()
+                .map(|m| position_to_seconds(&m.position))
+                .chain(regions.iter().map(|r| r.time_range.end_seconds()))
+                .max_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap())
+                .unwrap_or(60.0);
+
+            (start, end, end, None)
+        };
 
         // Extract sections - prefer regions, fall back to markers
         let mut sections = if let Some(ref song_region) = song_region {
@@ -523,11 +533,8 @@ impl SongBuilder {
         };
 
         // Extract comment markers within this song region's bounds
-        let comments = Self::extract_comments_in_range(
-            all_markers,
-            song_start_seconds,
-            end_seconds,
-        );
+        let comments =
+            Self::extract_comments_in_range(all_markers, song_start_seconds, end_seconds);
 
         Ok(Song {
             id: SongId::new(),
@@ -550,11 +557,7 @@ impl SongBuilder {
     }
 
     /// Extract non-structural comment markers within a time range.
-    fn extract_comments_in_range(
-        markers: &[Marker],
-        start: f64,
-        end: f64,
-    ) -> Vec<Comment> {
+    fn extract_comments_in_range(markers: &[Marker], start: f64, end: f64) -> Vec<Comment> {
         let mut comments: Vec<Comment> = markers
             .iter()
             .filter(|m| {
@@ -687,10 +690,7 @@ impl SongBuilder {
     /// Converts seconds → musical position (measure, beat, fraction), rounds up
     /// to the next measure, and converts back to seconds. If already exactly on
     /// a barline, returns the same position.
-    async fn snap_to_next_barline(
-        tempo_map: &daw::TempoMap,
-        seconds: f64,
-    ) -> eyre::Result<f64> {
+    async fn snap_to_next_barline(tempo_map: &daw::TempoMap, seconds: f64) -> eyre::Result<f64> {
         let (measure, beat, fraction) = tempo_map.time_to_musical(seconds).await?;
         // If already exactly on a barline (beat 1, no fraction), keep it
         if beat <= 1 && fraction < 0.001 {
@@ -700,7 +700,12 @@ impl SongBuilder {
         let snapped = tempo_map.musical_to_time(measure + 1, 1, 0.0).await?;
         debug!(
             "snap_to_next_barline: {:.3}s (m{}.{}.{:.3}) → {:.3}s (m{})",
-            seconds, measure, beat, fraction, snapped, measure + 1
+            seconds,
+            measure,
+            beat,
+            fraction,
+            snapped,
+            measure + 1
         );
         Ok(snapped)
     }
@@ -734,13 +739,10 @@ impl SongBuilder {
             .filter(|candidate| {
                 candidates.iter().any(|other| {
                     other.id != candidate.id
-                        && other.time_range.start_seconds()
-                            >= candidate.time_range.start_seconds()
+                        && other.time_range.start_seconds() >= candidate.time_range.start_seconds()
                         && other.time_range.end_seconds() <= candidate.time_range.end_seconds()
-                        && (other.time_range.start_seconds()
-                            > candidate.time_range.start_seconds()
-                            || other.time_range.end_seconds()
-                                < candidate.time_range.end_seconds())
+                        && (other.time_range.start_seconds() > candidate.time_range.start_seconds()
+                            || other.time_range.end_seconds() < candidate.time_range.end_seconds())
                 })
             })
             .map(|r| r.id)
@@ -929,7 +931,9 @@ impl SongBuilder {
         (0..measure_count)
             .map(|idx| {
                 let time_seconds = start_seconds + (idx as f64 * measure_duration);
-                daw::service::Position::from_time(daw::service::TimePosition::from_seconds(time_seconds))
+                daw::service::Position::from_time(daw::service::TimePosition::from_seconds(
+                    time_seconds,
+                ))
             })
             .collect()
     }

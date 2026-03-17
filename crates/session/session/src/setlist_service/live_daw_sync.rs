@@ -17,9 +17,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use daw::Project;
-use daw::service::{ItemEvent, MarkerEvent, RegionEvent};
 use daw::service::item::Item;
 use daw::service::primitives::{Duration, PositionInSeconds};
+use daw::service::{ItemEvent, MarkerEvent, RegionEvent};
 use moire::sync::RwLock;
 use session_proto::offset_map::SetlistOffsetMap;
 use tracing::{debug, info, warn};
@@ -69,12 +69,19 @@ impl SetlistItemIndex {
                 let take_name = Self::get_active_take_name(setlist, item).await;
                 let pos = item.position.as_seconds();
                 let key = (track_info.name.clone(), take_name);
-                entries.entry(key).or_default().push((pos, item.guid.clone()));
+                entries
+                    .entry(key)
+                    .or_default()
+                    .push((pos, item.guid.clone()));
             }
         }
 
         let total: usize = entries.values().map(|v| v.len()).sum();
-        debug!("SetlistItemIndex built: {} entries across {} keys", total, entries.len());
+        debug!(
+            "SetlistItemIndex built: {} entries across {} keys",
+            total,
+            entries.len()
+        );
 
         Self { entries }
     }
@@ -82,12 +89,7 @@ impl SetlistItemIndex {
     /// Find a setlist item by track name, take name, and expected position.
     ///
     /// Returns the item GUID if found within position tolerance.
-    pub fn find(
-        &self,
-        track_name: &str,
-        take_name: &str,
-        expected_position: f64,
-    ) -> Option<&str> {
+    pub fn find(&self, track_name: &str, take_name: &str, expected_position: f64) -> Option<&str> {
         let key = (track_name.to_string(), take_name.to_string());
         let candidates = self.entries.get(&key)?;
 
@@ -104,7 +106,13 @@ impl SetlistItemIndex {
     }
 
     /// Update position for an item after it moves.
-    pub fn update_position(&mut self, track_name: &str, take_name: &str, item_guid: &str, new_position: f64) {
+    pub fn update_position(
+        &mut self,
+        track_name: &str,
+        take_name: &str,
+        item_guid: &str,
+        new_position: f64,
+    ) {
         let key = (track_name.to_string(), take_name.to_string());
         if let Some(entries) = self.entries.get_mut(&key) {
             if let Some(entry) = entries.iter_mut().find(|(_, g)| g == item_guid) {
@@ -155,10 +163,16 @@ impl DawSyncBridge {
         let songs: Vec<SongTabBinding> = song_projects
             .into_iter()
             .map(|(idx, project)| {
-                let offset = offset_map.songs.get(idx)
+                let offset = offset_map
+                    .songs
+                    .get(idx)
                     .map(|s| s.global_start_seconds)
                     .unwrap_or(0.0);
-                SongTabBinding { song_index: idx, project, offset_seconds: offset }
+                SongTabBinding {
+                    song_index: idx,
+                    project,
+                    offset_seconds: offset,
+                }
             })
             .collect();
 
@@ -167,7 +181,11 @@ impl DawSyncBridge {
         let item_index = Arc::new(RwLock::new("session.daw_sync.item_index", index));
 
         info!("DawSyncBridge created with {} song bindings", songs.len());
-        Self { setlist_project, songs, item_index }
+        Self {
+            setlist_project,
+            songs,
+            item_index,
+        }
     }
 
     /// Rebuild the item index (call after structural setlist changes).
@@ -235,9 +253,14 @@ impl DawSyncBridge {
                         Ok(Some(event_ref)) => {
                             let event: ItemEvent = (*event_ref).clone();
                             handle_item_event(
-                                &setlist, &song_project, &item_index,
-                                &event, offset, song_idx,
-                            ).await;
+                                &setlist,
+                                &song_project,
+                                &item_index,
+                                &event,
+                                offset,
+                                song_idx,
+                            )
+                            .await;
                         }
                         Ok(None) => continue,
                         Err(_) => break,
@@ -246,33 +269,42 @@ impl DawSyncBridge {
             });
         }
 
-        info!("Song {} subscriptions active (offset={:.1}s)", song_idx, offset);
+        info!(
+            "Song {} subscriptions active (offset={:.1}s)",
+            song_idx, offset
+        );
     }
 }
 
 // ── Event Handlers ──────────────────────────────────────────────────────────
 
 fn marker_seconds(marker: &daw::service::Marker) -> f64 {
-    marker.position.time.as_ref().map(|t| t.as_seconds()).unwrap_or(0.0)
+    marker
+        .position
+        .time
+        .as_ref()
+        .map(|t| t.as_seconds())
+        .unwrap_or(0.0)
 }
 
-async fn handle_marker_event(
-    setlist: &Project,
-    event: &MarkerEvent,
-    offset: f64,
-    song_idx: usize,
-) {
+async fn handle_marker_event(setlist: &Project, event: &MarkerEvent, offset: f64, song_idx: usize) {
     match event {
         MarkerEvent::Added(marker) => {
             let song_pos = marker_seconds(marker);
             let setlist_pos = song_pos + offset;
-            debug!("Song {} marker added '{}' {:.3}s → setlist {:.3}s", song_idx, marker.name, song_pos, setlist_pos);
+            debug!(
+                "Song {} marker added '{}' {:.3}s → setlist {:.3}s",
+                song_idx, marker.name, song_pos, setlist_pos
+            );
             let _ = setlist.markers().add(setlist_pos, &marker.name).await;
         }
         MarkerEvent::Changed(marker) => {
             if let Some(id) = marker.id {
                 let setlist_pos = marker_seconds(marker) + offset;
-                debug!("Song {} marker changed '{}' → setlist {:.3}s", song_idx, marker.name, setlist_pos);
+                debug!(
+                    "Song {} marker changed '{}' → setlist {:.3}s",
+                    song_idx, marker.name, setlist_pos
+                );
                 let _ = setlist.markers().move_to(id, setlist_pos).await;
             }
         }
@@ -284,24 +316,25 @@ async fn handle_marker_event(
     }
 }
 
-async fn handle_region_event(
-    setlist: &Project,
-    event: &RegionEvent,
-    offset: f64,
-    song_idx: usize,
-) {
+async fn handle_region_event(setlist: &Project, event: &RegionEvent, offset: f64, song_idx: usize) {
     match event {
         RegionEvent::Added(region) => {
             let start = region.time_range.start_seconds() + offset;
             let end = region.time_range.end_seconds() + offset;
-            debug!("Song {} region added '{}' {:.1}→{:.1}s", song_idx, region.name, start, end);
+            debug!(
+                "Song {} region added '{}' {:.1}→{:.1}s",
+                song_idx, region.name, start, end
+            );
             let _ = setlist.regions().add(start, end, &region.name).await;
         }
         RegionEvent::Changed(region) => {
             if let Some(id) = region.id {
                 let start = region.time_range.start_seconds() + offset;
                 let end = region.time_range.end_seconds() + offset;
-                debug!("Song {} region changed '{}' → {:.1}→{:.1}s", song_idx, region.name, start, end);
+                debug!(
+                    "Song {} region changed '{}' → {:.1}→{:.1}s",
+                    song_idx, region.name, start, end
+                );
                 let _ = setlist.regions().set_bounds(id, start, end).await;
             }
         }
@@ -323,7 +356,11 @@ async fn resolve_item_identity(
     let item_info = item_handle.info().await.ok()?;
 
     // Get track name
-    let track = song_project.tracks().by_guid(&item_info.track_guid).await.ok()??;
+    let track = song_project
+        .tracks()
+        .by_guid(&item_info.track_guid)
+        .await
+        .ok()??;
     let track_info = track.info().await.ok()?;
 
     // Get active take name
@@ -345,33 +382,54 @@ async fn handle_item_event(
     song_idx: usize,
 ) {
     match event {
-        ItemEvent::PositionChanged { item_guid, old_position, new_position, .. } => {
+        ItemEvent::PositionChanged {
+            item_guid,
+            old_position,
+            new_position,
+            ..
+        } => {
             let setlist_old_pos = old_position + offset;
             let setlist_new_pos = new_position + offset;
 
             // Resolve the item's identity in the song project
             let identity = resolve_item_identity(song_project, item_guid).await;
             let Some((track_name, take_name)) = identity else {
-                debug!("Song {} item {} position changed but could not resolve identity", song_idx, item_guid);
+                debug!(
+                    "Song {} item {} position changed but could not resolve identity",
+                    song_idx, item_guid
+                );
                 return;
             };
 
             // Look up the corresponding setlist item
             let setlist_guid = {
                 let index = item_index.read().await;
-                index.find(&track_name, &take_name, setlist_old_pos).map(String::from)
+                index
+                    .find(&track_name, &take_name, setlist_old_pos)
+                    .map(String::from)
             };
             if let Some(setlist_guid) = setlist_guid {
                 debug!(
                     "Song {} item '{}' on '{}' moved {:.3}→{:.3}s → setlist item {} → {:.3}s",
-                    song_idx, take_name, track_name, old_position, new_position, setlist_guid, setlist_new_pos
+                    song_idx,
+                    take_name,
+                    track_name,
+                    old_position,
+                    new_position,
+                    setlist_guid,
+                    setlist_new_pos
                 );
                 if let Ok(Some(handle)) = setlist.items().by_guid(&setlist_guid).await {
-                    let _ = handle.set_position(PositionInSeconds::from_seconds(setlist_new_pos)).await;
+                    let _ = handle
+                        .set_position(PositionInSeconds::from_seconds(setlist_new_pos))
+                        .await;
                 }
                 // Update the index with the new position
                 item_index.write().await.update_position(
-                    &track_name, &take_name, &setlist_guid, setlist_new_pos,
+                    &track_name,
+                    &take_name,
+                    &setlist_guid,
+                    setlist_new_pos,
                 );
             } else {
                 debug!(
@@ -381,13 +439,24 @@ async fn handle_item_event(
             }
         }
 
-        ItemEvent::LengthChanged { item_guid, old_length, new_length, .. } => {
+        ItemEvent::LengthChanged {
+            item_guid,
+            old_length,
+            new_length,
+            ..
+        } => {
             let identity = resolve_item_identity(song_project, item_guid).await;
-            let Some((track_name, take_name)) = identity else { return; };
+            let Some((track_name, take_name)) = identity else {
+                return;
+            };
 
             // Get current position to find in index
             let pos = match song_project.items().by_guid(item_guid).await {
-                Ok(Some(h)) => h.info().await.ok().map(|i| i.position.as_seconds() + offset),
+                Ok(Some(h)) => h
+                    .info()
+                    .await
+                    .ok()
+                    .map(|i| i.position.as_seconds() + offset),
                 _ => None,
             };
 
@@ -405,22 +474,36 @@ async fn handle_item_event(
             }
         }
 
-        ItemEvent::MuteChanged { item_guid, muted, .. } => {
+        ItemEvent::MuteChanged {
+            item_guid, muted, ..
+        } => {
             let identity = resolve_item_identity(song_project, item_guid).await;
-            let Some((track_name, take_name)) = identity else { return; };
+            let Some((track_name, take_name)) = identity else {
+                return;
+            };
 
             let pos = match song_project.items().by_guid(item_guid).await {
-                Ok(Some(h)) => h.info().await.ok().map(|i| i.position.as_seconds() + offset),
+                Ok(Some(h)) => h
+                    .info()
+                    .await
+                    .ok()
+                    .map(|i| i.position.as_seconds() + offset),
                 _ => None,
             };
 
             if let Some(pos) = pos {
                 let index = item_index.read().await;
                 if let Some(setlist_guid) = index.find(&track_name, &take_name, pos) {
-                    debug!("Song {} item '{}' mute={} → setlist item {}", song_idx, take_name, muted, setlist_guid);
+                    debug!(
+                        "Song {} item '{}' mute={} → setlist item {}",
+                        song_idx, take_name, muted, setlist_guid
+                    );
                     if let Ok(Some(handle)) = setlist.items().by_guid(setlist_guid).await {
-                        if *muted { let _ = handle.mute().await; }
-                        else { let _ = handle.unmute().await; }
+                        if *muted {
+                            let _ = handle.mute().await;
+                        } else {
+                            let _ = handle.unmute().await;
+                        }
                     }
                 }
             }

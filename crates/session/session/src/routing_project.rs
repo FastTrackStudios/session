@@ -11,8 +11,8 @@
 
 use daw::Daw;
 use daw::service::RecordInput;
-use session_proto::routing_project::*;
 use session_proto::SessionServiceError;
+use session_proto::routing_project::*;
 use tracing::info;
 
 // r[impl routing.project.ensure]
@@ -55,12 +55,11 @@ pub async fn ensure_routing_project(
 }
 
 /// Scan open projects for one with the routing project ExtState marker.
-async fn find_open_routing_project(
-    daw: &Daw,
-) -> Result<Option<String>, SessionServiceError> {
-    let projects = daw.projects().await.map_err(|e| {
-        SessionServiceError::DawError(format!("Failed to list projects: {e}"))
-    })?;
+async fn find_open_routing_project(daw: &Daw) -> Result<Option<String>, SessionServiceError> {
+    let projects = daw
+        .projects()
+        .await
+        .map_err(|e| SessionServiceError::DawError(format!("Failed to list projects: {e}")))?;
 
     for project in projects {
         let value = project
@@ -134,7 +133,11 @@ async fn create_folder_with_channels(
     let map_err = |e: daw::Error| SessionServiceError::DawError(e.to_string());
 
     // Create folder track
-    let folder = project.tracks().add(folder_name, None).await.map_err(map_err)?;
+    let folder = project
+        .tracks()
+        .add(folder_name, None)
+        .await
+        .map_err(map_err)?;
     folder.set_folder_depth(1).await.map_err(map_err)?;
 
     // Create child tracks

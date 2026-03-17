@@ -10,9 +10,9 @@
 mod build;
 mod combined;
 pub mod file_watcher;
+mod hydration;
 pub mod live_daw_sync;
 pub mod live_sync;
-mod hydration;
 mod navigation;
 mod playback;
 mod polling;
@@ -20,14 +20,11 @@ pub mod position_sync;
 
 use crate::cache::Cache;
 use crate::event_bus::{EventBus, WatchBus};
-use session_proto::{
-    ActiveIndices, QueuedTarget, Setlist, Song,
-    SongChartHydration,
-};
+use moire::sync::RwLock;
+use session_proto::{ActiveIndices, QueuedTarget, Setlist, Song, SongChartHydration};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use moire::sync::RwLock;
 
 use position_sync::PositionSyncBridge;
 
@@ -87,7 +84,10 @@ impl SetlistServiceImpl {
         Self {
             setlist: Arc::new(RwLock::new("session.setlist", None)),
             active_song_id: Arc::new(RwLock::new("session.setlist.active_song_id", None)),
-            cached_indices: Arc::new(RwLock::new("session.setlist.cached_indices", ActiveIndices::default())),
+            cached_indices: Arc::new(RwLock::new(
+                "session.setlist.cached_indices",
+                ActiveIndices::default(),
+            )),
             queued_target: Arc::new(RwLock::new("session.setlist.queued_target", None)),
             setlist_update_bus: Arc::new(WatchBus::new("session.setlist.updates", 0_u64)),
             setlist_revision: Arc::new(AtomicU64::new(0)),
@@ -95,7 +95,10 @@ impl SetlistServiceImpl {
             hydration_bus: Arc::new(EventBus::new("session.setlist.hydration", 1024)),
             chart_hydration_bus: Arc::new(EventBus::new("session.setlist.chart_hydration", 1024)),
             chart_cache: Cache::named("session.setlist.chart_cache"),
-            fingerprint_method_supported: Arc::new(RwLock::new("session.setlist.fingerprint_supported", None)),
+            fingerprint_method_supported: Arc::new(RwLock::new(
+                "session.setlist.fingerprint_supported",
+                None,
+            )),
             last_chart_refresh_attempt: Cache::named("session.setlist.chart_refresh_attempts"),
             build_generation: Arc::new(AtomicU64::new(0)),
             position_sync: Arc::new(RwLock::new("session.setlist.position_sync", None)),
@@ -137,7 +140,11 @@ impl SetlistServiceImpl {
     pub(crate) async fn get_song_by_id(&self, id: &str) -> Option<Song> {
         let setlist = self.setlist.read().await;
         let setlist = setlist.as_ref()?;
-        setlist.songs.iter().find(|song| song.id.as_str() == id).cloned()
+        setlist
+            .songs
+            .iter()
+            .find(|song| song.id.as_str() == id)
+            .cloned()
     }
 
     /// Get the active song from cached local state (no RPC calls)
