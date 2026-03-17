@@ -99,6 +99,9 @@ impl SongBuilder {
         let songstart_marker = markers.iter().find(|m| Self::is_songstart_marker(&m.name));
         let songend_marker = markers.iter().find(|m| Self::is_songend_marker(&m.name));
         let absolute_end_marker = markers.iter().find(|m| m.name == "=END");
+        let postroll_marker = markers
+            .iter()
+            .find(|m| m.name == "POSTROLL" || m.name == "=POSTROLL");
 
         if tracing::enabled!(Level::DEBUG) {
             // Debug: log found markers with positions
@@ -175,11 +178,22 @@ impl SongBuilder {
                     None
                 };
 
+                // Determine the outermost end position:
+                // POSTROLL > =END > SONGEND
+                let outer_end = postroll_marker
+                    .map(|m| position_to_seconds(&m.position))
+                    .or(Some(absolute_end))
+                    .unwrap();
+
+                // Snap outer end to the next barline
+                let snapped_end =
+                    Self::snap_to_next_barline(tempo_map, outer_end).await.unwrap_or(outer_end);
+
                 debug!(
-                    "Song bounds: start={}, songend={}, end={}, count_in={:?}",
-                    song_start, song_end, absolute_end, count_in
+                    "Song bounds: start={}, songend={}, outer_end={}, snapped_end={}, count_in={:?}",
+                    song_start, song_end, outer_end, snapped_end, count_in
                 );
-                (song_start, song_end, absolute_end, count_in)
+                (song_start, song_end, snapped_end, count_in)
             } else if let Some(ref song_region) = song_region {
                 let end = song_region.time_range.end_seconds();
                 let start = song_region.time_range.start_seconds();
@@ -643,6 +657,10 @@ impl SongBuilder {
             || Self::is_songend_marker(name)
             || name == "=START"
             || name == "=END"
+            || name == "PREROLL"
+            || name == "=PREROLL"
+            || name == "POSTROLL"
+            || name == "=POSTROLL"
             || name.starts_with("=SONGSTART")
             || name.starts_with("=SONGEND")
     }
@@ -656,8 +674,35 @@ impl SongBuilder {
             || Self::is_songend_marker(name)
             || name == "=START"
             || name == "=END"
+            || name == "PREROLL"
+            || name == "=PREROLL"
+            || name == "POSTROLL"
+            || name == "=POSTROLL"
             || name.starts_with("=SONGSTART")
             || name.starts_with("=SONGEND")
+    }
+
+    /// Snap a time position to the next barline (measure boundary).
+    ///
+    /// Converts seconds → musical position (measure, beat, fraction), rounds up
+    /// to the next measure, and converts back to seconds. If already exactly on
+    /// a barline, returns the same position.
+    async fn snap_to_next_barline(
+        tempo_map: &daw::TempoMap,
+        seconds: f64,
+    ) -> eyre::Result<f64> {
+        let (measure, beat, fraction) = tempo_map.time_to_musical(seconds).await?;
+        // If already exactly on a barline (beat 1, no fraction), keep it
+        if beat <= 1 && fraction < 0.001 {
+            return Ok(seconds);
+        }
+        // Next barline = start of next measure
+        let snapped = tempo_map.musical_to_time(measure + 1, 1, 0.0).await?;
+        debug!(
+            "snap_to_next_barline: {:.3}s (m{}.{}.{:.3}) → {:.3}s (m{})",
+            seconds, measure, beat, fraction, snapped, measure + 1
+        );
+        Ok(snapped)
     }
 
     /// Find all regions that qualify as song regions (contain ≥2 child regions).
@@ -1275,8 +1320,20 @@ mod tests {
         assert!(SongBuilder::is_special_marker("SONGEND"));
         assert!(SongBuilder::is_special_marker("=START"));
         assert!(SongBuilder::is_special_marker("=END"));
+        assert!(SongBuilder::is_special_marker("PREROLL"));
+        assert!(SongBuilder::is_special_marker("=PREROLL"));
+        assert!(SongBuilder::is_special_marker("POSTROLL"));
+        assert!(SongBuilder::is_special_marker("=POSTROLL"));
         assert!(!SongBuilder::is_special_marker("Intro"));
         assert!(!SongBuilder::is_special_marker("VS 1A"));
         assert!(!SongBuilder::is_special_marker("CH 1"));
+    }
+
+    #[test]
+    fn test_is_structural_marker() {
+        assert!(SongBuilder::is_structural_marker("PREROLL"));
+        assert!(SongBuilder::is_structural_marker("=PREROLL"));
+        assert!(SongBuilder::is_structural_marker("POSTROLL"));
+        assert!(SongBuilder::is_structural_marker("=POSTROLL"));
     }
 }
