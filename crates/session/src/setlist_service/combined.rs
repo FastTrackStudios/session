@@ -191,10 +191,23 @@ impl SetlistServiceImpl {
 
         // Mark the combined setlist project
         let ext = new_project.ext_state();
-        let _ = ext.set(COMBINED_EXT_SECTION, COMBINED_EXT_KEY, "1", false).await;
-        let _ = ext.set(SYNC_SECTION, SYNC_KEY_SETLIST_ID, &setlist_id, false).await;
-        let _ = ext.set(SYNC_SECTION, SYNC_KEY_SONG_COUNT, &song_count, false).await;
-        let _ = ext.set(SYNC_SECTION, SYNC_KEY_SETLIST_PATH, &setlist_path_str, false).await;
+        let _ = ext
+            .set(COMBINED_EXT_SECTION, COMBINED_EXT_KEY, "1", false)
+            .await;
+        let _ = ext
+            .set(SYNC_SECTION, SYNC_KEY_SETLIST_ID, &setlist_id, false)
+            .await;
+        let _ = ext
+            .set(SYNC_SECTION, SYNC_KEY_SONG_COUNT, &song_count, false)
+            .await;
+        let _ = ext
+            .set(
+                SYNC_SECTION,
+                SYNC_KEY_SETLIST_PATH,
+                &setlist_path_str,
+                false,
+            )
+            .await;
 
         // Mark each individual song project with the same setlist_id + its index
         let all_projects = daw.projects().await.unwrap_or_default();
@@ -234,11 +247,30 @@ impl SetlistServiceImpl {
             };
 
             let ext = project.ext_state();
-            let _ = ext.set(SYNC_SECTION, SYNC_KEY_SETLIST_ID, &setlist_id, false).await;
-            let _ = ext.set(SYNC_SECTION, SYNC_KEY_SONG_INDEX, &song_idx.to_string(), false).await;
-            let _ = ext.set(SYNC_SECTION, SYNC_KEY_SETLIST_PATH, &setlist_path_str, false).await;
+            let _ = ext
+                .set(SYNC_SECTION, SYNC_KEY_SETLIST_ID, &setlist_id, false)
+                .await;
+            let _ = ext
+                .set(
+                    SYNC_SECTION,
+                    SYNC_KEY_SONG_INDEX,
+                    &song_idx.to_string(),
+                    false,
+                )
+                .await;
+            let _ = ext
+                .set(
+                    SYNC_SECTION,
+                    SYNC_KEY_SETLIST_PATH,
+                    &setlist_path_str,
+                    false,
+                )
+                .await;
 
-            debug!("Song {} ({}) tagged with setlist_id={}", song_idx, info.name, setlist_id);
+            debug!(
+                "Song {} ({}) tagged with setlist_id={}",
+                song_idx, info.name, setlist_id
+            );
             song_idx += 1;
         }
 
@@ -247,23 +279,28 @@ impl SetlistServiceImpl {
         // ── 7. Start bidirectional position sync ────────────────────────
         // Build offset map from song_infos and wire up the PositionSyncBridge.
         {
-            use session_proto::offset_map::{SetlistOffsetMap, SongOffset};
             use session_proto::SongId;
+            use session_proto::offset_map::{SetlistOffsetMap, SongOffset};
 
             let offset_map = SetlistOffsetMap {
-                songs: song_infos.iter().enumerate().map(|(i, si)| SongOffset {
-                    index: i,
-                    song_id: SongId::new(),
-                    project_guid: String::new(), // Filled below from open projects
-                    global_start_seconds: si.global_start_seconds,
-                    global_start_qn: si.global_start_seconds * 2.0, // approximate
-                    duration_seconds: si.duration_seconds,
-                    duration_qn: si.duration_seconds * 2.0,
-                    count_in_seconds: 0.0,
-                    start_tempo: 120.0,
-                    start_time_sig: daw::service::TimeSignature::new(4, 4),
-                }).collect(),
-                total_seconds: song_infos.last()
+                songs: song_infos
+                    .iter()
+                    .enumerate()
+                    .map(|(i, si)| SongOffset {
+                        index: i,
+                        song_id: SongId::new(),
+                        project_guid: String::new(), // Filled below from open projects
+                        global_start_seconds: si.global_start_seconds,
+                        global_start_qn: si.global_start_seconds * 2.0, // approximate
+                        duration_seconds: si.duration_seconds,
+                        duration_qn: si.duration_seconds * 2.0,
+                        count_in_seconds: 0.0,
+                        start_tempo: 120.0,
+                        start_time_sig: daw::service::TimeSignature::new(4, 4),
+                    })
+                    .collect(),
+                total_seconds: song_infos
+                    .last()
                     .map(|s| s.global_start_seconds + s.duration_seconds)
                     .unwrap_or(0.0),
                 total_qn: 0.0,
@@ -322,7 +359,10 @@ impl SetlistServiceImpl {
                 }
             });
 
-            info!("Position sync bridge started for {} songs", song_guids.len());
+            info!(
+                "Position sync bridge started for {} songs",
+                song_guids.len()
+            );
 
             // Also start the live DAW sync bridge (marker/region/item replication).
             // Collect song project handles for binding.
@@ -355,7 +395,8 @@ impl SetlistServiceImpl {
                         setlist_project,
                         song_projects,
                         &offset_map,
-                    ).await;
+                    )
+                    .await;
                     daw_sync.start().await;
                     info!("Live DAW sync bridge started");
                 }

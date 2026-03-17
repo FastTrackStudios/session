@@ -233,10 +233,7 @@ impl SetlistServiceImpl {
         Ok(())
     }
 
-    pub(crate) async fn go_to_section_impl(
-        &self,
-        index: usize,
-    ) -> Result<(), SessionServiceError> {
+    pub(crate) async fn go_to_section_impl(&self, index: usize) -> Result<(), SessionServiceError> {
         debug!("go_to_section: {}", index);
 
         let daw = Daw::get();
@@ -536,10 +533,7 @@ impl SetlistServiceImpl {
                     }
                 }
             } else {
-                warn!(
-                    "Section {} not found in song {}",
-                    section_index, song_index
-                );
+                warn!("Section {} not found in song {}", section_index, song_index);
             }
         } else {
             warn!("Song {} not found", song_index);

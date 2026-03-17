@@ -1,11 +1,12 @@
 //! Active indices polling/calculation, transport state tracking, subscriptions
 
 use super::{
-    SetlistServiceImpl, ACTIVE_HYDRATION_POLL_MAX_MS, ACTIVE_HYDRATION_POLL_MS,
-    ACTIVE_HYDRATION_TICK_MS, ACTIVE_INDICES_PROGRESS_EMIT_MS, HYDRATION_CONCURRENCY,
-    PROJECT_SWITCH_DEBOUNCE_MS, TRANSPORT_PROGRESS_EPSILON, TRANSPORT_TIME_EPSILON_SECS,
+    ACTIVE_HYDRATION_POLL_MAX_MS, ACTIVE_HYDRATION_POLL_MS, ACTIVE_HYDRATION_TICK_MS,
+    ACTIVE_INDICES_PROGRESS_EMIT_MS, HYDRATION_CONCURRENCY, PROJECT_SWITCH_DEBOUNCE_MS,
+    SetlistServiceImpl, TRANSPORT_PROGRESS_EPSILON, TRANSPORT_TIME_EPSILON_SECS,
 };
 use daw::Daw;
+use moire::sync::{Semaphore, mpsc};
 use roam::Tx;
 use rustc_hash::FxHashMap;
 use session_proto::{
@@ -16,7 +17,6 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use moire::sync::{Semaphore, mpsc};
 use tokio::sync::broadcast::error::RecvError as BroadcastRecvError;
 use tokio::task::JoinSet;
 use tokio::time::MissedTickBehavior;
@@ -60,8 +60,7 @@ impl SetlistServiceImpl {
                     song_index == *q_song && (position_seconds - q_pos).abs() < 0.1
                 }
                 session_proto::QueuedTarget::Measure {
-                    song_index: q_song,
-                    ..
+                    song_index: q_song, ..
                 } => {
                     // For measures, we'd need to check musical position - for now just check song
                     song_index == *q_song
@@ -183,10 +182,7 @@ impl SetlistServiceImpl {
         }
     }
 
-    pub(crate) fn transport_changed(
-        prev: &SongTransportState,
-        next: &SongTransportState,
-    ) -> bool {
+    pub(crate) fn transport_changed(prev: &SongTransportState, next: &SongTransportState) -> bool {
         if prev.song_index != next.song_index
             || prev.section_index != next.section_index
             || prev.is_playing != next.is_playing
@@ -235,7 +231,10 @@ impl SetlistServiceImpl {
             return Vec::new();
         }
 
-        let semaphore = Arc::new(Semaphore::new("session.setlist.polling.hydration", HYDRATION_CONCURRENCY));
+        let semaphore = Arc::new(Semaphore::new(
+            "session.setlist.polling.hydration",
+            HYDRATION_CONCURRENCY,
+        ));
         let mut join_set = JoinSet::new();
 
         for (song_index, song) in songs.into_iter().enumerate() {
@@ -250,7 +249,8 @@ impl SetlistServiceImpl {
                         // Get full transport state in ONE RPC call
                         match transport.get_state().await {
                             Ok(state) => {
-                                let is_playing = state.play_state == daw::service::PlayState::Playing
+                                let is_playing = state.play_state
+                                    == daw::service::PlayState::Playing
                                     || state.play_state == daw::service::PlayState::Recording;
 
                                 // Use playhead position when playing, edit cursor when stopped
@@ -503,7 +503,11 @@ impl SetlistServiceImpl {
                 for (index, song) in songs.iter().enumerate() {
                     if let Some(chart) = chart_snapshot.get(&song.project_guid).cloned() {
                         if events
-                            .send(SetlistEvent::SongChartHydrated { song_id: song.id.clone(), index, chart })
+                            .send(SetlistEvent::SongChartHydrated {
+                                song_id: song.id.clone(),
+                                index,
+                                chart,
+                            })
                             .await
                             .is_err()
                         {
@@ -601,14 +605,11 @@ impl SetlistServiceImpl {
 
             // Timer for checking project tab switches (every 500ms)
             // This is separate from transport updates which come at ~30Hz
-            let mut project_check_interval =
-                tokio::time::interval(Duration::from_millis(500));
-            project_check_interval
-                .set_missed_tick_behavior(MissedTickBehavior::Skip);
+            let mut project_check_interval = tokio::time::interval(Duration::from_millis(500));
+            project_check_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
             let mut active_hydration_interval =
                 tokio::time::interval(Duration::from_millis(ACTIVE_HYDRATION_TICK_MS));
-            active_hydration_interval
-                .set_missed_tick_behavior(MissedTickBehavior::Skip);
+            active_hydration_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
             let mut perf_log_interval = tokio::time::interval(Duration::from_secs(5));
             perf_log_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
             let (chart_probe_tx, mut chart_probe_rx) =
@@ -1305,10 +1306,7 @@ impl SetlistService for SetlistServiceImpl {
             .ok_or_else(|| SessionServiceError::not_found("Song", index))
     }
 
-    async fn get_sections(
-        &self,
-        song_index: usize,
-    ) -> Result<Vec<Section>, SessionServiceError> {
+    async fn get_sections(&self, song_index: usize) -> Result<Vec<Section>, SessionServiceError> {
         let setlist = self.setlist.read().await;
         let song = setlist
             .as_ref()
@@ -1436,9 +1434,7 @@ impl SetlistService for SetlistServiceImpl {
             .ok_or_else(|| SessionServiceError::not_found("Song", format!("at {seconds}s")))?;
         let (_, section) = song
             .section_at_position_with_index(seconds)
-            .ok_or_else(|| {
-                SessionServiceError::not_found("Section", format!("at {seconds}s"))
-            })?;
+            .ok_or_else(|| SessionServiceError::not_found("Section", format!("at {seconds}s")))?;
         Ok(section.clone())
     }
 
@@ -1594,5 +1590,4 @@ impl SetlistService for SetlistServiceImpl {
     ) -> Result<session_proto::AudioLatencyInfo, SessionServiceError> {
         self.get_audio_latency_info_impl().await
     }
-
 }

@@ -123,7 +123,7 @@ impl SetlistOffsetMap {
             .songs
             .binary_search_by(|s| s.global_start_seconds.partial_cmp(&global_seconds).unwrap())
         {
-            Ok(i) => i,    // exact match on a boundary
+            Ok(i) => i,            // exact match on a boundary
             Err(0) => return None, // before the first song
             Err(i) => i - 1,
         };

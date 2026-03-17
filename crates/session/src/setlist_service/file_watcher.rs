@@ -73,9 +73,7 @@ impl SongFileWatcher {
     /// Each tuple is `(path, song_index, song_name)`.
     ///
     /// Returns the watcher and a receiver for change events.
-    pub fn new(
-        songs: Vec<(PathBuf, usize, String)>,
-    ) -> (Self, mpsc::Receiver<SongFileChanged>) {
+    pub fn new(songs: Vec<(PathBuf, usize, String)>) -> (Self, mpsc::Receiver<SongFileChanged>) {
         let (tx, rx) = mpsc::channel(64);
 
         let watched: Vec<WatchedSong> = songs
@@ -93,10 +91,7 @@ impl SongFileWatcher {
             })
             .collect();
 
-        debug!(
-            "SongFileWatcher created for {} songs",
-            watched.len()
-        );
+        debug!("SongFileWatcher created for {} songs", watched.len());
 
         (Self { songs: watched, tx }, rx)
     }

@@ -113,11 +113,7 @@ pub enum LoopCommand {
 // Dispatch
 // ============================================================================
 
-pub async fn run(
-    socket: Option<PathBuf>,
-    cmd: SessionCommand,
-    as_json: bool,
-) -> Result<()> {
+pub async fn run(socket: Option<PathBuf>, cmd: SessionCommand, as_json: bool) -> Result<()> {
     match cmd {
         SessionCommand::Combine {
             ref input,
@@ -247,11 +243,7 @@ pub fn cmd_combine(input: &str, output: Option<&str>, gap_measures: u32, trim: b
         total = info.global_start_seconds + info.duration_seconds;
     }
     println!();
-    println!(
-        "Total: {:.0}:{:02.0}",
-        (total / 60.0).floor(),
-        total % 60.0,
-    );
+    println!("Total: {:.0}:{:02.0}", (total / 60.0).floor(), total % 60.0,);
 
     Ok(())
 }
@@ -350,9 +342,7 @@ fn resolve_track_paths(track: &mut daw::file::types::track::Track, source_dir: &
             for line in item.raw_content.lines() {
                 let trimmed = line.trim();
                 if trimmed.starts_with("FILE ") {
-                    let file_path = trimmed
-                        .trim_start_matches("FILE ")
-                        .trim_matches('"');
+                    let file_path = trimmed.trim_start_matches("FILE ").trim_matches('"');
                     if !std::path::PathBuf::from(file_path).is_absolute() {
                         let absolute = source_dir.join(file_path);
                         patched.push(format!("FILE \"{}\"", absolute.to_string_lossy()));

@@ -4,7 +4,7 @@
 
 use crate::setlist::{ActiveIndices, Setlist};
 use crate::song::{Section, Song, SongChartHydration};
-use crate::{SongId, SectionId};
+use crate::{SectionId, SongId};
 use daw::service::MusicalPosition;
 use facet::Facet;
 use roam::Tx;
@@ -150,10 +150,7 @@ pub enum SetlistEvent {
         song: Song,
     },
     /// Exited a song
-    SongExited {
-        song_id: SongId,
-        index: usize,
-    },
+    SongExited { song_id: SongId, index: usize },
     /// Entered a new section
     SectionEntered {
         song_id: SongId,
@@ -219,10 +216,17 @@ pub trait SetlistService {
     async fn get_sections(&self, song_index: usize) -> Result<Vec<Section>, SessionServiceError>;
 
     /// Get a specific section by song and section index
-    async fn get_section(&self, song_index: usize, section_index: usize) -> Result<Section, SessionServiceError>;
+    async fn get_section(
+        &self,
+        song_index: usize,
+        section_index: usize,
+    ) -> Result<Section, SessionServiceError>;
 
     /// Get measure information for a song
-    async fn get_measures(&self, song_index: usize) -> Result<Vec<MeasureInfo>, SessionServiceError>;
+    async fn get_measures(
+        &self,
+        song_index: usize,
+    ) -> Result<Vec<MeasureInfo>, SessionServiceError>;
 
     // =========================================================================
     // Active State Queries
@@ -268,23 +272,39 @@ pub trait SetlistService {
     /// Seek to a specific time within a song (absolute seconds from project start)
     ///
     /// This switches to the correct project and seeks to the specified time.
-    async fn seek_to_time(&self, song_index: usize, seconds: f64) -> Result<(), SessionServiceError>;
+    async fn seek_to_time(
+        &self,
+        song_index: usize,
+        seconds: f64,
+    ) -> Result<(), SessionServiceError>;
 
     /// Seek to a specific song by index (goes to song start)
     async fn seek_to_song(&self, song_index: usize) -> Result<(), SessionServiceError>;
 
     /// Seek to a specific section within a song
-    async fn seek_to_section(&self, song_index: usize, section_index: usize) -> Result<(), SessionServiceError>;
+    async fn seek_to_section(
+        &self,
+        song_index: usize,
+        section_index: usize,
+    ) -> Result<(), SessionServiceError>;
 
     /// Seek to a musical position within a song
     ///
     /// The position is relative to the song's start (measure 0 = first measure of the song).
-    async fn seek_to_musical_position(&self, song_index: usize, position: MusicalPosition) -> Result<(), SessionServiceError>;
+    async fn seek_to_musical_position(
+        &self,
+        song_index: usize,
+        position: MusicalPosition,
+    ) -> Result<(), SessionServiceError>;
 
     /// Seek to a specific measure within a song (0-indexed from song start)
     ///
     /// This switches to the correct project and seeks to the start of the specified measure.
-    async fn goto_measure(&self, song_index: usize, measure: i32) -> Result<(), SessionServiceError>;
+    async fn goto_measure(
+        &self,
+        song_index: usize,
+        measure: i32,
+    ) -> Result<(), SessionServiceError>;
 
     // =========================================================================
     // Playback Commands
@@ -313,7 +333,11 @@ pub trait SetlistService {
     async fn toggle_section_loop(&self) -> Result<(), SessionServiceError>;
 
     /// Set a custom loop region
-    async fn set_loop_region(&self, start_seconds: f64, end_seconds: f64) -> Result<(), SessionServiceError>;
+    async fn set_loop_region(
+        &self,
+        start_seconds: f64,
+        end_seconds: f64,
+    ) -> Result<(), SessionServiceError>;
 
     /// Clear any active loop
     async fn clear_loop(&self) -> Result<(), SessionServiceError>;
@@ -355,7 +379,8 @@ pub trait SetlistService {
     async fn subscribe(&self, events: Tx<SetlistEvent>) -> Result<(), SessionServiceError>;
 
     /// Subscribe to active indices changes
-    async fn subscribe_active(&self, indices: Tx<ActiveIndices>) -> Result<(), SessionServiceError>;
+    async fn subscribe_active(&self, indices: Tx<ActiveIndices>)
+    -> Result<(), SessionServiceError>;
 
     // =========================================================================
     // Audio Engine (proxy)

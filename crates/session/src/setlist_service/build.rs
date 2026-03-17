@@ -1,12 +1,12 @@
 //! Setlist assembly from open DAW projects
 
-use super::{SetlistServiceImpl, HYDRATION_CONCURRENCY};
+use super::{HYDRATION_CONCURRENCY, SetlistServiceImpl};
 use daw::Daw;
+use moire::sync::Semaphore;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_proto::{AdvanceMode, SessionServiceError, Setlist, Song};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use moire::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
@@ -158,7 +158,10 @@ impl SetlistServiceImpl {
         // Each project may produce multiple songs, so we splice by project_guid.
         let this = self.clone();
         tokio::spawn(async move {
-            let semaphore = Arc::new(Semaphore::new("session.setlist.build.hydration", HYDRATION_CONCURRENCY));
+            let semaphore = Arc::new(Semaphore::new(
+                "session.setlist.build.hydration",
+                HYDRATION_CONCURRENCY,
+            ));
             let mut join_set = JoinSet::new();
 
             for load in project_loads {

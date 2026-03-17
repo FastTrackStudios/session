@@ -37,6 +37,8 @@ pub mod song;
 pub mod track_structure;
 
 // Re-export common types
+pub use offset_map::{SetlistOffsetMap, SongOffset};
+pub use routing_project::{LoopbackConfig, RoutingChannel, RoutingGroup};
 pub use services::{
     AudioLatencyInfo, MeasureInfo, SessionServiceError, SetlistEvent, SetlistService,
     SetlistServiceClient, SetlistServiceDispatcher, SongService, SongServiceClient,
@@ -44,14 +46,12 @@ pub use services::{
     WebClientServiceDispatcher, setlist_service_service_descriptor,
     song_service_service_descriptor, web_client_service_service_descriptor,
 };
-pub use offset_map::{SetlistOffsetMap, SongOffset};
 pub use setlist::{ActiveIndices, AdvanceMode, QueuedTarget, Setlist};
+pub use song::{Comment, Section, SectionType, Song, SongChartHydration, SongDetectedChord};
 pub use track_structure::{
     GuideTrackRole, ReferenceStructure, SetlistTrackStructure, SongTrackMapping, TrackEntry,
     TrackIdentity,
 };
-pub use routing_project::{LoopbackConfig, RoutingChannel, RoutingGroup};
-pub use song::{Comment, Section, SectionType, Song, SongChartHydration, SongDetectedChord};
 // Typed IDs are defined at crate root and re-exported here for convenience
 // (SongId and SectionId are already in scope from the definitions above)
 

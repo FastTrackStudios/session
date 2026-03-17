@@ -43,10 +43,8 @@ impl LiveSyncState {
         setlist_project: ReaperProject,
     ) -> Self {
         // Take initial snapshots of each song
-        let song_snapshots: Vec<Option<ReaperProject>> = song_paths
-            .iter()
-            .map(|p| read_project(p).ok())
-            .collect();
+        let song_snapshots: Vec<Option<ReaperProject>> =
+            song_paths.iter().map(|p| read_project(p).ok()).collect();
 
         Self {
             song_paths,
@@ -63,7 +61,11 @@ impl LiveSyncState {
     pub fn handle_song_changed(&mut self, event: &SongFileChanged) -> bool {
         let idx = event.song_index;
         if idx >= self.song_paths.len() {
-            warn!("Song index {} out of range (have {} songs)", idx, self.song_paths.len());
+            warn!(
+                "Song index {} out of range (have {} songs)",
+                idx,
+                self.song_paths.len()
+            );
             return false;
         }
 
@@ -71,7 +73,11 @@ impl LiveSyncState {
         let new_song = match read_project(&event.path) {
             Ok(project) => project,
             Err(e) => {
-                warn!("Failed to parse updated song RPP {}: {}", event.path.display(), e);
+                warn!(
+                    "Failed to parse updated song RPP {}: {}",
+                    event.path.display(),
+                    e
+                );
                 return false;
             }
         };
@@ -80,17 +86,26 @@ impl LiveSyncState {
         let old_song = match &self.song_snapshots[idx] {
             Some(s) => s,
             None => {
-                info!("No previous snapshot for song {}, taking initial snapshot", idx);
+                info!(
+                    "No previous snapshot for song {}, taking initial snapshot",
+                    idx
+                );
                 self.song_snapshots[idx] = Some(new_song);
                 return false;
             }
         };
 
         // Get offset for this song
-        let song_offset = self.offset_map.songs.get(idx)
+        let song_offset = self
+            .offset_map
+            .songs
+            .get(idx)
             .map(|s| s.global_start_seconds)
             .unwrap_or(0.0);
-        let song_end = self.offset_map.songs.get(idx)
+        let song_end = self
+            .offset_map
+            .songs
+            .get(idx)
             .map(|s| s.global_start_seconds + s.duration_seconds)
             .unwrap_or(f64::MAX);
 
@@ -102,7 +117,8 @@ impl LiveSyncState {
             match_items_by_name: true,
         };
 
-        let project_diff = diff::diff_projects_with_options(old_song, &self.setlist_project, &diff_options);
+        let project_diff =
+            diff::diff_projects_with_options(old_song, &self.setlist_project, &diff_options);
 
         if project_diff.is_empty() {
             debug!("No changes detected for song {} ({})", idx, event.song_name);
@@ -112,7 +128,9 @@ impl LiveSyncState {
 
         info!(
             "Song {} ({}) changed: {}",
-            idx, event.song_name, project_diff.summary()
+            idx,
+            event.song_name,
+            project_diff.summary()
         );
 
         // Check if the change is structural (requires full regeneration)
@@ -126,7 +144,8 @@ impl LiveSyncState {
         }
 
         // Incremental patch: diff the NEW song against the setlist
-        let new_diff = diff::diff_projects_with_options(&new_song, &self.setlist_project, &diff_options);
+        let new_diff =
+            diff::diff_projects_with_options(&new_song, &self.setlist_project, &diff_options);
 
         // Apply the diff to the setlist
         let apply_options = ApplyOptions {
@@ -177,22 +196,27 @@ impl LiveSyncState {
         let combined = concatenate_projects(&projects, &song_infos);
 
         // Update the offset map
-        use session_proto::offset_map::{SongOffset, SetlistOffsetMap};
         use session_proto::SongId;
+        use session_proto::offset_map::{SetlistOffsetMap, SongOffset};
         self.offset_map = SetlistOffsetMap {
-            songs: song_infos.iter().enumerate().map(|(i, si)| SongOffset {
-                index: i,
-                song_id: SongId::new(),
-                project_guid: String::new(),
-                global_start_seconds: si.global_start_seconds,
-                global_start_qn: si.global_start_seconds * 2.0,
-                duration_seconds: si.duration_seconds,
-                duration_qn: si.duration_seconds * 2.0,
-                count_in_seconds: 0.0,
-                start_tempo: 120.0,
-                start_time_sig: daw::service::TimeSignature::new(4, 4),
-            }).collect(),
-            total_seconds: song_infos.last()
+            songs: song_infos
+                .iter()
+                .enumerate()
+                .map(|(i, si)| SongOffset {
+                    index: i,
+                    song_id: SongId::new(),
+                    project_guid: String::new(),
+                    global_start_seconds: si.global_start_seconds,
+                    global_start_qn: si.global_start_seconds * 2.0,
+                    duration_seconds: si.duration_seconds,
+                    duration_qn: si.duration_seconds * 2.0,
+                    count_in_seconds: 0.0,
+                    start_tempo: 120.0,
+                    start_time_sig: daw::service::TimeSignature::new(4, 4),
+                })
+                .collect(),
+            total_seconds: song_infos
+                .last()
                 .map(|s| s.global_start_seconds + s.duration_seconds)
                 .unwrap_or(0.0),
             total_qn: 0.0,
@@ -218,15 +242,24 @@ impl LiveSyncState {
                 rpp_text.len()
             ),
             Err(e) => {
-                warn!("Failed to write setlist to {}: {}", self.setlist_path.display(), e);
+                warn!(
+                    "Failed to write setlist to {}: {}",
+                    self.setlist_path.display(),
+                    e
+                );
                 return;
             }
         }
 
         // Regenerate shell copies for each role
         let roles = &["Vocals", "Guitar", "Keys", "Drum Enhancement"];
-        let output_dir = self.setlist_path.parent().unwrap_or(std::path::Path::new("."));
-        let setlist_stem = self.setlist_path.file_stem()
+        let output_dir = self
+            .setlist_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+        let setlist_stem = self
+            .setlist_path
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("Setlist");
 
@@ -240,11 +273,7 @@ impl LiveSyncState {
                     shell_path.display(),
                     shell_text.len()
                 ),
-                Err(e) => warn!(
-                    "Failed to write shell copy {}: {}",
-                    shell_path.display(),
-                    e
-                ),
+                Err(e) => warn!("Failed to write shell copy {}: {}", shell_path.display(), e),
             }
         }
     }
@@ -256,9 +285,15 @@ impl LiveSyncState {
 /// processes change events.
 pub fn start_live_sync(
     state: LiveSyncState,
-) -> (moire::task::JoinHandle<()>, tokio::sync::mpsc::Receiver<SongFileChanged>) {
+) -> (
+    moire::task::JoinHandle<()>,
+    tokio::sync::mpsc::Receiver<SongFileChanged>,
+) {
     // Create the file watcher
-    let songs: Vec<_> = state.song_paths.iter().enumerate()
+    let songs: Vec<_> = state
+        .song_paths
+        .iter()
+        .enumerate()
         .map(|(i, p)| (p.clone(), i, format!("Song {}", i + 1)))
         .collect();
 
