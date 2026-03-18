@@ -721,11 +721,11 @@
         "rust-overlay": "rust-overlay_3"
       },
       "locked": {
-        "lastModified": 1773842436,
-        "narHash": "sha256-X+Ec4jvGJtoVS6cqzEi4DRjpYR1UUl+u3przoQvTEI8=",
+        "lastModified": 1773852206,
+        "narHash": "sha256-WFAOolsHbs8VEP4DqnfCAecQzdk+syAyizWG2HV9JPs=",
         "owner": "FastTrackStudios",
         "repo": "fts-flake",
-        "rev": "3a4a9cbd1aac63ce78ff44f8dd0a085563ece74c",
+        "rev": "89a54e2154b1a61e387fe16dd6c5155c0669099f",
         "type": "github"
       },
       "original": {
@@ -1261,6 +1261,26 @@
         "type": "github"
       }
     },
+    "nix2container": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1767430085,
+        "narHash": "sha256-SiXJ6xv4pS2MDUqfj0/mmG746cGeJrMQGmoFgHLS25Y=",
+        "owner": "nlewo",
+        "repo": "nix2container",
+        "rev": "66f4b8a47e92aa744ec43acbb5e9185078983909",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nlewo",
+        "repo": "nix2container",
+        "type": "github"
+      }
+    },
     "nix_2": {
       "inputs": {
         "flake-compat": [
@@ -1670,6 +1690,7 @@
         "devenv": "devenv",
         "flake-utils": "flake-utils",
         "fts-flake": "fts-flake",
+        "nix2container": "nix2container",
         "nixpkgs": "nixpkgs_9",
         "rust-overlay": "rust-overlay_4"
       }
