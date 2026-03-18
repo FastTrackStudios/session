@@ -10,6 +10,8 @@
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     fts-flake.url = "github:FastTrackStudios/fts-flake";
     fts-flake.inputs.nixpkgs.follows = "nixpkgs";
+    nix2container.url = "github:nlewo/nix2container";
+    nix2container.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   nixConfig = {
@@ -31,6 +33,7 @@
       flake-utils,
       rust-overlay,
       fts-flake,
+      nix2container,
     } @ inputs:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (
       system:
@@ -41,8 +44,11 @@
             pkg:
             builtins.elem (pkgs.lib.getName pkg) [
               "reaper"
+              "reaper-headless"
             ];
         };
+
+        n2c = nix2container.packages.${system}.nix2container;
 
         # Isolated REAPER config — never touches ~/.config/REAPER
         ftsReaperConfig = "$HOME/.config/FastTrackStudio/Reaper";
@@ -99,8 +105,60 @@
           '';
           daw-ci.description = "Run full test suite (unit + integration)";
         };
+
+        # ── CI container image (for local testing with podman/docker) ──
+        ci-image = n2c.buildImage {
+          name = "daw-ci";
+          tag = "latest";
+          copyToRoot = pkgs.buildEnv {
+            name = "daw-ci-root";
+            paths = with pkgs; [
+              # Core tools
+              bashInteractive
+              coreutils
+              gnugrep
+              findutils
+              procps
+              which
+              gnused
+              gawk
+              git
+              cacert
+
+              # Build tools
+              pkg-config
+              openssl
+              gcc
+
+              # FTS packages (REAPER + headless runner + FHS sandbox)
+              ftsCi.fts-test
+              ftsCi.reaper-fhs
+
+              # Rust toolchain
+              cargo
+              rustc
+              rustfmt
+            ];
+            pathsToLink = [ "/bin" "/lib" "/share" "/etc" ];
+          };
+          config = {
+            Env = [
+              "FTS_REAPER_EXECUTABLE=${ftsCi.reaper}/bin/reaper"
+              "FTS_REAPER_RESOURCES=${ftsCi.reaper}/opt/REAPER"
+              "FTS_REAPER_CONFIG=/root/.config/FastTrackStudio/Reaper"
+              "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              "NIXPKGS_ALLOW_UNFREE=1"
+            ];
+            WorkingDir = "/workspace";
+            Cmd = [ "${pkgs.bashInteractive}/bin/bash" ];
+          };
+        };
       in
       {
+        packages = {
+          inherit ci-image;
+        };
+
         devShells = {
           # ── Default dev shell ─────────────────────────────────
           default = devenv.lib.mkShell {
