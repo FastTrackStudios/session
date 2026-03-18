@@ -52,6 +52,45 @@
           inherit pkgs;
           cfg = fts-flake.presets.ci;
         };
+        # ── Shared scripts (used in both dev and CI shells) ───────
+        sharedScripts = {
+          daw-build.exec = "cargo build --workspace";
+          daw-build.description = "Build the entire daw workspace";
+
+          daw-test.exec = "cargo test --workspace";
+          daw-test.description = "Run all unit tests";
+
+          daw-smoke.exec = ''
+            fts-test bash -c '
+              "$FTS_REAPER_EXECUTABLE" -newinst -nosplash -ignoreerrors &
+              RPID=$!
+              sleep 3
+              if kill -0 $RPID 2>/dev/null; then
+                echo "REAPER running (PID $RPID) — smoke test passed"
+                kill $RPID
+              else
+                echo "REAPER failed to start"
+                exit 1
+              fi
+            '
+          '';
+          daw-smoke.description = "Quick REAPER headless smoke test";
+
+          daw-integration.exec = "cargo xtask reaper-test";
+          daw-integration.description = "Run REAPER integration tests (headless)";
+
+          daw-ci.exec = ''
+            set -e
+            echo "=== Unit tests ==="
+            cargo test --workspace
+            echo ""
+            echo "=== Integration tests ==="
+            daw-integration
+            echo ""
+            echo "=== All tests passed ==="
+          '';
+          daw-ci.description = "Run full test suite (unit + integration)";
+        };
       in
       {
         devShells = {
@@ -82,67 +121,7 @@
                     FTS_REAPER_RESOURCES = "${ftsDev.reaper}/opt/REAPER";
                   };
 
-                  # ── Scripts ───────────────────────────────────
-                  scripts = {
-                    daw-build.exec = "cargo build --workspace";
-                    daw-build.description = "Build the entire daw workspace";
-
-                    daw-test.exec = "cargo test --workspace";
-                    daw-test.description = "Run all unit tests";
-
-                    daw-smoke.exec = ''
-                      fts-test bash -c '
-                        "$FTS_REAPER_EXECUTABLE" -newinst -nosplash -ignoreerrors &
-                        RPID=$!
-                        sleep 3
-                        if kill -0 $RPID 2>/dev/null; then
-                          echo "REAPER running (PID $RPID) — smoke test passed"
-                          kill $RPID
-                        else
-                          echo "REAPER failed to start"
-                          exit 1
-                        fi
-                      '
-                    '';
-                    daw-smoke.description = "Quick REAPER headless smoke test";
-
-                    daw-integration.exec = ''
-                      fts-test bash -c '
-                        "$FTS_REAPER_EXECUTABLE" -newinst -nosplash -ignoreerrors &
-                        RPID=$!
-                        echo "Waiting for REAPER socket..."
-                        SOCK=""
-                        for i in $(seq 1 30); do
-                          SOCK=$(ls /tmp/fts-daw-*.sock 2>/dev/null | head -1)
-                          if [ -n "$SOCK" ]; then break; fi
-                          sleep 1
-                        done
-                        if [ -z "$SOCK" ]; then
-                          echo "No socket found after 30s"
-                          kill $RPID 2>/dev/null
-                          exit 1
-                        fi
-                        echo "Socket ready: $SOCK"
-                        cargo test -p daw-reaper --test reaper_connection -- --ignored --nocapture
-                        STATUS=$?
-                        kill $RPID 2>/dev/null
-                        exit $STATUS
-                      '
-                    '';
-                    daw-integration.description = "Run REAPER integration tests (headless)";
-
-                    daw-ci.exec = ''
-                      set -e
-                      echo "=== Unit tests ==="
-                      cargo test --workspace
-                      echo ""
-                      echo "=== Integration tests ==="
-                      daw-integration
-                      echo ""
-                      echo "=== All tests passed ==="
-                    '';
-                    daw-ci.description = "Run full test suite (unit + integration)";
-                  };
+                  scripts = sharedScripts;
 
                   # ── Claude Code integration ──────────────────
                   claude.code = {
@@ -211,7 +190,7 @@
             ];
           };
 
-          # ── CI shell (minimal, no GUI, no plugins) ────────────
+          # ── CI shell (minimal, no GUI) ────────────────────────
           ci = devenv.lib.mkShell {
             inherit inputs pkgs;
             modules = [
@@ -236,6 +215,8 @@
                     FTS_REAPER_EXECUTABLE = "${ftsCi.reaper}/bin/reaper";
                     FTS_REAPER_RESOURCES = "${ftsCi.reaper}/opt/REAPER";
                   };
+
+                  scripts = sharedScripts;
                 }
               )
             ];

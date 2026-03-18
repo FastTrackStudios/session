@@ -34,11 +34,12 @@ jobs:
           cmd-format: nix develop .#ci --impure --command {0}
 
       - name: Run unit tests
-        run: nix develop .#ci --impure --command cargo test --workspace
+        run: nix develop .#ci --impure --command daw-test
 
   integration-tests:
     runs-on: ubuntu-latest
     needs: unit-tests
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -61,43 +62,12 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
         continue-on-error: true
 
-      - name: Smoke test — REAPER starts headless
-        run: |
-          nix develop .#ci --impure --command bash -c '
-            fts-test bash -c "
-              \"\$FTS_REAPER_EXECUTABLE\" -newinst -nosplash -ignoreerrors &
-              RPID=\$!
-              sleep 3
-              if kill -0 \$RPID 2>/dev/null; then
-                echo \"REAPER running (PID \$RPID) — smoke test passed\"
-                kill \$RPID
-              else
-                echo \"REAPER failed to start\"
-                exit 1
-              fi
-            "
-          '
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cmd-format: nix develop .#ci --impure --command {0}
 
-      # Uncomment when daw-reaper integration tests are Linux-ready:
-      # - name: Run integration tests
-      #   run: |
-      #     nix develop .#ci --impure --command bash -c '
-      #       fts-test bash -c "
-      #         \"\$FTS_REAPER_EXECUTABLE\" -newinst -nosplash -ignoreerrors &
-      #         RPID=\$!
-      #         for i in \$(seq 1 30); do
-      #           SOCK=\$(ls /tmp/fts-daw-*.sock 2>/dev/null | head -1)
-      #           if [ -n \"\$SOCK\" ]; then break; fi
-      #           sleep 1
-      #         done
-      #         if [ -z \"\$SOCK\" ]; then
-      #           echo \"No socket found after 30s\"
-      #           kill \$RPID 2>/dev/null
-      #           exit 1
-      #         fi
-      #         cargo test -p daw-reaper --test reaper_connection -- --ignored --nocapture
-      #         STATUS=\$?
-      #         kill \$RPID 2>/dev/null
-      #         exit \$STATUS
-      #       "
-      #     '
+      - name: Smoke test — REAPER starts headless
+        run: nix develop .#ci --impure --command daw-smoke
+
+      - name: Run integration tests
+        run: nix develop .#ci --impure --command daw-integration

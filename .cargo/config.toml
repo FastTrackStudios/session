@@ -1,2 +1,5 @@
 [build]
 rustflags = ["-C", "force-frame-pointers=yes"]
+
+[alias]
+xtask = "run --package daw-xtask --"
