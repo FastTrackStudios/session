@@ -2,7 +2,8 @@
   description = "FastTrackStudio DAW — cross-platform DAW control framework";
 
   inputs = {
-    nixpkgs.url = "github:cachix/devenv-nixpkgs/rolling";
+    # Use nixpkgs-unstable directly for Hydra binary cache hits.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     devenv.url = "github:cachix/devenv";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
