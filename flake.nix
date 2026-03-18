@@ -44,14 +44,21 @@
             ];
         };
 
+        # Isolated REAPER config — never touches ~/.config/REAPER
+        ftsReaperConfig = "$HOME/.config/FastTrackStudio/Reaper";
+
         # Get FTS packages for dev (with extensions + plugins) and CI (minimal)
         ftsDev = fts-flake.lib.mkFtsPackages {
           inherit pkgs;
-          cfg = fts-flake.presets.dev;
+          cfg = fts-flake.presets.dev // {
+            reaper.configDir = ftsReaperConfig;
+          };
         };
         ftsCi = fts-flake.lib.mkFtsPackages {
           inherit pkgs;
-          cfg = fts-flake.presets.ci;
+          cfg = fts-flake.presets.ci // {
+            reaper.configDir = ftsReaperConfig;
+          };
         };
         # ── Shared scripts (used in both dev and CI shells) ───────
         sharedScripts = {
@@ -120,6 +127,7 @@
                   env = {
                     FTS_REAPER_EXECUTABLE = "${ftsDev.reaper}/bin/reaper";
                     FTS_REAPER_RESOURCES = "${ftsDev.reaper}/opt/REAPER";
+                    FTS_REAPER_CONFIG = ftsReaperConfig;
                   };
 
                   scripts = sharedScripts;
@@ -215,6 +223,7 @@
                   env = {
                     FTS_REAPER_EXECUTABLE = "${ftsCi.reaper}/bin/reaper";
                     FTS_REAPER_RESOURCES = "${ftsCi.reaper}/opt/REAPER";
+                    FTS_REAPER_CONFIG = ftsReaperConfig;
                   };
 
                   scripts = sharedScripts;
