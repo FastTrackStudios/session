@@ -721,11 +721,11 @@
         "rust-overlay": "rust-overlay_3"
       },
       "locked": {
-        "lastModified": 1773860970,
-        "narHash": "sha256-Sv5yHcJ6+JFJMHqtpb5EPOJKVF1hLuervWy8u6OMe10=",
+        "lastModified": 1773863133,
+        "narHash": "sha256-kIiKOy7qPy8HpXDYzrUNe3IgsaVSYzXvtSfjB179Il0=",
         "owner": "FastTrackStudios",
         "repo": "fts-flake",
-        "rev": "947dde0720fb26983132b33880ced2951becc611",
+        "rev": "2b507b7938cffba76cf87343e3907b5746de9d5b",
         "type": "github"
       },
       "original": {
