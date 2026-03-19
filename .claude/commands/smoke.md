@@ -1,1 +1,0 @@
-/nix/store/sn29yqjfvfl8ymanfkvf9nwwb1hbhirp-claude-commands-smoke.md
