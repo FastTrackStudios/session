@@ -1,0 +1,18 @@
+[package]
+name = "session-extension"
+version.workspace = true
+edition.workspace = true
+description = "Session domain SHM guest — connects to REAPER via daw-bridge"
+
+[[bin]]
+name = "session-extension"
+path = "src/main.rs"
+
+[dependencies]
+daw.workspace = true
+daw-extension-runtime.workspace = true
+session.workspace = true
+tokio = { workspace = true, features = ["time", "net", "rt"] }
+eyre.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
