@@ -140,5 +140,11 @@ actions_proto::declare_actions! {
             category: Dev,
             menu_path: "FTS/Session/Dev",
         }
+        BUILD_SETLIST = "fts.session.build_setlist" {
+            name: "Build Setlist",
+            description: "Build setlist from all open REAPER project tabs",
+            category: Session,
+            menu_path: "FTS/Session",
+        }
     }
 }
