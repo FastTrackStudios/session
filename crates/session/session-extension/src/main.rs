@@ -52,37 +52,26 @@ async fn run() -> Result<()> {
         .await?;
     info!("[session:{pid}] Health beacon written");
 
-    // Register session-domain actions with REAPER.
+    // Register all actions with REAPER via daw-bridge.
+    // Actions with a menu_path are placed in the Extensions > FastTrackStudio menu.
     let registry = daw.action_registry();
-    for def in session_actions::definitions() {
+    let all_defs = session_actions::definitions()
+        .into_iter()
+        .chain(fts_transport_actions::definitions())
+        .chain(fts_markers_regions_actions::definitions());
+
+    for def in all_defs {
         let cmd_name = def.id.to_command_id();
-        let cmd_id = registry.register(&cmd_name, &def.description).await?;
+        let has_menu = def.menu_path.is_some();
+        let cmd_id = if has_menu {
+            registry.register_in_menu(&cmd_name, &def.name).await?
+        } else {
+            registry.register(&cmd_name, &def.name).await?
+        };
         if cmd_id == 0 {
             tracing::warn!("[session:{pid}] Failed to register action: {cmd_name}");
         } else {
-            info!("[session:{pid}] Registered {cmd_name} (cmd_id={cmd_id})");
-        }
-    }
-
-    // Register transport actions (play, stop, record, etc.)
-    for def in fts_transport_actions::definitions() {
-        let cmd_name = def.id.to_command_id();
-        let cmd_id = registry.register(&cmd_name, &def.description).await?;
-        if cmd_id == 0 {
-            tracing::warn!("[session:{pid}] Failed to register transport action: {cmd_name}");
-        } else {
-            info!("[session:{pid}] Registered transport {cmd_name} (cmd_id={cmd_id})");
-        }
-    }
-
-    // Register marker/region actions
-    for def in fts_markers_regions_actions::definitions() {
-        let cmd_name = def.id.to_command_id();
-        let cmd_id = registry.register(&cmd_name, &def.description).await?;
-        if cmd_id == 0 {
-            tracing::warn!("[session:{pid}] Failed to register marker action: {cmd_name}");
-        } else {
-            info!("[session:{pid}] Registered marker {cmd_name} (cmd_id={cmd_id})");
+            info!("[session:{pid}] Registered {cmd_name} (cmd_id={cmd_id}, menu={has_menu})");
         }
     }
 
