@@ -66,8 +66,15 @@ async fn run() -> Result<()> {
     let mut rx = registry.subscribe_actions().await?;
     info!("[session:{pid}] Subscribed to action events");
 
-    // TODO: Watch for project structure changes
-    // TODO: Manage arrangement and timeline state
+    // TODO: Move setlist_nav.rs from reaper-extension into this process:
+    //   - init_setlist(): scan [S] song folders, [L] variation tracks
+    //   - next/prev song/section/variation navigation
+    //   - Mute/unmute track groups for navigation
+    // TODO: Move ruler_manager.rs from reaper-extension into this process:
+    //   - scaffold_core_lanes(): create 8 core ruler lanes
+    //   - ensure_instrument_lane(): create instrument note lanes
+    //   - Marker/region insertion for each lane type
+    // TODO: Initialize SetlistServiceImpl + SongServiceImpl (from session.rs)
 
     // Event loop — handle action triggers from REAPER
     while let Ok(Some(event)) = rx.recv().await {
@@ -83,7 +90,8 @@ async fn run() -> Result<()> {
 }
 
 fn handle_action(command_name: &str) {
-    // TODO: Wire to SessionManager once it lives in this process.
-    // For now, log the trigger so we can verify the end-to-end flow.
+    // TODO: Dispatch to setlist navigation (next_song, prev_song, etc.)
+    // TODO: Dispatch to ruler manager (scaffold lanes, insert markers)
+    // TODO: Dispatch to SetlistService methods
     info!("[session] Action triggered: {command_name}");
 }
