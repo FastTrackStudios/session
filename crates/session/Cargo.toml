@@ -30,3 +30,5 @@ rustc-hash = "2"
 
 [dev-dependencies]
 daw = { workspace = true, features = ["standalone", "file"] }
+reaper-test.workspace = true
+eyre.workspace = true
