@@ -1,0 +1,110 @@
+[workspace]
+members = [
+    "apps/session-cli",
+    "crates/session",
+    "crates/session-extension",
+    "crates/session-proto",
+    "crates/session-ui",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["FastTrack Studio"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# ── Session crates (facade pattern) ──────────────────────────────────
+# `session` is the facade — the only public API surface for the session domain.
+# `session-proto` is INTERNAL. App crates must NOT depend on it directly;
+# use the `session` facade instead. session-ui is an exception (Dioxus components).
+session = { path = "crates/session" }
+session-proto = { path = "crates/session-proto" }
+session-ui = { path = "crates/session-ui", default-features = false }
+
+# ── DAW domain (sibling repo — facade crate) ────────────────────────
+# NOTE: daw-proto, daw-control, daw-control-sync, daw-reaper, daw-standalone,
+# dawfile-reaper are INTERNAL. Access them through the `daw` facade crate.
+# Use features: sync, reaper, standalone, file
+daw = { git = "https://github.com/FastTrackStudios/daw.git", branch = "main" }
+daw-extension-runtime = { git = "https://github.com/FastTrackStudios/daw.git", branch = "main" }
+
+# ── Testing (from daw repo) ─────────────────────────────────────────
+reaper-test = { git = "https://github.com/FastTrackStudios/daw.git", branch = "main" }
+
+# ── ROAM service framework (latest main) ────────────────────────────
+roam = { git = "https://github.com/bearcove/roam.git", branch = "main" }
+
+# ── Facet reflection ────────────────────────────────────────────────
+facet = { version = "0.44" }
+
+# ── Keyflow (sibling repo — facade pattern) ─────────────────────────
+keyflow = { git = "https://github.com/FastTrackStudios/keyflow.git", branch = "main" }
+
+# ── Actions / Input (sibling repo) ──────────────────────────────────
+actions-proto = { git = "https://github.com/FastTrackStudios/input_actions.git", branch = "main" }
+
+# ── Dock UI (sibling repo) ──────────────────────────────────────────
+dock-dioxus = { git = "https://github.com/FastTrackStudios/dock-dioxus.git", branch = "main", default-features = false }
+dock-proto = { git = "https://github.com/FastTrackStudios/dock-dioxus.git", branch = "main" }
+
+# ── FTS design system ───────────────────────────────────────────────
+fts-ui = { git = "https://github.com/FastTrackStudios/fts-ui.git", branch = "main" }
+
+# ── Shared infrastructure ───────────────────────────────────────────
+# utils lives in the FastTrackStudio monorepo — pull via git
+utils = { git = "https://github.com/FastTrackStudios/FastTrackStudio.git", branch = "main" }
+
+# ── Instrumentation ─────────────────────────────────────────────────
+moire = { version = "1.0", features = ["diagnostics"] }
+
+# ── Async runtime ───────────────────────────────────────────────────
+tokio = { version = "1.48", features = ["full"] }
+futures = "0.3"
+
+# ── Serialization ───────────────────────────────────────────────────
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+
+# ── Observability ───────────────────────────────────────────────────
+tracing = { version = "0.1", features = ["std"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── Utilities ────────────────────────────────────────────────────────
+eyre = "0.6"
+
+# ── Local development overrides ─────────────────────────────────────
+# Uncomment the sections below to use local checkouts instead of GitHub.
+# This gives you instant rebuilds when iterating across repos.
+#
+# [patch."https://github.com/FastTrackStudios/daw.git"]
+# daw = { path = "../daw/crates/daw" }
+# daw-extension-runtime = { path = "../daw/crates/daw-extension-runtime" }
+# reaper-test = { path = "../daw/crates/reaper-test" }
+#
+# [patch."https://github.com/FastTrackStudios/keyflow.git"]
+# keyflow = { path = "../keyflow/crates/keyflow" }
+#
+# [patch."https://github.com/FastTrackStudios/input_actions.git"]
+# actions-proto = { path = "../input_actions/crates/actions-proto" }
+#
+# [patch."https://github.com/FastTrackStudios/dock-dioxus.git"]
+# dock-dioxus = { path = "../dock-dioxus/crates/dock-dioxus" }
+# dock-proto = { path = "../dock-dioxus/crates/dock-proto" }
+#
+# [patch."https://github.com/FastTrackStudios/fts-ui.git"]
+# fts-ui = { path = "../fts-ui/crates/fts-ui" }
+#
+# [patch."https://github.com/FastTrackStudios/FastTrackStudio.git"]
+# utils = { path = "../FastTrackStudio/crates/shared/utils" }
+#
+# [patch."https://github.com/bearcove/roam.git"]
+# roam = { path = "../roam/crates/roam" }
+
+[workspace.lints.rust]
+dead_code = "allow"
+unused = "allow"
+
+[workspace.lints.clippy]
