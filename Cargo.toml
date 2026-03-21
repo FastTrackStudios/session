@@ -5,6 +5,7 @@ members = [
     "crates/session-extension",
     "crates/session-proto",
     "crates/session-ui",
+    "xtask",
 ]
 resolver = "2"
 
