@@ -36,10 +36,10 @@ daw-extension-runtime = { git = "https://github.com/FastTrackStudios/daw.git", b
 # ── Testing (from daw repo) ─────────────────────────────────────────
 reaper-test = { git = "https://github.com/FastTrackStudios/daw.git", branch = "main" }
 
-# ── Vox service framework (latest main) ──────────────────────────────
-vox = { git = "https://github.com/bearcove/vox.git", rev = "53bff48" }
-vox-stream = { git = "https://github.com/bearcove/vox.git", rev = "53bff48" }
-vox-websocket = { git = "https://github.com/bearcove/vox.git", rev = "53bff48" }
+# ── Vox service framework (fork with wasm32 fix) ─────────────────────
+vox = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-stream = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-websocket = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
 
 # ── Facet reflection ────────────────────────────────────────────────
 facet = { version = "0.44" }
@@ -58,8 +58,7 @@ dock-proto = { git = "https://github.com/FastTrackStudios/dock-dioxus.git", bran
 fts-ui = { git = "https://github.com/FastTrackStudios/fts-ui.git", branch = "main" }
 
 # ── Shared infrastructure ───────────────────────────────────────────
-# utils lives in the FastTrackStudio monorepo — pull via git
-utils = { git = "https://github.com/FastTrackStudios/FastTrackStudio.git", branch = "main" }
+utils = { git = "https://github.com/FastTrackStudios/fts-utils.git", branch = "main" }
 
 # ── Instrumentation ─────────────────────────────────────────────────
 moire = { version = "1.0", features = ["diagnostics"] }
@@ -105,11 +104,23 @@ reaper-test = { path = "../daw/crates/reaper-test" }
 # [patch."https://github.com/FastTrackStudios/fts-ui.git"]
 # fts-ui = { path = "../fts-ui/crates/fts-ui" }
 #
-# [patch."https://github.com/FastTrackStudios/FastTrackStudio.git"]
-# utils = { path = "../FastTrackStudio/crates/shared/utils" }
+# [patch."https://github.com/FastTrackStudios/fts-utils.git"]
+# utils = { path = "../fts-utils" }
 #
-# [patch."https://github.com/bearcove/vox.git"]
-# vox = { path = "../vox/rust/vox" }
+# Redirect transitive deps on upstream vox to our fork (wasm32 fix)
+[patch."https://github.com/bearcove/vox.git"]
+vox = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-core = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-types = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-postcard = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-stream = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-websocket = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-shm = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-schema = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-service-macros = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-codegen = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+vox-inprocess = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
+shm-primitives = { git = "https://github.com/Codys-Wright/roam.git", rev = "7657e6e" }
 
 # ── Vendored patches ──────────────────────────────────────────────────
 # moire: unify crates.io moire with the git rev that vox pulls in,
