@@ -9,6 +9,7 @@
 
 mod build;
 mod combined;
+pub mod demo;
 pub mod file_watcher;
 mod hydration;
 pub mod live_daw_sync;

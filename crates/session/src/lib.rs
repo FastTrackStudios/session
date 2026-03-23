@@ -54,6 +54,10 @@ pub use setlist_builder::SetlistBuilder;
 #[cfg(not(target_arch = "wasm32"))]
 pub use song_builder::SongBuilder;
 
+// Re-export demo setlist stamping (for extensions that have a local Daw instance)
+#[cfg(not(target_arch = "wasm32"))]
+pub use setlist_service::demo::{stamp_demo_into_project, stamp_demo_setlist};
+
 // Session action definitions — single source of truth.
 //
 // The `define_actions!` macro generates:
@@ -143,6 +147,12 @@ actions_proto::define_actions! {
             name: "Build Setlist",
             description: "Build setlist from all open REAPER project tabs",
             category: Session,
+        }
+        LOAD_DEMO_SETLIST = "load_demo_setlist" {
+            name: "Load Demo Setlist",
+            description: "Load a demo setlist with mock song data (no DAW required)",
+            category: Dev,
+            group: "Dev",
         }
     }
 }

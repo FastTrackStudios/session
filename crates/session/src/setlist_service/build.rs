@@ -76,7 +76,9 @@ impl SetlistServiceImpl {
             .song_cache
             .with_read(|map| {
                 map.iter()
-                    .map(|(guid, entry)| (guid.clone(), entry.song.clone()))
+                    .filter_map(|(guid, entry)| {
+                        entry.songs.first().map(|s| (guid.clone(), s.clone()))
+                    })
                     .collect()
             })
             .await;

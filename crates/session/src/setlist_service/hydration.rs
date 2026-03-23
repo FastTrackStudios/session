@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 pub(crate) struct SongCacheEntry {
     pub(crate) project_name: String,
     pub(crate) chart_fingerprint: Option<String>,
-    pub(crate) song: Song,
+    pub(crate) songs: Vec<Song>,
 }
 
 #[derive(Clone)]
@@ -124,6 +124,7 @@ impl SetlistServiceImpl {
             detected_chords: Vec::new(),
             chart_fingerprint: None,
             advance_mode: None,
+            color: None,
         }
     }
 
@@ -307,9 +308,11 @@ impl SetlistServiceImpl {
             };
 
             if cached.project_name == load.project_name && fingerprint_matches {
-                let mut song = cached.song;
-                song.id = Self::make_song_id(existing_song, Some(&song), &load.guid);
-                return vec![song];
+                let mut songs = cached.songs;
+                if let Some(first) = songs.first_mut() {
+                    first.id = Self::make_song_id(existing_song, Some(first), &load.guid);
+                }
+                return songs;
             }
         }
 
@@ -317,28 +320,36 @@ impl SetlistServiceImpl {
 
         match SongBuilder::build(&load.project).await {
             Ok(mut songs) => {
-                // Apply chart data and IDs to the first song; cache only the first song
+                // Apply chart data and IDs to the first song
                 if let Some(first_song) = songs.first_mut() {
                     first_song.id = Self::make_song_id(existing_song, None, &load.guid);
                     if let Some(data) = chart_data {
                         Self::apply_chart_data(first_song, data);
                     }
                     self.cache_chart_payload_for_song(first_song).await;
-                    let mut cached_song = first_song.clone();
-                    Self::strip_song_chart_payload(&mut cached_song);
-                    self.song_cache
-                        .insert(
-                            load.guid.clone(),
-                            SongCacheEntry {
-                                project_name: load.project_name.clone(),
-                                chart_fingerprint: first_song.chart_fingerprint.clone(),
-                                song: cached_song,
-                            },
-                        )
-                        .await;
                 }
-                // SongBuilder now assigns SongId::new() to each song,
-                // so remaining songs already have unique IDs.
+
+                // Cache all songs for this project
+                let cached_songs: Vec<Song> = songs
+                    .iter()
+                    .map(|s| {
+                        let mut cached = s.clone();
+                        Self::strip_song_chart_payload(&mut cached);
+                        cached
+                    })
+                    .collect();
+                let chart_fp = songs.first().and_then(|s| s.chart_fingerprint.clone());
+                self.song_cache
+                    .insert(
+                        load.guid.clone(),
+                        SongCacheEntry {
+                            project_name: load.project_name.clone(),
+                            chart_fingerprint: chart_fp,
+                            songs: cached_songs,
+                        },
+                    )
+                    .await;
+
                 songs
             }
             Err(e) => {
@@ -451,7 +462,7 @@ impl SetlistServiceImpl {
                     SongCacheEntry {
                         project_name,
                         chart_fingerprint: updated_song_light.chart_fingerprint.clone(),
-                        song: updated_song_light,
+                        songs: vec![updated_song_light],
                     },
                 )
                 .await;

@@ -7,7 +7,6 @@ use super::{
 };
 use daw::Daw;
 use moire::sync::{Semaphore, mpsc};
-use roam::Tx;
 use rustc_hash::FxHashMap;
 use session_proto::{
     ActiveIndices, AdvanceMode, MeasureInfo, Section, SessionServiceError, SetlistEvent,
@@ -21,6 +20,7 @@ use tokio::sync::broadcast::error::RecvError as BroadcastRecvError;
 use tokio::task::JoinSet;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
+use vox::Tx;
 
 impl SetlistServiceImpl {
     pub(crate) fn active_indices_structural_changed(
@@ -1557,6 +1557,13 @@ impl SetlistService for SetlistServiceImpl {
 
     async fn refresh(&self) -> Result<(), SessionServiceError> {
         self.refresh_impl().await
+    }
+
+    async fn load_demo_setlist(&self) -> Result<(), SessionServiceError> {
+        let daw = Daw::try_get()
+            .ok_or_else(|| SessionServiceError::DawError("DAW not initialized".to_string()))?;
+        super::demo::stamp_demo_setlist(daw).await?;
+        self.build_from_open_projects_impl().await
     }
 
     async fn generate_combined_setlist(
