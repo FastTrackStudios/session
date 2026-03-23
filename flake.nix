@@ -209,12 +209,30 @@
               Cmd = [ "${pkgs.bashInteractive}/bin/bash" ];
             };
           };
+          # Build just the daw-bridge cdylib (REAPER extension plugin)
+          daw-bridge = craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              pname = "daw-bridge";
+              cargoExtraArgs = "-p daw-bridge";
+              doCheck = false;
+              # cdylib-only crates don't produce binaries, so crane's default
+              # install phase would fail. We just need the shared library.
+              installPhaseCommand = ''
+                mkdir -p $out/lib
+                find target -name "libreaper_daw_bridge.so" -o -name "libreaper_daw_bridge.dylib" \
+                  | head -1 | xargs -I{} cp {} $out/lib/
+              '';
+            }
+          );
       in
       {
         packages =
           {
             default = daw-workspace;
             daw = daw-workspace;
+            daw-bridge = daw-bridge;
           }
           // pkgs.lib.optionalAttrs isLinux {
             ci-image = ci-image;
