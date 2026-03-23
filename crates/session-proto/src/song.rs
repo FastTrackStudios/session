@@ -292,6 +292,8 @@ pub struct Song {
     pub chart_fingerprint: Option<String>,
     /// Per-song advance mode override. `None` = use the setlist default.
     pub advance_mode: Option<crate::setlist::AdvanceMode>,
+    /// Color inherited from the SONG-lane region (REAPER native color, if set).
+    pub color: Option<u32>,
 }
 
 impl std::fmt::Debug for Song {
@@ -376,20 +378,49 @@ impl Song {
         self.start_seconds + relative_seconds
     }
 
-    /// Get bright color for UI display (uses first section's color or default)
+    /// Get bright color for UI display.
+    ///
+    /// Prefers the REAPER region color (from the SONG-lane region), then falls
+    /// back to the first section's color, then a default blue.
     pub fn bright_color(&self) -> String {
+        if let Some(hex) = self.reaper_color_hex() {
+            return hex;
+        }
         self.sections
             .first()
             .map(|s| s.bright_color())
             .unwrap_or_else(|| "#3b82f6".to_string()) // default blue
     }
 
-    /// Get muted color for UI display (uses first section's color or default)
+    /// Get muted (darker) color for UI display.
+    ///
+    /// Prefers a darkened version of the REAPER region color, then falls back
+    /// to the first section's muted color, then a default dark blue.
     pub fn muted_color(&self) -> String {
+        if let Some(c) = self.color {
+            // REAPER native color: 0x01BBGGRR
+            let r = (c & 0xFF) as u8;
+            let g = ((c >> 8) & 0xFF) as u8;
+            let b = ((c >> 16) & 0xFF) as u8;
+            // Darken by ~40%
+            let r = (r as f32 * 0.6) as u8;
+            let g = (g as f32 * 0.6) as u8;
+            let b = (b as f32 * 0.6) as u8;
+            return format!("#{:02x}{:02x}{:02x}", r, g, b);
+        }
         self.sections
             .first()
             .map(|s| s.muted_color())
             .unwrap_or_else(|| "#1e3a8a".to_string()) // default blue-900
+    }
+
+    /// Convert REAPER native color (0x01BBGGRR) to CSS hex (#RRGGBB).
+    fn reaper_color_hex(&self) -> Option<String> {
+        let c = self.color?;
+        let r = c & 0xFF;
+        let g = (c >> 8) & 0xFF;
+        let b = (c >> 16) & 0xFF;
+        Some(format!("#{:02x}{:02x}{:02x}", r, g, b))
     }
 
     /// Calculate progress percentage (0-100) based on transport position

@@ -8,26 +8,14 @@ use daw::service::marker::MarkerService;
 use daw::service::region::RegionService;
 use daw::standalone::{StandaloneMarker, StandaloneProject, StandaloneRegion};
 
-/// Create a test context for calling services directly
-fn test_context() -> Context {
-    Context::new(
-        roam::wire::ConnectionId::new(1),
-        roam::wire::RequestId::new(1),
-        roam::wire::MethodId::new(1),
-        roam::wire::Metadata::default(),
-        vec![],
-    )
-}
-
 /// Test that StandaloneProject returns 3 projects
 #[tokio::test]
 async fn test_standalone_returns_three_projects() {
     use daw::service::ProjectService;
 
     let project_service = StandaloneProject::new();
-    let cx = test_context();
 
-    let projects = project_service.list(&cx).await;
+    let projects = project_service.list().await;
 
     println!("Found {} projects:", projects.len());
     for (i, p) in projects.iter().enumerate() {
@@ -47,9 +35,8 @@ async fn test_markers_per_project() {
 
     let project_service = StandaloneProject::new();
     let marker_service = StandaloneMarker::new();
-    let cx = test_context();
 
-    let projects = project_service.list(&cx).await;
+    let projects = project_service.list().await;
 
     for project in &projects {
         let context = ProjectContext::Project(project.guid.clone());
@@ -92,9 +79,8 @@ async fn test_song_builder_marker_parsing() {
     let project_service = StandaloneProject::new();
     let marker_service = StandaloneMarker::new();
     let region_service = StandaloneRegion::new();
-    let cx = test_context();
 
-    let projects = project_service.list(&cx).await;
+    let projects = project_service.list().await;
 
     println!("\n=== Testing SongBuilder marker parsing logic ===\n");
 
@@ -184,9 +170,8 @@ async fn test_regions_per_project() {
 
     let project_service = StandaloneProject::new();
     let region_service = StandaloneRegion::new();
-    let cx = test_context();
 
-    let projects = project_service.list(&cx).await;
+    let projects = project_service.list().await;
 
     for project in &projects {
         let context = ProjectContext::Project(project.guid.clone());

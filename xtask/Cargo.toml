@@ -6,3 +6,4 @@ publish = false
 
 [dependencies]
 fts-devtools = { git = "https://github.com/FastTrackStudios/daw.git", branch = "main" }
+reaper-test = { workspace = true, features = ["runner"] }

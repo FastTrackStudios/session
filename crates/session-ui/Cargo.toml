@@ -34,6 +34,8 @@ eyre = "0.6"
 default = ["web"]
 # Web/desktop (WebView-based) rendering
 web = ["dioxus", "dock-dioxus/web"]
+# Desktop app (WebView-based Dioxus desktop)
+desktop = ["dioxus", "dock-dioxus/web"]
 # GPU-accelerated native rendering (opt-in, requires dioxus_native)
 native = []
 

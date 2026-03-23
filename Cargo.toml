@@ -1,6 +1,8 @@
 [workspace]
 members = [
-    "apps/session-cli",
+    "apps/cli",
+    "apps/desktop",
+    "apps/web",
     "crates/session",
     "crates/session-extension",
     "crates/session-proto",
@@ -34,8 +36,10 @@ daw-extension-runtime = { git = "https://github.com/FastTrackStudios/daw.git", b
 # ── Testing (from daw repo) ─────────────────────────────────────────
 reaper-test = { git = "https://github.com/FastTrackStudios/daw.git", branch = "main" }
 
-# ── ROAM service framework (latest main) ────────────────────────────
-roam = { git = "https://github.com/bearcove/roam.git", branch = "main" }
+# ── Vox service framework (latest main) ──────────────────────────────
+vox = { git = "https://github.com/bearcove/vox.git", rev = "53bff48" }
+vox-stream = { git = "https://github.com/bearcove/vox.git", rev = "53bff48" }
+vox-websocket = { git = "https://github.com/bearcove/vox.git", rev = "53bff48" }
 
 # ── Facet reflection ────────────────────────────────────────────────
 facet = { version = "0.44" }
@@ -60,6 +64,9 @@ utils = { git = "https://github.com/FastTrackStudios/FastTrackStudio.git", branc
 # ── Instrumentation ─────────────────────────────────────────────────
 moire = { version = "1.0", features = ["diagnostics"] }
 
+# ── UI framework ─────────────────────────────────────────────────────
+dioxus = "0.7.2"
+
 # ── Async runtime ───────────────────────────────────────────────────
 tokio = { version = "1.48", features = ["full"] }
 futures = "0.3"
@@ -80,10 +87,10 @@ eyre = "0.6"
 # Uncomment the sections below to use local checkouts instead of GitHub.
 # This gives you instant rebuilds when iterating across repos.
 #
-# [patch."https://github.com/FastTrackStudios/daw.git"]
-# daw = { path = "../daw/crates/daw" }
-# daw-extension-runtime = { path = "../daw/crates/daw-extension-runtime" }
-# reaper-test = { path = "../daw/crates/reaper-test" }
+[patch."https://github.com/FastTrackStudios/daw.git"]
+daw = { path = "../daw/crates/daw" }
+daw-extension-runtime = { path = "../daw/crates/daw-extension-runtime" }
+reaper-test = { path = "../daw/crates/reaper-test" }
 #
 # [patch."https://github.com/FastTrackStudios/keyflow.git"]
 # keyflow = { path = "../keyflow/crates/keyflow" }
@@ -101,8 +108,25 @@ eyre = "0.6"
 # [patch."https://github.com/FastTrackStudios/FastTrackStudio.git"]
 # utils = { path = "../FastTrackStudio/crates/shared/utils" }
 #
-# [patch."https://github.com/bearcove/roam.git"]
-# roam = { path = "../roam/crates/roam" }
+# [patch."https://github.com/bearcove/vox.git"]
+# vox = { path = "../vox/rust/vox" }
+
+# ── Vendored patches ──────────────────────────────────────────────────
+# moire: unify crates.io moire with the git rev that vox pulls in,
+# avoiding duplicate moire-runtime #[ctor] registrations that crash.
+# moire-trace-capture: tolerate broken frame-pointer chains (NixOS glibc).
+[patch."https://github.com/bearcove/moire"]
+moire-trace-capture = { path = "../forks/moire-trace-capture" }
+
+[patch.crates-io]
+moire = { git = "https://github.com/bearcove/moire", rev = "13eac79" }
+moire-macros-noop = { git = "https://github.com/bearcove/moire", rev = "13eac79" }
+moire-runtime = { git = "https://github.com/bearcove/moire", rev = "13eac79" }
+moire-tokio = { git = "https://github.com/bearcove/moire", rev = "13eac79" }
+moire-trace-types = { git = "https://github.com/bearcove/moire", rev = "13eac79" }
+moire-types = { git = "https://github.com/bearcove/moire", rev = "13eac79" }
+moire-wasm = { git = "https://github.com/bearcove/moire", rev = "13eac79" }
+moire-wire = { git = "https://github.com/bearcove/moire", rev = "13eac79" }
 
 [workspace.lints.rust]
 dead_code = "allow"

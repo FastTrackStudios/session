@@ -7,9 +7,9 @@ use crate::song::{Section, Song, SongChartHydration};
 use crate::{SectionId, SongId};
 use daw::service::MusicalPosition;
 use facet::Facet;
-use roam::Tx;
-use roam::service;
 use serde::{Deserialize, Serialize};
+use vox::Tx;
+use vox::service;
 
 // ─── SessionServiceError ────────────────────────────────────────
 
@@ -358,6 +358,13 @@ pub trait SetlistService {
     /// to song structures or project state.
     async fn refresh(&self) -> Result<(), SessionServiceError>;
 
+    /// Stamp demo markers and regions into the current REAPER project
+    ///
+    /// Creates SONGSTART, SONGEND, =END, COUNT-IN markers and section regions
+    /// (Intro, Verse, Chorus, Bridge, etc.) in the currently active project.
+    /// After stamping, call `build_from_open_projects()` to build the setlist.
+    async fn load_demo_setlist(&self) -> Result<(), SessionServiceError>;
+
     /// Generate a combined setlist project from all open song projects.
     ///
     /// Scans open projects, skips any that are already combined setlists
@@ -409,7 +416,7 @@ pub trait SetlistService {
 /// Service implemented by web clients to receive pushed state from the desktop.
 ///
 /// The desktop gateway calls these methods on each connected web client when
-/// session state changes. This avoids the need for roam channels (which don't
+/// session state changes. This avoids the need for vox channels (which don't
 /// work on WASM) by using regular bidirectional RPC instead.
 #[service]
 pub trait WebClientService {

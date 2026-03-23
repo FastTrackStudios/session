@@ -14,8 +14,8 @@ use daw::service::markers_regions::fts_markers_regions_actions;
 use daw::service::transport::fts_transport_actions;
 use daw_extension_runtime::GuestOptions;
 use eyre::Result;
-use session::session_actions;
-use tracing::info;
+use session::{session_actions, stamp_demo_setlist};
+use tracing::{debug, info};
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -41,7 +41,7 @@ async fn run() -> Result<()> {
     })
     .await?;
 
-    info!("[session:{pid}] Connected to REAPER via SHM");
+    debug!("[session:{pid}] Connected to REAPER via SHM");
 
     // Signal that we're alive — tests read this to verify the extension connected
     daw.ext_state()
@@ -50,7 +50,7 @@ async fn run() -> Result<()> {
     daw.ext_state()
         .set("FTS_SESSION_EXT", "pid", &pid.to_string(), false)
         .await?;
-    info!("[session:{pid}] Health beacon written");
+    debug!("[session:{pid}] Health beacon written");
 
     // Register all actions with REAPER via daw-bridge.
     // Actions with a menu_path are placed in the Extensions > FastTrackStudio menu.
@@ -60,30 +60,30 @@ async fn run() -> Result<()> {
         .chain(fts_transport_actions::definitions())
         .chain(fts_markers_regions_actions::definitions());
 
+    let mut total = 0usize;
+    let mut registered = 0usize;
     for def in all_defs {
+        total += 1;
         let cmd_name = def.id.to_command_id();
         let has_menu = def.menu_path.is_some();
+        let display = def.display_name();
         let cmd_id = if has_menu {
-            registry.register_in_menu(&cmd_name, &def.name).await?
+            registry.register_in_menu(&cmd_name, &display).await?
         } else {
-            registry.register(&cmd_name, &def.name).await?
+            registry.register(&cmd_name, &display).await?
         };
         if cmd_id == 0 {
             tracing::warn!("[session:{pid}] Failed to register action: {cmd_name}");
         } else {
-            info!("[session:{pid}] Registered {cmd_name} (cmd_id={cmd_id}, menu={has_menu})");
+            registered += 1;
         }
     }
 
-    info!("[session:{pid}] All session/transport/marker actions registered");
+    info!("[session:{pid}] Registered {registered}/{total} session/transport/marker actions");
 
     // Subscribe to action trigger events and handle them locally.
     let mut rx = registry.subscribe_actions().await?;
-    info!("[session:{pid}] Subscribed to action events");
-
-    // TODO: Move setlist_nav.rs from reaper-extension into this process
-    // TODO: Move ruler_manager.rs from reaper-extension into this process
-    // TODO: Initialize SetlistServiceImpl + SongServiceImpl
+    debug!("[session:{pid}] Subscribed to action events");
 
     // Event loop — handle action triggers from REAPER
     while let Ok(Some(event)) = rx.recv().await {
@@ -145,8 +145,15 @@ async fn handle_action(daw: &daw::Daw, command_name: &str) {
         }
 
         // Session-specific actions
+        n if n == session_actions::LOAD_DEMO_SETLIST.to_command_id() => {
+            info!("[session] Stamping demo markers/regions...");
+            match stamp_demo_setlist(daw).await {
+                Ok(()) => info!("[session] Demo setlist stamped successfully"),
+                Err(e) => tracing::error!("[session] Failed to stamp demo setlist: {e}"),
+            }
+        }
+
         _ => {
-            // TODO: Dispatch to setlist navigation, ruler manager, etc.
             info!("[session] Action triggered: {command_name}");
         }
     }

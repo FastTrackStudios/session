@@ -1,0 +1,51 @@
+[package]
+name = "session-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "session-web"
+path = "src/main.rs"
+
+[dependencies]
+# Dioxus UI framework (web/WASM target)
+dioxus = { workspace = true }
+
+# Vox RPC over WebSocket (WASM-compatible)
+vox.workspace = true
+vox-websocket.workspace = true
+
+# DAW control API — same API works on desktop and web
+daw.workspace = true
+
+# Session control — setlist and song navigation (via facade)
+session.workspace = true
+
+# Session UI components (web feature = default)
+session-ui.workspace = true
+
+# Dock panels
+dock-dioxus = { workspace = true, default-features = false, features = ["web"] }
+dock-proto.workspace = true
+
+# Async / WASM utilities
+futures.workspace = true
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+gloo-timers = { version = "0.3", features = ["futures"] }
+
+# Web APIs (window.location for WebSocket URL)
+web-sys = { version = "0.3", features = ["Window", "Location", "Performance"] }
+
+# Logging in browser
+tracing = "0.1"
+tracing-wasm = "0.2"
+
+# Error handling
+eyre.workspace = true
+
+[features]
+default = ["web"]
+web = ["dioxus/web"]

@@ -7,7 +7,7 @@
 //!
 //! For UI components, see the `session-ui` crate.
 
-use roam::service;
+use vox::service;
 
 // ─── Typed IDs ─────────────────────────────────────────────────
 

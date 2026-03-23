@@ -1,0 +1,13 @@
+[application]
+name = "Session"
+
+[desktop]
+title = "Session"
+
+[bundle]
+identifier = "com.fasttrackstudio.session-desktop"
+publisher = "FastTrack Studio"
+name = "Session"
+
+[bundle.macos]
+minimum_system_version = "13.0"
