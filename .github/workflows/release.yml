@@ -35,6 +35,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Allow unprivileged user namespaces
+        if: runner.os == 'Linux'
+        run: |
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          fi
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
+
       - uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |
@@ -47,28 +55,36 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
         continue-on-error: true
 
-      - name: Build release package
-        run: nix build .#daw --no-link --print-out-paths | tee /tmp/store-path
+      - name: Build daw-bridge
+        run: nix build .#daw-bridge --no-link --print-out-paths | tee /tmp/bridge-path
+
+      - name: Build reaper-launcher
+        run: nix build .#reaper-launcher --no-link --print-out-paths | tee /tmp/launcher-path
+
+      - name: Push to Cachix
+        run: |
+          cachix push fasttrackstudio $(cat /tmp/bridge-path) || true
+          cachix push fasttrackstudio $(cat /tmp/launcher-path) || true
+        continue-on-error: true
 
       - name: Stage artifacts
         run: |
-          STORE=$(cat /tmp/store-path)
+          BRIDGE=$(cat /tmp/bridge-path)
+          LAUNCHER=$(cat /tmp/launcher-path)
           mkdir -p staging
 
-          # Binaries
-          for bin in daw daw-guest reaper-launcher; do
-            if [ -f "$STORE/bin/$bin" ]; then
-              cp -L "$STORE/bin/$bin" "staging/${bin}-${{ matrix.suffix }}"
-            fi
-          done
-
-          # REAPER plugin (cdylib)
+          # daw-bridge cdylib
           for ext in so dylib; do
-            if [ -f "$STORE/lib/libreaper_daw_bridge.${ext}" ]; then
-              cp -L "$STORE/lib/libreaper_daw_bridge.${ext}" \
+            if [ -f "$BRIDGE/lib/libreaper_daw_bridge.${ext}" ]; then
+              cp -L "$BRIDGE/lib/libreaper_daw_bridge.${ext}" \
                 "staging/libreaper_daw_bridge-${{ matrix.suffix }}.${ext}"
             fi
           done
+
+          # reaper-launcher binary
+          if [ -f "$LAUNCHER/bin/reaper-launcher" ]; then
+            cp -L "$LAUNCHER/bin/reaper-launcher" "staging/reaper-launcher-${{ matrix.suffix }}"
+          fi
 
           ls -la staging/
 

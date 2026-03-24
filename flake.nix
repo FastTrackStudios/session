@@ -246,6 +246,17 @@
               '';
             }
           );
+
+          # Build just the reaper-launcher binary
+          reaper-launcher = craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              pname = "reaper-launcher";
+              cargoExtraArgs = "-p reaper-launcher";
+              doCheck = false;
+            }
+          );
       in
       {
         packages =
@@ -253,6 +264,7 @@
             default = daw-workspace;
             daw = daw-workspace;
             daw-bridge = daw-bridge;
+            reaper-launcher = reaper-launcher;
           }
           // pkgs.lib.optionalAttrs isLinux {
             ci-image = ci-image;
