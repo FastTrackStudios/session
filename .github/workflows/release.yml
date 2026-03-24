@@ -43,7 +43,7 @@ jobs:
           fi
           sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
 
-      - uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@v30
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
