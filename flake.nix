@@ -13,6 +13,10 @@
     fts-flake.inputs.nixpkgs.follows = "nixpkgs";
     nix2container.url = "github:nlewo/nix2container";
     nix2container.inputs.nixpkgs.follows = "nixpkgs";
+    wdl = {
+      url = "github:justinfrankel/WDL";
+      flake = false;
+    };
   };
 
   nixConfig = {
@@ -36,6 +40,7 @@
       crane,
       fts-flake,
       nix2container,
+      wdl,
     } @ inputs:
     flake-utils.lib.eachSystem
       [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ]
@@ -65,9 +70,25 @@
               || (builtins.match ".*\.cargo/config\.toml" path != null);
           };
 
+          # Vendor cargo deps with WDL submodule injected into reaper-rs
+          cargoVendorDir = craneLib.vendorCargoDeps {
+            inherit src;
+            overrideVendorGitCheckout = ps: drv:
+              if pkgs.lib.any (p: pkgs.lib.hasInfix "reaper-rs" (p.source or "")) ps
+              then drv.overrideAttrs (old: {
+                postInstall = (old.postInstall or "") + ''
+                  for d in $out/reaper-low-*/; do
+                    mkdir -p "$d/lib/WDL"
+                    cp -r ${wdl}/* "$d/lib/WDL/"
+                  done
+                '';
+              })
+              else drv;
+          };
+
           # Common args shared across all derivations
           commonArgs = {
-            inherit src;
+            inherit src cargoVendorDir;
             pname = "daw";
             version = "0.1.0";
             strictDeps = true;
