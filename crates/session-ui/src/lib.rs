@@ -56,14 +56,18 @@ pub mod prelude {
 }
 
 pub mod components;
+pub mod event_bridge;
 pub mod layouts;
 pub mod panel_registration;
+pub mod shell;
 pub mod signals;
 
 // Re-export key types for convenience
+pub use event_bridge::apply_setlist_event;
 pub use layouts::top_bar::{ConnectionState, TopBar, VERSION};
 pub use layouts::{PerformanceLayout, PerformanceSidebar, TransportPanel};
 pub use panel_registration::register_panels;
+pub use shell::{ConnectionBadge, SessionShell};
 pub use signals::{
     ChartAreaBounds, LatencyAction, LatencyInfo, LatencyMeasurement, LatencyTracker,
     PerfChartViewport, Session, TransportState, ACTIVE_INDICES, ACTIVE_PLAYBACK_IS_PLAYING,

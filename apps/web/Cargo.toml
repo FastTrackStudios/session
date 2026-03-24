@@ -24,7 +24,7 @@ daw.workspace = true
 session.workspace = true
 
 # Session UI components (web feature = default)
-session-ui.workspace = true
+session-ui = { workspace = true, features = ["web"] }
 
 # Dock panels
 dock-dioxus = { workspace = true, default-features = false, features = ["web"] }

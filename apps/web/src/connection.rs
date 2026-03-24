@@ -109,16 +109,27 @@ async fn try_connect_and_run(
     log("[session-web] WebSocket connected, initiating vox handshake...");
 
     let handler = WebClientServiceDispatcher::new(WebClientHandler);
-    let (caller, _session_handle) = vox::initiator_conduit(vox::BareConduit::new(link))
-        .spawn_fn(|fut| {
-            wasm_bindgen_futures::spawn_local(async move {
-                fut.await;
-            });
-        })
-        .max_concurrent_requests(64)
-        .establish::<vox::DriverCaller>(handler)
-        .await
-        .map_err(|e| format!("Handshake failed: {e:?}"))?;
+    let handshake_result = vox::HandshakeResult {
+        role: vox::SessionRole::Initiator,
+        our_settings: vox::ConnectionSettings {
+            parity: vox::Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+        peer_settings: vox::ConnectionSettings {
+            parity: vox::Parity::Even,
+            max_concurrent_requests: 64,
+        },
+        peer_supports_retry: true,
+        session_resume_key: None,
+        peer_resume_key: None,
+        our_schema: vec![],
+        peer_schema: vec![],
+    };
+    let (caller, _session_handle) =
+        vox::initiator_conduit(vox::BareConduit::new(link), handshake_result)
+            .establish::<vox::DriverCaller>(handler)
+            .await
+            .map_err(|e| format!("Handshake failed: {e:?}"))?;
 
     log("[session-web] Connection established!");
     state_signal.set(ConnectionState::Connected);

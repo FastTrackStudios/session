@@ -3,23 +3,12 @@
 //! Provides the session UI (performance view, transport, setlist navigation) without
 //! the full fts-control app. Runs session services in-process via LocalServices.
 
-use std::rc::Rc;
-
 use dioxus::desktop::{tao::window::WindowBuilder, Config};
 use dioxus::prelude::*;
 
-use dock_dioxus::{DockProvider, DockRoot, PanelRenderer, PanelRendererRegistry, DOCK_WORKSPACE};
-use dock_proto::builder::DockLayoutBuilder as B;
-use dock_proto::panel::PanelId;
-use dock_proto::workspace::{DockWorkspace, WindowBounds};
-use dock_proto::PanelRegistry;
+use session_ui::{ConnectionState, Session, SessionShell};
 
-use session_ui::{
-    ConnectionState, Session, TransportState, ACTIVE_INDICES, ACTIVE_PLAYBACK_IS_PLAYING,
-    ACTIVE_PLAYBACK_MUSICAL, PLAYBACK_STATE, SETLIST_STRUCTURE, SONG_CHARTS, SONG_TRANSPORT,
-    VERSION,
-};
-
+mod gateway;
 mod services;
 
 fn main() {
@@ -44,32 +33,48 @@ fn main() {
 
 #[component]
 fn App() -> Element {
-    rsx! { SessionShell {} }
+    rsx! { DesktopSessionShell {} }
 }
 
-/// Main shell: single top bar + resizable dock panels (Navigator | Performance + Transport).
+/// Main shell: starts gateway + REAPER connection, delegates UI to `SessionShell`.
 #[component]
-fn SessionShell() -> Element {
-    // Connection state — starts as Connecting, moves to Connected once services init
-    let mut connection_state = use_signal(|| ConnectionState::Connecting);
+fn DesktopSessionShell() -> Element {
+    let mut connection_state = use_signal(|| ConnectionState::Disconnected);
+    let mut gateway_info: Signal<Option<gateway::GatewayInfo>> = use_signal(|| None);
 
-    // Initialize services in the background, update connection state when done
-    let _services = use_future(move || async move {
-        match services::init_session_services().await {
-            Ok(()) => {
-                connection_state.set(ConnectionState::Connected);
-                tracing::info!("Connection state: Connected");
+    // Start the gateway immediately (serves web app even without REAPER)
+    let _gateway = use_future(move || async move {
+        match services::start_gateway().await {
+            Ok(info) => {
+                tracing::info!("Gateway started on port {}", info.port);
+                gateway_info.set(Some(info));
             }
             Err(e) => {
-                tracing::error!("Failed to initialize services: {e}");
-                connection_state.set(ConnectionState::Disconnected);
+                tracing::error!("Failed to start gateway: {e}");
             }
         }
     });
 
-    // Subscribe to setlist events once connected — bridges service events to UI signals.
-    // Retries periodically so that if no setlist exists yet (e.g. no projects open),
-    // it picks up the setlist once one becomes available.
+    // Connect to REAPER in the background — retries until found
+    let _reaper = use_future(move || async move {
+        loop {
+            connection_state.set(ConnectionState::Connecting);
+            match services::connect_to_reaper().await {
+                Ok(()) => {
+                    connection_state.set(ConnectionState::Connected);
+                    tracing::info!("Connected to REAPER");
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!("Waiting for REAPER: {e}");
+                    connection_state.set(ConnectionState::Disconnected);
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                }
+            }
+        }
+    });
+
+    // Subscribe to setlist events once connected
     let _subscription = use_future(move || async move {
         // Wait until connected
         loop {
@@ -82,7 +87,6 @@ fn SessionShell() -> Element {
         let session = Session::get();
 
         loop {
-            // Try to (re)build the setlist from REAPER's open projects
             if let Err(e) = session.setlist().build_from_open_projects().await {
                 tracing::warn!("build_from_open_projects failed: {e:?}");
             }
@@ -97,325 +101,129 @@ fn SessionShell() -> Element {
 
             tracing::info!("Subscribed to setlist events");
 
-            while let Ok(Some(event_ref)) = rx.recv().await {
-                match &*event_ref {
-                    session::SetlistEvent::SetlistChanged(setlist) => {
-                        tracing::debug!("Setlist changed: {} songs", setlist.songs.len());
-                        let valid_guids: std::collections::HashSet<String> = setlist
-                            .songs
-                            .iter()
-                            .map(|song| song.project_guid.clone())
-                            .collect();
-                        SONG_CHARTS
-                            .write()
-                            .retain(|guid, _| valid_guids.contains(guid));
-                        *SETLIST_STRUCTURE.write() = setlist.clone();
-                    }
-
-                    session::SetlistEvent::SongHydrated { index, song, .. } => {
-                        let mut setlist = SETLIST_STRUCTURE.write();
-                        if *index < setlist.songs.len() {
-                            setlist.songs[*index] = song.clone();
-                        }
-                    }
-
-                    session::SetlistEvent::SongChartHydrated { chart, .. } => {
-                        SONG_CHARTS
-                            .write()
-                            .insert(chart.project_guid.clone(), chart.clone());
-                    }
-
-                    session::SetlistEvent::ActiveIndicesChanged(indices) => {
-                        *PLAYBACK_STATE.write() = if indices.is_playing {
-                            daw::service::PlayState::Playing
-                        } else {
-                            daw::service::PlayState::Stopped
-                        };
-                        *ACTIVE_INDICES.write() = indices.clone();
-                    }
-
-                    session::SetlistEvent::TransportUpdate(transports) => {
-                        let active_song_index = ACTIVE_INDICES.read().song_index;
-
-                        let mut transport_updates: Vec<(usize, TransportState)> =
-                            Vec::with_capacity(transports.len());
-                        let mut active_transport_update = None;
-
-                        {
-                            let setlist = SETLIST_STRUCTURE.read();
-                            let existing = SONG_TRANSPORT.read();
-
-                            for transport in transports {
-                                let loop_region_pct =
-                                    transport.loop_region.as_ref().and_then(|region| {
-                                        setlist.songs.get(transport.song_index).map(|song| {
-                                            let dur = song.duration();
-                                            if dur > 0.0 {
-                                                (
-                                                    (region.start_seconds / dur).clamp(0.0, 1.0),
-                                                    (region.end_seconds / dur).clamp(0.0, 1.0),
-                                                )
-                                            } else {
-                                                (0.0, 1.0)
-                                            }
-                                        })
-                                    });
-
-                                let next_state = TransportState {
-                                    position: transport.position.clone(),
-                                    bpm: transport.bpm,
-                                    time_sig_num: transport.time_sig_num as i32,
-                                    time_sig_denom: transport.time_sig_denom as i32,
-                                    is_playing: transport.is_playing,
-                                    is_looping: transport.is_looping,
-                                    loop_region: loop_region_pct,
-                                };
-
-                                let changed = existing
-                                    .get(&transport.song_index)
-                                    .map(|e| *e != next_state)
-                                    .unwrap_or(true);
-
-                                if changed {
-                                    transport_updates.push((transport.song_index, next_state));
-                                }
-
-                                if Some(transport.song_index) == active_song_index {
-                                    active_transport_update = Some((
-                                        transport.progress,
-                                        transport.section_progress,
-                                        transport.section_index,
-                                        transport.is_playing,
-                                        transport.is_looping,
-                                        transport.position.musical.clone(),
-                                    ));
-                                }
-                            }
-                        }
-
-                        if !transport_updates.is_empty() {
-                            let mut song_transport = SONG_TRANSPORT.write();
-                            for (idx, state) in transport_updates {
-                                song_transport.insert(idx, state);
-                            }
-                        }
-
-                        if let Some((
-                            song_progress,
-                            section_progress,
-                            section_index,
-                            is_playing,
-                            is_looping,
-                            musical,
-                        )) = active_transport_update
-                        {
-                            if *ACTIVE_PLAYBACK_MUSICAL.peek() != musical {
-                                *ACTIVE_PLAYBACK_MUSICAL.write() = musical;
-                            }
-                            if *ACTIVE_PLAYBACK_IS_PLAYING.peek() != is_playing {
-                                *ACTIVE_PLAYBACK_IS_PLAYING.write() = is_playing;
-                            }
-
-                            let old_playing = *PLAYBACK_STATE.read();
-                            let new_playing = if is_playing {
-                                daw::service::PlayState::Playing
-                            } else {
-                                daw::service::PlayState::Stopped
-                            };
-                            if old_playing != new_playing {
-                                *PLAYBACK_STATE.write() = new_playing;
-                            }
-
-                            let indices_changed = {
-                                let current = ACTIVE_INDICES.read();
-                                current.song_progress != Some(song_progress)
-                                    || current.section_progress != section_progress
-                                    || current.section_index != section_index
-                                    || current.is_playing != is_playing
-                                    || current.looping != is_looping
-                            };
-
-                            if indices_changed {
-                                let mut indices = ACTIVE_INDICES.write();
-                                indices.song_progress = Some(song_progress);
-                                indices.section_progress = section_progress;
-                                indices.section_index = section_index;
-                                indices.is_playing = is_playing;
-                                indices.looping = is_looping;
-                            }
-                        }
-                    }
-
-                    session::SetlistEvent::SongEntered { index, song, .. } => {
-                        tracing::debug!("Entered song {}: {}", index, song.name);
-                    }
-
-                    session::SetlistEvent::SongExited { index, .. } => {
-                        tracing::debug!("Exited song {}", index);
-                    }
-
-                    session::SetlistEvent::SectionEntered {
-                        song_index,
-                        section_index,
-                        section,
-                        ..
-                    } => {
-                        tracing::debug!(
-                            "Entered section {}.{}: {}",
-                            song_index,
-                            section_index,
-                            section.name
-                        );
-                    }
-
-                    session::SetlistEvent::SectionExited {
-                        song_index,
-                        section_index,
-                        ..
-                    } => {
-                        tracing::debug!("Exited section {}.{}", song_index, section_index);
-                    }
-
-                    session::SetlistEvent::PositionChanged { .. } => {
-                        // Legacy event, ignored — we use TransportUpdate now
+            // Periodically re-scan REAPER for new/closed projects
+            let poll_session = session.clone();
+            let poll_handle = tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    if let Err(e) = poll_session.setlist().build_from_open_projects().await {
+                        tracing::debug!("Periodic project scan failed: {e:?}");
                     }
                 }
+            });
+
+            let web_registry = gateway::web_client_registry();
+
+            while let Ok(Some(event_ref)) = rx.recv().await {
+                web_registry.broadcast(&event_ref).await;
+                session_ui::apply_setlist_event(&event_ref);
             }
 
+            poll_handle.abort();
             tracing::info!("Setlist event subscription ended, will retry...");
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     });
 
-    // Initialize dock with a session-specific layout (no preset bar, no chart tabs)
-    use_hook(|| {
-        let layout = B::horizontal()
-            .left(B::tile(PanelId::Navigator))
-            .right(
-                B::vertical()
-                    .top(B::tile(PanelId::Performance))
-                    .bottom(B::tile(PanelId::Transport))
-                    .ratio(80.0)
-                    .build_node(),
-            )
-            .ratio(20.0)
-            .build();
-
-        let mut registry = PanelRegistry::new();
-        PanelId::register_all(&mut registry);
-
-        let workspace = DockWorkspace::with_main_window(
-            layout,
-            "Session",
-            WindowBounds::new(0.0, 0.0, 1400.0, 900.0, "main"),
-            registry,
-        );
-
-        *DOCK_WORKSPACE.write() = workspace;
-    });
-
-    // Panel renderer — register session panels
-    let render_panel = use_hook(|| {
-        let mut registry = PanelRendererRegistry::new();
-        session_ui::register_panels(&mut registry);
-
-        let registry = Rc::new(registry);
-        PanelRenderer::new(move |panel_id| registry.render(panel_id))
-    });
-
     rsx! {
         document::Stylesheet { href: asset!("/assets/tailwind.css") }
-
-        div { class: "h-screen flex flex-col bg-background text-foreground",
-
-            // ── Single top bar ───────────────────────────────────────
-            div {
-                class: "h-10 flex-shrink-0 border-b border-border bg-card flex items-center px-4",
-
-                // Left: branding
-                div { class: "flex items-center gap-1.5",
-                    span { class: "text-sm font-bold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent", "FTS" }
-                    span { class: "text-sm italic text-card-foreground", "Session" }
-                }
-
-                div { class: "ml-auto" }
-
-                // Right: version + connection badge
-                div { class: "flex items-center gap-3",
-                    span { class: "text-xs text-muted-foreground font-mono", "{VERSION}" }
-                    ConnectionBadge { state: connection_state() }
-                }
-            }
-
-            // ── Main content ─────────────────────────────────────────
-            if connection_state() == ConnectionState::Connected {
-                // Resizable dock layout
-                DockProvider { render_panel: render_panel.clone(),
-                    div { class: "flex-1 overflow-hidden relative",
-                        DockRoot {}
-                    }
-                }
-            } else if connection_state() == ConnectionState::Disconnected {
-                div { class: "flex-1 flex flex-col items-center justify-center gap-4",
-                    div { class: "w-6 h-6 rounded-full bg-red-400/20 flex items-center justify-center",
-                        div { class: "w-2.5 h-2.5 rounded-full bg-red-400" }
-                    }
-                    p { class: "text-sm text-red-400 font-medium", "Failed to connect" }
-                    p { class: "text-xs text-muted-foreground", "Check that REAPER is running with the FTS extension" }
-                }
-            } else {
-                // Connecting — loading screen
-                div { class: "flex-1 flex flex-col items-center justify-center gap-4",
-                    div {
-                        class: "w-8 h-8 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin",
-                    }
-                    p { class: "text-sm text-muted-foreground", "Connecting to REAPER\u{2026}" }
-                }
-            }
-        }
+        SessionShell { connection_state }
+        // Desktop-only: connection popover overlay
+        DesktopConnectionOverlay { connection_state, gateway_info }
     }
 }
 
-/// Connection status badge with spinner for connecting state.
+/// Desktop-only connection overlay — adds gateway info popover on top of the shared shell.
+/// This is rendered as a sibling to `SessionShell`, positioned absolutely over the badge area.
 #[component]
-fn ConnectionBadge(state: ConnectionState) -> Element {
-    let (bg_class, text_class, dot_class, label) = match state {
-        ConnectionState::Connected => (
-            "bg-green-500/20",
-            "text-green-400",
-            "bg-green-400",
-            "Connected",
-        ),
-        ConnectionState::Connecting => (
-            "bg-yellow-500/20",
-            "text-yellow-400",
-            "",
-            "Connecting\u{2026}",
-        ),
-        ConnectionState::Disconnected => (
-            "bg-red-500/20",
-            "text-red-400",
-            "bg-red-400",
-            "Disconnected",
-        ),
-    };
+fn DesktopConnectionOverlay(
+    connection_state: Signal<ConnectionState>,
+    gateway_info: Signal<Option<gateway::GatewayInfo>>,
+) -> Element {
+    let mut show_popover = use_signal(|| false);
+
+    // Only show the overlay button area if there's gateway info to display
+    let has_gateway_info = gateway_info.read().is_some();
+    if !has_gateway_info {
+        return rsx! {};
+    }
 
     rsx! {
+        // Invisible click-target positioned over the connection badge area (top-right)
         div {
-            class: "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium {bg_class} {text_class}",
+            class: "fixed top-0 right-0 h-10 z-30 flex items-center pr-4",
+            // Clickable area that matches the badge location
+            button {
+                class: "w-32 h-8 cursor-pointer opacity-0",
+                onclick: move |_| show_popover.toggle(),
+            }
+        }
 
-            match state {
-                ConnectionState::Connecting => rsx! {
-                    div {
-                        class: "w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin",
-                    }
-                },
-                _ => rsx! {
-                    div { class: "w-2 h-2 rounded-full {dot_class}" }
-                },
+        if show_popover() {
+            // Backdrop
+            div {
+                class: "fixed inset-0 z-40",
+                onclick: move |_| show_popover.set(false),
             }
 
-            "{label}"
+            // Popover panel
+            div {
+                class: "fixed right-4 top-12 z-50 w-72 rounded-lg border border-border bg-card shadow-xl p-3 text-sm",
+
+                div { class: "font-medium text-card-foreground mb-3", "Connection Info" }
+
+                // REAPER connection
+                div { class: "flex items-center justify-between py-1.5",
+                    span { class: "text-muted-foreground", "REAPER" }
+                    match connection_state() {
+                        ConnectionState::Connected => rsx! {
+                            span { class: "text-green-400 font-medium", "Connected" }
+                        },
+                        ConnectionState::Connecting => rsx! {
+                            span { class: "text-yellow-400 font-medium", "Connecting\u{2026}" }
+                        },
+                        ConnectionState::Disconnected => rsx! {
+                            span { class: "text-red-400 font-medium", "Disconnected" }
+                        },
+                    }
+                }
+
+                div { class: "border-t border-border my-2" }
+
+                if let Some(ref info) = *gateway_info.read() {
+                    div { class: "space-y-1.5",
+                        div { class: "text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1",
+                            "Web Gateway"
+                        }
+
+                        div { class: "flex items-center justify-between py-0.5",
+                            span { class: "text-muted-foreground", "Port" }
+                            span { class: "font-mono text-card-foreground", "{info.port}" }
+                        }
+
+                        div { class: "flex items-center justify-between py-0.5",
+                            span { class: "text-muted-foreground", "Local" }
+                            span { class: "font-mono text-blue-400 text-xs", "{info.local_url()}" }
+                        }
+
+                        if let Some(url) = info.network_url() {
+                            div { class: "flex items-center justify-between py-0.5",
+                                span { class: "text-muted-foreground", "Network" }
+                                span { class: "font-mono text-blue-400 text-xs", "{url}" }
+                            }
+                        }
+
+                        div { class: "flex items-center justify-between py-0.5",
+                            span { class: "text-muted-foreground", "Web App" }
+                            if info.serving_web_app {
+                                span { class: "text-green-400", "Serving" }
+                            } else {
+                                span { class: "text-yellow-400", "Not built" }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

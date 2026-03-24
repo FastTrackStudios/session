@@ -9,30 +9,76 @@ use daw::sync::LocalCaller;
 use daw::{Daw, ErasedCaller};
 use eyre::{bail, Result};
 use session::{
-    SetlistServiceClient, SetlistServiceDispatcher, SetlistServiceImpl, SongServiceImpl,
+    SetlistServiceClient, SetlistServiceDispatcher, SetlistServiceImpl,
+    SongServiceDispatcher, SongServiceImpl,
+    setlist_service_service_descriptor, song_service_service_descriptor,
 };
 use session_ui::Session;
+
+use crate::gateway;
 
 const SOCKET_DIR: &str = "/tmp";
 const SOCKET_PREFIX: &str = "fts-daw-";
 const SOCKET_SUFFIX: &str = ".sock";
 
-/// Initialize session services by connecting to a running REAPER instance.
+/// Start the WebSocket gateway immediately (does not require REAPER).
 ///
-/// 1. Discovers `/tmp/fts-daw-{pid}.sock` sockets
-/// 2. Connects via vox RPC
-/// 3. Initializes the global `Daw` singleton
-/// 4. Creates in-process SetlistService and builds from open projects
-/// 5. Initializes `Session::init()` so UI components can access the setlist client
-pub async fn init_session_services() -> Result<()> {
-    // Connect to REAPER
+/// Returns the gateway binding info once the server is listening.
+/// The gateway serves the web app and accepts WebSocket RPC connections
+/// regardless of whether REAPER is connected.
+pub async fn start_gateway() -> Result<gateway::GatewayInfo> {
+    let setlist = SetlistServiceImpl::new();
+    let song = SongServiceImpl::new();
+
+    let handler = gateway::RoutedHandler::new()
+        .with(
+            &setlist_service_service_descriptor(),
+            SetlistServiceDispatcher::new(setlist),
+        )
+        .with(
+            &song_service_service_descriptor(),
+            SongServiceDispatcher::new(song),
+        );
+
+    let bind_addr = std::env::var("GATEWAY_WS_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:3030".to_string());
+    let static_dir = std::env::var("GATEWAY_WS_STATIC_DIR")
+        .ok()
+        .or_else(discover_web_static_dir);
+    if let Some(ref dir) = static_dir {
+        tracing::info!("Serving web app from: {dir}");
+    }
+
+    let (info_tx, info_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        if let Err(e) = gateway::start_gateway(
+            handler,
+            &bind_addr,
+            static_dir.as_deref(),
+            info_tx,
+        )
+        .await
+        {
+            tracing::error!("WebSocket gateway error: {e}");
+        }
+    });
+
+    let gw_info = info_rx
+        .await
+        .map_err(|_| eyre::eyre!("Gateway failed to start"))?;
+    Ok(gw_info)
+}
+
+/// Connect to REAPER and initialize session services.
+///
+/// This can be called repeatedly (retried) until REAPER is available.
+/// Once connected, initializes the DAW singleton and Session client.
+pub async fn connect_to_reaper() -> Result<()> {
     let caller = discover_and_connect().await?;
     Daw::init(caller)?;
     tracing::info!("DAW initialized");
 
-    // Create setlist service and build from REAPER's open projects
     let setlist = SetlistServiceImpl::new();
-    let _song = SongServiceImpl::new();
 
     let local = LocalCaller::new(SetlistServiceDispatcher::new(setlist)).await?;
     let client = SetlistServiceClient::new(local.erased_caller());
@@ -169,4 +215,30 @@ fn initiator_handshake_result(max_concurrent_requests: u32) -> vox::HandshakeRes
         our_schema: vec![],
         peer_schema: vec![],
     }
+}
+
+/// Try to find the web app's `dx build` output directory.
+///
+/// Checks (in order):
+/// 1. `target/dx/session-web/release/web/public/` (release build)
+/// 2. `target/dx/session-web/debug/web/public/` (debug build)
+///
+/// Paths are resolved relative to the cargo workspace root.
+fn discover_web_static_dir() -> Option<String> {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .parent()?;
+
+    let candidates = [
+        workspace_root.join("target/dx/session-web/release/web/public"),
+        workspace_root.join("target/dx/session-web/debug/web/public"),
+    ];
+
+    for candidate in &candidates {
+        if candidate.join("index.html").exists() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+
+    None
 }

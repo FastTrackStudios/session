@@ -2,103 +2,255 @@
   description = "FastTrackStudio Session — session/project management domain";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-    rust-overlay.url = "github:oxalica/rust-overlay";
-    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    crane.url = "github:ipetkov/crane";
+    devenv.url = "github:cachix/devenv";
+    devenv-root = {
+      url = "file+file:///dev/null";
+      flake = false;
+    };
+    nix2container.url = "github:nlewo/nix2container";
+    nix2container.inputs.nixpkgs.follows = "nixpkgs";
+    mk-shell-bin.url = "github:rrbutani/nix-mk-shell-bin";
+    fts-flake.url = "github:FastTrackStudios/fts-flake";
   };
 
-  outputs =
-    {
-      self,
-      nixpkgs,
-      flake-utils,
-      rust-overlay,
-    }:
-    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (
-      system:
-      let
-        overlays = [ (import rust-overlay) ];
-        pkgs = import nixpkgs { inherit system overlays; };
-        toolchain = pkgs.rust-bin.stable.latest.default;
+  nixConfig = {
+    extra-trusted-public-keys = [
+      "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw="
+      "fasttrackstudio.cachix.org-1:r7v7WXBeSZ7m5meL6w0wttnvsOltRvTpXeVNItcy9f4="
+    ];
+    extra-substituters = [
+      "https://devenv.cachix.org"
+      "https://fasttrackstudio.cachix.org"
+    ];
+    pure-eval = false;
+  };
 
-        nativeBuildInputs = with pkgs; [
-          pkg-config
-          toolchain
-          tailwindcss_4
-        ];
+  outputs = { self, flake-parts, crane, devenv, devenv-root, fts-flake, ... } @inputs:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      imports = [ inputs.devenv.flakeModule ];
 
-        buildInputs = with pkgs; [
-          # OpenSSL
-          openssl
+      systems = [ "x86_64-linux" "x86_64-darwin" "aarch64-darwin" "aarch64-linux" ];
 
-          # X11 / windowing
-          libx11
-          libxi
-          libxcursor
-          libxrandr
-          libxcb
-          libxkbcommon
+      perSystem = { self', config, pkgs, lib, system, ... }:
+        let
+          devenvRootFromInput = let
+            content = builtins.readFile devenv-root.outPath;
+          in pkgs.lib.strings.trim content;
+          devenvRoot =
+            if devenvRootFromInput != ""
+            then devenvRootFromInput
+            else builtins.getEnv "PWD";
 
-          # GPU / Vulkan
-          vulkan-loader
-          libGL
+          # Rust toolchain — same pin as FastTrackStudio
+          rustToolchain = pkgs.rust-bin.stable."1.94.0".default.override {
+            extensions = [ "rust-src" "rust-analyzer" "clippy" "rustfmt" ];
+            targets = [ "wasm32-unknown-unknown" ];
+          };
 
-          # GTK / GLib (Dioxus desktop / WebKitGTK)
-          gtk3
-          glib
-          gdk-pixbuf
-          pango
-          cairo
-          atk
+          craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-          # Wayland
-          wayland
+          rev = toString (self.shortRev or self.dirtyShortRev or self.lastModified or "unknown");
 
-          # Dioxus desktop (webkit2gtk)
-          webkitgtk_4_1
-          libsoup_3
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              (craneLib.fileset.commonCargoSources ./.)
+              (lib.fileset.fileFilter (f: f.hasExt "css") ./.)
+              (lib.fileset.fileFilter (f: f.hasExt "ico") ./.)
+              (lib.fileset.fileFilter (f: f.hasExt "svg") ./.)
+              (lib.fileset.fileFilter (f: f.name == "Dioxus.toml") ./.)
+              (lib.fileset.fileFilter (f: f.name == "tailwind-config.js") ./.)
+            ];
+          };
 
-          # Misc
-          xdotool
-        ];
+          buildInputs = (with pkgs; [
+            openssl openssl.dev libiconv pkg-config fontconfig freetype cmake python3
+          ])
+          ++ lib.optionals pkgs.stdenv.isLinux (with pkgs; [
+            glib gtk3 gdk-pixbuf pango cairo atk
+            libsoup_3 webkitgtk_4_1 xdotool
+            libx11 libxcursor libxrandr libxi libxcb
+            libxkbcommon wayland libGL vulkan-loader
+          ])
+          ++ lib.optionals pkgs.stdenv.isDarwin (with pkgs; [
+            apple-sdk_15
+            libiconv
+          ]);
 
-        runtimeLibs = with pkgs; [
-          vulkan-loader
-          libGL
-          wayland
-          libxkbcommon
-          glib
-          gtk3
-          webkitgtk_4_1
-          libsoup_3
-          cairo
-          pango
-          gdk-pixbuf
-          atk
-          xdotool
-        ];
-      in
-      {
-        devShells.default = pkgs.mkShell {
-          inherit nativeBuildInputs buildInputs;
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+            rustPlatform.bindgenHook
+            dioxus-cli
+            wasm-bindgen-cli
+            tailwindcss_4
+          ];
 
-          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+          commonArgs = {
+            inherit src buildInputs nativeBuildInputs;
+            strictDeps = true;
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+            OPENSSL_DIR = "${pkgs.openssl.dev}";
+            OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+            CC_wasm32_unknown_unknown = "${pkgs.llvmPackages_18.clang}/bin/clang";
+            AR_wasm32_unknown_unknown = "${pkgs.llvmPackages_18.bintools}/bin/llvm-ar";
+          };
 
-          OPENSSL_DIR = "${pkgs.openssl.dev}";
-          OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-          shellHook = ''
-            echo ""
-            echo "  session dev shell"
-            echo "  ────────────────────────────────────────"
-            echo "  just dx             — serve desktop app"
-            echo "  just build          — build everything"
-            echo "  just check          — type-check all"
-            echo "  just test           — run tests"
-            echo ""
-          '';
+          libPath = lib.makeLibraryPath (with pkgs;
+            [ fontconfig freetype openssl ]
+            ++ lib.optionals pkgs.stdenv.isLinux [
+              libGL vulkan-loader gtk3 glib
+              gdk-pixbuf pango cairo atk
+              libx11 libxcb libxkbcommon wayland
+              webkitgtk_4_1 libsoup_3 xdotool
+            ]
+          );
+
+        in {
+          _module.args.pkgs = import inputs.nixpkgs {
+            inherit system;
+            overlays = [ inputs.rust-overlay.overlays.default ];
+            config.allowUnfree = true;
+          };
+
+          formatter = pkgs.nixfmt-rfc-style;
+
+          # ============================================================
+          # Packages
+          # ============================================================
+          packages = {
+            deps = cargoArtifacts;
+
+            # Session CLI
+            session-cli = craneLib.buildPackage (commonArgs // {
+              pname = "session-cli";
+              version = rev;
+              inherit cargoArtifacts;
+              cargoExtraArgs = "-p session-cli";
+              doCheck = false;
+            });
+
+            # Session Desktop App
+            session-desktop = craneLib.buildPackage (commonArgs // {
+              pname = "session-desktop";
+              version = rev;
+              inherit cargoArtifacts;
+              buildPhaseCargoCommand = ''
+                cd apps/desktop
+                dx build --release --platform desktop
+              '';
+              installPhaseCommand = ''
+                mkdir -p $out/Applications $out/bin
+                if [ -d "apps/desktop/target/dx/session-desktop/release/macos" ]; then
+                  cp -r apps/desktop/target/dx/session-desktop/release/macos/*.app $out/Applications/
+                  ln -s "$out/Applications/"*.app"/Contents/MacOS/"* $out/bin/session-desktop
+                elif [ -f "target/release/session-desktop" ]; then
+                  cp target/release/session-desktop $out/bin/
+                fi
+              '';
+              doCheck = false;
+            });
+
+            # Session Extension — SHM guest process for REAPER integration
+            session-extension = craneLib.buildPackage (commonArgs // {
+              pname = "session-extension";
+              version = rev;
+              inherit cargoArtifacts;
+              cargoExtraArgs = "-p session-extension";
+              doCheck = false;
+            });
+
+            default = self'.packages.session-desktop;
+          };
+
+          # ============================================================
+          # Checks
+          # ============================================================
+          checks = {
+            clippy = craneLib.cargoClippy (commonArgs // {
+              inherit cargoArtifacts;
+              cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+            });
+
+            fmt = craneLib.cargoFmt { inherit src; };
+
+            tests = craneLib.cargoNextest (commonArgs // {
+              inherit cargoArtifacts;
+              partitions = 1;
+              partitionType = "count";
+            });
+          };
+
+          # ============================================================
+          # Dev Shell
+          # ============================================================
+          devenv.shells.default = {
+            devenv.root =
+              pkgs.lib.mkIf (devenvRoot != "") devenvRoot;
+
+            cachix.pull = [ "fasttrackstudio" ];
+
+            packages = with pkgs; [
+              rustToolchain
+              dioxus-cli
+              wasm-bindgen-cli
+              tailwindcss_4
+              cargo-watch
+              cargo-nextest
+              bacon
+            ]
+            ++ buildInputs
+            ++ nativeBuildInputs;
+
+            env = {
+              LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+              OPENSSL_DIR = "${pkgs.openssl.dev}";
+              OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+              CC_wasm32_unknown_unknown = "${pkgs.llvmPackages_18.clang}/bin/clang";
+              AR_wasm32_unknown_unknown = "${pkgs.llvmPackages_18.bintools}/bin/llvm-ar";
+              RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
+            }
+            // lib.optionalAttrs pkgs.stdenv.isLinux {
+              LD_LIBRARY_PATH = libPath;
+              XDG_DATA_DIRS = "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}";
+            }
+            // lib.optionalAttrs pkgs.stdenv.isDarwin {
+              DYLD_LIBRARY_PATH = libPath;
+            };
+
+            scripts = {
+              session-build.exec = "cargo build --workspace";
+              session-build.description = "Build entire workspace";
+
+              session-check.exec = "cargo clippy --workspace -- -D warnings";
+              session-check.description = "Run clippy with warnings-as-errors";
+
+              session-test.exec = "cargo nextest run --workspace";
+              session-test.description = "Run all unit tests";
+            };
+
+            enterShell = ''
+              [ -f .env ] && { set -a; source .env; set +a; }
+              echo ""
+              echo "  Session dev shell (devenv)"
+              echo "  ────────────────────────────────────────"
+              echo "  session-build  — cargo build --workspace"
+              echo "  session-check  — clippy (warnings-as-errors)"
+              echo "  session-test   — cargo nextest run --workspace"
+              echo ""
+              echo "  Rust: $(rustc --version)"
+              echo "  dx:   $(dx --version 2>/dev/null || echo 'not available')"
+              echo ""
+            '';
+          };
         };
-      }
-    );
+    };
 }
