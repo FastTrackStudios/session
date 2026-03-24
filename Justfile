@@ -31,11 +31,25 @@ dx-build: tailwind
 
 # Build Tailwind CSS (v4)
 tailwind:
-    cd apps/desktop && npx @tailwindcss/cli -i ./input.css -o ./assets/tailwind.css --minify
+    cd apps/desktop && tailwindcss -i ./input.css -o ./assets/tailwind.css --minify
 
 # Watch Tailwind CSS for changes (run alongside dx serve)
 tailwind-watch:
-    cd apps/desktop && npx @tailwindcss/cli -i ./input.css -o ./assets/tailwind.css --watch --minify
+    cd apps/desktop && tailwindcss -i ./input.css -o ./assets/tailwind.css --watch --minify
+
+# ── Web App ─────────────────────────────────────────────────────────────
+
+# Build Tailwind CSS for web app (v4)
+tailwind-web:
+    cd apps/web && tailwindcss -i ./input.css -o ./assets/tailwind.css --minify
+
+# Build the web app (WASM) for release
+web-build: tailwind-web
+    cd apps/web && dx build --release --platform web
+
+# Build the web app for development
+web-dev: tailwind-web
+    cd apps/web && dx build --platform web
 
 # ── CLI ──────────────────────────────────────────────────────────────────
 
