@@ -17,6 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout sibling repos
+        run: |
+          cd ..
+          gh repo clone FastTrackStudios/daw -- --depth 1
+          mkdir -p forks
+          gh repo clone FastTrackStudios/moire-trace-capture forks/moire-trace-capture -- --depth 1
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
       - name: Allow unprivileged user namespaces (bwrap needs this)
         run: |
           if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
