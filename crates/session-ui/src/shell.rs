@@ -17,28 +17,20 @@ use dock_proto::PanelRegistry;
 
 use crate::layouts::top_bar::{ConnectionState, VERSION};
 use crate::prelude::*;
+use crate::signals::Session;
 
 /// The main session shell component.
 ///
 /// Renders the full session UI: top bar, connection states, and dock layout.
 /// The caller is responsible for driving the `connection_state` signal from
 /// whatever backend they use (REAPER socket, WebSocket, etc.).
-///
-/// # Usage
-///
-/// ```rust,ignore
-/// use session_ui::{SessionShell, ConnectionState};
-///
-/// let connection_state = use_signal(|| ConnectionState::Connecting);
-/// rsx! {
-///     SessionShell { connection_state }
-/// }
-/// ```
 #[component]
 pub fn SessionShell(
     /// Reactive connection state driven by the host app.
     connection_state: Signal<ConnectionState>,
 ) -> Element {
+    let mut show_connection_info = use_signal(|| false);
+
     // Initialize dock layout once
     use_hook(|| {
         let layout = B::horizontal()
@@ -76,7 +68,12 @@ pub fn SessionShell(
     });
 
     rsx! {
-        div { class: "h-screen flex flex-col bg-background text-foreground",
+        div {
+            class: "h-screen flex flex-col bg-background text-foreground",
+            tabindex: 0,
+            onkeydown: move |evt: KeyboardEvent| {
+                handle_hotkey(evt);
+            },
 
             // ── Top bar ────────────────────────────────────────────
             div {
@@ -93,7 +90,18 @@ pub fn SessionShell(
                 // Right: version + connection badge
                 div { class: "flex items-center gap-3",
                     span { class: "text-xs text-muted-foreground font-mono", "{VERSION}" }
-                    ConnectionBadge { state: connection_state() }
+                    ConnectionBadge {
+                        state: connection_state(),
+                        on_click: move |_| show_connection_info.toggle(),
+                    }
+                }
+            }
+
+            // ── Connection info overlay ───────────────────────────
+            if show_connection_info() {
+                ConnectionInfoPanel {
+                    state: connection_state(),
+                    on_close: move |_| show_connection_info.set(false),
                 }
             }
 
@@ -125,9 +133,56 @@ pub fn SessionShell(
     }
 }
 
+/// Handle global keyboard shortcuts.
+fn handle_hotkey(evt: KeyboardEvent) {
+    use dioxus::prelude::Key;
+
+    match evt.key() {
+        Key::Character(ref c) if c == " " => {
+            // Space → toggle play/pause
+            evt.prevent_default();
+            spawn(async move {
+                let _ = Session::get().setlist().toggle_playback().await;
+            });
+        }
+        Key::ArrowLeft => {
+            // Left arrow → previous section
+            evt.prevent_default();
+            spawn(async move {
+                let _ = Session::get().setlist().previous_section().await;
+            });
+        }
+        Key::ArrowRight => {
+            // Right arrow → next section
+            evt.prevent_default();
+            spawn(async move {
+                let _ = Session::get().setlist().next_section().await;
+            });
+        }
+        Key::ArrowUp => {
+            // Up arrow → previous song
+            evt.prevent_default();
+            spawn(async move {
+                let _ = Session::get().setlist().previous_song().await;
+            });
+        }
+        Key::ArrowDown => {
+            // Down arrow → next song
+            evt.prevent_default();
+            spawn(async move {
+                let _ = Session::get().setlist().next_song().await;
+            });
+        }
+        _ => {}
+    }
+}
+
 /// Connection status badge with spinner for connecting state.
 #[component]
-pub fn ConnectionBadge(state: ConnectionState) -> Element {
+pub fn ConnectionBadge(
+    state: ConnectionState,
+    on_click: EventHandler,
+) -> Element {
     let (bg_class, text_class, dot_class, label) = match state {
         ConnectionState::Connected => (
             "bg-green-500/20",
@@ -151,7 +206,8 @@ pub fn ConnectionBadge(state: ConnectionState) -> Element {
 
     rsx! {
         div {
-            class: "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium {bg_class} {text_class}",
+            class: "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium {bg_class} {text_class} cursor-pointer hover:brightness-125 transition-all",
+            onclick: move |_| on_click.call(()),
 
             match state {
                 ConnectionState::Connecting => rsx! {
@@ -165,6 +221,53 @@ pub fn ConnectionBadge(state: ConnectionState) -> Element {
             }
 
             "{label}"
+        }
+    }
+}
+
+/// Connection info panel — shown when clicking the connection badge.
+#[component]
+fn ConnectionInfoPanel(
+    state: ConnectionState,
+    on_close: EventHandler,
+) -> Element {
+    // Get local network info
+    let hostname = std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("HOST"))
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    rsx! {
+        div {
+            class: "absolute top-10 right-4 z-50 w-72 bg-card border border-border rounded-lg shadow-xl p-4",
+            onclick: move |evt: MouseEvent| evt.stop_propagation(),
+
+            div { class: "flex items-center justify-between mb-3",
+                span { class: "text-sm font-medium", "Connection Details" }
+                button {
+                    class: "text-muted-foreground hover:text-foreground text-xs cursor-pointer",
+                    onclick: move |_| on_close.call(()),
+                    "✕"
+                }
+            }
+
+            div { class: "flex flex-col gap-2 text-xs",
+                div { class: "flex justify-between",
+                    span { class: "text-muted-foreground", "Status" }
+                    span { class: match state {
+                        ConnectionState::Connected => "text-green-400",
+                        ConnectionState::Connecting => "text-yellow-400",
+                        ConnectionState::Disconnected => "text-red-400",
+                    }, "{state:?}" }
+                }
+                div { class: "flex justify-between",
+                    span { class: "text-muted-foreground", "Host" }
+                    span { class: "text-foreground font-mono", "{hostname}" }
+                }
+            }
+
+            div { class: "mt-3 pt-3 border-t border-border text-[10px] text-muted-foreground",
+                "Keyboard shortcuts: Space (play/pause), ←→ (sections), ↑↓ (songs)"
+            }
         }
     }
 }
