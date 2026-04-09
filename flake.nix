@@ -4,7 +4,6 @@
   inputs = {
     # Use nixpkgs-unstable directly for Hydra binary cache hits.
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    devenv.url = "github:cachix/devenv";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
@@ -21,11 +20,9 @@
 
   nixConfig = {
     extra-trusted-public-keys = [
-      "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw="
       "fasttrackstudio.cachix.org-1:r7v7WXBeSZ7m5meL6w0wttnvsOltRvTpXeVNItcy9f4="
     ];
     extra-substituters = [
-      "https://devenv.cachix.org"
       "https://fasttrackstudio.cachix.org"
     ];
   };
@@ -34,7 +31,6 @@
     {
       self,
       nixpkgs,
-      devenv,
       flake-utils,
       rust-overlay,
       crane,
@@ -49,6 +45,7 @@
         let
           pkgs = import nixpkgs {
             inherit system;
+            overlays = [ rust-overlay.overlays.default ];
             config.allowUnfreePredicate =
               pkg:
               builtins.elem (pkgs.lib.getName pkg) [
@@ -57,6 +54,7 @@
               ];
           };
           isLinux = pkgs.stdenv.hostPlatform.isLinux;
+          rustToolchain = pkgs.rust-bin.stable.latest.default;
 
           # ── Crane (release packages) ──────────────────────────────
           craneLib = crane.mkLib pkgs;
@@ -270,137 +268,64 @@
             ci-image = ci-image;
           };
 
-        devShells = pkgs.lib.optionalAttrs isLinux {
-          # ── Default dev shell ─────────────────────────────────
-          default = devenv.lib.mkShell {
-            inherit inputs pkgs;
-            modules = [
-              (
-                { pkgs, config, ... }:
-                {
-                  cachix.pull = [ "fasttrackstudio" ];
+        devShells = pkgs.lib.optionalAttrs isLinux (
+          let
+            # Convert sharedScripts to writeShellScriptBin derivations
+            mkScript = name: def: pkgs.writeShellScriptBin name def.exec;
+            scriptPackages = pkgs.lib.mapAttrsToList mkScript sharedScripts;
 
-                  packages = [
-                    ftsDev.fts-test
-                    ftsDev.fts-gui
-                    ftsDev.reaper-fhs
-                    pkgs.pkg-config
-                    pkgs.openssl
-                  ];
-
-                  languages.rust = {
-                    enable = true;
-                    channel = "stable";
-                  };
-
-                  env = {
-                    FTS_REAPER_EXECUTABLE = "${ftsDev.reaper}/bin/reaper";
-                    FTS_REAPER_RESOURCES = "${ftsDev.reaper}/opt/REAPER";
-                    FTS_REAPER_CONFIG = ftsReaperConfig;
-                  };
-
-                  scripts = sharedScripts;
-
-                  # ── Claude Code integration ──────────────────
-                  claude.code = {
-                    enable = true;
-                    commands = {
-                      smoke = ''
-                        Run the REAPER headless smoke test
-
-                        ```bash
-                        daw-smoke
-                        ```
-                      '';
-                      integration = ''
-                        Run the REAPER integration test suite
-
-                        ```bash
-                        daw-integration
-                        ```
-                      '';
-                      build = ''
-                        Build the daw workspace
-
-                        ```bash
-                        daw-build
-                        ```
-                      '';
-                      test = ''
-                        Run unit tests
-
-                        ```bash
-                        daw-test
-                        ```
-                      '';
-                      ci = ''
-                        Run the full CI test suite (unit + integration)
-
-                        ```bash
-                        daw-ci
-                        ```
-                      '';
-                    };
-                  };
-
-                  git-hooks.hooks = {
-                    rustfmt.enable = true;
-                  };
-
-                  enterShell = ''
-                    echo ""
-                    echo "  daw dev shell (devenv + fts-flake)"
-                    echo "  ────────────────────────────────────────"
-                    echo "  daw-build         — cargo build --workspace"
-                    echo "  daw-test          — cargo test --workspace"
-                    echo "  daw-smoke         — REAPER headless smoke test"
-                    echo "  daw-integration   — REAPER integration tests"
-                    echo "  daw-ci            — full test suite"
-                    echo ""
-                    echo "  fts-test [cmd]    — headless FHS env"
-                    echo "  fts-gui           — launch REAPER with GUI"
-                    echo ""
-                    echo "  REAPER: ${ftsDev.reaper}/bin/reaper"
-                    echo ""
-                  '';
-                }
-              )
+            commonPackages = scriptPackages ++ [
+              rustToolchain
+              pkgs.pkg-config
+              pkgs.openssl
             ];
-          };
 
-          # ── CI shell (minimal, no GUI) ────────────────────────
-          ci = devenv.lib.mkShell {
-            inherit inputs pkgs;
-            modules = [
-              (
-                { pkgs, ... }:
-                {
-                  cachix.pull = [ "fasttrackstudio" ];
+            commonEnv = {
+              FTS_REAPER_CONFIG = ftsReaperConfig;
+            };
+          in
+          {
+            # ── Default dev shell ─────────────────────────────────
+            default = pkgs.mkShell (commonEnv // {
+              packages = commonPackages ++ [
+                ftsDev.fts-test
+                ftsDev.fts-gui
+                ftsDev.reaper-fhs
+              ];
 
-                  packages = [
-                    ftsCi.fts-test
-                    ftsCi.reaper-fhs
-                    pkgs.pkg-config
-                    pkgs.openssl
-                  ];
+              FTS_REAPER_EXECUTABLE = "${ftsDev.reaper}/bin/reaper";
+              FTS_REAPER_RESOURCES = "${ftsDev.reaper}/opt/REAPER";
 
-                  languages.rust = {
-                    enable = true;
-                    channel = "stable";
-                  };
+              shellHook = ''
+                echo ""
+                echo "  daw dev shell (fts-flake)"
+                echo "  ────────────────────────────────────────"
+                echo "  daw-build         — cargo build --workspace"
+                echo "  daw-test          — cargo test --workspace"
+                echo "  daw-smoke         — REAPER headless smoke test"
+                echo "  daw-integration   — REAPER integration tests"
+                echo "  daw-ci            — full test suite"
+                echo ""
+                echo "  fts-test [cmd]    — headless FHS env"
+                echo "  fts-gui           — launch REAPER with GUI"
+                echo ""
+                echo "  REAPER: ${ftsDev.reaper}/bin/reaper"
+                echo ""
+              '';
+            });
 
-                  env = {
-                    FTS_REAPER_EXECUTABLE = "${ftsCi.reaper}/bin/reaper";
-                    FTS_REAPER_RESOURCES = "${ftsCi.reaper}/opt/REAPER";
-                    FTS_REAPER_CONFIG = ftsReaperConfig;
-                  };
+            # ── CI shell (minimal, no GUI) ────────────────────────
+            ci = pkgs.mkShell (commonEnv // {
+              packages = commonPackages ++ [
+                ftsCi.fts-test
+                ftsCi.reaper-fhs
+              ];
 
-                  scripts = sharedScripts;
-                }
-              )
-            ];
-          };
-        };
+              FTS_REAPER_EXECUTABLE = "${ftsCi.reaper}/bin/reaper";
+              FTS_REAPER_RESOURCES = "${ftsCi.reaper}/opt/REAPER";
+            });
+          }
+        );
       }
       );
 }
