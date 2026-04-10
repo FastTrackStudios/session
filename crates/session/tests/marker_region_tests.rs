@@ -6,9 +6,27 @@
 //! Run with:
 //!   cargo xtask reaper-test -- marker_region
 
+use daw::Project;
 use reaper_test::reaper_test;
 use session::{SongBuilder, stamp_demo_into_project};
 use std::time::Duration;
+
+/// Remove all markers and regions from a project so each test starts clean.
+async fn clear_project(project: &Project) -> eyre::Result<()> {
+    let markers = project.markers().all().await?;
+    for m in &markers {
+        if let Some(id) = m.id {
+            project.markers().remove(id).await?;
+        }
+    }
+    let regions = project.regions().all().await?;
+    for r in &regions {
+        if let Some(id) = r.id {
+            project.regions().remove(id).await?;
+        }
+    }
+    Ok(())
+}
 
 // ═════════════════════════════════════════════════════════════════════
 //  Marker CRUD
@@ -269,8 +287,9 @@ async fn region_set_bounds(ctx: &reaper_test::ReaperTestContext) -> eyre::Result
 }
 
 /// Query region at a specific position.
-#[reaper_test(isolated)]
+#[reaper_test]
 async fn region_at_position(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+    clear_project(&ctx.project).await?;
     let regions_api = ctx.project.regions();
 
     regions_api.add(10.0, 20.0, "SECTION-A").await?;
@@ -363,10 +382,11 @@ async fn songbuilder_reacts_to_region_rename(
 }
 
 /// Add an extra region and verify SongBuilder includes it.
-#[reaper_test(isolated)]
+#[reaper_test]
 async fn songbuilder_reacts_to_region_add(
     ctx: &reaper_test::ReaperTestContext,
 ) -> eyre::Result<()> {
+    clear_project(&ctx.project).await?;
     stamp_demo_into_project(&ctx.project).await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
