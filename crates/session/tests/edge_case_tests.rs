@@ -6,18 +6,37 @@
 //! Run with:
 //!   cargo xtask reaper-test -- edge_case
 
+use daw::Project;
 use reaper_test::reaper_test;
 use session::{SongBuilder, stamp_demo_into_project};
 use std::time::Duration;
+
+/// Remove all markers and regions from a project so each test starts clean.
+async fn clear_project(project: &Project) -> eyre::Result<()> {
+    let markers = project.markers().all().await?;
+    for m in &markers {
+        if let Some(id) = m.id {
+            project.markers().remove(id).await?;
+        }
+    }
+    let regions = project.regions().all().await?;
+    for r in &regions {
+        if let Some(id) = r.id {
+            project.regions().remove(id).await?;
+        }
+    }
+    Ok(())
+}
 
 // ═════════════════════════════════════════════════════════════════════
 //  SongBuilder edge cases
 // ═════════════════════════════════════════════════════════════════════
 
 /// SongBuilder on an empty project (no markers, no regions).
-#[reaper_test(isolated)]
+#[reaper_test]
 async fn songbuilder_empty_project(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
-    // Don't stamp anything — project is empty
+    clear_project(&ctx.project).await?;
+    // Project is now empty
     let songs = SongBuilder::build(&ctx.project).await?;
 
     println!("Songs from empty project: {}", songs.len());

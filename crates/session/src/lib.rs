@@ -58,6 +58,8 @@ pub use song_builder::SongBuilder;
 #[cfg(not(target_arch = "wasm32"))]
 pub use setlist_service::demo::{stamp_demo_into_project, stamp_demo_setlist};
 
+pub mod daw_module;
+
 // Session action definitions — single source of truth.
 //
 // The `define_actions!` macro generates:
