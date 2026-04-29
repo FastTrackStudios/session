@@ -278,7 +278,23 @@
               rustToolchain
               pkgs.pkg-config
               pkgs.openssl
+
+              # GPU / Dioxus-native rendering (daw-reaper-embed, daw-reaper-dioxus)
+              pkgs.fontconfig
+              pkgs.freetype
+
+              # C/C++ bindgen (avahi-sys via sync, blitz transitive)
+              pkgs.llvmPackages.libclang
+
+              # Misc system libs commonly required by GUI/audio crates
+              pkgs.dbus
+              pkgs.zlib
+              pkgs.stdenv.cc.cc.lib
             ];
+
+            commonShellEnv = {
+              LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+            };
 
             commonEnv = {
               FTS_REAPER_CONFIG = ftsReaperConfig;
@@ -286,7 +302,7 @@
           in
           {
             # ── Default dev shell ─────────────────────────────────
-            default = pkgs.mkShell (commonEnv // {
+            default = pkgs.mkShell (commonEnv // commonShellEnv // {
               packages = commonPackages ++ [
                 ftsDev.fts-test
                 ftsDev.fts-gui
@@ -315,7 +331,7 @@
             });
 
             # ── CI shell (minimal, no GUI) ────────────────────────
-            ci = pkgs.mkShell (commonEnv // {
+            ci = pkgs.mkShell (commonEnv // commonShellEnv // {
               packages = commonPackages ++ [
                 ftsCi.fts-test
                 ftsCi.reaper-fhs
