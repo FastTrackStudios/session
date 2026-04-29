@@ -48,6 +48,15 @@ setup-rigs *ARGS:
 integration-test *ARGS:
     cargo xtask reaper-test {{ARGS}}
 
+# Run UI / panel tests (requires GPU adapter capable of vello's
+# storage-buffer compute pipelines — real discrete GPU or the host's
+# integrated GPU). The devshell ships mesa lavapipe but that does NOT
+# satisfy vello's compute requirements, so headless CI will need
+# either a real GPU or vello-cpu/vello-hybrid backend selection.
+# Tests gated by FTS_GPU_TESTS=1; without it they skip cleanly.
+ui-tests *ARGS:
+    FTS_GPU_TESTS=1 cargo test -p daw-reaper-dioxus --tests {{ARGS}}
+
 # Full CI suite: unit tests + REAPER integration tests
 ci:
     @echo "=== unit tests ==="

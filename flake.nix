@@ -290,10 +290,24 @@
               pkgs.dbus
               pkgs.zlib
               pkgs.stdenv.cc.cc.lib
+
+              # Headless GPU (mesa software rasterizer + Vulkan loader).
+              # Enables wgpu offscreen rendering on CI runners with no
+              # discrete GPU. Used by daw-reaper-dioxus snapshot tests
+              # when FTS_GPU_TESTS=1.
+              pkgs.mesa
+              pkgs.libGL
+              pkgs.vulkan-loader
             ];
 
             commonShellEnv = {
               LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+              # Force software-rasterized OpenGL (lavapipe) so wgpu can
+              # acquire a GPU adapter in headless / CI environments.
+              # Tests still need to opt in via FTS_GPU_TESTS=1.
+              LIBGL_ALWAYS_SOFTWARE = "1";
+              # Point Vulkan-backed wgpu at lavapipe.
+              VK_ICD_FILENAMES = "${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json";
             };
 
             commonEnv = {
