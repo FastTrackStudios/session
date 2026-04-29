@@ -128,17 +128,40 @@
           # Isolated REAPER config — never touches ~/.config/REAPER
           ftsReaperConfig = "$HOME/.config/FastTrackStudio/Reaper";
 
-          ftsDev = fts-flake.lib.mkFtsPackages {
-            inherit pkgs;
-            cfg = fts-flake.presets.dev // {
-              reaper.configDir = ftsReaperConfig;
+          # reaper-flake (formerly fts-flake) renamed mkFtsPackages to
+          # mkReaperPackages and split the GUI / headless builds in
+          # https://github.com/FastTrackStudios/reaper-flake (commit
+          # `aee333d`). Old consumers expected `fts-test` (FHS-sandboxed
+          # headless launcher) and `fts-gui` (FHS-sandboxed GUI launcher)
+          # binary names — compat shims below preserve those so the
+          # existing runner.rs / devshell hooks keep working.
+          mkReaper = preset: extraCfg:
+            let
+              base = fts-flake.lib.mkReaperPackages {
+                inherit pkgs;
+                cfg = preset // extraCfg;
+              };
+            in base // {
+              # Generic FHS-env launcher: takes a binary path + args.
+              # Equivalent to the old `fts-test`. Used by reaper-test's
+              # spawn_reaper to run the headless REAPER under bwrap.
+              fts-test = pkgs.writeShellScriptBin "fts-test" ''
+                exec ${base.reaper-fhs}/bin/reaper-env "$@"
+              '';
+              # Visible-GUI launcher (renamed from old `fts-gui`). Wraps
+              # `reaper-wrapped` so the libSwell GUI binary opens a real
+              # window — needed for `just gui-test` to actually show
+              # REAPER.
+              fts-gui = pkgs.writeShellScriptBin "fts-gui" ''
+                exec ${base.reaper-wrapped}/bin/reaper "$@"
+              '';
             };
+
+          ftsDev = mkReaper fts-flake.presets.dev {
+            reaper.configDir = ftsReaperConfig;
           };
-          ftsCi = fts-flake.lib.mkFtsPackages {
-            inherit pkgs;
-            cfg = fts-flake.presets.ci // {
-              reaper.configDir = ftsReaperConfig;
-            };
+          ftsCi = mkReaper fts-flake.presets.ci {
+            reaper.configDir = ftsReaperConfig;
           };
           # ── Shared scripts (used in both dev and CI shells) ───────
           sharedScripts = {
