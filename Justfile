@@ -50,14 +50,22 @@ integration-test *ARGS:
 
 # Run REAPER integration tests with the GUI visible AND leave REAPER
 # open after they finish so you can inspect Actions, menus, dock state,
-# etc. Locally (CI unset) the runner already uses the real GUI REAPER —
-# `--keep-open` just stops it from being killed at the end of the run.
+# etc. Locally (CI unset) the runner uses the real GUI REAPER —
+# `--keep-open` stops it from being killed at the end of the run.
+#
+# Skips loading the FTS guest extensions (sync, dynamic-template,
+# session, signal, etc.) so the action_registry surface is the only
+# thing being driven. The guests' periodic poll loops slow REAPER's
+# main thread down enough to break the per-test 60s timeout.
+# To include them, run `cargo xtask reaper-test --keep-open` directly.
 #
 # Examples:
-#   just integration-test-gui                       # run everything
-#   just integration-test-gui register_toggle       # filter
-#   just integration-test-gui reaper_action_registry
+#   just gui-test                       # run everything
+#   just gui-test register_toggle       # filter
+#   just gui-test reaper_action_registry
 gui-test *ARGS:
+    FTS_EXTENSION_WHITELIST=__none__ \
+    REAPER_TEST_TIMEOUT_SECS=300 \
     cargo xtask reaper-test --keep-open {{ARGS}}
 
 # Run UI / panel tests (requires GPU adapter capable of vello's
