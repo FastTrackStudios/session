@@ -48,6 +48,18 @@ setup-rigs *ARGS:
 integration-test *ARGS:
     cargo xtask reaper-test {{ARGS}}
 
+# Run REAPER integration tests with the GUI visible AND leave REAPER
+# open after they finish so you can inspect Actions, menus, dock state,
+# etc. Locally (CI unset) the runner already uses the real GUI REAPER —
+# `--keep-open` just stops it from being killed at the end of the run.
+#
+# Examples:
+#   just integration-test-gui                       # run everything
+#   just integration-test-gui register_toggle       # filter
+#   just integration-test-gui reaper_action_registry
+gui-test *ARGS:
+    cargo xtask reaper-test --keep-open {{ARGS}}
+
 # Run UI / panel tests (requires GPU adapter capable of vello's
 # storage-buffer compute pipelines — real discrete GPU or the host's
 # integrated GPU). The devshell ships mesa lavapipe but that does NOT
