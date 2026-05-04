@@ -153,6 +153,15 @@
               # window — needed for `just gui-test` to actually show
               # REAPER.
               fts-gui = pkgs.writeShellScriptBin "fts-gui" ''
+                # GUI REAPER must use the host OpenGL stack. The dev shell
+                # intentionally defaults to lavapipe for headless GPU tests,
+                # but WebKitGTK embedded in REAPER needs real GL/EGL.
+                unset LIBGL_ALWAYS_SOFTWARE
+                unset VK_ICD_FILENAMES
+                export LD_LIBRARY_PATH="/run/opengl-driver/lib:/run/opengl-driver-32/lib:''${LD_LIBRARY_PATH:-}"
+                export LIBGL_DRIVERS_PATH="/run/opengl-driver/lib/dri"
+                export GBM_BACKENDS_PATH="/run/opengl-driver/lib/gbm"
+                export __EGL_VENDOR_LIBRARY_DIRS="/run/opengl-driver/share/glvnd/egl_vendor.d"
                 exec ${base.reaper-wrapped}/bin/reaper "$@"
               '';
             };
@@ -306,6 +315,34 @@
               pkgs.fontconfig
               pkgs.freetype
 
+              # Dioxus desktop / Wry WebKitGTK embedding
+              pkgs.gtk3
+              pkgs.webkitgtk_4_1
+              pkgs.webkitgtk_4_1.dev
+              pkgs.libsoup_3
+              pkgs.libsoup_3.dev
+              pkgs.glib
+              pkgs.gdk-pixbuf
+              pkgs.pango
+              pkgs.cairo
+              pkgs.atk
+
+              # X11 child-window embedding for Wry build_as_child on Linux
+              pkgs.libx11
+              pkgs.libxext
+              pkgs.libxrender
+              pkgs.libxfixes
+              pkgs.libxcomposite
+              pkgs.libxdamage
+              pkgs.libxi
+              pkgs.libxrandr
+              pkgs.libxcursor
+              pkgs.libxinerama
+              pkgs.libxtst
+              pkgs.libxcb
+              pkgs.libxscrnsaver
+              pkgs.libxkbcommon
+
               # C/C++ bindgen (avahi-sys via sync, blitz transitive)
               pkgs.llvmPackages.libclang
 
@@ -331,6 +368,33 @@
               LIBGL_ALWAYS_SOFTWARE = "1";
               # Point Vulkan-backed wgpu at lavapipe.
               VK_ICD_FILENAMES = "${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json";
+              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+                pkgs.gtk3
+                pkgs.webkitgtk_4_1
+                pkgs.libsoup_3
+                pkgs.glib
+                pkgs.gdk-pixbuf
+                pkgs.pango
+                pkgs.cairo
+                pkgs.atk
+                pkgs.libx11
+                pkgs.libxext
+                pkgs.libxrender
+                pkgs.libxfixes
+                pkgs.libxcomposite
+                pkgs.libxdamage
+                pkgs.libxi
+                pkgs.libxrandr
+                pkgs.libxcursor
+                pkgs.libxinerama
+                pkgs.libxtst
+                pkgs.libxcb
+                pkgs.libxscrnsaver
+                pkgs.libxkbcommon
+                pkgs.mesa
+                pkgs.libGL
+                pkgs.vulkan-loader
+              ];
             };
 
             commonEnv = {
