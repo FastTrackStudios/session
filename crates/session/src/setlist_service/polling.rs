@@ -728,6 +728,12 @@ impl SetlistServiceImpl {
                                 song_id_to_index.get(id).copied()
                             });
 
+                            let mut update_value = None;
+                            let _ = update.map(|value| {
+                                update_value = Some(value);
+                            });
+                            let update = update_value.expect("SelfRef::map ran");
+
                             for proj_state in &update.projects {
                                 if let Some(song_indices) = guid_to_indices.get(&proj_state.project_guid) {
                                     let is_playing = proj_state.transport.play_state

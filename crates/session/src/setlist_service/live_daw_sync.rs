@@ -215,7 +215,11 @@ impl DawSyncBridge {
                 loop {
                     match rx.recv().await {
                         Ok(Some(event_ref)) => {
-                            let event: MarkerEvent = (*event_ref).clone();
+                            let mut event = None;
+                            let _ = event_ref.map(|value| {
+                                event = Some(value);
+                            });
+                            let event: MarkerEvent = event.expect("SelfRef::map ran");
                             handle_marker_event(&setlist, &event, offset, song_idx).await;
                         }
                         Ok(None) => continue,
@@ -232,7 +236,11 @@ impl DawSyncBridge {
                 loop {
                     match rx.recv().await {
                         Ok(Some(event_ref)) => {
-                            let event: RegionEvent = (*event_ref).clone();
+                            let mut event = None;
+                            let _ = event_ref.map(|value| {
+                                event = Some(value);
+                            });
+                            let event: RegionEvent = event.expect("SelfRef::map ran");
                             handle_region_event(&setlist, &event, offset, song_idx).await;
                         }
                         Ok(None) => continue,
@@ -251,7 +259,11 @@ impl DawSyncBridge {
                 loop {
                     match rx.recv().await {
                         Ok(Some(event_ref)) => {
-                            let event: ItemEvent = (*event_ref).clone();
+                            let mut event = None;
+                            let _ = event_ref.map(|value| {
+                                event = Some(value);
+                            });
+                            let event: ItemEvent = event.expect("SelfRef::map ran");
                             handle_item_event(
                                 &setlist,
                                 &song_project,
