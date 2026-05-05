@@ -12,6 +12,23 @@ cargo build
 cargo check -p daw
 ```
 
+## Test
+
+Use `cargo xtask test` for the default local test pass. This delegates to
+`cargo nextest run --profile default` and uses `.config/nextest.toml`, matching
+the lightweight nextest setup used in Bearcove Rust repositories.
+
+Real REAPER integration tests are opt-in because they spawn REAPER and require a
+configured test rig:
+
+```bash
+cargo xtask test --reaper
+cargo xtask test --reaper actions_cli
+```
+
+`cargo xtask reaper-test` remains available as the direct REAPER harness entry
+point.
+
 ## Run Against REAPER
 
 Install or load the `daw-bridge` REAPER extension, then connect external tools

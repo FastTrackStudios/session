@@ -308,6 +308,7 @@
 
             commonPackages = scriptPackages ++ [
               rustToolchain
+              pkgs.cargo-nextest
               pkgs.pkg-config
               pkgs.openssl
 
@@ -347,6 +348,7 @@
               pkgs.llvmPackages.libclang
 
               # Misc system libs commonly required by GUI/audio crates
+              pkgs.alsa-lib
               pkgs.dbus
               pkgs.zlib
               pkgs.stdenv.cc.cc.lib
@@ -377,6 +379,7 @@
                 pkgs.pango
                 pkgs.cairo
                 pkgs.atk
+                pkgs.alsa-lib
                 pkgs.libx11
                 pkgs.libxext
                 pkgs.libxrender
