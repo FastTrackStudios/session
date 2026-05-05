@@ -14,6 +14,11 @@ broadcast through vox services.
 - [Spec](/spec/) — Specifications and requirements
 - [Getting Started](/getting-started/) — Building and running the REAPER extension
 
+## Operations
+
+- [REAPER Desktop Renderer Polling](/reaper-desktop-renderer-polling/) — Linux embedded desktop panel timer cadence
+- [Dioxus Renderer Event Converters](/dioxus-renderer-event-converters/) — Mixed native and desktop renderer event dispatch contract
+
 ## Features
 
 - **Bidirectional transport sync** — Play, stop, seek, and loop between REAPER and FTS tools
