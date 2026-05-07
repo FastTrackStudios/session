@@ -343,6 +343,9 @@
               pkgs.libxcb
               pkgs.libxscrnsaver
               pkgs.libxkbcommon
+              # libxdo — required by tray-icon / global-hotkey via wry's
+              # dioxus-desktop dep tree on Linux.
+              pkgs.xdotool
 
               # C/C++ bindgen (avahi-sys via sync, blitz transitive)
               pkgs.llvmPackages.libclang
