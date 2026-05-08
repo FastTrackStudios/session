@@ -41,11 +41,11 @@ commits. The current pins are:
 | `fts-launcher` | `698a29121c2d20c24cba5a58d608c6f5da0f56a0` |
 | `dynamic-template` | `d4467d3807b970476c09641d6c240321653f5148` |
 | `session` | `189f942bd9fc07513ed913c488b36871f661849d` |
-| `sync` | `e542c64e1af5c9ddbb70a7c1ec0829f78f46ad71` |
+| `sync` | `7830a5a0b46afff799d6cfb18a0d9834f35a3d3f` |
 | `input` | `7f06a6acf027956c94b6fa2cab5b50c425ca1067` |
 | `input_actions` | `8503c47c097ce9f4e3d8fb369a82c5925cef9317` |
-| `keyflow` | `887a231cef3e6aca698a67e37b61f65ca42297ce` |
-| `daw` | `baa648803fbe3fd0d19dbd314fbe37fdd2a9a38a` |
+| `keyflow` | `c57b122ec309a8aade59b07b84041bc98a195a85` |
+| `daw` | `273dbaa1ef5e4dfac9cd35988e13d2b4b954ab6e` |
 | `reaper-lib` | `8fe87a0604a87f24009dd03056627d0f19f89bc5` |
 | `fts-ui` | `d9f01261cb59708300cc5b31fa7fe6bd766a66aa` |
 | `blitz` | `18cbfa7d63496441c37074c07470f71f3004d290` |
