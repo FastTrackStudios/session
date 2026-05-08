@@ -33,7 +33,7 @@ async fn subscription_a_stop_event(ctx: &reaper_test::ReaperTestContext) -> eyre
         }
         match tokio::time::timeout(timeout, rx.recv()).await {
             Ok(Ok(Some(state))) => {
-                if state.is_stopped() {
+                if *state.map(|state| state.is_stopped()).get() {
                     saw_stopped = true;
                     break;
                 }
@@ -71,7 +71,7 @@ async fn subscription_b_receives_updates(ctx: &reaper_test::ReaperTestContext) -
             break;
         }
         match tokio::time::timeout(timeout, rx.recv()).await {
-            Ok(Ok(Some(state))) => updates.push(state),
+            Ok(Ok(Some(state))) => updates.push(*state.map(|state| state.is_playing()).get()),
             _ => break,
         }
     }
@@ -88,7 +88,7 @@ async fn subscription_b_receives_updates(ctx: &reaper_test::ReaperTestContext) -
     );
 
     // At least some updates should show playing state
-    let playing_count = updates.iter().filter(|s| s.is_playing()).count();
+    let playing_count = updates.iter().filter(|playing| **playing).count();
     println!("  {playing_count} updates showed playing state");
     assert!(
         playing_count > 0,

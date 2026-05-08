@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use daw::Project;
+use daw::RxExt;
 use daw::service::item::Item;
 use daw::service::primitives::{Duration, PositionInSeconds};
 use daw::service::{ItemEvent, MarkerEvent, RegionEvent};
@@ -212,19 +213,8 @@ impl DawSyncBridge {
         if let Ok(mut rx) = song.project.markers().subscribe().await {
             let setlist = setlist.clone();
             moire::task::spawn(async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(Some(event_ref)) => {
-                            let mut event = None;
-                            let _ = event_ref.map(|value| {
-                                event = Some(value);
-                            });
-                            let event: MarkerEvent = event.expect("SelfRef::map ran");
-                            handle_marker_event(&setlist, &event, offset, song_idx).await;
-                        }
-                        Ok(None) => continue,
-                        Err(_) => break,
-                    }
+                while let Ok(Some(event)) = rx.next_owned().await {
+                    handle_marker_event(&setlist, &event, offset, song_idx).await;
                 }
             });
         }
@@ -233,19 +223,8 @@ impl DawSyncBridge {
         if let Ok(mut rx) = song.project.regions().subscribe().await {
             let setlist = setlist.clone();
             moire::task::spawn(async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(Some(event_ref)) => {
-                            let mut event = None;
-                            let _ = event_ref.map(|value| {
-                                event = Some(value);
-                            });
-                            let event: RegionEvent = event.expect("SelfRef::map ran");
-                            handle_region_event(&setlist, &event, offset, song_idx).await;
-                        }
-                        Ok(None) => continue,
-                        Err(_) => break,
-                    }
+                while let Ok(Some(event)) = rx.next_owned().await {
+                    handle_region_event(&setlist, &event, offset, song_idx).await;
                 }
             });
         }
@@ -256,27 +235,16 @@ impl DawSyncBridge {
             let song_project = song.project.clone();
             let item_index = item_index.clone();
             moire::task::spawn(async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(Some(event_ref)) => {
-                            let mut event = None;
-                            let _ = event_ref.map(|value| {
-                                event = Some(value);
-                            });
-                            let event: ItemEvent = event.expect("SelfRef::map ran");
-                            handle_item_event(
-                                &setlist,
-                                &song_project,
-                                &item_index,
-                                &event,
-                                offset,
-                                song_idx,
-                            )
-                            .await;
-                        }
-                        Ok(None) => continue,
-                        Err(_) => break,
-                    }
+                while let Ok(Some(event)) = rx.next_owned().await {
+                    handle_item_event(
+                        &setlist,
+                        &song_project,
+                        &item_index,
+                        &event,
+                        offset,
+                        song_idx,
+                    )
+                    .await;
                 }
             });
         }

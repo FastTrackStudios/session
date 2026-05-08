@@ -1,13 +1,17 @@
 //! DawModule implementation for session.
 
-use daw::module::{ActionDef, DawModule, ModuleContext};
 use crate::session_actions;
+use daw::module::{ActionDef, DawModule, ModuleContext};
 
 pub struct SessionModule;
 
 impl DawModule for SessionModule {
-    fn name(&self) -> &str { "session" }
-    fn display_name(&self) -> &str { "Session Control" }
+    fn name(&self) -> &str {
+        "session"
+    }
+    fn display_name(&self) -> &str {
+        "Session Control"
+    }
 
     fn actions(&self) -> Vec<ActionDef> {
         session_actions::definitions()
