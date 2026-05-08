@@ -16,26 +16,14 @@
       url = "github:justinfrankel/WDL";
       flake = false;
     };
-    # WPE WebKit standalone flake with Cachix binary cache. Used by the
-    # Linux desktop renderer (Phase 2) for offscreen WebKit rendering
-    # via wpebackend-fdo + DMA-buf — bypasses the WebKitGTK
-    # WebProcess-creates-its-own-X-window fallback that breaks
-    # embedding inside REAPER's SWELL panels on Wayland.
-    #
-    # Do NOT add `inputs.nixpkgs.follows` here — the Cachix binary was
-    # built with nix-wpe-webkit's own pinned nixpkgs; following ours
-    # would change the derivation hash and force a ~1-hour rebuild.
-    nix-wpe-webkit.url = "github:eval-exec/nix-wpe-webkit";
   };
 
   nixConfig = {
     extra-trusted-public-keys = [
       "fasttrackstudio.cachix.org-1:r7v7WXBeSZ7m5meL6w0wttnvsOltRvTpXeVNItcy9f4="
-      "nix-wpe-webkit.cachix.org-1:ItCjHkz1Y5QcwqI9cTGNWHzcox4EqcXqKvOygxpwYHE="
     ];
     extra-substituters = [
       "https://fasttrackstudio.cachix.org"
-      "https://nix-wpe-webkit.cachix.org"
     ];
   };
 
@@ -49,7 +37,6 @@
       fts-flake,
       nix2container,
       wdl,
-      nix-wpe-webkit,
     } @ inputs:
     flake-utils.lib.eachSystem
       [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ]
@@ -67,15 +54,6 @@
               ];
           };
 
-          # Pull `wpewebkit` directly from the flake's prebuilt outputs
-          # (Cachix-cached). The flake pins its own nixpkgs; using its
-          # overlay against our nixpkgs would force a from-source build
-          # (~1 hour) because the derivation hash changes. Linux only.
-          wpewebkit =
-            if pkgs.stdenv.hostPlatform.isLinux then
-              nix-wpe-webkit.packages.${system}.wpewebkit
-            else
-              null;
           isLinux = pkgs.stdenv.hostPlatform.isLinux;
           rustToolchain = pkgs.rust-bin.stable.latest.default;
 
@@ -370,18 +348,6 @@
               # dioxus-desktop dep tree on Linux.
               pkgs.xdotool
 
-              # WPE WebKit stack (Phase 2 desktop renderer #19). libwpe
-              # + libwpe-fdo come from nixpkgs; wpewebkit comes from the
-              # nix-wpe-webkit flake (Cachix-cached, prebuilt). bindgen
-              # on libwpe / wpebackend-fdo / wpe-webkit-2.0 generates
-              # FFI bindings for the future `crates/daw-wpe-webkit`.
-              pkgs.libwpe
-              pkgs.libwpe-fdo
-              pkgs.wayland
-              pkgs.wayland-protocols
-              pkgs.libepoxy
-            ] ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux wpewebkit ++ [
-
               # C/C++ bindgen (avahi-sys via sync, blitz transitive)
               pkgs.llvmPackages.libclang
 
@@ -402,28 +368,6 @@
 
             commonShellEnv = {
               LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-              # bindgen needs the C standard headers (stdarg.h, time.h,
-              # stddef.h) plus glibc and Linux ABI headers to walk
-              # transitive includes from `<wpe/webkit.h>` etc. Nix's
-              # libclang doesn't bundle them — point clang explicitly.
-              # Without this, bindgen panics with `fatal error: 'time.h'
-              # file not found` when generating WPE WebKit bindings.
-              BINDGEN_EXTRA_CLANG_ARGS = builtins.concatStringsSep " " [
-                "-I${pkgs.llvmPackages.libclang.lib}/lib/clang/${pkgs.llvmPackages.libclang.version}/include"
-                "-I${pkgs.glibc.dev}/include"
-                "-I${pkgs.linuxHeaders}/include"
-              ];
-              # libwpe's loader dlopens this; without an absolute path
-              # it fails with "cannot open shared object file" inside
-              # the bwrap FHS env where /lib paths differ.
-              WPE_BACKEND_LIBRARY = "${pkgs.libwpe-fdo}/lib/libWPEBackend-fdo-1.0.so";
-              # WebKit's UIProcess sandbox can't see /nix paths inside
-              # bwrap. Disable per neomacs's reference flake — only
-              # safe for development/embedded use.
-              WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS = "1";
-              # Coalesce all WebViews into one WebProcess so we don't
-              # spawn N processes per panel. Embedded use case.
-              WEBKIT_USE_SINGLE_WEB_PROCESS = "1";
               # Force software-rasterized OpenGL (lavapipe) so wgpu can
               # acquire a GPU adapter in headless / CI environments.
               # Tests still need to opt in via FTS_GPU_TESTS=1.
