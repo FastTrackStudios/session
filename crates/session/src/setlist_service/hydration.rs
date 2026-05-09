@@ -5,6 +5,9 @@ use super::{
 };
 use crate::song_builder::SongBuilder;
 use daw::Daw;
+use keyflow_daw_analysis::{
+    DetectedChord, MidiChartData, MidiChartRequest, MidiChartServiceClient,
+};
 use moire::sync::Semaphore;
 use session_proto::{Song, SongChartHydration, SongDetectedChord, SongId};
 use std::sync::Arc;
@@ -134,7 +137,7 @@ impl SetlistServiceImpl {
         song.detected_chords.clear();
     }
 
-    fn map_detected_chords(chords: Vec<daw::service::MidiDetectedChord>) -> Vec<SongDetectedChord> {
+    fn map_detected_chords(chords: Vec<DetectedChord>) -> Vec<SongDetectedChord> {
         chords
             .into_iter()
             .map(|chord| SongDetectedChord {
@@ -147,17 +150,25 @@ impl SetlistServiceImpl {
             .collect()
     }
 
-    pub(crate) async fn fetch_midi_chart_data(
-        project: &daw::Project,
-    ) -> Option<daw::service::MidiChartData> {
-        let track_tag = Some(MIDI_TRACK_TAG.to_string());
-        match project.midi_analysis().generate_chart_data(track_tag).await {
+    /// Build a `MidiChartServiceClient` over the same vox channel daw is using.
+    /// Chart service is registered into the bridge by fts-extensions at
+    /// startup; we just need a client over the existing `Caller`.
+    fn chart_client() -> MidiChartServiceClient {
+        MidiChartServiceClient::new(Daw::get().caller().clone())
+    }
+
+    pub(crate) async fn fetch_midi_chart_data(project: &daw::Project) -> Option<MidiChartData> {
+        let req = MidiChartRequest::new(
+            Some(project.guid().to_string()),
+            Some(MIDI_TRACK_TAG.to_string()),
+        );
+        match Self::chart_client().generate_chart_data(req).await {
             Ok(data) => Some(data),
-            Err(err) => {
+            Err(vox_err) => {
                 debug!(
                     "MIDI chart generation unavailable for project {}: {}",
                     project.guid(),
-                    err
+                    vox_err
                 );
                 None
             }
@@ -173,21 +184,24 @@ impl SetlistServiceImpl {
             return None;
         }
 
-        let track_tag = Some(MIDI_TRACK_TAG.to_string());
-        match project.midi_analysis().source_fingerprint(track_tag).await {
+        let req = MidiChartRequest::new(
+            Some(project.guid().to_string()),
+            Some(MIDI_TRACK_TAG.to_string()),
+        );
+        match Self::chart_client().source_fingerprint(req).await {
             Ok(fingerprint) => {
                 if support_state != Some(true) {
                     *self.fingerprint_method_supported.write().await = Some(true);
                 }
                 Some(fingerprint)
             }
-            Err(err) => {
-                let err_text = err.to_string();
-                if err_text.contains("UnknownMethod") {
+            Err(vox_err) => {
+                if matches!(vox_err, vox::VoxError::UnknownMethod) {
                     let mut guard = self.fingerprint_method_supported.write().await;
                     if *guard != Some(false) {
                         info!(
-                            "MIDI source fingerprint unsupported by DAW backend; disabling fingerprint polling"
+                            "MIDI chart service unavailable on this bridge; disabling fingerprint \
+                             polling (load fts-extensions to enable keyflow chart analysis)"
                         );
                     }
                     *guard = Some(false);
@@ -195,7 +209,7 @@ impl SetlistServiceImpl {
                     debug!(
                         "MIDI source fingerprint unavailable for project {}: {}",
                         project.guid(),
-                        err_text
+                        vox_err
                     );
                 }
                 None
@@ -219,7 +233,7 @@ impl SetlistServiceImpl {
             .await
     }
 
-    pub(crate) fn apply_chart_data(song: &mut Song, chart_data: daw::service::MidiChartData) {
+    pub(crate) fn apply_chart_data(song: &mut Song, chart_data: MidiChartData) {
         song.chart_fingerprint = Some(chart_data.source_fingerprint);
         song.chart_text = Some(chart_data.chart_text);
         // Keep parsed_chart empty in session state to avoid cloning large chart
