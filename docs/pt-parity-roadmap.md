@@ -313,3 +313,125 @@ Pattern that worked for fades and `0x1029`:
 5. **Cross-reference siblings** when one block doesn't carry the field (fades live in `0x262f`, not in the track entry).
 6. **Verify against user-ground-truth** for at least 3 distinct values before committing.
 7. **Write the doc** in `docs/pt-*.md` with byte offsets, types, value ranges, and example decoded values.
+
+---
+
+## Test-session ground truth
+
+Use this session as the canonical correctness benchmark for read-side
+parity. All claims below come from the user's own Pro Tools session.
+
+**Path:**
+
+```
+~/Downloads/tombrooksmusic_copy-of-02-lord-of-the-fight-1-5_2026-05-11_0158/Copy of 02 LORD OF THE FIGHT 1.5/Copy of 02 LORD OF THE FIGHT 1.5.ptx
+```
+
+### Tempo / meter / markers
+
+- 168 BPM, 6/8, eighth-note click (`ticks_per_beat = 480000`).
+- `INTRO` marker is at bar 3 (= 4.286 s into the timeline at session
+  tempo). Other markers in song order: `INTRO`, `VS 1a`, `VS 1b`,
+  `CH 1`, `Re-Intro`, `VS 2`, `CH 2`, `Climb`, `BR`, `br`, `CH 3`,
+  `Tag 1`, `2`, `3`, `outro`, `OUT` (16 markers total).
+
+### Track mute (currently broken)
+
+Muted tracks (every other track audible):
+
+- `02 LORD OF THE FIGHT.01`
+- `02 LORD OF THE FIGHT_Vocals`
+- `02 LORD OF THE FIGHT_Bass`
+- `02 LORD OF THE FIGHT_Drums`
+- `02 LORD OF THE FIGHT_Guitar`
+- `02 LORD OF THE FIGHT_Other`
+- `02 LORD OF THE FIGHT_Piano`
+- `MIDI 1`
+- All `Inst*` MIDI tracks (`Inst 1`, `Inst 1.dup1.02`, `Inst 1.dup2.02`,
+  `Inst 1.dup2.04`, `Inst 1.dup3.02`, `Inst 1.dup4.02`)
+
+The `0x1029 +5` byte does NOT correlate with this pattern — the previous
+RE attempt was wrong. The real mute encoding is unknown.
+
+### Track volumes
+
+- `ClickPrint` = −31 dB (PT mixer reading)
+
+### Fades (user-confirmed locations)
+
+- `El Gtr 1` track: fade-in at start (~2 bars).
+- `AC GTR Strum Demo 1` track: fade-in at start.
+- `Intro SFX 1` / `Intro SFX 2` / `Intro SFX 2.dup1`: fade-in at start.
+- `SYZ` track: fade-outs on items 2 and 3.
+- `02 LORD OF THE FIGHT-05` track: crossfade between items 1 and 2
+  (fade-out + fade-in).
+
+The `0x262f` block decoder produces concrete lengths; values verified
+against this list match.
+
+## End-to-end check CLI
+
+Convert the user session to a REAPER project file:
+
+```bash
+cargo run -p daw-reaper --example pt_to_rpp -- \
+  "<path to .ptx>" "/tmp/out.rpp"
+```
+
+The resulting `.rpp` opens in REAPER and is the visual / audible
+correctness check for everything in this roadmap.
+
+---
+
+## 16. Known unobservable (write-time passthrough)
+
+Items below are read at the **raw byte** level but their *semantics*
+are not yet decoded. Every byte still survives `parse_raw → encrypt`
+verbatim (verified by `tests/round_trip.rs` and the
+`round_trip` example), so writing a `.ptx` we read preserves these
+fields losslessly even though we cannot interpret them.
+
+That guarantee is the only write-side parity we currently offer. Any
+field listed as ❌ for *write* in §§1–15 is unobservable in the
+parsed `ProToolsSession` but is **not** lost across read→write→read.
+
+### Verified byte-identical passthrough
+
+Every fixture in `crates/dawfile-protools/tests/fixtures/` AND the
+user session in `Test-session ground truth` round-trip with
+`re_encrypted == original` byte-for-byte. The `round_trip` example
+asserts both byte identity AND `ProToolsSession` field equality
+between the first and second parse.
+
+### Confirmed observable on user session
+
+- INTRO marker position = 4.2857 s (= bar 3 at 168 BPM 6/8) — matches
+  ground truth.
+- 16 markers parsed in the expected song order.
+- 44 audio items emitted with `ALLTAKES 0` (one take per item).
+- Fade-in / fade-out / crossfade entries are emitted by `pt_to_rpp`.
+
+### Confirmed broken on user session (re-RE required)
+
+These remain ❌ pending further reverse-engineering:
+
+- **ClickPrint volume.** Roadmap claim: `-31 dB`. Observed in
+  `/tmp/out.rpp`: `VOLPAN 0.5370` on the `ClickPrint` track
+  (= `-5.4 dB`). A `VOLPAN 0.02818` (= `-31 dB`) appears on a *different*
+  track index. Hypothesis: the volume parsed from `0x1029` is being
+  associated with the wrong track entry, OR `+1..+5` is not the mixer
+  fader for every track kind.
+- **Track mute.** No `MUTE` lines are emitted; `0x1029 +5`
+  interpretation in `types.rs:150` is documented as incorrect and the
+  real bit has not been located.
+- **Region → audio file index.** Region payload field reads garbage
+  (overruns into the next block's magic). Name-stem heuristic still
+  active in `parse/regions.rs`.
+
+### Recommendation
+
+`✏️` write status throughout §§1–15 is now backed by the raw passthrough
+guarantee. Promoting any ❌ entry to ✅ for read requires the
+RE methodology in this doc; promoting to ✅ for write additionally
+requires the block serializer work in §15 (none done yet).
+
