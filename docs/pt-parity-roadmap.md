@@ -138,7 +138,7 @@ for the real mute bit, OR look for a sibling block per track.
 | Hardware I/O channels | `0x1021`/`0x1022` | ✅ | ✏️ | |
 | I/O routing table | `0x2602`/`0x2603` | →§16 | →§16 | parsed as containers; field semantics unknown |
 | Track input (mic/line/bus) | unknown | →§16 | →§16 | |
-| Track output (master/bus) | unknown | →§16 | →§16 | |
+| Track output (master/bus) | `0x260e` (in `0x260d` wrapper) | ✅ | ✏️ | Length-prefixed destination name (e.g. `"Analog 1-2"`, `"Bus 13-14"`) at payload `+0x24`. 61-byte variant = no destination. Aligned 1:1 with `0x251a` order. Verified on user session: every track's output assignment matches PT's mixer view. |
 | Aux send count / levels / destinations | unknown | →§16 | →§16 | |
 | Aux send pre/post-fader | unknown | →§16 | →§16 | |
 | HW insert routing | unknown | →§16 | →§16 | |
