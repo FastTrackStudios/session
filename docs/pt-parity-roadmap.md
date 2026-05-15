@@ -102,8 +102,8 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
-| Volume (fader) | `0x1029` `+1..+5` i32 LE | ✅ | ✏️ | 0.1 dB units; verified -31 dB matches PT |
-| Mute | `0x1029` `+5` u8 | ✅ | ✏️ | `0` = audible, `1` = muted. Verified against the user session: every `+5 == 1` track lines up with the per-track mute table in `docs/pt-track-properties.md`. The earlier roadmap claim that `+5` was wrong was itself wrong. |
+| Volume (fader) | `0x1029` `+1..+5` i32 LE | ✅ | ✅ | 0.1 dB units; verified -31 dB matches PT. Write via `dawfile_protools::set_track_mix_state(session, name, vol, mute, pan)` — fixed-size in-place write to both record-A and record-B mirror. Round-trip tested on user session. |
+| Mute | `0x1029` `+5` u8 | ✅ | ✅ | `0` = audible, `1` = muted. Write via `set_track_mix_state` (same call as volume). Both records updated. |
 | Pan (left ch) | `0x1029` `+13..+17` i32 LE | →§16 | ✏️ | `−100` for stereo = "natural state", we map to centered |
 | Pan (right ch / multi-out) | `0x1029` `+17..+87` | →§16 | →§16 | |
 | Solo | unknown | →§16 | →§16 | |
@@ -138,7 +138,7 @@ for the real mute bit, OR look for a sibling block per track.
 | Hardware I/O channels | `0x1021`/`0x1022` | ✅ | ✏️ | |
 | I/O routing table | `0x2602`/`0x2603` | →§16 | →§16 | parsed as containers; field semantics unknown |
 | Track input (mic/line/bus) | unknown | →§16 | →§16 | |
-| Track output (master/bus) | `0x260e` (in `0x260d` wrapper) | ✅ | ✏️ | Length-prefixed destination name (e.g. `"Analog 1-2"`, `"Bus 13-14"`) at payload `+0x24`. 61-byte variant = no destination. Aligned 1:1 with `0x251a` order. Verified on user session: every track's output assignment matches PT's mixer view. |
+| Track output (master/bus) | `0x260e` (in `0x260d` wrapper) | ✅ | ✅ | Length-prefixed destination name (e.g. `"Analog 1-2"`, `"Bus 13-14"`) at payload `+0x24`. 61-byte variant = no destination. Aligned 1:1 with `0x251a` order. Write via `dawfile_protools::set_track_output(session, name, dest)` — splices the destination string and rebuilds parent block sizes. Round-trip test on user session confirms the new value survives parse→write→parse and no other track drifts. |
 | Aux send count / levels / destinations | unknown | →§16 | →§16 | |
 | Aux send pre/post-fader | unknown | →§16 | →§16 | |
 | HW insert routing | unknown | →§16 | →§16 | |
