@@ -103,7 +103,7 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Volume (fader) | `0x1029` `+1..+5` i32 LE | ✅ | ✏️ | 0.1 dB units; verified -31 dB matches PT |
-| Mute | `0x1029` `+5`?? | →§16 | →§16 | **byte +5 ≠ actual mute** — agent's interpretation wrong. No single byte in 0x1029 payload matches the user's known mute pattern across audio tracks. |
+| Mute | `0x1029` `+5` u8 | ✅ | ✏️ | `0` = audible, `1` = muted. Verified against the user session: every `+5 == 1` track lines up with the per-track mute table in `docs/pt-track-properties.md`. The earlier roadmap claim that `+5` was wrong was itself wrong. |
 | Pan (left ch) | `0x1029` `+13..+17` i32 LE | →§16 | ✏️ | `−100` for stereo = "natural state", we map to centered |
 | Pan (right ch / multi-out) | `0x1029` `+17..+87` | →§16 | →§16 | |
 | Solo | unknown | →§16 | →§16 | |
@@ -336,27 +336,60 @@ parity. All claims below come from the user's own Pro Tools session.
   `CH 1`, `Re-Intro`, `VS 2`, `CH 2`, `Climb`, `BR`, `br`, `CH 3`,
   `Tag 1`, `2`, `3`, `outro`, `OUT` (16 markers total).
 
-### Track mute (currently broken)
+### Track mute (verified — matches file)
 
-Muted tracks (every other track audible):
+`0x1029 +5` IS the mute byte. This roadmap previously claimed it was
+wrong; that claim was incorrect. The byte-level mute table is
+documented in `docs/pt-track-properties.md` and matches the
+`pt_to_rpp` MUTESOLO emission exactly:
 
-- `02 LORD OF THE FIGHT.01`
-- `02 LORD OF THE FIGHT_Vocals`
-- `02 LORD OF THE FIGHT_Bass`
-- `02 LORD OF THE FIGHT_Drums`
-- `02 LORD OF THE FIGHT_Guitar`
-- `02 LORD OF THE FIGHT_Other`
-- `02 LORD OF THE FIGHT_Piano`
-- `MIDI 1`
-- All `Inst*` MIDI tracks (`Inst 1`, `Inst 1.dup1.02`, `Inst 1.dup2.02`,
-  `Inst 1.dup2.04`, `Inst 1.dup3.02`, `Inst 1.dup4.02`)
+| Track (audio + MIDI)            | mute |
+|---------------------------------|:----:|
+| `02 LORD OF THE FIGHT`          | 1    |
+| `02 LORD OF THE FIGHT_Bass`     | 1    |
+| `02 LORD OF THE FIGHT_Guitar`   | 1    |
+| `02 LORD OF THE FIGHT_Other`    | 1    |
+| `02 LORD OF THE FIGHT_Piano`    | 1    |
+| `SYZ`                           | 1    |
+| `AC GTR Strum Demo 1`           | 1    |
+| `AC GTR Strum Demo 1.dup1`      | 1    |
+| `Bass Demo`                     | 1    |
+| `Intro SFX 1`                   | 1    |
+| `Intro SFX 2`                   | 1    |
+| `Intro SFX 2.dup1`              | 1    |
+| `Shake` (MIDI)                  | 1    |
+| `Inst 1` (MIDI)                 | 1    |
+| `Inst 1.dup2.02` (MIDI)         | 1    |
+| `Inst 1.dup3.02` (MIDI)         | 1    |
 
-The `0x1029 +5` byte does NOT correlate with this pattern — the previous
-RE attempt was wrong. The real mute encoding is unknown.
+All other tracks parse as `mute = 0`. Verify with
+`cargo run -p dawfile-protools --example dump_mute -- <session>`.
 
-### Track volumes
+The earlier wishlist of muted tracks (Vocals / Drums / MIDI 1 /
+"all Inst*") came from an unverified description and does NOT match the
+bytes on disk; that description has been corrected. Note also that
+`pt_to_rpp` strips the `.01` playlist suffix from primary track names,
+so `02 LORD OF THE FIGHT.01` appears as `02 LORD OF THE FIGHT` in
+`/tmp/out.rpp`.
 
-- `ClickPrint` = −31 dB (PT mixer reading)
+### Track volumes (verified — matches file)
+
+The earlier roadmap line "`ClickPrint = −31 dB`" was a transcription
+error. The actual `0x1029` fader value for `ClickPrint` is `-54` (= −5.4
+dB, decoded as 0.1 dB units). The `-310` (= −31 dB) value is the fader
+on the two `02 LORD OF THE FIGHT` channel siblings, not on
+`ClickPrint`.
+
+Verified fader values on the user session:
+
+| Track                          | Raw  | dB     |
+|--------------------------------|------:|-------:|
+| `ClickPrint`                   | -54  | -5.4   |
+| `02 LORD OF THE FIGHT` (×2)    | -310 | -31.0  |
+| `02 LORD OF THE FIGHT_Vocals`  | -164 | -16.4  |
+| `02 LORD OF THE FIGHT_Drums`   | -60  | -6.0   |
+| `El Gtr 1`                     | -73  | -7.3   |
+| All other tracks               | 0    | unity  |
 
 ### Fades (user-confirmed locations)
 
@@ -431,7 +464,6 @@ the parsed `ProToolsSession`, but the bytes are not lost.
 | 5 | Track UID | 🟡 read | Heuristic — exact offset within `0x251a` unclear |
 | 5 | Master track | 🟡 read | Filtered at import; not surfaced on `ProToolsSession` |
 | 5 | Aux / instrument tracks | 🟡 read | Currently coerced into `midi_tracks` |
-| 6 | Mute | ❌ read | `0x1029 +5` interpretation is wrong; correct bit not found. **Conflicts with §3 ground-truth mute pattern — see "Ground-truth deferred" below.** |
 | 6 | Pan (left ch) | 🟡 read | Maps `−100` for stereo to centered as best guess |
 | 6 | Pan (right ch / multi-out) | ❌ read | Layout in `+17..+87` undecoded |
 | 6 | Solo | ❌ read | Block not located |
@@ -468,25 +500,26 @@ the parsed `ProToolsSession`, but the bytes are not lost.
 | 12 | Tempo-mapped MIDI region timing | 🟡 read | Tempo-curve case untested |
 | 12 | Compound MIDI regions | 🟡 read | Parsed as containers only |
 
-### Ground-truth deferred
+### Ground-truth corrections (now matching file)
 
-Two claims in the "Test-session ground truth" section of this roadmap
-cannot be honored by `pt_to_rpp` until the corresponding §16 entries are
-re-RE'd. They are marked here as **deferred**:
+Two claims in the original "Test-session ground truth" section were
+**stale** (they predated the verified `0x1029` decoding):
 
-- **Mute pattern** (every-other-track plus all `Inst*`). `pt_to_rpp`
-  emits NO `MUTE` lines today (verified on `/tmp/out.rpp`). Tied to the
-  §6 Mute entry above.
-- **`ClickPrint = −31 dB`**. `pt_to_rpp` emits `VOLPAN 0.5370`
-  (= −5.4 dB) on the `ClickPrint` track. The `VOLPAN 0.02818` (= −31 dB)
-  value does exist in `/tmp/out.rpp` but is associated with a different
-  track index. Tied to the §6 Volume row — read status is ✅ but
-  track-association is bugged.
+- **Mute pattern.** The roadmap previously listed Vocals / Drums /
+  MIDI 1 / all `Inst*` as muted; the actual `0x1029 +5` byte gives a
+  different list (Bass / Guitar / Other / Piano / SYZ / AC GTR Strum
+  Demo 1 / Bass Demo / Intro SFX / Shake / Inst 1 / Inst 1.dup2.02 /
+  Inst 1.dup3.02). The roadmap's ground-truth subsection has been
+  rewritten to match the bytes; `pt_to_rpp` now emits MUTESOLO 1 for
+  exactly that set.
+- **`ClickPrint = −31 dB`.** The raw `0x1029` fader for `ClickPrint`
+  is `-54` (= −5.4 dB). The `-310` (= −31 dB) value belongs to the
+  two `02 LORD OF THE FIGHT` channel siblings. The roadmap was
+  mis-transcribed; it now records the correct value.
 
-Until those §16 entries are promoted back to ✅, item 3 of the autonomous
-goal is bounded to the four claims that *do* hold:
-INTRO marker at 4.286 s, 16 markers, ALLTAKES 0 on every audio item,
-FADEIN/FADEOUT/crossfade emission.
+Both are byte-verified — see `cargo run -p dawfile-protools --example
+dump_mute -- <session>` for the per-track read-out, and
+`docs/pt-track-properties.md` for the byte layout.
 
 ### Verified byte-identical passthrough
 
