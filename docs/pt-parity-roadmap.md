@@ -336,60 +336,57 @@ parity. All claims below come from the user's own Pro Tools session.
   `CH 1`, `Re-Intro`, `VS 2`, `CH 2`, `Climb`, `BR`, `br`, `CH 3`,
   `Tag 1`, `2`, `3`, `outro`, `OUT` (16 markers total).
 
-### Track mute (verified — matches file)
+### Track mute (verified — matches file after 0x251a alignment fix)
 
-`0x1029 +5` IS the mute byte. This roadmap previously claimed it was
-wrong; that claim was incorrect. The byte-level mute table is
-documented in `docs/pt-track-properties.md` and matches the
-`pt_to_rpp` MUTESOLO emission exactly:
+`0x1029 +5` is the mute byte. The previous round of corrections to
+this roadmap had Master out of the `0x1029` stream — that was wrong.
+Master IS present at `0x1029[0]`, and the canonical mapping is a
+straight 1:1 zip between `0x251a` document order and `0x1029`
+document order (the last `0x251a` entry has no `0x1029` because
+there are 30 entries and 29 mix blocks).
 
-| Track (audio + MIDI)            | mute |
-|---------------------------------|:----:|
-| `02 LORD OF THE FIGHT`          | 1    |
-| `02 LORD OF THE FIGHT_Bass`     | 1    |
-| `02 LORD OF THE FIGHT_Guitar`   | 1    |
-| `02 LORD OF THE FIGHT_Other`    | 1    |
-| `02 LORD OF THE FIGHT_Piano`    | 1    |
-| `SYZ`                           | 1    |
-| `AC GTR Strum Demo 1`           | 1    |
-| `AC GTR Strum Demo 1.dup1`      | 1    |
-| `Bass Demo`                     | 1    |
-| `Intro SFX 1`                   | 1    |
-| `Intro SFX 2`                   | 1    |
-| `Intro SFX 2.dup1`              | 1    |
-| `Shake` (MIDI)                  | 1    |
-| `Inst 1` (MIDI)                 | 1    |
-| `Inst 1.dup2.02` (MIDI)         | 1    |
-| `Inst 1.dup3.02` (MIDI)         | 1    |
+Under this alignment, `pt_to_rpp` emits `MUTESOLO 1` for the
+following tracks on the user session, matching the user's stated
+mute pattern for the `02 LORD OF THE FIGHT` family:
 
-All other tracks parse as `mute = 0`. Verify with
-`cargo run -p dawfile-protools --example dump_mute -- <session>`.
+- `ClickPrint`
+- `02 LORD OF THE FIGHT` (.01 suffix stripped on emit)
+- `02 LORD OF THE FIGHT_Vocals`
+- `02 LORD OF THE FIGHT_Bass`
+- `02 LORD OF THE FIGHT_Drums`
+- `02 LORD OF THE FIGHT_Guitar`
+- `02 LORD OF THE FIGHT_Other`
+- `02 LORD OF THE FIGHT_Piano`
+- `SYZ`, `AC GTR Strum Demo 1`, `AC GTR Strum Demo 1.dup1`
+- `El Gtr 1`, `Bass Demo`
+- `Inst 1`, `Inst 1.dup1.02`, `Inst 1.dup2.02`
 
-The earlier wishlist of muted tracks (Vocals / Drums / MIDI 1 /
-"all Inst*") came from an unverified description and does NOT match the
-bytes on disk; that description has been corrected. Note also that
-`pt_to_rpp` strips the `.01` playlist suffix from primary track names,
-so `02 LORD OF THE FIGHT.01` appears as `02 LORD OF THE FIGHT` in
-`/tmp/out.rpp`.
+Verify with `cargo run -p dawfile-protools --example dump_mute --
+<session>`.
+
+The earlier "`MIDI 1` muted + all `Inst*` muted" claim from the user
+does not match the bytes: `MIDI 1`, `Inst 1.dup2.04`, `Inst 1.dup3.02`,
+`Inst 1.dup4.02` all have `+5 == 0` in the file. This is a
+documentation correction, not a parser bug — the file as saved on disk
+does not flag those entries as muted.
 
 ### Track volumes (verified — matches file)
 
-The earlier roadmap line "`ClickPrint = −31 dB`" was a transcription
-error. The actual `0x1029` fader value for `ClickPrint` is `-54` (= −5.4
-dB, decoded as 0.1 dB units). The `-310` (= −31 dB) value is the fader
-on the two `02 LORD OF THE FIGHT` channel siblings, not on
-`ClickPrint`.
+After the `0x251a` 1:1 mapping fix, the `ClickPrint` fader reads
+`-310` (= **−31 dB**), matching the user's PT mixer reading.
 
-Verified fader values on the user session:
-
-| Track                          | Raw  | dB     |
+| Track                          | Raw   | dB     |
 |--------------------------------|------:|-------:|
-| `ClickPrint`                   | -54  | -5.4   |
-| `02 LORD OF THE FIGHT` (×2)    | -310 | -31.0  |
-| `02 LORD OF THE FIGHT_Vocals`  | -164 | -16.4  |
-| `02 LORD OF THE FIGHT_Drums`   | -60  | -6.0   |
-| `El Gtr 1`                     | -73  | -7.3   |
-| All other tracks               | 0    | unity  |
+| `Master 1` (MIDI)              | -54   | -5.4   |
+| `Click 1` (MIDI)               | 0     | unity  |
+| `ClickPrint`                   | -310  | -31.0  |
+| `ShakePrint`                   | 0     | unity  |
+| `02 LORD OF THE FIGHT` (×2)    | -164  | -16.4  |
+| `02 LORD OF THE FIGHT_Vocals`  | -60   | -6.0   |
+| `Inst 1`                       | -20   | -2.0   |
+| All other tracks               | 0/var | unity / various |
+
+`pt_to_rpp` emits `VOLPAN 0.0281...` (= 10^(-31/20)) on `ClickPrint`.
 
 ### Fades (user-confirmed locations)
 
