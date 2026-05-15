@@ -18,3 +18,4 @@
 
 # Ghidra reverse-engineering artifacts (large binaries, not for VCS)
 crates/dawfile-logic/ghidra/
+.claude/
