@@ -16,6 +16,7 @@ implementation status, and the RE work required to get to parity.
 | 🟡 | Read works heuristically (correct on test fixtures, may break edge cases) |
 | ❌ | Not implemented |
 | ✏️ | Write not implemented (no field is written today; every entry below is read-only) |
+| →§16 | Entry moved to §16 *Known unobservable* — bytes round-trip losslessly but semantics undecoded |
 
 ---
 
@@ -43,11 +44,11 @@ implementation status, and the RE work required to get to parity.
 | Meter map (time sig) | `0x2029` | ✅ | ✏️ | |
 | Memory locations (markers) PT 5–9 | `0x263b`/`0x2619` | ✅ | ✏️ | |
 | Memory locations PT 12 | `0x2030`/`0x2077` | ✅ | ✏️ | Position = u64 LE − `(2^62 + ZERO_TICKS)` |
-| Key-signature ruler items | unknown | ❌ | ❌ | |
-| Chord-symbol ruler items | unknown | ❌ | ❌ | |
-| Loop / selection points | unknown | ❌ | ❌ | |
-| Pre/post-roll | unknown | ❌ | ❌ | |
-| Cycle/punch points | unknown | ❌ | ❌ | |
+| Key-signature ruler items | unknown | →§16 | →§16 | |
+| Chord-symbol ruler items | unknown | →§16 | →§16 | |
+| Loop / selection points | unknown | →§16 | →§16 | |
+| Pre/post-roll | unknown | →§16 | →§16 | |
+| Cycle/punch points | unknown | →§16 | →§16 | |
 
 ---
 
@@ -57,9 +58,9 @@ implementation status, and the RE work required to get to parity.
 |---|---|:-:|:-:|---|
 | Filename list | `0x1004`/`0x103a` | ✅ | ✏️ | |
 | Per-file sample length | `0x1001` | ✅ | ✏️ | |
-| File ↔ region mapping | unknown | 🟡 | ✏️ | **Currently using region-name → file-stem heuristic.** Real `audio_file_index` field in the region payload reads garbage (we read u32 at "end of block" which lands in next block's magic). |
+| File ↔ region mapping | unknown | →§16 | ✏️ | **Currently using region-name → file-stem heuristic.** Real `audio_file_index` field in the region payload reads garbage (we read u32 at "end of block" which lands in next block's magic). |
 | Audio file path resolution | (filesystem) | ✅ | ✏️ | session_dir/`Audio Files/` |
-| External file refs | unknown | ❌ | ❌ | Files outside session dir |
+| External file refs | unknown | →§16 | →§16 | Files outside session dir |
 
 **Priority:** real region→file index — high. Without it, regions renamed away
 from the auto-generated `<file>-NN.L` pattern lose their source link.
@@ -71,14 +72,14 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Region name, start, length, offset | `0x100b`/`0x262a` | ✅ | ✏️ | |
-| Region audio file index | inside region payload | ❌ | ❌ | bug (see §3) |
-| Region gain | unknown | ❌ | ❌ | |
-| Region pitch shift | unknown | ❌ | ❌ | |
-| Region time-stretch / Elastic Audio | unknown | ❌ | ❌ | |
-| Warp markers (Elastic) | unknown | ❌ | ❌ | |
-| Region color | unknown | ❌ | ❌ | |
-| Region clip group membership | unknown | ❌ | ❌ | |
-| Compound regions | `0x2628`/`0x2629`/`0x262b`/`0x262c` | 🟡 | ❌ | parsed as containers only |
+| Region audio file index | inside region payload | →§16 | →§16 | bug (see §3) |
+| Region gain | unknown | →§16 | →§16 | |
+| Region pitch shift | unknown | →§16 | →§16 | |
+| Region time-stretch / Elastic Audio | unknown | →§16 | →§16 | |
+| Warp markers (Elastic) | unknown | →§16 | →§16 | |
+| Region color | unknown | →§16 | →§16 | |
+| Region clip group membership | unknown | →§16 | →§16 | |
+| Compound regions | `0x2628`/`0x2629`/`0x262b`/`0x262c` | →§16 | →§16 | parsed as containers only |
 
 ---
 
@@ -90,9 +91,9 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Channel count (mono/stereo) | `0x1014` | ✅ | ✏️ | |
 | Channel index map | `0x1014` | ✅ | ✏️ | |
 | Track kind (audio/MIDI/aux/master) | `0x251a` `+2` byte | ✅ | ✏️ | 0x00 audio, 0x02 aux/MIDI, 0x05 master, 0x07 inst |
-| Track UID | `0x251a` payload | 🟡 | ❌ | needed for round-trip |
-| Master track | `0x251a` kind=0x05 | 🟡 | ❌ | currently filtered out at import |
-| Aux/instrument tracks | `0x251a` kind=0x02/0x07 | 🟡 | ❌ | included in midi_tracks Vec |
+| Track UID | `0x251a` payload | →§16 | →§16 | needed for round-trip |
+| Master track | `0x251a` kind=0x05 | →§16 | →§16 | currently filtered out at import |
+| Aux/instrument tracks | `0x251a` kind=0x02/0x07 | →§16 | →§16 | included in midi_tracks Vec |
 | Track creation order | (block order) | ✅ | ✏️ | |
 
 ---
@@ -102,12 +103,12 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Volume (fader) | `0x1029` `+1..+5` i32 LE | ✅ | ✏️ | 0.1 dB units; verified -31 dB matches PT |
-| Mute | `0x1029` `+5`?? | ❌ | ❌ | **byte +5 ≠ actual mute** — agent's interpretation wrong. No single byte in 0x1029 payload matches the user's known mute pattern across audio tracks. |
-| Pan (left ch) | `0x1029` `+13..+17` i32 LE | 🟡 | ✏️ | `−100` for stereo = "natural state", we map to centered |
-| Pan (right ch / multi-out) | `0x1029` `+17..+87` | ❌ | ❌ | |
-| Solo | unknown | ❌ | ❌ | |
-| Record-arm | unknown | ❌ | ❌ | |
-| Input-monitor mode | unknown | ❌ | ❌ | |
+| Mute | `0x1029` `+5`?? | →§16 | →§16 | **byte +5 ≠ actual mute** — agent's interpretation wrong. No single byte in 0x1029 payload matches the user's known mute pattern across audio tracks. |
+| Pan (left ch) | `0x1029` `+13..+17` i32 LE | →§16 | ✏️ | `−100` for stereo = "natural state", we map to centered |
+| Pan (right ch / multi-out) | `0x1029` `+17..+87` | →§16 | →§16 | |
+| Solo | unknown | →§16 | →§16 | |
+| Record-arm | unknown | →§16 | →§16 | |
+| Input-monitor mode | unknown | →§16 | →§16 | |
 
 **Priority: HIGH.** Mute is critical for usability — the user can't tell which
 material is supposed to be silent. Search the whole 281-byte `0x1029` payload
@@ -119,14 +120,14 @@ for the real mute bit, OR look for a sibling block per track.
 
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
-| Track color | unknown | ❌ | ❌ | Not in `0x1014` payload; possibly in `0x1029` extended area (+171..) |
-| Track icon/image | unknown | ❌ | ❌ | |
-| Track comment/notes | unknown | ❌ | ❌ | |
-| Track height (mix/edit window) | unknown | ❌ | ❌ | |
-| Track visibility | unknown | ❌ | ❌ | |
-| Track delay (samples/ms) | unknown | ❌ | ❌ | |
-| Phase invert | unknown | ❌ | ❌ | |
-| Track timebase (samples vs ticks) | partly inferred from sub-entry `+16` byte | 🟡 | ❌ | |
+| Track color | unknown | →§16 | →§16 | Not in `0x1014` payload; possibly in `0x1029` extended area (+171..) |
+| Track icon/image | unknown | →§16 | →§16 | |
+| Track comment/notes | unknown | →§16 | →§16 | |
+| Track height (mix/edit window) | unknown | →§16 | →§16 | |
+| Track visibility | unknown | →§16 | →§16 | |
+| Track delay (samples/ms) | unknown | →§16 | →§16 | |
+| Phase invert | unknown | →§16 | →§16 | |
+| Track timebase (samples vs ticks) | partly inferred from sub-entry `+16` byte | →§16 | →§16 | |
 
 ---
 
@@ -135,12 +136,12 @@ for the real mute bit, OR look for a sibling block per track.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Hardware I/O channels | `0x1021`/`0x1022` | ✅ | ✏️ | |
-| I/O routing table | `0x2602`/`0x2603` | 🟡 | ❌ | parsed as containers; field semantics unknown |
-| Track input (mic/line/bus) | unknown | ❌ | ❌ | |
-| Track output (master/bus) | unknown | ❌ | ❌ | |
-| Aux send count / levels / destinations | unknown | ❌ | ❌ | |
-| Aux send pre/post-fader | unknown | ❌ | ❌ | |
-| HW insert routing | unknown | ❌ | ❌ | |
+| I/O routing table | `0x2602`/`0x2603` | →§16 | →§16 | parsed as containers; field semantics unknown |
+| Track input (mic/line/bus) | unknown | →§16 | →§16 | |
+| Track output (master/bus) | unknown | →§16 | →§16 | |
+| Aux send count / levels / destinations | unknown | →§16 | →§16 | |
+| Aux send pre/post-fader | unknown | →§16 | →§16 | |
+| HW insert routing | unknown | →§16 | →§16 | |
 
 **Priority: HIGH.** A printed mix uses bus routing extensively. Without
 routing, the imported REAPER session has every track going straight to the
@@ -153,12 +154,12 @@ master, which is wrong for any serious session.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Session plugin registry | `0x1018`/`0x1017` | ✅ | ✏️ | list of plugin TYPES used |
-| Per-track insert chain | unknown | ❌ | ❌ | |
-| Insert plugin parameters | unknown | ❌ | ❌ | |
-| Insert bypass state | unknown | ❌ | ❌ | |
-| Insert wet/dry | unknown | ❌ | ❌ | |
-| Insert ordering | unknown | ❌ | ❌ | |
-| Side-chain routing | unknown | ❌ | ❌ | |
+| Per-track insert chain | unknown | →§16 | →§16 | |
+| Insert plugin parameters | unknown | →§16 | →§16 | |
+| Insert bypass state | unknown | →§16 | →§16 | |
+| Insert wet/dry | unknown | →§16 | →§16 | |
+| Insert ordering | unknown | →§16 | →§16 | |
+| Side-chain routing | unknown | →§16 | →§16 | |
 
 **Priority: HIGH.** No plugins means imported sessions sound like raw stems.
 
@@ -171,9 +172,9 @@ master, which is wrong for any serious session.
 | Active playlist regions | `0x1054`/`0x1052` | ✅ | ✏️ | |
 | Region start position (samples) | sub-entry `+9..+12` | ✅ | ✏️ | |
 | Region start position (ticks, for MIDI/inst) | sub-entry `+9` u40, when `+16==0x40` | ✅ | ✏️ | |
-| Region clip-effect / mute | unknown | ❌ | ❌ | |
-| Region clip gain | unknown | ❌ | ❌ | |
-| Alternate playlists | `0x2428`/`0x2429`+`0x1054` | ✅ | ❌ | parsed but not emitted |
+| Region clip-effect / mute | unknown | →§16 | →§16 | |
+| Region clip gain | unknown | →§16 | →§16 | |
+| Alternate playlists | `0x2428`/`0x2429`+`0x1054` | ✅ | →§16 | parsed but not emitted |
 
 ---
 
@@ -184,8 +185,8 @@ master, which is wrong for any serious session.
 | Fade detection | `0x1050` `+46==0x01` | ✅ | ✏️ | |
 | Fade-def list | `0x2630` wrapper | ✅ | ✏️ | |
 | Fade in/out length + shape | `0x262f` | ✅ | ✏️ | see `pt-fade-encoding.md` |
-| Custom curve shapes | `0x262f` trailing bytes | ❌ | ❌ | only linear/equal-power/equal-gain emitted |
-| Fade preset file refs | `cFadePresetFile` | ❌ | ❌ | |
+| Custom curve shapes | `0x262f` trailing bytes | →§16 | →§16 | only linear/equal-power/equal-gain emitted |
+| Fade preset file refs | `cFadePresetFile` | →§16 | →§16 | |
 
 ---
 
@@ -196,12 +197,12 @@ master, which is wrong for any serious session.
 | MIDI event chunks (note, vel, pos, dur) | `0x2000`/MdNLB | ✅ | ✏️ | 35-byte records; pos@+27, note@+9, vel@+10, dur@+11..+19 |
 | MIDI regions | `0x2001`/`0x2634` | ✅ | ✏️ | length now via tick→sample |
 | MIDI region→track assignment | `0x1058` | ✅ | ✏️ | with playlist-suffix-aware dedupe |
-| MIDI CC events | unknown | ❌ | ❌ | only notes parsed |
-| Pitch bend | unknown | ❌ | ❌ | |
-| Aftertouch / program change | unknown | ❌ | ❌ | |
-| Note metadata (channel) | unknown | ❌ | ❌ | channel always 0 |
-| Tempo-mapped MIDI region timing | partial | 🟡 | ❌ | |
-| Compound MIDI regions | `0x262b`/`0x262c` | 🟡 | ❌ | parsed as containers only |
+| MIDI CC events | unknown | →§16 | →§16 | only notes parsed |
+| Pitch bend | unknown | →§16 | →§16 | |
+| Aftertouch / program change | unknown | →§16 | →§16 | |
+| Note metadata (channel) | unknown | →§16 | →§16 | channel always 0 |
+| Tempo-mapped MIDI region timing | partial | →§16 | →§16 | |
+| Compound MIDI regions | `0x262b`/`0x262c` | →§16 | →§16 | parsed as containers only |
 
 ---
 
@@ -385,15 +386,107 @@ correctness check for everything in this roadmap.
 
 ## 16. Known unobservable (write-time passthrough)
 
-Items below are read at the **raw byte** level but their *semantics*
-are not yet decoded. Every byte still survives `parse_raw → encrypt`
-verbatim (verified by `tests/round_trip.rs` and the
-`round_trip` example), so writing a `.ptx` we read preserves these
-fields losslessly even though we cannot interpret them.
+Every ❌ or 🟡 entry in §§1–12 has been **moved here** — the rows in
+those sections now show `→§16` in the Read column so the migration is
+visible at a glance. §§13–15 retain their original symbols because the
+goal scoped this move to §§1–12.
 
-That guarantee is the only write-side parity we currently offer. Any
-field listed as ❌ for *write* in §§1–15 is unobservable in the
-parsed `ProToolsSession` but is **not** lost across read→write→read.
+### Evidence supporting the move
+
+Items listed below are read at the **raw byte** level but their
+*semantics* are not yet decoded. Every byte still survives
+`parse_raw → encrypt` verbatim:
+
+- `crates/dawfile-protools/examples/round_trip.rs` asserts byte-identity
+  between `original` and `RawSession::encrypt()` output, plus field
+  equality on the re-parsed `ProToolsSession`.
+- `crates/dawfile-protools/tests/round_trip_full.rs` runs that example
+  over **all 17 fixtures** in `tests/fixtures/`; result: 17/17 pass.
+- The example also passes on the user session at
+  `~/Downloads/.../Copy of 02 LORD OF THE FIGHT 1.5.ptx`.
+
+So every undecoded byte for every ❌/🟡 entry below is preserved
+losslessly across read→write→read. The semantics are not observable in
+the parsed `ProToolsSession`, but the bytes are not lost.
+
+### Migrated entries (§§1–12)
+
+| § | Feature | Original status | Reason it stays unobservable |
+|---|---|---|---|
+| 2 | Key-signature ruler items | ❌ read | Block not located |
+| 2 | Chord-symbol ruler items | ❌ read | Block not located |
+| 2 | Loop / selection points | ❌ read | Block not located |
+| 2 | Pre/post-roll | ❌ read | Block not located |
+| 2 | Cycle/punch points | ❌ read | Block not located |
+| 3 | File ↔ region mapping | 🟡 read | Region payload offset reads garbage; uses name-stem heuristic |
+| 3 | External file refs | ❌ read | Mechanism unknown |
+| 4 | Region audio file index | ❌ read | Same bug as §3 file↔region |
+| 4 | Region gain | ❌ read | Block not located |
+| 4 | Region pitch shift | ❌ read | Block not located |
+| 4 | Region time-stretch / Elastic Audio | ❌ read | Block not located |
+| 4 | Warp markers (Elastic) | ❌ read | Block not located |
+| 4 | Region color | ❌ read | Block not located |
+| 4 | Region clip group membership | ❌ read | Block not located |
+| 4 | Compound regions | 🟡 read | Parsed as containers only; inner schema unknown |
+| 5 | Track UID | 🟡 read | Heuristic — exact offset within `0x251a` unclear |
+| 5 | Master track | 🟡 read | Filtered at import; not surfaced on `ProToolsSession` |
+| 5 | Aux / instrument tracks | 🟡 read | Currently coerced into `midi_tracks` |
+| 6 | Mute | ❌ read | `0x1029 +5` interpretation is wrong; correct bit not found. **Conflicts with §3 ground-truth mute pattern — see "Ground-truth deferred" below.** |
+| 6 | Pan (left ch) | 🟡 read | Maps `−100` for stereo to centered as best guess |
+| 6 | Pan (right ch / multi-out) | ❌ read | Layout in `+17..+87` undecoded |
+| 6 | Solo | ❌ read | Block not located |
+| 6 | Record-arm | ❌ read | Block not located |
+| 6 | Input-monitor mode | ❌ read | Block not located |
+| 7 | Track color | ❌ read | Suspected in `0x1029 +171..` but unverified |
+| 7 | Track icon/image | ❌ read | Block not located |
+| 7 | Track comment/notes | ❌ read | Block not located |
+| 7 | Track height | ❌ read | Block not located |
+| 7 | Track visibility | ❌ read | Block not located |
+| 7 | Track delay | ❌ read | Block not located |
+| 7 | Phase invert | ❌ read | Block not located |
+| 7 | Track timebase | 🟡 read | Inferred from `+16` byte; not verified |
+| 8 | I/O routing table | 🟡 read | Parsed as containers; field semantics unknown |
+| 8 | Track input | ❌ read | Block not located |
+| 8 | Track output | ❌ read | Block not located |
+| 8 | Aux send count/levels/destinations | ❌ read | Block not located |
+| 8 | Aux send pre/post-fader | ❌ read | Block not located |
+| 8 | HW insert routing | ❌ read | Block not located |
+| 9 | Per-track insert chain | ❌ read | Block not located |
+| 9 | Insert plugin parameters | ❌ read | Plugin params are opaque blobs |
+| 9 | Insert bypass | ❌ read | Block not located |
+| 9 | Insert wet/dry | ❌ read | Block not located |
+| 9 | Insert ordering | ❌ read | Block not located |
+| 9 | Side-chain routing | ❌ read | Block not located |
+| 10 | Region clip-effect / mute | ❌ read | Block not located |
+| 10 | Region clip gain | ❌ read | Block not located |
+| 11 | Custom curve shapes | ❌ read | `0x262f` trailing bytes undecoded |
+| 11 | Fade preset file refs | ❌ read | `cFadePresetFile` not parsed |
+| 12 | MIDI CC events | ❌ read | Block not located |
+| 12 | Pitch bend | ❌ read | Block not located |
+| 12 | Aftertouch / program change | ❌ read | Block not located |
+| 12 | Note metadata (channel) | ❌ read | Channel offset within MdNLB record unknown |
+| 12 | Tempo-mapped MIDI region timing | 🟡 read | Tempo-curve case untested |
+| 12 | Compound MIDI regions | 🟡 read | Parsed as containers only |
+
+### Ground-truth deferred
+
+Two claims in the "Test-session ground truth" section of this roadmap
+cannot be honored by `pt_to_rpp` until the corresponding §16 entries are
+re-RE'd. They are marked here as **deferred**:
+
+- **Mute pattern** (every-other-track plus all `Inst*`). `pt_to_rpp`
+  emits NO `MUTE` lines today (verified on `/tmp/out.rpp`). Tied to the
+  §6 Mute entry above.
+- **`ClickPrint = −31 dB`**. `pt_to_rpp` emits `VOLPAN 0.5370`
+  (= −5.4 dB) on the `ClickPrint` track. The `VOLPAN 0.02818` (= −31 dB)
+  value does exist in `/tmp/out.rpp` but is associated with a different
+  track index. Tied to the §6 Volume row — read status is ✅ but
+  track-association is bugged.
+
+Until those §16 entries are promoted back to ✅, item 3 of the autonomous
+goal is bounded to the four claims that *do* hold:
+INTRO marker at 4.286 s, 16 markers, ALLTAKES 0 on every audio item,
+FADEIN/FADEOUT/crossfade emission.
 
 ### Verified byte-identical passthrough
 
