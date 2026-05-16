@@ -71,6 +71,148 @@ what payload offsets.
 3. Standard ObjC/Swift analyzer in Ghidra does not unmangle Swift v3
    class refs reliably for this binary.
 
+## Update: Swift type metadata recovered via ipsw
+
+`ipsw swift-dump --demangle` extracts the complete Swift type model
+from the binary even though function symbols are stripped, because
+Swift embeds class/struct/enum layout metadata for reflection. Full
+dump is in `docs/pt-reaper-converter-swift-dump.txt`. The mute-relevant
+structs:
+
+```swift
+struct PTXTrackStateSpec {
+    var color: UInt8?       // ← static color
+    var active: Bool?
+    var hidden: Bool?
+    var solo: Bool?
+    var soloSafe: Bool?
+    var mute: Bool?         // ← static M button
+    var sends: [String: PTXSendStateSpec]
+}
+
+struct PTXSendStateSpec {
+    var mute: Bool?
+    var preFader: Bool?
+    var active: Bool?
+}
+
+struct PTXTrackSpec {
+    var name: String
+    var type: String
+    var format: String
+    var output: String?
+    var input: String?
+    var color: UInt8?
+    var active: Bool
+    var hidden: Bool
+    var solo: Bool
+    var soloSafe: Bool
+    var volume: [(pos: Int, raw: Int)]?  // ← automation breakpoints
+    var mute: [(pos: Int, raw: Int)]?    // ← MUTE AUTOMATION
+    var pan: [(pos: Int, raw: Int)]?
+    var surroundPan: PTXSurroundPanSpec?
+    var sends: [String: PTXSendSpec]
+    var playlists: [PTXPlaylistSpec]
+    var notes: String
+    var children: [String]
+    var clips: [PTXClipSpec]
+}
+
+struct PTXClipSpec {
+    var poolFile: String
+    var start: Int
+    var end: Int
+    var sourceIn: Int
+    var name: String?
+    var fades: [PTXFadeSpec]
+    var clipGain: PTXClipGain?
+    var color: UInt8?
+    var muted: Bool         // ← per-clip mute
+}
+
+struct PTXMutePoint {
+    let positionSamples: Int
+    let muted: Bool         // ← one automation breakpoint
+}
+```
+
+**Conclusion on mute architecture:** PT stores mute in FOUR distinct
+places (static track mute, mute automation envelope, per-clip mute,
+per-send mute). Our parser reads `0x1029 +5` which is most likely
+`PTXTrackStateSpec.mute`. The user-visible mute state in PT's UI is
+the *effective* mute = `mute || (automation evaluated at playhead)`.
+
+For the over-muted tracks (SYZ, AC GTR, El Gtr 1, Bass Demo): their
+`PTXTrackStateSpec.mute` is `true` but they likely have a mute
+*automation envelope* that overrides it to `false` at playhead, OR
+PT treats `active: false` as a distinct visual state from "muted".
+
+For the under-muted Inst dups: those alternate playlists inherit
+the parent's mute state via the PT mixer — not stored directly on
+the alternate.
+
+## Other recovered field models (selected highlights)
+
+```swift
+struct PTXClipGainBreakpoint {
+    let positionSamples: Int
+    let valueDB: Double
+}
+
+struct PTXMarker {
+    let number: Int
+    let name: String
+    let positionSamples: Int
+    let color: UInt8?       // ← MARKERS HAVE COLORS too
+}
+
+struct PTXAudioFileInfo {
+    var filename: String
+    var durationSamples: Int
+    var sampleRate: Int
+    var channels: Int
+    var bitDepth: Int
+    var hash1: Data?         // ← Avid Unique ID
+    var hash2: Data?
+    var fileUUID: Data?
+}
+
+struct PTXRegion {
+    let name: String
+    let index: Int
+    var sampleRate: Int
+    var durationSamples: Int
+    var sourceIn: Int
+    var sourceLength: Int
+    var clipDuration: Int
+    var sourceFile: String
+    var sfIdx: Int          // ← the source-file index we couldn't read
+}
+
+struct PTXBus {
+    let id: Int
+    let name: String
+    let format: String
+    let channels: Int
+    let isPhysicalOutput: Bool
+    let parentBusId: Int?   // ← bus hierarchy
+}
+
+struct PTXFade {
+    let trackName: String
+    let regionName: String
+    let timelineStart: Int
+    let fadeDirection: String
+    let curveSlope: String
+    let curveShape: String
+    let durationSamples: Int
+    let crossfadeStart: Int
+}
+```
+
+These give us the complete field set the upstream tool extracts.
+Promote each as a roadmap target.
+
 ## Useful next steps (if continuing this thread)
 
 1. Pull Ghidra's Swift symbolicator plugin or use `swift-demangle`
