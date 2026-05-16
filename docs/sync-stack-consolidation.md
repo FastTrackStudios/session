@@ -49,7 +49,24 @@ event type in a follow-up if a second consumer arrives.
 - The multi-instance tests need a REAPER extension to load the engine in
   each spawned instance — that's Phase 4.
 
-### Phase 4 — Extension role in `daw-bridge`
+### Phase 4 — Extension role in `daw-bridge` *(done)*
+- ✓ `sync` cargo feature on `daw-bridge` (default-on) pulls in
+  `daw-synchronization` + `daw-network`.
+- ✓ `daw-bridge::sync_runtime` constructs `SynchronizationEngine` + `PeerMesh`,
+  writes `FTS_SYNC_EXT/{status,pid,peer_id,mesh_port,peer_count}`, polls
+  `FTS_SYNC_EXT/connect_peers` for direct-connect orchestration.
+- ✓ Spawned from `plugin_main` when `FTS_SYNC_ENABLED=1`. `reaper_test`
+  macro now injects that env per-instance so multi-instance tests get the
+  runtime automatically.
+- ✓ Tests lifted to `daw-bridge/tests/`:
+  - `sync_position` (4-instance drift verification)
+  - `sync_multi_transport` (3-instance transport propagation)
+  - `sync_network_latency`
+  - `sync_full_session`
+- Skipped for now: mDNS (avoid avahi system dep). Tests use
+  `connect_sync_peers_direct` instead of `connect_sync_peers`.
+
+### Phase 4 — Extension role in `daw-bridge` *(legacy outline)*
 - Lift `sync-extension/src/lib.rs` + `link_bridge.rs` into `daw-bridge`
   (or a new `daw-bridge-sync` sibling if it'd bloat daw-bridge).
 - Provides a REAPER extension entry point that constructs:
