@@ -259,6 +259,39 @@ almost certainly holds mute automation envelope data:
   mainVolumeAutomation, mainPanAutomation).
 - `0x2627` — per-region waveform-overview cache.
 
+## Verification of the 6 unknown content_types (on Lord of the Fight)
+
+| ct | occurrences | inspection finding |
+|---|---|---|
+| `0x0031` | (likely 1) | small — probably PT product/version v2 string |
+| `0x204d` | (likely 1) | between 0x1028 and 0x2028 — session-wide preference? |
+| `0x2624` | 1, ~3.4 MB | huge — likely audio waveform overview cache |
+| `0x2627` | 29 instances, large | per-track waveform cache (one per mixable track) |
+| `0x2629` | 68 (= our AudioRegionNew, already known) | already decoded ✓ |
+| `0x2637` | (very few) | TBD |
+| `0x261e` | **2 instances** | wraps MIDI tracks (Click 1, Shake) — contains 0x261b. NOT automation. |
+| `0x261f` | **0 instances** | absent on this session — track-specific automation only when present? |
+
+So `0x261e`/`0x261f` are not the automation envelope blocks. The
+mute automation must live in a content_type that's NOT in PTXBlocks
+enum — likely handled by a different dispatch path in the converter
+(perhaps via a separate Swift enum for automation block IDs).
+
+## Mute automation — open question
+
+Given the Swift model declares `PTXTrackSpec.mute: [(pos, raw)]?` as
+a list of breakpoints, PT MUST store these somewhere. Candidates yet
+to investigate:
+
+1. **Inside the 281-byte `0x1029` payload itself** — bytes `+50..+170`
+   are mostly zero but might hold inline automation tables when the
+   track has any automation set.
+2. **A separate per-track block we haven't enumerated** that exists
+   only when automation is present (which would explain why our
+   "tracks with no automation" don't have it).
+3. **The 274 KB single `0x261d` top-level container** holds everything
+   and may include automation tables in a section we haven't found.
+
 ## Useful next steps (if continuing this thread)
 
 1. Pull Ghidra's Swift symbolicator plugin or use `swift-demangle`
