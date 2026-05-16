@@ -9,7 +9,7 @@
 //! The project can be opened/created via the `ensure_routing_project` function,
 //! which checks for an existing routing project before creating one.
 
-use daw::Daw;
+use daw::rpc::Daw;
 use daw::service::RecordInput;
 use session_proto::SessionServiceError;
 use session_proto::routing_project::*;
@@ -125,7 +125,7 @@ async fn create_routing_project(
 
 /// Create a folder track with child routing channel tracks.
 async fn create_folder_with_channels(
-    project: &daw::Project,
+    project: &daw::rpc::Project,
     folder_name: &str,
     channels: &[RoutingChannel],
     config: &LoopbackConfig,

@@ -5,7 +5,7 @@ use super::{
     ACTIVE_INDICES_PROGRESS_EMIT_MS, HYDRATION_CONCURRENCY, PROJECT_SWITCH_DEBOUNCE_MS,
     SetlistServiceImpl, TRANSPORT_PROGRESS_EPSILON, TRANSPORT_TIME_EPSILON_SECS,
 };
-use daw::Daw;
+use daw::rpc::Daw;
 use moire::sync::{Semaphore, mpsc};
 use rustc_hash::FxHashMap;
 use session_proto::{

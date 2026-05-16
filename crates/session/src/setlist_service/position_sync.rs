@@ -9,7 +9,7 @@
 //!
 //! Echo suppression prevents infinite feedback loops.
 
-use daw::{Daw, Project};
+use daw::rpc::{Daw, Project};
 use session_proto::offset_map::SetlistOffsetMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

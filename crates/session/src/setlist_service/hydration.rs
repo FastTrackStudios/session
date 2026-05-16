@@ -4,7 +4,7 @@ use super::{
     CHART_REFRESH_FALLBACK_POLL_MS, HYDRATION_CONCURRENCY, MIDI_TRACK_TAG, SetlistServiceImpl,
 };
 use crate::song_builder::SongBuilder;
-use daw::Daw;
+use daw::rpc::Daw;
 use keyflow_daw_analysis::{
     DetectedChord, MidiChartData, MidiChartRequest, MidiChartServiceClient,
 };
@@ -25,7 +25,7 @@ pub(crate) struct SongCacheEntry {
 #[derive(Clone)]
 pub(crate) struct ProjectLoad {
     pub(crate) index: usize,
-    pub(crate) project: daw::Project,
+    pub(crate) project: daw::rpc::Project,
     pub(crate) guid: String,
     pub(crate) project_name: String,
 }
@@ -157,7 +157,9 @@ impl SetlistServiceImpl {
         MidiChartServiceClient::new(Daw::get().caller().clone())
     }
 
-    pub(crate) async fn fetch_midi_chart_data(project: &daw::Project) -> Option<MidiChartData> {
+    pub(crate) async fn fetch_midi_chart_data(
+        project: &daw::rpc::Project,
+    ) -> Option<MidiChartData> {
         let req = MidiChartRequest::new(
             Some(project.guid().to_string()),
             Some(MIDI_TRACK_TAG.to_string()),
@@ -177,7 +179,7 @@ impl SetlistServiceImpl {
 
     pub(crate) async fn fetch_midi_source_fingerprint(
         &self,
-        project: &daw::Project,
+        project: &daw::rpc::Project,
     ) -> Option<String> {
         let support_state = *self.fingerprint_method_supported.read().await;
         if support_state == Some(false) {
@@ -271,7 +273,7 @@ impl SetlistServiceImpl {
         }
     }
 
-    pub(crate) async fn fetch_project_loads(projects: Vec<daw::Project>) -> Vec<ProjectLoad> {
+    pub(crate) async fn fetch_project_loads(projects: Vec<daw::rpc::Project>) -> Vec<ProjectLoad> {
         let semaphore = Arc::new(Semaphore::new(
             "session.setlist.hydration.fetch_projects",
             HYDRATION_CONCURRENCY,

@@ -6,7 +6,7 @@
 //! Run with:
 //!   cargo xtask reaper-test -- edge_case
 
-use daw::Project;
+use daw::rpc::Project;
 use reaper_test::reaper_test;
 use session::{SongBuilder, stamp_demo_into_project};
 use std::time::Duration;

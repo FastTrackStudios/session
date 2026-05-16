@@ -32,6 +32,8 @@ pub mod cache;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod event_bus;
 #[cfg(not(target_arch = "wasm32"))]
+mod keyflow_actions;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod routing_project;
 #[cfg(not(target_arch = "wasm32"))]
 mod setlist_builder;
@@ -132,6 +134,120 @@ actions_proto::define_actions! {
             description: "Go to the previous section in the current song",
             category: Session,
             group: "Navigate",
+        }
+        INSERT_INTRO_REGION = "insert_intro_region" {
+            name: "Insert Region - Intro (IN)",
+            description: "Insert an Intro section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_VERSE_REGION = "insert_verse_region" {
+            name: "Insert Region - Verse (VS)",
+            description: "Insert a Verse section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_PRE_CHORUS_REGION = "insert_pre_chorus_region" {
+            name: "Insert Region - Pre-Chorus (PRE-CH)",
+            description: "Insert a Pre-Chorus section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_CHORUS_REGION = "insert_chorus_region" {
+            name: "Insert Region - Chorus (CH)",
+            description: "Insert a Chorus section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_BRIDGE_REGION = "insert_bridge_region" {
+            name: "Insert Region - Bridge (BR)",
+            description: "Insert a Bridge section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_OUTRO_REGION = "insert_outro_region" {
+            name: "Insert Region - Outro (OUT)",
+            description: "Insert an Outro section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_INSTRUMENTAL_REGION = "insert_instrumental_region" {
+            name: "Insert Region - Instrumental (INST)",
+            description: "Insert an Instrumental section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_SOLO_REGION = "insert_solo_region" {
+            name: "Insert Region - Solo (SOLO)",
+            description: "Insert a Solo section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_HITS_REGION = "insert_hits_region" {
+            name: "Insert Region - Hits (HITS)",
+            description: "Insert a Hits section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_INTERLUDE_REGION = "insert_interlude_region" {
+            name: "Insert Region - Interlude (INT)",
+            description: "Insert an Interlude section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_BREAKDOWN_REGION = "insert_breakdown_region" {
+            name: "Insert Region - Breakdown (BD)",
+            description: "Insert a Breakdown section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_VAMP_REGION = "insert_vamp_region" {
+            name: "Insert Region - Vamp (VAMP)",
+            description: "Insert a Vamp section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_COUNT_IN_REGION = "insert_count_in_region" {
+            name: "Insert Region - Count-In (COUNT-IN)",
+            description: "Insert a Count-In section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_END_REGION = "insert_end_region" {
+            name: "Insert Region - End (END)",
+            description: "Insert an End section region at the current edit cursor",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_COUNT_IN_MARKER = "insert_count_in_marker" {
+            name: "Insert Count-In Marker",
+            description: "Insert a Count-In marker on the MARKS ruler lane",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_START_MARKER = "insert_start_marker" {
+            name: "Insert =START Marker",
+            description: "Insert an =START marker on the START/END ruler lane",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_END_MARKER = "insert_end_marker" {
+            name: "Insert =END Marker",
+            description: "Insert an =END marker on the START/END ruler lane",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_SONGSTART_MARKER = "insert_songstart_marker" {
+            name: "Insert SONGSTART Marker",
+            description: "Insert a SONGSTART marker on the MARKS ruler lane",
+            category: Session,
+            group: "Edit",
+        }
+        INSERT_SONGEND_MARKER = "insert_songend_marker" {
+            name: "Insert SONGEND Marker",
+            description: "Insert a SONGEND marker on the MARKS ruler lane",
+            category: Session,
+            group: "Edit",
         }
         LOG_HELLO = "log_hello" {
             name: "Log Hello",

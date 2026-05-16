@@ -3,7 +3,7 @@
 //! Scans open projects and combines their song structures into a setlist.
 
 use crate::song_builder::SongBuilder;
-use daw::Daw;
+use daw::rpc::Daw;
 use rayon::prelude::*;
 use session_proto::Setlist;
 use tokio::runtime::Handle;

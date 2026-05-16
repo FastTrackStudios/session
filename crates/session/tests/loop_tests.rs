@@ -10,7 +10,7 @@ use session::stamp_demo_into_project;
 use std::time::Duration;
 
 /// Helper: stamp demo data and wait for it to settle.
-async fn setup_demo(project: &daw::Project) -> eyre::Result<()> {
+async fn setup_demo(project: &daw::rpc::Project) -> eyre::Result<()> {
     stamp_demo_into_project(project).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
     Ok(())

@@ -1,7 +1,7 @@
 //! Navigation methods: go_to_song, next/previous song/section, seeking
 
 use super::SetlistServiceImpl;
-use daw::Daw;
+use daw::rpc::Daw;
 use session_proto::{QueuedTarget, SessionServiceError, Song};
 use std::time::Duration;
 use tracing::{debug, info, warn};

@@ -14,7 +14,7 @@
 //! - Wire routing receives (future: when routing folder is added at RPP level)
 
 use crate::setlist_service::SetlistServiceImpl;
-use daw::Daw;
+use daw::rpc::Daw;
 use session_proto::SessionServiceError;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
@@ -347,7 +347,7 @@ impl SetlistServiceImpl {
             // Spawn the position sync tick loop
             let position_sync = self.position_sync.clone();
             moire::task::spawn(async move {
-                let daw = daw::Daw::get();
+                let daw = daw::rpc::Daw::get();
                 loop {
                     tokio::time::sleep(std::time::Duration::from_millis(33)).await; // ~30Hz
                     let mut guard = position_sync.write().await;
@@ -366,7 +366,7 @@ impl SetlistServiceImpl {
 
             // Also start the live DAW sync bridge (marker/region/item replication).
             // Collect song project handles for binding.
-            let song_projects: Vec<(usize, daw::Project)> = {
+            let song_projects: Vec<(usize, daw::rpc::Project)> = {
                 let mut sp = Vec::new();
                 let all = daw.projects().await.unwrap_or_default();
                 for project in all {

@@ -16,8 +16,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use daw::Project;
 use daw::RxExt;
+use daw::rpc::Project;
 use daw::service::item::Item;
 use daw::service::primitives::{Duration, PositionInSeconds};
 use daw::service::{ItemEvent, MarkerEvent, RegionEvent};

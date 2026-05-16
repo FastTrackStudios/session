@@ -18,7 +18,7 @@
 //!   COUNT-IN → SONGSTART → Intro → Verse 1 → Chorus → Verse 2 → Chorus → Bridge → Chorus → Tag → SONGEND
 //! ```
 
-use daw::Daw;
+use daw::rpc::Daw;
 use session_proto::SessionServiceError;
 use session_proto::ruler_lanes::CoreLane;
 use tracing::info;
@@ -74,7 +74,9 @@ pub async fn stamp_demo_setlist(daw: &Daw) -> Result<(), SessionServiceError> {
 ///
 /// Use this when you already have a `Project` handle (e.g. in tests
 /// where each test gets its own isolated project tab).
-pub async fn stamp_demo_into_project(project: &daw::Project) -> Result<(), SessionServiceError> {
+pub async fn stamp_demo_into_project(
+    project: &daw::rpc::Project,
+) -> Result<(), SessionServiceError> {
     info!(
         "Stamping demo setlist markers/regions into project {}",
         project.guid()

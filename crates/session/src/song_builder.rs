@@ -13,7 +13,7 @@
 //! 2. **Markers**: When no regions exist, consecutive markers are used to define sections
 //!    Each marker defines the start of a section, ending at the next marker.
 
-use daw::Project;
+use daw::rpc::Project;
 use daw::service::{Marker, Region};
 use session_proto::{Comment, Section, SectionId, SectionType, Song, SongId};
 use tracing::{Level, debug, warn};
@@ -139,7 +139,7 @@ impl SongBuilder {
         project_name: &str,
         markers: &[Marker],
         regions: &[Region],
-        tempo_map: &daw::TempoMap,
+        tempo_map: &daw::rpc::TempoMap,
         lanes: &ResolvedLanes,
     ) -> eyre::Result<Song> {
         // Parse song name and artist from project name
@@ -511,7 +511,7 @@ impl SongBuilder {
         song_region: &Region,
         all_regions: &[Region],
         all_markers: &[Marker],
-        tempo_map: &daw::TempoMap,
+        tempo_map: &daw::rpc::TempoMap,
         lanes: &ResolvedLanes,
     ) -> eyre::Result<Song> {
         let (song_name, _artist) = Self::parse_project_name(&song_region.name);
@@ -794,7 +794,10 @@ impl SongBuilder {
     /// Converts seconds → musical position (measure, beat, fraction), rounds up
     /// to the next measure, and converts back to seconds. If already exactly on
     /// a barline, returns the same position.
-    async fn snap_to_next_barline(tempo_map: &daw::TempoMap, seconds: f64) -> eyre::Result<f64> {
+    async fn snap_to_next_barline(
+        tempo_map: &daw::rpc::TempoMap,
+        seconds: f64,
+    ) -> eyre::Result<f64> {
         let (measure, beat, fraction) = tempo_map.time_to_musical(seconds).await?;
         // If already exactly on a barline (beat 1, no fraction), keep it
         if beat <= 1 && fraction < 0.001 {
