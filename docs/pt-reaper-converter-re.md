@@ -213,6 +213,52 @@ struct PTXFade {
 These give us the complete field set the upstream tool extracts.
 Promote each as a roadmap target.
 
+## PTXBlocks enum case content_type values
+
+By scanning the binary for `mov ax, imm16` followed by `pop rbp; ret`
+(the Swift enum `rawValue.getter` accessor pattern), recovered the
+full enum-case-value list. Each case is a content_type the upstream
+parses:
+
+| case_va         | content_type | Our parser knows it as |
+|-----------------|--------------|----|
+| 0x1000d91a0     | 0x1028 | SessionSampleRate ✓ |
+| 0x1000d91b0     | **0x204d** | **unknown** |
+| 0x1000d91c0     | 0x2028 | TempoBlock ✓ |
+| 0x1000d91d0     | 0x1054 | AudioRegionTrackMapNew ✓ |
+| 0x1000d91e0     | 0x1052 | AudioRegionTrackMapEntriesNew ✓ |
+| 0x1000d91f0     | 0x1050 | AudioRegionTrackEntryNew ✓ |
+| 0x1000d9200     | 0x104f | AudioRegionTrackSubEntryNew ✓ |
+| 0x1000d9210     | **0x0031** | **unknown** (small block) |
+| 0x1000d9220     | 0x251a | MidiTrackInfo ✓ |
+| 0x1000d9230     | 0x2629 | AudioRegionNew ✓ |
+| 0x1000d9240     | 0x2628 | CompoundRegionGroup ✓ |
+| 0x1000d9250     | **0x2637** | **unknown** |
+| 0x1000d9260     | 0x262f | FadeDef ✓ |
+| 0x1000d9270     | **0x2624** | **unknown** (very large block) |
+| 0x1000d9280     | 0x261b | TrackContainer ✓ |
+| 0x1000d9290     | 0x261c | TrackContainer (inner) ✓ |
+| 0x1000d92a0     | **0x261e** | **unknown** |
+| 0x1000d92b0     | **0x261f** | **unknown** |
+| 0x1000d92c0     | 0x260a | (per-track aux entry, unnamed) |
+| 0x1000d92d0     | 0x103a | WavNames ✓ |
+| 0x1000d92e0     | 0x260d | TrackMixWrapper ✓ |
+| 0x1000d92f0     | 0x260c | (per-track aux entry, unnamed) |
+| 0x1000d9300     | **0x2627** | **unknown** (large per-region cache) |
+| 0x1000d9310     | 0x1003 | WavMetadata ✓ |
+
+24 block IDs total. Six are unknown to our parser — and one of them
+almost certainly holds mute automation envelope data:
+
+- `0x204d` (between session info & tempo) — likely session preferences
+- `0x0031` — small. Could be ProductString version v2.
+- `0x2637` — unknown
+- `0x2624` — very large (multi-MB on user session); audio cache?
+- `0x261e` / `0x261f` — both unknown. Strong candidates for the
+  per-track AUTOMATION envelope blocks (mainMuteAutomation,
+  mainVolumeAutomation, mainPanAutomation).
+- `0x2627` — per-region waveform-overview cache.
+
 ## Useful next steps (if continuing this thread)
 
 1. Pull Ghidra's Swift symbolicator plugin or use `swift-demangle`
