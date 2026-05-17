@@ -305,6 +305,217 @@ to investigate:
    Lord-of-the-Fight session and observe what mute state it emits
    for each track. The output `.rpp` becomes ground truth.
 
+## 2026-05-17 round: dispatcher disassembly
+
+Imported binary into Ghidra (`ProTools_RE` project,
+`pt_reaper_converter` program, x86_64 slice). Auto-analysis surfaced
+only 615 named functions — every internal PTX parser remains
+`FUN_xxxxxx` without function-boundary recognition, because the
+auto-analyzer can't follow Swift's indirect-call-through-type-metadata
+pattern. `ghidra-cli analyze` is idempotent, and inline `script
+python`/`script java` are blocked in bridge mode, so forcing function
+boundaries via script is non-trivial via CLI.
+
+Direct objdump on `__TEXT,__text` disassembled the 4 sites that
+reference `0x1029` (the byte-pattern hit list from earlier scan):
+
+| Site | Instruction | Role |
+|---|---|---|
+| `0x1000fe41b` | `cmpl $0x1029, %eax` | Block-scanner (skipper) |
+| `0x1001574a3` | `pushq $0x1029` | Caller of `find_block(ct, &out)` |
+| `0x10019c302` | `pushq $0x1029` | Same caller pattern |
+| `0x1002338b9` | `cmpl $0x1029, %eax` | Second block-scanner (skipper) |
+
+Key finding from disassembling `0x1000fe40d..0x1000fe48f`:
+
+```
+cmpl  $0x260b, %eax
+jg    .gt_260b_branch
+cmpl  $0x1029, %eax
+je    .skip_payload          ; common handler for 0x1029
+cmpl  $0x260a, %eax          ; sends
+jne   .skip_one_byte
+cmpl  $0x1c, %edx
+jb    .skip_one_byte
+...
+.gt_260b_branch:
+cmpl  $0x260c, %eax
+je    .skip_payload          ; same handler!
+cmpl  $0x260e, %eax           ; output routing
+jne   .skip_one_byte
+.skip_payload:
+testq %rdx, %rdx
+addq  $0x7, %rdx
+addq  %rdx, %rbx              ; advance file pointer past payload
+jno   .loop                   ; continue scanning
+```
+
+`0x1029`, `0x260c`, `0x260e` (and `0x260a` after a size check) share
+**a single skip handler** in this function — confirming this is a
+block-boundary walker, not a field parser. The actual mute/vol/pan
+field reads happen in a different code path entirely.
+
+The only candidate-parser site is `0x1001574a3`:
+
+```
+pushq  $0x1029
+leaq   -0x30(%rbp), %rax    ; output pointer
+pushq  %rax
+pushq  $0x10                  ; size or count
+callq  0x1001b9ad0           ; find_block(...)
+...
+movq   -0x30(%rbp), %rdi    ; load found block
+cmpq   $0x0, 0x10(%rdi)      ; check field +0x10
+movq   0x38(%rdi), %r13     ; read field +0x38
+...
+shrq   $0x3e, %rcx           ; extract tagged-pointer tag bits
+leaq   0x29d(%rip), %rdx     ; jump table base
+movslq (%rdx,%rcx,4), %rcx
+addq   %rdx, %rcx
+jmpq   *%rcx                  ; Swift enum case dispatch
+```
+
+After locating the `0x1029` block, this code:
+1. Reads fields at `+0x10` and `+0x38` of a found-block struct
+2. Dispatches through a Swift enum jump table (`0x29d(%rip)`)
+
+Tracing the enum jump table is where the real parser lives — but
+that's a multi-day pursuit (every case is a separate inlined Swift
+function with no boundary markers in this binary).
+
+## Practical conclusion for the mute fix
+
+After thorough byte-level brute force (see `find_mute_v3.rs`) AND
+direct dispatcher disassembly, the mute discriminator cannot be
+located in this fixture without one of:
+
+1. **`mute-automation.ptx` fixture** (priority-1 from
+   `pt-sample-data-needed.md`): differential between known-muted and
+   known-unmuted gives bytes directly.
+2. **Multi-day RE pursuit** into the Swift enum case dispatcher at
+   `0x10015750a`, naming each case manually in Ghidra GUI, and
+   recovering field offsets from the WitnessTable-mediated reads.
+
+The CLI-only ghidra-cli tooling cannot productively drive option 2
+because it can't create functions or force-disassemble at addresses
+without GUI interaction. Recommend either capturing the fixture or
+moving to the Ghidra desktop GUI for sustained RE work.
+
+## 2026-05-17 round 2: Frida dynamic analysis — DEFINITIVE answer
+
+Ran the actual PT Reaper Converter on the LotF session via Frida on
+voyager (macOS 26.0.1, ARM64). The .rpp output is ground truth.
+
+**The user's earlier `LOTF_EXPECTED_MUTED` list was wrong.** Only 8
+tracks are actually muted per the converter, not 17. The real muted
+set:
+
+  ClickPrint
+  02 LORD OF THE FIGHT.01
+  02 LORD OF THE FIGHT_Vocals
+  02 LORD OF THE FIGHT_Bass
+  02 LORD OF THE FIGHT_Drums
+  02 LORD OF THE FIGHT_Guitar
+  02 LORD OF THE FIGHT_Other
+  02 LORD OF THE FIGHT_Piano
+
+The Inst/MIDI 1/SYZ/AC GTR/El Gtr/Bass Demo tracks our parser also
+marks as muted are **NOT** muted in the converter's output.
+
+### MUTESOLO emit point located in ARM64 binary
+
+Scanned ARM64 immediates (MOV+MOVK chains) for "MUTESOLO" inline
+literals. Found 4 sites; only **0x100061400** fires at runtime. The
+containing function's prologue is at **0x100060b28** — this is the
+per-track RPP emitter.
+
+### Mute decision logic disassembled
+
+The mute=1 path at `0x1000612b0`-`0x1000612dc`:
+
+```
+ldr  w8, [sp, #0x84]         ; global "include mute" flag (always 1)
+tbz  w8, #0, .not_muted
+str  wzr, [sp, #0x24]
+ldr  x9, [sp, #0x88]          ; Swift Optional<...> pointer
+cbz  x9, .not_muted_2         ; null → NOT MUTED
+ldr  x8, [x9, #0x10]          ; must equal 1
+cmp  x8, #1
+b.ne .not_muted_2
+ldrb w8, [x9, #0x28]
+tbz  w8, #0, .not_muted_2     ; bit 0 must be set
+cbz  w27, .different_path     ; (folder-inheritance path likely)
+mov  w21, #1                  ; w21 := 1 (mute=true)
+```
+
+Frida hook at `0x1000612b0` over a full LotF conversion captured:
+
+| Track index | sp+0x88 ptr | [ptr+0x10] | [ptr+0x28] |
+|---|---|---|---|
+| 1 | 0x0 (NULL) | — | — |
+| 2 (ClickPrint) | 0xb4d8435d0 | 1 | 0x1 |
+| 3 (02 LORD.01) | 0xb4d843720 | 1 | 0x0 |
+| 16, 17, 18, 19, 21, 23, 25, 27 | 0x0 | — | — |
+
+**Only 2 tracks reach the decision point with a non-null mute
+object.** The other 6 muted tracks (LORD family stems) reach `MUTED=1`
+via a different code path — almost certainly **folder inheritance**
+from their parent track "02 LORD OF THE FIGHT.01".
+
+### Struct shape of the mute object (Swift class at 0xb500dfc08 type)
+
+```
++0x00: type-metadata pointer  (0xb500dfc08 — same for both tracks)
++0x08: 0x200000003             (flags or count)
++0x10: 1                       (used in cmp #1 check)
++0x18: 2                       (some state)
++0x20: 0
++0x28: byte flag (varies)
++0x30: 0xfac826af2553XXXX      (UID/token)
++0x38: 0x4XXXXX                (some value)
++0x60: 0xfac826af2553XXXX      (second UID — adjacent to +0x30)
+```
+
+The `0xfac826af2553` prefix is shared across muted tracks but NOT
+present in the .ptx file (confirmed by grep). So these are **runtime
+synthetic IDs**, not file offsets — they're constructed during PTX
+parsing. We can't directly grep the PTX for these.
+
+### Implications for our parser
+
+1. **The `0x1029 +5` byte we currently use as `mute` is the wrong
+   discriminator entirely.** It's set on 20 LotF tracks but only 8 are
+   actually muted. The +5 byte likely encodes some other PT track
+   attribute (`inactive`, `bouncedSource`, `printEnabled`, or
+   similar).
+2. **Mute is stored as an OBJECT, not a flag.** PT records a
+   `PTXMutePoint`-style object per explicitly-muted track. We need
+   to locate the block ID that carries these.
+3. **Folder mute inherits.** Whatever block carries mute, only the
+   FOLDER PARENT has an entry — children are muted by tree walk.
+4. **For LotF: only 2 tracks have explicit mute records** (ClickPrint
+   + 02 LORD OF THE FIGHT.01). Finding 2 muted records inside the
+   3.8MB .ptx is the new search target.
+
+### Action items
+
+- **Immediate**: drop the +5 byte heuristic from
+  `parse/mod.rs:181`. Default mute=false. Under-muting is much
+  less harmful than over-muting (REAPER user can mute manually but
+  can't easily un-mute a "muted" track they didn't expect to see
+  silent).
+- **Short-term**: implement folder-mute inheritance in the
+  `daw-reaper` PT→RPP path. When a folder track is muted, walk
+  children and mute them.
+- **Medium-term**: locate the mute-record block ID. Possible
+  approaches:
+  - Frida stalker-trace the converter while parsing LotF, log every
+    .ptx file offset read, and find the bytes corresponding to
+    ClickPrint's and LORD.01's mute objects.
+  - Try one of the 6 unknown PTXBlocks content_types as the
+    candidate (one of them is likely `MUTEENV` / mute-automation).
+  - Capture `mute-automation.ptx` fixture for a clean differential.
+
 ## Strings of interest (full list)
 
 `/tmp/pt_reaper_converter` binary contains these PTX classes (search

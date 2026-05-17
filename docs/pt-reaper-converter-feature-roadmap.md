@@ -29,7 +29,7 @@ names come from the Swift type dump in
 | Track volume automation | `PTXTrackSpec.volume: [(pos, raw)]?` | ❌ | same |
 | Track pan automation | `PTXTrackSpec.pan: [(pos, raw)]?` | ❌ | same |
 | Track sends | `PTXTrackSpec.sends: [String: PTXSendSpec]` | ❌ | likely `0x260a` or `0x260c` per-send |
-| Track folder nesting | `PTXTrackSpec.children: [String]` | ❌ | not yet found |
+| Track folder nesting | `PTXTrackSpec.children: [String]` | 🟡 (`Track.is_folder` flag from `0x251a` payload byte after name; children list not yet found) | `0x251a` +name_end |
 | Track notes | `PTXTrackSpec.notes: String` | ❌ | not yet found |
 | Track playlists (alternates) | `PTXTrackSpec.playlists: [PTXPlaylistSpec]` | 📖 (parsed, not emitted) | `0x2428`, `0x2429` |
 | Clips: position, length, fades, crossfade | `PTXClipSpec.start/end + .fades` | ✅ (partial — curve types) | `0x1050`, `0x262f` |
@@ -42,7 +42,7 @@ names come from the Swift type dump in
 | Crossfade detection | `PTXFadeType.crossfade` | ✅ | derived from `0x1050 +46==0x01` |
 | Fade curve shape (standard/equalPower/equalGain) | `PTXFadeCurve` enum | 🟡 (linear only) | `0x262f` trailing bytes |
 | Audio file references | `PTXAudioFileInfo.filename` | ✅ | `0x1004`/`0x103a` |
-| Audio file UUID (Avid Unique ID) | `PTXAudioFileInfo.fileUUID/hash1/hash2` | ❌ | not yet found |
+| Audio file UUID (Avid Unique ID) | `PTXAudioFileInfo.fileUUID/hash1/hash2` | 🟡 (16-byte UUID located inside `0x1003 → 0x2106` child; not yet wired into `AudioFile`) | `0x1003`/`0x2106` |
 | Region → audio-file index | `PTXRegion.sfIdx: Int` | 🟡 (name-stem heuristic) | inside `0x2629` payload |
 | Bus + parent bus | `PTXBus` + `parentBusId: Int?` | ❌ | likely `0x2602`/`0x2603` |
 | Bus is physical output | `PTXBus.isPhysicalOutput` | ❌ | same block |
