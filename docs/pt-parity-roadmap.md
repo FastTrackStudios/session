@@ -94,8 +94,8 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Channel index map | `0x1014` | ✅ | ✏️ | |
 | Track kind (audio/MIDI/aux/master) | `0x251a` `+2` byte | ✅ | ✏️ | 0x00 audio, 0x02 aux/MIDI, 0x05 master, 0x07 inst |
 | Track UID | `0x251a` payload | →§16 | →§16 | needed for round-trip |
-| Master track | `0x251a` kind=0x05 | →§16 | →§16 | currently filtered out at import |
-| Aux/instrument tracks | `0x251a` kind=0x02/0x07 | →§16 | →§16 | included in midi_tracks Vec |
+| Master track | `0x261e` (one per session) | 🟡 | ❌ | Now surfaced as `ProToolsSession.internal_tracks: Vec<InternalTrack>` (name + 6-byte routing UID). Master appears as one of the entries; distinguishing Master vs Aux vs Bus from the entry's byte payload still TBD. |
+| Aux/instrument tracks | `0x261e` | 🟡 | ❌ | Same `InternalTrack` list. wonder-session: 16 entries (DRUMS, BASS, AC GTR, Drum Verb, etc.). orchestral-session: 7 (Click 1, M2-M4, WW>>, Brass>>, Strings>>). Kind discrimination still pending. |
 | Track creation order | (block order) | ✅ | ✏️ | |
 
 ---
