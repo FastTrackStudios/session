@@ -59,7 +59,7 @@ implementation status, and the RE work required to get to parity.
 |---|---|:-:|:-:|---|
 | Filename list | `0x1004`/`0x103a` | ✅ | ✏️ | |
 | Per-file sample length | `0x1001` | ✅ | ✏️ | |
-| File ↔ region mapping | unknown | →§16 | ✏️ | **Currently using region-name → file-stem heuristic.** Real `audio_file_index` field in the region payload reads garbage (we read u32 at "end of block" which lands in next block's magic). |
+| File ↔ region mapping | `0x2628` magic `+54..+59` (6-byte UID) | 🟡 | ✏️ | Discovered via Frida byte-read trace on LotF. Surfaced as `AudioRegion.source_file_uid: Option<[u8;6]>`. Regions referencing the same WAV share the UID — verified on LotF (L+R pairs share UID). Counterpart UID in `0x1004`/`0x103a` audio file list still needs probing for the FULL region→file resolution. |
 | Audio file path resolution | (filesystem) | ✅ | ✏️ | session_dir/`Audio Files/` |
 | External file refs | unknown | →§16 | →§16 | Files outside session dir |
 
