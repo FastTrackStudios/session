@@ -215,7 +215,7 @@ master, which is wrong for any serious session.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Volume automation | `0x260a[0]` (1st `0x260a` child of `0x260d`) | ✅ | ❌ | 22-byte header + 6-byte implicit @+22 + N user breakpoints @+28. Each = `u32 time_samples + i16 value_centibel`. Surfaced as `Track.volume_automation`. Writer not yet implemented (mirror `write_mute_automation` pattern). |
-| Pan automation | `0x260a[2]` (suspected) | ❌ | ❌ | Same envelope format expected — needs probe-and-verify with `pan_envelope` |
+| Pan automation | `0x260a[2]` (suspected) | ❌ | ❌ | Same envelope format expected. The `pan_envelope` probe uses REAPER's `PANENV2` name but produces an all-zero 0x260a — converter likely uses a different REAPER envelope name (`PANENV`? `PANENV` is REAPER's volume; PT pan might need `PANENV2L`/`PANENV2R` or live in `PANENV`/`PANENV2` selector). Needs more probes. |
 | Mute automation | `0x260a[1]` (2nd `0x260a` child of `0x260d`) | ✅ | ✅ | See §6 mute automation row for full details |
 | Send-level automation | unknown | ❌ | ❌ | |
 | Plugin-parameter automation | unknown | ❌ | ❌ | |
