@@ -303,12 +303,44 @@ blocks) from a known-good 1-track baseline, duplicate N times with
 patched track name + UID, splice into the session, and extend the
 outer index lists by N-1 entries each.
 
-Per-track wrapper byte ranges (verified on `/tmp/baseline_2trk.ptx`):
-- Track 1 `0x261b`: `0x0076ef..0x0095fc` (7789 B)
-- Track 2 `0x261b`: `0x0097ab..0x00b614` (7788 B)
+Per-track wrapper byte ranges (verified on `/tmp/baseline_2trk.ptx`,
+with `Alpha`/`Beta` names):
+- Track 1 `0x261b`: `0x0076ef..0x00955c` (size 7782, payload 7789 B)
+- Track 2 `0x261b`: `0x00979b..0x00b607` (size 7781, payload 7788 B)
 
-The 1-byte size difference is a track-index field that grows by 1
-between tracks (TBD which offset).
+The 1-byte size difference is the track name length differential
+("Alpha"=5, "Beta"=4) — there is NO separate track-index field
+embedded in the wrapper size.
+
+#### Pure per-track variation map
+
+Probed with `two_tracks_eq` (`AAA`/`BBB` — equal-length names) and
+cross-file compared against `one_track_aaa`. Only 181 bytes differ
+between trk1 and trk2 within `two_tracks_eq`, and only **148 bytes**
+differ between trk-1-of-1 and trk-1-of-2 — meaning the per-track
+wrapper is **structurally self-contained**: there are no "I'm in a
+multi-track context" header fields anywhere.
+
+All offsets below are from the `0x261b` BLOCK start (raw file offset),
+not from payload start. `bs` = block start.
+
+| Offset | Size | Meaning |
+|--------|------|---------|
+| `bs+31`   | name_len | Track name bytes (length-prefix lives in a `0x2619` ahead of `bs`) |
+| `bs+45`   | 8 | Per-track UID, occurrence 1 (inside `0x260d` big container, payload +4) |
+| `bs+61`   | 8 | Per-track UID, occurrence 2 |
+| `bs+163`  | 8 | Per-track UID, occurrence 3 |
+| `bs+7350` | 1 | Send-slot dest bus index, slot 0 |
+| `bs+7354` | 1 | Send-slot dest bus index, slot 1 |
+| ...       | ... | (10 slots, stride 4: `bs+7350+4*i`) |
+| `bs+7386` | 1 | Send-slot dest bus index, slot 9 |
+| `bs+7435` | 148 | Randomized nonce region (per-track, likely cosmetic — only difference between 1-of-1 and 1-of-2 versions of same-named track) |
+
+Track N (1-indexed) gets bus indices `(N-1)*10+1 .. (N-1)*10+10` in
+its send-slot list. The first track in a session uses 0x01..0x0a.
+
+Session-trailer block uses a **randomized CT** (`0xc7c9`, `0xeac2`,
+`0x0deb` observed across runs) — a per-session unique-id block.
 
 Session-trailer block uses a **randomized CT** (`0xc7c9`, `0xeac2`,
 `0x0deb` observed across runs) — a per-session unique-id block.
