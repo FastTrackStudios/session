@@ -270,6 +270,49 @@ item to have a real audio source (`source_wave` pointing to an
 existing file) to materialize it as a PT clip. Item probes need an
 actual file fixture, not just metadata.
 
+### Multi-track template structure (2026-05-17)
+
+Confirmed via 1-track / 2-track / 3-track baselines (all `t.name(...)` only,
+no other state). The per-track block counts scale **perfectly linearly**:
+
+| CT       | Per-track | Notes                                    |
+|----------|-----------|------------------------------------------|
+| `0x1029` | +11       | mix-settings (master + 10 send slots)    |
+| `0x102d` | +1        | solo/mute root                           |
+| `0x200a` | +1        | aux/color block A                        |
+| `0x200b` | +1        | aux/color block B                        |
+| `0x2015` | +1        | color block C                            |
+| `0x2037` | +16       |                                          |
+| `0x2038` | +12       |                                          |
+| `0x203b` | +4        |                                          |
+| `0x260a` | +71       | sends (1 master vol + 70 send slots)     |
+| `0x260c` | +22       | pan mirrors                              |
+| `0x260d` | +11       | track wrapper (1 big 1654B + 10× 520B)   |
+| `0x2625` | +11       |                                          |
+| `0x2626` | +11       |                                          |
+| `0x261b` | +1        | **outer per-track wrapper (~7.8 KB)**    |
+| `0x261c` | +1        | per-track wrapper sibling                |
+| `0x485a` | +11       |                                          |
+
+Outer index blocks gain +1 entry per track (not +1 block): `0x2434`,
+`0x4420`, `0x4301`, `0x2619`.
+
+**Multi-track template strategy**: take the per-track block group
+(`0x261b` wrapper + adjacent `0x200a`/`0x200b`/`0x2015` color/aux
+blocks) from a known-good 1-track baseline, duplicate N times with
+patched track name + UID, splice into the session, and extend the
+outer index lists by N-1 entries each.
+
+Per-track wrapper byte ranges (verified on `/tmp/baseline_2trk.ptx`):
+- Track 1 `0x261b`: `0x0076ef..0x0095fc` (7789 B)
+- Track 2 `0x261b`: `0x0097ab..0x00b614` (7788 B)
+
+The 1-byte size difference is a track-index field that grows by 1
+between tracks (TBD which offset).
+
+Session-trailer block uses a **randomized CT** (`0xc7c9`, `0xeac2`,
+`0x0deb` observed across runs) — a per-session unique-id block.
+
 ## Probes still needed (next pass)
 
 - `marker_two`, `marker_colored` — to isolate name vs color encoding
