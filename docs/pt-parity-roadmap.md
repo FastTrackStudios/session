@@ -242,27 +242,31 @@ imported session sounds static.
 
 ---
 
-## 15. Writing (round-trip) — currently 0% done
+## 15. Writing (round-trip) — partial
 
-To write a `.ptx` file we need every read field above to have a corresponding
-**encoder**, plus:
+Reflects the current state of `crates/dawfile-protools/src/write/` after
+the write-side scaffolding round.
 
-| Concern | Status |
-|---|---|
-| XOR re-encryption with correct seed | ❌ |
-| Block tree serializer with correct sizes | ❌ |
-| Re-compute parent block `block_size` after children change | ❌ |
-| Re-compute cross-block indices (audio_file_index, fade_index, region_index, etc.) | ❌ |
-| Preserve unknown blocks verbatim (passthrough) | ❌ |
-| Preserve unknown bytes within known blocks | ❌ |
-| Stable UID generation for new tracks/regions/markers | ❌ |
-| Stable ordering (PT compares ordering for some structures) | ❌ |
-| Update headers (file size, modified-date, etc.) | ❌ |
-| Surface validation: PT refuses to open files with broken back-references | ❌ |
-
-`src/write.rs` exists today and supports only **single-field in-place
-modifications** (rename track, change sample rate) — not block-add or
-structural rewrite.
+| Concern | Status | Notes |
+|---|---|---|
+| XOR re-encryption with correct seed | ✅ | `RawSession::encrypt()` |
+| Block tree serializer with correct sizes | ✅ | `write/splice.rs` updates every ancestor `block_size` field on each modification, then re-parses the block tree |
+| Re-compute parent block `block_size` after children change | ✅ | same as above |
+| Re-compute cross-block indices (audio_file_index, fade_index, region_index, etc.) | 🟡 | implemented for fade_index in `write/native.rs`; other indices not yet |
+| Preserve unknown blocks verbatim (passthrough) | ✅ | the template-patch approach (`write/native.rs`) leaves unmodified blocks untouched |
+| Preserve unknown bytes within known blocks | ✅ | splice only touches the byte range you point at |
+| Stable UID generation for new tracks/regions/markers | ❌ | no `add_internal_track` path yet; will need a deterministic UID allocator that doesn't collide with existing entries |
+| Stable ordering (PT compares ordering for some structures) | ❌ | not yet validated; failure mode would be PT refusing to open |
+| Update headers (file size, modified-date, etc.) | 🟡 | size is implicit (just buffer length); modified-date not preserved |
+| Surface validation: PT refuses to open files with broken back-references | ❌ | no validator pass before write |
+| **Block construction primitive** (`wrap_as_block(ct, payload)`) | ✅ | `write/block_ops.rs` |
+| **Block-tree insert/remove** (`append_child_block`, `remove_block`) | ✅ | `write/block_ops.rs` |
+| **Stem-mapping (`0x4702`) writer** (add / replace) | ✅ | `write/edit_groups.rs::add_stem_mapping`, `replace_stem_mappings` |
+| **Edit-group (`0x4501`) writer** | ❌ | `write/edit_groups.rs::add_edit_group_name` returns `WriteError::Unimplemented`; blocked on membership-table decode |
+| **Internal-track (`0x261e`) rename** | ✅ | `write/internal_tracks.rs::rename_internal_track` (both same-length and variable-length splice) |
+| **Internal-track add/remove** | ❌ | `write/internal_tracks.rs::add_internal_track` / `remove_internal_track` return `WriteError::Unimplemented`; blocked on prefix-byte decode |
+| **TCE-clone (`0x2628[1]`) emission** (for clip playrate / slip-offset writes) | ❌ | not yet started |
+| **Pan / mute / send envelope writes** (`0x260a[1..3]`) | ❌ | blocked on value-unit verification (no PT-authored fixture exercises these) |
 
 ---
 
