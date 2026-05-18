@@ -219,7 +219,7 @@ master, which is wrong for any serious session.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Volume automation | `0x260a[0]` (1st `0x260a` child of `0x260d`) | ✅ | ✅ (single-track) | 22-byte header + 6-byte implicit @+22 + N user breakpoints @+28. Each = `u32 time_samples + i16 value_centibel`. Surfaced as `Track.volume_automation`; writer via `NativeTrackSpec.volume_automation`. Round-trip test covers 2-point envelopes. |
-| Pan automation | `0x260a[2]` (suspected) | ❌ | ❌ | Same envelope format expected. The `pan_envelope` probe uses REAPER's `PANENV2` name but produces an all-zero 0x260a — converter likely uses a different REAPER envelope name (`PANENV`? `PANENV` is REAPER's volume; PT pan might need `PANENV2L`/`PANENV2R` or live in `PANENV`/`PANENV2` selector). Needs more probes. |
+| Pan automation | `0x260a[1]` (was `[2]` — corrected) | ❌ | ❌ | Cross-fixture sweep confirms every audio-track `0x260d` carries 4 envelope slots: `[0]` vol (wired), `[1]` pan, `[2]` mute, `[3]` send-level (all suspected). Available test fixtures contain only volume curves — every `[1]`/`[2]`/`[3]` slot in every fixture is the 41-byte "empty + implicit only" stub. Format is assumed to mirror vol (same 22 B header + breakpoint shape) with different value units. Converter probes via `pan_envelope`, `pan_envelope_2`, `pan_envelope_lr` all produce no diff — REAPER builder pan-envelope names not propagated. Read parity needs a PT-authored fixture with non-trivial pan automation. |
 | Mute automation | `0x260a[1]` (2nd `0x260a` child of `0x260d`) | ✅ | ✅ | See §6 mute automation row for full details |
 | Send-level automation | unknown | ❌ | ❌ | |
 | Plugin-parameter automation | unknown | ❌ | ❌ | |

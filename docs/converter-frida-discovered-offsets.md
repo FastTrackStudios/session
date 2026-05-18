@@ -600,6 +600,33 @@ classifications. This block backs PT 12's "Stem Mapping" feature
    semantics are speculative without a known-shape probe.
 3. `ProToolsSession.edit_groups: Vec<EditGroup>` exposure.
 
+### `0x260d` — 4 envelope slots per audio track
+
+Sweep across all PT fixtures shows every audio-track `0x260d` wrapper
+contains **exactly four `0x260a` envelope children** (one track in
+`green-dolphin-street.ptx` has three — likely Master/Click):
+
+| Slot | Likely role | Status in current parser | Status in test fixtures |
+|---|---|---|---|
+| `0x260a[0]` | Volume | ✅ wired | populated in 5 fixtures |
+| `0x260a[1]` | **Pan** (suspected) | ❌ | empty (41 B) everywhere |
+| `0x260a[2]` | **Mute** (suspected) | ❌ | empty everywhere |
+| `0x260a[3]` | **Send-level / Pre-fader** (suspected) | ❌ | empty everywhere |
+
+The volume envelope format (22 B header + 6 B implicit @+22 +
+`N × (u32 time_samples + i16 value_cB)` breakpoints @+28) is fully
+decoded. The other slots are believed to share the same byte layout
+with different value units (pan position, mute bool, send level),
+but **none of the test fixtures contain a non-empty pan/mute/send
+envelope** — they are all 41-byte "empty + implicit only" stubs.
+
+Reading non-empty curves for slots [1]/[2]/[3] cannot be verified
+without a PT-authored fixture that exercises pan/mute/send
+automation. Wiring `pan_automation`/`mute_automation`/`send_automation`
+that simply reuses the volume decoder on `0x260a[1..3]` would be
+sound code-wise but the value-unit interpretation would be
+**unverified**.
+
 ### `0x2064` — plugin factory-preset references
 
 Three blocks in `worship-session`, payload 350 bytes each, each
