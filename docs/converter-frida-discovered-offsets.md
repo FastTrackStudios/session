@@ -505,6 +505,60 @@ The single-instance container CTs (`0x2611`, `0x2554`, `0x4841`,
 worship-session), almost certainly the wrapper for all the per-aux
 config records.
 
+### `0x2077` — Memory Locations (markers + selections + presets)
+
+Found in `worship-session.ptx` × 2. PT's unified "Memory Locations"
+feature, storing markers, edit-selections, mixer-snapshots, and
+window-configs as a single typed list.
+
+Block payload layout (offsets relative to magic):
+
+```
+magic +9    u16 LE   id / version  (observed: 0x0001)
+magic +11   u32 LE   flag bitmap   (observed: 0x00000903 — see below)
+magic +15   u32 LE   name_length
+magic +19   N bytes  name (ASCII, no NUL terminator)
+magic +19+N u64 LE   start_position (samples)
+magic +27+N u64 LE   end_position (samples; == start for point memlocs)
+magic +35+N 8 bytes  pre_roll? (observed `f0 bf ff ff ff ff ff ff`
+                     = -1.0 as a double, marking "unset")
+...                  further fields: window-config flags, zoom level,
+                     selection-region-uids, etc. (not yet decoded)
+```
+
+Verified records:
+
+| Probe | name | start | end | kind |
+|---|---|---|---|---|
+| `worship` 0x2077[0] | `"Location 1"` | 2737115 | 2737115 | point marker |
+| `worship` 0x2077[1] | `"move tuba slightly early"` | 8875 | 8875 | point marker |
+
+The `0x00000903` flag bitmap likely combines: `has_name` (bit 0)
++ `has_position` (bit 1) + `is_marker_kind` (bit 8) + `is_point_kind`
+(bit 11). Need probes with PT's other memloc kinds (selection,
+mixer-snapshot, window-config) to fully decode the bitmap.
+
+This block lives separately from the simpler `0x4825`/`0x4826` markers
+(which the roadmap already lists as ✅). `0x2077` is likely the
+authoritative store; `0x4825` may be a denormalized "markers only"
+view. The roadmap's `selection-state memlocs` and `zoom-state memlocs`
+(both ❌) almost certainly map to other entries in this same list with
+different flag-bitmap values.
+
+### `0x2064` — plugin factory-preset references
+
+Three blocks in `worship-session`, payload 350 bytes each, each
+containing two length-prefixed strings: a volume name (`"Macintosh HD"`)
+and a `.tfx` file name (PT's plugin factory-preset format).
+Examples:
+
+- `TrLntunrtmRTFact.tfx` — Tr-Lntu-nrtm-RT-Fact = obfuscated AAX plugin code
+- `UADxU3C2jccFact.tfx` — UAD-style plugin preset
+
+Probably session-level "plugin presets in use" cache; not the per-track
+plugin instance assignments (those live elsewhere). Useful for parity
+on plugin-state round-trip.
+
 ### Next on this branch
 
 - Probe REAPER aux-return / master-track / instrument-track creation

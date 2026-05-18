@@ -237,8 +237,8 @@ imported session sounds static.
 | Edit groups | unknown | ❌ | ❌ | |
 | Mix groups | unknown | ❌ | ❌ | |
 | Track folders (PT 12+) | unknown | ❌ | ❌ | |
-| Selection-state memlocs | `0x271a` siblings | ❌ | ❌ | |
-| Zoom-state memlocs | `0x271a` siblings | ❌ | ❌ | |
+| Selection-state memlocs | `0x2077` (not `0x271a`) | 🟡 | ❌ | `0x2077` is PT's unified Memory Locations list (markers + selections + window-configs). Name + start/end position decoded; flag-bitmap (`0x00000903` for a point marker) needs further differential probing across memloc kinds. See `docs/converter-frida-discovered-offsets.md` §"`0x2077` — Memory Locations". |
+| Zoom-state memlocs | `0x2077` (same as selection) | 🟡 | ❌ | Lives in the same Memory Locations list; identified by a different bit in the flag bitmap. Not yet decoded which bit. |
 
 ---
 
