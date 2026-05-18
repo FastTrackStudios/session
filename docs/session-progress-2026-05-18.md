@@ -132,6 +132,7 @@ pivoted to **dynamic binary RE via Frida**. The pipeline:
 |---------|----------------|--------|
 | **Marker color (PT 12)** | `0x4826` payload +2/+4/+6 (R/G/B as u16-LE low bytes) | ✅ DECODED + wired in parser |
 | **Region source-file UID** | `0x2628` magic +54..+59 (6-byte UID) | 🟡 DECODED + wired; groups L+R pairs correctly |
+| **Audio file UID** | `0x1003` magic +45..+50 (between sentinels `0x2A` / `0x80`) | 🟡 DECODED + wired; 24 distinct UIDs on LotF (one per file) |
 | Routing block fields | `0x2602` +10 (active flag), +47..+52 (6-byte destination UID), +33/+36/+50/+51/+52 (additional flags) | 📚 Documented; not yet wired |
 | Per-clip sub-block | `0x104f` +9/+20/+24/+25/+26/+27 | 📚 Documented; needs probe with real audio to ID fields |
 | Per-clip flag | `0x1050` +53 (boolean — mute or gain) | 📚 Documented; needs targeted probe |
