@@ -266,24 +266,56 @@ All probes prefix `clip_*` use that source.
   `clip_with_wav` → `-2` (default); `clip_colored(0x6e41d8)` → `27`.
   Field: `TrackRegion.clip_color`.
 
-### Pending — `clip_playrate_half` vs `clip_with_wav` diff
+### ✅ Solved — playrate encoding via TCE-clone region
 
-56 differing read lines. Concrete finds:
+Three-way differential probe (`clip_playrate_half/quarter/double` vs
+`clip_with_wav`) localized the encoding cleanly. **Playrate is stored
+implicitly** as the TCE-clone region's length-in-samples, *not* as a
+ratio.
 
-- New reads at file offsets `5953..=5955` (decoded vals `0, 119, 1`) resolve
-  to `0x2628 +45..+47`. As 24-bit LE = `96000` = `48000 SR × (1 / 0.5)`,
-  the converter's **stretched-length-in-samples** rederived from playrate +
-  source length. Not the playrate primitive itself.
-- New reads inside `0x104f +9` (val 0), `0x104f +20` (val 0),
-  `0x1052 +83` (val 1, read twice) — only triggered when playrate ≠ 1.0.
-  `0x1052 +83 = 1` is the strongest candidate for the **has-elastic-time
-  flag** (gates reading the rest of the TCE sub-tree). The actual
-  playrate ratio is almost certainly stored in the inserted ~316-byte
-  run upstream and not yet localized — needs `clip_playrate_quarter`
-  and `_double` probes for differential analysis.
-- All `0x2603 +N` shifts (`+193 → +232 → +295`) are downstream of an
-  inserted ~316-byte run earlier in the file — track elastic-time block
-  candidate.
+When playrate ≠ 1.0 the converter inserts a **second `0x2628`** block
+(plus second `0x2629` name block) representing the time-compressed/
+expanded clone of the source region. The clone block layout (relative
+to the `0x5A` block start):
+
+```
++0   0x5A 01 00 <size:u32> 28 26      9-byte block header
++9   <pathlen:u32> <utf-8 path bytes>  source path (e.g. "/tmp/.../clip_probe", no extension)
+... (variable) ...
+... 01 00 <dir_flag:u8> 33 08         field marker; dir_flag = 0x30 (slowdown) or 0x20 (speedup)
+... <length_samples:i64 LE>           item length in samples @ project SR
+... ff ff ff ff ff ff ff ff fe ff ...
+```
+
+Decoded values for the three probes (source = 96044 samples ≈ 1.0s @ 48k):
+
+| Probe | RPP item len | Field `dir_flag` | `length_samples` i64 LE | Decoded |
+|---|---|---|---|---|
+| `clip_playrate_half` (0.5×) | 2.0s | `0x30` | `00 77 01 00 00 00 00 00` | 96000 |
+| `clip_playrate_quarter` (0.25×) | 4.0s | `0x30` | `00 ee 02 00 00 00 00 00` | 192000 |
+| `clip_playrate_double` (2.0×) | 0.5s | `0x20` | `c0 5d 00 00 00 00 00 00` | 24000 |
+
+Implied playrate = `source_length_samples / length_samples`. Verified
+absolute file offsets in the half probe: `0x1741..0x1748` (= `0x2628`
+block-2 payload, after variable-length path string).
+
+Auxiliary observations:
+
+- `0x1052 +83 = 1` is the **TCE-enabled flag** at the inner clip block,
+  gating the cross-reference to the second `0x2628`.
+- `0x104f +9` and `0x104f +20` are read only when TCE-enabled (both
+  values happen to be `0` for these probes — likely an "additional fade
+  required" flag and an "alignment mode" flag respectively, not yet
+  differentiated).
+- All `0x2603 +N` byte shifts are downstream consequences of the
+  ~316-byte block insertion, not new fields.
+
+**Wiring approach (pending):** `TrackRegion` should expose
+`Option<f64> clip_playrate` derived from a lookup that finds the second
+`0x2628` (referenced by the clip's `0x104f`/`0x1052` cross-ref) and
+divides source length by the i64 at the marked offset. The encoder
+(Pro Tools writer) needs to emit the second `0x2628`+`0x2629` blocks
+when `clip_playrate.is_some() && clip_playrate != Some(1.0)`.
 
 Probes that produced **zero** useful diff vs `clip_with_wav` (converter
 discards or REAPER builder doesn't emit):
