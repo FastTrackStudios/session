@@ -234,8 +234,8 @@ imported session sounds static.
 
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
-| Edit groups | unknown | ❌ | ❌ | |
-| Mix groups | unknown | ❌ | ❌ | |
+| Edit groups | `0x4501` (one per session) | 🟡 | ❌ | Located via cross-fixture string sweep on orchestral-session.ptx. Flat list of `[u32_namelen][name][i16_color]` entries (~40 groups in orchestral). Per-track membership table precedes the list (~9 KB; format not yet decoded). See `docs/converter-frida-discovered-offsets.md` §"`0x4501` / `0x4702`". |
+| Mix groups (stem mapping) | `0x4702` | 🟡 | ❌ | PT 12+'s "Stem Mapping" feature (track → stem-type). Flat list `[u32_namelen][name]` (no color). Built-in entries `Dialog`, `Music`, `Effects`, `Narration`, then user classifications. |
 | Track folders (PT 12+) | unknown | ❌ | ❌ | |
 | Selection-state memlocs | `0x2077` (not `0x271a`) | 🟡 | ❌ | `0x2077` is PT's unified Memory Locations list (markers + selections + window-configs). Name + start/end position decoded; flag-bitmap (`0x00000903` for a point marker) needs further differential probing across memloc kinds. See `docs/converter-frida-discovered-offsets.md` §"`0x2077` — Memory Locations". |
 | Zoom-state memlocs | `0x2077` (same as selection) | 🟡 | ❌ | Lives in the same Memory Locations list; identified by a different bit in the flag bitmap. Not yet decoded which bit. |

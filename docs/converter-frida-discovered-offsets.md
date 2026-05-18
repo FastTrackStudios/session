@@ -545,6 +545,61 @@ view. The roadmap's `selection-state memlocs` and `zoom-state memlocs`
 (both ❌) almost certainly map to other entries in this same list with
 different flag-bitmap values.
 
+### `0x4501` / `0x4702` — edit groups + stem mapping
+
+Located via cross-fixture string search for "Group" / "Mix" /
+"GROUP" / "Foreign". `orchestral-session.ptx` is a film-post session
+with ~40 named groups split across two flat list blocks.
+
+**`0x4501` — edit groups list** (1 per session when groups exist):
+
+Layout from `Bed` example: each entry is
+`<u32 LE namelen><utf-8 name><0xFE 0xFF (i16 = -2)>`.
+
+The `FE FF` trailer is the same "no color" sentinel used elsewhere
+(clip default color, track default color). Each entry is `4 + namelen
++ 2` bytes; entries are concatenated. The block has a sizable
+per-track membership table preceding the name list (the first ~9 KB
+of the block before the names start), structure not yet decoded.
+
+Sample entries from orchestral-session (~40 total): `Bed`, `Objects`,
+`DX Obj`, `GRP Obj`, `MX Obj`, `FX Obj`, `DZN Obj`, `BG Obj`,
+`DIA Group`, `FX Group`, `MX Group`, `GRP Group`, `7.1.2 MIX`,
+`DX 712 BED`, `MX 712 BED`, `FX 712 BED`, `Backgrounds`, `Vocals`,
+`Music Stem No Vocals`, `Dials`, `DX STEM`, `MX STEM`, `FX STEM`,
+`Design`, `DESIGN`, …
+
+Cross-fixture counts of `0x4501`:
+
+| Fixture | 0x4501 | 0x4702 |
+|---|---|---|
+| `HeyLady.ptx` (no groups) | 0 | 0 |
+| `studio-session-2.ptx` | 1 | 1 |
+| `orchestral-session.ptx` | 1 | 1 |
+| `wonder-session.ptx` | 1 | 0 |
+| `worship-session.ptx` | 1 | 1 |
+
+**`0x4702` — stem-mapping / track-classification list** (when present):
+
+Same flat-name-list layout but **without the `FE FF` trailer**. Each
+entry is `<u32 LE namelen><utf-8 name>`. orchestral-session starts the
+list with PT 12+'s built-in stem types: `Dialog`, `Music`, `Effects`,
+`Narration`, then 2-char codes (`DX`, `MX`, `FX`), then user-defined
+classifications. This block backs PT 12's "Stem Mapping" feature
+(track → stem-type) used for film export.
+
+**Status — neither parsed yet.** Edit-groups parity needs:
+
+1. New `ContentType::EditGroupList = 0x4501` + `StemMappingList = 0x4702`
+   enums in `crates/dawfile-protools/src/content_type.rs`.
+2. New `EditGroup { name: String, color: Option<i16>, members:
+   Vec<TrackId> }` type and `parse_edit_groups()` walking the flat
+   list. Member-track mapping lives in the block prefix and still
+   needs to be decoded — the leading ~9 KB has clear per-track
+   records (`01 01 04 01 ...` 28-byte patterns) but the field
+   semantics are speculative without a known-shape probe.
+3. `ProToolsSession.edit_groups: Vec<EditGroup>` exposure.
+
 ### `0x2064` — plugin factory-preset references
 
 Three blocks in `worship-session`, payload 350 bytes each, each
@@ -567,12 +622,8 @@ on plugin-state round-trip.
 - Decode the routing UID inside `0x261e +0x32..+0x37`
   (`85 42 e7 e5 df a2` in worship-session DRUMS) and link it against
   the `0x2602` routing entries already parsed.
-- Identify the block CT for **edit groups / mix groups**. Currently
-  unknown — neither `0x261e` nor the `0x2613/14/15/16` cluster carry
-  the right shape for "list of (group-name, member-track-uids)". Likely
-  candidates: `0x2506` (102 instances in worship — matches roughly
-  number-of-tracks × group-classes), `0x261c` or sibling CTs not yet
-  enumerated.
+- Identify the block CT for **edit groups / mix groups**: ✅ found.
+  See "`0x4501` / `0x4702`" below.
 
 ## Methodology — extending this
 
