@@ -324,11 +324,47 @@ discards or REAPER builder doesn't emit):
   `track_show_mixer`, `clip_named`, `clip_long_name` (clip name inherits
   from region `0x2629`, not stored per-clip).
 
-### Fade probes — pending
+### Fade probes — partial decode
 
-`clip_fadein` / `clip_fadeout` produce complex shift patterns. Need
-name-length-equalized + position-equalized control to localize fade
-duration + curve bytes.
+Block-count diff (`clip_with_wav` vs `clip_fadein` / `clip_fadeout`):
+
+| CT | with_wav | fade present | meaning |
+|---|---|---|---|
+| `0x104f` | 1 | 2 | extra "fade-region" sub-clip |
+| `0x1050` | 1 | 2 | container for extra fade-region |
+| `0x262e` | 1 | 0 | "no-fade" track summary marker |
+| `0x262f` | 0 | 1 | "has-fade" track summary marker (replaces `0x262e`) |
+| `0xc95e` | 1 | 0 | tail config: no-fade variant |
+| `0xc9af` | — | 1 (fadein only) | tail config: fade-in variant |
+| `0xc9b5` | — | 1 (fadeout only) | tail config: fade-out variant |
+
+Verified per-region fields inside `0x104f` (offsets relative to the
+`0x5A` magic byte at the block start):
+
+- **`magic +24` (u8)** — region kind flag.
+  - `0x03` = ordinary playable region
+  - `0x01` = fade-tail render region
+- **`magic +16..+23` (i64 LE samples)** — region's start-offset
+  within source. `0` for ordinary regions and for the fade-tail of a
+  fade-IN; `48000` (= source end at 48kHz, i.e. the EOF marker for our
+  1.0s clip) for the fade-tail of a fade-OUT. Locates *which end* the
+  fade attaches to.
+
+These coexist with the previously-decoded fields:
+`magic +9` u8 = clip mute; `magic +25..+26` i16 LE = clip color.
+
+Not yet localized (probes built but no name/position-equalized differential
+yet): fade duration (in samples), fade curve type (linear / equal-power /
+S-curve / etc). Both are likely in the `0xc9af` / `0xc9b5` tail blocks
+(distinct CTs per direction; 6-byte size delta between the two).
+
+Roadmap:
+
+- Wire `TrackRegion.is_fade_region: bool` from `0x104f +17 == 0x01`.
+- Add `clip_fadein_long` / `clip_fadeout_long` probes (duration 0.5s and
+  1.0s) to differential the duration field inside the tail block.
+- Wire `TrackRegion.fade_in_samples` / `fade_out_samples: Option<u64>`
+  once the duration byte is pinned.
 
 ## Next probe ideas
 
