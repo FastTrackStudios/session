@@ -10,7 +10,43 @@ diff tool in `crates/daw-reaper/examples/ptx_plaintext_diff.rs`.
 
 ## Verified field locations (2026-05-17)
 
-### Track mute (bool)
+### The full PT mute model
+
+PT has SEVEN distinct mute-related concepts that interact to produce
+the "effective mute" that the converter outputs as REAPER's
+`MUTESOLO` field 1:
+
+1. **Stored mute bit** (`0x1029 +5`): set by PT when user clicks
+   mute, OR when track is marked inactive/bounced.
+2. **Send routing enabled** (`0x260a[0] +8`): cleared when user
+   clicks mute; remains set when the track is inactive/bounced.
+3. **Folder mute inheritance**: child tracks of a muted folder
+   parent are effective-muted via tree walk (the converter does this
+   resolution; PT doesn't store it explicitly).
+4. **Mute automation envelope** (`<MUTEENV>` in RPP → `0x0002`
+   master event stream in PTX): time-varying mute, evaluated at the
+   playhead. Format TBD.
+5. **Send mute** (per-send `+26` byte in `0x260a`): mutes one send
+   slot only, not the whole track.
+6. **Clip mute** (TBD location, probably in `0x2629`): mutes a single
+   audio clip, not the whole track.
+7. **Active/Inactive track flag** (TBD): PT's "Make Inactive" menu —
+   inactive tracks are greyed out. REAPER has no exact equivalent;
+   probing not yet attempted.
+
+Converter's effective-mute decision (verified by reverse-direction
+probes):
+```
+effective_mute =
+    (stored_mute AND NOT send_routed)         # user-clicked mute
+    OR folder_parent.effective_mute            # inherited
+    OR mute_automation.value_at_playhead       # envelope override (TBD)
+```
+
+`parse::mute_resolver` implements the first two terms and achieves
+strict equality with the converter's MUTESOLO output on LotF.
+
+### Track mute (bool, stored state)
 
 Stored redundantly across many per-track wrappers — the converter writes
 the same bit to all of these:
@@ -50,6 +86,42 @@ table is in `pt-color-palette-ground-truth.md`.
 | `0x261b` | `+171` | u8 |
 | `0x261c` | `+180` | u8 |
 | `0x2624` | `+193` | u8 |
+
+### Track solo-defeat (bool)
+
+| Block | Offset | Encoding |
+|---|---|---|
+| `0x200b` | `+268` | u8 (0/1) ← what parser reads |
+| `0x200a` | `+259` | u8 mirror |
+
+Set when the track ignores other tracks' solo state (REAPER's
+MUTESOLO field 3). Verified via `t.solo_defeated()` RPP→PTX probe.
+
+### Send routing enabled (bool)
+
+| Block | Offset | Encoding |
+|---|---|---|
+| `0x260a[0]` | `+8` | u8 (0/1) |
+
+The "send is enabled" flag on the master-send block. PT clears
+this when the user clicks mute (so audio doesn't flow out). For
+inactive/bounced-source tracks, this stays set (audio still routes
+in principle, but the track is silent for other reasons). The
+converter uses this to disambiguate user-mute from
+inactive-with-stored-mute-bit. See `parse::mute_resolver`.
+
+Cleared on the 12 LotF "over-mute" tracks (SYZ, AC GTR, El Gtr,
+Bass Demo, Inst*) but set on the 8 truly-muted ones (ClickPrint
++ LORD family).
+
+### Mute automation envelope
+
+Stored in `0x0002` master event stream (the timeline event log,
+6550 bytes in baseline). A 2-breakpoint `<MUTEENV>` envelope (NOT
+`MUTEENV2` — the converter looks for `MUTEENV` exactly) grows the
+PTX by 6 bytes. The breakpoint positions and values are encoded as
+events in the stream, but the exact format hasn't been decoded
+yet (the diff is mostly position-shift noise from the size change).
 
 ### Track volume (i16 LE, centibel)
 
