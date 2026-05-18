@@ -44,6 +44,7 @@ implementation status, and the RE work required to get to parity.
 | Meter map (time sig) | `0x2029` | ✅ | ✏️ | |
 | Memory locations (markers) PT 5–9 | `0x263b`/`0x2619` | ✅ | ✏️ | |
 | Memory locations PT 12 | `0x2030`/`0x2077` | ✅ | ✏️ | Position = u64 LE − `(2^62 + ZERO_TICKS)` |
+| Marker color (PT 12) | `0x4826` payload `+2/+4/+6` u16 LE low-byte triplet | ✅ | ✏️ | R,G,B components. Discovered via Frida byte-read trace on `marker_colored` probe (color 0xD86E41 → reads 0xD8, 0x6E, 0x41). Surfaced as `Marker.color_rgb: Option<(u8,u8,u8)>`. |
 | Key-signature ruler items | unknown | →§16 | →§16 | |
 | Chord-symbol ruler items | unknown | →§16 | →§16 | |
 | Loop / selection points | unknown | →§16 | →§16 | |
