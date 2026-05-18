@@ -114,18 +114,46 @@ Cleared on the 12 LotF "over-mute" tracks (SYZ, AC GTR, El Gtr,
 Bass Demo, Inst*) but set on the 8 truly-muted ones (ClickPrint
 + LORD family).
 
-### Mute automation envelope
+### Mute automation envelope (DECODED 2026-05-17)
 
-Stored in `0x0002` master event stream (the timeline event log,
-6550 bytes in baseline). A 2-breakpoint `<MUTEENV>` envelope (NOT
-`MUTEENV2` — the converter looks for `MUTEENV` exactly) grows the
-PTX by 6 bytes. The breakpoint positions and values are encoded as
-events in the stream, but the exact format hasn't been decoded
-yet (the diff is mostly position-shift noise from the size change).
+Stored in **`0x260a[1]`** — the per-track master-send mute block.
+Each track's mute automation lives in its own send block. The 6 bytes
+per breakpoint cascade size-mirror up the wrapper chain (0x260d,
+0x261b, 0x261c, 0x2624).
 
-Per the converter's stage log, this is processed under the
-`mute automation` pipeline phase (mirrors `volume automation` and
-`pan automation`).
+**Header** (constant 28-byte prefix in 0x260a[1] payload):
+```
++0..+3   01 46 01 00          — block tag (constant)
++4       u8                   — payload size byte
++5..+9   00 00 00 00 00       — reserved
++10      u8                   — total point count (1 = no automation)
++11..+13 00 00 00             — reserved
++14..+15 02 00                — envelope type (mute)
++16..+17 u16 LE               — user breakpoint count (= total - 1)
++18..+27 00 ... 00            — reserved
+```
+
+**Per breakpoint** (6 bytes each, starting at payload `+28`):
+```
++0..+3   u32 LE               — time in samples (at session SR)
++4       u8                   — value: 0 = muted, 1 = un-muted
++5       u8                   — shape/flags (0 = square, default)
+```
+
+Note: REAPER's default-at-`t=0` (often val=0 from REAPER side) is
+DROPPED by the converter as redundant with PT's implicit
+default-unmuted state.
+
+Verified by 4-probe series (1pt, 2pt, 3pt, 4pt MUTEENV):
+- 4pt with REAPER points at (0.0,0.0), (1.0,1.0), (2.0,0.0), (3.0,1.0)
+- → PT 3 user breakpoints (the t=0 point dropped):
+  - bp1 time=0xBB80=48000 (1.0s) val=1 (un-muted)
+  - bp2 time=0x17700=96000 (2.0s) val=0 (muted)
+  - bp3 time=0x23280=144000 (3.0s) val=1 (un-muted)
+
+Caveat: REAPER builder's 1-breakpoint envelope is ignored by the
+converter (no time-varying state → optimized out). Need 2+ points
+for any encoding to land.
 
 ### Active / Inactive flag (TBD)
 
