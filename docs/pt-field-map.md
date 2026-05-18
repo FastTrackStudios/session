@@ -342,6 +342,28 @@ its send-slot list. The first track in a session uses 0x01..0x0a.
 Session-trailer block uses a **randomized CT** (`0xc7c9`, `0xeac2`,
 `0x0deb` observed across runs) — a per-session unique-id block.
 
+#### Outer index lists (must be extended for parser-visible multi-track)
+
+Parser-level audio track count comes from `0x1014` entries inside
+the single top-level `0x1015`. The baseline declares the track as
+STEREO (`nch=2`), so a 1-track baseline already parses as 2 audio
+track channels. Cloning `0x261c` alone does NOT change
+`0x1014`/`0x1015`, so parsed track count is fixed at 2 regardless
+of how many `0x261c` clones we splice in.
+
+To produce N parsed PT tracks, each of these outer lists must gain
+entries (verified via converter 1-trk vs 2-trk diff):
+
+| Parent list | Per-track addition |
+|-------------|--------------------|
+| `0x1015`    | +1 × `0x1014` (audio track list entry) |
+| `0x1054`    | +2 × `0x1052` (one per channel) |
+| `0x2519`    | +2 × `0x251a` (MIDI/event list) |
+| `0x2107`    | +1 × `0x210b` |
+
+Each entry has its own internal byte layout (name, channel indices,
+refs) requiring per-entry RE before bulk extension. Tracked in GH #26.
+
 Session-trailer block uses a **randomized CT** (`0xc7c9`, `0xeac2`,
 `0x0deb` observed across runs) — a per-session unique-id block.
 
