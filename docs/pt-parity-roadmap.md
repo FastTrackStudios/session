@@ -76,7 +76,7 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Region audio file index | inside region payload | →§16 | →§16 | bug (see §3) |
 | Region gain | unknown | →§16 | →§16 | |
 | Region pitch shift | unknown | →§16 | →§16 | |
-| Region time-stretch / Elastic Audio | unknown | →§16 | →§16 | |
+| Region time-stretch / Elastic Audio | second `0x2628` (TCE clone) | 🟡 | ✏️ | Decoded via `clip_playrate_{half,quarter,double}` probes. Encoded **implicitly**: when playrate≠1.0 the converter emits a second `0x2628` block whose payload carries an i64 LE = item-length-in-samples (preceded by tag byte `0x08` and a direction flag `0x30` slowdown / `0x20` speedup). Inferred playrate = `source_len_samples / length_samples`. Gating flag at `0x1052 +83 = 1`. Full layout in `docs/converter-frida-discovered-offsets.md`. Not yet wired to `TrackRegion.clip_playrate`. |
 | Warp markers (Elastic) | unknown | →§16 | →§16 | |
 | Region color | unknown | →§16 | →§16 | |
 | Region clip group membership | unknown | →§16 | →§16 | |
