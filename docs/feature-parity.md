@@ -40,9 +40,9 @@ Status legend:
 
 | Feature | Status | Notes |
 |---|---|---|
-| Volume automation | 🔬 | 6-byte breakpoint format decoded (same as mute) |
-| Pan automation | 🔬 | Same format presumed |
-| Mute automation | ✅ | `Track.mute_automation: Vec<MuteAutomationBreakpoint>` decoded from `0x260a[1]`; round-trip tested |
+| Volume automation | ✅ | `Track.volume_automation` decoded from `0x260a[0]` (i16 centibel per breakpoint); write round-trip tested |
+| Pan automation | 🔬 | Expected at `0x260a[2]` with same format; converter doesn't emit it for our `PANENV` probe — needs more RE |
+| Mute automation | ✅ | `Track.mute_automation` decoded from `0x260a[1]`; write round-trip tested |
 
 ### Routing
 
@@ -124,9 +124,9 @@ This is the harder direction. We have the native PTX writer
 
 | Feature | Status | Notes |
 |---|---|---|
-| Mute automation write | ✅ | `write_mute_automation` — splice into `0x260a[1]` with header counters |
-| Volume automation write | ❌ | Format decoded; needs writer (GH #32) |
-| Pan automation write | ❌ | Same as above (GH #32) |
+| Mute automation write | ✅ | `write_mute_automation` — splice into `0x260a[1]` |
+| Volume automation write | ✅ | `write_volume_automation` — splice into `0x260a[0]` |
+| Pan automation write | ❌ | Awaiting read-side decode |
 
 ### Sends / busing
 
@@ -220,10 +220,12 @@ This is the harder direction. We have the native PTX writer
 
 Counting only **non-roadmap** rows:
 
-- **PTX → RPP**: ~21 ✅/🚧 out of ~32 entries ≈ **65% functional, 35% missing**
-  (heavy gaps in clip gain, surround, routing, audio merge)
-- **RPP → PTX**: ~11 ✅/🚧 out of ~37 entries ≈ **30% functional, 70% missing**
-  (single-track write works; everything beyond is open)
+- **PTX → RPP**: ~23 ✅/🚧 out of ~32 entries ≈ **72% functional, 28% missing**
+  (heavy gaps remain in clip gain, surround, sends/aux, audio merge)
+- **RPP → PTX**: ~13 ✅/🚧 out of ~37 entries ≈ **35% functional, 65% missing**
+  (single-track field-complete incl. vol/mute automation; multi-track
+  distinct names work; multi-track per-track vol/mute have known
+  parser-side scoping issue)
 
 The PT Reaper Converter's headline parity is **mostly RPP → PTX**;
 that's exactly where we have the most ground to cover.
