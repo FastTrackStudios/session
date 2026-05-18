@@ -353,18 +353,49 @@ Verified per-region fields inside `0x104f` (offsets relative to the
 These coexist with the previously-decoded fields:
 `magic +9` u8 = clip mute; `magic +25..+26` i16 LE = clip color.
 
-Not yet localized (probes built but no name/position-equalized differential
-yet): fade duration (in samples), fade curve type (linear / equal-power /
-S-curve / etc). Both are likely in the `0xc9af` / `0xc9b5` tail blocks
-(distinct CTs per direction; 6-byte size delta between the two).
+### ✅ Solved — fade duration + direction + curve inside `0x262f`
+
+Three-way duration probe (`clip_fadein` 0.25s vs `clip_fadein_long` 0.5s
+vs `clip_fadein_xlong` 0.75s) found the duration field cleanly. Each
+fade emits a single `0x262f` block (replacing the no-fade `0x262e`) at
+session-level whose payload encodes everything.
+
+Block layout (offsets relative to `0x5A` magic):
+
+```
+magic +0..+8     9-byte block header (5A 02 00 <size> 00 00 00 2F 26)
+magic +9..+13    5 zero bytes
+magic +14  u8    direction flag: 0x30 = fade-IN, 0x33 = fade-OUT
+magic +15..+16   2 zero bytes
+magic +17..+19   u24 LE: fade duration in samples (@ project SR)
+magic +20..+22   u24 LE: only set for fade-OUT (duplicate of +17..+19;
+                         fadein leaves these as 0x00,0x03,0x00 — the
+                         next byte slot is actually the curve)
+magic +N   u8    curve type byte: 0x03 = linear fadein, 0x02 = linear
+                                  fadeout. Other curves untested.
+```
+
+Decoded values for the differential set (project SR = 48000):
+
+| Probe | direction | duration bytes | decoded | curve |
+|---|---|---|---|---|
+| `clip_fadein` (0.25s) | `0x30` | `e0 2e 00` | 12000 | `0x03` |
+| `clip_fadein_long` (0.5s) | `0x30` | `c0 5d 00` | 24000 | `0x03` |
+| `clip_fadein_xlong` (0.75s) | `0x30` | `a0 8c 00` | 36000 | `0x03` |
+| `clip_fadeout` (0.25s) | `0x33` | `e0 2e 00` (×2) | 12000 | `0x02` |
+
+The fade-tail `0x104f` sub-region (kind = `0x01`) cross-references the
+`0x262f` block; the `0x104f` carries only the source-anchor (start
+sample within source), and `0x262f` carries the actual fade timing.
 
 Roadmap:
 
-- Wire `TrackRegion.is_fade_region: bool` from `0x104f +17 == 0x01`.
-- Add `clip_fadein_long` / `clip_fadeout_long` probes (duration 0.5s and
-  1.0s) to differential the duration field inside the tail block.
-- Wire `TrackRegion.fade_in_samples` / `fade_out_samples: Option<u64>`
-  once the duration byte is pinned.
+- Wire `TrackRegion.fade_in_samples: Option<u64>` and
+  `TrackRegion.fade_out_samples: Option<u64>` from `0x262f` block,
+  using direction byte to pick which to populate.
+- Wire `TrackRegion.is_fade_region: bool` from `0x104f magic+24 == 0x01`.
+- Probe equal-power / S-curve fades to enumerate the curve byte
+  vocabulary.
 
 ## Next probe ideas
 
