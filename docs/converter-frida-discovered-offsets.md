@@ -353,7 +353,13 @@ Verified per-region fields inside `0x104f` (offsets relative to the
 These coexist with the previously-decoded fields:
 `magic +9` u8 = clip mute; `magic +25..+26` i16 LE = clip color.
 
-### ✅ Solved — fade duration + direction + curve inside `0x262f`
+### ✅ Confirmed — fade duration + direction + curve inside `0x262f`
+
+This **independently re-verifies** the prior decode in
+[`docs/pt-fade-encoding.md`](pt-fade-encoding.md) via a fresh
+differential probe. That doc remains the canonical reference (it covers
+crossfades and the full type-byte vocabulary `0x30`/`0x33`/`0x22`/`0x20`/
+`0x11`). Summary of the cross-check below.
 
 Three-way duration probe (`clip_fadein` 0.25s vs `clip_fadein_long` 0.5s
 vs `clip_fadein_xlong` 0.75s) found the duration field cleanly. Each
