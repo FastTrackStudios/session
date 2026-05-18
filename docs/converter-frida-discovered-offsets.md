@@ -340,12 +340,24 @@ Auxiliary observations:
 - All `0x2603 +N` byte shifts are downstream consequences of the
   ~316-byte block insertion, not new fields.
 
-**Wiring approach (pending):** `TrackRegion` should expose
-`Option<f64> clip_playrate` derived from a lookup that finds the second
-`0x2628` (referenced by the clip's `0x104f`/`0x1052` cross-ref) and
-divides source length by the i64 at the marked offset. The encoder
-(Pro Tools writer) needs to emit the second `0x2628`+`0x2629` blocks
-when `clip_playrate.is_some() && clip_playrate != Some(1.0)`.
+**Wiring status — already in the parser.** Verified via
+`cargo run -p daw-reaper --example dump_parsed_regions <file>`. The
+existing `parse_three_point` path in `crates/dawfile-protools/src/parse/regions.rs`
+already extracts the slip-offset and stretched-length into
+`AudioRegion.sample_offset` and `AudioRegion.length`. The clip's
+`TrackRegion.region_index` already cross-references the TCE-clone
+(second `0x2628`) when one is present. Example:
+
+| Probe | `region_index` | `sample_offset` | `length` |
+|---|---|---|---|
+| `clip_with_wav` (no TCE) | 0 | 0 | 48000 |
+| `clip_slip_quarter` | 1 | **12000** | **36000** |
+| `clip_playrate_half` | 1 | 0 | **96000** |
+
+A consumer can compute `playrate = source_region.length / clip_region.length`
+where `source_region` is region 0 (the un-stretched source). The writer
+side (PTX emission) still needs to emit the TCE-clone block when slip or
+playrate is set — that path doesn't exist yet.
 
 Probes that produced **zero** useful diff vs `clip_with_wav` (converter
 discards or REAPER builder doesn't emit):

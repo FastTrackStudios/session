@@ -76,7 +76,8 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Region audio file index | inside region payload | →§16 | →§16 | bug (see §3) |
 | Region gain | unknown | →§16 | →§16 | |
 | Region pitch shift | unknown | →§16 | →§16 | |
-| Region time-stretch / Elastic Audio | second `0x2628` (TCE clone) | 🟡 | ✏️ | Decoded via `clip_playrate_{half,quarter,double}` probes. Encoded **implicitly**: when playrate≠1.0 the converter emits a second `0x2628` block whose payload carries an i64 LE = item-length-in-samples (preceded by tag byte `0x08` and a direction flag `0x30` slowdown / `0x20` speedup). Inferred playrate = `source_len_samples / length_samples`. Gating flag at `0x1052 +83 = 1`. Full layout in `docs/converter-frida-discovered-offsets.md`. Not yet wired to `TrackRegion.clip_playrate`. |
+| Region time-stretch / Elastic Audio | second `0x2628` (TCE clone) | ✅ | ✏️ | Read path already wired: when playrate≠1.0 the converter emits a second `0x2628` (TCE clone region) and the existing `parse_three_point` extracts its `sample_offset` + `length` into the corresponding `AudioRegion`. The clip's `TrackRegion.region_index` cross-references it. Consumers derive playrate as `source_region.length / clip_region.length`. Verified on `clip_playrate_{half,quarter,double}` and `clip_slip_{quarter,half,eighth}` probes via `cargo run -p daw-reaper --example dump_parsed_regions`. Writer-side emission of the TCE clone still pending. Full layout in `docs/converter-frida-discovered-offsets.md`. |
+| Region slip-offset (source start) | second `0x2628` payload `+50..+51` u16 LE | ✅ | ✏️ | Same TCE-clone block as time-stretch; surfaced as `AudioRegion.sample_offset`. Verified via `clip_slip_{eighth,quarter,half}` probes: 6000/12000/24000 samples decoded correctly. |
 | Warp markers (Elastic) | unknown | →§16 | →§16 | |
 | Region color | unknown | →§16 | →§16 | |
 | Region clip group membership | unknown | →§16 | →§16 | |
