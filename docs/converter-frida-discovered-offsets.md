@@ -124,6 +124,82 @@ Zero diff vs baseline — likely the probes don't actually mutate the
 generated PTX bytes (REAPER builder issue or converter takes a
 different code path for these fields).
 
+## Trace on the LotF user session — new offsets
+
+Running the same hook on
+`Copy of 02 LORD OF THE FIGHT 1.5.ptx` (3.9 MB, 29 logical tracks)
+produces 1,885 byte-reads. Aggregating by block CT and within-block
+offset (see `crates/daw-reaper/examples/map_offsets.rs`):
+
+### Newly-observed block CTs (not yet in our parser)
+
+| CT | Read offsets | Count | Likely meaning |
+|------|--------------|------:|----------------|
+| `0x104f` | +9, +20, +24, +25, +26, +27 | 504 | Per-clip sub-block (lives INSIDE `0x1050` at its payload start). +25/+26 = `FE FF` = i16 LE `-2` (default-color marker), so 0x104f probably stores **clip color** / clip palette. |
+| `0x2602` | +10, +31, +33, +35, +36, +47, +48, +50, +51, +52 | 536 | I/O routing entry. +10 is the "active" flag (toggles 0/1 across entries). |
+| `0x2628` | +45..+48, +54..+59 | 312 | Audio region inner block. +54..+59 is a **6-byte UID identifying the source audio file** (regions referencing the same file share this UID). |
+| `0x262f` | +17, +18, +21 | 112 | Fade definition. +17/+18 likely fade-length encoding bytes (per `pt-fade-encoding.md`). |
+| `0x4826` | +7, +8, +11, +13, +15 | 80 | Marker color block — verified above. |
+| `0x2077` | +24, ... | 16 | Marker entry list. |
+| `0x204d` | +9 | 1 | Unknown — read once early in parse. |
+
+### `0x2628 +54..+59` — **audio file UID** (region → file mapping!)
+
+This is the long-standing §3 / §16 "Block not located: region audio
+file index" win. The 6-byte UID identifies the source file. Multiple
+regions pointing to the same WAV will share the UID. To build the
+region→file mapping:
+
+1. Walk each `0x2629` region; descend to its inner `0x2628`.
+2. Read 6 bytes at payload `+54..+59` (block_start `+63..+68`).
+3. Group regions by UID. Each unique UID = one source file.
+4. Cross-reference UIDs to filenames via the file-list block (whose
+   UID layout still needs probing).
+
+This replaces the name-stem heuristic currently in
+`parse/regions.rs`.
+
+### `0x1050 +53` — per-clip flag (mute? gain?)
+
+92 reads at +53 inside `0x1050` blocks. Values mostly 0 but TWO are
+1 (offsets 390481 and 390537 in LotF). This is a per-clip boolean.
+
+The existing parser knows `0x1050 +46 == 0x01` indicates a fade.
+`+53` is 7 bytes later — a separate flag, likely **clip mute** or
+**clip gain non-zero** marker (§10 "Region clip-effect / mute" or
+"Region clip gain" in the roadmap).
+
+### `0x2602` routing — additional fields
+
+Beyond the +10 active flag:
+
+- `+10`: enable flag (0 = inactive, 1 = active)
+- `+33`: another byte flag (varies)
+- `+36`: another flag — observed 1 on some entries
+- `+47..+52`: cluster of bytes — likely destination ID encoding
+
+### Confirmation of existing decoded offsets on LotF
+
+- `0x1029 +14` mute: 20 reads (= 8 muted + checks)
+- `0x102d +N` solo: 20 reads
+- `0x200a +N` solo-defeat
+- `0x2015 +97/+98` color (i16 LE)
+- `0x4826 +11/+13/+15` marker color RGB (this session)
+
+All match the current parser's offsets.
+
+## Next probe ideas
+
+To find more unobservable bytes:
+
+1. **`item_basic` with a real WAV source** — would let us probe
+   clip-mute (`0x1050 +53`), clip-gain (`0x104f +?`), clip-color.
+2. **Routing-rich probes** (multi-track with explicit `send_to(bus)`)
+   to enumerate `0x2602` fields.
+3. **Pan probes that ACTUALLY mutate the file** — current `pan` probe
+   produces zero diff; investigate whether REAPER builder is missing
+   that field or converter ignores it.
+
 ## Methodology — extending this
 
 To find more byte-level fields:
