@@ -123,6 +123,27 @@ PTX by 6 bytes. The breakpoint positions and values are encoded as
 events in the stream, but the exact format hasn't been decoded
 yet (the diff is mostly position-shift noise from the size change).
 
+Per the converter's stage log, this is processed under the
+`mute automation` pipeline phase (mirrors `volume automation` and
+`pan automation`).
+
+### Active / Inactive flag (TBD)
+
+Not yet probed. Converter binary contains strings for `Active`,
+`Hidden`, `Inactive`, `InactiveH` (Swift small-string), plus a
+`states-inactive` JSON option name. The `--options` flag accepts
+`{"states-inactive":true}` syntactically but doesn't change output
+for an `--convert` invocation (the options likely only affect
+`--gen-test` test-generation mode, not normal conversion).
+
+Decoding inactive requires either:
+- A PT-authored session with known-inactive tracks (we don't have
+  one — LotF's 12 "over-mute" tracks have +5=1 and +8=1, which
+  matches "stored mute set but send still routed" — possibly
+  inactive but not provable without ground truth).
+- Frida RE of `PTXTrackStateSpec.active` reading path in the
+  converter binary.
+
 ### Track volume (i16 LE, centibel)
 
 | Block | Offset | Encoding |
