@@ -253,6 +253,48 @@ ground-truth probes):
 - `0x260e +20..+25` 6-byte UID for routing target.
 - `0x2637 +9..+12` u32 — some session-level counter.
 
+## Phase D — real-audio clip probes (2026-05-17)
+
+WAV fixture: `/tmp/pt-re/input/clip_probe.wav` (96044 B silent mono 48k/16).
+All probes prefix `clip_*` use that source.
+
+### Verified clip offsets (wired in `TrackRegion`)
+
+- `0x104f +9` u8 — **clip mute** (`clip_muted` probe sets to 1).
+  Field: `TrackRegion.clip_muted`.
+- `0x104f +25..+26` i16 LE — **clip color palette index**.
+  `clip_with_wav` → `-2` (default); `clip_colored(0x6e41d8)` → `27`.
+  Field: `TrackRegion.clip_color`.
+
+### Pending — `clip_playrate_half` vs `clip_with_wav` diff
+
+56 differing read lines. Concrete finds:
+
+- New reads at file offsets `5953..=5955` (decoded vals `0, 119, 1`) resolve
+  to `0x2628 +45..+47`. As 24-bit LE = `96000` = `48000 SR × (1 / 0.5)`,
+  the converter's **stretched-length-in-samples** rederived from playrate +
+  source length. Not the playrate primitive itself.
+- New read inside `0x104f +20` (only present on playrate run) — strong
+  candidate for the **per-clip playrate flag/byte**. Needs a name-length-
+  equalized differential probe (`clip_playrate_quarter` vs `_half` vs
+  `_double`) to isolate exact width + encoding.
+- All `0x2603 +N` shifts (`+193 → +232 → +295`) are downstream of an
+  inserted ~316-byte run earlier in the file — track elastic-time block
+  candidate.
+
+Probes that produced **zero** useful diff vs `clip_with_wav` (converter
+discards or REAPER builder doesn't emit):
+
+- `clip_selected`, `clip_at_offset`, `track_selected`, `track_locked`,
+  `track_show_mixer`, `clip_named`, `clip_long_name` (clip name inherits
+  from region `0x2629`, not stored per-clip).
+
+### Fade probes — pending
+
+`clip_fadein` / `clip_fadeout` produce complex shift patterns. Need
+name-length-equalized + position-equalized control to localize fade
+duration + curve bytes.
+
 ## Next probe ideas
 
 To find more unobservable bytes:
