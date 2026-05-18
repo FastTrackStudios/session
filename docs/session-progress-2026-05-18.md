@@ -113,6 +113,77 @@ Top-impact items left:
 - Compound regions, alternate playlists round-trip, key-sig /
   chord-symbol items, track folders, icons/comments/height
 
+## Session 2 (2026-05-18 continued) — Binary RE breakthrough
+
+After hitting the limits of probe-and-diff at the codebase level, we
+pivoted to **dynamic binary RE via Frida**. The pipeline:
+
+1. SSH to voyager Mac where the closed-source PT Reaper Converter
+   1.5.4 runs.
+2. Inject Frida hooks into the running converter, capturing every
+   read from the decrypted PTX buffer via `Data.subscript`.
+3. Run the converter on probe fixtures and diff byte-reads between
+   baseline and feature-isolated probes.
+4. Each diff localizes a feature → specific PTX byte.
+
+### Wins via Frida byte-read tracing
+
+| Feature | Block + offset | Status |
+|---------|----------------|--------|
+| **Marker color (PT 12)** | `0x4826` payload +2/+4/+6 (R/G/B as u16-LE low bytes) | ✅ DECODED + wired in parser |
+| **Region source-file UID** | `0x2628` magic +54..+59 (6-byte UID) | 🟡 DECODED + wired; groups L+R pairs correctly |
+| Routing block fields | `0x2602` +10 (active flag), +47..+52 (6-byte destination UID), +33/+36/+50/+51/+52 (additional flags) | 📚 Documented; not yet wired |
+| Per-clip sub-block | `0x104f` +9/+20/+24/+25/+26/+27 | 📚 Documented; needs probe with real audio to ID fields |
+| Per-clip flag | `0x1050` +53 (boolean — mute or gain) | 📚 Documented; needs targeted probe |
+| Track-state extra colors | `0x2015` +51..+52, +54..+55 (additional i16-LE color positions) | 📚 Documented; semantics TBD |
+| File entry UID (in `0x1003`) | `+45..+50` 6-byte UID (sentinels `2A` at +44, `80` at +51) | 📚 Documented; doesn't directly match region UIDs — separate mapping mechanism |
+
+### Frida pipeline + tools added
+
+- `scripts/frida/trace_all_reads.js` — hooks `Data.subscript` to log
+  every byte read, plus 8 RPP emit sites for correlation.
+- `scripts/frida/trace_block_scan.js` — hooks `FUN_100175f6c` (the
+  universal block-parse helper) to log every CT scan in order.
+- `scripts/frida/trace_data_reads.js` — earlier variant.
+- `scripts/probe_diff.sh` — end-to-end harness: build probe → trace
+  → diff vs baseline → map differing offsets to blocks.
+- `crates/daw-reaper/examples/find_blocks_at.rs` — map a file offset
+  back to (block CT, within-block offset).
+- `crates/daw-reaper/examples/map_offsets.rs` — bulk version, reads
+  offsets from stdin.
+- `crates/daw-reaper/examples/list_blocks_ct.rs` — list all blocks
+  of given content-type in a fixture.
+- `crates/daw-reaper/examples/dump_decrypted.rs` — dump decrypted
+  PTX bytes for post-processing.
+- `crates/daw-reaper/examples/dump_regions_idx.rs` /
+  `dump_region_uids.rs` — region-list with per-region UIDs.
+
+### Roadmap status updates
+
+- §2 Marker color (PT 12) — was unaddressed → ✅ DECODED + write-ready
+  (writer not yet implemented but offsets known).
+- §3 File ↔ region mapping — was 🟡 name-stem heuristic → 🟡
+  (improved: 6-byte UID groups L+R pairs; full file resolution
+  pending).
+- Foundation laid: 5 more §16 entries (clip color, clip mute, routing
+  destination, additional 0x2015 colors, file UID) have known
+  byte offsets, ready to wire.
+
+### What gates 100% parity now
+
+Less is unknown. Most §16 items that were "block not located" now
+have candidate offsets identified by the Frida pipeline. Remaining
+work per item:
+
+1. Build a feature-isolating probe (often needs new REAPER builder
+   methods, e.g. track notes, clip color, item with real audio).
+2. Run `scripts/probe_diff.sh <probe>` to confirm offset.
+3. Codify in `parse/` + `write/` modules.
+4. Add a round-trip test.
+
+Per-item this is ~30-60 min of work. With ~30 §16 items remaining,
+realistic effort: 20-30 hours focused RE.
+
 ## Operational notes
 
 - Pre-push hook blocks `git push -u origin pt-re-features` because
