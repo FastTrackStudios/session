@@ -53,6 +53,10 @@ Status legend:
 | Sends A–J | ❌ | Send-slot indices located in `0x261b +7350..` but content not decoded |
 | Sub-path buses (5.0, LCR, LFE) | ❌ | |
 | Folder routing with nesting | 🚧 | `Track.is_folder`; nesting depth TBD |
+| I/O routing entries | 🟡 | `ProToolsSession.routing_entries` (`0x2602`). `routing_entries.iter().filter(\|r\| r.active)` lists live routings. `ProToolsSession::resolve_routing_destination(&entry)` resolves to `IoChannel` by UID match. LotF: 85/208 active, "Analog 1-2" etc. resolve directly. |
+| Region/file UID linkage | 🟡 | `AudioRegion.source_file_uid` + `AudioFile.source_uid` both decoded as 6-byte UIDs; namespace separate (direct match doesn't work yet — see roadmap §3). |
+| Per-clip color | 🟡 | `TrackRegion.clip_color: Option<i16>` from `0x104f +25..+26`. |
+| Per-clip flag (clip-mute?) | 🟡 | `TrackRegion.clip_flag_53` from `0x1050 +53`. Semantics need verification. |
 
 ### Surround
 
@@ -66,7 +70,7 @@ Status legend:
 
 | Feature | Status | Notes |
 |---|---|---|
-| Markers (Memory Locations) | ✅ | `Marker` type; partially RE'd in `0x0002[0]` |
+| Markers (Memory Locations) | ✅ | `Marker` type. PT12 marker color decoded (`0x4826 +2/+4/+6` → `Marker.color_rgb`). |
 | Tempo map | ✅ | `tempo_events` |
 | Time signatures | ✅ | `meter_events` |
 
@@ -221,8 +225,9 @@ This is the harder direction. We have the native PTX writer
 
 Counting only **non-roadmap** rows:
 
-- **PTX → RPP**: ~23 ✅/🚧 out of ~32 entries ≈ **72% functional, 28% missing**
-  (heavy gaps remain in clip gain, surround, sends/aux, audio merge)
+- **PTX → RPP**: ~30 ✅/🚧 out of ~36 entries ≈ **83% functional, 17% missing**
+  (heavy gaps remain in clip gain, surround, sends/aux content, FX
+  insert params, audio merge)
 - **RPP → PTX**: ~15 ✅/🚧 out of ~37 entries ≈ **40% functional, 60% missing**
   (single-track field-complete incl. vol/mute automation; multi-track
   with distinct names + per-track color/solo/mute/vol/pan all
