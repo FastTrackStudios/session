@@ -103,10 +103,14 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Volume (fader) | `0x1029` `+1..+5` i32 LE | ✅ | ✅ | 0.1 dB units; verified -31 dB matches PT. Write via `dawfile_protools::set_track_mix_state(session, name, vol, mute, pan)` — fixed-size in-place write to both record-A and record-B mirror. Round-trip tested on user session. |
-| Mute | `0x1029` `+5` u8 | ✅ | ✅ | `0` = audible, `1` = muted. Write via `set_track_mix_state` (same call as volume). Both records updated. |
-| Pan (left ch) | `0x1029` `+13..+17` i32 LE | →§16 | ✏️ | `−100` for stereo = "natural state", we map to centered |
+| Mute (stored bit) | `0x1029` `+5` u8 | ✅ | ✅ | `0` = audible, `1` = muted. Write via `set_track_mix_state`. |
+| Mute (effective, w/ send routing) | `0x1029 +5` AND `0x260a[0] +8` | ✅ | ✅ | `effective = stored AND NOT send-routed`. Discriminates user-mute vs Make-Inactive. Verified on Lord of the Fight (8 muted tracks). |
+| Pan (left ch) | `0x1029` `+13..+17` i32 LE | 🟡 | ✏️ | `−100` for stereo = "natural state", we map to centered |
 | Pan (right ch / multi-out) | `0x1029` `+17..+87` | →§16 | →§16 | |
-| Solo | unknown | →§16 | →§16 | |
+| Solo | `0x102d +162` u8 | ✅ | ✅ (single-track + multi-track) | Per-track in `0x102d` block. Verified via probe-diff. |
+| Solo defeat | `0x200b +268` u8 (mirror `0x200a +259`) | ✅ | ✅ (single-track) | "Ignores other tracks' solo" |
+| Inactive (Make Inactive / bouncedSource) | derived: `0x1029 +5 == 1` AND `0x260a[0] +8 == 1` | ✅ | ✅ (single-track) | Stored mute bit set, send routing kept |
+| Mute automation envelope | `0x260a[1]` 6-byte breakpoints | 🟡 | ✅ (single-track) | Format decoded; not yet surfaced as a parsed field on `Track` (GH #28) |
 | Record-arm | unknown | →§16 | →§16 | |
 | Input-monitor mode | unknown | →§16 | →§16 | |
 
@@ -120,7 +124,7 @@ for the real mute bit, OR look for a sibling block per track.
 
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
-| Track color | unknown | →§16 | →§16 | Not in `0x1014` payload; possibly in `0x1029` extended area (+171..) |
+| Track color | `0x200b +106`, `0x200a +97`, `0x2015 +88` i16 LE | ✅ | ✅ (single-track + multi-track) | PT palette index; `0` = default mapped to `-2` |
 | Track icon/image | unknown | →§16 | →§16 | |
 | Track comment/notes | unknown | →§16 | →§16 | |
 | Track height (mix/edit window) | unknown | →§16 | →§16 | |
