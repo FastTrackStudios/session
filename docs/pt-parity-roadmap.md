@@ -110,7 +110,7 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Solo | `0x102d +162` u8 | ✅ | ✅ (single-track + multi-track) | Per-track in `0x102d` block. Verified via probe-diff. |
 | Solo defeat | `0x200b +268` u8 (mirror `0x200a +259`) | ✅ | ✅ (single-track) | "Ignores other tracks' solo" |
 | Inactive (Make Inactive / bouncedSource) | derived: `0x1029 +5 == 1` AND `0x260a[0] +8 == 1` | ✅ | ✅ (single-track) | Stored mute bit set, send routing kept |
-| Mute automation envelope | `0x260a[1]` 6-byte breakpoints | 🟡 | ✅ (single-track) | Format decoded; not yet surfaced as a parsed field on `Track` (GH #28) |
+| Mute automation envelope | `0x260a[1]` (2nd `0x260a` child of `0x260d` wrapper) | ✅ | ✅ (single-track) | 22-byte header + 6-byte implicit (t=0) + N user breakpoints at +28. Each BP = `u32 time_samples + u8 muted + u8 shape`. Surfaced as `Track.mute_automation: Vec<MuteAutomationBreakpoint>`. Round-trip test (`write_with_mute_automation_round_trip`) covers 2-point envelopes. |
 | Record-arm | unknown | →§16 | →§16 | |
 | Input-monitor mode | unknown | →§16 | →§16 | |
 
