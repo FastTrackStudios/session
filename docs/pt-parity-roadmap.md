@@ -59,7 +59,7 @@ implementation status, and the RE work required to get to parity.
 |---|---|:-:|:-:|---|
 | Filename list | `0x1004`/`0x103a` | ✅ | ✏️ | |
 | Per-file sample length | `0x1001` | ✅ | ✏️ | |
-| File ↔ region mapping | `0x2628` magic `+54..+59` (6-byte UID) | 🟡 | ✏️ | Discovered via Frida byte-read trace on LotF. Surfaced as `AudioRegion.source_file_uid: Option<[u8;6]>`. Regions referencing the same WAV share the UID — verified on LotF (L+R pairs share UID). Counterpart UID in `0x1004`/`0x103a` audio file list still needs probing for the FULL region→file resolution. |
+| File ↔ region mapping | partial UIDs decoded — see notes | 🟡 | ✏️ | Surfaced two related UIDs: (1) `AudioFile.source_uid` from `0x1003 +45..+50` (each file gets unique 6-byte UID, bracketed by `0x2A`/`0x80` sentinels); (2) `AudioRegion.source_file_uid` from `0x2628 magic +54..+59` (L+R pairs share). The two UID NAMESPACES DON'T DIRECTLY MATCH — `e5ac0155eee8` is the file UID for `vocals_1.wav` but the regions named `vocals_1-03.L/R` have UID `b45a6200b84c`. A third linkage block remains to be found before this can replace the name-stem heuristic. |
 | Audio file path resolution | (filesystem) | ✅ | ✏️ | session_dir/`Audio Files/` |
 | External file refs | unknown | →§16 | →§16 | Files outside session dir |
 
