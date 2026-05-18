@@ -188,6 +188,35 @@ Beyond the +10 active flag:
 
 All match the current parser's offsets.
 
+## Routing-examples fixture trace
+
+Running the hook on `routing-examples.ptx` (24 tracks with many
+routings) produces 724 reads. The routing block `0x2602` accounts
+for 554 of them across 217 distinct entries. Hot offsets:
+
+| Offset | Reads | Observed values | Likely meaning |
+|--------|------:|-----------------|----------------|
+| +10 | 217 | 0 / 1 | **active flag** (1 = routing entry is in use) |
+| +33 | 9 | 0 | secondary flag |
+| +35 | 28 | varies | data field |
+| +36 | 7 | 0 / 1 | another active-like flag |
+| +47..+52 | ~200 cluster | varies | 6-byte block — looks like a destination UID (same pattern as the region source-file UID) |
+| +50 | 19 | varies | mid-UID byte |
+| +54 | 7 | varies | trailing field |
+
+The `+47..+52` cluster IS shaped like a UID (varying bytes per
+entry, consecutive). Hypothesis: it's the destination UID that
+points to a specific bus / output / send target. Resolving the UID
+to a destination name needs probing of the bus/output list block.
+
+Also confirmed on this trace:
+- `0x260e +49 = 66` — a single read; likely a destination index
+  for the track output assignment.
+- `0x2015` has MULTIPLE i16-LE `FE FF` (default color) reads
+  at `+51..+52`, `+54..+55`, `+97..+98` — three separate color
+  positions within the same block (probably different states /
+  default-vs-set colors).
+
 ## Next probe ideas
 
 To find more unobservable bytes:
