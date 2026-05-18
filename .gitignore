@@ -19,3 +19,8 @@
 # Ghidra reverse-engineering artifacts (large binaries, not for VCS)
 crates/dawfile-logic/ghidra/
 .claude/
+
+# Sibling git checkouts that landed inside this tree
+/Firewheel/
+/cpal/
+/glicol/
