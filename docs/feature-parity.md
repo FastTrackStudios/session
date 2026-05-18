@@ -100,10 +100,12 @@ This is the harder direction. We have the native PTX writer
 | Single track (name, color, vol, pan) | ✅ | `write_single_track_ptx` |
 | Single-track mute / solo / solo-defeat | ✅ | All decoded and patched |
 | Single-track inactive | ✅ | |
-| Multi-track structural (N × `0x261c`) | 🚧 | `write_session_ptx` clones N times — parser doesn't yet see N distinct tracks (GH #26) |
-| Multi-track parser-visible | ❌ | Needs outer-list extension: `0x1015`/`0x1054`/`0x2519`/`0x2107` (GH #26) |
-| Multi-track distinct names | ❌ | Blocked on above |
-| Track colors | ✅ | (single-track) |
+| Multi-track structural (N × `0x261c`) | ✅ | `write_session_ptx` clones N times |
+| Multi-track parser-visible | ✅ | Outer-list extension done for `0x1015`/`0x1054`/`0x2519` |
+| Multi-track distinct names | ✅ | Verified up to 5 tracks (tests pass) |
+| Track colors (multi) | ✅ | Per-track color patching scoped to each `0x261c` |
+| Track solo (multi) | ✅ | Per-track solo patching scoped to each `0x261c` |
+| Track mute (multi) | 🚧 | Stored bit writes correctly, but parser's mute_resolver pairs names with wrappers positionally and breaks on cloned files — resolver-side fix needed |
 | Track notes | ❌ | |
 | Audio track / Folder / Video kinds | 🚧 | Audio only |
 
@@ -220,7 +222,7 @@ Counting only **non-roadmap** rows:
 
 - **PTX → RPP**: ~21 ✅/🚧 out of ~32 entries ≈ **65% functional, 35% missing**
   (heavy gaps in clip gain, surround, routing, audio merge)
-- **RPP → PTX**: ~6 ✅/🚧 out of ~37 entries ≈ **15% functional, 85% missing**
+- **RPP → PTX**: ~11 ✅/🚧 out of ~37 entries ≈ **30% functional, 70% missing**
   (single-track write works; everything beyond is open)
 
 The PT Reaper Converter's headline parity is **mostly RPP → PTX**;
