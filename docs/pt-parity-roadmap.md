@@ -141,7 +141,7 @@ for the real mute bit, OR look for a sibling block per track.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Hardware I/O channels | `0x1021`/`0x1022` | ✅ | ✏️ | |
-| I/O routing table | `0x2602`/`0x2603` | →§16 | →§16 | parsed as containers; field semantics unknown |
+| I/O routing table | `0x2602` per-entry: `+10` active u8, `+33` flag_33, `+36` flag_36, `+47..+52` 6-byte destination UID | 🟡 | ✏️ | Each entry surfaced as `RoutingEntry` on `ProToolsSession.routing_entries`. Verified via Frida byte-read trace: LotF has 208 entries (85 active), routing-examples shows the same byte pattern. Destination UID resolution to a bus/output name still TBD. |
 | Track input (mic/line/bus) | unknown | →§16 | →§16 | |
 | Track output (master/bus) | `0x260e` (in `0x260d` wrapper) | ✅ | ✅ | Length-prefixed destination name (e.g. `"Analog 1-2"`, `"Bus 13-14"`) at payload `+0x24`. 61-byte variant = no destination. Aligned 1:1 with `0x251a` order. Write via `dawfile_protools::set_track_output(session, name, dest)` — splices the destination string and rebuilds parent block sizes. Round-trip test on user session confirms the new value survives parse→write→parse and no other track drifts. |
 | Aux send count / levels / destinations | unknown | →§16 | →§16 | |
@@ -177,8 +177,8 @@ master, which is wrong for any serious session.
 | Active playlist regions | `0x1054`/`0x1052` | ✅ | ✏️ | |
 | Region start position (samples) | sub-entry `+9..+12` | ✅ | ✏️ | |
 | Region start position (ticks, for MIDI/inst) | sub-entry `+9` u40, when `+16==0x40` | ✅ | ✏️ | |
-| Region clip-effect / mute | unknown | →§16 | →§16 | |
-| Region clip gain | unknown | →§16 | →§16 | |
+| Region clip-effect / mute | `0x1050 +53` u8 | 🟡 | ✏️ | Surfaced as `TrackRegion.clip_flag_53`. Semantics not fully verified (LotF: 2 of 92 reads = `1`); hypothesis = clip-mute or clip-gain-non-zero indicator. Needs probe with explicit clip-mute. |
+| Region clip gain | `0x104f` (sub-block of `0x1050`) | 🟡 | ✏️ | Inner block decoded; clip color at `0x104f +25..+26` surfaced as `TrackRegion.clip_color: Option<i16>`. Other fields in the block (clip gain dB / breakpoints) await dedicated probes. |
 | Alternate playlists | `0x2428`/`0x2429`+`0x1054` | ✅ | →§16 | parsed but not emitted |
 
 ---
