@@ -217,6 +217,42 @@ Also confirmed on this trace:
   positions within the same block (probably different states /
   default-vs-set colors).
 
+## Multi-byte ranges captured via `Data.subscript(_:Range<Int>)`
+
+Hooking the range-subscript variant (`_$s10Foundation4DataV15_RepresentationOyACSnySiGcig`)
+at PLT stub `base + 0x2690c8` (script:
+`scripts/frida/trace_range_reads.js`) reveals **all multi-byte
+slice reads** that the single-byte hook misses.
+
+Baseline trace produces 62 unique range reads. Mapping highlights:
+
+| Range size | Within block | Likely meaning |
+|------------|--------------|----------------|
+| 4 bytes | `0x2637 +9..+12` | u32 — version/sample-rate |
+| 8 bytes | `0x2602 +37..+44` | second UID inside routing entry |
+| 8 bytes | `0x102d +43..+50` (within `0x2619`) | per-track UID? |
+| 10 bytes | `0x2519 +79..+88` | first-track name slice ("ProbeTrack") |
+| 10 bytes | `0x1052 +13..+23` | playlist-entry name |
+| 18 bytes | `0x2602 +28..+45` (etc.) | routing entry UID + flags |
+| 22 bytes | `0x4803 +13..+34` (under `0x204b`) | unknown block sub-field |
+| 38 bytes | `0x0003 +9..+47` | session version/product chunk |
+| 123 bytes | `0x0003 +9..+131` | larger session metadata |
+| 256 bytes | `0x0003 +51..+306` | large session blob |
+
+The range hook **doesn't capture byte values** (returns a Data
+slice, not a copy). For value extraction, use the byte-subscript
+hook OR read bytes from the buffer post-hoc with known offsets.
+
+**Next-session wiring candidates** (offsets known, semantics need
+ground-truth probes):
+- `0x102d +41..+46` 6-byte UID (per-track identity?) — also at
+  `+53..+58` (mirror).
+- `0x2602 +15..+22` 8-byte field (additional routing UID).
+- `0x260e +9..+10` u16 — track-output destination index
+  (complement to the destination-string at `+45`/`+47`).
+- `0x260e +20..+25` 6-byte UID for routing target.
+- `0x2637 +9..+12` u32 — some session-level counter.
+
 ## Next probe ideas
 
 To find more unobservable bytes:
