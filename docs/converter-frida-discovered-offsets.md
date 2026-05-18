@@ -266,6 +266,36 @@ All probes prefix `clip_*` use that source.
   `clip_with_wav` → `-2` (default); `clip_colored(0x6e41d8)` → `27`.
   Field: `TrackRegion.clip_color`.
 
+### ✅ Solved — clip slip-offset (source start within source)
+
+Three-way `clip_slip_{eighth,quarter,half}` probes localized
+slip-offset to the **same TCE-clone `0x2628` block** that holds
+playrate. Layout when only slip is set (playrate = 1.0):
+
+```
+... 01 20 20 33 08 <slip_u16_LE> <length_u16_LE> <pad×4> ...
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                two consecutive u16 LE values in samples @ project SR
+```
+
+| Probe | slip (s) | len (s) | bytes after `08` | decoded slip | decoded len |
+|---|---|---|---|---|---|
+| `clip_slip_eighth` | 0.125 | 0.875 | `70 17 10 a4` | 6000 | 42000 |
+| `clip_slip_quarter` | 0.25 | 0.75 | `e0 2e a0 8c` | 12000 | 36000 |
+| `clip_slip_half` | 0.5 | 0.5 | `c0 5d c0 5d` | 24000 | 24000 |
+
+The byte at `0x173e` of the second `0x2628` payload (relative to
+beginning of probe area; varies with source-path length) is the
+**slip discriminator**: `0x20` when slip > 0, `0x00` when slip == 0.
+The byte after (`0x173f` here) is the direction flag established
+earlier: `0x30` (slowdown) / `0x20` (speedup / non-stretched).
+
+**Open question**: this encoding uses u16 for slip+length, but the
+playrate-only case uses a wider i64 for the length alone. The two
+encodings select on the slip-discriminator byte. Need a combined
+`clip_slip_and_playrate` probe to confirm which path the converter
+takes when both are set.
+
 ### ✅ Solved — playrate encoding via TCE-clone region
 
 Three-way differential probe (`clip_playrate_half/quarter/double` vs
