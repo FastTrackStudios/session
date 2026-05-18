@@ -274,10 +274,13 @@ All probes prefix `clip_*` use that source.
   to `0x2628 +45..+47`. As 24-bit LE = `96000` = `48000 SR × (1 / 0.5)`,
   the converter's **stretched-length-in-samples** rederived from playrate +
   source length. Not the playrate primitive itself.
-- New read inside `0x104f +20` (only present on playrate run) — strong
-  candidate for the **per-clip playrate flag/byte**. Needs a name-length-
-  equalized differential probe (`clip_playrate_quarter` vs `_half` vs
-  `_double`) to isolate exact width + encoding.
+- New reads inside `0x104f +9` (val 0), `0x104f +20` (val 0),
+  `0x1052 +83` (val 1, read twice) — only triggered when playrate ≠ 1.0.
+  `0x1052 +83 = 1` is the strongest candidate for the **has-elastic-time
+  flag** (gates reading the rest of the TCE sub-tree). The actual
+  playrate ratio is almost certainly stored in the inserted ~316-byte
+  run upstream and not yet localized — needs `clip_playrate_quarter`
+  and `_double` probes for differential analysis.
 - All `0x2603 +N` shifts (`+193 → +232 → +295`) are downstream of an
   inserted ~316-byte run earlier in the file — track elastic-time block
   candidate.
