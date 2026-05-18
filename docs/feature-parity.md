@@ -42,7 +42,7 @@ Status legend:
 |---|---|---|
 | Volume automation | 🔬 | 6-byte breakpoint format decoded (same as mute) |
 | Pan automation | 🔬 | Same format presumed |
-| Mute automation | 🔬 | Format decoded in `0x260a[1]`; not surfaced on `Track` (GH #27) |
+| Mute automation | ✅ | `Track.mute_automation: Vec<MuteAutomationBreakpoint>` decoded from `0x260a[1]`; round-trip tested |
 
 ### Routing
 
