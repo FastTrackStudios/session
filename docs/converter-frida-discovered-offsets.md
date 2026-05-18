@@ -598,7 +598,17 @@ classifications. This block backs PT 12's "Stem Mapping" feature
    needs to be decoded — the leading ~9 KB has clear per-track
    records (`01 01 04 01 ...` 28-byte patterns) but the field
    semantics are speculative without a known-shape probe.
-3. `ProToolsSession.edit_groups: Vec<EditGroup>` exposure.
+3. `ProToolsSession.edit_groups: Vec<EditGroup>` exposure. **Done**
+   in this branch's parser (preliminary heuristic; over-reads on the
+   membership-table prefix).
+
+**Membership decode status (blocked):** worship-session has 4 named
+entries (just the built-in stem types) but only 2 occurrences of the
+`01 01 04 01` marker in its 0x4501 prefix, spaced 192 bytes apart. So
+the marker is not a 1-per-group record and the per-track membership
+table layout isn't a simple `N × M` matrix. Without a PT-authored
+fixture where the member-track list of each group is externally known,
+the prefix can't be reverse-engineered confidently.
 
 ### `0x260d` — 4 envelope slots per audio track
 
