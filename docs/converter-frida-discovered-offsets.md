@@ -353,6 +353,17 @@ discards or REAPER builder doesn't emit):
 - `clip_selected`, `clip_at_offset`, `track_selected`, `track_locked`,
   `track_show_mixer`, `clip_named`, `clip_long_name` (clip name inherits
   from region `0x2629`, not stored per-clip).
+- `clip_pitch_up_2` / `clip_pitch_up_7` / `clip_pitch_down_3` —
+  REAPER `.pitch(semitones)` does not reach the PT export through the
+  converter path (identical file size + only hash-region byte changes).
+  Pitch shift, if supported by PT, would need a different REAPER source
+  signal or a direct PTX-level write.
+- `midi_one_note` / `midi_cc1_only` / `midi_cc1_value127` /
+  `midi_cc7_volume` — all four produce **identical** block-CT counts and
+  identical 13-byte `0x2000` (MdNLB) blocks. The converter emits the
+  outer MIDI shell but **drops every MIDI event** (notes and CCs alike).
+  Round-tripping MIDI through this converter is not viable; MIDI CC
+  decoding will need a real PT-authored session, not converter output.
 
 ### Fade probes — partial decode
 
