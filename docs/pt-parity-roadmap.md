@@ -177,8 +177,10 @@ master, which is wrong for any serious session.
 | Active playlist regions | `0x1054`/`0x1052` | ✅ | ✏️ | |
 | Region start position (samples) | sub-entry `+9..+12` | ✅ | ✏️ | |
 | Region start position (ticks, for MIDI/inst) | sub-entry `+9` u40, when `+16==0x40` | ✅ | ✏️ | |
-| Region clip-effect / mute | `0x1050 +53` u8 | 🟡 | ✏️ | Surfaced as `TrackRegion.clip_flag_53`. Semantics not fully verified (LotF: 2 of 92 reads = `1`); hypothesis = clip-mute or clip-gain-non-zero indicator. Needs probe with explicit clip-mute. |
-| Region clip gain | `0x104f` (sub-block of `0x1050`) | 🟡 | ✏️ | Inner block decoded; clip color at `0x104f +25..+26` surfaced as `TrackRegion.clip_color: Option<i16>`. Other fields in the block (clip gain dB / breakpoints) await dedicated probes. |
+| Clip mute | `0x104f +9` u8 | ✅ | ✏️ | `TrackRegion.clip_muted`. Verified via `clip_muted` probe (REAPER item `.muted()` + real WAV source) → byte=1; baseline → byte=0. |
+| Clip color | `0x104f +25..+26` i16 LE | ✅ | ✏️ | `TrackRegion.clip_color`. Verified via `clip_colored` probe (REAPER item with color 0x6e41d8) → palette index `27`; baseline → `-2` (default). |
+| Region clip-effect flag | `0x1050 +53` u8 | 🟡 | ✏️ | `TrackRegion.clip_flag_53`. Semantics still unclear (rare value=1; doesn't toggle with mute/color probes). |
+| Region clip gain | `0x104f` (other fields TBD) | ❌ | ✏️ | Clip mute + color decoded above. Static gain / dynamic envelope encoding still TBD. |
 | Alternate playlists | `0x2428`/`0x2429`+`0x1054` | ✅ | →§16 | parsed but not emitted |
 
 ---
