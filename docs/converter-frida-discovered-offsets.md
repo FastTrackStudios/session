@@ -468,6 +468,58 @@ To find more unobservable bytes:
    produces zero diff; investigate whether REAPER builder is missing
    that field or converter ignores it.
 
+## Phase E — internal tracks via real PT fixtures (2026-05-18)
+
+Pivoted from converter-output probes to direct inspection of
+PT-authored fixtures under `crates/dawfile-protools/tests/fixtures/`
+since the converter discards too much (MIDI events, pitch shift,
+edit-group memberships, etc.) to surface those features.
+
+### `0x261e` — internal-track / aux-bus / master-bus / click-track entries
+
+Per-session count = number of non-audio mixer tracks (buses, aux
+returns, master, click). Each `0x261e` block carries the track name as
+a length-prefixed string at payload offset `+0x1d` (= magic + `0x24`).
+Names extracted from fixtures:
+
+| Fixture | count | sample names |
+|---|---|---|
+| `HeyLady.ptx` | 1 | `Click` (the metronome click track) |
+| `studio-session-2.ptx` | 6 | `Click 1`, `DRUMS LR`, `SNAPS`, `GTRS`, `verb`, `Master` |
+| `worship-session.ptx` | 7 | `DRUMS`, `EG GTR`, `G Delay`, `Verb`, `HORNS`, `Click 1`, `MixBus` |
+| `orchestral-session.ptx` | 7 | `Click 1`, `M2`, `M3`, `M4`, `WW>>`, `Brass>>`, `Strings>>` |
+| `wonder-session.ptx` | 16 | `DRUMS`, `Drum Verb`, `PERC`, `BASS`, `AC GTR`, …, `MixBus` |
+
+These are the **session's internal/mixer-only tracks** — not audio
+playback tracks. Currently `TrackKind` only models `Audio` and `Midi`;
+adding `Aux` / `Bus` / `Master` / `Click` variants would let the parser
+expose these.
+
+The single-block `0x2614` (size 13 bytes), and the nested wrappers
+`0x2613` ⊂ `0x2615` ⊂ `0x2616` co-occur with each `0x261e` — they
+appear to form the per-entry config records (plugin slot, output
+routing, signal-flow flags). Concrete byte semantics not yet decoded.
+
+The single-instance container CTs (`0x2611`, `0x2554`, `0x4841`,
+`0x2621`) live alongside this list — `0x2621` is huge (~260 KB in
+worship-session), almost certainly the wrapper for all the per-aux
+config records.
+
+### Next on this branch
+
+- Probe REAPER aux-return / master-track / instrument-track creation
+  via the builder (if exposed) to differential-decode the per-record
+  bytes in `0x2614`/`0x2615`/`0x2616`.
+- Decode the routing UID inside `0x261e +0x32..+0x37`
+  (`85 42 e7 e5 df a2` in worship-session DRUMS) and link it against
+  the `0x2602` routing entries already parsed.
+- Identify the block CT for **edit groups / mix groups**. Currently
+  unknown — neither `0x261e` nor the `0x2613/14/15/16` cluster carry
+  the right shape for "list of (group-name, member-track-uids)". Likely
+  candidates: `0x2506` (102 instances in worship — matches roughly
+  number-of-tracks × group-classes), `0x261c` or sibling CTs not yet
+  enumerated.
+
 ## Methodology — extending this
 
 To find more byte-level fields:
