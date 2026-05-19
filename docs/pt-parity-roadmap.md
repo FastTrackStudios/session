@@ -44,6 +44,7 @@ implementation status, and the RE work required to get to parity.
 | Meter map (time sig) | `0x2029` | ✅ | ✏️ | |
 | Memory locations (markers) PT 5–9 | `0x263b`/`0x2619` | ✅ | ✏️ | |
 | Memory locations PT 12 | `0x2030`/`0x2077` | ✅ | ✏️ | Position = u64 LE − `(2^62 + ZERO_TICKS)` |
+| Marker color (PT 12) | `0x4826` payload `+2/+4/+6` u16 LE low-byte triplet | ✅ | ✏️ | R,G,B components. Discovered via Frida byte-read trace on `marker_colored` probe (color 0xD86E41 → reads 0xD8, 0x6E, 0x41). Surfaced as `Marker.color_rgb: Option<(u8,u8,u8)>`. |
 | Key-signature ruler items | unknown | →§16 | →§16 | |
 | Chord-symbol ruler items | unknown | →§16 | →§16 | |
 | Loop / selection points | unknown | →§16 | →§16 | |
@@ -58,7 +59,7 @@ implementation status, and the RE work required to get to parity.
 |---|---|:-:|:-:|---|
 | Filename list | `0x1004`/`0x103a` | ✅ | ✏️ | |
 | Per-file sample length | `0x1001` | ✅ | ✏️ | |
-| File ↔ region mapping | unknown | →§16 | ✏️ | **Currently using region-name → file-stem heuristic.** Real `audio_file_index` field in the region payload reads garbage (we read u32 at "end of block" which lands in next block's magic). |
+| File ↔ region mapping | partial UIDs decoded — see notes | 🟡 | ✏️ | Surfaced two related UIDs: (1) `AudioFile.source_uid` from `0x1003 +45..+50` (each file gets unique 6-byte UID, bracketed by `0x2A`/`0x80` sentinels); (2) `AudioRegion.source_file_uid` from `0x2628 magic +54..+59` (L+R pairs share). The two UID NAMESPACES DON'T DIRECTLY MATCH — `e5ac0155eee8` is the file UID for `vocals_1.wav` but the regions named `vocals_1-03.L/R` have UID `b45a6200b84c`. A third linkage block remains to be found before this can replace the name-stem heuristic. |
 | Audio file path resolution | (filesystem) | ✅ | ✏️ | session_dir/`Audio Files/` |
 | External file refs | unknown | →§16 | →§16 | Files outside session dir |
 
@@ -75,7 +76,8 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Region audio file index | inside region payload | →§16 | →§16 | bug (see §3) |
 | Region gain | unknown | →§16 | →§16 | |
 | Region pitch shift | unknown | →§16 | →§16 | |
-| Region time-stretch / Elastic Audio | unknown | →§16 | →§16 | |
+| Region time-stretch / Elastic Audio | second `0x2628` (TCE clone) | ✅ | ✏️ | Read path already wired: when playrate≠1.0 the converter emits a second `0x2628` (TCE clone region) and the existing `parse_three_point` extracts its `sample_offset` + `length` into the corresponding `AudioRegion`. The clip's `TrackRegion.region_index` cross-references it. Consumers derive playrate as `source_region.length / clip_region.length`. Verified on `clip_playrate_{half,quarter,double}` and `clip_slip_{quarter,half,eighth}` probes via `cargo run -p daw-reaper --example dump_parsed_regions`. Writer-side emission of the TCE clone still pending. Full layout in `docs/converter-frida-discovered-offsets.md`. |
+| Region slip-offset (source start) | second `0x2628` payload `+50..+51` u16 LE | ✅ | ✏️ | Same TCE-clone block as time-stretch; surfaced as `AudioRegion.sample_offset`. Verified via `clip_slip_{eighth,quarter,half}` probes: 6000/12000/24000 samples decoded correctly. |
 | Warp markers (Elastic) | unknown | →§16 | →§16 | |
 | Region color | unknown | →§16 | →§16 | |
 | Region clip group membership | unknown | →§16 | →§16 | |
@@ -92,8 +94,8 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Channel index map | `0x1014` | ✅ | ✏️ | |
 | Track kind (audio/MIDI/aux/master) | `0x251a` `+2` byte | ✅ | ✏️ | 0x00 audio, 0x02 aux/MIDI, 0x05 master, 0x07 inst |
 | Track UID | `0x251a` payload | →§16 | →§16 | needed for round-trip |
-| Master track | `0x251a` kind=0x05 | →§16 | →§16 | currently filtered out at import |
-| Aux/instrument tracks | `0x251a` kind=0x02/0x07 | →§16 | →§16 | included in midi_tracks Vec |
+| Master track | `0x261e` (one per session) | 🟡 | ❌ | Now surfaced as `ProToolsSession.internal_tracks: Vec<InternalTrack>` (name + 6-byte routing UID). Master appears as one of the entries; distinguishing Master vs Aux vs Bus from the entry's byte payload still TBD. |
+| Aux/instrument tracks | `0x261e` | 🟡 | ❌ | Same `InternalTrack` list. wonder-session: 16 entries (DRUMS, BASS, AC GTR, Drum Verb, etc.). orchestral-session: 7 (Click 1, M2-M4, WW>>, Brass>>, Strings>>). Kind discrimination still pending. |
 | Track creation order | (block order) | ✅ | ✏️ | |
 
 ---
@@ -103,10 +105,14 @@ from the auto-generated `<file>-NN.L` pattern lose their source link.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Volume (fader) | `0x1029` `+1..+5` i32 LE | ✅ | ✅ | 0.1 dB units; verified -31 dB matches PT. Write via `dawfile_protools::set_track_mix_state(session, name, vol, mute, pan)` — fixed-size in-place write to both record-A and record-B mirror. Round-trip tested on user session. |
-| Mute | `0x1029` `+5` u8 | ✅ | ✅ | `0` = audible, `1` = muted. Write via `set_track_mix_state` (same call as volume). Both records updated. |
-| Pan (left ch) | `0x1029` `+13..+17` i32 LE | →§16 | ✏️ | `−100` for stereo = "natural state", we map to centered |
+| Mute (stored bit) | `0x1029` `+5` u8 | ✅ | ✅ | `0` = audible, `1` = muted. Write via `set_track_mix_state`. |
+| Mute (effective, w/ send routing) | `0x1029 +5` AND `0x260a[0] +8` | ✅ | ✅ | `effective = stored AND NOT send-routed`. Discriminates user-mute vs Make-Inactive. Verified on Lord of the Fight (8 muted tracks). |
+| Pan (left ch) | `0x1029` `+13..+17` i32 LE | 🟡 | ✏️ | `−100` for stereo = "natural state", we map to centered |
 | Pan (right ch / multi-out) | `0x1029` `+17..+87` | →§16 | →§16 | |
-| Solo | unknown | →§16 | →§16 | |
+| Solo | `0x102d +162` u8 | ✅ | ✅ (single-track + multi-track) | Per-track in `0x102d` block. Verified via probe-diff. |
+| Solo defeat | `0x200b +268` u8 (mirror `0x200a +259`) | ✅ | ✅ (single-track) | "Ignores other tracks' solo" |
+| Inactive (Make Inactive / bouncedSource) | derived: `0x1029 +5 == 1` AND `0x260a[0] +8 == 1` | ✅ | ✅ (single-track) | Stored mute bit set, send routing kept |
+| Mute automation envelope | `0x260a[1]` (2nd `0x260a` child of `0x260d` wrapper) | ✅ | ✅ (single-track) | 22-byte header + 6-byte implicit (t=0) + N user breakpoints at +28. Each BP = `u32 time_samples + u8 muted + u8 shape`. Surfaced as `Track.mute_automation: Vec<MuteAutomationBreakpoint>`. Round-trip test (`write_with_mute_automation_round_trip`) covers 2-point envelopes. |
 | Record-arm | unknown | →§16 | →§16 | |
 | Input-monitor mode | unknown | →§16 | →§16 | |
 
@@ -120,7 +126,7 @@ for the real mute bit, OR look for a sibling block per track.
 
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
-| Track color | unknown | →§16 | →§16 | Not in `0x1014` payload; possibly in `0x1029` extended area (+171..) |
+| Track color | `0x200b +106`, `0x200a +97`, `0x2015 +88` i16 LE | ✅ | ✅ (single-track + multi-track) | PT palette index; `0` = default mapped to `-2` |
 | Track icon/image | unknown | →§16 | →§16 | |
 | Track comment/notes | unknown | →§16 | →§16 | |
 | Track height (mix/edit window) | unknown | →§16 | →§16 | |
@@ -136,7 +142,7 @@ for the real mute bit, OR look for a sibling block per track.
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
 | Hardware I/O channels | `0x1021`/`0x1022` | ✅ | ✏️ | |
-| I/O routing table | `0x2602`/`0x2603` | →§16 | →§16 | parsed as containers; field semantics unknown |
+| I/O routing table | `0x2602` per-entry: `+10` active u8, `+33` flag_33, `+36` flag_36, `+47..+52` 6-byte destination UID | 🟡 | ✏️ | Each entry surfaced as `RoutingEntry` on `ProToolsSession.routing_entries`. Verified via Frida byte-read trace: LotF has 208 entries (85 active), routing-examples shows the same byte pattern. Destination UID resolution to a bus/output name still TBD. |
 | Track input (mic/line/bus) | unknown | →§16 | →§16 | |
 | Track output (master/bus) | `0x260e` (in `0x260d` wrapper) | ✅ | ✅ | Length-prefixed destination name (e.g. `"Analog 1-2"`, `"Bus 13-14"`) at payload `+0x24`. 61-byte variant = no destination. Aligned 1:1 with `0x251a` order. Write via `dawfile_protools::set_track_output(session, name, dest)` — splices the destination string and rebuilds parent block sizes. Round-trip test on user session confirms the new value survives parse→write→parse and no other track drifts. |
 | Aux send count / levels / destinations | unknown | →§16 | →§16 | |
@@ -172,8 +178,10 @@ master, which is wrong for any serious session.
 | Active playlist regions | `0x1054`/`0x1052` | ✅ | ✏️ | |
 | Region start position (samples) | sub-entry `+9..+12` | ✅ | ✏️ | |
 | Region start position (ticks, for MIDI/inst) | sub-entry `+9` u40, when `+16==0x40` | ✅ | ✏️ | |
-| Region clip-effect / mute | unknown | →§16 | →§16 | |
-| Region clip gain | unknown | →§16 | →§16 | |
+| Clip mute | `0x104f +9` u8 | ✅ | ✏️ | `TrackRegion.clip_muted`. Verified via `clip_muted` probe (REAPER item `.muted()` + real WAV source) → byte=1; baseline → byte=0. |
+| Clip color | `0x104f +25..+26` i16 LE | ✅ | ✏️ | `TrackRegion.clip_color`. Verified via `clip_colored` probe (REAPER item with color 0x6e41d8) → palette index `27`; baseline → `-2` (default). |
+| Region clip-effect flag | `0x1050 +53` u8 | 🟡 | ✏️ | `TrackRegion.clip_flag_53`. Semantics still unclear (rare value=1; doesn't toggle with mute/color probes). |
+| Region clip gain | `0x104f` (other fields TBD) | ❌ | ✏️ | Clip mute + color decoded above. Static gain / dynamic envelope encoding still TBD. |
 | Alternate playlists | `0x2428`/`0x2429`+`0x1054` | ✅ | →§16 | parsed but not emitted |
 
 ---
@@ -210,9 +218,9 @@ master, which is wrong for any serious session.
 
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
-| Volume automation | unknown | ❌ | ❌ | |
-| Pan automation | unknown | ❌ | ❌ | |
-| Mute automation | unknown | ❌ | ❌ | |
+| Volume automation | `0x260a[0]` (1st `0x260a` child of `0x260d`) | ✅ | ✅ (single-track) | 22-byte header + 6-byte implicit @+22 + N user breakpoints @+28. Each = `u32 time_samples + i16 value_centibel`. Surfaced as `Track.volume_automation`; writer via `NativeTrackSpec.volume_automation`. Round-trip test covers 2-point envelopes. |
+| Pan automation | `0x260a[1]` (was `[2]` — corrected) | ❌ | ❌ | Cross-fixture sweep confirms every audio-track `0x260d` carries 4 envelope slots: `[0]` vol (wired), `[1]` pan, `[2]` mute, `[3]` send-level (all suspected). Available test fixtures contain only volume curves — every `[1]`/`[2]`/`[3]` slot in every fixture is the 41-byte "empty + implicit only" stub. Format is assumed to mirror vol (same 22 B header + breakpoint shape) with different value units. Converter probes via `pan_envelope`, `pan_envelope_2`, `pan_envelope_lr` all produce no diff — REAPER builder pan-envelope names not propagated. Read parity needs a PT-authored fixture with non-trivial pan automation. |
+| Mute automation | `0x260a[1]` (2nd `0x260a` child of `0x260d`) | ✅ | ✅ | See §6 mute automation row for full details |
 | Send-level automation | unknown | ❌ | ❌ | |
 | Plugin-parameter automation | unknown | ❌ | ❌ | |
 | Tempo automation (vs static map) | partial | 🟡 | ✏️ | we emit static map; tempo curves untested |
@@ -226,35 +234,39 @@ imported session sounds static.
 
 | Feature | Block(s) | Read | Write | Notes |
 |---|---|:-:|:-:|---|
-| Edit groups | unknown | ❌ | ❌ | |
-| Mix groups | unknown | ❌ | ❌ | |
+| Edit groups | `0x4501` (one per session) | 🟡 | ❌ | Located via cross-fixture string sweep on orchestral-session.ptx. Flat list of `[u32_namelen][name][i16_color]` entries (~40 groups in orchestral). Per-track membership table precedes the list (~9 KB; format not yet decoded). See `docs/converter-frida-discovered-offsets.md` §"`0x4501` / `0x4702`". |
+| Mix groups (stem mapping) | `0x4702` | 🟡 | ❌ | PT 12+'s "Stem Mapping" feature (track → stem-type). Flat list `[u32_namelen][name]` (no color). Built-in entries `Dialog`, `Music`, `Effects`, `Narration`, then user classifications. |
 | Track folders (PT 12+) | unknown | ❌ | ❌ | |
-| Selection-state memlocs | `0x271a` siblings | ❌ | ❌ | |
-| Zoom-state memlocs | `0x271a` siblings | ❌ | ❌ | |
+| Selection-state memlocs | `0x2077` (not `0x271a`) | 🟡 | ❌ | `0x2077` is PT's unified Memory Locations list (markers + selections + window-configs). Name + start/end position decoded; flag-bitmap (`0x00000903` for a point marker) needs further differential probing across memloc kinds. See `docs/converter-frida-discovered-offsets.md` §"`0x2077` — Memory Locations". |
+| Zoom-state memlocs | `0x2077` (same as selection) | 🟡 | ❌ | Lives in the same Memory Locations list; identified by a different bit in the flag bitmap. Not yet decoded which bit. |
 
 ---
 
-## 15. Writing (round-trip) — currently 0% done
+## 15. Writing (round-trip) — partial
 
-To write a `.ptx` file we need every read field above to have a corresponding
-**encoder**, plus:
+Reflects the current state of `crates/dawfile-protools/src/write/` after
+the write-side scaffolding round.
 
-| Concern | Status |
-|---|---|
-| XOR re-encryption with correct seed | ❌ |
-| Block tree serializer with correct sizes | ❌ |
-| Re-compute parent block `block_size` after children change | ❌ |
-| Re-compute cross-block indices (audio_file_index, fade_index, region_index, etc.) | ❌ |
-| Preserve unknown blocks verbatim (passthrough) | ❌ |
-| Preserve unknown bytes within known blocks | ❌ |
-| Stable UID generation for new tracks/regions/markers | ❌ |
-| Stable ordering (PT compares ordering for some structures) | ❌ |
-| Update headers (file size, modified-date, etc.) | ❌ |
-| Surface validation: PT refuses to open files with broken back-references | ❌ |
-
-`src/write.rs` exists today and supports only **single-field in-place
-modifications** (rename track, change sample rate) — not block-add or
-structural rewrite.
+| Concern | Status | Notes |
+|---|---|---|
+| XOR re-encryption with correct seed | ✅ | `RawSession::encrypt()` |
+| Block tree serializer with correct sizes | ✅ | `write/splice.rs` updates every ancestor `block_size` field on each modification, then re-parses the block tree |
+| Re-compute parent block `block_size` after children change | ✅ | same as above |
+| Re-compute cross-block indices (audio_file_index, fade_index, region_index, etc.) | 🟡 | implemented for fade_index in `write/native.rs`; other indices not yet |
+| Preserve unknown blocks verbatim (passthrough) | ✅ | the template-patch approach (`write/native.rs`) leaves unmodified blocks untouched |
+| Preserve unknown bytes within known blocks | ✅ | splice only touches the byte range you point at |
+| Stable UID generation for new tracks/regions/markers | ❌ | no `add_internal_track` path yet; will need a deterministic UID allocator that doesn't collide with existing entries |
+| Stable ordering (PT compares ordering for some structures) | ❌ | not yet validated; failure mode would be PT refusing to open |
+| Update headers (file size, modified-date, etc.) | 🟡 | size is implicit (just buffer length); modified-date not preserved |
+| Surface validation: PT refuses to open files with broken back-references | ❌ | no validator pass before write |
+| **Block construction primitive** (`wrap_as_block(ct, payload)`) | ✅ | `write/block_ops.rs` |
+| **Block-tree insert/remove** (`append_child_block`, `remove_block`) | ✅ | `write/block_ops.rs` |
+| **Stem-mapping (`0x4702`) writer** (add / replace) | ✅ | `write/edit_groups.rs::add_stem_mapping`, `replace_stem_mappings` |
+| **Edit-group (`0x4501`) writer** | ❌ | `write/edit_groups.rs::add_edit_group_name` returns `WriteError::Unimplemented`; blocked on membership-table decode |
+| **Internal-track (`0x261e`) rename** | ✅ | `write/internal_tracks.rs::rename_internal_track` (both same-length and variable-length splice) |
+| **Internal-track add/remove** | ❌ | `write/internal_tracks.rs::add_internal_track` / `remove_internal_track` return `WriteError::Unimplemented`; blocked on prefix-byte decode |
+| **TCE-clone (`0x2628[1]`) emission** (for clip playrate / slip-offset writes) | ❌ | not yet started |
+| **Pan / mute / send envelope writes** (`0x260a[1..3]`) | ❌ | blocked on value-unit verification (no PT-authored fixture exercises these) |
 
 ---
 
