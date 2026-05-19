@@ -351,6 +351,16 @@
               # C/C++ bindgen (avahi-sys via sync, blitz transitive)
               pkgs.llvmPackages.libclang
 
+              # Plugin-hosting runtime deps (VST3/CLAP). Also listed in
+              # LD_LIBRARY_PATH below so dlopen finds them at runtime.
+              pkgs.curl
+              pkgs.xcbutil
+              pkgs.xcbutilcursor
+              pkgs.xcbutilkeysyms
+              pkgs.xcbutilimage
+              pkgs.xcbutilrenderutil
+              pkgs.xcbutilwm
+
               # Misc system libs commonly required by GUI/audio crates
               pkgs.alsa-lib
               pkgs.dbus
@@ -401,6 +411,24 @@
                 pkgs.mesa
                 pkgs.libGL
                 pkgs.vulkan-loader
+
+                # Runtime deps for hosting third-party VST3/CLAP plugins
+                # (`daw-standalone --features vst3-host,clap-host`).
+                # Most commercial Linux plugin .so's link against the
+                # system C++ runtime + freetype/fontconfig/curl/xcb-util
+                # for their built-in GUIs. Without these on
+                # LD_LIBRARY_PATH the bundle dlopens fail before
+                # `GetPluginFactory` is even resolved.
+                pkgs.stdenv.cc.cc.lib  # libstdc++.so.6
+                pkgs.freetype
+                pkgs.fontconfig.lib
+                pkgs.curl.out
+                pkgs.xcbutil
+                pkgs.xcbutilcursor
+                pkgs.xcbutilkeysyms
+                pkgs.xcbutilimage
+                pkgs.xcbutilrenderutil
+                pkgs.xcbutilwm
               ];
             };
 
