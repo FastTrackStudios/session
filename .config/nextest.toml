@@ -3,3 +3,14 @@ slow-timeout = { period = "5s", terminate-after = 3 }
 
 [profile.ci]
 slow-timeout = { period = "10s", terminate-after = 12 }
+
+# round_trip_every_fixture spawns the round_trip example as a subprocess
+# for every PT fixture (~18 files) — process startup + debug-mode parse
+# overhead easily exceeds the default 15s budget. Give it more headroom.
+[[profile.default.overrides]]
+filter = "test(round_trip_every_fixture)"
+slow-timeout = { period = "15s", terminate-after = 4 }
+
+[[profile.ci.overrides]]
+filter = "test(round_trip_every_fixture)"
+slow-timeout = { period = "30s", terminate-after = 4 }
