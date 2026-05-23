@@ -43,8 +43,10 @@ pub(crate) const TRANSPORT_TIME_EPSILON_SECS: f64 = 0.002;
 pub(crate) const TRANSPORT_PROGRESS_EPSILON: f64 = 0.0005;
 
 /// Implementation of SetlistService
-#[derive(Clone)]
-pub struct SetlistServiceImpl {
+pub struct SetlistServiceImpl<D = ()> {
+    /// Native in-process DAW backend. Host crates provide the concrete backend
+    /// (for example daw-reaper); session only calls daw-proto service traits.
+    pub(crate) daw: D,
     /// Current setlist state
     pub(crate) setlist: Arc<RwLock<Option<Setlist>>>,
     /// Currently active song ID (cached locally to avoid RPC calls)
@@ -80,9 +82,35 @@ pub struct SetlistServiceImpl {
     pub(crate) position_sync: Arc<RwLock<Option<PositionSyncBridge>>>,
 }
 
-impl SetlistServiceImpl {
-    pub fn new() -> Self {
+impl<D> Clone for SetlistServiceImpl<D>
+where
+    D: Clone,
+{
+    fn clone(&self) -> Self {
         Self {
+            daw: self.daw.clone(),
+            setlist: self.setlist.clone(),
+            active_song_id: self.active_song_id.clone(),
+            cached_indices: self.cached_indices.clone(),
+            queued_target: self.queued_target.clone(),
+            setlist_update_bus: self.setlist_update_bus.clone(),
+            setlist_revision: self.setlist_revision.clone(),
+            song_cache: self.song_cache.clone(),
+            hydration_bus: self.hydration_bus.clone(),
+            chart_hydration_bus: self.chart_hydration_bus.clone(),
+            chart_cache: self.chart_cache.clone(),
+            fingerprint_method_supported: self.fingerprint_method_supported.clone(),
+            last_chart_refresh_attempt: self.last_chart_refresh_attempt.clone(),
+            build_generation: self.build_generation.clone(),
+            position_sync: self.position_sync.clone(),
+        }
+    }
+}
+
+impl<D> SetlistServiceImpl<D> {
+    pub fn with_daw(daw: D) -> Self {
+        Self {
+            daw,
             setlist: Arc::new(RwLock::new("session.setlist", None)),
             active_song_id: Arc::new(RwLock::new("session.setlist.active_song_id", None)),
             cached_indices: Arc::new(RwLock::new(
@@ -105,7 +133,21 @@ impl SetlistServiceImpl {
             position_sync: Arc::new(RwLock::new("session.setlist.position_sync", None)),
         }
     }
+}
 
+impl SetlistServiceImpl<()> {
+    pub fn new() -> Self {
+        Self::with_daw(())
+    }
+}
+
+impl Default for SetlistServiceImpl<()> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<D> SetlistServiceImpl<D> {
     /// Get the cached active indices (updated by polling loop, no RPC calls)
     pub(crate) async fn get_cached_indices(&self) -> ActiveIndices {
         self.cached_indices.read().await.clone()
@@ -163,5 +205,13 @@ impl SetlistServiceImpl {
     pub(crate) fn notify_setlist_changed(&self) {
         let revision = self.setlist_revision.fetch_add(1, Ordering::SeqCst) + 1;
         self.setlist_update_bus.send(revision);
+    }
+}
+
+impl<D> architect::HasDispatcher for SetlistServiceImpl<D> {
+    type Dispatcher = architect::dispatch::CurrentThreadDispatcher;
+
+    fn dispatcher(&self) -> Self::Dispatcher {
+        architect::dispatch::CurrentThreadDispatcher
     }
 }

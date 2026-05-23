@@ -5,6 +5,7 @@ use super::{
 };
 use crate::song_builder::SongBuilder;
 use daw::rpc::Daw;
+use daw::service::{ProjectContext, ProjectInfo, Projects};
 use keyflow_daw_analysis::{
     DetectedChord, MidiChartData, MidiChartRequest, MidiChartServiceClient,
 };
@@ -12,7 +13,6 @@ use moire::sync::Semaphore;
 use session_proto::{Song, SongChartHydration, SongDetectedChord, SongId};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
 #[derive(Clone)]
@@ -25,12 +25,14 @@ pub(crate) struct SongCacheEntry {
 #[derive(Clone)]
 pub(crate) struct ProjectLoad {
     pub(crate) index: usize,
-    pub(crate) project: daw::rpc::Project,
     pub(crate) guid: String,
     pub(crate) project_name: String,
 }
 
-impl SetlistServiceImpl {
+impl<D> SetlistServiceImpl<D>
+where
+    D: Projects,
+{
     pub(crate) fn song_is_hydrated(song: &Song) -> bool {
         !song.sections.is_empty() || song.end_seconds > song.start_seconds
     }
@@ -41,18 +43,15 @@ impl SetlistServiceImpl {
             return Some(current);
         }
 
-        let daw = Daw::get();
-        let project = daw.project(&current.project_guid).await.ok()?;
+        let project_name = self
+            .daw
+            .get(&current.project_guid)
+            .map(|info| info.name)
+            .unwrap_or_else(|| current.project_guid.clone());
         let load = ProjectLoad {
             index,
             guid: current.project_guid.clone(),
-            project_name: project
-                .info()
-                .await
-                .ok()
-                .map(|info| info.name)
-                .unwrap_or_else(|| current.project_guid.clone()),
-            project,
+            project_name,
         };
         let rebuilt = self
             .build_songs_with_cache(&load, Some(&current))
@@ -151,17 +150,15 @@ impl SetlistServiceImpl {
     }
 
     /// Build a `MidiChartServiceClient` over the same vox channel daw is using.
-    /// Chart service is registered into the bridge by fts-extensions at
-    /// startup; we just need a client over the existing `Caller`.
+    /// Chart service is registered by session's DAW service layer at startup;
+    /// we just need a client over the existing `Caller`.
     fn chart_client() -> MidiChartServiceClient {
         MidiChartServiceClient::new(Daw::get().caller().clone())
     }
 
-    pub(crate) async fn fetch_midi_chart_data(
-        project: &daw::rpc::Project,
-    ) -> Option<MidiChartData> {
+    pub(crate) async fn fetch_midi_chart_data(project_guid: &str) -> Option<MidiChartData> {
         let req = MidiChartRequest::new(
-            Some(project.guid().to_string()),
+            Some(project_guid.to_string()),
             Some(MIDI_TRACK_TAG.to_string()),
         );
         match Self::chart_client().generate_chart_data(req).await {
@@ -169,25 +166,21 @@ impl SetlistServiceImpl {
             Err(vox_err) => {
                 debug!(
                     "MIDI chart generation unavailable for project {}: {}",
-                    project.guid(),
-                    vox_err
+                    project_guid, vox_err
                 );
                 None
             }
         }
     }
 
-    pub(crate) async fn fetch_midi_source_fingerprint(
-        &self,
-        project: &daw::rpc::Project,
-    ) -> Option<String> {
+    pub(crate) async fn fetch_midi_source_fingerprint(&self, project_guid: &str) -> Option<String> {
         let support_state = *self.fingerprint_method_supported.read().await;
         if support_state == Some(false) {
             return None;
         }
 
         let req = MidiChartRequest::new(
-            Some(project.guid().to_string()),
+            Some(project_guid.to_string()),
             Some(MIDI_TRACK_TAG.to_string()),
         );
         match Self::chart_client().source_fingerprint(req).await {
@@ -210,8 +203,7 @@ impl SetlistServiceImpl {
                 } else {
                     debug!(
                         "MIDI source fingerprint unavailable for project {}: {}",
-                        project.guid(),
-                        vox_err
+                        project_guid, vox_err
                     );
                 }
                 None
@@ -273,40 +265,24 @@ impl SetlistServiceImpl {
         }
     }
 
-    pub(crate) async fn fetch_project_loads(projects: Vec<daw::rpc::Project>) -> Vec<ProjectLoad> {
+    pub(crate) async fn fetch_project_loads(projects: Vec<ProjectInfo>) -> Vec<ProjectLoad> {
         let semaphore = Arc::new(Semaphore::new(
             "session.setlist.hydration.fetch_projects",
             HYDRATION_CONCURRENCY,
         ));
-        let mut join_set = JoinSet::new();
-
+        let mut loads = Vec::with_capacity(projects.len());
         for (index, project) in projects.into_iter().enumerate() {
-            let permit = semaphore.clone();
-            join_set.spawn(async move {
-                let _permit = permit.acquire_owned().await.expect("semaphore closed");
-                let guid = project.guid().to_string();
-                let project_name = project
-                    .info()
-                    .await
-                    .map(|info| info.name)
-                    .unwrap_or_else(|_| guid.clone());
-                ProjectLoad {
-                    index,
-                    project,
-                    guid,
-                    project_name,
-                }
+            let _permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("semaphore closed");
+            loads.push(ProjectLoad {
+                index,
+                guid: project.guid,
+                project_name: project.name,
             });
         }
-
-        let mut loads = Vec::new();
-        while let Some(result) = join_set.join_next().await {
-            match result {
-                Ok(load) => loads.push(load),
-                Err(e) => warn!("Failed to load project metadata: {}", e),
-            }
-        }
-        loads.sort_by_key(|load| load.index);
         loads
     }
 
@@ -315,7 +291,7 @@ impl SetlistServiceImpl {
         load: &ProjectLoad,
         existing_song: Option<&Song>,
     ) -> Vec<Song> {
-        let source_fingerprint = self.fetch_midi_source_fingerprint(&load.project).await;
+        let source_fingerprint = self.fetch_midi_source_fingerprint(&load.guid).await;
 
         if let Some(cached) = self.song_cache.get(&load.guid).await {
             let fingerprint_matches = match source_fingerprint.as_ref() {
@@ -332,9 +308,9 @@ impl SetlistServiceImpl {
             }
         }
 
-        let chart_data = Self::fetch_midi_chart_data(&load.project).await;
+        let chart_data = Self::fetch_midi_chart_data(&load.guid).await;
 
-        match SongBuilder::build(&load.project).await {
+        match SongBuilder::build_native(ProjectContext::Project(load.guid.clone())) {
             Ok(mut songs) => {
                 // Apply chart data and IDs to the first song
                 if let Some(first_song) = songs.first_mut() {
@@ -417,12 +393,12 @@ impl SetlistServiceImpl {
             return false;
         }
 
-        let daw = Daw::get();
-        let Ok(project) = daw.project(&song_snapshot.project_guid).await else {
+        if self.daw.get(&song_snapshot.project_guid).is_none() {
             return false;
-        };
+        }
         let source_fingerprint = if fingerprint_supported {
-            self.fetch_midi_source_fingerprint(&project).await
+            self.fetch_midi_source_fingerprint(&song_snapshot.project_guid)
+                .await
         } else {
             None
         };
@@ -433,7 +409,8 @@ impl SetlistServiceImpl {
             return false;
         }
 
-        let Some(chart_data) = Self::fetch_midi_chart_data(&project).await else {
+        let Some(chart_data) = Self::fetch_midi_chart_data(&song_snapshot.project_guid).await
+        else {
             return false;
         };
         if source_fingerprint.is_none()
@@ -466,10 +443,9 @@ impl SetlistServiceImpl {
                 .emit((song_index, updated_song_light.clone()));
             self.emit_cached_chart_payload_for_song(song_index, &updated_song_light.project_guid)
                 .await;
-            let project_name = project
-                .info()
-                .await
-                .ok()
+            let project_name = self
+                .daw
+                .get(&song_snapshot.project_guid)
                 .map(|info| info.name)
                 .unwrap_or_else(|| song_snapshot.project_guid.clone());
             self.song_cache

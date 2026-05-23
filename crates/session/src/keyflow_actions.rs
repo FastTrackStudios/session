@@ -1,16 +1,12 @@
 use daw::module::ModuleContext;
-use daw::rpc::Project;
-use daw::service::{MusicalPosition, Region};
+use daw::service::transport::service::Transport as TransportService;
+use daw::service::{Markers, MusicalPosition, ProjectContext, Projects, Region, Regions, TempoMap};
 use keyflow::sections::colors_for_section_type;
 use session_proto::SectionType;
 use session_proto::ruler_lanes::{CoreLane, FtsLane, classify_marker_lane};
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
 use std::time::Instant;
-use tokio::runtime::Runtime;
 use tracing::{info, warn};
-
-static RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
 
 const TOUCH_EPSILON_SECONDS: f64 = 0.001;
 const MAX_SECTION_TIME_SELECTION_SECONDS: f64 = 60.0 * 60.0;
@@ -56,9 +52,7 @@ struct SectionRegion {
     section_type: SectionType,
 }
 
-pub fn init(ctx: &ModuleContext) {
-    let _ = RUNTIME.set(ctx.runtime.clone());
-}
+pub fn init(_ctx: &ModuleContext) {}
 
 pub fn action_for_id(action_id: &str) -> Option<KeyflowAction> {
     let normalized = normalized_action_id(action_id);
@@ -105,34 +99,30 @@ fn normalized_action_id(action_id: &str) -> String {
         .unwrap_or_else(|| action_id.trim().to_lowercase())
 }
 
-pub fn dispatch(action: KeyflowAction) {
-    let Some(runtime) = RUNTIME.get() else {
-        tracing::warn!("[session] Keyflow action fired before module runtime was initialized");
-        return;
-    };
-
+pub fn dispatch<D>(daw: &D, action: KeyflowAction)
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap,
+{
     tracing::info!(?action, "[session] Dispatching Keyflow action");
-    runtime.spawn(async move {
-        tracing::info!(?action, "[session] Running Keyflow action");
-        if let Err(err) = run_action(action).await {
-            tracing::error!(?err, "[session] Keyflow action failed");
-        } else {
-            tracing::info!(?action, "[session] Keyflow action completed");
-        }
-    });
+    if let Err(err) = run_action(daw, action) {
+        tracing::error!(?err, "[session] Keyflow action failed");
+    } else {
+        tracing::info!(?action, "[session] Keyflow action completed");
+    }
 }
 
-async fn run_action(action: KeyflowAction) -> eyre::Result<()> {
+fn run_action<D>(daw: &D, action: KeyflowAction) -> eyre::Result<()>
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap,
+{
     let started = Instant::now();
-    let daw = daw::get().ok_or_else(|| eyre::eyre!("DAW facade not initialized"))?;
-    let project = daw.current_project().await?;
-    ensure_action_lane(&project, action).await?;
+    ensure_action_lane(daw, action);
 
     match action {
-        KeyflowAction::InsertSection(kind) => insert_section_region(&project, kind).await?,
+        KeyflowAction::InsertSection(kind) => insert_section_region(daw, kind)?,
         KeyflowAction::InsertMarker(kind) => {
-            insert_marker(&project, kind).await?;
-            normalize_marker_lanes(&project).await?;
+            insert_marker(daw, kind)?;
+            normalize_marker_lanes(daw)?;
         }
     }
 
@@ -144,27 +134,49 @@ async fn run_action(action: KeyflowAction) -> eyre::Result<()> {
     Ok(())
 }
 
-async fn ensure_action_lane(project: &Project, action: KeyflowAction) -> eyre::Result<()> {
+fn ensure_action_lane<D>(daw: &D, action: KeyflowAction)
+where
+    D: Projects,
+{
+    ensure_core_lanes(daw);
+
     let lane = match action {
         KeyflowAction::InsertSection(_) => FtsLane::Core(CoreLane::Sections),
         KeyflowAction::InsertMarker(kind) => classify_marker_lane(kind.name()),
     };
-    project
-        .set_ruler_lane_name(lane.lane_index(), lane.display_name())
-        .await?;
-    Ok(())
+    daw.set_ruler_lane_name(
+        ProjectContext::Current,
+        lane.lane_index(),
+        lane.display_name(),
+    );
 }
 
-async fn insert_marker(project: &Project, kind: MarkerKind) -> eyre::Result<()> {
+fn ensure_core_lanes<D>(daw: &D)
+where
+    D: Projects,
+{
+    let project = ProjectContext::Current;
+    for lane in CoreLane::all() {
+        daw.set_ruler_lane_name(project.clone(), lane.lane_index(), lane.display_name());
+    }
+}
+
+fn insert_marker<D>(daw: &D, kind: MarkerKind) -> eyre::Result<()>
+where
+    D: TransportService + Markers + TempoMap,
+{
     let started = Instant::now();
-    let position = project.transport().get_position().await?;
+    let project = ProjectContext::Current;
+    let position = edit_cursor_position(daw, project.clone());
     let name = kind.name();
     let lane = classify_marker_lane(name).lane_index();
-    let id = project.markers().add_in_lane(position, name, lane).await?;
-    project
-        .markers()
-        .set_color(id, kind.default_color())
-        .await?;
+    let id = Markers::add(daw, project.clone(), position, name)?;
+    Markers::set_color(daw, project.clone(), id, kind.default_color())?;
+    Markers::set_lane(daw, project.clone(), id, Some(lane))?;
+    if kind == MarkerKind::CountIn {
+        let cursor_position = two_measures_after(daw, project.clone(), position);
+        TransportService::set_position(daw, project, cursor_position)?;
+    }
     info!(
         ?kind,
         elapsed_ms = started.elapsed().as_millis(),
@@ -173,13 +185,27 @@ async fn insert_marker(project: &Project, kind: MarkerKind) -> eyre::Result<()> 
     Ok(())
 }
 
-async fn insert_section_region(project: &Project, kind: SectionKind) -> eyre::Result<()> {
+fn two_measures_after<D>(daw: &D, project: ProjectContext, position: f64) -> f64
+where
+    D: TempoMap,
+{
+    let (measure, beat, fraction) = daw.time_to_musical(project.clone(), position);
+    daw.musical_to_time(project, measure + 2, beat, fraction)
+}
+
+fn insert_section_region<D>(daw: &D, kind: SectionKind) -> eyre::Result<()>
+where
+    D: TransportService + Regions + TempoMap,
+{
     let started = Instant::now();
-    let position = project.transport().get_position().await?;
-    let time_selection = project.transport().get_time_selection().await?;
-    let regions = project.regions().all().await?;
-    let (start, end) =
-        infer_insert_bounds(project, kind, position, time_selection.as_ref(), &regions).await?;
+    let project = ProjectContext::Current;
+    let position = edit_cursor_position(daw, project.clone());
+    let time_selection = daw.get_time_selection(project.clone());
+    let regions = Regions::all(daw, project.clone());
+    let used_time_selection = time_selection.as_ref().is_some_and(|selection| {
+        is_valid_time_selection(selection.start_seconds, selection.end_seconds)
+    });
+    let (start, end) = infer_insert_bounds(daw, kind, position, time_selection.as_ref(), &regions);
     info!(
         kind = ?kind,
         position,
@@ -190,37 +216,45 @@ async fn insert_section_region(project: &Project, kind: SectionKind) -> eyre::Re
         insert_length_seconds = end - start,
         "[session] Keyflow section bounds",
     );
-    let lane = CoreLane::Sections.lane_index();
     info!("[session] Keyflow section insert: carving overlapping regions");
-    carve_overlapping_section_regions(project, &regions, start, end).await?;
+    carve_overlapping_section_regions(daw, &regions, start, end)?;
     info!("[session] Keyflow section insert: carve complete");
     info!("[session] Keyflow section insert: adding region");
-    let id = project
-        .regions()
-        .add_in_lane(start, end, &kind.section_type().abbreviation(), lane)
-        .await?;
+    let id = Regions::add(
+        daw,
+        project.clone(),
+        start,
+        end,
+        &kind.section_type().abbreviation(),
+    )?;
     info!(id, "[session] Keyflow section insert: add complete");
     info!(id, "[session] Keyflow section insert: setting color");
-    project
-        .regions()
-        .set_color(id, section_type_color(kind.section_type()))
-        .await?;
+    Regions::set_color(
+        daw,
+        project.clone(),
+        id,
+        section_type_color(kind.section_type()),
+    )?;
     info!(id, "[session] Keyflow section insert: color complete");
     info!(
         end,
         "[session] Keyflow section insert: moving cursor to end"
     );
-    project.transport().set_position(end).await?;
+    TransportService::set_position(daw, project.clone(), end)?;
     info!("[session] Keyflow section insert: cursor move complete");
+    if used_time_selection {
+        info!("[session] Keyflow section insert: clearing consumed time selection");
+        TransportService::clear_time_selection(daw, project.clone())?;
+    }
 
     info!("[session] Keyflow section insert: reloading regions");
-    let regions = project.regions().all().await?;
+    let regions = Regions::all(daw, project);
     info!(
         region_count = regions.len(),
         "[session] Keyflow section insert: reloaded regions",
     );
     info!("[session] Keyflow section insert: normalizing section regions");
-    normalize_section_regions(project, regions).await?;
+    normalize_section_regions(daw, regions)?;
     info!("[session] Keyflow section insert: normalize complete");
     info!(
         ?kind,
@@ -230,17 +264,31 @@ async fn insert_section_region(project: &Project, kind: SectionKind) -> eyre::Re
     Ok(())
 }
 
-async fn infer_insert_bounds(
-    project: &Project,
+fn edit_cursor_position<D>(daw: &D, project: ProjectContext) -> f64
+where
+    D: TransportService,
+{
+    daw.get_state(project.clone())
+        .edit_position
+        .time
+        .map(|position| position.as_seconds())
+        .unwrap_or_else(|| daw.get_position(project))
+}
+
+fn infer_insert_bounds<D>(
+    daw: &D,
     kind: SectionKind,
     position: f64,
     time_selection: Option<&daw::service::LoopRegion>,
     regions: &[Region],
-) -> eyre::Result<(f64, f64)> {
+) -> (f64, f64)
+where
+    D: TempoMap,
+{
     if let Some(selection) = time_selection
         .filter(|selection| is_valid_time_selection(selection.start_seconds, selection.end_seconds))
     {
-        return Ok((selection.start_seconds, selection.end_seconds));
+        return (selection.start_seconds, selection.end_seconds);
     }
     if let Some(selection) = time_selection.filter(|selection| {
         is_valid_range(selection.start_seconds, selection.end_seconds)
@@ -255,7 +303,7 @@ async fn infer_insert_bounds(
         );
     }
 
-    let musical_end = default_section_end(project, kind, position).await?;
+    let musical_end = default_section_end(daw, kind, position);
     let next_section_start = regions
         .iter()
         .filter(|region| region.start_seconds() > position + TOUCH_EPSILON_SECONDS)
@@ -264,17 +312,20 @@ async fn infer_insert_bounds(
         .min_by(f64::total_cmp);
     let end = choose_default_end(position, musical_end, next_section_start);
 
-    Ok((position, end))
+    (position, end)
 }
 
-async fn carve_overlapping_section_regions(
-    project: &Project,
+fn carve_overlapping_section_regions<D>(
+    daw: &D,
     regions: &[Region],
     insert_start: f64,
     insert_end: f64,
-) -> eyre::Result<()> {
+) -> eyre::Result<()>
+where
+    D: Regions,
+{
     let section_lane = CoreLane::Sections.lane_index();
-    let regions_client = project.regions();
+    let project = ProjectContext::Current;
 
     for region in regions {
         if region.lane != Some(section_lane) && parse_region_section_type(&region.name).is_none() {
@@ -300,7 +351,7 @@ async fn carve_overlapping_section_regions(
                 new_end = insert_start,
                 "[session] Carving section region: trimming right edge",
             );
-            regions_client.set_bounds(id, start, insert_start).await?;
+            Regions::set_bounds(daw, project.clone(), id, start, insert_start)?;
         } else if end > insert_end + TOUCH_EPSILON_SECONDS {
             info!(
                 id,
@@ -309,7 +360,7 @@ async fn carve_overlapping_section_regions(
                 new_start = insert_end,
                 "[session] Carving section region: trimming left edge",
             );
-            regions_client.set_bounds(id, insert_end, end).await?;
+            Regions::set_bounds(daw, project.clone(), id, insert_end, end)?;
         } else {
             info!(
                 id,
@@ -317,7 +368,7 @@ async fn carve_overlapping_section_regions(
                 region_end = end,
                 "[session] Carving section region: removing covered region",
             );
-            regions_client.remove(id).await?;
+            Regions::remove(daw, project.clone(), id)?;
         }
     }
 
@@ -340,13 +391,12 @@ fn is_valid_time_selection(start: f64, end: f64) -> bool {
     is_valid_range(start, end) && end - start <= MAX_SECTION_TIME_SELECTION_SECONDS
 }
 
-async fn default_section_end(
-    project: &Project,
-    kind: SectionKind,
-    position: f64,
-) -> eyre::Result<f64> {
-    let tempo_map = project.tempo_map();
-    let (measure, beat, fraction) = tempo_map.time_to_musical(position).await?;
+fn default_section_end<D>(daw: &D, kind: SectionKind, position: f64) -> f64
+where
+    D: TempoMap,
+{
+    let project = ProjectContext::Current;
+    let (measure, beat, fraction) = daw.time_to_musical(project.clone(), position);
     let start = musical_position_from_fraction(measure, beat, fraction);
     let end = MusicalPosition::new(
         start.measure + kind.default_measure_count() as i32,
@@ -354,9 +404,7 @@ async fn default_section_end(
         start.subdivision,
     );
     let end_fraction = end.subdivision as f64 / 1000.0;
-    Ok(tempo_map
-        .musical_to_time(end.measure, end.beat, end_fraction)
-        .await?)
+    daw.musical_to_time(project, end.measure, end.beat, end_fraction)
 }
 
 fn musical_position_from_fraction(measure: i32, beat: i32, fraction: f64) -> MusicalPosition {
@@ -368,69 +416,63 @@ fn musical_position_from_fraction(measure: i32, beat: i32, fraction: f64) -> Mus
     MusicalPosition::new(measure, beat, subdivision.clamp(0, 999))
 }
 
-async fn normalize_section_regions(project: &Project, regions: Vec<Region>) -> eyre::Result<()> {
+fn normalize_section_regions<D>(daw: &D, regions: Vec<Region>) -> eyre::Result<()>
+where
+    D: Regions,
+{
     let existing: HashMap<u32, (String, Option<u32>, Option<u32>)> = regions
         .iter()
         .filter_map(|region| Some((region.id?, (region.name.clone(), region.lane, region.color))))
         .collect();
     let normalized = normalized_section_updates(regions);
-    let regions = project.regions();
+    let project = ProjectContext::Current;
     for update in normalized {
         let SectionUpdate {
             id,
             name,
             section_type,
         } = update;
-        let desired_lane = Some(CoreLane::Sections.lane_index());
-        let desired_color = Some(section_type_color(section_type));
+        let desired_color = section_type_color(section_type);
         let current = existing.get(&id);
         if current
             .map(|(current_name, _, _)| current_name != &name)
             .unwrap_or(true)
         {
             info!(id, name, "[session] Normalizing section region: rename");
-            regions.rename(id, &name).await?;
+            Regions::rename(daw, project.clone(), id, &name)?;
         }
         if current
-            .map(|(_, current_lane, _)| *current_lane != desired_lane)
+            .map(|(_, _, current_color)| *current_color != Some(desired_color))
             .unwrap_or(true)
         {
             info!(
                 id,
-                lane = ?desired_lane,
-                "[session] Normalizing section region: set lane",
-            );
-            regions.set_lane(id, desired_lane).await?;
-        }
-        if current
-            .map(|(_, _, current_color)| *current_color != desired_color)
-            .unwrap_or(true)
-        {
-            info!(
-                id,
-                color = desired_color.unwrap(),
+                color = desired_color,
                 "[session] Normalizing section region: set color",
             );
-            regions.set_color(id, desired_color.unwrap()).await?;
+            Regions::set_color(daw, project.clone(), id, desired_color)?;
         }
     }
     Ok(())
 }
 
-async fn normalize_marker_lanes(project: &Project) -> eyre::Result<()> {
-    let markers = project.markers();
-    for marker in markers.all().await? {
+fn normalize_marker_lanes<D>(daw: &D) -> eyre::Result<()>
+where
+    D: Markers,
+{
+    let project = ProjectContext::Current;
+    for marker in Markers::all(daw, project.clone()) {
         let Some(id) = marker.id else {
             continue;
         };
-        let lane = classify_marker_lane(&marker.name).lane_index();
-        if marker.lane != Some(lane) {
-            markers.set_lane(id, Some(lane)).await?;
-        }
         if let Some(color) = marker_color_for_name(&marker.name)
             && marker.color != Some(color)
         {
-            markers.set_color(id, color).await?;
+            Markers::set_color(daw, project.clone(), id, color)?;
+        }
+        let lane = classify_marker_lane(&marker.name).lane_index();
+        if marker.lane != Some(lane) {
+            Markers::set_lane(daw, project.clone(), id, Some(lane))?;
         }
     }
     Ok(())
@@ -555,7 +597,7 @@ fn alpha_suffix(index: usize) -> String {
     let mut chars = Vec::new();
     loop {
         chars.push((b'A' + (n % 26) as u8) as char);
-        n = n / 26;
+        n /= 26;
         if n == 0 {
             break;
         }

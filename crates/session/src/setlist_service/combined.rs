@@ -15,9 +15,10 @@
 
 use crate::setlist_service::SetlistServiceImpl;
 use daw::rpc::Daw;
+use daw::service::{ExtState, ProjectContext, Projects};
 use session_proto::SessionServiceError;
 use std::path::PathBuf;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// ExtState section/key used to identify combined setlist projects.
 const COMBINED_EXT_SECTION: &str = "FTS";
@@ -31,7 +32,10 @@ const SYNC_KEY_SONG_INDEX: &str = "song_index";
 const SYNC_KEY_SETLIST_PATH: &str = "setlist_path";
 const SYNC_KEY_SONG_COUNT: &str = "song_count";
 
-impl SetlistServiceImpl {
+impl<D> SetlistServiceImpl<D>
+where
+    D: ExtState + Projects,
+{
     /// Generate a combined setlist project from open song projects.
     ///
     /// Pipeline:
@@ -48,68 +52,54 @@ impl SetlistServiceImpl {
         &self,
         gap_measures: u32,
     ) -> Result<String, SessionServiceError> {
-        let daw = Daw::get();
-
         // ── 1. Save all open projects to ensure RPP files are current ─
         info!("Saving all open projects before generating combined setlist...");
-        daw.save_all_projects()
-            .await
-            .map_err(|e| SessionServiceError::DawError(format!("Failed to save projects: {e}")))?;
+        self.daw.save_all();
 
         // Small delay to let REAPER finish writing files
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
         // ── 2. Get all open projects, skip combined setlists ─────────
-        let projects = daw
-            .projects()
-            .await
-            .map_err(|e| SessionServiceError::DawError(format!("Failed to list projects: {e}")))?;
+        let projects = self.daw.list();
 
         let mut rpp_paths = Vec::new();
         for project in &projects {
+            let ctx = ProjectContext::Project(project.guid.clone());
             // Skip combined setlist projects
-            let is_combined = project
-                .ext_state()
-                .get(COMBINED_EXT_SECTION, COMBINED_EXT_KEY)
-                .await
-                .unwrap_or(None)
+            let is_combined = self
+                .daw
+                .get_project(ctx.clone(), COMBINED_EXT_SECTION, COMBINED_EXT_KEY)
                 .map(|v| v == "1")
                 .unwrap_or(false);
 
             if is_combined {
-                debug!("Skipping combined setlist project: {}", project.guid());
+                debug!("Skipping combined setlist project: {}", project.guid);
                 continue;
             }
 
             // Skip routing projects
-            let is_routing = project
-                .ext_state()
-                .get(
+            let is_routing = self
+                .daw
+                .get_project(
+                    ctx,
                     session_proto::routing_project::EXT_STATE_SECTION,
                     session_proto::routing_project::EXT_STATE_KEY_IS_ROUTING,
                 )
-                .await
-                .unwrap_or(None)
                 .map(|v| v == "1")
                 .unwrap_or(false);
 
             if is_routing {
-                debug!("Skipping routing project: {}", project.guid());
+                debug!("Skipping routing project: {}", project.guid);
                 continue;
             }
-
-            let info = project
-                .info()
-                .await
-                .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
 
             // Skip unsaved projects (no file path)
-            if info.path.is_empty() {
-                debug!("Skipping unsaved project: {}", info.name);
+            if project.path.is_empty() {
+                debug!("Skipping unsaved project: {}", project.name);
                 continue;
             }
 
-            rpp_paths.push(PathBuf::from(&info.path));
+            rpp_paths.push(PathBuf::from(&project.path));
         }
 
         if rpp_paths.is_empty() {
@@ -173,12 +163,13 @@ impl SetlistServiceImpl {
         );
 
         // ── 5. Open in REAPER as a new tab ────────────────────────────
-        let new_project = daw
-            .open_project(output_path.to_string_lossy().to_string())
-            .await
-            .map_err(|e| {
-                SessionServiceError::DawError(format!("Failed to open combined setlist: {e}"))
+        let new_project = self
+            .daw
+            .open(output_path.to_string_lossy().as_ref())
+            .ok_or_else(|| {
+                SessionServiceError::DawError("Failed to open combined setlist".to_string())
             })?;
+        let new_project_ctx = ProjectContext::Project(new_project.guid.clone());
 
         // ── 6. Post-process: mark all projects with sync identity ──────
         //
@@ -190,91 +181,86 @@ impl SetlistServiceImpl {
         let song_count = rpp_paths.len().to_string();
 
         // Mark the combined setlist project
-        let ext = new_project.ext_state();
-        let _ = ext
-            .set(COMBINED_EXT_SECTION, COMBINED_EXT_KEY, "1", false)
-            .await;
-        let _ = ext
-            .set(SYNC_SECTION, SYNC_KEY_SETLIST_ID, &setlist_id, false)
-            .await;
-        let _ = ext
-            .set(SYNC_SECTION, SYNC_KEY_SONG_COUNT, &song_count, false)
-            .await;
-        let _ = ext
-            .set(
-                SYNC_SECTION,
-                SYNC_KEY_SETLIST_PATH,
-                &setlist_path_str,
-                false,
-            )
-            .await;
+        let _ = self.daw.set_project(
+            new_project_ctx.clone(),
+            COMBINED_EXT_SECTION,
+            COMBINED_EXT_KEY,
+            "1",
+        );
+        let _ = self.daw.set_project(
+            new_project_ctx.clone(),
+            SYNC_SECTION,
+            SYNC_KEY_SETLIST_ID,
+            &setlist_id,
+        );
+        let _ = self.daw.set_project(
+            new_project_ctx.clone(),
+            SYNC_SECTION,
+            SYNC_KEY_SONG_COUNT,
+            &song_count,
+        );
+        let _ = self.daw.set_project(
+            new_project_ctx,
+            SYNC_SECTION,
+            SYNC_KEY_SETLIST_PATH,
+            &setlist_path_str,
+        );
 
         // Mark each individual song project with the same setlist_id + its index
-        let all_projects = daw.projects().await.unwrap_or_default();
+        let all_projects = self.daw.list();
         let mut song_idx = 0u32;
         for project in &all_projects {
-            if project.guid() == new_project.guid() {
+            if project.guid == new_project.guid {
                 continue;
             }
 
-            let is_combined = project
-                .ext_state()
-                .get(COMBINED_EXT_SECTION, COMBINED_EXT_KEY)
-                .await
-                .unwrap_or(None)
+            let ctx = ProjectContext::Project(project.guid.clone());
+            let is_combined = self
+                .daw
+                .get_project(ctx.clone(), COMBINED_EXT_SECTION, COMBINED_EXT_KEY)
                 .map(|v| v == "1")
                 .unwrap_or(false);
             if is_combined {
                 continue;
             }
-            let is_routing = project
-                .ext_state()
-                .get(
+            let is_routing = self
+                .daw
+                .get_project(
+                    ctx.clone(),
                     session_proto::routing_project::EXT_STATE_SECTION,
                     session_proto::routing_project::EXT_STATE_KEY_IS_ROUTING,
                 )
-                .await
-                .unwrap_or(None)
                 .map(|v| v == "1")
                 .unwrap_or(false);
             if is_routing {
                 continue;
             }
 
-            let info = match project.info().await {
-                Ok(i) if !i.path.is_empty() => i,
-                _ => continue,
-            };
+            if project.path.is_empty() {
+                continue;
+            }
 
-            let ext = project.ext_state();
-            let _ = ext
-                .set(SYNC_SECTION, SYNC_KEY_SETLIST_ID, &setlist_id, false)
-                .await;
-            let _ = ext
-                .set(
-                    SYNC_SECTION,
-                    SYNC_KEY_SONG_INDEX,
-                    &song_idx.to_string(),
-                    false,
-                )
-                .await;
-            let _ = ext
-                .set(
-                    SYNC_SECTION,
-                    SYNC_KEY_SETLIST_PATH,
-                    &setlist_path_str,
-                    false,
-                )
-                .await;
+            let _ =
+                self.daw
+                    .set_project(ctx.clone(), SYNC_SECTION, SYNC_KEY_SETLIST_ID, &setlist_id);
+            let _ = self.daw.set_project(
+                ctx.clone(),
+                SYNC_SECTION,
+                SYNC_KEY_SONG_INDEX,
+                &song_idx.to_string(),
+            );
+            let _ =
+                self.daw
+                    .set_project(ctx, SYNC_SECTION, SYNC_KEY_SETLIST_PATH, &setlist_path_str);
 
             debug!(
                 "Song {} ({}) tagged with setlist_id={}",
-                song_idx, info.name, setlist_id
+                song_idx, project.name, setlist_id
             );
             song_idx += 1;
         }
 
-        let guid = new_project.guid().to_string();
+        let guid = new_project.guid.clone();
 
         // ── 7. Start bidirectional position sync ────────────────────────
         // Build offset map from song_infos and wire up the PositionSyncBridge.
@@ -307,27 +293,28 @@ impl SetlistServiceImpl {
             };
 
             // Fill in project GUIDs from the open song tabs
-            let all_projects = daw.projects().await.unwrap_or_default();
+            let all_projects = self.daw.list();
             let mut song_guids: Vec<String> = Vec::new();
             for project in &all_projects {
-                if project.guid() == guid {
+                if project.guid == guid {
                     continue;
                 }
-                let is_combined = project
-                    .ext_state()
-                    .get(COMBINED_EXT_SECTION, COMBINED_EXT_KEY)
-                    .await
-                    .unwrap_or(None)
+                let is_combined = self
+                    .daw
+                    .get_project(
+                        ProjectContext::Project(project.guid.clone()),
+                        COMBINED_EXT_SECTION,
+                        COMBINED_EXT_KEY,
+                    )
                     .map(|v| v == "1")
                     .unwrap_or(false);
                 if is_combined {
                     continue;
                 }
-                let info = match project.info().await {
-                    Ok(i) if !i.path.is_empty() => i,
-                    _ => continue,
-                };
-                song_guids.push(project.guid().to_string());
+                if project.path.is_empty() {
+                    continue;
+                }
+                song_guids.push(project.guid.clone());
             }
 
             // Update offset map with actual GUIDs
@@ -347,7 +334,10 @@ impl SetlistServiceImpl {
             // Spawn the position sync tick loop
             let position_sync = self.position_sync.clone();
             moire::task::spawn(async move {
-                let daw = daw::rpc::Daw::get();
+                let Some(daw) = daw::get().cloned() else {
+                    tracing::warn!("position sync loop skipped; daw facade is not initialized");
+                    return;
+                };
                 loop {
                     tokio::time::sleep(std::time::Duration::from_millis(33)).await; // ~30Hz
                     let mut guard = position_sync.write().await;
@@ -368,6 +358,7 @@ impl SetlistServiceImpl {
             // Collect song project handles for binding.
             let song_projects: Vec<(usize, daw::rpc::Project)> = {
                 let mut sp = Vec::new();
+                let daw = Daw::get();
                 let all = daw.projects().await.unwrap_or_default();
                 for project in all {
                     if project.guid() == guid {
@@ -379,16 +370,17 @@ impl SetlistServiceImpl {
                         .get(SYNC_SECTION, SYNC_KEY_SONG_INDEX)
                         .await
                         .unwrap_or(None);
-                    if let Some(idx_str) = idx_str {
-                        if let Ok(idx) = idx_str.parse::<usize>() {
-                            sp.push((idx, project));
-                        }
+                    if let Some(idx_str) = idx_str
+                        && let Ok(idx) = idx_str.parse::<usize>()
+                    {
+                        sp.push((idx, project));
                     }
                 }
                 sp
             };
 
             if !song_projects.is_empty() {
+                let daw = Daw::get();
                 let setlist_project = daw.project(&guid).await;
                 if let Ok(setlist_project) = setlist_project {
                     let daw_sync = super::live_daw_sync::DawSyncBridge::new(

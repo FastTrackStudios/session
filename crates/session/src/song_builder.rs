@@ -13,8 +13,9 @@
 //! 2. **Markers**: When no regions exist, consecutive markers are used to define sections
 //!    Each marker defines the start of a section, ending at the next marker.
 
+use daw::reaper::Reaper;
 use daw::rpc::Project;
-use daw::service::{Marker, Region};
+use daw::service::{Marker, Markers, ProjectContext, Projects, Region, Regions, TempoMap};
 use session_proto::{Comment, Section, SectionId, SectionType, Song, SongId};
 use tracing::{Level, debug, warn};
 
@@ -61,6 +62,26 @@ impl ResolvedLanes {
         resolved
     }
 
+    fn resolve_native(project: ProjectContext) -> Self {
+        let count = Reaper.ruler_lane_count(project.clone());
+        let mut resolved = Self::default();
+
+        for idx in 1..=count {
+            let name = Reaper.get_ruler_lane_name(project.clone(), idx);
+            match name.to_uppercase().as_str() {
+                "SONG" => resolved.song = Some(idx),
+                "SECTIONS" => resolved.sections = Some(idx),
+                _ => {}
+            }
+        }
+
+        debug!(
+            "ResolvedLanes(native): song={:?}, sections={:?}",
+            resolved.song, resolved.sections
+        );
+        resolved
+    }
+
     /// Check if a region is in the SONG lane.
     fn is_song_lane(&self, region: &Region) -> bool {
         self.song.is_some() && region.lane == self.song
@@ -68,6 +89,58 @@ impl ResolvedLanes {
 }
 
 impl SongBuilder {
+    /// Build one or more Songs from an in-process REAPER project using sync native traits.
+    pub fn build_native(project: ProjectContext) -> eyre::Result<Vec<Song>> {
+        let project_info = Reaper.info(project.clone())?;
+        debug!(
+            "SongBuilder::build_native for project {}",
+            project_info.guid
+        );
+
+        let markers = <Reaper as Markers>::all(&Reaper, project.clone());
+        let regions = <Reaper as Regions>::all(&Reaper, project.clone());
+        let lanes = ResolvedLanes::resolve_native(project.clone());
+
+        let song_regions = Self::find_song_regions(&regions, &lanes);
+        if song_regions.len() >= 2 {
+            debug!(
+                "Multi-song mode: found {} song regions in project {}",
+                song_regions.len(),
+                project_info.guid
+            );
+            let mut songs = Vec::with_capacity(song_regions.len());
+            for song_region in &song_regions {
+                match Self::build_song_from_region_native(
+                    project.clone(),
+                    &project_info.guid,
+                    song_region,
+                    &regions,
+                    &markers,
+                    &lanes,
+                ) {
+                    Ok(song) => songs.push(song),
+                    Err(e) => {
+                        warn!(
+                            "Failed to build song from region '{}': {}",
+                            song_region.name, e
+                        );
+                    }
+                }
+            }
+            Ok(songs)
+        } else {
+            let song = Self::build_single_song_native(
+                project,
+                &project_info.guid,
+                &project_info.name,
+                &markers,
+                &regions,
+                &lanes,
+            )?;
+            Ok(vec![song])
+        }
+    }
+
     /// Build one or more Songs from a DAW project.
     ///
     /// When the project contains multiple parent regions (each with ≥2 child regions),
@@ -238,8 +311,7 @@ impl SongBuilder {
             // POSTROLL > =END > SONGEND
             let outer_end = postroll_marker
                 .map(|m| position_to_seconds(&m.position))
-                .or(Some(absolute_end))
-                .unwrap();
+                .unwrap_or(absolute_end);
 
             // Snap outer end to the next barline
             let snapped_end = Self::snap_to_next_barline(tempo_map, outer_end)
@@ -251,7 +323,7 @@ impl SongBuilder {
                 song_start, song_end, outer_end, snapped_end, count_in
             );
             (song_start, song_end, snapped_end, count_in)
-        } else if let Some(ref song_region) = song_region {
+        } else if let Some(song_region) = song_region {
             let end = song_region.time_range.end_seconds();
             let start = song_region.time_range.start_seconds();
             let count_in = count_in_marker.and_then(|m| {
@@ -283,7 +355,7 @@ impl SongBuilder {
         };
 
         // Extract sections - prefer regions, fall back to markers
-        let mut sections = if let Some(ref song_region) = song_region {
+        let mut sections = if let Some(song_region) = song_region {
             Self::extract_sections_from_song_region(regions, song_region, lanes)?
         } else if !regions.is_empty() {
             Self::extract_sections_from_regions(regions, start_seconds, songend_seconds)?
@@ -495,6 +567,191 @@ impl SongBuilder {
         })
     }
 
+    fn build_single_song_native(
+        project: ProjectContext,
+        project_guid: &str,
+        project_name: &str,
+        markers: &[Marker],
+        regions: &[Region],
+        lanes: &ResolvedLanes,
+    ) -> eyre::Result<Song> {
+        let (song_name, _artist) = Self::parse_project_name(project_name);
+
+        let count_in_marker = markers.iter().find(|m| Self::is_count_in_marker(&m.name));
+        let absolute_start_marker = markers.iter().find(|m| m.name == "=START");
+        let songstart_marker = markers.iter().find(|m| Self::is_songstart_marker(&m.name));
+        let songend_marker = markers.iter().find(|m| Self::is_songend_marker(&m.name));
+        let absolute_end_marker = markers.iter().find(|m| m.name == "=END");
+        let postroll_marker = markers
+            .iter()
+            .find(|m| m.name == "POSTROLL" || m.name == "=POSTROLL");
+
+        let start_marker =
+            songstart_marker.or_else(|| markers.iter().find(|m| m.name.starts_with("=SONGSTART")));
+        let end_marker =
+            songend_marker.or_else(|| markers.iter().find(|m| m.name.starts_with("=SONGEND")));
+        let song_region = Self::find_song_region(regions, lanes);
+
+        let (start_seconds, songend_seconds, end_seconds, count_in_seconds) =
+            if let (Some(start), Some(end)) = (start_marker, end_marker) {
+                let song_start = position_to_seconds(&start.position);
+                let song_end = position_to_seconds(&end.position);
+                let absolute_end = absolute_end_marker
+                    .map(|m| position_to_seconds(&m.position))
+                    .unwrap_or(song_end);
+                let count_in = if let Some(ci_marker) = count_in_marker.or(absolute_start_marker) {
+                    let ci_time = position_to_seconds(&ci_marker.position);
+                    (ci_time < song_start).then_some(song_start - ci_time)
+                } else {
+                    None
+                };
+                let outer_end = postroll_marker
+                    .map(|m| position_to_seconds(&m.position))
+                    .unwrap_or(absolute_end);
+                let snapped_end = Self::snap_to_next_barline_native(project.clone(), outer_end)
+                    .unwrap_or(outer_end);
+                (song_start, song_end, snapped_end, count_in)
+            } else if let Some(song_region) = song_region {
+                let end = song_region.time_range.end_seconds();
+                let start = song_region.time_range.start_seconds();
+                let count_in = count_in_marker.and_then(|m| {
+                    let marker_time = position_to_seconds(&m.position);
+                    (marker_time < start).then_some(start - marker_time)
+                });
+                (start, end, end, count_in)
+            } else {
+                let start = markers
+                    .iter()
+                    .map(|m| position_to_seconds(&m.position))
+                    .chain(regions.iter().map(|r| r.time_range.start_seconds()))
+                    .min_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap())
+                    .unwrap_or(0.0);
+                let end = markers
+                    .iter()
+                    .map(|m| position_to_seconds(&m.position))
+                    .chain(regions.iter().map(|r| r.time_range.end_seconds()))
+                    .max_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap())
+                    .unwrap_or(60.0);
+                (start, end, end, None)
+            };
+
+        let mut sections = if let Some(song_region) = song_region {
+            Self::extract_sections_from_song_region(regions, song_region, lanes)?
+        } else if !regions.is_empty() {
+            Self::extract_sections_from_regions(regions, start_seconds, songend_seconds)?
+        } else {
+            Self::build_sections_from_markers(markers, start_seconds, songend_seconds)?
+        };
+
+        let song_start_seconds = if let Some(count_in_duration) = count_in_seconds {
+            if count_in_duration > 0.0 {
+                let count_in_start = start_seconds - count_in_duration;
+                let count_in_end = sections
+                    .first()
+                    .map(|s| s.start_seconds)
+                    .unwrap_or(start_seconds);
+                sections.insert(
+                    0,
+                    Section {
+                        section_id: SectionId::new(),
+                        id: None,
+                        name: "Count-In".to_string(),
+                        comment: None,
+                        section_type: SectionType::CountIn,
+                        start_seconds: count_in_start,
+                        end_seconds: count_in_end,
+                        number: None,
+                        color: None,
+                    },
+                );
+                count_in_start
+            } else {
+                start_seconds
+            }
+        } else {
+            start_seconds
+        };
+
+        if end_seconds > songend_seconds + 0.01 {
+            let end_section_start = sections
+                .last()
+                .map(|s| s.end_seconds)
+                .unwrap_or(songend_seconds);
+            sections.push(Section {
+                section_id: SectionId::new(),
+                id: None,
+                name: "End".to_string(),
+                comment: None,
+                section_type: SectionType::End,
+                start_seconds: end_section_start,
+                end_seconds,
+                number: None,
+                color: None,
+            });
+        }
+
+        let tempo = Some(Reaper.get_tempo_at(project.clone(), start_seconds));
+        let time_sig = {
+            let (num, denom) = Reaper.get_time_signature_at(project.clone(), start_seconds);
+            Some(daw::service::TimeSignature::new(
+                num.max(1) as u32,
+                denom.max(1) as u32,
+            ))
+        };
+        let measure_positions = if let (Some(bpm), Some(ts)) = (tempo, time_sig) {
+            Self::calculate_measure_positions(song_start_seconds, end_seconds, bpm, ts)
+        } else {
+            Vec::new()
+        };
+
+        let first_section_start = sections
+            .first()
+            .map(|s| s.start_seconds)
+            .unwrap_or(song_start_seconds);
+        let count_in_marker_pos = count_in_marker.map(|m| position_to_seconds(&m.position));
+        let count_in_is_mid_song = count_in_marker_pos
+            .map(|pos| pos > first_section_start + 0.01)
+            .unwrap_or(false);
+
+        let mut comments: Vec<Comment> = markers
+            .iter()
+            .filter(|m| {
+                let pos = position_to_seconds(&m.position);
+                let in_bounds = pos >= song_start_seconds && pos <= end_seconds;
+                let is_structural = Self::is_structural_marker(&m.name);
+                let is_mid_song_count_in =
+                    Self::is_count_in_marker(&m.name) && count_in_is_mid_song;
+                in_bounds && (!is_structural || is_mid_song_count_in)
+            })
+            .map(|m| Self::marker_to_comment(m))
+            .collect();
+        comments.sort_by(|a, b| {
+            a.position_seconds
+                .partial_cmp(&b.position_seconds)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        Ok(Song {
+            id: SongId::new(),
+            name: song_name,
+            project_guid: project_guid.to_string(),
+            start_seconds: song_start_seconds,
+            end_seconds,
+            count_in_seconds,
+            sections,
+            comments,
+            tempo,
+            time_signature: time_sig,
+            measure_positions,
+            chart_text: None,
+            parsed_chart: None,
+            detected_chords: Vec::new(),
+            chart_fingerprint: None,
+            advance_mode: None,
+            color: song_region.as_ref().and_then(|r| r.color),
+        })
+    }
+
     /// Build a Song from a specific parent region within a multi-song project.
     ///
     /// In multi-song mode, each parent region defines a song. Song name is parsed
@@ -660,6 +917,164 @@ impl SongBuilder {
         })
     }
 
+    fn build_song_from_region_native(
+        project: ProjectContext,
+        project_guid: &str,
+        song_region: &Region,
+        all_regions: &[Region],
+        all_markers: &[Marker],
+        lanes: &ResolvedLanes,
+    ) -> eyre::Result<Song> {
+        let (song_name, _artist) = Self::parse_project_name(&song_region.name);
+        let region_start = song_region.time_range.start_seconds();
+        let region_end = song_region.time_range.end_seconds();
+
+        let tolerance = 0.01;
+        let in_region =
+            |pos: f64| -> bool { pos >= region_start - tolerance && pos <= region_end + tolerance };
+
+        let songstart_marker = all_markers.iter().find(|m| {
+            Self::is_songstart_marker(&m.name) && in_region(position_to_seconds(&m.position))
+        });
+        let songend_marker = all_markers.iter().find(|m| {
+            Self::is_songend_marker(&m.name) && in_region(position_to_seconds(&m.position))
+        });
+        let count_in_marker = all_markers.iter().find(|m| {
+            Self::is_count_in_marker(&m.name) && in_region(position_to_seconds(&m.position))
+        });
+        let abs_end_marker = all_markers
+            .iter()
+            .find(|m| m.name == "=END" && in_region(position_to_seconds(&m.position)));
+
+        let songstart_seconds = songstart_marker
+            .map(|m| position_to_seconds(&m.position))
+            .unwrap_or(region_start);
+        let songend_seconds = songend_marker
+            .map(|m| position_to_seconds(&m.position))
+            .unwrap_or(region_end);
+        let end_seconds = abs_end_marker
+            .map(|m| position_to_seconds(&m.position))
+            .unwrap_or(region_end);
+
+        let mut sections =
+            Self::extract_sections_from_song_region(all_regions, song_region, lanes)?;
+
+        let count_in_seconds = count_in_marker.and_then(|m| {
+            let marker_time = position_to_seconds(&m.position);
+            (marker_time < songstart_seconds).then_some(songstart_seconds - marker_time)
+        });
+
+        let song_start_seconds = if let Some(count_in_duration) = count_in_seconds {
+            if count_in_duration > 0.0 {
+                let count_in_start = songstart_seconds - count_in_duration;
+                let count_in_end = sections
+                    .first()
+                    .map(|s| s.start_seconds)
+                    .unwrap_or(songstart_seconds);
+                sections.insert(
+                    0,
+                    Section {
+                        section_id: SectionId::new(),
+                        id: None,
+                        name: "Count-In".to_string(),
+                        comment: None,
+                        section_type: SectionType::CountIn,
+                        start_seconds: count_in_start,
+                        end_seconds: count_in_end,
+                        number: None,
+                        color: None,
+                    },
+                );
+                count_in_start
+            } else {
+                songstart_seconds
+            }
+        } else {
+            songstart_seconds
+        };
+
+        if end_seconds > songend_seconds + 0.01 {
+            let end_start = sections
+                .last()
+                .map(|s| s.end_seconds)
+                .unwrap_or(songend_seconds);
+            sections.push(Section {
+                section_id: SectionId::new(),
+                id: None,
+                name: "End".to_string(),
+                comment: None,
+                section_type: SectionType::End,
+                start_seconds: end_start,
+                end_seconds,
+                number: None,
+                color: None,
+            });
+        }
+
+        let tempo = Some(Reaper.get_tempo_at(project.clone(), songstart_seconds));
+        let time_sig = {
+            let (num, denom) = Reaper.get_time_signature_at(project.clone(), songstart_seconds);
+            Some(daw::service::TimeSignature::new(
+                num.max(1) as u32,
+                denom.max(1) as u32,
+            ))
+        };
+        let measure_positions = if let (Some(bpm), Some(ts)) = (tempo, time_sig) {
+            Self::calculate_measure_positions(song_start_seconds, end_seconds, bpm, ts)
+        } else {
+            Vec::new()
+        };
+
+        let comments =
+            Self::extract_comments_in_range(all_markers, song_start_seconds, end_seconds);
+
+        Ok(Song {
+            id: SongId::new(),
+            name: song_name,
+            project_guid: project_guid.to_string(),
+            start_seconds: song_start_seconds,
+            end_seconds,
+            count_in_seconds,
+            sections,
+            comments,
+            tempo,
+            time_signature: time_sig,
+            measure_positions,
+            chart_text: None,
+            parsed_chart: None,
+            detected_chords: Vec::new(),
+            chart_fingerprint: None,
+            advance_mode: None,
+            color: song_region.color,
+        })
+    }
+
+    fn marker_to_comment(marker: &Marker) -> Comment {
+        let is_count_in = Self::is_count_in_marker(&marker.name);
+        let (text, section_only) = if marker.name.trim().starts_with('>') {
+            (
+                marker
+                    .name
+                    .trim()
+                    .strip_prefix('>')
+                    .unwrap_or(&marker.name)
+                    .trim()
+                    .to_string(),
+                true,
+            )
+        } else {
+            (marker.name.clone(), false)
+        };
+        Comment {
+            id: marker.id,
+            text,
+            position_seconds: position_to_seconds(&marker.position),
+            color: marker.color,
+            is_count_in,
+            section_only,
+        }
+    }
+
     /// Extract non-structural comment markers within a time range.
     fn extract_comments_in_range(markers: &[Marker], start: f64, end: f64) -> Vec<Comment> {
         let mut comments: Vec<Comment> = markers
@@ -670,30 +1085,7 @@ impl SongBuilder {
                 let is_structural = Self::is_structural_marker(&m.name);
                 in_bounds && !is_structural
             })
-            .map(|m| {
-                let is_count_in = Self::is_count_in_marker(&m.name);
-                let (text, section_only) = if m.name.trim().starts_with('>') {
-                    (
-                        m.name
-                            .trim()
-                            .strip_prefix('>')
-                            .unwrap_or(&m.name)
-                            .trim()
-                            .to_string(),
-                        true,
-                    )
-                } else {
-                    (m.name.clone(), false)
-                };
-                Comment {
-                    id: m.id,
-                    text,
-                    position_seconds: position_to_seconds(&m.position),
-                    color: m.color,
-                    is_count_in,
-                    section_only,
-                }
-            })
+            .map(Self::marker_to_comment)
             .collect();
 
         comments.sort_by(|a, b| {
@@ -807,6 +1199,24 @@ impl SongBuilder {
         let snapped = tempo_map.musical_to_time(measure + 1, 1, 0.0).await?;
         debug!(
             "snap_to_next_barline: {:.3}s (m{}.{}.{:.3}) → {:.3}s (m{})",
+            seconds,
+            measure,
+            beat,
+            fraction,
+            snapped,
+            measure + 1
+        );
+        Ok(snapped)
+    }
+
+    fn snap_to_next_barline_native(project: ProjectContext, seconds: f64) -> eyre::Result<f64> {
+        let (measure, beat, fraction) = Reaper.time_to_musical(project.clone(), seconds);
+        if beat <= 1 && fraction < 0.001 {
+            return Ok(seconds);
+        }
+        let snapped = Reaper.musical_to_time(project, measure + 1, 1, 0.0);
+        debug!(
+            "snap_to_next_barline_native: {:.3}s (m{}.{}.{:.3}) -> {:.3}s (m{})",
             seconds,
             measure,
             beat,
@@ -1162,40 +1572,40 @@ impl SongBuilder {
         let name = name.trim();
 
         // Try double quotes first: `Something "Comment"`
-        if let Some(last_quote) = name.rfind('"') {
-            if let Some(open_quote) = name[..last_quote].rfind('"') {
-                let comment = name[open_quote + 1..last_quote].trim();
-                let name_part = name[..open_quote].trim();
+        if let Some(last_quote) = name.rfind('"')
+            && let Some(open_quote) = name[..last_quote].rfind('"')
+        {
+            let comment = name[open_quote + 1..last_quote].trim();
+            let name_part = name[..open_quote].trim();
 
-                if !comment.is_empty() {
-                    return (name_part, Some(comment.to_string()));
-                }
+            if !comment.is_empty() {
+                return (name_part, Some(comment.to_string()));
             }
         }
 
         // Try curly braces: `Something {Comment}`
-        if let Some(close_brace) = name.rfind('}') {
-            if let Some(open_brace) = name[..close_brace].rfind('{') {
-                let comment = name[open_brace + 1..close_brace].trim();
-                let name_part = name[..open_brace].trim();
+        if let Some(close_brace) = name.rfind('}')
+            && let Some(open_brace) = name[..close_brace].rfind('{')
+        {
+            let comment = name[open_brace + 1..close_brace].trim();
+            let name_part = name[..open_brace].trim();
 
-                if !comment.is_empty() {
-                    return (name_part, Some(comment.to_string()));
-                }
+            if !comment.is_empty() {
+                return (name_part, Some(comment.to_string()));
             }
         }
 
         // Try parentheses: `Something (Comment)`
         // Only if it looks like a descriptor (not a number like "Verse (1)")
-        if let Some(close_paren) = name.rfind(')') {
-            if let Some(open_paren) = name[..close_paren].rfind('(') {
-                let comment = name[open_paren + 1..close_paren].trim();
-                let name_part = name[..open_paren].trim();
+        if let Some(close_paren) = name.rfind(')')
+            && let Some(open_paren) = name[..close_paren].rfind('(')
+        {
+            let comment = name[open_paren + 1..close_paren].trim();
+            let name_part = name[..open_paren].trim();
 
-                // Only treat as comment if it's not just a number
-                if !comment.is_empty() && !comment.chars().all(|c| c.is_ascii_digit()) {
-                    return (name_part, Some(comment.to_string()));
-                }
+            // Only treat as comment if it's not just a number
+            if !comment.is_empty() && !comment.chars().all(|c| c.is_ascii_digit()) {
+                return (name_part, Some(comment.to_string()));
             }
         }
 

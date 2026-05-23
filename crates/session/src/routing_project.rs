@@ -9,8 +9,7 @@
 //! The project can be opened/created via the `ensure_routing_project` function,
 //! which checks for an existing routing project before creating one.
 
-use daw::rpc::Daw;
-use daw::service::RecordInput;
+use daw::service::{ExtState, ProjectContext, Projects, RecordInput, Routing, TrackRef, Tracks};
 use session_proto::SessionServiceError;
 use session_proto::routing_project::*;
 use tracing::info;
@@ -22,13 +21,15 @@ use tracing::info;
 /// 1. Scan open projects for ExtState `FTS/is_routing_project == "1"`
 /// 2. Check disk at `<fts_home>/Reaper/FTS-Routing.RPP` and open if found
 /// 3. Create from scratch with the canonical track hierarchy
-pub async fn ensure_routing_project(
+pub fn ensure_routing_project<D>(
+    daw: &D,
     config: &LoopbackConfig,
-) -> Result<String, SessionServiceError> {
-    let daw = Daw::get();
-
+) -> Result<String, SessionServiceError>
+where
+    D: Projects + ExtState + Tracks + Routing,
+{
     // Step 1: Check open projects for existing routing project
-    if let Some(guid) = find_open_routing_project(daw).await? {
+    if let Some(guid) = find_open_routing_project(daw)? {
         info!("Found open routing project: {guid}");
         return Ok(guid);
     }
@@ -41,34 +42,28 @@ pub async fn ensure_routing_project(
             routing_path.display()
         );
         let project = daw
-            .open_project(routing_path.to_string_lossy().as_ref())
-            .await
-            .map_err(|e| {
-                SessionServiceError::DawError(format!("Failed to open routing project: {e}"))
+            .open(routing_path.to_string_lossy().as_ref())
+            .ok_or_else(|| {
+                SessionServiceError::DawError("Failed to open routing project".to_string())
             })?;
-        return Ok(project.guid().to_string());
+        return Ok(project.guid);
     }
 
     // Step 3: Create from scratch
     info!("Creating new routing project");
-    create_routing_project(daw, config).await
+    create_routing_project(daw, config)
 }
 
 /// Scan open projects for one with the routing project ExtState marker.
-async fn find_open_routing_project(daw: &Daw) -> Result<Option<String>, SessionServiceError> {
-    let projects = daw
-        .projects()
-        .await
-        .map_err(|e| SessionServiceError::DawError(format!("Failed to list projects: {e}")))?;
-
-    for project in projects {
-        let value = project
-            .ext_state()
-            .get(EXT_STATE_SECTION, EXT_STATE_KEY_IS_ROUTING)
-            .await
-            .unwrap_or(None);
+fn find_open_routing_project<D>(daw: &D) -> Result<Option<String>, SessionServiceError>
+where
+    D: Projects + ExtState,
+{
+    for project in daw.list() {
+        let ctx = ProjectContext::Project(project.guid.clone());
+        let value = daw.get_project(ctx, EXT_STATE_SECTION, EXT_STATE_KEY_IS_ROUTING);
         if value.as_deref() == Some(EXT_STATE_VALUE_TRUE) {
-            return Ok(Some(project.guid().to_string()));
+            return Ok(Some(project.guid));
         }
     }
 
@@ -77,90 +72,100 @@ async fn find_open_routing_project(daw: &Daw) -> Result<Option<String>, SessionS
 
 // r[impl routing.project.structure]
 /// Create the routing project from scratch with the canonical FTS track hierarchy.
-async fn create_routing_project(
-    daw: &Daw,
+fn create_routing_project<D>(
+    daw: &D,
     config: &LoopbackConfig,
-) -> Result<String, SessionServiceError> {
-    let map_err = |e: daw::Error| SessionServiceError::DawError(e.to_string());
-
+) -> Result<String, SessionServiceError>
+where
+    D: Projects + ExtState + Tracks + Routing,
+{
     // Create a new empty project tab
-    let project = daw.create_project().await.map_err(map_err)?;
+    let project = daw
+        .create()
+        .ok_or_else(|| SessionServiceError::DawError("Failed to create project".to_string()))?;
+    let ctx = ProjectContext::Project(project.guid.clone());
 
     // Mark as routing project via ExtState
-    let _ = project
-        .ext_state()
-        .set(
-            EXT_STATE_SECTION,
-            EXT_STATE_KEY_IS_ROUTING,
-            EXT_STATE_VALUE_TRUE,
-            true, // persist
-        )
-        .await;
+    daw.set_project(
+        ctx.clone(),
+        EXT_STATE_SECTION,
+        EXT_STATE_KEY_IS_ROUTING,
+        EXT_STATE_VALUE_TRUE,
+    )
+    .map_err(|e| SessionServiceError::DawError(e.to_string()))?;
 
     // Create "Click + Guide" folder with children
     create_folder_with_channels(
-        &project,
+        daw,
+        ctx.clone(),
         RoutingGroup::ClickGuide.display_name(),
         RoutingChannel::click_guide_channels(),
         config,
-    )
-    .await?;
+    )?;
 
     // Create "TRACKS" folder with children
     create_folder_with_channels(
-        &project,
+        daw,
+        ctx.clone(),
         RoutingGroup::Tracks.display_name(),
         RoutingChannel::track_channels(),
         config,
-    )
-    .await?;
+    )?;
 
     // Save the project (will prompt Save As for first save)
-    project.save().await.map_err(map_err)?;
+    daw.save(ctx);
 
-    let guid = project.guid().to_string();
+    let guid = project.guid;
     info!("Routing project created: {guid}");
     Ok(guid)
 }
 
 /// Create a folder track with child routing channel tracks.
-async fn create_folder_with_channels(
-    project: &daw::rpc::Project,
+fn create_folder_with_channels<D>(
+    daw: &D,
+    project: ProjectContext,
     folder_name: &str,
     channels: &[RoutingChannel],
     config: &LoopbackConfig,
-) -> Result<(), SessionServiceError> {
-    let map_err = |e: daw::Error| SessionServiceError::DawError(e.to_string());
+) -> Result<(), SessionServiceError>
+where
+    D: Tracks + Routing,
+{
+    let map_err = |e: daw::service::DawError| SessionServiceError::DawError(e.to_string());
 
     // Create folder track
-    let folder = project
-        .tracks()
-        .add(folder_name, None)
-        .await
+    let folder_guid = daw
+        .add(project.clone(), folder_name, None)
         .map_err(map_err)?;
-    folder.set_folder_depth(1).await.map_err(map_err)?;
+    daw.set_folder_depth(project.clone(), TrackRef::guid(folder_guid), 1)
+        .map_err(map_err)?;
 
     // Create child tracks
     let last_idx = channels.len() - 1;
     for (i, channel) in channels.iter().enumerate() {
-        let track = project
-            .tracks()
-            .add(channel.display_name(), None)
-            .await
+        let track_guid = daw
+            .add(project.clone(), channel.display_name(), None)
             .map_err(map_err)?;
+        let track = TrackRef::guid(track_guid);
 
         // Configure for stereo loopback input
-        track.set_num_channels(2).await.map_err(map_err)?;
-        track
-            .set_record_input(RecordInput::Raw(config.recinput_value(*channel)))
-            .await
+        daw.set_num_channels(project.clone(), track.clone(), 2)
             .map_err(map_err)?;
-        track.arm().await.map_err(map_err)?;
-        track.set_parent_send(false).await.map_err(map_err)?;
+        daw.set_record_input(
+            project.clone(),
+            track.clone(),
+            RecordInput::Raw(config.recinput_value(*channel)),
+        )
+        .map_err(map_err)?;
+        daw.set_armed(project.clone(), track.clone(), true)
+            .map_err(map_err)?;
+        daw.set_parent_send_enabled(project.clone(), track.clone(), false)
+            .map_err(map_err)?;
 
         // Close the folder on the last child
         if i == last_idx {
-            track.set_folder_depth(-1).await.map_err(map_err)?;
+            daw.set_folder_depth(project.clone(), track, -1)
+                .map_err(map_err)?;
         }
     }
 

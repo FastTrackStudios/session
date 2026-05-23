@@ -11,10 +11,8 @@
 
 use daw::rpc::{Daw, Project};
 use session_proto::offset_map::SetlistOffsetMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::debug;
 
 /// Tracks suppression state to prevent echo loops.
 struct Suppression {
@@ -71,6 +69,7 @@ pub struct PositionSyncBridge {
     enabled: bool,
 }
 
+#[allow(dead_code)]
 impl PositionSyncBridge {
     /// Create a new bridge with the given offset map and setlist project GUID.
     pub fn new(offset_map: SetlistOffsetMap, setlist_guid: Option<String>) -> Self {
@@ -213,7 +212,7 @@ impl PositionSyncBridge {
         daw: &Daw,
         projects: &[Project],
         global_pos: f64,
-        setlist_guid: &str,
+        _setlist_guid: &str,
     ) {
         let (song_index, local_pos) = match self.offset_map.setlist_to_project(global_pos) {
             Some(r) => r,
@@ -247,7 +246,7 @@ impl PositionSyncBridge {
     async fn sync_play_state_to_setlist(
         &mut self,
         daw: &Daw,
-        song_guid: &str,
+        _song_guid: &str,
         playing: bool,
         setlist_guid: &str,
     ) {
@@ -265,11 +264,11 @@ impl PositionSyncBridge {
     /// Setlist play state changed → mirror to active song.
     async fn sync_play_state_to_song(
         &mut self,
-        daw: &Daw,
+        _daw: &Daw,
         projects: &[Project],
         playing: bool,
         global_pos: f64,
-        setlist_guid: &str,
+        _setlist_guid: &str,
     ) {
         let (song_index, _local_pos) = match self.offset_map.setlist_to_project(global_pos) {
             Some(r) => r,

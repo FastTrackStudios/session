@@ -3,7 +3,7 @@
 //! Creates a multi-song setlist with proper ruler lane organization.
 //! Each song is a parent region (SONG lane) containing section child regions
 //! (SECTIONS lane), with structural markers in the MARKS lane and
-//! render bounds in the START/END lane.
+//! render bounds in the MARKS lane.
 //!
 //! Layout (3 songs, ~12 minutes total):
 //!
@@ -18,17 +18,19 @@
 //!   COUNT-IN → SONGSTART → Intro → Verse 1 → Chorus → Verse 2 → Chorus → Bridge → Chorus → Tag → SONGEND
 //! ```
 
-use daw::rpc::Daw;
+#![allow(dead_code)]
+
+use daw::rpc;
+use daw::service::{Markers, ProjectContext, Projects, Regions};
 use session_proto::SessionServiceError;
 use session_proto::ruler_lanes::CoreLane;
 use tracing::info;
 
 // ── Lane indices (1-based, matching CoreLane) ──────────────────────────────
 
-const SECTIONS_LANE: u32 = CoreLane::Sections.lane_index(); // 1
-const MARKS_LANE: u32 = CoreLane::Marks.lane_index(); // 2
-const SONG_LANE: u32 = CoreLane::Song.lane_index(); // 3
-const START_END_LANE: u32 = CoreLane::StartEnd.lane_index(); // 4
+const SECTIONS_LANE: u32 = CoreLane::Sections.lane_index(); // 2
+const MARKS_LANE: u32 = CoreLane::Marks.lane_index(); // 3
+const SONG_LANE: u32 = CoreLane::Song.lane_index(); // 1
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -62,28 +64,50 @@ struct DemoSection {
 /// This is a free function that takes a `&Daw` so it works both with
 /// the global singleton and with a locally-held `Daw` instance (e.g.
 /// from `daw_extension_runtime::connect()`).
-pub async fn stamp_demo_setlist(daw: &Daw) -> Result<(), SessionServiceError> {
+pub async fn stamp_demo_setlist() -> Result<(), SessionServiceError> {
+    Err(SessionServiceError::DawError(
+        "stamp_demo_setlist requires a native DAW backend; use stamp_demo_setlist_with".to_string(),
+    ))
+}
+
+pub fn stamp_demo_setlist_with<D>(daw: &D) -> Result<(), SessionServiceError>
+where
+    D: Markers + Projects + Regions,
+{
     let project = daw
-        .current_project()
-        .await
-        .map_err(|e| SessionServiceError::DawError(format!("No current project: {e}")))?;
-    stamp_demo_into_project(&project).await
+        .current()
+        .ok_or_else(|| SessionServiceError::DawError("No current project".to_string()))?;
+    stamp_demo_into_project_native(daw, ProjectContext::Project(project.guid))
 }
 
 /// Stamp demo markers and regions into a specific REAPER project.
 ///
 /// Use this when you already have a `Project` handle (e.g. in tests
 /// where each test gets its own isolated project tab).
-pub async fn stamp_demo_into_project(
-    project: &daw::rpc::Project,
-) -> Result<(), SessionServiceError> {
+pub async fn stamp_demo_into_project(project: &rpc::Project) -> Result<(), SessionServiceError> {
+    let _ = project;
+    Err(SessionServiceError::DawError(
+        "stamp_demo_into_project requires a native DAW backend; use stamp_demo_into_project_native"
+            .to_string(),
+    ))
+}
+
+/// Native sync version for in-process extension/session paths.
+pub fn stamp_demo_into_project_native<D>(
+    daw: &D,
+    project: ProjectContext,
+) -> Result<(), SessionServiceError>
+where
+    D: Markers + Regions,
+{
     info!(
         "Stamping demo setlist markers/regions into project {}",
-        project.guid()
+        match &project {
+            ProjectContext::Current => "current",
+            ProjectContext::Project(guid) => guid,
+        }
     );
 
-    let markers_api = project.markers();
-    let regions_api = project.regions();
     let songs = demo_songs();
 
     let mut total_markers = 0u32;
@@ -91,40 +115,40 @@ pub async fn stamp_demo_into_project(
 
     for song in &songs {
         // ── SONG-lane parent region (spans entire song) ──────────
-        regions_api
-            .add_in_lane(song.region_start, song.region_end, song.name, SONG_LANE)
-            .await
-            .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
+        Regions::add(
+            daw,
+            project.clone(),
+            song.region_start,
+            song.region_end,
+            song.name,
+        )
+        .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
         total_regions += 1;
 
         // ── MARKS-lane structural markers ────────────────────────
-        markers_api
-            .add_in_lane(song.count_in, "COUNT-IN", MARKS_LANE)
-            .await
+        Markers::add(daw, project.clone(), song.count_in, "COUNT-IN")
             .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
-        markers_api
-            .add_in_lane(song.song_start, "SONGSTART", MARKS_LANE)
-            .await
+        Markers::add(daw, project.clone(), song.song_start, "SONGSTART")
             .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
-        markers_api
-            .add_in_lane(song.song_end, "SONGEND", MARKS_LANE)
-            .await
+        Markers::add(daw, project.clone(), song.song_end, "SONGEND")
             .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
         total_markers += 3;
 
-        // ── START/END-lane render bounds ─────────────────────────
-        markers_api
-            .add_in_lane(song.abs_end, "=END", START_END_LANE)
-            .await
+        // ── MARKS-lane render bounds ─────────────────────────────
+        Markers::add(daw, project.clone(), song.abs_end, "=END")
             .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
         total_markers += 1;
 
         // ── SECTIONS-lane section regions ────────────────────────
         for section in &song.sections {
-            regions_api
-                .add_in_lane(section.start, section.end, section.name, SECTIONS_LANE)
-                .await
-                .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
+            Regions::add(
+                daw,
+                project.clone(),
+                section.start,
+                section.end,
+                section.name,
+            )
+            .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
             total_regions += 1;
         }
     }
