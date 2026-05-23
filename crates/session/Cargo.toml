@@ -15,8 +15,15 @@ path = "src/main.rs"
 session-proto = { path = "../session-proto" }
 actions-proto.workspace = true
 architect.workspace = true
-daw = { workspace = true, features = ["file"] }
+daw = { workspace = true, features = ["file", "reaper"] }
+daw-proto = { workspace = true }
+daw-reaper = { workspace = true }
 daw-synchronization.workspace = true
+# Raw REAPER FFI — used by take_ranking for cursor / item / take-marker ops
+# that aren't covered by the daw service traits.
+reaper-high = { workspace = true }
+reaper-low = { workspace = true }
+reaper-medium = { workspace = true }
 dynamic-template.workspace = true
 vox.workspace = true
 tokio = { version = "1.48", features = ["rt", "sync", "time", "macros"] }

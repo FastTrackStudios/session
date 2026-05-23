@@ -162,6 +162,36 @@ pub fn current_mode() -> Mode {
     *current_cell().lock().expect("mode mutex poisoned")
 }
 
+/// Callback fired after `set_mode` updates the global slot, only when
+/// the mode actually changes. Use [`add_mode_change_listener`] to register.
+pub type ModeChangeListener = fn(Mode);
+
+static MODE_CHANGE_LISTENERS: OnceLock<Mutex<Vec<ModeChangeListener>>> = OnceLock::new();
+
+fn listeners_cell() -> &'static Mutex<Vec<ModeChangeListener>> {
+    MODE_CHANGE_LISTENERS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Register a callback to run whenever [`set_mode`] transitions to a new
+/// mode. Listeners run synchronously on the caller's thread after the
+/// global slot has been updated and before the window layout is applied,
+/// so they can observe the new mode via [`current_mode`].
+pub fn add_mode_change_listener(listener: ModeChangeListener) {
+    if let Ok(mut guard) = listeners_cell().lock() {
+        guard.push(listener);
+    }
+}
+
+fn fire_mode_change_listeners(mode: Mode) {
+    let listeners = match listeners_cell().lock() {
+        Ok(g) => g.clone(),
+        Err(_) => return,
+    };
+    for listener in listeners {
+        listener(mode);
+    }
+}
+
 /// Switch the active mode.
 ///
 /// Updates the global current-mode slot and asks the DAW's WindowManager
@@ -187,6 +217,7 @@ pub fn set_mode(mode: Mode) {
     };
     if prev != mode {
         tracing::info!(from = %prev, to = %mode, "[session] Mode changed");
+        fire_mode_change_listeners(mode);
     } else {
         tracing::debug!(mode = %mode, "[session] set_mode called with current mode (no-op)");
     }

@@ -60,6 +60,7 @@ pub use setlist_service::demo::{stamp_demo_into_project, stamp_demo_setlist};
 pub mod auto_color_actions;
 pub mod daw_module;
 pub mod mode_actions;
+pub mod take_ranking;
 pub mod track_manager_actions;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -414,12 +415,6 @@ actions_proto::define_actions! {
             category: Session,
             group: "Tracks",
         }
-        CREATE_NEW_SYNTH_BASS = "create_new_synth_bass" {
-            name: "Create New Synth Bass",
-            description: "Create a new synth bass track group",
-            category: Session,
-            group: "Tracks",
-        }
         CREATE_NEW_ELECTRIC_GUITAR = "create_new_electric_guitar" {
             name: "Create New Electric Guitar",
             description: "Create a new electric guitar track group",
@@ -432,39 +427,15 @@ actions_proto::define_actions! {
             category: Session,
             group: "Tracks",
         }
-        CREATE_NEW_PIANO = "create_new_piano" {
-            name: "Create New Piano",
-            description: "Create a new piano track group",
+        CREATE_NEW_KEYS = "create_new_keys" {
+            name: "Create New Keys",
+            description: "Create a new keys track group (piano, organ, electric keys, etc.)",
             category: Session,
             group: "Tracks",
         }
-        CREATE_NEW_ORGAN = "create_new_organ" {
-            name: "Create New Organ",
-            description: "Create a new organ track group",
-            category: Session,
-            group: "Tracks",
-        }
-        CREATE_NEW_ELECTRIC_KEYS = "create_new_electric_keys" {
-            name: "Create New Electric Keys",
-            description: "Create a new electric keys track group",
-            category: Session,
-            group: "Tracks",
-        }
-        CREATE_NEW_SYNTH_LEAD = "create_new_synth_lead" {
-            name: "Create New Synth Lead",
-            description: "Create a new synth lead track group",
-            category: Session,
-            group: "Tracks",
-        }
-        CREATE_NEW_SYNTH_PAD = "create_new_synth_pad" {
-            name: "Create New Synth Pad",
-            description: "Create a new synth pad track group",
-            category: Session,
-            group: "Tracks",
-        }
-        CREATE_NEW_SYNTH_ARP = "create_new_synth_arp" {
-            name: "Create New Synth Arp",
-            description: "Create a new synth arp track group",
+        CREATE_NEW_SYNTH = "create_new_synth" {
+            name: "Create New Synth",
+            description: "Create a new synth track group (bass, lead, pad, arp, etc.)",
             category: Session,
             group: "Tracks",
         }
@@ -477,6 +448,36 @@ actions_proto::define_actions! {
         CREATE_NEW_BACKGROUND_VOCALS = "create_new_background_vocals" {
             name: "Create New Background Vocals",
             description: "Create a new background vocals track group",
+            category: Session,
+            group: "Tracks",
+        }
+        CREATE_NEW_ORCHESTRAL_BRASS = "create_new_orchestral_brass" {
+            name: "Create New Orchestral Brass",
+            description: "Create a new orchestral brass track group",
+            category: Session,
+            group: "Tracks",
+        }
+        CREATE_NEW_ORCHESTRAL_WOODWINDS = "create_new_orchestral_woodwinds" {
+            name: "Create New Orchestral Woodwinds",
+            description: "Create a new orchestral woodwinds track group",
+            category: Session,
+            group: "Tracks",
+        }
+        CREATE_NEW_ORCHESTRAL_STRINGS = "create_new_orchestral_strings" {
+            name: "Create New Orchestral Strings",
+            description: "Create a new orchestral strings track group",
+            category: Session,
+            group: "Tracks",
+        }
+        CREATE_NEW_ORCHESTRAL_PERCUSSION = "create_new_orchestral_percussion" {
+            name: "Create New Orchestral Percussion",
+            description: "Create a new orchestral percussion track group",
+            category: Session,
+            group: "Tracks",
+        }
+        CREATE_NEW_SFX = "create_new_sfx" {
+            name: "Create New SFX",
+            description: "Create a new SFX track group",
             category: Session,
             group: "Tracks",
         }
@@ -700,6 +701,79 @@ actions_proto::define_actions! {
             description: "Load a demo setlist with mock song data (no DAW required)",
             category: Dev,
             group: "Dev",
+        }
+        // ── Take ranking (Record mode workflow) ──────────────────────
+        TAKE_RANK_PLAYPOS_1 = "take_rank_playpos_1" {
+            name: "Take: rank :) at play-pos -2s",
+            description: "Set the active take's rank marker to :) at (play-pos - 2s) on every selected item, or at edit cursor if not playing.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_PLAYPOS_2 = "take_rank_playpos_2" {
+            name: "Take: rank :)) at play-pos -2s",
+            description: "Set the active take's rank marker to :)) at (play-pos - 2s) on every selected item, or at edit cursor if not playing.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_PLAYPOS_3 = "take_rank_playpos_3" {
+            name: "Take: rank :))) at play-pos -2s",
+            description: "Set the active take's rank marker to :))) at (play-pos - 2s) on every selected item, or at edit cursor if not playing.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_PLAYPOS_DOWN = "take_rank_playpos_down" {
+            name: "Take: down-rank at play-pos -2s",
+            description: "Set the active take's rank marker to :( at (play-pos - 2s) on every selected item, or at edit cursor if not playing.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_ITEM_1 = "take_rank_item_1" {
+            name: "Take: rank :) (item-wide)",
+            description: "Set the active take's rank marker to :) at item start for every selected item.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_ITEM_2 = "take_rank_item_2" {
+            name: "Take: rank :)) (item-wide)",
+            description: "Set the active take's rank marker to :)) at item start for every selected item.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_ITEM_3 = "take_rank_item_3" {
+            name: "Take: rank :))) (item-wide)",
+            description: "Set the active take's rank marker to :))) at item start for every selected item.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_ITEM_DOWN = "take_rank_item_down" {
+            name: "Take: down-rank (item-wide)",
+            description: "Set the active take's rank marker to :( at item start for every selected item.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_MOUSE_1 = "take_rank_mouse_1" {
+            name: "Take: rank :) at mouse position",
+            description: "Set the rank marker to :) on the take under the mouse at the mouse's project-time position.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_MOUSE_2 = "take_rank_mouse_2" {
+            name: "Take: rank :)) at mouse position",
+            description: "Set the rank marker to :)) on the take under the mouse at the mouse's project-time position.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_MOUSE_3 = "take_rank_mouse_3" {
+            name: "Take: rank :))) at mouse position",
+            description: "Set the rank marker to :))) on the take under the mouse at the mouse's project-time position.",
+            category: Project,
+            group: "Take Ranking",
+        }
+        TAKE_RANK_MOUSE_DOWN = "take_rank_mouse_down" {
+            name: "Take: down-rank at mouse position",
+            description: "Set the rank marker to :( on the take under the mouse at the mouse's project-time position.",
+            category: Project,
+            group: "Take Ranking",
         }
     }
 }
