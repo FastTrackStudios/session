@@ -30,3 +30,4 @@ dist/
 # IDE / agent scratch
 .claude/worktrees/
 examples/vault/.obsidian/
+.claude/
