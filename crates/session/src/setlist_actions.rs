@@ -193,9 +193,20 @@ where
 /// Sync on the main thread — same reason the rest of dispatch is sync.
 fn dump_ruler_state<D>(daw: &D)
 where
-    D: Markers + Regions,
+    D: Projects + Markers + Regions,
 {
     let project = ProjectContext::Current;
+
+    // Lane table first. Probe 0..=10 because REAPER may have an
+    // implicit lane at index 0 (the "automatic" slot) that
+    // `ruler_lane_count` (which stops at the first empty name)
+    // hides from us, and the user wants to know about it.
+    tracing::info!("[session] === lanes ===");
+    for idx in 0u32..=10 {
+        let name = daw.get_ruler_lane_name(project.clone(), idx);
+        tracing::info!("[session] lane {idx}: name={:?}", name);
+    }
+
     let markers = Markers::all(daw, project.clone());
     let regions = Regions::all(daw, project);
 

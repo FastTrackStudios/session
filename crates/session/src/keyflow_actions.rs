@@ -146,11 +146,18 @@ where
         KeyflowAction::InsertSection(_) => FtsLane::Core(CoreLane::Sections),
         KeyflowAction::InsertMarker(kind) => classify_marker_lane(kind.name()),
     };
-    daw.set_ruler_lane_name(
-        ProjectContext::Current,
-        lane.lane_index(),
-        lane.display_name(),
-    );
+    // RULER_LANE_NAME uses 0-based name_key_index, *not* 1-based
+    // lane_index. Mixing them rewrote lane 2 to "SECTIONS" every
+    // insert and left an extra unnamed lane above SONG. See the
+    // matching fix in ensure_core_lanes.
+    let key_idx = match lane {
+        FtsLane::Core(core) => core.name_key_index(),
+        // Instrument lanes follow CoreLane::count() and stay 1-based
+        // for now; if they ever break the same way, swap to a
+        // dedicated `name_key_index` on InstrumentLane.
+        FtsLane::Instrument(_) => lane.lane_index(),
+    };
+    daw.set_ruler_lane_name(ProjectContext::Current, key_idx, lane.display_name());
 }
 
 fn ensure_core_lanes<D>(daw: &D)
@@ -159,18 +166,22 @@ where
 {
     let project = ProjectContext::Current;
     for lane in CoreLane::all() {
-        daw.set_ruler_lane_name(project.clone(), lane.lane_index(), lane.display_name());
-        // REAPER's per-lane flags pick the *default* destination for
-        // new markers and regions. We were setting only the names,
-        // so freshly-inserted regions kept landing in lane 1 (the
-        // renamed SONG lane) instead of SECTIONS, and SECTIONS sat
-        // empty. Apply the convention each CoreLane declares:
-        //   SECTIONS = 8 (default region lane)
-        //   SONG     = 4 (default marker lane)
-        //   MARKS / KEY = 0
+        // RULER_LANE_NAME:N / RULER_LANE_FLAGS:N use the 0-based
+        // *name-table* index (N=0 names the leftmost UI lane), not
+        // the 1-based `lane_index` markers/regions use via
+        // `I_LANENUMBER`. Passing `lane_index` (1-based) here named
+        // lane 2 in the UI and left an empty unnamed lane 1 above
+        // SONG. Use `name_key_index` so the rename hits the lane the
+        // user actually sees.
+        let key_idx = lane.name_key_index();
+        daw.set_ruler_lane_name(project.clone(), key_idx, lane.display_name());
+        // SECTIONS = 8 (default region lane), SONG = 4 (default
+        // marker lane). The flag steers *future* inserts; the
+        // explicit `set_lane` calls in normalize_section_regions /
+        // place_marker_via_action handle existing entities.
         daw.set_project_info(
             project.clone(),
-            &format!("RULER_LANE_FLAGS:{}", lane.lane_index()),
+            &format!("RULER_LANE_FLAGS:{}", key_idx),
             lane.flags() as f64,
         );
     }
@@ -203,13 +214,24 @@ where
         }
     }
 
-    let count = daw.ruler_lane_count(project.clone());
-    for i in 1..=count {
-        let name = daw.get_ruler_lane_name(project.clone(), i);
-        if valid_names.contains(name.trim()) || used_lanes.contains(&i) {
+    // Iterate the *name-table* 0-based — that's how
+    // `get_ruler_lane_name` keys read in REAPER. The 1-based loop we
+    // had before skipped the leftmost lane (the leftover unnamed
+    // one) entirely, so it never got hidden.
+    let count = daw.ruler_lane_count(project.clone()).max(1);
+    for key_idx in 0..count {
+        let name = daw.get_ruler_lane_name(project.clone(), key_idx);
+        // Convert to the 1-based `I_LANENUMBER` value markers/regions
+        // use, since `used_lanes` was filled from those.
+        let used_lane_value = key_idx + 1;
+        if valid_names.contains(name.trim()) || used_lanes.contains(&used_lane_value) {
             continue;
         }
-        daw.set_project_info(project.clone(), &format!("RULER_LANE_HIDDEN:{i}"), 1.0);
+        daw.set_project_info(
+            project.clone(),
+            &format!("RULER_LANE_HIDDEN:{key_idx}"),
+            1.0,
+        );
     }
 }
 
