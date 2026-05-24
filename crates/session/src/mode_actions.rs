@@ -182,7 +182,11 @@ pub fn current_mode() -> Mode {
 
 /// Callback fired after `set_mode` updates the global slot, only when
 /// the mode actually changes. Use [`add_mode_change_listener`] to register.
-pub type ModeChangeListener = fn(Mode);
+///
+/// Stored as `Arc<dyn Fn>` so listeners can be invoked outside the
+/// mutex (avoiding re-entrant deadlocks when a listener itself wants
+/// to register another listener or read state through a lock).
+pub type ModeChangeListener = std::sync::Arc<dyn Fn(Mode) + Send + Sync + 'static>;
 
 static MODE_CHANGE_LISTENERS: OnceLock<Mutex<Vec<ModeChangeListener>>> = OnceLock::new();
 
@@ -194,15 +198,21 @@ fn listeners_cell() -> &'static Mutex<Vec<ModeChangeListener>> {
 /// mode. Listeners run synchronously on the caller's thread after the
 /// global slot has been updated and before the window layout is applied,
 /// so they can observe the new mode via [`current_mode`].
-pub fn add_mode_change_listener(listener: ModeChangeListener) {
+pub fn add_mode_change_listener<F>(listener: F)
+where
+    F: Fn(Mode) + Send + Sync + 'static,
+{
     if let Ok(mut guard) = listeners_cell().lock() {
-        guard.push(listener);
+        guard.push(std::sync::Arc::new(listener));
     }
 }
 
 fn fire_mode_change_listeners(mode: Mode) {
-    let listeners = match listeners_cell().lock() {
-        Ok(g) => g.clone(),
+    // Snapshot Arc clones so the lock is dropped before any listener
+    // runs — listeners are free to call back into mode_actions or
+    // re-acquire the same mutex without deadlocking.
+    let listeners: Vec<ModeChangeListener> = match listeners_cell().lock() {
+        Ok(g) => g.iter().cloned().collect(),
         Err(_) => return,
     };
     for listener in listeners {
@@ -270,32 +280,30 @@ pub enum ModeAction {
 pub fn init(_ctx: &daw::module::ModuleContext) {
     // Initialise the global to Organize so `current_mode()` is always sane.
     let _ = current_mode();
-    // Register the broadcast bridge once so every set_mode call fans
-    // out to subscribed Vox clients with no per-listener cost.
-    register_broadcast_bridge();
 }
 
 // ── Mode-change broadcast (for Vox subscribers) ─────────────────────────────
 
 static MODE_BROADCAST: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
     std::sync::OnceLock::new();
-static BROADCAST_BRIDGE_REGISTERED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
 /// Process-wide broadcast channel of new mode slugs. Pushed each time
 /// `set_mode` transitions to a different mode. Subscribe a receiver to
 /// forward into a Vox client `Tx<String>`.
+///
+/// Lazy-installs the listener that bridges `set_mode` → broadcast the
+/// first time it's called, so the channel and its forwarding listener
+/// are guaranteed to exist before the first `subscribe` RPC fires.
 pub fn mode_broadcast() -> &'static tokio::sync::broadcast::Sender<String> {
-    MODE_BROADCAST.get_or_init(|| tokio::sync::broadcast::channel(32).0)
-}
-
-fn register_broadcast_bridge() {
-    if BROADCAST_BRIDGE_REGISTERED.set(()).is_err() {
-        return;
-    }
-    fn forward_to_broadcast(mode: Mode) {
-        let _ = mode_broadcast().send(mode.slug().to_string());
-    }
-    add_mode_change_listener(forward_to_broadcast);
+    MODE_BROADCAST.get_or_init(|| {
+        let (tx, _rx) = tokio::sync::broadcast::channel::<String>(32);
+        add_mode_change_listener(|mode| {
+            // Safe to call mode_broadcast() recursively — the OnceLock
+            // is already past its init call when the listener fires.
+            let _ = mode_broadcast().send(mode.slug().to_string());
+        });
+        tx
+    })
 }
 
 pub fn action_for_id(action_id: &str) -> Option<ModeAction> {

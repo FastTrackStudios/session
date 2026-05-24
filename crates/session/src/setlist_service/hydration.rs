@@ -6,9 +6,7 @@ use super::{
 use crate::song_builder::SongBuilder;
 use daw::rpc::Daw;
 use daw::service::{ProjectContext, ProjectInfo, Projects};
-use keyflow_daw_analysis::{
-    DetectedChord, MidiChartData, MidiChartRequest, MidiChartServiceClient,
-};
+use keyflow_daw_analysis::{DetectedChord, MidiChartData, MidiChartRequest, MidiChartsClient};
 use moire::sync::Semaphore;
 use session_proto::{Song, SongChartHydration, SongDetectedChord, SongId};
 use std::sync::Arc;
@@ -149,11 +147,11 @@ where
             .collect()
     }
 
-    /// Build a `MidiChartServiceClient` over the same vox channel daw is using.
+    /// Build a `MidiChartsClient` over the same vox channel daw is using.
     /// Chart service is registered by session's DAW service layer at startup;
     /// we just need a client over the existing `Caller`.
-    fn chart_client() -> MidiChartServiceClient {
-        MidiChartServiceClient::new(Daw::get().caller().clone())
+    fn chart_client() -> MidiChartsClient {
+        MidiChartsClient::new(Daw::get().caller().clone())
     }
 
     pub(crate) async fn fetch_midi_chart_data(project_guid: &str) -> Option<MidiChartData> {

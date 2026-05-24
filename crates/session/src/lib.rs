@@ -84,7 +84,7 @@ impl SessionServices {
             + 'static,
     {
         use keyflow_daw_analysis::{
-            KeyflowMidiAnalysis, MidiChartServiceDispatcher, midi_chart_service_service_descriptor,
+            KeyflowMidiAnalysis, MidiChartsDispatcher, midi_charts_service_descriptor,
         };
 
         vec![
@@ -97,8 +97,8 @@ impl SessionServices {
                 serve_song_service(SongServiceImpl::new()),
             ),
             daw::Mounted::new(
-                midi_chart_service_service_descriptor(),
-                MidiChartServiceDispatcher::new(KeyflowMidiAnalysis::from_global_daw()),
+                midi_charts_service_descriptor(),
+                MidiChartsDispatcher::new(KeyflowMidiAnalysis::from_global_daw()),
             ),
         ]
     }
