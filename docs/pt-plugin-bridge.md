@@ -71,10 +71,32 @@ Rust defines the strategies; per-plugin data lives in
 `plugin_bridge/assets/` (e.g. `omnisphere_template.json`), so plugins are
 added as data and the registry can later load community config files.
 
-## Remaining work
-1. Confirm Omnisphere loads the converted patch in Reaper (gate).
-2. Build the `plugin_bridge` registry + `PortableChunk` synthesis in Rust.
-3. Associate each PT `0x1038` state with its track (likely via the enclosing
-   `0x2624` / `0x2619` track name) and emit the `<FXCHAIN>` on that Reaper
-   track in `project_import.rs`.
-4. Add more `PortableChunk` plugins; design the config-file loader.
+## Status: integrated into the converter ✅
+
+- **Extraction** (`dawfile-protools/src/parse/plugin_states.rs`): scans the
+  per-track plugin container `0x2621` (track name = length-prefixed string at
+  payload `+18`), extracts the `<SynthMaster vers=…>…</SynthMaster>` blob, and
+  populates `ProToolsSession.plugin_states` (`PluginInstanceState { track_name,
+  kind, state }`).
+- **Registry / synthesis** (`daw-reaper/src/plugin_bridge/`): `PluginStateKind
+  → PortableChunkTemplate` (Omnisphere first). `convert()` re-wraps the blob
+  into the Reaper VST3 chunk (3 base64 segments, seg0 state-length field
+  patched). The template is plain data → loadable from community config later.
+- **Emission** (`daw-reaper/src/project_import.rs`): each converted FX is
+  claimed by its track (exact track-name match first, then normalized `.NN`
+  playlist-suffix match, once per track) and attached via the FX chain
+  (`TrackBuilder::fx` + `FxBuilder::raw_block`).
+
+Verified end-to-end across the 6 PNG tracking sessions: every Omnisphere
+instance lands on its own instrument track with the full patch
+(`ALLTHATIAM_FULL_with_Omnisphere.rpp` on voyager). The entire plugin state
+transfers — all parameters, FX, mod matrix, arp, all parts — not just the
+library reference.
+
+## Adding more plugins
+1. For a portable-chunk plugin: capture a Reaper-saved chunk, add a
+   `PortableChunkTemplate` const + a `PluginStateKind` variant, and a detector
+   in `parse_plugin_states`.
+2. For format-divergent plugins: add a `ParamMap` strategy (per-parameter
+   AAX→VST3 id/range table) — pure config.
+3. Eventually: load the registry from community-editable config files.
