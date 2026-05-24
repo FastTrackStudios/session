@@ -200,11 +200,20 @@ where
     // Lane table first. Probe 0..=10 because REAPER may have an
     // implicit lane at index 0 (the "automatic" slot) that
     // `ruler_lane_count` (which stops at the first empty name)
-    // hides from us, and the user wants to know about it.
-    tracing::info!("[session] === lanes ===");
-    for idx in 0u32..=10 {
+    // hides from us, and the user wants to know about it. Also
+    // pull RULER_LANE_FLAGS:N so we can see which lane REAPER
+    // considers the default marker / region target.
+    tracing::info!("[session] === lanes (name_key_index 0-based) ===");
+    for idx in 0u32..=6 {
         let name = daw.get_ruler_lane_name(project.clone(), idx);
-        tracing::info!("[session] lane {idx}: name={:?}", name);
+        let flags = daw.get_project_info(project.clone(), &format!("RULER_LANE_FLAGS:{idx}"));
+        let hidden = daw.get_project_info(project.clone(), &format!("RULER_LANE_HIDDEN:{idx}"));
+        tracing::info!(
+            "[session] lane {idx}: name={:?} flags={} hidden={}",
+            name,
+            flags,
+            hidden,
+        );
     }
 
     let markers = Markers::all(daw, project.clone());

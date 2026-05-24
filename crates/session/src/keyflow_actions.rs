@@ -214,17 +214,19 @@ where
         }
     }
 
-    // Iterate the *name-table* 0-based — that's how
-    // `get_ruler_lane_name` keys read in REAPER. The 1-based loop we
-    // had before skipped the leftmost lane (the leftover unnamed
-    // one) entirely, so it never got hidden.
-    let count = daw.ruler_lane_count(project.clone()).max(1);
-    for key_idx in 0..count {
+    // Probe a fixed range past the named-lanes count instead of
+    // stopping at `ruler_lane_count` — REAPER sometimes leaves a
+    // trailing empty lane after a sequence of `RULER_LANE_ORDER`
+    // inserts, and that empty lane sits beyond what `ruler_lane_count`
+    // reports. 12 is generous (we currently use 3 core lanes and
+    // ~8 instrument lanes; anything past that is the user's).
+    //
+    // Both `RULER_LANE_HIDDEN:N` and `I_LANENUMBER` use the same
+    // 0-based index now, so a marker with `lane=Some(N)` shows up in
+    // `used_lanes` with the same N we'd hide.
+    for key_idx in 0u32..12 {
         let name = daw.get_ruler_lane_name(project.clone(), key_idx);
-        // Convert to the 1-based `I_LANENUMBER` value markers/regions
-        // use, since `used_lanes` was filled from those.
-        let used_lane_value = key_idx + 1;
-        if valid_names.contains(name.trim()) || used_lanes.contains(&used_lane_value) {
+        if valid_names.contains(name.trim()) || used_lanes.contains(&key_idx) {
             continue;
         }
         daw.set_project_info(
