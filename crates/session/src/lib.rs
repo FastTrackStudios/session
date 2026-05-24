@@ -741,6 +741,12 @@ actions_proto::define_actions! {
             category: Dev,
             group: "Dev",
         }
+        DUMP_RULER_STATE = "dump_ruler_state" {
+            name: "Dump Ruler State",
+            description: "Log every marker and region in the current project with its position, name, color and ruler lane index. Useful for debugging lane assignment after BUILD_SETLIST / LOAD_DEMO_SETLIST.",
+            category: Dev,
+            group: "Dev",
+        }
         // ── Recording workflow ───────────────────────────────────────
         RECORD_RESTART = "record_restart" {
             name: "Record: Restart recording (delete + re-record)",

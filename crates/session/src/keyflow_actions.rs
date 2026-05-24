@@ -504,6 +504,25 @@ where
             );
             Regions::set_color(daw, project.clone(), id, desired_color)?;
         }
+        // Force the SECTIONS lane assignment too. `Regions::add`
+        // lands in REAPER's default region lane, which is only
+        // guaranteed to be SECTIONS after `ensure_core_lanes` has
+        // written `RULER_LANE_FLAGS:N=8` — and that flag only steers
+        // *future* inserts, not existing ones. Without this loop
+        // applying the lane explicitly, freshly-stamped section
+        // regions stick in lane 0 (REAPER's unnamed default).
+        let section_lane = CoreLane::Sections.lane_index();
+        if current
+            .map(|(_, current_lane, _)| *current_lane != Some(section_lane))
+            .unwrap_or(true)
+        {
+            info!(
+                id,
+                lane = section_lane,
+                "[session] Normalizing section region: set lane",
+            );
+            Regions::set_lane(daw, project.clone(), id, Some(section_lane))?;
+        }
     }
     Ok(())
 }
