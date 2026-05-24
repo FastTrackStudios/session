@@ -21,10 +21,13 @@
 #![allow(dead_code)]
 
 use daw::rpc;
-use daw::service::{Markers, ProjectContext, Projects, Regions};
+use daw::service::transport::service::Transport as TransportService;
+use daw::service::{Markers, ProjectContext, Projects, Regions, TempoMap};
 use session_proto::SessionServiceError;
 use session_proto::ruler_lanes::CoreLane;
 use tracing::info;
+
+use crate::keyflow_actions::{self, KeyflowAction, MarkerKind, SectionKind};
 
 // ── Lane indices (1-based, matching CoreLane) ──────────────────────────────
 
@@ -54,7 +57,13 @@ struct DemoSong {
 }
 
 struct DemoSection {
-    name: &'static str,
+    /// Section kind — drives both the inserted region's name (via
+    /// keyflow_actions' abbreviation table) and which template colour
+    /// the keyflow insert action picks. We carry the kind itself
+    /// rather than a string so the demo can dispatch through the
+    /// existing `insert_<kind>_region` actions and inherit all their
+    /// lane / colour / carving logic.
+    kind: SectionKind,
     start: f64,
     end: f64,
 }
@@ -72,7 +81,7 @@ pub async fn stamp_demo_setlist() -> Result<(), SessionServiceError> {
 
 pub fn stamp_demo_setlist_with<D>(daw: &D) -> Result<(), SessionServiceError>
 where
-    D: Markers + Projects + Regions,
+    D: Projects + TransportService + Markers + Regions + TempoMap,
 {
     let project = daw
         .current()
@@ -98,7 +107,7 @@ pub fn stamp_demo_into_project_native<D>(
     project: ProjectContext,
 ) -> Result<(), SessionServiceError>
 where
-    D: Markers + Regions,
+    D: Projects + TransportService + Markers + Regions + TempoMap,
 {
     info!(
         "Stamping demo setlist markers/regions into project {}",
@@ -108,18 +117,31 @@ where
         }
     );
 
+    // Every keyflow_actions::dispatch call below operates on
+    // `ProjectContext::Current`. If the caller asked for a different
+    // project we have to bring it to the front first.
+    if let ProjectContext::Project(guid) = &project {
+        if !daw.select(guid) {
+            return Err(SessionServiceError::DawError(format!(
+                "could not focus project {guid} before stamping demo"
+            )));
+        }
+    }
+
     let songs = demo_songs();
 
     let mut total_markers = 0u32;
     let mut total_regions = 0u32;
 
     for song in &songs {
-        // ── SONG-lane parent region (spans entire song) ──────────
+        // ── SONG-lane parent region (the song-bounded named region) ──
         //
-        // `Regions::add` drops the region into the project's default
-        // region lane — which may or may not be SECTIONS depending on
-        // project state. Pin to SONG_LANE explicitly so the song
-        // bound shows up where the rest of the stack expects it.
+        // No keyflow action exists for "insert song-name region into
+        // SONG lane" yet (the per-section inserts only target
+        // SECTIONS). Do this one by hand: add via the trait, pin to
+        // SONG lane via the new Regions::set_lane. Everything else is
+        // a chain of existing actions whose ensure-lane / set-lane /
+        // colour-pick logic we don't want to duplicate.
         let song_region_id = Regions::add(
             daw,
             project.clone(),
@@ -132,35 +154,32 @@ where
             .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
         total_regions += 1;
 
-        // ── SONG-lane bounds + MARKS-lane structural markers ─────
+        // ── Structural markers — chain the existing actions ──────
         //
-        // SONGSTART / SONGEND live on SONG (alongside the parent
-        // region they bracket). COUNT-IN and =END are render /
-        // playback structural cues — MARKS lane per the convention
-        // (see session_proto::ruler_lanes::classify_marker_lane).
-        place_marker(daw, &project, song.song_start, "SONGSTART", SONG_LANE)?;
-        place_marker(daw, &project, song.song_end, "SONGEND", SONG_LANE)?;
-        place_marker(daw, &project, song.count_in, "COUNT-IN", MARKS_LANE)?;
-        place_marker(daw, &project, song.abs_end, "=END", MARKS_LANE)?;
+        // Each `insert_<kind>_marker` action:
+        //   1. ensures the right CoreLane exists
+        //   2. drops the marker at the *edit cursor*
+        //   3. assigns the lane via `classify_marker_lane(kind.name())`
+        //   4. picks the conventional colour
+        // …so we just have to move the cursor and let the action do
+        // its thing. That keeps lane / colour / classification logic
+        // in one place (keyflow_actions) — this demo just composes.
+        place_marker_via_action(daw, &project, song.count_in, MarkerKind::CountIn)?;
+        place_marker_via_action(daw, &project, song.song_start, MarkerKind::SongStart)?;
+        place_marker_via_action(daw, &project, song.song_end, MarkerKind::SongEnd)?;
+        place_marker_via_action(daw, &project, song.abs_end, MarkerKind::End)?;
         total_markers += 4;
 
-        // ── SECTIONS-lane section regions ────────────────────────
+        // ── Section regions — chain the per-section inserts ──────
         //
-        // SECTIONS has flags=8 (default region lane) so these *should*
-        // land on it automatically, but make it explicit so the demo
-        // is robust against projects where the default has been
-        // changed by hand or by another extension.
+        // `insert_<section>_region` takes its bounds from either the
+        // current time selection or the edit cursor + default 2
+        // measures. We have exact bounds for every section, so set
+        // the time selection precisely and dispatch. The action
+        // carves overlaps, colours per section type, and lands in
+        // SECTIONS lane — all of which we'd otherwise re-implement.
         for section in &song.sections {
-            let id = Regions::add(
-                daw,
-                project.clone(),
-                section.start,
-                section.end,
-                section.name,
-            )
-            .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
-            Regions::set_lane(daw, project.clone(), id, Some(SECTIONS_LANE))
-                .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
+            place_section_via_action(daw, &project, section)?;
             total_regions += 1;
         }
     }
@@ -175,23 +194,43 @@ where
     Ok(())
 }
 
-/// Add a marker and pin it to the requested lane. Folds the
-/// add-then-set_lane pair callers want every time into one fallible
-/// step so the demo body reads as data.
-fn place_marker<D>(
+/// Move the edit cursor to `position`, then dispatch the matching
+/// `insert_<kind>_marker` keyflow action. The action handles
+/// lane / colour / convention — the helper just bridges between
+/// "we know exactly where it goes" and "the action reads the cursor".
+fn place_marker_via_action<D>(
     daw: &D,
     project: &ProjectContext,
     position: f64,
-    name: &str,
-    lane: u32,
+    kind: MarkerKind,
 ) -> Result<(), SessionServiceError>
 where
-    D: Markers,
+    D: Projects + TransportService + Markers + Regions + TempoMap,
 {
-    let id = Markers::add(daw, project.clone(), position, name)
+    TransportService::set_position(daw, project.clone(), position)
         .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
-    Markers::set_lane(daw, project.clone(), id, Some(lane))
+    keyflow_actions::dispatch(daw, KeyflowAction::InsertMarker(kind));
+    Ok(())
+}
+
+/// Set the project's time selection to the section's bounds, then
+/// dispatch `insert_<section>_region`. Keyflow's
+/// `infer_insert_bounds` consumes the time selection (clearing it
+/// afterwards) so this is the only way to feed precise bounds
+/// without rewriting the insert path.
+fn place_section_via_action<D>(
+    daw: &D,
+    project: &ProjectContext,
+    section: &DemoSection,
+) -> Result<(), SessionServiceError>
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap,
+{
+    TransportService::set_position(daw, project.clone(), section.start)
         .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
+    TransportService::set_time_selection(daw, project.clone(), section.start, section.end)
+        .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
+    keyflow_actions::dispatch(daw, KeyflowAction::InsertSection(section.kind));
     Ok(())
 }
 
@@ -210,32 +249,32 @@ fn demo_songs() -> Vec<DemoSong> {
             abs_end: 120.0,
             sections: vec![
                 DemoSection {
-                    name: "Intro",
+                    kind: SectionKind::Intro,
                     start: 4.0,
                     end: 20.0,
                 },
                 DemoSection {
-                    name: "Verse 1",
+                    kind: SectionKind::Verse,
                     start: 20.0,
                     end: 44.0,
                 },
                 DemoSection {
-                    name: "Chorus",
+                    kind: SectionKind::Chorus,
                     start: 44.0,
                     end: 68.0,
                 },
                 DemoSection {
-                    name: "Verse 2",
+                    kind: SectionKind::Verse,
                     start: 68.0,
                     end: 92.0,
                 },
                 DemoSection {
-                    name: "Chorus",
+                    kind: SectionKind::Chorus,
                     start: 92.0,
                     end: 112.0,
                 },
                 DemoSection {
-                    name: "Outro",
+                    kind: SectionKind::Outro,
                     start: 112.0,
                     end: 116.0,
                 },
@@ -253,32 +292,32 @@ fn demo_songs() -> Vec<DemoSong> {
             abs_end: 270.0,
             sections: vec![
                 DemoSection {
-                    name: "Intro",
+                    kind: SectionKind::Intro,
                     start: 134.0,
                     end: 152.0,
                 },
                 DemoSection {
-                    name: "Verse 1",
+                    kind: SectionKind::Verse,
                     start: 152.0,
                     end: 178.0,
                 },
                 DemoSection {
-                    name: "Pre-Chorus",
+                    kind: SectionKind::PreChorus,
                     start: 178.0,
                     end: 192.0,
                 },
                 DemoSection {
-                    name: "Chorus",
+                    kind: SectionKind::Chorus,
                     start: 192.0,
                     end: 218.0,
                 },
                 DemoSection {
-                    name: "Bridge",
+                    kind: SectionKind::Bridge,
                     start: 218.0,
                     end: 240.0,
                 },
                 DemoSection {
-                    name: "Chorus",
+                    kind: SectionKind::Chorus,
                     start: 240.0,
                     end: 266.0,
                 },
@@ -296,42 +335,46 @@ fn demo_songs() -> Vec<DemoSong> {
             abs_end: 430.0,
             sections: vec![
                 DemoSection {
-                    name: "Intro",
+                    kind: SectionKind::Intro,
                     start: 284.0,
                     end: 300.0,
                 },
                 DemoSection {
-                    name: "Verse 1",
+                    kind: SectionKind::Verse,
                     start: 300.0,
                     end: 320.0,
                 },
                 DemoSection {
-                    name: "Chorus",
+                    kind: SectionKind::Chorus,
                     start: 320.0,
                     end: 344.0,
                 },
                 DemoSection {
-                    name: "Verse 2",
+                    kind: SectionKind::Verse,
                     start: 344.0,
                     end: 364.0,
                 },
                 DemoSection {
-                    name: "Chorus",
+                    kind: SectionKind::Chorus,
                     start: 364.0,
                     end: 388.0,
                 },
                 DemoSection {
-                    name: "Bridge",
+                    kind: SectionKind::Bridge,
                     start: 388.0,
                     end: 408.0,
                 },
                 DemoSection {
-                    name: "Chorus",
+                    kind: SectionKind::Chorus,
                     start: 408.0,
                     end: 422.0,
                 },
+                // Closest existing variant — SectionKind has no Tag yet;
+                // SectionKind::Outro keeps the convention coherent (tag
+                // is a structural close to the song) without requiring
+                // a session-wide enum addition.
                 DemoSection {
-                    name: "Tag",
+                    kind: SectionKind::Outro,
                     start: 422.0,
                     end: 426.0,
                 },
