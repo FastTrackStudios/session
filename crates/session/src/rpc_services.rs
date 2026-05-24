@@ -19,6 +19,8 @@ use session_proto::SessionServiceError;
 use session_proto::services::{
     RecordControlService, SessionModeService, TakeRankLevel, TakeRankScope, TakeRankingService,
 };
+use tokio::sync::broadcast::error::RecvError;
+use vox::Tx;
 
 use crate::mode_actions::{self, Mode};
 use crate::record_actions::{self, RecordAction};
@@ -49,6 +51,32 @@ impl SessionModeService for SessionModeServiceImpl {
 
     async fn list_modes(&self) -> Result<Vec<String>, SessionServiceError> {
         Ok(Mode::ALL.iter().map(|m| m.slug().to_string()).collect())
+    }
+
+    async fn subscribe(&self, tx: Tx<String>) {
+        // Seed with the current value so subscribers don't have to do
+        // an extra `current_mode` RPC right after subscribe to know the
+        // initial state.
+        let initial = mode_actions::current_mode().slug().to_string();
+        let mut rx = mode_actions::mode_broadcast().subscribe();
+        tokio::spawn(async move {
+            if tx.send(initial).await.is_err() {
+                return;
+            }
+            loop {
+                match rx.recv().await {
+                    Ok(slug) => {
+                        if tx.send(slug).await.is_err() {
+                            return;
+                        }
+                    }
+                    Err(RecvError::Closed) => return,
+                    Err(RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "SessionMode subscriber lagged");
+                    }
+                }
+            }
+        });
     }
 }
 

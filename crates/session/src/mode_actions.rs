@@ -270,6 +270,32 @@ pub enum ModeAction {
 pub fn init(_ctx: &daw::module::ModuleContext) {
     // Initialise the global to Organize so `current_mode()` is always sane.
     let _ = current_mode();
+    // Register the broadcast bridge once so every set_mode call fans
+    // out to subscribed Vox clients with no per-listener cost.
+    register_broadcast_bridge();
+}
+
+// ── Mode-change broadcast (for Vox subscribers) ─────────────────────────────
+
+static MODE_BROADCAST: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
+    std::sync::OnceLock::new();
+static BROADCAST_BRIDGE_REGISTERED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Process-wide broadcast channel of new mode slugs. Pushed each time
+/// `set_mode` transitions to a different mode. Subscribe a receiver to
+/// forward into a Vox client `Tx<String>`.
+pub fn mode_broadcast() -> &'static tokio::sync::broadcast::Sender<String> {
+    MODE_BROADCAST.get_or_init(|| tokio::sync::broadcast::channel(32).0)
+}
+
+fn register_broadcast_bridge() {
+    if BROADCAST_BRIDGE_REGISTERED.set(()).is_err() {
+        return;
+    }
+    fn forward_to_broadcast(mode: Mode) {
+        let _ = mode_broadcast().send(mode.slug().to_string());
+    }
+    add_mode_change_listener(forward_to_broadcast);
 }
 
 pub fn action_for_id(action_id: &str) -> Option<ModeAction> {
