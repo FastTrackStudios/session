@@ -19,9 +19,23 @@ where
 
         let build_generation = self.build_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
-        let projects = self.daw.list();
-
-        let current_project_guid = self.daw.current().map(|project| project.guid);
+        // `Projects::list` / `Projects::current` on `daw_reaper::Reaper`
+        // hit REAPER's main-thread-only FFI (EnumProjects, etc.). Run
+        // them from the async RPC handler and they hang waiting on
+        // REAPER's internal lock. Bounce via `main_thread::query` —
+        // same pattern mode/take/record services already use.
+        let daw = self.daw.clone();
+        let (projects, current_project_guid) = daw_reaper::main_thread::query(move || {
+            let projects = daw.list();
+            let current = daw.current().map(|p| p.guid);
+            (projects, current)
+        })
+        .await
+        .ok_or_else(|| {
+            SessionServiceError::Internal(
+                "main thread unavailable (TaskSupport not initialised)".to_string(),
+            )
+        })?;
 
         let project_loads = Self::fetch_project_loads(projects).await;
         if project_loads.is_empty() {

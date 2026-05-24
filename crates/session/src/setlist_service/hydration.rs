@@ -150,8 +150,16 @@ where
     /// Build a `MidiChartsClient` over the same vox channel daw is using.
     /// Chart service is registered by session's DAW service layer at startup;
     /// we just need a client over the existing `Caller`.
-    fn chart_client() -> MidiChartsClient {
-        MidiChartsClient::new(Daw::get().caller().clone())
+    ///
+    /// Returns `None` when the global `Daw` hasn't been initialised —
+    /// happens in the in-process `fts-extensions` host, which calls
+    /// `daw::init_from_parts` instead of the desktop-style
+    /// `Daw::init(caller)`. Callers must handle `None` by skipping
+    /// chart hydration; without this guard the build path panics on
+    /// the worker thread and the awaiting RPC client hangs forever
+    /// (no response ever flows back).
+    fn chart_client() -> Option<MidiChartsClient> {
+        Some(MidiChartsClient::new(Daw::try_get()?.caller().clone()))
     }
 
     pub(crate) async fn fetch_midi_chart_data(project_guid: &str) -> Option<MidiChartData> {
@@ -159,7 +167,24 @@ where
             Some(project_guid.to_string()),
             Some(MIDI_TRACK_TAG.to_string()),
         );
-        match Self::chart_client().generate_chart_data(req).await {
+        // Same 2s safety cap as fetch_midi_source_fingerprint — see
+        // the comment there for the rationale.
+        let client = match Self::chart_client() {
+            Some(c) => c,
+            None => return None,
+        };
+        let call = client.generate_chart_data(req);
+        let res = match tokio::time::timeout(Duration::from_secs(2), call).await {
+            Ok(r) => r,
+            Err(_) => {
+                debug!(
+                    "MIDI chart generation timed out (>2s) for project {} — skipping",
+                    project_guid
+                );
+                return None;
+            }
+        };
+        match res {
             Ok(data) => Some(data),
             Err(vox_err) => {
                 debug!(
@@ -181,7 +206,27 @@ where
             Some(project_guid.to_string()),
             Some(MIDI_TRACK_TAG.to_string()),
         );
-        match Self::chart_client().source_fingerprint(req).await {
+        // Cap the chart service call at 2s so a hung keyflow handler
+        // (e.g. mid-edit while another agent is iterating on it) can't
+        // wedge `build_from_open_projects` forever. On timeout we treat
+        // it as "fingerprint unavailable" — the build still produces
+        // valid songs, just without chart hydration.
+        let client = match Self::chart_client() {
+            Some(c) => c,
+            None => return None,
+        };
+        let call = client.source_fingerprint(req);
+        let res = match tokio::time::timeout(Duration::from_secs(2), call).await {
+            Ok(r) => r,
+            Err(_) => {
+                debug!(
+                    "MIDI source fingerprint timed out (>2s) for project {} — skipping",
+                    project_guid
+                );
+                return None;
+            }
+        };
+        match res {
             Ok(fingerprint) => {
                 if support_state != Some(true) {
                     *self.fingerprint_method_supported.write().await = Some(true);
@@ -308,7 +353,19 @@ where
 
         let chart_data = Self::fetch_midi_chart_data(&load.guid).await;
 
-        match SongBuilder::build_native(ProjectContext::Project(load.guid.clone())) {
+        // SongBuilder::build_native calls REAPER FFI (info / markers /
+        // regions / lanes) which is main-thread-only. Bounce so the
+        // async build path works when invoked over RPC from a tokio
+        // worker thread — without this the call hangs on REAPER's
+        // internal lock instead of erroring.
+        let guid = load.guid.clone();
+        let build_result = daw_reaper::main_thread::query(move || {
+            SongBuilder::build_native(ProjectContext::Project(guid))
+        })
+        .await
+        .unwrap_or_else(|| Err(eyre::eyre!("main thread unavailable for SongBuilder")));
+
+        match build_result {
             Ok(mut songs) => {
                 // Apply chart data and IDs to the first song
                 if let Some(first_song) = songs.first_mut() {
