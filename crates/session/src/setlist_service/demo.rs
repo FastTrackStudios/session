@@ -115,7 +115,12 @@ where
 
     for song in &songs {
         // ── SONG-lane parent region (spans entire song) ──────────
-        Regions::add(
+        //
+        // `Regions::add` drops the region into the project's default
+        // region lane — which may or may not be SECTIONS depending on
+        // project state. Pin to SONG_LANE explicitly so the song
+        // bound shows up where the rest of the stack expects it.
+        let song_region_id = Regions::add(
             daw,
             project.clone(),
             song.region_start,
@@ -123,25 +128,30 @@ where
             song.name,
         )
         .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
+        Regions::set_lane(daw, project.clone(), song_region_id, Some(SONG_LANE))
+            .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
         total_regions += 1;
 
-        // ── MARKS-lane structural markers ────────────────────────
-        Markers::add(daw, project.clone(), song.count_in, "COUNT-IN")
-            .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
-        Markers::add(daw, project.clone(), song.song_start, "SONGSTART")
-            .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
-        Markers::add(daw, project.clone(), song.song_end, "SONGEND")
-            .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
-        total_markers += 3;
-
-        // ── MARKS-lane render bounds ─────────────────────────────
-        Markers::add(daw, project.clone(), song.abs_end, "=END")
-            .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
-        total_markers += 1;
+        // ── SONG-lane bounds + MARKS-lane structural markers ─────
+        //
+        // SONGSTART / SONGEND live on SONG (alongside the parent
+        // region they bracket). COUNT-IN and =END are render /
+        // playback structural cues — MARKS lane per the convention
+        // (see session_proto::ruler_lanes::classify_marker_lane).
+        place_marker(daw, &project, song.song_start, "SONGSTART", SONG_LANE)?;
+        place_marker(daw, &project, song.song_end, "SONGEND", SONG_LANE)?;
+        place_marker(daw, &project, song.count_in, "COUNT-IN", MARKS_LANE)?;
+        place_marker(daw, &project, song.abs_end, "=END", MARKS_LANE)?;
+        total_markers += 4;
 
         // ── SECTIONS-lane section regions ────────────────────────
+        //
+        // SECTIONS has flags=8 (default region lane) so these *should*
+        // land on it automatically, but make it explicit so the demo
+        // is robust against projects where the default has been
+        // changed by hand or by another extension.
         for section in &song.sections {
-            Regions::add(
+            let id = Regions::add(
                 daw,
                 project.clone(),
                 section.start,
@@ -149,6 +159,8 @@ where
                 section.name,
             )
             .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
+            Regions::set_lane(daw, project.clone(), id, Some(SECTIONS_LANE))
+                .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
             total_regions += 1;
         }
     }
@@ -160,6 +172,26 @@ where
         songs.len()
     );
     info!("Demo markers/regions stamped successfully");
+    Ok(())
+}
+
+/// Add a marker and pin it to the requested lane. Folds the
+/// add-then-set_lane pair callers want every time into one fallible
+/// step so the demo body reads as data.
+fn place_marker<D>(
+    daw: &D,
+    project: &ProjectContext,
+    position: f64,
+    name: &str,
+    lane: u32,
+) -> Result<(), SessionServiceError>
+where
+    D: Markers,
+{
+    let id = Markers::add(daw, project.clone(), position, name)
+        .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
+    Markers::set_lane(daw, project.clone(), id, Some(lane))
+        .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
     Ok(())
 }
 
