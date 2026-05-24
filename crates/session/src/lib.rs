@@ -62,6 +62,7 @@ pub mod daw_module;
 pub mod mode_actions;
 pub mod record_actions;
 pub mod rpc_services;
+pub mod setlist_actions;
 pub mod take_ranking;
 pub mod track_manager_actions;
 
@@ -87,10 +88,17 @@ impl SessionServices {
             KeyflowMidiAnalysis, MidiChartsDispatcher, midi_charts_service_descriptor,
         };
 
+        // Share one SetlistServiceImpl between the RPC mount and the
+        // action-handler chain (so the REAPER `build_setlist` hotkey
+        // and `fts session setlist` see the same in-memory state).
+        // SetlistServiceImpl is Clone over Arc'd fields, so cloning
+        // gives a handle to the same setlist / song_cache / etc.
+        let setlist_impl = SetlistServiceImpl::with_daw(daw.clone());
+        setlist_actions::register(setlist_impl.clone());
         vec![
             daw::Mounted::new(
                 &setlist_service_service_descriptor(),
-                serve_setlist_service(SetlistServiceImpl::with_daw(daw.clone())),
+                serve_setlist_service(setlist_impl),
             ),
             daw::Mounted::new(
                 &song_service_service_descriptor(),
