@@ -2,103 +2,179 @@
 //!
 //! The `BUILD_SETLIST` action ID has been registered in
 //! `session_actions!` for a while, but `daw_module::actions` walks a
-//! chain of `*_actions::action_for_id` lookups (keyflow, auto_color,
-//! preroll, mode, take_ranking, record) and *none* of those owned the
-//! setlist domain. Hitting the hotkey in REAPER fell through to the
-//! "No DAW handler registered" log message — the action was a no-op.
+//! chain of `*_actions::action_for_id` lookups and *none* of those
+//! owned the setlist domain. Hitting the hotkey in REAPER fell
+//! through to the "No DAW handler registered" log message — the
+//! action was a no-op.
 //!
-//! This module fills the gap. It:
+//! This module fills the gap, mirroring the `keyflow_actions` shape:
 //!
-//! 1. Holds a singleton `Arc<dyn SetlistDispatcher>` registered at
-//!    mount time so the action handler runs against the same in-memory
-//!    setlist the RPC service exposes.
-//! 2. Provides the `action_for_id` / `dispatch` shape every other
-//!    `*_actions` module uses, so wiring is one line in
-//!    `daw_module::actions`.
+//!   pub fn dispatch<D>(daw: &D, action: SetlistAction)
+//!       where D: Projects + …
 //!
-//! Why a trait-object singleton rather than a concrete
-//! `SetlistServiceImpl<D>`: the session crate is generic over a DAW
-//! backend `D`, but the action handler can't be generic (it ends up
-//! in a `Box<dyn Fn()>` cell on the REAPER side). Erasing to a small
-//! `SetlistDispatcher` trait keeps the static type-free.
+//! Runs **synchronously on REAPER's main thread** (where the action
+//! callback fires), so we can use the sync trait methods on
+//! `daw_reaper::Reaper` directly — no `main_thread::query` bounce,
+//! no Tokio runtime, no `moire::task::spawn`. This is the same
+//! pattern keyflow_actions uses and the same reason it works.
+//!
+//! Setlist storage: at mount time `register` stashes the
+//! `SetlistServiceImpl`'s `Arc<RwLock<Option<Setlist>>>` so the
+//! sync writer here and the RPC reader (`SetlistService::setlist`)
+//! share one piece of state.
 
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use daw::service::ProjectContext;
+use daw::service::transport::service::Transport as TransportService;
+use daw::service::{Markers, Projects, Regions, TempoMap};
+use moire::sync::RwLock;
+use session_proto::{AdvanceMode, Setlist, Song};
+
 use crate::setlist_service::SetlistServiceImpl;
+use crate::song_builder::SongBuilder;
 
-/// Type-erased "what to do when a setlist action fires" handle.
-/// Implemented by `SetlistServiceImpl<D>` for any `D: Send + Sync +
-/// Clone + 'static` that satisfies the service's own bounds.
-pub trait SetlistDispatcher: Send + Sync + 'static {
-    /// Trigger `build_from_open_projects` on this dispatcher's setlist
-    /// service. Synchronous from the caller's POV — bounces work onto
-    /// the moire runtime so the REAPER main thread keeps pumping.
-    fn trigger_build(&self);
-}
+/// The setlist storage cell shared with `SetlistServiceImpl`.
+static SETLIST_STORE: OnceLock<Arc<RwLock<Option<Setlist>>>> = OnceLock::new();
 
-impl<D> SetlistDispatcher for SetlistServiceImpl<D>
-where
-    D: Clone + daw::service::Projects + Send + Sync + 'static,
-{
-    fn trigger_build(&self) {
-        // Spawn on the moire runtime so we don't block REAPER's main
-        // thread (action handlers run synchronously on it). Call the
-        // `_impl` variant directly — going through the trait method
-        // dispatches via Vox in some setups; the impl is the work.
-        let svc = self.clone();
-        moire::task::spawn(async move {
-            match svc.build_from_open_projects_impl().await {
-                Ok(()) => tracing::info!("[session] build_setlist action completed"),
-                Err(e) => tracing::warn!("[session] build_setlist action failed: {e:?}"),
-            }
-        });
-    }
-}
-
-static SETLIST_DISPATCHER: OnceLock<Arc<dyn SetlistDispatcher>> = OnceLock::new();
-
-/// Stash the shared SetlistServiceImpl so the action handler can find
-/// it. Called once from `SessionServices::mounted_services_with_daw`.
-/// Re-registration is a silent no-op — first wins (we never expect to
-/// mount twice, but being lenient beats a panic at plugin load).
-pub fn register(impl_handle: impl SetlistDispatcher) {
-    let _ = SETLIST_DISPATCHER.set(Arc::new(impl_handle));
+/// Stash the `SetlistServiceImpl`'s setlist cell so the action
+/// handler writes to the same `Arc<RwLock<>>` the RPC service reads.
+/// Idempotent — first call wins; later calls ignored so re-mounting
+/// (shouldn't happen but defensive) can't blow up plugin startup.
+pub fn register<D>(svc: &SetlistServiceImpl<D>) {
+    let _ = SETLIST_STORE.set(svc.setlist.clone());
 }
 
 /// REAPER action dispatch table for the setlist domain. Returned to
 /// `daw_module::actions`'s `action_for_id` chain; `None` means
 /// "someone else's action".
 pub enum SetlistAction {
+    /// Scan open project tabs, parse SONGSTART/SONGEND markers + section
+    /// regions, populate the cached `Setlist`. Idempotent — rerun to
+    /// pick up edits.
     Build,
+    /// Stamp the canonical demo markers + section regions into the
+    /// current REAPER project (3 songs of typical worship-set
+    /// structure: count-in, song-start, verse/pre/chorus/bridge/outro
+    /// regions, song-end, =END render bound), then immediately rebuild
+    /// the cached `Setlist`. Use for a one-keypress "give me a working
+    /// setlist to test against" — handy when iterating on UI or RPC
+    /// without recording markers by hand.
+    LoadDemo,
 }
 
 pub fn action_for_id(action_id: &str) -> Option<SetlistAction> {
-    // The action ID strings come from the `define_actions!` macro in
-    // session_actions! — keep these in sync with the IDs declared
-    // there. (`build_setlist` is the action's `id`, namespaced to
-    // `fts.session.build_setlist` at command-id construction time.)
+    // Action IDs flow in either the dotted form `fts.session.build_setlist`
+    // (definition-time) or the upper-snake REAPER command form
+    // `FTS_SESSION_BUILD_SETLIST` (runtime callback). Accept both.
     let trimmed = action_id.trim();
-    let bare = trimmed.strip_prefix("fts.session.").unwrap_or(trimmed);
+    let lower = trimmed.to_lowercase();
+    let bare = lower
+        .strip_prefix("fts.session.")
+        .or_else(|| lower.strip_prefix("fts_session_"))
+        .unwrap_or(lower.as_str());
     match bare {
         "build_setlist" => Some(SetlistAction::Build),
+        "load_demo_setlist" => Some(SetlistAction::LoadDemo),
         _ => None,
     }
 }
 
-pub fn dispatch(action: SetlistAction) {
-    let Some(dispatcher) = SETLIST_DISPATCHER.get() else {
-        tracing::warn!(
-            "[session] setlist action fired but no dispatcher registered \
-             — session services were not mounted (or were mounted via a \
-             code path that skipped setlist_actions::register)"
-        );
-        return;
-    };
+/// Run a setlist action on the calling thread (REAPER main thread).
+/// All work is sync; no spawning, no Tokio runtime needed.
+pub fn dispatch<D>(daw: &D, action: SetlistAction)
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap,
+{
     match action {
-        SetlistAction::Build => {
-            tracing::info!("[session] build_setlist action — triggering");
-            dispatcher.trigger_build();
+        SetlistAction::LoadDemo => {
+            tracing::info!("[session] load_demo_setlist action — stamping demo markers/regions");
+            let started = std::time::Instant::now();
+            match crate::setlist_service::demo::stamp_demo_setlist_with(daw) {
+                Ok(()) => {
+                    tracing::info!(
+                        "[session] demo markers stamped in {:?}; rebuilding setlist",
+                        started.elapsed()
+                    );
+                    // Fall through into the Build path so the cached
+                    // setlist immediately reflects what we just stamped.
+                    dispatch(daw, SetlistAction::Build);
+                }
+                Err(e) => {
+                    tracing::warn!("[session] load_demo_setlist: stamping failed: {e:?}");
+                }
+            }
         }
+        SetlistAction::Build => {
+            tracing::info!("[session] build_setlist action — building synchronously");
+            let started = std::time::Instant::now();
+            let setlist = build_setlist_sync(daw);
+            let song_count = setlist.songs.len();
+            match SETLIST_STORE.get() {
+                Some(slot) => match slot.try_write() {
+                    Ok(mut guard) => {
+                        *guard = Some(setlist);
+                        tracing::info!(
+                            "[session] build_setlist action completed ({} songs in {:?})",
+                            song_count,
+                            started.elapsed()
+                        );
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            "[session] build_setlist: setlist cell busy — \
+                             another writer is mid-build, skipping"
+                        );
+                    }
+                },
+                None => {
+                    tracing::warn!(
+                        "[session] build_setlist action: setlist store not \
+                         registered (mounted_services_with_daw never called?)"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Walk every open REAPER project tab and synthesise a `Song` from
+/// each via `SongBuilder::build_native` (markers + regions + lanes —
+/// no chart / fingerprint hydration). Returns an empty setlist when
+/// nothing is open. Sync because callers are REAPER action handlers.
+fn build_setlist_sync<D>(daw: &D) -> Setlist
+where
+    D: Projects,
+{
+    let projects = daw.list();
+    let mut songs: Vec<Song> = Vec::with_capacity(projects.len());
+    for project in projects {
+        let ctx = ProjectContext::Project(project.guid.clone());
+        match SongBuilder::build_native(ctx) {
+            Ok(mut project_songs) => {
+                tracing::debug!(
+                    project = %project.name,
+                    guid = %project.guid,
+                    songs = project_songs.len(),
+                    "[session] built songs from project"
+                );
+                songs.append(&mut project_songs);
+            }
+            Err(err) => {
+                tracing::warn!(
+                    project = %project.name,
+                    guid = %project.guid,
+                    "[session] SongBuilder failed for project: {err}"
+                );
+            }
+        }
+    }
+
+    Setlist {
+        id: None,
+        name: format!("Setlist - {}", chrono::Local::now().format("%Y-%m-%d")),
+        advance_mode: AdvanceMode::default(),
+        songs,
     }
 }

@@ -94,7 +94,7 @@ impl SessionServices {
         // SetlistServiceImpl is Clone over Arc'd fields, so cloning
         // gives a handle to the same setlist / song_cache / etc.
         let setlist_impl = SetlistServiceImpl::with_daw(daw.clone());
-        setlist_actions::register(setlist_impl.clone());
+        setlist_actions::register(&setlist_impl);
         vec![
             daw::Mounted::new(
                 &setlist_service_service_descriptor(),
