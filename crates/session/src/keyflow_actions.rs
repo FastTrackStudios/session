@@ -3,8 +3,8 @@ use daw::service::transport::service::Transport as TransportService;
 use daw::service::{Markers, MusicalPosition, ProjectContext, Projects, Region, Regions, TempoMap};
 use keyflow::sections::colors_for_section_type;
 use session_proto::SectionType;
-use session_proto::ruler_lanes::{CoreLane, FtsLane, classify_marker_lane};
-use std::collections::HashMap;
+use session_proto::ruler_lanes::{CoreLane, FtsLane, InstrumentLane, classify_marker_lane};
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use tracing::{info, warn};
 
@@ -126,6 +126,8 @@ where
         }
     }
 
+    hide_stray_lanes(daw);
+
     info!(
         ?action,
         elapsed_ms = started.elapsed().as_millis(),
@@ -158,6 +160,43 @@ where
     let project = ProjectContext::Current;
     for lane in CoreLane::all() {
         daw.set_ruler_lane_name(project.clone(), lane.lane_index(), lane.display_name());
+    }
+}
+
+/// Hide any ruler lanes that aren't part of the FTS layout and have no
+/// markers/regions on them. REAPER's fresh-project "1" fallback lane can
+/// linger after FTS lanes are registered; this clears it without touching
+/// lanes the user has actually populated.
+fn hide_stray_lanes<D>(daw: &D)
+where
+    D: Projects + Markers + Regions,
+{
+    let project = ProjectContext::Current;
+    let valid_names: HashSet<&str> = CoreLane::all()
+        .iter()
+        .map(|l| l.display_name())
+        .chain(InstrumentLane::all().iter().map(|l| l.display_name()))
+        .collect();
+
+    let mut used_lanes: HashSet<u32> = HashSet::new();
+    for m in Markers::all(daw, project.clone()) {
+        if let Some(lane) = m.lane {
+            used_lanes.insert(lane);
+        }
+    }
+    for r in Regions::all(daw, project.clone()) {
+        if let Some(lane) = r.lane {
+            used_lanes.insert(lane);
+        }
+    }
+
+    let count = daw.ruler_lane_count(project.clone());
+    for i in 1..=count {
+        let name = daw.get_ruler_lane_name(project.clone(), i);
+        if valid_names.contains(name.trim()) || used_lanes.contains(&i) {
+            continue;
+        }
+        daw.set_project_info(project.clone(), &format!("RULER_LANE_HIDDEN:{i}"), 1.0);
     }
 }
 

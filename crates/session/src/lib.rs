@@ -60,6 +60,7 @@ pub use setlist_service::demo::{stamp_demo_into_project, stamp_demo_setlist};
 pub mod auto_color_actions;
 pub mod daw_module;
 pub mod mode_actions;
+pub mod record_actions;
 pub mod take_ranking;
 pub mod track_manager_actions;
 
@@ -701,6 +702,25 @@ actions_proto::define_actions! {
             description: "Load a demo setlist with mock song data (no DAW required)",
             category: Dev,
             group: "Dev",
+        }
+        // ── Recording workflow ───────────────────────────────────────
+        RECORD_RESTART = "record_restart" {
+            name: "Record: Restart recording (delete + re-record)",
+            description: "Stop the current recording (DELETE all recorded media this pass) and immediately start a fresh recording pass. For aborting a bad take without leaving stray media behind.",
+            category: Transport,
+            group: "Recording",
+        }
+        MONITOR_TOGGLE_ON_OFF = "monitor_toggle_on_off" {
+            name: "Track: Toggle record monitor on/off (selected, skip auto/tape)",
+            description: "Toggle the record-monitor state of every selected track between 'on' and 'off' only, skipping the auto/tape state that REAPER's native cycle action walks through. If any selected track is currently 'on', all go to off; otherwise all go to on.",
+            category: Tracks,
+            group: "Recording",
+        }
+        MONITOR_TOGGLE_TAPE_OFF = "monitor_toggle_tape_off" {
+            name: "Track: Toggle record monitor auto-tape/off (selected)",
+            description: "Toggle the record-monitor state of every selected track between 'auto/tape' (monitor input only while recording) and 'off'. If any selected track is currently 'auto/tape', all go to off; otherwise all go to auto/tape.",
+            category: Tracks,
+            group: "Recording",
         }
         // ── Take ranking (Record mode workflow) ──────────────────────
         TAKE_RANK_PLAYPOS_1 = "take_rank_playpos_1" {

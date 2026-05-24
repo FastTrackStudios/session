@@ -55,6 +55,24 @@ impl Mode {
         }
     }
 
+    /// Reverse of [`Mode::slug`]. Case-insensitive, trims whitespace.
+    /// Returns `None` for any string that doesn't match a known mode.
+    pub fn from_slug(slug: &str) -> Option<Self> {
+        match slug.trim().to_ascii_lowercase().as_str() {
+            "organize" => Some(Mode::Organize),
+            "write" => Some(Mode::Write),
+            "produce" => Some(Mode::Produce),
+            "record" => Some(Mode::Record),
+            "edit" => Some(Mode::Edit),
+            "mix" => Some(Mode::Mix),
+            "master" => Some(Mode::Master),
+            "live" => Some(Mode::Live),
+            "video" => Some(Mode::Video),
+            "minimal" => Some(Mode::Minimal),
+            _ => None,
+        }
+    }
+
     /// Title-cased display name.
     pub fn display_name(self) -> &'static str {
         match self {
@@ -218,6 +236,7 @@ pub fn set_mode(mode: Mode) {
     if prev != mode {
         tracing::info!(from = %prev, to = %mode, "[session] Mode changed");
         fire_mode_change_listeners(mode);
+        persist_current_mode(mode);
     } else {
         tracing::debug!(mode = %mode, "[session] set_mode called with current mode (no-op)");
     }
@@ -308,4 +327,61 @@ pub fn save_layout(mode: Mode) {
             "[session] Layout save reported failure"
         );
     }
+}
+
+// ─── Persistence ────────────────────────────────────────────────────────────
+
+/// REAPER ExtState section + key used for the persisted mode slug.
+/// Lives in `reaper-extstate.ini` (global, not per-project) so the
+/// extension restores the same mode regardless of which project loads
+/// at startup.
+const EXTSTATE_SECTION: &str = "FTS_SESSION";
+const EXTSTATE_KEY_MODE: &str = "current_mode";
+
+fn persist_current_mode(mode: Mode) {
+    use daw_reaper::safe_wrappers::ext_state;
+    use reaper_high::Reaper;
+    use std::ffi::CString;
+
+    let low = Reaper::get().medium_reaper().low();
+    let Ok(section) = CString::new(EXTSTATE_SECTION) else {
+        return;
+    };
+    let Ok(key) = CString::new(EXTSTATE_KEY_MODE) else {
+        return;
+    };
+    let Ok(value) = CString::new(mode.slug()) else {
+        return;
+    };
+    ext_state::set_ext_state(low, &section, &key, &value, true);
+    tracing::debug!(mode = %mode, "[session] Persisted mode to extstate");
+}
+
+/// Read the persisted mode slug from REAPER ExtState. Returns `None`
+/// when no value has been stored yet (first launch) or the stored
+/// value doesn't match a known mode.
+pub fn persisted_mode() -> Option<Mode> {
+    use daw_reaper::safe_wrappers::ext_state;
+    use reaper_high::Reaper;
+    use std::ffi::CString;
+
+    let low = Reaper::get().medium_reaper().low();
+    let section = CString::new(EXTSTATE_SECTION).ok()?;
+    let key = CString::new(EXTSTATE_KEY_MODE).ok()?;
+    let raw = ext_state::get_ext_state(low, &section, &key)?;
+    if raw.is_empty() {
+        return None;
+    }
+    Mode::from_slug(&raw)
+}
+
+/// Convenience: if there's a persisted mode, switch to it. Intended to
+/// run once at extension startup, after session module init but before
+/// other listeners depend on the active mode. Returns the restored mode
+/// if any.
+pub fn restore_persisted_mode() -> Option<Mode> {
+    let mode = persisted_mode()?;
+    tracing::info!(mode = %mode, "[session] Restoring persisted mode from extstate");
+    set_mode(mode);
+    Some(mode)
 }

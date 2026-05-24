@@ -1,8 +1,8 @@
 //! DawModule implementation for session.
 
 use crate::{
-    auto_color_actions, keyflow_actions, mode_actions, mode_defs, preroll_actions, session_actions,
-    take_ranking, track_manager_actions,
+    auto_color_actions, keyflow_actions, mode_actions, mode_defs, preroll_actions, record_actions,
+    session_actions, take_ranking, track_manager_actions,
 };
 use daw::module::{ActionDef, DawModule, ModuleContext};
 use daw::service::transport::service::Transport as TransportService;
@@ -80,6 +80,8 @@ where
                         mode_actions::dispatch(action);
                     } else if let Some(action) = take_ranking::action_for_id(&action_id) {
                         take_ranking::dispatch(action);
+                    } else if let Some(action) = record_actions::action_for_id(&action_id) {
+                        record_actions::dispatch(action);
                     } else if dynamic_template::daw_module::dispatch_session_command(&cmd2) {
                         tracing::debug!("[session] Dispatched template action for {}", cmd2);
                     } else {
