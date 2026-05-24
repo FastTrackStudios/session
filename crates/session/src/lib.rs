@@ -61,6 +61,7 @@ pub mod auto_color_actions;
 pub mod daw_module;
 pub mod mode_actions;
 pub mod record_actions;
+pub mod rpc_services;
 pub mod take_ranking;
 pub mod track_manager_actions;
 
@@ -160,6 +161,35 @@ pub mod daw_services {
             + 'static,
     {
         crate::SessionServices::merge_into_with_daw(handler, daw)
+    }
+
+    /// Mount the session control surfaces (mode / take-ranking /
+    /// record control) onto the in-process DAW router. These are
+    /// independent of the chart / setlist services and don't need a
+    /// `D` backend — each handler bounces to REAPER's main thread
+    /// via `daw_reaper::main_thread`.
+    pub fn layer_control_surfaces(mut handler: daw::LayerRouter) -> daw::LayerRouter {
+        use crate::rpc_services::{
+            RecordControlServiceImpl, SessionModeServiceImpl, TakeRankingServiceImpl,
+        };
+        use session_proto::services::{
+            record_control_service_service_descriptor, serve_record_control_service,
+            serve_session_mode_service, serve_take_ranking_service,
+            session_mode_service_service_descriptor, take_ranking_service_service_descriptor,
+        };
+        handler = handler.merge(daw::Mounted::new(
+            &session_mode_service_service_descriptor(),
+            serve_session_mode_service(SessionModeServiceImpl),
+        ));
+        handler = handler.merge(daw::Mounted::new(
+            &take_ranking_service_service_descriptor(),
+            serve_take_ranking_service(TakeRankingServiceImpl),
+        ));
+        handler = handler.merge(daw::Mounted::new(
+            &record_control_service_service_descriptor(),
+            serve_record_control_service(RecordControlServiceImpl),
+        ));
+        handler
     }
 }
 
