@@ -13,14 +13,26 @@ fn project_ctx(project_guid: &str) -> ProjectContext {
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: Projects + TempoMap + Transport,
+    D: Projects + TempoMap + Transport + Clone + Send + Sync + 'static,
 {
-    fn current_project_guid(&self) -> Option<String> {
-        self.daw.current().map(|p| p.guid)
+    // All `self.daw.*` calls below hit REAPER main-thread-only FFI on the
+    // `daw_reaper::Reaper` backend. Each helper bounces through
+    // `daw_reaper::main_thread::query` so async RPC handlers running on
+    // tokio workers don't spin on REAPER's internal lock. Batched where
+    // multiple calls need to happen together.
+    async fn current_project_guid(&self) -> Option<String> {
+        let daw = self.daw.clone();
+        daw_reaper::main_thread::query(move || daw.current().map(|p| p.guid))
+            .await
+            .flatten()
     }
 
-    fn select_project(&self, project_guid: &str) -> bool {
-        self.daw.select(project_guid)
+    async fn select_project(&self, project_guid: &str) -> bool {
+        let daw = self.daw.clone();
+        let project_guid = project_guid.to_string();
+        daw_reaper::main_thread::query(move || daw.select(&project_guid))
+            .await
+            .unwrap_or(false)
     }
 
     /// Stop the previously active project if it's not playing.
@@ -30,15 +42,20 @@ where
         if let Some(prev) = prev_song
             && prev.project_guid != new_project_guid
         {
-            let ctx = project_ctx(&prev.project_guid);
-            let state = self.daw.get_play_state(ctx.clone());
-            if state != daw::service::PlayState::Playing {
-                debug!(
-                    "Stopping idle project {} (state={:?}) before switching",
-                    prev.project_guid, state
-                );
-                let _ = self.daw.stop(ctx);
-            }
+            let daw = self.daw.clone();
+            let prev_guid = prev.project_guid.clone();
+            daw_reaper::main_thread::query(move || {
+                let ctx = project_ctx(&prev_guid);
+                let state = daw.get_play_state(ctx.clone());
+                if state != daw::service::PlayState::Playing {
+                    debug!(
+                        "Stopping idle project {} (state={:?}) before switching",
+                        prev_guid, state
+                    );
+                    let _ = daw.stop(ctx);
+                }
+            })
+            .await;
         }
     }
 
@@ -78,6 +95,7 @@ where
         // Check if we're already on the correct project (skip tab switch for same-project songs)
         let already_on_project = self
             .current_project_guid()
+            .await
             .map(|guid| guid == skeleton.project_guid)
             .unwrap_or(false);
 
@@ -87,7 +105,7 @@ where
         }
         self.set_active_song_id(skeleton.id.as_str()).await;
 
-        if !already_on_project && !self.select_project(&skeleton.project_guid) {
+        if !already_on_project && !self.select_project(&skeleton.project_guid).await {
             warn!(
                 "seek_to_song_internal: failed to switch to project {}",
                 skeleton.project_guid
@@ -111,15 +129,19 @@ where
             }
         };
 
-        let ctx = project_ctx(&skeleton.project_guid);
         let seek_pos = Self::song_seek_position(&song);
-        if let Err(e) = self.daw.set_position(ctx.clone(), seek_pos) {
-            warn!("seek_to_song_internal: failed to seek: {}", e);
-        }
-        // Start playback for auto-advance
-        if let Err(e) = self.daw.play(ctx) {
-            warn!("seek_to_song_internal: failed to start playback: {}", e);
-        }
+        let daw = self.daw.clone();
+        let project_guid = skeleton.project_guid.clone();
+        daw_reaper::main_thread::query(move || {
+            let ctx = project_ctx(&project_guid);
+            if let Err(e) = daw.set_position(ctx.clone(), seek_pos) {
+                warn!("seek_to_song_internal: failed to seek: {}", e);
+            }
+            if let Err(e) = daw.play(ctx) {
+                warn!("seek_to_song_internal: failed to start playback: {}", e);
+            }
+        })
+        .await;
     }
 
     // =========================================================================
@@ -143,7 +165,7 @@ where
         self.set_active_song_id(skeleton.id.as_str()).await;
 
         // Switch to the correct project tab first — this must always happen
-        if !self.select_project(&skeleton.project_guid) {
+        if !self.select_project(&skeleton.project_guid).await {
             warn!(
                 "Failed to switch to project {} for song {}",
                 skeleton.project_guid, index
@@ -175,26 +197,27 @@ where
             }
         };
 
-        // Only seek if the project is NOT already playing
-        // This preserves playback position when switching between songs
-        let ctx = project_ctx(&skeleton.project_guid);
-        let is_playing = self.daw.is_playing(ctx.clone());
-        if !is_playing {
-            let seek_pos = Self::song_seek_position(&song);
-            if let Err(e) = self.daw.set_position(ctx.clone(), seek_pos) {
+        // Only seek if the project is NOT already playing — preserves playback
+        // position when switching between songs. Batch is_playing/set_position/
+        // get_position into one main-thread bounce.
+        let seek_pos = Self::song_seek_position(&song);
+        let daw = self.daw.clone();
+        let project_guid = skeleton.project_guid.clone();
+        let (is_playing, actual_pos) = daw_reaper::main_thread::query(move || {
+            let ctx = project_ctx(&project_guid);
+            let is_playing = daw.is_playing(ctx.clone());
+            if !is_playing && let Err(e) = daw.set_position(ctx.clone(), seek_pos) {
                 warn!("Failed to set position for song {}: {}", index, e);
             }
-        }
+            let actual_pos = daw.get_position(ctx);
+            (is_playing, actual_pos)
+        })
+        .await
+        .unwrap_or((false, 0.0));
 
-        // Log the actual cursor position after navigation
-        let actual_pos = self.daw.get_position(ctx);
         info!(
             "go_to_song: song {} ({}) — seek_target={:.2}s, actual_pos={:.2}s, is_playing={}",
-            index,
-            song.name,
-            Self::song_seek_position(&song),
-            actual_pos,
-            is_playing
+            index, song.name, seek_pos, actual_pos, is_playing
         );
         Ok(())
     }
@@ -244,22 +267,35 @@ where
             .await;
 
             if let Some(section) = song.sections.get(index) {
-                if !self.select_project(&song.project_guid) {
-                    warn!(
+                let project_guid = song.project_guid.clone();
+                let section_start = section.start_seconds;
+                let daw = self.daw.clone();
+                let outcome = daw_reaper::main_thread::query(move || {
+                    if !daw.select(&project_guid) {
+                        return Err("select_failed");
+                    }
+                    daw.set_position(project_ctx(&project_guid), section_start)
+                        .map_err(|_| "set_position_failed")
+                })
+                .await
+                .unwrap_or(Err("main_thread_unavailable"));
+
+                match outcome {
+                    Err("select_failed") => warn!(
                         "Failed to switch to project {} for section navigation",
                         song.project_guid
-                    );
-                } else if let Err(e) = self
-                    .daw
-                    .set_position(project_ctx(&song.project_guid), section.start_seconds)
-                {
-                    warn!("Failed to navigate to section {}: {}", index, e);
-                    self.clear_queued_target().await;
-                } else {
-                    info!(
+                    ),
+                    Err(reason) => {
+                        warn!(
+                            "Failed to navigate to section {} ({}): {}",
+                            index, song.project_guid, reason
+                        );
+                        self.clear_queued_target().await;
+                    }
+                    Ok(()) => info!(
                         "Navigated to section {} ({}) in song {} (project {})",
                         index, section.name, song.name, song.project_guid
-                    );
+                    ),
                 }
             }
         }
@@ -313,12 +349,14 @@ where
             && let Some(song) = self.ensure_song_hydrated(song_idx).await
         {
             let absolute_pos = song.start_seconds() + seconds;
-            if let Err(e) = self
-                .daw
-                .set_position(project_ctx(&song.project_guid), absolute_pos)
-            {
-                warn!("Failed to seek to {}: {}", seconds, e);
-            }
+            let daw = self.daw.clone();
+            let project_guid = song.project_guid.clone();
+            let _ = daw_reaper::main_thread::query(move || {
+                if let Err(e) = daw.set_position(project_ctx(&project_guid), absolute_pos) {
+                    warn!("Failed to seek to {}: {}", absolute_pos, e);
+                }
+            })
+            .await;
         }
         Ok(())
     }
@@ -340,25 +378,34 @@ where
                 position_seconds: seconds,
             })
             .await;
-            if !self.select_project(&song.project_guid) {
-                warn!(
+            let daw = self.daw.clone();
+            let project_guid = song.project_guid.clone();
+            let outcome = daw_reaper::main_thread::query(move || {
+                if !daw.select(&project_guid) {
+                    return Err("select_failed");
+                }
+                daw.set_position(project_ctx(&project_guid), seconds)
+                    .map_err(|_| "set_position_failed")
+            })
+            .await
+            .unwrap_or(Err("main_thread_unavailable"));
+
+            match outcome {
+                Err("select_failed") => warn!(
                     "Failed to switch to project {} for song {}",
                     song.project_guid, song_index
-                );
-            } else if let Err(e) = self
-                .daw
-                .set_position(project_ctx(&song.project_guid), seconds)
-            {
-                warn!(
-                    "Failed to seek to {} seconds in song {}: {}",
-                    seconds, song_index, e
-                );
-                self.clear_queued_target().await;
-            } else {
-                info!(
+                ),
+                Err(reason) => {
+                    warn!(
+                        "Failed to seek to {} seconds in song {}: {}",
+                        seconds, song_index, reason
+                    );
+                    self.clear_queued_target().await;
+                }
+                Ok(()) => info!(
                     "Seeked to {} seconds in song {} ({})",
                     seconds, song_index, song.name
-                );
+                ),
             }
         } else {
             warn!("Song {} not found", song_index);
@@ -380,6 +427,7 @@ where
         // Check if we're already on the correct project (skip tab switch for same-project songs)
         let already_on_project = self
             .current_project_guid()
+            .await
             .map(|guid| guid == skeleton.project_guid)
             .unwrap_or(false);
 
@@ -393,7 +441,7 @@ where
         self.set_active_song_id(skeleton.id.as_str()).await;
 
         // Switch to the correct project tab (or reuse if already there)
-        if !already_on_project && !self.select_project(&skeleton.project_guid) {
+        if !already_on_project && !self.select_project(&skeleton.project_guid).await {
             warn!(
                 "Failed to switch to project {} for song {}",
                 skeleton.project_guid, song_index
@@ -425,25 +473,26 @@ where
             }
         };
 
-        // Only seek if the project is NOT already playing
-        let ctx = project_ctx(&skeleton.project_guid);
-        let is_playing = self.daw.is_playing(ctx.clone());
-        if !is_playing {
-            let seek_pos = Self::song_seek_position(&song);
-            if let Err(e) = self.daw.set_position(ctx.clone(), seek_pos) {
+        // Only seek if the project is NOT already playing. Batch
+        // is_playing/set_position/get_position in one main-thread bounce.
+        let seek_pos = Self::song_seek_position(&song);
+        let daw = self.daw.clone();
+        let project_guid = skeleton.project_guid.clone();
+        let (is_playing, actual_pos) = daw_reaper::main_thread::query(move || {
+            let ctx = project_ctx(&project_guid);
+            let is_playing = daw.is_playing(ctx.clone());
+            if !is_playing && let Err(e) = daw.set_position(ctx.clone(), seek_pos) {
                 warn!("Failed to seek to song {}: {}", song_index, e);
             }
-        }
+            let actual_pos = daw.get_position(ctx);
+            (is_playing, actual_pos)
+        })
+        .await
+        .unwrap_or((false, 0.0));
 
-        // Log the actual cursor position after navigation
-        let actual_pos = self.daw.get_position(ctx);
         info!(
             "seek_to_song: song {} ({}) — seek_target={:.2}s, actual_pos={:.2}s, is_playing={}",
-            song_index,
-            song.name,
-            Self::song_seek_position(&song),
-            actual_pos,
-            is_playing
+            song_index, song.name, seek_pos, actual_pos, is_playing
         );
         Ok(())
     }
@@ -459,24 +508,35 @@ where
         );
         if let Some(song) = self.ensure_song_hydrated(song_index).await {
             if let Some(section) = song.sections.get(section_index) {
-                if !self.select_project(&song.project_guid) {
-                    warn!(
+                let daw = self.daw.clone();
+                let project_guid = song.project_guid.clone();
+                let section_start = section.start_seconds;
+                let section_name = section.name.clone();
+                let song_name = song.name.clone();
+                let song_project_guid = song.project_guid.clone();
+                let outcome = daw_reaper::main_thread::query(move || {
+                    if !daw.select(&project_guid) {
+                        return Err("select_failed");
+                    }
+                    daw.set_position(project_ctx(&project_guid), section_start)
+                        .map_err(|_| "set_position_failed")
+                })
+                .await
+                .unwrap_or(Err("main_thread_unavailable"));
+
+                match outcome {
+                    Err("select_failed") => warn!(
                         "Failed to switch to project {} for song {}",
-                        song.project_guid, song_index
-                    );
-                } else if let Err(e) = self
-                    .daw
-                    .set_position(project_ctx(&song.project_guid), section.start_seconds)
-                {
-                    warn!(
+                        song_project_guid, song_index
+                    ),
+                    Err(reason) => warn!(
                         "Failed to seek to section {} in song {}: {}",
-                        section_index, song_index, e
-                    );
-                } else {
-                    info!(
+                        section_index, song_index, reason
+                    ),
+                    Ok(()) => info!(
                         "Seeked to section {} ({}) in song {} (project {})",
-                        section_index, section.name, song.name, song.project_guid
-                    );
+                        section_index, section_name, song_name, song_project_guid
+                    ),
                 }
             } else {
                 warn!("Section {} not found in song {}", section_index, song_index);
@@ -497,39 +557,41 @@ where
             song_index, position.measure, position.beat, position.subdivision
         );
         if let Some(song) = self.ensure_song_hydrated(song_index).await {
-            if !self.select_project(&song.project_guid) {
-                warn!(
-                    "Failed to switch to project {} for song {}",
-                    song.project_guid, song_index
-                );
-            } else {
-                let fraction = position.subdivision as f64 / 1000.0;
-                let relative_seconds = self.daw.musical_to_time(
-                    project_ctx(&song.project_guid),
-                    position.measure,
-                    position.beat,
-                    fraction,
-                );
-                let absolute_pos = song.start_seconds() + relative_seconds;
-
-                if let Err(e) = self
-                    .daw
-                    .set_position(project_ctx(&song.project_guid), absolute_pos)
-                {
-                    warn!(
-                        "Failed to seek to musical position in song {}: {}",
-                        song_index, e
-                    );
-                } else {
-                    info!(
-                        "Seeked to {}.{}.{} in song {} (project {})",
-                        position.measure,
-                        position.beat,
-                        position.subdivision,
-                        song.name,
-                        song.project_guid
-                    );
+            let daw = self.daw.clone();
+            let project_guid = song.project_guid.clone();
+            let song_start = song.start_seconds();
+            let song_name = song.name.clone();
+            let song_project_guid = song.project_guid.clone();
+            let measure = position.measure;
+            let beat = position.beat;
+            let subdivision = position.subdivision;
+            let outcome = daw_reaper::main_thread::query(move || {
+                if !daw.select(&project_guid) {
+                    return Err("select_failed");
                 }
+                let fraction = subdivision as f64 / 1000.0;
+                let relative_seconds =
+                    daw.musical_to_time(project_ctx(&project_guid), measure, beat, fraction);
+                let absolute_pos = song_start + relative_seconds;
+                daw.set_position(project_ctx(&project_guid), absolute_pos)
+                    .map_err(|_| "set_position_failed")
+            })
+            .await
+            .unwrap_or(Err("main_thread_unavailable"));
+
+            match outcome {
+                Err("select_failed") => warn!(
+                    "Failed to switch to project {} for song {}",
+                    song_project_guid, song_index
+                ),
+                Err(reason) => warn!(
+                    "Failed to seek to musical position in song {}: {}",
+                    song_index, reason
+                ),
+                Ok(()) => info!(
+                    "Seeked to {}.{}.{} in song {} (project {})",
+                    measure, beat, subdivision, song_name, song_project_guid
+                ),
             }
         } else {
             warn!("Song {} not found", song_index);
@@ -547,25 +609,35 @@ where
             song_index, measure
         );
         if let Some(song) = self.ensure_song_hydrated(song_index).await {
-            if !self.select_project(&song.project_guid) {
-                warn!(
-                    "Failed to switch to project {} for song {}",
-                    song.project_guid, song_index
-                );
-            } else {
-                let ctx = project_ctx(&song.project_guid);
-                let seconds = self.daw.musical_to_time(ctx.clone(), measure, 1, 0.0);
-                if let Err(e) = self.daw.set_position(ctx, seconds) {
-                    warn!(
-                        "Failed to goto measure {} in song {}: {}",
-                        measure, song_index, e
-                    );
-                } else {
-                    info!(
-                        "Went to measure {} in song {} ({})",
-                        measure, song.name, song.project_guid
-                    );
+            let daw = self.daw.clone();
+            let project_guid = song.project_guid.clone();
+            let song_name = song.name.clone();
+            let song_project_guid = song.project_guid.clone();
+            let outcome = daw_reaper::main_thread::query(move || {
+                if !daw.select(&project_guid) {
+                    return Err("select_failed");
                 }
+                let ctx = project_ctx(&project_guid);
+                let seconds = daw.musical_to_time(ctx.clone(), measure, 1, 0.0);
+                daw.set_position(ctx, seconds)
+                    .map_err(|_| "set_position_failed")
+            })
+            .await
+            .unwrap_or(Err("main_thread_unavailable"));
+
+            match outcome {
+                Err("select_failed") => warn!(
+                    "Failed to switch to project {} for song {}",
+                    song_project_guid, song_index
+                ),
+                Err(reason) => warn!(
+                    "Failed to goto measure {} in song {}: {}",
+                    measure, song_index, reason
+                ),
+                Ok(()) => info!(
+                    "Went to measure {} in song {} ({})",
+                    measure, song_name, song_project_guid
+                ),
             }
         } else {
             warn!("Song {} not found", song_index);

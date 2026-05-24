@@ -270,16 +270,27 @@ where
 
     /// Find the active song and section based on current DAW project
     pub(crate) async fn calculate_active_indices(&self) -> ActiveIndices {
-        let Some(current_project) = self.daw.current() else {
+        // `Projects::current` + `Transport::{get_position, is_playing, is_looping}`
+        // on `daw_reaper::Reaper` hit REAPER's main-thread-only FFI. Called
+        // from this async task on a tokio worker they hang on REAPER's
+        // internal lock. Bounce once via `main_thread::query` for the whole
+        // batch (same pattern as `build_from_open_projects_impl`).
+        let daw = self.daw.clone();
+        let Some(snapshot) = daw_reaper::main_thread::query(move || {
+            let current = daw.current()?;
+            let ctx = ProjectContext::Project(current.guid.clone());
+            let position = daw.get_position(ctx.clone());
+            let is_playing = daw.is_playing(ctx.clone());
+            let looping = daw.is_looping(ctx);
+            Some((current.guid, position, is_playing, looping))
+        })
+        .await
+        .flatten() else {
             warn!("Failed to get current project");
             return ActiveIndices::default();
         };
 
-        let current_guid = current_project.guid;
-        let ctx = ProjectContext::Project(current_guid.clone());
-        let position = self.daw.get_position(ctx.clone());
-        let is_playing = self.daw.is_playing(ctx.clone());
-        let looping = self.daw.is_looping(ctx);
+        let (current_guid, position, is_playing, looping) = snapshot;
 
         // Find which song corresponds to the current project
         let setlist = self.setlist.read().await;
@@ -517,8 +528,15 @@ where
             // Keyed by song_index to track section per song
             let mut last_section_by_song: FxHashMap<usize, Option<usize>> = FxHashMap::default();
 
-            // Track last known current project GUID for detecting tab switches
-            let mut last_current_project_guid: Option<String> = self.daw.current().map(|p| p.guid);
+            // Track last known current project GUID for detecting tab switches.
+            // `current()` hits REAPER main-thread FFI — bounce via main_thread::query
+            // so the subscribe future doesn't hang on the tokio worker.
+            let mut last_current_project_guid: Option<String> = {
+                let daw = self.daw.clone();
+                daw_reaper::main_thread::query(move || daw.current().map(|p| p.guid))
+                    .await
+                    .flatten()
+            };
             let mut pending_project_switch: Option<(String, Instant)> = None;
 
             // Timer for checking project tab switches (every 500ms)
@@ -934,8 +952,13 @@ where
                             continue;
                         }
 
-                        if let Some(current_project) = self.daw.current() {
-                            let current_guid = current_project.guid;
+                        let current_project_guid = {
+                            let daw = self.daw.clone();
+                            daw_reaper::main_thread::query(move || daw.current().map(|p| p.guid))
+                                .await
+                                .flatten()
+                        };
+                        if let Some(current_guid) = current_project_guid {
 
                             // No change.
                             if last_current_project_guid.as_ref() == Some(&current_guid) {

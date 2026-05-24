@@ -147,22 +147,33 @@ fn ensure_reactive_updates() -> eyre::Result<()> {
 
     let mut rx = daw::reaper::event_hub().subscribe_tracks();
 
-    moire::task::spawn(async move {
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    if should_schedule(&event.event) {
-                        schedule_project_apply(event.project_guid);
+    // `ensure_reactive_updates` can be reached from a REAPER action callback
+    // (main thread, no Tokio runtime), so `moire::task::spawn` would panic.
+    // Bounce through `daw::block_on` to enter the DAW runtime's Tokio context
+    // for just long enough to hand the recv-loop to `tokio::spawn`.
+    let spawned = daw::block_on(async move {
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        if should_schedule(&event.event) {
+                            schedule_project_apply(event.project_guid);
+                        }
                     }
+                    Err(RecvError::Lagged(skipped)) => {
+                        tracing::debug!(skipped, "[session] Auto-color sync stream lagged");
+                        schedule_current_project_apply();
+                    }
+                    Err(RecvError::Closed) => break,
                 }
-                Err(RecvError::Lagged(skipped)) => {
-                    tracing::debug!(skipped, "[session] Auto-color sync stream lagged");
-                    schedule_current_project_apply();
-                }
-                Err(RecvError::Closed) => break,
             }
-        }
+        });
     });
+
+    if spawned.is_none() {
+        state.subscribed.store(false, Ordering::Release);
+        eyre::bail!("daw runtime not initialised; auto-color subscription not started");
+    }
 
     Ok(())
 }
