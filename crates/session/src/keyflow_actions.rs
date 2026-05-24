@@ -160,6 +160,19 @@ where
     let project = ProjectContext::Current;
     for lane in CoreLane::all() {
         daw.set_ruler_lane_name(project.clone(), lane.lane_index(), lane.display_name());
+        // REAPER's per-lane flags pick the *default* destination for
+        // new markers and regions. We were setting only the names,
+        // so freshly-inserted regions kept landing in lane 1 (the
+        // renamed SONG lane) instead of SECTIONS, and SECTIONS sat
+        // empty. Apply the convention each CoreLane declares:
+        //   SECTIONS = 8 (default region lane)
+        //   SONG     = 4 (default marker lane)
+        //   MARKS / KEY = 0
+        daw.set_project_info(
+            project.clone(),
+            &format!("RULER_LANE_FLAGS:{}", lane.lane_index()),
+            lane.flags() as f64,
+        );
     }
 }
 
