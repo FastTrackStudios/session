@@ -32,7 +32,13 @@ base64-encoded independently, wrapped at 128 chars, each starting on a fresh
 line). On read, Reaper decodes the whole stream to `seg0‖seg1‖seg2`:
 
 - **seg0** (172 B): VST3 component header — class-ID magic `6d532b06ee5eedfe`
-  + IO-pin table. Plugin-identity, patch-independent → constant template.
+  + IO-pin table. **Mostly constant, but byte offset 160 (u32 LE) holds the
+  seg1/state length** and MUST be patched to the synthesized seg1 length —
+  otherwise Reaper reads a truncated state and the plugin loads blank/silent.
+  (This was the cause of the first PoC loading Omnisphere with no patch.)
+- The root state tag is `<SynthMaster vers=` — note `<SynthMaster` alone also
+  matches the nested `<SynthMasterEngineParamBlock`. There is exactly one
+  `</SynthMaster>` per instance (the root close).
 - **seg1**: `[u32 size@0 = L+62][20 B mid header][u32 size@24 = L+3][4 B]` +
   XML (length `L`) + 46-B `JUCEPrivateData` trailer. Only the two size fields
   and the XML vary; everything else is constant.
