@@ -89,23 +89,34 @@ pub fn dispatch(action: AutoColorAction) {
 pub fn subscribe(ctx: &daw::module::ModuleContext) {
     let _ = STATE.set(Arc::new(AutoColorState::new()));
     register_timer();
+    tracing::info!("[session] Auto-color subscribe: timer registered");
 
     match load_enabled() {
-        Ok(enabled) => set_enabled(enabled),
+        Ok(enabled) => {
+            set_enabled(enabled);
+            tracing::info!(enabled, "[session] Auto-color loaded enabled state");
+        }
         Err(err) => {
             tracing::warn!(?err, "[session] Failed to load auto-color enabled state");
         }
     }
 
     ctx.spawn(async {
-        if let Err(err) = ensure_reactive_updates() {
-            tracing::warn!(?err, "[session] Failed to start auto-color subscription");
+        match ensure_reactive_updates() {
+            Ok(()) => tracing::info!("[session] Auto-color reactive subscription started"),
+            Err(err) => {
+                tracing::warn!(?err, "[session] Failed to start auto-color subscription")
+            }
         }
 
-        if state()
+        let enabled = state()
             .map(|state| state.enabled.load(Ordering::Relaxed))
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        tracing::info!(
+            enabled,
+            "[session] Auto-color post-subscribe state; will schedule initial apply if enabled"
+        );
+        if enabled {
             schedule_current_project_apply();
         }
     });
@@ -226,10 +237,11 @@ fn auto_color_timer() {
         return;
     }
 
-    if state.pending_current.swap(false, Ordering::Relaxed)
-        && let Err(err) = apply_to_current_project(false, false)
-    {
-        tracing::warn!(?err, "[session] Startup auto-color pass failed");
+    if state.pending_current.swap(false, Ordering::Relaxed) {
+        tracing::info!("[session] Auto-color timer: applying to current project");
+        if let Err(err) = apply_to_current_project(false, false) {
+            tracing::warn!(?err, "[session] Startup auto-color pass failed");
+        }
     }
 
     let pending_projects = match state.pending_projects.lock() {
@@ -240,6 +252,12 @@ fn auto_color_timer() {
         }
     };
 
+    if !pending_projects.is_empty() {
+        tracing::info!(
+            count = pending_projects.len(),
+            "[session] Auto-color timer: applying to projects from event hub"
+        );
+    }
     for project_guid in pending_projects {
         if let Err(err) = apply_to_project_guid(&project_guid, false, false) {
             tracing::warn!(?err, project_guid, "[session] Reactive auto-color failed");
