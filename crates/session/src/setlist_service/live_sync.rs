@@ -10,6 +10,8 @@
 //! 5. Write the updated setlist to disk
 //! 6. Signal REAPER to reload the setlist project tab
 
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 
 use daw::file::diff::{self, ApplyOptions, DiffOptions};

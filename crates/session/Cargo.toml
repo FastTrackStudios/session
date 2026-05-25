@@ -14,7 +14,17 @@ path = "src/main.rs"
 [dependencies]
 session-proto = { path = "../session-proto" }
 actions-proto.workspace = true
-daw = { workspace = true, features = ["file"] }
+architect.workspace = true
+daw = { workspace = true, features = ["file", "reaper"] }
+daw-proto = { workspace = true }
+daw-reaper = { workspace = true }
+daw-synchronization.workspace = true
+# Raw REAPER FFI — used by take_ranking for cursor / item / take-marker ops
+# that aren't covered by the daw service traits.
+reaper-high = { workspace = true }
+reaper-low = { workspace = true }
+reaper-medium = { workspace = true }
+dynamic-template.workspace = true
 vox.workspace = true
 tokio = { version = "1.48", features = ["rt", "sync", "time", "macros"] }
 moire.workspace = true
@@ -23,8 +33,8 @@ tracing.workspace = true
 chrono = "0.4"
 utils.workspace = true
 uuid = { version = "1", features = ["v4"] }
-rayon = "1"
 keyflow = { workspace = true, features = ["text"] }
+keyflow-daw-analysis = { workspace = true }
 smallvec = "1.13"
 rustc-hash = "2"
 

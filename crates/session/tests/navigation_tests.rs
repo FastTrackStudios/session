@@ -14,7 +14,7 @@ use session::{SongBuilder, stamp_demo_into_project};
 use std::time::Duration;
 
 /// Helper: stamp demo data, build songs, return the song and its sections.
-async fn setup_song(project: &daw::Project) -> eyre::Result<session::Song> {
+async fn setup_song(project: &daw::rpc::Project) -> eyre::Result<session::Song> {
     stamp_demo_into_project(project).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
 

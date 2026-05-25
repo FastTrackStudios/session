@@ -3,6 +3,8 @@
 //! Periodically checks modification times of tracked song files and emits
 //! [`SongFileChanged`] events when a file has been updated on disk.
 
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;

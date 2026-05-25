@@ -1,7 +1,7 @@
 //! Setlist assembly from open DAW projects
 
 use super::{HYDRATION_CONCURRENCY, SetlistServiceImpl};
-use daw::Daw;
+use daw::service::Projects;
 use moire::sync::Semaphore;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_proto::{AdvanceMode, SessionServiceError, Setlist, Song};
@@ -10,31 +10,32 @@ use std::sync::atomic::Ordering;
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
-impl SetlistServiceImpl {
+impl<D> SetlistServiceImpl<D>
+where
+    D: Clone + Projects + Send + Sync + 'static,
+{
     pub(crate) async fn build_from_open_projects_impl(&self) -> Result<(), SessionServiceError> {
         debug!("Building setlist from open projects...");
 
-        // Check if DAW is initialized (it may not be ready yet after cell startup)
-        let Some(daw) = Daw::try_get() else {
-            warn!("DAW not initialized yet, cannot build setlist");
-            return Ok(());
-        };
-
         let build_generation = self.build_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
-        let projects = match daw.projects().await {
-            Ok(projects) => projects,
-            Err(e) => {
-                warn!("Failed to enumerate open projects: {}", e);
-                return Ok(());
-            }
-        };
-
-        let current_project_guid = daw
-            .current_project()
-            .await
-            .ok()
-            .map(|project| project.guid().to_string());
+        // `Projects::list` / `Projects::current` on `daw_reaper::Reaper`
+        // hit REAPER's main-thread-only FFI (EnumProjects, etc.). Run
+        // them from the async RPC handler and they hang waiting on
+        // REAPER's internal lock. Bounce via `main_thread::query` —
+        // same pattern mode/take/record services already use.
+        let daw = self.daw.clone();
+        let (projects, current_project_guid) = daw_reaper::main_thread::query(move || {
+            let projects = daw.list();
+            let current = daw.current().map(|p| p.guid);
+            (projects, current)
+        })
+        .await
+        .ok_or_else(|| {
+            SessionServiceError::Internal(
+                "main thread unavailable (TaskSupport not initialised)".to_string(),
+            )
+        })?;
 
         let project_loads = Self::fetch_project_loads(projects).await;
         if project_loads.is_empty() {
@@ -158,7 +159,7 @@ impl SetlistServiceImpl {
 
         // Phase 2: hydrate remaining projects in background with bounded concurrency.
         // Each project may produce multiple songs, so we splice by project_guid.
-        let this = self.clone();
+        let this = Arc::new((*self).clone());
         tokio::spawn(async move {
             let semaphore = Arc::new(Semaphore::new(
                 "session.setlist.build.hydration",

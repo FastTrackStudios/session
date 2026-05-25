@@ -1,7 +1,7 @@
-//! REAPER integration test for the session-extension SHM guest.
+//! REAPER integration test for the session-extension test host.
 //!
-//! Verifies that the session-extension binary was loaded by daw-bridge,
-//! connected over SHM, and wrote its health beacon to ExtState.
+//! Verifies that the session-extension REAPER plugin was loaded and wrote its
+//! health beacon to ExtState.
 //!
 //! Run with:
 //!   cargo xtask reaper-test -- session_extension_health
@@ -13,7 +13,7 @@ use reaper_test::reaper_test;
 /// Verify that session-extension connected and wrote its health beacon.
 ///
 /// The extension writes `FTS_SESSION_EXT/status = "ready"` and
-/// `FTS_SESSION_EXT/pid = "<pid>"` on successful SHM connect.
+/// `FTS_SESSION_EXT/pid = "<pid>"` after successful initialization.
 /// We poll for up to 10 seconds to give it time to start.
 #[reaper_test]
 async fn session_extension_health(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {

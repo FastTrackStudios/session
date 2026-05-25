@@ -16,12 +16,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use daw::Project;
+use daw::rpc::Project;
 use daw::service::item::Item;
 use daw::service::primitives::{Duration, PositionInSeconds};
 use daw::service::{ItemEvent, MarkerEvent, RegionEvent};
+use daw_synchronization::{SyncConfig, SyncDomain, SyncSession, SynchronizationEngine};
 use moire::sync::RwLock;
 use session_proto::offset_map::SetlistOffsetMap;
+use tokio::sync::broadcast::error::RecvError;
 use tracing::{debug, info, warn};
 
 /// Position tolerance for matching items by position (0.01s = 10ms).
@@ -114,22 +116,21 @@ impl SetlistItemIndex {
         new_position: f64,
     ) {
         let key = (track_name.to_string(), take_name.to_string());
-        if let Some(entries) = self.entries.get_mut(&key) {
-            if let Some(entry) = entries.iter_mut().find(|(_, g)| g == item_guid) {
-                entry.0 = new_position;
-            }
+        if let Some(entries) = self.entries.get_mut(&key)
+            && let Some(entry) = entries.iter_mut().find(|(_, g)| g == item_guid)
+        {
+            entry.0 = new_position;
         }
     }
 
     async fn get_active_take_name(project: &Project, item: &Item) -> String {
         // Try to get the active take's name via the take API
         let item_handle = project.items().by_guid(&item.guid).await;
-        if let Ok(Some(handle)) = item_handle {
-            if let Ok(take) = handle.takes().active().await {
-                if let Ok(take_info) = take.info().await {
-                    return take_info.name;
-                }
-            }
+        if let Ok(Some(handle)) = item_handle
+            && let Ok(take) = handle.takes().active().await
+            && let Ok(take_info) = take.info().await
+        {
+            return take_info.name;
         }
         // Fallback: use empty string
         String::new()
@@ -189,6 +190,7 @@ impl DawSyncBridge {
     }
 
     /// Rebuild the item index (call after structural setlist changes).
+    #[allow(dead_code)]
     pub async fn rebuild_index(&self) {
         let new_index = SetlistItemIndex::build(&self.setlist_project).await;
         *self.item_index.write().await = new_index;
@@ -197,93 +199,89 @@ impl DawSyncBridge {
 
     /// Start subscribing to all song tab change streams.
     pub async fn start(&self) {
-        for song in &self.songs {
-            self.subscribe_song(song).await;
-        }
-    }
+        let Some(daw) = daw::get().cloned() else {
+            warn!("live setlist sync skipped; daw facade is not initialized");
+            return;
+        };
+        let session = SyncSession {
+            session_id: format!("session-setlist-{}", self.setlist_project.guid()),
+            peer_id: format!("session-live-sync-{}", uuid::Uuid::new_v4()),
+            display_name: "Session live setlist sync".to_string(),
+        };
+        let mut config = SyncConfig::transport_only();
+        config.transport = false;
+        config.markers = true;
+        config.regions = true;
+        config.items = true;
 
-    async fn subscribe_song(&self, song: &SongTabBinding) {
+        let engine = Arc::new(SynchronizationEngine::new(daw.clone(), session, config));
+        if let Err(e) = engine.start().await {
+            warn!(
+                "Failed to start DAW sync engine for live setlist sync: {}",
+                e
+            );
+            return;
+        }
+
         let setlist = self.setlist_project.clone();
-        let offset = song.offset_seconds;
-        let song_idx = song.song_index;
         let item_index = self.item_index.clone();
+        let song_by_guid: HashMap<String, (usize, Project, f64)> = self
+            .songs
+            .iter()
+            .map(|song| {
+                (
+                    song.project.guid().to_string(),
+                    (song.song_index, song.project.clone(), song.offset_seconds),
+                )
+            })
+            .collect();
+        let mut rx = engine.subscribe();
+        let engine_handle = Arc::clone(&engine);
 
-        // Marker changes
-        if let Ok(mut rx) = song.project.markers().subscribe().await {
-            let setlist = setlist.clone();
-            moire::task::spawn(async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(Some(event_ref)) => {
-                            let mut event = None;
-                            let _ = event_ref.map(|value| {
-                                event = Some(value);
-                            });
-                            let event: MarkerEvent = event.expect("SelfRef::map ran");
-                            handle_marker_event(&setlist, &event, offset, song_idx).await;
+        moire::task::spawn(async move {
+            let _engine = engine_handle;
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let Some((song_idx, song_project, offset)) =
+                            song_by_guid.get(&event.project_guid)
+                        else {
+                            continue;
+                        };
+                        match event.domain {
+                            SyncDomain::Marker(marker_event) => {
+                                handle_marker_event(&setlist, &marker_event, *offset, *song_idx)
+                                    .await;
+                            }
+                            SyncDomain::Region(region_event) => {
+                                handle_region_event(&setlist, &region_event, *offset, *song_idx)
+                                    .await;
+                            }
+                            SyncDomain::Item(item_event) => {
+                                handle_item_event(
+                                    &setlist,
+                                    song_project,
+                                    &item_index,
+                                    &item_event,
+                                    *offset,
+                                    *song_idx,
+                                )
+                                .await;
+                            }
+                            _ => {}
                         }
-                        Ok(None) => continue,
-                        Err(_) => break,
                     }
-                }
-            });
-        }
-
-        // Region changes
-        if let Ok(mut rx) = song.project.regions().subscribe().await {
-            let setlist = setlist.clone();
-            moire::task::spawn(async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(Some(event_ref)) => {
-                            let mut event = None;
-                            let _ = event_ref.map(|value| {
-                                event = Some(value);
-                            });
-                            let event: RegionEvent = event.expect("SelfRef::map ran");
-                            handle_region_event(&setlist, &event, offset, song_idx).await;
-                        }
-                        Ok(None) => continue,
-                        Err(_) => break,
+                    Err(RecvError::Lagged(skipped)) => {
+                        debug!("Live DAW sync bridge lagged by {} events", skipped);
                     }
+                    Err(RecvError::Closed) => break,
                 }
-            });
-        }
-
-        // Item changes — uses the shared item index for resolution
-        if let Ok(mut rx) = song.project.items().subscribe().await {
-            let setlist = setlist.clone();
-            let song_project = song.project.clone();
-            let item_index = item_index.clone();
-            moire::task::spawn(async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(Some(event_ref)) => {
-                            let mut event = None;
-                            let _ = event_ref.map(|value| {
-                                event = Some(value);
-                            });
-                            let event: ItemEvent = event.expect("SelfRef::map ran");
-                            handle_item_event(
-                                &setlist,
-                                &song_project,
-                                &item_index,
-                                &event,
-                                offset,
-                                song_idx,
-                            )
-                            .await;
-                        }
-                        Ok(None) => continue,
-                        Err(_) => break,
-                    }
-                }
-            });
-        }
+            }
+        });
 
         info!(
-            "Song {} subscriptions active (offset={:.1}s)",
-            song_idx, offset
+            "Live DAW sync bridge active for {} song project(s)",
+            self.songs.len()
         );
     }
 }

@@ -4,12 +4,13 @@ use super::{
     CHART_REFRESH_FALLBACK_POLL_MS, HYDRATION_CONCURRENCY, MIDI_TRACK_TAG, SetlistServiceImpl,
 };
 use crate::song_builder::SongBuilder;
-use daw::Daw;
+use daw::rpc::Daw;
+use daw::service::{ProjectContext, ProjectInfo, Projects};
+use keyflow_daw_analysis::{DetectedChord, MidiChartData, MidiChartRequest, MidiChartsClient};
 use moire::sync::Semaphore;
 use session_proto::{Song, SongChartHydration, SongDetectedChord, SongId};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
 #[derive(Clone)]
@@ -22,12 +23,14 @@ pub(crate) struct SongCacheEntry {
 #[derive(Clone)]
 pub(crate) struct ProjectLoad {
     pub(crate) index: usize,
-    pub(crate) project: daw::Project,
     pub(crate) guid: String,
     pub(crate) project_name: String,
 }
 
-impl SetlistServiceImpl {
+impl<D> SetlistServiceImpl<D>
+where
+    D: Projects,
+{
     pub(crate) fn song_is_hydrated(song: &Song) -> bool {
         !song.sections.is_empty() || song.end_seconds > song.start_seconds
     }
@@ -38,18 +41,15 @@ impl SetlistServiceImpl {
             return Some(current);
         }
 
-        let daw = Daw::get();
-        let project = daw.project(&current.project_guid).await.ok()?;
+        let project_name = self
+            .daw
+            .get(&current.project_guid)
+            .map(|info| info.name)
+            .unwrap_or_else(|| current.project_guid.clone());
         let load = ProjectLoad {
             index,
             guid: current.project_guid.clone(),
-            project_name: project
-                .info()
-                .await
-                .ok()
-                .map(|info| info.name)
-                .unwrap_or_else(|| current.project_guid.clone()),
-            project,
+            project_name,
         };
         let rebuilt = self
             .build_songs_with_cache(&load, Some(&current))
@@ -134,7 +134,7 @@ impl SetlistServiceImpl {
         song.detected_chords.clear();
     }
 
-    fn map_detected_chords(chords: Vec<daw::service::MidiDetectedChord>) -> Vec<SongDetectedChord> {
+    fn map_detected_chords(chords: Vec<DetectedChord>) -> Vec<SongDetectedChord> {
         chords
             .into_iter()
             .map(|chord| SongDetectedChord {
@@ -147,55 +147,106 @@ impl SetlistServiceImpl {
             .collect()
     }
 
-    pub(crate) async fn fetch_midi_chart_data(
-        project: &daw::Project,
-    ) -> Option<daw::service::MidiChartData> {
-        let track_tag = Some(MIDI_TRACK_TAG.to_string());
-        match project.midi_analysis().generate_chart_data(track_tag).await {
+    /// Build a `MidiChartsClient` over the same vox channel daw is using.
+    /// Chart service is registered by session's DAW service layer at startup;
+    /// we just need a client over the existing `Caller`.
+    ///
+    /// Returns `None` when the global `Daw` hasn't been initialised —
+    /// happens in the in-process `fts-extensions` host, which calls
+    /// `daw::init_from_parts` instead of the desktop-style
+    /// `Daw::init(caller)`. Callers must handle `None` by skipping
+    /// chart hydration; without this guard the build path panics on
+    /// the worker thread and the awaiting RPC client hangs forever
+    /// (no response ever flows back).
+    fn chart_client() -> Option<MidiChartsClient> {
+        Some(MidiChartsClient::new(Daw::try_get()?.caller().clone()))
+    }
+
+    pub(crate) async fn fetch_midi_chart_data(project_guid: &str) -> Option<MidiChartData> {
+        let req = MidiChartRequest::new(
+            Some(project_guid.to_string()),
+            Some(MIDI_TRACK_TAG.to_string()),
+        );
+        // Same 2s safety cap as fetch_midi_source_fingerprint — see
+        // the comment there for the rationale.
+        let client = match Self::chart_client() {
+            Some(c) => c,
+            None => return None,
+        };
+        let call = client.generate_chart_data(req);
+        let res = match tokio::time::timeout(Duration::from_secs(2), call).await {
+            Ok(r) => r,
+            Err(_) => {
+                debug!(
+                    "MIDI chart generation timed out (>2s) for project {} — skipping",
+                    project_guid
+                );
+                return None;
+            }
+        };
+        match res {
             Ok(data) => Some(data),
-            Err(err) => {
+            Err(vox_err) => {
                 debug!(
                     "MIDI chart generation unavailable for project {}: {}",
-                    project.guid(),
-                    err
+                    project_guid, vox_err
                 );
                 None
             }
         }
     }
 
-    pub(crate) async fn fetch_midi_source_fingerprint(
-        &self,
-        project: &daw::Project,
-    ) -> Option<String> {
+    pub(crate) async fn fetch_midi_source_fingerprint(&self, project_guid: &str) -> Option<String> {
         let support_state = *self.fingerprint_method_supported.read().await;
         if support_state == Some(false) {
             return None;
         }
 
-        let track_tag = Some(MIDI_TRACK_TAG.to_string());
-        match project.midi_analysis().source_fingerprint(track_tag).await {
+        let req = MidiChartRequest::new(
+            Some(project_guid.to_string()),
+            Some(MIDI_TRACK_TAG.to_string()),
+        );
+        // Cap the chart service call at 2s so a hung keyflow handler
+        // (e.g. mid-edit while another agent is iterating on it) can't
+        // wedge `build_from_open_projects` forever. On timeout we treat
+        // it as "fingerprint unavailable" — the build still produces
+        // valid songs, just without chart hydration.
+        let client = match Self::chart_client() {
+            Some(c) => c,
+            None => return None,
+        };
+        let call = client.source_fingerprint(req);
+        let res = match tokio::time::timeout(Duration::from_secs(2), call).await {
+            Ok(r) => r,
+            Err(_) => {
+                debug!(
+                    "MIDI source fingerprint timed out (>2s) for project {} — skipping",
+                    project_guid
+                );
+                return None;
+            }
+        };
+        match res {
             Ok(fingerprint) => {
                 if support_state != Some(true) {
                     *self.fingerprint_method_supported.write().await = Some(true);
                 }
                 Some(fingerprint)
             }
-            Err(err) => {
-                let err_text = err.to_string();
-                if err_text.contains("UnknownMethod") {
+            Err(vox_err) => {
+                if matches!(vox_err, vox::VoxError::UnknownMethod) {
                     let mut guard = self.fingerprint_method_supported.write().await;
                     if *guard != Some(false) {
                         info!(
-                            "MIDI source fingerprint unsupported by DAW backend; disabling fingerprint polling"
+                            "MIDI chart service unavailable on this bridge; disabling fingerprint \
+                             polling (load fts-extensions to enable keyflow chart analysis)"
                         );
                     }
                     *guard = Some(false);
                 } else {
                     debug!(
                         "MIDI source fingerprint unavailable for project {}: {}",
-                        project.guid(),
-                        err_text
+                        project_guid, vox_err
                     );
                 }
                 None
@@ -219,7 +270,7 @@ impl SetlistServiceImpl {
             .await
     }
 
-    pub(crate) fn apply_chart_data(song: &mut Song, chart_data: daw::service::MidiChartData) {
+    pub(crate) fn apply_chart_data(song: &mut Song, chart_data: MidiChartData) {
         song.chart_fingerprint = Some(chart_data.source_fingerprint);
         song.chart_text = Some(chart_data.chart_text);
         // Keep parsed_chart empty in session state to avoid cloning large chart
@@ -257,40 +308,24 @@ impl SetlistServiceImpl {
         }
     }
 
-    pub(crate) async fn fetch_project_loads(projects: Vec<daw::Project>) -> Vec<ProjectLoad> {
+    pub(crate) async fn fetch_project_loads(projects: Vec<ProjectInfo>) -> Vec<ProjectLoad> {
         let semaphore = Arc::new(Semaphore::new(
             "session.setlist.hydration.fetch_projects",
             HYDRATION_CONCURRENCY,
         ));
-        let mut join_set = JoinSet::new();
-
+        let mut loads = Vec::with_capacity(projects.len());
         for (index, project) in projects.into_iter().enumerate() {
-            let permit = semaphore.clone();
-            join_set.spawn(async move {
-                let _permit = permit.acquire_owned().await.expect("semaphore closed");
-                let guid = project.guid().to_string();
-                let project_name = project
-                    .info()
-                    .await
-                    .map(|info| info.name)
-                    .unwrap_or_else(|_| guid.clone());
-                ProjectLoad {
-                    index,
-                    project,
-                    guid,
-                    project_name,
-                }
+            let _permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("semaphore closed");
+            loads.push(ProjectLoad {
+                index,
+                guid: project.guid,
+                project_name: project.name,
             });
         }
-
-        let mut loads = Vec::new();
-        while let Some(result) = join_set.join_next().await {
-            match result {
-                Ok(load) => loads.push(load),
-                Err(e) => warn!("Failed to load project metadata: {}", e),
-            }
-        }
-        loads.sort_by_key(|load| load.index);
         loads
     }
 
@@ -299,7 +334,7 @@ impl SetlistServiceImpl {
         load: &ProjectLoad,
         existing_song: Option<&Song>,
     ) -> Vec<Song> {
-        let source_fingerprint = self.fetch_midi_source_fingerprint(&load.project).await;
+        let source_fingerprint = self.fetch_midi_source_fingerprint(&load.guid).await;
 
         if let Some(cached) = self.song_cache.get(&load.guid).await {
             let fingerprint_matches = match source_fingerprint.as_ref() {
@@ -316,9 +351,21 @@ impl SetlistServiceImpl {
             }
         }
 
-        let chart_data = Self::fetch_midi_chart_data(&load.project).await;
+        let chart_data = Self::fetch_midi_chart_data(&load.guid).await;
 
-        match SongBuilder::build(&load.project).await {
+        // SongBuilder::build_native calls REAPER FFI (info / markers /
+        // regions / lanes) which is main-thread-only. Bounce so the
+        // async build path works when invoked over RPC from a tokio
+        // worker thread — without this the call hangs on REAPER's
+        // internal lock instead of erroring.
+        let guid = load.guid.clone();
+        let build_result = daw_reaper::main_thread::query(move || {
+            SongBuilder::build_native(ProjectContext::Project(guid))
+        })
+        .await
+        .unwrap_or_else(|| Err(eyre::eyre!("main thread unavailable for SongBuilder")));
+
+        match build_result {
             Ok(mut songs) => {
                 // Apply chart data and IDs to the first song
                 if let Some(first_song) = songs.first_mut() {
@@ -401,12 +448,12 @@ impl SetlistServiceImpl {
             return false;
         }
 
-        let daw = Daw::get();
-        let Ok(project) = daw.project(&song_snapshot.project_guid).await else {
+        if self.daw.get(&song_snapshot.project_guid).is_none() {
             return false;
-        };
+        }
         let source_fingerprint = if fingerprint_supported {
-            self.fetch_midi_source_fingerprint(&project).await
+            self.fetch_midi_source_fingerprint(&song_snapshot.project_guid)
+                .await
         } else {
             None
         };
@@ -417,7 +464,8 @@ impl SetlistServiceImpl {
             return false;
         }
 
-        let Some(chart_data) = Self::fetch_midi_chart_data(&project).await else {
+        let Some(chart_data) = Self::fetch_midi_chart_data(&song_snapshot.project_guid).await
+        else {
             return false;
         };
         if source_fingerprint.is_none()
@@ -450,10 +498,9 @@ impl SetlistServiceImpl {
                 .emit((song_index, updated_song_light.clone()));
             self.emit_cached_chart_payload_for_song(song_index, &updated_song_light.project_guid)
                 .await;
-            let project_name = project
-                .info()
-                .await
-                .ok()
+            let project_name = self
+                .daw
+                .get(&song_snapshot.project_guid)
                 .map(|info| info.name)
                 .unwrap_or_else(|| song_snapshot.project_guid.clone());
             self.song_cache

@@ -1,13 +1,20 @@
 //! SongService implementation — builds songs from the current DAW project.
 
 use crate::song_builder::SongBuilder;
-use daw::Daw;
+use daw::reaper::Reaper;
+use daw::service::{ProjectContext, Projects};
 use session_proto::{SessionServiceError, Song, SongService};
 use tracing::{debug, info, warn};
 
 /// Implementation of SongService
 #[derive(Clone)]
 pub struct SongServiceImpl;
+
+impl Default for SongServiceImpl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SongServiceImpl {
     pub fn new() -> Self {
@@ -19,23 +26,20 @@ impl SongService for SongServiceImpl {
     async fn build_from_current_project(&self) -> Result<Song, SessionServiceError> {
         debug!("build_from_current_project called");
 
-        let daw = Daw::get();
-
-        // Get current project
-        let project = match daw.current_project().await {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("Failed to get current project: {}", e);
-                return Err(SessionServiceError::DawError(format!(
-                    "Failed to get current project: {e}"
-                )));
+        let project = match Reaper.current() {
+            Some(project) => project,
+            None => {
+                warn!("Failed to get current project");
+                return Err(SessionServiceError::DawError(
+                    "Failed to get current project".to_string(),
+                ));
             }
         };
 
-        info!("Got current project: {}", project.guid());
+        info!("Got current project: {}", project.guid);
 
         // Build song(s) from project — return the first song
-        match SongBuilder::build(&project).await {
+        match SongBuilder::build_native(ProjectContext::Project(project.guid.clone())) {
             Ok(songs) => {
                 let song = songs
                     .into_iter()
@@ -57,27 +61,18 @@ impl SongService for SongServiceImpl {
         }
     }
 
-    async fn get_song(&self, project_guid: String) -> Result<Song, SessionServiceError> {
-        info!(
-            "SONG SERVICE: get_song called for project: {}",
-            project_guid
-        );
+    async fn song(&self, project_guid: String) -> Result<Song, SessionServiceError> {
+        info!("SONG SERVICE: song called for project: {}", project_guid);
 
-        let daw = Daw::get();
-
-        // Get specific project
-        let project = match daw.project(project_guid.clone()).await {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("Failed to get project {}: {}", project_guid, e);
-                return Err(SessionServiceError::DawError(format!(
-                    "Failed to get project {project_guid}: {e}"
-                )));
-            }
-        };
+        if Reaper.get(&project_guid).is_none() {
+            warn!("Failed to get project {}", project_guid);
+            return Err(SessionServiceError::DawError(format!(
+                "Failed to get project {project_guid}"
+            )));
+        }
 
         // Build song(s) from project — return the first song
-        match SongBuilder::build(&project).await {
+        match SongBuilder::build_native(ProjectContext::Project(project_guid.clone())) {
             Ok(songs) => {
                 let song = songs
                     .into_iter()

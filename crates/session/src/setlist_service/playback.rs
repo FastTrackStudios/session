@@ -1,26 +1,25 @@
 //! Playback commands: play, pause, stop, toggle, loop controls
 
 use super::SetlistServiceImpl;
-use daw::Daw;
+use daw::service::ProjectContext;
+use daw::service::transport::service::Transport;
 use session_proto::SessionServiceError;
 use tracing::{debug, warn};
 
-impl SetlistServiceImpl {
+impl<D> SetlistServiceImpl<D>
+where
+    D: Transport,
+{
     pub(crate) async fn toggle_playback_impl(&self) -> Result<(), SessionServiceError> {
         debug!("toggle_playback");
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
-            let daw = Daw::get();
-            match daw.project(&song.project_guid).await {
-                Ok(project) => {
-                    if let Err(e) = project.transport().play_pause().await {
-                        warn!("Failed to toggle playback: {}", e);
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to get project {}: {}", song.project_guid, e);
-                }
+            if let Err(e) = self
+                .daw
+                .play_pause(ProjectContext::Project(song.project_guid.clone()))
+            {
+                warn!("Failed to toggle playback: {}", e);
             }
         } else {
             warn!("No active song to toggle playback (navigate to a song first)");
@@ -33,16 +32,11 @@ impl SetlistServiceImpl {
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
-            let daw = Daw::get();
-            match daw.project(&song.project_guid).await {
-                Ok(project) => {
-                    if let Err(e) = project.transport().play().await {
-                        warn!("Failed to play: {}", e);
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to get project {}: {}", song.project_guid, e);
-                }
+            if let Err(e) = self
+                .daw
+                .play(ProjectContext::Project(song.project_guid.clone()))
+            {
+                warn!("Failed to play: {}", e);
             }
         } else {
             warn!("No active song to play (navigate to a song first)");
@@ -55,16 +49,11 @@ impl SetlistServiceImpl {
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
-            let daw = Daw::get();
-            match daw.project(&song.project_guid).await {
-                Ok(project) => {
-                    if let Err(e) = project.transport().pause().await {
-                        warn!("Failed to pause: {}", e);
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to get project {}: {}", song.project_guid, e);
-                }
+            if let Err(e) = self
+                .daw
+                .pause(ProjectContext::Project(song.project_guid.clone()))
+            {
+                warn!("Failed to pause: {}", e);
             }
         } else {
             warn!("No active song to pause (navigate to a song first)");
@@ -77,16 +66,11 @@ impl SetlistServiceImpl {
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
-            let daw = Daw::get();
-            match daw.project(&song.project_guid).await {
-                Ok(project) => {
-                    if let Err(e) = project.transport().stop().await {
-                        warn!("Failed to stop: {}", e);
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to get project {}: {}", song.project_guid, e);
-                }
+            if let Err(e) = self
+                .daw
+                .stop(ProjectContext::Project(song.project_guid.clone()))
+            {
+                warn!("Failed to stop: {}", e);
             }
         } else {
             warn!("No active song to stop (navigate to a song first)");
@@ -97,16 +81,8 @@ impl SetlistServiceImpl {
     pub(crate) async fn toggle_song_loop_impl(&self) -> Result<(), SessionServiceError> {
         debug!("toggle_song_loop");
 
-        let daw = Daw::get();
-        match daw.current_project().await {
-            Ok(project) => {
-                if let Err(e) = project.transport().toggle_loop().await {
-                    warn!("Failed to toggle song loop: {}", e);
-                }
-            }
-            Err(e) => {
-                warn!("Failed to get current project: {}", e);
-            }
+        if let Err(e) = self.daw.toggle_loop(ProjectContext::Current) {
+            warn!("Failed to toggle song loop: {}", e);
         }
         Ok(())
     }
@@ -132,16 +108,8 @@ impl SetlistServiceImpl {
     pub(crate) async fn clear_loop_impl(&self) -> Result<(), SessionServiceError> {
         debug!("clear_loop");
 
-        let daw = Daw::get();
-        match daw.current_project().await {
-            Ok(project) => {
-                if let Err(e) = project.transport().set_loop(false).await {
-                    warn!("Failed to clear loop: {}", e);
-                }
-            }
-            Err(e) => {
-                warn!("Failed to get current project: {}", e);
-            }
+        if let Err(e) = self.daw.set_loop(ProjectContext::Current, false) {
+            warn!("Failed to clear loop: {}", e);
         }
         Ok(())
     }

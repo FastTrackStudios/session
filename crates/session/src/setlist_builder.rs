@@ -3,16 +3,54 @@
 //! Scans open projects and combines their song structures into a setlist.
 
 use crate::song_builder::SongBuilder;
-use daw::Daw;
-use rayon::prelude::*;
+use daw::reaper::Reaper;
+use daw::rpc::Daw;
+use daw::service::{ProjectContext, Projects};
 use session_proto::Setlist;
-use tokio::runtime::Handle;
 use tracing::{debug, warn};
 
 /// Builder for assembling setlists from open DAW projects
 pub struct SetlistBuilder;
 
 impl SetlistBuilder {
+    /// Build a setlist from open REAPER projects using sync native service traits.
+    pub fn build_from_open_projects_native() -> eyre::Result<Setlist> {
+        debug!("SETLIST BUILDER: Building native setlist from open projects...");
+
+        let projects = Reaper.list();
+        debug!("Found {} open projects", projects.len());
+
+        let mut songs = Vec::new();
+        for (idx, project) in projects.iter().enumerate() {
+            debug!("Processing native project {}: {}", idx + 1, project.guid);
+            match SongBuilder::build_native(ProjectContext::Project(project.guid.clone())) {
+                Ok(project_songs) => {
+                    for song in &project_songs {
+                        debug!(
+                            "  Song extracted: {} ({} sections)",
+                            song.name,
+                            song.sections.len()
+                        );
+                    }
+                    songs.extend(project_songs);
+                }
+                Err(e) => {
+                    warn!(
+                        "  Failed to extract song from project {}: {}",
+                        project.guid, e
+                    );
+                }
+            }
+        }
+
+        Ok(Setlist {
+            id: None,
+            name: Self::generate_setlist_name(&songs),
+            advance_mode: session_proto::AdvanceMode::default(),
+            songs,
+        })
+    }
+
     /// Build a setlist from all currently open DAW projects
     ///
     /// Iterates through all open projects, attempts to extract a Song from each,
@@ -31,33 +69,13 @@ impl SetlistBuilder {
             debug!("  Project {}: {}", i, project.guid());
         }
 
-        let total_projects = projects.len();
-        let tokio_handle = Handle::current();
-
-        // Extract songs in parallel and keep original tab order.
-        let mut results = projects
-            .into_par_iter()
-            .enumerate()
-            .map(|(idx, project)| {
-                let guid = project.guid().to_string();
-                debug!("------------------------------------------------------------");
-                debug!(
-                    "Processing project {}/{}: {}",
-                    idx + 1,
-                    total_projects,
-                    guid
-                );
-
-                let result = tokio_handle.block_on(SongBuilder::build(&project));
-                (idx, guid, result)
-            })
-            .collect::<Vec<_>>();
-
-        results.sort_by_key(|(idx, _, _)| *idx);
-
         let mut songs = Vec::new();
-        for (_idx, guid, result) in results {
-            match result {
+        for (idx, project) in projects.into_iter().enumerate() {
+            let guid = project.guid().to_string();
+            debug!("------------------------------------------------------------");
+            debug!("Processing project {}: {}", idx + 1, guid);
+
+            match SongBuilder::build(&project).await {
                 Ok(project_songs) => {
                     for song in &project_songs {
                         debug!(

@@ -11,7 +11,7 @@
 //! Run with:
 //!   cargo xtask reaper-test -- demo_setlist
 
-use daw::Project;
+use daw::rpc::Project;
 use reaper_test::reaper_test;
 use session::{SongBuilder, stamp_demo_into_project};
 use std::time::Duration;
