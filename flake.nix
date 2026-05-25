@@ -10,6 +10,12 @@
     crane.url = "github:ipetkov/crane";
     fts-flake.url = "github:FastTrackStudios/fts-flake";
     fts-flake.inputs.nixpkgs.follows = "nixpkgs";
+    # Shared FTS repo-hygiene hub: pinned capn/tracey + the cargo xtask CI
+    # battery. We pull its bearcove tool packages into the dev shell so daw
+    # runs the same gate as every other repo; daw keeps its own rust-overlay
+    # toolchain + REAPER/GPU/audio stack below.
+    fts-repo.url = "git+https://git.starcommand.live/FastTrackStudios/fts-repo";
+    fts-repo.inputs.nixpkgs.follows = "nixpkgs";
     nix2container.url = "github:nlewo/nix2container";
     nix2container.inputs.nixpkgs.follows = "nixpkgs";
     wdl = {
@@ -35,6 +41,7 @@
       rust-overlay,
       crane,
       fts-flake,
+      fts-repo,
       nix2container,
       wdl,
     } @ inputs:
@@ -310,6 +317,17 @@
             commonPackages = scriptPackages ++ [
               rustToolchain
               pkgs.cargo-nextest
+
+              # ── Shared FTS hygiene tooling (from fts-repo) ──────────
+              # Same pinned versions every FTS repo uses, so `cargo xtask ci`
+              # behaves identically. daw keeps its own rust toolchain above
+              # (NOT fts-repo's rustup) to avoid a PATH clash.
+              fts-repo.packages.${system}.capn
+              fts-repo.packages.${system}.tracey
+              pkgs.git-cliff # CHANGELOG.md from conventional commits
+              pkgs.just # thin task runner → cargo xtask
+              pkgs.cargo-shear # unused-dependency detection (capn pre-push)
+
               pkgs.pkg-config
               pkgs.openssl
 
@@ -460,6 +478,10 @@
                 echo ""
                 echo "  fts-test [cmd]    — headless FHS env"
                 echo "  fts-gui           — launch REAPER with GUI"
+                echo ""
+                echo "  cargo xtask ci    — shared fts-repo gate (fmt/clippy/check/nextest/doctests)"
+                echo "  cargo xtask check — cargo check --workspace --all-targets"
+                echo "  capn / tracey     — pre-commit/pre-push gates + spec traceability"
                 echo ""
                 echo "  REAPER: ${ftsDev.reaper}/bin/reaper"
                 echo ""
