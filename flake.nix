@@ -331,6 +331,11 @@
               pkgs.pkg-config
               pkgs.openssl
 
+              # rusty_link (Ableton Link, via daw-link) builds a C++ lib with
+              # cmake at build time. Present on the host but not in a clean
+              # CI shell, so list it explicitly.
+              pkgs.cmake
+
               # GPU / Dioxus-native rendering (daw-reaper-embed, daw-reaper-dioxus)
               pkgs.fontconfig
               pkgs.freetype
