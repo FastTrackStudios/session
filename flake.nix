@@ -331,6 +331,11 @@
               pkgs.pkg-config
               pkgs.openssl
 
+              # rusty_link (Ableton Link, via daw-link) builds a C++ lib with
+              # cmake at build time. Present on the host but not in a clean
+              # CI shell, so list it explicitly.
+              pkgs.cmake
+
               # GPU / Dioxus-native rendering (daw-reaper-embed, daw-reaper-dioxus)
               pkgs.fontconfig
               pkgs.freetype
@@ -488,8 +493,20 @@
               '';
             });
 
-            # ── CI shell (minimal, no GUI) ────────────────────────
+            # ── CI shell — `cargo xtask ci` only ──────────────────
+            # The shared fts-repo gate (fmt/clippy/check/nextest/doctests)
+            # needs daw's build/system deps to COMPILE the workspace, but
+            # NOT REAPER. Keeping the unfree REAPER + FHS launcher out of
+            # this shell makes CI faster and avoids an unfree fetch.
             ci = pkgs.mkShell (commonEnv // commonShellEnv // {
+              packages = commonPackages;
+            });
+
+            # ── REAPER-CI shell — `cargo xtask reaper-test` ───────
+            # Heavier shell that adds the headless REAPER + FHS sandbox for
+            # the integration-test workflow. Separate so the fast `ci` gate
+            # doesn't pay for it on every push.
+            reaper-ci = pkgs.mkShell (commonEnv // commonShellEnv // {
               packages = commonPackages ++ [
                 ftsCi.fts-test
                 ftsCi.reaper-fhs
