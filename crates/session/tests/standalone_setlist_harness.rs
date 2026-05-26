@@ -79,38 +79,28 @@ async fn setlist_service_over_vox() -> eyre::Result<()> {
         serve_setlist_service(setlist_impl),
     ));
 
-    let (server_link, client_link) = vox::memory_link_pair(256);
-    let acc = ConnectionSettings { parity: Parity::Even, max_concurrent_requests: 64, initial_channel_credit: 16 };
-    let ini = ConnectionSettings { parity: Parity::Odd, max_concurrent_requests: 64, initial_channel_credit: 16 };
-
+    // Serve over a real Unix socket — the desktop's actual transport — so this
+    // exercises the same conduit/channel path REAPER uses (memory_link masked
+    // the streaming behaviour).
+    let _ = ConnectionSettings { parity: Parity::Even, max_concurrent_requests: 64, initial_channel_credit: 16 };
+    let _ = Parity::Even;
+    let sock = format!("/tmp/fts-setlist-harness-{}.sock", std::process::id());
+    let _ = std::fs::remove_file(&sock);
+    let addr = format!("local://{sock}");
+    let serve_addr = addr.clone();
     tokio::spawn(async move {
-        match vox::acceptor_on_link(server_link, acc).await {
-            Ok(b) => match b.on_connection(router).establish::<vox::NoopClient>().await {
-                Ok(guard) => {
-                    let _guard = guard;
-                    std::future::pending::<()>().await;
-                }
-                Err(e) => eprintln!("[v2] acceptor establish failed: {e:?}"),
-            },
-            Err(e) => eprintln!("[v2] acceptor_on_link failed: {e:?}"),
+        if let Err(e) = vox::serve(&serve_addr, router).await {
+            eprintln!("[v2] serve failed: {e:?}");
         }
     });
+    tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let conn = vox::initiator_on_link(client_link, ini)
-        .await?
-        .establish::<vox::NoopClient>()
-        .await?;
-    let client = SetlistServiceClient::new(conn.caller.clone());
-
-    // Subscribe (stays alive even with no setlist yet — no early bail), then
-    // build separately, the desktop's order. Both calls succeed over vox.
-    let (tx, mut rx) = vox::channel::<SetlistEvent>();
-    client
-        .subscribe(tx)
+    let client: SetlistServiceClient = vox::connect(&addr)
         .await
-        .map_err(|e| eyre::eyre!("subscribe: {e:?}"))?;
-    println!("[v2] subscribed over vox — OK");
+        .map_err(|e| eyre::eyre!("connect: {e:?}"))?;
 
+    // Desktop's exact order: BUILD first, THEN subscribe, then pump. The
+    // subscriber must receive the already-built setlist as the initial snapshot.
     client
         .build_from_open_projects()
         .await
@@ -125,9 +115,15 @@ async fn setlist_service_over_vox() -> eyre::Result<()> {
         Err(e) => panic!("[v2] setlist() error: {e:?}"),
     }
 
-    // Soft check: whether the SetlistChanged push reaches the subscriber over
-    // the revision loop. (Delivery of build-triggered revisions to an existing
-    // subscriber is the remaining known gap; the build + query path is proven.)
+    let (tx, mut rx) = vox::channel::<SetlistEvent>();
+    client
+        .subscribe(tx)
+        .await
+        .map_err(|e| eyre::eyre!("subscribe: {e:?}"))?;
+    println!("[v2] subscribed over vox — OK");
+
+    // The subscriber must get the initial SetlistChanged snapshot and the stream
+    // must stay open (the desktop spun resubscribing because the stream ended).
     let mut got_songs = 0usize;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     loop {
@@ -142,9 +138,14 @@ async fn setlist_service_over_vox() -> eyre::Result<()> {
                     break;
                 }
             }
+            Ok(Ok(None)) => {
+                println!("[v2] stream ended (rx closed) — reproduces desktop spin");
+                break;
+            }
             _ => break,
         }
     }
     println!("[v2] SetlistChanged delivered to subscriber: {got_songs} songs");
+    assert!(got_songs > 0, "subscriber got no initial SetlistChanged snapshot");
     Ok(())
 }
