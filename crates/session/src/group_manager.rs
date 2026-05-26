@@ -1,112 +1,19 @@
-//! Track-group manager.
+//! Track-group manager — REAPER-side operations over the canonical partition.
 //!
-//! REAPER exposes 128 track-group slots. Rather than let groups accrete
-//! ad-hoc, FTS partitions the 128 slots into fixed **instrument-category
-//! bands** so a project's groups are always organized the same way: drums
-//! own the first block, bass the next, and so on. This module owns that
-//! partition plus the REAPER-side operations that realize it.
+//! REAPER exposes 128 track-group slots. The **partition** that assigns those
+//! slots to fixed instrument-category bands is canonical and lives in
+//! [`music_catalog::groups`] (the single source of truth shared across FTS
+//! repos). This module owns only the REAPER-side operations that *realize*
+//! that partition in a live project.
 //!
 //! REAPER FFI here is raw `low`-level (group naming + membership aren't
 //! wrapped in `reaper-medium`), called on REAPER's **main thread** — same
 //! pattern as [`crate::record_actions`] and [`crate::take_ranking`].
 
+use music_catalog::groups::{SLOT_BANDS, TOTAL_GROUP_SLOTS, band_for_category, slot_label};
 use reaper_high::Reaper;
 use std::ffi::CString;
 use tracing::{info, warn};
-
-/// Total REAPER track-group slots (REAPER addresses these as four 32-bit
-/// windows via `GetSetTrackGroupMembershipEx`'s `offset` arg).
-pub const TOTAL_SLOTS: u16 = 128;
-
-/// One instrument-category band: a contiguous run of group slots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GroupBand {
-    pub name: &'static str,
-    /// 1-based first slot (inclusive).
-    pub start: u16,
-    /// Number of slots in the band.
-    pub count: u16,
-}
-
-impl GroupBand {
-    /// 1-based last slot (inclusive).
-    pub const fn end(&self) -> u16 {
-        self.start + self.count - 1
-    }
-    pub const fn contains(&self, slot: u16) -> bool {
-        slot >= self.start && slot <= self.end()
-    }
-}
-
-/// The canonical FTS instrument-category partition over the 128 group slots.
-/// Bands are contiguous and non-overlapping; slots past the last band
-/// (121–128) are spare. Total assigned = 120.
-pub const BANDS: &[GroupBand] = &[
-    GroupBand {
-        name: "Drums",
-        start: 1,
-        count: 10,
-    },
-    GroupBand {
-        name: "Bass",
-        start: 11,
-        count: 10,
-    },
-    GroupBand {
-        name: "Electric Gtr",
-        start: 21,
-        count: 20,
-    },
-    GroupBand {
-        name: "Acoustic Gtr",
-        start: 41,
-        count: 20,
-    },
-    GroupBand {
-        name: "Keys",
-        start: 61,
-        count: 10,
-    },
-    GroupBand {
-        name: "Synths",
-        start: 71,
-        count: 10,
-    },
-    GroupBand {
-        name: "Lead Vocal",
-        start: 81,
-        count: 20,
-    },
-    GroupBand {
-        name: "Background Vox",
-        start: 101,
-        count: 20,
-    },
-];
-
-/// First spare slot (one past the last band), or `TOTAL_SLOTS + 1` if the
-/// bands fill every slot.
-fn spare_start() -> u16 {
-    BANDS.last().map(|b| b.end() + 1).unwrap_or(1)
-}
-
-/// The band owning `slot` (1-based), or `None` for spare slots.
-pub fn band_for_slot(slot: u16) -> Option<&'static GroupBand> {
-    BANDS.iter().find(|b| b.contains(slot))
-}
-
-/// Look up a band by category name (case-insensitive).
-pub fn band_for_category(name: &str) -> Option<&'static GroupBand> {
-    BANDS.iter().find(|b| b.name.eq_ignore_ascii_case(name))
-}
-
-/// The human label for a slot, e.g. `"Drums 03"` or `"Spare 02"`.
-pub fn slot_label(slot: u16) -> String {
-    match band_for_slot(slot) {
-        Some(b) => format!("{} {:02}", b.name, slot - b.start + 1),
-        None => format!("Spare {:02}", slot.saturating_sub(spare_start()) + 1),
-    }
-}
 
 /// Write the instrument-category partition into the current project's 128
 /// track-group names (`TRACK_GROUP_NAME:X`). Idempotent — re-running just
@@ -117,7 +24,7 @@ pub fn apply_group_naming() -> u32 {
     let reaper = Reaper::get();
     let low = reaper.medium_reaper().low();
     let mut named = 0u32;
-    for slot in 1..=TOTAL_SLOTS {
+    for slot in 1..=TOTAL_GROUP_SLOTS {
         let Ok(desc) = CString::new(format!("TRACK_GROUP_NAME:{slot}")) else {
             continue;
         };
@@ -143,7 +50,7 @@ pub fn apply_group_naming() -> u32 {
     }
     info!(
         named,
-        bands = BANDS.len(),
+        bands = SLOT_BANDS.len(),
         "[group] Applied instrument-category naming to track groups"
     );
     named
@@ -225,7 +132,7 @@ pub fn assign_selected_to_category(category: &str) -> usize {
             break;
         }
         let Some(slot) = free_slot else {
-            warn!(band = band.name, "[group] no free slot in band");
+            warn!(band = band.label, "[group] no free slot in band");
             return 0;
         };
 
@@ -250,7 +157,7 @@ pub fn assign_selected_to_category(category: &str) -> usize {
         low.PreventUIRefresh(-1);
         low.Undo_EndBlock(undo.as_ptr(), 1); // 1 = track config changes
         info!(
-            category = band.name,
+            category = band.label,
             slot,
             label = %slot_label(slot),
             tracks = selected.len(),
@@ -264,6 +171,9 @@ pub fn assign_selected_to_category(category: &str) -> usize {
 mod tests {
     use super::*;
 
+    // The partition itself (band contiguity, slot labels, category lookups)
+    // is tested in `music_catalog::groups`. Here we only cover the REAPER
+    // membership bit-math that stays in this crate.
     #[test]
     fn slot_windows() {
         assert_eq!(slot_window(1), (0, 1));
@@ -271,33 +181,5 @@ mod tests {
         assert_eq!(slot_window(33), (32, 1));
         assert_eq!(slot_window(65), (64, 1));
         assert_eq!(slot_window(128), (96, 1 << 31));
-    }
-
-    #[test]
-    fn bands_are_contiguous_non_overlapping_and_fit() {
-        let mut expected_next = 1;
-        for b in BANDS {
-            assert_eq!(b.start, expected_next, "band {} not contiguous", b.name);
-            expected_next = b.end() + 1;
-        }
-        assert!(expected_next - 1 <= TOTAL_SLOTS, "bands overflow 128 slots");
-    }
-
-    #[test]
-    fn slot_labels() {
-        assert_eq!(slot_label(1), "Drums 01");
-        assert_eq!(slot_label(10), "Drums 10");
-        assert_eq!(slot_label(11), "Bass 01");
-        assert_eq!(slot_label(81), "Lead Vocal 01");
-        assert_eq!(slot_label(120), "Background Vox 20");
-        assert_eq!(slot_label(121), "Spare 01");
-        assert_eq!(slot_label(128), "Spare 08");
-    }
-
-    #[test]
-    fn band_lookups() {
-        assert_eq!(band_for_slot(25).unwrap().name, "Electric Gtr");
-        assert!(band_for_slot(125).is_none());
-        assert_eq!(band_for_category("keys").unwrap().start, 61);
     }
 }

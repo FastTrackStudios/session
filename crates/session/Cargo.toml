@@ -25,6 +25,8 @@ reaper-high = { workspace = true }
 reaper-low = { workspace = true }
 reaper-medium = { workspace = true }
 dynamic-template.workspace = true
+# Canonical 128-slot group partition lives here (music_catalog::groups).
+music-catalog.workspace = true
 vox.workspace = true
 tokio = { version = "1.48", features = ["rt", "sync", "time", "macros"] }
 moire.workspace = true
