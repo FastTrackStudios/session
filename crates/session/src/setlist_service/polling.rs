@@ -410,12 +410,16 @@ where
             let mut chart_hydration_rx = this.chart_hydration_bus.subscribe();
 
             // Get songs for GUID -> index mapping
-            let songs: Vec<Song>;
-            {
+            // NOTE: subscribe does NOT build inline. Doing the full build inside
+            // the streaming handler (before the select loop) wedges the
+            // subscription response. The desktop calls build_from_open_projects
+            // separately; the key fix is below — when there's no setlist yet we
+            // stay subscribed (rather than bailing) so the revision loop
+            // delivers SetlistChanged once a build populates it.
+            let songs: Vec<Song> = {
                 let setlist = this.setlist.read().await;
                 if let Some(ref sl) = *setlist {
-                    songs = sl.songs.clone();
-                    // Send initial setlist state
+                    // Send initial setlist state.
                     if events
                         .send(SetlistEvent::SetlistChanged(sl.clone()))
                         .await
@@ -426,11 +430,14 @@ where
                         );
                         return Ok(());
                     }
+                    sl.songs.clone()
                 } else {
-                    info!("SetlistService::subscribe() - no setlist available");
-                    return Ok(());
+                    // Build produced nothing (e.g. no open projects). Stay
+                    // subscribed so a later build still delivers SetlistChanged.
+                    info!("SetlistService::subscribe() - no setlist after build; awaiting updates");
+                    Vec::new()
                 }
-            }
+            };
 
             // Send cached chart payloads for current songs so subscribers can
             // render charts without bloating SetlistChanged payloads.

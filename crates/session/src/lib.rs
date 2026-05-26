@@ -33,9 +33,9 @@ mod preroll_actions;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod routing_project;
 #[cfg(not(target_arch = "wasm32"))]
-mod setlist_builder;
+pub mod setlist_builder;
 #[cfg(not(target_arch = "wasm32"))]
-mod setlist_service;
+pub mod setlist_service;
 #[cfg(not(target_arch = "wasm32"))]
 mod song_builder;
 #[cfg(not(target_arch = "wasm32"))]

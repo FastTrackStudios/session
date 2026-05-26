@@ -366,17 +366,19 @@ where
 
         let chart_data = Self::fetch_midi_chart_data(&load.guid).await;
 
-        // SongBuilder::build_native calls REAPER FFI (info / markers /
-        // regions / lanes) which is main-thread-only. Bounce so the
-        // async build path works when invoked over RPC from a tokio
-        // worker thread — without this the call hangs on REAPER's
-        // internal lock instead of erroring.
-        let guid = load.guid.clone();
-        let build_result = daw_reaper::main_thread::query(move || {
-            SongBuilder::build_native(ProjectContext::Project(guid))
-        })
-        .await
-        .unwrap_or_else(|| Err(eyre::eyre!("main thread unavailable for SongBuilder")));
+        // Extract songs through the backend-agnostic `SongBuilder::build(&Project)`
+        // over the `daw` facade. The `Project`'s service calls (info / markers /
+        // regions / tempo) bounce to the backend's required thread internally
+        // (REAPER's main thread via daw_proto::main_thread; inline for
+        // standalone), so this same path works against any daw backend — no
+        // direct REAPER FFI, unlike the former `SongBuilder::build_native`.
+        let build_result = match daw::get() {
+            Some(daw) => match daw.project(load.guid.clone()).await {
+                Ok(project) => SongBuilder::build(&project).await,
+                Err(e) => Err(eyre::eyre!("resolve project {}: {e}", load.guid)),
+            },
+            None => Err(eyre::eyre!("daw facade not initialised")),
+        };
 
         match build_result {
             Ok(mut songs) => {
