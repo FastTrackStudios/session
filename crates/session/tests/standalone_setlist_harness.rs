@@ -46,6 +46,64 @@ async fn build_setlist_from_standalone_demo() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Rich scenario: 10 projects, one song each, varied complex section layouts
+/// and alternating count-in. Verifies the full setlist view structure builds
+/// correctly over the daw facade (no REAPER).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
+    use daw::service::ProjectContext;
+    use session::setlist_service::demo::{fixture_songs, stamp_song_native};
+
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let standalone = Standalone::new();
+    let songs = fixture_songs(10);
+    for (i, song) in songs.iter().enumerate() {
+        let guid = standalone.seed_project(ProjectInfo {
+            guid: format!("proj-{i:02}"),
+            name: format!("Project {i:02}"),
+            path: String::new(),
+        });
+        stamp_song_native(&standalone, ProjectContext::Project(guid), song)
+            .map_err(|e| eyre::eyre!("stamp song {i}: {e:?}"))?;
+    }
+
+    let bundle = build_in_process_daw(standalone).await?;
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
+
+    println!("[v3] {} songs:", setlist.songs.len());
+    for s in &setlist.songs {
+        println!(
+            "  - {:<24} | {:>2} sections | count_in={:?}",
+            s.name,
+            s.sections.len(),
+            s.count_in_seconds
+        );
+    }
+
+    // One song per project, all 10 present.
+    assert_eq!(setlist.songs.len(), 10, "expected 10 songs (one per project)");
+    // Every song has sections.
+    for s in &setlist.songs {
+        assert!(!s.sections.is_empty(), "song '{}' has no sections", s.name);
+    }
+    // Complex section work: at least one song with a deep layout (>= 8 sections).
+    let max_sections = setlist.songs.iter().map(|s| s.sections.len()).max().unwrap_or(0);
+    assert!(
+        max_sections >= 8,
+        "expected a complex song with >=8 sections, got max {max_sections}"
+    );
+    // Count-in present on at least some songs.
+    let with_count_in = setlist
+        .songs
+        .iter()
+        .filter(|s| s.count_in_seconds.is_some_and(|c| c > 0.0))
+        .count();
+    println!("[v3] songs with count-in: {with_count_in}");
+    assert!(with_count_in > 0, "expected at least one song with a count-in");
+    Ok(())
+}
+
 /// Full desktop path over vox, no REAPER: host SetlistService behind a
 /// LayerRouter, drive it through SetlistServiceClient — subscribe, build, and
 /// confirm the SetlistChanged push reaches the subscriber.

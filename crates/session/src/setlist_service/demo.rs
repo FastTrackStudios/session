@@ -37,35 +37,38 @@ const SONG_LANE: u32 = CoreLane::Song.lane_index(); // 1
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-struct DemoSong {
+/// A song fixture for seeding setlist test data. Public so test harnesses can
+/// build arbitrary scenarios (see [`fixture_songs`] / [`stamp_song_native`]).
+pub struct DemoSong {
     /// Song name (used for the SONG-lane parent region)
-    name: &'static str,
+    pub name: &'static str,
     /// Absolute start of the song region (includes count-in)
-    region_start: f64,
+    pub region_start: f64,
     /// Absolute end of the song region
-    region_end: f64,
+    pub region_end: f64,
     /// Position of COUNT-IN marker (before SONGSTART)
-    count_in: f64,
+    pub count_in: f64,
     /// Position of SONGSTART marker
-    song_start: f64,
+    pub song_start: f64,
     /// Position of SONGEND marker
-    song_end: f64,
+    pub song_end: f64,
     /// Position of =END marker (render tail)
-    abs_end: f64,
+    pub abs_end: f64,
     /// Sections within the song
-    sections: Vec<DemoSection>,
+    pub sections: Vec<DemoSection>,
 }
 
-struct DemoSection {
+/// A section fixture within a [`DemoSong`].
+pub struct DemoSection {
     /// Section kind — drives both the inserted region's name (via
     /// keyflow_actions' abbreviation table) and which template colour
     /// the keyflow insert action picks. We carry the kind itself
     /// rather than a string so the demo can dispatch through the
     /// existing `insert_<kind>_region` actions and inherit all their
     /// lane / colour / carving logic.
-    kind: SectionKind,
-    start: f64,
-    end: f64,
+    pub kind: SectionKind,
+    pub start: f64,
+    pub end: f64,
 }
 
 /// Stamp demo markers and regions into the current REAPER project.
@@ -134,54 +137,9 @@ where
     let mut total_regions = 0u32;
 
     for song in &songs {
-        // ── SONG-lane parent region (the song-bounded named region) ──
-        //
-        // No keyflow action exists for "insert song-name region into
-        // SONG lane" yet (the per-section inserts only target
-        // SECTIONS). Do this one by hand: add via the trait, pin to
-        // SONG lane via the new Regions::set_lane. Everything else is
-        // a chain of existing actions whose ensure-lane / set-lane /
-        // colour-pick logic we don't want to duplicate.
-        let song_region_id = Regions::add(
-            daw,
-            project.clone(),
-            song.region_start,
-            song.region_end,
-            song.name,
-        )
-        .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
-        Regions::set_lane(daw, project.clone(), song_region_id, Some(SONG_LANE))
-            .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
-        total_regions += 1;
-
-        // ── Structural markers — chain the existing actions ──────
-        //
-        // Each `insert_<kind>_marker` action:
-        //   1. ensures the right CoreLane exists
-        //   2. drops the marker at the *edit cursor*
-        //   3. assigns the lane via `classify_marker_lane(kind.name())`
-        //   4. picks the conventional colour
-        // …so we just have to move the cursor and let the action do
-        // its thing. That keeps lane / colour / classification logic
-        // in one place (keyflow_actions) — this demo just composes.
-        place_marker_via_action(daw, &project, song.count_in, MarkerKind::CountIn)?;
-        place_marker_via_action(daw, &project, song.song_start, MarkerKind::SongStart)?;
-        place_marker_via_action(daw, &project, song.song_end, MarkerKind::SongEnd)?;
-        place_marker_via_action(daw, &project, song.abs_end, MarkerKind::End)?;
-        total_markers += 4;
-
-        // ── Section regions — chain the per-section inserts ──────
-        //
-        // `insert_<section>_region` takes its bounds from either the
-        // current time selection or the edit cursor + default 2
-        // measures. We have exact bounds for every section, so set
-        // the time selection precisely and dispatch. The action
-        // carves overlaps, colours per section type, and lands in
-        // SECTIONS lane — all of which we'd otherwise re-implement.
-        for section in &song.sections {
-            place_section_via_action(daw, &project, section)?;
-            total_regions += 1;
-        }
+        let (m, r) = stamp_song_native(daw, project.clone(), song)?;
+        total_markers += m;
+        total_regions += r;
     }
 
     info!(
@@ -192,6 +150,126 @@ where
     );
     info!("Demo markers/regions stamped successfully");
     Ok(())
+}
+
+/// Stamp a single [`DemoSong`] (SONG-lane region + structural markers +
+/// section regions) into `project`. Returns `(markers, regions)` stamped.
+///
+/// Reused by [`stamp_demo_into_project_native`] and by test harnesses that
+/// seed one song per project (see [`fixture_songs`]). The caller is
+/// responsible for focusing `project` first if the backend requires it.
+pub fn stamp_song_native<D>(
+    daw: &D,
+    project: ProjectContext,
+    song: &DemoSong,
+) -> Result<(u32, u32), SessionServiceError>
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap,
+{
+    // Keyflow insert actions operate on the *current* project, so focus the
+    // target project first when a specific one is requested.
+    if let ProjectContext::Project(guid) = &project
+        && !daw.select(guid)
+    {
+        return Err(SessionServiceError::DawError(format!(
+            "could not focus project {guid} before stamping song"
+        )));
+    }
+
+    // SONG-lane parent region (the song-bounded named region). No keyflow
+    // action targets the SONG lane yet, so add via the trait + pin the lane.
+    let song_region_id = Regions::add(
+        daw,
+        project.clone(),
+        song.region_start,
+        song.region_end,
+        song.name,
+    )
+    .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
+    Regions::set_lane(daw, project.clone(), song_region_id, Some(SONG_LANE))
+        .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
+
+    // Structural markers via the keyflow insert actions (lane/colour/convention).
+    place_marker_via_action(daw, &project, song.count_in, MarkerKind::CountIn)?;
+    place_marker_via_action(daw, &project, song.song_start, MarkerKind::SongStart)?;
+    place_marker_via_action(daw, &project, song.song_end, MarkerKind::SongEnd)?;
+    place_marker_via_action(daw, &project, song.abs_end, MarkerKind::End)?;
+
+    // Section regions via the per-section insert actions (carve/colour/SECTIONS lane).
+    for section in &song.sections {
+        place_section_via_action(daw, &project, section)?;
+    }
+
+    Ok((4, 1 + song.sections.len() as u32))
+}
+
+/// Generate `count` self-contained song fixtures, each starting near time 0 so
+/// it can be stamped into its own project (one song per project). Songs cycle
+/// through a few section layouts of increasing complexity and alternate
+/// count-in presence, to exercise the full setlist view: count-in handling,
+/// many sections, repeated section kinds, and short/long songs.
+pub fn fixture_songs(count: usize) -> Vec<DemoSong> {
+    const NAMES: [&str; 12] = [
+        "Cornerstone",
+        "Great Are You Lord",
+        "King of Kings",
+        "Goodness of God",
+        "Living Hope",
+        "Who You Say I Am",
+        "Reckless Love",
+        "Build My Life",
+        "Graves Into Gardens",
+        "The Blessing",
+        "Yes I Will",
+        "Raise a Hallelujah",
+    ];
+    // Section layouts of increasing complexity (intro→...→outro).
+    let layouts: [&[SectionKind]; 4] = [
+        &[SectionKind::Intro, SectionKind::Verse, SectionKind::Chorus, SectionKind::Outro],
+        &[
+            SectionKind::Intro, SectionKind::Verse, SectionKind::Chorus,
+            SectionKind::Verse, SectionKind::Chorus, SectionKind::Outro,
+        ],
+        &[
+            SectionKind::Intro, SectionKind::Verse, SectionKind::PreChorus, SectionKind::Chorus,
+            SectionKind::Verse, SectionKind::PreChorus, SectionKind::Chorus,
+            SectionKind::Bridge, SectionKind::Chorus, SectionKind::Outro,
+        ],
+        &[
+            SectionKind::Intro, SectionKind::Verse, SectionKind::Chorus, SectionKind::Bridge,
+            SectionKind::Chorus,
+        ],
+    ];
+
+    (0..count)
+        .map(|i| {
+            let layout = layouts[i % layouts.len()];
+            let has_count_in = i % 2 == 0;
+            // Every song lives in its own project timeline starting at 0.
+            // count-in occupies the first 4s when present; song body is 16s/section.
+            let count_in_pos = 0.0;
+            let song_start = if has_count_in { 4.0 } else { 0.0 };
+            let sec_len = 16.0;
+            let mut sections = Vec::with_capacity(layout.len());
+            let mut t = song_start;
+            for &kind in layout {
+                sections.push(DemoSection { kind, start: t, end: t + sec_len });
+                t += sec_len;
+            }
+            let song_end = t;
+            let abs_end = song_end + 4.0;
+            DemoSong {
+                name: NAMES[i % NAMES.len()],
+                region_start: 0.0,
+                region_end: abs_end,
+                count_in: count_in_pos,
+                song_start,
+                song_end,
+                abs_end,
+                sections,
+            }
+        })
+        .collect()
 }
 
 /// Move the edit cursor to `position`, then dispatch the matching
