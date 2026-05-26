@@ -400,20 +400,17 @@ where
         &self,
         events: Tx<SetlistEvent>,
     ) -> Result<(), SessionServiceError> {
-        // Spawn the streaming loop and return immediately. The subscribe RPC
-        // must respond so the client's `subscribe().await` resolves and the
-        // client can start pumping the receiver. Running the loop inline in
-        // this handler future never returned, so the response was never sent —
-        // the client hung on subscribe() and received nothing (empty UI). The
-        // Tx channel outlives the request/response exchange (vox channel
-        // lifecycle), so the detached task keeps delivering events afterwards.
-        let this = self.clone();
-        moire::task::spawn(async move {
-            if let Err(e) = this.run_subscription_stream(events).await {
-                debug!("SetlistService subscription stream ended: {e:?}");
-            }
-        });
-        Ok(())
+        // Run the streaming loop INLINE so the subscribe operation stays
+        // in-flight for the lifetime of the subscription — that keeps the Tx
+        // channel bound. Returning early (spawn + Ok) completes the operation,
+        // and the runtime's operation store then tears the channel down, so the
+        // client receives one event and then EOF (the resubscribe spin).
+        //
+        // Because this never returns until the stream ends, the CLIENT must NOT
+        // `await` subscribe() before reading the receiver — it must poll the
+        // receiver concurrently with this call (see the desktop / web-server /
+        // harness clients).
+        self.run_subscription_stream(events).await
     }
 
     async fn run_subscription_stream(

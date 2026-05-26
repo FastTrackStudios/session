@@ -173,37 +173,56 @@ async fn setlist_service_over_vox() -> eyre::Result<()> {
         Err(e) => panic!("[v2] setlist() error: {e:?}"),
     }
 
+    // The subscribe handler runs its loop in-flight (never returns until the
+    // stream ends), so poll the receiver CONCURRENTLY with the subscribe future
+    // instead of awaiting subscribe() first. Reproduces the desktop/web-server
+    // client pattern exactly.
     let (tx, mut rx) = vox::channel::<SetlistEvent>();
-    client
-        .subscribe(tx)
-        .await
-        .map_err(|e| eyre::eyre!("subscribe: {e:?}"))?;
-    println!("[v2] subscribed over vox — OK");
+    let mut sub = std::pin::pin!(client.subscribe(tx));
+    println!("[v2] subscribing (concurrent pump)");
 
-    // The subscriber must get the initial SetlistChanged snapshot and the stream
-    // must stay open (the desktop spun resubscribing because the stream ended).
     let mut got_songs = 0usize;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let mut stream_ended = false;
+    let end_at = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
-        let timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if timeout.is_zero() {
+        if tokio::time::Instant::now() >= end_at {
             break;
         }
-        match tokio::time::timeout(timeout, rx.recv()).await {
-            Ok(Ok(Some(ev_ref))) => {
-                if let SetlistEvent::SetlistChanged(sl) = ev_ref.get() {
-                    got_songs = sl.songs.len();
-                    break;
-                }
-            }
-            Ok(Ok(None)) => {
-                println!("[v2] stream ended (rx closed) — reproduces desktop spin");
+        tokio::select! {
+            res = &mut sub => {
+                println!("[v2] subscribe() returned: {res:?} — stream ENDED");
+                stream_ended = true;
                 break;
             }
-            _ => break,
+            ev = tokio::time::timeout(Duration::from_millis(400), rx.recv()) => {
+                match ev {
+                    Ok(Ok(Some(ev_ref))) => {
+                        if let SetlistEvent::SetlistChanged(sl) = ev_ref.get() {
+                            got_songs = sl.songs.len();
+                            println!("[v2] SetlistChanged: {got_songs} songs");
+                        }
+                    }
+                    Ok(Ok(None)) => {
+                        println!("[v2] rx closed — stream ENDED (reproduces spin)");
+                        stream_ended = true;
+                        break;
+                    }
+                    Ok(Err(e)) => {
+                        println!("[v2] rx error: {e:?}");
+                        stream_ended = true;
+                        break;
+                    }
+                    Err(_) => { /* idle tick; stream still open */ }
+                }
+            }
         }
     }
-    println!("[v2] SetlistChanged delivered to subscriber: {got_songs} songs");
+
+    println!("[v2] delivered={got_songs} songs, stream_ended={stream_ended}");
     assert!(got_songs > 0, "subscriber got no initial SetlistChanged snapshot");
+    assert!(
+        !stream_ended,
+        "subscription stream ended early — would cause the resubscribe spin"
+    );
     Ok(())
 }
