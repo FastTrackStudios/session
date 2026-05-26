@@ -46,15 +46,9 @@ async fn build_setlist_from_standalone_demo() -> eyre::Result<()> {
     Ok(())
 }
 
-// IGNORED: the SetlistService build path is now backend-agnostic (proven: the
-// service builds 3 songs over standalone — see git history / `setlist()` query),
-// but driving it through `subscribe(Tx<SetlistEvent>)` over an in-process vox
-// link surfaces a streaming-handler issue: subscribe's response and/or the
-// revision-triggered SetlistChanged push don't complete here. That last-mile
-// subscribe/notify delivery needs targeted debugging with full vox logs; the
-// build decoupling + single-global work this harness validated are independent
-// and complete.
-#[ignore = "subscribe streaming push delivery over in-proc vox needs targeted debugging"]
+/// Full desktop path over vox, no REAPER: host SetlistService behind a
+/// LayerRouter, drive it through SetlistServiceClient — subscribe, build, and
+/// confirm the SetlistChanged push reaches the subscriber.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn setlist_service_over_vox() -> eyre::Result<()> {
     use vox::{ConnectionSettings, Parity};
@@ -67,8 +61,11 @@ async fn setlist_service_over_vox() -> eyre::Result<()> {
     // client — exactly as REAPER wires the global facade to the REAPER daw.
     let standalone = seeded_stamped();
     let bundle = build_in_process_daw(standalone.clone()).await?;
+    // Current-thread runtime: init_from_parts only needs it for daw::block_on
+    // (unused here, since everything is async), and a current-thread runtime
+    // spawns no worker threads to keep the test process alive after it passes.
     let runtime = std::sync::Arc::new(
-        tokio::runtime::Builder::new_multi_thread()
+        tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?,
     );
