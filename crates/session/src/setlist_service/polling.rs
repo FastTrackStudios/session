@@ -1211,6 +1211,7 @@ where
         + Projects
         + daw::service::TempoMap
         + Transport
+        + daw::service::Tracks
         + Send
         + Sync
         + 'static,
@@ -1517,6 +1518,26 @@ where
 
     async fn clear_loop(&self) -> Result<(), SessionServiceError> {
         self.clear_loop_impl().await
+    }
+
+    // =========================================================================
+    // Recording — delegate to record.rs
+    // =========================================================================
+
+    async fn record(&self) -> Result<(), SessionServiceError> {
+        self.record_impl().await
+    }
+
+    async fn stop_recording(&self) -> Result<(), SessionServiceError> {
+        self.stop_recording_impl().await
+    }
+
+    async fn toggle_recording(&self) -> Result<(), SessionServiceError> {
+        self.toggle_recording_impl().await
+    }
+
+    async fn set_song_record_arm(&self, armed: bool) -> Result<(), SessionServiceError> {
+        self.set_song_record_arm_impl(armed).await
     }
 
     // =========================================================================

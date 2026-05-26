@@ -18,6 +18,7 @@ mod navigation;
 mod playback;
 mod polling;
 pub mod position_sync;
+mod record;
 
 use crate::cache::Cache;
 use crate::event_bus::{EventBus, WatchBus};

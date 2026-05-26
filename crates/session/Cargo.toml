@@ -39,6 +39,8 @@ smallvec = "1.13"
 rustc-hash = "2"
 
 [dev-dependencies]
-daw = { workspace = true, features = ["standalone", "file"] }
-reaper-test.workspace = true
+daw = { workspace = true, features = ["standalone", "file", "test-harness"] }
 eyre.workspace = true
+
+[lints]
+workspace = true

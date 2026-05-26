@@ -267,12 +267,11 @@ unsafe fn collect_selected_active_takes_at(
             continue;
         }
         let take_ptr = unsafe { low.GetActiveTake(item) };
-        if let Some(take) = MediaItemTake::new(take_ptr) {
-            if let Some(src) =
+        if let Some(take) = MediaItemTake::new(take_ptr)
+            && let Some(src) =
                 unsafe { project_pos_to_source_pos(low, item, take_ptr, target_proj_pos) }
-            {
-                out.push((take, src));
-            }
+        {
+            out.push((take, src));
         }
     }
     out

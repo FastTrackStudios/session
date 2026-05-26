@@ -82,6 +82,8 @@ where
                         take_ranking::dispatch(action);
                     } else if let Some(action) = record_actions::action_for_id(&action_id) {
                         record_actions::dispatch(action);
+                    } else if let Some(action) = crate::group_actions::action_for_id(&action_id) {
+                        crate::group_actions::dispatch(action);
                     } else if let Some(action) = setlist_actions::action_for_id(&action_id) {
                         setlist_actions::dispatch(&daw, action);
                     } else if dynamic_template::daw_module::dispatch_session_command(&cmd2) {

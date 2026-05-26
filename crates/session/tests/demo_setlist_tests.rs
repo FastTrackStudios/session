@@ -12,7 +12,7 @@
 //!   cargo xtask reaper-test -- demo_setlist
 
 use daw::rpc::Project;
-use reaper_test::reaper_test;
+use daw::test::reaper_test;
 use session::{SongBuilder, stamp_demo_into_project};
 use std::time::Duration;
 
@@ -38,7 +38,7 @@ async fn clear_project(project: &Project) -> eyre::Result<()> {
 /// Verify that stamping creates markers in the project that persist.
 /// 3 songs × 4 markers each (COUNT-IN, SONGSTART, SONGEND, =END) = 12 markers.
 #[reaper_test]
-async fn demo_setlist_creates_markers(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn demo_setlist_creates_markers(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     clear_project(&ctx.project).await?;
     stamp_demo_into_project(&ctx.project).await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -77,7 +77,7 @@ async fn demo_setlist_creates_markers(ctx: &reaper_test::ReaperTestContext) -> e
 /// Verify that stamping creates regions in the project that persist.
 /// 3 parent SONG regions + 6+6+8 section regions = 23 total.
 #[reaper_test]
-async fn demo_setlist_creates_regions(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn demo_setlist_creates_regions(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     clear_project(&ctx.project).await?;
     stamp_demo_into_project(&ctx.project).await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -129,7 +129,7 @@ async fn demo_setlist_creates_regions(ctx: &reaper_test::ReaperTestContext) -> e
 
 /// Verify marker positions for Song 1.
 #[reaper_test]
-async fn demo_setlist_marker_positions(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn demo_setlist_marker_positions(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     clear_project(&ctx.project).await?;
     stamp_demo_into_project(&ctx.project).await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -182,7 +182,7 @@ async fn demo_setlist_marker_positions(ctx: &reaper_test::ReaperTestContext) -> 
 
 /// Verify section region boundaries are contiguous within Song 1.
 #[reaper_test]
-async fn demo_setlist_regions_contiguous(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn demo_setlist_regions_contiguous(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     clear_project(&ctx.project).await?;
     stamp_demo_into_project(&ctx.project).await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -248,7 +248,7 @@ async fn demo_setlist_regions_contiguous(ctx: &reaper_test::ReaperTestContext) -
 /// then run SongBuilder to parse them, and confirm the resulting Songs
 /// have the expected sections, timing, and structure.
 #[reaper_test]
-async fn demo_setlist_end_to_end(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn demo_setlist_end_to_end(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     // ── Step 1: Clear and stamp demo markers and regions ─────────
     clear_project(&ctx.project).await?;
     stamp_demo_into_project(&ctx.project).await?;

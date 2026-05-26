@@ -272,10 +272,23 @@ where
 
     pub(crate) fn apply_chart_data(song: &mut Song, chart_data: MidiChartData) {
         song.chart_fingerprint = Some(chart_data.source_fingerprint);
+        // Parse the generated chart text into the structured Chart so clients
+        // receive the full chart — including mid-song time-signature changes —
+        // not just the source text. (Previously left `None` because the Chart's
+        // maps couldn't cross the vox wire; the JIT-codec fix lifted that.)
+        // The Song only rides infrequent setlist/hydration events, never the
+        // per-tick transport path, so carrying the parsed chart here is cheap.
+        match keyflow::parse(chart_data.chart_text.as_str()) {
+            Ok(chart) => song.parsed_chart = Some(chart),
+            Err(e) => {
+                tracing::warn!(
+                    project_guid = %song.project_guid,
+                    "failed to parse generated chart text into Chart: {e}"
+                );
+                song.parsed_chart = None;
+            }
+        }
         song.chart_text = Some(chart_data.chart_text);
-        // Keep parsed_chart empty in session state to avoid cloning large chart
-        // structures through transport/setlist event paths.
-        song.parsed_chart = None;
         song.detected_chords = Self::map_detected_chords(chart_data.chords);
     }
 

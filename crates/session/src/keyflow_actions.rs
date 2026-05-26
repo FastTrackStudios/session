@@ -15,6 +15,7 @@ const MAX_SECTION_TIME_SELECTION_SECONDS: f64 = 60.0 * 60.0;
 pub enum KeyflowAction {
     InsertSection(SectionKind),
     InsertMarker(MarkerKind),
+    ConvertMarkersToSessionFormat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +82,7 @@ pub fn action_for_id(action_id: &str) -> Option<KeyflowAction> {
         "insert_end_marker" => Some(KeyflowAction::InsertMarker(MarkerKind::End)),
         "insert_songstart_marker" => Some(KeyflowAction::InsertMarker(MarkerKind::SongStart)),
         "insert_songend_marker" => Some(KeyflowAction::InsertMarker(MarkerKind::SongEnd)),
+        "convert_markers_to_session_format" => Some(KeyflowAction::ConvertMarkersToSessionFormat),
         _ => None,
     }
 }
@@ -124,6 +126,10 @@ where
             insert_marker(daw, kind)?;
             normalize_marker_lanes(daw)?;
         }
+        KeyflowAction::ConvertMarkersToSessionFormat => {
+            convert_markers_to_session_format(daw)?;
+            normalize_marker_lanes(daw)?;
+        }
     }
 
     hide_stray_lanes(daw);
@@ -143,7 +149,9 @@ where
     ensure_core_lanes(daw);
 
     let lane = match action {
-        KeyflowAction::InsertSection(_) => FtsLane::Core(CoreLane::Sections),
+        KeyflowAction::InsertSection(_) | KeyflowAction::ConvertMarkersToSessionFormat => {
+            FtsLane::Core(CoreLane::Sections)
+        }
         KeyflowAction::InsertMarker(kind) => classify_marker_lane(kind.name()),
     };
     // RULER_LANE_NAME uses 0-based name_key_index, *not* 1-based
@@ -235,6 +243,114 @@ where
             1.0,
         );
     }
+}
+
+fn convert_markers_to_session_format<D>(daw: &D) -> eyre::Result<()>
+where
+    D: Projects + Markers + Regions,
+{
+    let project = ProjectContext::Current;
+
+    let project_name = daw
+        .info(project.clone())
+        .ok()
+        .map(|info| info.name)
+        .filter(|name| !name.is_empty() && name != "Untitled")
+        .unwrap_or_else(|| "Song".to_string());
+
+    // Markers with no time component can't anchor a region — drop them
+    // up front so subsequent indexing maps 1:1 with `marker_positions`.
+    let mut all_markers: Vec<_> = Markers::all(daw, project.clone())
+        .into_iter()
+        .filter(|m| m.position.seconds().is_some())
+        .collect();
+    all_markers.sort_by(|a, b| {
+        a.position
+            .seconds()
+            .unwrap()
+            .total_cmp(&b.position.seconds().unwrap())
+    });
+
+    let marker_positions: Vec<f64> = all_markers
+        .iter()
+        .map(|m| m.position.seconds().unwrap())
+        .collect();
+
+    let songstart_pos = all_markers
+        .iter()
+        .find(|m| m.name.trim().eq_ignore_ascii_case("SONGSTART"))
+        .and_then(|m| m.position.seconds());
+    let songend_pos = all_markers
+        .iter()
+        .find(|m| m.name.trim().eq_ignore_ascii_case("SONGEND"))
+        .and_then(|m| m.position.seconds());
+
+    let section_lane = CoreLane::Sections.lane_index();
+    let song_lane = CoreLane::Song.lane_index();
+
+    let mut converted_section_ends: Vec<f64> = Vec::new();
+    let mut converted_section_starts: Vec<f64> = Vec::new();
+
+    for (i, marker) in all_markers.iter().enumerate() {
+        let Some(id) = marker.id else { continue };
+        let Some(section_type) = parse_region_section_type(&marker.name) else {
+            continue;
+        };
+
+        let start = marker_positions[i];
+        let end = marker_positions
+            .iter()
+            .skip(i + 1)
+            .find(|&&p| p > start + TOUCH_EPSILON_SECONDS)
+            .copied()
+            .or(songend_pos)
+            .unwrap_or(start);
+
+        if end <= start {
+            warn!(
+                marker = %marker.name,
+                start,
+                "[session] Convert: skipping marker — no end position found",
+            );
+            continue;
+        }
+
+        let region_id = Regions::add(daw, project.clone(), start, end, &marker.name)?;
+        Regions::set_lane(daw, project.clone(), region_id, Some(section_lane))?;
+        Regions::set_color(
+            daw,
+            project.clone(),
+            region_id,
+            section_type_color(section_type),
+        )?;
+        Markers::remove(daw, project.clone(), id)?;
+
+        converted_section_starts.push(start);
+        converted_section_ends.push(end);
+    }
+
+    let song_start =
+        songstart_pos.or_else(|| converted_section_starts.iter().cloned().reduce(f64::min));
+    let song_end = songend_pos.or_else(|| converted_section_ends.iter().cloned().reduce(f64::max));
+
+    if let (Some(start), Some(end)) = (song_start, song_end)
+        && end > start
+    {
+        let already_has_song_region = Regions::all(daw, project.clone())
+            .iter()
+            .any(|r| r.lane == Some(song_lane));
+        if !already_has_song_region {
+            let id = Regions::add(daw, project.clone(), start, end, &project_name)?;
+            Regions::set_lane(daw, project.clone(), id, Some(song_lane))?;
+        }
+    }
+
+    info!(
+        sections_converted = converted_section_starts.len(),
+        project = %project_name,
+        "[session] Convert markers to session format",
+    );
+    Ok(())
 }
 
 fn insert_marker<D>(daw: &D, kind: MarkerKind) -> eyre::Result<()>
