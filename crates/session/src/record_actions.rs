@@ -16,8 +16,11 @@ mod cmd {
     /// captured. Used as the first half of `RestartRecording`.
     pub const STOP_DELETE: u32 = 40668;
     /// `Transport: Record` — starts a new recording pass with the
-    /// current arm / monitor / input-quantize settings.
+    /// current arm / monitor / input-quantize settings. Pressed again
+    /// while recording, it stops — i.e. it toggles.
     pub const RECORD: u32 = 1013;
+    /// `Transport: Stop` — stops playback/recording, keeping captured media.
+    pub const STOP: u32 = 1016;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +38,16 @@ pub enum RecordAction {
     /// (2)** and **off (0)**. Same any/all semantics as
     /// [`Self::ToggleMonitorOnOff`].
     ToggleMonitorTapeOff,
+    /// Start recording into the focused project (the current song's tab).
+    Record,
+    /// Stop the transport (keeps captured media).
+    StopRecording,
+    /// Toggle recording in the focused project.
+    ToggleRecording,
+    /// Arm the selected tracks (set `I_RECARM` = 1) in the focused project.
+    ArmSelected,
+    /// Disarm the selected tracks (set `I_RECARM` = 0) in the focused project.
+    DisarmSelected,
 }
 
 pub fn action_for_id(action_id: &str) -> Option<RecordAction> {
@@ -48,6 +61,11 @@ pub fn action_for_id(action_id: &str) -> Option<RecordAction> {
         "record_restart" => Some(RecordAction::RestartRecording),
         "monitor_toggle_on_off" => Some(RecordAction::ToggleMonitorOnOff),
         "monitor_toggle_tape_off" => Some(RecordAction::ToggleMonitorTapeOff),
+        "record" => Some(RecordAction::Record),
+        "record_stop" => Some(RecordAction::StopRecording),
+        "record_toggle" => Some(RecordAction::ToggleRecording),
+        "arm_selected" => Some(RecordAction::ArmSelected),
+        "disarm_selected" => Some(RecordAction::DisarmSelected),
         _ => None,
     }
 }
@@ -57,6 +75,59 @@ pub fn dispatch(action: RecordAction) {
         RecordAction::RestartRecording => restart_recording(),
         RecordAction::ToggleMonitorOnOff => toggle_monitor_between(MONITOR_ON, MONITOR_OFF),
         RecordAction::ToggleMonitorTapeOff => toggle_monitor_between(MONITOR_TAPE, MONITOR_OFF),
+        RecordAction::Record => run_transport(cmd::RECORD, "Record"),
+        RecordAction::StopRecording => run_transport(cmd::STOP, "Stop"),
+        RecordAction::ToggleRecording => run_transport(cmd::RECORD, "Toggle record"),
+        RecordAction::ArmSelected => set_arm_selected(true),
+        RecordAction::DisarmSelected => set_arm_selected(false),
+    }
+}
+
+/// Fire a transport command on REAPER's main thread.
+fn run_transport(command: u32, label: &str) {
+    let reaper = Reaper::get();
+    let low = reaper.medium_reaper().low();
+    unsafe {
+        low.Main_OnCommand(command as i32, 0);
+    }
+    info!("[record] {label}");
+}
+
+/// Set `I_RECARM` on every selected track (1 = armed, 0 = disarmed) in the
+/// focused project. Mirrors the monitor toggle's selection-scoped approach.
+fn set_arm_selected(armed: bool) {
+    let reaper = Reaper::get();
+    let low = reaper.medium_reaper().low();
+    let recarm = b"I_RECARM\0".as_ptr() as *const _;
+    let target = if armed { 1.0 } else { 0.0 };
+
+    unsafe {
+        let n = low.CountSelectedTracks(std::ptr::null_mut());
+        if n == 0 {
+            info!("[record] arm: no tracks selected");
+            return;
+        }
+        let undo = std::ffi::CString::new(if armed {
+            "Arm selected tracks"
+        } else {
+            "Disarm selected tracks"
+        })
+        .unwrap();
+        low.Undo_BeginBlock();
+        low.PreventUIRefresh(1);
+        for i in 0..n {
+            let t = low.GetSelectedTrack(std::ptr::null_mut(), i);
+            if !t.is_null() {
+                low.SetMediaTrackInfo_Value(t, recarm, target);
+            }
+        }
+        low.PreventUIRefresh(-1);
+        low.Undo_EndBlock(undo.as_ptr(), 1); // 1 = track config changes
+        info!(
+            armed,
+            tracks = n,
+            "[record] Set record arm on selected tracks"
+        );
     }
 }
 

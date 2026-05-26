@@ -59,6 +59,8 @@ pub use setlist_service::demo::{stamp_demo_into_project, stamp_demo_setlist};
 
 pub mod auto_color_actions;
 pub mod daw_module;
+pub mod group_actions;
+pub mod group_manager;
 pub mod mode_actions;
 pub mod record_actions;
 pub mod rpc_services;
@@ -80,6 +82,7 @@ impl SessionServices {
             + daw::service::Projects
             + daw::service::TempoMap
             + daw::service::transport::service::Transport
+            + daw::service::Tracks
             + Send
             + Sync
             + 'static,
@@ -97,11 +100,11 @@ impl SessionServices {
         setlist_actions::register(&setlist_impl);
         vec![
             daw::Mounted::new(
-                &setlist_service_service_descriptor(),
+                setlist_service_service_descriptor(),
                 serve_setlist_service(setlist_impl),
             ),
             daw::Mounted::new(
-                &song_service_service_descriptor(),
+                song_service_service_descriptor(),
                 serve_song_service(SongServiceImpl::new()),
             ),
             daw::Mounted::new(
@@ -119,6 +122,7 @@ impl SessionServices {
             + daw::service::Projects
             + daw::service::TempoMap
             + daw::service::transport::service::Transport
+            + daw::service::Tracks
             + Send
             + Sync
             + 'static,
@@ -138,6 +142,7 @@ impl SessionServices {
             + daw::service::Projects
             + daw::service::TempoMap
             + daw::service::transport::service::Transport
+            + daw::service::Tracks
             + Send
             + Sync
             + 'static,
@@ -164,6 +169,7 @@ pub mod daw_services {
             + daw::service::Projects
             + daw::service::TempoMap
             + daw::service::transport::service::Transport
+            + daw::service::Tracks
             + Send
             + Sync
             + 'static,
@@ -186,15 +192,15 @@ pub mod daw_services {
             session_mode_service_service_descriptor, take_ranking_service_service_descriptor,
         };
         handler = handler.merge(daw::Mounted::new(
-            &session_mode_service_service_descriptor(),
+            session_mode_service_service_descriptor(),
             serve_session_mode_service(SessionModeServiceImpl),
         ));
         handler = handler.merge(daw::Mounted::new(
-            &take_ranking_service_service_descriptor(),
+            take_ranking_service_service_descriptor(),
             serve_take_ranking_service(TakeRankingServiceImpl),
         ));
         handler = handler.merge(daw::Mounted::new(
-            &record_control_service_service_descriptor(),
+            record_control_service_service_descriptor(),
             serve_record_control_service(RecordControlServiceImpl),
         ));
         handler
@@ -415,6 +421,12 @@ actions_proto::define_actions! {
         INSERT_SONGEND_MARKER = "insert_songend_marker" {
             name: "Insert SONGEND Marker",
             description: "Insert a SONGEND marker on the MARKS ruler lane",
+            category: Session,
+            group: "Edit",
+        }
+        CONVERT_MARKERS_TO_SESSION_FORMAT = "convert_markers_to_session_format" {
+            name: "Convert Markers to Session Format",
+            description: "Convert plain section-name markers into FTS section regions and add a SONG-lane region named after the project",
             category: Session,
             group: "Edit",
         }
@@ -748,6 +760,36 @@ actions_proto::define_actions! {
             group: "Dev",
         }
         // ── Recording workflow ───────────────────────────────────────
+        RECORD = "record" {
+            name: "Record: Start recording (current song)",
+            description: "Start a recording pass in the focused project — the current song's tab. Uses the existing arm / monitor / input settings.",
+            category: Transport,
+            group: "Recording",
+        }
+        RECORD_STOP = "record_stop" {
+            name: "Record: Stop (keep media)",
+            description: "Stop the transport in the focused project, keeping the media captured this pass.",
+            category: Transport,
+            group: "Recording",
+        }
+        RECORD_TOGGLE = "record_toggle" {
+            name: "Record: Toggle recording (current song)",
+            description: "Toggle recording in the focused project — the current song's tab.",
+            category: Transport,
+            group: "Recording",
+        }
+        ARM_SELECTED = "arm_selected" {
+            name: "Track: Arm selected for recording",
+            description: "Arm every selected track (I_RECARM = 1) in the focused project so it captures input on the next recording pass.",
+            category: Tracks,
+            group: "Recording",
+        }
+        DISARM_SELECTED = "disarm_selected" {
+            name: "Track: Disarm selected",
+            description: "Disarm every selected track (I_RECARM = 0) in the focused project.",
+            category: Tracks,
+            group: "Recording",
+        }
         RECORD_RESTART = "record_restart" {
             name: "Record: Restart recording (delete + re-record)",
             description: "Stop the current recording (DELETE all recorded media this pass) and immediately start a fresh recording pass. For aborting a bad take without leaving stray media behind.",
@@ -765,6 +807,61 @@ actions_proto::define_actions! {
             description: "Toggle the record-monitor state of every selected track between 'auto/tape' (monitor input only while recording) and 'off'. If any selected track is currently 'auto/tape', all go to off; otherwise all go to auto/tape.",
             category: Tracks,
             group: "Recording",
+        }
+        // ── Track-group manager ──────────────────────────────────────
+        GROUP_APPLY_NAMING = "group_apply_naming" {
+            name: "Groups: Apply instrument-category naming scheme",
+            description: "Name the project's 128 track groups by the FTS instrument partition (Drums 1-10, Bass 11-20, Electric Gtr 21-40, Acoustic Gtr 41-60, Keys 61-70, Synths 71-80, Lead Vocal 81-100, Background Vox 101-120, Spare 121-128).",
+            category: Tracks,
+            group: "Track Groups",
+        }
+        GROUP_ASSIGN_DRUMS = "group_assign_drums" {
+            name: "Groups: Assign selected tracks to Drums",
+            description: "Add the selected tracks to the next free Drums group slot as a mutual group (all flag families).",
+            category: Tracks,
+            group: "Track Groups",
+        }
+        GROUP_ASSIGN_BASS = "group_assign_bass" {
+            name: "Groups: Assign selected tracks to Bass",
+            description: "Add the selected tracks to the next free Bass group slot as a mutual group.",
+            category: Tracks,
+            group: "Track Groups",
+        }
+        GROUP_ASSIGN_ELECTRIC_GTR = "group_assign_electric_gtr" {
+            name: "Groups: Assign selected tracks to Electric Gtr",
+            description: "Add the selected tracks to the next free Electric Gtr group slot as a mutual group.",
+            category: Tracks,
+            group: "Track Groups",
+        }
+        GROUP_ASSIGN_ACOUSTIC_GTR = "group_assign_acoustic_gtr" {
+            name: "Groups: Assign selected tracks to Acoustic Gtr",
+            description: "Add the selected tracks to the next free Acoustic Gtr group slot as a mutual group.",
+            category: Tracks,
+            group: "Track Groups",
+        }
+        GROUP_ASSIGN_KEYS = "group_assign_keys" {
+            name: "Groups: Assign selected tracks to Keys",
+            description: "Add the selected tracks to the next free Keys group slot as a mutual group.",
+            category: Tracks,
+            group: "Track Groups",
+        }
+        GROUP_ASSIGN_SYNTHS = "group_assign_synths" {
+            name: "Groups: Assign selected tracks to Synths",
+            description: "Add the selected tracks to the next free Synths group slot as a mutual group.",
+            category: Tracks,
+            group: "Track Groups",
+        }
+        GROUP_ASSIGN_LEAD_VOCAL = "group_assign_lead_vocal" {
+            name: "Groups: Assign selected tracks to Lead Vocal",
+            description: "Add the selected tracks to the next free Lead Vocal group slot as a mutual group.",
+            category: Tracks,
+            group: "Track Groups",
+        }
+        GROUP_ASSIGN_BACKGROUND_VOX = "group_assign_background_vox" {
+            name: "Groups: Assign selected tracks to Background Vox",
+            description: "Add the selected tracks to the next free Background Vox group slot as a mutual group.",
+            category: Tracks,
+            group: "Track Groups",
         }
         // ── Take ranking (Record mode workflow) ──────────────────────
         TAKE_RANK_PLAYPOS_1 = "take_rank_playpos_1" {

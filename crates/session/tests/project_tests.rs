@@ -5,12 +5,12 @@
 //! Run with:
 //!   cargo xtask reaper-test -- project_
 
-use reaper_test::reaper_test;
+use daw::test::reaper_test;
 use std::time::Duration;
 
 /// List all open projects.
 #[reaper_test]
-async fn project_list(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn project_list(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let projects = ctx.daw.projects().await?;
     println!("Open projects: {}", projects.len());
     for (i, p) in projects.iter().enumerate() {
@@ -32,7 +32,7 @@ async fn project_list(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> 
 
 /// Get current project matches the test project.
 #[reaper_test]
-async fn project_current(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn project_current(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     // Select our test project to make it current
     ctx.daw.select_project(ctx.project.guid()).await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -52,7 +52,7 @@ async fn project_current(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<(
 
 /// Create a new project tab, verify it exists, then close it.
 #[reaper_test]
-async fn project_create_and_close(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn project_create_and_close(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let before = ctx.daw.projects().await?;
     let count_before = before.len();
     println!("Projects before create: {count_before}");
@@ -95,7 +95,7 @@ async fn project_create_and_close(ctx: &reaper_test::ReaperTestContext) -> eyre:
 
 /// Switch between project tabs and verify correct project is active.
 #[reaper_test]
-async fn project_switch(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn project_switch(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     // Create a second project
     let project_b = ctx.daw.create_project().await?;
     let guid_b = project_b.guid().to_string();
@@ -132,7 +132,7 @@ async fn project_switch(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()
 /// REAPER transport operations apply to the currently active project tab,
 /// so we switch between tabs and verify each remembers its position.
 #[reaper_test]
-async fn project_independent_transport(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn project_independent_transport(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     // Create a second project
     let project_b = ctx.daw.create_project().await?;
     let guid_b = project_b.guid().to_string();
@@ -183,7 +183,7 @@ async fn project_independent_transport(ctx: &reaper_test::ReaperTestContext) -> 
 
 /// Get project by GUID.
 #[reaper_test]
-async fn project_get_by_guid(ctx: &reaper_test::ReaperTestContext) -> eyre::Result<()> {
+async fn project_get_by_guid(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let guid = ctx.project.guid().to_string();
 
     let project = ctx.daw.project(&guid).await?;

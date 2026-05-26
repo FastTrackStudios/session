@@ -120,12 +120,12 @@ where
     // Every keyflow_actions::dispatch call below operates on
     // `ProjectContext::Current`. If the caller asked for a different
     // project we have to bring it to the front first.
-    if let ProjectContext::Project(guid) = &project {
-        if !daw.select(guid) {
-            return Err(SessionServiceError::DawError(format!(
-                "could not focus project {guid} before stamping demo"
-            )));
-        }
+    if let ProjectContext::Project(guid) = &project
+        && !daw.select(guid)
+    {
+        return Err(SessionServiceError::DawError(format!(
+            "could not focus project {guid} before stamping demo"
+        )));
     }
 
     let songs = demo_songs();

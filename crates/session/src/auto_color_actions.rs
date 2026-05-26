@@ -602,6 +602,9 @@ fn normalize_name(name: &str) -> String {
         .collect::<String>()
 }
 
+// Ordering matters: the first matching rule wins. Keep specific names
+// (vocal, guitar) ahead of generic synth keywords like "lead"/"pad" so
+// "Lead Vocal" classifies as vocal, not synth.
 const AUTO_COLOR_RULES: &[AutoColorRule] = &[
     AutoColorRule {
         color: 0x7C3AED,
@@ -636,12 +639,12 @@ const AUTO_COLOR_RULES: &[AutoColorRule] = &[
         matcher: has_keys,
     },
     AutoColorRule {
-        color: 0x06B6D4,
-        matcher: has_synth,
-    },
-    AutoColorRule {
         color: 0xEC4899,
         matcher: has_vocal,
+    },
+    AutoColorRule {
+        color: 0x06B6D4,
+        matcher: has_synth,
     },
     AutoColorRule {
         color: 0x84CC16,
@@ -693,7 +696,7 @@ fn has_bass(name: &str) -> bool {
 }
 
 fn has_guitar(name: &str) -> bool {
-    has_any_word(name, &["guitar", "gtr", "egtr", "agtr"])
+    has_any_word(name, &["guitar", "guitars", "gtr", "gtrs", "egtr", "agtr"])
 }
 
 fn has_keys(name: &str) -> bool {
