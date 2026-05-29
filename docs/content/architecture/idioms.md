@@ -95,3 +95,44 @@ CI runs `cargo xtask ci`: `fmt --check` → `clippy -D warnings` →
 `check --workspace` → target-cfg crate checks → `nextest` →
 doctests → `app-ui` smoke test → `idioms` → `tracey validate`. The
 browser e2e runs in a separate job (`just test-e2e` / `test-e2e-memory`).
+
+## 6. Composing & building backends — the layer system
+
+Services compose through the `Layer` system; backends are built through
+the `Resource` construction layer. Keep the two straight:
+
+- **`Layer<B>` (service binding).** A `#[derive(Entity)]` repo and any
+  `#[architect::rpc]` trait emit a `Service` token. Compose tokens with
+  `layers![…]` / `.merge(…)`, then `.provide(backend)` (or
+  `backend.into_router()`) to get a `LayerRouter`. Backends are
+  interchangeable at the `.provide` site — swap the backend, change no
+  consumer code (see `examples/layered-services`).
+
+- **`Resource<T, E = eyre::Report>` (backend construction).** A lazy
+  builder for the backends a layer binds — `config → pool → repo`:
+  - `.and_then(|a| build_b(a))` — dependent build (B from A's output).
+  - `.zip(other)` — independent pair. `.map` / `.map_err` — transform.
+  - `Resource::acquire_release(acquire, release)` — register cleanup on a
+    `Scope`; finalizers run **LIFO** on `scope.close().await` (graceful
+    shutdown — see `examples/app/server`, which closes its db pool this
+    way on Ctrl-C).
+  - `.memoize()` — build once, share across dependents (a pool built once
+    for several repos).
+  - `.into_router(&scope)` — build a `Services` backend and mount it.
+
+- **`LayerGraph` (planner).** Declare nodes' `requires`/`provides`, call
+  `.plan()` for a topological build order or a precise diagnostic
+  (`missing-provider` / `conflicting-provider` / `cycle` / `duplicate`).
+
+### Deferred: same-trait multi-backend (Tags)
+
+Mounting two backends of the *same* trait (primary+replica, multi-tenant)
+isn't supported yet: vox addresses a service by name + method-id, which
+are identical for two backends sharing a descriptor, so the router can't
+route to a specific instance. This needs a vox wire-level service-instance
+qualifier — tracked separately, not in the `Resource`/`Layer` surface.
+
+These are architect's own DI engine — borrowed from Effect/`id_effect`
+(layers, scopes, memoization, a planner) **without** the `Effect<A,E,R>`
+monad or typed-requirement tracking. architect stays plain `async fn` +
+vox; `Resource` is just value-level builder combinators.
