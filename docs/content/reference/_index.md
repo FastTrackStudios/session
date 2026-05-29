@@ -68,7 +68,7 @@ The runtime DI engine (see [idioms §6–7](@/architecture/idioms.md)):
 | `LayerGraph` / `LayerNode` / `LayerPlan` | `architect::plan` | declared-graph topological planner + diagnostics |
 | `LocalServer` / `serve_local` | `architect::local` (feature `local`, native) | serve a router in-process over a vox in-memory link |
 | `Schedule` / `retry` / `repeat` | `architect::schedule` (feature `schedule`) | composable retry/repeat policies — backoff, jitter, caps; see [scheduling](@/architecture/scheduling.md) |
-| `Clock` / `SystemClock` / `TestClock` / `sleep` / `now` / `spawn` | `architect::platform` (feature `platform`) | native↔wasm clock + task spawn; deterministic `TestClock` |
+| `Clock` / `SystemClock` / `TestClock` / `timeout` / `spawn` (`JoinHandle`) / `CancellationToken` / `Deferred` / `Semaphore` / `Queue` | `architect::platform` (feature `platform`) | the portable async-runtime seam — clock, tasks, timeouts, cancellation, concurrency primitives (native↔wasm) |
 
 ## What the derive emits
 
