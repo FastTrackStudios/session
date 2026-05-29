@@ -8,6 +8,11 @@ The template's directory shape is built so a project can host multiple
 apps and an unlimited number of features without naming collisions or
 ambiguity about what each crate is.
 
+> In **this** repo (the framework itself), the reference project lives
+> under `examples/app/` so the framework crates and the demo that
+> consumes them stay clearly separated. A real consumer applies the shape
+> below at its own repo root — `apps/` and `features/` directly.
+
 ## The shape
 
 ```
