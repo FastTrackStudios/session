@@ -24,8 +24,8 @@ just check
 ```
 
 That runs `cargo check --workspace` plus a wasm32 check on each
-target-cfg-only crate (`apps/<app>/web`, `apps/<app>/desktop`,
-`apps/<app>/ui`, `features/<feature>/tests/web`).
+target-cfg-only crate (`examples/app/web`, `examples/app/desktop`,
+`examples/app/ui`, `examples/app/features/example/tests/web`).
 
 ## Run the test layers
 
@@ -55,3 +55,9 @@ just server
 Migrations apply automatically on boot. The server listens on
 `0.0.0.0:4040` by default; the vox WebSocket is at `/vox` and a
 health endpoint at `/api/health`.
+
+## Next
+
+Read [**Build a feature, end to end**](@/getting-started/walkthrough.md)
+— it walks the whole flow (define an entity → pick a backend → serve it →
+consume it remote *or* in-process) against the reference example.

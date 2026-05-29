@@ -49,8 +49,12 @@ Always (wasm-clean):
 - `ExampleRepo` — the `#[vox::service]` trait with `get` / `list` /
   `create` / `update` / `delete`. Vox generates `ExampleRepoClient` for
   consumers and `ExampleRepoDispatcher` for the server.
+- `ExampleRepoLayer` — a `Layer` service token (+ a `<snake>_repo_layer`
+  helper) so the repo composes through architect's layer system:
+  `layers![ExampleRepoLayer]`, `.provide(backend)` / `backend.into_router()`.
+  See [idioms §6](@/architecture/idioms.md).
 
-Under `--features server`:
+Under `--features server-seaorm`:
 
 - The SeaORM `Model` + `Entity` + `Column` + `Relation` + `ActiveModel`
   with the right `#[sea_orm(...)]` attributes synthesized from your
@@ -77,6 +81,13 @@ let created = client.create(ExampleCreate {
 
 let listed = client.list(Page { index: 0, size: 50 }, None, None).await?;
 ```
+
+This is the raw form. The example apps don't hard-code a URL — they
+program against `ExampleRepoClient` and inject a `Transport` (remote
+WebSocket *or* in-process) at the app root, so the same screens run
+against a server or an embedded backend. See
+[idioms §7 — inject the transport](@/architecture/idioms.md) and the
+[end-to-end walkthrough](@/getting-started/walkthrough.md).
 
 ## Field attributes
 
