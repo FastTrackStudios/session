@@ -124,13 +124,27 @@ the `Resource` construction layer. Keep the two straight:
   `.plan()` for a topological build order or a precise diagnostic
   (`missing-provider` / `conflicting-provider` / `cycle` / `duplicate`).
 
-### Deferred: same-trait multi-backend (Tags)
+### Same-trait multi-backend: use a routing backend, not tags
 
-Mounting two backends of the *same* trait (primary+replica, multi-tenant)
-isn't supported yet: vox addresses a service by name + method-id, which
-are identical for two backends sharing a descriptor, so the router can't
-route to a specific instance. This needs a vox wire-level service-instance
-qualifier — tracked separately, not in the `Resource`/`Layer` surface.
+Need two backends of the *same* trait (write→primary, reads→replica;
+shard by key)? Don't reach for service tags — vox addresses a service by
+name + method-id, identical for two backends sharing a descriptor, so the
+router can't route to a specific instance over the wire. Instead, write a
+**single backend that holds both and routes internally**:
+
+```rust
+#[derive(Clone)]
+struct RoutingRepo { primary: PgRepo, replica: PgRepo }
+impl ExampleRepo for RoutingRepo {
+    async fn get(&self, id: Uuid) -> Result<Example, RepoError> { self.replica.get(id).await }   // reads → replica
+    async fn create(&self, input: ExampleCreate) -> Result<Example, RepoError> { self.primary.create(input).await } // writes → primary
+    // …
+}
+```
+
+It impls `ExampleRepo`, so it's `into_router()`-able and serve-able like
+any other backend — the routing policy lives in one place instead of
+leaking to every caller, and there's no new wire machinery.
 
 These are architect's own DI engine — borrowed from Effect/`id_effect`
 (layers, scopes, memoization, a planner) **without** the `Effect<A,E,R>`
