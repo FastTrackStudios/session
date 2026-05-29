@@ -136,3 +136,35 @@ These are architect's own DI engine — borrowed from Effect/`id_effect`
 (layers, scopes, memoization, a planner) **without** the `Effect<A,E,R>`
 monad or typed-requirement tracking. architect stays plain `async fn` +
 vox; `Resource` is just value-level builder combinators.
+
+## 7. Inject the transport, not the backend
+
+Screens (and the CLI, and tests) program against the generated
+`<Entity>RepoClient` / `<Service>Client` and never hard-code *where* the
+backend lives. That's the `Transport`, chosen once at the app root:
+
+- **`Transport::Remote(url)`** — talk to a server over a vox WebSocket
+  (`WsLink` + `establish`).
+- **`Transport::Local(server)`** — serve a backend **in-process** over a
+  vox in-memory link via `architect::serve_local(backend, &scope)` /
+  `LocalServer::serve(router, scope)`. No server, no socket.
+
+Same screens, same client types — only the root differs:
+
+| App / mode | Transport | Result |
+| --- | --- | --- |
+| web (browser) | `Remote(url)` | talks to `app-server` |
+| desktop | `Local(service_router(ExampleRepoMemory))` | **whole stack in-process, no server** |
+| e2e `local_transport_round_trip` | `Local(…)` | identical asserts to the WS path, no server spawned |
+
+The desktop app (`examples/app/desktop`) is the headline: it serves the
+exact `app_server::service_router` (repo CRUD + `ExampleService`) the axum
+server mounts, just over an in-memory link — proving remote and local are
+behaviour-identical from the UI's point of view. `LocalServer` is native
+only (vox's in-memory link isn't compiled for wasm), so the browser stays
+remote; `examples/app/ui` cfg-gates the `Transport::Local` arm accordingly.
+
+This is the consumer-facing tip of the layer/construction system: build
+the backend with `Resource`/`Scope`, compose its services with `Layer`,
+and expose them over whichever transport the deployment needs — all from
+one set of screens.
