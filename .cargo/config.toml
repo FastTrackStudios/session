@@ -8,3 +8,11 @@ xtask = "run --package xtask --release --"
 # the same way `git` does outside cargo.
 [net]
 git-fetch-with-cli = true
+
+# getrandom 0.3 (transitive via fake → rand) needs its backend
+# selected explicitly on wasm. Paired with the `wasm_js` feature
+# enabled in apps/web/Cargo.toml. `dx` sets the same cfg on its own
+# builds; declaring it here makes plain `cargo check --target
+# wasm32-unknown-unknown` agree. See docs.rs/getrandom/#webassembly-support.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
