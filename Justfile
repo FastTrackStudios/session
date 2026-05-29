@@ -14,9 +14,9 @@ default: check
 # Type-check workspace + the target-cfg-only crates.
 check:
     cargo xtask check
-    cd apps/app/ui && cargo check
-    cd apps/app/web && cargo check --target wasm32-unknown-unknown
-    cd apps/app/desktop && cargo check
+    cd examples/app/ui && cargo check
+    cd examples/app/web && cargo check --target wasm32-unknown-unknown
+    cd examples/app/desktop && cargo check
 
 # nextest with the default profile.
 test:
@@ -67,7 +67,7 @@ diagnostics:
 
 # Run the wasm browser integration tests against an already-running server.
 test-wasm:
-    cd features/example/tests/web && cargo test --target wasm32-unknown-unknown --release
+    cd examples/app/features/example/tests/web && cargo test --target wasm32-unknown-unknown --release
 
 # Browser e2e against the default (sqlite) backend.
 test-e2e: (_e2e "")
@@ -89,15 +89,15 @@ _e2e features:
         if curl -fsS http://127.0.0.1:4040/api/health >/dev/null 2>&1; then break; fi
         sleep 0.2
     done
-    cd features/example/tests/web && cargo test --target wasm32-unknown-unknown --release
+    cd examples/app/features/example/tests/web && cargo test --target wasm32-unknown-unknown --release
 
 # `dx serve` the web app — connects to the server on 4040 by default.
 web:
-    cd apps/app/web && dx serve --web --addr 0.0.0.0 --port 8765
+    cd examples/app/web && dx serve --web --addr 0.0.0.0 --port 8765
 
 # `dx serve` the desktop app.
 desktop:
-    cd apps/app/desktop && dx serve --desktop
+    cd examples/app/desktop && dx serve --desktop
 
 # ── CLI client ─────────────────────────────────────────────────────────
 
@@ -168,6 +168,6 @@ capn-prepush:
 # Format all Rust files in the workspace + target-cfg crates.
 fmt:
     cargo fmt --all
-    cd apps/app/ui && cargo fmt
-    cd apps/app/web && cargo fmt
-    cd apps/app/desktop && cargo fmt
+    cd examples/app/ui && cargo fmt
+    cd examples/app/web && cargo fmt
+    cd examples/app/desktop && cargo fmt

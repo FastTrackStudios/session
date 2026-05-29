@@ -10,8 +10,9 @@ yields a wasm-clean wire type, an auto-generated vox repository trait,
 and (under `--features server`) a SeaORM-backed implementation.
 
 The repo doubles as a working **reference monorepo**: the macro itself
-lives in `macros/`, and `apps/` + `features/` show the layout and
-testing patterns a real project would copy.
+lives in `macros/`, and `examples/app/` (a full-stack demo with
+`features/` + Dioxus web/desktop apps) shows the layout and testing
+patterns a real project would copy.
 
 ## Where to start
 
