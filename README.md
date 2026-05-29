@@ -37,22 +37,25 @@ crate. No manual `From<Model> for Example` glue.
 macros/
   architect/         the user-facing crate (re-exports the derive + runtime traits)
   architect-derive/  the proc-macro crate
+crates/architect-cli/ scaffolds new feature crate families
+libs/                crdt / crdt-seaorm — the local-first layer
 
-crates/
-  example-proto/  uses #[derive(architect::Entity)] — wasm-clean by default
-  example-db/     pulls example-proto with --features server, owns the migrations
-  example-ui/     shared Dioxus components (consumes example-proto over vox)
-
-apps/
-  web/            Dioxus web (wasm) — talks to apps/server via vox
-  desktop/        Dioxus desktop — same UI as web
-  server/         axum + vox; implements the ExampleService alongside the auto-gen repo
-  db/             sea-orm-migration CLI
+examples/app/        the reference full-stack demo
+  features/example/  proto / db / memory / crdt / ui + facade for one entity
+  server/            axum + vox; generic vox_router + the ExampleService impl
+  cli/               native vox client (`app` binary)
+  db/                sea-orm-migration CLI
+  ui/                shared Dioxus shell — router + screens + vox client lifecycle
+  web/  desktop/     thin Dioxus launchers (wasm / native) over `ui`
+  tests/e2e/         real client ↔ real server over a vox socket
 ```
 
-The `apps/` and `crates/example-*` directories are the **reference
-example**. Read them to learn the pattern, then template them when
-spinning up a new project.
+`examples/app/` is the **reference example** — a full Dioxus web +
+desktop app (list/detail/create/edit/delete/search/duplicate) talking to
+the server entirely over vox. Read it to learn the pattern, then template
+it when spinning up a new project. The conventions it follows — and the
+CI gates that enforce them — are written up in
+[docs/architecture/idioms](docs/content/architecture/idioms.md).
 
 ## Why facet-only
 

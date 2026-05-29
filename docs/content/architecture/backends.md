@@ -24,8 +24,8 @@ contract holds.
 
 ## The facade
 
-`features/example/example/src/lib.rs` chooses between them with cargo
-features:
+`examples/app/features/example/example/src/lib.rs` chooses between them
+with cargo features:
 
 ```toml
 [features]

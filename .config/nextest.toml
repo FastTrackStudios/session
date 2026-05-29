@@ -25,3 +25,15 @@ slow-timeout = { period = "5s", terminate-after = 3 }
 # leash. Use sparingly.
 [profile.patient]
 slow-timeout = { period = "30s", terminate-after = 4 }
+
+# Integration suites that spawn a real server (and, for the CLI, real
+# subprocesses) over a vox WebSocket take seconds, not the <100ms the
+# fast default budget assumes. Give just those packages a longer leash
+# in every profile so `just test` doesn't terminate them mid-handshake.
+[[profile.default.overrides]]
+filter = "package(app-cli) | package(app-tests-e2e)"
+slow-timeout = { period = "20s", terminate-after = 2 }
+
+[[profile.ci.overrides]]
+filter = "package(app-cli) | package(app-tests-e2e)"
+slow-timeout = { period = "20s", terminate-after = 2 }

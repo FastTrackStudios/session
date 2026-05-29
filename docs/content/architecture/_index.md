@@ -20,10 +20,13 @@ distinction visible at a glance.
 - [Async diagnostics](@/architecture/diagnostics.md) — opt-in moiré
   instrumentation for the axum_ws adapter; see what every task is
   waiting on via the live dashboard.
+- [Idioms & enforcement](@/architecture/idioms.md) — the vox + Dioxus
+  conventions (data flows through vox, never Dioxus server functions)
+  and the CI gates that keep them honest.
 - [Testing strata](@/architecture/testing.md) — native unit, native
   integration, browser e2e: which lives where.
-- [Monorepo layout](@/architecture/layout.md) — `apps/<app>/<role>` +
-  `features/<feature>/<role>` and why the prefixes are duplicated in
-  both the directory and the package name.
+- [Monorepo layout](@/architecture/layout.md) — `<role>` crates per
+  feature/app and why the prefixes are duplicated in both the directory
+  and the package name.
 - [Spec coverage](@/architecture/specs.md) — per-feature
   `features/<feature>/spec/*.md` tracked by tracey.

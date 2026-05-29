@@ -4,19 +4,19 @@ specs (
     {
         name example
         source_url https://git.starcommand.live/codywright/architect
-        include (features/example/spec/**/*.md)
+        include (examples/app/features/example/spec/**/*.md)
         impls (
             {
                 name live
                 include (
-                    features/example/example-db/**/*.rs
-                    features/example/example-memory/**/*.rs
+                    examples/app/features/example/example-db/**/*.rs
+                    examples/app/features/example/example-memory/**/*.rs
                 )
                 exclude (
-                    features/example/**/target/**
+                    examples/app/features/example/**/target/**
                 )
                 test_include (
-                    features/example/tests/**/*.rs
+                    examples/app/features/example/tests/**/*.rs
                 )
             }
             {
@@ -28,45 +28,7 @@ specs (
                     examples/external-stub/**/target/**
                 )
                 test_include (
-                    features/example/tests/**/*.rs
-                )
-            }
-        )
-    }
-
-    {
-        name foo
-        include (features/foo/spec/**/*.md)
-        impls (
-            {
-                name live
-                include (
-                    features/foo/foo-memory/**/*.rs
-                )
-                exclude (
-                    features/foo/**/target/**
-                )
-                test_include (
-                    features/foo/tests/**/*.rs
-                )
-            }
-        )
-    }
-
-    {
-        name bar
-        include (features/bar/spec/**/*.md)
-        impls (
-            {
-                name live
-                include (
-                    features/bar/bar-memory/**/*.rs
-                )
-                exclude (
-                    features/bar/**/target/**
-                )
-                test_include (
-                    features/bar/tests/**/*.rs
+                    examples/app/features/example/tests/**/*.rs
                 )
             }
         )
