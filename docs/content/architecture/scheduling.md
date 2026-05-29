@@ -158,9 +158,50 @@ screen's requests when the user navigates away.
 | `Deferred<T>` | write-once value many tasks can await (broadcast one-shot) |
 | `Semaphore` / `Permit` | N-permit async gate to bound concurrency |
 | `Queue<T>` | bounded/unbounded MPMC channel (`send`/`recv`/`try_*`/`close`) |
+| `mpsc` / `broadcast` (re-exports) | point-to-point + fan-out pub/sub, via `architect::platform::{mpsc, broadcast}` |
+
+`mpsc`/`broadcast` are re-exported straight from `tokio::sync` (both
+wasm-clean) so consumers reach channels through one common
+`architect::platform` import path. Unlike the wrapped primitives, these
+expose tokio's types directly — a deliberate trade: tokio's channel API is
+rich and well-understood, and moiré's instrumentation already wraps these.
 
 It also centralizes the native↔wasm cfg-split that the rest of the crate
 (`resource`, `local`, `axum_ws`) would otherwise each repeat.
+
+## Supervision
+
+[`Schedule`] drives a *call* to a result; a [`Supervisor`] keeps a
+*service loop* running — restarting a long-lived task under a [`Restart`]
+policy, with `Schedule` backoff between restarts, until it settles or the
+supervisor is cancelled. It composes the pieces above: `Schedule` for the
+backoff, `CancellationToken` for shutdown, `spawn` to run in the background.
+
+```rust,ignore
+use architect::{Schedule, Supervisor, supervisor::Restart};
+
+let sup = Supervisor::new();
+
+// Keep a connection/worker loop alive: restart on *any* exit, backing off,
+// running in the background. `shutdown()` stops it gracefully.
+let handle = sup.spawn(
+    || async { run_worker().await },                 // Result<(), Error>
+    Restart::on_exit(Schedule::exponential(Duration::from_millis(200))
+        .max_delay(Duration::from_secs(30))
+        .jittered()),
+);
+// … later, on app shutdown …
+sup.shutdown();                                       // cancels the token
+```
+
+Two policies: `Restart::on_failure(schedule)` (retry-shaped — stop on the
+first `Ok`, or the last `Err` when the schedule exhausts) and
+`Restart::on_exit(schedule)` (keep-alive — restart on every exit). Both are
+cancellation-aware: `Supervisor::shutdown()` (or a shared
+`token.child_token()`) stops the in-flight run *and* interrupts the backoff
+wait. `run`/`run_with` drive it inline (the latter takes a `TestClock` for
+deterministic tests); `spawn` returns a [`JoinHandle`] over the
+[`Supervised`] outcome (`Settled(result)` or `Cancelled`).
 
 ## Testing scheduled code
 
