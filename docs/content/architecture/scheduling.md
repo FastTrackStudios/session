@@ -119,18 +119,47 @@ on **both** targets — `tokio::time` on desktop, browser timers on web.
 
 ## The platform layer
 
-`architect::platform` is the foundation `schedule` waits on, and a useful
-primitive in its own right:
+`architect::platform` is the foundation `schedule` waits on — and the
+portable async-runtime **seam** the rest of the crate sits on. Everything
+here is monad-free (plain `async`) and works native↔wasm, so call sites
+program against *these* types, not tokio directly. That makes the backing
+implementation swappable: an instrumented runtime (moiré) or an alternate
+executor can be slotted in without touching consumers.
+
+**Time & tasks**
 
 | Item | Role |
 | --- | --- |
-| `Clock` (`now` + async `sleep`) | the trait the drivers are generic over |
+| `Clock` (`now` + async `sleep`) | the trait the schedule drivers are generic over |
 | `SystemClock` | the real clock — `tokio::time` / browser `setTimeout` |
 | `TestClock` | deterministic; time only moves on `advance()` |
-| `sleep` / `now` / `spawn` (free fns) | portable primitives — native (tokio) / wasm (`spawn_local`) |
+| `sleep` / `now` (free fns) | portable wait + monotonic instant |
+| `spawn(fut) -> JoinHandle<T>` | background task; `await` the handle for the result, `abort()` to cancel (cooperative, even on wasm) |
+| `timeout(dur, fut)` / `timeout_with(&clock, …)` | bound a future against the clock → `Result<T, Elapsed>` (deterministic under `TestClock`) |
+| `race(a, b) -> Either` | drive two futures; first to finish wins, the other is dropped |
 | `Instant` | re-export of `web_time::Instant` (monotonic on both targets) |
 
-It centralizes the native↔wasm cfg-split that the rest of the crate
+**Cancellation**
+
+| Item | Role |
+| --- | --- |
+| `CancellationToken` | cooperative stop signal; `cancel()` / `is_cancelled()` / `.cancelled().await` |
+| `token.child_token()` | hierarchy — cancelling a parent cancels all descendants; a child cancel stays local |
+| `run_until_cancelled(&token, fut)` | run `fut` until it finishes (`Some`) or the token fires (`None`) |
+
+`CancellationToken` is the tool for superseding in-flight work — e.g. a
+search-as-you-type that cancels the previous query, or aborting all of a
+screen's requests when the user navigates away.
+
+**Concurrency primitives** (wasm-clean; `tokio::sync` + `async-channel`)
+
+| Item | Role |
+| --- | --- |
+| `Deferred<T>` | write-once value many tasks can await (broadcast one-shot) |
+| `Semaphore` / `Permit` | N-permit async gate to bound concurrency |
+| `Queue<T>` | bounded/unbounded MPMC channel (`send`/`recv`/`try_*`/`close`) |
+
+It also centralizes the native↔wasm cfg-split that the rest of the crate
 (`resource`, `local`, `axum_ws`) would otherwise each repeat.
 
 ## Testing scheduled code
