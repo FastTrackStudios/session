@@ -18,6 +18,9 @@ patterns a real project would copy.
 
 - [Getting started](@/getting-started/_index.md) — get the dev shell up,
   run the e2e tests, see the contract round-trip from a browser.
+- [**Build a feature, end to end**](@/getting-started/walkthrough.md) —
+  the fastest way to learn how to *use* architect: define an entity, pick
+  a backend, serve it, consume it remote or in-process.
 - [Architecture](@/architecture/_index.md) — the patterns the template
   is showcasing: contracts vs. implementations, multi-backend features,
   the facade-with-cargo-features split, the per-feature UI layer.

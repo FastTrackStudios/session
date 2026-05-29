@@ -65,9 +65,25 @@ type is automatically Facet-able, which means vox can transport it
 without any per-type glue. No parallel `serde` derives, no
 `#[serde(rename = …)]` mismatches with `#[architect(...)]`.
 
+## Learn
+
+New here? Read **[Build a feature, end to end](docs/content/getting-started/walkthrough.md)**
+— define an entity → pick a backend → serve it → consume it remote *or*
+in-process, against the reference example. Then:
+
+- [The architect pattern](docs/content/architecture/pattern.md) — what the
+  `Entity` derive emits, field by field.
+- [Idioms & enforcement](docs/content/architecture/idioms.md) — the
+  conventions (vox-only RPC, the `Layer`/`Resource` DI engine, transport
+  injection) and the CI gates behind them.
+- [Reference](docs/content/reference/_index.md) — crate map, features, the
+  runtime surface.
+
 ## Status
 
-Scaffold + macro entry point. The derive currently emits the wire
-struct only; the SeaORM Model + storage emission lands in subsequent
-commits. See `docs/pattern.md` for the design notes that drive the
-emission shape.
+Working end to end. The `Entity` derive emits the full surface (wire types
++ `Create`/`Update`/`List` + the `<Entity>Repo` vox trait + a `Layer`
+token, and the SeaORM storage under `server-seaorm`). The reference
+example (`examples/app/`) runs as a Dioxus web app against an axum+vox
+server, as a fully in-process desktop app, and as a CLI — all from the one
+contract, covered by native + browser + in-process tests.
