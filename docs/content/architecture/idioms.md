@@ -182,3 +182,27 @@ This is the consumer-facing tip of the layer/construction system: build
 the backend with `Resource`/`Scope`, compose its services with `Layer`,
 and expose them over whichever transport the deployment needs — all from
 one set of screens.
+
+## 8. Wrap fallible remote connects in `schedule::retry`
+
+A vox connect can fail transiently — the server is still booting, a
+WebSocket blips. Don't let that fail the first frame: wrap the
+connect+handshake in `architect::schedule::retry` under an
+exponential-backoff-with-jitter policy. The example client does exactly
+this (`examples/app/ui/src/client.rs`):
+
+```rust
+architect::schedule::retry(
+    || establish_ws_once::<C>(url),
+    architect::Schedule::exponential(Duration::from_millis(200))
+        .max_delay(Duration::from_secs(5))
+        .jittered()
+        .take(5),
+)
+.await
+```
+
+The policy's clock is platform-portable (`tokio::time` natively, browser
+timers on wasm), so the same resilient connect works on web and desktop.
+See [scheduling & resilience](@/architecture/scheduling.md) for the full
+`Schedule` surface and the `TestClock` testing story.

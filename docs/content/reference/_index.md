@@ -40,6 +40,8 @@ architect itself lives in `macros/` + `libs/`; everything under
 | `architect` | `server-seaorm` (alias `server`) | SeaORM storage helpers (`storage::DbConn`); derive emits `<T>RepoStorage`. |
 | `architect` | `server-axum` | axum adapter — `architect::axum_ws` (Link + `serve`). |
 | `architect` | `local` | In-process transport — `architect::{LocalServer, serve_local}` (native). |
+| `architect` | `platform` | Portable clock/sleep/spawn — `architect::platform` (native tokio ↔ wasm browser timers). |
+| `architect` | `schedule` | Retry/repeat policies — `architect::{Schedule, retry, repeat}` (implies `platform`). |
 | `architect` | `fake` | `#[derive(fake::Dummy)]` on emitted structs for seeding. |
 | `example` | `backend-db` / `backend-memory` / `backend-crdt` | re-export the chosen backend at `example::backend_*`. |
 | `example` | `server-axum` | re-export `architect::axum_ws`. |
@@ -65,6 +67,8 @@ The runtime DI engine (see [idioms §6–7](@/architecture/idioms.md)):
 | `Resource<T, E>` / `Scope` / `SharedResource` | `architect::resource` | lazy backend builders — `and_then` / `zip` / `acquire_release` / `memoize`, LIFO teardown |
 | `LayerGraph` / `LayerNode` / `LayerPlan` | `architect::plan` | declared-graph topological planner + diagnostics |
 | `LocalServer` / `serve_local` | `architect::local` (feature `local`, native) | serve a router in-process over a vox in-memory link |
+| `Schedule` / `retry` / `repeat` | `architect::schedule` (feature `schedule`) | composable retry/repeat policies — backoff, jitter, caps; see [scheduling](@/architecture/scheduling.md) |
+| `Clock` / `SystemClock` / `TestClock` / `sleep` / `now` / `spawn` | `architect::platform` (feature `platform`) | native↔wasm clock + task spawn; deterministic `TestClock` |
 
 ## What the derive emits
 

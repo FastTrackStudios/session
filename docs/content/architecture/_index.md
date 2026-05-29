@@ -17,6 +17,9 @@ distinction visible at a glance.
 - [Extensibility](@/architecture/extensibility.md) — in-tree vs
   third-party implementations; how the contract crate makes both
   paths interchangeable.
+- [Scheduling & resilience](@/architecture/scheduling.md) — `schedule`
+  retry/repeat policies (exponential backoff, jitter, caps) and the
+  `platform` clock they run on; how clients tolerate a flaky server.
 - [Async diagnostics](@/architecture/diagnostics.md) — opt-in moiré
   instrumentation for the axum_ws adapter; see what every task is
   waiting on via the live dashboard.
