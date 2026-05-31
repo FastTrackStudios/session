@@ -19,8 +19,8 @@ use daw_standalone::bootstrap::build_in_process_daw;
 use daw_standalone::sync::Standalone;
 use session::setlist_service::demo::stamp_demo_setlist_with;
 use session::{
-    SetlistBuilder, SetlistEvent, SetlistServiceClient, SetlistServiceImpl,
-    serve_setlist_service, setlist_service_service_descriptor,
+    SetlistBuilder, SetlistEvent, SetlistServiceClient, SetlistServiceImpl, serve_setlist_service,
+    setlist_service_service_descriptor,
 };
 
 fn seeded_stamped() -> Standalone {
@@ -41,7 +41,11 @@ async fn build_setlist_from_standalone_demo() -> eyre::Result<()> {
     let bundle = build_in_process_daw(seeded_stamped()).await?;
     let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
 
-    println!("[v1] built '{}' with {} songs", setlist.name, setlist.songs.len());
+    println!(
+        "[v1] built '{}' with {} songs",
+        setlist.name,
+        setlist.songs.len()
+    );
     assert!(!setlist.songs.is_empty(), "expected demo songs");
     Ok(())
 }
@@ -82,13 +86,22 @@ async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
     }
 
     // One song per project, all 10 present.
-    assert_eq!(setlist.songs.len(), 10, "expected 10 songs (one per project)");
+    assert_eq!(
+        setlist.songs.len(),
+        10,
+        "expected 10 songs (one per project)"
+    );
     // Every song has sections.
     for s in &setlist.songs {
         assert!(!s.sections.is_empty(), "song '{}' has no sections", s.name);
     }
     // Complex section work: at least one song with a deep layout (>= 8 sections).
-    let max_sections = setlist.songs.iter().map(|s| s.sections.len()).max().unwrap_or(0);
+    let max_sections = setlist
+        .songs
+        .iter()
+        .map(|s| s.sections.len())
+        .max()
+        .unwrap_or(0);
     assert!(
         max_sections >= 8,
         "expected a complex song with >=8 sections, got max {max_sections}"
@@ -100,7 +113,10 @@ async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
         .filter(|s| s.count_in_seconds.is_some_and(|c| c > 0.0))
         .count();
     println!("[v3] songs with count-in: {with_count_in}");
-    assert!(with_count_in > 0, "expected at least one song with a count-in");
+    assert!(
+        with_count_in > 0,
+        "expected at least one song with a count-in"
+    );
     Ok(())
 }
 
@@ -140,7 +156,11 @@ async fn setlist_service_over_vox() -> eyre::Result<()> {
     // Serve over a real Unix socket — the desktop's actual transport — so this
     // exercises the same conduit/channel path REAPER uses (memory_link masked
     // the streaming behaviour).
-    let _ = ConnectionSettings { parity: Parity::Even, max_concurrent_requests: 64, initial_channel_credit: 16 };
+    let _ = ConnectionSettings {
+        parity: Parity::Even,
+        max_concurrent_requests: 64,
+        initial_channel_credit: 16,
+    };
     let _ = Parity::Even;
     let sock = format!("/tmp/fts-setlist-harness-{}.sock", std::process::id());
     let _ = std::fs::remove_file(&sock);
@@ -219,7 +239,10 @@ async fn setlist_service_over_vox() -> eyre::Result<()> {
     }
 
     println!("[v2] delivered={got_songs} songs, stream_ended={stream_ended}");
-    assert!(got_songs > 0, "subscriber got no initial SetlistChanged snapshot");
+    assert!(
+        got_songs > 0,
+        "subscriber got no initial SetlistChanged snapshot"
+    );
     assert!(
         !stream_ended,
         "subscription stream ended early — would cause the resubscribe spin"

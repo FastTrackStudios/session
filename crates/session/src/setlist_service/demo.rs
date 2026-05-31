@@ -225,18 +225,37 @@ pub fn fixture_songs(count: usize) -> Vec<DemoSong> {
     ];
     // Section layouts of increasing complexity (intro→...→outro).
     let layouts: [&[SectionKind]; 4] = [
-        &[SectionKind::Intro, SectionKind::Verse, SectionKind::Chorus, SectionKind::Outro],
         &[
-            SectionKind::Intro, SectionKind::Verse, SectionKind::Chorus,
-            SectionKind::Verse, SectionKind::Chorus, SectionKind::Outro,
+            SectionKind::Intro,
+            SectionKind::Verse,
+            SectionKind::Chorus,
+            SectionKind::Outro,
         ],
         &[
-            SectionKind::Intro, SectionKind::Verse, SectionKind::PreChorus, SectionKind::Chorus,
-            SectionKind::Verse, SectionKind::PreChorus, SectionKind::Chorus,
-            SectionKind::Bridge, SectionKind::Chorus, SectionKind::Outro,
+            SectionKind::Intro,
+            SectionKind::Verse,
+            SectionKind::Chorus,
+            SectionKind::Verse,
+            SectionKind::Chorus,
+            SectionKind::Outro,
         ],
         &[
-            SectionKind::Intro, SectionKind::Verse, SectionKind::Chorus, SectionKind::Bridge,
+            SectionKind::Intro,
+            SectionKind::Verse,
+            SectionKind::PreChorus,
+            SectionKind::Chorus,
+            SectionKind::Verse,
+            SectionKind::PreChorus,
+            SectionKind::Chorus,
+            SectionKind::Bridge,
+            SectionKind::Chorus,
+            SectionKind::Outro,
+        ],
+        &[
+            SectionKind::Intro,
+            SectionKind::Verse,
+            SectionKind::Chorus,
+            SectionKind::Bridge,
             SectionKind::Chorus,
         ],
     ];
@@ -253,7 +272,11 @@ pub fn fixture_songs(count: usize) -> Vec<DemoSong> {
             let mut sections = Vec::with_capacity(layout.len());
             let mut t = song_start;
             for &kind in layout {
-                sections.push(DemoSection { kind, start: t, end: t + sec_len });
+                sections.push(DemoSection {
+                    kind,
+                    start: t,
+                    end: t + sec_len,
+                });
                 t += sec_len;
             }
             let song_end = t;
