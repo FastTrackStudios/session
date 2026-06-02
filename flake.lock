@@ -106,11 +106,11 @@
         "rev": "aea86f91f84cdf6052e4310e8a0541d87f37c624",
         "revCount": 755,
         "type": "git",
-        "url": "https://git.starcommand.live/codywright/moire"
+        "url": "https://codeberg.org/FastTrackStudios/moire"
       },
       "original": {
         "type": "git",
-        "url": "https://git.starcommand.live/codywright/moire"
+        "url": "https://codeberg.org/FastTrackStudios/moire"
       }
     },
     "nixpkgs": {
