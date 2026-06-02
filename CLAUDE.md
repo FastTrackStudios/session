@@ -19,17 +19,51 @@ cargo test -p daw-audio-graph   # Run audio graph tests
 
 ## Architecture
 
-This repo follows the **crate facade pattern**:
-- `daw` — facade, the only public API surface
-- `daw-proto` — protocol/domain types (internal)
-- `daw-control` — high-level control API (internal)
-- `daw-reaper` — REAPER-specific implementation (internal)
-- `daw-standalone` — reference/standalone implementation (internal)
-- `daw-audio-graph` — audio processing DAG engine (internal)
-- `daw-builtin-fx` — FTS DSP crates as AudioNode wrappers (internal)
-- `daw-plugin-host` — CLAP/VST3 external plugin hosting (internal, Phase 6)
+This repo follows the **crate facade pattern**. Apps depend only on `daw`
+(the facade), never on internal crates.
 
-Apps must depend only on `daw` (facade), never on internal crates.
+### Directory layout
+
+`crates/` holds the **spine** — the always-on contract + the published
+facade. `features/` holds every **optional, feature-gated** crate; each
+subtree maps to a cargo feature of `daw` (so "Reaper compatibility is a
+feature of `daw`" is literal, not a metaphor).
+
+```
+crates/                  # spine — mandatory contract + published facade
+  daw                    # facade — the only public API surface / crates.io artifact
+  daw-proto              # protocol/domain types: service traits + capability
+  daw-control            # high-level control API
+  daw-module             # module-host interface
+  daw-test-macro         # shared test tooling
+  fts-devtools
+
+features/                # each subtree = an optional cargo feature of `daw`
+  backends/              # integration targets — read/drive other DAWs
+    reaper/              # daw-reaper, dawfile-reaper, *-embed, *-dioxus, bridge, …
+    protools/ ableton/ logic/ aaf/ dawproject/   # the dawfile-* codecs
+  standalone/            # our own DAW (top-level: it is NOT a backend)
+  sync/                  # daw-synchronization, daw-network, daw-link, daw-audio-sync
+  audio/                 # daw-audio-graph, daw-allocator, audio-controls, fts-audio-proto
+  ui/                    # daw-ui
+```
+
+### Feature flags (on the `daw` facade)
+
+- `reaper`, `reaper-ui`, `standalone` (+ `standalone-audio`, `standalone-rpp`)
+- Source-format **parsers** (format → daw-proto types): `protools`, `ableton`,
+  `logic`, `aaf`, `dawproject`, `formats` (= all). Exposed as `daw::<format>`.
+- File→RPP **conversion**: `convert` (all importers) or per-format
+  `convert-protools` / `convert-ableton` / `convert-aaf` / `convert-dawproject`
+  so a specialized build compiles only the parsers it needs.
+
+`daw-reaper` carries matching per-format importer features
+(`default = all-formats`); take it with `default-features = false` to gate.
+
+**Not foldable into the facade** (each depends on `daw` → cycle): the sync
+stack (`daw-synchronization`/`daw-network`/`daw-link`) and
+`daw-extension-runtime` stay public sibling crates. Extension authors depend
+on `daw` + `daw-extension-runtime` together.
 
 ## Platform Targets
 
