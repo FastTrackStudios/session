@@ -14,7 +14,7 @@
     # battery. We pull its bearcove tool packages into the dev shell so daw
     # runs the same gate as every other repo; daw keeps its own rust-overlay
     # toolchain + REAPER/GPU/audio stack below.
-    fts-repo.url = "git+https://git.starcommand.live/FastTrackStudios/fts-repo";
+    fts-repo.url = "git+https://codeberg.org/FastTrackStudios/fts-repo";
     fts-repo.inputs.nixpkgs.follows = "nixpkgs";
     nix2container.url = "github:nlewo/nix2container";
     nix2container.inputs.nixpkgs.follows = "nixpkgs";

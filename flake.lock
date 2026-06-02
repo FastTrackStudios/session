@@ -106,11 +106,11 @@
         "rev": "671f47e5e99406944bb3dd62a5389b2e598886c3",
         "revCount": 2,
         "type": "git",
-        "url": "https://git.starcommand.live/FastTrackStudios/fts-repo"
+        "url": "https://codeberg.org/FastTrackStudios/fts-repo"
       },
       "original": {
         "type": "git",
-        "url": "https://git.starcommand.live/FastTrackStudios/fts-repo"
+        "url": "https://codeberg.org/FastTrackStudios/fts-repo"
       }
     },
     "nix2container": {
