@@ -21,7 +21,7 @@
     # The architect workspace patches all bearcove/moire git deps to
     # this fork so the runtime graph stays coherent across vox + us.
     moire = {
-      url = "git+https://git.starcommand.live/codywright/moire";
+      url = "git+https://codeberg.org/FastTrackStudios/moire";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };

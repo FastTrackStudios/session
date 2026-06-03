@@ -3,7 +3,7 @@
 specs (
     {
         name example
-        source_url https://git.starcommand.live/codywright/architect
+        source_url https://codeberg.org/FastTrackStudios/architect
         include (examples/app/features/example/spec/**/*.md)
         impls (
             {
