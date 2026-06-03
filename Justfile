@@ -36,6 +36,17 @@ build:
 check:
     cargo check --workspace
 
+# ── UI showcase ────────────────────────────────────────────────────────────
+
+# Run the standalone UI component showcase (native Blitz window):
+# DawWorkspace = ArrangeView (TCP sidebar + timeline) over the MixerControlPanel.
+showcase:
+    cargo run -p ui-showcase
+
+# Same, release-optimized (smoother metering / animation).
+showcase-release:
+    cargo run -p ui-showcase --release
+
 # Run unit tests
 test:
     cargo test --workspace
