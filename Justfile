@@ -38,8 +38,10 @@ check:
 
 # ── UI showcase ────────────────────────────────────────────────────────────
 
-# Run the standalone UI component showcase (native Blitz window):
+# Run the standalone UI component showcase (native Blitz window, hardware GPU):
 # DawWorkspace = ArrangeView (TCP sidebar + timeline) over the MixerControlPanel.
+# The dev shell already wires hardware-GPU discovery (see flake.nix); the CI
+# shells use lavapipe instead.
 showcase:
     cargo run -p ui-showcase
 

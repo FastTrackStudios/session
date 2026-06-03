@@ -404,13 +404,12 @@
 
             commonShellEnv = {
               LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-              # Force software-rasterized OpenGL (lavapipe) so wgpu can
-              # acquire a GPU adapter in headless / CI environments.
-              # Tests still need to opt in via FTS_GPU_TESTS=1.
-              LIBGL_ALWAYS_SOFTWARE = "1";
-              # Point Vulkan-backed wgpu at lavapipe.
-              VK_ICD_FILENAMES = "${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json";
-              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+              # `/run/opengl-driver/lib` FIRST so the system GPU driver .so
+              # (e.g. NVIDIA's libGLX_nvidia + Vulkan ICD lib) loads at runtime;
+              # the nix-store GUI/audio libs follow. Hardware GPU is the default
+              # (Blitz/dioxus-native + wgpu); the CI shells layer
+              # `softwareRenderEnv` on top for deterministic lavapipe rendering.
+              LD_LIBRARY_PATH = "/run/opengl-driver/lib:" + pkgs.lib.makeLibraryPath [
                 pkgs.gtk3
                 pkgs.webkitgtk_4_1
                 pkgs.libsoup_3
@@ -460,6 +459,16 @@
               ];
             };
 
+            # Deterministic software rendering (mesa lavapipe) for headless CI
+            # GPU snapshot tests (opt-in via FTS_GPU_TESTS=1). Layered onto the
+            # `ci` / `reaper-ci` shells only — the default dev shell uses the
+            # real GPU. `VK_DRIVER_FILES` is the current Vulkan-loader variable
+            # (`VK_ICD_FILENAMES` is deprecated).
+            softwareRenderEnv = {
+              LIBGL_ALWAYS_SOFTWARE = "1";
+              VK_DRIVER_FILES = "${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json";
+            };
+
             commonEnv = {
               FTS_REAPER_CONFIG = ftsReaperConfig;
             };
@@ -476,7 +485,22 @@
               FTS_REAPER_EXECUTABLE = "${ftsDev.reaper}/bin/reaper";
               FTS_REAPER_RESOURCES = "${ftsDev.reaper}/opt/REAPER";
 
+              # Prefer the discrete/hardware GPU when wgpu (Blitz/dioxus-native,
+              # e.g. `just showcase`) requests an adapter.
+              WGPU_POWER_PREF = "high";
+
               shellHook = ''
+                # Hardware GPU for wgpu/Blitz (just showcase) + GL/EGL — mirrors
+                # the fts-gui launcher's host-GL setup. /run/opengl-driver is
+                # NixOS's live driver tree (LD_LIBRARY_PATH prepends its lib in
+                # commonShellEnv). XDG_DATA_DIRS exposes the system Vulkan ICDs
+                # (/run/opengl-driver/share/vulkan/icd.d) to the loader so wgpu
+                # discovers a real adapter — portable across GPUs, no hardcoded
+                # driver. Verify: `nix shell nixpkgs#vulkan-tools -c vulkaninfo`.
+                export LIBGL_DRIVERS_PATH="/run/opengl-driver/lib/dri"
+                export GBM_BACKENDS_PATH="/run/opengl-driver/lib/gbm"
+                export __EGL_VENDOR_LIBRARY_DIRS="/run/opengl-driver/share/glvnd/egl_vendor.d"
+                export XDG_DATA_DIRS="/run/opengl-driver/share:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
                 echo ""
                 echo "  daw dev shell (fts-flake)"
                 echo "  ────────────────────────────────────────"
@@ -503,7 +527,7 @@
             # needs daw's build/system deps to COMPILE the workspace, but
             # NOT REAPER. Keeping the unfree REAPER + FHS launcher out of
             # this shell makes CI faster and avoids an unfree fetch.
-            ci = pkgs.mkShell (commonEnv // commonShellEnv // {
+            ci = pkgs.mkShell (commonEnv // commonShellEnv // softwareRenderEnv // {
               packages = commonPackages;
             });
 
@@ -511,7 +535,7 @@
             # Heavier shell that adds the headless REAPER + FHS sandbox for
             # the integration-test workflow. Separate so the fast `ci` gate
             # doesn't pay for it on every push.
-            reaper-ci = pkgs.mkShell (commonEnv // commonShellEnv // {
+            reaper-ci = pkgs.mkShell (commonEnv // commonShellEnv // softwareRenderEnv // {
               packages = commonPackages ++ [
                 ftsCi.fts-test
                 ftsCi.reaper-fhs
