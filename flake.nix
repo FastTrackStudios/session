@@ -367,6 +367,9 @@
               pkgs.libxcb
               pkgs.libxscrnsaver
               pkgs.libxkbcommon
+              # Wayland client libs — Blitz/winit (dioxus-native, the ui-showcase
+              # renderer) dlopens libwayland-client directly on Wayland sessions.
+              pkgs.wayland
               # libxdo — required by tray-icon / global-hotkey via wry's
               # dioxus-desktop dep tree on Linux.
               pkgs.xdotool
@@ -431,6 +434,8 @@
                 pkgs.libxcb
                 pkgs.libxscrnsaver
                 pkgs.libxkbcommon
+                # Wayland client libs (Blitz/winit dlopens libwayland-client).
+                pkgs.wayland
                 pkgs.mesa
                 pkgs.libGL
                 pkgs.vulkan-loader
