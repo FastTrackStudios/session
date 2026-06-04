@@ -44,7 +44,7 @@ rustc-hash = "2"
 daw = { workspace = true, features = ["standalone", "file", "test-harness"] }
 # Ephemeral, REAPER-free harness: drive the SetlistService build path against
 # an in-process daw-standalone backend over a vox memory link.
-daw-standalone = { git = "https://git.starcommand.live/FastTrackStudios/daw.git", branch = "main", features = ["bootstrap"] }
+daw-standalone = { git = "https://codeberg.org/FastTrackStudios/daw.git", branch = "main", features = ["bootstrap"] }
 daw-proto = { workspace = true }
 tokio = { workspace = true }
 tracing-subscriber = { workspace = true }

@@ -1706,6 +1706,13 @@ impl SongBuilder {
                 SectionType::Pre(Box::new(SectionType::Chorus))
             }
 
+            // Single-letter DAW-region abbreviations ("V2", "C1"). keyflow's
+            // format parser deliberately rejects these (too ambiguous in chart
+            // source), but they're idiomatic REAPER region names.
+            "v" => SectionType::Verse,
+            "c" => SectionType::Chorus,
+            "b" => SectionType::Bridge,
+
             // Build is sometimes used as breakdown
             "build" => SectionType::Breakdown,
 
