@@ -17,7 +17,10 @@
 *.db
 
 # Ghidra reverse-engineering artifacts (large binaries, not for VCS)
-crates/dawfile-logic/ghidra/
+features/backends/logic/dawfile-logic/ghidra/
+
+# A stray copied git-index file
+/index
 .claude/
 
 # Sibling git checkouts that landed inside this tree

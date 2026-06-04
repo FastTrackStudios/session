@@ -36,18 +36,33 @@ build:
 check:
     cargo check --workspace
 
-# ── UI showcase ────────────────────────────────────────────────────────────
+# ── Native app ───────────────────────────────────────────────────────────
 
-# Run the standalone UI component showcase (native Blitz window, hardware GPU):
-# DawWorkspace = ArrangeView (TCP sidebar + timeline) over the MixerControlPanel.
-# The dev shell already wires hardware-GPU discovery (see flake.nix); the CI
-# shells use lavapipe instead.
-showcase:
-    cargo run -p ui-showcase
+# Run the native (Blitz/GPU) FastTrackStudio app via the Dioxus CLI with RSX
+# hot-reload: the daw-standalone engine rendered through the themed
+# DawWorkspace panels (ArrangeView + TCP sidebar over the MixerControlPanel).
+# Plain `dx serve` works because daw-native declares an (empty) `native`
+# feature dx autodetects the platform from — see apps/daw/native/Cargo.toml.
+# The dev shell wires hardware-GPU discovery (see flake.nix); the CI shells
+# use lavapipe instead.
+#
+# (The app itself prefers native Wayland when a compositor socket exists —
+# see `prefer_wayland()` in apps/daw/native/src/main.rs. Under XWayland the
+# initial tiling resize races blitz's viewport init and the layout sticks at
+# 800x600.)
+native:
+    dx serve -p daw-native
 
 # Same, release-optimized (smoother metering / animation).
-showcase-release:
-    cargo run -p ui-showcase --release
+native-release:
+    dx serve -p daw-native --release
+
+# Plain cargo run, no dx/hot-reload — the upstream blitz way (their justfile
+# never uses dx for native; dioxus-native's devtools connect is a no-op when
+# the DIOXUS_DEVSERVER_* env vars aren't set). Faster cold start: reuses the
+# normal cargo target dir instead of dx's separate profile.
+native-run *ARGS:
+    cargo run -p daw-native {{ARGS}}
 
 # Run unit tests
 test:
