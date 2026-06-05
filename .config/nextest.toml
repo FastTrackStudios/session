@@ -6,11 +6,24 @@ slow-timeout = { period = "10s", terminate-after = 12 }
 
 # round_trip_every_fixture spawns the round_trip example as a subprocess
 # for every PT fixture (~18 files) — process startup + debug-mode parse
-# overhead easily exceeds the default 15s budget. Give it more headroom.
+# overhead easily exceeds the default 15s budget. It runs in ~2s in
+# isolation but competes for CPU with the rest of the suite under the
+# full-workspace gate run, so the budget must absorb heavy load.
 [[profile.default.overrides]]
 filter = "test(round_trip_every_fixture)"
-slow-timeout = { period = "15s", terminate-after = 4 }
+slow-timeout = { period = "15s", terminate-after = 10 }
 
 [[profile.ci.overrides]]
 filter = "test(round_trip_every_fixture)"
+slow-timeout = { period = "30s", terminate-after = 5 }
+
+# The theming::reaper_import tests each parse and evaluate a full WALTER
+# theme in debug mode (~12s in isolation) — over the default 15s budget
+# once the gate run loads every core. Same headroom treatment.
+[[profile.default.overrides]]
+filter = "test(theming::reaper_import)"
+slow-timeout = { period = "20s", terminate-after = 4 }
+
+[[profile.ci.overrides]]
+filter = "test(theming::reaper_import)"
 slow-timeout = { period = "30s", terminate-after = 4 }
