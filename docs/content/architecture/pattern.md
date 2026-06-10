@@ -64,6 +64,18 @@ Under `--features server-seaorm`:
   implementation against SeaORM. Sort handling is wired against
   `Column` variants for every `#[architect(sortable)]` field.
 
+With the `store` flag, under the consumer's `atom` + `vox` features (the
+Dioxus client side):
+
+- `ExampleStore` (+ `provide_example_store` / `use_example_store`) — the
+  shared optimistic cache, and `ExampleClientError` — the typed error.
+- `use_example(id)` / `use_example_list()` — data hooks returning an
+  `AtomResult` phase for pages to `match`.
+- `ExampleMutations` (`use_example_mutations`) — optimistic
+  `create`/`update`/`delete` with rollback, failure notification, and
+  reactivity-key invalidation. See
+  [composing the UI](@/architecture/composing-the-ui.md).
+
 ## How a client consumes it
 
 Identical from wasm and desktop — only the link construction differs:
@@ -108,3 +120,6 @@ against a server or an embedded backend. See
 |-----------|--------|
 | `table_name = "..."` | SeaORM table name. Defaults to snake_case of the struct name. |
 | `repo` | Emit the `<T>Repo` `#[vox::service]` trait + the server-side `<T>RepoStorage<C>`. |
+| `store` | Also emit the Dioxus client state layer (store, typed hooks, optimistic mutations). Requires `repo`; gated on the consumer's `atom` + `vox` features; pk must be `Copy + FromStr`. |
+| `form` | Also emit typed form bindings (`<T>CreateFields` / `<T>UpdateFields`, `submit()` → the wire payload). Gated on the consumer's `form` feature. Field attrs: `form(optional)`, `form(label = "…")`. |
+| `events` | Also emit the live-event story: `<T>Event` enum, `<T>Events` subscribe trait, the `<T>Evented<R>` publish-through wrapper (its `Services` bundle mounts CRUD + the event feed), and — with `store` — the `use_<t>_events()` client hook that makes every store-rendered page live. Requires `repo`. |

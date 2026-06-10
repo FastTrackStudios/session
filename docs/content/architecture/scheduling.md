@@ -97,7 +97,7 @@ deterministic one.
 
 This is the direct answer to the "client connect is fragile" thread. The
 example app wraps its vox connect in `schedule::retry`
-([`examples/app/ui/src/client.rs`](https://git.starcommand.live/codywright/architect/src/branch/main/examples/app/ui/src/client.rs)),
+([`examples/app/ui/src/transport.rs`](https://git.starcommand.live/codywright/architect/src/branch/main/examples/app/ui/src/transport.rs)),
 so a just-booting or briefly-flaky server is tolerated instead of failing
 the first frame:
 

@@ -42,6 +42,16 @@ features/
 macros/                        proc-macros (architect, architect-derive).
 ```
 
+The architect repo itself follows the same convention for its **built-in
+features**: `features/atom` and `features/form` (the Dioxus client-state
+primitives, re-exported on the `architect` crate behind the `atom` /
+`form` features) and `features/auth/` — the full auth feature
+(`auth-proto` / `auth` / `auth-db` / the `architect-auth` facade +
+`spec/` + `tests/`), folded in from the former architect-auth repo.
+Auth is built *on* architect (its proto uses the Entity derive), so it's
+consumed as the `architect-auth` crate rather than re-exported —
+re-exporting would be a dependency cycle.
+
 ## Naming rules
 
 - **Path prefix matches package name prefix.** A crate at

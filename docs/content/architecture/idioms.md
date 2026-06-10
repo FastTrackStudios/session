@@ -35,12 +35,16 @@ storage-column concern, not the wire, so it's fine.)
 
 ## 3. The client is established once and shared via context
 
-The app root (`examples/app/ui/src/client.rs`) establishes the typed
-clients **once**, stores them in a `Signal<ConnState>`, and provides it
-with `use_context_provider`. Screens pull it with `use_context` (via the
-`use_conn` helper) and read data with `use_resource`, which re-runs when
-the connection flips to `Ready` or when its inputs change. Don't
-reconnect per-screen; don't block the first render on the socket.
+The app root (`examples/app/ui/src/lib.rs`, with the connection machinery
+in `transport.rs`) establishes the typed clients **once**, stores them in a
+`Signal<ConnState>`, and provides it with `use_context_provider`. The
+context *shapes* (`ConnState`, `ExampleClients`, `use_conn`,
+`use_example_store`) live with the feature in `example-ui`'s `context.rs`,
+so the feature's view-blocks consume them while the shell owns the
+transport. Views pull the context with `use_context` (via `use_conn`) and
+read data with `use_resource`, which re-runs when the connection flips to
+`Ready` or when its inputs change. Don't reconnect per-view; don't block
+the first render on the socket.
 
 ```rust
 let conn = use_context_provider(|| Signal::new(ConnState::Connecting));
@@ -189,7 +193,7 @@ A vox connect can fail transiently — the server is still booting, a
 WebSocket blips. Don't let that fail the first frame: wrap the
 connect+handshake in `architect::schedule::retry` under an
 exponential-backoff-with-jitter policy. The example client does exactly
-this (`examples/app/ui/src/client.rs`):
+this (`examples/app/ui/src/transport.rs`):
 
 ```rust
 architect::schedule::retry(
@@ -206,3 +210,38 @@ The policy's clock is platform-portable (`tokio::time` natively, browser
 timers on wasm), so the same resilient connect works on web and desktop.
 See [scheduling & resilience](@/architecture/scheduling.md) for the full
 `Schedule` surface and the `TestClock` testing story.
+
+## 9. Client UI: features own state + presentation, the shell composes
+
+The Dioxus client splits in two: a **feature crate** exposes state hooks
+(returning an `AtomResult` phase) + dumb components; the **shell** owns the
+transport + routes and composes features by `match`ing the phase. The hard
+rule: **Dioxus primitives (`Link`/`nav`) for navigation; the `AtomResult`
+phase-match for state** — nothing else. Full guide:
+[composing the UI](@/architecture/composing-the-ui.md).
+
+Reads are stale-while-revalidate and writes are optimistic: a
+create/update/delete patches a shared `Store<Example>` instantly and only
+*reconciles* against the server in the background, rolling back on failure.
+**Don't hand-write the CRUD state layer at all** — add `store` to the
+entity derive (`#[architect(table_name = …, repo, store)]`) and the typed
+hooks, the store, and the optimistic mutations are emitted. Hand-written
+hooks (search, live reads) bind the same primitives (`AtomResult`,
+`Store` + `use_mutation`, `use_async`, `use_store_entry`,
+`use_store_list`). Errors stay **typed** end-to-end (`ClientError<E>`,
+never `format!("{e:?}")`); temp rows use the typed `Id::Temp`, never a
+magic `"tmp-"` string prefix.
+
+This is the client-side twin of the server-side Layer/Resource DI (§6),
+and the same "borrow Effect's ideas without the monad" stance — here
+following [effect-atom](https://github.com/tim-smart/effect-atom). Full
+walkthrough: [optimistic state](@/architecture/optimistic.md).
+
+> Enforced: unit tests in `features/atom`; the dioxus-MCP
+> `magic_id_prefix_for_optimistic` + `optimistic_lock_gate` audits flag the
+> anti-patterns the typed `Id<K>` + `use_mutation` lifecycle avoid.
+
+Forms follow the same stance: validate with `architect-form` (typed
+`Field`s + a `Form` controller whose submit result is an `AtomResult`),
+then submit through the vox client — never a Dioxus server function. Full
+walkthrough: [forms](@/architecture/forms.md).

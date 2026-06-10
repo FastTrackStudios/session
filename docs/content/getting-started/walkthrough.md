@@ -111,7 +111,7 @@ pub fn service_router<R: ExampleRepo + Services + Clone + Send + Sync + 'static>
 
 Screens/CLI program against `ExampleRepoClient` and never hard-code where
 it lives. The `Transport` is chosen once at the app root
-([`examples/app/ui/src/client.rs`](https://git.starcommand.live/codywright/architect/src/branch/main/examples/app/ui/src/client.rs)):
+([`examples/app/ui/src/transport.rs`](https://git.starcommand.live/codywright/architect/src/branch/main/examples/app/ui/src/transport.rs)):
 
 ```rust
 match transport {
