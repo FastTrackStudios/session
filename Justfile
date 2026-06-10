@@ -34,6 +34,22 @@ migrate:
 server:
     cargo run -p app-server
 
+# Same, but with a 2s artificial latency on every write so the web
+# client's optimistic create/update/delete sit visibly "pending" before
+# reconciling. Test/demo only — see `LatencyRepo` in app-server.
+server-slow:
+    EXAMPLE_LATENCY_MS=2000 cargo run -p app-server
+
+# The whole dev loop in one terminal: the vox server + `dx serve` for the
+# web app (http://localhost:8765). Ctrl-C stops both. Open two browser
+# windows to watch live events sync them.
+dev:
+    #!/usr/bin/env bash
+    set -m
+    trap 'kill 0' EXIT INT TERM
+    cargo run -p app-server &
+    (cd examples/app/web && dx serve --web --addr 0.0.0.0 --port 8765)
+
 # ── Diagnostics (moiré) ───────────────────────────────────────────────
 
 # Run the app-server with moiré instrumentation enabled. Connects to
