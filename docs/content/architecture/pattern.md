@@ -120,6 +120,6 @@ against a server or an embedded backend. See
 |-----------|--------|
 | `table_name = "..."` | SeaORM table name. Defaults to snake_case of the struct name. |
 | `repo` | Emit the `<T>Repo` `#[vox::service]` trait + the server-side `<T>RepoStorage<C>`. |
-| `store` | Also emit the Dioxus client state layer (store, typed hooks, optimistic mutations). Requires `repo`; gated on the consumer's `atom` + `vox` features; pk must be `Copy + FromStr`. |
+| `store` | Also emit the Dioxus client state layer (store, typed hooks, optimistic mutations). Requires `repo`; gated on the consumer's `atom` + `vox` features; pk must be `Clone + Eq + Hash + FromStr` (`Uuid`, `String`, integer ids — `Copy` not required). |
 | `form` | Also emit typed form bindings (`<T>CreateFields` / `<T>UpdateFields`, `submit()` → the wire payload). Gated on the consumer's `form` feature. Field attrs: `form(optional)`, `form(label = "…")`. |
 | `events` | Also emit the live-event story: `<T>Event` enum, `<T>Events` subscribe trait, the `<T>Evented<R>` publish-through wrapper (its `Services` bundle mounts CRUD + the event feed), and — with `store` — the `use_<t>_events()` client hook that makes every store-rendered page live. Requires `repo`. |
