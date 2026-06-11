@@ -150,6 +150,25 @@ windows, type, kill the server, keep typing, restart it.
   callbacks only push into channels; signal writes happen in Dioxus
   tasks.
 
+## Text fields are LWW today
+
+A `String` field on a `#[architect(crdt)]` entity is stored as a plain
+`LoroValue::String` in the row's `LoroMap` — **last-writer-wins on the
+whole string**. If two peers edit the same text field concurrently, the
+merge keeps one peer's entire value and the other's edit is **lost**
+(the row converges, but not character-by-character). That's fine for
+short, rarely-contended fields (a title, an author name); it is the
+wrong tool for collaborative prose.
+
+The planned fix is an opt-in attribute — `#[architect(crdt(text))]` —
+mapping the field to a child `LoroText` container instead, so
+concurrent edits merge at character level. The runtime support already
+exists (`crdt::codec::{text_child, read_text, apply_text_ops,
+apply_text_diff}`, including migration from legacy LWW strings via
+`read_text_with_migration`); the derive just doesn't emit it yet. Until
+it lands, treat every derived text field as LWW and reach for the codec
+helpers directly where character-level merging matters.
+
 ## What this means for Task and DAW
 
 - **Task** (local-first, multi-device): one doc per project; tasks/
