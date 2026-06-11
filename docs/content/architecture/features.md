@@ -51,6 +51,7 @@ dispatcher.
 | `platform` | — | web-time, async-channel, tokio time/rt, gloo-timers + wasm-bindgen-futures (wasm) | `architect::platform` — `Clock` (async sleep/now), `spawn`, deterministic `TestClock`. Required by `use_interval`. |
 | `schedule` | `platform` | — | `architect::schedule` — composable retry/repeat policies (backoff, jitter, caps) + drivers. |
 | `rt` | — | rtrb | `architect::rt` — wait-free SPSC ring (`rt_channel`) bridging real-time threads (audio callbacks) to `PubSub`; drop-on-full, drained at UI rate. See [server push](@/architecture/streams.md). |
+| `sync-client` | `vox` | tokio (rt) | `architect::BlockingCaller` — drives the `#[architect::rpc(sync_client)]`-emitted `<Trait>SyncClient` blocking facades. Native only; for sync code calling a *remote* backend (in-process callers use the sync trait directly). |
 | `fake` | — | fake | `#[derive(fake::Dummy)]` on every emitted struct — trivially seedable test data. |
 | `diagnostics` | — | moire/diagnostics | Moiré instrumentation in axum_ws (dashboard at `MOIRE_DASHBOARD`). Zero-cost passthrough when off. |
 
