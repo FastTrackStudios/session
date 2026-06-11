@@ -187,3 +187,22 @@ fmt:
     cd examples/app/ui && cargo fmt
     cd examples/app/web && cargo fmt
     cd examples/app/desktop && cargo fmt
+
+# Headless-browser e2e for the web app: real server + `dx serve` + the
+# playwright spec under examples/app/web/e2e (system chromium via
+# playwright-core). This is the layer that catches wasm panics, render
+# wedges, and main-thread livelocks that cargo tests can't see.
+web-e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pids=()
+    cleanup() { for p in "${pids[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done; }
+    trap cleanup EXIT INT TERM
+    COLLAB_DATA_DIR=$(mktemp -d) cargo run -p app-server --no-default-features --features backend-memory &
+    pids+=($!)
+    until curl -sf http://127.0.0.1:4040/api/health -o /dev/null; do sleep 1; done
+    rm -f /tmp/dx-web-e2e.log
+    (cd examples/app/web && exec dx serve --web --addr 127.0.0.1 --port 8123 > /tmp/dx-web-e2e.log 2>&1) &
+    pids+=($!)
+    until grep -q "Build completed successfully" /tmp/dx-web-e2e.log 2>/dev/null; do sleep 2; done
+    cd examples/app/web/e2e && pnpm install --silent && BASE_URL=http://127.0.0.1:8123 node collab.spec.mjs
