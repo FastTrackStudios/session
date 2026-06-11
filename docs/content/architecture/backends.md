@@ -78,3 +78,29 @@ A `crates/daw-reaper` binary then pulls `timeline` with `backend-reaper`,
 `mixing` with `backend-reaper`, etc. `crates/daw-ableton` does the same
 with `-ableton` features. The same `apps/daw-ui` shell composes both
 because both expose the same `<feature>_proto` types and traits.
+
+## Large payloads
+
+A vox return value serializes whole. For megabyte-scale results — an FX
+state chunk, a rendered audio block — that's megabytes of encoding per
+call even when the client only wants a slice. `architect::handle` keeps
+the allocation in the backend instead:
+
+| Crate side | Type | Role |
+|------------|------|------|
+| proto (wire) | `RawHandle` | Opaque id, facet-serializable (a bare UUID). What service signatures carry. |
+| backend | `HandleRegistry<T>` | Thread-safe table owning the values; mints `Handle<T>`s. |
+| backend | `Handle<T>` | Typed wrapper around `RawHandle` — a registry of one type can't deref a handle of another. |
+
+**Send the bytes** when the payload is small (tens of KB), consumed
+whole, or needed offline — a handle that outlives its server entry is
+just a miss. **Send a handle** when the payload is large, when the
+client only ever derefs ranges of it (the DAW's audio accessors: render
+once server-side, `get_samples(handle, start, len)` per window), or when
+the resource isn't a wire type at all (FFI pointers, mmaps).
+
+Eviction is the **caller's policy**: pair every handle-returning method
+with a `release` method, and sweep with `HandleRegistry::retain` for
+sessions that leak. Chunked / streaming responses — moving the bytes
+themselves incrementally rather than parking them behind an id — are a
+separate planned facility, not what handles are for.
