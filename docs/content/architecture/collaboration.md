@@ -120,19 +120,78 @@ restarts:
 - **browser**: `IndexedDbPersistence` (feature `indexeddb`) — same
   layout in IndexedDB object stores.
 
+## Many documents (`DocRegistry`)
+
+`DocSyncHost` / `PresenceHost` each serve exactly one `doc_id` — but a
+product like Task wants **one doc per project**, with projects coming
+and going at runtime. `crdt::registry::DocRegistry` implements the same
+`DocSync` + `DocPresence` service traits, so *one* mounted dispatcher
+pair serves every doc: on `sync(doc_id, …)` / `presence(doc_id, …)` it
+looks up — or lazily opens — the per-doc host and delegates. All the
+single-doc invariants (snapshot-then-changes attach, durable relay,
+weak-handle subscriptions, unbounded doc fan-out) are inherited by
+composition.
+
+```rust
+let registry = DocRegistry::new(move |doc_id| {
+    let root = data_dir.clone();
+    // the factory owns per-doc persistence policy — FilePersistence
+    // already namespaces by doc id under its root; a DB backend keys
+    // its rows by doc_id the same way
+    Box::pin(async move { CrdtDoc::open(doc_id, FilePersistence::new(root)).await })
+})
+.with_compaction(64)                                  // per created host
+.with_shallow_bootstrap()                             // per created host
+.with_presence_timeout(30_000)                        // per created PresenceHost
+.with_admission(|doc_id| known.contains(&doc_id))     // gate before open/serve
+.with_idle_eviction(Duration::from_secs(900));        // compact + drop idle docs
+
+router = router
+    .with(doc_sync_service_descriptor(), DocSyncDispatcher::new(registry.clone()))
+    .with(doc_presence_service_descriptor(), DocPresenceDispatcher::new(registry));
+```
+
+- **Factory** — `Fn(Uuid) -> Pin<Box<dyn Future<Output = Result<CrdtDoc,
+  PersistError>> + Send>>`: the caller decides persistence per doc.
+  One `tokio::Mutex` guards the doc map across the factory call, so two
+  concurrent first-attaches can't double-open the same persistence.
+- **Admission** — `Fn(Uuid) -> bool`, checked before a doc is opened
+  *or* served; rejected ids fail with `UnknownDoc` (indistinguishable
+  from a doc that doesn't exist). This is coarse server-side *scoping*,
+  not authorization — the hook sees only the doc id, not who's asking;
+  real per-user authz needs caller identity threaded through the
+  transport (future work: vox middleware context).
+- **Idle eviction** — a sweeper compacts and drops docs with zero live
+  sessions and no activity for the configured window; the next attach
+  reopens from persistence (one snapshot import, thanks to the
+  pre-evict compaction). The eviction-vs-in-flight-attach race is
+  closed by re-checking session counts under the same creation lock
+  every attach holds from lookup through completion.
+
+Client side, the **keyed hooks** pair with the registry: where
+`use_synced_doc` / `use_presence_channel` provide a single unkeyed
+context (two simultaneous docs would collide), `use_synced_doc_keyed(doc_id)`
+and `use_presence_channel_keyed(doc_id, timeout_ms)` *return* their
+handles instead — a component holds one per doc. The unkeyed hooks are
+now thin wrappers that delegate to the keyed ones and provide context.
+
 ## Server wiring (the example app's shape)
 
 ```rust
-// once per process, like the evented repo wrapper:
-let collab = Collab::open("./collab-data").await?;   // file-persisted canonical doc
-// per connection (hosts are cheap clones over the same hubs):
+// once per process, like the evented repo wrapper — a DocRegistry over
+// file persistence (one subdir per doc), notes doc opened eagerly:
+let collab = Collab::open("./collab-data").await?;
+// per connection (clones are cheap over the same doc map):
 router = collab.mount(router);                        // DocSync + DocPresence
 ```
 
 Proven end-to-end by `libs/crdt/tests/sync_convergence.rs` (in-process:
 bidirectional convergence, late joiner, offline-restart push-back,
-shutdown teardown) and `app-tests-e2e` (`notes_replicas_converge_over_websocket`,
-`presence_propagates_between_peers` — real WebSocket, real axum server).
+shutdown teardown), `libs/crdt/tests/registry.rs` (two docs through one
+dispatcher pair, presence isolation, admission gate, evict-then-reopen)
+and `app-tests-e2e` (`notes_replicas_converge_over_websocket`,
+`presence_propagates_between_peers`, `two_docs_sync_through_one_registry`
+— real WebSocket, real axum server, all through the registry).
 The example app's **Collab** page is the live showcase: open it in two
 windows, type, kill the server, keep typing, restart it.
 
@@ -171,7 +230,8 @@ helpers directly where character-level merging matters.
 
 ## What this means for Task and DAW
 
-- **Task** (local-first, multi-device): one doc per project; tasks/
+- **Task** (local-first, multi-device): one doc per project — a
+  `DocRegistry` on the server, keyed hooks on the client; tasks/
   cycles/milestones as `#[architect(crdt)]` entities in it. Devices
   work offline and merge on reconnect; file/IndexedDB persistence makes
   restarts free.
