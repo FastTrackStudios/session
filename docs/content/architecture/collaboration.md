@@ -15,18 +15,48 @@ architect has two state models, and they answer different questions:
 | Right for | server-owned rows, thin clients | collaborative, offline-first features (Task projects, DAW sessions) |
 
 Both share the same wire (vox), the same fan-out (`PubSub`), the same
-phase-match rendering. Pick per feature.
+phase-match rendering. Pick per feature — the example app runs both
+side by side (`Example` is store-backed, `Note` is a CRDT replica).
+
+## One attribute end to end
+
+```rust
+#[derive(architect::Entity, ::facet::Facet, Clone, Debug, PartialEq)]
+#[architect(table_name = "notes", repo, crdt, form)]
+pub struct Note {
+    #[architect(primary_key, auto_increment = false, on_create = Uuid::new_v4())]
+    pub id: Uuid,
+    #[architect(sortable, fulltext)]
+    pub text: String,
+    pub author: String,
+    #[architect(exclude(create, update), on_create = Utc::now())]
+    pub created_at: DateTime<Utc>,
+    #[architect(exclude(create, update), on_create = Utc::now(), on_update = Utc::now())]
+    pub updated_at: DateTime<Utc>,
+}
+```
+
+`#[architect(crdt)]` (user-crate feature `crdt = ["dep:crdt"]`) emits:
+
+- the **`EntityCrdt` codec** — field ↔ `LoroMap` mapping inferred from
+  the field types (`Uuid`, `String`, `bool`, ints, `DateTime<Utc>`,
+  `Vec<String>`, `Option` of each), with the same `on_create` /
+  `on_update` / `exclude` policy the SeaORM path uses;
+- **`NoteRepoLoro`** — a Loro-backed implementation of the same
+  `NoteRepo` trait the SQL storage implements, over any `CrdtDoc`;
+- with the `atom` feature too (convention: `atom = ["architect/atom",
+  "crdt?/dioxus"]`): **`use_note_crdt_list()` / `use_note_crdt(id)`**
+  returning the same `AtomResult` phases pages already `match`, and
+  **`use_note_crdt_actions()`** — create/update/delete that write the
+  local replica directly. No optimistic machinery, no rollback arm:
+  writes are instant and *final*, concurrent edits merge.
 
 ## The stack
 
 `libs/crdt` is the local-first layer: one [`CrdtDoc`] per collaboration
 boundary (a project, a workspace, a DAW session) wrapping a `LoroDoc` +
-pluggable `Persistence` (SeaORM server-side via `crdt-seaorm`, in-memory
-for tests), and typed `LoroRepo<E>` CRUD views per entity (the
-`EntityCrdt` glue). `example-crdt` already mounts one as an
-`ExampleRepo` backend.
-
-What `crdt::sync` (the `vox` feature) adds is the **transport**:
+pluggable `Persistence`, and typed `LoroRepo<E>` CRUD views per entity.
+`crdt::sync` (feature `vox`) is the transport:
 
 ```text
  client A                      server                       client B
@@ -38,79 +68,94 @@ What `crdt::sync` (the `vox` feature) adds is the **transport**:
  └────────────┘                     └──────────────┘         └────────────┘
 ```
 
-- **`DocSync`** — one `#[vox::service]` method: the client sends its Loro
-  **version vector** plus an up-channel (its future local updates) and a
-  down-sink. The server answers with exactly the missing history
+- **`DocSync`** — one `#[vox::service]` method. The client sends its
+  Loro **version vector** plus an up-channel and a down-sink; the
+  server answers with exactly the missing history
   (`ExportMode::Updates { from }` — an offline week is a delta, not a
-  re-download), then streams every peer's updates. Uses `PubSub`'s
-  buffered attach, so nothing is missed between catch-up and live
-  traffic; overlap is harmless because Loro imports are idempotent.
-- **`DocSyncHost`** — the server: canonical doc (persisting every update
-  through its `Persistence`) + unbounded fan-out (update bytes are never
-  dropped — unlike state-shaped entity events, a lost CRDT update is a
-  lost edit until the next catch-up). Server-side writes to the same doc
-  (other transports, background jobs) broadcast automatically via the
-  doc's local-update subscription.
-- **`SyncedDoc`** — the client driver: wires a local `CrdtDoc`'s
-  local-update stream into an outbox (buffered while offline), runs one
-  `sync` session at a time, merges everything that comes down. `run()`
-  is a plain future — spawn it with tokio, `dioxus::spawn`, or
-  wasm-bindgen; on disconnect, run it again and the version vector makes
-  re-sync incremental.
+  re-download) and **returns its own version vector**, so the client
+  pushes back anything the *server* is missing. Catch-up is
+  bidirectional: a replica that edited offline, restarted (in-memory
+  outbox gone), and reconnected still delivers its history.
+- **`DocSyncHost`** — the server: canonical doc + unbounded fan-out
+  (update bytes are never dropped). Relayed updates are persisted
+  explicitly (imports don't fire the local-update subscription).
+  `.with_compaction(n)` folds the update log into a snapshot every `n`
+  updates so storage stays bounded; `.with_shallow_bootstrap()` serves
+  fresh joiners a shallow snapshot instead of full history.
+- **`SyncedDoc`** — the client driver: outbox-buffers local updates
+  while offline, runs one `sync` session per connection, merges
+  everything that comes down. `run()` is a plain future — spawn it with
+  tokio, `dioxus::spawn`, or wasm-bindgen.
+- **`DocPresence` / `PresenceHost` / `PresencePeer`** — who's here,
+  over Loro's `EphemeralStore` (timestamp-LWW, auto-expiring) and a
+  *sliding* PubSub: presence is state-shaped and droppable, unlike doc
+  updates. Late joiners get the current picture from the host's mirror
+  on attach; peers re-announce their keys on reconnect.
 
-Proven by `libs/crdt/tests/sync_convergence.rs`: two live replicas
-converge bidirectionally through the in-process transport, and a late
-joiner with an empty doc catches up the full history.
-
-## Using it today (server + native client)
+## Dioxus hooks
 
 ```rust
-// server: canonical doc + host, mounted like any service
-let doc = CrdtDoc::open(project_id, SeaOrmPersistence::new(db)).await?;
-let host = DocSyncHost::new(project_id, doc.clone());
-router = router.with(doc_sync_service_descriptor(), DocSyncDispatcher::new(host));
-// the same doc also serves plain RPC reads: ExampleRepoLoro::new(&doc)
+// app root — one synced replica + presence per collaboration boundary:
+crdt::use_synced_doc(COLLAB_DOC_ID);
+crdt::use_presence_channel(COLLAB_DOC_ID, 30_000);
 
-// client: a replica that survives offline
-let mut synced = SyncedDoc::new(project_id, CrdtDoc::ephemeral());
-let repo = synced.doc().repo::<TaskEntity>();   // typed CRUD, writes are local + instant
-spawn(async move { loop { let _ = synced.run(&client).await; /* backoff */ } });
+// a page (or use the derive's entity-bound wrappers):
+let handle = crdt::use_doc_handle();        // .status(): Connecting | Live | Offline
+let notes  = use_note_crdt_list();          // AtomResult — same match as everywhere
+let actions = use_note_crdt_actions();      // .create/.update/.delete → local replica
+let presence = crdt::use_presence();        // .set(key, value), .states()
 ```
 
-## The roadmap to full client integration
+`use_synced_doc` owns the replica, bridges the doc's change
+subscription to a revision `Signal` (every committed change — local or
+a peer's — re-renders the readers), and keeps one sync session alive
+against the app's shared `Connection<Caller>`, retrying with the
+version vector so every reconnect is a delta. The doc is usable
+*immediately*, online or not. `use_synced_doc_with(doc_id, || async {
+CrdtDoc::open(doc_id, persistence) })` makes the replica itself survive
+restarts:
 
-In dependency order; each step is independently shippable:
+- **desktop / server**: `FilePersistence` (snapshot + update log under
+  a directory, write-then-rename, compaction prunes the log);
+- **browser**: `IndexedDbPersistence` (feature `indexeddb`) — same
+  layout in IndexedDB object stores.
 
-1. **Dioxus hooks** (`architect`, atom+vox): `use_synced_doc(doc_id)` —
-   owns the `SyncedDoc`, spawns/respawns `run` against the shared
-   `Connection<Caller>` (reconnect = delta catch-up), and bridges the
-   doc's change subscription to a `Signal` revision so
-   `use_crdt_list::<E>()` / `use_crdt_entry::<E>(id)` re-read the
-   `LoroRepo` into the same `AtomResult` phases pages already match.
-   Mutations write the local repo directly — no optimistic machinery,
-   no rollback arm.
-2. **Client persistence**: a `Persistence` impl for the browser
-   (IndexedDB) and desktop (file), so the replica itself survives
-   restarts offline. The trait is already object-safe and wasm-clean;
-   this is one impl per platform.
-3. **Derive integration**: `#[architect(crdt)]` emitting the
-   `EntityCrdt` glue (field ↔ LoroMap mapping — `crdt-derive` already
-   covers part of this), the hooks from step 1 bound to the entity, and
-   the host wiring — making a collaborative feature one attribute, the
-   same way `store`/`events` work for server-owned state.
-4. **Presence/awareness**: cursors, selections, who's-online — Loro's
-   `EphemeralStore` (already re-exported by `libs/crdt`) over the same
-   channel pattern, fanned out by a second `PubSub` (sliding — presence
-   is state-shaped and droppable).
-5. **Compaction policy**: the host calling `CrdtDoc::compact` on
-   quiesce/N-updates so server storage stays bounded; shallow snapshots
-   (`ExportMode::ShallowSnapshot`) for fresh joiners of long-lived docs.
+## Server wiring (the example app's shape)
+
+```rust
+// once per process, like the evented repo wrapper:
+let collab = Collab::open("./collab-data").await?;   // file-persisted canonical doc
+// per connection (hosts are cheap clones over the same hubs):
+router = collab.mount(router);                        // DocSync + DocPresence
+```
+
+Proven end-to-end by `libs/crdt/tests/sync_convergence.rs` (in-process:
+bidirectional convergence, late joiner, offline-restart push-back,
+shutdown teardown) and `app-tests-e2e` (`notes_replicas_converge_over_websocket`,
+`presence_propagates_between_peers` — real WebSocket, real axum server).
+The example app's **Collab** page is the live showcase: open it in two
+windows, type, kill the server, keep typing, restart it.
+
+## Loro gotchas the framework already encodes
+
+- **Subscription closures never own a strong `CrdtDoc`.** Loro fires
+  callbacks synchronously under internal locks; if a closure is the
+  doc's last owner, the final drop happens inside unsubscribe and
+  deadlocks. Hold `CrdtDoc::downgrade()` (`WeakCrdtDoc`) and send work
+  through a channel — see `DocSyncHost`'s compaction worker.
+- **Imports don't fire `subscribe_local_update`** — a host applying
+  relayed updates persists them explicitly
+  (`CrdtDoc::apply_remote_durable`).
+- **Events fire synchronously during `commit()`/`import()`** — hook
+  callbacks only push into channels; signal writes happen in Dioxus
+  tasks.
 
 ## What this means for Task and DAW
 
 - **Task** (local-first, multi-device): one doc per project; tasks/
-  cycles/milestones as `EntityCrdt` types in it. Devices work offline and
-  merge on reconnect; Nextcloud/file backends slot in as `Persistence`.
+  cycles/milestones as `#[architect(crdt)]` entities in it. Devices
+  work offline and merge on reconnect; file/IndexedDB persistence makes
+  restarts free.
 - **DAW**: a session doc for collaborative arrangement state (markers,
   regions, routing), with the REAPER extension holding a replica
   in-process — host edits broadcast to web UIs and vice versa. Live
