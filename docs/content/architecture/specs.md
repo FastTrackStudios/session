@@ -1,7 +1,7 @@
 +++
 title = "Spec coverage"
 description = "Per-feature spec rules tracked by tracey."
-weight = 50
+weight = 51
 +++
 
 Every feature owns its own spec — written in markdown at

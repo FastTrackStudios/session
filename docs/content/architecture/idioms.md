@@ -128,6 +128,9 @@ the `Resource` construction layer. Keep the two straight:
   `.plan()` for a topological build order or a precise diagnostic
   (`missing-provider` / `conflicting-provider` / `cycle` / `duplicate`).
 
+Full `Resource`/`Scope` walkthrough:
+[construction](@/architecture/construction.md).
+
 ### Same-trait multi-backend: use a routing backend, not tags
 
 Need two backends of the *same* trait (write→primary, reads→replica;
@@ -185,7 +188,8 @@ remote; `examples/app/ui` cfg-gates the `Transport::Local` arm accordingly.
 This is the consumer-facing tip of the layer/construction system: build
 the backend with `Resource`/`Scope`, compose its services with `Layer`,
 and expose them over whichever transport the deployment needs — all from
-one set of screens.
+one set of screens. Full `LocalServer` walkthrough:
+[the in-process transport](@/architecture/local.md).
 
 ## 8. Wrap fallible remote connects in `schedule::retry`
 

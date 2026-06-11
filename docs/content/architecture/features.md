@@ -15,7 +15,7 @@ profiles; the à la carte flags below them exist for fine-grained builds.
 |----------|----------------------------------------------------|-----|
 | `client` | `vox`, `atom`, `form`                              | UI crates — wasm or desktop shells. Typed RPC clients, optimistic store hooks, validated forms. Wasm-clean. |
 | `server` | `vox`, `server-seaorm`, `server-axum`, `dispatch-tokio` | Native server binaries. RPC, SeaORM storage bridge, axum WebSocket transport, tokio blocking dispatcher. |
-| `full`   | `vox`, `server-seaorm`, `server-axum`, `fake`, `diagnostics`, `platform`, `schedule` | Development / single-binary builds. Deliberately excludes `atom`/`form` so server builds never compile Dioxus. |
+| `full`   | `vox`, `server-seaorm`, `server-axum`, `fake`, `diagnostics`, `platform`, `schedule`, `rt` | Development / single-binary builds. Deliberately excludes `atom`/`form` so server builds never compile Dioxus. |
 
 A typical app:
 
@@ -50,6 +50,7 @@ dispatcher.
 | `local` | `vox` | vox-core, tracing, tokio rt | In-process transport: serve a `LayerRouter` over a vox memory link. Native only. |
 | `platform` | — | web-time, async-channel, tokio time/rt, gloo-timers + wasm-bindgen-futures (wasm) | `architect::platform` — `Clock` (async sleep/now), `spawn`, deterministic `TestClock`. Required by `use_interval`. |
 | `schedule` | `platform` | — | `architect::schedule` — composable retry/repeat policies (backoff, jitter, caps) + drivers. |
+| `rt` | — | rtrb | `architect::rt` — wait-free SPSC ring (`rt_channel`) bridging real-time threads (audio callbacks) to `PubSub`; drop-on-full, drained at UI rate. See [server push](@/architecture/streams.md). |
 | `fake` | — | fake | `#[derive(fake::Dummy)]` on every emitted struct — trivially seedable test data. |
 | `diagnostics` | — | moire/diagnostics | Moiré instrumentation in axum_ws (dashboard at `MOIRE_DASHBOARD`). Zero-cost passthrough when off. |
 

@@ -1,7 +1,7 @@
 +++
 title = "Scheduling & resilience"
 description = "architect::schedule retry/repeat policies and the architect::platform clock they run on."
-weight = 60
+weight = 59
 +++
 
 `architect::schedule` is a small, composable retry/repeat engine — the
@@ -168,6 +168,12 @@ rich and well-understood, and moiré's instrumentation already wraps these.
 
 It also centralizes the native↔wasm cfg-split that the rest of the crate
 (`resource`, `local`, `axum_ws`) would otherwise each repeat.
+
+One thing deliberately *not* here: real-time-thread handoff. The
+platform primitives lock or park, which a real-time (audio) thread can
+never do — audio-rate producers use the wait-free `architect::rt`
+bridge instead. See the real-time-safety section of
+[server push](@/architecture/streams.md).
 
 ## Supervision
 

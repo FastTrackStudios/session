@@ -1,7 +1,7 @@
 +++
 title = "Optimistic state (architect-atom)"
 description = "Client-side optimistic, stale-while-revalidate state for Dioxus — the client twin of architect's server-side Layer/Resource DI, borrowed from effect-atom without the monad."
-weight = 55
+weight = 54
 +++
 
 architect's server side borrows [Effect](https://effect.website/)'s

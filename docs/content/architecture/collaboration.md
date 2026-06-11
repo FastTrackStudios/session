@@ -1,7 +1,7 @@
 +++
 title = "Real-time collaboration (Loro)"
 description = "Offline-first collaborative state: Loro CRDT replicas synced over vox channels — local writes are instant, everything merges, reconnects are deltas."
-weight = 57
+weight = 58
 +++
 
 architect has two state models, and they answer different questions:
