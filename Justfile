@@ -126,6 +126,16 @@ test-browser-fresh:
     sleep 1
     CI=1 just test-browser
 
+# Multiplayer conformance suites (tests/multiplayer/): 5-way editor
+# convergence + 20-peer presence churn against an ISOLATED stack —
+# its own task-server (port 18091, throwaway TASK_DATA_ROOT, seeded
+# org + dev accounts) and a statically-served wasm bundle baked with
+# TASK_VOX_URL_WEB pointing at it. Never touches the dev server on
+# :18080. See tests/multiplayer/README.md for the suite status table
+# and the current findings. ~5 min warm, longer on a cold build.
+mp-test *ARGS:
+    nix develop .#playwright --command tests/multiplayer/run.sh {{ARGS}}
+
 # ── Lint / format / CI ───────────────────────────────────────────────────
 
 fmt:
