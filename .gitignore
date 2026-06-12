@@ -31,3 +31,7 @@ dist/
 .claude/worktrees/
 examples/vault/.obsidian/
 .claude/
+
+# deploy: staged image artifacts (see deploy/docker/*.Dockerfile)
+deploy/docker/web-public/
+deploy/docker/ui-lab-dist/
