@@ -303,9 +303,10 @@
             src = ./ui-lab;
             nativeBuildInputs = [
               pkgs.nodejs_22
-              pkgs.pnpm_9.configHook
+              pkgs.pnpm_9
+              pkgs.pnpmConfigHook
             ];
-            pnpmDeps = pkgs.pnpm_9.fetchDeps {
+            pnpmDeps = pkgs.fetchPnpmDeps {
               inherit (finalAttrs) pname version src;
               fetcherVersion = 2;
               hash = "sha256-JBWJhg81dixFwSc8GZg0yJcSyd38pR08VLcH81KkId4=";
