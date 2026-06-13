@@ -133,6 +133,33 @@
             doCheck = false;
           };
 
+          # wasm-bindgen shim: dx 0.7.9's release bundler hashes the
+          # wasm-bindgen `.js`/`_bg.wasm` into `assets/` but DISCARDS the
+          # sibling `snippets/` dir that the bundled JS imports
+          # (`./snippets/...`) — so a release web bundle white-screens
+          # (the snippet imports 404 → SPA-fallback HTML → ES-module
+          # graph fails to load). dx generates the snippets correctly in
+          # its wasm-bindgen `--out-dir`; this shim wraps wasm-bindgen to
+          # snapshot that `snippets/` dir (version- and flag-correct,
+          # exactly as dx produced it) before dx deletes it. The build
+          # then copies the snapshot into the bundle at `assets/snippets`.
+          wbShim = pkgs.writeShellScript "wasm-bindgen-snippet-shim" ''
+            "$WB_REAL" "$@"; rc=$?
+            od=
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --out-dir) od="$2"; shift ;;
+                --out-dir=*) od="''${1#--out-dir=}" ;;
+              esac
+              shift
+            done
+            if [ -n "$od" ] && [ -d "$od/snippets" ]; then
+              mkdir -p "$WB_SNIPPET_CAPTURE"
+              cp -R "$od/snippets" "$WB_SNIPPET_CAPTURE/snippets"
+            fi
+            exit $rc
+          '';
+
           # ── Packages ────────────────────────────────────────────────────
 
           task-server = craneLib.buildPackage (commonArgs // {
@@ -204,6 +231,14 @@
               mkdir -p "$HOME/.local/share/.dx/tools/binaryen-129/bin"
               ln -sf "$(command -v wasm-opt)" \
                 "$HOME/.local/share/.dx/tools/binaryen-129/bin/wasm-opt"
+              # Front PATH with the wasm-bindgen snippet-capture shim (see
+              # wbShim) so the snippets dx discards during release bundling
+              # get snapshotted for the install phase to put back.
+              export WB_REAL="$(command -v wasm-bindgen)"
+              export WB_SNIPPET_CAPTURE="$TMPDIR/wb-snippets"
+              mkdir -p "$TMPDIR/wb-bin"
+              ln -sf ${wbShim} "$TMPDIR/wb-bin/wasm-bindgen"
+              export PATH="$TMPDIR/wb-bin:$PATH"
               tailwindcss -i apps/web/tailwind.css -o apps/web/assets/tailwind.css
               cd apps/web
               dx build --release --platform web
@@ -216,6 +251,16 @@
               srcdir="$(pwd)"
               case "$srcdir" in */apps/web) srcdir="''${srcdir%/apps/web}";; esac
               cp -R "$srcdir/target/dx/task-app-web/release/web/public/." $out/www/
+              # Restore the wasm-bindgen JS snippets dx dropped (see
+              # wbShim). The bundled JS imports them from ./snippets/,
+              # which resolves to assets/snippets/ (the JS lives in
+              # assets/). Without this the app white-screens.
+              if [ -d "$TMPDIR/wb-snippets/snippets" ]; then
+                cp -R "$TMPDIR/wb-snippets/snippets" "$out/www/assets/snippets"
+              else
+                echo "ERROR: wasm-bindgen snippets were not captured" >&2
+                exit 1
+              fi
             '';
             doCheck = false;
           });
