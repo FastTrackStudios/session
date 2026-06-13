@@ -10,7 +10,13 @@
     # 0.7.9 dioxus lock ("dx and dioxus versions are incompatible"). We
     # don't bump the main pin (it would ripple through crane's toolchain
     # + the wasm-bindgen pins); we just take dx from here.
-    nixpkgs-dx.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Pinned to a rev that carries binaryen 129 (the wasm-opt version dx
+    # 0.7.9 expects) AND dioxus-cli 0.7.9. nixos-unstable's branch tip
+    # drifts the binaryen version; pinning keeps the web bundle's wasm-opt
+    # reproducible (older binaryen 126 SIGABRTs on the wasm's DWARF, which
+    # silently disables optimization and ships a broken `import "env"`
+    # bundle — see the task-webapp build). Both pkgs are already in-store.
+    nixpkgs-dx.url = "github:NixOS/nixpkgs/d99b013d5d1931ad77fe3912ed218170dec5d9a4";
     flake-parts.url = "github:hercules-ci/flake-parts";
 
     rust-overlay = {
@@ -133,33 +139,6 @@
             doCheck = false;
           };
 
-          # wasm-bindgen shim: dx 0.7.9's release bundler hashes the
-          # wasm-bindgen `.js`/`_bg.wasm` into `assets/` but DISCARDS the
-          # sibling `snippets/` dir that the bundled JS imports
-          # (`./snippets/...`) — so a release web bundle white-screens
-          # (the snippet imports 404 → SPA-fallback HTML → ES-module
-          # graph fails to load). dx generates the snippets correctly in
-          # its wasm-bindgen `--out-dir`; this shim wraps wasm-bindgen to
-          # snapshot that `snippets/` dir (version- and flag-correct,
-          # exactly as dx produced it) before dx deletes it. The build
-          # then copies the snapshot into the bundle at `assets/snippets`.
-          wbShim = pkgs.writeShellScript "wasm-bindgen-snippet-shim" ''
-            "$WB_REAL" "$@"; rc=$?
-            od=
-            while [ $# -gt 0 ]; do
-              case "$1" in
-                --out-dir) od="$2"; shift ;;
-                --out-dir=*) od="''${1#--out-dir=}" ;;
-              esac
-              shift
-            done
-            if [ -n "$od" ] && [ -d "$od/snippets" ]; then
-              mkdir -p "$WB_SNIPPET_CAPTURE"
-              cp -R "$od/snippets" "$WB_SNIPPET_CAPTURE/snippets"
-            fi
-            exit $rc
-          '';
-
           # ── Packages ────────────────────────────────────────────────────
 
           task-server = craneLib.buildPackage (commonArgs // {
@@ -214,34 +193,54 @@
             cargoArtifacts = null;
             cargoExtraArgs = "--manifest-path apps/web/Cargo.toml";
             nativeBuildInputs = commonArgs.nativeBuildInputs ++ [
-              dioxus-cli            # dx 0.7.9 (nixpkgs-dx)
-              wasm-bindgen-cli-web  # 0.2.122, matches the lock
+              dioxus-cli                  # dx 0.7.9 (nixpkgs-dx)
+              wasm-bindgen-cli-web        # 0.2.122, matches the lock
+              pkgsDx.binaryen             # wasm-opt — dx 0.7.9 pins binaryen 129
             ] ++ (with pkgs; [
               tailwindcss_4
-              binaryen
+              # wasm C cross-toolchain for arborium-sysroot (see below).
+              llvmPackages.clang-unwrapped
+              llvmPackages.bintools-unwrapped
             ]);
+
+            # ── The actual fix for the "blank page" web bundle ──────────
+            # The editor pulls in `arborium` / `arborium-tree-sitter`,
+            # whose build.rs compiles the tree-sitter C runtime + grammars
+            # to wasm via `cc::Build`. That needs a clang targeting
+            # wasm32 and an llvm-ar (nix's cc-wrapper injects host-only
+            # hardening flags clang rejects for wasm — same reason the dev
+            # shell uses the *-unwrapped variants). WITHOUT these, the C
+            # symbols never get compiled in and the linker leaves them as
+            # unresolved `(import "env" "tree_sitter_*")` entries in the
+            # wasm. dx's JS asset bundler then can't process that broken
+            # module, falls back to emitting the raw wasm-bindgen JS, and
+            # the shipped bundle white-screens with `import * from "env"`
+            # plus dangling `./snippets/` imports. Setting CC/AR (exactly
+            # as devShells.default does) makes the grammars link in and
+            # the whole class of symptoms disappears — no binaryen seed or
+            # wasm-bindgen snippet shim required.
+            CC_wasm32_unknown_unknown =
+              "${pkgs.llvmPackages.clang-unwrapped}/bin/clang";
+            AR_wasm32_unknown_unknown =
+              "${pkgs.llvmPackages.bintools-unwrapped}/bin/llvm-ar";
+
+            # Hermetic dx: the sandbox has no network. With NO_DOWNLOADS
+            # set, dx resolves wasm-opt via `which wasm-opt` on PATH
+            # (pkgsDx.binaryen) instead of fetching binaryen from GitHub —
+            # the supported offline path, no `.dx/tools` seeding needed.
+            # wasm-bindgen 0.2.122 on PATH already matches the lock.
+            NO_DOWNLOADS = "1";
+
             doNotPostBuildInstallCargoBinaries = true;
-            # Hermetic dx: the sandbox has no network, so dx must NOT try
-            # to download its wasm-bindgen / wasm-opt toolchain. Pre-seed
-            # its tool dir with the nix-built wasm-opt (binaryen) and point
-            # HOME at a writable dir; the wasm-bindgen-cli on PATH (0.2.122)
-            # already matches the lock so dx reuses it instead of fetching.
             buildPhaseCargoCommand = ''
               export HOME="$TMPDIR/dx-home"
-              mkdir -p "$HOME/.local/share/.dx/tools/binaryen-129/bin"
-              ln -sf "$(command -v wasm-opt)" \
-                "$HOME/.local/share/.dx/tools/binaryen-129/bin/wasm-opt"
-              # Front PATH with the wasm-bindgen snippet-capture shim (see
-              # wbShim) so the snippets dx discards during release bundling
-              # get snapshotted for the install phase to put back.
-              export WB_REAL="$(command -v wasm-bindgen)"
-              export WB_SNIPPET_CAPTURE="$TMPDIR/wb-snippets"
-              mkdir -p "$TMPDIR/wb-bin"
-              ln -sf ${wbShim} "$TMPDIR/wb-bin/wasm-bindgen"
-              export PATH="$TMPDIR/wb-bin:$PATH"
+              mkdir -p "$HOME"
               tailwindcss -i apps/web/tailwind.css -o apps/web/assets/tailwind.css
               cd apps/web
-              dx build --release --platform web
+              # --debug-symbols false: drop DWARF for a smaller release
+              # bundle (and it sidesteps DWARF-version mismatches in
+              # wasm-opt). The default for `dx build` is true.
+              dx build --release --platform web --debug-symbols false
             '';
             # buildPhase ends in `cd apps/web`, but dx writes the bundle to
             # the *workspace-root* target dir. Anchor the copy there
@@ -251,16 +250,6 @@
               srcdir="$(pwd)"
               case "$srcdir" in */apps/web) srcdir="''${srcdir%/apps/web}";; esac
               cp -R "$srcdir/target/dx/task-app-web/release/web/public/." $out/www/
-              # Restore the wasm-bindgen JS snippets dx dropped (see
-              # wbShim). The bundled JS imports them from ./snippets/,
-              # which resolves to assets/snippets/ (the JS lives in
-              # assets/). Without this the app white-screens.
-              if [ -d "$TMPDIR/wb-snippets/snippets" ]; then
-                cp -R "$TMPDIR/wb-snippets/snippets" "$out/www/assets/snippets"
-              else
-                echo "ERROR: wasm-bindgen snippets were not captured" >&2
-                exit 1
-              fi
             '';
             doCheck = false;
           });
