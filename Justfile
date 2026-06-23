@@ -30,7 +30,7 @@ task *args:
 # Assumes direnv/.envrc already loaded the `.#ui` dev shell. If you're
 # running outside direnv, prefix with `nix develop .#ui --command`.
 web:
-    cd apps/web && dx serve --web --addr 0.0.0.0 --port 8765
+    cd apps/web && dx serve --web --addr 0.0.0.0 
 
 # Regenerate apps/desktop/assets/tailwind.css from the source
 # `tailwind.css` input. Run after touching `@source` paths or the
