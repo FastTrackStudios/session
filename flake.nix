@@ -292,7 +292,8 @@
             tag = "latest";
             # git + curl: the snapshot engine shells out to them; cacert
             # for outbound TLS; coreutils/bash for any shell-out the
-            # engine performs. /data is the TASK_DATA_ROOT volume.
+            # engine performs; yt-dlp for the watch-view transcript
+            # ingest (YouTube captions). /data is the TASK_DATA_ROOT volume.
             contents = with pkgs; [
               task-server
               git
@@ -300,6 +301,7 @@
               cacert
               bashInteractive
               coreutils
+              yt-dlp
             ];
             extraCommands = ''
               mkdir -p data tmp
@@ -419,6 +421,10 @@
               # `NotFound { kind: NotFound, error: "Could not
               # find protoc" }`.
               protobuf
+              # `yt-dlp`: the resources/watch transcript ingest shells
+              # out to it to pull YouTube auto-captions (no whisper —
+              # captions only, so no ffmpeg needed).
+              yt-dlp
             ];
             shellHook = ''
               export CC_wasm32_unknown_unknown=${pkgs.llvmPackages.clang-unwrapped}/bin/clang
