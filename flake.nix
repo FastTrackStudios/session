@@ -340,9 +340,14 @@
             nativeBuildInputs = [
               pkgs.nodejs_22
               pkgs.pnpm_9
-              pkgs.pnpmConfigHook
+              # Fetcher, config hook, and build pnpm MUST be the same
+              # major — a nixpkgs bump once moved the generic
+              # fetchPnpmDeps/pnpmConfigHook to pnpm 10, whose v10
+              # store layout pnpm 9 can't read (ERR_PNPM_NO_OFFLINE_
+              # TARBALL at install time). Pin all three to pnpm_9.
+              pkgs.pnpm_9.configHook
             ];
-            pnpmDeps = pkgs.fetchPnpmDeps {
+            pnpmDeps = pkgs.pnpm_9.fetchDeps {
               inherit (finalAttrs) pname version src;
               fetcherVersion = 2;
               hash = "sha256-JBWJhg81dixFwSc8GZg0yJcSyd38pR08VLcH81KkId4=";
