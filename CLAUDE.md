@@ -100,6 +100,11 @@ in all three environments. Only I/O adapter crates are platform-specific.
 - Processing-core crates (`daw-audio-graph`, `daw-builtin-fx`) must never use async
 
 ### RPC Services
-- Service traits use `#[vox::service]`
+- Service traits use `#[architect::rpc]` (sync trait → hidden async
+  vox mirror + client + `Service`/`layer`/`serve`/`Dispatcher`/`descriptor`,
+  emitted under the consumer crate's `vox` feature). Never apply
+  `#[vox::service]` directly.
+- The capability system (`daw_proto::capability`) is advisory metadata
+  a backend can publish — it is not wired into `LayerRouter` dispatch.
 - Max 4 params per method (Facet constraint)
 - Use `Tx<T>` / `Rx<T>` for streaming
