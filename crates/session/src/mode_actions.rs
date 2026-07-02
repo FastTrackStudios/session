@@ -19,10 +19,11 @@ pub enum Mode {
     Master,
     Live,
     Video,
-    /// "Stripped-down" mode — saves/loads a native screenset slot
-    /// like the others, but doesn't claim any of REAPER's floating
-    /// toolbar slots. Intended as a "everything hidden" reset.
-    Minimal,
+    /// Scoring mode — saves/loads a native screenset slot like the
+    /// others, but doesn't claim any of REAPER's floating toolbar
+    /// slots. Intended for running/monitoring multi-agent orchestration
+    /// workflows rather than a REAPER editing task.
+    Scoring,
 }
 
 impl Mode {
@@ -36,7 +37,7 @@ impl Mode {
         Mode::Master,
         Mode::Live,
         Mode::Video,
-        Mode::Minimal,
+        Mode::Scoring,
     ];
 
     /// Stable lowercase identifier used in action IDs.
@@ -51,7 +52,7 @@ impl Mode {
             Mode::Master => "master",
             Mode::Live => "live",
             Mode::Video => "video",
-            Mode::Minimal => "minimal",
+            Mode::Scoring => "scoring",
         }
     }
 
@@ -68,7 +69,7 @@ impl Mode {
             "master" => Some(Mode::Master),
             "live" => Some(Mode::Live),
             "video" => Some(Mode::Video),
-            "minimal" => Some(Mode::Minimal),
+            "scoring" => Some(Mode::Scoring),
             _ => None,
         }
     }
@@ -85,15 +86,15 @@ impl Mode {
             Mode::Master => "Master",
             Mode::Live => "Live",
             Mode::Video => "Video",
-            Mode::Minimal => "Minimal",
+            Mode::Scoring => "Scoring",
         }
     }
 
     /// Whether this mode owns the standard 3 floating toolbars. Most
-    /// modes do; `Minimal` is the lone exception (no toolbars reserved
+    /// modes do; `Scoring` is the lone exception (no toolbars reserved
     /// in `reaper-menu.ini`, no mode-toolbar slots auto-renamed).
     pub fn has_toolbars(self) -> bool {
-        !matches!(self, Mode::Minimal)
+        !matches!(self, Mode::Scoring)
     }
 }
 

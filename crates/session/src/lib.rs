@@ -991,9 +991,9 @@ actions_proto::define_actions! {
             description: "Switch to Video mode (sync to picture / video editing layout)",
             category: Session,
         }
-        MINIMAL = "minimal" {
-            name: "Minimal",
-            description: "Switch to Minimal mode (stripped layout, no mode toolbars)",
+        SCORING = "scoring" {
+            name: "Scoring",
+            description: "Switch to Scoring mode (multi-agent orchestration layout, no mode toolbars)",
             category: Session,
         }
         SAVE_ORGANIZE = "save_organize" {
@@ -1041,9 +1041,9 @@ actions_proto::define_actions! {
             description: "Capture current REAPER window state to Video's native screenset slot",
             category: Session,
         }
-        SAVE_MINIMAL = "save_minimal" {
-            name: "Save: Minimal",
-            description: "Capture current REAPER window state to Minimal's native screenset slot",
+        SAVE_SCORING = "save_scoring" {
+            name: "Save: Scoring",
+            description: "Capture current REAPER window state to Scoring's native screenset slot",
             category: Session,
         }
         LOG_CURRENT = "log_current" {
