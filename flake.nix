@@ -278,25 +278,49 @@
           # static-web-server config shared by the web + ui-lab images:
           # serve $root on :8080, SPA-fallback every unknown path to
           # index.html with a 200 (client-side router owns the route).
+          #
+          # Cache scheme (the load-time + staleness contract):
+          # - HTML (and the SPA fallback) is `no-cache` — revalidated on
+          #   every load, so a deploy is visible on the next reload.
+          #   Critical because nix-store files carry a 1970 mtime: with
+          #   no Cache-Control, browsers' heuristic freshness (10% of
+          #   Last-Modified age) pins index.html for MONTHS.
+          # - `/assets/**` is immutable-forever — dx content-hashes
+          #   every asset URL, so a new bundle is new URLs.
+          # Rules are declared in a config file because per-path headers
+          # have no flag form; later [[advanced.headers]] entries win on
+          # conflict, so the /assets rule follows the catch-all.
           mkStaticSite = { name, tag ? "latest", siteRoot }:
+            let
+              swsConfig = pkgs.writeText "sws.toml" ''
+                [general]
+                host = "0.0.0.0"
+                port = 8080
+                root = "${siteRoot}"
+                page-fallback = "${siteRoot}/index.html"
+                log-level = "info"
+                # Serve the pre-built .br variants (the wasm ships
+                # pre-compressed next to the original).
+                compression-static = true
+
+                [advanced]
+                [[advanced.headers]]
+                source = "/**"
+                [advanced.headers.headers]
+                Cache-Control = "no-cache"
+
+                [[advanced.headers]]
+                source = "/assets/**"
+                [advanced.headers.headers]
+                Cache-Control = "public, max-age=31536000, immutable"
+              '';
+            in
             pkgs.dockerTools.streamLayeredImage {
               inherit name tag;
               contents = [ pkgs.static-web-server pkgs.cacert ];
               config = {
                 Entrypoint = [ "/bin/static-web-server" ];
-                Cmd = [
-                  "--host" "0.0.0.0"
-                  "--port" "8080"
-                  "--root" siteRoot
-                  "--page-fallback" "${siteRoot}/index.html"
-                  "--log-level" "info"
-                  # Serve the pre-built .br variants (the wasm ships
-                  # pre-compressed next to the original) + long-lived
-                  # cache headers — dx assets are content-hashed, so
-                  # repeat loads come from browser cache entirely.
-                  "--compression-static" "true"
-                  "--cache-control-headers" "true"
-                ];
+                Cmd = [ "--config-file" "${swsConfig}" ];
                 ExposedPorts = { "8080/tcp" = { }; };
                 Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
               };
