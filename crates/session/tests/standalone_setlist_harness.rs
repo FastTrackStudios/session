@@ -123,11 +123,20 @@ async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
 /// Full desktop path over vox, no REAPER: host SetlistService behind a
 /// LayerRouter, drive it through SetlistServiceClient — subscribe, build, and
 /// confirm the SetlistChanged push reaches the subscriber.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "blocked on vox-postcard lower_enum index-OOB (fork f31f1040) — same bug repro_inprocess isolates"]
-async fn setlist_service_over_vox() -> eyre::Result<()> {
-    use vox::{ConnectionSettings, Parity};
+#[test]
+fn setlist_service_over_vox() -> eyre::Result<()> {
+    // Manual runtime instead of #[tokio::test]: vox 0.10's debug-build
+    // channel encode recurses deeply on the Setlist payload, overflowing
+    // tokio's default 2 MiB worker stacks — give the workers more room.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(16 * 1024 * 1024)
+        .enable_all()
+        .build()?;
+    rt.block_on(setlist_service_over_vox_inner())
+}
 
+async fn setlist_service_over_vox_inner() -> eyre::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
     // Standalone backend, shared between the service's own handle and the
@@ -156,27 +165,43 @@ async fn setlist_service_over_vox() -> eyre::Result<()> {
 
     // Serve over a real Unix socket — the desktop's actual transport — so this
     // exercises the same conduit/channel path REAPER uses (memory_link masked
-    // the streaming behaviour).
-    let _ = ConnectionSettings {
-        parity: Parity::Even,
-        max_concurrent_requests: 64,
-        initial_channel_credit: 16,
-    };
-    let _ = Parity::Even;
+    // the streaming behaviour). vox 0.10 lane model: hand every inbound lane
+    // to the shared LayerRouter (dispatches by method id).
     let sock = format!("/tmp/fts-setlist-harness-{}.sock", std::process::id());
     let _ = std::fs::remove_file(&sock);
     let addr = format!("local://{sock}");
     let serve_addr = addr.clone();
     tokio::spawn(async move {
-        if let Err(e) = vox::serve(&serve_addr, router).await {
+        let lane_acceptor = vox::lane_acceptor_fn(move |_req, lane: vox::PendingLane| {
+            lane.handle_with(router.clone());
+            Ok(())
+        });
+        if let Err(e) = vox::serve(&serve_addr, lane_acceptor).await {
             eprintln!("[v2] serve failed: {e:?}");
         }
     });
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let client: SetlistServiceClient = vox::connect(&addr)
+    /// Minimal `FromVoxLane` client capturing the lane's `Caller`.
+    #[derive(Clone)]
+    struct HarnessLaneClient {
+        caller: vox::Caller,
+    }
+    impl vox::FromVoxLane for HarnessLaneClient {
+        const SERVICE_NAME: &'static str = "setlist-harness";
+        fn from_vox_lane(caller: vox::Caller, _connection: Option<vox::ConnectionHandle>) -> Self {
+            Self { caller }
+        }
+    }
+
+    let connection = vox::connect(&addr)
         .await
         .map_err(|e| eyre::eyre!("connect: {e:?}"))?;
+    let lane = connection
+        .open_lane::<HarnessLaneClient>()
+        .await
+        .map_err(|e| eyre::eyre!("open lane: {e:?}"))?;
+    let client = SetlistServiceClient::new(lane.caller);
 
     // Desktop's exact order: BUILD first, THEN subscribe, then pump. The
     // subscriber must receive the already-built setlist as the initial snapshot.
