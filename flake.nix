@@ -198,6 +198,8 @@
               pkgsDx.binaryen             # wasm-opt — dx 0.7.9 pins binaryen 129
             ] ++ (with pkgs; [
               tailwindcss_4
+              # Pre-compression for --compression-static serving.
+              brotli
               # wasm C cross-toolchain for arborium-sysroot (see below).
               llvmPackages.clang-unwrapped
               llvmPackages.bintools-unwrapped
@@ -250,6 +252,13 @@
               srcdir="$(pwd)"
               case "$srcdir" in */apps/web) srcdir="''${srcdir%/apps/web}";; esac
               cp -R "$srcdir/target/dx/task-app-web/release/web/public/." $out/www/
+              # Pre-compress everything text/wasm so static-web-server's
+              # --compression-static serves .br variants — the 40MB wasm
+              # goes over the wire at brotli size instead (the difference
+              # between a ~6s and ~1s first load).
+              find $out/www -type f \( -name '*.wasm' -o -name '*.js' \
+                -o -name '*.css' -o -name '*.html' -o -name '*.json' \
+                -o -name '*.svg' \) -exec brotli --keep --quality=9 {} +
             '';
             doCheck = false;
           });
@@ -281,6 +290,12 @@
                   "--root" siteRoot
                   "--page-fallback" "${siteRoot}/index.html"
                   "--log-level" "info"
+                  # Serve the pre-built .br variants (the wasm ships
+                  # pre-compressed next to the original) + long-lived
+                  # cache headers — dx assets are content-hashed, so
+                  # repeat loads come from browser cache entirely.
+                  "--compression-static" "true"
+                  "--cache-control-headers" "true"
                 ];
                 ExposedPorts = { "8080/tcp" = { }; };
                 Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
