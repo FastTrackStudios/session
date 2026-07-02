@@ -19,7 +19,7 @@ and **pushed to Codeberg** on the branches listed at the bottom.
 | **Master** | top-level group rows only, collapsed | group strips + **expanded MIX BUS chain** |
 | **Live** | guide/click + playable `* MIDI` rows + prints, nothing else | same |
 | **Video** | top-level reference rows + video/print/stem tracks | same |
-| **Minimal** | bare top-level rows | same |
+| **Scoring** | bare top-level rows | same |
 
 ### Mix phases (Mode → Phase → Step; `docs/mixing-phases.md`)
 
