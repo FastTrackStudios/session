@@ -290,14 +290,34 @@
           # Rules are declared in a config file because per-path headers
           # have no flag form; later [[advanced.headers]] entries win on
           # conflict, so the /assets rule follows the catch-all.
+          # Git rev baked into the deployable images so a running
+          # deployment can say WHICH commit it serves: the web images
+          # get `/version.json`, task-server exposes it in
+          # `.well-known/task-server.json` (`build`). CI's verify-live
+          # step polls these until they match the pushed sha. Only the
+          # cheap image/wrapper layers depend on it — the expensive
+          # cargo/wasm derivations stay rev-free and cached.
+          buildRev = inputs.self.rev or inputs.self.dirtyRev or "unknown";
+
           mkStaticSite = { name, tag ? "latest", siteRoot }:
             let
+              # Bundle + version stamp composed into one served root.
+              # Real copy, not symlinks: static-web-server denies files
+              # that resolve outside its base path, so a symlinked root
+              # 200s every asset request into the SPA fallback. Nix
+              # store auto-optimise dedups the bytes across revs.
+              versionedRoot = pkgs.runCommand "${name}-root" { } ''
+                mkdir -p $out
+                cp -a ${siteRoot}/. $out/
+                chmod u+w $out
+                echo '{"rev":"${buildRev}"}' > $out/version.json
+              '';
               swsConfig = pkgs.writeText "sws.toml" ''
                 [general]
                 host = "0.0.0.0"
                 port = 8080
-                root = "${siteRoot}"
-                page-fallback = "${siteRoot}/index.html"
+                root = "${versionedRoot}"
+                page-fallback = "${versionedRoot}/index.html"
                 log-level = "info"
                 # Serve the pre-built .br variants (the wasm ships
                 # pre-compressed next to the original).
@@ -348,6 +368,7 @@
             config = {
               Entrypoint = [ "/bin/task-server" ];
               Env = [
+                "TASK_BUILD_REV=${buildRev}"
                 "TASK_DATA_ROOT=/data"
                 "TASK_SERVER_BIND=0.0.0.0:8080"
                 "RUST_LOG=info"
