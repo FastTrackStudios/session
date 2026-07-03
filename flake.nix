@@ -393,6 +393,14 @@
               pkgs.zlib
               pkgs.stdenv.cc.cc.lib
 
+              # jack-sys (daw-midi-io/daw-audio-io) + libspa-sys (pipewire
+              # duplex backend, daw-audio-io) need jack.pc / libpipewire-0.3.pc
+              # on PKG_CONFIG_PATH at build time.
+              pkgs.libjack2
+              pkgs.libjack2.dev
+              pkgs.pipewire
+              pkgs.pipewire.dev
+
               # Headless GPU (mesa software rasterizer + Vulkan loader).
               # Enables wgpu offscreen rendering on CI runners with no
               # discrete GPU. Used by daw-reaper-dioxus snapshot tests
