@@ -9,7 +9,7 @@
 //!
 //! This module fills the gap, mirroring the `keyflow_actions` shape:
 //!
-//!   pub fn dispatch<D>(daw: &D, action: SetlistAction)
+//!   `pub fn dispatch<D>(daw: &D, action: SetlistAction)`
 //!       where D: Projects + …
 //!
 //! Runs **synchronously on REAPER's main thread** (where the action

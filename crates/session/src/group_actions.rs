@@ -1,7 +1,7 @@
 //! Track-group manager actions.
 //!
 //! Registered under the `fts.session.*` namespace via the `session_actions`
-//! `define_actions!` block in [`crate::lib`], dispatched from
+//! `define_actions!` block in `crate::lib`, dispatched from
 //! `daw_module`'s `action_for_id` chain. All work runs on REAPER's main
 //! thread (the action-callback context), delegating to [`crate::group_manager`].
 

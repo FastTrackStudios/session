@@ -2,7 +2,7 @@
 //!
 //! These exist alongside `take_ranking` and `mode_actions` and are
 //! registered under the `fts.session.*` action namespace via the
-//! `session_actions` `define_actions!` block in [`crate::lib`].
+//! `session_actions` `define_actions!` block in `crate::lib`.
 
 use reaper_high::Reaper;
 use tracing::info;

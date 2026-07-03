@@ -53,7 +53,7 @@ impl Suppression {
 
 /// The position sync bridge.
 ///
-/// Call [`tick()`] from the session polling loop (~30-60Hz).
+/// Call `tick()` from the session polling loop (~30-60Hz).
 pub struct PositionSyncBridge {
     /// The offset map for position translation.
     offset_map: SetlistOffsetMap,
