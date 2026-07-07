@@ -57,25 +57,44 @@ xtask/                         build tooling. in workspace `members` so
   root, per `docs/content/architecture/layout.md`.
 - **`crates/`** — publishable libraries or CLI tools that are neither a
   framework internal (`libs/`) nor scoped to one feature
-  (`features/<feature>/`). Example: `crates/architect-cli`, the
+  (`features/<feature>/`). These are what an app most directly depends
+  on and assembles — a crate typically composes one or more `features/`
+  underneath it. Example: `crates/architect-cli`, the
   `architect feature new` scaffolder.
 - **`examples/`** — reference/demo code that shows how a consumer uses
   the framework. Not shipped, not depended on by `libs/`/`macros/`.
   `examples/app/` is the full reference app; `examples/custom-server`,
   `examples/external-stub`, `examples/layered-services` are narrow
   single-concept demos.
-- **`features/`** — vertical slices of product capability, each
-  independently backend-swappable and independently testable. If new
-  code is a capability an app opts into (auth, atom, form, a DAW
+- **`features/`** — vertical slices of product capability, meant to be
+  *consumed* — think of a feature as a specialized, backend-swappable
+  lib rather than a leaf app concern. Each is independently testable
+  and each backend impl is swappable behind the facade. If new code is
+  a capability something else opts into (auth, atom, form, a DAW
   feature), it goes here, scaffolded with `just scaffold-feature <name>`
   — never hand-rolled.
 - **`libs/`** — support code architect's *own* implementation depends on
   that isn't a proc-macro and isn't feature-scoped. Example: `libs/crdt`,
   `libs/crdt-seaorm`. If you're tempted to add something here, first ask
-  whether it's really a `feature/` (product-facing, backend-swappable) or
+  whether it's really a `feature/` (consumable, backend-swappable) or
   a `crates/` (standalone/publishable) instead.
 - **`macros/`** — proc-macro crates only. `architect`, `architect-derive`,
   `architect-rpc-derive`, `architect-action-derive`, `crdt-derive`.
+
+### Dependency direction
+
+```
+apps/  ──depends on──>  crates/  ──depends on──>  features/  ──depends on──>  libs/, macros/
+  │                                                    ^
+  └──────────────────── may also depend on directly ───┘
+```
+
+Apps *can* depend on `features/` directly, but the common shape is
+apps depending on `crates/`, and `crates/` doing the work of composing
+whichever `features/` it needs. `features/` themselves are built on
+`libs/` and `macros/`. Dependencies only ever point rightward/downward
+in that chain — a `feature/` never depends on a `crate/`, and `libs/`/
+`macros/` never depend on `features/`.
 
 ## Naming rules
 
@@ -101,14 +120,16 @@ to `members` and expect it to build on the host target; don't skip
 ## Adding new code — decision checklist
 
 1. Is it a proc-macro? → `macros/`.
-2. Is it one capability an app opts into, with a wire contract and
-   swappable backends? → `features/<name>/`, via
-   `just scaffold-feature <name>` (never hand-authored — it also wires
-   the workspace `Cargo.toml` and `.config/tracey/config.styx`).
+2. Is it one *consumable* capability — a wire contract with swappable
+   backends, meant to be pulled into a crate or app? → `features/<name>/`,
+   via `just scaffold-feature <name>` (never hand-authored — it also
+   wires the workspace `Cargo.toml` and `.config/tracey/config.styx`).
 3. Is it a runtime binary suite (server/ui/web/desktop)? → `apps/<name>/`
-   at a consumer's repo root (or `examples/app/` in this repo).
-4. Is it a standalone publishable crate/tool that isn't feature-scoped?
-   → `crates/`.
+   at a consumer's repo root (or `examples/app/` in this repo). It should
+   depend on `crates/` (which in turn compose the `features/` it needs),
+   though depending on a `feature/` directly is fine for something small.
+4. Is it a standalone publishable crate/tool that isn't feature-scoped —
+   the thing an app actually reaches for? → `crates/`.
 5. Is it internal plumbing architect's own implementation needs, that
    isn't a macro and isn't one feature's concern? → `libs/`.
 6. Is it a demo/reference showing how to consume the framework, not
