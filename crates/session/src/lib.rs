@@ -62,6 +62,7 @@ pub mod daw_module;
 pub mod group_actions;
 pub mod group_manager;
 pub mod mode_actions;
+pub mod playback_actions;
 pub mod record_actions;
 pub mod rpc_services;
 pub mod setlist_actions;
@@ -236,6 +237,20 @@ actions_proto::define_actions! {
             shortcut: "L",
             when: "tab:performance",
         }
+        // SMART_NEXT / SMART_PREVIOUS / NEXT_SONG / PREVIOUS_SONG /
+        // NEXT_SECTION / PREVIOUS_SECTION: RPC-only, deliberately NOT
+        // migrated to `#[architect::actions]` (see `playback_actions.rs`'s
+        // module doc for the full reasoning) — they route through
+        // `SetlistServiceImpl::go_to_song_impl`/`go_to_section_impl`,
+        // which depend on `ensure_song_hydrated`'s async, timeout-bounded
+        // rebuild path. There's no safe way to collapse that to a sync
+        // REAPER action callback without either a main-thread deadlock
+        // risk (blocking on the async work) or a silent behavior
+        // regression (a sync fast-path that no-ops on a cache miss).
+        // Reachable today only via `SetlistService`'s async RPC methods
+        // (CLI/desktop/web clients) — not as REAPER named commands. This
+        // predates this migration; `daw_module.rs`'s dispatch chain never
+        // routed these to a sync handler either.
         SMART_NEXT = "smart_next" {
             name: "Smart Next",
             description: "Go to next section, or next song if at last section",
