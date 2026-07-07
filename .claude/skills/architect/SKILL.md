@@ -1,5 +1,5 @@
 ---
-name: repo-hygiene
+name: architect
 description: Enforces architect's monorepo directory structure and hygiene conventions (apps/, crates/, examples/, features/, libs/, macros/, xtask/) — what each top-level directory is for, naming rules, and what should never be committed. Use when deciding where new code/files belong, adding a crate or feature, reviewing a PR for structural drift, or auditing the repo for cruft.
 ---
 
