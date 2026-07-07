@@ -304,3 +304,137 @@ fn c_str_d_playrate() -> *const std::os::raw::c_char {
 fn c_str_d_startoffs() -> *const std::os::raw::c_char {
     b"D_STARTOFFS\0".as_ptr() as *const _
 }
+
+// ── architect::actions declaration ──────────────────────────────────────
+//
+// `RankAction` / `action_for_id` / `dispatch` above stay put — still the
+// live path `daw_module.rs`'s dispatch chain calls into. Additive
+// declarative layer only, mirroring `setlist_actions`'s migration.
+
+/// Bridges the twelve take-ranking actions onto `#[architect::actions]`.
+/// Every method forwards to the existing synchronous `dispatch` — no
+/// behavior change, just a declarative front door with real metadata.
+pub struct TakeRankingActionsImpl;
+
+#[architect::actions(namespace = "FTS_SESSION")]
+pub trait TakeRankingActions {
+    #[action(
+        description = "Set the active take's rank marker to :) at (play-pos - 2s) on every selected item, or at edit cursor if not playing",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_playpos_1(&self);
+    #[action(
+        description = "Set the active take's rank marker to :)) at (play-pos - 2s) on every selected item, or at edit cursor if not playing",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_playpos_2(&self);
+    #[action(
+        description = "Set the active take's rank marker to :))) at (play-pos - 2s) on every selected item, or at edit cursor if not playing",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_playpos_3(&self);
+    #[action(
+        description = "Set the active take's rank marker to :( at (play-pos - 2s) on every selected item, or at edit cursor if not playing",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_playpos_down(&self);
+    #[action(
+        description = "Set the active take's rank marker to :) at item start for every selected item",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_item_1(&self);
+    #[action(
+        description = "Set the active take's rank marker to :)) at item start for every selected item",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_item_2(&self);
+    #[action(
+        description = "Set the active take's rank marker to :))) at item start for every selected item",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_item_3(&self);
+    #[action(
+        description = "Set the active take's rank marker to :( at item start for every selected item",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_item_down(&self);
+    #[action(
+        description = "Set the rank marker to :) on the take under the mouse at the mouse's project-time position",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_mouse_1(&self);
+    #[action(
+        description = "Set the rank marker to :)) on the take under the mouse at the mouse's project-time position",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_mouse_2(&self);
+    #[action(
+        description = "Set the rank marker to :))) on the take under the mouse at the mouse's project-time position",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_mouse_3(&self);
+    #[action(
+        description = "Set the rank marker to :( on the take under the mouse at the mouse's project-time position",
+        category = "Project",
+        group = "Take Ranking"
+    )]
+    fn take_rank_mouse_down(&self);
+}
+
+impl TakeRankingActions for TakeRankingActionsImpl {
+    fn take_rank_playpos_1(&self) {
+        dispatch(RankAction::PlayPos1);
+    }
+    fn take_rank_playpos_2(&self) {
+        dispatch(RankAction::PlayPos2);
+    }
+    fn take_rank_playpos_3(&self) {
+        dispatch(RankAction::PlayPos3);
+    }
+    fn take_rank_playpos_down(&self) {
+        dispatch(RankAction::PlayPosDown);
+    }
+    fn take_rank_item_1(&self) {
+        dispatch(RankAction::Item1);
+    }
+    fn take_rank_item_2(&self) {
+        dispatch(RankAction::Item2);
+    }
+    fn take_rank_item_3(&self) {
+        dispatch(RankAction::Item3);
+    }
+    fn take_rank_item_down(&self) {
+        dispatch(RankAction::ItemDown);
+    }
+    fn take_rank_mouse_1(&self) {
+        dispatch(RankAction::Mouse1);
+    }
+    fn take_rank_mouse_2(&self) {
+        dispatch(RankAction::Mouse2);
+    }
+    fn take_rank_mouse_3(&self) {
+        dispatch(RankAction::Mouse3);
+    }
+    fn take_rank_mouse_down(&self) {
+        dispatch(RankAction::MouseDown);
+    }
+}
+
+/// Registers all twelve take-ranking actions with `backend`.
+pub fn register_actions<B>(backend: &B)
+where
+    B: ::architect::action::ActionBackend + ?Sized,
+{
+    register_take_ranking_actions_actions(backend, std::sync::Arc::new(TakeRankingActionsImpl));
+}

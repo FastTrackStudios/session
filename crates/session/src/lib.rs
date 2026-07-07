@@ -27,9 +27,9 @@ pub mod cache;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod event_bus;
 #[cfg(not(target_arch = "wasm32"))]
-mod keyflow_actions;
+pub mod keyflow_actions;
 #[cfg(not(target_arch = "wasm32"))]
-mod preroll_actions;
+pub mod preroll_actions;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod routing_project;
 #[cfg(not(target_arch = "wasm32"))]

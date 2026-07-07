@@ -214,3 +214,102 @@ fn restart_recording() {
     }
     info!("[record] Restarted recording (stop+delete then record)");
 }
+
+// ── architect::actions declaration ──────────────────────────────────────
+//
+// `RecordAction` / `action_for_id` / `dispatch` above stay put — still the
+// live path `daw_module.rs`'s dispatch chain calls into. Additive
+// declarative layer only, mirroring `setlist_actions`'s migration.
+
+/// Bridges the eight recording-workflow actions onto
+/// `#[architect::actions]`. Every method forwards to the existing
+/// synchronous `dispatch` — no behavior change, just a declarative front
+/// door with real metadata.
+pub struct RecordActionsImpl;
+
+#[architect::actions(namespace = "FTS_SESSION")]
+pub trait RecordActions {
+    #[action(
+        description = "Start a recording pass in the focused project — the current song's tab. Uses the existing arm / monitor / input settings.",
+        category = "Transport",
+        group = "Recording"
+    )]
+    fn record(&self);
+    #[action(
+        description = "Stop the transport in the focused project, keeping the media captured this pass.",
+        category = "Transport",
+        group = "Recording"
+    )]
+    fn record_stop(&self);
+    #[action(
+        description = "Toggle recording in the focused project — the current song's tab.",
+        category = "Transport",
+        group = "Recording"
+    )]
+    fn record_toggle(&self);
+    #[action(
+        description = "Arm every selected track (I_RECARM = 1) in the focused project so it captures input on the next recording pass.",
+        category = "Tracks",
+        group = "Recording"
+    )]
+    fn arm_selected(&self);
+    #[action(
+        description = "Disarm every selected track (I_RECARM = 0) in the focused project.",
+        category = "Tracks",
+        group = "Recording"
+    )]
+    fn disarm_selected(&self);
+    #[action(
+        description = "Stop the current recording (DELETE all recorded media this pass) and immediately start a fresh recording pass. For aborting a bad take without leaving stray media behind.",
+        category = "Transport",
+        group = "Recording"
+    )]
+    fn record_restart(&self);
+    #[action(
+        description = "Toggle the record-monitor state of every selected track between 'on' and 'off' only, skipping the auto/tape state that REAPER's native cycle action walks through. If any selected track is currently 'on', all go to off; otherwise all go to on.",
+        category = "Tracks",
+        group = "Recording"
+    )]
+    fn monitor_toggle_on_off(&self);
+    #[action(
+        description = "Toggle the record-monitor state of every selected track between 'auto/tape' (monitor input only while recording) and 'off'. If any selected track is currently 'auto/tape', all go to off; otherwise all go to auto/tape.",
+        category = "Tracks",
+        group = "Recording"
+    )]
+    fn monitor_toggle_tape_off(&self);
+}
+
+impl RecordActions for RecordActionsImpl {
+    fn record(&self) {
+        dispatch(RecordAction::Record);
+    }
+    fn record_stop(&self) {
+        dispatch(RecordAction::StopRecording);
+    }
+    fn record_toggle(&self) {
+        dispatch(RecordAction::ToggleRecording);
+    }
+    fn arm_selected(&self) {
+        dispatch(RecordAction::ArmSelected);
+    }
+    fn disarm_selected(&self) {
+        dispatch(RecordAction::DisarmSelected);
+    }
+    fn record_restart(&self) {
+        dispatch(RecordAction::RestartRecording);
+    }
+    fn monitor_toggle_on_off(&self) {
+        dispatch(RecordAction::ToggleMonitorOnOff);
+    }
+    fn monitor_toggle_tape_off(&self) {
+        dispatch(RecordAction::ToggleMonitorTapeOff);
+    }
+}
+
+/// Registers all eight recording-workflow actions with `backend`.
+pub fn register_actions<B>(backend: &B)
+where
+    B: ::architect::action::ActionBackend + ?Sized,
+{
+    register_record_actions_actions(backend, std::sync::Arc::new(RecordActionsImpl));
+}

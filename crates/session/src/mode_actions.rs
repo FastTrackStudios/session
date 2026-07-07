@@ -420,3 +420,223 @@ pub fn restore_persisted_mode() -> Option<Mode> {
     set_mode(mode);
     Some(mode)
 }
+
+// ── architect::actions declaration ──────────────────────────────────────
+//
+// `ModeAction` / `action_for_id` / `dispatch` above stay put — still the
+// live path `daw_module.rs`'s dispatch chain calls into (via `mode_defs`,
+// a separate `actions_proto::define_actions!` block so it renders as
+// `FTS: Mode - <Name>` rather than nested under Session). Additive
+// declarative layer only, mirroring `setlist_actions`'s migration.
+// Namespace `FTS_SESSION_MODE` matches `mode_defs`'s `fts.session.mode`
+// action-id prefix.
+
+/// Bridges the twenty-one mode actions (10 switch + 10 save-layout + log)
+/// onto `#[architect::actions]`. Every method forwards to the existing
+/// synchronous `dispatch` — no behavior change, just a declarative front
+/// door with real metadata.
+pub struct ModeActionsImpl;
+
+#[architect::actions(namespace = "FTS_SESSION_MODE")]
+pub trait ModeActions {
+    #[action(
+        description = "Switch to Organize mode (planning, song structure, setlists)",
+        category = "Session",
+        group = "Switch"
+    )]
+    fn organize(&self);
+    #[action(
+        description = "Switch to Write mode (lyric/melody/idea capture)",
+        category = "Session",
+        group = "Switch"
+    )]
+    fn write(&self);
+    #[action(
+        description = "Switch to Produce mode (arrangement, sound design, instrument selection)",
+        category = "Session",
+        group = "Switch"
+    )]
+    fn produce(&self);
+    #[action(
+        description = "Switch to Record mode (tracking, takes, monitoring)",
+        category = "Session",
+        group = "Switch"
+    )]
+    fn record(&self);
+    #[action(
+        description = "Switch to Edit mode (comping, timing, cleanup)",
+        category = "Session",
+        group = "Switch"
+    )]
+    fn edit(&self);
+    #[action(
+        description = "Switch to Mix mode (mixer focus, processing, automation)",
+        category = "Session",
+        group = "Switch"
+    )]
+    fn mix(&self);
+    #[action(
+        description = "Switch to Master mode (master bus processing, metering, export prep)",
+        category = "Session",
+        group = "Switch"
+    )]
+    fn master(&self);
+    #[action(
+        description = "Switch to Live mode (performance/setlist playback view)",
+        category = "Session",
+        group = "Switch"
+    )]
+    fn live(&self);
+    #[action(
+        description = "Switch to Video mode (sync to picture / video editing layout)",
+        category = "Session",
+        group = "Switch"
+    )]
+    fn video(&self);
+    #[action(
+        description = "Switch to Scoring mode (multi-agent orchestration layout, no mode toolbars)",
+        category = "Session",
+        group = "Switch"
+    )]
+    fn scoring(&self);
+    #[action(
+        description = "Capture current REAPER window state to Organize's native screenset slot",
+        category = "Session",
+        group = "Save"
+    )]
+    fn save_organize(&self);
+    #[action(
+        description = "Capture current REAPER window state to Write's native screenset slot",
+        category = "Session",
+        group = "Save"
+    )]
+    fn save_write(&self);
+    #[action(
+        description = "Capture current REAPER window state to Produce's native screenset slot",
+        category = "Session",
+        group = "Save"
+    )]
+    fn save_produce(&self);
+    #[action(
+        description = "Capture current REAPER window state to Record's native screenset slot",
+        category = "Session",
+        group = "Save"
+    )]
+    fn save_record(&self);
+    #[action(
+        description = "Capture current REAPER window state to Edit's native screenset slot",
+        category = "Session",
+        group = "Save"
+    )]
+    fn save_edit(&self);
+    #[action(
+        description = "Capture current REAPER window state to Mix's native screenset slot",
+        category = "Session",
+        group = "Save"
+    )]
+    fn save_mix(&self);
+    #[action(
+        description = "Capture current REAPER window state to Master's native screenset slot",
+        category = "Session",
+        group = "Save"
+    )]
+    fn save_master(&self);
+    #[action(
+        description = "Capture current REAPER window state to Live's native screenset slot",
+        category = "Session",
+        group = "Save"
+    )]
+    fn save_live(&self);
+    #[action(
+        description = "Capture current REAPER window state to Video's native screenset slot",
+        category = "Session",
+        group = "Save"
+    )]
+    fn save_video(&self);
+    #[action(
+        description = "Capture current REAPER window state to Scoring's native screenset slot",
+        category = "Session",
+        group = "Save"
+    )]
+    fn save_scoring(&self);
+    #[action(
+        description = "Log the current session mode to the console (debug helper)",
+        category = "Session",
+        group = "Debug"
+    )]
+    fn log_current(&self);
+}
+
+impl ModeActions for ModeActionsImpl {
+    fn organize(&self) {
+        dispatch(ModeAction::Switch(Mode::Organize));
+    }
+    fn write(&self) {
+        dispatch(ModeAction::Switch(Mode::Write));
+    }
+    fn produce(&self) {
+        dispatch(ModeAction::Switch(Mode::Produce));
+    }
+    fn record(&self) {
+        dispatch(ModeAction::Switch(Mode::Record));
+    }
+    fn edit(&self) {
+        dispatch(ModeAction::Switch(Mode::Edit));
+    }
+    fn mix(&self) {
+        dispatch(ModeAction::Switch(Mode::Mix));
+    }
+    fn master(&self) {
+        dispatch(ModeAction::Switch(Mode::Master));
+    }
+    fn live(&self) {
+        dispatch(ModeAction::Switch(Mode::Live));
+    }
+    fn video(&self) {
+        dispatch(ModeAction::Switch(Mode::Video));
+    }
+    fn scoring(&self) {
+        dispatch(ModeAction::Switch(Mode::Scoring));
+    }
+    fn save_organize(&self) {
+        dispatch(ModeAction::SaveLayout(Mode::Organize));
+    }
+    fn save_write(&self) {
+        dispatch(ModeAction::SaveLayout(Mode::Write));
+    }
+    fn save_produce(&self) {
+        dispatch(ModeAction::SaveLayout(Mode::Produce));
+    }
+    fn save_record(&self) {
+        dispatch(ModeAction::SaveLayout(Mode::Record));
+    }
+    fn save_edit(&self) {
+        dispatch(ModeAction::SaveLayout(Mode::Edit));
+    }
+    fn save_mix(&self) {
+        dispatch(ModeAction::SaveLayout(Mode::Mix));
+    }
+    fn save_master(&self) {
+        dispatch(ModeAction::SaveLayout(Mode::Master));
+    }
+    fn save_live(&self) {
+        dispatch(ModeAction::SaveLayout(Mode::Live));
+    }
+    fn save_video(&self) {
+        dispatch(ModeAction::SaveLayout(Mode::Video));
+    }
+    fn save_scoring(&self) {
+        dispatch(ModeAction::SaveLayout(Mode::Scoring));
+    }
+    fn log_current(&self) {
+        dispatch(ModeAction::LogCurrent);
+    }
+}
+
+/// Registers all twenty-one mode actions with `backend`.
+pub fn register_actions<B>(backend: &B)
+where
+    B: ::architect::action::ActionBackend + ?Sized,
+{
+    register_mode_actions_actions(backend, std::sync::Arc::new(ModeActionsImpl));
+}

@@ -134,3 +134,84 @@ where
     daw.get_project_config(project.clone(), PROJECT_PRE_ROLL_MEASURES_KEY)
         .unwrap_or_else(|| daw.get_project_info(project, PROJECT_PRE_ROLL_MEASURES_KEY))
 }
+
+// ── architect::actions declaration ──────────────────────────────────────
+//
+// `PreRollAction` / `action_for_id` / `dispatch` above stay put — still
+// the live path `daw_module.rs`'s dispatch chain calls into. Additive
+// declarative layer only, mirroring `setlist_actions`'s migration.
+
+/// Bridges the five pre-roll actions onto `#[architect::actions]`. Every
+/// method forwards to the existing synchronous `dispatch` — no behavior
+/// change, just a declarative front door with real metadata.
+pub struct PreRollActionsImpl<D> {
+    daw: D,
+}
+
+#[architect::actions(namespace = "FTS_SESSION")]
+pub trait PreRollActions {
+    #[action(
+        description = "Double the project pre-roll/count-in duration",
+        category = "Transport",
+        group = "Pre-Roll"
+    )]
+    fn pre_roll_double_duration(&self);
+    #[action(
+        description = "Halve the project pre-roll/count-in duration",
+        category = "Transport",
+        group = "Pre-Roll"
+    )]
+    fn pre_roll_half_duration(&self);
+    #[action(
+        description = "Set the project pre-roll/count-in duration to half a measure",
+        category = "Transport",
+        group = "Pre-Roll",
+        toggleable
+    )]
+    fn pre_roll_set_half_measure(&self);
+    #[action(
+        description = "Set the project pre-roll/count-in duration to one measure",
+        category = "Transport",
+        group = "Pre-Roll",
+        toggleable
+    )]
+    fn pre_roll_set_1_measure(&self);
+    #[action(
+        description = "Set the project pre-roll/count-in duration to two measures",
+        category = "Transport",
+        group = "Pre-Roll",
+        toggleable
+    )]
+    fn pre_roll_set_2_measures(&self);
+}
+
+impl<D> PreRollActions for PreRollActionsImpl<D>
+where
+    D: Projects + ActionRegistration,
+{
+    fn pre_roll_double_duration(&self) {
+        dispatch(&self.daw, PreRollAction::Double);
+    }
+    fn pre_roll_half_duration(&self) {
+        dispatch(&self.daw, PreRollAction::Half);
+    }
+    fn pre_roll_set_half_measure(&self) {
+        dispatch(&self.daw, PreRollAction::SetMeasures(0.5));
+    }
+    fn pre_roll_set_1_measure(&self) {
+        dispatch(&self.daw, PreRollAction::SetMeasures(1.0));
+    }
+    fn pre_roll_set_2_measures(&self) {
+        dispatch(&self.daw, PreRollAction::SetMeasures(2.0));
+    }
+}
+
+/// Registers all five pre-roll actions with `backend`, dispatching each
+/// through a fresh `PreRollActionsImpl` bound to `daw`.
+pub fn register_actions<D, B>(backend: &B, daw: D)
+where
+    D: Projects + ActionRegistration + Send + Sync + 'static,
+    B: ::architect::action::ActionBackend + ?Sized,
+{
+    register_pre_roll_actions_actions(backend, std::sync::Arc::new(PreRollActionsImpl { daw }));
+}

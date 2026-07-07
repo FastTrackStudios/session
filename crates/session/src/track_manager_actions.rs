@@ -504,3 +504,92 @@ fn subtree_end_index(tracks: &[daw::service::Track], parent_guid: &str) -> Optio
     }
     Some(parent.index + 1)
 }
+
+// ── architect::actions declaration ──────────────────────────────────────
+//
+// `TrackManagerAction` / `action_for_id` / `dispatch` above stay put —
+// still the live path `daw_module.rs`'s dispatch chain calls into.
+// Additive declarative layer only, mirroring `setlist_actions`'s migration.
+
+/// Bridges the seven track-manager actions onto `#[architect::actions]`.
+/// Every method forwards to the existing synchronous `dispatch` — no
+/// behavior change, just a declarative front door with real metadata.
+pub struct TrackManagerActionsImpl;
+
+#[architect::actions(namespace = "FTS_SESSION")]
+pub trait TrackManagerActions {
+    #[action(
+        description = "Add the next dynamic-template channel to the selected track scope",
+        category = "Session",
+        group = "Track Manager"
+    )]
+    fn track_manager_add_channel(&self);
+    #[action(
+        description = "Add the next dynamic-template layer to the selected track scope",
+        category = "Session",
+        group = "Track Manager"
+    )]
+    fn track_manager_add_layer(&self);
+    #[action(
+        description = "Add the next dynamic-template multi-mic track to the selected track scope",
+        category = "Session",
+        group = "Track Manager"
+    )]
+    fn track_manager_add_multi_mic(&self);
+    #[action(
+        description = "Add a performer folder to the selected track scope",
+        category = "Session",
+        group = "Track Manager"
+    )]
+    fn track_manager_add_performer(&self);
+    #[action(
+        description = "Add the next dynamic-template arrangement to the selected instrument scope",
+        category = "Session",
+        group = "Track Manager"
+    )]
+    fn track_manager_add_arrangement(&self);
+    #[action(
+        description = "Reorganize selected tracks with performer as the top metadata dimension",
+        category = "Session",
+        group = "Track Manager"
+    )]
+    fn track_manager_reorganize_selected_by_performer(&self);
+    #[action(
+        description = "Reorganize selected tracks with arrangement as the top metadata dimension",
+        category = "Session",
+        group = "Track Manager"
+    )]
+    fn track_manager_reorganize_selected_by_arrangement(&self);
+}
+
+impl TrackManagerActions for TrackManagerActionsImpl {
+    fn track_manager_add_channel(&self) {
+        dispatch(TrackManagerAction::AddChannel);
+    }
+    fn track_manager_add_layer(&self) {
+        dispatch(TrackManagerAction::AddLayer);
+    }
+    fn track_manager_add_multi_mic(&self) {
+        dispatch(TrackManagerAction::AddMultiMic);
+    }
+    fn track_manager_add_performer(&self) {
+        dispatch(TrackManagerAction::AddPerformer);
+    }
+    fn track_manager_add_arrangement(&self) {
+        dispatch(TrackManagerAction::AddArrangement);
+    }
+    fn track_manager_reorganize_selected_by_performer(&self) {
+        dispatch(TrackManagerAction::ReorganizeSelectedByPerformer);
+    }
+    fn track_manager_reorganize_selected_by_arrangement(&self) {
+        dispatch(TrackManagerAction::ReorganizeSelectedByArrangement);
+    }
+}
+
+/// Registers all seven track-manager actions with `backend`.
+pub fn register_actions<B>(backend: &B)
+where
+    B: ::architect::action::ActionBackend + ?Sized,
+{
+    register_track_manager_actions_actions(backend, std::sync::Arc::new(TrackManagerActionsImpl));
+}

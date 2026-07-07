@@ -778,3 +778,74 @@ mod tests {
         assert_eq!(decisions["child"].color, Some(0xEC4899));
     }
 }
+
+// ── architect::actions declaration ──────────────────────────────────────
+//
+// `AutoColorAction` / `action_for_id` / `dispatch` above stay put — still
+// the live path `daw_module.rs`'s dispatch chain calls into. Additive
+// declarative layer only, mirroring `setlist_actions`'s migration.
+
+/// Bridges the five auto-color actions onto `#[architect::actions]`. Every
+/// method forwards to the existing synchronous `dispatch` — no behavior
+/// change, just a declarative front door with real metadata.
+pub struct AutoColorActionsImpl;
+
+#[architect::actions(namespace = "FTS_SESSION")]
+pub trait AutoColorActions {
+    #[action(
+        description = "Apply session auto-color rules to all tracks and keep auto-color enabled",
+        category = "Session",
+        group = "Auto Color"
+    )]
+    fn auto_color_color_all(&self);
+    #[action(
+        description = "Apply session auto-color rules to selected tracks",
+        category = "Session",
+        group = "Auto Color"
+    )]
+    fn auto_color_color_selected(&self);
+    #[action(
+        description = "Toggle session auto-color for all tracks",
+        category = "Session",
+        group = "Auto Color"
+    )]
+    fn auto_color_toggle(&self);
+    #[action(
+        description = "Clear colors from all tracks and disable session auto-color",
+        category = "Session",
+        group = "Auto Color"
+    )]
+    fn auto_color_clear_all(&self);
+    #[action(
+        description = "Clear colors from selected tracks",
+        category = "Session",
+        group = "Auto Color"
+    )]
+    fn auto_color_clear_selected(&self);
+}
+
+impl AutoColorActions for AutoColorActionsImpl {
+    fn auto_color_color_all(&self) {
+        dispatch(AutoColorAction::ColorAll);
+    }
+    fn auto_color_color_selected(&self) {
+        dispatch(AutoColorAction::ColorSelected);
+    }
+    fn auto_color_toggle(&self) {
+        dispatch(AutoColorAction::Toggle);
+    }
+    fn auto_color_clear_all(&self) {
+        dispatch(AutoColorAction::ClearAll);
+    }
+    fn auto_color_clear_selected(&self) {
+        dispatch(AutoColorAction::ClearSelected);
+    }
+}
+
+/// Registers all five auto-color actions with `backend`.
+pub fn register_actions<B>(backend: &B)
+where
+    B: ::architect::action::ActionBackend + ?Sized,
+{
+    register_auto_color_actions_actions(backend, std::sync::Arc::new(AutoColorActionsImpl));
+}

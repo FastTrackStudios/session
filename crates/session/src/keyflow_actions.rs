@@ -1100,3 +1100,238 @@ mod tests {
         );
     }
 }
+
+// ── architect::actions declaration ──────────────────────────────────────
+//
+// `KeyflowAction` / `action_for_id` / `dispatch` above stay put — still the
+// live path `daw_module.rs`'s dispatch chain calls into. Additive
+// declarative layer only, mirroring `setlist_actions`'s migration: same
+// twenty handlers, now with real `ActionMeta` instead of only living in
+// `session_actions`'s `actions_proto::define_actions!` block (`lib.rs`).
+// Namespace `FTS_SESSION` matches the existing REAPER command-id
+// convention (`FTS_SESSION_INSERT_INTRO_REGION`, etc).
+
+/// Bridges the twenty keyflow-insert actions onto `#[architect::actions]`.
+/// Every method forwards to the existing synchronous `dispatch` — no
+/// behavior change, just a declarative front door with real metadata.
+pub struct KeyflowActionsImpl<D> {
+    daw: D,
+}
+
+#[architect::actions(namespace = "FTS_SESSION")]
+pub trait KeyflowActions {
+    #[action(
+        description = "Insert an Intro section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_intro_region(&self);
+    #[action(
+        description = "Insert a Verse section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_verse_region(&self);
+    #[action(
+        description = "Insert a Pre-Chorus section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_pre_chorus_region(&self);
+    #[action(
+        description = "Insert a Chorus section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_chorus_region(&self);
+    #[action(
+        description = "Insert a Bridge section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_bridge_region(&self);
+    #[action(
+        description = "Insert an Outro section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_outro_region(&self);
+    #[action(
+        description = "Insert an Instrumental section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_instrumental_region(&self);
+    #[action(
+        description = "Insert a Solo section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_solo_region(&self);
+    #[action(
+        description = "Insert a Hits section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_hits_region(&self);
+    #[action(
+        description = "Insert an Interlude section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_interlude_region(&self);
+    #[action(
+        description = "Insert a Breakdown section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_breakdown_region(&self);
+    #[action(
+        description = "Insert a Vamp section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_vamp_region(&self);
+    #[action(
+        description = "Insert a Count-In section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_count_in_region(&self);
+    #[action(
+        description = "Insert an End section region at the current edit cursor",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_end_region(&self);
+    #[action(
+        description = "Insert a Count-In marker on the MARKS ruler lane",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_count_in_marker(&self);
+    #[action(
+        description = "Insert an =START marker on the MARKS ruler lane",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_start_marker(&self);
+    #[action(
+        description = "Insert an =END marker on the MARKS ruler lane",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_end_marker(&self);
+    #[action(
+        description = "Insert a SONGSTART marker on the MARKS ruler lane",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_songstart_marker(&self);
+    #[action(
+        description = "Insert a SONGEND marker on the MARKS ruler lane",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn insert_songend_marker(&self);
+    #[action(
+        description = "Convert plain section-name markers into FTS section regions and add a SONG-lane region named after the project",
+        category = "Session",
+        group = "Edit"
+    )]
+    fn convert_markers_to_session_format(&self);
+}
+
+impl<D> KeyflowActions for KeyflowActionsImpl<D>
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap,
+{
+    fn insert_intro_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Intro));
+    }
+    fn insert_verse_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Verse));
+    }
+    fn insert_pre_chorus_region(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertSection(SectionKind::PreChorus),
+        );
+    }
+    fn insert_chorus_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Chorus));
+    }
+    fn insert_bridge_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Bridge));
+    }
+    fn insert_outro_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Outro));
+    }
+    fn insert_instrumental_region(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertSection(SectionKind::Instrumental),
+        );
+    }
+    fn insert_solo_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Solo));
+    }
+    fn insert_hits_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Hits));
+    }
+    fn insert_interlude_region(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertSection(SectionKind::Interlude),
+        );
+    }
+    fn insert_breakdown_region(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertSection(SectionKind::Breakdown),
+        );
+    }
+    fn insert_vamp_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Vamp));
+    }
+    fn insert_count_in_region(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertSection(SectionKind::CountIn),
+        );
+    }
+    fn insert_end_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::End));
+    }
+    fn insert_count_in_marker(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::CountIn));
+    }
+    fn insert_start_marker(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::Start));
+    }
+    fn insert_end_marker(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::End));
+    }
+    fn insert_songstart_marker(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertMarker(MarkerKind::SongStart),
+        );
+    }
+    fn insert_songend_marker(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::SongEnd));
+    }
+    fn convert_markers_to_session_format(&self) {
+        dispatch(&self.daw, KeyflowAction::ConvertMarkersToSessionFormat);
+    }
+}
+
+/// Registers all twenty keyflow actions with `backend`, dispatching each
+/// through a fresh `KeyflowActionsImpl` bound to `daw`.
+pub fn register_actions<D, B>(backend: &B, daw: D)
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap + Send + Sync + 'static,
+    B: ::architect::action::ActionBackend + ?Sized,
+{
+    register_keyflow_actions_actions(backend, std::sync::Arc::new(KeyflowActionsImpl { daw }));
+}

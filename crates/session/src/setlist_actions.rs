@@ -26,6 +26,7 @@
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use architect::action::ActionBackend;
 use daw::service::ProjectContext;
 use daw::service::transport::service::Transport as TransportService;
 use daw::service::{Markers, Projects, Regions, TempoMap};
@@ -287,4 +288,85 @@ where
             r.id,
         );
     }
+}
+
+// ── architect::actions declaration ──────────────────────────────────────
+//
+// `SetlistAction` / `action_for_id` / `dispatch` above stay put — they're
+// still the live path `daw_module.rs`'s dispatch chain calls into, and
+// duplicating that chain's plumbing isn't this migration's job. This is
+// an additive declarative layer: same three handlers, now with real
+// `ActionMeta` (description/category/group) instead of only living in
+// `session_actions`'s `actions_proto::define_actions!` block (`lib.rs`
+// lines ~745-761), ready for an `ActionBackend` (REAPER, CLI, …) to
+// register once one exists.
+//
+// Namespace is `FTS_SESSION` (not the macro's trait-derived default
+// `SETLIST`) so generated ids match the REAPER named-command convention
+// already in use — `FTS_SESSION_BUILD_SETLIST` etc, see
+// `fts-extensions`'s action registration and
+// `docs/handoff-session-thread-safety.md`.
+
+/// Bridges the three setlist actions onto `#[architect::actions]`. Every
+/// method forwards to the existing synchronous `dispatch` — no behavior
+/// change, just a declarative front door with real metadata.
+pub struct SetlistActionsImpl<D> {
+    daw: D,
+}
+
+#[architect::actions(namespace = "FTS_SESSION")]
+pub trait SetlistActions {
+    #[action(
+        description = "Scan every open REAPER project tab, parse SONGSTART/SONGEND markers and section regions, and rebuild the cached Setlist",
+        category = "Setlist",
+        group = "Build"
+    )]
+    fn build_setlist(&self);
+
+    #[action(
+        description = "Stamp a 3-song demo setlist (markers + section regions) into the current project, then rebuild the cached Setlist",
+        category = "Setlist",
+        group = "Demo"
+    )]
+    fn load_demo_setlist(&self);
+
+    #[action(
+        description = "Log every marker and region in the current project with position, name, color and ruler lane index — diagnostic for lane-assignment issues",
+        category = "Debug",
+        group = "Diagnostics"
+    )]
+    fn dump_ruler_state(&self);
+}
+
+impl<D> SetlistActions for SetlistActionsImpl<D>
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap,
+{
+    fn build_setlist(&self) {
+        dispatch(&self.daw, SetlistAction::Build);
+    }
+
+    fn load_demo_setlist(&self) {
+        dispatch(&self.daw, SetlistAction::LoadDemo);
+    }
+
+    fn dump_ruler_state(&self) {
+        dispatch(&self.daw, SetlistAction::DumpRulerState);
+    }
+}
+
+/// Registers all three setlist actions with `backend` (a REAPER
+/// `ActionBackend`, a CLI command-tree builder, an in-memory test double,
+/// …), dispatching each through a fresh `SetlistActionsImpl` bound to
+/// `daw`. Call once at module init, alongside [`register`].
+///
+/// Once `daw-reaper` grows an `ActionBackend` impl (architect migration
+/// phase 2), the call site is simply:
+/// `setlist_actions::register_actions(&reaper_backend, self.daw.clone())`.
+pub fn register_actions<D, B>(backend: &B, daw: D)
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap + Send + Sync + 'static,
+    B: ActionBackend + ?Sized,
+{
+    register_setlist_actions_actions(backend, Arc::new(SetlistActionsImpl { daw }));
 }
