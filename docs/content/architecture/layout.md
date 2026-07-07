@@ -26,7 +26,11 @@ apps/
     tests/
       e2e/                     package: <app>-tests-e2e
 
-crates/                        publishable libraries.
+crates/                        publishable libraries. architect's own
+                                user-facing facade crate (`crates/architect`)
+                                lives here too — it isn't a proc-macro
+                                itself, just a regular lib that re-exports
+                                the derives + runtime traits.
 
 features/
   <feature>/                   one feature = one capability.
@@ -38,18 +42,26 @@ features/
     tests/
       native/                  cargo test against in-memory backend.
       web/                     wasm-bindgen browser tests against a server.
-
-macros/                        proc-macros (architect, architect-derive).
 ```
+
+There is no top-level `macros/` or `libs/` directory. Proc-macro crates
+(`architect-derive`, `architect-rpc-derive`, `architect-action-derive`)
+live under `features/macros/` — they're cross-cutting rather than
+scoped to one feature, but they're still consumable capabilities other
+crates pull in, so they get a `features/` home rather than an
+exception. A proc-macro scoped to a *single* feature nests inside that
+feature instead — `crdt-derive` lives at `features/crdt/crdt-derive`,
+next to `crdt` and `crdt-seaorm`.
 
 The architect repo itself follows the same convention for its **built-in
 features**: `features/atom` and `features/form` (the Dioxus client-state
 primitives, re-exported on the `architect` crate behind the `atom` /
-`form` features) and `features/auth/` — the full auth feature
-(`auth-proto` / `auth` / `auth-db` / the `architect-auth` facade +
-`spec/` + `tests/`), folded in from the former architect-auth repo.
-Auth is built *on* architect (its proto uses the Entity derive), so it's
-consumed as the `architect-auth` crate rather than re-exported —
+`form` features), `features/crdt/` (the local-first CRDT layer —
+`crdt` + `crdt-seaorm` + `crdt-derive`), and `features/auth/` — the full
+auth feature (`auth-proto` / `auth` / `auth-db` / the `architect-auth`
+facade + `spec/` + `tests/`), folded in from the former architect-auth
+repo. Auth is built *on* architect (its proto uses the Entity derive),
+so it's consumed as the `architect-auth` crate rather than re-exported —
 re-exporting would be a dependency cycle.
 
 ## Naming rules

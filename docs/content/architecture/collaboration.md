@@ -53,7 +53,7 @@ pub struct Note {
 
 ## The stack
 
-`libs/crdt` is the local-first layer: one [`CrdtDoc`] per collaboration
+`features/crdt/crdt` is the local-first layer: one [`CrdtDoc`] per collaboration
 boundary (a project, a workspace, a DAW session) wrapping a `LoroDoc` +
 pluggable `Persistence`, and typed `LoroRepo<E>` CRUD views per entity.
 `crdt::sync` (feature `vox`) is the transport:
@@ -185,9 +185,9 @@ let collab = Collab::open("./collab-data").await?;
 router = collab.mount(router);                        // DocSync + DocPresence
 ```
 
-Proven end-to-end by `libs/crdt/tests/sync_convergence.rs` (in-process:
+Proven end-to-end by `features/crdt/crdt/tests/sync_convergence.rs` (in-process:
 bidirectional convergence, late joiner, offline-restart push-back,
-shutdown teardown), `libs/crdt/tests/registry.rs` (two docs through one
+shutdown teardown), `features/crdt/crdt/tests/registry.rs` (two docs through one
 dispatcher pair, presence isolation, admission gate, evict-then-reopen)
 and `app-tests-e2e` (`notes_replicas_converge_over_websocket`,
 `presence_propagates_between_peers`, `two_docs_sync_through_one_registry`

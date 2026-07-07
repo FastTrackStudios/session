@@ -6,16 +6,18 @@ weight = 30
 
 ## Crate map
 
-architect itself lives in `macros/` + `libs/`; everything under
-`examples/` is the reference demo a real project would copy.
+architect itself lives in `crates/architect` (facade) +
+`features/macros/` (its proc-macros); everything under `examples/` is
+the reference demo a real project would copy.
 
 | Crate | Path | Role |
 |-------|------|------|
-| `architect` | `macros/architect` | User-facing — re-exports the derive + runtime (layer / `Resource` / `local`). |
-| `architect-derive` | `macros/architect-derive` | The `#[derive(Entity)]` / `#[derive(JsonField)]` proc-macro. |
-| `architect-rpc-derive` | `macros/architect-rpc-derive` | `#[architect::rpc]` — sync/async trait → vox service + `Layer` token. |
-| `crdt`, `crdt-seaorm` | `libs/` | Loro CRDT layer + its SeaORM persistence. |
-| `architect-cli` | `crates/architect-cli` | `architect feature new <name>` scaffolder. |
+| `architect` | `crates/architect` | User-facing — re-exports the derive + runtime (layer / `Resource` / `local`). |
+| `architect-derive` | `features/macros/architect-derive` | The `#[derive(Entity)]` / `#[derive(JsonField)]` proc-macro. |
+| `architect-rpc-derive` | `features/macros/architect-rpc-derive` | `#[architect::rpc]` — sync/async trait → vox service + `Layer` token. |
+| `architect-action-derive` | `features/macros/architect-action-derive` | `#[architect::actions]` — named-command traits with menu/CLI metadata. |
+| `crdt`, `crdt-seaorm`, `crdt-derive` | `features/crdt/` | Loro CRDT layer + its SeaORM persistence — the local-first feature every `#[architect(crdt)]` entity builds on. |
+| `architect-cli` | `apps/architect/cli` | `architect feature new <name>` scaffolder. |
 | `example` | `examples/app/features/example/example` | Facade for the example feature. |
 | `example-proto` | `…/example-proto` | Wire contract — `#[derive(architect::Entity)]` + `ExampleService`. |
 | `example-db` | `…/example-db` | SeaORM/SQLite implementation. |

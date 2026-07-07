@@ -9,10 +9,11 @@ contract-first Rust projects: one `#[derive(Entity)]` on a plain struct
 yields a wasm-clean wire type, an auto-generated vox repository trait,
 and (under `--features server`) a SeaORM-backed implementation.
 
-The repo doubles as a working **reference monorepo**: the macro itself
-lives in `macros/`, and `examples/app/` (a full-stack demo with
-`features/` + Dioxus web/desktop apps) shows the layout and testing
-patterns a real project would copy.
+The repo doubles as a working **reference monorepo**: the facade crate
+lives in `crates/architect`, its proc-macros in `features/macros/`, and
+`examples/app/` (a full-stack demo with `features/` + Dioxus
+web/desktop apps) shows the layout and testing patterns a real project
+would copy.
 
 ## Where to start
 

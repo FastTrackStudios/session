@@ -34,11 +34,10 @@ crate. No manual `From<Model> for Example` glue.
 ## Layout
 
 ```
-macros/
-  architect/         the user-facing crate (re-exports the derive + runtime traits)
-  architect-derive/  the proc-macro crate
-crates/architect-cli/ scaffolds new feature crate families
-libs/                crdt / crdt-seaorm — the local-first layer
+crates/architect/    the user-facing crate (re-exports the derive + runtime traits)
+apps/architect/cli/  scaffolds new feature crate families (`architect feature new`)
+features/macros/     architect-derive / architect-rpc-derive / architect-action-derive — the proc-macros
+features/crdt/       crdt / crdt-seaorm / crdt-derive — the local-first layer
 
 examples/app/        the reference full-stack demo
   features/example/  proto / db / memory / crdt / ui + facade for one entity
