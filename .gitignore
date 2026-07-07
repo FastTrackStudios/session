@@ -15,3 +15,6 @@ docs/public/
 # moire-web's SQLite ingest store — created when the dashboard runs.
 moire-web.sqlite
 moire-web.sqlite-*
+
+# example server's default COLLAB_DATA_DIR — runtime CRDT state, not source.
+collab-data/

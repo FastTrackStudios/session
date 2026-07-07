@@ -75,3 +75,57 @@ The runtime DI engine (see [idioms §6–7](@/architecture/idioms.md)):
 
 See [The architect pattern](@/architecture/pattern.md) for the full
 list of fields and the input → output mapping.
+
+## `#[architect::rpc]` mechanics
+
+Given a trait, the macro classifies each method **sync** or **async**
+and adapts what it emits: all-sync traits get a bridge that marshals
+every call onto a `Dispatcher` plus an async mirror for the vox
+client/host; all-async traits are already their own RPC face; mixed
+traits bridge the sync methods and pass the async ones through
+unchanged. `#[subscribe]` methods are stream declarations, not calls —
+see [streams](@/architecture/streams.md).
+
+**Object-safety requirements** (checked at macro-expansion time, with a
+clear compile error on violation):
+
+- Methods take `&self` — never `&mut self` or by-value `self`.
+- No generic type or const parameters on the method.
+- No borrowed return types, and no `Self` returns.
+
+**Argument rewriting** (sync trait → owned async mirror, so the
+bridge's closures can capture arguments across the dispatch boundary):
+
+| Sync-trait argument | Mirror-trait argument |
+|---|---|
+| `&str` | `String` |
+| `&[T]` | `Vec<T>` |
+| other `&T` | `T` (the backend must impl `Clone`) |
+
+**`Dispatcher`** (`architect::dispatch`) marshals a sync closure onto a
+runtime-appropriate execution context; it's object-safe
+(`Arc<dyn Dispatcher>`) so the choice composes at runtime.
+`DispatchError` (`ShutDown` / `Panicked` / `Cancelled`) wraps
+transport-level dispatch failures — application errors returned by the
+closure flow through unchanged. Two dispatchers ship in `architect`:
+`CurrentThreadDispatcher` (calls inline — tests, in-process callers)
+and `TokioBlockingDispatcher` (`spawn_blocking`, feature
+`dispatch-tokio`, the server default — see
+[feature flags](@/architecture/features.md)). Runtime-specific
+dispatchers (a UI main-thread queue, a hardware-API thread) live in
+their own crates and implement the same trait.
+
+## Glossary
+
+- **Service** — a trait describing operations on a domain concept,
+  annotated with `#[architect::rpc]` (or emitted by `#[architect(repo)]`).
+  The trait *is* the service; the macro derives the network face.
+- **Entity** — a struct describing data shape, annotated with
+  `#[derive(architect::Entity)]`. Travels over the wire as `facet::Facet`.
+- **Host** — the server-side wrapper (`<T>Host`) that mounts a backend
+  impl on a vox router.
+- **Client** — the caller-side proxy (`<T>Client`) that talks to a
+  `<T>Host` over vox.
+- **Bridge** — the adapter inside `<T>Host` that turns `Arc<dyn T>` +
+  `Dispatcher` into the hidden async mirror trait vox serves. Not
+  user-visible.
