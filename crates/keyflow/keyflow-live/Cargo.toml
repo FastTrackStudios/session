@@ -1,0 +1,13 @@
+[package]
+name = "keyflow-live"
+version.workspace = true
+edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+description = "Live in-process implementation of keyflow-proto services"
+
+[dependencies]
+keyflow-proto.workspace = true
+keyflow-text.workspace = true
+keyflow-midi.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "keyflow-orchestra"
+version.workspace = true
+edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+description = "MusicXML → articulated sample-library MIDI (CSS orchestrator port) + score analysis"
+
+[dependencies]
+musicxml = { workspace = true }
+thiserror = { workspace = true }
+# .mxl extraction is done here (container.xml rootfile → inner XML) because
+# the musicxml crate's built-in zip reader fails on multi-file archives and
+# on inner names that don't end in .musicxml (e.g. MuseScore's score.xml).
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true

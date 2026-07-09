@@ -1,0 +1,102 @@
+[package]
+name = "keyflow-ui"
+version = "0.1.0"
+edition = "2021"
+description = "Dioxus UI components for Keyflow chart editing"
+
+[dependencies]
+# Keyflow parsing, types, and engraver (all through the facade)
+keyflow = { workspace = true, features = ["text", "engraver", "highlighting"] }
+
+# FTS shared design system (Button, Card, Tabs, Input, Tooltip, Theme, etc.).
+# The chart **renderer** stays raw (Vello scene mounts under
+# `chart_graphics.rs` / `chart_renderer.rs`); everything else — toolbars,
+# panels, editor chrome, status footer — should compose `fts-ui` primitives.
+fts-ui = { workspace = true }
+
+# Backend-agnostic rendering abstraction
+anyrender = { workspace = true }
+# Pinned inline: root pins anyrender_vello 0.11 for the blitz-git stack;
+# keyflow-ui pairs 0.10.1 with crates.io dioxus-native 0.7.9.
+anyrender_vello = { version = "0.10.1", optional = true, features = ["log_frame_times"] }
+anyrender_vello_hybrid = { workspace = true, optional = true, features = ["webgl"] }
+peniko = { workspace = true, optional = true }
+
+# Dioxus UI framework - use dioxus-native when native feature is enabled
+dioxus = { version = "0.7.9", optional = true }
+# Root's dioxus-native (blitz git rev): the crates.io 0.7.9 release pulls a
+# second stylo (`links = "servo_style_crate"`) and cannot coexist with the
+# daw stack's blitz in one graph. Only used by the non-default `native`
+# feature.
+dioxus-native = { workspace = true, optional = true }
+
+# Vello scene types (for building scenes to hand off to ChartGraphics)
+vello = "0.9"
+vello_hybrid = { workspace = true, optional = true }
+kurbo = { workspace = true }
+
+# WASM WebGL rendering
+vello_common = { workspace = true, optional = true }
+web-sys = { version = "0.3", optional = true, features = ["HtmlCanvasElement"] }
+rustc-hash = { version = "2", optional = true }
+
+# Session UI signals (for playback state, chart area bounds, etc.)
+session-ui = { workspace = true, default-features = false, optional = true }
+session = { workspace = true, optional = true }
+
+# DAW protocol types (for MusicalPosition)
+daw-proto = { workspace = true, optional = true }
+
+# Dock layout system (for panel visibility checks)
+dock-dioxus = { workspace = true, default-features = false, optional = true }
+dock-proto = { workspace = true, optional = true }
+
+# JSON parsing (for bounds eval results)
+serde_json = { workspace = true, optional = true }
+
+# MusicXML catalog extraction for local ignored reference corpora.
+roxmltree = "0.20"
+
+# Icons
+lucide-dioxus = { version = "2", features = ["all-icons"] }
+
+# Async runtime (for debounce timers on desktop)
+tokio = { version = "1.49", features = ["time"] }
+
+# Logging
+tracing = "0.1"
+web-time = "1.1.0"
+
+[features]
+default = ["web"]
+# Web/desktop (WebView-based) rendering
+web = ["dioxus", "dioxus/desktop", "desktop-panels"]
+# Native GPU-accelerated rendering via Blitz
+native = ["dioxus", "dioxus-native", "desktop-panels"]
+# Desktop panel components (ChartView, ChartPreviewPanel) with full app dependencies
+desktop-panels = [
+    "anyrender_vello",
+    "peniko",
+    "session-ui",
+    "session",
+    "daw-proto",
+    "dock-dioxus",
+    "dock-proto",
+    "serde_json",
+]
+# WASM chart panels — WebGL2 rendering via vello_hybrid, no dock/desktop deps
+wasm-panels = [
+    "dioxus",
+    "anyrender_vello_hybrid",
+    "vello_hybrid",
+    "vello_common",
+    "web-sys",
+    "rustc-hash",
+    "peniko",
+    "session-ui",
+    "daw-proto",
+    "serde_json",
+]
+
+[lints]
+workspace = true

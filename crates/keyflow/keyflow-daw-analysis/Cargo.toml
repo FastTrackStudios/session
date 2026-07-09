@@ -1,0 +1,35 @@
+[package]
+name = "keyflow-daw-analysis"
+version.workspace = true
+edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+description = "Keyflow-domain MIDI chart service: chord detection + chart text generation, backed by the daw client API"
+
+[dependencies]
+# This crate owns the chart-domain service trait and its types. daw has
+# nothing to do with chord detection or chart text — those are keyflow
+# concerns. The crate sits *above* the daw facade: depends on `daw`
+# (public) for project / track / take / midi access, and on `keyflow`
+# (sibling) for the actual analysis. fts-extensions composes both at
+# startup and registers the dispatcher with daw-bridge's RoutedHandler.
+keyflow = { workspace = true, features = ["engraver", "midi-import"] }
+daw = { workspace = true }
+
+# architect — provides `#[architect::rpc]`. Enabling the `vox` feature
+# wires the macro's async mirror through the workspace's vox stack.
+# `MidiCharts` is all-async, so architect emits a pass-through
+# `#[vox::service]` decoration.
+architect = { workspace = true, features = ["vox"] }
+vox = { workspace = true }
+facet = { workspace = true }
+
+eyre = "0.6"
+tracing = "0.1"
+
+[features]
+default = ["vox"]
+# Consumer-crate flag the architect-rpc-derive macro checks via
+# `#[cfg(feature = "vox")]` on the generated client/dispatcher aliases.
+vox = []
+
+[lints]
+workspace = true
