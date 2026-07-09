@@ -1,0 +1,40 @@
+{
+  "name": "keyflow-vscode",
+  "displayName": "Keyflow",
+  "description": "Live linter, completion, and hover for Keyflow chart notation.",
+  "version": "0.1.0",
+  "publisher": "fasttrackstudio",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:keyflow"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "keyflow",
+        "aliases": ["Keyflow", "keyflow"],
+        "extensions": [".kf", ".keyflow"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "title": "Keyflow",
+      "properties": {
+        "keyflow.serverPath": {
+          "type": "string",
+          "default": "keyflow-lsp",
+          "description": "Path to the keyflow-lsp executable. Defaults to 'keyflow-lsp' on $PATH."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^2.24.0"
+  }
+}

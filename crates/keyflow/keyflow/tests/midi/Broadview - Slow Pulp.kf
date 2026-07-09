@@ -1,0 +1,46 @@
+125bpm 4/4 #C
+
+IN
+Am7 | C | G | D
+Am7 | C | G | D/F#
+Am7 | C | G | D
+Am7 | C | G | D/F#
+
+VS 16
+Am7 | C | G | D
+Am7 | C | G | D/F#
+Am7 | C | G | D
+Am7 | C | G | D/F#
+
+CH 10
+Em // D/F# // | G // D // | Cmaj7 | . x2
+Am7 | Cmaj7
+
+INST {Harmonica} 6
+G | D | Am7 | C
+G | D/F#
+
+VS
+Am7 | Cmaj7 | G | D
+Am7 | C | G | D/F#
+Am7 | C | G | D
+Am7 | Cmaj7 | G | D/F#
+
+CH 14
+Em // D/F# // | G // D // | Cmaj7 | . x2
+Am7 | C | G | D
+Am7 | Cmaj7
+
+INST 18
+G | D/F# | Am7 | C | G | D | Am7 | C x2
+G | D/F#
+
+CH 24
+Em // D/F# // | G // D // | Cmaj7 | . x2
+Am7 | C | G | D
+Am7 | C | G // D/F# // | Em7
+A | . | Cmaj7 | . x2
+
+Outro 6
+G // D/F# // | Em7 // D // | Cmaj7 | .
+. | .

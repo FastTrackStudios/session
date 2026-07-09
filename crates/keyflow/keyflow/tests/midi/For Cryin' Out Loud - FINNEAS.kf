@@ -1,0 +1,31 @@
+93bpm 4/4 #C
+
+IN
+B | . | . | .
+. | . | . | 'C#m7
+
+VS 16
+'C#m7 | 'F# | 'Bmaj7 | 'E x4
+
+CH 8
+C#m7 | 'F# | 'Bmaj7 | 'E x2
+
+INST 4
+C#m7 | 'F# | 'Bmaj7 | 'E
+
+VS
+C#m7 | 'F# | 'Bmaj7 | 'E x2
+'C#m7 | 'F# | 'Bmaj7 | 'E x2
+
+CH 8
+C#m7 | 'F# | 'Bmaj7 | 'E x2
+
+INST 8
+C#m7 | 'F# | 'Bmaj7 | 'E | C#m7 | 'F# | 'Bmaj7 | 'E
+
+CH 3A 8
+C#m7 | 'F# | 'Bmaj7 | 'E x2
+
+CH 3B 8
+C#m7 | 'F# | 'Bmaj7 | 'E
+'C#m7 | 'F# | 'Bmaj7 | 'E

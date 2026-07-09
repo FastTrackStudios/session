@@ -1,0 +1,61 @@
+[package]
+name = "keyflow"
+version.workspace = true
+edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+description = "Music theory and chord parsing - re-exports from keyflow-proto"
+
+[features]
+default = ["text", "engraver"]
+text = ["dep:keyflow-text"]
+midi = ["dep:keyflow-midi"]
+live = ["dep:keyflow-live"]
+# CPU layout + SVG export (no GPU). Pair with `text` for `.kf` text → SVG.
+# This is what lightweight / wasm consumers (e.g. an editor rendering `.kf`
+# fences) should enable — it never pulls in wgpu/vello.
+svg = ["dep:engraver", "engraver/svg"]
+# Live GPU renderer (wgpu/vello) on top of `svg`.
+wgpu = ["svg", "engraver/wgpu"]
+# Full engraver: svg + wgpu + PDF export.
+engraver = ["svg", "wgpu", "engraver/engraver"]
+highlighting = ["keyflow-text?/highlighting"]
+midi-import = ["engraver", "engraver/midi-import"]
+
+[dependencies]
+# Core dependencies
+tracing = "0.1"
+color-eyre = "0.6"
+colored = "3.0"
+regex = "1.11.3"
+derive_more = { version = "1.0", features = ["debug", "display", "from", "error"] }
+
+# DAW types-only deps (WASM compatible). Internal crates rather than
+# the `daw` facade — keyflow is consumed by daw-reaper for chord
+# detection, so going through the facade would create a cycle.
+daw-module = { workspace = true }
+daw-proto = { workspace = true }
+facet = { workspace = true }
+helgoboss-midi = "0.4.0"
+
+# Keyflow protocol types
+keyflow-proto.workspace = true
+keyflow-text = { workspace = true, optional = true }
+keyflow-midi = { workspace = true, optional = true }
+keyflow-live = { workspace = true, optional = true }
+engraver = { workspace = true, optional = true }
+
+# WASM-specific dependencies
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "1.0", features = ["v4", "js"] }
+getrandom = { version = "0.2", features = ["js"] }
+
+# Non-WASM dependencies
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+uuid = { version = "1.0", features = ["v4"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+dawfile-reaper = { workspace = true }
+engraver = { workspace = true, features = ["engraver", "midi-import"] }
+
+[lints]
+workspace = true

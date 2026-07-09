@@ -1,0 +1,80 @@
+[package]
+name = "keyflow-sync"
+version.workspace = true
+edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+description = "Lyrics-to-audio forced alignment + pluggable stem separation for Keyflow"
+
+[features]
+# Lean by default: the pure-Rust trellis, tokenizer, SI-SDR benchmark, the
+# sidecar format, and the external (shell-out) separator/aligner backends all
+# build with no native deps. `kf sync` works against an external `demucs` /
+# aligner with just this.
+default = []
+
+# Self-contained inference: embed wav2vec2 (alignment) and HT-Demucs
+# (separation) via ONNX Runtime. Pulls the `ort` native lib into the binary —
+# this is the "no Python, no external tools" path. Model *weights* are still
+# downloaded separately (see `download`); they are never in the binary.
+onnx = ["dep:ort", "dep:ndarray"]
+
+# Download + cache model weights (`kf models pull`). Pure-Rust TLS via ureq.
+download = ["dep:ureq", "dep:sha2"]
+
+# GPU acceleration via the CUDA execution provider (implies `onnx`). Falls back
+# to CPU at runtime if the CUDA libraries aren't present.
+cuda = ["onnx", "ort/cuda"]
+
+# Whisper ASR (candle, pure Rust) — an LM-backed transcription baseline to
+# compare against CTC forced alignment. Much better on singing than greedy CTC.
+whisper = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:serde_json", "dep:flate2", "dep:rand", "download"]
+# Whisper on GPU (candle CUDA backend; needs nvcc + CUDA toolkit at build).
+whisper-cuda = ["whisper", "candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+
+[dependencies]
+# Pure-Rust WAV I/O. Compressed formats go through ffmpeg upstream (see docs).
+hound = "3.5"
+
+# Pure-Rust Standard MIDI File writer for the lyrics/karaoke MIDI export.
+midly = "0.5"
+
+# Sidecar (de)serialization — match the workspace's facet stack. The sidecar is
+# chart-agnostic (keyed by section/word index), so this crate never depends on
+# the keyflow chart graph; the CLI extracts SectionLyrics from a parsed Chart.
+facet = { workspace = true }
+facet-json = { workspace = true }
+
+# Optional: embedded ONNX inference.
+# `std` is required so ort enables `ndarray/std` (NdFloat); ndarray is pinned to
+# ort's own 0.17 line so `Tensor::from_array` accepts our arrays without a skew.
+# Pinned =rc.10 to unify with session-guide's chatterbox-rs pin (rc.12 made
+# `Session` fields private and broke it; one graph = one ort). rc.10 has no
+# `tls-rustls` feature — its ureq downloader carries its own TLS.
+ort = { version = "=2.0.0-rc.10", optional = true, default-features = false, features = [
+    "std",
+    "ndarray",
+    "download-binaries",
+    "copy-dylibs",
+    "tracing",
+] }
+ndarray = { version = "0.17", optional = true }
+
+# Optional: model download + integrity check.
+ureq = { version = "2.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+
+# Optional: Whisper ASR via candle (pure Rust).
+candle-core = { version = "0.9", optional = true }
+candle-nn = { version = "0.9", optional = true }
+candle-transformers = { version = "0.9", optional = true }
+tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
+serde_json = { version = "1", optional = true }
+flate2 = { version = "1", optional = true }
+rand = { version = "0.8", optional = true }
+
+tracing = "0.1"
+
+[dev-dependencies]
+hound = "3.5"
+
+[lints]
+workspace = true

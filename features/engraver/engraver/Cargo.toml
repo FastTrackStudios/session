@@ -1,0 +1,21 @@
+[package]
+name = "engraver"
+version = "0.1.0"
+edition = "2024"
+description = "Engraver facade — re-exports engraver-proto for chart layout and rendering"
+
+[features]
+default = ["engraver"]
+# CPU layout + SVG export, no GPU. For lightweight / wasm consumers.
+svg = ["engraver-proto/svg"]
+# Live GPU renderer (wgpu/vello) on top of `svg`.
+wgpu = ["svg", "engraver-proto/wgpu"]
+# Full engraver: svg + wgpu + PDF export.
+engraver = ["svg", "wgpu", "engraver-proto/engraver"]
+midi-import = ["engraver", "engraver-proto/midi-import"]
+
+[dependencies]
+engraver-proto.workspace = true
+
+[lints]
+workspace = true

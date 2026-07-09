@@ -1,0 +1,26 @@
+{
+  "name": "tree-sitter-keyflow",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for Keyflow chart notation (.kf) with embedded ChordPro 6.07.",
+  "main": "bindings/node",
+  "keywords": ["parser", "tree-sitter", "keyflow", "chordpro", "music"],
+  "author": "FastTrack Studio",
+  "license": "MIT OR Apache-2.0",
+  "scripts": {
+    "gen": "tree-sitter generate",
+    "test": "tree-sitter test",
+    "parse": "tree-sitter parse"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.keyflow",
+      "file-types": ["kf", "keyflow"],
+      "highlights": ["queries/highlights.scm"],
+      "injections": ["queries/injections.scm"],
+      "locals": ["queries/locals.scm"]
+    }
+  ],
+  "devDependencies": {
+    "tree-sitter-cli": "^0.22"
+  }
+}
