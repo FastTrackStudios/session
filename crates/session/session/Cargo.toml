@@ -1,0 +1,61 @@
+[package]
+name = "session"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "session"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "session"
+path = "src/main.rs"
+
+[dependencies]
+session-proto.workspace = true
+actions-proto.workspace = true
+architect.workspace = true
+daw = { workspace = true, features = ["file", "reaper"] }
+daw-proto = { workspace = true }
+daw-reaper = { workspace = true }
+daw-synchronization.workspace = true
+# Raw REAPER FFI — used by take_ranking for cursor / item / take-marker ops
+# that aren't covered by the daw service traits.
+reaper-high = { workspace = true }
+reaper-low = { workspace = true }
+reaper-medium = { workspace = true }
+dynamic-template.workspace = true
+# Canonical 128-slot group partition lives here (music_catalog::groups).
+music-catalog.workspace = true
+# `transport-local` on top of the root ["runtime"] baseline: the standalone
+# setlist harness serves/connects over `local://` Unix sockets (carried
+# over from the dissolved session workspace's vox pin).
+vox = { workspace = true, features = ["transport-local"] }
+tokio = { version = "1.48", features = ["rt", "sync", "time", "macros"] }
+moire.workspace = true
+eyre.workspace = true
+tracing.workspace = true
+chrono = "0.4"
+utils.workspace = true
+uuid = { version = "1", features = ["v4"] }
+keyflow = { workspace = true, features = ["text"] }
+keyflow-daw-analysis = { workspace = true }
+smallvec = "1.13"
+rustc-hash = "2"
+
+[dev-dependencies]
+daw = { workspace = true, features = ["standalone", "file", "test-harness"] }
+# Ephemeral, REAPER-free harness: drive the SetlistService build path against
+# an in-process daw-standalone backend over a vox memory link.
+# "audio" is required: daw-standalone's unconditional `sync` module references
+# the feature-gated `audio_engine` (compile error with default features) —
+# same workaround dynamic-template carries.
+daw-standalone = { workspace = true, features = ["bootstrap", "audio"] }
+daw-proto = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+eyre.workspace = true
+
+[lints]
+workspace = true

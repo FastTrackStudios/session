@@ -1,0 +1,27 @@
+[package]
+name = "session-extension"
+version.workspace = true
+edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+description = "Test-only REAPER extension that hosts the session DawModule"
+
+[lib]
+crate-type = ["cdylib"]
+name = "reaper_session_extension"
+path = "src/lib.rs"
+test = false
+
+[dependencies]
+daw = { workspace = true, features = ["reaper"] }
+daw-reaper.workspace = true
+daw-extension-runtime.workspace = true
+session.workspace = true
+eyre.workspace = true
+fragile = "2"
+crossbeam-channel = "0.5"
+reaper-low.workspace = true
+reaper-macros.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
