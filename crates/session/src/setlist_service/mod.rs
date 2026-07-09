@@ -59,6 +59,10 @@ pub struct SetlistServiceImpl<D = ()> {
     /// Queued navigation target (flashes in UI until transport reaches it)
     /// Only one target can be queued at a time
     pub(crate) queued_target: Arc<RwLock<Option<QueuedTarget>>>,
+    /// `#[subscribe]` hubs — the stream layer serves subscribers from these;
+    /// the pumps (subscribe_impl / subscribe_active_impl) publish into them.
+    pub(crate) events_hub: architect::PubSub<session_proto::SetlistEvent>,
+    pub(crate) indices_hub: architect::PubSub<session_proto::ActiveIndices>,
     /// Monotonic setlist revision stream for subscribers (hydration/build updates)
     pub(crate) setlist_update_bus: Arc<WatchBus<u64>>,
     /// Last setlist revision value
@@ -94,6 +98,8 @@ where
             active_song_id: self.active_song_id.clone(),
             cached_indices: self.cached_indices.clone(),
             queued_target: self.queued_target.clone(),
+            events_hub: self.events_hub.clone(),
+            indices_hub: self.indices_hub.clone(),
             setlist_update_bus: self.setlist_update_bus.clone(),
             setlist_revision: self.setlist_revision.clone(),
             song_cache: self.song_cache.clone(),
@@ -119,6 +125,8 @@ impl<D> SetlistServiceImpl<D> {
                 ActiveIndices::default(),
             )),
             queued_target: Arc::new(RwLock::new("session.setlist.queued_target", None)),
+            events_hub: architect::PubSub::sliding(64),
+            indices_hub: architect::PubSub::sliding(16),
             setlist_update_bus: Arc::new(WatchBus::new("session.setlist.updates", 0_u64)),
             setlist_revision: Arc::new(AtomicU64::new(0)),
             song_cache: Cache::named("session.setlist.song_cache"),

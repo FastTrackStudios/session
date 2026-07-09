@@ -396,10 +396,26 @@ where
     // SetlistService trait: Subscriptions
     // =========================================================================
 
-    pub(crate) async fn subscribe_impl(
-        &self,
-        events: Tx<SetlistEvent>,
-    ) -> Result<(), SessionServiceError> {
+    /// Spawn the `#[subscribe]` stream pumps (setlist events + active
+    /// indices) — call once after construction; every stream subscriber
+    /// shares the hubs.
+    pub fn start_stream_pumps(&self)
+    where
+        Self: Clone + Send + Sync + 'static,
+    {
+        let pump = self.clone();
+        moire::task::spawn(async move {
+            let _ = pump.subscribe_impl().await;
+        });
+        let pump = self.clone();
+        moire::task::spawn(async move {
+            let _ = pump.subscribe_active_impl().await;
+        });
+    }
+
+    /// One process-wide event pump: publishes every setlist change into
+    /// the `#[subscribe]` hub (all stream subscribers share it). Spawn once.
+    pub(crate) async fn subscribe_impl(&self) -> Result<(), SessionServiceError> {
         // Run the streaming loop INLINE so the subscribe operation stays
         // in-flight for the lifetime of the subscription — that keeps the Tx
         // channel bound. Returning early (spawn + Ok) completes the operation,
@@ -410,13 +426,10 @@ where
         // `await` subscribe() before reading the receiver — it must poll the
         // receiver concurrently with this call (see the desktop / web-server /
         // harness clients).
-        self.run_subscription_stream(events).await
+        self.run_subscription_stream().await
     }
 
-    async fn run_subscription_stream(
-        &self,
-        events: Tx<SetlistEvent>,
-    ) -> Result<(), SessionServiceError> {
+    async fn run_subscription_stream(&self) -> Result<(), SessionServiceError> {
         debug!("SetlistService::subscribe() - starting fully reactive event stream");
         let this = self;
         {
@@ -435,16 +448,7 @@ where
                 let setlist = this.setlist.read().await;
                 if let Some(ref sl) = *setlist {
                     // Send initial setlist state.
-                    if events
-                        .send(SetlistEvent::SetlistChanged(sl.clone()))
-                        .await
-                        .is_err()
-                    {
-                        debug!(
-                            "SetlistService::subscribe() - client disconnected during initial send"
-                        );
-                        return Ok(());
-                    }
+                    self.events_hub.publish(SetlistEvent::SetlistChanged(sl.clone()));
                     sl.songs.clone()
                 } else {
                     // Build produced nothing (e.g. no open projects). Stay
@@ -459,17 +463,12 @@ where
             {
                 let chart_snapshot = this.chart_cache.snapshot().await;
                 for (index, song) in songs.iter().enumerate() {
-                    if let Some(chart) = chart_snapshot.get(&song.project_guid).cloned()
-                        && events
-                            .send(SetlistEvent::SongChartHydrated {
-                                song_id: song.id.clone(),
-                                index,
-                                chart,
-                            })
-                            .await
-                            .is_err()
-                    {
-                        return Ok(());
+                    if let Some(chart) = chart_snapshot.get(&song.project_guid).cloned() {
+                        self.events_hub.publish(SetlistEvent::SongChartHydrated {
+                            song_id: song.id.clone(),
+                            index,
+                            chart,
+                        });
                     }
                 }
             }
@@ -520,14 +519,7 @@ where
             {
                 *this.active_song_id.write().await = Some(song.id.to_string());
             }
-            if events
-                .send(SetlistEvent::ActiveIndicesChanged(last_indices.clone()))
-                .await
-                .is_err()
-            {
-                debug!("SetlistService::subscribe() - client disconnected");
-                return Ok(());
-            }
+            self.events_hub.publish(SetlistEvent::ActiveIndicesChanged(last_indices.clone()));
 
             // Send initial transport state for all songs (one-time poll)
             let initial_transports = this.get_all_song_transports().await;
@@ -537,14 +529,7 @@ where
                     .cloned()
                     .map(|transport| (transport.song_index, transport))
                     .collect();
-            if events
-                .send(SetlistEvent::TransportUpdate(initial_transports))
-                .await
-                .is_err()
-            {
-                debug!("SetlistService::subscribe() - client disconnected");
-                return Ok(());
-            }
+            self.events_hub.publish(SetlistEvent::TransportUpdate(initial_transports));
 
             // Track current song/section for enter/exit events
             // Keyed by song_index to track section per song
@@ -612,26 +597,14 @@ where
                                 .enumerate()
                                 .map(|(idx, song)| (song.id.to_string(), idx))
                                 .collect();
-                            if events
-                                .send(SetlistEvent::SetlistChanged(setlist))
-                                .await
-                            .is_err()
-                            {
-                                break;
-                            }
+                            self.events_hub.publish(SetlistEvent::SetlistChanged(setlist));
                         }
                     }
 
                     hydrated = hydration_rx.recv() => {
                         match hydrated {
                             Ok((index, song)) => {
-                                if events
-                                    .send(SetlistEvent::SongHydrated { song_id: song.id.clone(), index, song })
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
+                                self.events_hub.publish(SetlistEvent::SongHydrated { song_id: song.id.clone(), index, song });
                             }
                             Err(BroadcastRecvError::Lagged(skipped)) => {
                                 debug!("Hydration update lagged by {} messages", skipped);
@@ -650,13 +623,7 @@ where
                                         .map(|s| s.id.clone())
                                         .unwrap_or_else(session_proto::SongId::new)
                                 };
-                                if events
-                                    .send(SetlistEvent::SongChartHydrated { song_id, index, chart })
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
+                                self.events_hub.publish(SetlistEvent::SongChartHydrated { song_id, index, chart });
                             }
                             Err(BroadcastRecvError::Lagged(skipped)) => {
                                 debug!("Chart hydration update lagged by {} messages", skipped);
@@ -796,9 +763,7 @@ where
 
                         if !song_transports.is_empty() {
                             for section_event in pending_section_events {
-                                if events.send(section_event).await.is_err() {
-                                    break;
-                                }
+                                self.events_hub.publish(section_event);
                             }
 
                             // Update ActiveIndices from the first playing song (or first song with updates)
@@ -904,15 +869,9 @@ where
                                 }
 
                                 if structural_change || (progress_change && can_emit_progress) {
-                                    if events
-                                        .send(SetlistEvent::ActiveIndicesChanged(
+                                    self.events_hub.publish(SetlistEvent::ActiveIndicesChanged(
                                             current_indices.clone(),
-                                        ))
-                                        .await
-                                    .is_err()
-                                    {
-                                        break;
-                                    }
+                                        ));
                                     if progress_change {
                                         last_indices_progress_emit = Instant::now();
                                     }
@@ -942,13 +901,7 @@ where
                             let changed_count = changed_transports.len();
                             if changed_count > 0 {
                                 let changed_transports = changed_transports.into_vec();
-                                if events
-                                    .send(SetlistEvent::TransportUpdate(changed_transports))
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
+                                self.events_hub.publish(SetlistEvent::TransportUpdate(changed_transports));
                                 transport_events_sent += 1;
                                 transport_song_updates_sent += changed_count;
                             }
@@ -1042,13 +995,7 @@ where
                                 }
 
                                 if new_indices != last_indices {
-                                    if events
-                                        .send(SetlistEvent::ActiveIndicesChanged(new_indices.clone()))
-                                        .await
-                                        .is_err()
-                                    {
-                                        break;
-                                    }
+                                    self.events_hub.publish(SetlistEvent::ActiveIndicesChanged(new_indices.clone()));
                                     if new_indices.song_index != last_indices.song_index {
                                         chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
                                         chart_probe_last_started = Instant::now()
@@ -1162,45 +1109,20 @@ where
         Ok(())
     }
 
-    pub(crate) async fn subscribe_active_impl(
-        &self,
-        indices: Tx<ActiveIndices>,
-    ) -> Result<(), SessionServiceError> {
-        info!("SetlistService::subscribe_active() - starting active indices stream");
-
-        // Clone self for the spawned task
-        let this = Arc::new((*self).clone());
-
-        // Spawn the streaming loop so this method returns immediately
-        tokio::spawn(async move {
-            // Send initial state
-            let mut last_indices = this.calculate_active_indices().await;
-            if indices.send(last_indices.clone()).await.is_err() {
-                debug!(
-                    "SetlistService::subscribe_active() - client disconnected during initial send"
-                );
-                return;
+    /// One process-wide active-indices pump: 60 Hz cursor changes into
+    /// the `#[subscribe]` hub. Spawn once.
+    pub(crate) async fn subscribe_active_impl(&self) -> Result<(), SessionServiceError> {
+        info!("SetlistService: starting active-indices pump");
+        let mut last_indices = self.calculate_active_indices().await;
+        self.indices_hub.publish(last_indices.clone());
+        loop {
+            moire::time::sleep(Duration::from_micros(16667)).await;
+            let current_indices = self.calculate_active_indices().await;
+            if current_indices != last_indices {
+                self.indices_hub.publish(current_indices.clone());
+                last_indices = current_indices;
             }
-
-            // Poll for changes at 60Hz (smooth updates during playback)
-            loop {
-                moire::time::sleep(Duration::from_micros(16667)).await;
-
-                let current_indices = this.calculate_active_indices().await;
-
-                // Only send if something changed
-                if current_indices != last_indices {
-                    if indices.send(current_indices.clone()).await.is_err() {
-                        debug!("SetlistService::subscribe_active() - client disconnected");
-                        break;
-                    }
-                    last_indices = current_indices;
-                }
-            }
-
-            info!("SetlistService::subscribe_active() - stream ended");
-        });
-        Ok(())
+        }
     }
 
     pub(crate) async fn get_audio_latency_impl(&self) -> Result<f64, SessionServiceError> {
@@ -1590,16 +1512,7 @@ where
     // Subscriptions — delegate to polling.rs
     // =========================================================================
 
-    async fn subscribe(&self, events: Tx<SetlistEvent>) -> Result<(), SessionServiceError> {
-        self.subscribe_impl(events).await
-    }
 
-    async fn subscribe_active(
-        &self,
-        indices: Tx<ActiveIndices>,
-    ) -> Result<(), SessionServiceError> {
-        self.subscribe_active_impl(indices).await
-    }
 
     async fn get_audio_latency(&self) -> Result<f64, SessionServiceError> {
         self.get_audio_latency_impl().await
@@ -1609,5 +1522,28 @@ where
         &self,
     ) -> Result<session_proto::AudioLatencyInfo, SessionServiceError> {
         self.get_audio_latency_info_impl().await
+    }
+}
+
+impl<D> session_proto::services::setlist_service::SetlistServiceStreamSource
+    for SetlistServiceImpl<D>
+where
+    D: AudioEngine
+        + Clone
+        + daw::service::ExtState
+        + Projects
+        + daw::service::TempoMap
+        + Transport
+        + daw::service::Tracks
+        + Send
+        + Sync
+        + 'static,
+{
+    fn events_hub(&self) -> &architect::PubSub<SetlistEvent> {
+        &self.events_hub
+    }
+
+    fn active_indices_hub(&self) -> &architect::PubSub<ActiveIndices> {
+        &self.indices_hub
     }
 }
