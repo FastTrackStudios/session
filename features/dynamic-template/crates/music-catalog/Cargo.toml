@@ -1,0 +1,13 @@
+[package]
+name = "music-catalog"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Canonical music production taxonomy — instrument groups, song sections, colors, abbreviations"
+
+[dependencies]
+color-palette = { workspace = true }
+
+[lints]
+workspace = true
