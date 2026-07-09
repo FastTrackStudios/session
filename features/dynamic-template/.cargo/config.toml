@@ -1,5 +1,0 @@
-[alias]
-xtask = "run --package xtask --release --"
-
-[net]
-git-fetch-with-cli = true

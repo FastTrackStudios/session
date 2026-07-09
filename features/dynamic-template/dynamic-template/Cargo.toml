@@ -1,7 +1,7 @@
 [package]
 name = "dynamic-template"
 version.workspace = true
-edition.workspace = true
+edition = "2021"  # original edition of the dissolved workspace (root is 2024)
 authors.workspace = true
 license.workspace = true
 description = "Dynamic template system using monarchy for hierarchical organization"
@@ -15,9 +15,9 @@ path = "src/main.rs"
 [dependencies]
 dynamic-template-proto = { workspace = true }
 architect = { workspace = true }
-daw = { workspace = true }
+daw = { workspace = true, features = ["reaper"] }
 daw-proto = { workspace = true }
-daw-reaper = { workspace = true }
+daw-reaper = { workspace = true, default-features = true }
 eyre = { workspace = true }
 monarchy = { workspace = true }
 color-palette = { workspace = true }
