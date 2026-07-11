@@ -374,21 +374,11 @@ const EXTSTATE_SECTION: &str = "FTS_SESSION";
 const EXTSTATE_KEY_MODE: &str = "current_mode";
 
 fn persist_current_mode(mode: Mode) {
-    use daw_reaper::safe_wrappers::ext_state;
-    use reaper_high::Reaper;
-    use std::ffi::CString;
+    use daw::service::ExtState as _;
 
-    let low = Reaper::get().medium_reaper().low();
-    let Ok(section) = CString::new(EXTSTATE_SECTION) else {
-        return;
-    };
-    let Ok(key) = CString::new(EXTSTATE_KEY_MODE) else {
-        return;
-    };
-    let Ok(value) = CString::new(mode.slug()) else {
-        return;
-    };
-    ext_state::set_ext_state(low, &section, &key, &value, true);
+    // Global ext-state (`reaper-extstate.ini`, persist=true) — not
+    // project-scoped, so the mode restores regardless of which project loads.
+    let _ = daw::reaper::Reaper.set(EXTSTATE_SECTION, EXTSTATE_KEY_MODE, mode.slug(), true);
     tracing::debug!(mode = %mode, "[session] Persisted mode to extstate");
 }
 
@@ -396,14 +386,9 @@ fn persist_current_mode(mode: Mode) {
 /// when no value has been stored yet (first launch) or the stored
 /// value doesn't match a known mode.
 pub fn persisted_mode() -> Option<Mode> {
-    use daw_reaper::safe_wrappers::ext_state;
-    use reaper_high::Reaper;
-    use std::ffi::CString;
+    use daw::service::ExtState as _;
 
-    let low = Reaper::get().medium_reaper().low();
-    let section = CString::new(EXTSTATE_SECTION).ok()?;
-    let key = CString::new(EXTSTATE_KEY_MODE).ok()?;
-    let raw = ext_state::get_ext_state(low, &section, &key)?;
+    let raw = daw::reaper::Reaper.get(EXTSTATE_SECTION, EXTSTATE_KEY_MODE)?;
     if raw.is_empty() {
         return None;
     }

@@ -4,7 +4,8 @@
 //! registered under the `fts.session.*` action namespace via the
 //! `session_actions` `define_actions!` block in `crate::lib`.
 
-use reaper_high::Reaper;
+use daw::service::transport::service::Transport;
+use daw::service::{InputMonitoringMode, ProjectContext, TrackRef};
 use tracing::info;
 
 /// REAPER native command IDs we call. Kept as named constants here so
@@ -19,8 +20,6 @@ mod cmd {
     /// current arm / monitor / input-quantize settings. Pressed again
     /// while recording, it stops — i.e. it toggles.
     pub const RECORD: u32 = 1013;
-    /// `Transport: Stop` — stops playback/recording, keeping captured media.
-    pub const STOP: u32 = 1016;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,147 +70,115 @@ pub fn action_for_id(action_id: &str) -> Option<RecordAction> {
 }
 
 pub fn dispatch(action: RecordAction) {
+    let daw = daw::reaper::Reaper;
     match action {
         RecordAction::RestartRecording => restart_recording(),
-        RecordAction::ToggleMonitorOnOff => toggle_monitor_between(MONITOR_ON, MONITOR_OFF),
-        RecordAction::ToggleMonitorTapeOff => toggle_monitor_between(MONITOR_TAPE, MONITOR_OFF),
-        RecordAction::Record => run_transport(cmd::RECORD, "Record"),
-        RecordAction::StopRecording => run_transport(cmd::STOP, "Stop"),
-        RecordAction::ToggleRecording => run_transport(cmd::RECORD, "Toggle record"),
+        RecordAction::ToggleMonitorOnOff => {
+            toggle_monitor_between(InputMonitoringMode::Normal, InputMonitoringMode::Off)
+        }
+        RecordAction::ToggleMonitorTapeOff => {
+            toggle_monitor_between(InputMonitoringMode::NotWhenPlaying, InputMonitoringMode::Off)
+        }
+        RecordAction::Record => {
+            let _ = daw.record(ProjectContext::Current);
+            info!("[record] Record");
+        }
+        RecordAction::StopRecording => {
+            let _ = daw.stop_recording(ProjectContext::Current);
+            info!("[record] Stop");
+        }
+        RecordAction::ToggleRecording => {
+            let _ = daw.toggle_recording(ProjectContext::Current);
+            info!("[record] Toggle record");
+        }
         RecordAction::ArmSelected => set_arm_selected(true),
         RecordAction::DisarmSelected => set_arm_selected(false),
     }
 }
 
-/// Fire a transport command on REAPER's main thread.
-fn run_transport(command: u32, label: &str) {
-    let reaper = Reaper::get();
-    let low = reaper.medium_reaper().low();
-    unsafe {
-        low.Main_OnCommand(command as i32, 0);
-    }
-    info!("[record] {label}");
-}
-
-/// Set `I_RECARM` on every selected track (1 = armed, 0 = disarmed) in the
-/// focused project. Mirrors the monitor toggle's selection-scoped approach.
+/// Arm/disarm every selected track in the focused project, in one undo block.
 fn set_arm_selected(armed: bool) {
-    let reaper = Reaper::get();
-    let low = reaper.medium_reaper().low();
-    let recarm = b"I_RECARM\0".as_ptr() as *const _;
-    let target = if armed { 1.0 } else { 0.0 };
+    use daw::service::{Projects as _, Tracks as _};
 
-    unsafe {
-        let n = low.CountSelectedTracks(std::ptr::null_mut());
-        if n == 0 {
-            info!("[record] arm: no tracks selected");
-            return;
-        }
-        let undo = std::ffi::CString::new(if armed {
-            "Arm selected tracks"
-        } else {
-            "Disarm selected tracks"
-        })
-        .unwrap();
-        low.Undo_BeginBlock();
-        low.PreventUIRefresh(1);
-        for i in 0..n {
-            let t = low.GetSelectedTrack(std::ptr::null_mut(), i);
-            if !t.is_null() {
-                low.SetMediaTrackInfo_Value(t, recarm, target);
-            }
-        }
-        low.PreventUIRefresh(-1);
-        low.Undo_EndBlock(undo.as_ptr(), 1); // 1 = track config changes
-        info!(
-            armed,
-            tracks = n,
-            "[record] Set record arm on selected tracks"
-        );
+    let daw = daw::reaper::Reaper;
+    let selected = daw.selected(ProjectContext::Current);
+    if selected.is_empty() {
+        info!("[record] arm: no tracks selected");
+        return;
     }
+
+    let label = if armed {
+        "Arm selected tracks"
+    } else {
+        "Disarm selected tracks"
+    };
+    daw.begin_undo_block(ProjectContext::Current, label);
+    for track in &selected {
+        let _ = daw.set_armed(ProjectContext::Current, TrackRef::Guid(track.guid.clone()), armed);
+    }
+    daw.end_undo_block(ProjectContext::Current, label, None);
+    info!(
+        armed,
+        tracks = selected.len(),
+        "[record] Set record arm on selected tracks"
+    );
 }
 
-// REAPER `I_RECMON` values: 0 = off, 1 = normal, 2 = auto/tape.
-const MONITOR_OFF: f64 = 0.0;
-const MONITOR_ON: f64 = 1.0;
-const MONITOR_TAPE: f64 = 2.0;
-
-/// Toggle `I_RECMON` on every selected track between `a` and `b`.
+/// Toggle record-input monitoring on every selected track between `a` and `b`.
 ///
-/// Semantic: if *any* selected track is currently set to `a`, push them
-/// all to `b`; otherwise push them all to `a`. This avoids the
-/// per-track flip that would leave a multi-track selection in mixed
-/// states and gives a predictable "master switch" feel.
-fn toggle_monitor_between(a: f64, b: f64) {
-    let reaper = Reaper::get();
-    let low = reaper.medium_reaper().low();
-    let recmon = b"I_RECMON\0".as_ptr() as *const _;
+/// Semantic: if *any* selected track is currently set to `a`, push them all
+/// to `b`; otherwise push them all to `a`. This avoids the per-track flip
+/// that would leave a multi-track selection in mixed states and gives a
+/// predictable "master switch" feel.
+fn toggle_monitor_between(a: InputMonitoringMode, b: InputMonitoringMode) {
+    use daw::service::{Projects as _, Tracks as _};
 
-    unsafe {
-        let n = low.CountSelectedTracks(std::ptr::null_mut());
-        if n == 0 {
-            return;
-        }
+    let daw = daw::reaper::Reaper;
+    let selected = daw.selected(ProjectContext::Current);
+    if selected.is_empty() {
+        return;
+    }
 
-        // Collect first so SetMediaTrackInfo_Value can't perturb iteration.
-        let mut tracks = Vec::with_capacity(n as usize);
-        for i in 0..n {
-            let t = low.GetSelectedTrack(std::ptr::null_mut(), i);
-            if !t.is_null() {
-                tracks.push(t);
-            }
-        }
+    let any_at_a = selected.iter().any(|t| t.input_monitor == a);
+    let target = if any_at_a { b } else { a };
 
-        let any_at_a = tracks
-            .iter()
-            .any(|t| low.GetMediaTrackInfo_Value(*t, recmon) == a);
-        let target = if any_at_a { b } else { a };
+    let label = format!(
+        "Toggle record monitor ({} ↔ {})",
+        monitor_label(a),
+        monitor_label(b)
+    );
+    daw.begin_undo_block(ProjectContext::Current, &label);
+    for track in &selected {
+        let _ =
+            daw.set_input_monitor(ProjectContext::Current, TrackRef::Guid(track.guid.clone()), target);
+    }
+    daw.end_undo_block(ProjectContext::Current, &label, None);
+    info!(
+        tracks = selected.len(),
+        new_state = monitor_label(target),
+        "[record] Set record monitor"
+    );
+}
 
-        let undo = std::ffi::CString::new(format!(
-            "Toggle record monitor ({} ↔ {})",
-            monitor_label(a),
-            monitor_label(b)
-        ))
-        .unwrap();
-        low.Undo_BeginBlock();
-        low.PreventUIRefresh(1);
-        for t in &tracks {
-            low.SetMediaTrackInfo_Value(*t, recmon, target);
-        }
-        low.PreventUIRefresh(-1);
-        low.Undo_EndBlock(undo.as_ptr(), 1); // 1 = track config changes
-        info!(
-            tracks = tracks.len(),
-            new_state = target,
-            "[record] Set record monitor"
-        );
+fn monitor_label(m: InputMonitoringMode) -> &'static str {
+    match m {
+        InputMonitoringMode::Off => "off",
+        InputMonitoringMode::Normal => "on",
+        InputMonitoringMode::NotWhenPlaying => "auto/tape",
     }
 }
 
-fn monitor_label(v: f64) -> &'static str {
-    match v as i32 {
-        0 => "off",
-        1 => "on",
-        2 => "auto/tape",
-        _ => "?",
-    }
-}
-
-/// Stop the current recording (discarding anything captured this pass)
-/// and immediately start a fresh recording pass. The two REAPER calls
-/// happen back-to-back on the main thread, wrapped in a single undo
-/// block so the project history records one "Restart Recording"
-/// entry rather than two separate transport events.
+/// Stop the current recording (discarding anything captured this pass) and
+/// immediately start a fresh recording pass, wrapped in a single undo block
+/// so the history records one "Restart recording" entry.
 fn restart_recording() {
-    let reaper = Reaper::get();
-    let low = reaper.medium_reaper().low();
-    let undo = std::ffi::CString::new("Restart recording").unwrap();
-    unsafe {
-        low.Undo_BeginBlock();
-        low.Main_OnCommand(cmd::STOP_DELETE as i32, 0);
-        low.Main_OnCommand(cmd::RECORD as i32, 0);
-        low.Undo_EndBlock(undo.as_ptr(), -1);
-    }
+    use daw::service::{ActionRegistration as _, Projects as _};
+
+    let daw = daw::reaper::Reaper;
+    daw.begin_undo_block(ProjectContext::Current, "Restart recording");
+    daw.run_action(cmd::STOP_DELETE);
+    daw.run_action(cmd::RECORD);
+    daw.end_undo_block(ProjectContext::Current, "Restart recording", None);
     info!("[record] Restarted recording (stop+delete then record)");
 }
 
