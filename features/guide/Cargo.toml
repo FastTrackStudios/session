@@ -15,7 +15,10 @@ default = []
 # NOT realtime-safe: cues are pre-rendered to wav at setlist-build time by
 # `CueBank` and handed to the engine as preloaded PCM. Loading previously
 # cached cues does NOT require this feature (hound handles the wav I/O).
-tts = ["dep:chatterbox-rs", "dep:ort"]
+# `ort/load-dynamic`: dlopen libonnxruntime at runtime (via ORT_DYLIB_PATH)
+# instead of a downloaded/build-linked binary — the only approach that works
+# under Nix's linker. The flake provides onnxruntime and exports ORT_DYLIB_PATH.
+tts = ["dep:chatterbox-rs", "dep:ort", "ort/load-dynamic"]
 
 [dependencies]
 # Session domain types (Section / Song / Setlist) that the engine's inputs
