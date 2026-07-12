@@ -257,22 +257,22 @@ impl CueSchedule {
             }
             let guide_time = (section.start_seconds - lead).max(0.0);
             let mut keys = Vec::new();
+            // Priority: a custom spoken note, then the REAL recorded guide
+            // sample (numbered, then unnumbered), then TTS of the full spoken
+            // name ("Verse 1"), then TTS of the abbreviated name — so real
+            // audio wins and TTS only fills gaps.
             if let Some(note) = &section.spoken_note {
                 keys.push(tts_cue_key(note));
             }
-            // Prefer the full spoken name ("Verse 1"); keep the abbreviated
-            // name as a secondary key so any pre-rendered "VS 1" cue still hits.
-            keys.push(tts_cue_key(&section.spoken_name()));
-            keys.push(tts_cue_key(&section.name));
             keys.push(get_guide_key(
                 &section.section_type_name,
                 section.section_number,
             ));
-            // Unnumbered fallback ("Chorus_None") — the voice library only
-            // ships unnumbered announcements for some types.
             if section.section_number.is_some() {
                 keys.push(get_guide_key(&section.section_type_name, None));
             }
+            keys.push(tts_cue_key(&section.spoken_name()));
+            keys.push(tts_cue_key(&section.name));
             cues.push(ScheduledCue {
                 time_seconds: guide_time,
                 event: CueEvent::Guide { keys },
