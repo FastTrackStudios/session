@@ -705,6 +705,17 @@ fn normalized_section_names(regions: Vec<Region>) -> Vec<(u32, String)> {
 }
 
 fn normalized_section_updates(regions: Vec<Region>) -> Vec<SectionUpdate> {
+    // Song boundaries: SONG-lane regions delimit songs on a shared timeline.
+    // Section numbering resets at each song, so "Verse 2" means the second
+    // verse *within its song*, not the second across the whole project.
+    let song_lane = CoreLane::Song.lane_index();
+    let mut song_starts: Vec<f64> = regions
+        .iter()
+        .filter(|region| region.lane == Some(song_lane))
+        .map(|region| region.start_seconds())
+        .collect();
+    song_starts.sort_by(f64::total_cmp);
+
     let mut sections: Vec<_> = regions
         .into_iter()
         .filter(|region| {
@@ -727,6 +738,32 @@ fn normalized_section_updates(regions: Vec<Region>) -> Vec<SectionUpdate> {
             .then_with(|| a.end.total_cmp(&b.end))
     });
 
+    // Which song a section belongs to = the last SONG start at or before it.
+    // Sections before the first song (or when there are no song regions) fall
+    // into bucket 0, preserving the single-song / whole-project behavior.
+    let song_of = |start: f64| -> usize {
+        song_starts
+            .partition_point(|&song_start| song_start <= start)
+            .saturating_sub(1)
+    };
+
+    let mut by_song: std::collections::BTreeMap<usize, Vec<SectionRegion>> =
+        std::collections::BTreeMap::new();
+    for section in sections {
+        by_song.entry(song_of(section.start)).or_default().push(section);
+    }
+
+    let mut updates = Vec::new();
+    for (_song, song_sections) in by_song {
+        updates.extend(number_sections_in_song(song_sections));
+    }
+    updates
+}
+
+/// Number one song's sections: each section type is numbered by occurrence
+/// within the song (Verse 1, Verse 2, …), touching sections of the same type
+/// collapsing into one lettered group.
+fn number_sections_in_song(sections: Vec<SectionRegion>) -> Vec<SectionUpdate> {
     let mut by_type: HashMap<String, Vec<SectionRegion>> = HashMap::new();
     for section in sections {
         by_type
