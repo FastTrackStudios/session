@@ -308,11 +308,15 @@ impl SampleBank {
             self.triplet = Some(synth_tick(1_200.0, 18.0, 0.35, sample_rate));
         }
 
-        // Count voices: one scale degree per count number (C5 major).
-        const COUNT_HZ: [f32; 8] = [523.25, 587.33, 659.25, 698.46, 783.99, 880.0, 987.77, 1046.5];
+        // Count voices: a clear, CONSISTENT count tick rather than an
+        // ascending scale (spoken "1, 2, 3, 4" needs a TTS voice or real
+        // Count samples). The downbeat ("1", index 0) is accented higher so
+        // the top of the count-in stands out; the rest are one steady tone —
+        // a recognizable count-in, not a melodic run of random beeps.
         for (i, slot) in self.counts.iter_mut().enumerate() {
             if slot.is_none() {
-                *slot = Some(synth_tick(COUNT_HZ[i], 110.0, 0.5, sample_rate));
+                let (freq, gain) = if i == 0 { (1_760.0, 0.6) } else { (1_320.0, 0.5) };
+                *slot = Some(synth_tick(freq, 55.0, gain, sample_rate));
             }
         }
 
