@@ -19,13 +19,12 @@
 //! repeated keystrokes at the same spot idempotent while still allowing
 //! a take to carry multiple rank regions for comping workflows.
 
-use daw_proto::TakeRating;
-use daw_reaper::safe_wrappers::item as item_sw;
+use daw::service::transport::service::Transport as _;
+use daw::service::{
+    Items as _, ItemRef, PlayState, Projects as _, ProjectContext, TakeMarkerCreate,
+    TakeMarkerUpdate, TakeRating, TakeRef, Takes as _,
+};
 use daw_reaper::safe_wrappers::mouse::MouseSnapshot;
-use reaper_high::Reaper;
-use reaper_low::raw;
-use reaper_medium::MediaItemTake;
-use std::ffi::CString;
 use tracing::{debug, info};
 
 const REPLACE_WINDOW_SECS: f64 = 0.5;
@@ -116,193 +115,159 @@ pub fn dispatch(action: RankAction) {
 
 // ─── Core ────────────────────────────────────────────────────────────────────
 
-fn apply(scope: Scope, rating: TakeRating) {
-    let reaper = Reaper::get();
-    let medium = reaper.medium_reaper();
-    let low = medium.low();
-    let marker_name = rating.to_marker_name();
-    let undo_c = CString::new(format!("Take rank: {} ({})", marker_name, scope.label())).unwrap();
-
-    unsafe {
-        low.Undo_BeginBlock();
-        low.PreventUIRefresh(1);
-
-        let targets: Vec<(MediaItemTake, f64)> = match scope {
-            Scope::PlayPosMinus2s => targets_play_pos_minus_2s(low),
-            Scope::ItemWide => targets_item_wide(low),
-            Scope::MouseCursor => targets_mouse_cursor().into_iter().collect(),
-        };
-        // medium handle is only used by the play-pos / item scopes via low.
-        let _ = medium;
-
-        if targets.is_empty() {
-            low.PreventUIRefresh(-1);
-            low.Undo_EndBlock(undo_c.as_ptr(), 0);
-            debug!(scope = scope.label(), rank = %marker_name, "[take-rank] No targets");
-            return;
-        }
-
-        for (take, source_pos) in &targets {
-            write_rank_marker(low, *take, &marker_name, *source_pos);
-        }
-
-        low.UpdateArrange();
-        low.PreventUIRefresh(-1);
-        low.Undo_EndBlock(undo_c.as_ptr(), 4); // 4 = item changes
-        info!(
-            scope = scope.label(),
-            rank = %marker_name,
-            targets = targets.len(),
-            "[take-rank] Applied"
-        );
-    }
+/// One take to mark: which take (item + take ref) and the source-time
+/// position the rank marker anchors at.
+struct Target {
+    item: ItemRef,
+    take: TakeRef,
+    source_pos: f64,
 }
 
-fn write_rank_marker(low: &reaper_low::Reaper, take: MediaItemTake, name: &str, source_pos: f64) {
-    let markers = item_sw::list_take_markers(low, take);
+fn apply(scope: Scope, rating: TakeRating) {
+    let daw = daw::reaper::Reaper;
+    let marker_name = rating.to_marker_name();
+
+    let targets: Vec<Target> = match scope {
+        Scope::PlayPosMinus2s => targets_play_pos_minus_2s(&daw),
+        Scope::ItemWide => targets_item_wide(&daw),
+        Scope::MouseCursor => targets_mouse_cursor().into_iter().collect(),
+    };
+
+    if targets.is_empty() {
+        debug!(scope = scope.label(), rank = %marker_name, "[take-rank] No targets");
+        return;
+    }
+
+    let undo = format!("Take rank: {} ({})", marker_name, scope.label());
+    daw.begin_undo_block(ProjectContext::Current, &undo);
+    for t in &targets {
+        write_rank_marker(&daw, &t.item, &t.take, &marker_name, t.source_pos);
+    }
+    daw.end_undo_block(ProjectContext::Current, &undo, None);
+
+    info!(
+        scope = scope.label(),
+        rank = %marker_name,
+        targets = targets.len(),
+        "[take-rank] Applied"
+    );
+}
+
+/// Write (or replace-in-place) a rank marker on `take`. Any existing rank
+/// marker within ±`REPLACE_WINDOW_SECS` of `source_pos` is renamed; else a
+/// new marker is appended.
+fn write_rank_marker(
+    daw: &daw_reaper::Reaper,
+    item: &ItemRef,
+    take: &TakeRef,
+    name: &str,
+    source_pos: f64,
+) {
+    let markers = daw.get_take_markers(ProjectContext::Current, item.clone(), take.clone());
     let existing = markers.iter().find(|m| {
         TakeRating::from_marker_name(&m.name).is_some()
             && (m.source_position_seconds - source_pos).abs() <= REPLACE_WINDOW_SECS
     });
     match existing {
         Some(m) => {
-            let ok =
-                item_sw::update_take_marker(low, take, m.index, Some(name), Some(source_pos), None);
-            info!(
-                action = "update",
-                ok,
-                index = m.index,
-                source_pos,
-                old = %m.name,
-                new = name,
-                marker_count_before = markers.len(),
-                "[take-rank] Wrote marker"
+            let _ = daw.set_take_marker(
+                ProjectContext::Current,
+                item.clone(),
+                take.clone(),
+                TakeMarkerUpdate {
+                    index: m.index,
+                    name: Some(name.to_string()),
+                    source_position_seconds: Some(source_pos),
+                    color: None,
+                },
             );
+            debug!(action = "update", index = m.index, source_pos, new = name, "[take-rank] Wrote marker");
         }
         None => {
-            let idx = item_sw::add_take_marker(low, take, name, source_pos, None);
-            info!(
-                action = "add",
-                idx = ?idx,
-                source_pos,
-                name = name,
-                marker_count_before = markers.len(),
-                "[take-rank] Wrote marker"
+            let _ = daw.add_take_marker(
+                ProjectContext::Current,
+                item.clone(),
+                take.clone(),
+                TakeMarkerCreate {
+                    name: name.to_string(),
+                    source_position_seconds: source_pos,
+                    color: None,
+                },
             );
+            debug!(action = "add", source_pos, name, "[take-rank] Wrote marker");
         }
     }
 }
 
 // ─── Scope target resolvers ─────────────────────────────────────────────────
 
-unsafe fn targets_play_pos_minus_2s(low: &reaper_low::Reaper) -> Vec<(MediaItemTake, f64)> {
-    let play_state = unsafe { low.GetPlayStateEx(std::ptr::null_mut()) };
-    let is_playing = play_state & 1 != 0;
-    let target_proj_pos = if is_playing {
-        (unsafe { low.GetPlayPositionEx(std::ptr::null_mut()) } - 2.0).max(0.0)
-    } else {
-        unsafe { low.GetCursorPositionEx(std::ptr::null_mut()) }
-    };
-    unsafe { collect_selected_active_takes_at(low, target_proj_pos) }
-}
+/// Target = `(play_pos - 2s)` while playing/recording, else the edit cursor
+/// (`Transport::get_position` returns play-or-edit). Acts on the active take
+/// of each selected item that spans that project position.
+fn targets_play_pos_minus_2s(daw: &daw_reaper::Reaper) -> Vec<Target> {
+    let playing = matches!(
+        daw.get_play_state(ProjectContext::Current),
+        PlayState::Playing | PlayState::Recording
+    );
+    let cursor = daw.get_position(ProjectContext::Current);
+    let target_pos = if playing { (cursor - 2.0).max(0.0) } else { cursor };
 
-unsafe fn targets_item_wide(low: &reaper_low::Reaper) -> Vec<(MediaItemTake, f64)> {
-    let n = unsafe { low.CountSelectedMediaItems(std::ptr::null_mut()) };
-    let mut out = Vec::with_capacity(n.max(0) as usize);
-    for i in 0..n {
-        let item = unsafe { low.GetSelectedMediaItem(std::ptr::null_mut(), i) };
-        if item.is_null() {
+    let mut out = Vec::new();
+    for it in daw.get_selected_items(ProjectContext::Current) {
+        let start = it.position.as_seconds();
+        let end = start + it.length.as_seconds();
+        if target_pos < start || target_pos > end {
             continue;
         }
-        let take_ptr = unsafe { low.GetActiveTake(item) };
-        if let Some(take) = MediaItemTake::new(take_ptr) {
-            out.push((take, 0.0));
+        let item = ItemRef::Guid(it.guid);
+        let Some(take) = daw.get_active_take(ProjectContext::Current, item.clone()) else {
+            continue;
+        };
+        let src = (target_pos - start) * take.play_rate + take.start_offset.as_seconds();
+        if src < 0.0 {
+            continue;
         }
+        out.push(Target {
+            item,
+            take: TakeRef::Active,
+            source_pos: src,
+        });
     }
     out
 }
 
-fn targets_mouse_cursor() -> Option<(MediaItemTake, f64)> {
+/// Active take of every selected item; marker anchored at source 0.
+fn targets_item_wide(daw: &daw_reaper::Reaper) -> Vec<Target> {
+    daw.get_selected_items(ProjectContext::Current)
+        .into_iter()
+        .map(|it| Target {
+            item: ItemRef::Guid(it.guid),
+            take: TakeRef::Active,
+            source_pos: 0.0,
+        })
+        .collect()
+}
+
+/// Take under the mouse cursor + its source-time position. Local-only (a
+/// remote client has no REAPER mouse cursor), so this uses the daw-reaper
+/// `MouseSnapshot` safe wrapper rather than a domain trait.
+fn targets_mouse_cursor() -> Option<Target> {
     let snap = MouseSnapshot::capture();
-    if snap.take.is_none() {
-        info!(
-            screen_x = snap.screen_pos.x,
-            screen_y = snap.screen_pos.y,
-            window = ?snap.window,
-            segment = ?snap.segment,
-            item_some = snap.item.is_some(),
-            track_some = snap.track.is_some(),
+    let (Some(item_guid), Some(take_guid), Some(source_pos)) =
+        (snap.item_guid(), snap.take_guid(), snap.take_source_position())
+    else {
+        debug!(
+            item = snap.item.is_some(),
+            take = snap.take.is_some(),
             "[take-rank] mouse: no take under cursor"
         );
         return None;
-    }
-    let source_pos = snap.take_source_position();
-    if source_pos.is_none() {
-        info!(
-            screen_x = snap.screen_pos.x,
-            screen_y = snap.screen_pos.y,
-            project_position = ?snap.project_position,
-            item_some = snap.item.is_some(),
-            "[take-rank] mouse: take found but source_pos resolves to None"
-        );
-        return None;
-    }
-    Some((snap.take?, source_pos?))
-}
-
-unsafe fn collect_selected_active_takes_at(
-    low: &reaper_low::Reaper,
-    target_proj_pos: f64,
-) -> Vec<(MediaItemTake, f64)> {
-    let n = unsafe { low.CountSelectedMediaItems(std::ptr::null_mut()) };
-    let mut out = Vec::new();
-    for i in 0..n {
-        let item = unsafe { low.GetSelectedMediaItem(std::ptr::null_mut(), i) };
-        if item.is_null() {
-            continue;
-        }
-        let item_start = unsafe { low.GetMediaItemInfo_Value(item, c_str_d_position()) };
-        let item_length = unsafe { low.GetMediaItemInfo_Value(item, c_str_d_length()) };
-        if target_proj_pos < item_start || target_proj_pos > item_start + item_length {
-            continue;
-        }
-        let take_ptr = unsafe { low.GetActiveTake(item) };
-        if let Some(take) = MediaItemTake::new(take_ptr)
-            && let Some(src) =
-                unsafe { project_pos_to_source_pos(low, item, take_ptr, target_proj_pos) }
-        {
-            out.push((take, src));
-        }
-    }
-    out
-}
-
-unsafe fn project_pos_to_source_pos(
-    low: &reaper_low::Reaper,
-    item: *mut raw::MediaItem,
-    take: *mut raw::MediaItem_Take,
-    proj_pos: f64,
-) -> Option<f64> {
-    let item_start = unsafe { low.GetMediaItemInfo_Value(item, c_str_d_position()) };
-    let play_rate = unsafe { low.GetMediaItemTakeInfo_Value(take, c_str_d_playrate()) };
-    let start_offset = unsafe { low.GetMediaItemTakeInfo_Value(take, c_str_d_startoffs()) };
-    let src = (proj_pos - item_start) * play_rate + start_offset;
-    if src < 0.0 { None } else { Some(src) }
-}
-
-// ─── Static C-string accessors ──────────────────────────────────────────────
-
-fn c_str_d_position() -> *const std::os::raw::c_char {
-    b"D_POSITION\0".as_ptr() as *const _
-}
-fn c_str_d_length() -> *const std::os::raw::c_char {
-    b"D_LENGTH\0".as_ptr() as *const _
-}
-fn c_str_d_playrate() -> *const std::os::raw::c_char {
-    b"D_PLAYRATE\0".as_ptr() as *const _
-}
-fn c_str_d_startoffs() -> *const std::os::raw::c_char {
-    b"D_STARTOFFS\0".as_ptr() as *const _
+    };
+    Some(Target {
+        item: ItemRef::Guid(item_guid),
+        take: TakeRef::Guid(take_guid),
+        source_pos,
+    })
 }
 
 // ── architect::actions declaration ──────────────────────────────────────
