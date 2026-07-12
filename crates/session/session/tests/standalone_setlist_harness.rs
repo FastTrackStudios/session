@@ -279,6 +279,82 @@ async fn transport_stream_inner() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Headless proof that the `SynchronizationEngine` is backend-agnostic:
+/// a mutation on a daw-standalone project must surface as a `SyncEvent`
+/// through the engine. The engine used to read `daw_reaper::event_hub()`
+/// directly (REAPER-only); after the migration it consumes the daw facade's
+/// architect event bus (`Daw::events()`), so it works against standalone too.
+#[test]
+fn sync_engine_backend_agnostic_over_standalone() -> eyre::Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(16 * 1024 * 1024)
+        .enable_all()
+        .build()?;
+    rt.block_on(sync_engine_inner())
+}
+
+async fn sync_engine_inner() -> eyre::Result<()> {
+    use daw_synchronization::{SyncConfig, SyncDomain, SyncSession, SynchronizationEngine};
+
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let bundle = build_in_process_daw(seeded_stamped()).await?;
+    let daw = bundle.daw.clone();
+
+    let engine = SynchronizationEngine::new(
+        daw.clone(),
+        SyncSession {
+            session_id: "test-session".into(),
+            peer_id: "test-peer".into(),
+            display_name: "Test".into(),
+        },
+        SyncConfig::all(),
+    );
+    engine
+        .start()
+        .await
+        .map_err(|e| eyre::eyre!("engine start: {e:?}"))?;
+    let mut rx = engine.subscribe();
+
+    // Let the per-project bus forwarder finish its async subscribe.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Mutate the demo project via the facade — daw-standalone publishes these
+    // onto the event bus, which the (now backend-agnostic) engine forwards.
+    let project = daw
+        .project("demo-proj".to_string())
+        .await
+        .map_err(|e| eyre::eyre!("project: {e:?}"))?;
+    project
+        .markers()
+        .add(2.5, "SyncMarker")
+        .await
+        .map_err(|e| eyre::eyre!("marker add: {e:?}"))?;
+
+    let mut got_marker = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(1500);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(300), rx.recv()).await {
+            Ok(Ok(ev)) => {
+                println!("[sync] domain={:?}", std::mem::discriminant(&ev.domain));
+                if matches!(ev.domain, SyncDomain::Marker(_)) {
+                    got_marker = true;
+                    break;
+                }
+            }
+            Ok(Err(_)) => break,
+            Err(_) => { /* idle */ }
+        }
+    }
+
+    assert!(
+        got_marker,
+        "sync engine produced no Marker SyncEvent from a standalone mutation — it is not backend-agnostic"
+    );
+    Ok(())
+}
+
 /// Full desktop path over vox, no REAPER: host SetlistService behind a
 /// LayerRouter, drive it through SetlistServiceClient — build, query the
 /// setlist, and confirm seeking selects the active song/section.
