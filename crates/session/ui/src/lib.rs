@@ -57,7 +57,7 @@ pub mod shell;
 pub mod signals;
 
 // Re-export key types for convenience
-pub use event_bridge::apply_setlist_event;
+pub use event_bridge::{apply_active_indices, apply_setlist_event};
 pub use layouts::top_bar::{ConnectionState, VERSION};
 pub use layouts::{PerformanceLayout, PerformanceSidebar, TransportPanel};
 pub use panel_registration::register_panels;

@@ -8,7 +8,6 @@ use super::{
 use daw::rpc::Daw;
 use daw::service::transport::service::Transport;
 use daw::service::{AudioEngine, ProjectContext, Projects};
-use daw_synchronization::{SyncConfig, SyncDomain, SyncSession, SynchronizationEngine};
 use moire::sync::mpsc;
 use rustc_hash::FxHashMap;
 use session_proto::{
@@ -487,24 +486,13 @@ where
                 .map(|(idx, song)| (song.id.to_string(), idx))
                 .collect();
 
-            // Subscribe through the DAW sync engine, which is the canonical
-            // local event-hub bridge for streaming DAW state.
+            // Transport propagation is an architect `#[subscribe]` stream now
+            // (each backend's `TransportStreamSource`) — no SynchronizationEngine
+            // bridge, no 30 Hz poll fallback. The stream is all-projects; each
+            // event routes to its song(s) by `project_guid`, and we query that
+            // project's full transport snapshot to build `SongTransportState`.
             let daw = Daw::get();
-            let session = SyncSession {
-                session_id: "session-setlist-transport".to_string(),
-                peer_id: format!("session-transport-{}", uuid::Uuid::new_v4()),
-                display_name: "Session setlist transport".to_string(),
-            };
-            let sync_engine = Arc::new(SynchronizationEngine::new(
-                daw.clone(),
-                session,
-                SyncConfig::transport_only(),
-            ));
-            if let Err(e) = sync_engine.start().await {
-                warn!("Failed to start DAW sync engine for transport: {}", e);
-                return Ok(());
-            }
-            let transport_rx = sync_engine.subscribe();
+            let mut transport_stream = daw.transport_events();
 
             // Get initial active indices from REAPER's current project (makes RPC calls)
             // This ensures the UI shows the correct song/section on startup
@@ -519,7 +507,10 @@ where
             {
                 *this.active_song_id.write().await = Some(song.id.to_string());
             }
-            self.events_hub.publish(SetlistEvent::ActiveIndicesChanged(last_indices.clone()));
+            // Cursor delivery is owned by the active-indices pump
+            // (`subscribe_active_impl` → `indices_hub`); this events pump only
+            // carries setlist structure + transport. It still tracks
+            // `last_indices` below for auto-advance / chart-probe bookkeeping.
 
             // Send initial transport state for all songs (one-time poll)
             let initial_transports = this.get_all_song_transports().await;
@@ -573,10 +564,7 @@ where
             // Track which song index we already auto-advanced from, to prevent retriggering.
             let mut auto_advance_triggered_for: Option<usize> = None;
 
-            // Fully reactive loop - processes transport stream updates and periodic project checks
-            let mut transport_rx = transport_rx;
-            let _sync_engine = sync_engine;
-
+            // Fully reactive loop — architect transport stream + periodic checks.
             loop {
                 tokio::select! {
                     changed = setlist_updates.changed() => {
@@ -632,13 +620,35 @@ where
                         }
                     }
 
-                    // Handle transport updates from the broadcast channel
-                    result = transport_rx.recv() => {
-                        match result {
-                    Ok(sync_event) => {
-                        let SyncDomain::Transport(transport_state) = sync_event.domain else {
-                            continue;
+                    // Handle transport updates from the architect transport stream.
+                    ev = transport_stream.recv() => {
+                        // Only position ticks drive per-song updates; state-only
+                        // events (play/stop/tempo) are reflected by the fresh
+                        // snapshot query on the next tick. `None`/error ends the
+                        // stream — exit the pump.
+                        let project_guid = match ev {
+                            Ok(Some(ev_ref)) => match ev_ref.get() {
+                                daw::service::transport::TransportStreamEvent::Position(tick) => {
+                                    tick.project_guid.clone()
+                                }
+                                _ => continue,
+                            },
+                            _ => break,
                         };
+                        // Full transport snapshot for this project (tempo / time
+                        // signature / loop / play-state / positions) — the same
+                        // struct the old SyncEngine delivered.
+                        let transport_state = match daw
+                            .project(project_guid.clone())
+                            .await
+                        {
+                            Ok(p) => match p.transport().get_state().await {
+                                Ok(s) => s,
+                                Err(_) => continue,
+                            },
+                            Err(_) => continue,
+                        };
+                        {
                         let transport_started = Instant::now();
                         let active_song_id = this.active_song_id.read().await.clone();
                         let active_song_index: Option<usize>;
@@ -657,7 +667,7 @@ where
                                 song_id_to_index.get(id).copied()
                             });
 
-                            if let Some(song_indices) = guid_to_indices.get(&sync_event.project_guid) {
+                            if let Some(song_indices) = guid_to_indices.get(&project_guid) {
                                     let is_playing = transport_state.play_state
                                         == daw::service::PlayState::Playing
                                         || transport_state.play_state
@@ -869,9 +879,10 @@ where
                                 }
 
                                 if structural_change || (progress_change && can_emit_progress) {
-                                    self.events_hub.publish(SetlistEvent::ActiveIndicesChanged(
-                                            current_indices.clone(),
-                                        ));
+                                    // Cursor is published by the active-indices
+                                    // pump; here we only advance the bookkeeping
+                                    // this events pump uses for auto-advance /
+                                    // chart-probe scheduling.
                                     if progress_change {
                                         last_indices_progress_emit = Instant::now();
                                     }
@@ -908,14 +919,6 @@ where
                         }
                         transport_tick_count += 1;
                         transport_compute_total += transport_started.elapsed();
-                    }
-                    Err(BroadcastRecvError::Lagged(skipped)) => {
-                        debug!("Transport sync stream lagged by {} events", skipped);
-                    }
-                    Err(BroadcastRecvError::Closed) => {
-                        info!("SetlistService::subscribe() - transport sync stream ended");
-                        break;
-                    }
                         }
                     }
 
@@ -995,7 +998,8 @@ where
                                 }
 
                                 if new_indices != last_indices {
-                                    self.events_hub.publish(SetlistEvent::ActiveIndicesChanged(new_indices.clone()));
+                                    // Cursor published by the active-indices pump;
+                                    // keep the chart-probe scheduling bookkeeping.
                                     if new_indices.song_index != last_indices.song_index {
                                         chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
                                         chart_probe_last_started = Instant::now()

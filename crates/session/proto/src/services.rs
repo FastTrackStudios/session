@@ -137,8 +137,6 @@ pub enum SetlistEvent {
         index: usize,
         chart: SongChartHydration,
     },
-    /// Active indices changed (which song/section is "current")
-    ActiveIndicesChanged(ActiveIndices),
     /// Transport state updated for one or more songs
     /// This is sent at 60Hz and includes state for ALL songs that have active projects
     TransportUpdate(Vec<SongTransportState>),

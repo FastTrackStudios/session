@@ -118,3 +118,11 @@ pub struct ActiveIndices {
     /// Queued navigation target (flashes until confirmed)
     pub queued_target: Option<QueuedTarget>,
 }
+
+// SelfRef compatibility (vox channel `.get()`): ActiveIndices has no lifetime
+// parameters, so Ref<'a> = Self. Required to consume the `active_indices`
+// `#[subscribe]` stream through a `vox::channel::<ActiveIndices>()`.
+#[allow(unsafe_code)]
+unsafe impl vox_types::Reborrow for ActiveIndices {
+    type Ref<'a> = ActiveIndices;
+}

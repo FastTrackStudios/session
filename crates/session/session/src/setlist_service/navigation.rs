@@ -2,7 +2,7 @@
 
 use super::SetlistServiceImpl;
 use daw::service::transport::service::Transport;
-use daw::service::{ProjectContext, Projects, TempoMap};
+use daw::service::{AudioEngine, ProjectContext, Projects, TempoMap};
 use session_proto::{QueuedTarget, SessionServiceError, Song};
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -13,7 +13,7 @@ fn project_ctx(project_guid: &str) -> ProjectContext {
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: Projects + TempoMap + Transport + Clone + Send + Sync + 'static,
+    D: AudioEngine + Projects + TempoMap + Transport + Clone + Send + Sync + 'static,
 {
     // All `self.daw.*` calls below hit REAPER main-thread-only FFI on the
     // `daw_reaper::Reaper` backend. Each helper bounces through
@@ -25,6 +25,26 @@ where
         daw_reaper::main_thread::query(move || daw.current().map(|p| p.guid))
             .await
             .flatten()
+    }
+
+    /// Recompute the active song/section from the current playhead and push
+    /// them to subscribers.
+    ///
+    /// Seeks (`seek_to_song`, `seek_to_section`, `seek_to_musical_position`,
+    /// `goto_measure`) move the DAW position but emit no active-index event
+    /// of their own — the transport pump only republishes `ActiveIndices`
+    /// when playback state changes. So a *stopped* seek would leave the UI's
+    /// active song stale (the sidebar never expands the seeked-to song, its
+    /// sections never show). Calling this at the end of each seek keeps the
+    /// active indices in lockstep with the playhead whether or not the
+    /// transport is rolling. Idempotent: publishing the current indices when
+    /// nothing moved is harmless.
+    pub(crate) async fn refresh_active_indices(&self) {
+        let indices = self.calculate_active_indices().await;
+        self.set_cached_indices(indices.clone()).await;
+        // Cursor changes ride the dedicated active-indices stream
+        // (`#[subscribe] fn active_indices`), not the setlist-events stream.
+        self.indices_hub.publish(indices);
     }
 
     async fn select_project(&self, project_guid: &str) -> bool {
@@ -494,6 +514,7 @@ where
             "seek_to_song: song {} ({}) — seek_target={:.2}s, actual_pos={:.2}s, is_playing={}",
             song_index, song.name, seek_pos, actual_pos, is_playing
         );
+        self.refresh_active_indices().await;
         Ok(())
     }
 
@@ -544,6 +565,7 @@ where
         } else {
             warn!("Song {} not found", song_index);
         }
+        self.refresh_active_indices().await;
         Ok(())
     }
 
@@ -596,6 +618,7 @@ where
         } else {
             warn!("Song {} not found", song_index);
         }
+        self.refresh_active_indices().await;
         Ok(())
     }
 
@@ -642,6 +665,7 @@ where
         } else {
             warn!("Song {} not found", song_index);
         }
+        self.refresh_active_indices().await;
         Ok(())
     }
 }

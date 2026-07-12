@@ -5,17 +5,34 @@
 //! (from the `WebClientHandler`).
 
 use crate::prelude::*;
-use session_proto::{SetlistEvent, SongTransportState};
+use session_proto::{ActiveIndices, SetlistEvent, SongTransportState};
 
 use crate::signals::{
     ACTIVE_INDICES, ACTIVE_PLAYBACK_IS_PLAYING, ACTIVE_PLAYBACK_MUSICAL, PLAYBACK_STATE,
     SETLIST_STRUCTURE, SONG_CHARTS, SONG_TRANSPORT, TransportState,
 };
 
+/// Apply an active-song/section cursor update to the global UI signals.
+///
+/// Fed from the service's dedicated `active_indices` `#[subscribe]` stream
+/// (the architect `PubSub<ActiveIndices>` hub) — the single source of truth
+/// for the cursor. `apply_setlist_event` handles setlist *structure* and
+/// per-song transport; this owns which song/section is current + playback
+/// state. Both desktop and web consumers call this.
+pub fn apply_active_indices(indices: &ActiveIndices) {
+    *PLAYBACK_STATE.write() = if indices.is_playing {
+        daw_proto::PlayState::Playing
+    } else {
+        daw_proto::PlayState::Stopped
+    };
+    *ACTIVE_INDICES.write() = indices.clone();
+}
+
 /// Apply a single `SetlistEvent` to the global UI signals.
 ///
 /// This is the canonical mapping — both desktop and web apps should call this
-/// instead of duplicating the signal-update logic.
+/// instead of duplicating the signal-update logic. Cursor changes arrive on a
+/// separate stream; see [`apply_active_indices`].
 pub fn apply_setlist_event(event: &SetlistEvent) {
     match event {
         SetlistEvent::SetlistChanged(setlist) => {
@@ -41,15 +58,6 @@ pub fn apply_setlist_event(event: &SetlistEvent) {
             SONG_CHARTS
                 .write()
                 .insert(chart.project_guid.clone(), chart.clone());
-        }
-
-        SetlistEvent::ActiveIndicesChanged(indices) => {
-            *PLAYBACK_STATE.write() = if indices.is_playing {
-                daw_proto::PlayState::Playing
-            } else {
-                daw_proto::PlayState::Stopped
-            };
-            *ACTIVE_INDICES.write() = indices.clone();
         }
 
         SetlistEvent::TransportUpdate(transports) => {
@@ -109,14 +117,8 @@ fn apply_transport_update(transports: &[SongTransportState]) {
             }
 
             if Some(transport.song_index) == active_song_index {
-                active_transport_update = Some((
-                    transport.progress,
-                    transport.section_progress,
-                    transport.section_index,
-                    transport.is_playing,
-                    transport.is_looping,
-                    transport.position.musical.clone(),
-                ));
+                active_transport_update =
+                    Some((transport.is_playing, transport.position.musical.clone()));
             }
         }
     }
@@ -128,41 +130,16 @@ fn apply_transport_update(transports: &[SongTransportState]) {
         }
     }
 
-    if let Some((song_progress, section_progress, section_index, is_playing, is_looping, musical)) =
-        active_transport_update
-    {
+    // Transport only feeds the per-song `SONG_TRANSPORT` map and the active
+    // song's musical-position readout. The cursor itself (`ACTIVE_INDICES`,
+    // `PLAYBACK_STATE`) is owned exclusively by `apply_active_indices`, fed
+    // from the dedicated active-indices stream — no cursor writes here.
+    if let Some((is_playing, musical)) = active_transport_update {
         if *ACTIVE_PLAYBACK_MUSICAL.peek() != musical {
             *ACTIVE_PLAYBACK_MUSICAL.write() = musical;
         }
         if *ACTIVE_PLAYBACK_IS_PLAYING.peek() != is_playing {
             *ACTIVE_PLAYBACK_IS_PLAYING.write() = is_playing;
-        }
-
-        let new_playing = if is_playing {
-            daw_proto::PlayState::Playing
-        } else {
-            daw_proto::PlayState::Stopped
-        };
-        if *PLAYBACK_STATE.read() != new_playing {
-            *PLAYBACK_STATE.write() = new_playing;
-        }
-
-        let indices_changed = {
-            let current = ACTIVE_INDICES.read();
-            current.song_progress != Some(song_progress)
-                || current.section_progress != section_progress
-                || current.section_index != section_index
-                || current.is_playing != is_playing
-                || current.looping != is_looping
-        };
-
-        if indices_changed {
-            let mut indices = ACTIVE_INDICES.write();
-            indices.song_progress = Some(song_progress);
-            indices.section_progress = section_progress;
-            indices.section_index = section_index;
-            indices.is_playing = is_playing;
-            indices.looping = is_looping;
         }
     }
 }

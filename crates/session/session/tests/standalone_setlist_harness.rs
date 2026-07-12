@@ -7,8 +7,9 @@
 //!   against a `Daw` client. Proves the build logic + the daw RPC path.
 //! * `setlist_service_over_vox` — mirrors the desktop exactly: hosts
 //!   `SetlistServiceImpl` behind a `LayerRouter` over vox, then drives it
-//!   through a `SetlistServiceClient` (`build_from_open_projects` + the
-//!   `subscribe(Tx<SetlistEvent>)` stream). This is the path the desktop uses.
+//!   through a `SetlistServiceClient` (`build_from_open_projects`, `setlist`,
+//!   `seek_to_section`, active-song queries). Live streaming rides the
+//!   `events` / `active_indices` `#[subscribe]` streams (architect PubSub).
 //!
 //! Run: cargo test -p session --test standalone_setlist_harness -- --nocapture
 
@@ -19,7 +20,7 @@ use daw_standalone::bootstrap::build_in_process_daw;
 use daw_standalone::sync::Standalone;
 use session::setlist_service::demo::stamp_demo_setlist_with;
 use session::{
-    SetlistBuilder, SetlistEvent, SetlistServiceClient, SetlistServiceImpl, serve_setlist_service,
+    SetlistBuilder, SetlistServiceClient, SetlistServiceImpl, serve_setlist_service,
     setlist_service_service_descriptor,
 };
 
@@ -120,9 +121,167 @@ async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Structural contract for the demo setlist the desktop app plays: every
+/// song must carry sections with real, ordered, positive-duration timing
+/// (so the sidebar has sections to show and the player can seek into them),
+/// plus tempo + time signature (so measure lengths are derivable). Built
+/// through the same standalone → `SetlistBuilder` path the desktop uses —
+/// no global daw, no vox.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn demo_setlist_songs_have_sections_with_timing() -> eyre::Result<()> {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let bundle = build_in_process_daw(seeded_stamped()).await?;
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
+
+    println!("setlist '{}' — {} songs", setlist.name, setlist.songs.len());
+    assert!(!setlist.songs.is_empty(), "demo setlist has no songs");
+
+    for (si, song) in setlist.songs.iter().enumerate() {
+        println!(
+            "  song {si}: {:<28} {:>2} sections  tempo={:?} ts={:?}  {:.2}..{:.2}s",
+            song.name,
+            song.sections.len(),
+            song.tempo,
+            song.time_signature
+                .as_ref()
+                .map(|t| (t.numerator, t.denominator)),
+            song.start_seconds,
+            song.end_seconds,
+        );
+        assert!(
+            !song.sections.is_empty(),
+            "song '{}' has no sections",
+            song.name
+        );
+
+        let mut prev_end: Option<f64> = None;
+        for (ci, sec) in song.sections.iter().enumerate() {
+            println!(
+                "      [{ci}] {:<16} {:.2}..{:.2}s ({:.2}s)",
+                sec.display_name(),
+                sec.start_seconds,
+                sec.end_seconds,
+                sec.duration(),
+            );
+            assert!(
+                sec.duration() > 0.0,
+                "section '{}' in '{}' has non-positive duration ({:.3}s)",
+                sec.name,
+                song.name,
+                sec.duration(),
+            );
+            if let Some(pe) = prev_end {
+                assert!(
+                    sec.start_seconds + 0.01 >= pe,
+                    "sections in '{}' out of order at [{ci}] ({:.2} < prev end {:.2})",
+                    song.name,
+                    sec.start_seconds,
+                    pe,
+                );
+            }
+            prev_end = Some(sec.end_seconds);
+        }
+
+        assert!(
+            song.tempo.is_some_and(|t| t > 0.0),
+            "song '{}' has no positive tempo — measure length undefined",
+            song.name
+        );
+        assert!(
+            song.time_signature.is_some(),
+            "song '{}' has no time signature",
+            song.name
+        );
+    }
+    Ok(())
+}
+
+/// End-to-end transport streaming, headless (no REAPER, no GUI): the
+/// standalone playhead must advance AND its position ticks must reach a
+/// consumer through the architect `daw.transport_events()` `#[subscribe]`
+/// stream — the exact path that drives the UI playhead. Regression guard for
+/// the transport→architect migration (no `SynchronizationEngine`, no poll
+/// fallback). If this passes but the UI playhead is frozen, the break is in
+/// the app's stream consumption, not the daw/session pipeline.
+#[test]
+fn transport_stream_delivers_advancing_position() -> eyre::Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(16 * 1024 * 1024)
+        .enable_all()
+        .build()?;
+    rt.block_on(transport_stream_inner())
+}
+
+async fn transport_stream_inner() -> eyre::Result<()> {
+    use daw_proto::transport::TransportStreamEvent;
+
+    let _ = tracing_subscriber::fmt::try_init();
+
+    // Isolated: drive the daw handle from THIS build directly (no global
+    // `init_from_parts`) so parallel tests can't cross-wire the transport.
+    let bundle = build_in_process_daw(seeded_stamped()).await?;
+    let daw = bundle.daw.clone();
+
+    // Subscribe to the architect transport stream first.
+    let mut stream = daw.transport_events();
+
+    // Put the playhead at a known spot inside song 0 and start playback. This
+    // lazily creates the per-project transport engine (spawning the transport
+    // bridge that publishes onto the hub) and advances the soft-clock playhead.
+    let project = daw
+        .project("demo-proj".to_string())
+        .await
+        .map_err(|e| eyre::eyre!("project: {e:?}"))?;
+    project
+        .transport()
+        .set_position(4.0)
+        .await
+        .map_err(|e| eyre::eyre!("set_position: {e:?}"))?;
+    project
+        .transport()
+        .play()
+        .await
+        .map_err(|e| eyre::eyre!("play: {e:?}"))?;
+
+    // Collect position ticks for ~1.5s.
+    let mut ticks = 0usize;
+    let mut first_pos: Option<f64> = None;
+    let mut last_pos = 0.0f64;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(1500);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(300), stream.recv()).await {
+            Ok(Ok(Some(ev))) => {
+                if let TransportStreamEvent::Position(tick) = ev.get() {
+                    let pos = tick.playhead.time.map(|t| t.as_seconds()).unwrap_or(0.0);
+                    ticks += 1;
+                    first_pos.get_or_insert(pos);
+                    last_pos = pos;
+                }
+            }
+            Ok(Ok(None)) | Ok(Err(_)) => break,
+            Err(_) => { /* idle tick; keep waiting */ }
+        }
+    }
+
+    let reported = project.transport().get_position().await.unwrap_or(-1.0);
+    println!("[transport] ticks={ticks} first={first_pos:?} last={last_pos} reported={reported:.3}");
+
+    assert!(
+        ticks > 3,
+        "no position ticks through daw.transport_events() (got {ticks}) — the playhead stream is not delivering"
+    );
+    assert!(
+        last_pos > first_pos.unwrap_or(0.0) + 0.01,
+        "playhead did not advance ({first_pos:?} -> {last_pos})"
+    );
+    Ok(())
+}
+
 /// Full desktop path over vox, no REAPER: host SetlistService behind a
-/// LayerRouter, drive it through SetlistServiceClient — subscribe, build, and
-/// confirm the SetlistChanged push reaches the subscriber.
+/// LayerRouter, drive it through SetlistServiceClient — build, query the
+/// setlist, and confirm seeking selects the active song/section.
 #[test]
 fn setlist_service_over_vox() -> eyre::Result<()> {
     // Manual runtime instead of #[tokio::test]: vox 0.10's debug-build
@@ -211,67 +370,72 @@ async fn setlist_service_over_vox_inner() -> eyre::Result<()> {
         .map_err(|e| eyre::eyre!("build_from_open_projects: {e:?}"))?;
     println!("[v2] build_from_open_projects returned (service built over standalone)");
 
-    match client.setlist().await {
+    let expected_first_song = match client.setlist().await {
         Ok(sl) => {
             println!("[v2] setlist() query: {} songs", sl.songs.len());
             assert!(!sl.songs.is_empty(), "service built an empty setlist");
+            let first = &sl.songs[0];
+            assert!(
+                !first.sections.is_empty(),
+                "song 0 ('{}') built with no sections",
+                first.name
+            );
+            first.name.clone()
         }
         Err(e) => panic!("[v2] setlist() error: {e:?}"),
+    };
+
+    // ── Selecting an active song (the sidebar-expand path) ──────────────
+    //
+    // The desktop app opens with nothing playing, so the ONLY way the
+    // sidebar learns which song is active — and therefore which sections to
+    // show — is a seek publishing the cursor. Reproduce that here over the
+    // real vox path: song 0 must carry a measure grid, and seeking to it
+    // (while STOPPED) must make song 0 / section 0 the active selection.
+    //
+    // (Live cursor/setlist *delivery* now rides the `active_indices` /
+    // `events` `#[subscribe]` streams — exercised in-process by the app's
+    // SessionEventBridge — rather than the old `subscribe(Tx)` verb.)
+
+    let measures = client
+        .measures(0)
+        .await
+        .map_err(|e| eyre::eyre!("measures(0): {e:?}"))?;
+    println!("[v2] song 0 measures: {}", measures.len());
+    assert!(!measures.is_empty(), "song 0 reports no measures");
+
+    // Before the seek nothing is guaranteed active (demo cursor sits at the
+    // timeline end) — active_song() may legitimately error; just log.
+    match client.active_song().await {
+        Ok(s) => println!("[v2] active song before seek: '{}'", s.name),
+        Err(e) => println!("[v2] no active song before seek (expected): {e:?}"),
     }
 
-    // The subscribe handler runs its loop in-flight (never returns until the
-    // stream ends), so poll the receiver CONCURRENTLY with the subscribe future
-    // instead of awaiting subscribe() first. Reproduces the desktop/web-server
-    // client pattern exactly.
-    let (tx, mut rx) = vox::channel::<SetlistEvent>();
-    let mut sub = std::pin::pin!(client.subscribe(tx));
-    println!("[v2] subscribing (concurrent pump)");
+    client
+        .seek_to_section(0, 0)
+        .await
+        .map_err(|e| eyre::eyre!("seek_to_section(0,0): {e:?}"))?;
 
-    let mut got_songs = 0usize;
-    let mut stream_ended = false;
-    let end_at = tokio::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        if tokio::time::Instant::now() >= end_at {
-            break;
-        }
-        tokio::select! {
-            res = &mut sub => {
-                println!("[v2] subscribe() returned: {res:?} — stream ENDED");
-                stream_ended = true;
-                break;
-            }
-            ev = tokio::time::timeout(Duration::from_millis(400), rx.recv()) => {
-                match ev {
-                    Ok(Ok(Some(ev_ref))) => {
-                        if let SetlistEvent::SetlistChanged(sl) = ev_ref.get() {
-                            got_songs = sl.songs.len();
-                            println!("[v2] SetlistChanged: {got_songs} songs");
-                        }
-                    }
-                    Ok(Ok(None)) => {
-                        println!("[v2] rx closed — stream ENDED (reproduces spin)");
-                        stream_ended = true;
-                        break;
-                    }
-                    Ok(Err(e)) => {
-                        println!("[v2] rx error: {e:?}");
-                        stream_ended = true;
-                        break;
-                    }
-                    Err(_) => { /* idle tick; stream still open */ }
-                }
-            }
-        }
-    }
+    let active_song = client
+        .active_song()
+        .await
+        .map_err(|e| eyre::eyre!("active_song after seek: {e:?}"))?;
+    let active_section = client
+        .active_section()
+        .await
+        .map_err(|e| eyre::eyre!("active_section after seek: {e:?}"))?;
+    println!(
+        "[v2] after seek_to_section(0,0): active song='{}' section='{}'",
+        active_song.name, active_section.name
+    );
+    assert_eq!(
+        active_song.name, expected_first_song,
+        "seek_to_section(0,0) did not make song 0 ('{expected_first_song}') active — the sidebar would never expand it"
+    );
+    assert_eq!(
+        active_section.section_id, active_song.sections[0].section_id,
+        "seek_to_section(0,0) did not make section 0 active"
+    );
 
-    println!("[v2] delivered={got_songs} songs, stream_ended={stream_ended}");
-    assert!(
-        got_songs > 0,
-        "subscriber got no initial SetlistChanged snapshot"
-    );
-    assert!(
-        !stream_ended,
-        "subscription stream ended early — would cause the resubscribe spin"
-    );
     Ok(())
 }
