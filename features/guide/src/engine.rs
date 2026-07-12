@@ -258,6 +258,25 @@ impl GuideEngine {
         let beats_start = clock.pos_beats;
         let beats_end = beats_start + block_quarters;
 
+        // Detect a seek up front: this block's start doesn't continue from
+        // the previous block's end. On a seek we must re-anchor BOTH the
+        // click grid trackers and the cue cursor to the new position —
+        // otherwise a *backward* seek leaves the monotonic grid indices
+        // ahead of the playhead and every `k = last_idx + 1` grid point is
+        // already past `beats_end`, so the click goes silent until playback
+        // catches back up to where it was. Resetting to `i64::MIN` makes
+        // `schedule_grid` re-anchor on the new `beats_start`.
+        let sec_start = clock.pos_seconds;
+        let continuous = self
+            .prev_block_end_seconds
+            .is_some_and(|prev| (prev - sec_start).abs() < 1e-4);
+        if !continuous {
+            self.last_beat_idx = i64::MIN;
+            self.last_eighth_idx = i64::MIN;
+            self.last_sixteenth_idx = i64::MIN;
+            self.last_triplet_idx = i64::MIN;
+        }
+
         // ── Click subdivisions (grid-index walk; sample accurate) ────────
         let num = clock.time_sig_num.max(1) as i64;
         let beat_unit_quarters = 4.0 / f64::from(clock.time_sig_den.max(1));
@@ -346,11 +365,7 @@ impl GuideEngine {
         }
 
         // ── Scheduled cues (count-in voices, guide announcements) ────────
-        let sec_start = clock.pos_seconds;
         let sec_end = sec_start + n as f64 / clock.sample_rate;
-        let continuous = self
-            .prev_block_end_seconds
-            .is_some_and(|prev| (prev - sec_start).abs() < 1e-4);
         if !continuous {
             // Seek (or first rolling block): relocate the cue cursor.
             self.next_cue = self
@@ -486,5 +501,66 @@ impl GuideEngine {
 impl Default for GuideEngine {
     fn default() -> Self {
         Self::new(GuideConfig::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Sum of squared output energy for one rolling block at `pos_beats`.
+    fn block_energy(engine: &mut GuideEngine, pos_seconds: f64, pos_beats: f64) -> f64 {
+        // 120 bpm, 48 kHz → 24 000 samples/quarter, so a 24 000-frame block
+        // is exactly one beat and always contains a beat onset at offset 0.
+        let n = 24_000;
+        let mut l = vec![0.0f32; n];
+        let mut r = vec![0.0f32; n];
+        engine.render_stereo(
+            &mut l,
+            &mut r,
+            &BlockClock {
+                playing: true,
+                pos_seconds,
+                pos_beats,
+                tempo_bpm: 120.0,
+                time_sig_num: 4,
+                time_sig_den: 4,
+                sample_rate: 48_000.0,
+            },
+        );
+        l.iter().chain(r.iter()).map(|s| (*s as f64) * (*s as f64)).sum()
+    }
+
+    /// A backward seek (to an already-played section) must NOT silence the
+    /// click. Regression for the monotonic grid-index bug: the click grid
+    /// trackers were only re-anchored on the cue cursor, so seeking back
+    /// left them ahead of the playhead and no beats fired until playback
+    /// climbed back to the old position.
+    #[test]
+    fn backward_seek_keeps_click_playing() {
+        let mut bank = SampleBank::default();
+        bank.synthesize_defaults(48_000);
+        let mut config = GuideConfig::default();
+        // Isolate the click grid from the (empty) cue schedule.
+        config.enable_count = false;
+        config.enable_guide = false;
+        let mut engine = GuideEngine::new(config);
+        engine.set_bank(bank);
+
+        // Roll forward a few beats so the grid trackers advance.
+        assert!(block_energy(&mut engine, 2.0, 4.0) > 0.0, "first block silent");
+        assert!(block_energy(&mut engine, 2.5, 5.0) > 0.0, "second block silent");
+        assert!(block_energy(&mut engine, 3.0, 6.0) > 0.0, "third block silent");
+
+        // Seek BACKWARD to an earlier beat: the click must keep firing.
+        let after_seek = block_energy(&mut engine, 1.0, 2.0);
+        assert!(
+            after_seek > 0.0,
+            "click went silent after a backward seek (energy = {after_seek})"
+        );
+
+        // And a forward seek stays healthy too.
+        let after_fwd = block_energy(&mut engine, 10.0, 20.0);
+        assert!(after_fwd > 0.0, "click went silent after a forward seek");
     }
 }

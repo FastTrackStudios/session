@@ -32,6 +32,13 @@ impl From<Reference> for Group<ItemMetadata> {
                 "ref",
                 "ref mix",
                 "reference mix",
+                // Original master / released-track references (MultiTracks ship an
+                // "(Original Track)" full-mix reference alongside the stems)
+                "original",
+                "original track",
+                "original mix",
+                "master mix",
+                "album mix",
                 // Mixdown abbreviations
                 "MDN",
                 "mixdown",

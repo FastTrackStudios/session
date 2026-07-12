@@ -56,7 +56,12 @@ ort = { version = "=2.0.0-rc.10", optional = true, default-features = false, fea
     "copy-dylibs",
     "tracing",
 ] }
-ndarray = { version = "0.17", optional = true }
+# Must match the ndarray version `ort` rc.10 links, or `Tensor::from_array`
+# rejects our arrays (`OwnedTensorArrayData` is impl'd only for ort's own
+# ndarray `Array`). ort rc.10 resolves ndarray 0.16 (pulled transitively via
+# chatterbox-rs/session-guide in this workspace), so pin 0.16 here — NOT 0.17,
+# which silently coexists as a second version and breaks the trait bound.
+ndarray = { version = "0.16", optional = true }
 
 # Optional: model download + integrity check.
 ureq = { version = "2.10", optional = true }

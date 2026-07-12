@@ -131,6 +131,12 @@ where
         )));
     }
 
+    // Praise (song 1) is 127 bpm — set the project default tempo so the guide
+    // grid and count-in beats line up (`SongBuilder::build` reads tempo from
+    // the project snapshot). The placeholder songs inherit it for now.
+    daw.set_default_tempo(project.clone(), 127.0)
+        .map_err(|e| SessionServiceError::DawError(format!("set demo tempo: {e}")))?;
+
     let songs = demo_songs();
 
     let mut total_markers = 0u32;
@@ -335,8 +341,102 @@ where
     Ok(())
 }
 
-/// Build the demo setlist: 3 worship songs with realistic structure.
+/// The bundled "Praise" chart (keyflow text) — the first real demo song. Its
+/// section structure, tempo (127), key (A), and count-in are all derived from
+/// this text via [`crate::chart_import`], exercising the live chart→sections
+/// path end to end.
+const PRAISE_CHART: &str = "\
+Praise - Elevation Worship
+#A 127bpm 4/4
+
+Count 2
+In 4
+Refrain 8
+VS 8
+VS
+PRE 2
+CH 8
+VS
+VS
+PRE
+CH
+CH
+Interlude \"Breakdown\" 8
+BR \"Down\" 8
+BR \"Build\"
+CH
+CH
+CH
+INST \"Guitar Lead\" 8
+Refrain
+Refrain";
+
+/// Build "Praise" as a [`DemoSong`] from its keyflow chart. The leading
+/// CountIn section becomes the count-in marker (`count_in`/`song_start`); the
+/// musical sections become SECTION-lane regions.
+fn praise_song() -> DemoSong {
+    let layout = crate::chart_import::chart_to_layout(PRAISE_CHART)
+        .expect("bundled Praise chart must parse");
+    let sections: Vec<DemoSection> = layout
+        .sections
+        .iter()
+        .filter(|s| s.kind != SectionKind::CountIn)
+        .map(|s| DemoSection {
+            kind: s.kind,
+            start: s.start_seconds,
+            end: s.end_seconds,
+        })
+        .collect();
+    let tail = 4.0; // ring-out after the last section
+    DemoSong {
+        name: "Praise",
+        region_start: 0.0,
+        region_end: layout.song_end_seconds + tail,
+        count_in: 0.0,
+        song_start: layout.song_start_seconds,
+        song_end: layout.song_end_seconds,
+        abs_end: layout.song_end_seconds + tail,
+        sections,
+    }
+}
+
+/// Shift every absolute position in a song by `delta` seconds (used to
+/// re-space the placeholder songs after the much-longer Praise).
+fn shift_song(mut song: DemoSong, delta: f64) -> DemoSong {
+    song.region_start += delta;
+    song.region_end += delta;
+    song.count_in += delta;
+    song.song_start += delta;
+    song.song_end += delta;
+    song.abs_end += delta;
+    for s in &mut song.sections {
+        s.start += delta;
+        s.end += delta;
+    }
+    song
+}
+
+/// Build the demo setlist: "Praise" (real chart) followed by two placeholder
+/// worship songs, re-spaced to sit after it on the timeline.
 fn demo_songs() -> Vec<DemoSong> {
+    const GAP: f64 = 10.0;
+    let praise = praise_song();
+    let mut songs = vec![praise];
+    let mut cursor = songs[0].abs_end + GAP;
+    // Keep the two placeholder songs (skip the old hymn slot at index 0),
+    // shifting each to start after the previous song.
+    for base in legacy_demo_songs().into_iter().skip(1) {
+        let delta = cursor - base.region_start;
+        let shifted = shift_song(base, delta);
+        cursor = shifted.abs_end + GAP;
+        songs.push(shifted);
+    }
+    songs
+}
+
+/// The original hardcoded 3-song demo. Index 0 (a hymn) is superseded by the
+/// real Praise chart; indices 1–2 are kept as placeholder songs.
+fn legacy_demo_songs() -> Vec<DemoSong> {
     vec![
         // ── Song 1: "Great Is Thy Faithfulness" ──────────────────
         // 120 BPM, 4/4 — classic hymn arrangement

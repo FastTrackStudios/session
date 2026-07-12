@@ -32,6 +32,7 @@ pub enum SectionKind {
     Interlude,
     Breakdown,
     Vamp,
+    Refrain,
     CountIn,
     End,
 }
@@ -75,6 +76,7 @@ pub fn action_for_id(action_id: &str) -> Option<KeyflowAction> {
         "insert_interlude_region" => Some(KeyflowAction::InsertSection(SectionKind::Interlude)),
         "insert_breakdown_region" => Some(KeyflowAction::InsertSection(SectionKind::Breakdown)),
         "insert_vamp_region" => Some(KeyflowAction::InsertSection(SectionKind::Vamp)),
+        "insert_refrain_region" => Some(KeyflowAction::InsertSection(SectionKind::Refrain)),
         "insert_count_in_region" => Some(KeyflowAction::InsertSection(SectionKind::CountIn)),
         "insert_end_region" => Some(KeyflowAction::InsertSection(SectionKind::End)),
         "insert_count_in_marker" => Some(KeyflowAction::InsertMarker(MarkerKind::CountIn)),
@@ -893,7 +895,7 @@ fn marker_color_for_name(name: &str) -> Option<u32> {
 }
 
 impl SectionKind {
-    fn section_type(self) -> SectionType {
+    pub(crate) fn section_type(self) -> SectionType {
         match self {
             Self::Intro => SectionType::Intro,
             Self::Verse => SectionType::Verse,
@@ -907,19 +909,49 @@ impl SectionKind {
             Self::Interlude => SectionType::Interlude,
             Self::Breakdown => SectionType::Breakdown,
             Self::Vamp => SectionType::Vamp,
+            Self::Refrain => SectionType::Refrain,
             Self::CountIn => SectionType::CountIn,
             Self::End => SectionType::End,
         }
     }
 
-    fn default_measure_count(self) -> u32 {
+    /// Map a keyflow `SectionType` back to the session `SectionKind` used for
+    /// marker insertion. `Pre(_)` collapses to `PreChorus`, `Opening`→`Intro`,
+    /// `Post(_)`→`Outro`, and `Custom(_)` falls back to `Instrumental` — the
+    /// session model has no free-form section kind, so a custom section is
+    /// stamped as a generic instrumental region (its label is carried
+    /// separately).
+    pub(crate) fn from_section_type(st: &SectionType) -> SectionKind {
+        match st {
+            SectionType::Intro => Self::Intro,
+            SectionType::Verse => Self::Verse,
+            SectionType::Chorus => Self::Chorus,
+            SectionType::Bridge => Self::Bridge,
+            SectionType::Outro => Self::Outro,
+            SectionType::Instrumental => Self::Instrumental,
+            SectionType::Solo => Self::Solo,
+            SectionType::CountIn => Self::CountIn,
+            SectionType::End => Self::End,
+            SectionType::Hits => Self::Hits,
+            SectionType::Interlude => Self::Interlude,
+            SectionType::Breakdown => Self::Breakdown,
+            SectionType::Vamp => Self::Vamp,
+            SectionType::Refrain => Self::Refrain,
+            SectionType::Pre(_) => Self::PreChorus,
+            SectionType::Opening => Self::Intro,
+            SectionType::Post(_) => Self::Outro,
+            SectionType::Custom(_) => Self::Instrumental,
+        }
+    }
+
+    pub(crate) fn default_measure_count(self) -> u32 {
         self.verified_default_measure_count().unwrap_or(4)
     }
 
     fn verified_default_measure_count(self) -> Option<u32> {
         match self {
             Self::CountIn => Some(2),
-            Self::Verse | Self::Chorus | Self::Bridge => Some(8),
+            Self::Verse | Self::Chorus | Self::Bridge | Self::Refrain => Some(8),
             Self::Intro | Self::Outro | Self::Instrumental => Some(4),
             Self::PreChorus
             | Self::Solo

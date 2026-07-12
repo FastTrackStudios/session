@@ -102,12 +102,16 @@ impl From<BackgroundVocals> for ItemMetadataGroup {
             .patterns([
                 // Standard abbreviations
                 "bgv",
+                "bgvs",
+                "bgvox",
                 "bg",
                 "bv",
+                "bvs",
                 "background",
                 "backing",
                 "harmony",
-                "choir",
+                // NOTE: "choir" intentionally omitted — choir stems route to the
+                // dedicated Choir subgroup under Vocals, not into BGVs.
                 // Ad-libs are typically supporting vocal elements
                 "ad lib",
                 "adlib",
@@ -122,6 +126,8 @@ impl From<BackgroundVocals> for ItemMetadataGroup {
                 // "Hey Hey" is a common vocal hook/response pattern in pop/rock
                 "hey hey",
             ])
+            // Choir stems are handled by the dedicated Choir subgroup, not BGVs.
+            .exclude(["choir", "chorale", "ensemble"])
             .performer(ItemMetadataGroup::builder("Performer").build()) // Priority 1: Performer (uses global patterns)
             .section(ItemMetadataGroup::builder("Section").build()) // Priority 2: Section (uses global patterns)
             .arrangement(harmony_arrangement) // Priority 3: Arrangement (harmony-specific patterns)

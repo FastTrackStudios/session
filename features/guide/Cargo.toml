@@ -42,3 +42,9 @@ chatterbox-rs = { git = "https://github.com/bearcove/cbx", optional = true }
 # forces smallvec down to 2.0.0-alpha.10 (ort rc.10 pins `=alpha.10`;
 # facet-reflect's `^2.0.0-alpha.10` still accepts it).
 ort = { version = "=2.0.0-rc.10", optional = true, default-features = false }
+
+# The TTS smoke example only compiles with the `tts` feature (it uses the
+# Chatterbox backend); gate it so default-feature `cargo test`/`build` skip it.
+[[example]]
+name = "tts_smoke"
+required-features = ["tts"]

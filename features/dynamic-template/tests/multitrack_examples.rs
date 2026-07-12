@@ -25,6 +25,7 @@ mod multitrack_examples {
     mod derek_and_the_dominos_layla;
     mod eagles_hotel_california;
     mod ej_rios_echo;
+    mod elevation_worship_praise;
     mod enda_reilly_cur_an_long;
     mod entwistle_dont_you_ever;
     mod family_band_again;

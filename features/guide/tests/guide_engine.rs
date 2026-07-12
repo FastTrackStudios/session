@@ -456,13 +456,11 @@ fn synthesize_defaults_fills_all_slots_non_silent_and_bounded() {
         let p = peak(sample);
         assert!(p > 0.05 && p <= 1.0, "count {i} peak {p} out of range");
     }
-    // Section-guide chimes cover the standard keys.
-    for key in ["Verse_1", "Chorus_None", "Pre Chorus_2", "Ending_None"] {
-        let sample = &bank.guides[key];
-        let p = peak(sample);
-        assert!(p > 0.05 && p <= 1.0, "guide {key} peak {p} out of range");
-        assert!(sample.frames() < SR as usize, "guide {key} too long");
-    }
+    // Section-guide chimes are intentionally NOT synthesized: guide
+    // announcements come from real recorded samples (load_guide_dir) or TTS,
+    // so a zero-asset engine has no synthesized guides (an unmatched section
+    // stays silent rather than emitting a noise chime).
+    assert!(bank.guides.is_empty());
 }
 
 #[test]
@@ -478,10 +476,11 @@ fn synthesize_defaults_never_overwrites_loaded_samples() {
     assert_eq!(bank.beat.as_ref().unwrap().frames(), 1);
     assert_eq!(bank.counts[0].as_ref().unwrap().frames(), 1);
     assert_eq!(bank.guides["Chorus_None"].frames(), 1);
-    // ...while empty slots were still filled.
+    // ...while empty CLICK/COUNT slots were still filled. (Guides are never
+    // synthesized, so no new guide keys appear — the preloaded one above is
+    // simply left untouched.)
     assert!(bank.measure_accent.is_some());
     assert!(bank.counts[1].is_some());
-    assert!(bank.guides.contains_key("Verse_1"));
 }
 
 #[test]
@@ -548,4 +547,116 @@ fn measure_accent_replaces_beat_one() {
     assert_eq!(l[500], 1.0); // plain beats 2-4
     assert_eq!(l[1000], 1.0);
     assert_eq!(l[1500], 1.0);
+}
+
+// ─── sections_from_song: count-in attaches to the first MUSICAL section ──
+//
+// Regression for the "announced the section but never counted 1-2-3-4" bug.
+// `SongBuilder` prepends a synthetic `CountIn` section and sets the song's
+// `start_seconds` to the count-in START, so the count-in must attach to the
+// first non-CountIn section and count INTO its downbeat — not to the
+// synthetic section at t≈0, where the whole count landed at negative time
+// and got dropped.
+
+fn count_in_song() -> session_proto::Song {
+    use session_proto::{Section, SectionId, SectionType, Song, SongId};
+
+    // 120 bpm, 4/4 → beat 0.5 s, measure 2.0 s. Count-in START at 0.0, a
+    // 2-measure (4.0 s) count into the Intro downbeat at 4.0 s. This mirrors
+    // demo song #1, which previously produced NO count audio.
+    let section = |name: &str, ty: SectionType, start: f64, end: f64| Section {
+        section_id: SectionId::default(),
+        id: None,
+        name: name.to_string(),
+        comment: None,
+        section_type: ty,
+        start_seconds: start,
+        end_seconds: end,
+        number: None,
+        color: None,
+    };
+    Song {
+        id: SongId::default(),
+        name: "Count-In Song".into(),
+        project_guid: "guid-ci".into(),
+        start_seconds: 0.0, // count-in START, per SongBuilder
+        end_seconds: 36.0,
+        count_in_seconds: Some(4.0),
+        sections: vec![
+            section("Count-In", SectionType::CountIn, 0.0, 4.0),
+            section("Intro", SectionType::Intro, 4.0, 20.0),
+            section("Verse 1", SectionType::Verse, 20.0, 36.0),
+        ],
+        comments: vec![],
+        tempo: Some(120.0),
+        time_signature: None, // GuideSongTiming defaults to 4/4
+        measure_positions: vec![],
+        chart_text: None,
+        parsed_chart: None,
+        detected_chords: vec![],
+        chart_fingerprint: None,
+        advance_mode: None,
+        color: None,
+    }
+}
+
+#[test]
+fn count_in_attaches_to_first_musical_section() {
+    let song = count_in_song();
+    let sections = session_guide::sections_from_song(&song);
+
+    // The synthetic count-in section gets NO count-in position…
+    assert_eq!(sections[0].section_type_name, "Count-In"); // CountIn full_name
+    assert_eq!(sections[0].count_in_position, None);
+    // …the first musical section (Intro) carries it, anchored at the count
+    // START (0.0), not one count-in duration earlier (the old −4.0 bug).
+    assert_eq!(sections[1].name, "Intro");
+    assert_eq!(sections[1].count_in_position, Some(0.0));
+}
+
+#[test]
+fn count_in_song_schedules_full_count_into_the_downbeat() {
+    let song = count_in_song();
+    let sections = session_guide::sections_from_song(&song);
+    let timing = GuideSongTiming::from_song(&song);
+    // DEFAULT options — this pins the default "Announce, rest, full count"
+    // layout — but isolate the count-IN from the SONGEND count-OUT (which
+    // also emits Count cues) by disabling the count-out for this song.
+    let options = ScheduleOptions {
+        extend_songend_count: false,
+        ..ScheduleOptions::default()
+    };
+    let schedule = CueSchedule::build(&sections, &timing, &options);
+
+    let counts: Vec<(f64, usize)> = schedule
+        .cues
+        .iter()
+        .filter_map(|c| match c.event {
+            CueEvent::Count { index } => Some((c.time_seconds, index)),
+            _ => None,
+        })
+        .collect();
+
+    // The bug produced ZERO counts. The default now counts ONLY the final
+    // measure — a clean "1 2 3 4" at 2.0/2.5/3.0/3.5 into the 4.0 s downbeat —
+    // with the first measure left silent for the announcement to breathe.
+    assert_eq!(
+        counts,
+        vec![(2.0, 0), (2.5, 1), (3.0, 2), (3.5, 3)],
+        "count-in should be a single full measure into the downbeat"
+    );
+
+    // The Intro is announced up front, at the START of the count-in (2
+    // measures / 4.0 s before its 4.0 s downbeat → t = 0.0).
+    let intro_guide_time = schedule.cues.iter().find_map(|c| match &c.event {
+        CueEvent::Guide { keys } if keys.iter().any(|k| k.contains("Intro")) => {
+            Some(c.time_seconds)
+        }
+        _ => None,
+    });
+    assert_eq!(
+        intro_guide_time,
+        Some(0.0),
+        "Intro should be announced at the start of the count-in"
+    );
 }

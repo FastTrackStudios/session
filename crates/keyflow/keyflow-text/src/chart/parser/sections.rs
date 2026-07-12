@@ -702,13 +702,30 @@ impl<'a> ChartParser<'a> {
 
         // Default to Pre-Chorus
         let section_type = SectionType::Pre(Box::new(SectionType::Chorus));
-        let measure_count = if parts.len() > 1 {
-            parts[1].parse::<usize>().ok()
-        } else {
-            None
-        };
+        let measure_count =
+            self.pre_post_measure_count(&section_type, parts.get(1).copied());
 
         self.parse_section_content(lines, start_idx, section_type, measure_count, false, None)
+    }
+
+    /// Resolve the bar count for a bare `pre`/`post` line, threading the
+    /// section-measure memory the same way the main marker path does: an
+    /// explicit count updates the memory; a missing count inherits the last
+    /// count seen for this exact section type (so a lone `PRE` after `PRE 2`
+    /// still gets 2 measures).
+    fn pre_post_measure_count(
+        &mut self,
+        section_type: &SectionType,
+        count_token: Option<&str>,
+    ) -> Option<usize> {
+        match count_token.and_then(|t| t.parse::<usize>().ok()) {
+            Some(count) => {
+                self.section_measure_memory
+                    .insert(section_type.clone(), count);
+                Some(count)
+            }
+            None => self.section_measure_memory.get(section_type).copied(),
+        }
     }
 
     /// Parse "post" section (post-chorus, post-verse, etc.)
@@ -722,11 +739,8 @@ impl<'a> ChartParser<'a> {
 
         // Default to Post-Chorus
         let section_type = SectionType::Post(Box::new(SectionType::Chorus));
-        let measure_count = if parts.len() > 1 {
-            parts[1].parse::<usize>().ok()
-        } else {
-            None
-        };
+        let measure_count =
+            self.pre_post_measure_count(&section_type, parts.get(1).copied());
 
         self.parse_section_content(lines, start_idx, section_type, measure_count, false, None)
     }

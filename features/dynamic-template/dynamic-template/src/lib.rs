@@ -24,7 +24,7 @@ pub use error::{Error, Result};
 pub use golden::golden_template;
 pub use groups::{
     Bass, Choir, Drums, Guide, Guitars, Harmonica, Horns, Keys, Orchestra, Percussion, Reference,
-    SFX, StemSplit, Strings, Synths, Vocals,
+    SFX, StemSplit, Strings, Synths, Tracks, Vocals,
 };
 pub use item_metadata::ItemMetadata;
 
@@ -68,9 +68,16 @@ pub fn default_config() -> DynamicTemplateConfig {
         .group(Harmonica)
         .group(Strings)
         .group(Vocals)
+        // Top-level Choir catches standalone voice-part choir sessions
+        // (soprano/alto/tenor, "chorus", ensembles). Literal "choir"/"chorale"
+        // stems are handled by Vocals' Choir subgroup instead (routed to the
+        // vocal bus) — the top-level group deliberately does NOT match those two
+        // bare words, so a "Choir" stem lands under Vocals with no duplication.
         .group(Choir)
         .group(Orchestra)
         .group(SFX)
+        // Backing/playback tracks (loops, sequences) — a live-rig top-level group.
+        .group(Tracks)
         // Utility tracks at the bottom
         .group(Guide)
         .group(Reference)
