@@ -42,6 +42,19 @@ pub struct GuideSection {
     pub spoken_note: Option<String>,
 }
 
+impl GuideSection {
+    /// The full spoken form for TTS — "Verse 1", "Chorus", "Pre-Chorus 2" —
+    /// built from the section *type* (full word) + number, rather than the
+    /// abbreviated on-screen name ("VS 1", "CH", "PRE-CH 2"). This is what a
+    /// human would say, so it reads well through Chatterbox.
+    pub fn spoken_name(&self) -> String {
+        match self.section_number {
+            Some(n) => format!("{} {}", self.section_type_name, n),
+            None => self.section_type_name.clone(),
+        }
+    }
+}
+
 impl From<&session_proto::Section> for GuideSection {
     fn from(s: &session_proto::Section) -> Self {
         Self {
@@ -247,6 +260,9 @@ impl CueSchedule {
             if let Some(note) = &section.spoken_note {
                 keys.push(tts_cue_key(note));
             }
+            // Prefer the full spoken name ("Verse 1"); keep the abbreviated
+            // name as a secondary key so any pre-rendered "VS 1" cue still hits.
+            keys.push(tts_cue_key(&section.spoken_name()));
             keys.push(tts_cue_key(&section.name));
             keys.push(get_guide_key(
                 &section.section_type_name,
@@ -373,8 +389,9 @@ impl CueSchedule {
                     texts.push(note.clone());
                 }
             }
-            if !texts.contains(&section.name) {
-                texts.push(section.name.clone());
+            let spoken = section.spoken_name();
+            if !texts.contains(&spoken) {
+                texts.push(spoken);
             }
         }
         if !texts.iter().any(|t| t == "Ending") {
