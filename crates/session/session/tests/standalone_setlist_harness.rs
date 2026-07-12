@@ -197,6 +197,57 @@ async fn demo_setlist_songs_have_sections_with_timing() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Section numbering resets per song: within each song, every repeated
+/// section type is numbered contiguously from 1 (Verse 1, Verse 2, …) rather
+/// than continuing across the whole project (the demo puts 3 songs on one
+/// timeline, so a global counter would render song 2's first verse as
+/// "Verse 4"). Single-occurrence types carry no number.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn section_numbering_resets_per_song() -> eyre::Result<()> {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let bundle = build_in_process_daw(seeded_stamped()).await?;
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
+    assert!(setlist.songs.len() >= 2, "need multiple songs to test per-song reset");
+
+    for song in &setlist.songs {
+        // Collect the trailing number of each numbered section, keyed by its
+        // base label ("VS 2" -> base "VS", n 2; "Intro" -> unnumbered).
+        let mut by_base: std::collections::BTreeMap<String, Vec<u32>> = Default::default();
+        for sec in &song.sections {
+            let name = sec.display_name();
+            if let Some((base, n)) = name
+                .rsplit_once(' ')
+                .and_then(|(b, n)| n.parse::<u32>().ok().map(|n| (b.to_string(), n)))
+            {
+                by_base.entry(base).or_default().push(n);
+            }
+        }
+        for (base, mut nums) in by_base {
+            nums.sort_unstable();
+            assert_eq!(
+                nums.first().copied(),
+                Some(1),
+                "song '{}' type '{}' numbering starts at {:?}, expected 1 (per-song reset)",
+                song.name,
+                base,
+                nums.first(),
+            );
+            for (i, n) in nums.iter().enumerate() {
+                assert_eq!(
+                    *n,
+                    i as u32 + 1,
+                    "song '{}' type '{}' numbering not contiguous from 1: {:?}",
+                    song.name,
+                    base,
+                    nums,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// End-to-end transport streaming, headless (no REAPER, no GUI): the
 /// standalone playhead must advance AND its position ticks must reach a
 /// consumer through the architect `daw.transport_events()` `#[subscribe]`
@@ -322,25 +373,66 @@ async fn sync_engine_inner() -> eyre::Result<()> {
 
     // Mutate the demo project via the facade — daw-standalone publishes these
     // onto the event bus, which the (now backend-agnostic) engine forwards.
+    // Exercise three domains: Marker, Item (add + move), Routing (send).
     let project = daw
         .project("demo-proj".to_string())
         .await
         .map_err(|e| eyre::eyre!("project: {e:?}"))?;
+
     project
         .markers()
         .add(2.5, "SyncMarker")
         .await
         .map_err(|e| eyre::eyre!("marker add: {e:?}"))?;
 
+    // Two tracks so we can add an item and a send between them.
+    let track_a = project
+        .tracks()
+        .add("A", None)
+        .await
+        .map_err(|e| eyre::eyre!("track A: {e:?}"))?;
+    let track_b = project
+        .tracks()
+        .add("B", None)
+        .await
+        .map_err(|e| eyre::eyre!("track B: {e:?}"))?;
+
+    // Item: add on track A, then MOVE it (fine ItemEvent::PositionChanged).
+    let item = track_a
+        .items()
+        .add(
+            daw_proto::PositionInSeconds::from_seconds(1.0),
+            daw_proto::Duration::from_seconds(2.0),
+        )
+        .await
+        .map_err(|e| eyre::eyre!("item add: {e:?}"))?;
+    item.set_position(daw_proto::PositionInSeconds::from_seconds(5.0))
+        .await
+        .map_err(|e| eyre::eyre!("item move: {e:?}"))?;
+
+    // Routing: send from A → B.
+    track_a
+        .sends()
+        .add_to(track_b.guid())
+        .await
+        .map_err(|e| eyre::eyre!("add send: {e:?}"))?;
+
     let mut got_marker = false;
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(1500);
+    let mut got_item = false;
+    let mut got_routing = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(2000);
     while tokio::time::Instant::now() < deadline {
+        if got_marker && got_item && got_routing {
+            break;
+        }
         match tokio::time::timeout(Duration::from_millis(300), rx.recv()).await {
             Ok(Ok(ev)) => {
                 println!("[sync] domain={:?}", std::mem::discriminant(&ev.domain));
-                if matches!(ev.domain, SyncDomain::Marker(_)) {
-                    got_marker = true;
-                    break;
+                match ev.domain {
+                    SyncDomain::Marker(_) => got_marker = true,
+                    SyncDomain::Item(_) => got_item = true,
+                    SyncDomain::Routing(_) => got_routing = true,
+                    _ => {}
                 }
             }
             Ok(Err(_)) => break,
@@ -351,6 +443,14 @@ async fn sync_engine_inner() -> eyre::Result<()> {
     assert!(
         got_marker,
         "sync engine produced no Marker SyncEvent from a standalone mutation — it is not backend-agnostic"
+    );
+    assert!(
+        got_item,
+        "sync engine produced no Item SyncEvent — daw-standalone item events are not reaching the bus"
+    );
+    assert!(
+        got_routing,
+        "sync engine produced no Routing SyncEvent — daw-standalone routing events are not reaching the bus"
     );
     Ok(())
 }
