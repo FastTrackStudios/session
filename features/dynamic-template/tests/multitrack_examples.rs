@@ -26,6 +26,13 @@ mod multitrack_examples {
     mod eagles_hotel_california;
     mod ej_rios_echo;
     mod elevation_worship_praise;
+    // Worship-multitracks grouping tests (share `worship_common`'s placement helper).
+    mod worship_common;
+    mod god_im_just_grateful;
+    mod holy_forever;
+    mod thank_god_im_free;
+    mod washed;
+    mod who_else;
     mod enda_reilly_cur_an_long;
     mod entwistle_dont_you_ever;
     mod family_band_again;

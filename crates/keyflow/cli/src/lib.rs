@@ -328,6 +328,29 @@ enum Commands {
         #[arg(long)]
         align: bool,
     },
+    /// Recover a keyflow section arrangement from a song's Click + Guide
+    /// (spoken-cue) tracks: detect tempo/bars from the click, transcribe the
+    /// spoken section names, and emit chart text. Needs `--features onnx,whisper`.
+    GuideChart {
+        /// Path to the Click-track WAV (steady metronome).
+        #[arg(long)]
+        click: PathBuf,
+        /// Path to the Guide/Cue-track WAV (spoken section names).
+        #[arg(long)]
+        guide: PathBuf,
+        /// Assumed beats per bar (meter numerator).
+        #[arg(long, default_value_t = 4)]
+        beats_per_bar: u32,
+        /// Drop recognized cues below this confidence (hallucination gate).
+        #[arg(long, default_value_t = 0.15)]
+        min_confidence: f32,
+        /// Optional header line to prepend (e.g. "Song\n#A 127bpm 4/4").
+        #[arg(long)]
+        header: Option<String>,
+        /// Write the recovered keyflow text here.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Score a separated stem against a reference (SI-SDR / SDR), for comparing
     /// stem-splitter tools head-to-head.
     Bench {
@@ -1787,6 +1810,24 @@ fn run(cli: Cli) -> Result<(), String> {
                 AsrEngine::Ctc => sync::cmd_transcribe(opts),
                 AsrEngine::Whisper => sync::cmd_transcribe_whisper(opts),
             }
+        }
+        Commands::GuideChart {
+            click,
+            guide,
+            beats_per_bar,
+            min_confidence,
+            header,
+            output,
+        } => {
+            let opts = sync::GuideChartOpts {
+                click: &click,
+                guide: &guide,
+                beats_per_bar,
+                min_confidence,
+                header: header.as_deref(),
+                output: output.as_deref(),
+            };
+            sync::cmd_guide_chart(opts)
         }
 
         Commands::Karaoke {

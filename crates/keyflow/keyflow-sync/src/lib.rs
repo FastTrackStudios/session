@@ -26,7 +26,9 @@
 pub mod align;
 pub mod audio;
 pub mod bench;
+pub mod click;
 pub mod error;
+pub mod guide_chart;
 pub mod karaoke;
 pub mod lanes;
 pub mod models;
@@ -40,6 +42,8 @@ pub mod whisper;
 
 pub use align::{EmissionModel, WordTiming, align_words};
 pub use audio::AudioBuffer;
+pub use click::{ClickGrid, detect_click_grid};
+pub use guide_chart::{RecoveredSection, SectionCue, cues_to_keyflow, recover_sections};
 pub use error::{Result, SyncError};
 pub use pipeline::{SectionLyrics, prepare_vocals, run_alignment};
 pub use separator::{StemSelection, StemSeparator, Stems};
