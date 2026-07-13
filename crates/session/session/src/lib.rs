@@ -30,6 +30,7 @@ pub mod chart_import;
 pub mod event_bus;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod keyflow_actions;
+pub mod keyflow_scaffold;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod preroll_actions;
 #[cfg(not(target_arch = "wasm32"))]

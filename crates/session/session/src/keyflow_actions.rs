@@ -610,7 +610,7 @@ fn musical_position_from_fraction(measure: i32, beat: i32, fraction: f64) -> Mus
     MusicalPosition::new(measure, beat, subdivision.clamp(0, 999))
 }
 
-fn normalize_section_regions<D>(daw: &D, regions: Vec<Region>) -> eyre::Result<()>
+pub(crate) fn normalize_section_regions<D>(daw: &D, regions: Vec<Region>) -> eyre::Result<()>
 where
     D: Regions,
 {
@@ -872,7 +872,7 @@ fn parse_region_section_type(name: &str) -> Option<SectionType> {
         .or_else(|| SectionType::parse(trimmed).ok())
 }
 
-fn section_type_color(section_type: SectionType) -> u32 {
+pub(crate) fn section_type_color(section_type: SectionType) -> u32 {
     if matches!(section_type, SectionType::CountIn) {
         return MarkerKind::CountIn.default_color();
     }
