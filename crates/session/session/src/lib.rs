@@ -24,6 +24,8 @@ pub use session_proto::{offset_map, ruler_lanes, services, setlist, song, track_
 // (re-exported above) and the action declarations (below).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cache;
+
+pub mod chart_import;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod event_bus;
 #[cfg(not(target_arch = "wasm32"))]

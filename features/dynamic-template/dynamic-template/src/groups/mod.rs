@@ -15,6 +15,7 @@ pub mod sfx;
 pub mod stem_split;
 pub mod strings;
 pub mod synths;
+pub mod tracks;
 pub mod vocals;
 
 // Re-export the top-level containers
@@ -35,4 +36,5 @@ pub use sfx::SFX;
 pub use stem_split::StemSplit;
 pub use strings::Strings;
 pub use synths::Synths;
+pub use tracks::Tracks;
 pub use vocals::Vocals;

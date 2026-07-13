@@ -19,11 +19,17 @@ impl From<Vocals> for ItemMetadataGroup {
         ItemMetadataGroup::builder("Vocals")
             .prefix("V")
             .patterns([
-                "vocal", "vocals", "vox", "voc", "voca", "voice", "lv", "bv", "bg",
+                "vocal", "vocals", "vox", "voc", "voca", "voice", "lv", "bv", "bg", "bgv", "bgvs",
+                "bvs", // background-vocal abbreviations enter the Vocals bus
             ])
             // Exclude non-vocal voice effects (these should go to SFX)
             // Also exclude "cowbell" to prevent compound names like "CowbellGangVox" from matching
             .exclude(["robot", "vocoder", "talkbox", "cowbell"])
+            // The Vocals folder is the vocal summing bus (VCA target) for Lead +
+            // BGVs. Choir routes to the top-level Choir group (a monarchy
+            // limitation: a "Choir" subgroup here duplicates against that group,
+            // whose name doubles as a match token) — route it to this VCA in the
+            // DAW rather than nesting it.
             .group(LeadVocals)
             .group(BackgroundVocals)
             .build()

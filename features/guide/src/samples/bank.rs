@@ -320,45 +320,10 @@ impl SampleBank {
             }
         }
 
-        // Section-guide chime under the keys `CueSchedule` looks up
-        // (`get_guide_key` shapes) for every section type the legacy
-        // library knows, in both spaced and hyphenated spellings.
-        const SECTION_TYPES: [&str; 21] = [
-            "Verse",
-            "Chorus",
-            "Bridge",
-            "Intro",
-            "Outro",
-            "Instrumental",
-            "Pre Chorus",
-            "Pre-Chorus",
-            "Post Chorus",
-            "Post-Chorus",
-            "Breakdown",
-            "Interlude",
-            "Tag",
-            "Ending",
-            "Solo",
-            "Vamp",
-            "Turnaround",
-            "Refrain",
-            "Rap",
-            "Acapella",
-            "Exhortation",
-        ];
-        let chime = synth_chime(sample_rate);
-        for ty in SECTION_TYPES {
-            let key = get_guide_key(ty, None);
-            if !self.guides.contains_key(&key) {
-                self.guides.insert(key, chime.clone());
-            }
-            for n in 1..=8u32 {
-                let key = get_guide_key(ty, Some(n));
-                if !self.guides.contains_key(&key) {
-                    self.guides.insert(key, chime.clone());
-                }
-            }
-        }
+        // No section-guide fallback here: guide announcements come from real
+        // recorded samples (loaded via `load_guide_dir`) or TTS. Synthesizing
+        // a chime for every section type just produced noise when neither was
+        // present, so an unmatched section stays silent instead.
     }
 }
 
@@ -373,17 +338,6 @@ fn synth_tick(freq_hz: f32, dur_ms: f32, gain: f32, sample_rate: u32) -> AudioSa
             gain * (std::f32::consts::TAU * freq_hz * t).sin() * (-t / tau).exp()
         })
         .collect();
-    AudioSample::mono(samples, sample_rate)
-}
-
-/// Two-tone "ding-dong" chime used as the section-guide placeholder.
-fn synth_chime(sample_rate: u32) -> AudioSample {
-    let a = synth_tick(880.0, 140.0, 0.4, sample_rate);
-    let b = synth_tick(1_318.5, 180.0, 0.4, sample_rate);
-    let gap = (sample_rate as f32 * 0.06) as usize; // 60 ms between tones
-    let mut samples = a.data.into_iter().next().unwrap_or_default();
-    samples.resize(samples.len() + gap, 0.0);
-    samples.extend(b.data.into_iter().next().unwrap_or_default());
     AudioSample::mono(samples, sample_rate)
 }
 

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use chatterbox_rs::chatterbox::Chatterbox;
 use chatterbox_rs::hf::{self, ModelVariant};
+use chatterbox_rs::voice::{self, VoiceProfile};
 
 use crate::GuideError;
 
@@ -17,6 +18,20 @@ use super::{TtsAudio, TtsRenderer};
 
 /// Chatterbox model sample rate (`chatterbox_rs::audio::TARGET_SAMPLE_RATE`).
 const CHATTERBOX_SAMPLE_RATE: u32 = 24_000;
+
+/// dtype string cbx uses to tag voice profiles / model variants (must match
+/// the `--dtype` naming so `pick_voice_for_model` resolves cached profiles).
+fn dtype_str(v: ModelVariant) -> &'static str {
+    match v {
+        ModelVariant::Fp32 => "fp32",
+        ModelVariant::Fp16 => "fp16",
+        ModelVariant::Quantized => "quantized",
+        ModelVariant::Q4 => "q4",
+        ModelVariant::Q4f16 => "q4f16",
+        ModelVariant::Q8 => "q8",
+        ModelVariant::Q8f16 => "q8f16",
+    }
+}
 
 /// Configuration for [`ChatterboxTts`].
 #[derive(Debug, Clone)]
@@ -40,12 +55,14 @@ pub struct ChatterboxTtsConfig {
 }
 
 impl ChatterboxTtsConfig {
-    /// Default model config for a given reference voice.
+    /// Default model config for a given reference voice. `Fp16` so it matches
+    /// the bundled `default`/`default-fp32` voice profiles (cbx only ships
+    /// fp16/fp32 profiles; a profile is tied to its model dtype).
     pub fn with_voice(voice_wav: impl Into<PathBuf>, voice_name: impl Into<String>) -> Self {
         Self {
             repo_id: "ResembleAI/chatterbox-turbo-ONNX".to_string(),
             revision: "main".to_string(),
-            variant: ModelVariant::Quantized,
+            variant: ModelVariant::Fp16,
             voice_wav: voice_wav.into(),
             voice_name: voice_name.into(),
             max_new_tokens: 512,
@@ -54,30 +71,53 @@ impl ChatterboxTtsConfig {
     }
 }
 
-/// A [`TtsRenderer`] backed by a locally-loaded Chatterbox model.
+/// A [`TtsRenderer`] backed by a locally-loaded Chatterbox model. Prefers a
+/// cached voice profile (the bundled `default` — no user recording needed);
+/// falls back to re-encoding `config.voice_wav` when no profile matches.
 pub struct ChatterboxTts {
     model: Chatterbox,
     config: ChatterboxTtsConfig,
     voice_id: String,
+    /// A precomputed voice profile (cbx `.cbxvoice`), when one is cached for
+    /// this model tuple. `None` → synthesize from the reference wav.
+    profile: Option<VoiceProfile>,
 }
 
 impl ChatterboxTts {
-    /// Download (into the HF cache) and load the model. Blocking and slow;
-    /// never call from an audio thread.
+    /// Download (into the HF cache) and load the model, then resolve a voice:
+    /// the cached `default` profile if present, else the reference wav.
+    /// Blocking and slow; never call from an audio thread.
     pub fn load(config: ChatterboxTtsConfig) -> Result<Self, GuideError> {
         let paths =
             hf::download_chatterbox_assets(&config.repo_id, &config.revision, config.variant)
                 .map_err(|e| GuideError::Tts(format!("chatterbox asset download: {e:#}")))?;
         let model = Chatterbox::load(&paths)
             .map_err(|e| GuideError::Tts(format!("chatterbox model load: {e:#}")))?;
+
+        // Prefer a cached voice profile matching this model tuple (cbx ships a
+        // `default` one via `install_default_voice.sh`). This is the
+        // out-of-the-box voice — no reference recording required.
+        let dtype = dtype_str(config.variant);
+        let (profile, voice_name) = voice::voice_cache_dir()
+            .ok()
+            .and_then(|dir| {
+                let name = voice::pick_voice_for_model(&dir, &config.repo_id, &config.revision, dtype)
+                    .ok()
+                    .flatten()?;
+                let profile = voice::load_voice_profile(&dir, &name).ok()?;
+                Some((Some(profile), name))
+            })
+            .unwrap_or((None, config.voice_name.clone()));
+
         let voice_id = format!(
             "chatterbox:{}@{}:{:?}:{}",
-            config.repo_id, config.revision, config.variant, config.voice_name
+            config.repo_id, config.revision, config.variant, voice_name
         );
         Ok(Self {
             model,
             config,
             voice_id,
+            profile,
         })
     }
 }
@@ -88,15 +128,31 @@ impl TtsRenderer for ChatterboxTts {
     }
 
     fn render(&mut self, text: &str) -> Result<TtsAudio, GuideError> {
-        let samples = self
-            .model
-            .synthesize(
-                text,
-                &self.config.voice_wav,
-                self.config.max_new_tokens,
-                self.config.repetition_penalty,
-            )
-            .map_err(|e| GuideError::Tts(format!("chatterbox synthesize {text:?}: {e:#}")))?;
+        let dtype = dtype_str(self.config.variant);
+        let samples = if let Some(profile) = self.profile.clone() {
+            self.model
+                .synthesize_with_voice_profile(
+                    text,
+                    &self.config.repo_id,
+                    &self.config.revision,
+                    dtype,
+                    &profile,
+                    self.config.max_new_tokens,
+                    self.config.repetition_penalty,
+                )
+                .map_err(|e| {
+                    GuideError::Tts(format!("chatterbox synthesize (profile) {text:?}: {e:#}"))
+                })?
+        } else {
+            self.model
+                .synthesize(
+                    text,
+                    &self.config.voice_wav,
+                    self.config.max_new_tokens,
+                    self.config.repetition_penalty,
+                )
+                .map_err(|e| GuideError::Tts(format!("chatterbox synthesize {text:?}: {e:#}")))?
+        };
         Ok(TtsAudio {
             samples,
             sample_rate: CHATTERBOX_SAMPLE_RATE,

@@ -1168,6 +1168,120 @@ pub fn cmd_transcribe_whisper(_opts: TranscribeOpts<'_>) -> Result<(), String> {
     Err("Whisper ASR needs `--features whisper` (or `whisper-cuda`).".into())
 }
 
+/// Options for `kf guide-chart`.
+pub struct GuideChartOpts<'a> {
+    pub click: &'a Path,
+    pub guide: &'a Path,
+    pub beats_per_bar: u32,
+    pub min_confidence: f32,
+    pub header: Option<&'a str>,
+    pub output: Option<&'a Path>,
+}
+
+/// Merge Whisper's per-word output into [`SectionCue`]s, joining an adjacent
+/// "pre" + "chorus" into one "prechorus" cue (Whisper splits the compound).
+#[cfg(all(feature = "whisper", feature = "onnx"))]
+fn words_to_cues(words: &[keyflow_sync::WordTiming]) -> Vec<keyflow_sync::SectionCue> {
+    use keyflow_sync::SectionCue;
+    let mut cues = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        let w = &words[i];
+        let lw = w.word.to_ascii_lowercase();
+        if (lw.starts_with("pre") || lw.starts_with("pri")) && lw.len() <= 4 {
+            if let Some(n) = words.get(i + 1) {
+                let ln = n.word.to_ascii_lowercase();
+                if ln.contains("chorus") || ln.contains("corus") {
+                    cues.push(SectionCue {
+                        word: "prechorus".into(),
+                        time_sec: w.start,
+                        confidence: (w.confidence + n.confidence) / 2.0,
+                    });
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        cues.push(SectionCue {
+            word: w.word.clone(),
+            time_sec: w.start,
+            confidence: w.confidence,
+        });
+        i += 1;
+    }
+    cues
+}
+
+/// `kf guide-chart` — recover a keyflow arrangement from Click + Guide tracks.
+#[cfg(all(feature = "whisper", feature = "onnx"))]
+pub fn cmd_guide_chart(opts: GuideChartOpts<'_>) -> Result<(), String> {
+    use keyflow_sync::align::{align_words_star, tokenizer::Vocab, wav2vec2::Wav2Vec2Onnx};
+    use keyflow_sync::audio::AudioBuffer;
+    use keyflow_sync::whisper::{WhisperAsr, ensure_model};
+    use keyflow_sync::{cues_to_keyflow, detect_click_grid, models};
+
+    // 1. Click track → tempo + bar grid.
+    let click = AudioBuffer::load_wav(opts.click).map_err(|e| e.to_string())?;
+    let grid = detect_click_grid(&click, opts.beats_per_bar);
+    println!(
+        "click: {:.1} bpm, first beat {:.2}s, {} beats ({:.2}s/bar)",
+        grid.bpm,
+        grid.first_beat_sec,
+        grid.beats.len(),
+        grid.bar_seconds(),
+    );
+
+    // 2. Guide track → Whisper transcript.
+    let guide = AudioBuffer::load_wav(opts.guide)
+        .map_err(|e| e.to_string())?
+        .resample(16_000);
+    let dir = ensure_model().map_err(|e| e.to_string())?;
+    println!("loading whisper-base.en…");
+    let mut asr = WhisperAsr::load(&dir).map_err(|e| e.to_string())?;
+    println!("transcribing guide track…");
+    let segments = asr.transcribe(&guide.samples).map_err(|e| e.to_string())?;
+    let transcript = clean_transcript(&segments);
+    if transcript.trim().is_empty() {
+        return Err("guide track produced no words".into());
+    }
+
+    // 3. Forced-align the transcript for per-word times (mms-fa).
+    let reg = models::load_registry().map_err(|e| e.to_string())?;
+    let entry =
+        models::find(&reg, "mms-fa").ok_or_else(|| "no mms-fa aligner in registry".to_string())?;
+    let path = models::local_path(&entry);
+    if !path.exists() {
+        return Err("aligner not downloaded — run `kf models pull mms-fa`".into());
+    }
+    let vocab_path = path.with_extension("vocab.json");
+    let vocab = if vocab_path.exists() {
+        Vocab::from_vocab_map_json(&std::fs::read_to_string(&vocab_path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?
+    } else {
+        Vocab::wav2vec2_en_960h()
+    };
+    let model = Wav2Vec2Onnx::load(&path, vocab, 16_000, 50.0).map_err(|e| e.to_string())?;
+    println!("aligning guide cues…");
+    let words = align_words_star(&model, &guide.samples, &transcript, Some(-2.5))
+        .map_err(|e| e.to_string())?;
+
+    // 4. Words → section cues → keyflow text (snapped to the click grid).
+    let cues = words_to_cues(&words);
+    let kf = cues_to_keyflow(&cues, &grid, opts.min_confidence, opts.header);
+
+    println!("\n--- recovered keyflow chart ---\n{kf}");
+    if let Some(out) = opts.output {
+        std::fs::write(out, &kf).map_err(|e| e.to_string())?;
+        println!("wrote {}", out.display());
+    }
+    Ok(())
+}
+
+#[cfg(not(all(feature = "whisper", feature = "onnx")))]
+pub fn cmd_guide_chart(_opts: GuideChartOpts<'_>) -> Result<(), String> {
+    Err("`kf guide-chart` needs `--features onnx,whisper`.".into())
+}
+
 #[cfg(not(feature = "onnx"))]
 pub fn cmd_sync(_chart: &Chart, _opts: SyncOpts<'_>) -> Result<(), String> {
     Err(

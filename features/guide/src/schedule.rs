@@ -42,6 +42,19 @@ pub struct GuideSection {
     pub spoken_note: Option<String>,
 }
 
+impl GuideSection {
+    /// The full spoken form for TTS — "Verse 1", "Chorus", "Pre-Chorus 2" —
+    /// built from the section *type* (full word) + number, rather than the
+    /// abbreviated on-screen name ("VS 1", "CH", "PRE-CH 2"). This is what a
+    /// human would say, so it reads well through Chatterbox.
+    pub fn spoken_name(&self) -> String {
+        match self.section_number {
+            Some(n) => format!("{} {}", self.section_type_name, n),
+            None => self.section_type_name.clone(),
+        }
+    }
+}
+
 impl From<&session_proto::Section> for GuideSection {
     fn from(s: &session_proto::Section) -> Self {
         Self {
@@ -64,12 +77,27 @@ impl From<&session_proto::Section> for GuideSection {
 pub fn sections_from_song(song: &session_proto::Song) -> Vec<GuideSection> {
     let mut sections: Vec<GuideSection> = song.sections.iter().map(GuideSection::from).collect();
     let count = sections.len();
+    // The count-in must count INTO the first musical downbeat, not into the
+    // synthetic "Count-In" section the song builder prepends. `SongBuilder`
+    // sets `song.start_seconds` to the count-in START and inserts a
+    // `SectionType::CountIn` section at index 0, so we attach
+    // `count_in_position` to the first section that ISN'T that count-in
+    // marker. `count_in_position` is the count START (`song.start_seconds`);
+    // `CueSchedule::build` derives the measure count from the gap to that
+    // section's own `start_seconds` (the real downbeat) and counts up to it.
+    // (The old code pinned it to index 0 as `start_seconds - count_in`, which
+    // for the first song landed the whole count at negative time and dropped
+    // it — the "announced the section but never counted 1-2-3-4" bug.)
+    let first_musical = song
+        .sections
+        .iter()
+        .position(|s| s.section_type != session_proto::SectionType::CountIn);
     for (i, section) in sections.iter_mut().enumerate() {
         if i == 0 {
             section.is_first_section = true;
-            section.count_in_position = song
-                .count_in_seconds
-                .map(|count_in| song.start_seconds - count_in);
+        }
+        if Some(i) == first_musical {
+            section.count_in_position = song.count_in_seconds.map(|_| song.start_seconds);
         }
         if i + 1 == count {
             section.song_end_position = Some(song.end_seconds);
@@ -167,9 +195,22 @@ pub struct ScheduleOptions {
     /// Legacy "Guide Replaces Beat 1": drop the count voice that coincides
     /// with a guide announcement.
     pub guide_replace_beat1: bool,
+    /// Count only the FINAL measure of the count-in (a full "1 2 3 4"),
+    /// leaving the earlier measures silent so the section announcement can
+    /// breathe: "Verse 1  .  .  . | 1 2 3 4". When false, the full ported
+    /// multi-measure ramp ("1 _ 2 _ | 1 2 3 4") is used instead. Applies to
+    /// the section count-in only — the SONGEND count-out always ramps.
+    pub count_final_measure_only: bool,
+    /// Count "1 2 3 4" into EVERY new section (a single full measure ending on
+    /// the section's downbeat), not just the one with an explicit count-in
+    /// marker. Same-name continuations (Chorus 3 repeated, 3A→3B) are NOT
+    /// counted — only real section changes. On by default: the guide counts
+    /// the band into each part automatically.
+    pub count_into_sections: bool,
     /// Speak the section-name cue this many beat units before the section
-    /// starts ("Chorus in 2..." style). Legacy behavior announced at the
-    /// start of the count-in; one measure is the default.
+    /// starts ("Chorus in 2..." style). Announced at the start of the
+    /// count-in; two measures (8 beats in 4/4) is the default so the name
+    /// lands clearly before the count.
     pub speak_lead_beats: f64,
 }
 
@@ -180,7 +221,9 @@ impl Default for ScheduleOptions {
             extend_songend_count: true,
             full_count_odd_time: true,
             guide_replace_beat1: true,
-            speak_lead_beats: 4.0,
+            count_final_measure_only: true,
+            count_into_sections: true,
+            speak_lead_beats: 8.0,
         }
     }
 }
@@ -216,7 +259,15 @@ impl CueSchedule {
         let mut cues: Vec<ScheduledCue> = Vec::new();
         let mut guide_times: Vec<f64> = Vec::new();
 
+        let mut prev_name: Option<String> = None;
         for section in sections {
+            let name = section.spoken_name();
+            // A section is a real transition only when its spoken name differs
+            // from the previous one. Consecutive same-name sections (a Chorus
+            // repeated, or 3A→3B splits that share "Chorus 3") are one
+            // continuous part — they neither re-announce nor re-count.
+            let is_change = prev_name.as_deref() != Some(name.as_str());
+
             // ── Count-in into the section start ─────────────────────────
             if let Some(count_pos) = section.count_in_position {
                 let total_measures = CountInCalculator::calculate_count_in_measures(
@@ -233,35 +284,53 @@ impl CueSchedule {
                     den,
                     beat_secs,
                     options,
+                    options.count_final_measure_only,
                 );
+            } else if is_change && options.count_into_sections {
+                // Count "1 2 3 4" into every NEW section: one full measure
+                // ending on the downbeat (overlaying the tail of the previous
+                // section). This is what makes the guide count the band in.
+                let count_start = section.start_seconds - measure_secs;
+                if count_start >= 0.0 {
+                    Self::push_count_pattern(
+                        &mut cues, count_start, 1, num, den, beat_secs, options, true,
+                    );
+                }
             }
 
-            // ── Section guide announcement ───────────────────────────────
-            let mut lead = options.speak_lead_beats * beat_secs;
-            if let Some(count_pos) = section.count_in_position {
-                // Never announce before the count-in marker.
-                lead = lead.min(section.start_seconds - count_pos);
+            // ── Section guide announcement (only on an actual change) ────
+            if is_change {
+                let mut lead = options.speak_lead_beats * beat_secs;
+                if let Some(count_pos) = section.count_in_position {
+                    // Never announce before the count-in marker.
+                    lead = lead.min(section.start_seconds - count_pos);
+                }
+                let guide_time = (section.start_seconds - lead).max(0.0);
+                let mut keys = Vec::new();
+                // Priority: a custom spoken note, then the REAL recorded guide
+                // sample (numbered, then unnumbered), then TTS of the full
+                // spoken name ("Verse 1"), then TTS of the abbreviated name —
+                // real audio wins and TTS only fills gaps.
+                if let Some(note) = &section.spoken_note {
+                    keys.push(tts_cue_key(note));
+                }
+                keys.push(get_guide_key(
+                    &section.section_type_name,
+                    section.section_number,
+                ));
+                if section.section_number.is_some() {
+                    keys.push(get_guide_key(&section.section_type_name, None));
+                }
+                keys.push(tts_cue_key(&section.spoken_name()));
+                keys.push(tts_cue_key(&section.name));
+                cues.push(ScheduledCue {
+                    time_seconds: guide_time,
+                    event: CueEvent::Guide { keys },
+                });
+                guide_times.push(guide_time);
             }
-            let guide_time = (section.start_seconds - lead).max(0.0);
-            let mut keys = Vec::new();
-            if let Some(note) = &section.spoken_note {
-                keys.push(tts_cue_key(note));
-            }
-            keys.push(tts_cue_key(&section.name));
-            keys.push(get_guide_key(
-                &section.section_type_name,
-                section.section_number,
-            ));
-            // Unnumbered fallback ("Chorus_None") — the voice library only
-            // ships unnumbered announcements for some types.
-            if section.section_number.is_some() {
-                keys.push(get_guide_key(&section.section_type_name, None));
-            }
-            cues.push(ScheduledCue {
-                time_seconds: guide_time,
-                event: CueEvent::Guide { keys },
-            });
-            guide_times.push(guide_time);
+
+            prev_name = Some(name);
 
             // ── SONGEND count-out ────────────────────────────────────────
             if let (Some(song_end), true) =
@@ -270,6 +339,7 @@ impl CueSchedule {
                 // Always 2 measures before SONGEND (legacy behavior).
                 let total_measures = 2;
                 let count_start = song_end - f64::from(total_measures) * measure_secs;
+                // The count-OUT always ramps (never final-measure-only).
                 Self::push_count_pattern(
                     &mut cues,
                     count_start,
@@ -278,6 +348,7 @@ impl CueSchedule {
                     den,
                     beat_secs,
                     options,
+                    false,
                 );
                 cues.push(ScheduledCue {
                     time_seconds: count_start.max(0.0),
@@ -313,13 +384,29 @@ impl CueSchedule {
         time_sig_den: i32,
         beat_secs: f64,
         options: &ScheduleOptions,
+        final_measure_only: bool,
     ) {
-        for measure_index in 0..total_measures {
+        // When `final_measure_only`, silence every measure but the last so a
+        // section announcement can breathe ("Verse 1  .  .  . | 1 2 3 4").
+        // The last measure is then counted as a standalone full measure
+        // (total_measures = 1) so standard and odd-time patterns still fill
+        // it; it stays positioned at its real time via `measure_index`.
+        let first_measure = if final_measure_only {
+            (total_measures - 1).max(0)
+        } else {
+            0
+        };
+        for measure_index in first_measure..total_measures {
+            let (pat_measure, pat_total) = if final_measure_only {
+                (0, 1)
+            } else {
+                (measure_index, total_measures)
+            };
             for beat_in_measure in 1..=time_sig_num {
                 let Some(count_number) = CountInPattern::should_count(
-                    measure_index,
+                    pat_measure,
                     beat_in_measure,
-                    total_measures,
+                    pat_total,
                     time_sig_num,
                     time_sig_den,
                     options.offset_count_by_one,
@@ -373,8 +460,9 @@ impl CueSchedule {
                     texts.push(note.clone());
                 }
             }
-            if !texts.contains(&section.name) {
-                texts.push(section.name.clone());
+            let spoken = section.spoken_name();
+            if !texts.contains(&spoken) {
+                texts.push(spoken);
             }
         }
         if !texts.iter().any(|t| t == "Ending") {

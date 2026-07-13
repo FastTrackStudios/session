@@ -67,7 +67,8 @@ fn gloria_anderson_households() -> Result<()> {
     // Keys                          ← 14.Piano
     // Vocals/
     //   ├─ Lead                     ← 16.Vocal
-    //   └─ BGVs/                    ← Choir, Vocal harmony (D)
+    //   └─ BGVs                     ← Vocal harmony (D)
+    // Choir                         ← Choir (top-level, route to vocal VCA)
     // Orchestra/
     //   ├─ Strings Tim              ← Households_TimHoek_Strings
     //   └─ Strings                  ← Strings (R)
@@ -124,16 +125,17 @@ fn gloria_anderson_households() -> Result<()> {
         .end()
         .track("Keys")
         .item("14.Piano_01.wav")
+        // Choir now routes to the top-level Choir group (separate from BGVs),
+        // per the Lead / BGVs / Choir vocal taxonomy. It's a sibling of the
+        // Vocals bus (route it to the vocal VCA in the DAW).
         .folder("Vocals")
         .track("Lead")
         .item("16.Vocal_01.wav")
-        .folder("BGVs")
-        .track("BGVs 1")
-        .item("Choir.wav")
-        .track("BGVs 2")
+        .track("BGVs")
         .item("Vocal harmony (D).wav")
         .end()
-        .end()
+        .track("Choir")
+        .item("Choir.wav")
         .folder("Orchestra")
         .track("Strings Tim")
         .item("Households_TimHoek_Strings.wav")

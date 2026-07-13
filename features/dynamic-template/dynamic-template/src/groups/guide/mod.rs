@@ -205,7 +205,10 @@ impl From<DynamicCues> for Group<ItemMetadata> {
                 "tacet",
                 "rest",
                 "wait",
-                "cue",
+                // NOTE: bare "cue" intentionally NOT listed here — it belongs to
+                // the Cues subgroup. Dynamic Cues only matches specific dynamic
+                // direction words ("build", "all in", "softly", …). A plain
+                // "Cue" track must land in Cues, not Dynamic Cues.
             ])
             .build()
     }
