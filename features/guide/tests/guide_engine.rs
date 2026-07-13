@@ -255,6 +255,8 @@ fn songend_gets_two_measure_count_out_and_ending_guide() {
     };
     let options = ScheduleOptions {
         guide_replace_beat1: false,
+        // Isolate the SONGEND count-out from the per-section count-in.
+        count_into_sections: false,
         ..Default::default()
     };
     let schedule = CueSchedule::build(&[last], &timing, &options);
@@ -619,11 +621,12 @@ fn count_in_song_schedules_full_count_into_the_downbeat() {
     let song = count_in_song();
     let sections = session_guide::sections_from_song(&song);
     let timing = GuideSongTiming::from_song(&song);
-    // DEFAULT options — this pins the default "Announce, rest, full count"
-    // layout — but isolate the count-IN from the SONGEND count-OUT (which
-    // also emits Count cues) by disabling the count-out for this song.
+    // Pins the "Announce, rest, full count" count-IN layout in isolation:
+    // disable the SONGEND count-out AND the per-section count-in (both emit
+    // Count cues) so only the first section's explicit count-in remains.
     let options = ScheduleOptions {
         extend_songend_count: false,
+        count_into_sections: false,
         ..ScheduleOptions::default()
     };
     let schedule = CueSchedule::build(&sections, &timing, &options);
@@ -659,4 +662,61 @@ fn count_in_song_schedules_full_count_into_the_downbeat() {
         Some(0.0),
         "Intro should be announced at the start of the count-in"
     );
+}
+
+// ─── count_into_sections + announcement dedup ───────────────────────────
+#[test]
+fn counts_into_each_new_section_and_dedupes_repeats() {
+    // 120 bpm 4/4 → measure 2 s. Four sections, the middle two both "Chorus 3"
+    // (a repeated/continued chorus). Every REAL change gets a "1 2 3 4" count
+    // and one announcement; the continuation gets neither.
+    let timing = GuideSongTiming {
+        tempo_bpm: 120.0,
+        time_sig_num: 4,
+        time_sig_den: 4,
+    };
+    let mk = |start: f64, end: f64, ty: &str, num: Option<u32>| {
+        let mut s = section(start, end, ty, ty);
+        s.section_number = num;
+        s
+    };
+    let sections = vec![
+        mk(8.0, 16.0, "Verse", Some(1)),   // Verse 1        (change)
+        mk(16.0, 24.0, "Chorus", Some(3)), // Chorus 3       (change)
+        mk(24.0, 32.0, "Chorus", Some(3)), // Chorus 3 again (continuation)
+        mk(32.0, 40.0, "Verse", Some(1)),  // Verse 1        (change)
+    ];
+    let options = ScheduleOptions {
+        guide_replace_beat1: false,
+        extend_songend_count: false,
+        ..Default::default()
+    };
+    let schedule = CueSchedule::build(&sections, &timing, &options);
+
+    // Beat-1 of the count into each NEW section = one measure (2 s) before its
+    // downbeat: 6.0 (Verse1), 14.0 (Chorus3), 30.0 (Verse1). NOT 22.0 — the
+    // repeated Chorus 3 is a continuation, not a new count-in.
+    let count_ones: Vec<f64> = schedule
+        .cues
+        .iter()
+        .filter_map(|c| match c.event {
+            CueEvent::Count { index: 0 } => Some(c.time_seconds),
+            _ => None,
+        })
+        .collect();
+    assert!(count_ones.contains(&6.0), "no count into Verse 1");
+    assert!(count_ones.contains(&14.0), "no count into Chorus 3");
+    assert!(count_ones.contains(&30.0), "no count into the returning Verse 1");
+    assert!(
+        !count_ones.contains(&22.0),
+        "the repeated Chorus 3 must NOT be counted into"
+    );
+
+    // Announcements only on a real change: Verse1, Chorus3, Verse1 = 3.
+    let announcements = schedule
+        .cues
+        .iter()
+        .filter(|c| matches!(c.event, CueEvent::Guide { .. }))
+        .count();
+    assert_eq!(announcements, 3, "repeated Chorus 3 should not re-announce");
 }
