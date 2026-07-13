@@ -216,15 +216,22 @@ async fn section_numbering_resets_per_song() -> eyre::Result<()> {
         let mut by_base: std::collections::BTreeMap<String, Vec<u32>> = Default::default();
         for sec in &song.sections {
             let name = sec.display_name();
-            if let Some((base, n)) = name
-                .rsplit_once(' ')
-                .and_then(|(b, n)| n.parse::<u32>().ok().map(|n| (b.to_string(), n)))
-            {
+            if let Some((base, n)) = name.rsplit_once(' ').and_then(|(b, tok)| {
+                // A group with several touching same-type sections renders as
+                // "PRE-CH 2A" / "2B" — strip the trailing group letter so the
+                // group number ("2") still counts.
+                let digits: String = tok.chars().take_while(|c| c.is_ascii_digit()).collect();
+                digits.parse::<u32>().ok().map(|n| (b.to_string(), n))
+            }) {
                 by_base.entry(base).or_default().push(n);
             }
         }
         for (base, mut nums) in by_base {
             nums.sort_unstable();
+            // Several sections can share a group number (a repeated part, or a
+            // multi-section group like 2A/2B) — the invariant is that the
+            // DISTINCT group numbers are contiguous from 1, so dedup first.
+            nums.dedup();
             assert_eq!(
                 nums.first().copied(),
                 Some(1),

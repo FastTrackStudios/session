@@ -30,6 +30,7 @@ fn keyword_to_kf(word: &str) -> Option<&'static str> {
         .collect();
     let m = match w.as_str() {
         _ if w.contains("refrain") => "Refrain",
+        _ if w.contains("turnaround") => "Turnaround",
         _ if w.contains("prechorus") || w.contains("pricorus") => "PRE",
         _ if w.contains("verse") => "VS",
         _ if w.contains("chorus") || w.contains("corus") => "CH",

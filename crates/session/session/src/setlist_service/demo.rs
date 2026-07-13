@@ -402,12 +402,127 @@ INST \"Guitar Lead\" 8
 Refrain
 Refrain";
 
-/// Build "Praise" as a [`DemoSong`] from its keyflow chart. The leading
+/// "God, I'm Just Grateful" (Elevation Worship) — the real keyflow chart.
+const GOD_IM_JUST_GRATEFUL_CHART: &str = "\
+God, I'm Just Grateful - Elevation Worship
+72bpm 4/4 #D
+
+Count 2
+Intro 2
+VS 8
+CH 8
+Breakdown 1
+VS
+CH
+CH
+Interlude 4
+BR 8
+BR
+CH
+CH
+CH";
+
+/// "Washed" (Elevation Rhythm) — the real keyflow chart.
+const WASHED_CHART: &str = "\
+Washed - Elevation Rhythm
+139bpm 4/4 #B
+
+Count 2
+Intro 4
+VS 8
+VS
+CH 8
+VS
+VS
+CH
+CH
+INST 2
+BR 8
+BR
+BR
+BR
+Refrain 8
+INST 8
+TAG 8
+CH";
+
+/// "Who Else" (Gateway Worship) — the real keyflow chart.
+const WHO_ELSE_CHART: &str = "\
+Who Else - Gateway Worship
+68bpm #Ab 4/4
+
+Count 2
+VS 8
+CH 8
+VS
+CH
+CH
+INST 4
+BR 8
+BR
+CH
+Tag 4";
+
+/// "Thank God I'm Free" (Elevation Rhythm) — the real keyflow chart.
+const THANK_GOD_IM_FREE_CHART: &str = "\
+Thank God I'm Free - Elevation Rhythm
+128bpm 4/4 #E
+
+Count 2
+IN 8
+VS 8
+VS
+CH 8
+Post 8
+Interlude 4
+VS
+CH
+Post
+BR 8
+BR
+BR
+Refrain 8
+CH
+Post
+BR
+BR
+Refrain
+Post
+Post";
+
+/// "Holy Forever" (Bethel Music) — the real keyflow chart. Uses the new
+/// `Turnaround` ("Turn") section type. Only partially mapped so far.
+const HOLY_FOREVER_CHART: &str = "\
+Holy Forever - Bethel
+72bpm 4/4 #Bb
+
+Count 2
+Intro 4
+VS 8
+PRE 8
+CH 8
+Turn 2
+VS
+Tag 2
+CH
+CH
+PRE 8
+PRE
+CH
+CH
+Tag 12
+CH
+CH
+PRE";
+
+/// Build a [`DemoSong`] from a keyflow chart (the accurate path — tempo, time
+/// signature, and real section lengths all come from the chart). The leading
 /// CountIn section becomes the count-in marker (`count_in`/`song_start`); the
-/// musical sections become SECTION-lane regions.
-fn praise_song() -> DemoSong {
-    let layout = crate::chart_import::chart_to_layout(PRAISE_CHART)
-        .expect("bundled Praise chart must parse");
+/// musical sections become SECTION-lane regions. Used for every song we have a
+/// real chart for; songs without one fall back to `layout_worship_song`.
+fn chart_song(name: &'static str, chart: &str) -> DemoSong {
+    let layout = crate::chart_import::chart_to_layout(chart)
+        .unwrap_or_else(|e| panic!("bundled chart for {name} must parse: {e:?}"));
     let sections: Vec<DemoSection> = layout
         .sections
         .iter()
@@ -420,7 +535,7 @@ fn praise_song() -> DemoSong {
         .collect();
     let tail = 4.0; // ring-out after the last section
     DemoSong {
-        name: "Praise",
+        name,
         region_start: 0.0,
         region_end: layout.song_end_seconds + tail,
         count_in: 0.0,
@@ -547,74 +662,56 @@ fn shift_song(mut song: DemoSong, delta: f64) -> DemoSong {
     song
 }
 
-/// The bundled worship songs (besides Praise) we have real multitrack stems
-/// for. `(name, tempo_bpm, time_sig_num, time_sig_den, duration_s,
-/// [(lyric-section-label, line-weight)])`.
-///
-/// Tempos are the REAL published BPMs (click-track auto-detection was octave-off
-/// on the slow songs, so these are the known targets): Praise 127 (its
-/// MultiTracks metadata), Grateful 72, Holy Forever 72, Thank God I'm Free 128,
-/// Washed 139, Who Else 68 — all 4/4. Section timings are still lyric-derived
-/// proportions, not a real chart, so the section markers remain approximate.
+/// Lyric-derived FALLBACK layout for the songs we don't yet have a keyflow chart
+/// for (currently Holy Forever 72, Thank God I'm Free 128 — both 4/4). Charted
+/// songs live in `SONG_CHARTS` and always win. `(name, tempo_bpm, time_sig_num,
+/// time_sig_den, duration_s, [(lyric-section-label, line-weight)])`. Tempos are
+/// the real published BPMs; section timings are lyric-proportional (approximate,
+/// not a real chart) — replace a song here with a chart to make it accurate.
 const WORSHIP_SONGS: &[(&str, f64, u32, u32, f64, &[(&str, u32)])] = &[
-    (
-        "God, I'm Just Grateful",
-        72.0, 4, 4,
-        304.0,
-        &[
-            ("Verse 1", 2), ("Pre-Chorus", 4), ("Chorus", 6), ("Verse 2", 2),
-            ("Pre-Chorus", 4), ("Chorus", 6), ("Bridge", 4), ("Chorus", 6), ("Tag", 6),
-        ],
-    ),
-    (
-        "Holy Forever",
-        72.0, 4, 4,
-        503.0,
-        &[
-            ("Verse 1", 5), ("Chorus 1", 6), ("Chorus 2", 4), ("Verse 2", 7),
-            ("Chorus 2", 4), ("Bridge", 4), ("Chorus 1", 6), ("Chorus 1", 7),
-            ("Chorus 2", 4), ("Bridge", 4), ("Outro", 2),
-        ],
-    ),
-    (
-        "Thank God I'm Free",
-        128.0, 4, 4,
-        300.0,
-        &[
-            ("Verse 1", 8), ("Chorus", 8), ("Verse 2", 4), ("Bridge", 10),
-            ("Chorus", 8), ("Outro", 8),
-        ],
-    ),
-    (
-        "Washed",
-        139.0, 4, 4,
-        222.0,
-        &[
-            ("Chorus", 4), ("Verse 1", 10), ("Chorus", 4), ("Verse 2", 10),
-            ("Chorus", 4), ("Bridge", 4), ("Interlude", 2), ("Chorus", 4),
-        ],
-    ),
-    (
-        // Who Else is in 6/8.
-        "Who Else",
-        68.0, 4, 4,
-        285.0,
-        &[
-            ("Verse 1", 6), ("Chorus", 8), ("Verse 2", 8), ("Chorus", 8),
-            ("Bridge", 8), ("Chorus", 8), ("Tag", 2),
-        ],
-    ),
+    // All six songs now have real keyflow charts (see SONG_CHARTS); this
+    // lyric-derived fallback is currently empty but kept for future songs.
 ];
 
-/// Build the demo setlist: "Praise" (real chart) then every other worship song
-/// we have stems for (lyric-derived, detected-tempo), each shifted to sit after
-/// the previous on the timeline.
+/// Songs we have a real keyflow chart for — accurate tempo / time-signature /
+/// section lengths, built via [`chart_song`]. Add a chart here (and drop the
+/// song from `WORSHIP_SONGS`) as we transcribe each one; a chart always wins
+/// over the lyric-derived fallback.
+const SONG_CHARTS: &[(&str, &str)] = &[
+    ("Praise", PRAISE_CHART),
+    ("God, I'm Just Grateful", GOD_IM_JUST_GRATEFUL_CHART),
+    ("Washed", WASHED_CHART),
+    ("Who Else", WHO_ELSE_CHART),
+    ("Thank God I'm Free", THANK_GOD_IM_FREE_CHART),
+    ("Holy Forever", HOLY_FOREVER_CHART),
+];
+
 fn demo_songs() -> Vec<DemoSong> {
     const GAP: f64 = 10.0;
-    let mut songs = vec![praise_song()];
-    let mut cursor = songs[0].abs_end + GAP;
-    for (name, tempo, num, den, dur, sections) in WORSHIP_SONGS {
-        let base = layout_worship_song(name, *tempo, *num, *den, *dur, sections);
+    // The setlist order. Each song uses its chart if we have one, else the
+    // lyric-derived proportional fallback.
+    const ORDER: &[&str] = &[
+        "Praise",
+        "God, I'm Just Grateful",
+        "Holy Forever",
+        "Thank God I'm Free",
+        "Washed",
+        "Who Else",
+    ];
+    let mut base_songs: Vec<DemoSong> = Vec::with_capacity(ORDER.len());
+    for &name in ORDER {
+        if let Some(&(_, chart)) = SONG_CHARTS.iter().find(|(n, _)| *n == name) {
+            base_songs.push(chart_song(name, chart));
+        } else if let Some(&(n, tempo, num, den, dur, sections)) =
+            WORSHIP_SONGS.iter().find(|e| e.0 == name)
+        {
+            base_songs.push(layout_worship_song(n, tempo, num, den, dur, sections));
+        }
+    }
+
+    let mut songs = Vec::with_capacity(base_songs.len());
+    let mut cursor = 0.0;
+    for base in base_songs {
         let delta = cursor - base.region_start;
         let shifted = shift_song(base, delta);
         cursor = shifted.abs_end + GAP;

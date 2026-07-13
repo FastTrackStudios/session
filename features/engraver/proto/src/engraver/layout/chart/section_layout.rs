@@ -35,6 +35,7 @@ pub fn get_section_theme(section_type: &SectionType) -> RehearsalMarkStyle {
         SectionType::Interlude => rehearsal_themes::interlude(),
         SectionType::Vamp => rehearsal_themes::interlude(), // Vamp uses interlude styling (similar transitional role)
         SectionType::Refrain => rehearsal_themes::chorus(), // Refrain is a recurring hook — chorus-family styling
+        SectionType::Turnaround => rehearsal_themes::interlude(), // Turnaround — transitional link styling
 
         // Pre/Post sections - lighter versions of their parent section
         SectionType::Pre(inner) | SectionType::Post(inner) => {

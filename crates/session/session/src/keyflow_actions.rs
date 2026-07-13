@@ -33,6 +33,7 @@ pub enum SectionKind {
     Breakdown,
     Vamp,
     Refrain,
+    Turnaround,
     CountIn,
     End,
 }
@@ -77,6 +78,9 @@ pub fn action_for_id(action_id: &str) -> Option<KeyflowAction> {
         "insert_breakdown_region" => Some(KeyflowAction::InsertSection(SectionKind::Breakdown)),
         "insert_vamp_region" => Some(KeyflowAction::InsertSection(SectionKind::Vamp)),
         "insert_refrain_region" => Some(KeyflowAction::InsertSection(SectionKind::Refrain)),
+        "insert_turnaround_region" => {
+            Some(KeyflowAction::InsertSection(SectionKind::Turnaround))
+        }
         "insert_count_in_region" => Some(KeyflowAction::InsertSection(SectionKind::CountIn)),
         "insert_end_region" => Some(KeyflowAction::InsertSection(SectionKind::End)),
         "insert_count_in_marker" => Some(KeyflowAction::InsertMarker(MarkerKind::CountIn)),
@@ -910,6 +914,7 @@ impl SectionKind {
             Self::Breakdown => SectionType::Breakdown,
             Self::Vamp => SectionType::Vamp,
             Self::Refrain => SectionType::Refrain,
+            Self::Turnaround => SectionType::Turnaround,
             Self::CountIn => SectionType::CountIn,
             Self::End => SectionType::End,
         }
@@ -937,6 +942,7 @@ impl SectionKind {
             SectionType::Breakdown => Self::Breakdown,
             SectionType::Vamp => Self::Vamp,
             SectionType::Refrain => Self::Refrain,
+            SectionType::Turnaround => Self::Turnaround,
             SectionType::Pre(_) => Self::PreChorus,
             SectionType::Opening => Self::Intro,
             SectionType::Post(_) => Self::Outro,
@@ -950,7 +956,7 @@ impl SectionKind {
 
     fn verified_default_measure_count(self) -> Option<u32> {
         match self {
-            Self::CountIn => Some(2),
+            Self::CountIn | Self::Turnaround => Some(2),
             Self::Verse | Self::Chorus | Self::Bridge | Self::Refrain => Some(8),
             Self::Intro | Self::Outro | Self::Instrumental => Some(4),
             Self::PreChorus
