@@ -54,6 +54,12 @@ pub struct DemoSong {
     pub song_end: f64,
     /// Position of =END marker (render tail)
     pub abs_end: f64,
+    /// Song tempo in BPM (drives the per-song tempo point + guide grid).
+    pub tempo_bpm: f64,
+    /// Time-signature numerator (beats per measure).
+    pub time_sig_num: u32,
+    /// Time-signature denominator (beat unit).
+    pub time_sig_den: u32,
     /// Sections within the song
     pub sections: Vec<DemoSection>,
 }
@@ -131,13 +137,35 @@ where
         )));
     }
 
-    // Praise (song 1) is 127 bpm — set the project default tempo so the guide
-    // grid and count-in beats line up (`SongBuilder::build` reads tempo from
-    // the project snapshot). The placeholder songs inherit it for now.
-    daw.set_default_tempo(project.clone(), 127.0)
-        .map_err(|e| SessionServiceError::DawError(format!("set demo tempo: {e}")))?;
-
     let songs = demo_songs();
+
+    // Per-song tempo: the default tempo is the first song's, then each song
+    // drops a tempo point at its count-in so the guide grid + count-in beats
+    // line up for that song (`SongBuilder::build` reads tempo from the project
+    // snapshot). Praise's 127 is authoritative (its chart); the other songs'
+    // tempos are detected from their click tracks (approximate).
+    if let Some(first) = songs.first() {
+        daw.set_default_tempo(project.clone(), first.tempo_bpm)
+            .map_err(|e| SessionServiceError::DawError(format!("set demo tempo: {e}")))?;
+        daw.set_default_time_signature(
+            project.clone(),
+            first.time_sig_num as i32,
+            first.time_sig_den as i32,
+        )
+        .map_err(|e| SessionServiceError::DawError(format!("set demo time sig: {e}")))?;
+    }
+    for song in &songs {
+        let idx = daw
+            .add_tempo_point(project.clone(), song.count_in, song.tempo_bpm)
+            .map_err(|e| SessionServiceError::DawError(format!("add tempo point: {e}")))?;
+        daw.set_time_signature_at_point(
+            project.clone(),
+            idx,
+            song.time_sig_num as i32,
+            song.time_sig_den as i32,
+        )
+        .map_err(|e| SessionServiceError::DawError(format!("set song time sig: {e}")))?;
+    }
 
     let mut total_markers = 0u32;
     let mut total_regions = 0u32;
@@ -295,6 +323,9 @@ pub fn fixture_songs(count: usize) -> Vec<DemoSong> {
                 song_start,
                 song_end,
                 abs_end,
+                tempo_bpm: 120.0,
+                time_sig_num: 4,
+                time_sig_den: 4,
                 sections,
             }
         })
@@ -396,7 +427,107 @@ fn praise_song() -> DemoSong {
         song_start: layout.song_start_seconds,
         song_end: layout.song_end_seconds,
         abs_end: layout.song_end_seconds + tail,
+        tempo_bpm: layout.tempo_bpm,
+        time_sig_num: layout.time_sig_num,
+        time_sig_den: layout.time_sig_den,
         sections,
+    }
+}
+
+/// Map a lyrics-sheet section label to a [`SectionKind`]. Trailing numbers
+/// ("Verse 1", "Chorus 2") are ignored here — the setlist auto-numbers
+/// repeated kinds per song downstream.
+fn label_to_kind(label: &str) -> SectionKind {
+    let l = label.trim().to_ascii_lowercase();
+    if l.starts_with("pre") {
+        SectionKind::PreChorus
+    } else if l.starts_with("verse") {
+        SectionKind::Verse
+    } else if l.starts_with("chorus") {
+        SectionKind::Chorus
+    } else if l.starts_with("refrain") {
+        SectionKind::Refrain
+    } else if l.starts_with("bridge") {
+        SectionKind::Bridge
+    } else if l.starts_with("interlude") {
+        SectionKind::Interlude
+    } else if l.starts_with("instrumental") || l.starts_with("inst") {
+        SectionKind::Instrumental
+    } else if l.starts_with("intro") {
+        SectionKind::Intro
+    } else if l.starts_with("outro") || l.starts_with("ending") || l.starts_with("tag") {
+        // "Tag" reads as a structural close, like Outro (SectionKind has no Tag).
+        SectionKind::Outro
+    } else {
+        SectionKind::Chorus
+    }
+}
+
+/// Build a worship song `DemoSong` at region_start 0 (the caller shifts it into
+/// place). 4/4 with a 2-measure count-in; the `duration_s` musical span (from
+/// song_start to the audio end) is split among `sections` weighted by their
+/// lyric line-count, so longer parts get proportionally more time. Section
+/// timings are APPROXIMATE — derived from lyrics + a detected tempo, not a real
+/// chart — but give a navigable, playable song over its seeded stems.
+fn layout_worship_song(
+    name: &'static str,
+    tempo_bpm: f64,
+    time_sig_num: u32,
+    time_sig_den: u32,
+    duration_s: f64,
+    sections: &[(&str, u32)],
+) -> DemoSong {
+    // A measure is `num` beats, each beat = the `den`-th note. In seconds:
+    // num * (60/tempo) * (4/den) — so 4/4 → 4*(60/tempo), 6/8 → 6*(60/tempo)*0.5.
+    let measure = time_sig_num as f64 * (60.0 / tempo_bpm) * (4.0 / time_sig_den as f64);
+    let count_in = 0.0;
+    let song_start = 2.0 * measure;
+    let song_end = duration_s.max(song_start + measure);
+    let tail = 4.0;
+
+    let total_w: f64 = sections.iter().map(|(_, w)| (*w).max(1) as f64).sum::<f64>().max(1.0);
+    let span = song_end - song_start;
+    let mut demo_sections = Vec::with_capacity(sections.len());
+    let mut t = song_start;
+    for (label, w) in sections {
+        let dur = span * (*w).max(1) as f64 / total_w;
+        let end = (t + dur).min(song_end);
+        demo_sections.push(DemoSection {
+            kind: label_to_kind(label),
+            start: t,
+            end,
+        });
+        t = end;
+    }
+    // Snap the last section to song_end (absorb rounding).
+    if let Some(last) = demo_sections.last_mut() {
+        last.end = song_end;
+    }
+
+    // Coalesce consecutive sections that map to the same kind (e.g. two
+    // adjacent choruses → one CH region). Adjacent same-type regions confuse
+    // the per-song section numbering, and a repeated part reads as one section.
+    let mut coalesced: Vec<DemoSection> = Vec::with_capacity(demo_sections.len());
+    for s in demo_sections {
+        match coalesced.last_mut() {
+            Some(prev) if prev.kind == s.kind => prev.end = s.end,
+            _ => coalesced.push(s),
+        }
+    }
+    let demo_sections = coalesced;
+
+    DemoSong {
+        name,
+        region_start: 0.0,
+        region_end: song_end + tail,
+        count_in,
+        song_start,
+        song_end,
+        abs_end: song_end + tail,
+        tempo_bpm,
+        time_sig_num,
+        time_sig_den,
+        sections: demo_sections,
     }
 }
 
@@ -416,16 +547,74 @@ fn shift_song(mut song: DemoSong, delta: f64) -> DemoSong {
     song
 }
 
-/// Build the demo setlist: "Praise" (real chart) followed by two placeholder
-/// worship songs, re-spaced to sit after it on the timeline.
+/// The bundled worship songs (besides Praise) we have real multitrack stems
+/// for. `(name, tempo_bpm, time_sig_num, time_sig_den, duration_s,
+/// [(lyric-section-label, line-weight)])`.
+///
+/// Tempos are the REAL published BPMs (click-track auto-detection was octave-off
+/// on the slow songs, so these are the known targets): Praise 127 (its
+/// MultiTracks metadata), Grateful 72, Holy Forever 72, Thank God I'm Free 128,
+/// Washed 139, Who Else 68 — all 4/4. Section timings are still lyric-derived
+/// proportions, not a real chart, so the section markers remain approximate.
+const WORSHIP_SONGS: &[(&str, f64, u32, u32, f64, &[(&str, u32)])] = &[
+    (
+        "God, I'm Just Grateful",
+        72.0, 4, 4,
+        304.0,
+        &[
+            ("Verse 1", 2), ("Pre-Chorus", 4), ("Chorus", 6), ("Verse 2", 2),
+            ("Pre-Chorus", 4), ("Chorus", 6), ("Bridge", 4), ("Chorus", 6), ("Tag", 6),
+        ],
+    ),
+    (
+        "Holy Forever",
+        72.0, 4, 4,
+        503.0,
+        &[
+            ("Verse 1", 5), ("Chorus 1", 6), ("Chorus 2", 4), ("Verse 2", 7),
+            ("Chorus 2", 4), ("Bridge", 4), ("Chorus 1", 6), ("Chorus 1", 7),
+            ("Chorus 2", 4), ("Bridge", 4), ("Outro", 2),
+        ],
+    ),
+    (
+        "Thank God I'm Free",
+        128.0, 4, 4,
+        300.0,
+        &[
+            ("Verse 1", 8), ("Chorus", 8), ("Verse 2", 4), ("Bridge", 10),
+            ("Chorus", 8), ("Outro", 8),
+        ],
+    ),
+    (
+        "Washed",
+        139.0, 4, 4,
+        222.0,
+        &[
+            ("Chorus", 4), ("Verse 1", 10), ("Chorus", 4), ("Verse 2", 10),
+            ("Chorus", 4), ("Bridge", 4), ("Interlude", 2), ("Chorus", 4),
+        ],
+    ),
+    (
+        // Who Else is in 6/8.
+        "Who Else",
+        68.0, 4, 4,
+        285.0,
+        &[
+            ("Verse 1", 6), ("Chorus", 8), ("Verse 2", 8), ("Chorus", 8),
+            ("Bridge", 8), ("Chorus", 8), ("Tag", 2),
+        ],
+    ),
+];
+
+/// Build the demo setlist: "Praise" (real chart) then every other worship song
+/// we have stems for (lyric-derived, detected-tempo), each shifted to sit after
+/// the previous on the timeline.
 fn demo_songs() -> Vec<DemoSong> {
     const GAP: f64 = 10.0;
-    let praise = praise_song();
-    let mut songs = vec![praise];
+    let mut songs = vec![praise_song()];
     let mut cursor = songs[0].abs_end + GAP;
-    // Keep the two placeholder songs (skip the old hymn slot at index 0),
-    // shifting each to start after the previous song.
-    for base in legacy_demo_songs().into_iter().skip(1) {
+    for (name, tempo, num, den, dur, sections) in WORSHIP_SONGS {
+        let base = layout_worship_song(name, *tempo, *num, *den, *dur, sections);
         let delta = cursor - base.region_start;
         let shifted = shift_song(base, delta);
         cursor = shifted.abs_end + GAP;
@@ -434,152 +623,12 @@ fn demo_songs() -> Vec<DemoSong> {
     songs
 }
 
-/// The original hardcoded 3-song demo. Index 0 (a hymn) is superseded by the
-/// real Praise chart; indices 1–2 are kept as placeholder songs.
-fn legacy_demo_songs() -> Vec<DemoSong> {
-    vec![
-        // ── Song 1: "Great Is Thy Faithfulness" ──────────────────
-        // 120 BPM, 4/4 — classic hymn arrangement
-        DemoSong {
-            name: "Great Is Thy Faithfulness",
-            region_start: 0.0,
-            region_end: 120.0,
-            count_in: 0.0,
-            song_start: 4.0,
-            song_end: 116.0,
-            abs_end: 120.0,
-            sections: vec![
-                DemoSection {
-                    kind: SectionKind::Intro,
-                    start: 4.0,
-                    end: 20.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Verse,
-                    start: 20.0,
-                    end: 44.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Chorus,
-                    start: 44.0,
-                    end: 68.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Verse,
-                    start: 68.0,
-                    end: 92.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Chorus,
-                    start: 92.0,
-                    end: 112.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Outro,
-                    start: 112.0,
-                    end: 116.0,
-                },
-            ],
-        },
-        // ── Song 2: "Build My Life" ──────────────────────────────
-        // 68 BPM, 4/4 — modern worship, slower tempo
-        DemoSong {
-            name: "Build My Life",
-            region_start: 130.0,
-            region_end: 270.0,
-            count_in: 130.0,
-            song_start: 134.0,
-            song_end: 266.0,
-            abs_end: 270.0,
-            sections: vec![
-                DemoSection {
-                    kind: SectionKind::Intro,
-                    start: 134.0,
-                    end: 152.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Verse,
-                    start: 152.0,
-                    end: 178.0,
-                },
-                DemoSection {
-                    kind: SectionKind::PreChorus,
-                    start: 178.0,
-                    end: 192.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Chorus,
-                    start: 192.0,
-                    end: 218.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Bridge,
-                    start: 218.0,
-                    end: 240.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Chorus,
-                    start: 240.0,
-                    end: 266.0,
-                },
-            ],
-        },
-        // ── Song 3: "Way Maker" ──────────────────────────────────
-        // 72 BPM, 4/4 — builds dynamically, longer song
-        DemoSong {
-            name: "Way Maker",
-            region_start: 280.0,
-            region_end: 430.0,
-            count_in: 280.0,
-            song_start: 284.0,
-            song_end: 426.0,
-            abs_end: 430.0,
-            sections: vec![
-                DemoSection {
-                    kind: SectionKind::Intro,
-                    start: 284.0,
-                    end: 300.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Verse,
-                    start: 300.0,
-                    end: 320.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Chorus,
-                    start: 320.0,
-                    end: 344.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Verse,
-                    start: 344.0,
-                    end: 364.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Chorus,
-                    start: 364.0,
-                    end: 388.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Bridge,
-                    start: 388.0,
-                    end: 408.0,
-                },
-                DemoSection {
-                    kind: SectionKind::Chorus,
-                    start: 408.0,
-                    end: 422.0,
-                },
-                // Closest existing variant — SectionKind has no Tag yet;
-                // SectionKind::Outro keeps the convention coherent (tag
-                // is a structural close to the song) without requiring
-                // a session-wide enum addition.
-                DemoSection {
-                    kind: SectionKind::Outro,
-                    start: 422.0,
-                    end: 426.0,
-                },
-            ],
-        },
-    ]
+/// The setlist layout for media seeding: `(song name, region_start, length)` in
+/// timeline order. The app seeds each song's stems at its `region_start` so the
+/// audio lines up with the stamped song region.
+pub fn demo_song_layout() -> Vec<(&'static str, f64, f64)> {
+    demo_songs()
+        .iter()
+        .map(|s| (s.name, s.region_start, s.region_end - s.region_start))
+        .collect()
 }
