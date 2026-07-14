@@ -143,6 +143,20 @@ where
             }
         });
 
+        // Each song carries its own authored tempo / time signature (from its
+        // chart). The shared-timeline standalone project reports one global
+        // tempo (the first song's), so the project transport tempo is wrong for
+        // every later song. Prefer the song's own value; fall back to the
+        // project transport only when the song didn't author one. This is
+        // model-agnostic: once each song is its own DAW project, `song.tempo`
+        // still matches that project's tempo.
+        let bpm = song.tempo.unwrap_or(tempo);
+        let (time_sig_num, time_sig_denom) = song
+            .time_signature
+            .as_ref()
+            .map(|ts| (ts.numerator(), ts.denominator()))
+            .unwrap_or(time_sig);
+
         SongTransportState {
             song_index,
             position,
@@ -152,9 +166,9 @@ where
             is_playing,
             is_looping,
             loop_region: song_loop_region,
-            bpm: tempo,
-            time_sig_num: time_sig.0,
-            time_sig_denom: time_sig.1,
+            bpm,
+            time_sig_num,
+            time_sig_denom,
         }
     }
 
@@ -265,6 +279,22 @@ where
         }
 
         transports
+    }
+
+    /// Query the current transport for every song and publish a
+    /// `TransportUpdate` on the events hub.
+    ///
+    /// The reactive polling loop only emits transport on playhead *position
+    /// ticks*, which fire while playing. A seek while stopped moves the edit
+    /// cursor without a tick, so the UI badges (playhead time, musical
+    /// position, BPM) would stay frozen at the previous song. Call this after
+    /// any stopped seek so the badges reflect the new position immediately.
+    pub(crate) async fn publish_transport_snapshot(&self) {
+        let transports = self.get_all_song_transports().await;
+        if !transports.is_empty() {
+            self.events_hub
+                .publish(SetlistEvent::TransportUpdate(transports));
+        }
     }
 
     /// Find the active song and section based on current DAW project
@@ -1549,5 +1579,88 @@ where
 
     fn active_indices_hub(&self) -> &architect::PubSub<ActiveIndices> {
         &self.indices_hub
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use daw::service::Position;
+    use daw_proto::{PositionInSeconds, TimeSignature};
+    use daw_standalone::Standalone;
+    use session_proto::SongId;
+
+    fn song_at(name: &str, start: f64, end: f64, tempo: f64, ts: (u32, u32)) -> Song {
+        Song {
+            id: SongId::new(),
+            name: name.to_string(),
+            project_guid: "shared-timeline".to_string(),
+            start_seconds: start,
+            end_seconds: end,
+            count_in_seconds: None,
+            sections: vec![],
+            comments: vec![],
+            tempo: Some(tempo),
+            time_signature: Some(TimeSignature::new(ts.0, ts.1)),
+            measure_positions: vec![],
+            chart_text: None,
+            parsed_chart: None,
+            detected_chords: vec![],
+            chart_fingerprint: None,
+            advance_mode: None,
+            color: None,
+        }
+    }
+
+    /// The demo stamps every song onto ONE standalone project, so the project
+    /// transport reports a single global tempo (the first song's, 127). Each
+    /// later song must still show ITS OWN authored tempo/time signature in the
+    /// badges — `calculate_song_transport` overrides the project transport with
+    /// the song's own values. This guards the "tempo badge stuck at 127" bug.
+    #[test]
+    fn song_transport_reports_songs_own_tempo_not_project_tempo() {
+        // A later song authored at 72 BPM, 6/8 — while the project transport
+        // (shared timeline) reports the first song's 127 BPM, 4/4.
+        let song = song_at("God I'm Just Grateful", 300.0, 480.0, 72.0, (6, 8));
+        let position = Position::from_time(PositionInSeconds::from_seconds(360.0));
+
+        let t = SetlistServiceImpl::<Standalone>::calculate_song_transport(
+            &song,
+            1,
+            position,
+            false,   // is_playing
+            false,   // is_looping
+            None,    // loop_region
+            127.0,   // project transport tempo (WRONG for this song)
+            (4, 4),  // project transport time sig (WRONG for this song)
+        );
+
+        assert_eq!(t.bpm, 72.0, "badge must show the song's own tempo, not 127");
+        assert_eq!(t.time_sig_num, 6);
+        assert_eq!(t.time_sig_denom, 8);
+        // Position is carried through so the time/musical badges move on seek.
+        assert_eq!(
+            t.position.time.map(|p| p.as_seconds()),
+            Some(360.0),
+            "seek position must reach the transport state for the badge"
+        );
+    }
+
+    /// When a song hasn't authored a tempo (no chart), fall back to the project
+    /// transport tempo rather than losing it.
+    #[test]
+    fn song_transport_falls_back_to_project_tempo_when_unauthored() {
+        let mut song = song_at("Untitled", 0.0, 60.0, 0.0, (4, 4));
+        song.tempo = None;
+        song.time_signature = None;
+        let position = Position::from_time(PositionInSeconds::from_seconds(1.0));
+
+        let t = SetlistServiceImpl::<Standalone>::calculate_song_transport(
+            &song, 0, position, false, false, None, 140.0, (3, 4),
+        );
+
+        assert_eq!(t.bpm, 140.0);
+        assert_eq!(t.time_sig_num, 3);
+        assert_eq!(t.time_sig_denom, 4);
     }
 }

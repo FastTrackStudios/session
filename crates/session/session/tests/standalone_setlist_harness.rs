@@ -121,6 +121,99 @@ async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Per-song-project demo setlist (the model the app now stamps): each song is
+/// its OWN standalone project, 0-based, with its own DEFAULT tempo/time-sig at
+/// t=0 (no shared timeline, no tempo points, no GAP offsets). Zero-padded
+/// project names keep `Projects::list()`'s name-sort in authored order. Asserts
+/// the setlist keeps ORDER and every song reports ITS OWN tempo (the payoff over
+/// the shared-timeline model, where every song reported the first song's tempo).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn per_song_project_demo_setlist_holds_order_and_tempo() -> eyre::Result<()> {
+    use daw::service::ProjectContext;
+    use session::setlist_service::demo::{demo_songs_base, stamp_song_with_default_tempo_native};
+
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let standalone = Standalone::new();
+    let songs = demo_songs_base();
+    for (i, song) in songs.iter().enumerate() {
+        let guid = format!("demo-song-{i:02}");
+        standalone.seed_project(ProjectInfo {
+            guid: guid.clone(),
+            name: format!("{i:02} {}", song.name),
+            path: String::new(),
+        });
+        stamp_song_with_default_tempo_native(
+            &standalone,
+            ProjectContext::Project(guid.clone()),
+            song,
+        )
+        .map_err(|e| eyre::eyre!("stamp song {i}: {e:?}"))?;
+    }
+
+    let bundle = build_in_process_daw(standalone).await?;
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
+
+    for s in &setlist.songs {
+        println!(
+            "  {:<24} tempo={:?} ts={:?} start={:.2}s count_in={:?} {} sections",
+            s.name,
+            s.tempo,
+            s.time_signature.as_ref().map(|t| (t.numerator, t.denominator)),
+            s.start_seconds,
+            s.count_in_seconds,
+            s.sections.len(),
+        );
+    }
+
+    // Order preserved by the zero-padded project-name sort.
+    let names: Vec<&str> = setlist.songs.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "Praise",
+            "God, I'm Just Grateful",
+            "Holy Forever",
+            "Thank God I'm Free",
+            "Washed",
+            "Who Else",
+        ],
+        "per-song-project setlist lost authored order"
+    );
+
+    // Each song reports ITS OWN tempo (the real published BPMs), not a single
+    // shared-timeline tempo — this is the whole point of the split.
+    let expected_tempo: &[(&str, f64)] = &[
+        ("Praise", 127.0),
+        ("God, I'm Just Grateful", 72.0),
+        ("Holy Forever", 72.0),
+        ("Thank God I'm Free", 128.0),
+        ("Washed", 139.0),
+        ("Who Else", 68.0),
+    ];
+    for (song, (name, tempo)) in setlist.songs.iter().zip(expected_tempo) {
+        assert_eq!(&song.name, name);
+        assert_eq!(
+            song.tempo,
+            Some(*tempo),
+            "song '{name}' must report its own tempo {tempo}"
+        );
+        // 0-based per-project timeline: the song starts within a couple of
+        // count-in measures of t=0 (no cumulative GAP shift).
+        assert!(
+            song.start_seconds < 15.0,
+            "song '{name}' start {:.2}s is not 0-based (GAP shift leaked?)",
+            song.start_seconds
+        );
+        assert!(
+            !song.sections.is_empty(),
+            "song '{name}' built with no sections"
+        );
+    }
+
+    Ok(())
+}
+
 /// Structural contract for the demo setlist the desktop app plays: every
 /// song must carry sections with real, ordered, positive-duration timing
 /// (so the sidebar has sections to show and the player can seek into them),

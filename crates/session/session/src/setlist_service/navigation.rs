@@ -427,6 +427,7 @@ where
                     seconds, song_index, song.name
                 ),
             }
+            self.publish_transport_snapshot().await;
         } else {
             warn!("Song {} not found", song_index);
         }
@@ -515,6 +516,10 @@ where
             song_index, song.name, seek_pos, actual_pos, is_playing
         );
         self.refresh_active_indices().await;
+        // A stopped seek moves the edit cursor without a playhead tick, so the
+        // reactive loop won't emit transport. Publish a fresh snapshot so the
+        // playhead/BPM/musical-position badges update to the new song.
+        self.publish_transport_snapshot().await;
         Ok(())
     }
 
@@ -566,6 +571,7 @@ where
             warn!("Song {} not found", song_index);
         }
         self.refresh_active_indices().await;
+        self.publish_transport_snapshot().await;
         Ok(())
     }
 
@@ -666,6 +672,7 @@ where
             warn!("Song {} not found", song_index);
         }
         self.refresh_active_indices().await;
+        self.publish_transport_snapshot().await;
         Ok(())
     }
 }

@@ -84,7 +84,16 @@ where
 
     pub(crate) fn parse_project_name_fallback(project_name: &str) -> String {
         let base = project_name.strip_suffix(".rpp").unwrap_or(project_name);
-        base.split(" - ").next().unwrap_or(base).trim().to_string()
+        let base = base.split(" - ").next().unwrap_or(base).trim();
+        // Drop a leading zero-padded setlist-order prefix ("00 Praise" → "Praise")
+        // so transient name-only placeholders don't show the ordering index.
+        let digits = base.chars().take_while(|c| c.is_ascii_digit()).count();
+        let base = if (2..=3).contains(&digits) && base[digits..].starts_with(' ') {
+            base[digits + 1..].trim_start()
+        } else {
+            base
+        };
+        base.to_string()
     }
 
     pub(crate) fn make_song_id(

@@ -237,6 +237,40 @@ where
     Ok((4, 1 + song.sections.len() as u32))
 }
 
+/// Stamp one [`DemoSong`] into its OWN project: set the project DEFAULT tempo
+/// and time-signature at t=0 (no tempo points, no time-signature points), then
+/// stamp the song's regions/markers via [`stamp_song_native`].
+///
+/// This is the per-song-project path — each song owns a project whose entire
+/// timeline runs at that song's tempo, so the first downbeat lands on measure 1
+/// and the guide/click grid + count-in line up natively. The caller must have
+/// already created (`seed_project`) the target project; this focuses it.
+pub fn stamp_song_with_default_tempo_native<D>(
+    daw: &D,
+    project: ProjectContext,
+    song: &DemoSong,
+) -> Result<(u32, u32), SessionServiceError>
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap,
+{
+    if let ProjectContext::Project(guid) = &project
+        && !daw.select(guid)
+    {
+        return Err(SessionServiceError::DawError(format!(
+            "could not focus project {guid} before stamping song"
+        )));
+    }
+    daw.set_default_tempo(project.clone(), song.tempo_bpm)
+        .map_err(|e| SessionServiceError::DawError(format!("set song tempo: {e}")))?;
+    daw.set_default_time_signature(
+        project.clone(),
+        song.time_sig_num as i32,
+        song.time_sig_den as i32,
+    )
+    .map_err(|e| SessionServiceError::DawError(format!("set song time sig: {e}")))?;
+    stamp_song_native(daw, project, song)
+}
+
 /// Generate `count` self-contained song fixtures, each starting near time 0 so
 /// it can be stamped into its own project (one song per project). Songs cycle
 /// through a few section layouts of increasing complexity and alternate
@@ -686,18 +720,25 @@ const SONG_CHARTS: &[(&str, &str)] = &[
     ("Holy Forever", HOLY_FOREVER_CHART),
 ];
 
-fn demo_songs() -> Vec<DemoSong> {
-    const GAP: f64 = 10.0;
-    // The setlist order. Each song uses its chart if we have one, else the
-    // lyric-derived proportional fallback.
-    const ORDER: &[&str] = &[
-        "Praise",
-        "God, I'm Just Grateful",
-        "Holy Forever",
-        "Thank God I'm Free",
-        "Washed",
-        "Who Else",
-    ];
+/// The setlist order. Each song uses its chart if we have one, else the
+/// lyric-derived proportional fallback.
+const ORDER: &[&str] = &[
+    "Praise",
+    "God, I'm Just Grateful",
+    "Holy Forever",
+    "Thank God I'm Free",
+    "Washed",
+    "Who Else",
+];
+
+/// The demo songs, each **project-relative / 0-based** (count-in near t=0,
+/// first downbeat at the song's own measure 1), in setlist [`ORDER`].
+///
+/// This is the per-song-project source of truth: each song is stamped into its
+/// OWN standalone project with its own default tempo/time-signature at t=0, so
+/// there are no shared-timeline GAP offsets and no tempo points. The
+/// (legacy) single-project [`demo_songs`] shifts these sequentially instead.
+pub fn demo_songs_base() -> Vec<DemoSong> {
     let mut base_songs: Vec<DemoSong> = Vec::with_capacity(ORDER.len());
     for &name in ORDER {
         if let Some(&(_, chart)) = SONG_CHARTS.iter().find(|(n, _)| *n == name) {
@@ -708,10 +749,18 @@ fn demo_songs() -> Vec<DemoSong> {
             base_songs.push(layout_worship_song(n, tempo, num, den, dur, sections));
         }
     }
+    base_songs
+}
 
-    let mut songs = Vec::with_capacity(base_songs.len());
+/// Legacy single-project layout: the [`demo_songs_base`] songs shifted onto one
+/// shared timeline with a gap between them (used by the one-project stamp path
+/// and the older harness tests). The app now stamps one project per song via
+/// [`demo_songs_base`] + [`stamp_song_with_default_tempo_native`].
+fn demo_songs() -> Vec<DemoSong> {
+    const GAP: f64 = 10.0;
+    let mut songs = Vec::new();
     let mut cursor = 0.0;
-    for base in base_songs {
+    for base in demo_songs_base() {
         let delta = cursor - base.region_start;
         let shifted = shift_song(base, delta);
         cursor = shifted.abs_end + GAP;

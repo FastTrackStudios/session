@@ -1109,6 +1109,13 @@ impl SongBuilder {
             .trim_end_matches(".RPP")
             .trim_end_matches(".Rpp");
 
+        // Strip a leading zero-padded setlist-order prefix ("00 ", "01 ", …).
+        // Per-song-project setups name projects `NN <Song>` so `Projects::list()`
+        // (name-sorted) keeps the authored order; the index isn't part of the
+        // song title. Only a 2–3 digit run followed by a space is stripped, so
+        // real titles ("10,000 Reasons") are untouched.
+        let name = Self::strip_order_prefix(name);
+
         // Look for " - " separator (with spaces around dash)
         if let Some(sep_pos) = name.find(" - ") {
             let title = name[..sep_pos].trim();
@@ -1121,6 +1128,17 @@ impl SongBuilder {
             }
         } else {
             (name.to_string(), None)
+        }
+    }
+
+    /// Strip a leading `NN ` (2–3 digit, space) setlist-order prefix from a
+    /// project name. Returns the input unchanged when there is no such prefix.
+    fn strip_order_prefix(name: &str) -> &str {
+        let digits = name.chars().take_while(|c| c.is_ascii_digit()).count();
+        if (2..=3).contains(&digits) && name[digits..].starts_with(' ') {
+            name[digits + 1..].trim_start()
+        } else {
+            name
         }
     }
 
