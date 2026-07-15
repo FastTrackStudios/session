@@ -28,6 +28,18 @@ impl TextFontMetrics {
         Self { font_data }
     }
 
+    /// Create a metrics provider with no font data that always uses the
+    /// per-character estimation fallback.
+    ///
+    /// Used as a safe last resort when a caller supplies no real font
+    /// metrics — measurements are approximate but layout never panics.
+    #[must_use]
+    pub fn estimation_only() -> Self {
+        Self {
+            font_data: Arc::new(Vec::new()),
+        }
+    }
+
     /// Get the horizontal advance width for a string at the given font size.
     ///
     /// This uses actual glyph metrics from the font file, not estimation.

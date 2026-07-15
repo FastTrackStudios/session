@@ -224,6 +224,7 @@ impl ChartLayoutEngine {
             .id_base(id_base)
             .justify_to(width_spatiums)
             .no_barlines() // Barlines handled by chart_layout
+            .beam_grouping(self.config.beam_grouping)
             .segment_min_widths(chord_min_widths);
 
         // Set the rhythm using either entries (for explicit rhythms) or rhythm (for slash fills)

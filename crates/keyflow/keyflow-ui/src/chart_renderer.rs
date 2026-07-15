@@ -537,8 +537,11 @@ fn replay_recorded_scene(
 /// Two cache levels to avoid redundant work:
 /// 1. **Parse cache** (`cached_chart`): Keyed by source text hash. Avoids re-parsing
 ///    (~10-20ms) when only the layout mode or viewport changes.
-/// 2. **Layout cache** (`layout_result`): Keyed by (source, preview_mode) hash. Avoids
-///    re-layout (~440-500ms) when the same chart is re-rendered.
+/// 2. **Layout cache** (`layout_result`): Keyed by (source, preview_mode) hash
+///    plus an equality check against the `Chart` value that was actually laid
+///    out (`last_layout_chart`) — programmatic/DAW-generated charts can change
+///    without the source string changing. Avoids re-layout (~440-500ms) when
+///    the same chart is re-rendered.
 ///
 /// Rendering uses the `PaintScene` trait abstraction (via anyrender) so the
 /// chart rendering pipeline is backend-agnostic.
@@ -553,6 +556,13 @@ pub struct ChartLayoutManager {
     last_chart_hash: u64,
     /// Cached parsed chart — rebuilt only when source text changes.
     cached_chart: Option<Chart>,
+    /// The exact `Chart` value the current `layout_result` was computed from.
+    ///
+    /// Programmatic / DAW-generated charts can change without the source
+    /// string changing, so the hash-based layout skip additionally requires
+    /// the provided chart to equal this one (a `PartialEq` walk — far cheaper
+    /// than parse or layout).
+    last_layout_chart: Option<Chart>,
     /// Hash of just the source text (for parse cache invalidation).
     last_source_hash: u64,
     /// Last preview mode (affects fit-to-width calculation).
@@ -887,6 +897,7 @@ impl ChartLayoutManager {
             layout_result: None,
             last_chart_hash: 0,
             cached_chart: None,
+            last_layout_chart: None,
             last_source_hash: 0,
             last_preview_mode: PreviewMode::Page,
             cursor: ChartCursor::default(),
@@ -955,9 +966,16 @@ impl ChartLayoutManager {
         preview_mode: PreviewMode,
         zoom: f64,
     ) -> Result<bool, String> {
-        // Check layout hash — skip everything if nothing changed
+        // Check layout hash — skip everything if nothing changed. The extra
+        // chart-equality check guards against a programmatic layout (via
+        // `layout_chart_with_preview_mode`) having replaced the displayed
+        // chart since the last parse of this same source string.
         let chart_hash = self.compute_chart_hash(source, preview_mode, viewport_width, zoom);
-        if self.layout_result.is_some() && chart_hash == self.last_chart_hash {
+        if self.layout_result.is_some()
+            && chart_hash == self.last_chart_hash
+            && self.cached_chart.is_some()
+            && self.last_layout_chart == self.cached_chart
+        {
             return Ok(false);
         }
 
@@ -984,6 +1002,7 @@ impl ChartLayoutManager {
             .layout_chart_with_config(chart, &mode, &config);
 
         self.layout_result = Some(result);
+        self.last_layout_chart = self.cached_chart.clone();
         self.last_chart_hash = chart_hash;
         self.last_preview_mode = preview_mode;
         self.cached_cursor_state = None; // Invalidate cursor cache
@@ -1044,8 +1063,14 @@ impl ChartLayoutManager {
     ) {
         let chart_hash = self.compute_chart_hash(source, preview_mode, viewport_width, zoom);
 
-        // Skip if already laid out with same content
-        if self.layout_result.is_some() && chart_hash == self.last_chart_hash {
+        // Skip if already laid out with same content. The hash only covers
+        // the source string + view parameters; programmatic / DAW-generated
+        // charts can change while the caller reuses the same source string,
+        // so the provided Chart value must also match the one we laid out.
+        if self.layout_result.is_some()
+            && chart_hash == self.last_chart_hash
+            && self.last_layout_chart.as_ref() == Some(chart)
+        {
             return;
         }
 
@@ -1056,6 +1081,7 @@ impl ChartLayoutManager {
             .layout_chart_with_config(chart, &mode, &config);
 
         self.layout_result = Some(result);
+        self.last_layout_chart = Some(chart.clone());
         self.last_chart_hash = chart_hash;
         self.last_preview_mode = preview_mode;
         self.cached_cursor_state = None; // Invalidate cursor cache
@@ -2333,6 +2359,7 @@ impl ChartLayoutManager {
         source.hash(&mut hasher);
         let source_hash = hasher.finish();
 
+        self.last_layout_chart = Some(chart.clone());
         self.cached_chart = Some(chart);
         self.last_source_hash = source_hash;
         self.layout_result = Some(result);
@@ -2359,5 +2386,41 @@ impl ChartLayoutManager {
         self.cached_visible_pages.clear();
         self.cached_focus_page = None;
         self.rebuild_page_geometry_cache();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A programmatic (DAW-generated) chart edit must invalidate the layout
+    /// cache even when the caller reuses the same source string — the cache
+    /// key is the Chart value, not just the source hash.
+    #[test]
+    fn layout_cache_invalidates_on_chart_value_change_with_same_source() {
+        let mut manager = ChartLayoutManager::new().expect("manager");
+
+        let chart_a = keyflow::parse("120bpm 4/4 #C\n\nvs\nC F G C\n").expect("chart A");
+        let mut chart_b = chart_a.clone();
+        // Simulate a programmatic edit: drop a section's worth of content.
+        chart_b.metadata.title = Some("Programmatically Edited".to_string());
+
+        // Same source string for both layouts (programmatic callers often
+        // reuse whatever string they have on hand).
+        let source = "programmatic";
+
+        manager.layout_chart_with_preview_mode(&chart_a, source, 800.0, PreviewMode::Page, 1.0);
+        assert!(manager.layout_result.is_some());
+        assert!(manager.last_layout_chart.as_ref() == Some(&chart_a));
+
+        // Second call with the SAME source but a DIFFERENT chart value must
+        // re-run layout (previously it was skipped via the source hash).
+        manager.layout_chart_with_preview_mode(&chart_b, source, 800.0, PreviewMode::Page, 1.0);
+        assert!(manager.last_layout_chart.as_ref() == Some(&chart_b));
+
+        // And an identical chart + source is still served from cache: the
+        // stored chart remains the same value.
+        manager.layout_chart_with_preview_mode(&chart_b, source, 800.0, PreviewMode::Page, 1.0);
+        assert!(manager.last_layout_chart.as_ref() == Some(&chart_b));
     }
 }

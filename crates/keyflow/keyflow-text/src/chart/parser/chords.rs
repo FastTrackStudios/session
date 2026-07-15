@@ -1581,6 +1581,14 @@ impl<'a> ChartParser<'a> {
             } else {
                 // Parse chords from line
                 // Pass section measure_count for x^ calculation
+                //
+                // Positions computed inside the line parse (key changes) are
+                // line-relative; publish the beats already consumed by earlier
+                // lines of this section so they come out section-relative.
+                self.section_beats_offset = measures
+                    .iter()
+                    .map(|m| f64::from(m.time_signature.0))
+                    .sum();
                 let mut line_measures = self.parse_chord_line_with_default_chord_length(
                     line,
                     section_type,
@@ -1616,6 +1624,7 @@ impl<'a> ChartParser<'a> {
         }
 
         self.melody_octave_memory = section_melody_octave;
+        self.section_beats_offset = 0.0;
         Ok(measures)
     }
 
@@ -3020,11 +3029,13 @@ impl<'a> ChartParser<'a> {
                     // (the in-progress section hasn't been pushed yet).
                     let section_index = self.chart.sections.len();
 
-                    // Position is line-relative: measures finished in this line plus
-                    // beats into the current measure. Cross-line carryover within a
-                    // single section is not yet tracked here — see parse_section_measures.
-                    let beats_into_section =
-                        (measures.len() as f64) * beats_per_measure + current_measure_beats;
+                    // Position is section-relative: beats consumed by earlier
+                    // lines of this section (`section_beats_offset`, published
+                    // by parse_section_measures) plus measures finished in this
+                    // line plus beats into the current measure.
+                    let beats_into_section = self.section_beats_offset
+                        + (measures.len() as f64) * beats_per_measure
+                        + current_measure_beats;
                     let position = AbsolutePosition::new(
                         MusicalDuration::from_beats(beats_into_section, time_sig),
                         section_index,

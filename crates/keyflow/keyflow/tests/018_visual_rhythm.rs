@@ -185,8 +185,10 @@ fn assert_glyph(
 
 /// Get the workspace root directory.
 fn workspace_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR points to packages/keyflow, go up two levels
+    // CARGO_MANIFEST_DIR points to crates/keyflow/keyflow; go up three levels to the repo root
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
         .parent()
         .unwrap()
         .parent()
@@ -197,8 +199,8 @@ fn workspace_root() -> PathBuf {
 /// Helper to create a layout engine for tests.
 fn create_test_engine() -> ChartLayoutEngine {
     let root = workspace_root();
-    let text_font_path = root.join("crates/engraver-proto/fonts/FreeSans.ttf");
-    let musejazz_font_path = root.join("crates/engraver-proto/fonts/MuseJazzText.otf");
+    let text_font_path = root.join("features/engraver/proto/fonts/FreeSans.ttf");
+    let musejazz_font_path = root.join("features/engraver/proto/fonts/MuseJazzText.otf");
 
     let text_font_data = Arc::new(
         std::fs::read(&text_font_path)

@@ -718,6 +718,37 @@ cmaj7 dm7 #G gmaj7 am7
         assert_eq!(measures.len(), 4);
     }
 
+    /// A key change on the *second* line of a multi-line section must be
+    /// anchored relative to the section start, not the line start — earlier
+    /// lines' measures count toward the key change position.
+    #[test]
+    fn test_key_change_position_carries_across_lines_within_section() {
+        let input = r#"
+Cross Line Key Change
+
+120bpm 4/4 #C
+
+vs
+cmaj7 dm7 g7 cmaj7
+am7 dm7 #G gmaj7 cmaj7
+"#;
+
+        let chart = parse_chart(input).expect("Failed to parse chart");
+
+        assert_eq!(chart.key_changes.len(), 1);
+        let kc = &chart.key_changes[0];
+        assert_eq!(kc.to_key.root.name(), "G");
+        assert_eq!(kc.section_index, 0);
+
+        // Line 1 contributes 4 full measures; the key change lands after 2
+        // more measures on line 2 → 6 measures into the section, beat 0.
+        assert_eq!(kc.position.total_duration.measure, 6);
+        assert_eq!(kc.position.total_duration.beat, 0);
+
+        // The section still has all 8 chord measures.
+        assert_eq!(chart.sections[0].measures().len(), 8);
+    }
+
     #[test]
     fn test_parse_multiple_sections_with_key_change() {
         let input = r#"

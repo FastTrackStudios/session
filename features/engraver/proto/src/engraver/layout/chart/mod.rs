@@ -443,18 +443,9 @@ impl Breakpoint {
     }
 }
 
-/// Beam grouping strategy for melody notes within a measure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BeamGroupingMode {
-    /// Break beams at every beat boundary (standard classical convention).
-    #[default]
-    Standard,
-    /// Group eighths within each half-bar (beats 1-2 and 3-4 in 4/4).
-    /// Common in jazz lead sheets.
-    JazzHalfBar,
-    /// Beam every eighth/sixteenth in the measure together. Compressed.
-    FullBar,
-}
+// `BeamGroupingMode` lives next to the beam pass in `notation`; re-exported
+// here so `ChartLayoutConfig` consumers keep their existing import path.
+pub use crate::engraver::notation::BeamGroupingMode;
 
 // `impl Default for ChartLayoutConfig` and all preset / builder methods
 // live in `config_presets.rs`.

@@ -33,13 +33,15 @@ fn workspace_root() -> PathBuf {
         .unwrap()
         .parent()
         .unwrap()
+        .parent()
+        .unwrap()
         .to_path_buf()
 }
 
 fn create_test_engine() -> ChartLayoutEngine {
     let root = workspace_root();
-    let text_font_path = root.join("crates/engraver-proto/fonts/FreeSans.ttf");
-    let musejazz_font_path = root.join("crates/engraver-proto/fonts/MuseJazzText.otf");
+    let text_font_path = root.join("features/engraver/proto/fonts/FreeSans.ttf");
+    let musejazz_font_path = root.join("features/engraver/proto/fonts/MuseJazzText.otf");
 
     let text_font_data = Arc::new(
         std::fs::read(&text_font_path)

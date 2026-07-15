@@ -18,6 +18,11 @@ pub struct ChartParser<'a> {
     /// `resolve_notation_system`.
     chart_letter_votes: u32,
     chart_degree_votes: u32,
+    /// Beats already consumed by earlier lines of the section currently being
+    /// parsed. `parse_section_measures` refreshes this before each chord line
+    /// so positions computed inside a single-line parse (e.g. key changes)
+    /// are section-relative, not line-relative.
+    section_beats_offset: f64,
 }
 
 impl<'a> ChartParser<'a> {
@@ -29,6 +34,7 @@ impl<'a> ChartParser<'a> {
             default_duration: None,
             chart_letter_votes: 0,
             chart_degree_votes: 0,
+            section_beats_offset: 0.0,
         }
     }
 }

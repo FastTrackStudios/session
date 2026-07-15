@@ -55,11 +55,12 @@ pub enum BassArrangement {
 /// - Alterations (b5, #9) render as superscript
 /// - Superscript uses 0.75 scale and -0.36 vertical offset
 ///
-/// # Required: Font Metrics
+/// # Font Metrics
 ///
-/// `text_font_metrics` is **required** for layout. The layout function will panic
-/// if not provided. Use [`with_text_font_metrics`](Self::with_text_font_metrics) or
-/// [`with_font_data`](Self::with_font_data) to set font metrics.
+/// `text_font_metrics` should be provided for accurate layout — use
+/// [`with_text_font_metrics`](Self::with_text_font_metrics) or
+/// [`with_font_data`](Self::with_font_data). If absent, layout falls back to
+/// per-character width estimation (approximate, but never panics).
 ///
 /// `symbol_font_metrics` is optional and falls back to `text_font_metrics` if not set.
 #[derive(Clone)]
@@ -439,11 +440,23 @@ pub fn layout_harmony(
     let mut cursor_x = 0.0;
     let baseline_y = 0.0;
 
-    // Font metrics are required for accurate glyph measurement
-    let text_metrics = style.text_font_metrics.as_ref().expect(
-        "HarmonyStyle requires text_font_metrics for layout. \
-         Use HarmonyStyle::with_text_font_metrics() to provide font metrics.",
-    );
+    // Font metrics are needed for accurate glyph measurement. The main chart
+    // engine always supplies them; direct callers that construct a bare
+    // HarmonyStyle fall back to per-character estimation instead of
+    // panicking — a bad/missing font must never kill rendering.
+    let estimation_fallback;
+    let text_metrics = match style.text_font_metrics.as_ref() {
+        Some(metrics) => metrics,
+        None => {
+            tracing::warn!(
+                "HarmonyStyle has no text_font_metrics; falling back to \
+                 estimated glyph widths. Use \
+                 HarmonyStyle::with_text_font_metrics() for accurate layout."
+            );
+            estimation_fallback = TextFontMetrics::estimation_only();
+            &estimation_fallback
+        }
+    };
     let symbol_metrics = style.symbol_font_metrics.as_ref().unwrap_or(text_metrics);
 
     // Measure text width using actual font metrics (no estimation fallback)
@@ -1386,6 +1399,25 @@ mod tests {
         let params = HarmonyParams::major("C")
             .at(100.0, 50.0)
             .with_style(make_test_style());
+        let (layout, node) = layout_harmony(&params, &ctx);
+
+        assert!(layout.width > 0.0);
+        assert!(!node.commands.is_empty());
+    }
+
+    /// A `HarmonyStyle` built without font metrics (direct callers of
+    /// `layout_harmony`) must fall back to estimated glyph widths instead of
+    /// panicking — a missing font must never kill rendering.
+    #[test]
+    fn test_layout_harmony_without_font_metrics_does_not_panic() {
+        let ctx = make_ctx();
+        let mut style = make_test_style();
+        style.text_font_metrics = None;
+        style.symbol_font_metrics = None;
+        let params = HarmonyParams::major("C")
+            .at(100.0, 50.0)
+            .with_style(style);
+
         let (layout, node) = layout_harmony(&params, &ctx);
 
         assert!(layout.width > 0.0);

@@ -315,6 +315,35 @@ impl TimeSignature {
         1920 / self.denominator as i32
     }
 
+    /// Get beam-group pulse durations for this time signature under the
+    /// given grouping mode. Returns a list of tick counts for each group.
+    ///
+    /// - [`BeamGroupingMode::Standard`] — the canonical per-meter grouping
+    ///   from [`beam_groups`](Self::beam_groups).
+    /// - [`BeamGroupingMode::JazzHalfBar`] — two half-bar groups (eighths in
+    ///   beats 1-2 and 3-4 of 4/4 beam together). Meters whose measure
+    ///   length doesn't split evenly in half fall back to standard grouping.
+    /// - [`BeamGroupingMode::FullBar`] — one group spanning the measure.
+    #[must_use]
+    pub fn beam_pulses(&self, mode: BeamGroupingMode) -> Vec<i32> {
+        match mode {
+            BeamGroupingMode::Standard => self.beam_groups(),
+            BeamGroupingMode::JazzHalfBar => {
+                // Only meters with an even beat count have a musically
+                // meaningful half-bar point (4/4 → beat 3, 6/8 → the
+                // dotted-quarter midpoint). Odd meters (3/4, 5/4, 7/8)
+                // fall back to standard grouping.
+                if self.numerator % 2 == 0 {
+                    let half = self.measure_ticks() / 2;
+                    vec![half, half]
+                } else {
+                    self.beam_groups()
+                }
+            }
+            BeamGroupingMode::FullBar => vec![self.measure_ticks()],
+        }
+    }
+
     /// Get beam groupings for this time signature.
     /// Returns a list of tick counts for each beam group.
     #[must_use]
@@ -339,4 +368,17 @@ impl Default for TimeSignature {
     fn default() -> Self {
         Self::COMMON
     }
+}
+
+/// Beam grouping strategy for melody notes within a measure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BeamGroupingMode {
+    /// Break beams at every beat boundary (standard classical convention).
+    #[default]
+    Standard,
+    /// Group eighths within each half-bar (beats 1-2 and 3-4 in 4/4).
+    /// Common in jazz lead sheets.
+    JazzHalfBar,
+    /// Beam every eighth/sixteenth in the measure together. Compressed.
+    FullBar,
 }

@@ -19,7 +19,7 @@ use crate::engraver::scene::node::SceneNode;
 use crate::engraver::scene::paint::PaintCommand;
 
 use super::mode::NotationMode;
-use super::{Duration, DurationKind, TimeSignature};
+use super::{BeamGroupingMode, Duration, DurationKind, TimeSignature};
 
 /// A rhythm entry representing either a note/chord or a rest.
 ///
@@ -150,6 +150,10 @@ pub struct MeasureBuilder {
     /// `note_pitches` when set, each entry holding the secondary heads
     /// (octave doublings, double-stops). All share the primary's stem.
     note_pitch_stacks: Vec<Vec<(i32, Accidental)>>,
+    /// Beam-grouping strategy for flagged notes. Default `Standard` (break
+    /// at every beat/pulse boundary); `JazzHalfBar` and `FullBar` widen the
+    /// pulse windows — see [`TimeSignature::beam_pulses`].
+    beam_grouping: BeamGroupingMode,
 }
 
 impl Default for MeasureBuilder {
@@ -183,7 +187,15 @@ impl MeasureBuilder {
             segment_min_widths: Vec::new(),
             note_pitches: Vec::new(),
             note_pitch_stacks: Vec::new(),
+            beam_grouping: BeamGroupingMode::default(),
         }
+    }
+
+    /// Set the beam-grouping strategy for flagged notes (default `Standard`).
+    #[must_use]
+    pub fn beam_grouping(mut self, mode: BeamGroupingMode) -> Self {
+        self.beam_grouping = mode;
+        self
     }
 
     /// Set compact mode for minimal left margin (useful for count-in measures).
@@ -992,8 +1004,9 @@ impl MeasureBuilder {
         let ts = self.time_signature.unwrap_or(TimeSignature::COMMON);
         // Beam-group boundary ticks: cumulative sum of pulse durations.
         // For 6/8 → [720, 1440]; a note ending at 720 closes the first
-        // group; the next starts there.
-        let beam_pulses = ts.beam_groups();
+        // group; the next starts there. The grouping mode widens the pulses
+        // (JazzHalfBar → half-bar windows, FullBar → one measure-wide window).
+        let beam_pulses = ts.beam_pulses(self.beam_grouping);
         let group_boundaries: Vec<i32> = beam_pulses
             .iter()
             .scan(0i32, |acc, &g| {
@@ -1927,6 +1940,70 @@ mod tests {
         // All 8 should be in one group (within beat 1)
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].notes.len(), 8);
+    }
+
+    #[test]
+    fn test_beam_groups_jazz_half_bar_mode() {
+        // 8 eighths in 4/4 under JazzHalfBar grouping: eighths in beats 1-2
+        // and 3-4 beam together → 2 groups of 4.
+        let builder = MeasureBuilder::new()
+            .time_signature(4, 4)
+            .beam_grouping(BeamGroupingMode::JazzHalfBar)
+            .rhythm(vec![Duration::Eighth; 8]);
+
+        let groups = builder.compute_beam_groups();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].notes.len(), 4);
+        assert_eq!(groups[1].notes.len(), 4);
+    }
+
+    #[test]
+    fn test_beam_groups_full_bar_mode() {
+        // 8 eighths in 4/4 under FullBar grouping: one beam across the bar.
+        let builder = MeasureBuilder::new()
+            .time_signature(4, 4)
+            .beam_grouping(BeamGroupingMode::FullBar)
+            .rhythm(vec![Duration::Eighth; 8]);
+
+        let groups = builder.compute_beam_groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].notes.len(), 8);
+    }
+
+    #[test]
+    fn test_beam_groups_jazz_half_bar_odd_meter_falls_back_to_standard() {
+        // 3/4 doesn't split evenly in half → JazzHalfBar falls back to
+        // per-beat (standard) grouping: 3 groups of 2 eighths.
+        let builder = MeasureBuilder::new()
+            .time_signature(3, 4)
+            .beam_grouping(BeamGroupingMode::JazzHalfBar)
+            .rhythm(vec![Duration::Eighth; 6]);
+
+        let groups = builder.compute_beam_groups();
+        assert_eq!(groups.len(), 3);
+        assert!(groups.iter().all(|g| g.notes.len() == 2));
+    }
+
+    #[test]
+    fn test_beam_groups_jazz_half_bar_rests_still_break() {
+        // Rests break beams regardless of grouping mode.
+        let mut builder = MeasureBuilder::new()
+            .time_signature(4, 4)
+            .beam_grouping(BeamGroupingMode::JazzHalfBar)
+            .rhythm(vec![
+                Duration::Eighth,
+                Duration::Eighth,
+                Duration::Eighth,
+                Duration::Eighth,
+            ]);
+        builder.rest_positions = vec![false, true, false, false];
+
+        let groups = builder.compute_beam_groups();
+        // [8th], [rest], [8th 8th]
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].notes.len(), 1);
+        assert_eq!(groups[1].notes.len(), 1);
+        assert_eq!(groups[2].notes.len(), 2);
     }
 
     #[test]
