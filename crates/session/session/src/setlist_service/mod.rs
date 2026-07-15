@@ -126,7 +126,11 @@ impl<D> SetlistServiceImpl<D> {
             )),
             queued_target: Arc::new(RwLock::new("session.setlist.queued_target", None)),
             events_hub: architect::PubSub::sliding(64),
-            indices_hub: architect::PubSub::sliding(16),
+            // Replay the last cursor to every new subscriber: a remote that
+            // joins mid-show (the browser session player over the network
+            // engine) sees the active song/section immediately instead of
+            // waiting for the next change to publish.
+            indices_hub: architect::PubSub::sliding(16).with_replay(1),
             setlist_update_bus: Arc::new(WatchBus::new("session.setlist.updates", 0_u64)),
             setlist_revision: Arc::new(AtomicU64::new(0)),
             song_cache: Cache::named("session.setlist.song_cache"),
