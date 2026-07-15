@@ -5,6 +5,10 @@ edition = "2021"  # original edition of the dissolved workspace (root is 2024)
 description = "MusicXML → articulated sample-library MIDI (CSS orchestrator port) + score analysis"
 
 [dependencies]
+# Shared articulation/legato/re-bow annotation model (stage 1 of the mirror
+# pass) — the ONE source of truth, also consumed by signal-sampler's document
+# mode.
+keyflow-annotate = { workspace = true }
 musicxml = { workspace = true }
 thiserror = { workspace = true }
 # .mxl extraction is done here (container.xml rootfile → inner XML) because

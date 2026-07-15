@@ -21,7 +21,12 @@ use crate::config::Config;
 use crate::engine::{CcEvent, OutNote, total_delay_ms};
 use crate::score::{TempoPoint, bpm_at};
 
-const EPS: f64 = 1e-6;
+/// The annotation model itself lives in `keyflow-annotate` (shared with
+/// signal-sampler's document mode); re-exported for consumers of this pass.
+pub use keyflow_annotate::{
+    CcTimeline, EPS, EdgeParams, LineNote, NoteAnnotation, annotate_line, ks_blocks_rebow,
+    ks_is_con_sord, ks_is_legato_toggle, ks_is_marcato,
+};
 
 /// A plain MIDI note (QN domain, 1-based channel) — the exchange type between
 /// DAW readers/writers and the mirror pass.
@@ -55,63 +60,13 @@ pub struct MirrorOutput {
     pub item_start_qn: f64,
 }
 
-/// How a CC58 value classifies for timing purposes. Only "marcato" changes the
-/// delay math; shorts never overlap so they never read as legato anyway.
-fn ks_is_marcato(val: u8) -> bool {
-    (66..=75).contains(&val) // marcato + marcato-with-overlay bands
-}
-
-fn ks_is_legato_toggle(val: u8) -> bool {
-    (76..=85).contains(&val) // legato on / legato off
-}
-
-fn ks_is_con_sord(val: u8) -> bool {
-    (86..=95).contains(&val) // con sordino on / off
-}
-
-/// Short-articulation bands (spiccato/staccatissimo/staccato/sfz/pizzicato)
-/// plus tremolo — none of these connect, so a same-pitch abutment between
-/// them is a plain break, not a re-bow. Marcato deliberately does NOT block:
-/// the engine decides re-bow before its fast-run→marcato conversion, so a
-/// marcato-keyswitched note abutting the same pitch is (almost always) a
-/// fast-run tail flowing into a held note, which re-bows.
-fn ks_blocks_rebow(val: u8) -> bool {
-    (11..=35).contains(&val) || (56..=60).contains(&val)
-}
-
-/// Per-channel step timeline of a CC's value (state machine over events).
-struct CcState {
-    /// (qn, val) sorted by qn.
-    events: Vec<(f64, u8)>,
-}
-
-impl CcState {
-    fn new(ccs: &[CcEvent], chan: u8, cc: u8) -> Self {
-        let mut events: Vec<(f64, u8)> = ccs
-            .iter()
+/// The channel's CC timeline for one controller (state machine over events).
+fn cc_timeline(ccs: &[CcEvent], chan: u8, cc: u8) -> CcTimeline {
+    CcTimeline::from_events(
+        ccs.iter()
             .filter(|e| e.chan == chan && e.cc == cc)
-            .map(|e| (e.qn, e.val))
-            .collect();
-        events.sort_by(|a, b| a.0.total_cmp(&b.0));
-        Self { events }
-    }
-
-    /// Last value at or before `qn` (None if no event yet).
-    fn at(&self, qn: f64) -> Option<u8> {
-        let mut cur = None;
-        for &(q, v) in &self.events {
-            if q <= qn + EPS {
-                cur = Some(v);
-            } else {
-                break;
-            }
-        }
-        cur
-    }
-
-    fn is_empty(&self) -> bool {
-        self.events.is_empty()
-    }
+            .map(|e| (e.qn, e.val)),
+    )
 }
 
 /// Working copy of a note through the mirror pass.
@@ -130,31 +85,85 @@ struct MNote {
 }
 
 impl MNote {
-    /// Does this note refuse to connect (block re-bow)? Keyswitch schemes are
-    /// lossy — e.g. woodwinds have no tremolo band, so a tremolo note carries
-    /// the sustain keyswitch — so a notation hint always wins over CC58 state.
-    ///
-    /// The hint is the NOTATED articulation: `"marcato"` means a written
-    /// strong-accent (which breaks the line), whereas a fast-run note that the
-    /// engine auto-converted to the marcato patch is notated plain — it stays
-    /// connected. Without hints, a marcato keyswitch is assumed to be the
-    /// (far more common) fast-run kind and does not block.
-    fn blocks_rebow(&self) -> bool {
-        match self.hint {
-            Some(a) => matches!(
-                a,
-                "spiccato" | "staccatissimo" | "staccato" | "pizzicato" | "tremolo" | "marcato"
-            ),
-            None => self.ks_val.map(ks_blocks_rebow).unwrap_or(false),
-        }
-    }
-
     /// Marcato patch engaged (no sampled pre-delay → no timing pull)? True
     /// for both the notated and the fast-run kind — the keyswitch band sees
     /// both; a notated hint catches it even if the keyswitch stream is bare.
     fn is_marcato(&self) -> bool {
         self.ks_val.map(ks_is_marcato).unwrap_or(false) || self.hint == Some("marcato")
     }
+}
+
+/// Does a note refuse to connect (block re-bow)? Keyswitch schemes are
+/// lossy — e.g. woodwinds have no tremolo band, so a tremolo note carries
+/// the sustain keyswitch — so a notation hint always wins over CC58 state.
+///
+/// The hint is the NOTATED articulation: `"marcato"` means a written
+/// strong-accent (which breaks the line), whereas a fast-run note that the
+/// engine auto-converted to the marcato patch is notated plain — it stays
+/// connected. Without hints, a marcato keyswitch is assumed to be the
+/// (far more common) fast-run kind and does not block.
+fn note_blocks_rebow(hint: Option<&'static str>, ks_val: Option<u8>) -> bool {
+    match hint {
+        Some(a) => matches!(
+            a,
+            "spiccato" | "staccatissimo" | "staccato" | "pizzicato" | "tremolo" | "marcato"
+        ),
+        None => ks_val.map(ks_blocks_rebow).unwrap_or(false),
+    }
+}
+
+/// Stage 1 of the mirror pass on its own: infer each note's articulation
+/// state (CC58 at note-on) and the legato/re-bow edges, per channel — a thin
+/// grouping adapter over [`keyflow_annotate::annotate_line`] (the ONE shared
+/// implementation, also consumed by signal-sampler's document mode; the
+/// adapter-level parity is asserted in signal-sampler's
+/// `tests/annotation_parity.rs`).
+pub fn stage1_annotations(
+    src_notes: &[MidiNote],
+    src_ccs: &[CcEvent],
+    artic_hints: Option<&[&'static str]>,
+    cfg: &Config,
+) -> Vec<NoteAnnotation> {
+    let prof = cfg.profile.profile();
+    let params = EdgeParams {
+        break_gap_qn: cfg.break_gap_qn,
+        rebow_capable: cfg.re_bow && prof.legato.is_some() && !prof.polyphonic,
+        // Notation-domain source: same-pitch notes never overlap (the engine
+        // guarantees it), so only the abutment window connects.
+        connect_same_pitch_overlap: false,
+    };
+    let mut ann = vec![NoteAnnotation::default(); src_notes.len()];
+    let mut by_ch: BTreeMap<u8, Vec<usize>> = BTreeMap::new();
+    for (i, n) in src_notes.iter().enumerate() {
+        by_ch.entry(n.chan).or_default().push(i);
+    }
+    for list in by_ch.values_mut() {
+        list.sort_by(|&a, &b| src_notes[a].start_qn.total_cmp(&src_notes[b].start_qn));
+    }
+    let hint = |i: usize| artic_hints.and_then(|h| h.get(i).copied());
+    for (&ch, list) in &by_ch {
+        let ks = cc_timeline(src_ccs, ch, cfg.cc_keyswitch);
+        let line: Vec<LineNote> = list
+            .iter()
+            .map(|&ni| LineNote {
+                start_qn: src_notes[ni].start_qn,
+                end_qn: src_notes[ni].end_qn,
+                pitch: src_notes[ni].pitch,
+            })
+            .collect();
+        // The notated articulation wins over lossy CC58 state (see
+        // `note_blocks_rebow`); `w` indexes the line, `list[w]` the part.
+        let line_ann = annotate_line(
+            &line,
+            &ks,
+            |w, ks_val| note_blocks_rebow(hint(list[w]), ks_val),
+            &params,
+        );
+        for (w, &ni) in list.iter().enumerate() {
+            ann[ni] = line_ann[w];
+        }
+    }
+    ann
 }
 
 /// Mirror one part's source MIDI into performance MIDI.
@@ -185,16 +194,21 @@ pub fn mirror_part(
         tempos
     };
 
+    // -------------------------------------------------------------
+    // 1. Infer articulation state + legato/re-bow edges per channel
+    // -------------------------------------------------------------
+    let ann = stage1_annotations(src_notes, src_ccs, artic_hints, cfg);
+
     // Working notes, grouped per channel, sorted by source start.
     let mut notes: Vec<MNote> = src_notes
         .iter()
         .enumerate()
         .map(|(i, &src)| MNote {
             src,
-            ks_val: None,
+            ks_val: ann[i].ks_val,
             hint: artic_hints.and_then(|h| h.get(i).copied()),
-            legato_from: false,
-            re_bow_to: false,
+            legato_from: ann[i].legato_from,
+            re_bow_to: ann[i].re_bow_to,
             start: src.start_qn,
             stop: src.end_qn,
         })
@@ -205,47 +219,6 @@ pub fn mirror_part(
     }
     for list in by_ch.values_mut() {
         list.sort_by(|&a, &b| notes[a].src.start_qn.total_cmp(&notes[b].src.start_qn));
-    }
-
-    // -------------------------------------------------------------
-    // 1. Infer articulation state + legato/re-bow edges per channel
-    // -------------------------------------------------------------
-    for (&ch, list) in &by_ch {
-        let ks = CcState::new(src_ccs, ch, cfg.cc_keyswitch);
-        for &ni in list {
-            notes[ni].ks_val = ks.at(notes[ni].src.start_qn).filter(|v| {
-                // legato-toggle / sordino presses are state, not articulation
-                !ks_is_legato_toggle(*v) && !ks_is_con_sord(*v)
-            });
-        }
-        let rebow_capable = cfg.re_bow && prof.legato.is_some() && !prof.polyphonic;
-        for w in 0..list.len().saturating_sub(1) {
-            let (ai, bi) = (list[w], list[w + 1]);
-            let a = &notes[ai];
-            let b = &notes[bi];
-            let gap = b.src.start_qn - a.src.end_qn;
-            if a.src.pitch != b.src.pitch {
-                // different-pitch overlap = legato transition
-                if gap < -EPS {
-                    notes[bi].legato_from = true;
-                }
-            } else {
-                // same-pitch never overlaps in a valid source; a tiny gap
-                // between two SUSTAIN notes is a re-bow/re-tongue (the engine
-                // always re-bows same-pitch sustains). Shorts and tremolo
-                // don't connect, so those junctions are breaks. (The CC64
-                // pedal isn't a reliable witness — consecutive runs' on/off
-                // presses interleave in the source stream.)
-                if rebow_capable
-                    && !a.blocks_rebow()
-                    && !b.blocks_rebow()
-                    && gap.abs() <= cfg.break_gap_qn * 2.0 + EPS
-                {
-                    notes[ai].re_bow_to = true;
-                    notes[bi].legato_from = true;
-                }
-            }
-        }
     }
 
     // -------------------------------------------------------------
@@ -309,7 +282,7 @@ pub fn mirror_part(
     // press precedes its (shifted) note. Legato-toggle presses re-anchor to
     // the new item start; sordino presses keep their musical position.
     for (&ch, list) in &by_ch {
-        let ks = CcState::new(src_ccs, ch, cfg.cc_keyswitch);
+        let ks = cc_timeline(src_ccs, ch, cfg.cc_keyswitch);
         if ks.is_empty() {
             continue;
         }

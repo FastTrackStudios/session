@@ -1,0 +1,16 @@
+[package]
+name = "keyflow-annotate"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+authors.workspace = true
+description = "Shared articulation/legato/re-bow annotation model — the ONE source of truth consumed by keyflow-orchestra's mirror pass and signal-sampler's document mode"
+
+# Deliberately dependency-free and no_std + alloc: the annotation model must be
+# consumable from signal-sampler's processing side (native / WASM / embedded)
+# and from keyflow-orchestra (std, file-parsing) alike. No file I/O here, ever.
+
+[dependencies]
+
+[lints]
+workspace = true
