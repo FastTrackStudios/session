@@ -720,3 +720,125 @@ fn counts_into_each_new_section_and_dedupes_repeats() {
         .count();
     assert_eq!(announcements, 3, "repeated Chorus 3 should not re-announce");
 }
+
+// ─── Offline render against a real tempo map ────────────────────────────
+//
+// The engine is host-clocked: each block's `BlockClock` carries the
+// transport position in seconds AND beats plus the tempo at block start,
+// exactly how daw-standalone's aux hook derives it from the project
+// tempo map (`RenderSnapshot::clock_info`). This test drives the engine
+// through a tempo CHANGE and proves that click and count-in impulses
+// land on the exact sample positions the map implies.
+
+/// A two-segment tempo map: `bpm_a` until `change_seconds`, `bpm_b` after.
+/// Mirrors the seconds→beats / tempo-at lookups the daw-standalone
+/// render snapshot performs for the aux clock.
+struct TwoTempoMap {
+    bpm_a: f64,
+    bpm_b: f64,
+    change_seconds: f64,
+}
+
+impl TwoTempoMap {
+    fn tempo_at(&self, seconds: f64) -> f64 {
+        if seconds < self.change_seconds { self.bpm_a } else { self.bpm_b }
+    }
+
+    fn seconds_to_beat(&self, seconds: f64) -> f64 {
+        if seconds < self.change_seconds {
+            seconds * self.bpm_a / 60.0
+        } else {
+            self.change_seconds * self.bpm_a / 60.0
+                + (seconds - self.change_seconds) * self.bpm_b / 60.0
+        }
+    }
+
+    /// Timeline seconds of quarter-note `beat` (inverse of the above).
+    fn beat_to_seconds(&self, beat: f64) -> f64 {
+        let change_beat = self.change_seconds * self.bpm_a / 60.0;
+        if beat <= change_beat {
+            beat * 60.0 / self.bpm_a
+        } else {
+            self.change_seconds + (beat - change_beat) * 60.0 / self.bpm_b
+        }
+    }
+}
+
+#[test]
+fn tempo_map_render_places_clicks_and_counts_sample_accurately() {
+    const SR: f64 = 1000.0; // 1 kHz keeps sample offsets == milliseconds
+    const BLOCK: usize = 250;
+    const TOTAL: usize = 6000; // 6 s
+
+    // 120 bpm for the first 2 s (beats 0..=4), then 60 bpm.
+    let map = TwoTempoMap { bpm_a: 120.0, bpm_b: 60.0, change_seconds: 2.0 };
+
+    let mut engine = GuideEngine::new(GuideConfig {
+        enable_measure_accent: false, // plain beat everywhere: positions only
+        ..Default::default()
+    });
+    engine.bank_mut().beat = Some(AudioSample::mono(vec![1.0], SR as u32));
+    for i in 0..4 {
+        engine.bank_mut().counts[i] = Some(AudioSample::mono(vec![1.0], SR as u32));
+    }
+
+    // Count-in "1 2 3 4" on beats 4..8 — i.e. into a section whose
+    // downbeat is beat 8. Cue times come from the tempo map, exactly as a
+    // setlist-build step (or the app's schedule rebuild) would compute them.
+    let mut schedule = CueSchedule::default();
+    for (i, beat) in (4..8).enumerate() {
+        schedule.cues.push(session_guide::ScheduledCue {
+            time_seconds: map.beat_to_seconds(beat as f64),
+            event: CueEvent::Count { index: i },
+        });
+    }
+    engine.set_schedule(schedule);
+
+    let mut click = vec![0.0f32; TOTAL];
+    let mut count = vec![0.0f32; TOTAL];
+    let mut guide = vec![0.0f32; TOTAL];
+    for start in (0..TOTAL).step_by(BLOCK) {
+        let pos_seconds = start as f64 / SR;
+        let clock = BlockClock {
+            playing: true,
+            pos_seconds,
+            pos_beats: map.seconds_to_beat(pos_seconds),
+            tempo_bpm: map.tempo_at(pos_seconds),
+            time_sig_num: 4,
+            time_sig_den: 4,
+            sample_rate: SR,
+        };
+        let mut buses = session_guide::GuideBuses {
+            click_l: &mut click[start..start + BLOCK],
+            click_r: &mut vec![0.0f32; BLOCK],
+            count_l: &mut count[start..start + BLOCK],
+            count_r: &mut vec![0.0f32; BLOCK],
+            guide_l: &mut guide[start..start + BLOCK],
+            guide_r: &mut vec![0.0f32; BLOCK],
+        };
+        engine.render(&mut buses, &clock);
+    }
+
+    let hits = |buf: &[f32]| -> Vec<usize> {
+        buf.iter().enumerate().filter(|(_, v)| **v != 0.0).map(|(i, _)| i).collect()
+    };
+
+    // Quarter notes: every 0.5 s at 120 bpm, every 1.0 s at 60 bpm.
+    // Beats 0..=4 → 0, 500, 1000, 1500, 2000; beats 5.. → 3000, 4000, 5000.
+    assert_eq!(
+        hits(&click),
+        vec![0, 500, 1000, 1500, 2000, 3000, 4000, 5000],
+        "click impulses off the tempo-map beat grid"
+    );
+
+    // Count-in on beats 4..8: samples 2000, 3000, 4000, 5000 (all in the
+    // 60 bpm region — beat 4 IS the tempo change).
+    assert_eq!(
+        hits(&count),
+        vec![2000, 3000, 4000, 5000],
+        "count-in impulses off the tempo-map beat grid"
+    );
+
+    // Nothing scheduled on the guide bus.
+    assert_eq!(hits(&guide), Vec::<usize>::new());
+}
