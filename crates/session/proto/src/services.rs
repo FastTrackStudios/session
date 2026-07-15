@@ -207,7 +207,7 @@ pub use song_service::{
 pub mod setlist_service {
     use super::{
         ActiveIndices, AudioLatencyInfo, MeasureInfo, MusicalPosition, Section,
-        SessionServiceError, Setlist, SetlistEvent, Song, Tx,
+        SessionServiceError, Setlist, SetlistEvent, Song, SongChartHydration, Tx,
     };
 
     #[architect::rpc]
@@ -237,6 +237,18 @@ pub mod setlist_service {
 
         /// Get measure information for a song
         fn measures(&self, song_index: usize) -> Result<Vec<MeasureInfo>, SessionServiceError>;
+
+        /// Get the hydrated chart payload (keyflow chart text + detected
+        /// chords) for a song, if one exists.
+        ///
+        /// Charts are stripped from `Setlist`/`Song` structural payloads and
+        /// stream as `SetlistEvent::SongChartHydrated` deltas; a remote that
+        /// connects after hydration already ran uses this to backfill its
+        /// chart cache (the browser chart pane's initial snapshot).
+        async fn song_chart(
+            &self,
+            song_index: usize,
+        ) -> Result<Option<SongChartHydration>, SessionServiceError>;
 
         // =========================================================================
         // Active State Queries

@@ -720,6 +720,16 @@ const SONG_CHARTS: &[(&str, &str)] = &[
     ("Holy Forever", HOLY_FOREVER_CHART),
 ];
 
+/// The bundled keyflow chart text for a demo song, if we have one.
+///
+/// Hosts stamping the demo setlist use this to attach the chart to the
+/// song's project (ext-state `FTS/chart_text`) so setlist hydration can
+/// serve it to remotes even without a MIDI chart-analysis service — the
+/// browser chart pane renders from exactly this text.
+pub fn demo_chart_for(name: &str) -> Option<&'static str> {
+    SONG_CHARTS.iter().find(|(n, _)| *n == name).map(|&(_, c)| c)
+}
+
 /// The setlist order. Each song uses its chart if we have one, else the
 /// lyric-derived proportional fallback.
 const ORDER: &[&str] = &[

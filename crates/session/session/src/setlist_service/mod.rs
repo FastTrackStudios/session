@@ -34,6 +34,14 @@ pub(crate) use hydration::SongCacheEntry;
 
 pub(crate) const HYDRATION_CONCURRENCY: usize = 12;
 pub(crate) const MIDI_TRACK_TAG: &str = "CHORDS";
+/// Project ext-state section/key carrying a song's keyflow chart text.
+///
+/// Written by hosts that know a song's chart (the demo engine stamps the
+/// bundled charts; an organize/combine flow can stamp imported ones) and
+/// read by hydration as the chart source when no MIDI chart-analysis
+/// service is mounted (e.g. the daw-standalone network engine).
+pub const CHART_EXT_STATE_SECTION: &str = "FTS";
+pub const CHART_EXT_STATE_KEY: &str = "chart_text";
 pub(crate) const ACTIVE_HYDRATION_POLL_MS: u64 = 2000;
 pub(crate) const ACTIVE_HYDRATION_TICK_MS: u64 = 500;
 pub(crate) const ACTIVE_HYDRATION_POLL_MAX_MS: u64 = 15000;

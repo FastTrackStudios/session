@@ -1262,6 +1262,21 @@ where
             .ok_or_else(|| SessionServiceError::not_found("Section", section_index))
     }
 
+    async fn song_chart(
+        &self,
+        song_index: usize,
+    ) -> Result<Option<session_proto::SongChartHydration>, SessionServiceError> {
+        let project_guid = {
+            let setlist = self.setlist.read().await;
+            let song = setlist
+                .as_ref()
+                .and_then(|s| s.songs.get(song_index))
+                .ok_or_else(|| SessionServiceError::not_found("Song", song_index))?;
+            song.project_guid.clone()
+        };
+        Ok(self.chart_cache.get(&project_guid).await)
+    }
+
     fn measures(&self, song_index: usize) -> Result<Vec<MeasureInfo>, SessionServiceError> {
         let setlist = self
             .setlist

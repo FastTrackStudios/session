@@ -31,6 +31,41 @@ impl<D> SetlistServiceImpl<D>
 where
     D: Projects,
 {
+    /// Chart source of last resort: keyflow chart text stamped onto the
+    /// project itself (ext-state `FTS/chart_text`, read over the global
+    /// `daw::` facade). This is how songs carry their chart on backends
+    /// without a MIDI chart-analysis service — the demo engine stamps the
+    /// bundled charts here, and any organize/combine flow can do the same
+    /// for imported charts. The fingerprint is a hash of the text, so
+    /// edits invalidate caches exactly like the MIDI path.
+    async fn fetch_ext_state_chart(project_guid: &str) -> Option<MidiChartData> {
+        let daw = daw::get()?;
+        let ctx = daw::service::ProjectContext::Project(project_guid.to_string());
+        let chart_text = daw
+            .ext_state()
+            .get_project(
+                ctx,
+                super::CHART_EXT_STATE_SECTION,
+                super::CHART_EXT_STATE_KEY,
+            )
+            .await
+            .ok()??;
+        if chart_text.trim().is_empty() {
+            return None;
+        }
+        let fingerprint = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            chart_text.hash(&mut hasher);
+            format!("extstate:{:016x}", hasher.finish())
+        };
+        Some(MidiChartData {
+            source_track_name: "ext-state".to_string(),
+            source_fingerprint: fingerprint,
+            chart_text,
+            chords: Vec::new(),
+        })
+    }
     pub(crate) fn song_is_hydrated(song: &Song) -> bool {
         !song.sections.is_empty() || song.end_seconds > song.start_seconds
     }
@@ -373,7 +408,12 @@ where
             }
         }
 
-        let chart_data = Self::fetch_midi_chart_data(&load.guid).await;
+        let chart_data = match Self::fetch_midi_chart_data(&load.guid).await {
+            Some(data) => Some(data),
+            // No MIDI chart service on this backend — fall back to chart
+            // text stamped on the project (ext-state `FTS/chart_text`).
+            None => Self::fetch_ext_state_chart(&load.guid).await,
+        };
 
         // Extract songs through the backend-agnostic `SongBuilder::build(&Project)`
         // over the `daw` facade. The `Project`'s service calls (info / markers /
