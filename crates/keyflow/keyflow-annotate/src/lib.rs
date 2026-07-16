@@ -182,14 +182,34 @@ impl Default for EdgeParams {
 pub fn annotate_line(
     notes: &[LineNote],
     ks: &CcTimeline,
+    blocks_rebow: impl FnMut(usize, Option<u8>) -> bool,
+    p: &EdgeParams,
+) -> Vec<NoteAnnotation> {
+    annotate_line_with(
+        notes,
+        ks,
+        blocks_rebow,
+        |v| !ks_is_legato_toggle(v) && !ks_is_con_sord(v),
+        p,
+    )
+}
+
+/// [`annotate_line`] with a caller-supplied articulation filter instead of
+/// the CSS CC58 band classification: `is_articulation(val)` decides whether
+/// a CC value on the keyswitch timeline is an ARTICULATION selection (kept
+/// as `ks_val`) or a mode/toggle press (skipped). Selector conventions whose
+/// every value is an articulation code (e.g. a latched-CC / UACC selector)
+/// pass `|_| true`.
+pub fn annotate_line_with(
+    notes: &[LineNote],
+    ks: &CcTimeline,
     mut blocks_rebow: impl FnMut(usize, Option<u8>) -> bool,
+    is_articulation: impl Fn(u8) -> bool,
     p: &EdgeParams,
 ) -> Vec<NoteAnnotation> {
     let mut ann = vec![NoteAnnotation::default(); notes.len()];
     for (i, n) in notes.iter().enumerate() {
-        ann[i].ks_val = ks
-            .at(n.start_qn)
-            .filter(|v| !ks_is_legato_toggle(*v) && !ks_is_con_sord(*v));
+        ann[i].ks_val = ks.at(n.start_qn).filter(|v| is_articulation(*v));
     }
     for w in 0..notes.len().saturating_sub(1) {
         let (a, b) = (&notes[w], &notes[w + 1]);

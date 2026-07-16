@@ -53,6 +53,44 @@ impl Default for Keyswitches {
     }
 }
 
+impl Keyswitches {
+    /// UACC code-table equivalents of the CSS band centres, for emission
+    /// targeting a latched-CC (UACC, CC32) articulation selector instead of
+    /// CC58 keyswitch bands. Codes from the published Spitfire UACC v2
+    /// standard (see signal-sampler's `UACC_STANDARD_TABLE` for provenance).
+    /// UACC has no legato-mode or toggle codes, so:
+    /// - sustains: 1 (Long) for both legato modes — Low Latency/Expressive
+    ///   is a CSS engine mode, not a UACC articulation
+    /// - trills: 70 (trill minor 2nd) — UACC splits trills by interval, CSS
+    ///   by keyswitch velocity; the emitter has no interval context here
+    /// - marcato / marcato-overlay: both 52 (Short Marcato)
+    /// - legato/sordino toggles: 0 (suppressed at emission under
+    ///   `Config::use_uacc`)
+    pub fn uacc() -> Self {
+        Self {
+            sustain_ll: 1,
+            sustain_exp: 1,
+            spiccato: 42,
+            staccatissimo: 41,
+            staccato: 40,
+            sfz: 54,
+            pizzicato: 56,
+            bartok: 57,
+            col_legno: 58,
+            trills: 70,
+            harmonics: 10,
+            tremolo: 11,
+            meas_trem: 81,
+            marcato: 52,
+            marcato_ov: 52,
+            legato_on: 0,
+            legato_off: 0,
+            con_sord_on: 0,
+            con_sord_off: 0,
+        }
+    }
+}
+
 /// CSS legato engine mode — must match the patch GUI (sets both timing
 /// compensation and the sustain keyswitch).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -147,6 +185,12 @@ pub struct Config {
     pub cc_dynamics: u8,
     pub cc_vibrato: u8,
     pub ks: Keyswitches,
+    /// Emission targets a UACC-style latched-CC articulation selector
+    /// instead of CSS CC58 keyswitch bands: articulation selections go out
+    /// on `cc_keyswitch` (CC32) with UACC codes, and the CSS-only mode
+    /// toggles (Legato On, Con Sordino On/Off) — which have no UACC codes —
+    /// are suppressed. Set via [`Config::use_uacc`].
+    pub uacc: bool,
 
     // Lead-in / tail / spacing
     pub lead_in_qn: f64,
@@ -256,6 +300,7 @@ impl Default for Config {
             cc_dynamics: 1,
             cc_vibrato: 2,
             ks: Keyswitches::default(),
+            uacc: false,
 
             lead_in_qn: 0.5,
             ks_stagger_qn: 1.0 / 128.0,
@@ -366,7 +411,21 @@ impl Default for Config {
     }
 }
 
+/// The UACC selector controller: CC32, per Spitfire's Universal
+/// Articulation Controller Channel convention.
+pub const UACC_CC: u8 = 32;
+
 impl Config {
+    /// Target articulation emission at a UACC latched-CC selector: CC32
+    /// carries a published standard code wherever a CC58 keyswitch band
+    /// would have been emitted; CSS-only mode toggles are suppressed.
+    pub fn use_uacc(&mut self) -> &mut Self {
+        self.uacc = true;
+        self.cc_keyswitch = UACC_CC;
+        self.ks = Keyswitches::uacc();
+        self
+    }
+
     /// Map a real-time inter-onset interval (seconds) to a legato-speed
     /// velocity by interpolating the configured curve — port of
     /// `legatoVelFromInterval`. Smaller interval (faster playing) → higher
