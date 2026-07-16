@@ -44,11 +44,10 @@ impl<'a> ChartParser<'a> {
         let (name, value) = if let Some(rest) = line.strip_prefix("/alias ") {
             let mut parts = rest.splitn(2, char::is_whitespace);
             (parts.next()?.trim(), parts.next()?.trim())
-        } else if let Some(rest) = line.strip_prefix("let ") {
+        } else {
+            let rest = line.strip_prefix("let ")?;
             let (name, value) = rest.split_once('=')?;
             (name.trim(), value.trim())
-        } else {
-            return None;
         };
         if name.is_empty() || value.is_empty() {
             return None;
