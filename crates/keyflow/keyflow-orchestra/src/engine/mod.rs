@@ -1023,9 +1023,15 @@ pub fn process_part(part: &Part, cfg: &Config) -> PartOutput {
     // select, so every "press" needs its own tick, all before the first note.
     let ks_lead_qn = 1.0 / 64.0;
     if !prof.no_keyswitch {
-        // events common to all channels: Legato On at start, con/senza sordino
-        let mut shared: Vec<(f64, u8)> = vec![(item_start_qn, cfg.ks.legato_on)];
-        if cfg.con_sord && prof.con_sord {
+        // events common to all channels: Legato On at start, con/senza sordino.
+        // UACC target: these CSS mode toggles have no UACC codes (a latched-CC
+        // selector's every value is an articulation) — suppress them.
+        let mut shared: Vec<(f64, u8)> = if cfg.uacc {
+            Vec::new()
+        } else {
+            vec![(item_start_qn, cfg.ks.legato_on)]
+        };
+        if !cfg.uacc && cfg.con_sord && prof.con_sord {
             for mk in &part.markings {
                 if let MarkingKind::Words(text) = &mk.kind {
                     let w = text.to_lowercase();
