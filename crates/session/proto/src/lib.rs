@@ -33,6 +33,7 @@ pub mod services;
 pub mod setlist;
 pub mod song;
 pub mod track_structure;
+pub mod watch;
 
 // Re-export common types
 pub use offset_map::{SetlistOffsetMap, SongOffset};

@@ -35,17 +35,22 @@ wgpu = [
     "dep:bytemuck",
 ]
 
-# Full engraver umbrella: `svg` + the `wgpu` renderer + PDF export. This is the
-# default and what existing consumers (keyflow-ui's live preview) expect.
-engraver = [
+# PDF export (printpdf/svg2pdf/usvg/…). Split from the umbrella because
+# printpdf drags the azul stack, which doesn't compile for iOS — mobile
+# builds take `engraver` (svg+wgpu) without it; `kf` CLI / site enable it.
+pdf = [
     "svg",
-    "wgpu",
     "dep:printpdf",
     "dep:svg2pdf",
     "dep:usvg",
     "dep:pdf-writer",
     "dep:lopdf",
 ]
+
+# Engraver umbrella: `svg` + the `wgpu` renderer. This is the default and
+# what existing consumers (keyflow-ui's live preview) expect; PDF export is
+# the separate `pdf` feature above.
+engraver = ["svg", "wgpu"]
 engraver-example = ["engraver", "dep:winit", "dep:pollster", "dep:env_logger", "dep:log"]
 midi-import = ["engraver", "dep:keyflow-midi"]
 

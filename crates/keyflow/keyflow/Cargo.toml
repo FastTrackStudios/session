@@ -17,6 +17,9 @@ svg = ["dep:engraver", "engraver/svg"]
 wgpu = ["svg", "engraver/wgpu"]
 # Full engraver: svg + wgpu + PDF export.
 engraver = ["svg", "wgpu", "engraver/engraver"]
+# PDF chart export (kf CLI, site) — split out because printpdf's azul dep
+# doesn't build for iOS.
+pdf = ["engraver", "engraver/pdf"]
 highlighting = ["keyflow-text?/highlighting"]
 midi-import = ["engraver", "engraver/midi-import"]
 
@@ -55,7 +58,7 @@ uuid = { version = "1.0", features = ["v4"] }
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 dawfile-reaper = { workspace = true }
-engraver = { workspace = true, features = ["engraver", "midi-import"] }
+engraver = { workspace = true, features = ["engraver", "midi-import", "pdf"] }
 
 [lints]
 workspace = true
