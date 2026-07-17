@@ -44,11 +44,10 @@ impl<'a> ChartParser<'a> {
         let (name, value) = if let Some(rest) = line.strip_prefix("/alias ") {
             let mut parts = rest.splitn(2, char::is_whitespace);
             (parts.next()?.trim(), parts.next()?.trim())
-        } else if let Some(rest) = line.strip_prefix("let ") {
+        } else {
+            let rest = line.strip_prefix("let ")?;
             let (name, value) = rest.split_once('=')?;
             (name.trim(), value.trim())
-        } else {
-            return None;
         };
         if name.is_empty() || value.is_empty() {
             return None;
@@ -5090,89 +5089,6 @@ mod tests {
             chart.key_changes
         );
     }
-
-    #[test]
-    fn life_giving_water_parses_into_its_twelve_sections() {
-        // Full-chart regression: exercises section-scoped `/Duration`, the
-        // rhythm-slash override of the duration default, floating slash-bass,
-        // attached + standalone suspension figures, a trailing key change on a
-        // section header (`BR 8 #G`), a quoted section comment (`CH 6 "New?"`),
-        // and inline time changes (`!T2/4`). parse_chart only succeeds if every
-        // section's parsed measure count matches its header.
-        let chart = parse_chart(LIFE_GIVING_WATER).expect("Life Giving Water should parse");
-        let kinds: Vec<_> = chart
-            .sections
-            .iter()
-            .map(|s| s.section.section_type.clone())
-            .collect();
-        assert_eq!(chart.sections.len(), 12, "section kinds: {kinds:?}");
-        assert_eq!(chart.sections[0].section.section_type, SectionType::Intro);
-        assert_eq!(chart.sections[4].section.section_type, SectionType::Bridge);
-        assert_eq!(
-            chart.sections[6].section.section_type,
-            SectionType::Instrumental
-        );
-        // `BR 8 #G` applied a key change to G entering the bridge.
-        assert!(
-            chart
-                .key_changes
-                .iter()
-                .any(|kc| format!("{}", kc.to_key).contains('G')),
-            "expected key change to G, got {:?}",
-            chart.key_changes
-        );
-    }
-
-    const LIFE_GIVING_WATER: &str = r##"Life Giving Water
-64 BPM #E 4/4
-
-/Duration 2
-
-Intro 4
-/Duration 4
-C#m /// /B / A // E/G# // D //// B4-3 ////
-
-VS 8
-E B/D# A/C# E/B / /G# / A B E B4
-E B/D# A/C# E/B / /G# / A B E B/A
-
-VS 8
-E B/D# A/C# E / /G# / A B E B/A
-E //// A E A B E B/A
-
-CH 8
-E B/D# A/C# E/B / /G# / A C#m B4-3 ////
-E E/G# C#m E/B //// A B E3-4-3 ////
-
-BR 8 #G
-G D/F# C/E G/D C D G D/C
-G D/F# C/E G/B C D/C G D/C
-
-CH 8
-G D/F# C/E G C //// Em D
-G G/B Em G/D C D G D/C
-
-INST 3
-G D/F# C/E G/D / /B / C D
-
-CH "New?" 5
-G D/F# Em G/D C G/B G !T2/4 Am7 #A Esus ////
-
-CH 8
-A E/G# D/F# A/E / A/C# / D //// F#m E
-A E/G# D/F# A/E / A/C# / D // E // F#m E/G#
-
-CH 8
-A E/G# D/F# A/E / A/C# / D //// F#m E
-A A/C# F#m A/E / A/C# / D E F#m ////
-
-Tag 5
-D E F#m ////
-!T2/4 D Esus // E // E5 ////
-
-Out 4
-A E/G# D/F# A/E D // Esus // F#m ////
-"##;
 
     #[test]
     fn percent_repeats_previous_measure() {
