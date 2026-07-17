@@ -6,7 +6,7 @@ description = "Dioxus UI components for Keyflow chart editing"
 
 [dependencies]
 # Keyflow parsing, types, and engraver (all through the facade)
-keyflow = { workspace = true, features = ["text", "engraver", "highlighting"] }
+keyflow = { workspace = true, features = ["text", "engraver", "pdf", "highlighting"] }
 
 # FTS shared design system (Button, Card, Tabs, Input, Tooltip, Theme, etc.).
 # The chart **renderer** stays raw (Vello scene mounts under

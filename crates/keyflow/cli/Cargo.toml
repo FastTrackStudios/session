@@ -32,7 +32,7 @@ reaper = ["dep:dawfile-reaper"]
 download = ["keyflow-sync/download"]
 
 [dependencies]
-keyflow = { workspace = true, features = ["text", "midi", "engraver", "highlighting"] }
+keyflow = { workspace = true, features = ["text", "midi", "engraver", "pdf", "highlighting"] }
 keyflow-musicxml = { workspace = true }
 keyflow-orchestra.workspace = true
 keyflow-sync.workspace = true

@@ -10,8 +10,10 @@ default = ["engraver"]
 svg = ["engraver-proto/svg"]
 # Live GPU renderer (wgpu/vello) on top of `svg`.
 wgpu = ["svg", "engraver-proto/wgpu"]
-# Full engraver: svg + wgpu + PDF export.
+# Engraver umbrella: svg + wgpu. PDF export is the separate `pdf` feature
+# (printpdf's azul dep doesn't build for iOS).
 engraver = ["svg", "wgpu", "engraver-proto/engraver"]
+pdf = ["engraver-proto/pdf"]
 midi-import = ["engraver", "engraver-proto/midi-import"]
 
 [dependencies]
