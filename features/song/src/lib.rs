@@ -23,6 +23,8 @@
 //! [`to_folder`] / [`from_folder`] round-trip a [`Song`] to a folder. See
 //! `docs/song-folder-format.md` for the layout.
 
+#[cfg(feature = "attachments")]
+pub mod attachments;
 pub mod folder;
 pub mod key;
 pub mod model;

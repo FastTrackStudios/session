@@ -14,8 +14,21 @@ serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
+# Attachment wiring (client-side upload + signed-URL resolve). Additive:
+# off by default so the schema core stays dependency-light. We work against
+# the plain `AttachmentService` trait, injectable with any client (incl. a
+# test mock) — no running server required.
+attachments-proto = { workspace = true, optional = true }
+
+[features]
+default = []
+attachments = ["dep:attachments-proto"]
+
 [dev-dependencies]
 tempfile = "3"
+# Used only by the attachments test's in-memory mock service.
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]
 workspace = true
