@@ -1,0 +1,21 @@
+[package]
+name = "song"
+description = "Durable Song + Arrangement schema — the STORED counterpart to the runtime `session_proto::Song`. A Song is a portable, self-contained vault folder (a `song.md` frontmatter index plus per-arrangement resource folders). It carries an identity and one or more Arrangements (a default plus alternates), each with its Key, a chart *reference*, a parts manifest, and attachment references. Deliberately keyflow-agnostic: charts are stored as relative-path / attachment-id references, never embedded `keyflow::Chart` — parsing/rendering is a later workstream."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
