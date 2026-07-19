@@ -424,17 +424,13 @@ fn calculate_alter(step: &str, key_fifths: i64) -> i64 {
     if key_fifths == 0 {
         0
     } else if key_fifths > 0 {
-        if SHARPS_AND_FLATS[..key_fifths as usize]
-            .iter()
-            .any(|s| *s == step)
+        if SHARPS_AND_FLATS[..key_fifths as usize].contains(&step)
         {
             1
         } else {
             0
         }
-    } else if SHARPS_AND_FLATS[(7 + key_fifths) as usize..]
-        .iter()
-        .any(|s| *s == step)
+    } else if SHARPS_AND_FLATS[(7 + key_fifths) as usize..].contains(&step)
     {
         -1
     } else {
@@ -677,7 +673,7 @@ pub fn translate_dynamics(text: &str) -> Option<String> {
 
 /// `(tag_name, type)` for an engraver articulation char (string of an integer).
 pub fn translate_articulation(char_main: &str) -> (String, Option<String>) {
-    if let Some(code) = char_main.parse::<i64>().ok() {
+    if let Ok(code) = char_main.parse::<i64>() {
         if let Some((tag, ty)) = engraver_articulation(code) {
             return (tag.to_string(), ty.map(str::to_string));
         }
