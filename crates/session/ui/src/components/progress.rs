@@ -285,7 +285,10 @@ pub fn SegmentedProgressBar(
             } else if short_name_width_px <= section_width_px {
                 section.short_name.clone()
             } else {
-                section.short_name.clone()
+                // Too narrow for even the short name — an illegible
+                // micro-label is noise; the current-section readout above
+                // the bar (and the segment's hover title) carry the name.
+                String::new()
             };
 
             // Show comment if it fits within the section width
@@ -588,6 +591,9 @@ pub fn SegmentedProgressBar(
                                     "absolute h-full z-0"
                                 },
                                 style: format!("left: {}%; width: {}%;", section_start, section_width),
+                                // Hover reveals the full name even when the
+                                // segment is too narrow for a legible label.
+                                title: "{sections.get(*index).map(|s| s.name.as_str()).unwrap_or_default()}",
                                 onclick: {
                                     let callback_opt = on_section_click.clone();
                                     let idx = *index;
