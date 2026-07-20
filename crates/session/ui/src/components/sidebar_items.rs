@@ -38,6 +38,11 @@ pub fn SongItem(
     is_expanded: bool,
     is_playing: bool,
     current_section_index: Option<usize>,
+    /// When true, the SONG bar uses a themed selection (subtle muted-color
+    /// tint + primary ring) instead of the dark "stage" fill. Lets a
+    /// light-themed host (Task setlist navigator) opt out of the white box.
+    #[props(default)]
+    plain_selection: bool,
     on_song_click: Callback<()>,
     on_section_click: Callback<usize>,
 ) -> Element {
@@ -74,7 +79,7 @@ pub fn SongItem(
                         muted_color: song_data.muted_color.clone(),
                         is_selected: is_expanded,
                         is_inactive: !show_progress,
-                        always_black_bg: true,
+                        always_black_bg: !plain_selection,
                         on_click: Some(Callback::new(move |_| {
                             on_song_click.call(());
                         })),
