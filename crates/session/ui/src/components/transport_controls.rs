@@ -13,6 +13,11 @@ use lucide_dioxus::{
 ///
 /// Provides arm, record, back, play/pause, loop, and forward controls.
 /// All actions are handled via callbacks to keep the component domain-agnostic.
+///
+/// The six controls always lay out as a single 6-column grid. In the default
+/// (desktop) mode each cell is a roomy `icon + label` row at `text-lg`. Set
+/// `compact` for tight hosts (e.g. a narrow note pane): the icon stacks over a
+/// small label so all six fit without clipping regardless of the frame width.
 #[component]
 pub fn TransportControlBar(
     is_playing: bool,
@@ -25,11 +30,26 @@ pub fn TransportControlBar(
     on_arm_toggle: Callback<()>,
     on_back: Callback<()>,
     on_forward: Callback<()>,
+    /// Tight layout: stack a small label under a smaller icon so all six
+    /// controls fit a narrow container. Defaults false (desktop row layout).
+    #[props(default)]
+    compact: bool,
 ) -> Element {
     let playing = is_playing;
     let looping = is_looping;
     let recording = is_recording;
     let armed = is_armed;
+
+    let icon = if compact { 20 } else { 28 };
+    // Shared cell layout — the only difference between modes is icon size,
+    // stacking direction, and type scale. State-specific fills are appended
+    // per button below.
+    let base = if compact {
+        "flex flex-col items-center justify-center gap-1 px-1 text-center leading-none cursor-pointer transition-colors text-[11px] font-medium"
+    } else {
+        "flex items-center justify-center gap-3 cursor-pointer transition-colors text-lg font-medium"
+    };
+    let cls = |extra: &str| format!("{base} {extra}");
 
     rsx! {
         div {
@@ -44,66 +64,57 @@ pub fn TransportControlBar(
             // Arm Button — arms/disarms the selected tracks in the active song
             div {
                 class: if armed {
-                    "flex items-center justify-center gap-3 cursor-pointer bg-red-600/80 text-white hover:bg-red-600 transition-colors text-lg font-medium"
+                    cls("bg-red-600/80 text-white hover:bg-red-600")
                 } else {
-                    "flex items-center justify-center gap-3 cursor-pointer border border-border hover:bg-accent transition-colors text-lg font-medium"
+                    cls("border border-border hover:bg-accent")
                 },
                 onclick: move |_| {
                     on_arm_toggle.call(());
                 },
-                ArmIcon { size: 28, color: "currentColor" }
+                ArmIcon { size: icon, color: "currentColor" }
                 "Arm"
             }
 
             // Record Button — toggles recording into the active song's project
             div {
                 class: if recording {
-                    "flex items-center justify-center gap-3 cursor-pointer bg-red-600 text-white hover:bg-red-700 transition-colors text-lg font-medium"
+                    cls("bg-red-600 text-white hover:bg-red-700")
                 } else {
-                    "flex items-center justify-center gap-3 cursor-pointer border border-border hover:bg-accent transition-colors text-lg font-medium text-red-500"
+                    cls("border border-border hover:bg-accent text-red-500")
                 },
                 onclick: move |_| {
                     on_record_toggle.call(());
                 },
-                RecordIcon { size: 28, color: "currentColor" }
+                RecordIcon { size: icon, color: "currentColor" }
                 if recording { "Recording" } else { "Record" }
             }
 
             // Back Button
             div {
-                class: "flex items-center justify-center gap-3 cursor-pointer hover:bg-accent transition-colors text-lg font-medium",
+                class: cls("hover:bg-accent"),
                 onclick: move |_| {
                     if !playing {
                         on_back.call(());
                     }
                 },
-                BackIcon {
-                    size: 28,
-                    color: "currentColor",
-                }
+                BackIcon { size: icon, color: "currentColor" }
                 "Back"
             }
 
             // Play/Pause Button
             div {
                 class: if playing {
-                    "flex items-center justify-center gap-3 cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-lg font-medium"
+                    cls("bg-primary text-primary-foreground hover:bg-primary/90")
                 } else {
-                    "flex items-center justify-center gap-3 cursor-pointer border border-border hover:bg-accent transition-colors text-lg font-medium"
+                    cls("border border-border hover:bg-accent")
                 },
                 onclick: move |_| {
                     on_play_pause.call(());
                 },
                 if playing {
-                    PauseIcon {
-                        size: 28,
-                        color: "currentColor",
-                    }
+                    PauseIcon { size: icon, color: "currentColor" }
                 } else {
-                    PlayIcon {
-                        size: 28,
-                        color: "currentColor",
-                    }
+                    PlayIcon { size: icon, color: "currentColor" }
                 }
                 if playing { "Pause" } else { "Play" }
             }
@@ -111,33 +122,27 @@ pub fn TransportControlBar(
             // Loop Button
             div {
                 class: if looping {
-                    "flex items-center justify-center gap-3 cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-lg font-medium"
+                    cls("bg-primary text-primary-foreground hover:bg-primary/90")
                 } else {
-                    "flex items-center justify-center gap-3 cursor-pointer border border-border hover:bg-accent transition-colors text-lg font-medium"
+                    cls("border border-border hover:bg-accent")
                 },
                 onclick: move |_| {
                     on_loop_toggle.call(());
                 },
-                LoopIcon {
-                    size: 28,
-                    color: "currentColor",
-                }
+                LoopIcon { size: icon, color: "currentColor" }
                 "Loop"
             }
 
             // Advance Button
             div {
-                class: "flex items-center justify-center gap-3 cursor-pointer hover:bg-accent transition-colors text-lg font-medium",
+                class: cls("hover:bg-accent"),
                 onclick: move |_| {
                     if !playing {
                         on_forward.call(());
                     }
                 },
+                ForwardIcon { size: icon, color: "currentColor" }
                 "Advance"
-                ForwardIcon {
-                    size: 28,
-                    color: "currentColor",
-                }
             }
         }
     }
