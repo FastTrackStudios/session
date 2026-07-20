@@ -91,12 +91,12 @@ pub fn chart_to_layout(chart_text: &str) -> Result<ChartLayout, ChartImportError
 
     let tempo_bpm = chart
         .tempo
-        .map(|t| t.bpm as f64)
+        .map(|t| t.bpm)
         .filter(|b| *b > 0.0)
         .unwrap_or(DEFAULT_TEMPO_BPM);
     let (num, den) = chart
         .time_signature
-        .map(|ts| (u32::from(ts.numerator), u32::from(ts.denominator)))
+        .map(|ts| (ts.numerator, ts.denominator))
         .unwrap_or((4, 4));
     // Beat = 60/bpm; a measure is `num` beats (beat unit assumed quarter, i.e.
     // den == 4 — true for these worship charts).
