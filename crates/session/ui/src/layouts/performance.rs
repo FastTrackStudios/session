@@ -90,6 +90,12 @@ pub fn PerformanceSidebar(
     /// of the `Session` singleton.
     #[props(default)]
     on_section_select: Option<Callback<(usize, usize)>>,
+    /// When true, the navigator's active song uses a themed selection
+    /// (subtle muted-color tint + primary ring) instead of the dark "stage"
+    /// fill — for light-themed hosts like the Task setlist player. Defaults
+    /// false, so the desktop performance view is unchanged.
+    #[props(default)]
+    plain_selection: bool,
 ) -> Element {
     // Read active indices - updates when song/section selection changes
     let indices = ACTIVE_INDICES.read();
@@ -153,6 +159,7 @@ pub fn PerformanceSidebar(
                         },
                         on_song_select,
                         on_section_select,
+                        plain_selection,
                     }
                 }
             }
@@ -173,6 +180,7 @@ fn SidebarSongItemReactive(
     current_section_index: Option<usize>,
     #[props(default)] on_song_select: Option<Callback<usize>>,
     #[props(default)] on_section_select: Option<Callback<(usize, usize)>>,
+    #[props(default)] plain_selection: bool,
 ) -> Element {
     // First, peek to check if this song is playing (without subscribing)
     let is_song_playing = SONG_TRANSPORT
@@ -266,6 +274,7 @@ fn SidebarSongItemReactive(
             is_expanded: is_expanded,
             is_playing: is_song_playing,
             current_section_index: current_section_index,
+            plain_selection: plain_selection,
             on_song_click: Callback::new(move |_| {
                 if let Some(cb) = on_song_select {
                     cb.call(song_idx);
