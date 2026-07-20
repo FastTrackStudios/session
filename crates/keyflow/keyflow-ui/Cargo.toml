@@ -14,11 +14,10 @@ keyflow = { workspace = true, features = ["text", "engraver", "pdf", "highlighti
 # panels, editor chrome, status footer — should compose `fts-ui` primitives.
 fts-ui = { workspace = true }
 
-# Backend-agnostic rendering abstraction
+# Backend-agnostic rendering abstraction — one stack with the workspace
+# (anyrender 0.11 / anyrender_vello 0.12, paired with blitz-git dioxus-native).
 anyrender = { workspace = true }
-# Pinned inline: root pins anyrender_vello 0.11 for the blitz-git stack;
-# keyflow-ui pairs 0.10.1 with crates.io dioxus-native 0.7.9.
-anyrender_vello = { version = "0.10.1", optional = true, features = ["log_frame_times"] }
+anyrender_vello = { workspace = true, optional = true }
 anyrender_vello_hybrid = { workspace = true, optional = true, features = ["webgl"] }
 peniko = { workspace = true, optional = true }
 
