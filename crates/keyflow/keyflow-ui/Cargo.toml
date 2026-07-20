@@ -22,7 +22,7 @@ anyrender_vello_hybrid = { workspace = true, optional = true, features = ["webgl
 peniko = { workspace = true, optional = true }
 
 # Dioxus UI framework - use dioxus-native when native feature is enabled
-dioxus = { version = "0.7.9", optional = true }
+dioxus = { workspace = true, optional = true }
 # Root's dioxus-native (blitz git rev): the crates.io 0.7.9 release pulls a
 # second stylo (`links = "servo_style_crate"`) and cannot coexist with the
 # daw stack's blitz in one graph. Only used by the non-default `native`
@@ -57,7 +57,7 @@ serde_json = { workspace = true, optional = true }
 roxmltree = "0.20"
 
 # Icons
-lucide-dioxus = { version = "2", features = ["all-icons"] }
+lucide-dioxus = { workspace = true }
 
 # Async runtime (for debounce timers on desktop)
 tokio = { version = "1.49", features = ["time"] }

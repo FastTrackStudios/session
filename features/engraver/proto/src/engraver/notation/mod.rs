@@ -333,7 +333,7 @@ impl TimeSignature {
                 // meaningful half-bar point (4/4 → beat 3, 6/8 → the
                 // dotted-quarter midpoint). Odd meters (3/4, 5/4, 7/8)
                 // fall back to standard grouping.
-                if self.numerator % 2 == 0 {
+                if self.numerator.is_multiple_of(2) {
                     let half = self.measure_ticks() / 2;
                     vec![half, half]
                 } else {

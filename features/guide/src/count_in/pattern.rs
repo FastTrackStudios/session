@@ -127,7 +127,7 @@ impl CountInPattern {
                 } else {
                     total_measures - measure_index
                 };
-                if count_number >= 1 && count_number <= 8 {
+                if (1..=8).contains(&count_number) {
                     return Some(count_number);
                 }
             }
