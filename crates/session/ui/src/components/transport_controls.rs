@@ -33,6 +33,12 @@ pub fn TransportControlBar(
 
     rsx! {
         div {
+            // Layout-critical: state it inline so the six controls always
+            // lay out as one 6-column row regardless of whether the Tailwind
+            // `grid grid-cols-6` utilities survived the consumer's CSS purge.
+            // Without this the children collapse to block rows and overlap
+            // inside the caller's fixed-height (`h-16 overflow-hidden`) frame.
+            style: "display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); align-items:stretch;",
             class: "h-full w-full bg-card grid grid-cols-6 divide-x divide-border",
 
             // Arm Button — arms/disarms the selected tracks in the active song
