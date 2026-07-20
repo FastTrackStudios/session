@@ -80,7 +80,17 @@ struct SidebarSectionStructure {
 /// Transport updates (60Hz) are handled by individual SidebarSongItem components
 /// to avoid re-rendering the entire sidebar.
 #[component]
-pub fn PerformanceSidebar() -> Element {
+pub fn PerformanceSidebar(
+    /// When set, a song click calls this instead of the `Session` singleton —
+    /// lets a client-driven host (e.g. the web setlist player) reuse this
+    /// navigator without an engine. Falls back to `Session` when `None`.
+    #[props(default)]
+    on_song_select: Option<Callback<usize>>,
+    /// When set, a section click calls this `(song_idx, section_idx)` instead
+    /// of the `Session` singleton.
+    #[props(default)]
+    on_section_select: Option<Callback<(usize, usize)>>,
+) -> Element {
     // Read active indices - updates when song/section selection changes
     let indices = ACTIVE_INDICES.read();
     let active_song_index = indices.song_index;
@@ -141,6 +151,8 @@ pub fn PerformanceSidebar() -> Element {
                         } else {
                             None
                         },
+                        on_song_select,
+                        on_section_select,
                     }
                 }
             }
@@ -159,6 +171,8 @@ fn SidebarSongItemReactive(
     song_structure: SidebarSongStructure,
     is_expanded: bool,
     current_section_index: Option<usize>,
+    #[props(default)] on_song_select: Option<Callback<usize>>,
+    #[props(default)] on_section_select: Option<Callback<(usize, usize)>>,
 ) -> Element {
     // First, peek to check if this song is playing (without subscribing)
     let is_song_playing = SONG_TRANSPORT
@@ -253,19 +267,25 @@ fn SidebarSongItemReactive(
             is_playing: is_song_playing,
             current_section_index: current_section_index,
             on_song_click: Callback::new(move |_| {
-                tracing::info!("on_song_click callback triggered for song_idx={}", song_idx);
-                spawn(async move {
-                    tracing::info!("Calling seek_to_song({})", song_idx);
-                    match Session::get().setlist().seek_to_song(song_idx).await {
-                        Ok(_) => tracing::info!("seek_to_song({}) completed successfully", song_idx),
-                        Err(e) => tracing::error!("seek_to_song({}) failed: {:?}", song_idx, e),
-                    }
-                });
+                if let Some(cb) = on_song_select {
+                    cb.call(song_idx);
+                } else {
+                    spawn(async move {
+                        match Session::get().setlist().seek_to_song(song_idx).await {
+                            Ok(_) => tracing::info!("seek_to_song({}) ok", song_idx),
+                            Err(e) => tracing::error!("seek_to_song({}) failed: {:?}", song_idx, e),
+                        }
+                    });
+                }
             }),
             on_section_click: Callback::new(move |section_idx| {
-                spawn(async move {
-                    let _ = Session::get().setlist().seek_to_section(song_idx, section_idx).await;
-                });
+                if let Some(cb) = on_section_select {
+                    cb.call((song_idx, section_idx));
+                } else {
+                    spawn(async move {
+                        let _ = Session::get().setlist().seek_to_section(song_idx, section_idx).await;
+                    });
+                }
             }),
         }
     }
