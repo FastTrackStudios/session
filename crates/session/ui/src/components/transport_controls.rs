@@ -34,12 +34,19 @@ pub fn TransportControlBar(
     /// controls fit a narrow container. Defaults false (desktop row layout).
     #[props(default)]
     compact: bool,
+    /// Show the Arm + Record controls. Recording environments want them;
+    /// a playback-only surface (the browser session player) does not.
+    /// Defaults true. When false the bar is a 4-column playback transport
+    /// (Back / Play / Loop / Advance).
+    #[props(default = true)]
+    show_recording: bool,
 ) -> Element {
     let playing = is_playing;
     let looping = is_looping;
     let recording = is_recording;
     let armed = is_armed;
 
+    let cols = if show_recording { 6 } else { 4 };
     let icon = if compact { 20 } else { 28 };
     // Shared cell layout — the only difference between modes is icon size,
     // stacking direction, and type scale. State-specific fills are appended
@@ -53,40 +60,44 @@ pub fn TransportControlBar(
 
     rsx! {
         div {
-            // Layout-critical: state it inline so the six controls always
-            // lay out as one 6-column row regardless of whether the Tailwind
-            // `grid grid-cols-6` utilities survived the consumer's CSS purge.
-            // Without this the children collapse to block rows and overlap
-            // inside the caller's fixed-height (`h-16 overflow-hidden`) frame.
-            style: "display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); align-items:stretch;",
-            class: "h-full w-full bg-card grid grid-cols-6 divide-x divide-border",
+            // Layout-critical: state it inline so the controls always lay out
+            // as one N-column row regardless of whether the Tailwind grid
+            // utilities survived the consumer's CSS purge. Without this the
+            // children collapse to block rows and overlap inside the caller's
+            // fixed-height (`h-16 overflow-hidden`) frame.
+            style: "display:grid; grid-template-columns:repeat({cols},minmax(0,1fr)); align-items:stretch;",
+            class: "h-full w-full bg-card grid divide-x divide-border",
 
-            // Arm Button — arms/disarms the selected tracks in the active song
-            div {
-                class: if armed {
-                    cls("bg-red-600/80 text-white hover:bg-red-600")
-                } else {
-                    cls("border border-border hover:bg-accent")
-                },
-                onclick: move |_| {
-                    on_arm_toggle.call(());
-                },
-                ArmIcon { size: icon, color: "currentColor" }
-                "Arm"
-            }
+            // Arm + Record — recording environments only (playback surfaces
+            // pass `show_recording: false`).
+            if show_recording {
+                // Arm Button — arms/disarms the selected tracks in the active song
+                div {
+                    class: if armed {
+                        cls("bg-red-600/80 text-white hover:bg-red-600")
+                    } else {
+                        cls("border border-border hover:bg-accent")
+                    },
+                    onclick: move |_| {
+                        on_arm_toggle.call(());
+                    },
+                    ArmIcon { size: icon, color: "currentColor" }
+                    "Arm"
+                }
 
-            // Record Button — toggles recording into the active song's project
-            div {
-                class: if recording {
-                    cls("bg-red-600 text-white hover:bg-red-700")
-                } else {
-                    cls("border border-border hover:bg-accent text-red-500")
-                },
-                onclick: move |_| {
-                    on_record_toggle.call(());
-                },
-                RecordIcon { size: icon, color: "currentColor" }
-                if recording { "Recording" } else { "Record" }
+                // Record Button — toggles recording into the active song's project
+                div {
+                    class: if recording {
+                        cls("bg-red-600 text-white hover:bg-red-700")
+                    } else {
+                        cls("border border-border hover:bg-accent text-red-500")
+                    },
+                    onclick: move |_| {
+                        on_record_toggle.call(());
+                    },
+                    RecordIcon { size: icon, color: "currentColor" }
+                    if recording { "Recording" } else { "Record" }
+                }
             }
 
             // Back Button
