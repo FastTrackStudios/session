@@ -13,6 +13,34 @@ use crate::components::*;
 use crate::prelude::*;
 use crate::signals::*;
 
+/// The `#<KEY>` metadata token from a keyflow chart (`"A"` from `#A 127bpm`).
+fn chart_meta_key(text: &str) -> Option<String> {
+    text.split_whitespace()
+        .find(|t| t.len() > 1 && t.starts_with('#') && t.as_bytes()[1].is_ascii_alphabetic())
+        .map(|t| t[1..].to_string())
+}
+
+/// Key label for a setlist song in the navigator: the setlist override's
+/// rendered key (the fingered shape key when a capo is set), else the song's
+/// own key from its chart metadata. `None` hides the badge.
+fn nav_key_label(song_idx: usize) -> Option<String> {
+    let setlist = SETLIST_STRUCTURE.read();
+    let song = setlist.songs.get(song_idx)?;
+    if let Some(k) = SONG_VIEWS
+        .read()
+        .get(&song.project_guid)
+        .and_then(|v| v.display_key_label())
+    {
+        return Some(k);
+    }
+    let charts = SONG_CHARTS.read();
+    let text = charts
+        .get(&song.project_guid)
+        .map(|c| c.chart_text.clone())
+        .or_else(|| song.chart_text.clone())?;
+    chart_meta_key(&text)
+}
+
 /// Performance view layout
 ///
 /// Complete performance view with:
@@ -265,6 +293,7 @@ fn SidebarSongItemReactive(
         bright_color: song_structure.bright_color.clone(),
         muted_color: song_structure.muted_color.clone(),
         sections,
+        key_label: nav_key_label(song_idx),
     };
 
     rsx! {

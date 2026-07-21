@@ -217,6 +217,84 @@ pub static ACTIVE_PLAYBACK_IS_PLAYING: GlobalSignal<bool> = Signal::global(|| fa
 pub static SONG_CHARTS: GlobalSignal<HashMap<String, SongChartHydration>> =
     Signal::global(HashMap::new);
 
+/// A non-destructive chart display override for one song — transpose to a key,
+/// re-spell in Nashville numbers / Roman numerals, and/or finger with a capo.
+/// It NEVER changes the keyflow source; the chart is re-engraved through
+/// `keyflow::transpose::apply_view`. Keyed by `project_guid` in [`SONG_VIEWS`].
+#[derive(Clone, PartialEq)]
+pub struct SongView {
+    /// Render sounding in this key (keyflow key string, e.g. `"G"`); `None` =
+    /// the song's own key.
+    pub target_key: Option<String>,
+    /// How chord roots are spelled.
+    pub notation: keyflow::NotationSystem,
+    /// Capo fret (0 = none); the chart then renders in the fingered shape key.
+    pub capo: u8,
+}
+
+impl Default for SongView {
+    fn default() -> Self {
+        Self {
+            target_key: None,
+            notation: keyflow::NotationSystem::Letters,
+            capo: 0,
+        }
+    }
+}
+
+impl SongView {
+    /// True when this view renders the chart exactly as written.
+    pub fn is_identity(&self) -> bool {
+        self.target_key.is_none()
+            && self.capo == 0
+            && self.notation == keyflow::NotationSystem::Letters
+    }
+
+    /// Build the keyflow transposition view (target key parsed from the string).
+    pub fn to_chart_view(&self) -> keyflow::ChartView {
+        keyflow::ChartView {
+            target_key: self
+                .target_key
+                .as_deref()
+                .and_then(|s| keyflow::Key::parse(s).ok()),
+            notation: self.notation,
+            capo: self.capo,
+        }
+    }
+
+    /// Discriminant for a layout cache key (so switching the view re-renders).
+    pub fn cache_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.target_key.hash(&mut h);
+        let n = match self.notation {
+            keyflow::NotationSystem::Letters => 0u8,
+            keyflow::NotationSystem::Nashville => 1,
+            keyflow::NotationSystem::Roman => 2,
+        };
+        n.hash(&mut h);
+        self.capo.hash(&mut h);
+        h.finish()
+    }
+
+    /// The effective sounding key label shown to the player: the fingered shape
+    /// key when a capo is set (that's what they play), else the target key.
+    /// `None` when the view leaves the song in its own key.
+    pub fn display_key_label(&self) -> Option<String> {
+        let target = self.target_key.as_deref()?;
+        let key = keyflow::Key::parse(target).ok()?;
+        if self.capo > 0 {
+            Some(keyflow::transpose::shape_key_for_capo(key, self.capo).to_string())
+        } else {
+            Some(key.to_string())
+        }
+    }
+}
+
+/// Per-song chart-view overrides (`project_guid` → [`SongView`]). A display
+/// layer only — never persisted to the song file.
+pub static SONG_VIEWS: GlobalSignal<HashMap<String, SongView>> = Signal::global(HashMap::new);
+
 /// Global playback state
 /// Updates when play/pause/stop state changes
 pub static PLAYBACK_STATE: GlobalSignal<PlayState> = Signal::global(|| PlayState::Stopped);

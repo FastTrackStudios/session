@@ -25,6 +25,9 @@ pub struct SongItemData {
     pub bright_color: String,
     pub muted_color: String,
     pub sections: Vec<SectionItem>,
+    /// The song's rendered key (setlist override or its own key), shown as a
+    /// corner badge. `None` hides it.
+    pub key_label: Option<String>,
 }
 
 /// Song item component for sidebar
@@ -53,6 +56,13 @@ pub fn SongItem(
         div {
             key: "{index}",
             class: "relative",
+            // Key badge (setlist key / capo shape key) in the top-right corner.
+            if let Some(key) = song_data.key_label.clone() {
+                span {
+                    class: "pointer-events-none absolute right-1.5 top-1.5 z-10 rounded bg-background/75 px-1.5 py-0.5 text-[10px] font-bold leading-none text-foreground shadow-sm",
+                    "{key}"
+                }
+            }
             div {
                 class: "flex",
                 // Vertical progress bar (only show if expanded)
