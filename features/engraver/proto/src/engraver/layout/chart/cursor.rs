@@ -287,25 +287,33 @@ impl ChartCursor {
         beat: &BeatPosition,
         layout: &ChartLayoutResult,
     ) {
-        let measure_beats = layout.beats_in_measure(beat.measure);
-        if measure_beats.is_empty() {
-            return;
+        // Highlight the measure BOX (barline-to-barline via `measure_x0/x1`),
+        // not the beat slots (which are inset from the barlines and would offset
+        // the highlight to the right). Restrict to beats on the SAME staff line
+        // as the cursor beat: count-in measures share global measure indices
+        // 0/1 with the first real measures but sit on the header staff, so a
+        // plain `beats_in_measure` would fuse a count-in box with a real one —
+        // this keeps the count-in highlight its own compact size.
+        let (mut x0, mut x1) = (f64::INFINITY, f64::NEG_INFINITY);
+        for b in layout
+            .beat_positions
+            .iter()
+            .filter(|b| b.measure == beat.measure && b.staff_y == beat.staff_y)
+        {
+            x0 = x0.min(b.measure_x0);
+            x1 = x1.max(b.measure_x1);
         }
-
-        let min_x = measure_beats
-            .iter()
-            .map(|b| b.x)
-            .fold(f64::INFINITY, f64::min);
-        let max_x = measure_beats
-            .iter()
-            .map(|b| b.x + b.width)
-            .fold(f64::NEG_INFINITY, f64::max);
+        if !x0.is_finite() || !x1.is_finite() || x1 <= x0 {
+            // Fallback: the cursor beat's own box.
+            x0 = beat.measure_x0;
+            x1 = beat.measure_x1;
+        }
 
         let color = multiply_alpha(self.config.accent_color, self.config.fill_alpha);
         commands.push(HighlightCommand::FillRect {
-            x: min_x,
+            x: x0,
             y: beat.staff_y,
-            width: max_x - min_x,
+            width: x1 - x0,
             height: beat.staff_height,
             color,
         });
@@ -384,6 +392,8 @@ mod tests {
                 absolute_tick: 0,
                 x: 100.0,
                 width: 50.0,
+                measure_x0: 100.0,
+                measure_x1: 200.0,
                 staff_y: 200.0,
                 staff_height: 20.0,
                 time_start: 0.0,
@@ -406,6 +416,8 @@ mod tests {
                 absolute_tick: 480,
                 x: 150.0,
                 width: 50.0,
+                measure_x0: 100.0,
+                measure_x1: 200.0,
                 staff_y: 200.0,
                 staff_height: 20.0,
                 time_start: 0.5,
@@ -428,6 +440,8 @@ mod tests {
                 absolute_tick: 1920,
                 x: 300.0,
                 width: 50.0,
+                measure_x0: 300.0,
+                measure_x1: 350.0,
                 staff_y: 200.0,
                 staff_height: 20.0,
                 time_start: 2.0,
@@ -624,6 +638,8 @@ mod tests {
             absolute_tick: -1920,
             x: 50.0,
             width: 30.0,
+            measure_x0: 50.0,
+            measure_x1: 80.0,
             staff_y: 100.0,
             staff_height: 20.0,
             time_start: -2.0,
