@@ -1037,25 +1037,10 @@ impl ChartLayoutEngine {
                     // Include count-in snippet in header instead of on first system
                     if !title_header_added {
                         let has_pushed_first_chord = chart_first_chord_is_pushed(chart);
-                        // Per-measure labels above the count-in snippet — pulled
-                        // from the CountIn section's measures so the overlay
-                        // shows their source measure numbers (1, 2 for LotF).
-                        let count_in_labels: Vec<String> = chart
-                            .sections
-                            .iter()
-                            .find(|s| matches!(s.section.section_type, SectionType::CountIn))
-                            .map(|s| {
-                                s.measures()
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, m)| {
-                                        m.source_measure_number
-                                            .map(|n| n.to_string())
-                                            .unwrap_or_else(|| (i + 1).to_string())
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
+                        // Per-measure labels above the count-in snippet: a
+                        // countdown into the downbeat, so 2 count-in measures are
+                        // `-1, 0` and the first real measure is `1`.
+                        let count_in_labels = engine_helpers::count_in_countdown_labels(count_in_measures);
                         let (header_height, count_in_geos) = self.add_title_header(
                             &mut root,
                             page_x,
@@ -2138,24 +2123,8 @@ impl ChartLayoutEngine {
         // render too, now including the count-in snippet.
         if chart.metadata.title.is_some() {
             let has_pushed_first_chord = chart_first_chord_is_pushed(chart);
-            // Per-measure labels above the count-in snippet, pulled from the
-            // CountIn section's source measure numbers (falling back to 1..N).
-            let count_in_labels: Vec<String> = chart
-                .sections
-                .iter()
-                .find(|s| matches!(s.section.section_type, SectionType::CountIn))
-                .map(|s| {
-                    s.measures()
-                        .iter()
-                        .enumerate()
-                        .map(|(i, m)| {
-                            m.source_measure_number
-                                .map(|n| n.to_string())
-                                .unwrap_or_else(|| (i + 1).to_string())
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            // Countdown labels into the downbeat (`-1, 0` for a 2-bar count-in).
+            let count_in_labels = engine_helpers::count_in_countdown_labels(count_in_measures);
             let (header_height, _) = self.add_title_header(
                 &mut root,
                 0.0,

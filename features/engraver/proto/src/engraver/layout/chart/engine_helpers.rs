@@ -309,6 +309,15 @@ impl ChartLayoutEngine {
     }
 }
 
+/// Per-measure labels for a count-in snippet: a countdown into the downbeat, so
+/// `n` count-in measures are labelled `-(n-1) ..= 0` (e.g. `-1, 0` for a 2-bar
+/// count-in) and the first real measure is `1`.
+pub(super) fn count_in_countdown_labels(n: usize) -> Vec<String> {
+    (0..n)
+        .map(|i| (i as i64 - (n as i64 - 1)).to_string())
+        .collect()
+}
+
 fn repeat_pass_label_parts(labels: &str) -> impl Iterator<Item = &str> {
     labels
         .lines()

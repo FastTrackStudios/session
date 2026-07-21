@@ -133,12 +133,14 @@ pub fn render_count_in_snippet(
     let staff_height = spatium * 4.0; // 5 lines, 4 spaces
     let beat_number_offset = spatium * 4.4; // Below staff, clear of beamed count notes
 
-    // Measure layout: beats positioned with padding at measure boundaries
-    // Slash glyphs are wide diagonal shapes that extend significantly to the right,
-    // so we need substantial end padding to prevent touching the barline
-    let notation_start_inset = spatium * 3.2; // Time signature column + air before beat 1.
-    let start_padding = beat_spacing * 1.2; // Padding before first beat and time signature
-    let end_padding = beat_spacing * 1.0; // Padding after last beat
+    // Measure layout: the notation fills each measure like a scaled real
+    // measure. Only the FIRST measure reserves the time-signature column; the
+    // rest start their notation just past the barline (small inset), so the
+    // slashes span the bar instead of bunching in the middle with a dead gap.
+    let notation_start_inset = spatium * 3.2; // Time signature column (measure 0 only).
+    let barline_inset = spatium * 0.9; // Air just past the barline (non-first measures).
+    let start_padding = beat_spacing * 0.6; // Padding before first beat and time signature
+    let end_padding = beat_spacing * 0.6; // Padding after last beat
     let beats_content_width = beat_spacing * (config.beats_per_measure - 1) as f64;
     let measure_width = start_padding + beats_content_width + end_padding;
 
@@ -243,8 +245,15 @@ pub fn render_count_in_snippet(
     // measures. The header still owns staff-line/barline thickness and labels.
     for measure_idx in 0..config.num_measures {
         let measure_start_x = staff_start_x + measure_width * measure_idx as f64;
-        let notation_x = measure_start_x + notation_start_inset;
-        let notation_width = (measure_width - notation_start_inset - spatium).max(spatium * 6.0);
+        // Only the first measure reserves the time-signature column; the rest
+        // start just past the barline so their slashes fill the bar.
+        let inset = if measure_idx == 0 {
+            notation_start_inset
+        } else {
+            barline_inset
+        };
+        let notation_x = measure_start_x + inset;
+        let notation_width = (measure_width - inset - barline_inset).max(spatium * 6.0);
         let measure_scene =
             count_in_measure_scene(config, measure_idx, notation_width, &notation_ctx);
         let chord_positions = measure_scene
