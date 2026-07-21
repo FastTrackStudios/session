@@ -288,7 +288,7 @@ impl LiveSyncState {
 pub fn start_live_sync(
     state: LiveSyncState,
 ) -> (
-    moire::task::JoinHandle<()>,
+    architect::platform::JoinHandle<()>,
     tokio::sync::mpsc::Receiver<SongFileChanged>,
 ) {
     // Create the file watcher
@@ -308,7 +308,7 @@ pub fn start_live_sync(
     let (fwd_tx, fwd_rx) = tokio::sync::mpsc::channel(64);
 
     // Spawn the sync processing task
-    let handle = moire::task::spawn(async move {
+    let handle = architect::platform::spawn(async move {
         let mut state = state;
         let mut rx = rx;
 

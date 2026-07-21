@@ -19,57 +19,73 @@
 pub use session_proto::*;
 pub use session_proto::{offset_map, ruler_lanes, services, setlist, song, track_structure};
 
-// Server-side modules — these use moire::sync, tokio, and Daw::get() which
-// are not available on wasm32. The web app only needs session-proto types
-// (re-exported above) and the action declarations (below).
-#[cfg(not(target_arch = "wasm32"))]
+// The setlist-service stack + its support modules. These drive the
+// backend-agnostic `daw::get()` facade over moire/tokio primitives that are
+// all wasm-safe (the browser setlist engine builds/serves the same
+// `SetlistServiceImpl` in-process). Only the REAPER coupling was the wasm
+// blocker, now routed through `daw_proto::main_thread` (inline on non-REAPER
+// backends). See setlist_service::live_daw_sync (native-only — the
+// SynchronizationEngine is REAPER-linked).
 pub mod cache;
 
 pub mod chart_import;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod event_bus;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod keyflow_actions;
 pub mod keyflow_scaffold;
+// REAPER-side helpers (preroll insertion, routing-project mutation). Not
+// needed by the browser build; kept native-only.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod preroll_actions;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod routing_project;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod setlist_builder;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod setlist_service;
-#[cfg(not(target_arch = "wasm32"))]
 mod song_builder;
 #[cfg(not(target_arch = "wasm32"))]
 mod song_service;
 
 // Re-export service implementations for library use
-#[cfg(not(target_arch = "wasm32"))]
 pub use setlist_service::SetlistServiceImpl;
 #[cfg(not(target_arch = "wasm32"))]
 pub use song_service::SongServiceImpl;
 
 // Re-export builders for advanced use cases
-#[cfg(not(target_arch = "wasm32"))]
 pub use setlist_builder::SetlistBuilder;
-#[cfg(not(target_arch = "wasm32"))]
 pub use song_builder::SongBuilder;
 
 // Re-export demo setlist stamping (for extensions that have a local Daw instance)
-#[cfg(not(target_arch = "wasm32"))]
 pub use setlist_service::demo::{stamp_demo_into_project, stamp_demo_setlist};
 
+// Uses `daw::block_on` (native-only) and is only consumed by `daw_module`
+// (also native-only) — the REAPER auto-coloring action.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod auto_color_actions;
+// `daw_module` + `track_manager_actions` drive `dynamic-template` (native
+// template engine); `take_ranking` uses raw REAPER FFI. All native-only.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod daw_module;
+// REAPER-hotkey action modules: `group_manager`/`mode_actions`/`record_actions`
+// drive the `daw::reaper` backend directly, `group_actions` wraps
+// `group_manager`, and `rpc_services` composes them + `take_ranking` behind a
+// tokio-runtime pump. None are needed by the browser setlist engine — native-only.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod group_actions;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod group_manager;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod mode_actions;
 pub mod playback_actions;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod record_actions;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod rpc_services;
+// REAPER hotkey action registration (`build_setlist_sync` → `SongBuilder::
+// build_native`) — native-only, consumed by `SessionServices`.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod setlist_actions;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod take_ranking;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod track_manager_actions;
 
 #[cfg(not(target_arch = "wasm32"))]

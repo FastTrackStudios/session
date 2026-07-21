@@ -21,7 +21,7 @@ use daw::service::item::Item;
 use daw::service::primitives::{Duration, PositionInSeconds};
 use daw::service::{ItemEvent, MarkerEvent, RegionEvent};
 use daw_synchronization::{SyncConfig, SyncDomain, SyncSession, SynchronizationEngine};
-use moire::sync::RwLock;
+use tokio::sync::RwLock;
 use session_proto::offset_map::SetlistOffsetMap;
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{debug, info, warn};
@@ -179,7 +179,7 @@ impl DawSyncBridge {
 
         info!("Building setlist item index...");
         let index = SetlistItemIndex::build(&setlist_project).await;
-        let item_index = Arc::new(RwLock::new("session.daw_sync.item_index", index));
+        let item_index = Arc::new(RwLock::new(index));
 
         info!("DawSyncBridge created with {} song bindings", songs.len());
         Self {
@@ -238,7 +238,7 @@ impl DawSyncBridge {
         let mut rx = engine.subscribe();
         let engine_handle = Arc::clone(&engine);
 
-        moire::task::spawn(async move {
+        architect::platform::spawn(async move {
             let _engine = engine_handle;
             loop {
                 match rx.recv().await {

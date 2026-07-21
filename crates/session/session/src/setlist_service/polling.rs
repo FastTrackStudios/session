@@ -8,7 +8,7 @@ use super::{
 use daw::rpc::Daw;
 use daw::service::transport::service::Transport;
 use daw::service::{AudioEngine, ProjectContext, Projects};
-use moire::sync::mpsc;
+use tokio::sync::mpsc;
 use rustc_hash::FxHashMap;
 use session_proto::{
     ActiveIndices, AdvanceMode, MeasureInfo, Section, SessionServiceError, SetlistEvent,
@@ -305,7 +305,7 @@ where
         // internal lock. Bounce once via `main_thread::query` for the whole
         // batch (same pattern as `build_from_open_projects_impl`).
         let daw = self.daw.clone();
-        let Some(snapshot) = daw_reaper::main_thread::query(move || {
+        let Some(snapshot) = daw_proto::main_thread::query(move || {
             let current = daw.current()?;
             let ctx = ProjectContext::Project(current.guid.clone());
             let position = daw.get_position(ctx.clone());
@@ -433,11 +433,11 @@ where
         Self: Clone + Send + Sync + 'static,
     {
         let pump = self.clone();
-        moire::task::spawn(async move {
+        architect::platform::spawn(async move {
             let _ = pump.subscribe_impl().await;
         });
         let pump = self.clone();
-        moire::task::spawn(async move {
+        architect::platform::spawn(async move {
             let _ = pump.subscribe_active_impl().await;
         });
     }
@@ -458,6 +458,18 @@ where
         self.run_subscription_stream().await
     }
 
+    // wasm stub: the native reactive stream below drives `tokio::time::interval`
+    // + `tokio::select!` + `tokio::spawn` (tokio-runtime, `Send`-bounded), which
+    // don't build for the browser's single-threaded runtime. The in-browser
+    // engine will drive `#[subscribe]` updates via a Phase-2 reactive path; for
+    // now the pump parks to keep the subscription in-flight (matching the native
+    // contract that this never returns while the subscription lives).
+    #[cfg(target_arch = "wasm32")]
+    async fn run_subscription_stream(&self) -> Result<(), SessionServiceError> {
+        std::future::pending().await
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     async fn run_subscription_stream(&self) -> Result<(), SessionServiceError> {
         debug!("SetlistService::subscribe() - starting fully reactive event stream");
         let this = self;
@@ -561,7 +573,7 @@ where
             // so the subscribe future doesn't hang on the tokio worker.
             let mut last_current_project_guid: Option<String> = {
                 let daw = self.daw.clone();
-                daw_reaper::main_thread::query(move || daw.current().map(|p| p.guid))
+                daw_proto::main_thread::query(move || daw.current().map(|p| p.guid))
                     .await
                     .flatten()
             };
@@ -577,7 +589,7 @@ where
             let mut perf_log_interval = tokio::time::interval(Duration::from_secs(5));
             perf_log_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
             let (chart_probe_tx, mut chart_probe_rx) =
-                mpsc::unbounded_channel::<(Duration, bool)>("session.setlist.polling.chart_probe");
+                mpsc::unbounded_channel::<(Duration, bool)>();
             let chart_probe_inflight = Arc::new(AtomicBool::new(false));
 
             let mut transport_tick_count: u64 = 0;
@@ -962,7 +974,7 @@ where
 
                         let current_project_guid = {
                             let daw = self.daw.clone();
-                            daw_reaper::main_thread::query(move || daw.current().map(|p| p.guid))
+                            daw_proto::main_thread::query(move || daw.current().map(|p| p.guid))
                                 .await
                                 .flatten()
                         };
@@ -1150,7 +1162,7 @@ where
         let mut last_indices = self.calculate_active_indices().await;
         self.indices_hub.publish(last_indices.clone());
         loop {
-            moire::time::sleep(Duration::from_micros(16667)).await;
+            architect::platform::sleep(Duration::from_micros(16667)).await;
             let current_indices = self.calculate_active_indices().await;
             if current_indices != last_indices {
                 self.indices_hub.publish(current_indices.clone());

@@ -3,7 +3,7 @@
 //! [`EventBus`] wraps `moire::sync::broadcast` for multi-consumer event streaming.
 //! [`WatchBus`] wraps `moire::sync::watch` for single-latest-value streaming.
 
-use moire::sync::{broadcast, watch};
+use tokio::sync::{broadcast, watch};
 use tokio::sync::watch as tokio_watch;
 
 /// Multi-consumer event bus backed by `moire::sync::broadcast`.
@@ -16,8 +16,8 @@ pub struct EventBus<T: Clone> {
 
 impl<T: Clone> EventBus<T> {
     /// Create a new event bus with the given name and channel capacity.
-    pub fn new(name: &str, capacity: usize) -> Self {
-        let (tx, _) = broadcast::channel(name, capacity);
+    pub fn new(_name: &str, capacity: usize) -> Self {
+        let (tx, _) = broadcast::channel(capacity);
         Self { tx }
     }
 
@@ -44,8 +44,8 @@ pub struct WatchBus<T> {
 
 impl<T: Clone> WatchBus<T> {
     /// Create a new watch bus with the given name and initial value.
-    pub fn new(name: &str, initial: T) -> Self {
-        let (tx, rx) = watch::channel(name, initial);
+    pub fn new(_name: &str, initial: T) -> Self {
+        let (tx, rx) = watch::channel(initial);
         Self { tx, rx }
     }
 

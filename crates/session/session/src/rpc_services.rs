@@ -14,7 +14,7 @@
 //! e.g. `set_mode` from a remote client would touch REAPER from the
 //! wrong thread.
 
-use daw_reaper::main_thread;
+use daw_proto::main_thread;
 use session_proto::SessionServiceError;
 use session_proto::services::{
     RecordControlService, SessionModeService, TakeRankLevel, TakeRankScope, TakeRankingService,

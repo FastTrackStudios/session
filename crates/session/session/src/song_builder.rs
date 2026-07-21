@@ -13,9 +13,15 @@
 //! 2. **Markers**: When no regions exist, consecutive markers are used to define sections
 //!    Each marker defines the start of a section, ending at the next marker.
 
+// REAPER FFI backend + the sync service traits it implements — used only by
+// the `*_native` builders below (the async builders drive the backend-agnostic
+// `daw::rpc::Project` handle). Native-only.
+#[cfg(not(target_arch = "wasm32"))]
 use daw::reaper::Reaper;
+#[cfg(not(target_arch = "wasm32"))]
+use daw::service::{Markers, ProjectContext, Projects, Regions, TempoMap};
 use daw::rpc::Project;
-use daw::service::{Marker, Markers, ProjectContext, Projects, Region, Regions, TempoMap};
+use daw::service::{Marker, Region};
 use session_proto::{Comment, Section, SectionId, SectionType, Song, SongId};
 use tracing::{Level, debug, warn};
 
@@ -62,6 +68,9 @@ impl ResolvedLanes {
         resolved
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn resolve_native(project: ProjectContext) -> Self {
         let count = Reaper.ruler_lane_count(project.clone());
         let mut resolved = Self::default();
@@ -90,6 +99,7 @@ impl ResolvedLanes {
 
 impl SongBuilder {
     /// Build one or more Songs from an in-process REAPER project using sync native traits.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn build_native(project: ProjectContext) -> eyre::Result<Vec<Song>> {
         let project_info = Reaper.info(project.clone())?;
         debug!(
@@ -567,6 +577,9 @@ impl SongBuilder {
         })
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn build_single_song_native(
         project: ProjectContext,
         project_guid: &str,
@@ -917,6 +930,9 @@ impl SongBuilder {
         })
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn build_song_from_region_native(
         project: ProjectContext,
         project_guid: &str,
@@ -1227,6 +1243,9 @@ impl SongBuilder {
         Ok(snapped)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn snap_to_next_barline_native(project: ProjectContext, seconds: f64) -> eyre::Result<f64> {
         let (measure, beat, fraction) = Reaper.time_to_musical(project.clone(), seconds);
         if beat <= 1 && fraction < 0.001 {

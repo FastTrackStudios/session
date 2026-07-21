@@ -8,11 +8,22 @@
 //! - `polling` — Active indices calculation, transport streaming, subscriptions
 
 mod build;
+// Combined-setlist RPP export drives `daw::file` (REAPER project combining) —
+// native-only. wasm gets a stub (see the bottom of this file).
+#[cfg(not(target_arch = "wasm32"))]
 mod combined;
 pub mod demo;
+// Watches a `.base` setlist file on disk (native std::fs + a spawned
+// JoinHandle-held watcher) — native-only.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod file_watcher;
 mod hydration;
+// The SynchronizationEngine is REAPER-linked (daw-synchronization pulls the
+// reaper daw backend), so the live daw-sync bridge is native-only.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod live_daw_sync;
+// Holds a spawned JoinHandle forwarding a `.base` file's changes — native-only.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod live_sync;
 mod navigation;
 mod playback;
@@ -22,7 +33,7 @@ mod record;
 
 use crate::cache::Cache;
 use crate::event_bus::{EventBus, WatchBus};
-use moire::sync::RwLock;
+use tokio::sync::RwLock;
 use session_proto::{ActiveIndices, QueuedTarget, Setlist, Song, SongChartHydration};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -126,13 +137,11 @@ impl<D> SetlistServiceImpl<D> {
     pub fn with_daw(daw: D) -> Self {
         Self {
             daw,
-            setlist: Arc::new(RwLock::new("session.setlist", None)),
-            active_song_id: Arc::new(RwLock::new("session.setlist.active_song_id", None)),
-            cached_indices: Arc::new(RwLock::new(
-                "session.setlist.cached_indices",
-                ActiveIndices::default(),
+            setlist: Arc::new(RwLock::new(None)),
+            active_song_id: Arc::new(RwLock::new(None)),
+            cached_indices: Arc::new(RwLock::new(ActiveIndices::default(),
             )),
-            queued_target: Arc::new(RwLock::new("session.setlist.queued_target", None)),
+            queued_target: Arc::new(RwLock::new(None)),
             events_hub: architect::PubSub::sliding(64),
             // Replay the last cursor to every new subscriber: a remote that
             // joins mid-show (the browser session player over the network
@@ -145,13 +154,11 @@ impl<D> SetlistServiceImpl<D> {
             hydration_bus: Arc::new(EventBus::new("session.setlist.hydration", 1024)),
             chart_hydration_bus: Arc::new(EventBus::new("session.setlist.chart_hydration", 1024)),
             chart_cache: Cache::named("session.setlist.chart_cache"),
-            fingerprint_method_supported: Arc::new(RwLock::new(
-                "session.setlist.fingerprint_supported",
-                None,
+            fingerprint_method_supported: Arc::new(RwLock::new(None,
             )),
             last_chart_refresh_attempt: Cache::named("session.setlist.chart_refresh_attempts"),
             build_generation: Arc::new(AtomicU64::new(0)),
-            position_sync: Arc::new(RwLock::new("session.setlist.position_sync", None)),
+            position_sync: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -234,5 +241,20 @@ impl<D> architect::HasDispatcher for SetlistServiceImpl<D> {
 
     fn dispatcher(&self) -> Self::Dispatcher {
         architect::dispatch::CurrentThreadDispatcher
+    }
+}
+
+// wasm stub for the native combined-setlist RPP export (see `mod combined`,
+// gated native-only). Keeps the `SetlistService::generate_combined_setlist`
+// trait method total on wasm; RPP file combining is inherently native.
+#[cfg(target_arch = "wasm32")]
+impl<D> SetlistServiceImpl<D> {
+    pub(crate) async fn generate_combined_setlist_impl(
+        &self,
+        _gap_measures: u32,
+    ) -> Result<String, session_proto::SessionServiceError> {
+        Err(session_proto::SessionServiceError::Internal(
+            "combined-setlist RPP export is not available in the browser build".to_string(),
+        ))
     }
 }

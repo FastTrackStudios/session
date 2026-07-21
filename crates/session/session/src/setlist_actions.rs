@@ -15,7 +15,7 @@
 //! Runs **synchronously on REAPER's main thread** (where the action
 //! callback fires), so we can use the sync trait methods on
 //! `daw_reaper::Reaper` directly — no `main_thread::query` bounce,
-//! no Tokio runtime, no `moire::task::spawn`. This is the same
+//! no Tokio runtime, no `architect::platform::spawn`. This is the same
 //! pattern keyflow_actions uses and the same reason it works.
 //!
 //! Setlist storage: at mount time `register` stashes the
@@ -30,7 +30,7 @@ use architect::action::ActionBackend;
 use daw::service::ProjectContext;
 use daw::service::transport::service::Transport as TransportService;
 use daw::service::{Markers, Projects, Regions, TempoMap};
-use moire::sync::RwLock;
+use tokio::sync::RwLock;
 use session_proto::{AdvanceMode, Setlist, Song};
 
 use crate::setlist_service::SetlistServiceImpl;

@@ -2,11 +2,14 @@
 
 use super::{HYDRATION_CONCURRENCY, SetlistServiceImpl};
 use daw::service::Projects;
-use moire::sync::Semaphore;
+// `Semaphore` + `JoinSet` back the native-only background hydration pass below.
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::sync::Semaphore;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_proto::{AdvanceMode, SessionServiceError, Setlist, Song};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
@@ -25,7 +28,7 @@ where
         // REAPER's internal lock. Bounce via `main_thread::query` —
         // same pattern mode/take/record services already use.
         let daw = self.daw.clone();
-        let (projects, current_project_guid) = daw_reaper::main_thread::query(move || {
+        let (projects, current_project_guid) = daw_proto::main_thread::query(move || {
             let projects = daw.list();
             let current = daw.current().map(|p| p.guid);
             (projects, current)
@@ -159,11 +162,18 @@ where
 
         // Phase 2: hydrate remaining projects in background with bounded concurrency.
         // Each project may produce multiple songs, so we splice by project_guid.
+        // Native-only: the background pass uses `tokio::spawn` + `tokio::task::
+        // JoinSet` (a tokio runtime + `Send` futures), which don't build for the
+        // browser's single-threaded runtime. On wasm the initial (Phase 1)
+        // synchronous build above already populated the setlist; lazy hydration
+        // for the browser engine is a Phase-2 runtime path.
+        #[cfg(target_arch = "wasm32")]
+        let _ = build_generation;
+        #[cfg(not(target_arch = "wasm32"))]
         let this = Arc::new((*self).clone());
+        #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move {
-            let semaphore = Arc::new(Semaphore::new(
-                "session.setlist.build.hydration",
-                HYDRATION_CONCURRENCY,
+            let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY,
             ));
             let mut join_set = JoinSet::new();
 
