@@ -61,6 +61,13 @@ reaper-medium = { workspace = true }
 dynamic-template.workspace = true
 vox = { workspace = true, features = ["transport-local"] }
 
+# Wasm-only: the browser setlist pump drives its single-threaded reactive loop
+# with `futures::select!` + fused `architect::platform::sleep` timers (the
+# native pump uses `tokio::select!` + `tokio::time::interval`, neither of which
+# builds for the browser runtime).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures = { workspace = true }
+
 [dev-dependencies]
 daw = { workspace = true, features = ["standalone", "file", "test-harness"] }
 # Ephemeral, REAPER-free harness: drive the SetlistService build path against
