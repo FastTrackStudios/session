@@ -70,6 +70,12 @@ impl ChartLayoutEngine {
         }
 
         let (section_type, abbreviation) = self.section_type_to_strings(&section.section_type);
+        // The capsule text is assembled by the shared `section_label` helper so
+        // it can never drift from `chart_section_timeline`'s label. It equals
+        // what `layout_margin_label` would build from
+        // section_type/abbreviation/number/letter, so rendering is unchanged.
+        let label_override =
+            Some(section_layout::section_label(&section.section_type, section.number, letter));
         let (_, label_node) = layout_margin_label(
             &MarginLabelParams {
                 section_type,
@@ -77,6 +83,7 @@ impl ChartLayoutEngine {
                 number: section.number,
                 letter,
                 comment: section.comment.clone(),
+                label_override,
                 page_x,
                 margin_width,
                 staff_y,
