@@ -52,12 +52,15 @@ const FADER_CSS: &str = r#"
   background:color-mix(in oklab,var(--muted) 55%,#000);box-shadow:inset 0 0 4px rgba(0,0,0,.9);}
 .fts-fader::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
   width:22px;height:34px;border-radius:5px;border:1px solid rgba(0,0,0,.65);
+  /* center the wide cap over the 8px rail: -(22-8)/2 on each inline edge */
+  margin-inline:-7px;
   box-shadow:0 2px 4px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.45);
   background:
     repeating-linear-gradient(to bottom,rgba(0,0,0,.30) 0 1.5px,transparent 1.5px 6px),
     linear-gradient(to bottom,rgba(255,255,255,.42),rgba(255,255,255,0) 45%),
     var(--fader,var(--primary));}
 .fts-fader::-moz-range-thumb{width:22px;height:34px;border-radius:5px;border:1px solid rgba(0,0,0,.65);
+  margin-inline:-7px;
   box-shadow:0 2px 4px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.45);
   background:
     repeating-linear-gradient(to bottom,rgba(0,0,0,.30) 0 1.5px,transparent 1.5px 6px),
