@@ -40,7 +40,7 @@ where
         }
     }
 
-    /// Create an empty cache with a descriptive name for the moire dashboard.
+    /// Create an empty cache with a descriptive name (retained for API compatibility; the moire dashboard is retired).
     pub fn named(_name: &'static str) -> Self {
         Self {
             inner: Arc::new(RwLock::new(FxHashMap::default())),

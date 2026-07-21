@@ -1,12 +1,12 @@
 //! Reusable event broadcasting abstractions.
 //!
-//! [`EventBus`] wraps `moire::sync::broadcast` for multi-consumer event streaming.
-//! [`WatchBus`] wraps `moire::sync::watch` for single-latest-value streaming.
+//! [`EventBus`] wraps `tokio::sync::broadcast` for multi-consumer event streaming.
+//! [`WatchBus`] wraps `tokio::sync::watch` for single-latest-value streaming.
 
 use tokio::sync::{broadcast, watch};
 use tokio::sync::watch as tokio_watch;
 
-/// Multi-consumer event bus backed by `moire::sync::broadcast`.
+/// Multi-consumer event bus backed by `tokio::sync::broadcast`.
 ///
 /// Each call to [`subscribe`](EventBus::subscribe) creates an independent receiver
 /// that will see all subsequent events emitted via [`emit`](EventBus::emit).
@@ -34,7 +34,7 @@ impl<T: Clone> EventBus<T> {
     }
 }
 
-/// Single-value streaming bus backed by `moire::sync::watch`.
+/// Single-value streaming bus backed by `tokio::sync::watch`.
 ///
 /// Holds the latest value and lets any number of subscribers observe changes.
 pub struct WatchBus<T> {

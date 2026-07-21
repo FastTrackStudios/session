@@ -15,8 +15,11 @@ Apps must depend only on `session` (facade) or `session-ui`, never on internal c
 ## Key Rules
 
 ### Async & Concurrency
-- Use `moire::task::spawn` instead of `tokio::spawn`
-- Use `moire::sync::Mutex` / `moire::sync::RwLock` instead of tokio/std equivalents
+- Use `architect::platform::spawn` instead of `tokio::spawn` (wasm-cfg-split:
+  tokio on native, `spawn_local` on wasm); likewise `architect::platform::{sleep,
+  timeout}` for timers
+- Use `tokio::sync::{Mutex, RwLock, broadcast, watch, mpsc}` for locks/channels
+  (moire is retired — Jul 2026)
 - Never hold std sync primitives across `.await`
 
 ### RPC Services

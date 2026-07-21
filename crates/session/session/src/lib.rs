@@ -20,7 +20,7 @@ pub use session_proto::*;
 pub use session_proto::{offset_map, ruler_lanes, services, setlist, song, track_structure};
 
 // The setlist-service stack + its support modules. These drive the
-// backend-agnostic `daw::get()` facade over moire/tokio primitives that are
+// backend-agnostic `daw::get()` facade over tokio primitives that are
 // all wasm-safe (the browser setlist engine builds/serves the same
 // `SetlistServiceImpl` in-process). Only the REAPER coupling was the wasm
 // blocker, now routed through `daw_proto::main_thread` (inline on non-REAPER
