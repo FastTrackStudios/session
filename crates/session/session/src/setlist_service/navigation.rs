@@ -368,6 +368,14 @@ where
         if let Some(song_idx) = active.song_index
             && let Some(song) = self.ensure_song_hydrated(song_idx).await
         {
+            // HARD INVARIANT: a `seek_to` is song-relative and may never
+            // leave the current song — clamp instead of letting an
+            // out-of-range target run the playhead past the song end (where
+            // the advance logic would flip the whole set to another song).
+            // The 10 ms end margin keeps the playhead strictly INSIDE the
+            // song: on a shared timeline song N's end == song N+1's start,
+            // and landing exactly on the boundary re-indexes to the next song.
+            let seconds = seconds.clamp(0.0, (song.duration() - 0.01).max(0.0));
             // Mirror the (working) seek_to_section path exactly: select the
             // project first, seek, then republish. Without the republish a
             // PAUSED seek moves the cursor with no playhead tick, so
