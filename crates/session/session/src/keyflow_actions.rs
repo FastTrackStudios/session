@@ -6,7 +6,7 @@ use session_proto::SectionType;
 use session_proto::ruler_lanes::{CoreLane, FtsLane, InstrumentLane, classify_marker_lane};
 use std::collections::{HashMap, HashSet};
 use architect::platform::Instant;
-use tracing::{info, warn};
+use tracing::{debug, warn};
 
 const TOUCH_EPSILON_SECONDS: f64 = 0.001;
 const MAX_SECTION_TIME_SELECTION_SECONDS: f64 = 60.0 * 60.0;
@@ -111,11 +111,11 @@ pub fn dispatch<D>(daw: &D, action: KeyflowAction)
 where
     D: Projects + TransportService + Markers + Regions + TempoMap,
 {
-    tracing::info!(?action, "[session] Dispatching Keyflow action");
+    tracing::debug!(?action, "[session] Dispatching Keyflow action");
     if let Err(err) = run_action(daw, action) {
         tracing::error!(?err, "[session] Keyflow action failed");
     } else {
-        tracing::info!(?action, "[session] Keyflow action completed");
+        tracing::debug!(?action, "[session] Keyflow action completed");
     }
 }
 
@@ -140,7 +140,7 @@ where
 
     hide_stray_lanes(daw);
 
-    info!(
+    debug!(
         ?action,
         elapsed_ms = started.elapsed().as_millis(),
         "[session] Keyflow action timing",
@@ -351,7 +351,7 @@ where
         }
     }
 
-    info!(
+    debug!(
         sections_converted = converted_section_starts.len(),
         project = %project_name,
         "[session] Convert markers to session format",
@@ -375,7 +375,7 @@ where
         let cursor_position = two_measures_after(daw, project.clone(), position);
         TransportService::set_position(daw, project, cursor_position)?;
     }
-    info!(
+    debug!(
         ?kind,
         elapsed_ms = started.elapsed().as_millis(),
         "[session] Keyflow marker insert timing",
@@ -404,7 +404,7 @@ where
         is_valid_time_selection(selection.start_seconds, selection.end_seconds)
     });
     let (start, end) = infer_insert_bounds(daw, kind, position, time_selection.as_ref(), &regions);
-    info!(
+    debug!(
         kind = ?kind,
         position,
         time_selection_start = ?time_selection.as_ref().map(|selection| selection.start_seconds),
@@ -414,10 +414,10 @@ where
         insert_length_seconds = end - start,
         "[session] Keyflow section bounds",
     );
-    info!("[session] Keyflow section insert: carving overlapping regions");
+    debug!("[session] Keyflow section insert: carving overlapping regions");
     carve_overlapping_section_regions(daw, &regions, start, end)?;
-    info!("[session] Keyflow section insert: carve complete");
-    info!("[session] Keyflow section insert: adding region");
+    debug!("[session] Keyflow section insert: carve complete");
+    debug!("[session] Keyflow section insert: adding region");
     let id = Regions::add(
         daw,
         project.clone(),
@@ -425,36 +425,36 @@ where
         end,
         &kind.section_type().abbreviation(),
     )?;
-    info!(id, "[session] Keyflow section insert: add complete");
-    info!(id, "[session] Keyflow section insert: setting color");
+    debug!(id, "[session] Keyflow section insert: add complete");
+    debug!(id, "[session] Keyflow section insert: setting color");
     Regions::set_color(
         daw,
         project.clone(),
         id,
         section_type_color(kind.section_type()),
     )?;
-    info!(id, "[session] Keyflow section insert: color complete");
-    info!(
+    debug!(id, "[session] Keyflow section insert: color complete");
+    debug!(
         end,
         "[session] Keyflow section insert: moving cursor to end"
     );
     TransportService::set_position(daw, project.clone(), end)?;
-    info!("[session] Keyflow section insert: cursor move complete");
+    debug!("[session] Keyflow section insert: cursor move complete");
     if used_time_selection {
-        info!("[session] Keyflow section insert: clearing consumed time selection");
+        debug!("[session] Keyflow section insert: clearing consumed time selection");
         TransportService::clear_time_selection(daw, project.clone())?;
     }
 
-    info!("[session] Keyflow section insert: reloading regions");
+    debug!("[session] Keyflow section insert: reloading regions");
     let regions = Regions::all(daw, project);
-    info!(
+    debug!(
         region_count = regions.len(),
         "[session] Keyflow section insert: reloaded regions",
     );
-    info!("[session] Keyflow section insert: normalizing section regions");
+    debug!("[session] Keyflow section insert: normalizing section regions");
     normalize_section_regions(daw, regions)?;
-    info!("[session] Keyflow section insert: normalize complete");
-    info!(
+    debug!("[session] Keyflow section insert: normalize complete");
+    debug!(
         ?kind,
         elapsed_ms = started.elapsed().as_millis(),
         "[session] Keyflow section insert timing",
@@ -542,7 +542,7 @@ where
         }
 
         if start < insert_start - TOUCH_EPSILON_SECONDS {
-            info!(
+            debug!(
                 id,
                 region_start = start,
                 region_end = end,
@@ -551,7 +551,7 @@ where
             );
             Regions::set_bounds(daw, project.clone(), id, start, insert_start)?;
         } else if end > insert_end + TOUCH_EPSILON_SECONDS {
-            info!(
+            debug!(
                 id,
                 region_start = start,
                 region_end = end,
@@ -560,7 +560,7 @@ where
             );
             Regions::set_bounds(daw, project.clone(), id, insert_end, end)?;
         } else {
-            info!(
+            debug!(
                 id,
                 region_start = start,
                 region_end = end,
@@ -636,14 +636,14 @@ where
             .map(|(current_name, _, _)| current_name != &name)
             .unwrap_or(true)
         {
-            info!(id, name, "[session] Normalizing section region: rename");
+            debug!(id, name, "[session] Normalizing section region: rename");
             Regions::rename(daw, project.clone(), id, &name)?;
         }
         if current
             .map(|(_, _, current_color)| *current_color != Some(desired_color))
             .unwrap_or(true)
         {
-            info!(
+            debug!(
                 id,
                 color = desired_color,
                 "[session] Normalizing section region: set color",
@@ -662,7 +662,7 @@ where
             .map(|(_, current_lane, _)| *current_lane != Some(section_lane))
             .unwrap_or(true)
         {
-            info!(
+            debug!(
                 id,
                 lane = section_lane,
                 "[session] Normalizing section region: set lane",
