@@ -16,6 +16,9 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 keyflow-musicxml.workspace = true
+# examples/convert_batch.rs — parallel batch conversion (example-only dep,
+# the library itself stays dependency-light).
+rayon = "1"
 
 [lints]
 workspace = true
