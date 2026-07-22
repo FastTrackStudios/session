@@ -11,7 +11,8 @@
 
 use daw::rpc::{Daw, Project};
 use session_proto::offset_map::SetlistOffsetMap;
-use std::time::{Duration, Instant};
+use architect::platform::Instant;
+use std::time::Duration;
 use tracing::debug;
 
 /// Tracks suppression state to prevent echo loops.
@@ -28,7 +29,7 @@ impl Suppression {
     fn new() -> Self {
         Self {
             last_target_guid: None,
-            last_apply_time: Instant::now() - Duration::from_secs(10),
+            last_apply_time: architect::platform::now() - Duration::from_secs(10),
             window: Duration::from_millis(200),
         }
     }
@@ -36,7 +37,7 @@ impl Suppression {
     /// Record that we applied a position change to the given project.
     fn suppress(&mut self, target_guid: &str) {
         self.last_target_guid = Some(target_guid.to_string());
-        self.last_apply_time = Instant::now();
+        self.last_apply_time = architect::platform::now();
     }
 
     /// Check if a change from the given project should be ignored (echo).

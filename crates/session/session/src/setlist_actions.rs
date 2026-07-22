@@ -99,7 +99,7 @@ where
         SetlistAction::DumpRulerState => dump_ruler_state(daw),
         SetlistAction::LoadDemo => {
             tracing::info!("[session] load_demo_setlist action — stamping demo markers/regions");
-            let started = std::time::Instant::now();
+            let started = architect::platform::now();
             match crate::setlist_service::demo::stamp_demo_setlist_with(daw) {
                 Ok(()) => {
                     tracing::info!(
@@ -117,7 +117,7 @@ where
         }
         SetlistAction::Build => {
             tracing::info!("[session] build_setlist action — building synchronously");
-            let started = std::time::Instant::now();
+            let started = architect::platform::now();
             let setlist = build_setlist_sync(daw);
             let song_count = setlist.songs.len();
             match SETLIST_STORE.get() {

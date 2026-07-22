@@ -5,7 +5,7 @@ use keyflow::sections::colors_for_section_type;
 use session_proto::SectionType;
 use session_proto::ruler_lanes::{CoreLane, FtsLane, InstrumentLane, classify_marker_lane};
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
+use architect::platform::Instant;
 use tracing::{info, warn};
 
 const TOUCH_EPSILON_SECONDS: f64 = 0.001;
@@ -123,7 +123,7 @@ fn run_action<D>(daw: &D, action: KeyflowAction) -> eyre::Result<()>
 where
     D: Projects + TransportService + Markers + Regions + TempoMap,
 {
-    let started = Instant::now();
+    let started = architect::platform::now();
     ensure_action_lane(daw, action);
 
     match action {
@@ -363,7 +363,7 @@ fn insert_marker<D>(daw: &D, kind: MarkerKind) -> eyre::Result<()>
 where
     D: TransportService + Markers + TempoMap,
 {
-    let started = Instant::now();
+    let started = architect::platform::now();
     let project = ProjectContext::Current;
     let position = edit_cursor_position(daw, project.clone());
     let name = kind.name();
@@ -395,7 +395,7 @@ fn insert_section_region<D>(daw: &D, kind: SectionKind) -> eyre::Result<()>
 where
     D: TransportService + Regions + TempoMap,
 {
-    let started = Instant::now();
+    let started = architect::platform::now();
     let project = ProjectContext::Current;
     let position = edit_cursor_position(daw, project.clone());
     let time_selection = daw.get_time_selection(project.clone());

@@ -37,7 +37,7 @@ use tokio::sync::RwLock;
 use session_proto::{ActiveIndices, QueuedTarget, Setlist, Song, SongChartHydration};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use architect::platform::Instant;
 
 use position_sync::PositionSyncBridge;
 

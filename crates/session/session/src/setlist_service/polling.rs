@@ -17,7 +17,8 @@ use smallvec::SmallVec;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use architect::platform::Instant;
+use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError as BroadcastRecvError;
 use tokio::sync::{broadcast, mpsc, watch};
 // `MissedTickBehavior` + `tokio::time::interval` drive the native pump only;
@@ -659,9 +660,9 @@ where
             chart_check_count: 0,
             chart_update_count: 0,
             chart_compute_total: Duration::ZERO,
-            last_indices_progress_emit: Instant::now(),
+            last_indices_progress_emit: architect::platform::now(),
             chart_probe_poll_ms: ACTIVE_HYDRATION_POLL_MS,
-            chart_probe_last_started: Instant::now()
+            chart_probe_last_started: architect::platform::now()
                 - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS),
         };
 
@@ -790,7 +791,7 @@ where
             Err(_) => return ControlFlow::Continue(()),
         };
         {
-            let transport_started = Instant::now();
+            let transport_started = architect::platform::now();
             let active_song_id = this.active_song_id.read().await.clone();
             let active_song_index: Option<usize>;
             let mut song_transports: SmallVec<[SongTransportState; 16]> = SmallVec::new();
@@ -1019,12 +1020,12 @@ where
                         // this events pump uses for auto-advance /
                         // chart-probe scheduling.
                         if progress_change {
-                            st.last_indices_progress_emit = Instant::now();
+                            st.last_indices_progress_emit = architect::platform::now();
                         }
                         st.last_indices = current_indices;
                         if song_changed {
                             st.chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
-                            st.chart_probe_last_started = Instant::now()
+                            st.chart_probe_last_started = architect::platform::now()
                                 - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS);
                         }
                     }
@@ -1090,14 +1091,14 @@ where
                 _ => false,
             };
             if !switch_stable {
-                st.pending_project_switch = Some((current_guid, Instant::now()));
+                st.pending_project_switch = Some((current_guid, architect::platform::now()));
                 return ControlFlow::Continue(());
             }
 
             let (confirmed_guid, _) = st
                 .pending_project_switch
                 .take()
-                .unwrap_or((current_guid, Instant::now()));
+                .unwrap_or((current_guid, architect::platform::now()));
             debug!(
                 "Project tab changed from {:?} to {}",
                 st.last_current_project_guid, confirmed_guid
@@ -1143,7 +1144,7 @@ where
                     // keep the chart-probe scheduling bookkeeping.
                     if new_indices.song_index != st.last_indices.song_index {
                         st.chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
-                        st.chart_probe_last_started = Instant::now()
+                        st.chart_probe_last_started = architect::platform::now()
                             - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS);
                     }
                     st.last_indices = new_indices;
@@ -1166,12 +1167,12 @@ where
         // Keep chart probing off the hot transport/select loop.
         // If a prior probe is still running, skip this tick.
         if !st.chart_probe_inflight.swap(true, Ordering::SeqCst) {
-            st.chart_probe_last_started = Instant::now();
+            st.chart_probe_last_started = architect::platform::now();
             let this_clone = this.clone();
             let chart_probe_tx_clone = st.chart_probe_tx.clone();
             let inflight = st.chart_probe_inflight.clone();
             let probe = async move {
-                let chart_started = Instant::now();
+                let chart_started = architect::platform::now();
                 let updated = this_clone.refresh_active_song_chart_if_changed().await;
                 let _ = chart_probe_tx_clone.send((chart_started.elapsed(), updated));
                 inflight.store(false, Ordering::SeqCst);

@@ -9,7 +9,8 @@ use keyflow_daw_analysis::{DetectedChord, MidiChartData, MidiChartRequest, MidiC
 use tokio::sync::Semaphore;
 use session_proto::{Song, SongChartHydration, SongDetectedChord, SongId};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use architect::platform::Instant;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 #[derive(Clone)]
@@ -298,7 +299,7 @@ where
     }
 
     pub(crate) async fn should_run_fallback_chart_refresh(&self, project_guid: &str) -> bool {
-        let now = Instant::now();
+        let now = architect::platform::now();
         self.last_chart_refresh_attempt
             .with_write(|map| {
                 if let Some(last) = map.get(project_guid)
