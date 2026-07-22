@@ -396,7 +396,7 @@ fn replay_recorded_scene(
         for cmd in &recorded.commands {
             match cmd {
                 RenderCommand::PushLayer(cmd) => {
-                    target.push_layer(cmd.blend, cmd.alpha, cmd.transform, &cmd.clip)
+                    target.push_layer(cmd.blend, cmd.alpha, cmd.transform, &cmd.clip, None, None)
                 }
                 RenderCommand::PushClipLayer(cmd) => {
                     target.push_clip_layer(cmd.transform, &cmd.clip)
@@ -466,6 +466,8 @@ fn replay_recorded_scene(
                 cmd.alpha,
                 scene_transform * cmd.transform,
                 &cmd.clip,
+                None,
+                None,
             ),
             RenderCommand::PushClipLayer(cmd) => {
                 target.push_clip_layer(scene_transform * cmd.transform, &cmd.clip)
@@ -679,7 +681,7 @@ impl ChartLayoutManager {
         }
 
         let clip_rect = Rect::new(0.0, 0.0, width, height);
-        scene.push_layer(Compose::SrcOver, 1.0, offset, &clip_rect);
+        scene.push_layer(Compose::SrcOver, 1.0, offset, &clip_rect, None, None);
 
         let (visible_pages, focus_page) =
             self.visible_and_focus_for_viewport(width, height, transform);
@@ -867,7 +869,7 @@ impl ChartLayoutManager {
         }
 
         let clip_rect = Rect::new(0.0, 0.0, width, height);
-        scene.push_layer(Compose::SrcOver, 1.0, offset, &clip_rect);
+        scene.push_layer(Compose::SrcOver, 1.0, offset, &clip_rect, None, None);
 
         if let Some((scene_x, scene_y)) = hover_point {
             self.render_hover_highlight(scene, scene_x, scene_y, offset * transform);

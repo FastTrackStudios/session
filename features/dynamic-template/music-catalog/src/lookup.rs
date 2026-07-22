@@ -89,6 +89,27 @@ static COLOR_MAP: LazyLock<HashMap<&'static str, Color>> = LazyLock::new(|| {
     m.insert("hi-hat", drums::HI_HAT);
     m.insert("hihat", drums::HI_HAT);
     m.insert("room", drums::ROOM);
+    // Singular / stage-sheet spellings (live channel lists say
+    // "Guitar 1", "Engineer Vocal", "OH L" — not "Guitars").
+    m.insert("drum", groups::DRUMS);
+    m.insert("drummer", groups::DRUMS);
+    m.insert("perc", groups::PERCUSSION);
+    m.insert("guitar", groups::GUITARS);
+    m.insert("gtr", groups::GUITARS);
+    m.insert("acoustic", guitars::ACOUSTIC);
+    m.insert("vocal", groups::VOCALS);
+    m.insert("vox", groups::VOCALS);
+    m.insert("synth", groups::SYNTHS);
+    m.insert("toms", drums::TOM);
+    m.insert("hat", drums::HI_HAT);
+    m.insert("oh", drums::CYMBALS);
+    m.insert("ohs", drums::CYMBALS);
+    m.insert("overhead", drums::CYMBALS);
+    m.insert("overheads", drums::CYMBALS);
+    m.insert("ride", drums::CYMBALS);
+    m.insert("crash", drums::CYMBALS);
+    m.insert("china", drums::CYMBALS);
+    m.insert("splash", drums::CYMBALS);
 
     // Bass sub-groups
     m.insert("bass/guitar", bass::GUITAR);
