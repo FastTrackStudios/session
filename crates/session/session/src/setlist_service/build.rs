@@ -97,13 +97,23 @@ where
 
         // Phase 1: focused project full details, all others names only.
         // A single project may produce multiple songs (multi-song mode).
+        //
+        // Wasm exception: the browser engine has no Phase-2 background
+        // hydration pass (below — it's tokio JoinSet, native-only), so a
+        // name-only placeholder there would NEVER gain its sections/chart. The
+        // in-browser setlist is small (one ext-state chart read per song, all
+        // in-process), so fully build EVERY project up front instead — this is
+        // what lights up the navigator + chart pane for songs beyond the
+        // focused one. Native is byte-for-byte unchanged (`full_build` reduces
+        // to `load.index == focused_index`).
         let mut songs = Vec::with_capacity(project_loads.len());
         let mut focused_song_count = 0usize;
         for load in &project_loads {
             let existing_song = existing_songs_by_guid.get(&load.guid);
             let cached_song = cached_songs.get(&load.guid);
 
-            if load.index == focused_index {
+            let full_build = load.index == focused_index || cfg!(target_arch = "wasm32");
+            if full_build {
                 let project_songs = self.build_songs_with_cache(load, existing_song).await;
                 if !project_songs.is_empty() {
                     for song in &project_songs {
@@ -116,7 +126,9 @@ where
                             s
                         })
                         .collect();
-                    focused_song_count = light_songs.len();
+                    if load.index == focused_index {
+                        focused_song_count = light_songs.len();
+                    }
                     songs.extend(light_songs);
                     continue;
                 }
