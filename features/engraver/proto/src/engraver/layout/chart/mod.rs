@@ -1037,25 +1037,10 @@ impl ChartLayoutEngine {
                     // Include count-in snippet in header instead of on first system
                     if !title_header_added {
                         let has_pushed_first_chord = chart_first_chord_is_pushed(chart);
-                        // Per-measure labels above the count-in snippet — pulled
-                        // from the CountIn section's measures so the overlay
-                        // shows their source measure numbers (1, 2 for LotF).
-                        let count_in_labels: Vec<String> = chart
-                            .sections
-                            .iter()
-                            .find(|s| matches!(s.section.section_type, SectionType::CountIn))
-                            .map(|s| {
-                                s.measures()
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, m)| {
-                                        m.source_measure_number
-                                            .map(|n| n.to_string())
-                                            .unwrap_or_else(|| (i + 1).to_string())
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
+                        // Per-measure labels above the count-in snippet: a
+                        // countdown into the downbeat, so 2 count-in measures are
+                        // `-1, 0` and the first real measure is `1`.
+                        let count_in_labels = engine_helpers::count_in_countdown_labels(count_in_measures);
                         let (header_height, count_in_geos) = self.add_title_header(
                             &mut root,
                             page_x,
@@ -1089,6 +1074,8 @@ impl ChartLayoutEngine {
                                 absolute_tick,
                                 x: geo.x,
                                 width: geo.width,
+                                measure_x0: geo.x,
+                                measure_x1: geo.x + geo.width,
                                 staff_y: geo.staff_y,
                                 staff_height: geo.staff_height,
                                 time_start: absolute_tick as f64 * seconds_per_tick,
@@ -1537,6 +1524,8 @@ impl ChartLayoutEngine {
                                 absolute_tick,
                                 x: measure_x + segment.x,
                                 width: segment.width,
+                                measure_x0: measure_x,
+                                measure_x1: measure_x + this_measure_width,
                                 staff_y,
                                 staff_height,
                                 time_start,
@@ -2103,13 +2092,39 @@ impl ChartLayoutEngine {
         let mut global_system_index = 0usize;
         let mut global_measure_index = 0usize;
 
+        // Time signature — computed early because the count-in snippet needs the
+        // meter for its beat geometry. (Reused below for the measure passes.)
+        let time_signature = chart
+            .time_signature
+            .map(|ts| (ts.numerator as u8, ts.denominator as u8))
+            .unwrap_or((4u8, 4u8));
+
+        // Count-in measure count: an explicit config override, else the chart's
+        // own `CountIn` section length. In continuous mode the count-in is a
+        // compact snippet drawn in the header ("up by the tempo markers"), a
+        // VISUAL pre-roll only — it is NOT part of the scrolling measure
+        // timeline (real measures still start at t=0 / tick 0), so the live
+        // cursor maps transport progress straight onto the real measures.
+        let count_in_measures = if self.config.count_in_measures > 0 {
+            self.config.count_in_measures as usize
+        } else {
+            chart
+                .sections
+                .iter()
+                .find(|s| matches!(s.section.section_type, SectionType::CountIn))
+                .map(|s| s.measures().len())
+                .unwrap_or(0)
+        };
+
         // Title header (title / artist / tempo / key) above the music — the same
         // block the paginated path draws, but only when the chart actually names
         // itself. A bare chord snippet (`Cmaj7 | …`) stays header-free and tight;
         // a titled chart (`Vienna - Billy Joel`) shows its header in the inline
-        // render too. No count-in here (continuous mode synthesizes none), so the
-        // time signature passed is unused.
+        // render too, now including the count-in snippet.
         if chart.metadata.title.is_some() {
+            let has_pushed_first_chord = chart_first_chord_is_pushed(chart);
+            // Countdown labels into the downbeat (`-1, 0` for a 2-bar count-in).
+            let count_in_labels = engine_helpers::count_in_countdown_labels(count_in_measures);
             let (header_height, _) = self.add_title_header(
                 &mut root,
                 0.0,
@@ -2117,10 +2132,10 @@ impl ChartLayoutEngine {
                 width,
                 &chart.metadata,
                 chart.tempo.as_ref(),
-                0,
-                (4, 4),
-                false,
-                Vec::new(),
+                count_in_measures,
+                time_signature,
+                has_pushed_first_chord,
+                count_in_labels,
             );
             total_height += header_height;
         }
@@ -2158,12 +2173,6 @@ impl ChartLayoutEngine {
             &mut measurement_cache,
         );
 
-        // Get time signature for beat calculations
-        let time_signature = chart
-            .time_signature
-            .map(|ts| (ts.numerator as u8, ts.denominator as u8))
-            .unwrap_or((4u8, 4u8));
-
         // Prevailing meter, carried across sections/systems in playback order so a
         // measure whose `time_signature` differs from its predecessor renders an
         // inline meter change. Seeded with the chart's initial meter.
@@ -2174,18 +2183,6 @@ impl ChartLayoutEngine {
         let mut prevailing_ts = time_signature;
         let mut prev_prevailing_ts: Option<(u8, u8)> = None;
         let mut ts_run_len: usize = 0;
-
-        // Detect count-in from parsed chart sections if not configured explicitly.
-        let _count_in_measures = if self.config.count_in_measures > 0 {
-            self.config.count_in_measures as usize
-        } else {
-            chart
-                .sections
-                .iter()
-                .find(|s| matches!(s.section.section_type, SectionType::CountIn))
-                .map(|s| s.measures().len())
-                .unwrap_or(0)
-        };
 
         // Track offset into `chart_measurements`. Compact and End sections are
         // filtered out of the measure pass, so this offset only advances for
@@ -2655,6 +2652,8 @@ impl ChartLayoutEngine {
                                 absolute_tick,
                                 x: measure_x + segment.x,
                                 width: segment.width,
+                                measure_x0: measure_x,
+                                measure_x1: measure_x + this_measure_width,
                                 staff_y,
                                 staff_height,
                                 time_start,

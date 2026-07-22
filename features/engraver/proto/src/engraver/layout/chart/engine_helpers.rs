@@ -70,6 +70,12 @@ impl ChartLayoutEngine {
         }
 
         let (section_type, abbreviation) = self.section_type_to_strings(&section.section_type);
+        // The capsule text is assembled by the shared `section_label` helper so
+        // it can never drift from `chart_section_timeline`'s label. It equals
+        // what `layout_margin_label` would build from
+        // section_type/abbreviation/number/letter, so rendering is unchanged.
+        let label_override =
+            Some(section_layout::section_label(&section.section_type, section.number, letter));
         let (_, label_node) = layout_margin_label(
             &MarginLabelParams {
                 section_type,
@@ -77,6 +83,7 @@ impl ChartLayoutEngine {
                 number: section.number,
                 letter,
                 comment: section.comment.clone(),
+                label_override,
                 page_x,
                 margin_width,
                 staff_y,
@@ -307,6 +314,15 @@ impl ChartLayoutEngine {
             count_in: count_in_config.as_ref(),
         })
     }
+}
+
+/// Per-measure labels for a count-in snippet: a countdown into the downbeat, so
+/// `n` count-in measures are labelled `-(n-1) ..= 0` (e.g. `-1, 0` for a 2-bar
+/// count-in) and the first real measure is `1`.
+pub(super) fn count_in_countdown_labels(n: usize) -> Vec<String> {
+    (0..n)
+        .map(|i| (i as i64 - (n as i64 - 1)).to_string())
+        .collect()
 }
 
 fn repeat_pass_label_parts(labels: &str) -> impl Iterator<Item = &str> {

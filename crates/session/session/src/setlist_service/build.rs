@@ -2,17 +2,23 @@
 
 use super::{HYDRATION_CONCURRENCY, SetlistServiceImpl};
 use daw::service::Projects;
-use moire::sync::Semaphore;
+// `Semaphore` + `JoinSet` back the native-only background hydration pass below.
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::sync::Semaphore;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_proto::{AdvanceMode, SessionServiceError, Setlist, Song};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: Clone + Projects + Send + Sync + 'static,
+    // `MaybeSendSync` = `Send + Sync` on native (byte-for-byte the old
+    // bound), empty on wasm — lets the browser's `!Send` Standalone backend
+    // serve this in-process (see architect's LocalServer wasm support).
+    D: Clone + Projects + architect::MaybeSendSync + 'static,
 {
     pub(crate) async fn build_from_open_projects_impl(&self) -> Result<(), SessionServiceError> {
         debug!("Building setlist from open projects...");
@@ -25,7 +31,7 @@ where
         // REAPER's internal lock. Bounce via `main_thread::query` —
         // same pattern mode/take/record services already use.
         let daw = self.daw.clone();
-        let (projects, current_project_guid) = daw_reaper::main_thread::query(move || {
+        let (projects, current_project_guid) = daw_proto::main_thread::query(move || {
             let projects = daw.list();
             let current = daw.current().map(|p| p.guid);
             (projects, current)
@@ -91,13 +97,23 @@ where
 
         // Phase 1: focused project full details, all others names only.
         // A single project may produce multiple songs (multi-song mode).
+        //
+        // Wasm exception: the browser engine has no Phase-2 background
+        // hydration pass (below — it's tokio JoinSet, native-only), so a
+        // name-only placeholder there would NEVER gain its sections/chart. The
+        // in-browser setlist is small (one ext-state chart read per song, all
+        // in-process), so fully build EVERY project up front instead — this is
+        // what lights up the navigator + chart pane for songs beyond the
+        // focused one. Native is byte-for-byte unchanged (`full_build` reduces
+        // to `load.index == focused_index`).
         let mut songs = Vec::with_capacity(project_loads.len());
         let mut focused_song_count = 0usize;
         for load in &project_loads {
             let existing_song = existing_songs_by_guid.get(&load.guid);
             let cached_song = cached_songs.get(&load.guid);
 
-            if load.index == focused_index {
+            let full_build = load.index == focused_index || cfg!(target_arch = "wasm32");
+            if full_build {
                 let project_songs = self.build_songs_with_cache(load, existing_song).await;
                 if !project_songs.is_empty() {
                     for song in &project_songs {
@@ -110,7 +126,9 @@ where
                             s
                         })
                         .collect();
-                    focused_song_count = light_songs.len();
+                    if load.index == focused_index {
+                        focused_song_count = light_songs.len();
+                    }
                     songs.extend(light_songs);
                     continue;
                 }
@@ -159,11 +177,18 @@ where
 
         // Phase 2: hydrate remaining projects in background with bounded concurrency.
         // Each project may produce multiple songs, so we splice by project_guid.
+        // Native-only: the background pass uses `tokio::spawn` + `tokio::task::
+        // JoinSet` (a tokio runtime + `Send` futures), which don't build for the
+        // browser's single-threaded runtime. On wasm the initial (Phase 1)
+        // synchronous build above already populated the setlist; lazy hydration
+        // for the browser engine is a Phase-2 runtime path.
+        #[cfg(target_arch = "wasm32")]
+        let _ = build_generation;
+        #[cfg(not(target_arch = "wasm32"))]
         let this = Arc::new((*self).clone());
+        #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move {
-            let semaphore = Arc::new(Semaphore::new(
-                "session.setlist.build.hydration",
-                HYDRATION_CONCURRENCY,
+            let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY,
             ));
             let mut join_set = JoinSet::new();
 

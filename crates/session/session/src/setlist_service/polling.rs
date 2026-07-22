@@ -8,24 +8,90 @@ use super::{
 use daw::rpc::Daw;
 use daw::service::transport::service::Transport;
 use daw::service::{AudioEngine, ProjectContext, Projects};
-use moire::sync::mpsc;
 use rustc_hash::FxHashMap;
 use session_proto::{
     ActiveIndices, AdvanceMode, MeasureInfo, Section, SessionServiceError, SetlistEvent,
     SetlistService, Song, SongTransportState,
 };
 use smallvec::SmallVec;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use architect::platform::Instant;
+use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError as BroadcastRecvError;
+use tokio::sync::{broadcast, mpsc, watch};
+// `MissedTickBehavior` + `tokio::time::interval` drive the native pump only;
+// the wasm pump uses fused `architect::platform::sleep` timers instead.
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
 use vox::Tx;
 
+/// A timestamp `dur` in the past, wasm-safe. `web_time::Instant` (what
+/// `architect::platform::now()` returns) is relative to page load, so it starts
+/// near zero and `now() - dur` UNDERFLOW-panics on wasm ("overflow when
+/// subtracting duration from instant"). Native `Instant`s are huge and never
+/// underflow, so `checked_sub` there is byte-for-byte the old `-`; on wasm we
+/// saturate to `now()` (the first interval-gated action just waits one tick).
+pub(crate) fn instant_ago(dur: Duration) -> Instant {
+    architect::platform::now()
+        .checked_sub(dur)
+        .unwrap_or_else(architect::platform::now)
+}
+
+/// Loop-carried mutable state for the setlist subscription pump.
+///
+/// Every mutable the reactive `select!` branches touch lives here so the native
+/// `tokio::select!` loop and the wasm `futures::select!` loop can drive the
+/// *same* `on_*` branch handlers (see `run_subscription_stream`). Extracting
+/// this made the native loop a pure refactor: the branch bodies moved verbatim,
+/// only threading their mutables through `st`.
+struct StreamState {
+    guid_to_indices: FxHashMap<String, Vec<usize>>,
+    song_id_to_index: FxHashMap<String, usize>,
+    last_indices: ActiveIndices,
+    last_transport_by_song: FxHashMap<usize, SongTransportState>,
+    last_section_by_song: FxHashMap<usize, Option<usize>>,
+    last_current_project_guid: Option<String>,
+    pending_project_switch: Option<(String, Instant)>,
+    auto_advance_triggered_for: Option<usize>,
+    chart_probe_inflight: Arc<AtomicBool>,
+    chart_probe_tx: mpsc::UnboundedSender<(Duration, bool)>,
+    transport_tick_count: u64,
+    transport_events_sent: u64,
+    transport_song_updates_sent: usize,
+    transport_compute_total: Duration,
+    chart_check_count: u64,
+    chart_update_count: u64,
+    chart_compute_total: Duration,
+    last_indices_progress_emit: Instant,
+    chart_probe_poll_ms: u64,
+    chart_probe_last_started: Instant,
+}
+
+/// Subscription handles + the initial `StreamState`, produced by the shared
+/// setup (`initialize_stream`). Both select loops own the receivers as locals
+/// so their per-branch borrows stay disjoint.
+struct StreamInit {
+    setlist_updates: watch::Receiver<u64>,
+    hydration_rx: broadcast::Receiver<(usize, Song)>,
+    chart_hydration_rx: broadcast::Receiver<(usize, session_proto::SongChartHydration)>,
+    transport_stream: daw::rpc::EventStream<daw::service::transport::TransportStreamEvent>,
+    chart_probe_rx: mpsc::UnboundedReceiver<(Duration, bool)>,
+    daw: Daw,
+    state: StreamState,
+}
+
 impl<D> SetlistServiceImpl<D>
 where
-    D: AudioEngine + Clone + Projects + daw::service::TempoMap + Transport + Send + Sync + 'static,
+    D: AudioEngine
+        + Clone
+        + Projects
+        + daw::service::TempoMap
+        + Transport
+        + architect::MaybeSendSync
+        + 'static,
 {
     pub(crate) fn active_indices_structural_changed(
         prev: &ActiveIndices,
@@ -305,7 +371,7 @@ where
         // internal lock. Bounce once via `main_thread::query` for the whole
         // batch (same pattern as `build_from_open_projects_impl`).
         let daw = self.daw.clone();
-        let Some(snapshot) = daw_reaper::main_thread::query(move || {
+        let Some(snapshot) = daw_proto::main_thread::query(move || {
             let current = daw.current()?;
             let ctx = ProjectContext::Project(current.guid.clone());
             let position = daw.get_position(ctx.clone());
@@ -430,14 +496,16 @@ where
     /// shares the hubs.
     pub fn start_stream_pumps(&self)
     where
-        Self: Clone + Send + Sync + 'static,
+        // `MaybeSendSync` = `Send + Sync` natively (what `platform::spawn`'s
+        // tokio backend needs), empty on wasm (`spawn_local` needs neither).
+        Self: Clone + architect::MaybeSendSync + 'static,
     {
         let pump = self.clone();
-        moire::task::spawn(async move {
+        architect::platform::spawn(async move {
             let _ = pump.subscribe_impl().await;
         });
         let pump = self.clone();
-        moire::task::spawn(async move {
+        architect::platform::spawn(async move {
             let _ = pump.subscribe_active_impl().await;
         });
     }
@@ -458,688 +526,916 @@ where
         self.run_subscription_stream().await
     }
 
-    async fn run_subscription_stream(&self) -> Result<(), SessionServiceError> {
-        debug!("SetlistService::subscribe() - starting fully reactive event stream");
+    // ── Shared setup ────────────────────────────────────────────────────────
+    // The subscription setup (initial setlist/chart publish, guid maps,
+    // transport snapshot, initial indices, chart-probe channel) is identical on
+    // native and wasm; only the reactive loop differs (tokio vs futures
+    // select). This produces the subscription handles + the initial
+    // `StreamState` both loops drive.
+    async fn initialize_stream(&self) -> StreamInit {
         let this = self;
+        let setlist_updates = this.setlist_update_bus.subscribe();
+        let hydration_rx = this.hydration_bus.subscribe();
+        let chart_hydration_rx = this.chart_hydration_bus.subscribe();
+
+        // Get songs for GUID -> index mapping
+        // NOTE: subscribe does NOT build inline. Doing the full build inside
+        // the streaming handler (before the select loop) wedges the
+        // subscription response. The desktop calls build_from_open_projects
+        // separately; the key fix is below — when there's no setlist yet we
+        // stay subscribed (rather than bailing) so the revision loop
+        // delivers SetlistChanged once a build populates it.
+        let songs: Vec<Song> = {
+            let setlist = this.setlist.read().await;
+            if let Some(ref sl) = *setlist {
+                // Send initial setlist state.
+                self.events_hub.publish(SetlistEvent::SetlistChanged(sl.clone()));
+                sl.songs.clone()
+            } else {
+                // Build produced nothing (e.g. no open projects). Stay
+                // subscribed so a later build still delivers SetlistChanged.
+                info!("SetlistService::subscribe() - no setlist after build; awaiting updates");
+                Vec::new()
+            }
+        };
+
+        // Send cached chart payloads for current songs so subscribers can
+        // render charts without bloating SetlistChanged payloads.
         {
-            let mut setlist_updates = this.setlist_update_bus.subscribe();
-            let mut hydration_rx = this.hydration_bus.subscribe();
-            let mut chart_hydration_rx = this.chart_hydration_bus.subscribe();
-
-            // Get songs for GUID -> index mapping
-            // NOTE: subscribe does NOT build inline. Doing the full build inside
-            // the streaming handler (before the select loop) wedges the
-            // subscription response. The desktop calls build_from_open_projects
-            // separately; the key fix is below — when there's no setlist yet we
-            // stay subscribed (rather than bailing) so the revision loop
-            // delivers SetlistChanged once a build populates it.
-            let songs: Vec<Song> = {
-                let setlist = this.setlist.read().await;
-                if let Some(ref sl) = *setlist {
-                    // Send initial setlist state.
-                    self.events_hub.publish(SetlistEvent::SetlistChanged(sl.clone()));
-                    sl.songs.clone()
-                } else {
-                    // Build produced nothing (e.g. no open projects). Stay
-                    // subscribed so a later build still delivers SetlistChanged.
-                    info!("SetlistService::subscribe() - no setlist after build; awaiting updates");
-                    Vec::new()
-                }
-            };
-
-            // Send cached chart payloads for current songs so subscribers can
-            // render charts without bloating SetlistChanged payloads.
-            {
-                let chart_snapshot = this.chart_cache.snapshot().await;
-                for (index, song) in songs.iter().enumerate() {
-                    if let Some(chart) = chart_snapshot.get(&song.project_guid).cloned() {
-                        self.events_hub.publish(SetlistEvent::SongChartHydrated {
-                            song_id: song.id.clone(),
-                            index,
-                            chart,
-                        });
-                    }
+            let chart_snapshot = this.chart_cache.snapshot().await;
+            for (index, song) in songs.iter().enumerate() {
+                if let Some(chart) = chart_snapshot.get(&song.project_guid).cloned() {
+                    self.events_hub.publish(SetlistEvent::SongChartHydrated {
+                        song_id: song.id.clone(),
+                        index,
+                        chart,
+                    });
                 }
             }
+        }
 
-            // Build project GUID -> song indices mapping (multiple songs may share a GUID).
-            let mut guid_to_indices: FxHashMap<String, Vec<usize>> = FxHashMap::default();
-            for (idx, song) in songs.iter().enumerate() {
-                guid_to_indices
+        // Build project GUID -> song indices mapping (multiple songs may share a GUID).
+        let mut guid_to_indices: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+        for (idx, song) in songs.iter().enumerate() {
+            guid_to_indices
+                .entry(song.project_guid.clone())
+                .or_default()
+                .push(idx);
+        }
+        let song_id_to_index: FxHashMap<String, usize> = songs
+            .iter()
+            .enumerate()
+            .map(|(idx, song)| (song.id.to_string(), idx))
+            .collect();
+
+        // Transport propagation is an architect `#[subscribe]` stream now
+        // (each backend's `TransportStreamSource`) — no SynchronizationEngine
+        // bridge, no 30 Hz poll fallback. The stream is all-projects; each
+        // event routes to its song(s) by `project_guid`, and we query that
+        // project's full transport snapshot to build `SongTransportState`.
+        // Native reads daw-control's global facade (`Daw::get()` → `&Daw`, an
+        // Arc-backed handle we clone to own); on wasm daw-control's global is
+        // `cfg(not(wasm32))`, so read the same handle from the daw *facade*'s
+        // wasm seam (`daw::get()`, populated by `daw::init_from_parts` when the
+        // in-process daw-standalone is wired). Single seam, no duplicate.
+        #[cfg(not(target_arch = "wasm32"))]
+        let daw = Daw::get().clone();
+        #[cfg(target_arch = "wasm32")]
+        let daw = daw::get()
+            .expect(
+                "wasm Daw not initialized; call daw::init_from_parts (build_in_process_daw) \
+                 before starting the setlist pump",
+            )
+            .clone();
+        let transport_stream = daw.transport_events();
+
+        // Get initial active indices from REAPER's current project (makes RPC calls)
+        // This ensures the UI shows the correct song/section on startup
+        let last_indices = this.calculate_active_indices().await;
+
+        // Update cached indices so navigation works correctly
+        this.set_cached_indices(last_indices.clone()).await;
+
+        // Also update active_song_id if we found a song
+        if let Some(song_idx) = last_indices.song_index
+            && let Some(song) = songs.get(song_idx)
+        {
+            *this.active_song_id.write().await = Some(song.id.to_string());
+        }
+        // Cursor delivery is owned by the active-indices pump
+        // (`subscribe_active_impl` → `indices_hub`); this events pump only
+        // carries setlist structure + transport. It still tracks
+        // `last_indices` below for auto-advance / chart-probe bookkeeping.
+
+        // Send initial transport state for all songs (one-time poll)
+        let initial_transports = this.get_all_song_transports().await;
+        let last_transport_by_song: FxHashMap<usize, SongTransportState> = initial_transports
+            .iter()
+            .cloned()
+            .map(|transport| (transport.song_index, transport))
+            .collect();
+        self.events_hub
+            .publish(SetlistEvent::TransportUpdate(initial_transports));
+
+        // Track current song/section for enter/exit events
+        // Keyed by song_index to track section per song
+        let last_section_by_song: FxHashMap<usize, Option<usize>> = FxHashMap::default();
+
+        // Track last known current project GUID for detecting tab switches.
+        // `current()` hits REAPER main-thread FFI — bounce via main_thread::query
+        // so the subscribe future doesn't hang on the tokio worker.
+        let last_current_project_guid: Option<String> = {
+            let daw = self.daw.clone();
+            daw_proto::main_thread::query(move || daw.current().map(|p| p.guid))
+                .await
+                .flatten()
+        };
+
+        let (chart_probe_tx, chart_probe_rx) = mpsc::unbounded_channel::<(Duration, bool)>();
+        let chart_probe_inflight = Arc::new(AtomicBool::new(false));
+
+        let state = StreamState {
+            guid_to_indices,
+            song_id_to_index,
+            last_indices,
+            last_transport_by_song,
+            last_section_by_song,
+            last_current_project_guid,
+            pending_project_switch: None,
+            auto_advance_triggered_for: None,
+            chart_probe_inflight,
+            chart_probe_tx,
+            transport_tick_count: 0,
+            transport_events_sent: 0,
+            transport_song_updates_sent: 0,
+            transport_compute_total: Duration::ZERO,
+            chart_check_count: 0,
+            chart_update_count: 0,
+            chart_compute_total: Duration::ZERO,
+            last_indices_progress_emit: architect::platform::now(),
+            chart_probe_poll_ms: ACTIVE_HYDRATION_POLL_MS,
+            chart_probe_last_started: instant_ago(Duration::from_millis(ACTIVE_HYDRATION_POLL_MS)),
+        };
+
+        StreamInit {
+            setlist_updates,
+            hydration_rx,
+            chart_hydration_rx,
+            transport_stream,
+            chart_probe_rx,
+            daw,
+            state,
+        }
+    }
+
+    // ── Branch handlers ──────────────────────────────────────────────────────
+    // One `async fn` per select branch, shared by both loops. Each returns
+    // `ControlFlow::Break(())` where the original branch did `break` (ends the
+    // pump) and `ControlFlow::Continue(())` where it did `continue` / fell
+    // through (re-enter the loop). Bodies are the original branch bodies moved
+    // verbatim, threading their mutables through `st`.
+
+    async fn on_setlist_update(
+        &self,
+        st: &mut StreamState,
+        changed: Result<(), watch::error::RecvError>,
+    ) -> ControlFlow<()> {
+        if changed.is_err() {
+            return ControlFlow::Break(());
+        }
+        if let Some(setlist) = self.setlist.read().await.clone() {
+            st.guid_to_indices = FxHashMap::default();
+            for (idx, song) in setlist.songs.iter().enumerate() {
+                st.guid_to_indices
                     .entry(song.project_guid.clone())
                     .or_default()
                     .push(idx);
             }
-            let mut song_id_to_index: FxHashMap<String, usize> = songs
+            st.song_id_to_index = setlist
+                .songs
                 .iter()
                 .enumerate()
                 .map(|(idx, song)| (song.id.to_string(), idx))
                 .collect();
+            self.events_hub.publish(SetlistEvent::SetlistChanged(setlist));
+        }
+        ControlFlow::Continue(())
+    }
 
-            // Transport propagation is an architect `#[subscribe]` stream now
-            // (each backend's `TransportStreamSource`) — no SynchronizationEngine
-            // bridge, no 30 Hz poll fallback. The stream is all-projects; each
-            // event routes to its song(s) by `project_guid`, and we query that
-            // project's full transport snapshot to build `SongTransportState`.
-            let daw = Daw::get();
-            let mut transport_stream = daw.transport_events();
-
-            // Get initial active indices from REAPER's current project (makes RPC calls)
-            // This ensures the UI shows the correct song/section on startup
-            let mut last_indices = this.calculate_active_indices().await;
-
-            // Update cached indices so navigation works correctly
-            this.set_cached_indices(last_indices.clone()).await;
-
-            // Also update active_song_id if we found a song
-            if let Some(song_idx) = last_indices.song_index
-                && let Some(song) = songs.get(song_idx)
-            {
-                *this.active_song_id.write().await = Some(song.id.to_string());
+    async fn on_hydration(
+        &self,
+        hydrated: Result<(usize, Song), BroadcastRecvError>,
+    ) -> ControlFlow<()> {
+        match hydrated {
+            Ok((index, song)) => {
+                self.events_hub.publish(SetlistEvent::SongHydrated {
+                    song_id: song.id.clone(),
+                    index,
+                    song,
+                });
             }
-            // Cursor delivery is owned by the active-indices pump
-            // (`subscribe_active_impl` → `indices_hub`); this events pump only
-            // carries setlist structure + transport. It still tracks
-            // `last_indices` below for auto-advance / chart-probe bookkeeping.
+            Err(BroadcastRecvError::Lagged(skipped)) => {
+                debug!("Hydration update lagged by {} messages", skipped);
+            }
+            Err(BroadcastRecvError::Closed) => return ControlFlow::Break(()),
+        }
+        ControlFlow::Continue(())
+    }
 
-            // Send initial transport state for all songs (one-time poll)
-            let initial_transports = this.get_all_song_transports().await;
-            let mut last_transport_by_song: FxHashMap<usize, SongTransportState> =
-                initial_transports
-                    .iter()
-                    .cloned()
-                    .map(|transport| (transport.song_index, transport))
-                    .collect();
-            self.events_hub.publish(SetlistEvent::TransportUpdate(initial_transports));
+    async fn on_chart_hydration(
+        &self,
+        chart_hydrated: Result<(usize, session_proto::SongChartHydration), BroadcastRecvError>,
+    ) -> ControlFlow<()> {
+        match chart_hydrated {
+            Ok((index, chart)) => {
+                let song_id = {
+                    let setlist = self.setlist.read().await;
+                    setlist
+                        .as_ref()
+                        .and_then(|sl| sl.songs.get(index))
+                        .map(|s| s.id.clone())
+                        .unwrap_or_else(session_proto::SongId::new)
+                };
+                self.events_hub.publish(SetlistEvent::SongChartHydrated {
+                    song_id,
+                    index,
+                    chart,
+                });
+            }
+            Err(BroadcastRecvError::Lagged(skipped)) => {
+                debug!("Chart hydration update lagged by {} messages", skipped);
+            }
+            Err(BroadcastRecvError::Closed) => return ControlFlow::Break(()),
+        }
+        ControlFlow::Continue(())
+    }
 
-            // Track current song/section for enter/exit events
-            // Keyed by song_index to track section per song
-            let mut last_section_by_song: FxHashMap<usize, Option<usize>> = FxHashMap::default();
+    // Handle transport updates from the architect transport stream.
+    async fn on_transport(
+        &self,
+        st: &mut StreamState,
+        daw: &Daw,
+        ev: Result<Option<vox::SelfRef<daw::service::transport::TransportStreamEvent>>, vox::RxError>,
+    ) -> ControlFlow<()> {
+        let this = self;
+        // Only position ticks drive per-song updates; state-only
+        // events (play/stop/tempo) are reflected by the fresh
+        // snapshot query on the next tick. `None`/error ends the
+        // stream — exit the pump.
+        let project_guid = match ev {
+            Ok(Some(ev_ref)) => match ev_ref.get() {
+                daw::service::transport::TransportStreamEvent::Position(tick) => {
+                    tick.project_guid.clone()
+                }
+                _ => return ControlFlow::Continue(()),
+            },
+            _ => return ControlFlow::Break(()),
+        };
+        // Full transport snapshot for this project (tempo / time
+        // signature / loop / play-state / positions) — the same
+        // struct the old SyncEngine delivered.
+        let transport_state = match daw.project(project_guid.clone()).await {
+            Ok(p) => match p.transport().get_state().await {
+                Ok(s) => s,
+                Err(_) => return ControlFlow::Continue(()),
+            },
+            Err(_) => return ControlFlow::Continue(()),
+        };
+        {
+            let transport_started = architect::platform::now();
+            let active_song_id = this.active_song_id.read().await.clone();
+            let active_song_index: Option<usize>;
+            let mut song_transports: SmallVec<[SongTransportState; 16]> = SmallVec::new();
+            let mut pending_section_events: SmallVec<[SetlistEvent; 8]> = SmallVec::new();
 
-            // Track last known current project GUID for detecting tab switches.
-            // `current()` hits REAPER main-thread FFI — bounce via main_thread::query
-            // so the subscribe future doesn't hang on the tokio worker.
-            let mut last_current_project_guid: Option<String> = {
-                let daw = self.daw.clone();
-                daw_reaper::main_thread::query(move || daw.current().map(|p| p.guid))
-                    .await
-                    .flatten()
-            };
-            let mut pending_project_switch: Option<(String, Instant)> = None;
+            {
+                let setlist_guard = this.setlist.read().await;
+                let Some(ref setlist_ref) = *setlist_guard else {
+                    return ControlFlow::Continue(());
+                };
 
-            // Timer for checking project tab switches (every 500ms)
-            // This is separate from transport updates which come at ~30Hz
-            let mut project_check_interval = tokio::time::interval(Duration::from_millis(500));
-            project_check_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-            let mut active_hydration_interval =
-                tokio::time::interval(Duration::from_millis(ACTIVE_HYDRATION_TICK_MS));
-            active_hydration_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-            let mut perf_log_interval = tokio::time::interval(Duration::from_secs(5));
-            perf_log_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-            let (chart_probe_tx, mut chart_probe_rx) =
-                mpsc::unbounded_channel::<(Duration, bool)>("session.setlist.polling.chart_probe");
-            let chart_probe_inflight = Arc::new(AtomicBool::new(false));
+                active_song_index = active_song_id
+                    .as_ref()
+                    .and_then(|id| st.song_id_to_index.get(id).copied());
 
-            let mut transport_tick_count: u64 = 0;
-            let mut transport_events_sent: u64 = 0;
-            let mut transport_song_updates_sent: usize = 0;
-            let mut transport_compute_total = Duration::ZERO;
-            let mut chart_check_count: u64 = 0;
-            let mut chart_update_count: u64 = 0;
-            let mut chart_compute_total = Duration::ZERO;
-            let mut last_indices_progress_emit = Instant::now();
-            let mut chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
-            let mut chart_probe_last_started =
-                Instant::now() - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS);
-            // Track which song index we already auto-advanced from, to prevent retriggering.
-            let mut auto_advance_triggered_for: Option<usize> = None;
+                if let Some(song_indices) = st.guid_to_indices.get(&project_guid) {
+                    let is_playing = transport_state.play_state
+                        == daw::service::PlayState::Playing
+                        || transport_state.play_state == daw::service::PlayState::Recording;
 
-            // Fully reactive loop — architect transport stream + periodic checks.
-            loop {
-                tokio::select! {
-                    changed = setlist_updates.changed() => {
-                        if changed.is_err() {
-                            break;
-                        }
-                        if let Some(setlist) = this.setlist.read().await.clone() {
-                            guid_to_indices = FxHashMap::default();
-                            for (idx, song) in setlist.songs.iter().enumerate() {
-                                guid_to_indices
-                                    .entry(song.project_guid.clone())
-                                    .or_default()
-                                    .push(idx);
+                    // Use playhead position when playing, edit cursor when stopped
+                    let position = if is_playing {
+                        transport_state.playhead_position.clone()
+                    } else {
+                        transport_state.edit_position.clone()
+                    };
+
+                    let pos_secs = position
+                        .time
+                        .as_ref()
+                        .map(|t| t.as_seconds())
+                        .unwrap_or(0.0);
+
+                    // Resolve which song the playhead is in (position-based)
+                    let resolved_index = song_indices
+                        .iter()
+                        .copied()
+                        .find(|&idx| {
+                            if let Some(s) = setlist_ref.songs.get(idx) {
+                                pos_secs >= s.start_seconds && pos_secs < s.end_seconds
+                            } else {
+                                false
                             }
-                            song_id_to_index = setlist
-                                .songs
+                        })
+                        // Fallback: nearest song in this project
+                        .or_else(|| {
+                            song_indices
                                 .iter()
-                                .enumerate()
-                                .map(|(idx, song)| (song.id.to_string(), idx))
-                                .collect();
-                            self.events_hub.publish(SetlistEvent::SetlistChanged(setlist));
-                        }
-                    }
-
-                    hydrated = hydration_rx.recv() => {
-                        match hydrated {
-                            Ok((index, song)) => {
-                                self.events_hub.publish(SetlistEvent::SongHydrated { song_id: song.id.clone(), index, song });
-                            }
-                            Err(BroadcastRecvError::Lagged(skipped)) => {
-                                debug!("Hydration update lagged by {} messages", skipped);
-                            }
-                            Err(BroadcastRecvError::Closed) => break,
-                        }
-                    }
-
-                    chart_hydrated = chart_hydration_rx.recv() => {
-                        match chart_hydrated {
-                            Ok((index, chart)) => {
-                                let song_id = {
-                                    let setlist = this.setlist.read().await;
-                                    setlist.as_ref()
-                                        .and_then(|sl| sl.songs.get(index))
-                                        .map(|s| s.id.clone())
-                                        .unwrap_or_else(session_proto::SongId::new)
-                                };
-                                self.events_hub.publish(SetlistEvent::SongChartHydrated { song_id, index, chart });
-                            }
-                            Err(BroadcastRecvError::Lagged(skipped)) => {
-                                debug!("Chart hydration update lagged by {} messages", skipped);
-                            }
-                            Err(BroadcastRecvError::Closed) => break,
-                        }
-                    }
-
-                    // Handle transport updates from the architect transport stream.
-                    ev = transport_stream.recv() => {
-                        // Only position ticks drive per-song updates; state-only
-                        // events (play/stop/tempo) are reflected by the fresh
-                        // snapshot query on the next tick. `None`/error ends the
-                        // stream — exit the pump.
-                        let project_guid = match ev {
-                            Ok(Some(ev_ref)) => match ev_ref.get() {
-                                daw::service::transport::TransportStreamEvent::Position(tick) => {
-                                    tick.project_guid.clone()
-                                }
-                                _ => continue,
-                            },
-                            _ => break,
-                        };
-                        // Full transport snapshot for this project (tempo / time
-                        // signature / loop / play-state / positions) — the same
-                        // struct the old SyncEngine delivered.
-                        let transport_state = match daw
-                            .project(project_guid.clone())
-                            .await
-                        {
-                            Ok(p) => match p.transport().get_state().await {
-                                Ok(s) => s,
-                                Err(_) => continue,
-                            },
-                            Err(_) => continue,
-                        };
-                        {
-                        let transport_started = Instant::now();
-                        let active_song_id = this.active_song_id.read().await.clone();
-                        let active_song_index: Option<usize>;
-                        let mut song_transports: SmallVec<[SongTransportState; 16]> =
-                            SmallVec::new();
-                        let mut pending_section_events: SmallVec<[SetlistEvent; 8]> =
-                            SmallVec::new();
-
-                        {
-                            let setlist_guard = this.setlist.read().await;
-                            let Some(ref setlist_ref) = *setlist_guard else {
-                                continue;
-                            };
-
-                            active_song_index = active_song_id.as_ref().and_then(|id| {
-                                song_id_to_index.get(id).copied()
-                            });
-
-                            if let Some(song_indices) = guid_to_indices.get(&project_guid) {
-                                    let is_playing = transport_state.play_state
-                                        == daw::service::PlayState::Playing
-                                        || transport_state.play_state
-                                            == daw::service::PlayState::Recording;
-
-                                    // Use playhead position when playing, edit cursor when stopped
-                                    let position = if is_playing {
-                                        transport_state.playhead_position.clone()
-                                    } else {
-                                        transport_state.edit_position.clone()
-                                    };
-
-                                    let pos_secs = position
-                                        .time
-                                        .as_ref()
-                                        .map(|t| t.as_seconds())
-                                        .unwrap_or(0.0);
-
-                                    // Resolve which song the playhead is in (position-based)
-                                    let resolved_index = song_indices
-                                        .iter()
-                                        .copied()
-                                        .find(|&idx| {
-                                            if let Some(s) = setlist_ref.songs.get(idx) {
-                                                pos_secs >= s.start_seconds && pos_secs < s.end_seconds
-                                            } else {
-                                                false
-                                            }
-                                        })
-                                        // Fallback: nearest song in this project
-                                        .or_else(|| {
-                                            song_indices
-                                                .iter()
-                                                .copied()
-                                                .min_by(|&a, &b| {
-                                                    let dist_a = setlist_ref.songs.get(a).map(|s| {
-                                                        (pos_secs - s.start_seconds).abs()
-                                                            .min((pos_secs - s.end_seconds).abs())
-                                                    }).unwrap_or(f64::MAX);
-                                                    let dist_b = setlist_ref.songs.get(b).map(|s| {
-                                                        (pos_secs - s.start_seconds).abs()
-                                                            .min((pos_secs - s.end_seconds).abs())
-                                                    }).unwrap_or(f64::MAX);
-                                                    dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
-                                                })
-                                        });
-
-                                    // Emit transport for all songs in this project
-                                    for &song_index in song_indices {
-                                        if let Some(song) = setlist_ref.songs.get(song_index) {
-                                            let song_transport = Self::calculate_song_transport(
-                                                song,
-                                                song_index,
-                                                position.clone(),
-                                                is_playing,
-                                                transport_state.looping,
-                                                transport_state.loop_region.clone(),
-                                                transport_state.tempo.bpm(),
-                                                (
-                                                    transport_state.time_signature.numerator(),
-                                                    transport_state.time_signature.denominator(),
-                                                ),
-                                            );
-
-                                            // Track section changes only for the resolved active song
-                                            if Some(song_index) == resolved_index {
-                                                let current_section = song_transport.section_index;
-                                                let last_section =
-                                                    last_section_by_song.get(&song_index).copied().flatten();
-
-                                                if current_section != last_section {
-                                                    if let Some(sec_idx) = last_section {
-                                                        let section_id = song.sections.get(sec_idx)
-                                                            .map(|s| s.section_id.clone())
-                                                            .unwrap_or_else(session_proto::SectionId::new);
-                                                        pending_section_events.push(SetlistEvent::SectionExited {
-                                                            song_id: song.id.clone(),
-                                                            song_index,
-                                                            section_id,
-                                                            section_index: sec_idx,
-                                                        });
-                                                    }
-
-                                                    if let Some(sec_idx) = current_section
-                                                        && let Some(section) = song.sections.get(sec_idx) {
-                                                            pending_section_events.push(SetlistEvent::SectionEntered {
-                                                                song_id: song.id.clone(),
-                                                                song_index,
-                                                                section_id: section.section_id.clone(),
-                                                                section_index: sec_idx,
-                                                                section: section.clone(),
-                                                            });
-                                                        }
-
-                                                    last_section_by_song.insert(song_index, current_section);
-                                                }
-                                            }
-                                            song_transports.push(song_transport);
-                                        }
-                                    }
-                            }
-                        }
-
-                        if !song_transports.is_empty() {
-                            for section_event in pending_section_events {
-                                self.events_hub.publish(section_event);
-                            }
-
-                            // Update ActiveIndices from the first playing song (or first song with updates)
-                            // Find the currently active song based on cached ID
-                            // Find transport for active song, or use first available
-                            let active_transport = active_song_index
-                                .and_then(|idx| {
-                                    song_transports.iter().find(|t| t.song_index == idx)
+                                .copied()
+                                .min_by(|&a, &b| {
+                                    let dist_a = setlist_ref.songs.get(a).map(|s| {
+                                        (pos_secs - s.start_seconds).abs()
+                                            .min((pos_secs - s.end_seconds).abs())
+                                    }).unwrap_or(f64::MAX);
+                                    let dist_b = setlist_ref.songs.get(b).map(|s| {
+                                        (pos_secs - s.start_seconds).abs()
+                                            .min((pos_secs - s.end_seconds).abs())
+                                    }).unwrap_or(f64::MAX);
+                                    dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
                                 })
-                                .or_else(|| song_transports.first());
+                        });
 
-                            if let Some(transport) = active_transport {
-                                // Get current position in seconds for queue checking
-                                let position_seconds = transport
-                                    .position
-                                    .time
-                                    .map(|t| t.as_seconds())
-                                    .unwrap_or(0.0);
-
-                                // Check if we've reached the queued target
-                                this.check_and_clear_queue(
-                                    transport.song_index,
-                                    transport.section_index,
-                                    position_seconds,
-                                )
-                                .await;
-
-                                // Get current queued target to include in indices
-                                let queued_target = this.get_queued_target().await;
-
-                                let current_indices = ActiveIndices {
-                                    song_index: Some(transport.song_index),
-                                    section_index: transport.section_index,
-                                    slide_index: None,
-                                    song_progress: Some(transport.progress),
-                                    section_progress: transport.section_progress,
-                                    is_playing: transport.is_playing,
-                                    looping: transport.is_looping,
-                                    loop_selection: None,
-                                    queued_target,
-                                };
-
-                                // Cache indices for instant navigation (no RPC needed)
-                                this.set_cached_indices(current_indices.clone()).await;
-
-                                // Only send if changed. Structural changes are immediate;
-                                // progress-only changes are throttled to reduce UI churn.
-                                let structural_change = Self::active_indices_structural_changed(
-                                    &last_indices,
-                                    &current_indices,
-                                );
-                                let progress_change = current_indices.song_progress
-                                    != last_indices.song_progress
-                                    || current_indices.section_progress
-                                        != last_indices.section_progress;
-                                let can_emit_progress = last_indices_progress_emit.elapsed()
-                                    >= Duration::from_millis(ACTIVE_INDICES_PROGRESS_EMIT_MS);
-                                let song_changed =
-                                    current_indices.song_index != last_indices.song_index;
-
-                                // ── Auto-advance: when a song ends, optionally navigate to next ──
-                                if let Some(song_idx) = current_indices.song_index {
-                                    let near_end = current_indices
-                                        .song_progress
-                                        .map(|p| p >= 0.999)
-                                        .unwrap_or(false);
-                                    let stopped = !current_indices.is_playing;
-
-                                    if song_changed {
-                                        // Reset auto-advance guard when the song changes.
-                                        auto_advance_triggered_for = None;
-                                    }
-
-                                    if near_end
-                                        && stopped
-                                        && auto_advance_triggered_for != Some(song_idx)
-                                    {
-                                        // Extract advance decision under the read lock, then drop it
-                                        // before performing any async navigation.
-                                        let should_advance = {
-                                            let setlist = this.setlist.read().await;
-                                            setlist.as_ref().and_then(|sl| {
-                                                let song = sl.songs.get(song_idx)?;
-                                                let mode = song.effective_advance_mode(sl.advance_mode);
-                                                if mode == AdvanceMode::AutoPlay {
-                                                    let next_idx = song_idx + 1;
-                                                    (next_idx < sl.songs.len()).then_some(next_idx)
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                        };
-
-                                        if let Some(next_idx) = should_advance {
-                                            auto_advance_triggered_for = Some(song_idx);
-                                            info!(
-                                                "Auto-advance: song {} ended, advancing to song {}",
-                                                song_idx, next_idx
-                                            );
-                                            this.seek_to_song_internal(next_idx).await;
-                                        }
-                                    }
-                                }
-
-                                if structural_change || (progress_change && can_emit_progress) {
-                                    // Cursor is published by the active-indices
-                                    // pump; here we only advance the bookkeeping
-                                    // this events pump uses for auto-advance /
-                                    // chart-probe scheduling.
-                                    if progress_change {
-                                        last_indices_progress_emit = Instant::now();
-                                    }
-                                    last_indices = current_indices;
-                                    if song_changed {
-                                        chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
-                                        chart_probe_last_started = Instant::now()
-                                            - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS);
-                                    }
-                                }
-                            }
-
-                            let mut changed_transports: SmallVec<[SongTransportState; 16]> =
-                                SmallVec::with_capacity(song_transports.len());
-                            for transport in song_transports {
-                                let changed = last_transport_by_song
-                                    .get(&transport.song_index)
-                                    .map(|prev| Self::transport_changed(prev, &transport))
-                                    .unwrap_or(true);
-                                if changed {
-                                    last_transport_by_song
-                                        .insert(transport.song_index, transport.clone());
-                                    changed_transports.push(transport);
-                                }
-                            }
-
-                            let changed_count = changed_transports.len();
-                            if changed_count > 0 {
-                                let changed_transports = changed_transports.into_vec();
-                                self.events_hub.publish(SetlistEvent::TransportUpdate(changed_transports));
-                                transport_events_sent += 1;
-                                transport_song_updates_sent += changed_count;
-                            }
-                        }
-                        transport_tick_count += 1;
-                        transport_compute_total += transport_started.elapsed();
-                        }
-                    }
-
-                    // Periodically check if the current REAPER project tab has changed
-                    _ = project_check_interval.tick() => {
-                        // Avoid tab-switch churn while transport is active.
-                        if this.get_cached_indices().await.is_playing {
-                            pending_project_switch = None;
-                            continue;
-                        }
-
-                        let current_project_guid = {
-                            let daw = self.daw.clone();
-                            daw_reaper::main_thread::query(move || daw.current().map(|p| p.guid))
-                                .await
-                                .flatten()
-                        };
-                        if let Some(current_guid) = current_project_guid {
-
-                            // No change.
-                            if last_current_project_guid.as_ref() == Some(&current_guid) {
-                                pending_project_switch = None;
-                                continue;
-                            }
-
-                            // Debounce tab switches so transient backend jitter doesn't thrash active state.
-                            let switch_stable = match pending_project_switch.as_ref() {
-                                Some((pending_guid, started)) if pending_guid == &current_guid => {
-                                    started.elapsed()
-                                        >= Duration::from_millis(PROJECT_SWITCH_DEBOUNCE_MS)
-                                }
-                                _ => false,
-                            };
-                            if !switch_stable {
-                                pending_project_switch = Some((current_guid, Instant::now()));
-                                continue;
-                            }
-
-                            let (confirmed_guid, _) =
-                                pending_project_switch.take().unwrap_or((current_guid, Instant::now()));
-                            debug!(
-                                "Project tab changed from {:?} to {}",
-                                last_current_project_guid, confirmed_guid
+                    // Emit transport for all songs in this project
+                    for &song_index in song_indices {
+                        if let Some(song) = setlist_ref.songs.get(song_index) {
+                            let song_transport = Self::calculate_song_transport(
+                                song,
+                                song_index,
+                                position.clone(),
+                                is_playing,
+                                transport_state.looping,
+                                transport_state.loop_region.clone(),
+                                transport_state.tempo.bpm(),
+                                (
+                                    transport_state.time_signature.numerator(),
+                                    transport_state.time_signature.denominator(),
+                                ),
                             );
 
-                            // Check if previously active project was paused - if so, stop it
-                            if let Some(prev_guid) = &last_current_project_guid
-                                && let Ok(prev_project) = daw.project(prev_guid).await {
-                                    let transport = prev_project.transport();
-                                    if let Ok(state) = transport.get_play_state().await
-                                        && state == daw::service::PlayState::Paused {
-                                            // Stop the paused project
-                                            debug!("Stopping paused project {}", prev_guid);
-                                            let _ = transport.stop().await;
+                            // Track section changes only for the resolved active song
+                            if Some(song_index) == resolved_index {
+                                let current_section = song_transport.section_index;
+                                let last_section =
+                                    st.last_section_by_song.get(&song_index).copied().flatten();
+
+                                if current_section != last_section {
+                                    if let Some(sec_idx) = last_section {
+                                        let section_id = song.sections.get(sec_idx)
+                                            .map(|s| s.section_id.clone())
+                                            .unwrap_or_else(session_proto::SectionId::new);
+                                        pending_section_events.push(SetlistEvent::SectionExited {
+                                            song_id: song.id.clone(),
+                                            song_index,
+                                            section_id,
+                                            section_index: sec_idx,
+                                        });
+                                    }
+
+                                    if let Some(sec_idx) = current_section
+                                        && let Some(section) = song.sections.get(sec_idx) {
+                                            pending_section_events.push(SetlistEvent::SectionEntered {
+                                                song_id: song.id.clone(),
+                                                song_index,
+                                                section_id: section.section_id.clone(),
+                                                section_index: sec_idx,
+                                                section: section.clone(),
+                                            });
                                         }
-                                }
 
-                            // Find the song that matches the new current project
-                            if guid_to_indices.contains_key(&confirmed_guid) {
-                                // Let calculate_active_indices resolve the correct
-                                // song by position (handles multi-song projects).
-                                let new_indices = this.calculate_active_indices().await;
-                                this.set_cached_indices(new_indices.clone()).await;
-
-                                // Update active song ID from resolved index
-                                if let Some(song_idx) = new_indices.song_index {
-                                    let song_id_str = {
-                                        let setlist_guard = this.setlist.read().await;
-                                        setlist_guard
-                                            .as_ref()
-                                            .and_then(|sl| sl.songs.get(song_idx))
-                                            .map(|song| song.id.to_string())
-                                    };
-                                    if let Some(song_id_str) = song_id_str {
-                                        *this.active_song_id.write().await = Some(song_id_str);
-                                    }
-                                }
-
-                                if new_indices != last_indices {
-                                    // Cursor published by the active-indices pump;
-                                    // keep the chart-probe scheduling bookkeeping.
-                                    if new_indices.song_index != last_indices.song_index {
-                                        chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
-                                        chart_probe_last_started = Instant::now()
-                                            - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS);
-                                    }
-                                    last_indices = new_indices;
+                                    st.last_section_by_song.insert(song_index, current_section);
                                 }
                             }
-
-                            last_current_project_guid = Some(confirmed_guid);
+                            song_transports.push(song_transport);
                         }
-                    }
-
-                    _ = active_hydration_interval.tick() => {
-                        if this.get_cached_indices().await.is_playing {
-                            continue;
-                        }
-                        if chart_probe_last_started.elapsed()
-                            < Duration::from_millis(chart_probe_poll_ms)
-                        {
-                            continue;
-                        }
-                        // Keep chart probing off the hot transport/select loop.
-                        // If a prior probe is still running, skip this tick.
-                        if !chart_probe_inflight.swap(true, Ordering::SeqCst) {
-                            chart_probe_last_started = Instant::now();
-                            let this_clone = this.clone();
-                            let chart_probe_tx_clone = chart_probe_tx.clone();
-                            let inflight = chart_probe_inflight.clone();
-                            tokio::spawn(async move {
-                                let chart_started = Instant::now();
-                                let updated = this_clone.refresh_active_song_chart_if_changed().await;
-                                let _ = chart_probe_tx_clone.send((chart_started.elapsed(), updated));
-                                inflight.store(false, Ordering::SeqCst);
-                            });
-                        }
-                    }
-
-                    chart_probe = chart_probe_rx.recv() => {
-                        match chart_probe {
-                            Some((elapsed, updated)) => {
-                                chart_check_count += 1;
-                                if updated {
-                                    chart_update_count += 1;
-                                    chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
-                                } else if elapsed >= Duration::from_millis(25) {
-                                    chart_probe_poll_ms = (chart_probe_poll_ms.saturating_mul(2))
-                                        .min(ACTIVE_HYDRATION_POLL_MAX_MS);
-                                } else {
-                                    // Keep lightweight probes responsive while idle.
-                                    chart_probe_poll_ms = (chart_probe_poll_ms + 1000)
-                                        .min(ACTIVE_HYDRATION_POLL_MAX_MS);
-                                }
-                                chart_compute_total += elapsed;
-                            }
-                            None => {
-                                warn!("Chart probe channel closed");
-                                break;
-                            }
-                        }
-                    }
-
-                    _ = perf_log_interval.tick() => {
-                        if transport_tick_count == 0 && chart_check_count == 0 {
-                            continue;
-                        }
-
-                        let transport_avg_ms = if transport_tick_count > 0 {
-                            (transport_compute_total.as_secs_f64() * 1000.0)
-                                / transport_tick_count as f64
-                        } else {
-                            0.0
-                        };
-                        let chart_avg_ms = if chart_check_count > 0 {
-                            (chart_compute_total.as_secs_f64() * 1000.0)
-                                / chart_check_count as f64
-                        } else {
-                            0.0
-                        };
-                        let fingerprint_support = match *this.fingerprint_method_supported.read().await {
-                            Some(true) => "supported",
-                            Some(false) => "unsupported",
-                            None => "unknown",
-                        };
-
-                        debug!(
-                            "Setlist perf (5s): transport_ticks={}, transport_events={}, transport_song_updates={}, transport_avg_ms={:.2}, chart_checks={}, chart_updates={}, chart_avg_ms={:.2}, fingerprint={}",
-                            transport_tick_count,
-                            transport_events_sent,
-                            transport_song_updates_sent,
-                            transport_avg_ms,
-                            chart_check_count,
-                            chart_update_count,
-                            chart_avg_ms,
-                            fingerprint_support
-                        );
-
-                        transport_tick_count = 0;
-                        transport_events_sent = 0;
-                        transport_song_updates_sent = 0;
-                        transport_compute_total = Duration::ZERO;
-                        chart_check_count = 0;
-                        chart_update_count = 0;
-                        chart_compute_total = Duration::ZERO;
                     }
                 }
             }
 
-            info!("SetlistService::subscribe() - stream ended");
+            if !song_transports.is_empty() {
+                for section_event in pending_section_events {
+                    self.events_hub.publish(section_event);
+                }
+
+                // Update ActiveIndices from the first playing song (or first song with updates)
+                // Find the currently active song based on cached ID
+                // Find transport for active song, or use first available
+                let active_transport = active_song_index
+                    .and_then(|idx| song_transports.iter().find(|t| t.song_index == idx))
+                    .or_else(|| song_transports.first());
+
+                if let Some(transport) = active_transport {
+                    // Get current position in seconds for queue checking
+                    let position_seconds = transport
+                        .position
+                        .time
+                        .map(|t| t.as_seconds())
+                        .unwrap_or(0.0);
+
+                    // Check if we've reached the queued target
+                    this.check_and_clear_queue(
+                        transport.song_index,
+                        transport.section_index,
+                        position_seconds,
+                    )
+                    .await;
+
+                    // Get current queued target to include in indices
+                    let queued_target = this.get_queued_target().await;
+
+                    let current_indices = ActiveIndices {
+                        song_index: Some(transport.song_index),
+                        section_index: transport.section_index,
+                        slide_index: None,
+                        song_progress: Some(transport.progress),
+                        section_progress: transport.section_progress,
+                        is_playing: transport.is_playing,
+                        looping: transport.is_looping,
+                        loop_selection: None,
+                        queued_target,
+                    };
+
+                    // Cache indices for instant navigation (no RPC needed)
+                    this.set_cached_indices(current_indices.clone()).await;
+
+                    // Only send if changed. Structural changes are immediate;
+                    // progress-only changes are throttled to reduce UI churn.
+                    let structural_change = Self::active_indices_structural_changed(
+                        &st.last_indices,
+                        &current_indices,
+                    );
+                    let progress_change = current_indices.song_progress
+                        != st.last_indices.song_progress
+                        || current_indices.section_progress != st.last_indices.section_progress;
+                    let can_emit_progress = st.last_indices_progress_emit.elapsed()
+                        >= Duration::from_millis(ACTIVE_INDICES_PROGRESS_EMIT_MS);
+                    let song_changed =
+                        current_indices.song_index != st.last_indices.song_index;
+
+                    // ── Auto-advance: when a song ends, optionally navigate to next ──
+                    if let Some(song_idx) = current_indices.song_index {
+                        let near_end = current_indices
+                            .song_progress
+                            .map(|p| p >= 0.999)
+                            .unwrap_or(false);
+                        let stopped = !current_indices.is_playing;
+
+                        if song_changed {
+                            // Reset auto-advance guard when the song changes.
+                            st.auto_advance_triggered_for = None;
+                        }
+
+                        if near_end
+                            && stopped
+                            && st.auto_advance_triggered_for != Some(song_idx)
+                        {
+                            // Extract advance decision under the read lock, then drop it
+                            // before performing any async navigation.
+                            let should_advance = {
+                                let setlist = this.setlist.read().await;
+                                setlist.as_ref().and_then(|sl| {
+                                    let song = sl.songs.get(song_idx)?;
+                                    let mode = song.effective_advance_mode(sl.advance_mode);
+                                    if mode == AdvanceMode::AutoPlay {
+                                        let next_idx = song_idx + 1;
+                                        (next_idx < sl.songs.len()).then_some(next_idx)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            };
+
+                            if let Some(next_idx) = should_advance {
+                                st.auto_advance_triggered_for = Some(song_idx);
+                                info!(
+                                    "Auto-advance: song {} ended, advancing to song {}",
+                                    song_idx, next_idx
+                                );
+                                this.seek_to_song_internal(next_idx).await;
+                            }
+                        }
+                    }
+
+                    if structural_change || (progress_change && can_emit_progress) {
+                        // Cursor is published by the active-indices
+                        // pump; here we only advance the bookkeeping
+                        // this events pump uses for auto-advance /
+                        // chart-probe scheduling.
+                        if progress_change {
+                            st.last_indices_progress_emit = architect::platform::now();
+                        }
+                        st.last_indices = current_indices;
+                        if song_changed {
+                            st.chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
+                            st.chart_probe_last_started =
+                                instant_ago(Duration::from_millis(ACTIVE_HYDRATION_POLL_MS));
+                        }
+                    }
+                }
+
+                let mut changed_transports: SmallVec<[SongTransportState; 16]> =
+                    SmallVec::with_capacity(song_transports.len());
+                for transport in song_transports {
+                    let changed = st
+                        .last_transport_by_song
+                        .get(&transport.song_index)
+                        .map(|prev| Self::transport_changed(prev, &transport))
+                        .unwrap_or(true);
+                    if changed {
+                        st.last_transport_by_song
+                            .insert(transport.song_index, transport.clone());
+                        changed_transports.push(transport);
+                    }
+                }
+
+                let changed_count = changed_transports.len();
+                if changed_count > 0 {
+                    let changed_transports = changed_transports.into_vec();
+                    self.events_hub
+                        .publish(SetlistEvent::TransportUpdate(changed_transports));
+                    st.transport_events_sent += 1;
+                    st.transport_song_updates_sent += changed_count;
+                }
+            }
+            st.transport_tick_count += 1;
+            st.transport_compute_total += transport_started.elapsed();
         }
+        ControlFlow::Continue(())
+    }
+
+    // Periodically check if the current REAPER project tab has changed
+    async fn on_project_check(&self, st: &mut StreamState, daw: &Daw) -> ControlFlow<()> {
+        let this = self;
+        // Avoid tab-switch churn while transport is active.
+        if this.get_cached_indices().await.is_playing {
+            st.pending_project_switch = None;
+            return ControlFlow::Continue(());
+        }
+
+        let current_project_guid = {
+            let daw = self.daw.clone();
+            daw_proto::main_thread::query(move || daw.current().map(|p| p.guid))
+                .await
+                .flatten()
+        };
+        if let Some(current_guid) = current_project_guid {
+            // No change.
+            if st.last_current_project_guid.as_ref() == Some(&current_guid) {
+                st.pending_project_switch = None;
+                return ControlFlow::Continue(());
+            }
+
+            // Debounce tab switches so transient backend jitter doesn't thrash active state.
+            let switch_stable = match st.pending_project_switch.as_ref() {
+                Some((pending_guid, started)) if pending_guid == &current_guid => {
+                    started.elapsed() >= Duration::from_millis(PROJECT_SWITCH_DEBOUNCE_MS)
+                }
+                _ => false,
+            };
+            if !switch_stable {
+                st.pending_project_switch = Some((current_guid, architect::platform::now()));
+                return ControlFlow::Continue(());
+            }
+
+            let (confirmed_guid, _) = st
+                .pending_project_switch
+                .take()
+                .unwrap_or((current_guid, architect::platform::now()));
+            debug!(
+                "Project tab changed from {:?} to {}",
+                st.last_current_project_guid, confirmed_guid
+            );
+
+            // Check if previously active project was paused - if so, stop it
+            if let Some(prev_guid) = &st.last_current_project_guid
+                && let Ok(prev_project) = daw.project(prev_guid).await
+            {
+                let transport = prev_project.transport();
+                if let Ok(state) = transport.get_play_state().await
+                    && state == daw::service::PlayState::Paused
+                {
+                    // Stop the paused project
+                    debug!("Stopping paused project {}", prev_guid);
+                    let _ = transport.stop().await;
+                }
+            }
+
+            // Find the song that matches the new current project
+            if st.guid_to_indices.contains_key(&confirmed_guid) {
+                // Let calculate_active_indices resolve the correct
+                // song by position (handles multi-song projects).
+                let new_indices = this.calculate_active_indices().await;
+                this.set_cached_indices(new_indices.clone()).await;
+
+                // Update active song ID from resolved index
+                if let Some(song_idx) = new_indices.song_index {
+                    let song_id_str = {
+                        let setlist_guard = this.setlist.read().await;
+                        setlist_guard
+                            .as_ref()
+                            .and_then(|sl| sl.songs.get(song_idx))
+                            .map(|song| song.id.to_string())
+                    };
+                    if let Some(song_id_str) = song_id_str {
+                        *this.active_song_id.write().await = Some(song_id_str);
+                    }
+                }
+
+                if new_indices != st.last_indices {
+                    // Cursor published by the active-indices pump;
+                    // keep the chart-probe scheduling bookkeeping.
+                    if new_indices.song_index != st.last_indices.song_index {
+                        st.chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
+                        st.chart_probe_last_started =
+                            instant_ago(Duration::from_millis(ACTIVE_HYDRATION_POLL_MS));
+                    }
+                    st.last_indices = new_indices;
+                }
+            }
+
+            st.last_current_project_guid = Some(confirmed_guid);
+        }
+        ControlFlow::Continue(())
+    }
+
+    async fn on_active_hydration(&self, st: &mut StreamState) -> ControlFlow<()> {
+        let this = self;
+        if this.get_cached_indices().await.is_playing {
+            return ControlFlow::Continue(());
+        }
+        if st.chart_probe_last_started.elapsed() < Duration::from_millis(st.chart_probe_poll_ms) {
+            return ControlFlow::Continue(());
+        }
+        // Keep chart probing off the hot transport/select loop.
+        // If a prior probe is still running, skip this tick.
+        if !st.chart_probe_inflight.swap(true, Ordering::SeqCst) {
+            st.chart_probe_last_started = architect::platform::now();
+            let this_clone = this.clone();
+            let chart_probe_tx_clone = st.chart_probe_tx.clone();
+            let inflight = st.chart_probe_inflight.clone();
+            let probe = async move {
+                let chart_started = architect::platform::now();
+                let updated = this_clone.refresh_active_song_chart_if_changed().await;
+                let _ = chart_probe_tx_clone.send((chart_started.elapsed(), updated));
+                inflight.store(false, Ordering::SeqCst);
+            };
+            // Native uses `tokio::spawn` (byte-for-byte with the original loop);
+            // wasm has no tokio runtime, so drive the probe via the portable
+            // `spawn_local`-backed `architect::platform::spawn`.
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::spawn(probe);
+            #[cfg(target_arch = "wasm32")]
+            architect::platform::spawn(probe);
+        }
+        ControlFlow::Continue(())
+    }
+
+    async fn on_chart_probe(
+        &self,
+        st: &mut StreamState,
+        chart_probe: Option<(Duration, bool)>,
+    ) -> ControlFlow<()> {
+        match chart_probe {
+            Some((elapsed, updated)) => {
+                st.chart_check_count += 1;
+                if updated {
+                    st.chart_update_count += 1;
+                    st.chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
+                } else if elapsed >= Duration::from_millis(25) {
+                    st.chart_probe_poll_ms =
+                        (st.chart_probe_poll_ms.saturating_mul(2)).min(ACTIVE_HYDRATION_POLL_MAX_MS);
+                } else {
+                    // Keep lightweight probes responsive while idle.
+                    st.chart_probe_poll_ms =
+                        (st.chart_probe_poll_ms + 1000).min(ACTIVE_HYDRATION_POLL_MAX_MS);
+                }
+                st.chart_compute_total += elapsed;
+            }
+            None => {
+                warn!("Chart probe channel closed");
+                return ControlFlow::Break(());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    async fn on_perf_log(&self, st: &mut StreamState) -> ControlFlow<()> {
+        let this = self;
+        if st.transport_tick_count == 0 && st.chart_check_count == 0 {
+            return ControlFlow::Continue(());
+        }
+
+        let transport_avg_ms = if st.transport_tick_count > 0 {
+            (st.transport_compute_total.as_secs_f64() * 1000.0) / st.transport_tick_count as f64
+        } else {
+            0.0
+        };
+        let chart_avg_ms = if st.chart_check_count > 0 {
+            (st.chart_compute_total.as_secs_f64() * 1000.0) / st.chart_check_count as f64
+        } else {
+            0.0
+        };
+        let fingerprint_support = match *this.fingerprint_method_supported.read().await {
+            Some(true) => "supported",
+            Some(false) => "unsupported",
+            None => "unknown",
+        };
+
+        debug!(
+            "Setlist perf (5s): transport_ticks={}, transport_events={}, transport_song_updates={}, transport_avg_ms={:.2}, chart_checks={}, chart_updates={}, chart_avg_ms={:.2}, fingerprint={}",
+            st.transport_tick_count,
+            st.transport_events_sent,
+            st.transport_song_updates_sent,
+            transport_avg_ms,
+            st.chart_check_count,
+            st.chart_update_count,
+            chart_avg_ms,
+            fingerprint_support
+        );
+
+        st.transport_tick_count = 0;
+        st.transport_events_sent = 0;
+        st.transport_song_updates_sent = 0;
+        st.transport_compute_total = Duration::ZERO;
+        st.chart_check_count = 0;
+        st.chart_update_count = 0;
+        st.chart_compute_total = Duration::ZERO;
+        ControlFlow::Continue(())
+    }
+
+    // ── Native reactive loop ─────────────────────────────────────────────────
+    // A pure refactor of the original select loop: same `tokio::select!` + three
+    // `tokio::time::interval` timers (MissedTickBehavior::Skip), now dispatching
+    // to the shared `on_*` handlers. Behavior is identical to the pre-refactor
+    // loop.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn run_subscription_stream(&self) -> Result<(), SessionServiceError> {
+        debug!("SetlistService::subscribe() - starting fully reactive event stream");
+        let StreamInit {
+            mut setlist_updates,
+            mut hydration_rx,
+            mut chart_hydration_rx,
+            mut transport_stream,
+            mut chart_probe_rx,
+            daw,
+            mut state,
+        } = self.initialize_stream().await;
+
+        // Timer for checking project tab switches (every 500ms)
+        // This is separate from transport updates which come at ~30Hz
+        let mut project_check_interval = tokio::time::interval(Duration::from_millis(500));
+        project_check_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut active_hydration_interval =
+            tokio::time::interval(Duration::from_millis(ACTIVE_HYDRATION_TICK_MS));
+        active_hydration_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut perf_log_interval = tokio::time::interval(Duration::from_secs(5));
+        perf_log_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+        // Fully reactive loop — architect transport stream + periodic checks.
+        loop {
+            tokio::select! {
+                changed = setlist_updates.changed() => {
+                    if self.on_setlist_update(&mut state, changed).await.is_break() {
+                        break;
+                    }
+                }
+                hydrated = hydration_rx.recv() => {
+                    if self.on_hydration(hydrated).await.is_break() {
+                        break;
+                    }
+                }
+                chart_hydrated = chart_hydration_rx.recv() => {
+                    if self.on_chart_hydration(chart_hydrated).await.is_break() {
+                        break;
+                    }
+                }
+                ev = transport_stream.recv() => {
+                    if self.on_transport(&mut state, &daw, ev).await.is_break() {
+                        break;
+                    }
+                }
+                _ = project_check_interval.tick() => {
+                    if self.on_project_check(&mut state, &daw).await.is_break() {
+                        break;
+                    }
+                }
+                _ = active_hydration_interval.tick() => {
+                    if self.on_active_hydration(&mut state).await.is_break() {
+                        break;
+                    }
+                }
+                chart_probe = chart_probe_rx.recv() => {
+                    if self.on_chart_probe(&mut state, chart_probe).await.is_break() {
+                        break;
+                    }
+                }
+                _ = perf_log_interval.tick() => {
+                    if self.on_perf_log(&mut state).await.is_break() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        info!("SetlistService::subscribe() - stream ended");
+        Ok(())
+    }
+
+    // ── Wasm reactive loop ───────────────────────────────────────────────────
+    // Same StreamState + shared `on_*` handlers as native, driven by
+    // `futures::select!` on the browser's single-threaded runtime (no tokio
+    // runtime, no `tokio::time::interval`, no `tokio::select!`). The
+    // broadcast/watch/transport/chart-probe receiver futures are freshly fused
+    // each iteration (cancel-safe, exactly like `tokio::select!` recreates its
+    // branch futures); the three `tokio::time::interval` timers become
+    // re-arming `architect::platform::sleep` futures.
+    //
+    // Timer caveat: unlike `MissedTickBehavior::Skip` (fixed wall-clock cadence
+    // regardless of handler duration), each `sleep(period)` here is re-armed
+    // from the END of its handler, so a slow handler shifts the next tick's
+    // phase. Wasm timer resolution is also millisecond-grained. Neither matters
+    // for the browser pump (the live-rig pump is the native path above).
+    #[cfg(target_arch = "wasm32")]
+    async fn run_subscription_stream(&self) -> Result<(), SessionServiceError> {
+        use futures::FutureExt;
+
+        debug!("SetlistService::subscribe() - starting fully reactive event stream (wasm)");
+        let StreamInit {
+            mut setlist_updates,
+            mut hydration_rx,
+            mut chart_hydration_rx,
+            mut transport_stream,
+            mut chart_probe_rx,
+            daw,
+            mut state,
+        } = self.initialize_stream().await;
+
+        // Re-arming periodic timers (boxed so the fused future is `Unpin` and can
+        // be reassigned in place after each fire).
+        let mut project_check =
+            Box::pin(architect::platform::sleep(Duration::from_millis(500))).fuse();
+        let mut active_hydration = Box::pin(architect::platform::sleep(Duration::from_millis(
+            ACTIVE_HYDRATION_TICK_MS,
+        )))
+        .fuse();
+        let mut perf_log = Box::pin(architect::platform::sleep(Duration::from_secs(5))).fuse();
+
+        loop {
+            // Freshly fuse the receiver futures each iteration and pin them on
+            // the stack for `futures::select!` (they are cancel-safe, so
+            // recreating them per iteration matches `tokio::select!`).
+            let setlist_fut = setlist_updates.changed().fuse();
+            let hydration_fut = hydration_rx.recv().fuse();
+            let chart_hydration_fut = chart_hydration_rx.recv().fuse();
+            let transport_fut = transport_stream.recv().fuse();
+            let chart_probe_fut = chart_probe_rx.recv().fuse();
+            futures::pin_mut!(
+                setlist_fut,
+                hydration_fut,
+                chart_hydration_fut,
+                transport_fut,
+                chart_probe_fut
+            );
+
+            let flow = futures::select! {
+                changed = setlist_fut => self.on_setlist_update(&mut state, changed).await,
+                hydrated = hydration_fut => self.on_hydration(hydrated).await,
+                chart_hydrated = chart_hydration_fut => self.on_chart_hydration(chart_hydrated).await,
+                ev = transport_fut => self.on_transport(&mut state, &daw, ev).await,
+                chart_probe = chart_probe_fut => self.on_chart_probe(&mut state, chart_probe).await,
+                _ = project_check => {
+                    project_check =
+                        Box::pin(architect::platform::sleep(Duration::from_millis(500))).fuse();
+                    self.on_project_check(&mut state, &daw).await
+                }
+                _ = active_hydration => {
+                    active_hydration = Box::pin(architect::platform::sleep(
+                        Duration::from_millis(ACTIVE_HYDRATION_TICK_MS),
+                    ))
+                    .fuse();
+                    self.on_active_hydration(&mut state).await
+                }
+                _ = perf_log => {
+                    perf_log =
+                        Box::pin(architect::platform::sleep(Duration::from_secs(5))).fuse();
+                    self.on_perf_log(&mut state).await
+                }
+            };
+            if let ControlFlow::Break(()) = flow {
+                break;
+            }
+        }
+
+        info!("SetlistService::subscribe() - stream ended");
         Ok(())
     }
 
@@ -1150,7 +1446,7 @@ where
         let mut last_indices = self.calculate_active_indices().await;
         self.indices_hub.publish(last_indices.clone());
         loop {
-            moire::time::sleep(Duration::from_micros(16667)).await;
+            architect::platform::sleep(Duration::from_micros(16667)).await;
             let current_indices = self.calculate_active_indices().await;
             if current_indices != last_indices {
                 self.indices_hub.publish(current_indices.clone());
@@ -1190,8 +1486,9 @@ where
         + daw::service::TempoMap
         + Transport
         + daw::service::Tracks
-        + Send
-        + Sync
+        // `Send + Sync` natively (byte-for-byte), empty on wasm — the browser
+        // in-process engine serves this with a `!Send` Standalone backend.
+        + architect::MaybeSendSync
         + 'static,
 {
     // =========================================================================
@@ -1584,8 +1881,8 @@ where
         + daw::service::TempoMap
         + Transport
         + daw::service::Tracks
-        + Send
-        + Sync
+        // `Send + Sync` natively (byte-for-byte), empty on wasm.
+        + architect::MaybeSendSync
         + 'static,
 {
     fn events_hub(&self) -> &architect::PubSub<SetlistEvent> {

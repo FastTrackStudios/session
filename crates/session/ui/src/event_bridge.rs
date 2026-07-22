@@ -58,6 +58,20 @@ pub fn apply_setlist_event(event: &SetlistEvent) {
             SONG_CHARTS
                 .write()
                 .insert(chart.project_guid.clone(), chart.clone());
+            // Also seed the song's *stable* `chart_text` in SETLIST_STRUCTURE.
+            // Charts are stripped from the Setlist payload and only ride these
+            // hydration deltas, so without this the keyflow SOURCE editor — which
+            // seeds from SETLIST_STRUCTURE (NOT the live SONG_CHARTS it writes
+            // into, to avoid a re-seed loop) — has no text. The editor never
+            // writes SETLIST_STRUCTURE, so this stays the original seed.
+            let mut sl = SETLIST_STRUCTURE.write();
+            for song in sl
+                .songs
+                .iter_mut()
+                .filter(|s| s.project_guid == chart.project_guid)
+            {
+                song.chart_text = Some(chart.chart_text.clone());
+            }
         }
 
         SetlistEvent::TransportUpdate(transports) => {

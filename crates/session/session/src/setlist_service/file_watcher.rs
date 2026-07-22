@@ -100,8 +100,8 @@ impl SongFileWatcher {
 
     /// Spawn the polling loop. Returns a join handle that runs until all
     /// receivers are dropped (channel closes) or the task is aborted.
-    pub fn start(mut self) -> moire::task::JoinHandle<()> {
-        moire::task::spawn(async move {
+    pub fn start(mut self) -> architect::platform::JoinHandle<()> {
+        architect::platform::spawn(async move {
             loop {
                 tokio::time::sleep(POLL_INTERVAL).await;
 

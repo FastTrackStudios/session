@@ -16,7 +16,7 @@
 //! `ensure_song_hydrated` (`setlist_service/hydration.rs`) — a real
 //! async rebuild path (chart/fingerprint extraction via
 //! `keyflow_daw_analysis::MidiChartsClient`, semaphore-bounded
-//! concurrency) guarded by a 5s `moire::time::timeout`, plus multiple
+//! concurrency) guarded by a 5s `architect::platform::timeout`, plus multiple
 //! `daw_reaper::main_thread::query(...).await` bounces batched across
 //! several steps.
 //!

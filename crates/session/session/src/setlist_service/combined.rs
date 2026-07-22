@@ -34,7 +34,7 @@ const SYNC_KEY_SONG_COUNT: &str = "song_count";
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: ExtState + Projects + Clone + Send + Sync + 'static,
+    D: ExtState + Projects + Clone + architect::MaybeSendSync + 'static,
 {
     /// Generate a combined setlist project from open song projects.
     ///
@@ -57,20 +57,20 @@ where
         // `Projects::save_all` / `list` / `ExtState::get_project` on
         // `daw_reaper::Reaper` hit main-thread-only REAPER FFI. From this
         // async RPC handler they hang on REAPER's internal lock. Bounce
-        // each phase through `daw_reaper::main_thread::query`.
+        // each phase through `daw_proto::main_thread::query`.
         info!("Saving all open projects before generating combined setlist...");
         {
             let daw = self.daw.clone();
-            daw_reaper::main_thread::query(move || daw.save_all()).await;
+            daw_proto::main_thread::query(move || daw.save_all()).await;
         }
 
         // Small delay to let REAPER finish writing files
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        architect::platform::sleep(std::time::Duration::from_millis(500)).await;
 
         // ── 2. Get all open projects, skip combined setlists ─────────
         let projects_with_flags = {
             let daw = self.daw.clone();
-            daw_reaper::main_thread::query(move || {
+            daw_proto::main_thread::query(move || {
                 daw.list()
                     .into_iter()
                     .map(|project| {
@@ -180,7 +180,7 @@ where
         let new_project = {
             let daw = self.daw.clone();
             let output_path_str = output_path.to_string_lossy().to_string();
-            daw_reaper::main_thread::query(move || daw.open(&output_path_str))
+            daw_proto::main_thread::query(move || daw.open(&output_path_str))
                 .await
                 .flatten()
                 .ok_or_else(|| {
@@ -204,7 +204,7 @@ where
             let setlist_id = setlist_id.clone();
             let setlist_path_str = setlist_path_str.clone();
             let new_project_guid = new_project_guid.clone();
-            daw_reaper::main_thread::query(move || {
+            daw_proto::main_thread::query(move || {
                 let new_project_ctx = ProjectContext::Project(new_project_guid.clone());
 
                 // Mark the combined setlist project
@@ -329,7 +329,7 @@ where
             let song_guids: Vec<String> = {
                 let daw = self.daw.clone();
                 let guid_filter = guid.clone();
-                daw_reaper::main_thread::query(move || {
+                daw_proto::main_thread::query(move || {
                     daw.list()
                         .into_iter()
                         .filter(|project| project.guid != guid_filter)
@@ -366,13 +366,13 @@ where
 
             // Spawn the position sync tick loop
             let position_sync = self.position_sync.clone();
-            moire::task::spawn(async move {
+            architect::platform::spawn(async move {
                 let Some(daw) = daw::get().cloned() else {
                     tracing::warn!("position sync loop skipped; daw facade is not initialized");
                     return;
                 };
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_millis(33)).await; // ~30Hz
+                    architect::platform::sleep(std::time::Duration::from_millis(33)).await; // ~30Hz
                     let mut guard = position_sync.write().await;
                     if let Some(ref mut bridge) = *guard {
                         bridge.tick(&daw).await;

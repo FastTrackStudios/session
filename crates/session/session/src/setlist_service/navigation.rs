@@ -13,16 +13,16 @@ fn project_ctx(project_guid: &str) -> ProjectContext {
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: AudioEngine + Projects + TempoMap + Transport + Clone + Send + Sync + 'static,
+    D: AudioEngine + Projects + TempoMap + Transport + Clone + architect::MaybeSendSync + 'static,
 {
     // All `self.daw.*` calls below hit REAPER main-thread-only FFI on the
     // `daw_reaper::Reaper` backend. Each helper bounces through
-    // `daw_reaper::main_thread::query` so async RPC handlers running on
+    // `daw_proto::main_thread::query` so async RPC handlers running on
     // tokio workers don't spin on REAPER's internal lock. Batched where
     // multiple calls need to happen together.
     async fn current_project_guid(&self) -> Option<String> {
         let daw = self.daw.clone();
-        daw_reaper::main_thread::query(move || daw.current().map(|p| p.guid))
+        daw_proto::main_thread::query(move || daw.current().map(|p| p.guid))
             .await
             .flatten()
     }
@@ -50,7 +50,7 @@ where
     async fn select_project(&self, project_guid: &str) -> bool {
         let daw = self.daw.clone();
         let project_guid = project_guid.to_string();
-        daw_reaper::main_thread::query(move || daw.select(&project_guid))
+        daw_proto::main_thread::query(move || daw.select(&project_guid))
             .await
             .unwrap_or(false)
     }
@@ -64,7 +64,7 @@ where
         {
             let daw = self.daw.clone();
             let prev_guid = prev.project_guid.clone();
-            daw_reaper::main_thread::query(move || {
+            daw_proto::main_thread::query(move || {
                 let ctx = project_ctx(&prev_guid);
                 let state = daw.get_play_state(ctx.clone());
                 if state != daw::service::PlayState::Playing {
@@ -133,7 +133,7 @@ where
             return;
         }
 
-        let song = match moire::time::timeout(
+        let song = match architect::platform::timeout(
             Duration::from_secs(5),
             self.ensure_song_hydrated(song_index),
         )
@@ -152,7 +152,7 @@ where
         let seek_pos = Self::song_seek_position(&song);
         let daw = self.daw.clone();
         let project_guid = skeleton.project_guid.clone();
-        daw_reaper::main_thread::query(move || {
+        daw_proto::main_thread::query(move || {
             let ctx = project_ctx(&project_guid);
             if let Err(e) = daw.set_position(ctx.clone(), seek_pos) {
                 warn!("seek_to_song_internal: failed to seek: {}", e);
@@ -194,7 +194,7 @@ where
         }
 
         // Now try to hydrate (best-effort, with timeout to prevent freezes)
-        let song = match moire::time::timeout(
+        let song = match architect::platform::timeout(
             Duration::from_secs(5),
             self.ensure_song_hydrated(index),
         )
@@ -223,7 +223,7 @@ where
         let seek_pos = Self::song_seek_position(&song);
         let daw = self.daw.clone();
         let project_guid = skeleton.project_guid.clone();
-        let (is_playing, actual_pos) = daw_reaper::main_thread::query(move || {
+        let (is_playing, actual_pos) = daw_proto::main_thread::query(move || {
             let ctx = project_ctx(&project_guid);
             let is_playing = daw.is_playing(ctx.clone());
             if !is_playing && let Err(e) = daw.set_position(ctx.clone(), seek_pos) {
@@ -290,7 +290,7 @@ where
                 let project_guid = song.project_guid.clone();
                 let section_start = section.start_seconds;
                 let daw = self.daw.clone();
-                let outcome = daw_reaper::main_thread::query(move || {
+                let outcome = daw_proto::main_thread::query(move || {
                     if !daw.select(&project_guid) {
                         return Err("select_failed");
                     }
@@ -368,15 +368,46 @@ where
         if let Some(song_idx) = active.song_index
             && let Some(song) = self.ensure_song_hydrated(song_idx).await
         {
+            // HARD INVARIANT: a `seek_to` is song-relative and may never
+            // leave the current song — clamp instead of letting an
+            // out-of-range target run the playhead past the song end (where
+            // the advance logic would flip the whole set to another song).
+            // The 10 ms end margin keeps the playhead strictly INSIDE the
+            // song: on a shared timeline song N's end == song N+1's start,
+            // and landing exactly on the boundary re-indexes to the next song.
+            let seconds = seconds.clamp(0.0, (song.duration() - 0.01).max(0.0));
+            // Mirror the (working) seek_to_section path exactly: select the
+            // project first, seek, then republish. Without the republish a
+            // PAUSED seek moves the cursor with no playhead tick, so
+            // ACTIVE_INDICES never follows and Play "resumes" at the stale
+            // position the UI snapped back to.
             let absolute_pos = song.start_seconds() + seconds;
             let daw = self.daw.clone();
             let project_guid = song.project_guid.clone();
-            let _ = daw_reaper::main_thread::query(move || {
-                if let Err(e) = daw.set_position(project_ctx(&project_guid), absolute_pos) {
-                    warn!("Failed to seek to {}: {}", absolute_pos, e);
+            let outcome = daw_proto::main_thread::query(move || {
+                if !daw.select(&project_guid) {
+                    return Err("select_failed");
                 }
+                daw.set_position(project_ctx(&project_guid), absolute_pos)
+                    .map_err(|_| "set_position_failed")
             })
-            .await;
+            .await
+            .unwrap_or(Err("main_thread_unavailable"));
+
+            match outcome {
+                Ok(()) => info!(
+                    "Seeked to {:.2}s (abs {:.2}s) in song {} ({})",
+                    seconds, absolute_pos, song_idx, song.name
+                ),
+                Err(reason) => warn!(
+                    "Failed to seek to {:.2}s in song {}: {}",
+                    seconds, song_idx, reason
+                ),
+            }
+            self.refresh_active_indices().await;
+            self.publish_transport_snapshot().await;
+        } else {
+            warn!("seek_to: no active song (indices not cached yet)");
         }
         Ok(())
     }
@@ -400,7 +431,7 @@ where
             .await;
             let daw = self.daw.clone();
             let project_guid = song.project_guid.clone();
-            let outcome = daw_reaper::main_thread::query(move || {
+            let outcome = daw_proto::main_thread::query(move || {
                 if !daw.select(&project_guid) {
                     return Err("select_failed");
                 }
@@ -471,7 +502,7 @@ where
         }
 
         // Now try to hydrate (best-effort, with timeout to prevent freezes)
-        let song = match moire::time::timeout(
+        let song = match architect::platform::timeout(
             Duration::from_secs(5),
             self.ensure_song_hydrated(song_index),
         )
@@ -499,7 +530,7 @@ where
         let seek_pos = Self::song_seek_position(&song);
         let daw = self.daw.clone();
         let project_guid = skeleton.project_guid.clone();
-        let (is_playing, actual_pos) = daw_reaper::main_thread::query(move || {
+        let (is_playing, actual_pos) = daw_proto::main_thread::query(move || {
             let ctx = project_ctx(&project_guid);
             let is_playing = daw.is_playing(ctx.clone());
             if !is_playing && let Err(e) = daw.set_position(ctx.clone(), seek_pos) {
@@ -540,7 +571,7 @@ where
                 let section_name = section.name.clone();
                 let song_name = song.name.clone();
                 let song_project_guid = song.project_guid.clone();
-                let outcome = daw_reaper::main_thread::query(move || {
+                let outcome = daw_proto::main_thread::query(move || {
                     if !daw.select(&project_guid) {
                         return Err("select_failed");
                     }
@@ -593,7 +624,7 @@ where
             let measure = position.measure;
             let beat = position.beat;
             let subdivision = position.subdivision;
-            let outcome = daw_reaper::main_thread::query(move || {
+            let outcome = daw_proto::main_thread::query(move || {
                 if !daw.select(&project_guid) {
                     return Err("select_failed");
                 }
@@ -642,7 +673,7 @@ where
             let project_guid = song.project_guid.clone();
             let song_name = song.name.clone();
             let song_project_guid = song.project_guid.clone();
-            let outcome = daw_reaper::main_thread::query(move || {
+            let outcome = daw_proto::main_thread::query(move || {
                 if !daw.select(&project_guid) {
                     return Err("select_failed");
                 }

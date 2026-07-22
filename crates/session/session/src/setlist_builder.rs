@@ -3,8 +3,10 @@
 //! Scans open projects and combines their song structures into a setlist.
 
 use crate::song_builder::SongBuilder;
+#[cfg(not(target_arch = "wasm32"))]
 use daw::reaper::Reaper;
 use daw::rpc::Daw;
+#[cfg(not(target_arch = "wasm32"))]
 use daw::service::{ProjectContext, Projects};
 use session_proto::Setlist;
 use tracing::{debug, warn};
@@ -14,6 +16,7 @@ pub struct SetlistBuilder;
 
 impl SetlistBuilder {
     /// Build a setlist from open REAPER projects using sync native service traits.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn build_from_open_projects_native() -> eyre::Result<Setlist> {
         debug!("SETLIST BUILDER: Building native setlist from open projects...");
 

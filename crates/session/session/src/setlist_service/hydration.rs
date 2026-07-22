@@ -4,13 +4,13 @@ use super::{
     CHART_REFRESH_FALLBACK_POLL_MS, HYDRATION_CONCURRENCY, MIDI_TRACK_TAG, SetlistServiceImpl,
 };
 use crate::song_builder::SongBuilder;
-use daw::rpc::Daw;
 use daw::service::{ProjectContext, ProjectInfo, Projects};
 use keyflow_daw_analysis::{DetectedChord, MidiChartData, MidiChartRequest, MidiChartsClient};
-use moire::sync::Semaphore;
+use tokio::sync::Semaphore;
 use session_proto::{Song, SongChartHydration, SongDetectedChord, SongId};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use architect::platform::Instant;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 #[derive(Clone)]
@@ -203,7 +203,7 @@ where
     /// the worker thread and the awaiting RPC client hangs forever
     /// (no response ever flows back).
     fn chart_client() -> Option<MidiChartsClient> {
-        Some(MidiChartsClient::new(Daw::try_get()?.caller().clone()))
+        Some(MidiChartsClient::new(daw::get()?.caller().clone()))
     }
 
     pub(crate) async fn fetch_midi_chart_data(project_guid: &str) -> Option<MidiChartData> {
@@ -218,7 +218,7 @@ where
             None => return None,
         };
         let call = client.generate_chart_data(req);
-        let res = match tokio::time::timeout(Duration::from_secs(2), call).await {
+        let res = match architect::platform::timeout(Duration::from_secs(2), call).await {
             Ok(r) => r,
             Err(_) => {
                 debug!(
@@ -260,7 +260,7 @@ where
             None => return None,
         };
         let call = client.source_fingerprint(req);
-        let res = match tokio::time::timeout(Duration::from_secs(2), call).await {
+        let res = match architect::platform::timeout(Duration::from_secs(2), call).await {
             Ok(r) => r,
             Err(_) => {
                 debug!(
@@ -299,11 +299,11 @@ where
     }
 
     pub(crate) async fn should_run_fallback_chart_refresh(&self, project_guid: &str) -> bool {
-        let now = Instant::now();
+        let now = architect::platform::now();
         self.last_chart_refresh_attempt
             .with_write(|map| {
                 if let Some(last) = map.get(project_guid)
-                    && now.duration_since(*last)
+                    && now.saturating_duration_since(*last)
                         < Duration::from_millis(CHART_REFRESH_FALLBACK_POLL_MS)
                 {
                     return false;
@@ -366,9 +366,7 @@ where
     }
 
     pub(crate) async fn fetch_project_loads(projects: Vec<ProjectInfo>) -> Vec<ProjectLoad> {
-        let semaphore = Arc::new(Semaphore::new(
-            "session.setlist.hydration.fetch_projects",
-            HYDRATION_CONCURRENCY,
+        let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY,
         ));
         let mut loads = Vec::with_capacity(projects.len());
         for (index, project) in projects.into_iter().enumerate() {

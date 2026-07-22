@@ -190,6 +190,13 @@ pub struct BeatPosition {
     pub x: f64,
     /// Width of this beat segment.
     pub width: f64,
+    /// Left barline X of the measure this beat belongs to (measure box start).
+    /// Used to draw the measure highlight barline-to-barline rather than over
+    /// the beat slots (which are inset from the barlines). All body beats in a
+    /// measure share this; count-in beats carry their own compact box.
+    pub measure_x0: f64,
+    /// Right barline X of the measure this beat belongs to (measure box end).
+    pub measure_x1: f64,
     /// Y position of the staff (top line).
     pub staff_y: f64,
     /// Staff height (for cursor rendering).

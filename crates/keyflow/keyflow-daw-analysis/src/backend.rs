@@ -40,7 +40,10 @@ impl KeyflowMidiAnalysis {
         self.daw
             .as_deref()
             .cloned()
-            .or_else(|| Daw::try_get().cloned())
+            // `daw::get()` is the facade accessor — `rpc::Daw::try_get()` on
+            // native (identical), and the wasm-capable global on wasm32 (where
+            // daw-control's `Daw::try_get` singleton is native-only).
+            .or_else(|| daw::get().cloned())
             .ok_or_else(|| "DAW not initialized".to_string())
     }
 
