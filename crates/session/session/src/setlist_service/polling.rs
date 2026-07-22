@@ -70,44 +70,15 @@ struct StreamInit {
     state: StreamState,
 }
 
-/// Wasm registration seam for the rpc `Daw` facade the browser setlist pump
-/// streams transport from.
-///
-/// daw-control's global `Daw::{init, get, try_get}` live behind
-/// `cfg(not(target_arch = "wasm32"))` (they use a `Send + Sync` global), so on
-/// the browser's single-threaded runtime there is no `Daw::get()`. The wasm
-/// setlist engine registers its in-process (memory-link) `Daw` here before
-/// starting the stream pumps; `initialize_stream` reads it. Until
-/// daw-standalone is wired in-process, `get()` panics with the same
-/// "not initialized" contract as native `Daw::get()`.
-#[cfg(target_arch = "wasm32")]
-pub(crate) mod wasm_daw {
-    use daw::rpc::Daw;
-    use std::cell::RefCell;
-
-    thread_local! {
-        static WASM_DAW: RefCell<Option<Daw>> = const { RefCell::new(None) };
-    }
-
-    /// Register the wasm `Daw` facade (call once at engine startup).
-    pub(crate) fn init(daw: Daw) {
-        WASM_DAW.with(|cell| *cell.borrow_mut() = Some(daw));
-    }
-
-    /// The registered wasm `Daw`. Panics if [`init`] hasn't been called — same
-    /// contract as native `Daw::get()`.
-    pub(crate) fn get() -> Daw {
-        WASM_DAW.with(|cell| {
-            cell.borrow().clone().expect(
-                "wasm Daw not initialized; call wasm_daw::init() before starting the setlist pump",
-            )
-        })
-    }
-}
-
 impl<D> SetlistServiceImpl<D>
 where
-    D: AudioEngine + Clone + Projects + daw::service::TempoMap + Transport + Send + Sync + 'static,
+    D: AudioEngine
+        + Clone
+        + Projects
+        + daw::service::TempoMap
+        + Transport
+        + architect::MaybeSendSync
+        + 'static,
 {
     pub(crate) fn active_indices_structural_changed(
         prev: &ActiveIndices,
@@ -512,7 +483,9 @@ where
     /// shares the hubs.
     pub fn start_stream_pumps(&self)
     where
-        Self: Clone + Send + Sync + 'static,
+        // `MaybeSendSync` = `Send + Sync` natively (what `platform::spawn`'s
+        // tokio backend needs), empty on wasm (`spawn_local` needs neither).
+        Self: Clone + architect::MaybeSendSync + 'static,
     {
         let pump = self.clone();
         architect::platform::spawn(async move {
@@ -608,12 +581,19 @@ where
         // event routes to its song(s) by `project_guid`, and we query that
         // project's full transport snapshot to build `SongTransportState`.
         // Native reads daw-control's global facade (`Daw::get()` → `&Daw`, an
-        // Arc-backed handle we clone to own); wasm has no such global (it's
-        // `cfg(not(wasm32))`), so it reads the pump's registration seam.
+        // Arc-backed handle we clone to own); on wasm daw-control's global is
+        // `cfg(not(wasm32))`, so read the same handle from the daw *facade*'s
+        // wasm seam (`daw::get()`, populated by `daw::init_from_parts` when the
+        // in-process daw-standalone is wired). Single seam, no duplicate.
         #[cfg(not(target_arch = "wasm32"))]
         let daw = Daw::get().clone();
         #[cfg(target_arch = "wasm32")]
-        let daw = wasm_daw::get();
+        let daw = daw::get()
+            .expect(
+                "wasm Daw not initialized; call daw::init_from_parts (build_in_process_daw) \
+                 before starting the setlist pump",
+            )
+            .clone();
         let transport_stream = daw.transport_events();
 
         // Get initial active indices from REAPER's current project (makes RPC calls)
@@ -1494,8 +1474,9 @@ where
         + daw::service::TempoMap
         + Transport
         + daw::service::Tracks
-        + Send
-        + Sync
+        // `Send + Sync` natively (byte-for-byte), empty on wasm — the browser
+        // in-process engine serves this with a `!Send` Standalone backend.
+        + architect::MaybeSendSync
         + 'static,
 {
     // =========================================================================
@@ -1888,8 +1869,8 @@ where
         + daw::service::TempoMap
         + Transport
         + daw::service::Tracks
-        + Send
-        + Sync
+        // `Send + Sync` natively (byte-for-byte), empty on wasm.
+        + architect::MaybeSendSync
         + 'static,
 {
     fn events_hub(&self) -> &architect::PubSub<SetlistEvent> {

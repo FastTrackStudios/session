@@ -15,7 +15,10 @@ use tracing::{debug, info, warn};
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: Clone + Projects + Send + Sync + 'static,
+    // `MaybeSendSync` = `Send + Sync` on native (byte-for-byte the old
+    // bound), empty on wasm — lets the browser's `!Send` Standalone backend
+    // serve this in-process (see architect's LocalServer wasm support).
+    D: Clone + Projects + architect::MaybeSendSync + 'static,
 {
     pub(crate) async fn build_from_open_projects_impl(&self) -> Result<(), SessionServiceError> {
         debug!("Building setlist from open projects...");

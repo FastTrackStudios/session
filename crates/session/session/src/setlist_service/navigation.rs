@@ -13,7 +13,7 @@ fn project_ctx(project_guid: &str) -> ProjectContext {
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: AudioEngine + Projects + TempoMap + Transport + Clone + Send + Sync + 'static,
+    D: AudioEngine + Projects + TempoMap + Transport + Clone + architect::MaybeSendSync + 'static,
 {
     // All `self.daw.*` calls below hit REAPER main-thread-only FFI on the
     // `daw_reaper::Reaper` backend. Each helper bounces through

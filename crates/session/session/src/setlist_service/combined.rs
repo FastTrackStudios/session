@@ -34,7 +34,7 @@ const SYNC_KEY_SONG_COUNT: &str = "song_count";
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: ExtState + Projects + Clone + Send + Sync + 'static,
+    D: ExtState + Projects + Clone + architect::MaybeSendSync + 'static,
 {
     /// Generate a combined setlist project from open song projects.
     ///
