@@ -29,7 +29,11 @@ impl Suppression {
     fn new() -> Self {
         Self {
             last_target_guid: None,
-            last_apply_time: architect::platform::now() - Duration::from_secs(10),
+            // web_time::Instant is page-load-relative on wasm; `now() - 10s`
+            // underflow-panics there. Saturate to now() (native never underflows).
+            last_apply_time: architect::platform::now()
+                .checked_sub(Duration::from_secs(10))
+                .unwrap_or_else(architect::platform::now),
             window: Duration::from_millis(200),
         }
     }

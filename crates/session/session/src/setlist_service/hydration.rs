@@ -303,7 +303,7 @@ where
         self.last_chart_refresh_attempt
             .with_write(|map| {
                 if let Some(last) = map.get(project_guid)
-                    && now.duration_since(*last)
+                    && now.saturating_duration_since(*last)
                         < Duration::from_millis(CHART_REFRESH_FALLBACK_POLL_MS)
                 {
                     return false;

@@ -28,6 +28,18 @@ use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
 use vox::Tx;
 
+/// A timestamp `dur` in the past, wasm-safe. `web_time::Instant` (what
+/// `architect::platform::now()` returns) is relative to page load, so it starts
+/// near zero and `now() - dur` UNDERFLOW-panics on wasm ("overflow when
+/// subtracting duration from instant"). Native `Instant`s are huge and never
+/// underflow, so `checked_sub` there is byte-for-byte the old `-`; on wasm we
+/// saturate to `now()` (the first interval-gated action just waits one tick).
+pub(crate) fn instant_ago(dur: Duration) -> Instant {
+    architect::platform::now()
+        .checked_sub(dur)
+        .unwrap_or_else(architect::platform::now)
+}
+
 /// Loop-carried mutable state for the setlist subscription pump.
 ///
 /// Every mutable the reactive `select!` branches touch lives here so the native
@@ -662,8 +674,7 @@ where
             chart_compute_total: Duration::ZERO,
             last_indices_progress_emit: architect::platform::now(),
             chart_probe_poll_ms: ACTIVE_HYDRATION_POLL_MS,
-            chart_probe_last_started: architect::platform::now()
-                - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS),
+            chart_probe_last_started: instant_ago(Duration::from_millis(ACTIVE_HYDRATION_POLL_MS)),
         };
 
         StreamInit {
@@ -1025,8 +1036,8 @@ where
                         st.last_indices = current_indices;
                         if song_changed {
                             st.chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
-                            st.chart_probe_last_started = architect::platform::now()
-                                - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS);
+                            st.chart_probe_last_started =
+                                instant_ago(Duration::from_millis(ACTIVE_HYDRATION_POLL_MS));
                         }
                     }
                 }
@@ -1144,8 +1155,8 @@ where
                     // keep the chart-probe scheduling bookkeeping.
                     if new_indices.song_index != st.last_indices.song_index {
                         st.chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
-                        st.chart_probe_last_started = architect::platform::now()
-                            - Duration::from_millis(ACTIVE_HYDRATION_POLL_MS);
+                        st.chart_probe_last_started =
+                            instant_ago(Duration::from_millis(ACTIVE_HYDRATION_POLL_MS));
                     }
                     st.last_indices = new_indices;
                 }
