@@ -368,15 +368,38 @@ where
         if let Some(song_idx) = active.song_index
             && let Some(song) = self.ensure_song_hydrated(song_idx).await
         {
+            // Mirror the (working) seek_to_section path exactly: select the
+            // project first, seek, then republish. Without the republish a
+            // PAUSED seek moves the cursor with no playhead tick, so
+            // ACTIVE_INDICES never follows and Play "resumes" at the stale
+            // position the UI snapped back to.
             let absolute_pos = song.start_seconds() + seconds;
             let daw = self.daw.clone();
             let project_guid = song.project_guid.clone();
-            let _ = daw_proto::main_thread::query(move || {
-                if let Err(e) = daw.set_position(project_ctx(&project_guid), absolute_pos) {
-                    warn!("Failed to seek to {}: {}", absolute_pos, e);
+            let outcome = daw_proto::main_thread::query(move || {
+                if !daw.select(&project_guid) {
+                    return Err("select_failed");
                 }
+                daw.set_position(project_ctx(&project_guid), absolute_pos)
+                    .map_err(|_| "set_position_failed")
             })
-            .await;
+            .await
+            .unwrap_or(Err("main_thread_unavailable"));
+
+            match outcome {
+                Ok(()) => info!(
+                    "Seeked to {:.2}s (abs {:.2}s) in song {} ({})",
+                    seconds, absolute_pos, song_idx, song.name
+                ),
+                Err(reason) => warn!(
+                    "Failed to seek to {:.2}s in song {}: {}",
+                    seconds, song_idx, reason
+                ),
+            }
+            self.refresh_active_indices().await;
+            self.publish_transport_snapshot().await;
+        } else {
+            warn!("seek_to: no active song (indices not cached yet)");
         }
         Ok(())
     }
