@@ -29,6 +29,8 @@ tempfile = "3"
 # Used only by the attachments test's in-memory mock service.
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
+# `migrate_flat_songs` example reads the legacy `manifest.json`.
+serde_json = { workspace = true }
 
 [lints]
 workspace = true
