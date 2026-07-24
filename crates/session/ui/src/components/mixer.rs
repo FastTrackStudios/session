@@ -71,6 +71,9 @@ const FADER_CSS: &str = r#"
 /// Instrument category derived from a track / group name.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Inst {
+    /// The reference / original / backing track — its own dedicated home,
+    /// always the leftmost folder (see [`organize_builtin`]).
+    Reference,
     Drums,
     Bass,
     Guitars,
@@ -78,6 +81,9 @@ enum Inst {
     Keys,
     Strings,
     Vocals,
+    /// Loops, samples, sequences, playback stems — anything triggered live
+    /// rather than an instrument performance.
+    Tracks,
     Click,
     Other,
 }
@@ -87,7 +93,11 @@ impl Inst {
     fn from_name(name: &str) -> Self {
         let n = name.to_lowercase();
         let has = |kws: &[&str]| kws.iter().any(|k| n.contains(k));
-        if has(&["click", "cue", "guide", "metronome", "count"]) {
+        // Reference FIRST so "Original Track" lands in Reference, not Tracks
+        // (it contains "track") — and never in an instrument folder.
+        if has(&["reference", "original", "backing"]) {
+            Inst::Reference
+        } else if has(&["click", "cue", "guide", "metronome", "count"]) {
             Inst::Click
         } else if has(&["drum", "kick", "snare", "tom", "hat", "perc", "cymbal", "ride", "crash"]) {
             Inst::Drums
@@ -103,6 +113,8 @@ impl Inst {
             Inst::Strings
         } else if has(&["vox", "vocal", "choir", "bgv", "lead", "singer"]) {
             Inst::Vocals
+        } else if has(&["loop", "sample", "sequence", "playback", "sfx", "stem", "track"]) {
+            Inst::Tracks
         } else {
             Inst::Other
         }
@@ -111,6 +123,7 @@ impl Inst {
     /// Group label / folder name.
     fn label(self) -> &'static str {
         match self {
+            Inst::Reference => "Reference",
             Inst::Drums => "Drums",
             Inst::Bass => "Bass",
             Inst::Guitars => "Guitars",
@@ -118,6 +131,7 @@ impl Inst {
             Inst::Keys => "Keys",
             Inst::Strings => "Strings",
             Inst::Vocals => "Vocals",
+            Inst::Tracks => "Tracks",
             Inst::Click => "Click",
             Inst::Other => "Other",
         }
@@ -134,7 +148,9 @@ fn instrument_icon(name: &str) -> Element {
         Inst::Synths | Inst::Keys => rsx! { Piano { size: sz, color: "currentColor" } },
         Inst::Vocals => rsx! { Mic { size: sz, color: "currentColor" } },
         Inst::Click => rsx! { AlarmClock { size: sz, color: "currentColor" } },
-        Inst::Strings | Inst::Other => rsx! { Music2 { size: sz, color: "currentColor" } },
+        Inst::Reference | Inst::Tracks | Inst::Strings | Inst::Other => {
+            rsx! { Music2 { size: sz, color: "currentColor" } }
+        }
     }
 }
 
@@ -231,10 +247,18 @@ fn organize_builtin(tracks: &[Track]) -> Vec<MixNode> {
             .map(MixNode::Leaf)
             .collect();
     }
+    // Reference is the dedicated, always-leftmost home for the reference /
+    // original track — pull it to the front regardless of stem order. Stable,
+    // so every other category keeps its first-seen order behind it.
+    order.sort_by_key(|c| if *c == Inst::Reference { 0 } else { 1 });
     let mut out = Vec::new();
     for c in order {
         let items = groups.remove(&c).unwrap_or_default();
-        if items.len() == 1 {
+        // Reference and Tracks are always their OWN labeled folder — even a
+        // lone track — so they read as deliberate homes. Ordinary instrument
+        // categories collapse a single track to a bare strip.
+        let always_folder = matches!(c, Inst::Reference | Inst::Tracks);
+        if items.len() == 1 && !always_folder {
             out.push(MixNode::Leaf(items.into_iter().next().unwrap()));
         } else {
             out.push(MixNode::Folder(FolderNode {
