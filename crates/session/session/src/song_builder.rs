@@ -69,8 +69,6 @@ impl ResolvedLanes {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn resolve_native(project: ProjectContext) -> Self {
         let count = Reaper.ruler_lane_count(project.clone());
         let mut resolved = Self::default();
@@ -578,8 +576,6 @@ impl SongBuilder {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn build_single_song_native(
         project: ProjectContext,
         project_guid: &str,
@@ -931,8 +927,6 @@ impl SongBuilder {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn build_song_from_region_native(
         project: ProjectContext,
         project_guid: &str,
@@ -1242,8 +1236,6 @@ impl SongBuilder {
         );
         Ok(snapped)
     }
-
-    #[cfg(not(target_arch = "wasm32"))]
 
     #[cfg(not(target_arch = "wasm32"))]
     fn snap_to_next_barline_native(project: ProjectContext, seconds: f64) -> eyre::Result<f64> {
