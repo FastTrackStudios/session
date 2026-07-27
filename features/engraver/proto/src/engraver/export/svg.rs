@@ -123,7 +123,7 @@ pub struct SvgSerializer {
     config: SvgExportConfig,
     output: String,
     indent_level: usize,
-    /// Glyphs used in this document (for <defs>)
+    /// Glyphs used in this document (for `<defs>`)
     used_glyphs: std::collections::HashSet<char>,
 }
 

@@ -17,7 +17,7 @@ pub mod metadata_keys {
     pub const SOURCE_SPAN: &str = "source_span";
     /// Chart position (JSON-serialized ChartPosition)
     pub const CHART_POSITION: &str = "chart_position";
-    /// Semantic roles (JSON-serialized Vec<SemanticRole>)
+    /// Semantic roles (JSON-serialized Vec`<SemanticRole>`)
     pub const SEMANTIC_ROLES: &str = "semantic_roles";
     /// Source link (JSON-serialized SourceLink)
     pub const SOURCE_LINK: &str = "source_link";
