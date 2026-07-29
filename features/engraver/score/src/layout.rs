@@ -1202,7 +1202,11 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
                         ));
                     }
                     sys_node.add_child(container);
-                    x += scene.width;
+                    // Advance by the ALLOCATED width (chart does the same):
+                    // any spring-justification shortfall stays inside this
+                    // measure's slot instead of accumulating as a gap at the
+                    // end of the line.
+                    x += width;
                     // Builder barlines are suppressed (mixed y-convention);
                     // draw the measure's closing barline in staff coords.
                     sys_node.add_child(barline(x, spatium));
