@@ -2382,3 +2382,49 @@ mod degree_root_size_guard {
         );
     }
 }
+
+#[cfg(test)]
+mod slash_continuation_guard {
+    use super::{collect_text_command_positions, test_style};
+    use crate::engraver::layout::chart::{ChartLayoutEngine, LayoutMode};
+    use std::sync::Arc;
+
+    /// Issue #48: `A //// // D //` is two measures — A for a bar, then two
+    /// beats of continuation slashes before D on beat 3. The leading Space
+    /// elements occupy beats, so D must anchor over beat 3 of bar 2, not
+    /// collapse onto beat 1 (which read as "A //// D //").
+    #[test]
+    fn bare_continuation_slashes_keep_next_chord_on_its_beat() {
+        let style = test_style();
+        let engine = ChartLayoutEngine::new(style, Arc::new(Vec::new()), Arc::new(Vec::new()));
+        let chart = keyflow_text::chart::parse_chart(
+            "Slash Test\n#A 120bpm 4/4\n\nVS 2\nA //// // D //",
+        )
+        .expect("chart should parse");
+        let result = engine.layout_chart(&chart, &LayoutMode::default());
+
+        let texts = collect_text_command_positions(&result.scene);
+        let d_chord = texts
+            .iter()
+            .find(|t| t.metadata_type.as_deref() == Some("chord") && t.text == "D")
+            .expect("D chord symbol should render");
+
+        // Nearest rendered beat to the D symbol must be beat 2 (0-indexed) of
+        // measure 1, i.e. the third slash — not the measure start.
+        let nearest = result
+            .beat_positions
+            .iter()
+            .filter(|b| b.measure == 1)
+            .min_by(|a, b| {
+                (a.x - d_chord.position.x)
+                    .abs()
+                    .total_cmp(&(b.x - d_chord.position.x).abs())
+            })
+            .expect("measure 2 should have beat positions");
+        assert_eq!(
+            nearest.beat, 2,
+            "D should anchor over beat 3 of bar 2 (x={:.1}); nearest beat was {} at x={:.1}",
+            d_chord.position.x, nearest.beat, nearest.x
+        );
+    }
+}

@@ -715,19 +715,24 @@ pub fn calculate_segment_index(
         let mut found_beat_pos = None;
         let mut seen_chord_count = 0;
 
+        let rhythm_beats = |rhythm: &ChordRhythm| match rhythm {
+            ChordRhythm::Slashes { count, .. } => *count as usize,
+            _ => 1,
+        };
         for elem in measure.rhythm_elements.iter() {
-            if let RhythmElement::Chord(c) = elem {
-                if seen_chord_count == chord_idx {
-                    found_beat_pos = Some(cumulative_beats);
-                    break;
+            match elem {
+                RhythmElement::Chord(c) => {
+                    if seen_chord_count == chord_idx {
+                        found_beat_pos = Some(cumulative_beats);
+                        break;
+                    }
+                    cumulative_beats += rhythm_beats(&c.rhythm);
+                    seen_chord_count += 1;
                 }
-                let chord_beats = match &c.rhythm {
-                    ChordRhythm::Slashes { count, .. } => *count as usize,
-                    ChordRhythm::Default => 1,
-                    _ => 1,
-                };
-                cumulative_beats += chord_beats;
-                seen_chord_count += 1;
+                // Continuation slashes / rests before the chord still occupy
+                // beats — "A //// // D //" must place D on beat 3 of bar 2.
+                RhythmElement::Space(s) => cumulative_beats += rhythm_beats(&s.rhythm),
+                RhythmElement::Rest(r) => cumulative_beats += rhythm_beats(&r.rhythm),
             }
         }
         return found_beat_pos
@@ -906,6 +911,25 @@ fn chord_beat_position(chord: &ChordInstance) -> f64 {
 /// measure can shift across a barline.
 fn chord_local_onset_beat(measure: &Measure, chord_idx: usize, time_signature: (u8, u8)) -> f64 {
     let ts = TimeSignature::new(time_signature.0.into(), time_signature.1.into());
+    // Prefer rhythm_elements: continuation slashes ("A //// // D //") and
+    // rests occupy beats before the chord but never appear in `chords`.
+    if !measure.rhythm_elements.is_empty() {
+        let mut beats = 0.0;
+        let mut seen_chords = 0usize;
+        for elem in &measure.rhythm_elements {
+            match elem {
+                RhythmElement::Chord(c) => {
+                    if seen_chords == chord_idx {
+                        return beats;
+                    }
+                    beats += c.duration.to_beats(ts);
+                    seen_chords += 1;
+                }
+                RhythmElement::Space(s) => beats += s.duration.to_beats(ts),
+                RhythmElement::Rest(r) => beats += r.duration.to_beats(ts),
+            }
+        }
+    }
     measure
         .chords
         .iter()
