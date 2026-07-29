@@ -1,0 +1,15 @@
+[package]
+name = "engraver-score"
+version.workspace = true
+edition = "2024"
+description = "Notation score model + MusicXML importer for the engraver (full scores and parts)"
+
+[dependencies]
+musicxml = { workspace = true }
+thiserror = { workspace = true }
+# the musicxml crate's built-in zip reader fails on multi-file archives and
+# non-standard inner names; we unpack .mxl ourselves (same as keyflow-orchestra)
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true
