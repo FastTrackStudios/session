@@ -1,3 +1,7 @@
+// Lint debt: workspace flipped dead_code/unused to warn (task cleanup);
+// this crate predates that — burn down separately.
+#![allow(dead_code, unused)]
+
 //! keyflow-cli — the `kf` command-line surface as a library.
 //!
 //! Former `apps/keyflow-cli` binary crate, kept as a crates/keyflow/cli
