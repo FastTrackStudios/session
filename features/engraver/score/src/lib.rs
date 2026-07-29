@@ -8,7 +8,9 @@
 //! conversion lives in `keyflow-musicxml`.
 
 pub mod import;
+pub mod layout;
 pub mod model;
+pub mod render;
 
 pub use import::{ImportError, import_bytes, import_file};
 pub use model::Score;
