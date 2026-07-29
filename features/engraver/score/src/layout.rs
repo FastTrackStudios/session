@@ -823,7 +823,45 @@ fn draw_directions(
                         draw_wedge(sys_node, x1, anchor_x(a, d.tick) + head_w, cresc);
                     }
                 }
-                model::DirectionKind::Words(_) | model::DirectionKind::Rehearsal(_) => {}
+                model::DirectionKind::Words(w) => {
+                    // Staff text above the staff (tempo/technique cues),
+                    // clamped so long strings stay on the page.
+                    let est_w = 9.0 * 0.55 * w.chars().count() as f64;
+                    let x = anchor_x(a, d.tick).min((system_width - est_w).max(0.0));
+                    sys_node.add_child(text(
+                        w,
+                        "FreeSans",
+                        9.0,
+                        Point::new(x, -3.4 * spatium),
+                        TextAnchor::Start,
+                        FontWeight::Normal,
+                    ));
+                }
+                model::DirectionKind::Rehearsal(r) => {
+                    // Boxed rehearsal mark (the Columbus-book "VS 1" style).
+                    let x = anchor_x(a, d.tick);
+                    let size = 11.0;
+                    let w_est = size * 0.62 * r.len() as f64 + 8.0;
+                    let y_top = -6.2 * spatium;
+                    let mut cmds = vec![PaintCommand::Rect {
+                        rect: Rect::new(x - 4.0, y_top, x + w_est - 4.0, y_top + size + 6.0),
+                        fill: None,
+                        stroke: Some(Color::BLACK),
+                        stroke_width: 1.1,
+                        corner_radius: None,
+                    }];
+                    cmds.push(PaintCommand::Text {
+                        text: r.clone(),
+                        font_family: "FreeSans".to_string(),
+                        font_size: size,
+                        position: Point::new(x, y_top + size + 1.0),
+                        color: Color::BLACK,
+                        anchor: TextAnchor::Start,
+                        weight: FontWeight::Bold,
+                        style: FontStyle::Normal,
+                    });
+                    sys_node.add_child(SceneNode::anonymous_leaf(cmds));
+                }
             }
         }
     }
