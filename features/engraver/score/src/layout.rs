@@ -12,6 +12,7 @@
 use engraver_proto::engraver::layout::chart::prefix_renderer::{
     PrefixRenderContext, calculate_prefix_width, render_system_prefix,
 };
+use engraver_proto::engraver::layout::chart::{constants, measure_layout, spacing as chart_spacing};
 use engraver_proto::engraver::layout::context::LayoutContextOwned;
 use engraver_proto::engraver::layout::tlayout::{Accidental, ClefType, TupletRatio};
 use engraver_proto::engraver::model::{Octave, Pitch, PitchClass};
@@ -654,33 +655,99 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
     let mut root = SceneNode::group(SemanticId::new(ElementType::System, 0));
     let mut pages = Vec::new();
 
-    // ── greedy system packing on natural (compact) widths ──
+    // ── measure metrics: min width (compact build) + content weight ──
+    //
+    // Mirrors the chart engine's spacing model (width_dist.rs): weights come
+    // from rhythmic density via `chart_spacing::duration_stretch`, minimum
+    // widths from a compact pre-build, and the per-system distribution is the
+    // same spring physics (`measure_layout::distribute_measure_widths_spring`).
+    const SLOPE: f64 = chart_spacing::DEFAULT_SPACING_SLOPE;
+    const DENSITY: f64 = chart_spacing::DEFAULT_SPACING_DENSITY;
+
+    let measure_ticks_of = |time: (u32, u32)| -> f64 {
+        f64::from(time.0) * 4.0 * constants::TICKS_PER_QUARTER / f64::from(time.1.max(1))
+    };
+
+    struct MeasureMetrics {
+        min_width: f64,
+        weight: f64,
+    }
+    let metrics: Vec<MeasureMetrics> = prepared
+        .iter()
+        .map(|item| match item {
+            Prepared::Notated(m) => {
+                let min_width = build_measure(m, &ctx, None, false, false, 1).width;
+                let measure_ticks = measure_ticks_of(m.time);
+                let note_ticks: Vec<f64> = m
+                    .entries
+                    .iter()
+                    .filter_map(|e| match e {
+                        RhythmEntry::Note(d) => Some(f64::from(d.ticks())),
+                        RhythmEntry::Rest(_) => None,
+                    })
+                    .collect();
+                let shortest = note_ticks.iter().copied().fold(f64::INFINITY, f64::min);
+                let dense =
+                    note_ticks.len() >= 4 || shortest <= constants::TICKS_PER_QUARTER / 2.0;
+                let duration_weight = if note_ticks.is_empty() || !dense {
+                    chart_spacing::duration_stretch(
+                        measure_ticks,
+                        constants::TICKS_PER_QUARTER,
+                        SLOPE,
+                    )
+                } else {
+                    note_ticks
+                        .iter()
+                        .map(|t| {
+                            chart_spacing::duration_stretch(
+                                *t,
+                                constants::TICKS_PER_QUARTER,
+                                SLOPE,
+                            )
+                        })
+                        .sum()
+                };
+                let tuplet_bonus: f64 = m
+                    .tuplets
+                    .iter()
+                    .map(|(start, end, _)| (end - start) as f64 * 0.08)
+                    .sum();
+                MeasureMetrics {
+                    min_width,
+                    weight: (duration_weight + tuplet_bonus).max(0.5),
+                }
+            }
+            Prepared::MultiRest { time, .. } => MeasureMetrics {
+                min_width: MULTIREST_WIDTH_SP * spatium,
+                weight: chart_spacing::duration_stretch(
+                    measure_ticks_of(*time),
+                    constants::TICKS_PER_QUARTER,
+                    SLOPE,
+                ),
+            },
+        })
+        .collect();
+
+    // ── system packing: min-width constrained, capped per system ──
+    const MAX_MEASURES_PER_SYSTEM: usize = 6;
     struct SystemPlan {
         items: Vec<usize>, // indices into `prepared`
     }
-    let natural_width = |idx: usize| -> f64 {
-        match &prepared[idx] {
-            Prepared::Notated(m) => {
-                build_measure(m, &ctx, None, false, false, 1).width
-            }
-            Prepared::MultiRest { .. } => MULTIREST_WIDTH_SP * spatium,
-        }
-    };
-
     let mut systems: Vec<SystemPlan> = Vec::new();
     {
         let mut current = SystemPlan { items: Vec::new() };
         let mut used = 0.0;
         for idx in 0..prepared.len() {
-            // Reserve prefix room (clef + key) on every system.
             let key_fifths = match &prepared[idx] {
                 Prepared::Notated(m) => m.key_fifths,
                 Prepared::MultiRest { key_fifths, .. } => *key_fifths,
             };
             let (_, _, _, prefix_w) =
                 calculate_prefix_width(spatium, true, true, key_fifths, current.items.is_empty());
-            let w = natural_width(idx);
-            if !current.items.is_empty() && used + w > avail_width - prefix_w {
+            let w = metrics[idx].min_width;
+            let full = current.items.len() >= MAX_MEASURES_PER_SYSTEM
+                || (!current.items.is_empty() && used + w > avail_width - prefix_w);
+            if full {
                 systems.push(current);
                 current = SystemPlan { items: Vec::new() };
                 used = 0.0;
@@ -692,6 +759,30 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
             systems.push(current);
         }
     }
+
+    // Expansion gating, verbatim from the chart engine's width_dist.rs
+    // (pub(super) there): only stretch past base width when a measure's
+    // rhythm or minimum actually demands it.
+    let expansion_stretches = |weights: &[f64], min_widths: &[f64], base: f64| -> Vec<f64> {
+        const RHYTHM_EXPANSION_THRESHOLD: f64 = 3.0;
+        let has_expander = weights.iter().zip(min_widths).any(|(w, m)| {
+            *w >= RHYTHM_EXPANSION_THRESHOLD || *m > base * 1.05
+        });
+        if !has_expander {
+            return vec![1.0; weights.len()];
+        }
+        weights
+            .iter()
+            .zip(min_widths)
+            .map(|(weight, min_width)| {
+                if *weight >= RHYTHM_EXPANSION_THRESHOLD || *min_width > base * 1.05 {
+                    weight.max(min_width / base.max(1.0)).max(1.0).sqrt()
+                } else {
+                    1.0
+                }
+            })
+            .collect()
+    };
 
     // ── render systems onto pages ──
     let mut id: u64 = 10;
@@ -795,19 +886,36 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
         id = prefix.next_id + 100;
         let prefix_w = prefix.total_width;
 
-        // Distribute the remaining width proportionally to natural widths.
-        let naturals: Vec<f64> = sys.items.iter().map(|&i| natural_width(i)).collect();
-        let natural_sum: f64 = naturals.iter().sum();
-        let target_total = avail_width - prefix_w;
+        // Spring-based width distribution (same engine as chart layout).
+        let weights: Vec<f64> = sys.items.iter().map(|&i| metrics[i].weight).collect();
+        let min_widths: Vec<f64> = sys.items.iter().map(|&i| metrics[i].min_width).collect();
+        let measures_area = avail_width - prefix_w;
+        let base_measure_width = measures_area / MAX_MEASURES_PER_SYSTEM as f64;
         let is_last_system = sys_idx + 1 == systems.len();
-        // Don't stretch a sparse final system across the whole page.
-        let scale = if is_last_system && natural_sum < target_total * 0.7 {
-            1.0
+        let min_sum: f64 = min_widths.iter().sum();
+        // Every system justifies to the full line except a sparse final one.
+        let total_to_distribute = if is_last_system
+            && sys.items.len() < MAX_MEASURES_PER_SYSTEM
+            && min_sum < measures_area * 0.7
+        {
+            (sys.items.len() as f64 * base_measure_width).max(min_sum)
         } else {
-            target_total / natural_sum.max(1.0)
+            measures_area
         };
+        let stretches = expansion_stretches(&weights, &min_widths, base_measure_width);
+        let widths = measure_layout::distribute_measure_widths_spring(
+            &stretches,
+            0,
+            total_to_distribute,
+            0.4,
+            base_measure_width,
+            &min_widths,
+            spatium,
+            SLOPE,
+            DENSITY,
+        );
 
-        let content_width = natural_sum * scale;
+        let content_width: f64 = widths.iter().sum();
         sys_node.add_child(staff_lines(prefix_w + content_width, spatium));
 
         for node in prefix.nodes {
@@ -816,7 +924,7 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
 
         let mut x = prefix_w;
         for (item_pos, &item_idx) in sys.items.iter().enumerate() {
-            let width = naturals[item_pos] * scale;
+            let width = widths[item_pos];
             match &prepared[item_idx] {
                 Prepared::Notated(m) => {
                     let scene = build_measure(
