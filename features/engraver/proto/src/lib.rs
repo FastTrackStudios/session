@@ -1,3 +1,7 @@
+// Lint debt: workspace flipped dead_code/unused to warn (task cleanup);
+// this crate predates that — burn down separately.
+#![allow(dead_code, unused)]
+
 //! Engraver protocol - implementation crate for Keyflow engraving.
 //!
 //! Public consumers should use `keyflow` with its default `engraver` feature
