@@ -221,10 +221,15 @@ impl Default for DynamicsParams {
 pub fn layout_dynamic(params: &DynamicsParams, ctx: &LayoutContext) -> (LayoutData, SceneNode) {
     let spatium = ctx.spatium();
 
-    // Dynamic-specific font size (typically larger than lyrics)
+    // Text fallback size in points. For the SMuFL glyph path the size unit is
+    // SPATIUMS (`PaintCommand::glyph` → serializer × 4 = the SMuFL em), and
+    // MuseScore's default (dynamicsFontSize 10pt ≈ 2sp em of the text-variant
+    // music font) equals the score font at its standard 4sp em — so glyph
+    // size = 1.0 spatium here, scaled by nothing further.
     let font_size = spatium * 2.2;
+    let glyph_size = spatium;
     let dynamic_width = params.dynamic_type.width() * spatium;
-    let dynamic_height = font_size * 1.0;
+    let dynamic_height = spatium * 1.8;
 
     // Calculate X position based on alignment
     let x = match params.align {
@@ -250,7 +255,7 @@ pub fn layout_dynamic(params: &DynamicsParams, ctx: &LayoutContext) -> (LayoutDa
         commands.push(PaintCommand::glyph(
             glyph,
             Point::new(x, y + dynamic_height * 0.8),
-            font_size,
+            glyph_size,
             Color::BLACK,
         ));
     } else if let Some(text) = &params.custom_text {
