@@ -56,11 +56,34 @@ pub struct Measure {
     pub attributes: Vec<AttrChange>,
     /// Notes/rests, each with a tick onset from measure start.
     pub events: Vec<Event>,
+    /// Directions (dynamics, hairpins, texts) at tick positions.
+    pub directions: Vec<Direction>,
     /// Divisions-per-quarter in effect for this measure's ticks.
     pub divisions: u32,
     /// Measure length in ticks (from the inherited meter; content may
     /// overflow on malformed input — layout clamps).
     pub len_ticks: u32,
+}
+
+/// A `<direction>` at a tick position within its measure.
+#[derive(Debug, Clone)]
+pub struct Direction {
+    pub tick: u32,
+    pub kind: DirectionKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectionKind {
+    /// Dynamic mark by conventional name ("p", "mf", "sfz", …).
+    Dynamic(String),
+    /// Hairpin start (`<wedge>` crescendo/diminuendo).
+    WedgeStart { crescendo: bool },
+    /// Hairpin stop.
+    WedgeStop,
+    /// Free staff text (`<words>`).
+    Words(String),
+    /// Boxed rehearsal mark.
+    Rehearsal(String),
 }
 
 /// A mid-stream attribute change (clef/key/time/divisions/staves).

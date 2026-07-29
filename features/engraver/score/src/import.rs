@@ -13,8 +13,8 @@ use musicxml::elements::{
 };
 
 use crate::model::{
-    AttrChange, Chord, Clef, ClefSign, Event, Measure, Note, NoteTypeValue, Part, Rest, Score, Step,
-    Transposition, WrittenDuration, WrittenPitch,
+    AttrChange, Chord, Clef, ClefSign, Direction, DirectionKind, Event, Measure, Note,
+    NoteTypeValue, Part, Rest, Score, Step, Transposition, WrittenDuration, WrittenPitch,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -272,6 +272,13 @@ fn import_part(
                     cursor += i64::from(*f.content.duration.content);
                 }
 
+                MeasureElement::Direction(dir) => {
+                    let tick = cursor.max(0) as u32;
+                    for dt in &dir.content.direction_type {
+                        import_direction_type(dt, tick, &mut measure.directions);
+                    }
+                }
+
                 MeasureElement::Note(note) => {
                     import_note(note, &mut measure, &mut cursor, &mut prev_onset, &mut staves);
                 }
@@ -493,6 +500,90 @@ fn push_pitched(
         slur_stop,
         articulations,
     }));
+}
+
+/// Import one `<direction-type>` into the measure's direction list.
+fn import_direction_type(
+    dt: &musicxml::elements::DirectionType,
+    tick: u32,
+    out: &mut Vec<Direction>,
+) {
+    use musicxml::datatypes::WedgeType;
+    use musicxml::elements::DirectionTypeContents;
+    match &dt.content {
+        DirectionTypeContents::Dynamics(dyns) => {
+            for d in dyns {
+                for item in &d.content {
+                    if let Some(name) = dynamics_tag(item) {
+                        out.push(Direction {
+                            tick,
+                            kind: DirectionKind::Dynamic(name.to_string()),
+                        });
+                    }
+                }
+            }
+        }
+        DirectionTypeContents::Wedge(w) => {
+            let kind = match w.attributes.r#type {
+                WedgeType::Crescendo => Some(DirectionKind::WedgeStart { crescendo: true }),
+                WedgeType::Diminuendo => Some(DirectionKind::WedgeStart { crescendo: false }),
+                WedgeType::Stop => Some(DirectionKind::WedgeStop),
+                WedgeType::Continue => None,
+            };
+            if let Some(kind) = kind {
+                out.push(Direction { tick, kind });
+            }
+        }
+        DirectionTypeContents::Words(words) => {
+            for w in words {
+                let text = decode_entities(&w.content);
+                if !text.trim().is_empty() {
+                    out.push(Direction {
+                        tick,
+                        kind: DirectionKind::Words(text),
+                    });
+                }
+            }
+        }
+        DirectionTypeContents::Rehearsal(rehs) => {
+            for r in rehs {
+                if !r.content.is_empty() {
+                    out.push(Direction {
+                        tick,
+                        kind: DirectionKind::Rehearsal(decode_entities(&r.content)),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Conventional name for a `<dynamics>` child (same mapping as
+/// keyflow-orchestra's parse).
+fn dynamics_tag(d: &musicxml::elements::DynamicsType) -> Option<&'static str> {
+    use musicxml::elements::DynamicsType as D;
+    Some(match d {
+        D::P(_) => "p",
+        D::Pp(_) => "pp",
+        D::Ppp(_) => "ppp",
+        D::Pppp(_) => "pppp",
+        D::F(_) => "f",
+        D::Ff(_) => "ff",
+        D::Fff(_) => "fff",
+        D::Ffff(_) => "ffff",
+        D::Mp(_) => "mp",
+        D::Mf(_) => "mf",
+        D::Sf(_) => "sf",
+        D::Sfz(_) => "sfz",
+        D::Sffz(_) => "sffz",
+        D::Fp(_) => "fp",
+        D::Fz(_) => "fz",
+        D::Rf(_) => "rf",
+        D::Rfz(_) => "rfz",
+        D::Sfp(_) => "sfp",
+        _ => return None,
+    })
 }
 
 /// Collect articulation tags + slur flags from `<notations>`.

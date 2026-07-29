@@ -103,6 +103,12 @@ struct NotatedMeasure {
     /// Per entry: slur start/stop flags.
     slur_starts: Vec<bool>,
     slur_stops: Vec<bool>,
+    /// Per entry: tick onset (for direction anchoring).
+    entry_ticks: Vec<u32>,
+    /// Per entry: articulation tags (staccato, accent, …).
+    arts: Vec<Vec<String>>,
+    /// Directions in this measure (dynamics, hairpins, texts).
+    directions: Vec<model::Direction>,
     /// Clef change taking effect at this measure (drawn in-measure when
     /// mid-system, absorbed by the prefix at system start).
     clef: ClefType,
@@ -126,6 +132,9 @@ impl NotatedMeasure {
             tie_stop_lines: vec![Vec::new()],
             slur_starts: vec![false],
             slur_stops: vec![false],
+            entry_ticks: vec![0],
+            arts: vec![Vec::new()],
+            directions: Vec::new(),
             clef,
             clef_changed: false,
             key_fifths,
@@ -425,6 +434,8 @@ fn prepare_measures(
         let mut tie_stop_lines: Vec<Vec<i32>> = Vec::new();
         let mut slur_starts: Vec<bool> = Vec::new();
         let mut slur_stops: Vec<bool> = Vec::new();
+        let mut entry_ticks: Vec<u32> = Vec::new();
+        let mut arts: Vec<Vec<String>> = Vec::new();
 
         // Chords of the merged voice, keyed by (tick, duration).
         let partner_chords: std::collections::HashMap<(u32, u32), &model::Chord> = merged_voice
@@ -511,6 +522,8 @@ fn prepare_measures(
                     tie_stop_lines.push(stops);
                     slur_starts.push(chord.slur_start);
                     slur_stops.push(chord.slur_stop);
+                    entry_ticks.push(chord.tick);
+                    arts.push(chord.articulations.iter().cloned().collect());
                 }
                 Event::Rest(rest) => {
                     let duration = if rest.measure_rest || rest.duration >= measure.len_ticks {
@@ -531,6 +544,8 @@ fn prepare_measures(
                     tie_stop_lines.push(Vec::new());
                     slur_starts.push(false);
                     slur_stops.push(false);
+                    entry_ticks.push(rest.tick);
+                    arts.push(Vec::new());
                 }
             }
         }
@@ -544,6 +559,8 @@ fn prepare_measures(
             tie_stop_lines.push(Vec::new());
             slur_starts.push(false);
             slur_stops.push(false);
+            entry_ticks.push(0);
+            arts.push(Vec::new());
         }
 
         // Contiguous runs of same-ratio tuplet entries become bracket groups.
@@ -580,6 +597,9 @@ fn prepare_measures(
             tie_stop_lines,
             slur_starts,
             slur_stops,
+            entry_ticks,
+            arts,
+            directions: measure.directions.clone(),
             clef: state.clef,
             clef_changed,
             key_fifths: state.key_fifths,
@@ -682,6 +702,196 @@ fn barline(x: f64, spatium: f64) -> SceneNode {
 struct MeasureAnchors<'a> {
     m: &'a NotatedMeasure,
     entry_x: Vec<f64>,
+}
+
+/// Map a MusicXML articulation tag to a tlayout articulation type.
+fn articulation_type(tag: &str) -> Option<engraver_proto::engraver::layout::tlayout::ArticulationType> {
+    use engraver_proto::engraver::layout::tlayout::ArticulationType as A;
+    Some(match tag {
+        "staccato" => A::Staccato,
+        "staccatissimo" => A::Staccatissimo,
+        "accent" => A::Accent,
+        "strong-accent" => A::Marcato,
+        "tenuto" => A::Tenuto,
+        "detached-legato" => A::TenutoStaccato,
+        "stress" => A::Stress,
+        "unstress" => A::Unstress,
+        "soft-accent" => A::SoftAccent,
+        _ => return None,
+    })
+}
+
+/// Map a conventional dynamic name to the tlayout dynamic type.
+fn dynamic_type(name: &str) -> engraver_proto::engraver::layout::tlayout::DynamicType {
+    use engraver_proto::engraver::layout::tlayout::DynamicType as D;
+    match name {
+        "ppp" | "pppp" => D::Ppp,
+        "pp" => D::Pp,
+        "p" => D::P,
+        "mp" => D::Mp,
+        "mf" => D::Mf,
+        "f" => D::F,
+        "ff" => D::Ff,
+        "fff" | "ffff" => D::Fff,
+        "sf" | "sfz" => D::Sfz,
+        "sffz" => D::Sffz,
+        "fp" => D::Fp,
+        "fz" => D::Fz,
+        "rf" => D::Rf,
+        "rfz" => D::Rfz,
+        "sfp" => D::Sfp,
+        _ => D::Other,
+    }
+}
+
+/// Draw dynamics, hairpins, and articulation marks over a laid-out system.
+fn draw_directions(
+    sys_node: &mut SceneNode,
+    anchors: &[MeasureAnchors<'_>],
+    ctx: &LayoutContextOwned,
+    system_width: f64,
+    spatium: f64,
+    id: &mut u64,
+) {
+    use engraver_proto::engraver::layout::tlayout::{
+        DynamicsAlign, DynamicsParams, DynamicsPlacement, layout_dynamic,
+    };
+    let head_w = 1.18 * spatium;
+    // Anchor x for a tick within one measure: last entry at or before it.
+    let anchor_x = |a: &MeasureAnchors<'_>, tick: u32| -> f64 {
+        let mut x = a.entry_x.first().copied().unwrap_or(0.0);
+        for (i, t) in a.m.entry_ticks.iter().enumerate() {
+            if *t <= tick
+                && let Some(ex) = a.entry_x.get(i)
+            {
+                x = *ex;
+            }
+        }
+        x
+    };
+
+    // ── dynamics + hairpins ──
+    let mut wedge_open: Option<(f64, bool)> = None; // (start x, crescendo)
+    let hairpin_y = 4.0 * spatium + 2.8 * spatium;
+    let mut draw_wedge = |sys_node: &mut SceneNode, x1: f64, x2: f64, crescendo: bool| {
+        if x2 <= x1 + spatium {
+            return;
+        }
+        let half = 0.55 * spatium;
+        let (open1, open2) = if crescendo { (0.0, half) } else { (half, 0.0) };
+        let mut cmds = Vec::new();
+        for sign in [-1.0, 1.0] {
+            cmds.push(PaintCommand::Line {
+                start: Point::new(x1, hairpin_y + sign * open1),
+                end: Point::new(x2, hairpin_y + sign * open2),
+                width: spatium * 0.12,
+                color: Color::BLACK,
+                line_cap: Default::default(),
+            });
+        }
+        sys_node.add_child(SceneNode::anonymous_leaf(cmds));
+    };
+
+    for a in anchors {
+        for d in &a.m.directions {
+            match &d.kind {
+                model::DirectionKind::Dynamic(name) => {
+                    let (_, node) = layout_dynamic(
+                        &DynamicsParams {
+                            id: *id,
+                            dynamic_type: dynamic_type(name),
+                            custom_text: Some(name.clone()),
+                            placement: DynamicsPlacement::Below,
+                            align: DynamicsAlign::Center,
+                            x: anchor_x(a, d.tick),
+                            note_width: head_w,
+                            center_on_notehead: true,
+                        },
+                        &ctx.as_context(),
+                    );
+                    *id += 1;
+                    let mut container = SceneNode::group(SemanticId::new(ElementType::Dynamic, *id));
+                    container.transform = Affine::translate((0.0, 4.0 * spatium));
+                    container.add_child(node);
+                    sys_node.add_child(container);
+                }
+                model::DirectionKind::WedgeStart { crescendo } => {
+                    wedge_open = Some((anchor_x(a, d.tick), *crescendo));
+                }
+                model::DirectionKind::WedgeStop => {
+                    if let Some((x1, cresc)) = wedge_open.take() {
+                        draw_wedge(sys_node, x1, anchor_x(a, d.tick) + head_w, cresc);
+                    }
+                }
+                model::DirectionKind::Words(_) | model::DirectionKind::Rehearsal(_) => {}
+            }
+        }
+    }
+    // Hairpin still open at line end: run it to the system edge.
+    if let Some((x1, cresc)) = wedge_open {
+        draw_wedge(sys_node, x1, system_width, cresc);
+    }
+
+    // ── articulation marks ──
+    for a in anchors {
+        for i in 0..a.m.entries.len() {
+            if a.m.arts[i].is_empty() {
+                continue;
+            }
+            let Some((primary_line, _)) = a.m.pitches[i] else {
+                continue;
+            };
+            let ex = a.entry_x.get(i).copied().unwrap_or(0.0);
+            // Stems point down for notes on/above the middle line, so the
+            // mark goes above the notehead (and vice versa).
+            let stem_up = primary_line < 0;
+            let top_line = a
+                .m
+                .stacks[i]
+                .iter()
+                .map(|(l, _)| *l)
+                .chain(std::iter::once(primary_line))
+                .max()
+                .unwrap_or(primary_line);
+            let bottom_line = a
+                .m
+                .stacks[i]
+                .iter()
+                .map(|(l, _)| *l)
+                .chain(std::iter::once(primary_line))
+                .min()
+                .unwrap_or(primary_line);
+            let mut stack_offset = 0.0;
+            for tag in &a.m.arts[i] {
+                let Some(art) = articulation_type(tag) else {
+                    continue;
+                };
+                let above = !stem_up;
+                let (glyph, y) = if above {
+                    let y_note = 2.0 * spatium - f64::from(top_line) * spatium / 2.0;
+                    (
+                        art.smufl_codepoint_above(),
+                        y_note - 1.1 * spatium - stack_offset,
+                    )
+                } else {
+                    let y_note = 2.0 * spatium - f64::from(bottom_line) * spatium / 2.0;
+                    (
+                        art.smufl_codepoint_below(),
+                        y_note + 1.4 * spatium + stack_offset,
+                    )
+                };
+                stack_offset += 1.1 * spatium;
+                // PaintCommand::glyph size is in SPATIUMS (the SVG serializer
+                // multiplies by 4 for the SMuFL em).
+                sys_node.add_child(SceneNode::anonymous_leaf(vec![PaintCommand::glyph(
+                    glyph,
+                    Point::new(ex + head_w / 2.0 - 0.4 * spatium, y),
+                    spatium,
+                    Color::BLACK,
+                )]));
+            }
+        }
+    }
 }
 
 /// Draw ties and slurs over a laid-out system.
@@ -1234,6 +1444,7 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
         }
 
         draw_ties_and_slurs(&mut sys_node, &anchors, prefix_w + content_width, spatium, &mut id);
+        draw_directions(&mut sys_node, &anchors, &ctx, prefix_w + content_width, spatium, &mut id);
 
         root.add_child(sys_node);
         y += opts.system_gap;
