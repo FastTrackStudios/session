@@ -96,6 +96,13 @@ struct NotatedMeasure {
     pitches: Vec<Option<(i32, Accidental)>>,
     stacks: Vec<Vec<(i32, Accidental)>>,
     tuplets: Vec<(usize, usize, TupletRatio)>,
+    /// Per entry: staff lines of noteheads that START a tie.
+    tie_start_lines: Vec<Vec<i32>>,
+    /// Per entry: staff lines of noteheads that END a tie.
+    tie_stop_lines: Vec<Vec<i32>>,
+    /// Per entry: slur start/stop flags.
+    slur_starts: Vec<bool>,
+    slur_stops: Vec<bool>,
     /// Clef change taking effect at this measure (drawn in-measure when
     /// mid-system, absorbed by the prefix at system start).
     clef: ClefType,
@@ -104,6 +111,29 @@ struct NotatedMeasure {
     key_changed: bool,
     time: (u32, u32),
     time_changed: bool,
+}
+
+impl NotatedMeasure {
+    /// A whole-bar-rest measure with the given attribute state.
+    fn rest_bar(number: String, clef: ClefType, key_fifths: i8, time: (u32, u32)) -> Self {
+        Self {
+            number,
+            entries: vec![RhythmEntry::Rest(Duration::Whole)],
+            pitches: vec![None],
+            stacks: vec![Vec::new()],
+            tuplets: Vec::new(),
+            tie_start_lines: vec![Vec::new()],
+            tie_stop_lines: vec![Vec::new()],
+            slur_starts: vec![false],
+            slur_stops: vec![false],
+            clef,
+            clef_changed: false,
+            key_fifths,
+            key_changed: false,
+            time,
+            time_changed: false,
+        }
+    }
 }
 
 /// Walk state: clef/key/time inherited across measures.
@@ -313,19 +343,12 @@ fn prepare_measures(
             });
         } else {
             for (number, clef, key_fifths, time) in run.iter() {
-                out.push(Prepared::Notated(Box::new(NotatedMeasure {
-                    number: number.clone(),
-                    entries: vec![RhythmEntry::Rest(Duration::Whole)],
-                    pitches: vec![None],
-                    stacks: vec![Vec::new()],
-                    tuplets: Vec::new(),
-                    clef: *clef,
-                    clef_changed: false,
-                    key_fifths: *key_fifths,
-                    key_changed: false,
-                    time: *time,
-                    time_changed: false,
-                })));
+                out.push(Prepared::Notated(Box::new(NotatedMeasure::rest_bar(
+                    number.clone(),
+                    *clef,
+                    *key_fifths,
+                    *time,
+                ))));
             }
         }
         run.clear();
@@ -371,21 +394,24 @@ fn prepare_measures(
 
         let Some(voice) = primary_voice(measure) else {
             // Rests only but with attribute changes: render a whole-rest bar.
-            prepared.push(Prepared::Notated(Box::new(NotatedMeasure {
-                number: measure.number.clone(),
-                entries: vec![RhythmEntry::Rest(Duration::Whole)],
-                pitches: vec![None],
-                stacks: vec![Vec::new()],
-                tuplets: Vec::new(),
-                clef: state.clef,
-                clef_changed,
-                key_fifths: state.key_fifths,
-                key_changed,
-                time: state.time,
-                time_changed,
-            })));
+            let mut bar = NotatedMeasure::rest_bar(
+                measure.number.clone(),
+                state.clef,
+                state.key_fifths,
+                state.time,
+            );
+            bar.clef_changed = clef_changed;
+            bar.key_changed = key_changed;
+            bar.time_changed = time_changed;
+            prepared.push(Prepared::Notated(Box::new(bar)));
             continue;
         };
+
+        // Homophonic second voice: when another voice's chords share the
+        // primary voice's exact rhythm signature (tick + duration), merge its
+        // noteheads into the primary chords instead of dropping them
+        // (violin div., horns a2…). True polyphony is P3.
+        let merged_voice = homophonic_partner(measure, voice);
 
         let octave_change = 0i8; // per-measure clef octave marks: P3
         let middle = middle_line_ref(state.clef, octave_change);
@@ -395,16 +421,42 @@ fn prepare_measures(
         let mut stacks = Vec::new();
         let mut tuplet_marks: Vec<Option<TupletRatio>> = Vec::new();
 
+        let mut tie_start_lines: Vec<Vec<i32>> = Vec::new();
+        let mut tie_stop_lines: Vec<Vec<i32>> = Vec::new();
+        let mut slur_starts: Vec<bool> = Vec::new();
+        let mut slur_stops: Vec<bool> = Vec::new();
+
+        // Chords of the merged voice, keyed by (tick, duration).
+        let partner_chords: std::collections::HashMap<(u32, u32), &model::Chord> = merged_voice
+            .map(|mv| {
+                measure
+                    .events
+                    .iter()
+                    .filter_map(|e| match e {
+                        Event::Chord(c) if c.voice == mv && c.staff == 1 && !c.grace => {
+                            Some(((c.tick, c.duration), c))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let mut events: Vec<&Event> = measure
             .events
             .iter()
             .filter(|e| {
+                let is_merged_chord = matches!(
+                    (e, merged_voice),
+                    (Event::Chord(c), Some(mv)) if c.voice == mv && c.staff == 1 && !c.grace
+                );
                 let keep = e.voice() == voice
                     && match e {
                         Event::Chord(c) => c.staff == 1 && !c.grace,
                         Event::Rest(r) => r.staff == 1,
                     };
-                if !keep {
+                if !keep && !is_merged_chord && !matches!((e, merged_voice), (Event::Rest(r), Some(mv)) if r.voice == mv)
+                {
                     *dropped += 1;
                 }
                 keep
@@ -423,25 +475,42 @@ fn prepare_measures(
                     entries.push(RhythmEntry::Note(duration));
                     tuplet_marks.push(duration.tuplet);
 
-                    let mut lines: Vec<(i32, Accidental)> = chord
+                    let partner = partner_chords.get(&(chord.tick, chord.duration));
+                    let all_notes = chord
                         .notes
                         .iter()
-                        .map(|n| {
-                            let p = Pitch::with_alteration(
-                                pitch_class(n.pitch.step),
-                                Octave::new(n.pitch.octave),
-                                n.pitch.alter,
-                            );
-                            let line = p.staff_position() - middle;
-                            let acc = acc_state.resolve(&n.pitch, state.key_fifths);
-                            (line, acc)
-                        })
-                        .collect();
+                        .chain(partner.into_iter().flat_map(|p| p.notes.iter()));
+
+                    let mut lines: Vec<(i32, Accidental)> = Vec::new();
+                    let mut starts: Vec<i32> = Vec::new();
+                    let mut stops: Vec<i32> = Vec::new();
+                    for n in all_notes {
+                        let p = Pitch::with_alteration(
+                            pitch_class(n.pitch.step),
+                            Octave::new(n.pitch.octave),
+                            n.pitch.alter,
+                        );
+                        let line = p.staff_position() - middle;
+                        let acc = acc_state.resolve(&n.pitch, state.key_fifths);
+                        if !lines.iter().any(|(l, _)| *l == line) {
+                            lines.push((line, acc));
+                        }
+                        if n.tie_start {
+                            starts.push(line);
+                        }
+                        if n.tie_stop {
+                            stops.push(line);
+                        }
+                    }
                     // Primary head = highest note; extras stack below it.
                     lines.sort_by_key(|(line, _)| -line);
                     let primary = lines.remove(0);
                     pitches.push(Some(primary));
                     stacks.push(lines);
+                    tie_start_lines.push(starts);
+                    tie_stop_lines.push(stops);
+                    slur_starts.push(chord.slur_start);
+                    slur_stops.push(chord.slur_stop);
                 }
                 Event::Rest(rest) => {
                     let duration = if rest.measure_rest || rest.duration >= measure.len_ticks {
@@ -458,6 +527,10 @@ fn prepare_measures(
                     tuplet_marks.push(duration.tuplet);
                     pitches.push(None);
                     stacks.push(Vec::new());
+                    tie_start_lines.push(Vec::new());
+                    tie_stop_lines.push(Vec::new());
+                    slur_starts.push(false);
+                    slur_stops.push(false);
                 }
             }
         }
@@ -467,6 +540,10 @@ fn prepare_measures(
             pitches.push(None);
             stacks.push(Vec::new());
             tuplet_marks.push(None);
+            tie_start_lines.push(Vec::new());
+            tie_stop_lines.push(Vec::new());
+            slur_starts.push(false);
+            slur_stops.push(false);
         }
 
         // Contiguous runs of same-ratio tuplet entries become bracket groups.
@@ -482,7 +559,7 @@ fn prepare_measures(
                     if idx - start >= 2 {
                         tuplets.push((start, idx - 1, r));
                     }
-                    run_start = if let Some(m) = mark { Some((idx, *m)) } else { None };
+                    run_start = mark.as_ref().map(|m| (idx, *m));
                 }
                 (None, None) => {}
             }
@@ -499,6 +576,10 @@ fn prepare_measures(
             pitches,
             stacks,
             tuplets,
+            tie_start_lines,
+            tie_stop_lines,
+            slur_starts,
+            slur_stops,
             clef: state.clef,
             clef_changed,
             key_fifths: state.key_fifths,
@@ -509,6 +590,41 @@ fn prepare_measures(
     }
     flush_rests(&mut rest_run, &mut prepared, opts);
     prepared
+}
+
+/// Find a second voice whose chords share the primary voice's exact rhythm
+/// signature (same (tick, duration) multiset) — safe to merge as stacked
+/// noteheads.
+fn homophonic_partner(measure: &model::Measure, primary: u32) -> Option<u32> {
+    let signature = |v: u32| -> Vec<(u32, u32)> {
+        let mut sig: Vec<(u32, u32)> = measure
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Chord(c) if c.voice == v && c.staff == 1 && !c.grace => {
+                    Some((c.tick, c.duration))
+                }
+                _ => None,
+            })
+            .collect();
+        sig.sort_unstable();
+        sig
+    };
+    let primary_sig = signature(primary);
+    if primary_sig.is_empty() {
+        return None;
+    }
+    let voices: std::collections::BTreeSet<u32> = measure
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Chord(c) if c.staff == 1 && !c.grace => Some(c.voice),
+            _ => None,
+        })
+        .collect();
+    voices
+        .into_iter()
+        .find(|v| *v != primary && signature(*v) == primary_sig)
 }
 
 // ───────────────────────── system + page assembly ─────────────────────────
@@ -544,7 +660,131 @@ fn build_measure(
     } else {
         builder = builder.compact();
     }
+    // System pass draws its own barlines: builder barlines use top-line y
+    // coords while notes use middle-line coords (chart does the same).
+    builder = builder.no_barlines();
     builder.build(&ctx.as_context())
+}
+
+/// A full-height barline at `x` in staff coords (top line = 0).
+fn barline(x: f64, spatium: f64) -> SceneNode {
+    SceneNode::anonymous_leaf(vec![PaintCommand::Line {
+        start: Point::new(x, 0.0),
+        end: Point::new(x, 4.0 * spatium),
+        width: spatium * 0.16,
+        color: Color::BLACK,
+        line_cap: Default::default(),
+    }])
+}
+
+/// Anchors for the tie/slur overlay: one notated measure with the
+/// system-local x of each ChordRest segment, in entry order.
+struct MeasureAnchors<'a> {
+    m: &'a NotatedMeasure,
+    entry_x: Vec<f64>,
+}
+
+/// Draw ties and slurs over a laid-out system.
+///
+/// Anchor conventions follow MuseScore's `SlurTieLayout::adjustX` (clone at
+/// ~/reference/MuseScore, src/engraving/rendering/score/slurtielayout.cpp):
+/// tie start clears the notehead + ~0.2sp padding, end stops the same
+/// padding before the target head; direction is away from the stem (single
+/// voice: notes on/above the middle line stem down → curve up). Ties that
+/// leave the system become half-ties to the line end; incoming stops with
+/// no pending start become half-ties from the line start.
+fn draw_ties_and_slurs(
+    sys_node: &mut SceneNode,
+    anchors: &[MeasureAnchors<'_>],
+    system_width: f64,
+    spatium: f64,
+    id: &mut u64,
+) {
+    use engraver_proto::engraver::layout::tlayout::{
+        SlurDirection, SlurEndpoint, SlurTieConfig, layout_slur, layout_tie,
+    };
+    let cfg = SlurTieConfig::default();
+    let y_of = |line: i32| 2.0 * spatium - f64::from(line) * spatium / 2.0;
+    let head_w = 1.18 * spatium;
+    let pad = 0.2 * spatium;
+
+    let mut draw_tie = |sys_node: &mut SceneNode, line: i32, x1: f64, x2: f64| {
+        let dir = if line >= 0 {
+            SlurDirection::Up
+        } else {
+            SlurDirection::Down
+        };
+        let start = SlurEndpoint {
+            x: x1,
+            y: y_of(line),
+            stem_up: line < 0,
+        };
+        let end = SlurEndpoint {
+            x: x2.max(x1 + spatium),
+            y: y_of(line),
+            stem_up: line < 0,
+        };
+        let tie = layout_tie(&start, &end, dir, *id, spatium, &cfg);
+        *id += 1;
+        sys_node.add_child(tie.scene);
+    };
+
+    // ── ties ──
+    let mut pending: Vec<(i32, f64)> = Vec::new();
+    for a in anchors {
+        for i in 0..a.m.entries.len() {
+            let ex = a.entry_x.get(i).copied().unwrap_or(0.0);
+            for line in &a.m.tie_stop_lines[i] {
+                if let Some(pos) = pending.iter().position(|(l, _)| l == line) {
+                    let (l, sx) = pending.remove(pos);
+                    draw_tie(sys_node, l, sx + head_w + pad, ex - pad);
+                } else {
+                    // Tie arriving from the previous system: half tie in.
+                    draw_tie(sys_node, *line, (ex - 3.0 * spatium).max(0.0), ex - pad);
+                }
+            }
+            for line in &a.m.tie_start_lines[i] {
+                pending.push((*line, ex));
+            }
+        }
+    }
+    // Ties leaving the system: half tie out to the line end.
+    for (line, sx) in pending {
+        let x1 = sx + head_w + pad;
+        draw_tie(sys_node, line, x1, (x1 + 3.0 * spatium).min(system_width));
+    }
+
+    // ── slurs ──
+    let mut open: Option<(f64, i32)> = None;
+    for a in anchors {
+        for i in 0..a.m.entries.len() {
+            let ex = a.entry_x.get(i).copied().unwrap_or(0.0);
+            let line = a.m.pitches[i].map(|(l, _)| l).unwrap_or(0);
+            if a.m.slur_stops[i]
+                && let Some((sx, sl)) = open.take()
+            {
+                // Slur above; endpoints just over the noteheads.
+                let start = SlurEndpoint {
+                    x: sx + head_w / 2.0,
+                    y: y_of(sl) - 0.8 * spatium,
+                    stem_up: false,
+                };
+                let end = SlurEndpoint {
+                    x: ex + head_w / 2.0,
+                    y: y_of(line) - 0.8 * spatium,
+                    stem_up: false,
+                };
+                if end.x > start.x + spatium {
+                    let slur = layout_slur(&start, &end, SlurDirection::Up, *id, spatium, &cfg);
+                    *id += 1;
+                    sys_node.add_child(slur.scene);
+                }
+            }
+            if a.m.slur_starts[i] && open.is_none() {
+                open = Some((ex, line));
+            }
+        }
+    }
 }
 
 /// Draw a multi-measure rest block: serifs + H-bar on the middle line and
@@ -922,6 +1162,8 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
             sys_node.add_child(node);
         }
 
+        let mut anchors: Vec<MeasureAnchors<'_>> = Vec::new();
+
         let mut x = prefix_w;
         for (item_pos, &item_idx) in sys.items.iter().enumerate() {
             let width = widths[item_pos];
@@ -936,9 +1178,17 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
                         id,
                     );
                     id += 1000;
+                    let entry_x = engraver_proto::engraver::layout::chart::chord_layout::get_chord_rest_positions(&scene)
+                        .into_iter()
+                        .map(|seg_x| x + seg_x)
+                        .collect();
+                    anchors.push(MeasureAnchors { m, entry_x });
                     let mut container =
                         SceneNode::group(SemanticId::new(ElementType::Measure, item_idx as u64 + 1));
-                    container.transform = Affine::translate((x, 0.0));
+                    // MeasureScene notation is authored around the MIDDLE
+                    // line (y=0) — same +2sp shift the chart pipeline applies
+                    // to its measure containers.
+                    container.transform = Affine::translate((x, 2.0 * spatium));
                     container.add_child(scene.scene.clone());
                     // Measure number over the first measure of each system.
                     if item_pos == 0 {
@@ -946,13 +1196,16 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
                             &m.number,
                             "FreeSans",
                             8.0,
-                            Point::new(0.0, -2.6 * spatium),
+                            Point::new(0.0, -4.6 * spatium),
                             TextAnchor::Start,
                             FontWeight::Normal,
                         ));
                     }
                     sys_node.add_child(container);
                     x += scene.width;
+                    // Builder barlines are suppressed (mixed y-convention);
+                    // draw the measure's closing barline in staff coords.
+                    sys_node.add_child(barline(x, spatium));
                 }
                 Prepared::MultiRest { count, number, .. } => {
                     let mut container =
@@ -975,6 +1228,8 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
                 }
             }
         }
+
+        draw_ties_and_slurs(&mut sys_node, &anchors, prefix_w + content_width, spatium, &mut id);
 
         root.add_child(sys_node);
         y += opts.system_gap;
