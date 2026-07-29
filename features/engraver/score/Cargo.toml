@@ -1,0 +1,7 @@
+[package]
+name = "engraver-score"
+version = "0.1.0"
+edition = "2024"
+description = "Score engraving — orchestral scores + extracted parts (see docs: score-engraving spec). Stub crate: the workspace member landed with the spec before the implementation."
+
+[dependencies]
