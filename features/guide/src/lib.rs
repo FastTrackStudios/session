@@ -1,3 +1,7 @@
+// Lint debt: workspace flipped dead_code/unused to warn (task cleanup);
+// this crate predates that — burn down separately.
+#![allow(dead_code, unused)]
+
 //! session-guide — portable guide engine for the session domain.
 //!
 //! Port of the legacy FTS-Guide REAPER plugin (click track, count-in,

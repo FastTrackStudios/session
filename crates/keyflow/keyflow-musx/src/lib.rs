@@ -1,3 +1,7 @@
+// Lint debt: workspace flipped dead_code/unused to warn (task cleanup);
+// this crate predates that — burn down separately.
+#![allow(dead_code, unused)]
+
 //! Finale `.musx` → MusicXML converter.
 //!
 //! A Rust port of [joris-vaneyghen/musx2mxl](https://github.com/joris-vaneyghen/musx2mxl)
