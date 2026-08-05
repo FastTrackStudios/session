@@ -182,7 +182,7 @@ pub enum CueEvent {
     /// to reverse-engineer it out of `keys`.
     Guide {
         keys: Vec<String>,
-        section_type: Option<String>,
+        section_type: Option<session_proto::SectionType>,
     },
 }
 
@@ -337,7 +337,7 @@ impl CueSchedule {
                     time_seconds: guide_time,
                     event: CueEvent::Guide {
                         keys,
-                        section_type: Some(section.section_type_name.clone()),
+                        section_type: session_proto::SectionType::parse(&section.section_type_name).ok(),
                     },
                 });
                 guide_times.push(guide_time);
@@ -367,7 +367,7 @@ impl CueSchedule {
                     time_seconds: count_start.max(0.0),
                     event: CueEvent::Guide {
                         keys: vec![tts_cue_key("Ending"), "Ending_None".to_string()],
-                        section_type: Some("Ending".to_string()),
+                        section_type: Some(session_proto::SectionType::End),
                     },
                 });
                 guide_times.push(count_start.max(0.0));

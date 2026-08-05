@@ -336,7 +336,7 @@ fn engine_renders_clicks_and_cues_sample_accurately() {
         time_seconds: 0.75,
         event: CueEvent::Guide {
             keys: vec!["Verse_1".to_string()],
-            section_type: Some("Verse".to_string()),
+            section_type: Some(session_proto::SectionType::Verse),
         },
     });
     engine.set_schedule(schedule);

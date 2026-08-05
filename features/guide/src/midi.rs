@@ -13,7 +13,12 @@ pub const MIDI_NOTE_CLICK_TRIPLET: u8 = 65; // F4
 /// MIDI notes for count samples (1-8)
 pub const MIDI_NOTES_COUNT: [u8; 8] = [72, 73, 74, 75, 76, 77, 78, 79]; // C5-C6
 
-/// Map section types to MIDI notes (starting from C6 = 84)
+/// Map a section *name* to a MIDI note (starting from C6 = 84).
+///
+/// The legacy plugin's table, kept verbatim for names that aren't
+/// [`SectionType`] variants (Tag, Rap, Acapella, Exhortation — these
+/// arrive as [`SectionType::Custom`]). Prefer
+/// [`midi_note_for_section`], which is exhaustive over the real enum.
 pub fn get_midi_note_for_section_type(section_type: &str) -> Option<u8> {
     Some(match section_type {
         "Verse" => 84,                       // C6
@@ -39,6 +44,54 @@ pub fn get_midi_note_for_section_type(section_type: &str) -> Option<u8> {
     })
 }
 
+/// Map a [`SectionType`] to its MIDI note.
+///
+/// Exhaustive over the enum rather than matching on a rendered name:
+/// `SectionType` is the canonical section vocabulary (defined in
+/// `keyflow`, re-exported by `session_proto`, used everywhere), so
+/// stringly-matching it here would silently miss `Pre`/`Post` spellings
+/// and drift the moment a variant is added.
+///
+/// `None` means "no note for this" and the cue is simply not stamped —
+/// the audio cue still plays. `CountIn` is deliberately `None`: count-ins
+/// go to the Count track, not the Guide track.
+pub fn midi_note_for_section(section_type: &SectionType) -> Option<u8> {
+    Some(match section_type {
+        SectionType::Verse => 84,
+        SectionType::Chorus => 85,
+        SectionType::Bridge => 86,
+        SectionType::Intro => 87,
+        SectionType::Outro => 88,
+        SectionType::Instrumental => 89,
+        SectionType::Breakdown => 92,
+        SectionType::Interlude => 93,
+        // The legacy table called this "Ending".
+        SectionType::End => 95,
+        SectionType::Solo => 96,
+        SectionType::Vamp => 97,
+        SectionType::Turnaround => 98,
+        SectionType::Refrain => 99,
+        // Pre-/Post- have their own notes only for Chorus, which is all
+        // the legacy plugin ever had; anything else takes the inner
+        // section's note so a Pre-Verse still announces as a Verse.
+        SectionType::Pre(inner) => match **inner {
+            SectionType::Chorus => 90,
+            ref other => return midi_note_for_section(other),
+        },
+        SectionType::Post(inner) => match **inner {
+            SectionType::Chorus => 91,
+            ref other => return midi_note_for_section(other),
+        },
+        // Names the enum doesn't model (Tag, Rap, Acapella, Exhortation)
+        // still resolve through the legacy table.
+        SectionType::Custom(name) => return get_midi_note_for_section_type(name),
+        // Count-ins are Count-track material; Opening and Hits had no
+        // note in the legacy layout and inventing one would put an
+        // unexpected trigger into someone's sampler.
+        SectionType::CountIn | SectionType::Opening | SectionType::Hits => return None,
+    })
+}
+
 // ── Rendering the guide as MIDI ─────────────────────────────────────────
 //
 // The authoring counterpart to the playback engine: same schedule, same
@@ -47,7 +100,7 @@ pub fn get_midi_note_for_section_type(section_type: &str) -> Option<u8> {
 // REAPER, and so the host owns *where* the notes go.
 
 use crate::schedule::{CueEvent, CueSchedule, GuideSection, GuideSongTiming, ScheduleOptions};
-use session_proto::GuideTrackRole;
+use session_proto::{GuideTrackRole, SectionType};
 
 /// One note to stamp, on the track its role names.
 #[derive(Debug, Clone, PartialEq)]
@@ -205,7 +258,7 @@ pub fn cue_notes(schedule: &CueSchedule) -> Vec<GuideMidiNote> {
                 role: GuideTrackRole::Guide,
                 time_seconds: cue.time_seconds,
                 length_seconds: TRIGGER_LENGTH_SECONDS,
-                pitch: get_midi_note_for_section_type(section_type.as_deref()?)?,
+                pitch: midi_note_for_section(section_type.as_ref()?)?,
                 velocity: NORMAL_VELOCITY,
             }),
         })
@@ -313,7 +366,7 @@ mod tests {
                     time_seconds: 2.0,
                     event: CueEvent::Guide {
                         keys: vec!["Chorus_1".into()],
-                        section_type: Some("Chorus".into()),
+                        section_type: Some(SectionType::Chorus),
                     },
                 },
             ],
@@ -326,7 +379,7 @@ mod tests {
         assert_eq!(notes[1].role, GuideTrackRole::Guide);
         assert_eq!(
             notes[1].pitch,
-            get_midi_note_for_section_type("Chorus").unwrap()
+            midi_note_for_section(&SectionType::Chorus).unwrap()
         );
     }
 
@@ -348,12 +401,80 @@ mod tests {
                     time_seconds: 2.0,
                     event: CueEvent::Guide {
                         keys: vec![],
-                        section_type: Some("Kazoo Solo".into()),
+                        section_type: Some(SectionType::Custom("Kazoo Solo".into())),
                     },
                 },
             ],
         };
 
         assert!(cue_notes(&schedule).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod section_note_tests {
+    use super::*;
+
+    /// The mapping is over `SectionType` — the canonical vocabulary from
+    /// keyflow that the whole app already shares — not over a rendered
+    /// name. A new variant is a compile error here rather than a section
+    /// that silently stops announcing.
+    #[test]
+    fn pre_and_post_chorus_have_their_own_notes() {
+        assert_eq!(
+            midi_note_for_section(&SectionType::Pre(Box::new(SectionType::Chorus))),
+            Some(90)
+        );
+        assert_eq!(
+            midi_note_for_section(&SectionType::Post(Box::new(SectionType::Chorus))),
+            Some(91)
+        );
+    }
+
+    /// Pre-/Post- of anything else falls back to the inner section, so a
+    /// Pre-Verse still announces rather than going silent.
+    #[test]
+    fn pre_of_other_sections_falls_back_to_the_inner_note() {
+        assert_eq!(
+            midi_note_for_section(&SectionType::Pre(Box::new(SectionType::Verse))),
+            midi_note_for_section(&SectionType::Verse)
+        );
+    }
+
+    /// Names the enum doesn't model still resolve through the legacy table.
+    #[test]
+    fn custom_sections_use_the_legacy_name_table() {
+        assert_eq!(
+            midi_note_for_section(&SectionType::Custom("Tag".into())),
+            Some(94)
+        );
+        assert_eq!(midi_note_for_section(&SectionType::Custom("Nope".into())), None);
+    }
+
+    /// Count-ins belong on the Count track; putting them on Guide too
+    /// would double-trigger.
+    #[test]
+    fn count_in_has_no_guide_note() {
+        assert_eq!(midi_note_for_section(&SectionType::CountIn), None);
+    }
+
+    /// `CueSchedule` stores what `SectionType::parse` makes of a section's
+    /// name, so the names the guide crate carries must round-trip.
+    #[test]
+    fn section_names_round_trip_through_parse() {
+        for ty in [
+            SectionType::Verse,
+            SectionType::Chorus,
+            SectionType::Bridge,
+            SectionType::Intro,
+            SectionType::Outro,
+        ] {
+            assert_eq!(
+                SectionType::parse(&ty.full_name()).as_ref(),
+                Ok(&ty),
+                "{} should round-trip",
+                ty.full_name()
+            );
+        }
     }
 }
