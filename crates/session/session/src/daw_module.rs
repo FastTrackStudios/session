@@ -1,9 +1,9 @@
 //! DawModule implementation for session.
 
-use crate::{
-    auto_color_actions, keyflow_actions, mode_actions, mode_defs, preroll_actions, record_actions,
-    session_actions, setlist_actions, take_ranking,
-};
+use crate::{keyflow_actions, mode_actions, mode_defs, session_actions, setlist_actions};
+// Generic DAW actions, no longer session's: pre-roll, record control,
+// grouping, take ranking, auto-colour.
+use daw_actions::{auto_color, groups, preroll, record, take_ranking};
 use daw::module::{ActionDef, DawModule, ModuleContext};
 use daw::service::transport::service::Transport as TransportService;
 use daw::service::{ActionRegistration, Markers, Projects, Regions, TempoMap};
@@ -64,24 +64,24 @@ where
                 let name = def.display_name();
                 let action_id = def.id.as_str().to_string();
                 let cmd2 = cmd.clone();
-                let toggleable = preroll_actions::is_toggle_action(&action_id);
+                let toggleable = preroll::is_toggle_action(&action_id);
                 let daw = self.daw.clone();
                 let action = ActionDef::new(cmd, name, move || {
                     tracing::info!("[session] Action: {}", cmd2);
                     if let Some(action) = keyflow_actions::action_for_id(&action_id) {
                         keyflow_actions::dispatch(&daw, action);
-                    } else if let Some(action) = auto_color_actions::action_for_id(&action_id) {
-                        auto_color_actions::dispatch(action);
-                    } else if let Some(action) = preroll_actions::action_for_id(&action_id) {
-                        preroll_actions::dispatch(&daw, action);
+                    } else if let Some(action) = auto_color::action_for_id(&action_id) {
+                        auto_color::dispatch(action);
+                    } else if let Some(action) = preroll::action_for_id(&action_id) {
+                        preroll::dispatch(&daw, action);
                     } else if let Some(action) = mode_actions::action_for_id(&action_id) {
                         mode_actions::dispatch(action);
                     } else if let Some(action) = take_ranking::action_for_id(&action_id) {
                         take_ranking::dispatch(action);
-                    } else if let Some(action) = record_actions::action_for_id(&action_id) {
-                        record_actions::dispatch(action);
-                    } else if let Some(action) = crate::group_actions::action_for_id(&action_id) {
-                        crate::group_actions::dispatch(action);
+                    } else if let Some(action) = record::action_for_id(&action_id) {
+                        record::dispatch(action);
+                    } else if let Some(action) = groups::action_for_id(&action_id) {
+                        groups::dispatch(action);
                     } else if let Some(action) = setlist_actions::action_for_id(&action_id) {
                         setlist_actions::dispatch(&daw, action);
                     } else if dynamic_template::daw_module::dispatch_session_command(&cmd2) {
@@ -101,14 +101,14 @@ where
 
     fn init(&self, ctx: &ModuleContext) {
         keyflow_actions::init(ctx);
-        auto_color_actions::init(ctx);
-        preroll_actions::init(&self.daw);
+        auto_color::init(ctx);
+        preroll::init(&self.daw);
         mode_actions::init(ctx);
         template_module().init(ctx);
     }
 
     fn subscribe(&self, ctx: &ModuleContext) {
-        auto_color_actions::subscribe(ctx);
+        auto_color::subscribe(ctx);
         template_module().subscribe(ctx);
     }
 }

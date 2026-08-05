@@ -23,8 +23,8 @@ use tokio::sync::broadcast::error::RecvError;
 use vox::Tx;
 
 use crate::mode_actions::{self, Mode};
-use crate::record_actions::{self, RecordAction};
-use crate::take_ranking::{self, RankAction};
+use daw_actions::record::{self, RecordAction};
+use daw_actions::take_ranking::{self, RankAction};
 
 // ─── SessionModeService ─────────────────────────────────────────────────
 
@@ -151,7 +151,7 @@ impl RecordControlService for RecordControlServiceImpl {
 }
 
 async fn dispatch_record(action: RecordAction) -> Result<(), SessionServiceError> {
-    main_thread::query(move || record_actions::dispatch(action))
+    main_thread::query(move || record::dispatch(action))
         .await
         .ok_or_else(|| SessionServiceError::DawError("TaskSupport not initialised".to_string()))?;
     Ok(())

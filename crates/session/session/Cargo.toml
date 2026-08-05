@@ -52,6 +52,9 @@ rustc-hash = "2"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 daw = { workspace = true, features = ["file", "reaper"] }
 daw-reaper = { workspace = true }
+# Pre-roll / record / grouping / take-ranking / auto-colour actions —
+# generic DAW operations, moved out of this crate.
+daw-actions = { workspace = true }
 daw-synchronization.workspace = true
 # Raw REAPER FFI — used by take_ranking for cursor / item / take-marker ops
 # that aren't covered by the daw service traits.

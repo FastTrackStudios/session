@@ -36,10 +36,8 @@ pub mod chart_import;
 pub mod event_bus;
 pub mod keyflow_actions;
 pub mod keyflow_scaffold;
-// REAPER-side helpers (preroll insertion, routing-project mutation). Not
-// needed by the browser build; kept native-only.
-#[cfg(not(target_arch = "wasm32"))]
-pub mod preroll_actions;
+// REAPER-side helper (routing-project mutation). Not needed by the browser
+// build; kept native-only.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod routing_project;
 pub mod setlist_builder;
@@ -60,35 +58,26 @@ pub use song_builder::SongBuilder;
 // Re-export demo setlist stamping (for extensions that have a local Daw instance)
 pub use setlist_service::demo::{stamp_demo_into_project, stamp_demo_setlist};
 
-// Uses `daw::block_on` (native-only) and is only consumed by `daw_module`
-// (also native-only) — the REAPER auto-coloring action.
-#[cfg(not(target_arch = "wasm32"))]
-pub mod auto_color_actions;
 // `daw_module` + `track_manager_actions` drive `dynamic-template` (native
-// template engine); `take_ranking` uses raw REAPER FFI. All native-only.
+// template engine) — native-only.
+//
+// Pre-roll, record control, track grouping, take ranking and auto-colour
+// moved to the `daw-actions` crate: they're plain DAW operations with
+// nothing session-specific about them.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod daw_module;
-// REAPER-hotkey action modules: `group_manager`/`mode_actions`/`record_actions`
-// drive the `daw::reaper` backend directly, `group_actions` wraps
-// `group_manager`, and `rpc_services` composes them + `take_ranking` behind a
-// tokio-runtime pump. None are needed by the browser setlist engine — native-only.
-#[cfg(not(target_arch = "wasm32"))]
-pub mod group_actions;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod group_manager;
+// REAPER-hotkey action modules driving the `daw::reaper` backend directly;
+// `rpc_services` composes them behind a tokio-runtime pump. Not needed by
+// the browser setlist engine — native-only.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mode_actions;
 pub mod playback_actions;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod record_actions;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod rpc_services;
 // REAPER hotkey action registration (`build_setlist_sync` → `SongBuilder::
 // build_native`) — native-only, consumed by `SessionServices`.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod setlist_actions;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod take_ranking;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod track_manager_actions;
 

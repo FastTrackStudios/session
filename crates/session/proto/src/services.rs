@@ -516,7 +516,7 @@ pub use session_mode_service::{
 // ─── Take ranking ──────────────────────────────────────────────────────
 
 /// Scope for [`TakeRankingService::apply_rank`]. Wire-side mirror of
-/// the `Scope` enum in `session::take_ranking`.
+/// the `Scope` enum in `daw_actions::take_ranking`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Facet)]
 #[repr(u8)]
 pub enum TakeRankScope {
