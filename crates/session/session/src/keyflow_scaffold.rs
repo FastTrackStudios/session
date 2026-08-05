@@ -13,6 +13,8 @@
 use daw::service::{Markers, ProjectContext, Projects, Regions, TrackRef, Tracks, UiDialogs};
 use tracing::{info, warn};
 
+use session_proto::keyflow_scaffold::{KeyflowScaffoldActions, register_keyflow_scaffold_actions};
+
 use crate::chart_import::{ChartLayout, chart_to_layout};
 use crate::keyflow_actions::{normalize_section_regions, section_type_color};
 
@@ -106,19 +108,11 @@ fn lay_out_sections<D: Regions>(
 }
 
 // ── architect action ────────────────────────────────────────────────────
+//
+// Contract in `session_proto::keyflow_scaffold`.
 
 pub struct KeyflowScaffoldImpl<D> {
     pub daw: D,
-}
-
-#[architect::actions(namespace = "FTS_SESSION")]
-pub trait KeyflowScaffoldActions {
-    #[action(
-        description = "Scaffold a project from keyflow text: prompt for a chart, then build the Keyflow folder (KEY/CHORD/MELODY/SCALE tracks) and lay out one coloured region per song section.",
-        category = "Keyflow",
-        group = "Scaffold"
-    )]
-    fn scaffold_keyflow(&self);
 }
 
 impl<D: ScaffoldDaw> KeyflowScaffoldActions for KeyflowScaffoldImpl<D> {

@@ -67,9 +67,7 @@ where
                 let daw = self.daw.clone();
                 let action = ActionDef::new(cmd, name, move || {
                     tracing::info!("[session] Action: {}", cmd2);
-                    if let Some(action) = keyflow_actions::action_for_id(&action_id) {
-                        keyflow_actions::dispatch(&daw, action);
-                    } else if let Some(action) = auto_color::action_for_id(&action_id) {
+                    if let Some(action) = auto_color::action_for_id(&action_id) {
                         auto_color::dispatch(action);
                     } else if let Some(action) = preroll::action_for_id(&action_id) {
                         preroll::dispatch(&daw, action);

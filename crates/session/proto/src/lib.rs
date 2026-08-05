@@ -30,6 +30,8 @@ pub use actions_proto::{
 };
 
 // Domain modules
+pub mod keyflow_actions;
+pub mod keyflow_scaffold;
 pub mod mode;
 pub mod offset_map;
 pub mod playback;

@@ -6,6 +6,7 @@ use session_proto::SectionType;
 use session_proto::ruler_lanes::{CoreLane, FtsLane, InstrumentLane, classify_marker_lane};
 use std::collections::{HashMap, HashSet};
 use architect::platform::Instant;
+use session_proto::keyflow_actions::{KeyflowActions, register_keyflow_actions};
 use tracing::{debug, warn};
 
 const TOUCH_EPSILON_SECONDS: f64 = 0.001;
@@ -57,57 +58,7 @@ struct SectionRegion {
 
 pub fn init(_ctx: &ModuleContext) {}
 
-pub fn action_for_id(action_id: &str) -> Option<KeyflowAction> {
-    let normalized = normalized_action_id(action_id);
-    let suffix = normalized
-        .strip_prefix("fts.session.")
-        .unwrap_or(normalized.as_str());
-    match suffix {
-        "insert_intro_region" => Some(KeyflowAction::InsertSection(SectionKind::Intro)),
-        "insert_verse_region" => Some(KeyflowAction::InsertSection(SectionKind::Verse)),
-        "insert_pre_chorus_region" => Some(KeyflowAction::InsertSection(SectionKind::PreChorus)),
-        "insert_chorus_region" => Some(KeyflowAction::InsertSection(SectionKind::Chorus)),
-        "insert_bridge_region" => Some(KeyflowAction::InsertSection(SectionKind::Bridge)),
-        "insert_outro_region" => Some(KeyflowAction::InsertSection(SectionKind::Outro)),
-        "insert_instrumental_region" => {
-            Some(KeyflowAction::InsertSection(SectionKind::Instrumental))
-        }
-        "insert_solo_region" => Some(KeyflowAction::InsertSection(SectionKind::Solo)),
-        "insert_hits_region" => Some(KeyflowAction::InsertSection(SectionKind::Hits)),
-        "insert_interlude_region" => Some(KeyflowAction::InsertSection(SectionKind::Interlude)),
-        "insert_breakdown_region" => Some(KeyflowAction::InsertSection(SectionKind::Breakdown)),
-        "insert_vamp_region" => Some(KeyflowAction::InsertSection(SectionKind::Vamp)),
-        "insert_refrain_region" => Some(KeyflowAction::InsertSection(SectionKind::Refrain)),
-        "insert_turnaround_region" => {
-            Some(KeyflowAction::InsertSection(SectionKind::Turnaround))
-        }
-        "insert_count_in_region" => Some(KeyflowAction::InsertSection(SectionKind::CountIn)),
-        "insert_end_region" => Some(KeyflowAction::InsertSection(SectionKind::End)),
-        "insert_count_in_marker" => Some(KeyflowAction::InsertMarker(MarkerKind::CountIn)),
-        "insert_start_marker" => Some(KeyflowAction::InsertMarker(MarkerKind::Start)),
-        "insert_end_marker" => Some(KeyflowAction::InsertMarker(MarkerKind::End)),
-        "insert_songstart_marker" => Some(KeyflowAction::InsertMarker(MarkerKind::SongStart)),
-        "insert_songend_marker" => Some(KeyflowAction::InsertMarker(MarkerKind::SongEnd)),
-        "convert_markers_to_session_format" => Some(KeyflowAction::ConvertMarkersToSessionFormat),
-        _ => None,
-    }
-}
-
-fn normalized_action_id(action_id: &str) -> String {
-    action_id
-        .trim()
-        .to_lowercase()
-        .strip_prefix("fts_session_")
-        .map(|suffix| {
-            format!(
-                "insert_{}",
-                suffix.strip_prefix("insert_").unwrap_or(suffix)
-            )
-        })
-        .unwrap_or_else(|| action_id.trim().to_lowercase())
-}
-
-pub fn dispatch<D>(daw: &D, action: KeyflowAction)
+pub(crate) fn dispatch<D>(daw: &D, action: KeyflowAction)
 where
     D: Projects + TransportService + Markers + Regions + TempoMap,
 {
@@ -1151,170 +1102,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn action_lookup_accepts_reaper_command_names() {
-        assert_eq!(
-            action_for_id("FTS_SESSION_INSERT_CHORUS_REGION"),
-            Some(KeyflowAction::InsertSection(SectionKind::Chorus))
-        );
-        assert_eq!(
-            action_for_id("FTS_SESSION_INSERT_SONGSTART_MARKER"),
-            Some(KeyflowAction::InsertMarker(MarkerKind::SongStart))
-        );
-    }
-
-    #[test]
-    fn action_lookup_accepts_internal_action_ids() {
-        assert_eq!(
-            action_for_id("insert_chorus_region"),
-            Some(KeyflowAction::InsertSection(SectionKind::Chorus))
-        );
-        assert_eq!(
-            action_for_id("fts.session.insert_songstart_marker"),
-            Some(KeyflowAction::InsertMarker(MarkerKind::SongStart))
-        );
-    }
 }
 
-// ── architect::actions declaration ──────────────────────────────────────
+// ── architect::actions implementation ───────────────────────────────────
 //
-// `KeyflowAction` / `action_for_id` / `dispatch` above stay put — still the
-// live path `daw_module.rs`'s dispatch chain calls into. Additive
-// declarative layer only, mirroring `setlist_actions`'s migration: same
-// twenty handlers, now with real `ActionMeta` instead of only living in
-// `session_actions`'s `actions_proto::define_actions!` block (`lib.rs`).
-// Namespace `FTS_SESSION` matches the existing REAPER command-id
-// convention (`FTS_SESSION_INSERT_INTRO_REGION`, etc).
+// The contract lives in `session_proto::keyflow_actions`. `KeyflowAction`
+// / `SectionKind` / `MarkerKind` stay: unlike the pass-through enums in
+// the other action modules, `run_action` genuinely matches on them, so
+// they are domain logic rather than a parallel dispatch path. What's gone
+// is the string-keyed `action_for_id` lookup and the `session_actions`
+// `define_actions!` entries that declared the same `FTS_SESSION_*` command
+// ids a second time.
 
-/// Bridges the twenty keyflow-insert actions onto `#[architect::actions]`.
-/// Every method forwards to the existing synchronous `dispatch` — no
-/// behavior change, just a declarative front door with real metadata.
+/// Serves the twenty keyflow-insert actions against a `daw` backend.
 pub struct KeyflowActionsImpl<D> {
     daw: D,
-}
-
-#[architect::actions(namespace = "FTS_SESSION")]
-pub trait KeyflowActions {
-    #[action(
-        description = "Insert an Intro section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_intro_region(&self);
-    #[action(
-        description = "Insert a Verse section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_verse_region(&self);
-    #[action(
-        description = "Insert a Pre-Chorus section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_pre_chorus_region(&self);
-    #[action(
-        description = "Insert a Chorus section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_chorus_region(&self);
-    #[action(
-        description = "Insert a Bridge section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_bridge_region(&self);
-    #[action(
-        description = "Insert an Outro section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_outro_region(&self);
-    #[action(
-        description = "Insert an Instrumental section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_instrumental_region(&self);
-    #[action(
-        description = "Insert a Solo section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_solo_region(&self);
-    #[action(
-        description = "Insert a Hits section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_hits_region(&self);
-    #[action(
-        description = "Insert an Interlude section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_interlude_region(&self);
-    #[action(
-        description = "Insert a Breakdown section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_breakdown_region(&self);
-    #[action(
-        description = "Insert a Vamp section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_vamp_region(&self);
-    #[action(
-        description = "Insert a Count-In section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_count_in_region(&self);
-    #[action(
-        description = "Insert an End section region at the current edit cursor",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_end_region(&self);
-    #[action(
-        description = "Insert a Count-In marker on the MARKS ruler lane",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_count_in_marker(&self);
-    #[action(
-        description = "Insert an =START marker on the MARKS ruler lane",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_start_marker(&self);
-    #[action(
-        description = "Insert an =END marker on the MARKS ruler lane",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_end_marker(&self);
-    #[action(
-        description = "Insert a SONGSTART marker on the MARKS ruler lane",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_songstart_marker(&self);
-    #[action(
-        description = "Insert a SONGEND marker on the MARKS ruler lane",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn insert_songend_marker(&self);
-    #[action(
-        description = "Convert plain section-name markers into FTS section regions and add a SONG-lane region named after the project",
-        category = "Session",
-        group = "Edit"
-    )]
-    fn convert_markers_to_session_format(&self);
 }
 
 impl<D> KeyflowActions for KeyflowActionsImpl<D>
