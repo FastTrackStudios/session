@@ -285,7 +285,7 @@ fn songend_gets_two_measure_count_out_and_ending_guide() {
     // "Ending" announcement at the count-out start.
     assert!(schedule.cues.iter().any(|c| matches!(
         &c.event,
-        CueEvent::Guide { keys } if c.time_seconds == 26.0 && keys.contains(&"Ending_None".to_string())
+        CueEvent::Guide { keys, .. } if c.time_seconds == 26.0 && keys.contains(&"Ending_None".to_string())
     )));
 }
 
@@ -298,7 +298,8 @@ fn push_speak_inserts_sorted_tts_cue() {
     assert_eq!(
         schedule.cues[1].event,
         CueEvent::Guide {
-            keys: vec![tts_cue_key("Bridge in 2")]
+            keys: vec![tts_cue_key("Bridge in 2")],
+            section_type: None,
         }
     );
 }
@@ -335,6 +336,7 @@ fn engine_renders_clicks_and_cues_sample_accurately() {
         time_seconds: 0.75,
         event: CueEvent::Guide {
             keys: vec!["Verse_1".to_string()],
+            section_type: Some(session_proto::SectionType::Verse),
         },
     });
     engine.set_schedule(schedule);
@@ -652,7 +654,7 @@ fn count_in_song_schedules_full_count_into_the_downbeat() {
     // The Intro is announced up front, at the START of the count-in (2
     // measures / 4.0 s before its 4.0 s downbeat → t = 0.0).
     let intro_guide_time = schedule.cues.iter().find_map(|c| match &c.event {
-        CueEvent::Guide { keys } if keys.iter().any(|k| k.contains("Intro")) => {
+        CueEvent::Guide { keys, .. } if keys.iter().any(|k| k.contains("Intro")) => {
             Some(c.time_seconds)
         }
         _ => None,

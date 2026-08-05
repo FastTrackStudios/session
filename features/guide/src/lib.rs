@@ -45,7 +45,9 @@ pub mod samples;
 mod schedule;
 pub mod tts;
 
-pub use engine::{BlockClock, GuideBuses, GuideConfig, GuideEngine};
+pub use engine::{
+    BlockClock, GuideBuses, GuideConfig, GuideEngine, GuideTrigger, TriggerSource,
+};
 pub use samples::{AudioSample, ClickSound, SampleBank, get_guide_key, section_to_guide_filename};
 pub use schedule::{
     CueEvent, CueSchedule, GuideSection, GuideSongTiming, ScheduleOptions, ScheduledCue,
