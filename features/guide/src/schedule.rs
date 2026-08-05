@@ -173,7 +173,17 @@ pub enum CueEvent {
     /// Play a guide announcement. `keys` are tried in order against the
     /// sample bank; the first present wins (e.g. `["tts:Chorus", "Chorus_2"]`
     /// prefers a TTS-rendered cue over the canned voice library).
-    Guide { keys: Vec<String> },
+    ///
+    /// `section_type` is the announcement's subject — the section type
+    /// this cue is announcing ("Chorus", "Bridge"), or `None` for a
+    /// free-form spoken cue with no section behind it. Carried
+    /// explicitly so a consumer that needs the *type* rather than the
+    /// audio (the MIDI renderer, which maps type to note) doesn't have
+    /// to reverse-engineer it out of `keys`.
+    Guide {
+        keys: Vec<String>,
+        section_type: Option<String>,
+    },
 }
 
 /// A cue at an absolute timeline position (seconds).
@@ -325,7 +335,10 @@ impl CueSchedule {
                 keys.push(tts_cue_key(&section.name));
                 cues.push(ScheduledCue {
                     time_seconds: guide_time,
-                    event: CueEvent::Guide { keys },
+                    event: CueEvent::Guide {
+                        keys,
+                        section_type: Some(section.section_type_name.clone()),
+                    },
                 });
                 guide_times.push(guide_time);
             }
@@ -354,6 +367,7 @@ impl CueSchedule {
                     time_seconds: count_start.max(0.0),
                     event: CueEvent::Guide {
                         keys: vec![tts_cue_key("Ending"), "Ending_None".to_string()],
+                        section_type: Some("Ending".to_string()),
                     },
                 });
                 guide_times.push(count_start.max(0.0));
@@ -442,6 +456,7 @@ impl CueSchedule {
             time_seconds,
             event: CueEvent::Guide {
                 keys: vec![tts_cue_key(text)],
+                section_type: None,
             },
         };
         let idx = self

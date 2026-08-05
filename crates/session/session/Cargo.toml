@@ -27,6 +27,9 @@ architect = { workspace = true, features = ["platform"] }
 daw = { workspace = true }
 daw-proto = { workspace = true }
 # Canonical 128-slot group partition lives here (music_catalog::groups).
+# Guide schedule + MIDI note rendering (the pure half of guide
+# generation; this crate does the DAW writes).
+session-guide.workspace = true
 music-catalog.workspace = true
 # Auto-colour classification: monarchy sorts track names into the group
 # hierarchy, color-palette carries the Color type the palette is keyed in.

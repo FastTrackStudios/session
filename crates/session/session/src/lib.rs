@@ -46,6 +46,8 @@ pub mod song;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod color;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod guide;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod keyflow;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod modes;
@@ -107,6 +109,8 @@ where
         + daw::service::TempoMap
         + daw::service::Tracks
         + daw::service::Items
+        + daw::service::Midi
+        + daw::service::PositionConversion
         + daw::service::UiDialogs
         + Clone
         + Send
@@ -115,6 +119,7 @@ where
     B: architect::action::ActionBackend + Clone,
 {
     color::register_actions(backend);
+    guide::register_actions(backend, daw.clone());
     keyflow::actions::register_actions(backend, daw.clone());
     keyflow::scaffold::register_actions(backend, daw.clone());
     modes::register_actions(backend);

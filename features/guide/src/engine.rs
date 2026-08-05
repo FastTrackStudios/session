@@ -385,7 +385,7 @@ impl GuideEngine {
                         self.pending.push((offset, Trigger::Count(*index)));
                     }
                 }
-                CueEvent::Guide { keys } => {
+                CueEvent::Guide { keys, .. } => {
                     if self.config.enable_guide {
                         if let Some(key) = keys.iter().find(|k| self.bank.guides.contains_key(*k))
                         {
