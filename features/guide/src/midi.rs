@@ -478,3 +478,165 @@ mod section_note_tests {
         }
     }
 }
+
+// ── Reading the guide back from MIDI ────────────────────────────────────
+
+/// Which sound a MIDI note triggers — the inverse of the note layout
+/// above.
+///
+/// This is what makes a stamped guide track playable *by the plugin*
+/// rather than only by an external sampler: the host sends the track's
+/// notes in, this resolves each to a [`GuideTrigger`], and the engine
+/// mixes it. The mapping is one table, used in both directions, so a
+/// track this crate stamps is a track it can read back.
+///
+/// Returns `None` for notes outside the layout, so an unrelated MIDI
+/// track routed in by accident stays silent rather than firing arbitrary
+/// cues.
+pub fn trigger_for_midi_note(note: u8) -> Option<crate::GuideTrigger> {
+    use crate::GuideTrigger;
+
+    if let Some(index) = MIDI_NOTES_COUNT.iter().position(|n| *n == note) {
+        return Some(GuideTrigger::Count(index));
+    }
+    Some(match note {
+        MIDI_NOTE_CLICK_ACCENT => GuideTrigger::Accent,
+        MIDI_NOTE_CLICK_BEAT => GuideTrigger::Beat,
+        MIDI_NOTE_CLICK_EIGHTH => GuideTrigger::Eighth,
+        MIDI_NOTE_CLICK_SIXTEENTH => GuideTrigger::Sixteenth,
+        MIDI_NOTE_CLICK_TRIPLET => GuideTrigger::Triplet,
+        _ => {
+            // Section announcement: resolve the note to a section type and
+            // ask for that section's guide sample by the bank's own key.
+            let section = section_for_midi_note(note)?;
+            GuideTrigger::Guide(crate::get_guide_key(&section.full_name(), None))
+        }
+    })
+}
+
+/// The section type a Guide-track note stands for — inverse of
+/// [`midi_note_for_section`].
+pub fn section_for_midi_note(note: u8) -> Option<SectionType> {
+    Some(match note {
+        84 => SectionType::Verse,
+        85 => SectionType::Chorus,
+        86 => SectionType::Bridge,
+        87 => SectionType::Intro,
+        88 => SectionType::Outro,
+        89 => SectionType::Instrumental,
+        90 => SectionType::Pre(Box::new(SectionType::Chorus)),
+        91 => SectionType::Post(Box::new(SectionType::Chorus)),
+        92 => SectionType::Breakdown,
+        93 => SectionType::Interlude,
+        94 => SectionType::Custom("Tag".to_string()),
+        95 => SectionType::End,
+        96 => SectionType::Solo,
+        97 => SectionType::Vamp,
+        98 => SectionType::Turnaround,
+        99 => SectionType::Refrain,
+        100 => SectionType::Custom("Rap".to_string()),
+        101 => SectionType::Custom("Acapella".to_string()),
+        102 => SectionType::Custom("Exhortation".to_string()),
+        _ => return None,
+    })
+}
+
+/// Human-readable name for a note in the guide layout, for a host's
+/// piano roll ("Chorus" rather than "C6").
+///
+/// Every note the layout uses has one; anything else is `None`.
+pub fn note_name(note: u8) -> Option<String> {
+    if let Some(index) = MIDI_NOTES_COUNT.iter().position(|n| *n == note) {
+        return Some(format!("Count {}", index + 1));
+    }
+    Some(match note {
+        MIDI_NOTE_CLICK_ACCENT => "Click: Accent".to_string(),
+        MIDI_NOTE_CLICK_BEAT => "Click: Beat".to_string(),
+        MIDI_NOTE_CLICK_EIGHTH => "Click: 8th".to_string(),
+        MIDI_NOTE_CLICK_SIXTEENTH => "Click: 16th".to_string(),
+        MIDI_NOTE_CLICK_TRIPLET => "Click: Triplet".to_string(),
+        _ => section_for_midi_note(note)?.full_name(),
+    })
+}
+
+/// Every named note in the layout, low to high. What a host's note-name
+/// list wants.
+pub fn note_names() -> Vec<(u8, String)> {
+    (0u8..=127)
+        .filter_map(|note| note_name(note).map(|name| (note, name)))
+        .collect()
+}
+
+#[cfg(test)]
+mod midi_input_tests {
+    use super::*;
+    use crate::GuideTrigger;
+
+    /// The layout is one table read in both directions: anything this
+    /// crate stamps, it must be able to read back.
+    #[test]
+    fn every_stamped_section_note_maps_back_to_a_trigger() {
+        for ty in [
+            SectionType::Verse,
+            SectionType::Chorus,
+            SectionType::Bridge,
+            SectionType::Intro,
+            SectionType::Outro,
+            SectionType::Instrumental,
+            SectionType::Breakdown,
+            SectionType::Interlude,
+            SectionType::End,
+            SectionType::Solo,
+            SectionType::Vamp,
+            SectionType::Turnaround,
+            SectionType::Refrain,
+            SectionType::Pre(Box::new(SectionType::Chorus)),
+            SectionType::Post(Box::new(SectionType::Chorus)),
+        ] {
+            let note = midi_note_for_section(&ty).expect("has a note");
+            assert_eq!(
+                section_for_midi_note(note).as_ref(),
+                Some(&ty),
+                "note {note} should map back to {}",
+                ty.full_name()
+            );
+            assert!(matches!(
+                trigger_for_midi_note(note),
+                Some(GuideTrigger::Guide(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn click_and_count_notes_map_to_their_triggers() {
+        assert_eq!(
+            trigger_for_midi_note(MIDI_NOTE_CLICK_ACCENT),
+            Some(GuideTrigger::Accent)
+        );
+        assert_eq!(
+            trigger_for_midi_note(MIDI_NOTE_CLICK_BEAT),
+            Some(GuideTrigger::Beat)
+        );
+        assert_eq!(
+            trigger_for_midi_note(MIDI_NOTES_COUNT[3]),
+            Some(GuideTrigger::Count(3))
+        );
+    }
+
+    /// An unrelated MIDI track routed in by accident must stay silent
+    /// rather than firing arbitrary cues.
+    #[test]
+    fn notes_outside_the_layout_are_ignored() {
+        assert_eq!(trigger_for_midi_note(0), None);
+        assert_eq!(trigger_for_midi_note(64), None);
+        assert_eq!(trigger_for_midi_note(127), None);
+        assert_eq!(note_name(64), None);
+    }
+
+    #[test]
+    fn every_named_note_is_playable_and_vice_versa() {
+        for (note, _) in note_names() {
+            assert!(trigger_for_midi_note(note).is_some(), "note {note}");
+        }
+    }
+}
