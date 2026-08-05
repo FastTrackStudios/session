@@ -235,26 +235,17 @@ actions_proto::define_actions! {
     pub session_actions {
         prefix: "fts.session",
         title: "Session",
-        TOGGLE_PLAYBACK = "toggle_playback" {
-            name: "Toggle Playback",
-            description: "Toggle play/pause state",
-            category: Transport,
-            group: "Transport",
-            shortcut: "Space",
-            when: "tab:performance",
-        }
-        TOGGLE_SONG_LOOP = "toggle_song_loop" {
-            name: "Toggle Song Loop",
-            description: "Toggle looping for the current song",
-            category: Transport,
-            group: "Transport",
-            shortcut: "L",
-            when: "tab:performance",
-        }
+        // TOGGLE_PLAYBACK / TOGGLE_SONG_LOOP moved to
+        // `session_proto::playback::PlaybackActions`. They are NOT
+        // redeclared here: the `#[architect::actions]` macro emits the
+        // same `FTS_SESSION_*` command ids, so keeping both would
+        // register each command twice.
+        //
         // SMART_NEXT / SMART_PREVIOUS / NEXT_SONG / PREVIOUS_SONG /
         // NEXT_SECTION / PREVIOUS_SECTION: RPC-only, deliberately NOT
-        // migrated to `#[architect::actions]` (see `playback_actions.rs`'s
-        // module doc for the full reasoning) — they route through
+        // migrated to `#[architect::actions]` (see
+        // `session_proto::playback`'s module doc for the full reasoning)
+        // — they route through
         // `SetlistServiceImpl::go_to_song_impl`/`go_to_section_impl`,
         // which depend on `ensure_song_hydrated`'s async, timeout-bounded
         // rebuild path. There's no safe way to collapse that to a sync

@@ -31,6 +31,7 @@ pub use actions_proto::{
 
 // Domain modules
 pub mod offset_map;
+pub mod playback;
 pub mod routing_project;
 pub mod ruler_lanes;
 pub mod services;
