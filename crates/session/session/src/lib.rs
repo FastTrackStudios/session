@@ -196,13 +196,15 @@ pub mod daw_services {
     /// `D` backend — each handler bounces to REAPER's main thread
     /// via `daw_reaper::main_thread`.
     pub fn layer_control_surfaces(mut handler: daw::LayerRouter) -> daw::LayerRouter {
-        use crate::rpc_services::{
-            RecordControlServiceImpl, SessionModeServiceImpl, TakeRankingServiceImpl,
-        };
-        use session_proto::services::{
+        use crate::rpc_services::SessionModeServiceImpl;
+        use daw::service::{
             record_control_service_service_descriptor, serve_record_control_service,
-            serve_session_mode_service, serve_take_ranking_service,
-            session_mode_service_service_descriptor, take_ranking_service_service_descriptor,
+            serve_take_ranking_service, take_ranking_service_service_descriptor,
+        };
+        use daw_actions::record::RecordControlServiceImpl;
+        use daw_actions::take_ranking::TakeRankingServiceImpl;
+        use session_proto::services::{
+            serve_session_mode_service, session_mode_service_service_descriptor,
         };
         handler = handler.merge(daw::Mounted::new(
             session_mode_service_service_descriptor(),

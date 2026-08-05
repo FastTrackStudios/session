@@ -1,62 +1,14 @@
-//! Service trait definitions for session management
-//!
-//! These traits define the RPC interfaces for song and setlist operations.
+//! Setlist control service — the main live surface: queries, navigation,
+//! transport, loop, recording, build/refresh, and the event streams.
 
+use super::error::SessionServiceError;
 use crate::setlist::{ActiveIndices, Setlist};
 use crate::song::{Section, Song, SongChartHydration};
 use crate::{SectionId, SongId};
 use daw_proto::MusicalPosition;
 use facet::Facet;
-use serde::{Deserialize, Serialize};
 use vox::Tx;
 
-// ─── SessionServiceError ────────────────────────────────────────
-
-/// Typed error for session service trait boundaries.
-///
-/// All methods return `Result<T, SessionServiceError>` using typed error variants
-/// for structured diagnostics.
-#[repr(C)]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Facet, thiserror::Error)]
-pub enum SessionServiceError {
-    /// Entity not found by ID.
-    #[error("{entity} not found: {id}")]
-    NotFound { entity: String, id: String },
-
-    /// A DAW operation failed.
-    #[error("daw error: {0}")]
-    DawError(String),
-
-    /// Hydration (data enrichment) failed.
-    #[error("hydration error: {0}")]
-    HydrationError(String),
-
-    /// Catch-all for unexpected failures.
-    #[error("internal error: {0}")]
-    Internal(String),
-}
-
-impl SessionServiceError {
-    /// Convenience for creating a NotFound error.
-    pub fn not_found(entity: impl Into<String>, id: impl ToString) -> Self {
-        Self::NotFound {
-            entity: entity.into(),
-            id: id.to_string(),
-        }
-    }
-}
-
-impl From<String> for SessionServiceError {
-    fn from(s: String) -> Self {
-        Self::Internal(s)
-    }
-}
-
-impl From<eyre::Report> for SessionServiceError {
-    fn from(e: eyre::Report) -> Self {
-        Self::Internal(format!("{e:#}"))
-    }
-}
 
 /// Measure information for RPC
 #[derive(Clone, Debug, PartialEq, Facet)]
@@ -173,37 +125,7 @@ pub enum SetlistEvent {
 /// Service for building and retrieving song information
 ///
 /// This service extracts song structure from DAW projects by analyzing
-/// markers, regions, and tempo maps.
-pub mod song_service {
-    use super::{SessionServiceError, Song};
 
-    #[architect::rpc]
-    pub trait SongService {
-        /// Build a song from the current active DAW project
-        ///
-        /// Analyzes the current project's markers (SONGSTART/SONGEND) and regions
-        /// to extract song structure including sections, tempo, and time signature.
-        ///
-        /// Returns None if no valid song structure is found.
-        async fn build_from_current_project(&self) -> Result<Song, SessionServiceError>;
-
-        /// Get song information for a specific project by GUID
-        ///
-        /// Loads and analyzes the specified project to extract song information.
-        async fn song(&self, project_guid: String) -> Result<Song, SessionServiceError>;
-    }
-}
-
-pub use song_service::{
-    Service as SongServiceLayer, SongService, SongServiceClient, SongServiceDispatcher,
-    layer as song_service_layer, serve as serve_song_service, song_service_rpc_service_descriptor,
-    song_service_service_descriptor,
-};
-
-/// Service for managing and controlling setlists
-///
-/// This service provides high-level control over setlist playback,
-/// navigation, and state tracking.
 pub mod setlist_service {
     use super::{
         ActiveIndices, AudioLatencyInfo, MeasureInfo, MusicalPosition, Section,
@@ -461,136 +383,6 @@ pub use setlist_service::{
     setlist_service_rpc_service_descriptor as setlist_service_service_descriptor,
 };
 
-// =============================================================================
-// Web Client Push Service (desktop → browser)
-// =============================================================================
-
-
-// ─── Mode control ──────────────────────────────────────────────────────
-//
-// FTS session modes (Organize / Write / Produce / Record / …). The data
-// enum lives in the `session` crate (it carries layout / toolbar logic
-// that doesn't belong in -proto). On the wire we use the stable
-// lowercase slug — every implementation calls `Mode::from_slug` to
-// reconstitute.
-
-/// Service for inspecting + switching the active FTS session mode.
-///
-/// Mounted by `fts-extensions` and consumed by the CLI / desktop /
-/// any other Vox peer (e.g. a mobile app). State is host-process-
-/// global; per-project mode is a future extension.
-pub mod session_mode_service {
-    use super::{SessionServiceError, Tx};
-
-    #[architect::rpc]
-    pub trait SessionModeService {
-        /// Lowercase slug of the currently active mode.
-        /// E.g. `"organize"`, `"record"`.
-        async fn current_mode(&self) -> Result<String, SessionServiceError>;
-
-        /// Switch the active mode by slug. Idempotent if `slug`
-        /// matches the current mode. Errors with `NotFound` if the
-        /// slug doesn't map to a known mode.
-        async fn set_mode(&self, slug: String) -> Result<(), SessionServiceError>;
-
-        /// All known mode slugs in declaration order, for menus / CLI
-        /// completion. Returned even when no mode change has happened
-        /// yet (static set).
-        async fn list_modes(&self) -> Result<Vec<String>, SessionServiceError>;
-
-        /// Mode changes, as they happen: the new slug each time the
-        /// active mode flips — `set_mode` over RPC, the in-REAPER hotkey
-        /// action, or `restore_persisted_mode` at startup. Zero polling.
-        #[subscribe]
-        fn mode_changes(&self) -> String;
-    }
-}
-
-pub use session_mode_service::{
-    Service as SessionModeServiceLayer, SessionModeService, SessionModeServiceClient,
-    SessionModeServiceDispatcher, layer as session_mode_service_layer,
-    serve as serve_session_mode_service, session_mode_service_rpc_service_descriptor,
-    session_mode_service_service_descriptor,
-};
-
-// ─── Take ranking ──────────────────────────────────────────────────────
-
-/// Scope for [`TakeRankingService::apply_rank`]. Wire-side mirror of
-/// the `Scope` enum in `daw_actions::take_ranking`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Facet)]
-#[repr(u8)]
-pub enum TakeRankScope {
-    /// Active take of each selected item, marker at `(play_pos - 2s)`
-    /// when playing or at edit cursor when stopped.
-    PlayPosMinus2s,
-    /// Active take of each selected item, marker at item start.
-    ItemWide,
-    /// Take under the mouse cursor, marker at mouse project-time.
-    MouseCursor,
-}
-
-/// Rank level: 1..=3 stars (up-rank) or `Down`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Facet)]
-#[repr(u8)]
-pub enum TakeRankLevel {
-    One,
-    Two,
-    Three,
-    Down,
-}
-
-pub mod take_ranking_service {
-    use super::{SessionServiceError, TakeRankLevel, TakeRankScope};
-
-    #[architect::rpc]
-    pub trait TakeRankingService {
-        /// Apply `level` at `scope`. Behavior matches the session
-        /// `take_ranking::apply` semantics: replace-if-near for
-        /// position-based scopes, single marker per take for
-        /// item-wide.
-        async fn apply_rank(
-            &self,
-            scope: TakeRankScope,
-            level: TakeRankLevel,
-        ) -> Result<(), SessionServiceError>;
-    }
-}
-
-pub use take_ranking_service::{
-    Service as TakeRankingServiceLayer, TakeRankingService, TakeRankingServiceClient,
-    TakeRankingServiceDispatcher, layer as take_ranking_service_layer,
-    serve as serve_take_ranking_service, take_ranking_service_rpc_service_descriptor,
-    take_ranking_service_service_descriptor,
-};
-
-// ─── Record control ────────────────────────────────────────────────────
-
-pub mod record_control_service {
-    use super::SessionServiceError;
-
-    #[architect::rpc]
-    pub trait RecordControlService {
-        /// Stop the current recording (DELETE all recorded media this
-        /// pass) and immediately start a fresh recording pass. One
-        /// undo block.
-        async fn restart_recording(&self) -> Result<(), SessionServiceError>;
-
-        /// Toggle record monitor on selected tracks between **on (1)**
-        /// and **off (0)** — skips auto/tape.
-        async fn toggle_monitor_on_off(&self) -> Result<(), SessionServiceError>;
-
-        /// Toggle record monitor on selected tracks between
-        /// **auto/tape (2)** and **off (0)**.
-        async fn toggle_monitor_tape_off(&self) -> Result<(), SessionServiceError>;
-    }
-}
-
-pub use record_control_service::{
-    RecordControlService, RecordControlServiceClient, RecordControlServiceDispatcher,
-    Service as RecordControlServiceLayer, layer as record_control_service_layer,
-    record_control_service_rpc_service_descriptor, record_control_service_service_descriptor,
-    serve as serve_record_control_service,
-};
 
 /// Complete audio latency information for display
 #[derive(Clone, Debug, Default, PartialEq, Facet)]
