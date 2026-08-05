@@ -111,28 +111,28 @@ fn dispatch(command_name: &str) {
     }
 }
 
+/// Compatibility shim for the `FTS_SESSION_*` aliases of this module's
+/// actions.
+///
+/// These are a *second* name for actions this module already registers as
+/// `FTS_DYNAMIC_TEMPLATE_*`. They exist only because committed FTS config
+/// still binds the old names: `reaper-input`'s `tracks.styx` /
+/// `mode-organize.styx` keybindings and `fts-icons`' `tracks.toml`
+/// toolbar assignments. Retiring the aliases means repointing those files
+/// at the real ids *and* re-running `fts-icons build --install`, so it is
+/// a deliberate, sequenced change — not a refactor.
+///
+/// Every alias with no committed binding has already been deleted (the
+/// visibility toggles, show-all/hide-all, the visibility profiles,
+/// rebuild-cache, organize-session). What remains is exactly what config
+/// still points at.
+///
+/// Returns `false` for anything it doesn't recognise, so the caller can
+/// fall through.
 pub fn dispatch_session_command(command_name: &str) -> bool {
     let mapped = match command_name {
-        "FTS_SESSION_ORGANIZE_SESSION" | "FTS_SESSION_ORGANIZE_EVERYTHING" => {
-            "FTS_DYNAMIC_TEMPLATE_SORT_ALL".to_string()
-        }
+        "FTS_SESSION_ORGANIZE_EVERYTHING" => "FTS_DYNAMIC_TEMPLATE_SORT_ALL".to_string(),
         "FTS_SESSION_ORGANIZE_SELECTED_TRACKS" => "FTS_DYNAMIC_TEMPLATE_SORT_SELECTED".to_string(),
-        "FTS_SESSION_SHOW_ALL_TRACKS" => "FTS_VISIBILITY_MANAGER_SHOW_ALL".to_string(),
-        "FTS_SESSION_HIDE_TEMPLATE_TRACKS" => "FTS_VISIBILITY_MANAGER_HIDE_ALL".to_string(),
-        "FTS_SESSION_VISIBILITY_PROFILE_DRUM_EDITING" => {
-            "FTS_VISIBILITY_MANAGER_PROFILE_DRUM_EDITING".to_string()
-        }
-        "FTS_SESSION_VISIBILITY_PROFILE_MIDI_EDITING" => {
-            "FTS_VISIBILITY_MANAGER_PROFILE_MIDI_EDITING".to_string()
-        }
-        "FTS_SESSION_REBUILD_VISIBILITY_CACHE" => {
-            "FTS_VISIBILITY_MANAGER_REBUILD_CACHE".to_string()
-        }
-        "FTS_SESSION_AUTO_COLOR_COLOR_ALL" => "FTS_AUTO_COLOR_COLOR_ALL".to_string(),
-        "FTS_SESSION_AUTO_COLOR_COLOR_SELECTED" => "FTS_AUTO_COLOR_COLOR_SELECTED".to_string(),
-        "FTS_SESSION_AUTO_COLOR_TOGGLE" => "FTS_AUTO_COLOR_TOGGLE".to_string(),
-        "FTS_SESSION_AUTO_COLOR_CLEAR_ALL" => "FTS_AUTO_COLOR_CLEAR_ALL".to_string(),
-        "FTS_SESSION_AUTO_COLOR_CLEAR_SELECTED" => "FTS_AUTO_COLOR_CLEAR_SELECTED".to_string(),
         command_name => {
             if let Some(suffix) = command_name.strip_prefix("FTS_SESSION_CREATE_NEW_") {
                 let suffix = match suffix {
@@ -141,11 +141,6 @@ pub fn dispatch_session_command(command_name: &str) -> bool {
                     suffix => suffix,
                 };
                 format!("FTS_DYNAMIC_TEMPLATE_CREATE_NEW_{suffix}")
-            } else if let Some(group) = command_name
-                .strip_prefix("FTS_SESSION_TOGGLE_")
-                .and_then(|suffix| suffix.strip_suffix("_VISIBILITY"))
-            {
-                format!("FTS_VISIBILITY_MANAGER_TOGGLE_{group}")
             } else {
                 return false;
             }

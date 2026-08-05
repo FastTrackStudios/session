@@ -118,7 +118,12 @@ where
     playback::register_actions(backend, daw.clone());
     setlist::actions::register_actions(backend, daw.clone());
     session_proto::track_manager::register_track_manager_actions(
-        &architect::action::ScopedActionBackend::new(backend.clone(), "SESSION", "Session"),
+        // "FTS_SESSION", not "SESSION": every other command in the tree
+        // carries the FTS_ prefix, and reaper-input's tracks.styx binds
+        // `_FTS_SESSION_TRACK_MANAGER_ADD_*`. Registering as plain
+        // `SESSION_*` left all five of those keybindings resolving to
+        // nothing.
+        &architect::action::ScopedActionBackend::new(backend.clone(), "FTS_SESSION", "Session"),
         std::sync::Arc::new(track_manager::TrackManager::new(daw)),
     );
 }
@@ -346,12 +351,6 @@ actions_proto::define_actions! {
         // CONVERT_MARKERS_TO_SESSION_FORMAT moved to
         // `session_proto::keyflow_actions::KeyflowActions`; not redeclared
         // here, or the same FTS_SESSION_* command ids would register twice.
-        ORGANIZE_SESSION = "organize_session" {
-            name: "Organize Session",
-            description: "Organize the current session using the dynamic template track hierarchy",
-            category: Session,
-            group: "Tracks",
-        }
         ORGANIZE_EVERYTHING = "organize_everything" {
             name: "Organize Everything",
             description: "Organize all project tracks using the dynamic template track hierarchy",
@@ -447,144 +446,6 @@ actions_proto::define_actions! {
             description: "Create a new SFX track group",
             category: Session,
             group: "Tracks",
-        }
-        TOGGLE_DRUMS_VISIBILITY = "toggle_drums_visibility" {
-            name: "Toggle Drums Visibility",
-            description: "Toggle visibility for drum tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_PERCUSSION_VISIBILITY = "toggle_percussion_visibility" {
-            name: "Toggle Percussion Visibility",
-            description: "Toggle visibility for percussion tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_BASS_VISIBILITY = "toggle_bass_visibility" {
-            name: "Toggle Bass Visibility",
-            description: "Toggle visibility for bass tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_GUITARS_VISIBILITY = "toggle_guitars_visibility" {
-            name: "Toggle Guitars Visibility",
-            description: "Toggle visibility for guitar tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_KEYS_VISIBILITY = "toggle_keys_visibility" {
-            name: "Toggle Keys Visibility",
-            description: "Toggle visibility for keys tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_SYNTHS_VISIBILITY = "toggle_synths_visibility" {
-            name: "Toggle Synths Visibility",
-            description: "Toggle visibility for synth tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_HORNS_VISIBILITY = "toggle_horns_visibility" {
-            name: "Toggle Horns Visibility",
-            description: "Toggle visibility for horns tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_HARMONICA_VISIBILITY = "toggle_harmonica_visibility" {
-            name: "Toggle Harmonica Visibility",
-            description: "Toggle visibility for harmonica tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_STRINGS_VISIBILITY = "toggle_strings_visibility" {
-            name: "Toggle Strings Visibility",
-            description: "Toggle visibility for strings tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_VOCALS_VISIBILITY = "toggle_vocals_visibility" {
-            name: "Toggle Vocals Visibility",
-            description: "Toggle visibility for vocal tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_CHOIR_VISIBILITY = "toggle_choir_visibility" {
-            name: "Toggle Choir Visibility",
-            description: "Toggle visibility for choir tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_ORCHESTRA_VISIBILITY = "toggle_orchestra_visibility" {
-            name: "Toggle Orchestra Visibility",
-            description: "Toggle visibility for orchestra tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_SFX_VISIBILITY = "toggle_sfx_visibility" {
-            name: "Toggle SFX Visibility",
-            description: "Toggle visibility for SFX tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_GUIDE_VISIBILITY = "toggle_guide_visibility" {
-            name: "Toggle Guide Visibility",
-            description: "Toggle visibility for guide tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_REFERENCE_VISIBILITY = "toggle_reference_visibility" {
-            name: "Toggle Reference Visibility",
-            description: "Toggle visibility for reference tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        TOGGLE_STEM_SPLIT_VISIBILITY = "toggle_stem_split_visibility" {
-            name: "Toggle Stem Split Visibility",
-            description: "Toggle visibility for stem split tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        SHOW_ALL_TRACKS = "show_all_tracks" {
-            name: "Show All Tracks",
-            description: "Show all tracks in the session",
-            category: Session,
-            group: "Visibility",
-        }
-        HIDE_TEMPLATE_TRACKS = "hide_template_tracks" {
-            name: "Hide Template Tracks",
-            description: "Hide all dynamic template group tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        VISIBILITY_PROFILE_DRUM_EDITING = "visibility_profile_drum_editing" {
-            name: "Session Visibility - Drum Editing",
-            description: "Show and size drum tracks for editing, hiding unrelated tracks",
-            category: Session,
-            group: "Visibility",
-        }
-        VISIBILITY_PROFILE_MIDI_EDITING = "visibility_profile_midi_editing" {
-            name: "Session Visibility - MIDI Editing",
-            description: "Show and size MIDI-oriented template groups for editing",
-            category: Session,
-            group: "Visibility",
-        }
-        REBUILD_VISIBILITY_CACHE = "rebuild_visibility_cache" {
-            name: "Rebuild Visibility Cache",
-            description: "Rebuild the dynamic template visibility cache",
-            category: Session,
-            group: "Visibility",
-        }
-        LOG_HELLO = "log_hello" {
-            name: "Log Hello",
-            description: "Logs 'Hello from session!'",
-            category: Dev,
-            group: "Dev",
-        }
-        LOG_STATUS = "log_status" {
-            name: "Log Status",
-            description: "Logs current session status",
-            category: Dev,
-            group: "Dev",
         }
         // BUILD_SETLIST / LOAD_DEMO_SETLIST / DUMP_RULER_STATE moved to
         // `session_proto::setlist_actions::SetlistActions`; not redeclared
