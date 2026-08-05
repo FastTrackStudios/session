@@ -15,6 +15,23 @@ pub enum TrackDimension {
     Other,
 }
 
+/// Lower-case, hyphenated — these end up in user-facing messages (e.g. a
+/// REAPER message box reading "no configured multi-mic name remains"), so
+/// the `Debug` spelling (`MultiMic`) isn't what we want there.
+impl std::fmt::Display for TrackDimension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Channel => "channel",
+            Self::Layer => "layer",
+            Self::MultiMic => "multi-mic",
+            Self::Performer => "performer",
+            Self::Arrangement => "arrangement",
+            Self::Other => "other",
+        };
+        f.write_str(name)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackClassification {
     pub name: String,

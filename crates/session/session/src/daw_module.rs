@@ -2,7 +2,7 @@
 
 use crate::{
     auto_color_actions, keyflow_actions, mode_actions, mode_defs, preroll_actions, record_actions,
-    session_actions, setlist_actions, take_ranking, track_manager_actions,
+    session_actions, setlist_actions, take_ranking,
 };
 use daw::module::{ActionDef, DawModule, ModuleContext};
 use daw::service::transport::service::Transport as TransportService;
@@ -102,7 +102,6 @@ where
     fn init(&self, ctx: &ModuleContext) {
         keyflow_actions::init(ctx);
         auto_color_actions::init(ctx);
-        track_manager_actions::init(ctx);
         preroll_actions::init(&self.daw);
         mode_actions::init(ctx);
         template_module().init(ctx);
