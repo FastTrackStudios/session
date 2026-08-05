@@ -1,6 +1,6 @@
 //! Session modes — REAPER-facing action contract.
 //!
-//! The trait only; `session::mode_actions::ModeActionsImpl` is the
+//! The trait only; `session::modes::ModeActionsImpl` is the
 //! implementation. Same split as `track_manager` / `playback`: the
 //! contract and the macro-emitted `ActionMeta` consts +
 //! `register_mode_actions` are protocol.

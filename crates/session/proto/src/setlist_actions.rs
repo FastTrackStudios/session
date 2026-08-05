@@ -1,6 +1,6 @@
 //! Setlist build / demo / diagnostics — REAPER-facing action contract.
 //!
-//! The trait only; `session::setlist_actions::SetlistActionsImpl<D>` is
+//! The trait only; `session::setlist::actions::SetlistActionsImpl<D>` is
 //! the implementation. Same split as `track_manager` / `playback` /
 //! `mode`.
 //!

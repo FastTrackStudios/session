@@ -16,7 +16,7 @@ use session_proto::SessionServiceError;
 use session_proto::services::SessionModeService;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::mode_actions::{self, Mode};
+use crate::modes::{self as mode_actions, Mode};
 
 // ─── SessionModeService ─────────────────────────────────────────────────
 

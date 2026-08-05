@@ -1,6 +1,6 @@
 //! Keyflow project scaffolding — REAPER-facing action contract.
 //!
-//! The trait only; `session::keyflow_scaffold::KeyflowScaffoldImpl<D>`
+//! The trait only; `session::keyflow::scaffold::KeyflowScaffoldImpl<D>`
 //! is the implementation. Same split as the other action contracts in
 //! this crate.
 

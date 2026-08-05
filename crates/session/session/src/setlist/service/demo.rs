@@ -27,7 +27,7 @@ use session_proto::SessionServiceError;
 use session_proto::ruler_lanes::CoreLane;
 use tracing::info;
 
-use crate::keyflow_actions::{self, KeyflowAction, MarkerKind, SectionKind};
+use crate::keyflow::actions::{self as keyflow_actions, KeyflowAction, MarkerKind, SectionKind};
 
 // ── Lane indices (1-based, matching CoreLane) ──────────────────────────────
 
@@ -408,7 +408,7 @@ where
 
 /// The bundled "Praise" chart (keyflow text) — the first real demo song. Its
 /// section structure, tempo (127), key (A), and count-in are all derived from
-/// this text via [`crate::chart_import`], exercising the live chart→sections
+/// this text via [`crate::setlist::chart_import`], exercising the live chart→sections
 /// path end to end.
 const PRAISE_CHART: &str = "\
 Praise - Elevation Worship
@@ -555,7 +555,7 @@ PRE";
 /// musical sections become SECTION-lane regions. Used for every song we have a
 /// real chart for; songs without one fall back to `layout_worship_song`.
 fn chart_song(name: &'static str, chart: &str) -> DemoSong {
-    let layout = crate::chart_import::chart_to_layout(chart)
+    let layout = crate::setlist::chart_import::chart_to_layout(chart)
         .unwrap_or_else(|e| panic!("bundled chart for {name} must parse: {e:?}"));
     let sections: Vec<DemoSection> = layout
         .sections

@@ -7,7 +7,7 @@
 //! demo song; the sung/audio *when* comes separately (guide analysis / lyric
 //! sync).
 
-use crate::keyflow_actions::SectionKind;
+use crate::keyflow::actions::SectionKind;
 
 /// Failure modes of [`chart_to_layout`].
 #[derive(Debug, Clone, PartialEq, Eq)]

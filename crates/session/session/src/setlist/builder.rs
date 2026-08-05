@@ -2,7 +2,7 @@
 //!
 //! Scans open projects and combines their song structures into a setlist.
 
-use crate::song_builder::SongBuilder;
+use crate::song::builder::SongBuilder;
 #[cfg(not(target_arch = "wasm32"))]
 use daw::reaper::Reaper;
 use daw::rpc::Daw;

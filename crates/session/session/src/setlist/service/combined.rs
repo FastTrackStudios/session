@@ -13,7 +13,7 @@
 //! - Mark as combined setlist (ExtState)
 //! - Wire routing receives (future: when routing folder is added at RPP level)
 
-use crate::setlist_service::SetlistServiceImpl;
+use crate::setlist::service::SetlistServiceImpl;
 use daw::rpc::Daw;
 use daw::service::{ExtState, ProjectContext, Projects};
 use session_proto::SessionServiceError;

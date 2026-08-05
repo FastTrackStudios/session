@@ -3,7 +3,7 @@
 use super::{
     CHART_REFRESH_FALLBACK_POLL_MS, HYDRATION_CONCURRENCY, MIDI_TRACK_TAG, SetlistServiceImpl,
 };
-use crate::song_builder::SongBuilder;
+use crate::song::builder::SongBuilder;
 use daw::service::{ProjectContext, ProjectInfo, Projects};
 use keyflow_daw_analysis::{DetectedChord, MidiChartData, MidiChartRequest, MidiChartsClient};
 use tokio::sync::Semaphore;

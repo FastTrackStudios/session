@@ -1,6 +1,6 @@
 //! Transport playback — REAPER-facing action contract.
 //!
-//! The trait only; `session::playback_actions::PlaybackActionsImpl<D>`
+//! The trait only; `session::playback::PlaybackActionsImpl<D>`
 //! is the implementation. Same split as `track_manager`: the contract
 //! (and the macro-emitted `ActionMeta` consts +
 //! `register_playback_actions`) is protocol, so it lives in proto where

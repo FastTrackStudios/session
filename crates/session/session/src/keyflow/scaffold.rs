@@ -6,8 +6,8 @@
 //! arrangement" scaffold.
 //!
 //! Phase 1 (this): folder + tracks + section regions, reusing
-//! [`crate::chart_import::chart_to_layout`] and the region helpers in
-//! [`crate::keyflow_actions`]. Later phases add project key signatures,
+//! [`crate::setlist::chart_import::chart_to_layout`] and the region helpers in
+//! [`crate::keyflow::actions`]. Later phases add project key signatures,
 //! chords as items, and melody MIDI.
 
 use daw::service::{Markers, ProjectContext, Projects, Regions, TrackRef, Tracks, UiDialogs};
@@ -15,8 +15,8 @@ use tracing::{info, warn};
 
 use session_proto::keyflow_scaffold::{KeyflowScaffoldActions, register_keyflow_scaffold_actions};
 
-use crate::chart_import::{ChartLayout, chart_to_layout};
-use crate::keyflow_actions::{normalize_section_regions, section_type_color};
+use crate::setlist::chart_import::{ChartLayout, chart_to_layout};
+use crate::keyflow::actions::{normalize_section_regions, section_type_color};
 
 /// Everything a backend needs to scaffold a project from keyflow text.
 pub trait ScaffoldDaw:

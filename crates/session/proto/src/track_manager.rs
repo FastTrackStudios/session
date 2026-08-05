@@ -1,6 +1,6 @@
 //! Track Manager — REAPER-facing action contract.
 //!
-//! The trait only; `session::track_manager_actions::TrackManager<D>` is
+//! The trait only; `session::track_manager::TrackManager<D>` is
 //! the implementation. Same split as the `#[architect::rpc]` services in
 //! this crate: the contract (and the macro-emitted `ActionMeta` consts +
 //! `register_track_manager_actions`) is protocol, so it lives in proto

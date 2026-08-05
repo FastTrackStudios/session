@@ -22,8 +22,8 @@ use daw::service::{Markers, Projects, Regions, TempoMap};
 use tokio::sync::RwLock;
 use session_proto::{AdvanceMode, Setlist, Song};
 
-use crate::setlist_service::SetlistServiceImpl;
-use crate::song_builder::SongBuilder;
+use crate::setlist::service::SetlistServiceImpl;
+use crate::song::builder::SongBuilder;
 use session_proto::setlist_actions::{SetlistActions, register_setlist_actions};
 
 /// The setlist storage cell shared with `SetlistServiceImpl`.
@@ -51,7 +51,7 @@ where
 {
     tracing::info!("[session] load_demo_setlist action — stamping demo markers/regions");
     let started = architect::platform::now();
-    match crate::setlist_service::demo::stamp_demo_setlist_with(daw) {
+    match crate::setlist::service::demo::stamp_demo_setlist_with(daw) {
         Ok(()) => {
             tracing::info!(
                 "[session] demo markers stamped in {:?}; rebuilding setlist",

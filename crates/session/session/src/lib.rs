@@ -19,67 +19,68 @@
 //! let router = SessionServices.into_router();
 //! ```
 
-// Re-export session-proto so app crates can use `session::` instead of `session_proto::` directly.
+// Re-export session-proto so app crates can use `session::` instead of
+// `session_proto::` directly. `setlist` / `song` are NOT re-exported here:
+// this crate has its own domain folders by those names, and each one
+// re-exports the matching proto module itself so `session::setlist::…`
+// still resolves to the proto types.
 pub use session_proto::*;
-pub use session_proto::{offset_map, ruler_lanes, services, setlist, song, track_structure};
+pub use session_proto::{offset_map, ruler_lanes, services, track_structure};
 
-// The setlist-service stack + its support modules. These drive the
-// backend-agnostic `daw::get()` facade over tokio primitives that are
-// all wasm-safe (the browser setlist engine builds/serves the same
+// ── Domain folders ──────────────────────────────────────────────────────
+//
+// One per domain, each pairing the implementation with a re-export of its
+// `session_proto` counterpart. The setlist stack drives the
+// backend-agnostic `daw::get()` facade over tokio primitives that are all
+// wasm-safe (the browser setlist engine builds/serves the same
 // `SetlistServiceImpl` in-process). Only the REAPER coupling was the wasm
-// blocker, now routed through `daw_proto::main_thread` (inline on non-REAPER
-// backends). See setlist_service::live_daw_sync (native-only — the
-// SynchronizationEngine is REAPER-linked).
-pub mod cache;
+// blocker, now routed through `daw_proto::main_thread` (inline on
+// non-REAPER backends). See setlist::service::live_daw_sync (native-only —
+// the SynchronizationEngine is REAPER-linked).
+pub mod setlist;
+pub mod song;
 
-pub mod chart_import;
-pub mod event_bus;
-pub mod keyflow_actions;
-pub mod keyflow_scaffold;
+// REAPER-hotkey action domains driving the `daw::reaper` backend directly.
+// Not needed by the browser setlist engine — native-only. `track_manager`
+// also drives `dynamic-template` (the native template engine).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod keyflow;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod modes;
+pub mod playback;
 // REAPER-side helper (routing-project mutation). Not needed by the browser
 // build; kept native-only.
 #[cfg(not(target_arch = "wasm32"))]
-pub mod routing_project;
-pub mod setlist_builder;
-pub mod setlist_service;
-mod song_builder;
+pub mod routing;
 #[cfg(not(target_arch = "wasm32"))]
-mod song_service;
+pub mod track_manager;
 
-// Re-export service implementations for library use
-pub use setlist_service::SetlistServiceImpl;
-#[cfg(not(target_arch = "wasm32"))]
-pub use song_service::SongServiceImpl;
-
-// Re-export builders for advanced use cases
-pub use setlist_builder::SetlistBuilder;
-pub use song_builder::SongBuilder;
-
-// Re-export demo setlist stamping (for extensions that have a local Daw instance)
-pub use setlist_service::demo::{stamp_demo_into_project, stamp_demo_setlist};
-
-// `daw_module` + `track_manager_actions` drive `dynamic-template` (native
-// template engine) — native-only.
+// ── Infrastructure ──────────────────────────────────────────────────────
+//
+// Cross-domain plumbing, deliberately flat.
 //
 // Pre-roll, record control, track grouping, take ranking and auto-colour
 // moved to the `daw-actions` crate: they're plain DAW operations with
 // nothing session-specific about them.
+pub mod cache;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod daw_module;
-// REAPER-hotkey action modules driving the `daw::reaper` backend directly;
-// `rpc_services` composes them behind a tokio-runtime pump. Not needed by
-// the browser setlist engine — native-only.
-#[cfg(not(target_arch = "wasm32"))]
-pub mod mode_actions;
-pub mod playback_actions;
+pub mod event_bus;
+// Composes the mode actions behind a tokio-runtime pump.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod rpc_services;
-// REAPER hotkey action registration (`build_setlist_sync` → `SongBuilder::
-// build_native`) — native-only, consumed by `SessionServices`.
+
+// Re-export service implementations for library use
+pub use setlist::SetlistServiceImpl;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod setlist_actions;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod track_manager_actions;
+pub use song::SongServiceImpl;
+
+// Re-export builders for advanced use cases
+pub use setlist::SetlistBuilder;
+pub use song::SongBuilder;
+
+// Re-export demo setlist stamping (for extensions that have a local Daw instance)
+pub use setlist::service::demo::{stamp_demo_into_project, stamp_demo_setlist};
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, Default)]
@@ -110,7 +111,7 @@ impl SessionServices {
         // SetlistServiceImpl is Clone over Arc'd fields, so cloning
         // gives a handle to the same setlist / song_cache / etc.
         let setlist_impl = SetlistServiceImpl::with_daw(daw.clone());
-        setlist_actions::register(&setlist_impl);
+        setlist::actions::register(&setlist_impl);
         vec![
             daw::Mounted::new(
                 setlist_service_service_descriptor(),

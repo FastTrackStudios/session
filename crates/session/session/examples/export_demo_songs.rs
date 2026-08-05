@@ -1,6 +1,6 @@
 //! Export the 6 real worship demo songs into portable Song folders.
 //!
-//! For each song in [`session::setlist_service::demo::demo_songs_base`] (the
+//! For each song in [`session::setlist::service::demo::demo_songs_base`] (the
 //! SAME source of truth the in-process session engine plays), this writes a
 //! self-contained folder the fasttrackstudio.app browser player can stream:
 //!
@@ -31,9 +31,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use session::chart_import::{ChartLayout, chart_to_layout};
-use session::keyflow_actions::SectionKind;
-use session::setlist_service::demo::{DemoSong, demo_chart_for, demo_songs_base};
+use session::setlist::chart_import::{ChartLayout, chart_to_layout};
+use session::keyflow::actions::SectionKind;
+use session::setlist::service::demo::{DemoSong, demo_chart_for, demo_songs_base};
 
 // ── Stem tables, replicated from apps/fasttrackstudio/src/session_engine.rs ──
 
@@ -305,7 +305,7 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
 
     // ── Sections: seconds STRAIGHT from demo_songs_base(); names/labels from
     //    the same chart via chart_to_layout (zipped in order). ──
-    let chart_secs: Vec<&session::chart_import::LaidSection> = layout
+    let chart_secs: Vec<&session::setlist::chart_import::LaidSection> = layout
         .as_ref()
         .map(|l| l.sections.iter().filter(|s| s.kind != SectionKind::CountIn).collect())
         .unwrap_or_default();

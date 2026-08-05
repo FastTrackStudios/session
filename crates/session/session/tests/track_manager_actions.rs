@@ -1,6 +1,6 @@
 //! Session Track Manager — headless, no REAPER.
 //!
-//! Drives `session::track_manager_actions::TrackManager` (the REAPER
+//! Drives `session::track_manager::TrackManager` (the REAPER
 //! actions "Session Track Manager - Add Channel/Multi-Mic/Arrangement/
 //! Layer/Performer") wrapping `daw_standalone::sync::Standalone`, the same
 //! in-memory backend used by `standalone_setlist_harness.rs`. `TrackManager<D>`
@@ -25,7 +25,7 @@ use daw_proto::{
     assert_tracks_equal,
 };
 use daw_standalone::sync::Standalone;
-use session::track_manager_actions::{TrackManager, TrackManagerActions};
+use session::track_manager::{TrackManager, TrackManagerActions};
 
 /// `Track.folder_depth` (raw REAPER-style relative depth change) is exactly
 /// `FolderDepthChange`'s raw representation, so a live project's flat,

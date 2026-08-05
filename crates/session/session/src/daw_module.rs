@@ -1,6 +1,8 @@
 //! DawModule implementation for session.
 
-use crate::{keyflow_actions, mode_actions, session_actions};
+use crate::keyflow::actions as keyflow_actions;
+use crate::modes as mode_actions;
+use crate::session_actions;
 // Generic DAW actions, no longer session's: pre-roll, record control,
 // grouping, take ranking, auto-colour.
 use daw_actions::{auto_color, groups, preroll, record, take_ranking};

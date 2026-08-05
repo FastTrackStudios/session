@@ -1,6 +1,6 @@
 //! Keyflow section/marker insertion — REAPER-facing action contract.
 //!
-//! The trait only; `session::keyflow_actions::KeyflowActionsImpl<D>` is
+//! The trait only; `session::keyflow::actions::KeyflowActionsImpl<D>` is
 //! the implementation. Same split as `track_manager` / `playback` /
 //! `mode` / `setlist_actions`.
 //!
