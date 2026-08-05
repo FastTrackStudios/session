@@ -28,6 +28,10 @@ daw = { workspace = true }
 daw-proto = { workspace = true }
 # Canonical 128-slot group partition lives here (music_catalog::groups).
 music-catalog.workspace = true
+# Auto-colour classification: monarchy sorts track names into the group
+# hierarchy, color-palette carries the Color type the palette is keyed in.
+monarchy.workspace = true
+color-palette.workspace = true
 # Base (wasm-safe) vox runtime. `transport-local` (Unix-socket / tokio-net,
 # pulls mio) is native-only — added in the target table below.
 vox = { workspace = true }

@@ -44,6 +44,8 @@ pub mod song;
 // Not needed by the browser setlist engine — native-only. `track_manager`
 // also drives `dynamic-template` (the native template engine).
 #[cfg(not(target_arch = "wasm32"))]
+pub mod color;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod keyflow;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod modes;
@@ -112,6 +114,7 @@ where
         + 'static,
     B: architect::action::ActionBackend + Clone,
 {
+    color::register_actions(backend);
     keyflow::actions::register_actions(backend, daw.clone());
     keyflow::scaffold::register_actions(backend, daw.clone());
     modes::register_actions(backend);

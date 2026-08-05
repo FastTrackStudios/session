@@ -5,7 +5,8 @@ use crate::modes as mode_actions;
 use crate::session_actions;
 // init/subscribe hooks only — the action *dispatch* for these now runs
 // entirely through their `#[architect::actions]` traits.
-use daw_actions::{auto_color, preroll};
+use crate::color as auto_color;
+use daw_actions::preroll;
 use daw::module::{ActionDef, DawModule, ModuleContext};
 use daw::service::transport::service::Transport as TransportService;
 use daw::service::{ActionRegistration, Markers, Projects, Regions, TempoMap};
