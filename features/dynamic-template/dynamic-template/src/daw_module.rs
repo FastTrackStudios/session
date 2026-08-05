@@ -1945,11 +1945,11 @@ impl ToggleGroupActions for ToggleGroupActionsImpl {
 
 /// Register every architect-declared action in this module against `backend`.
 pub fn register_architect_actions<B: architect::action::ActionBackend>(backend: &B) {
-    register_dynamic_template_actions_actions(backend, Arc::new(DynamicTemplateActionsImpl));
-    register_auto_color_architect_actions_actions(backend, Arc::new(AutoColorArchitectActionsImpl));
-    register_visibility_manager_actions_actions(backend, Arc::new(VisibilityManagerActionsImpl));
-    register_create_group_actions_actions(backend, Arc::new(CreateGroupActionsImpl));
-    register_toggle_group_actions_actions(backend, Arc::new(ToggleGroupActionsImpl));
+    register_dynamic_template_actions(backend, Arc::new(DynamicTemplateActionsImpl));
+    register_auto_color_architect_actions(backend, Arc::new(AutoColorArchitectActionsImpl));
+    register_visibility_manager_actions(backend, Arc::new(VisibilityManagerActionsImpl));
+    register_create_group_actions(backend, Arc::new(CreateGroupActionsImpl));
+    register_toggle_group_actions(backend, Arc::new(ToggleGroupActionsImpl));
 }
 
 #[cfg(test)]

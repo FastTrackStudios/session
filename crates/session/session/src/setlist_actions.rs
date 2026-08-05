@@ -368,5 +368,5 @@ where
     D: Projects + TransportService + Markers + Regions + TempoMap + Send + Sync + 'static,
     B: ActionBackend + ?Sized,
 {
-    register_setlist_actions_actions(backend, Arc::new(SetlistActionsImpl { daw }));
+    register_setlist_actions(backend, Arc::new(SetlistActionsImpl { daw }));
 }

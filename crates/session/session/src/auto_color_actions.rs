@@ -847,5 +847,5 @@ pub fn register_actions<B>(backend: &B)
 where
     B: ::architect::action::ActionBackend + ?Sized,
 {
-    register_auto_color_actions_actions(backend, std::sync::Arc::new(AutoColorActionsImpl));
+    register_auto_color_actions(backend, std::sync::Arc::new(AutoColorActionsImpl));
 }

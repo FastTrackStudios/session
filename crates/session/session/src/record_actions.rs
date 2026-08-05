@@ -278,5 +278,5 @@ pub fn register_actions<B>(backend: &B)
 where
     B: ::architect::action::ActionBackend + ?Sized,
 {
-    register_record_actions_actions(backend, std::sync::Arc::new(RecordActionsImpl));
+    register_record_actions(backend, std::sync::Arc::new(RecordActionsImpl));
 }

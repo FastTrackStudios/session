@@ -133,5 +133,5 @@ where
     D: ScaffoldDaw,
     B: architect::action::ActionBackend + ?Sized,
 {
-    register_keyflow_scaffold_actions_actions(backend, std::sync::Arc::new(KeyflowScaffoldImpl { daw }));
+    register_keyflow_scaffold_actions(backend, std::sync::Arc::new(KeyflowScaffoldImpl { daw }));
 }

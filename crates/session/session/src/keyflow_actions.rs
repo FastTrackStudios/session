@@ -1408,5 +1408,5 @@ where
     D: Projects + TransportService + Markers + Regions + TempoMap + Send + Sync + 'static,
     B: ::architect::action::ActionBackend + ?Sized,
 {
-    register_keyflow_actions_actions(backend, std::sync::Arc::new(KeyflowActionsImpl { daw }));
+    register_keyflow_actions(backend, std::sync::Arc::new(KeyflowActionsImpl { daw }));
 }

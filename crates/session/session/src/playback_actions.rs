@@ -102,7 +102,7 @@ where
     D: TransportService + Send + Sync + 'static,
     B: ActionBackend + ?Sized,
 {
-    register_playback_actions_actions(backend, Arc::new(PlaybackActionsImpl { daw }));
+    register_playback_actions(backend, Arc::new(PlaybackActionsImpl { daw }));
 }
 
 #[cfg(test)]

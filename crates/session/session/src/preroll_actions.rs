@@ -213,5 +213,5 @@ where
     D: Projects + ActionRegistration + Send + Sync + 'static,
     B: ::architect::action::ActionBackend + ?Sized,
 {
-    register_pre_roll_actions_actions(backend, std::sync::Arc::new(PreRollActionsImpl { daw }));
+    register_pre_roll_actions(backend, std::sync::Arc::new(PreRollActionsImpl { daw }));
 }
