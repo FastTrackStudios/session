@@ -1,438 +1,443 @@
 use std::collections::HashSet;
 
-use daw::service::{ItemRef, Items, ProjectContext, Projects, Track, TrackRef, Tracks};
+use daw::service::{
+    DawError, DawResult, ItemRef, Items, ProjectContext, Projects, Track, TrackRef, Tracks,
+    TracksExt,
+};
 use dynamic_template::track_schema::{self, TrackDimension};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrackManagerAction {
-    AddChannel,
-    AddLayer,
-    AddMultiMic,
-    AddPerformer,
-    AddArrangement,
-    ReorganizeSelectedByPerformer,
-    ReorganizeSelectedByArrangement,
-}
-
 #[derive(Debug, Clone)]
-struct TrackShape {
-    name: String,
-    children: Vec<TrackShape>,
+pub struct TrackShape {
+    pub name: String,
+    pub children: Vec<TrackShape>,
 }
 
 pub fn init(_ctx: &daw::module::ModuleContext) {}
 
-pub fn action_for_id(action_id: &str) -> Option<TrackManagerAction> {
-    let normalized = action_id
-        .trim()
-        .to_lowercase()
-        .strip_prefix("fts.session.")
-        .unwrap_or(action_id.trim())
-        .to_string();
-    match normalized.as_str() {
-        "track_manager_add_channel" => Some(TrackManagerAction::AddChannel),
-        "track_manager_add_layer" => Some(TrackManagerAction::AddLayer),
-        "track_manager_add_multi_mic" => Some(TrackManagerAction::AddMultiMic),
-        "track_manager_add_performer" => Some(TrackManagerAction::AddPerformer),
-        "track_manager_add_arrangement" => Some(TrackManagerAction::AddArrangement),
-        "track_manager_reorganize_selected_by_performer" => {
-            Some(TrackManagerAction::ReorganizeSelectedByPerformer)
-        }
-        "track_manager_reorganize_selected_by_arrangement" => {
-            Some(TrackManagerAction::ReorganizeSelectedByArrangement)
-        }
-        _ => None,
+/// Session's track-tree editor for one DAW backend. This is what callers
+/// actually use: `TrackManager::new(daw).add_channel()`, never
+/// `daw.add_channel()` — adding a dynamic-template channel/multi-mic/
+/// arrangement isn't a generic DAW capability, it's session business logic
+/// layered on top of one (`daw::service::Tracks`/`Items`/`Projects`), so it
+/// isn't blanket-impl'd onto every backend the way `daw::service::TracksExt`
+/// (generic selection/lookup plumbing — `selected_scope`, `select`,
+/// `children_of`, `get_track`, ...) is. `TrackManager<D>` wraps whichever
+/// `D` for the duration it's used; it always acts on
+/// `ProjectContext::Current` (matches how a REAPER named command works —
+/// there's no "target a background project" for a user-triggered action).
+///
+/// Production wraps `daw::reaper::Reaper`; tests wrap
+/// `daw_standalone::sync::Standalone` to drive the tree logic headless,
+/// with no live REAPER process — same trait impl either way.
+pub struct TrackManager<D> {
+    daw: D,
+}
+
+impl<D> TrackManager<D> {
+    pub fn new(daw: D) -> Self {
+        Self { daw }
     }
 }
 
-pub fn dispatch(action: TrackManagerAction) {
-    if let Err(err) = run_action(action) {
-        tracing::error!(?action, ?err, "[session] Track manager action failed");
+/// Derefs to the wrapped backend so `Tracks`/`Items`/`Projects`/
+/// `TracksExt` methods are callable directly as `self.method(...)` instead
+/// of `self.daw.method(...)` everywhere below — `TrackManager`'s own
+/// methods (`append_child`, `add_named_scope`, ...) still resolve to
+/// themselves first, Rust only reaches through `Deref` for names `Self`
+/// doesn't otherwise have.
+impl<D> std::ops::Deref for TrackManager<D> {
+    type Target = D;
+    fn deref(&self) -> &D {
+        &self.daw
     }
 }
 
-fn run_action(action: TrackManagerAction) -> eyre::Result<()> {
-    match action {
-        TrackManagerAction::AddChannel => {
-            run_track_edit("Session Track Manager - Add Channel", add_channel)
-        }
-        TrackManagerAction::AddLayer => run_track_edit("Session Track Manager - Add Layer", || {
-            add_named_scope("DBL", true)
-        }),
-        TrackManagerAction::AddMultiMic => {
-            run_track_edit("Session Track Manager - Add Multi-Mic", || {
-                add_next_multi_mic()
-            })
-        }
-        TrackManagerAction::AddPerformer => {
-            run_track_edit("Session Track Manager - Add Performer", || {
-                add_named_scope("New Performer", true)
-            })
-        }
-        TrackManagerAction::AddArrangement => {
-            run_track_edit("Session Track Manager - Add Arrangement", add_arrangement)
-        }
-        TrackManagerAction::ReorganizeSelectedByPerformer => reorganize_selected_by("Performer"),
-        TrackManagerAction::ReorganizeSelectedByArrangement => {
-            reorganize_selected_by("Arrangement")
-        }
+/// The seven REAPER-facing actions, declared with no bodies — `TrackManager<D>`
+/// is the (only) implementor, below. `#[architect::actions(namespace =
+/// "TRACK_MANAGER")]` turns each `#[action(...)]` method directly into a
+/// REAPER named command (`register_track_manager_actions_actions` —
+/// macro-generated — wires each one through `architect::action::
+/// ActionBackend`) — no hand-written action-id enum, `action_for_id`
+/// string-matcher, or dispatch bridge. This trait declares only its own
+/// identity ("Track Manager") and knows nothing about being nested under
+/// Session or FTS — that nesting is composed at registration time by
+/// wrapping the backend in `architect::action::ScopedActionBackend` once
+/// per level (see `register_actions` below), not by this trait naming its
+/// ancestors. Each method returns `daw::service::DawResult<()>`; a failure
+/// reaches the user as a REAPER message box (see `show_action_error` in
+/// `daw-reaper`'s `ActionBackend` impl) instead of being silently logged.
+#[architect::actions(namespace = "TRACK_MANAGER")]
+pub trait TrackManagerActions {
+    #[action(description = "Add the next dynamic-template channel to the selected track scope")]
+    fn add_channel(&self) -> DawResult<()>;
+
+    #[action(description = "Add the next dynamic-template layer to the selected track scope")]
+    fn add_layer(&self) -> DawResult<()>;
+
+    #[action(
+        description = "Add the next dynamic-template multi-mic track to the selected track scope"
+    )]
+    fn add_multi_mic(&self) -> DawResult<()>;
+
+    #[action(description = "Add a performer folder to the selected track scope")]
+    fn add_performer(&self) -> DawResult<()>;
+
+    #[action(
+        description = "Add the next dynamic-template arrangement to the selected instrument scope"
+    )]
+    fn add_arrangement(&self) -> DawResult<()>;
+
+    #[action(
+        description = "Reorganize selected tracks with performer as the top metadata dimension"
+    )]
+    fn reorganize_selected_by_performer(&self) -> DawResult<()>;
+
+    #[action(
+        description = "Reorganize selected tracks with arrangement as the top metadata dimension"
+    )]
+    fn reorganize_selected_by_arrangement(&self) -> DawResult<()>;
+}
+
+impl<D: Tracks + Items + Projects> TrackManagerActions for TrackManager<D> {
+    fn add_channel(&self) -> DawResult<()> {
+        let project = ProjectContext::Current;
+        let label = "Session Track Manager - Add Channel";
+        self.begin_undo_block(project.clone(), label);
+        let result = (|| -> DawResult<()> {
+            let scope_info = self.selected_scope()?;
+            let context = scope_context(&scope_info);
+            let direct_children = self.children_of(&scope_info.guid);
+            let child_names: HashSet<_> = direct_children
+                .iter()
+                .map(|track| track.name.as_str())
+                .collect();
+
+            let existing_channel = direct_children
+                .iter()
+                .find(|track| track_dimension(&track.name, &context) == TrackDimension::Channel);
+            let channel_child_shape = existing_channel
+                .map(|track| self.child_shapes(&track.guid))
+                .unwrap_or_default();
+            let initial_channels = ["L".to_string(), "R".to_string()];
+
+            if !initial_channels
+                .iter()
+                .any(|name| child_names.contains(name.as_str()))
+            {
+                let direct_multi_mic_names: Vec<String> = direct_children
+                    .iter()
+                    .filter(|track| {
+                        track_dimension(&track.name, &context) == TrackDimension::MultiMic
+                    })
+                    .map(|track| track.name.clone())
+                    .collect();
+
+                if !direct_multi_mic_names.is_empty() {
+                    return self.convert_direct_multi_mics_to_channels(
+                        &scope_info,
+                        &direct_multi_mic_names,
+                        &initial_channels,
+                    );
+                }
+
+                self.set_folder_depth(project.clone(), TrackRef::Guid(scope_info.guid.clone()), 1)?;
+                let l = self.add(
+                    project.clone(),
+                    &initial_channels[0],
+                    Some(scope_info.index + 1),
+                )?;
+                let r = self.add(
+                    project.clone(),
+                    &initial_channels[1],
+                    Some(scope_info.index + 2),
+                )?;
+                self.set_folder_depth(project.clone(), TrackRef::Guid(l.clone()), 0)?;
+                self.set_folder_depth(project.clone(), TrackRef::Guid(r), -1)?;
+                return self.move_items(&scope_info.guid, &l);
+            }
+
+            let next = track_schema::next_configured_value(
+                TrackDimension::Channel,
+                &context,
+                child_names.iter().copied(),
+            )
+            .ok_or_else(|| DawError::not_found("configured channel name", &scope_info.name))?;
+            if channel_child_shape.is_empty() {
+                self.append_child(&scope_info.guid, &next, false)
+            } else {
+                self.append_shape(
+                    &scope_info.guid,
+                    &[TrackShape {
+                        name: next,
+                        children: channel_child_shape,
+                    }],
+                )
+            }
+        })();
+        self.end_undo_block(project, label, None);
+        result
+    }
+
+    fn add_layer(&self) -> DawResult<()> {
+        let project = ProjectContext::Current;
+        let label = "Session Track Manager - Add Layer";
+        self.begin_undo_block(project.clone(), label);
+        let result = self.add_named_scope("DBL", true);
+        self.end_undo_block(project, label, None);
+        result
+    }
+
+    fn add_multi_mic(&self) -> DawResult<()> {
+        let project = ProjectContext::Current;
+        let label = "Session Track Manager - Add Multi-Mic";
+        self.begin_undo_block(project.clone(), label);
+        let result = (|| -> DawResult<()> {
+            let scope_info = self.selected_scope()?;
+            let context = scope_context(&scope_info);
+            let child_names: HashSet<_> = self
+                .children_of(&scope_info.guid)
+                .iter()
+                .map(|track| track.name.clone())
+                .collect();
+            let next = track_schema::next_configured_value(
+                TrackDimension::MultiMic,
+                &context,
+                child_names.iter().map(String::as_str),
+            )
+            .ok_or_else(|| DawError::not_found("configured multi-mic name", &scope_info.name))?;
+            self.append_child(&scope_info.guid, &next, false)
+        })();
+        self.end_undo_block(project, label, None);
+        result
+    }
+
+    fn add_performer(&self) -> DawResult<()> {
+        let project = ProjectContext::Current;
+        let label = "Session Track Manager - Add Performer";
+        self.begin_undo_block(project.clone(), label);
+        let result = self.add_named_scope("New Performer", true);
+        self.end_undo_block(project, label, None);
+        result
+    }
+
+    fn add_arrangement(&self) -> DawResult<()> {
+        let project = ProjectContext::Current;
+        let label = "Session Track Manager - Add Arrangement";
+        self.begin_undo_block(project.clone(), label);
+        let result = (|| -> DawResult<()> {
+            let selected_info = self.selected_scope()?;
+            let scope_info = self.instrument_scope(selected_info);
+            self.append_child(&scope_info.guid, "<ArrangementDescriptor>", false)
+        })();
+        self.end_undo_block(project, label, None);
+        result
+    }
+
+    fn reorganize_selected_by_performer(&self) -> DawResult<()> {
+        self.reorganize_selected_by("Performer")
+    }
+
+    fn reorganize_selected_by_arrangement(&self) -> DawResult<()> {
+        self.reorganize_selected_by("Arrangement")
     }
 }
 
-fn run_track_edit<F>(label: &str, edit: F) -> eyre::Result<()>
-where
-    F: FnOnce() -> eyre::Result<()>,
-{
-    let reaper = daw::reaper::Reaper;
-    let project = ProjectContext::Current;
-    let selected_guids: Vec<String> = reaper
-        .selected(project.clone())
-        .into_iter()
-        .map(|track| track.guid)
-        .collect();
+impl<D: Tracks + Items + Projects> TrackManager<D> {
+    fn add_named_scope(&self, name: &str, inherit_channels: bool) -> DawResult<()> {
+        let scope_info = self.selected_scope()?;
+        let context = scope_context(&scope_info);
 
-    if selected_guids.is_empty() {
-        eyre::bail!("Select a track before running a Session Track Manager action");
-    }
+        let inherited_shape = if inherit_channels {
+            let children = self.child_shapes(&scope_info.guid);
+            let channel_shape: Vec<_> = children
+                .iter()
+                .filter(|track| track_dimension(&track.name, &context) == TrackDimension::Channel)
+                .cloned()
+                .collect();
+            if channel_shape.is_empty() {
+                children
+                    .into_iter()
+                    .filter(|track| {
+                        track_dimension(&track.name, &context) == TrackDimension::MultiMic
+                    })
+                    .collect()
+            } else {
+                channel_shape
+            }
+        } else {
+            Vec::new()
+        };
 
-    reaper.begin_undo_block(project.clone(), label);
-    let edit_result = edit();
-    let restore_result = restore_track_selection(&selected_guids);
-    reaper.end_undo_block(project, label, None);
-
-    edit_result?;
-    restore_result?;
-    Ok(())
-}
-
-fn restore_track_selection(guids: &[String]) -> eyre::Result<()> {
-    let reaper = daw::reaper::Reaper;
-    let project = ProjectContext::Current;
-    reaper.clear_selection(project.clone())?;
-    for guid in guids {
-        Tracks::set_selected(&reaper, project.clone(), TrackRef::Guid(guid.clone()), true)?;
-    }
-    Ok(())
-}
-
-fn selected_scope() -> eyre::Result<Track> {
-    let reaper = daw::reaper::Reaper;
-    let mut selected = reaper.selected(ProjectContext::Current);
-    selected
-        .drain(..)
-        .next()
-        .ok_or_else(|| eyre::eyre!("Select a track before running a Session Track Manager action"))
-}
-
-fn add_channel() -> eyre::Result<()> {
-    let reaper = daw::reaper::Reaper;
-    let project = ProjectContext::Current;
-    let scope_info = selected_scope()?;
-    let all = reaper.all(project.clone());
-    let direct_children = direct_children(&all, &scope_info.guid);
-    let context = scope_context(&scope_info);
-    let child_names: HashSet<_> = direct_children
-        .iter()
-        .map(|track| track.name.as_str())
-        .collect();
-
-    let existing_channel = direct_children
-        .iter()
-        .find(|track| track_dimension(&track.name, &context) == TrackDimension::Channel)
-        .copied();
-    let channel_child_shape = existing_channel
-        .map(|track| child_shapes(&all, &track.guid))
-        .unwrap_or_default();
-    let initial_channels = ["L".to_string(), "R".to_string()];
-
-    if !initial_channels
-        .iter()
-        .any(|name| child_names.contains(name.as_str()))
-    {
-        let direct_multi_mic_names: Vec<String> = direct_children
-            .iter()
-            .filter(|track| track_dimension(&track.name, &context) == TrackDimension::MultiMic)
-            .map(|track| track.name.clone())
-            .collect();
-
-        if !direct_multi_mic_names.is_empty() {
-            convert_direct_multi_mics_to_channels(
-                &scope_info,
-                &direct_multi_mic_names,
-                &initial_channels,
-            )?;
-            return Ok(());
+        if inherited_shape.is_empty() {
+            return self.append_child(&scope_info.guid, name, false);
         }
 
-        reaper.set_folder_depth(project.clone(), TrackRef::Guid(scope_info.guid.clone()), 1)?;
-        let l = reaper.add(
-            project.clone(),
-            &initial_channels[0],
-            Some(scope_info.index + 1),
-        )?;
-        let r = reaper.add(
-            project.clone(),
-            &initial_channels[1],
-            Some(scope_info.index + 2),
-        )?;
-        reaper.set_folder_depth(project.clone(), TrackRef::Guid(l.clone()), 0)?;
-        reaper.set_folder_depth(project.clone(), TrackRef::Guid(r), -1)?;
-        move_items(&scope_info.guid, &l)?;
-        return Ok(());
-    }
-
-    let next = track_schema::next_configured_value(
-        TrackDimension::Channel,
-        &context,
-        child_names.iter().copied(),
-    )
-    .ok_or_else(|| eyre::eyre!("No configured channel names remain for {}", scope_info.name))?;
-    if channel_child_shape.is_empty() {
-        append_child(&scope_info.guid, &next, false)?;
-    } else {
-        append_shape(
+        self.append_shape(
             &scope_info.guid,
             &[TrackShape {
-                name: next,
-                children: channel_child_shape,
+                name: name.to_string(),
+                children: inherited_shape,
             }],
-        )?;
-    }
-    Ok(())
-}
-
-fn add_next_multi_mic() -> eyre::Result<()> {
-    let reaper = daw::reaper::Reaper;
-    let project = ProjectContext::Current;
-    let scope_info = selected_scope()?;
-    let all = reaper.all(project);
-    let context = scope_context(&scope_info);
-    let child_names: HashSet<_> = direct_children(&all, &scope_info.guid)
-        .iter()
-        .map(|track| track.name.as_str())
-        .collect();
-    let next = track_schema::next_configured_value(
-        TrackDimension::MultiMic,
-        &context,
-        child_names.iter().copied(),
-    )
-    .ok_or_else(|| {
-        eyre::eyre!(
-            "No configured multi-mic names remain for {}",
-            scope_info.name
         )
-    })?;
-    append_child(&scope_info.guid, &next, false)
-}
+    }
 
-fn add_arrangement() -> eyre::Result<()> {
-    let reaper = daw::reaper::Reaper;
-    let project = ProjectContext::Current;
-    let selected_info = selected_scope()?;
-    let all = reaper.all(project);
-    let scope_info = instrument_scope(&all, &selected_info)
-        .cloned()
-        .unwrap_or(selected_info);
+    /// `TrackShape`s (session's own tree-building type) for every direct
+    /// child of `guid`, recursively.
+    fn child_shapes(&self, guid: &str) -> Vec<TrackShape> {
+        self.children_of(guid)
+            .into_iter()
+            .map(|track| TrackShape {
+                name: track.name.clone(),
+                children: self.child_shapes(&track.guid),
+            })
+            .collect()
+    }
 
-    append_child(&scope_info.guid, "<ArrangementDescriptor>", false)
-}
+    fn append_child(&self, parent_guid: &str, name: &str, as_folder: bool) -> DawResult<()> {
+        let project = ProjectContext::Current;
+        let insertion_index = self.prepare_append(parent_guid)?;
+        self.set_folder_depth(project.clone(), TrackRef::Guid(parent_guid.to_string()), 1)?;
+        let child = self.add(project.clone(), name, Some(insertion_index))?;
+        self.set_folder_depth(
+            project,
+            TrackRef::Guid(child),
+            if as_folder { 1 } else { -1 },
+        )
+    }
 
-fn add_named_scope(name: &str, inherit_channels: bool) -> eyre::Result<()> {
-    let reaper = daw::reaper::Reaper;
-    let project = ProjectContext::Current;
-    let scope_info = selected_scope()?;
-    let all = reaper.all(project);
-    let context = scope_context(&scope_info);
+    fn append_shape(&self, parent_guid: &str, shape: &[TrackShape]) -> DawResult<()> {
+        let project = ProjectContext::Current;
+        let insertion_index = self.prepare_append(parent_guid)?;
+        self.set_folder_depth(project.clone(), TrackRef::Guid(parent_guid.to_string()), 1)?;
 
-    let inherited_shape = if inherit_channels {
-        let children = child_shapes(&all, &scope_info.guid);
-        let channel_shape: Vec<_> = children
-            .iter()
-            .filter(|track| track_dimension(&track.name, &context) == TrackDimension::Channel)
-            .cloned()
-            .collect();
-        if channel_shape.is_empty() {
-            children
-                .into_iter()
-                .filter(|track| track_dimension(&track.name, &context) == TrackDimension::MultiMic)
-                .collect()
-        } else {
-            channel_shape
+        let mut flattened = Vec::new();
+        flatten_shape(shape, &mut flattened);
+        if let Some(last) = flattened.last_mut() {
+            last.1 -= 1;
         }
-    } else {
-        Vec::new()
-    };
 
-    if inherited_shape.is_empty() {
-        append_child(&scope_info.guid, name, false)?;
-        return Ok(());
+        for (offset, (name, folder_depth)) in flattened.into_iter().enumerate() {
+            let track = self.add(project.clone(), &name, Some(insertion_index + offset as u32))?;
+            self.set_folder_depth(project.clone(), TrackRef::Guid(track), folder_depth)?;
+        }
+        Ok(())
     }
 
-    append_shape(
-        &scope_info.guid,
-        &[TrackShape {
-            name: name.to_string(),
-            children: inherited_shape,
-        }],
-    )?;
-    Ok(())
-}
-
-fn append_child(parent_guid: &str, name: &str, as_folder: bool) -> eyre::Result<()> {
-    let reaper = daw::reaper::Reaper;
-    let project = ProjectContext::Current;
-    let all = reaper.all(project.clone());
-    let parent = all
-        .iter()
-        .find(|track| track.guid == parent_guid)
-        .ok_or_else(|| eyre::eyre!("Selected track no longer exists"))?;
-    let insertion_index = subtree_end_index(&all, parent_guid).unwrap_or(parent.index + 1);
-    let previous_index = insertion_index.saturating_sub(1);
-    if let Some(previous) = all.iter().find(|track| track.index == previous_index)
-        && previous.parent_guid.as_deref() == Some(parent_guid)
-        && previous.folder_depth < 0
-    {
-        reaper.set_folder_depth(project.clone(), TrackRef::Guid(previous.guid.clone()), 0)?;
-    }
-    reaper.set_folder_depth(project.clone(), TrackRef::Guid(parent_guid.to_string()), 1)?;
-    let child = reaper.add(project.clone(), name, Some(insertion_index))?;
-    reaper.set_folder_depth(
-        project,
-        TrackRef::Guid(child),
-        if as_folder { 1 } else { -1 },
-    )?;
-    Ok(())
-}
-
-fn append_shape(parent_guid: &str, shape: &[TrackShape]) -> eyre::Result<()> {
-    let reaper = daw::reaper::Reaper;
-    let project = ProjectContext::Current;
-    let all = reaper.all(project.clone());
-    let parent = all
-        .iter()
-        .find(|track| track.guid == parent_guid)
-        .ok_or_else(|| eyre::eyre!("Selected track no longer exists"))?;
-    let insertion_index = subtree_end_index(&all, parent_guid).unwrap_or(parent.index + 1);
-    let previous_index = insertion_index.saturating_sub(1);
-    if let Some(previous) = all.iter().find(|track| track.index == previous_index)
-        && previous.parent_guid.as_deref() == Some(parent_guid)
-        && previous.folder_depth < 0
-    {
-        reaper.set_folder_depth(project.clone(), TrackRef::Guid(previous.guid.clone()), 0)?;
-    }
-    reaper.set_folder_depth(project.clone(), TrackRef::Guid(parent_guid.to_string()), 1)?;
-
-    let mut flattened = Vec::new();
-    flatten_shape(shape, &mut flattened);
-    if let Some(last) = flattened.last_mut() {
-        last.1 -= 1;
+    /// The index to insert a new last child of `parent_guid` at. If the
+    /// track immediately before that index is a direct child of
+    /// `parent_guid` that currently closes the folder (`folder_depth <
+    /// 0`), reopens it (`folder_depth = 0`) first so the new sibling
+    /// takes over closing it instead — computed once, before that
+    /// reopen, since reopening changes what a fresh subtree-end walk
+    /// would see.
+    fn prepare_append(&self, parent_guid: &str) -> DawResult<u32> {
+        let insertion_index = self
+            .subtree_end_index(parent_guid)
+            .unwrap_or(self.get_track(parent_guid)?.index + 1);
+        let previous_index = insertion_index.saturating_sub(1);
+        if let Some(previous) =
+            Tracks::get(&self.daw, ProjectContext::Current, TrackRef::Index(previous_index))
+            && previous.parent_guid.as_deref() == Some(parent_guid)
+            && previous.folder_depth < 0
+        {
+            self.set_folder_depth(ProjectContext::Current, TrackRef::Guid(previous.guid), 0)?;
+        }
+        Ok(insertion_index)
     }
 
-    for (offset, (name, folder_depth)) in flattened.into_iter().enumerate() {
-        let track = reaper.add(
+    fn convert_direct_multi_mics_to_channels(
+        &self,
+        scope_info: &Track,
+        multi_mic_names: &[String],
+        channel_names: &[String],
+    ) -> DawResult<()> {
+        if channel_names.len() < 2 {
+            return Err(DawError::operation_failed(format!(
+                "dynamic-template config does not define enough channel values for {}",
+                scope_info.name
+            )));
+        }
+        let project = ProjectContext::Current;
+        let context = scope_context(scope_info);
+        let direct_multi_mics: Vec<Track> = self
+            .children_of(&scope_info.guid)
+            .into_iter()
+            .filter(|track| track_dimension(&track.name, &context) == TrackDimension::MultiMic)
+            .collect();
+        let Some(first_multi_mic) = direct_multi_mics.first() else {
+            return Ok(());
+        };
+
+        self.set_folder_depth(project.clone(), TrackRef::Guid(scope_info.guid.clone()), 1)?;
+
+        let l = self.add(
             project.clone(),
-            &name,
-            Some(insertion_index + offset as u32),
+            &channel_names[0],
+            Some(first_multi_mic.index),
         )?;
-        reaper.set_folder_depth(project.clone(), TrackRef::Guid(track), folder_depth)?;
-    }
-    Ok(())
-}
+        self.set_folder_depth(project.clone(), TrackRef::Guid(l), 1)?;
+        for (index, track) in direct_multi_mics.iter().enumerate() {
+            self.set_folder_depth(
+                project.clone(),
+                TrackRef::Guid(track.guid.clone()),
+                if index + 1 == direct_multi_mics.len() {
+                    -1
+                } else {
+                    0
+                },
+            )?;
+        }
 
-fn convert_direct_multi_mics_to_channels(
-    scope_info: &Track,
-    multi_mic_names: &[String],
-    channel_names: &[String],
-) -> eyre::Result<()> {
-    if channel_names.len() < 2 {
-        eyre::bail!(
-            "Dynamic-template config does not define enough channel values for {}",
-            scope_info.name
+        self.append_shape(
+            &scope_info.guid,
+            &[TrackShape {
+                name: channel_names[1].clone(),
+                children: multi_mic_names
+                    .iter()
+                    .map(|name| TrackShape {
+                        name: name.clone(),
+                        children: Vec::new(),
+                    })
+                    .collect(),
+            }],
+        )
+    }
+
+    /// Walk up from `track` while its ancestors are still classified as
+    /// part of an instrument (guitar/keys/drums/...), stopping at the
+    /// outermost one — that's the scope a new arrangement variant nests
+    /// under, not whatever leaf track happened to be selected.
+    fn instrument_scope(&self, track: Track) -> Track {
+        let mut current = track;
+        while let Some(parent_guid) = current.parent_guid.clone() {
+            let Ok(parent) = self.get_track(&parent_guid) else {
+                break;
+            };
+            let parent_context = scope_context(&parent);
+            if track_dimension(&current.name, &parent_context) != TrackDimension::Other {
+                current = parent;
+                continue;
+            }
+            if let Some(grandparent_guid) = parent.parent_guid.clone()
+                && let Ok(grandparent) = self.get_track(&grandparent_guid)
+                && track_dimension(&parent.name, &scope_context(&grandparent))
+                    != TrackDimension::Other
+            {
+                current = parent;
+                continue;
+            }
+            break;
+        }
+        current
+    }
+
+    fn reorganize_selected_by(&self, field_name: &str) -> DawResult<()> {
+        let _scope = self.selected_scope()?;
+        tracing::warn!(
+            "[session] Reorganize selected by {field_name} is registered; hierarchy rewrite policy is pending"
         );
+        Ok(())
     }
-    let reaper = daw::reaper::Reaper;
-    let project = ProjectContext::Current;
-    let all = reaper.all(project.clone());
-    let context = scope_context(scope_info);
-    let direct_multi_mics = direct_children(&all, &scope_info.guid)
-        .into_iter()
-        .filter(|track| track_dimension(&track.name, &context) == TrackDimension::MultiMic)
-        .collect::<Vec<_>>();
-    let Some(first_multi_mic) = direct_multi_mics.first() else {
-        return Ok(());
-    };
-
-    reaper.set_folder_depth(project.clone(), TrackRef::Guid(scope_info.guid.clone()), 1)?;
-
-    let l = reaper.add(
-        project.clone(),
-        &channel_names[0],
-        Some(first_multi_mic.index),
-    )?;
-    reaper.set_folder_depth(project.clone(), TrackRef::Guid(l), 1)?;
-    for (index, track) in direct_multi_mics.iter().enumerate() {
-        reaper.set_folder_depth(
-            project.clone(),
-            TrackRef::Guid(track.guid.clone()),
-            if index + 1 == direct_multi_mics.len() {
-                -1
-            } else {
-                0
-            },
-        )?;
-    }
-
-    append_shape(
-        &scope_info.guid,
-        &[TrackShape {
-            name: channel_names[1].clone(),
-            children: multi_mic_names
-                .iter()
-                .map(|name| TrackShape {
-                    name: name.clone(),
-                    children: Vec::new(),
-                })
-                .collect(),
-        }],
-    )
-}
-
-fn move_items(from_guid: &str, to_guid: &str) -> eyre::Result<()> {
-    let reaper = daw::reaper::Reaper;
-    let project = ProjectContext::Current;
-    let target = TrackRef::Guid(to_guid.to_string());
-    for item in reaper.get_items(project.clone(), TrackRef::Guid(from_guid.to_string())) {
-        reaper.move_to_track(project.clone(), ItemRef::Guid(item.guid), target.clone())?;
-    }
-    Ok(())
-}
-
-fn reorganize_selected_by(field_name: &str) -> eyre::Result<()> {
-    let _scope = selected_scope()?;
-    tracing::warn!(
-        "[session] Reorganize selected by {field_name} is registered; hierarchy rewrite policy is pending"
-    );
-    Ok(())
-}
-
-fn direct_children<'a>(
-    tracks: &'a [daw::service::Track],
-    parent_guid: &str,
-) -> Vec<&'a daw::service::Track> {
-    tracks
-        .iter()
-        .filter(|track| track.parent_guid.as_deref() == Some(parent_guid))
-        .collect()
-}
-
-fn child_shapes(tracks: &[daw::service::Track], parent_guid: &str) -> Vec<TrackShape> {
-    direct_children(tracks, parent_guid)
-        .into_iter()
-        .map(|track| TrackShape {
-            name: track.name.clone(),
-            children: child_shapes(tracks, &track.guid),
-        })
-        .collect()
 }
 
 fn flatten_shape(shape: &[TrackShape], output: &mut Vec<(String, i32)>) {
@@ -458,138 +463,20 @@ fn track_dimension(name: &str, context: &[String]) -> TrackDimension {
     track_schema::classify_track_dimension(name, context)
 }
 
-fn scope_context(scope: &daw::service::Track) -> Vec<String> {
+fn scope_context(scope: &Track) -> Vec<String> {
     vec![scope.name.clone()]
 }
 
-fn instrument_scope<'a>(
-    tracks: &'a [daw::service::Track],
-    selected: &'a daw::service::Track,
-) -> Option<&'a daw::service::Track> {
-    let mut current = selected;
-    while let Some(parent) = parent_track(tracks, current) {
-        if track_dimension(&current.name, &scope_context(parent)) != TrackDimension::Other {
-            current = parent;
-            continue;
-        }
-        if let Some(grandparent) = parent_track(tracks, parent)
-            && track_dimension(&parent.name, &scope_context(grandparent)) != TrackDimension::Other
-        {
-            current = parent;
-            continue;
-        }
-        break;
-    }
-    Some(current)
-}
-
-fn parent_track<'a>(
-    tracks: &'a [daw::service::Track],
-    track: &daw::service::Track,
-) -> Option<&'a daw::service::Track> {
-    let parent_guid = track.parent_guid.as_deref()?;
-    tracks
-        .iter()
-        .find(|candidate| candidate.guid == parent_guid)
-}
-
-fn subtree_end_index(tracks: &[daw::service::Track], parent_guid: &str) -> Option<u32> {
-    let parent = tracks.iter().find(|track| track.guid == parent_guid)?;
-    let mut depth = 0;
-    for track in tracks.iter().filter(|track| track.index >= parent.index) {
-        depth += track.folder_depth;
-        if track.index > parent.index && depth <= 0 {
-            return Some(track.index + 1);
-        }
-    }
-    Some(parent.index + 1)
-}
-
-// ── architect::actions declaration ──────────────────────────────────────
-//
-// `TrackManagerAction` / `action_for_id` / `dispatch` above stay put —
-// still the live path `daw_module.rs`'s dispatch chain calls into.
-// Additive declarative layer only, mirroring `setlist_actions`'s migration.
-
-/// Bridges the seven track-manager actions onto `#[architect::actions]`.
-/// Every method forwards to the existing synchronous `dispatch` — no
-/// behavior change, just a declarative front door with real metadata.
-pub struct TrackManagerActionsImpl;
-
-#[architect::actions(namespace = "FTS_SESSION")]
-pub trait TrackManagerActions {
-    #[action(
-        description = "Add the next dynamic-template channel to the selected track scope",
-        category = "Session",
-        group = "Track Manager"
-    )]
-    fn track_manager_add_channel(&self);
-    #[action(
-        description = "Add the next dynamic-template layer to the selected track scope",
-        category = "Session",
-        group = "Track Manager"
-    )]
-    fn track_manager_add_layer(&self);
-    #[action(
-        description = "Add the next dynamic-template multi-mic track to the selected track scope",
-        category = "Session",
-        group = "Track Manager"
-    )]
-    fn track_manager_add_multi_mic(&self);
-    #[action(
-        description = "Add a performer folder to the selected track scope",
-        category = "Session",
-        group = "Track Manager"
-    )]
-    fn track_manager_add_performer(&self);
-    #[action(
-        description = "Add the next dynamic-template arrangement to the selected instrument scope",
-        category = "Session",
-        group = "Track Manager"
-    )]
-    fn track_manager_add_arrangement(&self);
-    #[action(
-        description = "Reorganize selected tracks with performer as the top metadata dimension",
-        category = "Session",
-        group = "Track Manager"
-    )]
-    fn track_manager_reorganize_selected_by_performer(&self);
-    #[action(
-        description = "Reorganize selected tracks with arrangement as the top metadata dimension",
-        category = "Session",
-        group = "Track Manager"
-    )]
-    fn track_manager_reorganize_selected_by_arrangement(&self);
-}
-
-impl TrackManagerActions for TrackManagerActionsImpl {
-    fn track_manager_add_channel(&self) {
-        dispatch(TrackManagerAction::AddChannel);
-    }
-    fn track_manager_add_layer(&self) {
-        dispatch(TrackManagerAction::AddLayer);
-    }
-    fn track_manager_add_multi_mic(&self) {
-        dispatch(TrackManagerAction::AddMultiMic);
-    }
-    fn track_manager_add_performer(&self) {
-        dispatch(TrackManagerAction::AddPerformer);
-    }
-    fn track_manager_add_arrangement(&self) {
-        dispatch(TrackManagerAction::AddArrangement);
-    }
-    fn track_manager_reorganize_selected_by_performer(&self) {
-        dispatch(TrackManagerAction::ReorganizeSelectedByPerformer);
-    }
-    fn track_manager_reorganize_selected_by_arrangement(&self) {
-        dispatch(TrackManagerAction::ReorganizeSelectedByArrangement);
-    }
-}
-
-/// Registers all seven track-manager actions with `backend`.
-pub fn register_actions<B>(backend: &B)
+/// Registers all seven track-manager actions with `backend`, dispatching
+/// through a `TrackManager` wrapping `daw`, nested one level under
+/// "Session" (see `TrackManagerActions`'s docs — the trait itself only
+/// knows its own name).
+pub fn register_actions<B, D>(backend: &B, daw: D)
 where
-    B: ::architect::action::ActionBackend + ?Sized,
+    B: ::architect::action::ActionBackend + Clone,
+    D: Tracks + Items + Projects + Send + Sync + 'static,
 {
-    register_track_manager_actions_actions(backend, std::sync::Arc::new(TrackManagerActionsImpl));
+    let session =
+        ::architect::action::ScopedActionBackend::new(backend.clone(), "SESSION", "Session");
+    register_track_manager_actions_actions(&session, std::sync::Arc::new(TrackManager::new(daw)));
 }

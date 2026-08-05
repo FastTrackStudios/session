@@ -726,48 +726,6 @@ actions_proto::define_actions! {
             category: Session,
             group: "Auto Color",
         }
-        TRACK_MANAGER_ADD_CHANNEL = "track_manager_add_channel" {
-            name: "Add Channel",
-            description: "Add the next dynamic-template channel to the selected track scope",
-            category: Session,
-            group: "Track Manager",
-        }
-        TRACK_MANAGER_ADD_LAYER = "track_manager_add_layer" {
-            name: "Add Layer",
-            description: "Add the next dynamic-template layer to the selected track scope",
-            category: Session,
-            group: "Track Manager",
-        }
-        TRACK_MANAGER_ADD_MULTI_MIC = "track_manager_add_multi_mic" {
-            name: "Add Multi-Mic",
-            description: "Add the next dynamic-template multi-mic track to the selected track scope",
-            category: Session,
-            group: "Track Manager",
-        }
-        TRACK_MANAGER_ADD_PERFORMER = "track_manager_add_performer" {
-            name: "Add Performer",
-            description: "Add a performer folder to the selected track scope",
-            category: Session,
-            group: "Track Manager",
-        }
-        TRACK_MANAGER_ADD_ARRANGEMENT = "track_manager_add_arrangement" {
-            name: "Add Arrangement",
-            description: "Add the next dynamic-template arrangement to the selected instrument scope",
-            category: Session,
-            group: "Track Manager",
-        }
-        TRACK_MANAGER_REORGANIZE_SELECTED_BY_PERFORMER = "track_manager_reorganize_selected_by_performer" {
-            name: "Reorganize Selected by Performer",
-            description: "Reorganize selected tracks with performer as the top metadata dimension",
-            category: Session,
-            group: "Track Manager",
-        }
-        TRACK_MANAGER_REORGANIZE_SELECTED_BY_ARRANGEMENT = "track_manager_reorganize_selected_by_arrangement" {
-            name: "Reorganize Selected by Arrangement",
-            description: "Reorganize selected tracks with arrangement as the top metadata dimension",
-            category: Session,
-            group: "Track Manager",
-        }
         LOG_HELLO = "log_hello" {
             name: "Log Hello",
             description: "Logs 'Hello from session!'",

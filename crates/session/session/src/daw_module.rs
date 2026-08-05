@@ -72,8 +72,6 @@ where
                         keyflow_actions::dispatch(&daw, action);
                     } else if let Some(action) = auto_color_actions::action_for_id(&action_id) {
                         auto_color_actions::dispatch(action);
-                    } else if let Some(action) = track_manager_actions::action_for_id(&action_id) {
-                        track_manager_actions::dispatch(action);
                     } else if let Some(action) = preroll_actions::action_for_id(&action_id) {
                         preroll_actions::dispatch(&daw, action);
                     } else if let Some(action) = mode_actions::action_for_id(&action_id) {
