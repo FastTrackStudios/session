@@ -8,6 +8,8 @@
 use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
+use session_proto::mode::{ModeActions, register_mode_actions};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mode {
     Organize,
@@ -269,15 +271,6 @@ pub fn set_mode(mode: Mode) {
 
 // ─── Action wiring ──────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModeAction {
-    Switch(Mode),
-    /// Capture REAPER's current window state into the mode's native
-    /// screenset slot (mode index N → REAPER window set #N+1).
-    SaveLayout(Mode),
-    LogCurrent,
-}
-
 pub fn init(_ctx: &daw::module::ModuleContext) {
     // Initialise the global to Organize so `current_mode()` is always sane.
     let _ = current_mode();
@@ -305,39 +298,6 @@ pub fn mode_broadcast() -> &'static tokio::sync::broadcast::Sender<String> {
         });
         tx
     })
-}
-
-pub fn action_for_id(action_id: &str) -> Option<ModeAction> {
-    // Strip the `fts.session.mode.` prefix produced by `define_actions!`
-    // for the `mode_defs` block. Action IDs look like
-    // `fts.session.mode.organize`, `fts.session.mode.log_current`, etc.
-    let trimmed = action_id.trim().to_lowercase();
-    let slug = trimmed
-        .strip_prefix("fts.session.mode.")
-        .unwrap_or(trimmed.as_str());
-
-    if slug == "log_current" {
-        return Some(ModeAction::LogCurrent);
-    }
-    for mode in Mode::ALL {
-        if slug == mode.slug() {
-            return Some(ModeAction::Switch(mode));
-        }
-        if slug == format!("save_{}", mode.slug()) {
-            return Some(ModeAction::SaveLayout(mode));
-        }
-    }
-    None
-}
-
-pub fn dispatch(action: ModeAction) {
-    match action {
-        ModeAction::Switch(mode) => set_mode(mode),
-        ModeAction::SaveLayout(mode) => save_layout(mode),
-        ModeAction::LogCurrent => {
-            tracing::info!(mode = %current_mode(), "[session] Current mode");
-        }
-    }
 }
 
 /// Capture REAPER's current window state into the mode's native
@@ -406,215 +366,80 @@ pub fn restore_persisted_mode() -> Option<Mode> {
     Some(mode)
 }
 
-// ── architect::actions declaration ──────────────────────────────────────
+// ── architect::actions implementation ───────────────────────────────────
 //
-// `ModeAction` / `action_for_id` / `dispatch` above stay put — still the
-// live path `daw_module.rs`'s dispatch chain calls into (via `mode_defs`,
-// a separate `actions_proto::define_actions!` block so it renders as
-// `FTS: Mode - <Name>` rather than nested under Session). Additive
-// declarative layer only, mirroring `setlist_actions`'s migration.
-// Namespace `FTS_SESSION_MODE` matches `mode_defs`'s `fts.session.mode`
-// action-id prefix.
+// The contract lives in `session_proto::mode`; this is the impl side.
+// Each method calls `set_mode` / `save_layout` directly — there is no
+// longer an intermediate `ModeAction` enum or string-keyed
+// `action_for_id`, and no `mode_defs` `define_actions!` block declaring
+// the same `FTS_SESSION_MODE_*` command ids a second time.
 
-/// Bridges the twenty-one mode actions (10 switch + 10 save-layout + log)
-/// onto `#[architect::actions]`. Every method forwards to the existing
-/// synchronous `dispatch` — no behavior change, just a declarative front
-/// door with real metadata.
+/// Serves the twenty-one mode actions (10 switch + 10 save-layout + log).
 pub struct ModeActionsImpl;
-
-#[architect::actions(namespace = "FTS_SESSION_MODE")]
-pub trait ModeActions {
-    #[action(
-        description = "Switch to Organize mode (planning, song structure, setlists)",
-        category = "Session",
-        group = "Switch"
-    )]
-    fn organize(&self);
-    #[action(
-        description = "Switch to Write mode (lyric/melody/idea capture)",
-        category = "Session",
-        group = "Switch"
-    )]
-    fn write(&self);
-    #[action(
-        description = "Switch to Produce mode (arrangement, sound design, instrument selection)",
-        category = "Session",
-        group = "Switch"
-    )]
-    fn produce(&self);
-    #[action(
-        description = "Switch to Record mode (tracking, takes, monitoring)",
-        category = "Session",
-        group = "Switch"
-    )]
-    fn record(&self);
-    #[action(
-        description = "Switch to Edit mode (comping, timing, cleanup)",
-        category = "Session",
-        group = "Switch"
-    )]
-    fn edit(&self);
-    #[action(
-        description = "Switch to Mix mode (mixer focus, processing, automation)",
-        category = "Session",
-        group = "Switch"
-    )]
-    fn mix(&self);
-    #[action(
-        description = "Switch to Master mode (master bus processing, metering, export prep)",
-        category = "Session",
-        group = "Switch"
-    )]
-    fn master(&self);
-    #[action(
-        description = "Switch to Live mode (performance/setlist playback view)",
-        category = "Session",
-        group = "Switch"
-    )]
-    fn live(&self);
-    #[action(
-        description = "Switch to Video mode (sync to picture / video editing layout)",
-        category = "Session",
-        group = "Switch"
-    )]
-    fn video(&self);
-    #[action(
-        description = "Switch to Scoring mode (multi-agent orchestration layout, no mode toolbars)",
-        category = "Session",
-        group = "Switch"
-    )]
-    fn scoring(&self);
-    #[action(
-        description = "Capture current REAPER window state to Organize's native screenset slot",
-        category = "Session",
-        group = "Save"
-    )]
-    fn save_organize(&self);
-    #[action(
-        description = "Capture current REAPER window state to Write's native screenset slot",
-        category = "Session",
-        group = "Save"
-    )]
-    fn save_write(&self);
-    #[action(
-        description = "Capture current REAPER window state to Produce's native screenset slot",
-        category = "Session",
-        group = "Save"
-    )]
-    fn save_produce(&self);
-    #[action(
-        description = "Capture current REAPER window state to Record's native screenset slot",
-        category = "Session",
-        group = "Save"
-    )]
-    fn save_record(&self);
-    #[action(
-        description = "Capture current REAPER window state to Edit's native screenset slot",
-        category = "Session",
-        group = "Save"
-    )]
-    fn save_edit(&self);
-    #[action(
-        description = "Capture current REAPER window state to Mix's native screenset slot",
-        category = "Session",
-        group = "Save"
-    )]
-    fn save_mix(&self);
-    #[action(
-        description = "Capture current REAPER window state to Master's native screenset slot",
-        category = "Session",
-        group = "Save"
-    )]
-    fn save_master(&self);
-    #[action(
-        description = "Capture current REAPER window state to Live's native screenset slot",
-        category = "Session",
-        group = "Save"
-    )]
-    fn save_live(&self);
-    #[action(
-        description = "Capture current REAPER window state to Video's native screenset slot",
-        category = "Session",
-        group = "Save"
-    )]
-    fn save_video(&self);
-    #[action(
-        description = "Capture current REAPER window state to Scoring's native screenset slot",
-        category = "Session",
-        group = "Save"
-    )]
-    fn save_scoring(&self);
-    #[action(
-        description = "Log the current session mode to the console (debug helper)",
-        category = "Session",
-        group = "Debug"
-    )]
-    fn log_current(&self);
-}
 
 impl ModeActions for ModeActionsImpl {
     fn organize(&self) {
-        dispatch(ModeAction::Switch(Mode::Organize));
+        set_mode(Mode::Organize);
     }
     fn write(&self) {
-        dispatch(ModeAction::Switch(Mode::Write));
+        set_mode(Mode::Write);
     }
     fn produce(&self) {
-        dispatch(ModeAction::Switch(Mode::Produce));
+        set_mode(Mode::Produce);
     }
     fn record(&self) {
-        dispatch(ModeAction::Switch(Mode::Record));
+        set_mode(Mode::Record);
     }
     fn edit(&self) {
-        dispatch(ModeAction::Switch(Mode::Edit));
+        set_mode(Mode::Edit);
     }
     fn mix(&self) {
-        dispatch(ModeAction::Switch(Mode::Mix));
+        set_mode(Mode::Mix);
     }
     fn master(&self) {
-        dispatch(ModeAction::Switch(Mode::Master));
+        set_mode(Mode::Master);
     }
     fn live(&self) {
-        dispatch(ModeAction::Switch(Mode::Live));
+        set_mode(Mode::Live);
     }
     fn video(&self) {
-        dispatch(ModeAction::Switch(Mode::Video));
+        set_mode(Mode::Video);
     }
     fn scoring(&self) {
-        dispatch(ModeAction::Switch(Mode::Scoring));
+        set_mode(Mode::Scoring);
     }
     fn save_organize(&self) {
-        dispatch(ModeAction::SaveLayout(Mode::Organize));
+        save_layout(Mode::Organize);
     }
     fn save_write(&self) {
-        dispatch(ModeAction::SaveLayout(Mode::Write));
+        save_layout(Mode::Write);
     }
     fn save_produce(&self) {
-        dispatch(ModeAction::SaveLayout(Mode::Produce));
+        save_layout(Mode::Produce);
     }
     fn save_record(&self) {
-        dispatch(ModeAction::SaveLayout(Mode::Record));
+        save_layout(Mode::Record);
     }
     fn save_edit(&self) {
-        dispatch(ModeAction::SaveLayout(Mode::Edit));
+        save_layout(Mode::Edit);
     }
     fn save_mix(&self) {
-        dispatch(ModeAction::SaveLayout(Mode::Mix));
+        save_layout(Mode::Mix);
     }
     fn save_master(&self) {
-        dispatch(ModeAction::SaveLayout(Mode::Master));
+        save_layout(Mode::Master);
     }
     fn save_live(&self) {
-        dispatch(ModeAction::SaveLayout(Mode::Live));
+        save_layout(Mode::Live);
     }
     fn save_video(&self) {
-        dispatch(ModeAction::SaveLayout(Mode::Video));
+        save_layout(Mode::Video);
     }
     fn save_scoring(&self) {
-        dispatch(ModeAction::SaveLayout(Mode::Scoring));
+        save_layout(Mode::Scoring);
     }
     fn log_current(&self) {
-        dispatch(ModeAction::LogCurrent);
+        tracing::info!(mode = %current_mode(), "[session] Current mode");
     }
 }
 

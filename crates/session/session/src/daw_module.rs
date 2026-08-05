@@ -1,6 +1,6 @@
 //! DawModule implementation for session.
 
-use crate::{keyflow_actions, mode_actions, mode_defs, session_actions, setlist_actions};
+use crate::{keyflow_actions, mode_actions, session_actions, setlist_actions};
 // Generic DAW actions, no longer session's: pre-roll, record control,
 // grouping, take ranking, auto-colour.
 use daw_actions::{auto_color, groups, preroll, record, take_ranking};
@@ -58,7 +58,6 @@ where
     fn actions(&self) -> Vec<ActionDef> {
         session_actions::definitions()
             .into_iter()
-            .chain(mode_defs::definitions())
             .map(|def| {
                 let cmd = def.id.to_command_id();
                 let name = def.display_name();
@@ -74,8 +73,6 @@ where
                         auto_color::dispatch(action);
                     } else if let Some(action) = preroll::action_for_id(&action_id) {
                         preroll::dispatch(&daw, action);
-                    } else if let Some(action) = mode_actions::action_for_id(&action_id) {
-                        mode_actions::dispatch(action);
                     } else if let Some(action) = take_ranking::action_for_id(&action_id) {
                         take_ranking::dispatch(action);
                     } else if let Some(action) = record::action_for_id(&action_id) {
