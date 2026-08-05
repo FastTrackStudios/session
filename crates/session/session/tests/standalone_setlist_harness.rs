@@ -18,7 +18,7 @@ use std::time::Duration;
 use daw_proto::ProjectInfo;
 use daw_standalone::bootstrap::build_in_process_daw;
 use daw_standalone::sync::Standalone;
-use session::setlist_service::demo::stamp_demo_setlist_with;
+use session::setlist::service::demo::stamp_demo_setlist_with;
 use session::{
     SetlistBuilder, SetlistServiceClient, SetlistServiceImpl, serve_setlist_service,
     setlist_service_service_descriptor,
@@ -57,7 +57,7 @@ async fn build_setlist_from_standalone_demo() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
     use daw::service::ProjectContext;
-    use session::setlist_service::demo::{fixture_songs, stamp_song_native};
+    use session::setlist::service::demo::{fixture_songs, stamp_song_native};
 
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -130,7 +130,7 @@ async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn per_song_project_demo_setlist_holds_order_and_tempo() -> eyre::Result<()> {
     use daw::service::ProjectContext;
-    use session::setlist_service::demo::{demo_songs_base, stamp_song_with_default_tempo_native};
+    use session::setlist::service::demo::{demo_songs_base, stamp_song_with_default_tempo_native};
 
     let _ = tracing_subscriber::fmt::try_init();
 

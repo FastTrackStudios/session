@@ -1,6 +1,6 @@
 //! Session Track Manager — headless, no REAPER.
 //!
-//! Drives `session::track_manager_actions::TrackManager` (the REAPER
+//! Drives `session::track_manager::TrackManager` (the REAPER
 //! actions "Session Track Manager - Add Channel/Multi-Mic/Arrangement/
 //! Layer/Performer") wrapping `daw_standalone::sync::Standalone`, the same
 //! in-memory backend used by `standalone_setlist_harness.rs`. `TrackManager<D>`
@@ -25,7 +25,7 @@ use daw_proto::{
     assert_tracks_equal,
 };
 use daw_standalone::sync::Standalone;
-use session::track_manager_actions::{TrackManager, TrackManagerActions};
+use session::track_manager::{TrackManager, TrackManagerActions};
 
 /// `Track.folder_depth` (raw REAPER-style relative depth change) is exactly
 /// `FolderDepthChange`'s raw representation, so a live project's flat,
@@ -157,6 +157,135 @@ fn add_layer_inherits_multi_mic_shape() {
         .end()
         .end()
         .build();
+    assert_tracks_equal(&hierarchy_of(&daw), &expected).unwrap();
+}
+
+/// Add Channel on a bare track (no channels, no mics) scaffolds the first
+/// L/R pair underneath it.
+#[test]
+fn add_channel_scaffolds_first_l_r_pair() {
+    let (daw, tm) = setup();
+
+    let electric_gtr = daw.insert_track("Electric GTR").unwrap();
+    daw.select(&electric_gtr).unwrap();
+    tm.add_channel().expect("Add Channel");
+
+    let expected = TrackStructureBuilder::new()
+        .folder("Electric GTR")
+        .track("L")
+        .track("R")
+        .end()
+        .build();
+    assert_tracks_equal(&hierarchy_of(&daw), &expected).unwrap();
+}
+
+/// Add Channel on a scope whose children are bare multi-mics folds those
+/// mics under an L channel in place, then mirrors them under a new R.
+#[test]
+fn add_channel_splits_existing_multi_mics_across_l_r() {
+    let (daw, tm) = setup();
+
+    let electric_gtr = daw.insert_track("Electric GTR").unwrap();
+    daw.select(&electric_gtr).unwrap();
+    tm.add_multi_mic().expect("Add Multi-Mic (Amp)");
+    tm.add_multi_mic().expect("Add Multi-Mic (DI)");
+
+    daw.select(&electric_gtr).unwrap();
+    tm.add_channel().expect("Add Channel over bare multi-mics");
+
+    let expected = TrackStructureBuilder::new()
+        .folder("Electric GTR")
+        .folder("L")
+        .track("Amp")
+        .track("DI")
+        .end()
+        .folder("R")
+        .track("Amp")
+        .track("DI")
+        .end()
+        .end()
+        .build();
+    assert_tracks_equal(&hierarchy_of(&daw), &expected).unwrap();
+}
+
+/// A third channel inherits the shape of the existing channels rather
+/// than arriving bare — Add Channel on an already-channelled scope copies
+/// the first channel's mic subtree onto the new one.
+#[test]
+fn add_channel_inherits_existing_channel_shape() {
+    let (daw, tm) = setup();
+
+    let electric_gtr = daw.insert_track("Electric GTR").unwrap();
+    daw.select(&electric_gtr).unwrap();
+    tm.add_multi_mic().expect("Add Multi-Mic (Amp)");
+    daw.select(&electric_gtr).unwrap();
+    tm.add_channel().expect("split into L/R");
+
+    daw.select(&electric_gtr).unwrap();
+    tm.add_channel().expect("third channel");
+
+    // C is the next configured channel after L/R, and comes with the same
+    // single Amp mic the existing channels carry.
+    let expected = TrackStructureBuilder::new()
+        .folder("Electric GTR")
+        .folder("L")
+        .track("Amp")
+        .end()
+        .folder("R")
+        .track("Amp")
+        .end()
+        .folder("C")
+        .track("Amp")
+        .end()
+        .end()
+        .build();
+    assert_tracks_equal(&hierarchy_of(&daw), &expected).unwrap();
+}
+
+/// Add Performer mirrors Add Layer's inherit-the-shape behaviour, under a
+/// differently-named scope.
+#[test]
+fn add_performer_inherits_multi_mic_shape() {
+    let (daw, tm) = setup();
+
+    let electric_gtr = daw.insert_track("Electric GTR").unwrap();
+    daw.select(&electric_gtr).unwrap();
+    tm.add_multi_mic().expect("Add Multi-Mic (Amp)");
+
+    daw.select(&electric_gtr).unwrap();
+    tm.add_performer().expect("Add Performer");
+
+    let expected = TrackStructureBuilder::new()
+        .folder("Electric GTR")
+        .track("Amp")
+        .folder("New Performer")
+        .track("Amp")
+        .end()
+        .end()
+        .build();
+    assert_tracks_equal(&hierarchy_of(&daw), &expected).unwrap();
+}
+
+/// The reorganize actions are registered but their hierarchy-rewrite
+/// policy is still pending — they must at least require a selection and
+/// otherwise no-op cleanly rather than erroring or mutating.
+#[test]
+fn reorganize_actions_require_selection_and_no_op() {
+    let (daw, tm) = setup();
+
+    assert!(
+        tm.reorganize_selected_by_performer()
+            .unwrap_err()
+            .to_string()
+            .contains("no track is selected")
+    );
+
+    let electric_gtr = daw.insert_track("Electric GTR").unwrap();
+    daw.select(&electric_gtr).unwrap();
+    tm.reorganize_selected_by_performer().expect("performer");
+    tm.reorganize_selected_by_arrangement().expect("arrangement");
+
+    let expected = TrackStructureBuilder::new().track("Electric GTR").build();
     assert_tracks_equal(&hierarchy_of(&daw), &expected).unwrap();
 }
 

@@ -27,7 +27,14 @@ architect = { workspace = true, features = ["platform"] }
 daw = { workspace = true }
 daw-proto = { workspace = true }
 # Canonical 128-slot group partition lives here (music_catalog::groups).
+# Guide schedule + MIDI note rendering (the pure half of guide
+# generation; this crate does the DAW writes).
+session-guide.workspace = true
 music-catalog.workspace = true
+# Auto-colour classification: monarchy sorts track names into the group
+# hierarchy, color-palette carries the Color type the palette is keyed in.
+monarchy.workspace = true
+color-palette.workspace = true
 # Base (wasm-safe) vox runtime. `transport-local` (Unix-socket / tokio-net,
 # pulls mio) is native-only — added in the target table below.
 vox = { workspace = true }
@@ -52,6 +59,9 @@ rustc-hash = "2"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 daw = { workspace = true, features = ["file", "reaper"] }
 daw-reaper = { workspace = true }
+# Pre-roll / record / grouping / take-ranking / auto-colour actions —
+# generic DAW operations, moved out of this crate.
+daw-actions = { workspace = true }
 daw-synchronization.workspace = true
 # Raw REAPER FFI — used by take_ranking for cursor / item / take-marker ops
 # that aren't covered by the daw service traits.

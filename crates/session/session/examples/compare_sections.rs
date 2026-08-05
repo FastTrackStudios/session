@@ -5,15 +5,15 @@
 //! cargo run -p session --example compare_sections -- <songs-root> [slug ...]
 //! ```
 //! For each song folder that has both `chart.kf` and `manifest.json`, runs
-//! [`session::chart_import::chart_to_layout`] on the chart and prints, per
+//! [`session::setlist::chart_import::chart_to_layout`] on the chart and prints, per
 //! section, the manifest's authored start/end vs the chart-derived ones,
 //! plus the max absolute delta and duration difference.
 
 use std::path::PathBuf;
 
 use serde::Deserialize;
-use session::chart_import::chart_to_layout;
-use session::keyflow_actions::SectionKind;
+use session::setlist::chart_import::chart_to_layout;
+use session::keyflow::actions::SectionKind;
 
 #[derive(Deserialize)]
 struct Manifest {

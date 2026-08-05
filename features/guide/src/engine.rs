@@ -70,6 +70,29 @@ pub struct GuideConfig {
     pub guide_gain: f32,
     /// Count-in / announcement scheduling options.
     pub schedule: ScheduleOptions,
+    /// Where triggers come from. See [`TriggerSource`].
+    pub source: TriggerSource,
+}
+
+/// What drives the engine.
+///
+/// The two are mutually exclusive on purpose. Running both would
+/// double-trigger every beat: a stamped guide track carries the *same*
+/// clicks and cues the internal grid would generate, so a host playing
+/// that track into the plugin while the plugin also follows the transport
+/// hears everything twice, slightly flammed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TriggerSource {
+    /// Follow the host transport: the engine derives the click grid from
+    /// tempo/time-signature and fires scheduled cues from its own
+    /// [`CueSchedule`]. Self-contained — no input needed.
+    #[default]
+    HostTransport,
+    /// Play only what's handed to [`GuideEngine::trigger`] — MIDI notes
+    /// from the host. The internal grid and cue schedule stay silent, so
+    /// what you hear is exactly what's on the track: editable, visible,
+    /// and movable in the piano roll.
+    Midi,
 }
 
 impl Default for GuideConfig {
@@ -86,13 +109,18 @@ impl Default for GuideConfig {
             count_gain: 1.0,
             guide_gain: 1.0,
             schedule: ScheduleOptions::default(),
+            source: TriggerSource::default(),
         }
     }
 }
 
-/// A trigger resolved to a sample offset within the current block.
-#[derive(Debug, Clone)]
-enum Trigger {
+/// A sound the engine can fire.
+///
+/// Public because the engine can be driven from outside its own grid —
+/// the plugin shell maps incoming MIDI notes onto these and hands them to
+/// [`GuideEngine::trigger`]. See [`TriggerSource`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum GuideTrigger {
     Beat,
     Accent,
     Eighth,
@@ -107,6 +135,10 @@ pub struct GuideEngine {
     pub config: GuideConfig,
     bank: SampleBank,
     schedule: CueSchedule,
+
+    /// Triggers pushed in from outside (MIDI), consumed next block.
+    /// Separate from `pending` because `prepare_block` clears that.
+    external: Vec<(usize, GuideTrigger)>,
 
     click_state: ClickPlayerState,
     count_state: CountPlayerState,
@@ -128,7 +160,7 @@ pub struct GuideEngine {
     next_cue: usize,
 
     /// Scratch trigger list, reused across blocks.
-    pending: Vec<(usize, Trigger)>,
+    pending: Vec<(usize, GuideTrigger)>,
 }
 
 impl GuideEngine {
@@ -137,6 +169,7 @@ impl GuideEngine {
             config,
             bank: SampleBank::default(),
             schedule: CueSchedule::default(),
+            external: Vec::new(),
             click_state: ClickPlayerState::new(),
             count_state: CountPlayerState::new(),
             guide_state: GuidePlayerState::new(),
@@ -185,6 +218,7 @@ impl GuideEngine {
 
     /// Reset all playback state (voice tails, grid trackers, cue cursor).
     pub fn reset(&mut self) {
+        self.external.clear();
         self.click_state.reset();
         self.count_state.reset();
         self.guide_state.reset();
@@ -235,9 +269,36 @@ impl GuideEngine {
         });
     }
 
+    /// Queue a sound to fire `offset_frames` into the next rendered
+    /// block.
+    ///
+    /// The host shell calls this per MIDI note-on, passing the event's
+    /// sample offset so a note lands where it was played rather than at
+    /// the block boundary — block-quantised cues audibly flam against a
+    /// click.
+    ///
+    /// Honoured under either [`TriggerSource`]; the mode only controls
+    /// whether the engine *also* generates its own.
+    pub fn trigger(&mut self, offset_frames: usize, trigger: GuideTrigger) {
+        self.external.push((offset_frames, trigger));
+    }
+
     /// Gather this block's triggers into `self.pending` (sorted by offset).
     fn prepare_block(&mut self, n: usize, clock: &BlockClock) {
         self.pending.clear();
+
+        // Externally-pushed triggers always play, whatever the source —
+        // they were explicitly asked for.
+        self.pending.append(&mut self.external);
+
+        // In MIDI mode the internal grid and cue schedule stay silent;
+        // the incoming notes ARE the guide.
+        if self.config.source == TriggerSource::Midi {
+            self.pending.sort_by_key(|(offset, _)| *offset);
+            self.prev_block_end_seconds =
+                Some(clock.pos_seconds + n as f64 / clock.sample_rate);
+            return;
+        }
         if n == 0 || clock.sample_rate <= 0.0 {
             return;
         }
@@ -285,8 +346,8 @@ impl GuideEngine {
         let mut schedule_grid =
             |interval: f64,
              last_idx: &mut i64,
-             pending: &mut Vec<(usize, Trigger)>,
-             make: &dyn Fn(i64) -> Trigger| {
+             pending: &mut Vec<(usize, GuideTrigger)>,
+             make: &dyn Fn(i64) -> GuideTrigger| {
                 if interval <= 0.0 {
                     return;
                 }
@@ -315,23 +376,23 @@ impl GuideEngine {
             // Legacy parity: "beats" are quarter notes and the measure
             // accent fires when the quarter-note index is a multiple of the
             // time-signature numerator.
-            let mut tmp: Vec<(usize, Trigger)> = Vec::new();
+            let mut tmp: Vec<(usize, GuideTrigger)> = Vec::new();
             schedule_grid(1.0, &mut self.last_beat_idx, &mut tmp, &|k| {
                 if enable_accent && k.rem_euclid(num) == 0 {
-                    Trigger::Accent
+                    GuideTrigger::Accent
                 } else {
-                    Trigger::Beat
+                    GuideTrigger::Beat
                 }
             });
             for (offset, trig) in tmp {
                 match trig {
-                    Trigger::Accent => {
+                    GuideTrigger::Accent => {
                         // Accent replaces the plain beat click on beat 1
                         // only when the accent sample is present.
                         if self.bank.measure_accent.is_some() {
-                            self.pending.push((offset, Trigger::Accent));
+                            self.pending.push((offset, GuideTrigger::Accent));
                         } else if enable_beat {
-                            self.pending.push((offset, Trigger::Beat));
+                            self.pending.push((offset, GuideTrigger::Beat));
                         }
                     }
                     trig => {
@@ -345,21 +406,21 @@ impl GuideEngine {
         if self.config.enable_eighth {
             let mut tmp = std::mem::take(&mut self.pending);
             schedule_grid(0.5, &mut self.last_eighth_idx, &mut tmp, &|_| {
-                Trigger::Eighth
+                GuideTrigger::Eighth
             });
             self.pending = tmp;
         }
         if self.config.enable_sixteenth {
             let mut tmp = std::mem::take(&mut self.pending);
             schedule_grid(0.25, &mut self.last_sixteenth_idx, &mut tmp, &|_| {
-                Trigger::Sixteenth
+                GuideTrigger::Sixteenth
             });
             self.pending = tmp;
         }
         if self.config.enable_triplet {
             let mut tmp = std::mem::take(&mut self.pending);
             schedule_grid(triplet_interval, &mut self.last_triplet_idx, &mut tmp, &|_| {
-                Trigger::Triplet
+                GuideTrigger::Triplet
             });
             self.pending = tmp;
         }
@@ -382,14 +443,14 @@ impl GuideEngine {
             match &cue.event {
                 CueEvent::Count { index } => {
                     if self.config.enable_count && *index < 8 {
-                        self.pending.push((offset, Trigger::Count(*index)));
+                        self.pending.push((offset, GuideTrigger::Count(*index)));
                     }
                 }
-                CueEvent::Guide { keys } => {
+                CueEvent::Guide { keys, .. } => {
                     if self.config.enable_guide {
                         if let Some(key) = keys.iter().find(|k| self.bank.guides.contains_key(*k))
                         {
-                            self.pending.push((offset, Trigger::Guide(key.clone())));
+                            self.pending.push((offset, GuideTrigger::Guide(key.clone())));
                         }
                     }
                 }
@@ -412,32 +473,32 @@ impl GuideEngine {
         for i in 0..n {
             while ti < pending.len() && pending[ti].0 == i {
                 match &pending[ti].1 {
-                    Trigger::Beat => {
+                    GuideTrigger::Beat => {
                         self.click_state.is_playing_beat = true;
                         self.click_state.playback_position_beat = 0;
                     }
-                    Trigger::Accent => {
+                    GuideTrigger::Accent => {
                         self.click_state.is_playing_measure_accent = true;
                         self.click_state.playback_position_measure_accent = 0;
                     }
-                    Trigger::Eighth => {
+                    GuideTrigger::Eighth => {
                         self.click_state.is_playing_eighth = true;
                         self.click_state.playback_position_eighth = 0;
                     }
-                    Trigger::Sixteenth => {
+                    GuideTrigger::Sixteenth => {
                         self.click_state.is_playing_sixteenth = true;
                         self.click_state.playback_position_sixteenth = 0;
                     }
-                    Trigger::Triplet => {
+                    GuideTrigger::Triplet => {
                         self.click_state.is_playing_triplet = true;
                         self.click_state.playback_position_triplet = 0;
                     }
-                    Trigger::Count(index) => {
+                    GuideTrigger::Count(index) => {
                         self.count_state.is_playing_count[*index] = true;
                         self.count_state.playback_position_count[*index] = 0;
                         self.count_state.current_count_number = *index as i32 + 1;
                     }
-                    Trigger::Guide(key) => {
+                    GuideTrigger::Guide(key) => {
                         self.current_guide_key = Some(key.clone());
                         self.guide_state.is_playing_guide = true;
                         self.guide_state.playback_position_guide = 0;

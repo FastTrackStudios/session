@@ -18,7 +18,7 @@ use daw_proto::{ProjectContext, ProjectInfo};
 use daw_standalone::bootstrap::build_in_process_daw;
 use daw_standalone::sync::Standalone;
 use session::services::SetlistService;
-use session::setlist_service::demo::stamp_demo_setlist_with;
+use session::setlist::service::demo::stamp_demo_setlist_with;
 use session::SetlistServiceImpl;
 
 fn seeded_stamped() -> Standalone {

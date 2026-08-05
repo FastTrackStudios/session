@@ -1,11 +1,8 @@
 //! Vox RPC service implementations for session control surfaces.
 //!
-//! Three services exposed today, all mounted by `fts-extensions` on
-//! the published Unix socket:
-//!
-//! - [`SessionModeServiceImpl`] — get / set / list FTS session modes
-//! - [`TakeRankingServiceImpl`] — apply a rank at a given scope
-//! - [`RecordControlServiceImpl`] — restart_recording + monitor toggles
+//! One service today: [`SessionModeServiceImpl`] — get / set / list FTS
+//! session modes. (Take-ranking and record-control moved to
+//! `daw_actions`, next to the handlers they drive.)
 //!
 //! Every call bounces to REAPER's main thread via
 //! `daw_reaper::main_thread::query` because the underlying handlers
@@ -16,15 +13,10 @@
 
 use daw_proto::main_thread;
 use session_proto::SessionServiceError;
-use session_proto::services::{
-    RecordControlService, SessionModeService, TakeRankLevel, TakeRankScope, TakeRankingService,
-};
+use session_proto::services::SessionModeService;
 use tokio::sync::broadcast::error::RecvError;
-use vox::Tx;
 
-use crate::mode_actions::{self, Mode};
-use crate::record_actions::{self, RecordAction};
-use crate::take_ranking::{self, RankAction};
+use crate::modes::{self as mode_actions, Mode};
 
 // ─── SessionModeService ─────────────────────────────────────────────────
 
@@ -89,70 +81,4 @@ impl SessionModeService for SessionModeServiceImpl {
         Ok(Mode::ALL.iter().map(|m| m.slug().to_string()).collect())
     }
 
-}
-
-// ─── TakeRankingService ────────────────────────────────────────────────
-
-#[derive(Clone, Default)]
-pub struct TakeRankingServiceImpl;
-
-impl TakeRankingService for TakeRankingServiceImpl {
-    async fn apply_rank(
-        &self,
-        scope: TakeRankScope,
-        level: TakeRankLevel,
-    ) -> Result<(), SessionServiceError> {
-        let action = rank_action_for(scope, level);
-        main_thread::query(move || take_ranking::dispatch(action))
-            .await
-            .ok_or_else(|| {
-                SessionServiceError::DawError("TaskSupport not initialised".to_string())
-            })?;
-        Ok(())
-    }
-}
-
-fn rank_action_for(scope: TakeRankScope, level: TakeRankLevel) -> RankAction {
-    use TakeRankLevel::*;
-    use TakeRankScope::*;
-    match (scope, level) {
-        (PlayPosMinus2s, One) => RankAction::PlayPos1,
-        (PlayPosMinus2s, Two) => RankAction::PlayPos2,
-        (PlayPosMinus2s, Three) => RankAction::PlayPos3,
-        (PlayPosMinus2s, Down) => RankAction::PlayPosDown,
-        (ItemWide, One) => RankAction::Item1,
-        (ItemWide, Two) => RankAction::Item2,
-        (ItemWide, Three) => RankAction::Item3,
-        (ItemWide, Down) => RankAction::ItemDown,
-        (MouseCursor, One) => RankAction::Mouse1,
-        (MouseCursor, Two) => RankAction::Mouse2,
-        (MouseCursor, Three) => RankAction::Mouse3,
-        (MouseCursor, Down) => RankAction::MouseDown,
-    }
-}
-
-// ─── RecordControlService ──────────────────────────────────────────────
-
-#[derive(Clone, Default)]
-pub struct RecordControlServiceImpl;
-
-impl RecordControlService for RecordControlServiceImpl {
-    async fn restart_recording(&self) -> Result<(), SessionServiceError> {
-        dispatch_record(RecordAction::RestartRecording).await
-    }
-
-    async fn toggle_monitor_on_off(&self) -> Result<(), SessionServiceError> {
-        dispatch_record(RecordAction::ToggleMonitorOnOff).await
-    }
-
-    async fn toggle_monitor_tape_off(&self) -> Result<(), SessionServiceError> {
-        dispatch_record(RecordAction::ToggleMonitorTapeOff).await
-    }
-}
-
-async fn dispatch_record(action: RecordAction) -> Result<(), SessionServiceError> {
-    main_thread::query(move || record_actions::dispatch(action))
-        .await
-        .ok_or_else(|| SessionServiceError::DawError("TaskSupport not initialised".to_string()))?;
-    Ok(())
 }

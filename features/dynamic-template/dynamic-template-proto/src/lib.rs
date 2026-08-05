@@ -39,7 +39,6 @@
 #![deny(unsafe_code)]
 
 pub mod actions;
-pub mod auto_color;
 mod error;
 mod services;
 pub mod session_template;

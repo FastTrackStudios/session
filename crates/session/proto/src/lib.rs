@@ -30,12 +30,22 @@ pub use actions_proto::{
 };
 
 // Domain modules
+pub mod color;
+pub mod guide;
+pub mod keyflow_actions;
+pub mod keyflow_scaffold;
+pub mod mode;
 pub mod offset_map;
+pub mod playback;
 pub mod routing_project;
 pub mod ruler_lanes;
 pub mod services;
 pub mod setlist;
+pub mod setlist_actions;
 pub mod song;
+// Action contracts (`#[architect::actions]`), traits only — see
+// `track_manager` for the rationale; implementations live in `session`.
+pub mod track_manager;
 pub mod track_structure;
 pub mod watch;
 

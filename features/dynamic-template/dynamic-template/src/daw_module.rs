@@ -4,23 +4,22 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use daw::module::{ActionDef, DawModule, ModuleContext};
-use daw::service::{ExtState, ProjectContext, TrackRef, Tracks};
+use daw::service::{ExtState, ProjectContext, Tracks};
 use daw_reaper::track::{
     add_track_on_main_thread, set_folder_depth_on_main_thread, set_tcp_height_on_main_thread,
     set_visibility_on_main_thread,
 };
 
 use crate::{
-    ItemMetadata, OrganizeIntoTracks, Structure, auto_color, default_config, monarchy_sort,
+    ItemMetadata, OrganizeIntoTracks, Structure, default_config, monarchy_sort,
     track_schema,
 };
 use dynamic_template_proto::{
-    actions::dynamic_template_actions, auto_color::actions::auto_color_actions,
+    actions::dynamic_template_actions,
     visibility_manager::actions::visibility_manager_actions,
 };
 
 struct State {
-    auto_color_enabled: bool,
     group_cache: HashMap<String, Vec<String>>,
 }
 
@@ -39,7 +38,6 @@ fn state() -> Arc<Mutex<State>> {
     STATE
         .get_or_init(|| {
             Arc::new(Mutex::new(State {
-                auto_color_enabled: true,
                 group_cache: HashMap::new(),
             }))
         })
@@ -67,13 +65,6 @@ impl DawModule for DynamicTemplateModule {
             defs.push(ActionDef::new(cmd, name, move || dispatch(&cmd2)));
         }
 
-        for def in auto_color_actions::definitions() {
-            let cmd = def.id.to_command_id();
-            let name = def.display_name();
-            let cmd2 = cmd.clone();
-            defs.push(ActionDef::new(cmd, name, move || dispatch(&cmd2)));
-        }
-
         for def in visibility_manager_actions::definitions() {
             let cmd = def.id.to_command_id();
             let name = def.display_name();
@@ -89,17 +80,9 @@ impl DawModule for DynamicTemplateModule {
     }
 
     fn subscribe(&self, _ctx: &ModuleContext) {
-        let enabled = {
-            let s = state();
-            let locked = s.lock().unwrap();
-            locked.auto_color_enabled
-        };
-        if enabled {
-            if let Err(err) = color_tracks(false) {
-                tracing::warn!("[dynamic-template] initial auto-color failed: {err}");
-            }
-        }
-        tracing::debug!("[dynamic-template] subscribe initialized with native sync DAW traits");
+        // Auto-colour's initial pass and its reactive re-application now
+        // live in `session::color`, which owns the enable/disable state
+        // and persists what it applied. Nothing to hook here.
     }
 }
 
@@ -111,28 +94,28 @@ fn dispatch(command_name: &str) {
     }
 }
 
+/// Compatibility shim for the `FTS_SESSION_*` aliases of this module's
+/// actions.
+///
+/// These are a *second* name for actions this module already registers as
+/// `FTS_DYNAMIC_TEMPLATE_*`. They exist only because committed FTS config
+/// still binds the old names: `reaper-input`'s `tracks.styx` /
+/// `mode-organize.styx` keybindings and `fts-icons`' `tracks.toml`
+/// toolbar assignments. Retiring the aliases means repointing those files
+/// at the real ids *and* re-running `fts-icons build --install`, so it is
+/// a deliberate, sequenced change — not a refactor.
+///
+/// Every alias with no committed binding has already been deleted (the
+/// visibility toggles, show-all/hide-all, the visibility profiles,
+/// rebuild-cache, organize-session). What remains is exactly what config
+/// still points at.
+///
+/// Returns `false` for anything it doesn't recognise, so the caller can
+/// fall through.
 pub fn dispatch_session_command(command_name: &str) -> bool {
     let mapped = match command_name {
-        "FTS_SESSION_ORGANIZE_SESSION" | "FTS_SESSION_ORGANIZE_EVERYTHING" => {
-            "FTS_DYNAMIC_TEMPLATE_SORT_ALL".to_string()
-        }
+        "FTS_SESSION_ORGANIZE_EVERYTHING" => "FTS_DYNAMIC_TEMPLATE_SORT_ALL".to_string(),
         "FTS_SESSION_ORGANIZE_SELECTED_TRACKS" => "FTS_DYNAMIC_TEMPLATE_SORT_SELECTED".to_string(),
-        "FTS_SESSION_SHOW_ALL_TRACKS" => "FTS_VISIBILITY_MANAGER_SHOW_ALL".to_string(),
-        "FTS_SESSION_HIDE_TEMPLATE_TRACKS" => "FTS_VISIBILITY_MANAGER_HIDE_ALL".to_string(),
-        "FTS_SESSION_VISIBILITY_PROFILE_DRUM_EDITING" => {
-            "FTS_VISIBILITY_MANAGER_PROFILE_DRUM_EDITING".to_string()
-        }
-        "FTS_SESSION_VISIBILITY_PROFILE_MIDI_EDITING" => {
-            "FTS_VISIBILITY_MANAGER_PROFILE_MIDI_EDITING".to_string()
-        }
-        "FTS_SESSION_REBUILD_VISIBILITY_CACHE" => {
-            "FTS_VISIBILITY_MANAGER_REBUILD_CACHE".to_string()
-        }
-        "FTS_SESSION_AUTO_COLOR_COLOR_ALL" => "FTS_AUTO_COLOR_COLOR_ALL".to_string(),
-        "FTS_SESSION_AUTO_COLOR_COLOR_SELECTED" => "FTS_AUTO_COLOR_COLOR_SELECTED".to_string(),
-        "FTS_SESSION_AUTO_COLOR_TOGGLE" => "FTS_AUTO_COLOR_TOGGLE".to_string(),
-        "FTS_SESSION_AUTO_COLOR_CLEAR_ALL" => "FTS_AUTO_COLOR_CLEAR_ALL".to_string(),
-        "FTS_SESSION_AUTO_COLOR_CLEAR_SELECTED" => "FTS_AUTO_COLOR_CLEAR_SELECTED".to_string(),
         command_name => {
             if let Some(suffix) = command_name.strip_prefix("FTS_SESSION_CREATE_NEW_") {
                 let suffix = match suffix {
@@ -141,11 +124,6 @@ pub fn dispatch_session_command(command_name: &str) -> bool {
                     suffix => suffix,
                 };
                 format!("FTS_DYNAMIC_TEMPLATE_CREATE_NEW_{suffix}")
-            } else if let Some(group) = command_name
-                .strip_prefix("FTS_SESSION_TOGGLE_")
-                .and_then(|suffix| suffix.strip_suffix("_VISIBILITY"))
-            {
-                format!("FTS_VISIBILITY_MANAGER_TOGGLE_{group}")
             } else {
                 return false;
             }
@@ -156,7 +134,6 @@ pub fn dispatch_session_command(command_name: &str) -> bool {
 }
 
 fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<()> {
-    use auto_color_actions as ac;
     use dynamic_template_actions as dt;
     use visibility_manager_actions as vm;
 
@@ -164,11 +141,6 @@ fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<
     let sort_all = dt::SORT_ALL.to_id().to_command_id();
     let log_status = dt::LOG_STATUS.to_id().to_command_id();
     let log_groups = dt::LOG_GROUPS.to_id().to_command_id();
-    let color_all = ac::COLOR_ALL.to_id().to_command_id();
-    let color_selected = ac::COLOR_SELECTED.to_id().to_command_id();
-    let toggle = ac::TOGGLE.to_id().to_command_id();
-    let clear_all = ac::CLEAR_ALL.to_id().to_command_id();
-    let clear_selected = ac::CLEAR_SELECTED.to_id().to_command_id();
     let show_all_cmd = vm::SHOW_ALL.to_id().to_command_id();
     let hide_all_cmd = vm::HIDE_ALL.to_id().to_command_id();
     let rebuild_cache_cmd = vm::REBUILD_CACHE.to_id().to_command_id();
@@ -182,30 +154,6 @@ fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<
         n if n == sort_all => sort_tracks(false)?,
         n if n == log_status => log_status_action(state),
         n if n == log_groups => log_groups_action(),
-        n if n == color_all => {
-            color_tracks(false)?;
-            state.lock().unwrap().auto_color_enabled = true;
-        }
-        n if n == color_selected => {
-            color_tracks(true)?;
-        }
-        n if n == toggle => {
-            let enabled = state.lock().unwrap().auto_color_enabled;
-            if enabled {
-                clear_track_colors(false)?;
-                state.lock().unwrap().auto_color_enabled = false;
-            } else {
-                color_tracks(false)?;
-                state.lock().unwrap().auto_color_enabled = true;
-            }
-        }
-        n if n == clear_all => {
-            clear_track_colors(false)?;
-            state.lock().unwrap().auto_color_enabled = false;
-        }
-        n if n == clear_selected => {
-            clear_track_colors(true)?;
-        }
         n if n == show_all_cmd => show_all_tracks()?,
         n if n == hide_all_cmd => hide_all_group_tracks(state)?,
         n if n == rebuild_cache_cmd => {
@@ -261,38 +209,6 @@ fn sort_tracks(selected_only: bool) -> eyre::Result<()> {
         "[dynamic-template] sort skipped for {} tracks; current DAW facade no longer exposes hierarchy apply",
         hierarchy.tracks.len()
     );
-    Ok(())
-}
-
-fn color_tracks(selected_only: bool) -> eyre::Result<()> {
-    let infos = selected_or_all_tracks(selected_only);
-    if infos.is_empty() {
-        return Ok(());
-    }
-    let names: Vec<String> = infos.iter().map(|t| t.name.clone()).collect();
-    let color_map = auto_color::classify_and_color(names);
-    for info in &infos {
-        if let Some(color) = color_map.get(&info.name) {
-            let color = color.to_hex();
-            if info.color.unwrap_or(0) != color {
-                daw_reaper::Reaper.set_color(
-                    project(),
-                    TrackRef::Guid(info.guid.clone()),
-                    color,
-                )?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn clear_track_colors(selected_only: bool) -> eyre::Result<()> {
-    let infos = selected_or_all_tracks(selected_only);
-    for info in &infos {
-        if info.color.is_some() {
-            daw_reaper::Reaper.set_color(project(), TrackRef::Guid(info.guid.clone()), 0)?;
-        }
-    }
     Ok(())
 }
 
@@ -517,8 +433,7 @@ fn collect_group_cache(
 fn log_status_action(state: &Arc<Mutex<State>>) {
     let locked = state.lock().unwrap();
     tracing::info!(
-        "[dynamic-template] status: auto_color_enabled={}, cached_groups={}",
-        locked.auto_color_enabled,
+        "[dynamic-template] status: cached_groups={}",
         locked.group_cache.len()
     );
 }
@@ -1157,7 +1072,7 @@ pub fn module() -> Box<dyn DawModule> {
 // ── architect::actions — declarative layer over the actions above ──────────
 //
 // Additive: `DawModule::actions()` above (and the old `actions_proto`-based
-// `dynamic_template_actions`/`auto_color_actions`/`visibility_manager_actions`
+// `dynamic_template_actions`/`visibility_manager_actions`
 // definitions) are untouched and still do the real REAPER registration. This
 // gives the same ~26 actions real `ActionMeta` (description/category/group)
 // through the new architect primitive, forwarding to the exact same handler
@@ -1249,59 +1164,6 @@ impl DynamicTemplateActions for DynamicTemplateActionsImpl {
     }
     fn log_groups(&self) {
         log_groups_action();
-    }
-}
-
-struct AutoColorArchitectActionsImpl;
-
-#[architect::actions(namespace = "FTS_AUTO_COLOR")]
-trait AutoColorArchitectActions {
-    #[action(
-        description = "Classify all tracks by instrument group and apply colors",
-        category = "General"
-    )]
-    fn color_all(&self);
-
-    #[action(
-        description = "Classify selected tracks by instrument group and apply colors",
-        category = "General"
-    )]
-    fn color_selected(&self);
-
-    #[action(
-        description = "Toggle auto-color on/off (applies or clears all track colors)",
-        category = "General"
-    )]
-    fn toggle(&self);
-
-    #[action(
-        description = "Reset colors on all tracks to default",
-        category = "General"
-    )]
-    fn clear_all(&self);
-
-    #[action(
-        description = "Reset colors on selected tracks to default",
-        category = "General"
-    )]
-    fn clear_selected(&self);
-}
-
-impl AutoColorArchitectActions for AutoColorArchitectActionsImpl {
-    fn color_all(&self) {
-        dispatch(&auto_color_actions::COLOR_ALL.to_id().to_command_id());
-    }
-    fn color_selected(&self) {
-        dispatch(&auto_color_actions::COLOR_SELECTED.to_id().to_command_id());
-    }
-    fn toggle(&self) {
-        dispatch(&auto_color_actions::TOGGLE.to_id().to_command_id());
-    }
-    fn clear_all(&self) {
-        dispatch(&auto_color_actions::CLEAR_ALL.to_id().to_command_id());
-    }
-    fn clear_selected(&self) {
-        dispatch(&auto_color_actions::CLEAR_SELECTED.to_id().to_command_id());
     }
 }
 
@@ -1945,11 +1807,10 @@ impl ToggleGroupActions for ToggleGroupActionsImpl {
 
 /// Register every architect-declared action in this module against `backend`.
 pub fn register_architect_actions<B: architect::action::ActionBackend>(backend: &B) {
-    register_dynamic_template_actions_actions(backend, Arc::new(DynamicTemplateActionsImpl));
-    register_auto_color_architect_actions_actions(backend, Arc::new(AutoColorArchitectActionsImpl));
-    register_visibility_manager_actions_actions(backend, Arc::new(VisibilityManagerActionsImpl));
-    register_create_group_actions_actions(backend, Arc::new(CreateGroupActionsImpl));
-    register_toggle_group_actions_actions(backend, Arc::new(ToggleGroupActionsImpl));
+    register_dynamic_template_actions(backend, Arc::new(DynamicTemplateActionsImpl));
+    register_visibility_manager_actions(backend, Arc::new(VisibilityManagerActionsImpl));
+    register_create_group_actions(backend, Arc::new(CreateGroupActionsImpl));
+    register_toggle_group_actions(backend, Arc::new(ToggleGroupActionsImpl));
 }
 
 #[cfg(test)]
