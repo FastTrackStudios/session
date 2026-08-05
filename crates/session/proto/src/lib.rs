@@ -36,6 +36,9 @@ pub mod ruler_lanes;
 pub mod services;
 pub mod setlist;
 pub mod song;
+// Action contracts (`#[architect::actions]`), traits only — see
+// `track_manager` for the rationale; implementations live in `session`.
+pub mod track_manager;
 pub mod track_structure;
 pub mod watch;
 

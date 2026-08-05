@@ -2,6 +2,10 @@ use daw::service::{
     DawError, DawResult, Items, Projects, Track, TrackShape, TrackTree, Tracks, TracksExt,
 };
 use dynamic_template::track_schema::{self, TrackDimension};
+// The action contract lives in session-proto (traits are protocol);
+// this file is the implementation. `register_track_manager_actions`
+// is macro-emitted alongside the trait there.
+pub use session_proto::track_manager::{TrackManagerActions, register_track_manager_actions};
 
 /// Session's track-tree editor for one DAW backend. This is what callers
 /// actually use: `TrackManager::new(daw).add_channel()`, never
@@ -42,66 +46,6 @@ impl<D> std::ops::Deref for TrackManager<D> {
     fn deref(&self) -> &D {
         &self.daw
     }
-}
-
-/// The seven REAPER-facing actions, declared with no bodies —
-/// `TrackManager<D>` is the (only) implementor, below.
-/// `#[architect::actions(namespace = "TRACK_MANAGER")]` turns each
-/// `#[action(...)]` method directly into a REAPER named command and emits
-/// `register_track_manager_actions(backend, imp)` to wire them through an
-/// `architect::action::ActionBackend` — no hand-written action-id enum,
-/// `action_for_id` string-matcher, dispatch bridge, or per-module
-/// registration wrapper.
-///
-/// This trait declares only its own identity ("Track Manager") and knows
-/// nothing about being nested under Session or FTS — callers compose that
-/// by handing the generated function a
-/// `architect::action::ScopedActionBackend`, one wrap per level.
-///
-/// `#[action(undo)]` marks the mutating actions: the backend brackets
-/// those in a REAPER undo block labelled after the action, so each is one
-/// atomic undo point with no begin/end bookkeeping here. Every method
-/// returns `daw::service::DawResult<()>`; a failure reaches the user as a
-/// REAPER message box (`show_action_error` in `daw-reaper`'s
-/// `ActionBackend` impl) instead of being silently logged.
-#[architect::actions(namespace = "TRACK_MANAGER")]
-pub trait TrackManagerActions {
-    #[action(
-        undo,
-        description = "Add the next dynamic-template channel to the selected track scope"
-    )]
-    fn add_channel(&self) -> DawResult<()>;
-
-    #[action(
-        undo,
-        description = "Add the next dynamic-template layer to the selected track scope"
-    )]
-    fn add_layer(&self) -> DawResult<()>;
-
-    #[action(
-        undo,
-        description = "Add the next dynamic-template multi-mic track to the selected track scope"
-    )]
-    fn add_multi_mic(&self) -> DawResult<()>;
-
-    #[action(undo, description = "Add a performer folder to the selected track scope")]
-    fn add_performer(&self) -> DawResult<()>;
-
-    #[action(
-        undo,
-        description = "Add the next dynamic-template arrangement to the selected instrument scope"
-    )]
-    fn add_arrangement(&self) -> DawResult<()>;
-
-    #[action(
-        description = "Reorganize selected tracks with performer as the top metadata dimension"
-    )]
-    fn reorganize_selected_by_performer(&self) -> DawResult<()>;
-
-    #[action(
-        description = "Reorganize selected tracks with arrangement as the top metadata dimension"
-    )]
-    fn reorganize_selected_by_arrangement(&self) -> DawResult<()>;
 }
 
 impl<D: Tracks + Items + Projects> TrackManagerActions for TrackManager<D> {
