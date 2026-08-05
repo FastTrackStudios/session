@@ -3,9 +3,9 @@
 use crate::keyflow::actions as keyflow_actions;
 use crate::modes as mode_actions;
 use crate::session_actions;
-// Generic DAW actions, no longer session's: pre-roll, record control,
-// grouping, take ranking, auto-colour.
-use daw_actions::{auto_color, groups, preroll, record, take_ranking};
+// init/subscribe hooks only — the action *dispatch* for these now runs
+// entirely through their `#[architect::actions]` traits.
+use daw_actions::{auto_color, preroll};
 use daw::module::{ActionDef, DawModule, ModuleContext};
 use daw::service::transport::service::Transport as TransportService;
 use daw::service::{ActionRegistration, Markers, Projects, Regions, TempoMap};
@@ -65,31 +65,15 @@ where
                 let name = def.display_name();
                 let action_id = def.id.as_str().to_string();
                 let cmd2 = cmd.clone();
-                let toggleable = preroll::is_toggle_action(&action_id);
-                let daw = self.daw.clone();
-                let action = ActionDef::new(cmd, name, move || {
+                let _ = &action_id;
+                ActionDef::new(cmd, name, move || {
                     tracing::info!("[session] Action: {}", cmd2);
-                    if let Some(action) = auto_color::action_for_id(&action_id) {
-                        auto_color::dispatch(action);
-                    } else if let Some(action) = preroll::action_for_id(&action_id) {
-                        preroll::dispatch(&daw, action);
-                    } else if let Some(action) = take_ranking::action_for_id(&action_id) {
-                        take_ranking::dispatch(action);
-                    } else if let Some(action) = record::action_for_id(&action_id) {
-                        record::dispatch(action);
-                    } else if let Some(action) = groups::action_for_id(&action_id) {
-                        groups::dispatch(action);
-                    } else if dynamic_template::daw_module::dispatch_session_command(&cmd2) {
+                    if dynamic_template::daw_module::dispatch_session_command(&cmd2) {
                         tracing::debug!("[session] Dispatched template action for {}", cmd2);
                     } else {
                         tracing::debug!("[session] No DAW handler registered for {}", cmd2);
                     }
-                });
-                if toggleable {
-                    action.toggleable()
-                } else {
-                    action
-                }
+                })
             })
             .collect()
     }

@@ -82,6 +82,47 @@ pub use song::SongBuilder;
 // Re-export demo setlist stamping (for extensions that have a local Daw instance)
 pub use setlist::service::demo::{stamp_demo_into_project, stamp_demo_setlist};
 
+/// Register every REAPER action this crate declares against `backend`.
+///
+/// One call instead of six. A module added here reaches every host that
+/// already calls this, rather than silently not registering until each
+/// call site remembers to add a line — which is exactly how
+/// `FTS_SESSION_TOGGLE_PLAYBACK` sat dead in REAPER's action list.
+///
+/// Scope nesting is composed here, not declared by the leaf traits:
+/// `track_manager` names only itself ("Track Manager") and gets wrapped
+/// in a `SESSION`-scoped backend on the way in.
+///
+/// `daw` is the backend the handlers drive (`daw::reaper::Reaper` in
+/// production, `daw_standalone::sync::Standalone` in tests).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn register_all_actions<D, B>(backend: &B, daw: D)
+where
+    D: daw::service::Projects
+        + daw::service::transport::service::Transport
+        + daw::service::Markers
+        + daw::service::Regions
+        + daw::service::TempoMap
+        + daw::service::Tracks
+        + daw::service::Items
+        + daw::service::UiDialogs
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    B: architect::action::ActionBackend + Clone,
+{
+    keyflow::actions::register_actions(backend, daw.clone());
+    keyflow::scaffold::register_actions(backend, daw.clone());
+    modes::register_actions(backend);
+    playback::register_actions(backend, daw.clone());
+    setlist::actions::register_actions(backend, daw.clone());
+    session_proto::track_manager::register_track_manager_actions(
+        &architect::action::ScopedActionBackend::new(backend.clone(), "SESSION", "Session"),
+        std::sync::Arc::new(track_manager::TrackManager::new(daw)),
+    );
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SessionServices;
@@ -300,36 +341,6 @@ actions_proto::define_actions! {
             description: "Go to the previous section in the current song",
             category: Session,
             group: "Navigate",
-        }
-        PRE_ROLL_DOUBLE_DURATION = "pre_roll_double_duration" {
-            name: "Double Pre-Roll Duration",
-            description: "Double the project pre-roll/count-in duration",
-            category: Transport,
-            group: "Pre-Roll",
-        }
-        PRE_ROLL_HALF_DURATION = "pre_roll_half_duration" {
-            name: "Half Pre-Roll Duration",
-            description: "Halve the project pre-roll/count-in duration",
-            category: Transport,
-            group: "Pre-Roll",
-        }
-        PRE_ROLL_SET_HALF_MEASURE = "pre_roll_set_half_measure" {
-            name: "Set Pre-Roll to 1/2 Measure",
-            description: "Set the project pre-roll/count-in duration to half a measure",
-            category: Transport,
-            group: "Pre-Roll",
-        }
-        PRE_ROLL_SET_1_MEASURE = "pre_roll_set_1_measure" {
-            name: "Set Pre-Roll to 1 Measure",
-            description: "Set the project pre-roll/count-in duration to one measure",
-            category: Transport,
-            group: "Pre-Roll",
-        }
-        PRE_ROLL_SET_2_MEASURES = "pre_roll_set_2_measures" {
-            name: "Set Pre-Roll to 2 Measures",
-            description: "Set the project pre-roll/count-in duration to two measures",
-            category: Transport,
-            group: "Pre-Roll",
         }
         // The 19 INSERT_* region/marker commands and
         // CONVERT_MARKERS_TO_SESSION_FORMAT moved to
@@ -563,36 +574,6 @@ actions_proto::define_actions! {
             category: Session,
             group: "Visibility",
         }
-        AUTO_COLOR_COLOR_ALL = "auto_color_color_all" {
-            name: "Session Auto Color - Color All Tracks",
-            description: "Apply session auto-color rules to all tracks and keep auto-color enabled",
-            category: Session,
-            group: "Auto Color",
-        }
-        AUTO_COLOR_COLOR_SELECTED = "auto_color_color_selected" {
-            name: "Session Auto Color - Color Selected Tracks",
-            description: "Apply session auto-color rules to selected tracks",
-            category: Session,
-            group: "Auto Color",
-        }
-        AUTO_COLOR_TOGGLE = "auto_color_toggle" {
-            name: "Session Auto Color - Toggle",
-            description: "Toggle session auto-color for all tracks",
-            category: Session,
-            group: "Auto Color",
-        }
-        AUTO_COLOR_CLEAR_ALL = "auto_color_clear_all" {
-            name: "Session Auto Color - Clear All Tracks",
-            description: "Clear colors from all tracks and disable session auto-color",
-            category: Session,
-            group: "Auto Color",
-        }
-        AUTO_COLOR_CLEAR_SELECTED = "auto_color_clear_selected" {
-            name: "Session Auto Color - Clear Selected Tracks",
-            description: "Clear colors from selected tracks",
-            category: Session,
-            group: "Auto Color",
-        }
         LOG_HELLO = "log_hello" {
             name: "Log Hello",
             description: "Logs 'Hello from session!'",
@@ -609,182 +590,8 @@ actions_proto::define_actions! {
         // `session_proto::setlist_actions::SetlistActions`; not redeclared
         // here, or the same FTS_SESSION_* command ids would register twice.
         // ── Recording workflow ───────────────────────────────────────
-        RECORD = "record" {
-            name: "Record: Start recording (current song)",
-            description: "Start a recording pass in the focused project — the current song's tab. Uses the existing arm / monitor / input settings.",
-            category: Transport,
-            group: "Recording",
-        }
-        RECORD_STOP = "record_stop" {
-            name: "Record: Stop (keep media)",
-            description: "Stop the transport in the focused project, keeping the media captured this pass.",
-            category: Transport,
-            group: "Recording",
-        }
-        RECORD_TOGGLE = "record_toggle" {
-            name: "Record: Toggle recording (current song)",
-            description: "Toggle recording in the focused project — the current song's tab.",
-            category: Transport,
-            group: "Recording",
-        }
-        ARM_SELECTED = "arm_selected" {
-            name: "Track: Arm selected for recording",
-            description: "Arm every selected track (I_RECARM = 1) in the focused project so it captures input on the next recording pass.",
-            category: Tracks,
-            group: "Recording",
-        }
-        DISARM_SELECTED = "disarm_selected" {
-            name: "Track: Disarm selected",
-            description: "Disarm every selected track (I_RECARM = 0) in the focused project.",
-            category: Tracks,
-            group: "Recording",
-        }
-        RECORD_RESTART = "record_restart" {
-            name: "Record: Restart recording (delete + re-record)",
-            description: "Stop the current recording (DELETE all recorded media this pass) and immediately start a fresh recording pass. For aborting a bad take without leaving stray media behind.",
-            category: Transport,
-            group: "Recording",
-        }
-        MONITOR_TOGGLE_ON_OFF = "monitor_toggle_on_off" {
-            name: "Track: Toggle record monitor on/off (selected, skip auto/tape)",
-            description: "Toggle the record-monitor state of every selected track between 'on' and 'off' only, skipping the auto/tape state that REAPER's native cycle action walks through. If any selected track is currently 'on', all go to off; otherwise all go to on.",
-            category: Tracks,
-            group: "Recording",
-        }
-        MONITOR_TOGGLE_TAPE_OFF = "monitor_toggle_tape_off" {
-            name: "Track: Toggle record monitor auto-tape/off (selected)",
-            description: "Toggle the record-monitor state of every selected track between 'auto/tape' (monitor input only while recording) and 'off'. If any selected track is currently 'auto/tape', all go to off; otherwise all go to auto/tape.",
-            category: Tracks,
-            group: "Recording",
-        }
         // ── Track-group manager ──────────────────────────────────────
-        GROUP_APPLY_NAMING = "group_apply_naming" {
-            name: "Groups: Apply instrument-category naming scheme",
-            description: "Name the project's 128 track groups by the FTS instrument partition (Drums 1-10, Bass 11-20, Electric Gtr 21-40, Acoustic Gtr 41-60, Keys 61-70, Synths 71-80, Lead Vocal 81-100, Background Vox 101-120, Spare 121-128).",
-            category: Tracks,
-            group: "Track Groups",
-        }
-        GROUP_ASSIGN_DRUMS = "group_assign_drums" {
-            name: "Groups: Assign selected tracks to Drums",
-            description: "Add the selected tracks to the next free Drums group slot as a mutual group (all flag families).",
-            category: Tracks,
-            group: "Track Groups",
-        }
-        GROUP_ASSIGN_BASS = "group_assign_bass" {
-            name: "Groups: Assign selected tracks to Bass",
-            description: "Add the selected tracks to the next free Bass group slot as a mutual group.",
-            category: Tracks,
-            group: "Track Groups",
-        }
-        GROUP_ASSIGN_ELECTRIC_GTR = "group_assign_electric_gtr" {
-            name: "Groups: Assign selected tracks to Electric Gtr",
-            description: "Add the selected tracks to the next free Electric Gtr group slot as a mutual group.",
-            category: Tracks,
-            group: "Track Groups",
-        }
-        GROUP_ASSIGN_ACOUSTIC_GTR = "group_assign_acoustic_gtr" {
-            name: "Groups: Assign selected tracks to Acoustic Gtr",
-            description: "Add the selected tracks to the next free Acoustic Gtr group slot as a mutual group.",
-            category: Tracks,
-            group: "Track Groups",
-        }
-        GROUP_ASSIGN_KEYS = "group_assign_keys" {
-            name: "Groups: Assign selected tracks to Keys",
-            description: "Add the selected tracks to the next free Keys group slot as a mutual group.",
-            category: Tracks,
-            group: "Track Groups",
-        }
-        GROUP_ASSIGN_SYNTHS = "group_assign_synths" {
-            name: "Groups: Assign selected tracks to Synths",
-            description: "Add the selected tracks to the next free Synths group slot as a mutual group.",
-            category: Tracks,
-            group: "Track Groups",
-        }
-        GROUP_ASSIGN_LEAD_VOCAL = "group_assign_lead_vocal" {
-            name: "Groups: Assign selected tracks to Lead Vocal",
-            description: "Add the selected tracks to the next free Lead Vocal group slot as a mutual group.",
-            category: Tracks,
-            group: "Track Groups",
-        }
-        GROUP_ASSIGN_BACKGROUND_VOX = "group_assign_background_vox" {
-            name: "Groups: Assign selected tracks to Background Vox",
-            description: "Add the selected tracks to the next free Background Vox group slot as a mutual group.",
-            category: Tracks,
-            group: "Track Groups",
-        }
         // ── Take ranking (Record mode workflow) ──────────────────────
-        TAKE_RANK_PLAYPOS_1 = "take_rank_playpos_1" {
-            name: "Take: rank :) at play-pos -2s",
-            description: "Set the active take's rank marker to :) at (play-pos - 2s) on every selected item, or at edit cursor if not playing.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_PLAYPOS_2 = "take_rank_playpos_2" {
-            name: "Take: rank :)) at play-pos -2s",
-            description: "Set the active take's rank marker to :)) at (play-pos - 2s) on every selected item, or at edit cursor if not playing.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_PLAYPOS_3 = "take_rank_playpos_3" {
-            name: "Take: rank :))) at play-pos -2s",
-            description: "Set the active take's rank marker to :))) at (play-pos - 2s) on every selected item, or at edit cursor if not playing.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_PLAYPOS_DOWN = "take_rank_playpos_down" {
-            name: "Take: down-rank at play-pos -2s",
-            description: "Set the active take's rank marker to :( at (play-pos - 2s) on every selected item, or at edit cursor if not playing.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_ITEM_1 = "take_rank_item_1" {
-            name: "Take: rank :) (item-wide)",
-            description: "Set the active take's rank marker to :) at item start for every selected item.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_ITEM_2 = "take_rank_item_2" {
-            name: "Take: rank :)) (item-wide)",
-            description: "Set the active take's rank marker to :)) at item start for every selected item.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_ITEM_3 = "take_rank_item_3" {
-            name: "Take: rank :))) (item-wide)",
-            description: "Set the active take's rank marker to :))) at item start for every selected item.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_ITEM_DOWN = "take_rank_item_down" {
-            name: "Take: down-rank (item-wide)",
-            description: "Set the active take's rank marker to :( at item start for every selected item.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_MOUSE_1 = "take_rank_mouse_1" {
-            name: "Take: rank :) at mouse position",
-            description: "Set the rank marker to :) on the take under the mouse at the mouse's project-time position.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_MOUSE_2 = "take_rank_mouse_2" {
-            name: "Take: rank :)) at mouse position",
-            description: "Set the rank marker to :)) on the take under the mouse at the mouse's project-time position.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_MOUSE_3 = "take_rank_mouse_3" {
-            name: "Take: rank :))) at mouse position",
-            description: "Set the rank marker to :))) on the take under the mouse at the mouse's project-time position.",
-            category: Project,
-            group: "Take Ranking",
-        }
-        TAKE_RANK_MOUSE_DOWN = "take_rank_mouse_down" {
-            name: "Take: down-rank at mouse position",
-            description: "Set the rank marker to :( on the take under the mouse at the mouse's project-time position.",
-            category: Project,
-            group: "Take Ranking",
-        }
     }
 }
 
