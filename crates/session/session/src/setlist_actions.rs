@@ -1,22 +1,11 @@
-//! REAPER action handlers for setlist-level operations.
-//!
-//! The `BUILD_SETLIST` action ID has been registered in
-//! `session_actions!` for a while, but `daw_module::actions` walks a
-//! chain of `*_actions::action_for_id` lookups and *none* of those
-//! owned the setlist domain. Hitting the hotkey in REAPER fell
-//! through to the "No DAW handler registered" log message — the
-//! action was a no-op.
-//!
-//! This module fills the gap, mirroring the `keyflow_actions` shape:
-//!
-//!   `pub fn dispatch<D>(daw: &D, action: SetlistAction)`
-//!       where D: Projects + …
+//! Implementation of [`session_proto::setlist_actions::SetlistActions`]
+//! — build / load-demo / dump-ruler-state.
 //!
 //! Runs **synchronously on REAPER's main thread** (where the action
-//! callback fires), so we can use the sync trait methods on
-//! `daw_reaper::Reaper` directly — no `main_thread::query` bounce,
-//! no Tokio runtime, no `architect::platform::spawn`. This is the same
-//! pattern keyflow_actions uses and the same reason it works.
+//! callback fires), so the sync trait methods on `daw_reaper::Reaper` can
+//! be called directly — no `main_thread::query` bounce, no Tokio
+//! runtime, no `architect::platform::spawn`. Same pattern as
+//! `keyflow_actions`, and the same reason it works.
 //!
 //! Setlist storage: at mount time `register` stashes the
 //! `SetlistServiceImpl`'s `Arc<RwLock<Option<Setlist>>>` so the
@@ -35,6 +24,7 @@ use session_proto::{AdvanceMode, Setlist, Song};
 
 use crate::setlist_service::SetlistServiceImpl;
 use crate::song_builder::SongBuilder;
+use session_proto::setlist_actions::{SetlistActions, register_setlist_actions};
 
 /// The setlist storage cell shared with `SetlistServiceImpl`.
 static SETLIST_STORE: OnceLock<Arc<RwLock<Option<Setlist>>>> = OnceLock::new();
@@ -47,103 +37,67 @@ pub fn register<D>(svc: &SetlistServiceImpl<D>) {
     let _ = SETLIST_STORE.set(svc.setlist.clone());
 }
 
-/// REAPER action dispatch table for the setlist domain. Returned to
-/// `daw_module::actions`'s `action_for_id` chain; `None` means
-/// "someone else's action".
-pub enum SetlistAction {
-    /// Scan open project tabs, parse SONGSTART/SONGEND markers + section
-    /// regions, populate the cached `Setlist`. Idempotent — rerun to
-    /// pick up edits.
-    Build,
-    /// Stamp the canonical demo markers + section regions into the
-    /// current REAPER project (3 songs of typical worship-set
-    /// structure: count-in, song-start, verse/pre/chorus/bridge/outro
-    /// regions, song-end, =END render bound), then immediately rebuild
-    /// the cached `Setlist`. Use for a one-keypress "give me a working
-    /// setlist to test against" — handy when iterating on UI or RPC
-    /// without recording markers by hand.
-    LoadDemo,
-    /// Log every marker and region in the current project with its
-    /// position, name, color and ruler lane index. Diagnostic — the
-    /// vox response-store encoder still panics on Markers::all /
-    /// Regions::all so there's no read-side CLI path; dump-via-log
-    /// is the workaround for inspecting actual lane assignments.
-    DumpRulerState,
-}
-
-pub fn action_for_id(action_id: &str) -> Option<SetlistAction> {
-    // Action IDs flow in either the dotted form `fts.session.build_setlist`
-    // (definition-time) or the upper-snake REAPER command form
-    // `FTS_SESSION_BUILD_SETLIST` (runtime callback). Accept both.
-    let trimmed = action_id.trim();
-    let lower = trimmed.to_lowercase();
-    let bare = lower
-        .strip_prefix("fts.session.")
-        .or_else(|| lower.strip_prefix("fts_session_"))
-        .unwrap_or(lower.as_str());
-    match bare {
-        "build_setlist" => Some(SetlistAction::Build),
-        "load_demo_setlist" => Some(SetlistAction::LoadDemo),
-        "dump_ruler_state" => Some(SetlistAction::DumpRulerState),
-        _ => None,
-    }
-}
-
-/// Run a setlist action on the calling thread (REAPER main thread).
-/// All work is sync; no spawning, no Tokio runtime needed.
-pub fn dispatch<D>(daw: &D, action: SetlistAction)
+/// Stamp the canonical demo markers + section regions into the current
+/// REAPER project (3 songs of typical worship-set structure: count-in,
+/// song-start, verse/pre/chorus/bridge/outro regions, song-end, =END
+/// render bound), then rebuild the cached `Setlist` so it immediately
+/// reflects what was stamped.
+///
+/// All work is sync; no spawning, no Tokio runtime needed — the caller
+/// is a REAPER action handler already on the main thread.
+fn load_demo<D>(daw: &D)
 where
     D: Projects + TransportService + Markers + Regions + TempoMap,
 {
-    match action {
-        SetlistAction::DumpRulerState => dump_ruler_state(daw),
-        SetlistAction::LoadDemo => {
-            tracing::info!("[session] load_demo_setlist action — stamping demo markers/regions");
-            let started = architect::platform::now();
-            match crate::setlist_service::demo::stamp_demo_setlist_with(daw) {
-                Ok(()) => {
-                    tracing::info!(
-                        "[session] demo markers stamped in {:?}; rebuilding setlist",
-                        started.elapsed()
-                    );
-                    // Fall through into the Build path so the cached
-                    // setlist immediately reflects what we just stamped.
-                    dispatch(daw, SetlistAction::Build);
-                }
-                Err(e) => {
-                    tracing::warn!("[session] load_demo_setlist: stamping failed: {e:?}");
-                }
-            }
+    tracing::info!("[session] load_demo_setlist action — stamping demo markers/regions");
+    let started = architect::platform::now();
+    match crate::setlist_service::demo::stamp_demo_setlist_with(daw) {
+        Ok(()) => {
+            tracing::info!(
+                "[session] demo markers stamped in {:?}; rebuilding setlist",
+                started.elapsed()
+            );
+            build(daw);
         }
-        SetlistAction::Build => {
-            tracing::info!("[session] build_setlist action — building synchronously");
-            let started = architect::platform::now();
-            let setlist = build_setlist_sync(daw);
-            let song_count = setlist.songs.len();
-            match SETLIST_STORE.get() {
-                Some(slot) => match slot.try_write() {
-                    Ok(mut guard) => {
-                        *guard = Some(setlist);
-                        tracing::info!(
-                            "[session] build_setlist action completed ({} songs in {:?})",
-                            song_count,
-                            started.elapsed()
-                        );
-                    }
-                    Err(_) => {
-                        tracing::warn!(
-                            "[session] build_setlist: setlist cell busy — \
-                             another writer is mid-build, skipping"
-                        );
-                    }
-                },
-                None => {
-                    tracing::warn!(
-                        "[session] build_setlist action: setlist store not \
-                         registered (mounted_services_with_daw never called?)"
-                    );
-                }
+        Err(e) => {
+            tracing::warn!("[session] load_demo_setlist: stamping failed: {e:?}");
+        }
+    }
+}
+
+/// Scan open project tabs, parse SONGSTART/SONGEND markers + section
+/// regions, and write the result into the cached `Setlist`. Idempotent —
+/// rerun to pick up edits.
+fn build<D>(daw: &D)
+where
+    D: Projects,
+{
+    tracing::info!("[session] build_setlist action — building synchronously");
+    let started = architect::platform::now();
+    let setlist = build_setlist_sync(daw);
+    let song_count = setlist.songs.len();
+    match SETLIST_STORE.get() {
+        Some(slot) => match slot.try_write() {
+            Ok(mut guard) => {
+                *guard = Some(setlist);
+                tracing::info!(
+                    "[session] build_setlist action completed ({} songs in {:?})",
+                    song_count,
+                    started.elapsed()
+                );
             }
+            Err(_) => {
+                tracing::warn!(
+                    "[session] build_setlist: setlist cell busy — \
+                     another writer is mid-build, skipping"
+                );
+            }
+        },
+        None => {
+            tracing::warn!(
+                "[session] build_setlist action: setlist store not \
+                 registered (mounted_services_with_daw never called?)"
+            );
         }
     }
 }
@@ -290,52 +244,16 @@ where
     }
 }
 
-// ── architect::actions declaration ──────────────────────────────────────
+// ── architect::actions implementation ───────────────────────────────────
 //
-// `SetlistAction` / `action_for_id` / `dispatch` above stay put — they're
-// still the live path `daw_module.rs`'s dispatch chain calls into, and
-// duplicating that chain's plumbing isn't this migration's job. This is
-// an additive declarative layer: same three handlers, now with real
-// `ActionMeta` (description/category/group) instead of only living in
-// `session_actions`'s `actions_proto::define_actions!` block (`lib.rs`
-// lines ~745-761), ready for an `ActionBackend` (REAPER, CLI, …) to
-// register once one exists.
-//
-// Namespace is `FTS_SESSION` (not the macro's trait-derived default
-// `SETLIST`) so generated ids match the REAPER named-command convention
-// already in use — `FTS_SESSION_BUILD_SETLIST` etc, see
-// `fts-extensions`'s action registration and
-// `docs/handoff-session-thread-safety.md`.
+// The contract lives in `session_proto::setlist_actions`. There is no
+// longer a parallel `SetlistAction` enum / `action_for_id` / `dispatch`
+// path, and no `session_actions` `define_actions!` entries declaring the
+// same `FTS_SESSION_*` command ids a second time.
 
-/// Bridges the three setlist actions onto `#[architect::actions]`. Every
-/// method forwards to the existing synchronous `dispatch` — no behavior
-/// change, just a declarative front door with real metadata.
+/// Serves the three setlist actions against a `daw` backend.
 pub struct SetlistActionsImpl<D> {
     daw: D,
-}
-
-#[architect::actions(namespace = "FTS_SESSION")]
-pub trait SetlistActions {
-    #[action(
-        description = "Scan every open REAPER project tab, parse SONGSTART/SONGEND markers and section regions, and rebuild the cached Setlist",
-        category = "Setlist",
-        group = "Build"
-    )]
-    fn build_setlist(&self);
-
-    #[action(
-        description = "Stamp a 3-song demo setlist (markers + section regions) into the current project, then rebuild the cached Setlist",
-        category = "Setlist",
-        group = "Demo"
-    )]
-    fn load_demo_setlist(&self);
-
-    #[action(
-        description = "Log every marker and region in the current project with position, name, color and ruler lane index — diagnostic for lane-assignment issues",
-        category = "Debug",
-        group = "Diagnostics"
-    )]
-    fn dump_ruler_state(&self);
 }
 
 impl<D> SetlistActions for SetlistActionsImpl<D>
@@ -343,15 +261,15 @@ where
     D: Projects + TransportService + Markers + Regions + TempoMap,
 {
     fn build_setlist(&self) {
-        dispatch(&self.daw, SetlistAction::Build);
+        build(&self.daw);
     }
 
     fn load_demo_setlist(&self) {
-        dispatch(&self.daw, SetlistAction::LoadDemo);
+        load_demo(&self.daw);
     }
 
     fn dump_ruler_state(&self) {
-        dispatch(&self.daw, SetlistAction::DumpRulerState);
+        dump_ruler_state(&self.daw);
     }
 }
 

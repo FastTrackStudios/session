@@ -720,23 +720,9 @@ actions_proto::define_actions! {
             category: Dev,
             group: "Dev",
         }
-        BUILD_SETLIST = "build_setlist" {
-            name: "Build Setlist",
-            description: "Build setlist from all open REAPER project tabs",
-            category: Session,
-        }
-        LOAD_DEMO_SETLIST = "load_demo_setlist" {
-            name: "Load Demo Setlist",
-            description: "Load a demo setlist with mock song data (no DAW required)",
-            category: Dev,
-            group: "Dev",
-        }
-        DUMP_RULER_STATE = "dump_ruler_state" {
-            name: "Dump Ruler State",
-            description: "Log every marker and region in the current project with its position, name, color and ruler lane index. Useful for debugging lane assignment after BUILD_SETLIST / LOAD_DEMO_SETLIST.",
-            category: Dev,
-            group: "Dev",
-        }
+        // BUILD_SETLIST / LOAD_DEMO_SETLIST / DUMP_RULER_STATE moved to
+        // `session_proto::setlist_actions::SetlistActions`; not redeclared
+        // here, or the same FTS_SESSION_* command ids would register twice.
         // ── Recording workflow ───────────────────────────────────────
         RECORD = "record" {
             name: "Record: Start recording (current song)",

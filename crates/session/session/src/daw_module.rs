@@ -1,6 +1,6 @@
 //! DawModule implementation for session.
 
-use crate::{keyflow_actions, mode_actions, session_actions, setlist_actions};
+use crate::{keyflow_actions, mode_actions, session_actions};
 // Generic DAW actions, no longer session's: pre-roll, record control,
 // grouping, take ranking, auto-colour.
 use daw_actions::{auto_color, groups, preroll, record, take_ranking};
@@ -79,8 +79,6 @@ where
                         record::dispatch(action);
                     } else if let Some(action) = groups::action_for_id(&action_id) {
                         groups::dispatch(action);
-                    } else if let Some(action) = setlist_actions::action_for_id(&action_id) {
-                        setlist_actions::dispatch(&daw, action);
                     } else if dynamic_template::daw_module::dispatch_session_command(&cmd2) {
                         tracing::debug!("[session] Dispatched template action for {}", cmd2);
                     } else {
