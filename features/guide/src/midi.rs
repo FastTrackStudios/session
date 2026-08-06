@@ -640,3 +640,34 @@ mod midi_input_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod note_name_list_tests {
+    use super::*;
+
+    /// `every_named_note_is_playable_and_vice_versa` iterates `note_names()`
+    /// and would pass vacuously on an empty list — which is exactly the
+    /// failure mode that matters, since an empty list means the host shows
+    /// nothing and everything still "works". Pin the contents.
+    #[test]
+    fn note_names_is_not_empty_and_covers_each_family() {
+        let names = note_names();
+        assert!(!names.is_empty(), "note_names() returned nothing");
+
+        let by_note: std::collections::HashMap<u8, String> = names.into_iter().collect();
+        assert_eq!(
+            by_note.get(&MIDI_NOTE_CLICK_ACCENT).map(String::as_str),
+            Some("Click: Accent")
+        );
+        assert_eq!(
+            by_note.get(&MIDI_NOTES_COUNT[0]).map(String::as_str),
+            Some("Count 1")
+        );
+        assert_eq!(by_note.get(&85).map(String::as_str), Some("Chorus"));
+        assert!(
+            by_note.len() >= 20,
+            "expected the full layout, got {}",
+            by_note.len()
+        );
+    }
+}

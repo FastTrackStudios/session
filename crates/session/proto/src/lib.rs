@@ -32,6 +32,7 @@ pub use actions_proto::{
 // Domain modules
 pub mod color;
 pub mod guide;
+pub mod key;
 pub mod keyflow_actions;
 pub mod keyflow_scaffold;
 pub mod mode;

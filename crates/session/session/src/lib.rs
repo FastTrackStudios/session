@@ -37,6 +37,7 @@ pub use session_proto::{offset_map, ruler_lanes, services, track_structure};
 // blocker, now routed through `daw_proto::main_thread` (inline on
 // non-REAPER backends). See setlist::service::live_daw_sync (native-only —
 // the SynchronizationEngine is REAPER-linked).
+pub mod section_kinds;
 pub mod setlist;
 pub mod song;
 
@@ -48,6 +49,15 @@ pub mod color;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod guide;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod key;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod key_actions;
+// NOT gated, deliberately: `chart_import`, `setlist::service::demo` and
+// `task-player-ui` (the browser setlist engine) all reach into
+// `keyflow::actions`. Adding gated modules directly above this line once
+// left its `#[cfg]` attached to `keyflow` instead, which silently
+// wasm-gated it and broke the task-web image build — so keep a
+// non-attribute line between this and any gated module added above.
 pub mod keyflow;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod modes;
@@ -120,6 +130,7 @@ where
 {
     color::register_actions(backend);
     guide::register_actions(backend, daw.clone());
+    key_actions::register_actions(backend, daw.clone());
     keyflow::actions::register_actions(backend, daw.clone());
     keyflow::scaffold::register_actions(backend, daw.clone());
     modes::register_actions(backend);
