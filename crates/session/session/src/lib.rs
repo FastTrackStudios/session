@@ -52,7 +52,12 @@ pub mod guide;
 pub mod key;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod key_actions;
-#[cfg(not(target_arch = "wasm32"))]
+// NOT gated, deliberately: `chart_import`, `setlist::service::demo` and
+// `task-player-ui` (the browser setlist engine) all reach into
+// `keyflow::actions`. Adding gated modules directly above this line once
+// left its `#[cfg]` attached to `keyflow` instead, which silently
+// wasm-gated it and broke the task-web image build — so keep a
+// non-attribute line between this and any gated module added above.
 pub mod keyflow;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod modes;
