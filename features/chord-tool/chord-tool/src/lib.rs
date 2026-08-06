@@ -1,17 +1,15 @@
-//! chord-tool — fire scale chords and notes into a project.
+//! chord-tool — the chord-firing panel.
 //!
-//! A port of ChordGun (benjohnson2001/pandabot) in the sense that it does
-//! the same job, not that it carries the same code across. ChordGun ships
-//! its own scales, chord tables and degree arithmetic; this tree already
-//! has all of that in `keyflow`, so [`theory`] resolves a scale degree
-//! through keyflow instead. What actually needed porting is the workflow —
-//! pick a key and a chord size, hear a degree, drop it at the cursor,
-//! advance by the grid.
+//! GUI only. This is the ChordGun workflow (pick a key, hear and place
+//! scale chords) but none of its theory: ChordGun carries its own
+//! scales/chords tables, and everything they describe already exists in
+//! `keyflow`. Pitches come from `keyflow::chord::realize`; if logic in
+//! here starts computing intervals, it belongs there instead.
 //!
-//! The Lua original's `interface/` (Frame, Label, Dropdown, HitArea drawn
-//! into a gfx buffer) has no counterpart here either: the panel is a
-//! Dioxus component rendered by Blitz, living in `fts-extensions`.
+//! The same [`ChordToolPanel`] runs two ways — a desktop window for
+//! iteration (`cargo run -p chord-tool --example panel`) and a Blitz-
+//! rendered REAPER panel via `fts-extensions`.
 
-pub mod theory;
+pub mod panel;
 
-pub use theory::{ChordSize, chord_notes, scale_chords, scale_note};
+pub use panel::ChordToolPanel;
