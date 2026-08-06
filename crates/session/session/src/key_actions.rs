@@ -7,8 +7,6 @@
 
 use daw::service::{Items, ProjectContext, Tracks, transport::service::Transport};
 use daw_proto::{DawError, DawResult};
-use keyflow::key::Key;
-use keyflow::primitives::MusicalNote;
 use session_proto::key::{KeyActions, register_key_actions};
 
 use crate::key;
@@ -31,13 +29,8 @@ impl<T> KeyDaw for T where T: Tracks + Items + Transport + Send + Sync + 'static
 impl<D: KeyDaw> KeyActionsImpl<D> {
     /// Place `root` major or minor at the edit cursor.
     fn set(&self, root: &str, major: bool) -> DawResult<()> {
-        let note = MusicalNote::from_string(root)
+        let key = key::key_from_name(root, major)
             .ok_or_else(|| DawError::OperationFailed(format!("{root} is not a note")))?;
-        let key = if major {
-            Key::major(note)
-        } else {
-            Key::minor(note)
-        };
         let project = ProjectContext::Current;
         let at = Transport::get_position(&self.daw, project.clone());
         key::set_key_at(&self.daw, project, at, &key)

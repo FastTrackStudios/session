@@ -93,6 +93,20 @@ pub fn parse_key(label: &str) -> Option<Key> {
     Some(Key::new(root, mode))
 }
 
+/// Build a key from a root name and a major/minor flag.
+///
+/// Exists so callers — the actions, the toolbar selector — can name a key
+/// without depending on keyflow directly. `None` if the root isn't a
+/// note.
+pub fn key_from_name(root: &str, major: bool) -> Option<Key> {
+    let note = MusicalNote::from_string(&normalize_root(root))?;
+    Some(if major {
+        Key::major(note)
+    } else {
+        Key::minor(note)
+    })
+}
+
 /// Find the KEY track, or make one.
 fn ensure_key_track<D: Tracks>(daw: &D, project: ProjectContext) -> DawResult<TrackRef> {
     if let Some(track) = daw
