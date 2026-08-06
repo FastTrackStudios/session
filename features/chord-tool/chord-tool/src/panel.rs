@@ -20,11 +20,30 @@ use keyflow::chord::palette::{ChordCandidate, grid};
 use keyflow::key::Key;
 use keyflow::primitives::MusicalNote;
 
-/// Blitz doesn't load external stylesheets reliably, so everything is
-/// inline or embedded — the same constraint the signal UI documents.
+/// The app's compiled Tailwind sheet and theme tokens, inlined rather
+/// than linked: Blitz doesn't load external stylesheets reliably, and
+/// this is the same sheet `apps/fasttrackstudio` inlines. `chord-tool`
+/// is in input.css's `@source` list, so classes used here are generated.
+const APP_TAILWIND: &str = include_str!("../../../../apps/fasttrackstudio/assets/tailwind-signal.css");
+const FTS_THEME: &str = include_str!("../../../../libs/fts-ui/fts-ui/assets/fts-theme.css");
+
+/// Host reset. Without `html,body{height:100%}` a `height:100%` root
+/// resolves against `auto` and the panel collapses to its content
+/// instead of filling the window — which is exactly what it did before
+/// this existed. Mirrors the reset `apps/fasttrackstudio` injects.
+const HOST_RESET: &str = r#"
+html, body { margin:0; padding:0; height:100%; width:100%; background:#18181b; overflow:hidden; }
+* { box-sizing: border-box; }
+#main, body > div { height:100%; }
+"#;
+
+/// Layout-critical values stay explicit rather than leaning on Tailwind:
+/// Blitz treats Tailwind as additive, so anything structural has to hold
+/// up without it.
 const PANEL_CSS: &str = r#"
 .ct-root { font-family: system-ui, sans-serif; background:#18181b; color:#e4e4e7;
-  padding:12px; display:flex; flex-direction:column; gap:12px; height:100%; }
+  padding:12px; display:flex; flex-direction:column; gap:12px;
+  height:100%; width:100%; overflow:hidden; }
 .ct-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .ct-label { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#a1a1aa; }
 .ct-select { background:#27272a; color:#e4e4e7; border:1px solid #3f3f46; border-radius:6px;
@@ -33,8 +52,8 @@ const PANEL_CSS: &str = r#"
   padding:4px 9px; font-size:13px; cursor:pointer; }
 .ct-step:hover { background:#3f3f46; }
 
-.ct-grid { display:flex; gap:6px; flex:1; align-items:flex-start; }
-.ct-col { flex:1; display:flex; flex-direction:column; gap:4px; min-width:0; }
+.ct-grid { display:flex; gap:6px; flex:1; align-items:stretch; min-height:0; overflow:auto; }
+.ct-col { flex:1 1 0; display:flex; flex-direction:column; gap:4px; min-width:0; }
 .ct-head { text-align:center; padding:5px 2px; border-radius:6px; background:#27272a;
   border:1px solid #3f3f46; }
 .ct-head .numeral { display:block; font-size:14px; font-weight:700; color:#e4e4e7; }
@@ -81,6 +100,9 @@ pub fn ChordToolPanel() -> Element {
     let numerals = if minor() { MINOR_NUMERALS } else { MAJOR_NUMERALS };
 
     rsx! {
+        document::Style { {FTS_THEME} }
+        document::Style { {APP_TAILWIND} }
+        document::Style { {HOST_RESET} }
         document::Style { {PANEL_CSS} }
         div { class: "ct-root",
             div { class: "ct-bar",
