@@ -12,41 +12,11 @@ use tracing::{debug, warn};
 const TOUCH_EPSILON_SECONDS: f64 = 0.001;
 const MAX_SECTION_TIME_SELECTION_SECONDS: f64 = 60.0 * 60.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyflowAction {
-    InsertSection(SectionKind),
-    InsertMarker(MarkerKind),
-    ConvertMarkersToSessionFormat,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SectionKind {
-    Intro,
-    Verse,
-    PreChorus,
-    Chorus,
-    Bridge,
-    Outro,
-    Instrumental,
-    Solo,
-    Hits,
-    Interlude,
-    Breakdown,
-    Vamp,
-    Refrain,
-    Turnaround,
-    CountIn,
-    End,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarkerKind {
-    CountIn,
-    Start,
-    End,
-    SongStart,
-    SongEnd,
-}
+// The vocabulary itself lives in `crate::section_kinds` so wasm callers
+// (the browser setlist engine) can name a section without pulling in
+// this module's REAPER dependencies. Re-exported here so every existing
+// `keyflow::actions::SectionKind` path keeps resolving.
+pub use crate::section_kinds::{KeyflowAction, MarkerKind, SectionKind};
 
 #[derive(Debug, Clone)]
 struct SectionRegion {

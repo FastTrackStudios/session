@@ -37,6 +37,7 @@ pub use session_proto::{offset_map, ruler_lanes, services, track_structure};
 // blocker, now routed through `daw_proto::main_thread` (inline on
 // non-REAPER backends). See setlist::service::live_daw_sync (native-only —
 // the SynchronizationEngine is REAPER-linked).
+pub mod section_kinds;
 pub mod setlist;
 pub mod song;
 
@@ -47,7 +48,6 @@ pub mod song;
 pub mod color;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod guide;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod keyflow;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod modes;
