@@ -10,6 +10,9 @@ description = "chord-tool — the chord-firing panel (Dioxus; runs standalone fo
 # instead.
 keyflow = { workspace = true }
 dioxus = { workspace = true }
+# Themed primitives — the native <select> ignores the theme, and this is
+# the component set the rest of the app styles with.
+fts-ui = { workspace = true }
 
 [dev-dependencies]
 # The standalone iteration harness (examples/panel.rs) uses the desktop
