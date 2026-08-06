@@ -13,6 +13,7 @@ dioxus = { workspace = true }
 # Themed primitives — the native <select> ignores the theme, and this is
 # the component set the rest of the app styles with.
 fts-ui = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 # The standalone iteration harness (examples/panel.rs) uses the desktop
