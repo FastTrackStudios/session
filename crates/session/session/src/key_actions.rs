@@ -5,7 +5,7 @@
 //! gives every key its own REAPER action, so they can be bound to keys
 //! and put on a toolbar.
 
-use daw::service::{Items, ProjectContext, Tracks, transport::service::Transport};
+use daw::service::{Items, ProjectContext, Projects, TempoMap, Tracks, transport::service::Transport};
 use daw_proto::{DawError, DawResult};
 use session_proto::key::{KeyActions, register_key_actions};
 
@@ -23,8 +23,14 @@ impl<D> KeyActionsImpl<D> {
 }
 
 /// What placing a key change needs from a backend.
-pub trait KeyDaw: Tracks + Items + Transport + Send + Sync + 'static {}
-impl<T> KeyDaw for T where T: Tracks + Items + Transport + Send + Sync + 'static {}
+pub trait KeyDaw:
+    Tracks + Items + Transport + Projects + TempoMap + Send + Sync + 'static
+{
+}
+impl<T> KeyDaw for T where
+    T: Tracks + Items + Transport + Projects + TempoMap + Send + Sync + 'static
+{
+}
 
 impl<D: KeyDaw> KeyActionsImpl<D> {
     /// Place `root` major or minor at the edit cursor.
@@ -159,9 +165,9 @@ impl<D: KeyDaw> KeyActions for KeyActionsImpl<D> {
     }
 
     fn bake_key_signatures(&self) -> DawResult<()> {
-        Err(DawError::NotSupported(
-            "baking needs the project-file round trip — see session::key::bake".into(),
-        ))
+        let count = key::bake_key_signatures(&self.daw, ProjectContext::Current)?;
+        tracing::info!(count, "[session] baked key signatures into the project file");
+        Ok(())
     }
 
     fn clear_key_changes(&self) -> DawResult<()> {

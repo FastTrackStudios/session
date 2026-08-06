@@ -16,8 +16,11 @@
 //! `<KEYSIG>`. [`crate::key::bake`] is the separate, explicit step for
 //! that.
 
-use daw::service::{Duration, Items, ItemRef, PositionInSeconds, ProjectContext, TrackRef, Tracks};
-use daw_proto::DawResult;
+use daw::service::{
+    Duration, ItemRef, Items, PositionInSeconds, ProjectContext, Projects, TempoMap, TrackRef,
+    Tracks,
+};
+use daw_proto::{DawError, DawResult};
 use keyflow::key::Key;
 use keyflow::key::scale::ScaleMode;
 use keyflow::primitives::MusicalNote;
@@ -222,6 +225,101 @@ where
     Ok(())
 }
 
+/// REAPER's measure numbers into `<KEYSIG>`'s.
+///
+/// `TempoMap::time_to_musical` counts measures from 1, the way REAPER's
+/// ruler does; the `<KEYSIG>` block counts from 0. Without this every
+/// baked key signature lands one bar late — an error that looks right in
+/// every unit test and wrong in every real project.
+pub fn keysig_measure(reaper_measure: i32) -> u32 {
+    (reaper_measure - 1).max(0) as u32
+}
+
+/// Convert a key into the `<KEYSIG>` triple: root pitch class, spelling,
+/// and scale mask.
+///
+/// The spelling is taken from how the key is *written*, not computed —
+/// `Db` asks for flats and `C#` for sharps, and they are the same pitch.
+/// Losing that is losing the distinction the whole enharmonic split
+/// exists for.
+fn keysig_fields(key: &Key) -> (u8, i8, u32) {
+    let accidental = if key.root.name.contains('b') {
+        -1
+    } else if key.root.name.contains('#') {
+        1
+    } else {
+        0
+    };
+    // REAPER's mask describes the scale from its root. A minor key is the
+    // major scale rotated, which REAPER spells by giving the relative
+    // major's mask against the minor root — so both use the major mask.
+    (key.root.semitone % 12, accidental, dawfile_reaper::keysig::SCALE_MASK_MAJOR)
+}
+
+/// Write the KEY track's changes into the project file's `<KEYSIG>`
+/// block, so REAPER's MIDI editor key snap agrees with them.
+///
+/// This exists because REAPER has no API for key signatures at all — not
+/// in the C API, not among its 9,582 actions, and not in item or track
+/// chunks (a Cockos thread, t=287164, has an extension author confirming
+/// the last of those). The project file is the only representation, so
+/// the only way in is through the file.
+///
+/// The cost is real and unavoidable: the project is saved, rewritten, and
+/// reopened. Undo history does not survive that. It is deliberately a
+/// separate, explicit action rather than something the per-key actions do
+/// silently — you choose when to pay it.
+///
+/// Refuses to touch an unsaved project: without a path there is no file
+/// to edit, and inventing one would put a user's work somewhere they
+/// didn't ask for.
+pub fn bake_key_signatures<D>(daw: &D, project: ProjectContext) -> DawResult<usize>
+where
+    D: Tracks + Items + Projects + TempoMap,
+{
+    let changes = key_changes(daw, project.clone());
+    if changes.is_empty() {
+        return Ok(0);
+    }
+
+    let info = Projects::info(daw, project.clone())?;
+    if info.path.trim().is_empty() {
+        return Err(DawError::OperationFailed(
+            "save the project first — baking rewrites its file".into(),
+        ));
+    }
+
+    // Flush memory to disk, so what we read is what the user has.
+    daw.save(project.clone());
+
+    let sigs: Vec<dawfile_reaper::keysig::KeySig> = changes
+        .iter()
+        .map(|change| {
+            let (measure, _, _) = daw.time_to_musical(project.clone(), change.seconds);
+            let (root, accidental, scale_mask) = keysig_fields(&change.key);
+            dawfile_reaper::keysig::KeySig {
+                measure: keysig_measure(measure),
+                root,
+                accidental,
+                scale_mask,
+            }
+        })
+        .collect();
+
+    let original = std::fs::read_to_string(&info.path)
+        .map_err(|e| DawError::OperationFailed(format!("could not read {}: {e}", info.path)))?;
+    let spliced = dawfile_reaper::keysig::splice(&original, &sigs);
+    std::fs::write(&info.path, spliced)
+        .map_err(|e| DawError::OperationFailed(format!("could not write {}: {e}", info.path)))?;
+
+    // Reopen so REAPER picks the block up. Without this the edit sits on
+    // disk and the next save overwrites it from memory.
+    daw.open(&info.path)
+        .ok_or_else(|| DawError::OperationFailed("could not reopen the project".into()))?;
+
+    Ok(sigs.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,6 +354,28 @@ mod tests {
     /// two names. Both spellings must parse to the same key, and the
     /// common name is what gets written back, since that's what a
     /// musician reads.
+    /// The 1-based / 0-based measure gap, pinned here as well as in the
+    /// REAPER test that found it.
+    #[test]
+    fn reaper_measures_shift_down_by_one() {
+        assert_eq!(keysig_measure(1), 0, "REAPER's bar 1 is KEYSIG measure 0");
+        assert_eq!(keysig_measure(5), 4);
+        assert_eq!(keysig_measure(0), 0, "never negative");
+    }
+
+    /// A key's spelling drives the KEYSIG accidental — that field is the
+    /// only thing distinguishing Db major from C# major in the file.
+    #[test]
+    fn keysig_fields_carry_the_spelling() {
+        let d_flat = parse_key("Db major").expect("Db major");
+        let c_sharp = parse_key("C# major").expect("C# major");
+        assert_eq!(keysig_fields(&d_flat), (1, -1, 0xAB5));
+        assert_eq!(keysig_fields(&c_sharp), (1, 1, 0xAB5));
+
+        let c = parse_key("C major").expect("C major");
+        assert_eq!(keysig_fields(&c), (0, 0, 0xAB5), "naturals spell as 0");
+    }
+
     #[test]
     fn ionian_and_major_are_the_same_key() {
         assert_eq!(parse_key("C ionian"), parse_key("C major"));

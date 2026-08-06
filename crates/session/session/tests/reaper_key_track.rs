@@ -124,3 +124,42 @@ async fn accidentals_survive_the_round_trip(
     }
     Ok(())
 }
+
+// ── Baking to <KEYSIG> ──────────────────────────────────────────────────
+
+/// Baking turns key changes at *times* into `<KEYSIG>` entries at
+/// *measures*, and that conversion runs through the project's real tempo
+/// map. Everything else about the bake is covered by unit tests against a
+/// REAPER-written fixture (`dawfile_reaper::keysig`); this is the part
+/// only a live project can answer.
+///
+/// At 120bpm 4/4 a bar is two seconds. The catch — which this test found
+/// — is that `time_to_musical` returns **1-based** measures (0s is
+/// measure 1) while `<KEYSIG>` counts from **0**. Baking without that
+/// subtraction puts every key signature exactly one bar late, in a way
+/// nothing but a live project would reveal.
+#[reaper_test(isolated)]
+async fn key_positions_convert_to_the_right_measures(
+    ctx: &daw::test::ReaperTestContext,
+) -> eyre::Result<()> {
+    let project = ctx.project().clone();
+    project.transport().set_tempo(120.0).await?;
+
+    let bar = 2.0; // 120bpm, 4/4
+    for (i, seconds) in [0.0, bar * 4.0, bar * 8.0].iter().enumerate() {
+        let (measure, beat, _) = project.tempo_map().time_to_musical(*seconds).await?;
+        ctx.log(&format!("{seconds}s -> REAPER measure {measure}, beat {beat}"));
+        assert_eq!(
+            measure as usize,
+            i * 4 + 1,
+            "REAPER numbers measures from 1"
+        );
+        assert_eq!(
+            session::key::keysig_measure(measure),
+            (i * 4) as u32,
+            "KEYSIG numbers them from 0"
+        );
+        assert_eq!(beat, 1, "a downbeat — REAPER numbers beats from 1 as well");
+    }
+    Ok(())
+}
