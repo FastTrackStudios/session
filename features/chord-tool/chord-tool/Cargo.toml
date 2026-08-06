@@ -1,0 +1,20 @@
+[package]
+name = "chord-tool"
+version.workspace = true
+edition.workspace = true
+description = "chord-tool — scale-aware chord firing for REAPER (the ChordGun workflow, on keyflow's theory)"
+
+[dependencies]
+# The theory layer. Scales, modes, harmonization, chord spelling and
+# transposition all already exist here — this crate resolves a scale
+# degree to concrete MIDI notes and nothing more.
+keyflow = { workspace = true }
+# DAW writes (MIDI items + notes) and the cursor/grid.
+daw = { workspace = true }
+daw-proto = { workspace = true }
+architect = { workspace = true, features = ["vox"] }
+eyre = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true
