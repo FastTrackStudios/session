@@ -11,5 +11,7 @@
 //! rendered REAPER panel via `fts-extensions`.
 
 pub mod panel;
+pub mod sink;
 
 pub use panel::ChordToolPanel;
+pub use sink::{ChordSink, LogSink, SinkHandle};
