@@ -12,5 +12,12 @@ daw = { workspace = true }
 daw-proto = { workspace = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+# The REAPER integration harness (#[reaper_test]) plus the theory the
+# tests assert against.
+daw = { workspace = true, features = ["test-harness", "reaper"] }
+keyflow = { workspace = true }
+eyre = { workspace = true }
+
 [lints]
 workspace = true
