@@ -30,6 +30,8 @@ daw-proto = { workspace = true }
 # Guide schedule + MIDI note rendering (the pure half of guide
 # generation; this crate does the DAW writes).
 session-guide.workspace = true
+# <KEYSIG> read/write for the bake step.
+dawfile-reaper.workspace = true
 music-catalog.workspace = true
 # Auto-colour classification: monarchy sorts track names into the group
 # hierarchy, color-palette carries the Color type the palette is keyed in.
