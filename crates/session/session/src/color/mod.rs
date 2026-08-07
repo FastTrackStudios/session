@@ -607,6 +607,39 @@ fn inherited_parent_color(
     None
 }
 
+// ── architect::actions implementation ───────────────────────────────────
+//
+// Contract in `session_proto::color`.
+
+/// Serves the five auto-colour actions.
+pub struct AutoColorActionsImpl;
+
+impl AutoColorActions for AutoColorActionsImpl {
+    fn auto_color_color_all(&self) {
+        dispatch(AutoColorAction::ColorAll);
+    }
+    fn auto_color_color_selected(&self) {
+        dispatch(AutoColorAction::ColorSelected);
+    }
+    fn auto_color_toggle(&self) {
+        dispatch(AutoColorAction::Toggle);
+    }
+    fn auto_color_clear_all(&self) {
+        dispatch(AutoColorAction::ClearAll);
+    }
+    fn auto_color_clear_selected(&self) {
+        dispatch(AutoColorAction::ClearSelected);
+    }
+}
+
+/// Registers all five auto-color actions with `backend`.
+pub fn register_actions<B>(backend: &B)
+where
+    B: ::architect::action::ActionBackend + ?Sized,
+{
+    register_auto_color_actions(backend, std::sync::Arc::new(AutoColorActionsImpl));
+}
+
 #[cfg(test)]
 mod tests {
     use daw::service::Track;
@@ -664,37 +697,4 @@ mod tests {
         assert!(child.is_some());
         assert_ne!(child, Some(guitars()), "vocal should not inherit Guitars");
     }
-}
-
-// ── architect::actions implementation ───────────────────────────────────
-//
-// Contract in `session_proto::color`.
-
-/// Serves the five auto-colour actions.
-pub struct AutoColorActionsImpl;
-
-impl AutoColorActions for AutoColorActionsImpl {
-    fn auto_color_color_all(&self) {
-        dispatch(AutoColorAction::ColorAll);
-    }
-    fn auto_color_color_selected(&self) {
-        dispatch(AutoColorAction::ColorSelected);
-    }
-    fn auto_color_toggle(&self) {
-        dispatch(AutoColorAction::Toggle);
-    }
-    fn auto_color_clear_all(&self) {
-        dispatch(AutoColorAction::ClearAll);
-    }
-    fn auto_color_clear_selected(&self) {
-        dispatch(AutoColorAction::ClearSelected);
-    }
-}
-
-/// Registers all five auto-color actions with `backend`.
-pub fn register_actions<B>(backend: &B)
-where
-    B: ::architect::action::ActionBackend + ?Sized,
-{
-    register_auto_color_actions(backend, std::sync::Arc::new(AutoColorActionsImpl));
 }

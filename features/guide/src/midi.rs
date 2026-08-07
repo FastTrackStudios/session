@@ -213,9 +213,9 @@ pub fn click_notes(
             if time >= segment_end {
                 break;
             }
-            let on_beat = index % u64::from(per_beat) == 0;
+            let on_beat = index.is_multiple_of(u64::from(per_beat));
             let beat_index = index / u64::from(per_beat);
-            let downbeat = on_beat && beat_index % u64::from(segment.time_sig_num) == 0;
+            let downbeat = on_beat && beat_index.is_multiple_of(u64::from(segment.time_sig_num));
 
             notes.push(GuideMidiNote {
                 role: GuideTrackRole::Click,

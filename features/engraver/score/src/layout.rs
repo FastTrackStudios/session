@@ -773,7 +773,7 @@ fn draw_directions(
     // ── dynamics + hairpins ──
     let mut wedge_open: Option<(f64, bool)> = None; // (start x, crescendo)
     let hairpin_y = 4.0 * spatium + 2.8 * spatium;
-    let mut draw_wedge = |sys_node: &mut SceneNode, x1: f64, x2: f64, crescendo: bool| {
+    let draw_wedge = |sys_node: &mut SceneNode, x1: f64, x2: f64, crescendo: bool| {
         if x2 <= x1 + spatium {
             return;
         }
@@ -1276,7 +1276,6 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
     let mut id: u64 = 10;
     let mut page_index = 0usize;
     let mut y = opts.margin + opts.title_block_height;
-    let mut page_origin_y = 0.0;
 
     let new_page = |pages: &mut Vec<PageRect>, page_index: &mut usize| -> f64 {
         let y_off = *page_index as f64 * (opts.page_height + 24.0);
@@ -1289,7 +1288,7 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
         *page_index += 1;
         y_off
     };
-    page_origin_y = new_page(&mut pages, &mut page_index);
+    let mut page_origin_y = new_page(&mut pages, &mut page_index);
 
     // Title block (page 1).
     {
