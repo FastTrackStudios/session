@@ -926,6 +926,115 @@ const fn reaper_native_rgb(rgb: u32) -> u32 {
     0x01000000 | (rgb & 0xFFFFFF)
 }
 
+// ── architect::actions implementation ───────────────────────────────────
+//
+// The contract lives in `session_proto::keyflow_actions`. `KeyflowAction`
+// / `SectionKind` / `MarkerKind` stay: unlike the pass-through enums in
+// the other action modules, `run_action` genuinely matches on them, so
+// they are domain logic rather than a parallel dispatch path. What's gone
+// is the string-keyed `action_for_id` lookup and the `session_actions`
+// `define_actions!` entries that declared the same `FTS_SESSION_*` command
+// ids a second time.
+
+/// Serves the twenty keyflow-insert actions against a `daw` backend.
+pub struct KeyflowActionsImpl<D> {
+    daw: D,
+}
+
+impl<D> KeyflowActions for KeyflowActionsImpl<D>
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap,
+{
+    fn insert_intro_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Intro));
+    }
+    fn insert_verse_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Verse));
+    }
+    fn insert_pre_chorus_region(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertSection(SectionKind::PreChorus),
+        );
+    }
+    fn insert_chorus_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Chorus));
+    }
+    fn insert_bridge_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Bridge));
+    }
+    fn insert_outro_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Outro));
+    }
+    fn insert_instrumental_region(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertSection(SectionKind::Instrumental),
+        );
+    }
+    fn insert_solo_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Solo));
+    }
+    fn insert_hits_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Hits));
+    }
+    fn insert_interlude_region(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertSection(SectionKind::Interlude),
+        );
+    }
+    fn insert_breakdown_region(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertSection(SectionKind::Breakdown),
+        );
+    }
+    fn insert_vamp_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Vamp));
+    }
+    fn insert_count_in_region(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertSection(SectionKind::CountIn),
+        );
+    }
+    fn insert_end_region(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::End));
+    }
+    fn insert_count_in_marker(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::CountIn));
+    }
+    fn insert_start_marker(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::Start));
+    }
+    fn insert_end_marker(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::End));
+    }
+    fn insert_songstart_marker(&self) {
+        dispatch(
+            &self.daw,
+            KeyflowAction::InsertMarker(MarkerKind::SongStart),
+        );
+    }
+    fn insert_songend_marker(&self) {
+        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::SongEnd));
+    }
+    fn convert_markers_to_session_format(&self) {
+        dispatch(&self.daw, KeyflowAction::ConvertMarkersToSessionFormat);
+    }
+}
+
+/// Registers all twenty keyflow actions with `backend`, dispatching each
+/// through a fresh `KeyflowActionsImpl` bound to `daw`.
+pub fn register_actions<D, B>(backend: &B, daw: D)
+where
+    D: Projects + TransportService + Markers + Regions + TempoMap + Send + Sync + 'static,
+    B: ::architect::action::ActionBackend + ?Sized,
+{
+    register_keyflow_actions(backend, std::sync::Arc::new(KeyflowActionsImpl { daw }));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1072,113 +1181,4 @@ mod tests {
         );
     }
 
-}
-
-// ── architect::actions implementation ───────────────────────────────────
-//
-// The contract lives in `session_proto::keyflow_actions`. `KeyflowAction`
-// / `SectionKind` / `MarkerKind` stay: unlike the pass-through enums in
-// the other action modules, `run_action` genuinely matches on them, so
-// they are domain logic rather than a parallel dispatch path. What's gone
-// is the string-keyed `action_for_id` lookup and the `session_actions`
-// `define_actions!` entries that declared the same `FTS_SESSION_*` command
-// ids a second time.
-
-/// Serves the twenty keyflow-insert actions against a `daw` backend.
-pub struct KeyflowActionsImpl<D> {
-    daw: D,
-}
-
-impl<D> KeyflowActions for KeyflowActionsImpl<D>
-where
-    D: Projects + TransportService + Markers + Regions + TempoMap,
-{
-    fn insert_intro_region(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Intro));
-    }
-    fn insert_verse_region(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Verse));
-    }
-    fn insert_pre_chorus_region(&self) {
-        dispatch(
-            &self.daw,
-            KeyflowAction::InsertSection(SectionKind::PreChorus),
-        );
-    }
-    fn insert_chorus_region(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Chorus));
-    }
-    fn insert_bridge_region(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Bridge));
-    }
-    fn insert_outro_region(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Outro));
-    }
-    fn insert_instrumental_region(&self) {
-        dispatch(
-            &self.daw,
-            KeyflowAction::InsertSection(SectionKind::Instrumental),
-        );
-    }
-    fn insert_solo_region(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Solo));
-    }
-    fn insert_hits_region(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Hits));
-    }
-    fn insert_interlude_region(&self) {
-        dispatch(
-            &self.daw,
-            KeyflowAction::InsertSection(SectionKind::Interlude),
-        );
-    }
-    fn insert_breakdown_region(&self) {
-        dispatch(
-            &self.daw,
-            KeyflowAction::InsertSection(SectionKind::Breakdown),
-        );
-    }
-    fn insert_vamp_region(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::Vamp));
-    }
-    fn insert_count_in_region(&self) {
-        dispatch(
-            &self.daw,
-            KeyflowAction::InsertSection(SectionKind::CountIn),
-        );
-    }
-    fn insert_end_region(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertSection(SectionKind::End));
-    }
-    fn insert_count_in_marker(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::CountIn));
-    }
-    fn insert_start_marker(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::Start));
-    }
-    fn insert_end_marker(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::End));
-    }
-    fn insert_songstart_marker(&self) {
-        dispatch(
-            &self.daw,
-            KeyflowAction::InsertMarker(MarkerKind::SongStart),
-        );
-    }
-    fn insert_songend_marker(&self) {
-        dispatch(&self.daw, KeyflowAction::InsertMarker(MarkerKind::SongEnd));
-    }
-    fn convert_markers_to_session_format(&self) {
-        dispatch(&self.daw, KeyflowAction::ConvertMarkersToSessionFormat);
-    }
-}
-
-/// Registers all twenty keyflow actions with `backend`, dispatching each
-/// through a fresh `KeyflowActionsImpl` bound to `daw`.
-pub fn register_actions<D, B>(backend: &B, daw: D)
-where
-    D: Projects + TransportService + Markers + Regions + TempoMap + Send + Sync + 'static,
-    B: ::architect::action::ActionBackend + ?Sized,
-{
-    register_keyflow_actions(backend, std::sync::Arc::new(KeyflowActionsImpl { daw }));
 }
