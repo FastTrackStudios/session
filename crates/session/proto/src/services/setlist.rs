@@ -125,7 +125,6 @@ pub enum SetlistEvent {
 /// Service for building and retrieving song information
 ///
 /// This service extracts song structure from DAW projects by analyzing
-
 pub mod setlist_service {
     use super::{
         ActiveIndices, AudioLatencyInfo, MeasureInfo, MusicalPosition, Section,
