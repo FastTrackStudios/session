@@ -15,7 +15,7 @@ use crate::parsing::TextSpan;
 #[derive(Debug, Clone)]
 pub struct LineOffsetMap {
     /// Byte offset of the start of each line (0-indexed array, 1-indexed line numbers)
-    /// line_offsets[0] is always 0 (line 1 starts at byte 0)
+    /// `line_offsets[0]` is always 0 (line 1 starts at byte 0)
     line_offsets: Vec<usize>,
 }
 
