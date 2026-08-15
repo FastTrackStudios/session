@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use dioxus::prelude::*;
 use dioxus_core::Task;
-use fts_ui::prelude::{Button, ButtonSize, ButtonVariant};
+use architect_ui::prelude::{Button, ButtonSize, ButtonVariant};
 use kurbo::Affine;
 
 use crate::chart_graphics::ChartGraphics;
@@ -578,7 +578,7 @@ pub fn ChartPreviewPanel() -> Element {
                         on_click: Callback::new(move |_| {
                             *PERF_CHART_VIEWPORT.write() = PerfChartViewport::default();
                         }),
-                        fts_ui::lucide_dioxus::RotateCcw {
+                        architect_ui::lucide_dioxus::RotateCcw {
                             size: 14,
                         }
                         "Reset View"

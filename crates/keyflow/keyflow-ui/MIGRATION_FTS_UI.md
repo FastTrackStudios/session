@@ -1,16 +1,16 @@
-# Migration: keyflow-ui → fts-ui
+# Migration: keyflow-ui → architect-ui
 
 `keyflow-ui` now depends on the FastTrack Studio shared design system,
-`fts-ui` (lives at `../fts-ui/crates/fts-ui`). The chart **renderer**
+`architect-ui` (lives at `../fts-ui/crates/fts-ui`). The chart **renderer**
 (Vello scene mounts in `chart_graphics.rs` / `chart_renderer.rs`) stays
-raw — every other piece of UI chrome should compose `fts-ui` primitives
+raw — every other piece of UI chrome should compose `architect-ui` primitives
 instead of hand-rolled `<button>` / `<div class="card">` markup.
 
 ## How to use it
 
 Use the existing `keyflow_ui::prelude::*` import. It now also re-exports
-`fts_ui::prelude::*` and the `cn!` macro, so callers never need to
-`use fts_ui::…` directly.
+`architect_ui::prelude::*` and the `cn!` macro, so callers never need to
+`use architect_ui::…` directly.
 
 ```rust
 use crate::prelude::*;
@@ -51,7 +51,7 @@ Total: 13 raw `<button class="…tailwind…">` instances replaced; 2 ad-hoc
 - **Examples dropdown** (`layouts/chart_editor.rs`) — replaced ad-hoc
   `relative div` + manual `examples_open` open-state plumbing with
   `Dropdown` / `DropdownTrigger` / `DropdownContent` / `DropdownItem`.
-  The fts-ui primitives carry their own keyboard nav, focus management,
+  The architect-ui primitives carry their own keyboard nav, focus management,
   and click-outside dismissal.
 - **Hard-coded color classes** swapped for theme tokens that resolve
   through `ThemeProvider`:
@@ -71,7 +71,7 @@ Total: 13 raw `<button class="…tailwind…">` instances replaced; 2 ad-hoc
 
 ## What still needs migration
 
-Run this to find raw HTML elements that should become `fts-ui` components:
+Run this to find raw HTML elements that should become `architect-ui` components:
 
 ```bash
 grep -rn 'rsx! *{ *button\|class: "card"\|<input\|<select' \
@@ -80,7 +80,7 @@ grep -rn 'rsx! *{ *button\|class: "card"\|<input\|<select' \
 
 ### Per-file checklist
 
-| File | What to migrate | Suggested fts-ui targets |
+| File | What to migrate | Suggested architect-ui targets |
 |---|---|---|
 | `layouts/chart_editor.rs` | Toolbar buttons (lines ~174, 204, 227, 325, 354, 396, 406, 416, 426, 444, 456) — currently raw `button { class: "…tailwind…" }` | `Toolbar` + `ToolbarButton` for the row, `Button` for one-off CTAs, `Tooltip` for icon-only buttons |
 | `panels/preview_panel.rs:568` | Single raw button | `Button { variant: Primary }` |
@@ -115,9 +115,9 @@ The `ThemeProvider` resolves these against the active preset, so light
 ## Single-source-of-truth rule
 
 `keyflow/Cargo.toml` has a `[patch."https://github.com/FastTrackStudios/fts-ui.git"]`
-section that redirects every transitive `fts-ui` (e.g. the one
+section that redirects every transitive `architect-ui` (e.g. the one
 `session-ui` pulls in over git) to the local sibling checkout. This
-keeps the workspace on a single `fts-ui` version so components composed
+keeps the workspace on a single `architect-ui` version so components composed
 here interop with components composed elsewhere in the FTS workspace.
 
 ## Pre-existing build issues (unrelated)

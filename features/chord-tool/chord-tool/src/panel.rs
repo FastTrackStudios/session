@@ -26,14 +26,14 @@
 //! come from `keyflow::chord::palette`.
 
 use dioxus::prelude::*;
-use fts_ui::components::{Select, SelectContent, SelectItem};
+use architect_ui::components::{Select, SelectContent, SelectItem};
 use keyflow::chord::palette::{ChordCandidate, grid};
 use keyflow::key::Key;
 use keyflow::primitives::MusicalNote;
 
 use crate::sink::{LogSink, SinkHandle};
 
-const FTS_THEME: &str = include_str!("../../../../libs/fts-ui/fts-ui/assets/fts-theme.css");
+const FTS_THEME: &str = architect_ui::THEME_CSS;
 const APP_TAILWIND: &str =
     include_str!("../../../../apps/fasttrackstudio/assets/tailwind-signal.css");
 

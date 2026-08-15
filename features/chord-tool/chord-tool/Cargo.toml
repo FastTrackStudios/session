@@ -12,7 +12,7 @@ keyflow = { workspace = true }
 dioxus = { workspace = true }
 # Themed primitives — the native <select> ignores the theme, and this is
 # the component set the rest of the app styles with.
-fts-ui = { workspace = true }
+architect-ui = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
