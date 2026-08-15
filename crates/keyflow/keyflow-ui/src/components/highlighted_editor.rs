@@ -214,7 +214,7 @@ pub fn HighlightedEditor(
             } // end stacked editor layers div
 
             // Status footer — error/warning summary + first message tooltip.
-            // Composed from fts-ui Text primitives (uses theme tokens for the
+            // Composed from architect-ui Text primitives (uses theme tokens for the
             // muted-foreground / destructive / warning colors).
             div {
                 class: "border-t bg-card px-3 py-1 flex gap-3 items-center",
@@ -290,8 +290,8 @@ fn render_squiggle_overlay(source: &str, diagnostics: &[keyflow::text::ide::Diag
             Severity::Hint => "kf-diag kf-diag-hint",
         };
         // Use the theme's CSS custom properties so squiggle colors track
-        // light/dark/custom themes set via `fts_ui::ThemeProvider`. The
-        // tokens are defined in `fts-ui`'s theme stylesheet.
+        // light/dark/custom themes set via `architect_ui::ThemeProvider`. The
+        // tokens are defined in `architect-ui`'s theme stylesheet.
         let color = match severity {
             Severity::Error => "var(--destructive)",
             Severity::Warning => "var(--warning)",

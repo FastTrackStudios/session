@@ -138,7 +138,7 @@ fn compute_zoom_for_level(
 pub fn ChartEditorLayout() -> Element {
     // Wrap the whole editor in `ThemeProvider` so theme tokens
     // (`--destructive`, `--warning`, etc.) are defined for child CSS,
-    // and so `fts-ui` components pick up the active preset.
+    // and so `architect-ui` components pick up the active preset.
     // `ToastProvider` lets descendants call `use_toast()`.
     // Default to Dark to match the host app's dark `:root` theme — the bare
     // `default_theme_state` is Light, which renders the whole editor white.
@@ -205,7 +205,7 @@ fn ChartEditorLayoutInner() -> Element {
                     div {
                         class: "flex items-center gap-2",
 
-                        // Examples dropdown — fts-ui primitive-backed
+                        // Examples dropdown — architect-ui primitive-backed
                         // (handles open/close + keyboard nav + focus
                         // management; we just feed in items).
                         Dropdown {
@@ -218,7 +218,7 @@ fn ChartEditorLayoutInner() -> Element {
                                     variant: ButtonVariant::Secondary,
                                     size: ButtonSize::Small,
                                     span { "{EXAMPLES[*selected_example.read()].name}" }
-                                    fts_ui::lucide_dioxus::ChevronDown { size: 12 }
+                                    architect_ui::lucide_dioxus::ChevronDown { size: 12 }
                                 }
                             }
                             DropdownContent {
@@ -252,7 +252,7 @@ fn ChartEditorLayoutInner() -> Element {
                                     variant: ButtonVariant::Secondary,
                                     size: ButtonSize::Small,
                                     span { "Catalog" }
-                                    fts_ui::lucide_dioxus::ChevronDown { size: 12 }
+                                    architect_ui::lucide_dioxus::ChevronDown { size: 12 }
                                 }
                             }
                             DropdownContent {
@@ -414,7 +414,7 @@ fn ChartEditorLayoutInner() -> Element {
                                                     navigate_to_page(cp - 1);
                                                 }
                                             }),
-                                            fts_ui::lucide_dioxus::ChevronLeft { size: 14 }
+                                            architect_ui::lucide_dioxus::ChevronLeft { size: 14 }
                                         }
 
                                         // Page indicator
@@ -436,7 +436,7 @@ fn ChartEditorLayoutInner() -> Element {
                                                     navigate_to_page(next);
                                                 }
                                             }),
-                                            fts_ui::lucide_dioxus::ChevronRight { size: 14 }
+                                            architect_ui::lucide_dioxus::ChevronRight { size: 14 }
                                         }
                                     }
                                 }

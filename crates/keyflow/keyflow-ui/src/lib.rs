@@ -35,28 +35,28 @@
 //! ```
 
 /// Re-export dioxus prelude based on feature flags **plus** the FTS shared
-/// design system (`fts-ui`).
+/// design system (`architect-ui`).
 ///
 /// Every component / panel / layout in this crate is expected to compose
-/// `fts-ui` primitives — `Button`, `Card`, `Tabs`, `Tooltip`, `Toast`,
+/// `architect-ui` primitives — `Button`, `Card`, `Tabs`, `Tooltip`, `Toast`,
 /// theme tokens, etc. — instead of hand-rolling raw `<button>` / `<div>`
 /// markup. The chart **renderer** itself (`chart_graphics`,
 /// `chart_renderer`) stays raw because it owns a Vello scene mount; the
 /// chrome around it (toolbars, panels, status footer, dialogs) goes
-/// through `fts-ui`.
+/// through `architect-ui`.
 ///
 /// `use keyflow_ui::prelude::*;` therefore brings in:
 /// - `dioxus::prelude` — `rsx!`, `#[component]`, signals, … (dioxus-native
 ///   is only the renderer; the component framework is always `dioxus`)
-/// - `fts_ui::prelude` — every FTS component, layout primitive, theme
+/// - `architect_ui::prelude` — every FTS component, layout primitive, theme
 ///   token, and the `cn!` class-merge macro.
 ///
-/// Down-stream callers should never need to `use fts_ui::…` directly.
+/// Down-stream callers should never need to `use architect_ui::…` directly.
 pub mod prelude {
     pub use dioxus::prelude::*;
 
-    pub use fts_ui::cn;
-    pub use fts_ui::prelude::*;
+    pub use architect_ui::cn;
+    pub use architect_ui::prelude::*;
 }
 
 pub mod catalog;

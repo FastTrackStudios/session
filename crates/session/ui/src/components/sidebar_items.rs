@@ -4,7 +4,7 @@
 //! Copied from FastTrackStudio for exact styling match.
 
 use crate::prelude::*;
-use fts_ui::prelude::*;
+use architect_ui::prelude::*;
 
 /// Section item data for sidebar
 #[derive(Clone, Debug, PartialEq)]

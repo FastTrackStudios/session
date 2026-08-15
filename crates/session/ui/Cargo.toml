@@ -19,7 +19,7 @@ daw-proto = { workspace = true }
 keyflow = { workspace = true, default-features = false }
 
 # FTS UI components
-fts-ui.workspace = true
+architect-ui.workspace = true
 
 # Dock panel registration
 dock-dioxus = { workspace = true, default-features = false }
