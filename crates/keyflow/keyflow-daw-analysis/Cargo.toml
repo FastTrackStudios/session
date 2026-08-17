@@ -2,6 +2,7 @@
 name = "keyflow-daw-analysis"
 version.workspace = true
 edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+license.workspace = true
 description = "Keyflow-domain MIDI chart service: chord detection + chart text generation, backed by the daw client API"
 
 [dependencies]

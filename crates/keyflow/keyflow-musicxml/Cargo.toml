@@ -2,6 +2,7 @@
 name = "keyflow-musicxml"
 version.workspace = true
 edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+license.workspace = true
 description = "MusicXML import — translate score files to keyflow Chart"
 
 [dependencies]

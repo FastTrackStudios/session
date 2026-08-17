@@ -1,16 +1,18 @@
 # License
 
-Copyright (c) 2026 FastTrackStudio. All rights reserved.
+Copyright (C) 2026 FastTrackStudio
 
-This source code is made available for reference and educational purposes only.
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the
+Free Software Foundation, either version 3 of the License, or (at your
+option) any later version.
 
-## Restrictions
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General
+Public License for more details.
 
-- **Commercial use is prohibited.** You may not use, copy, modify, or distribute this software or any derivative works for commercial purposes.
-- **Redistribution is prohibited.** You may not redistribute this software in source or binary form without prior written permission.
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
 
-## Source-Available Notice
-
-This project is currently in active development. The intent is for it to remain source-available, but a formal open-source license has not yet been selected. Until a license is chosen and applied, all rights are reserved by the author.
-
-If you are interested in using this software beyond personal reference, please reach out to discuss licensing.
+The full text is in `LICENSE` at the repository root.

@@ -2,6 +2,7 @@
 name = "keyflow-midi"
 version.workspace = true
 edition = "2024"
+license.workspace = true
 description = "Keyflow MIDI import helpers"
 
 [features]

@@ -2,6 +2,7 @@
 name = "keyflow-live"
 version.workspace = true
 edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+license.workspace = true
 description = "Live in-process implementation of keyflow-proto services"
 
 [dependencies]

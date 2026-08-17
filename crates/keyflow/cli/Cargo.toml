@@ -2,6 +2,7 @@
 name = "keyflow-cli"
 version.workspace = true
 edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+license.workspace = true
 description = "The kf CLI surface for parsing and rendering Keyflow charts (lib + thin `kf` bin)"
 
 # Library-first: `keyflow_cli::cli_main(argv)` is the embeddable entry

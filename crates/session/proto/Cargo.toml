@@ -2,6 +2,7 @@
 name = "session-proto"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 
 [package.metadata.cargo-shear]
 # `uuid` is only referenced inside the `utils::typed_uuid_id!` macro

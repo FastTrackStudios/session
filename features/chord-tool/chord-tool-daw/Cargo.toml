@@ -2,6 +2,7 @@
 name = "chord-tool-daw"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "chord-tool-daw — writes chord-tool's chords into a DAW project"
 
 [dependencies]

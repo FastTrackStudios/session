@@ -2,6 +2,7 @@
 name = "engraver-score"
 version.workspace = true
 edition = "2024"
+license.workspace = true
 description = "Notation score model + MusicXML importer for the engraver (full scores and parts)"
 
 [dependencies]

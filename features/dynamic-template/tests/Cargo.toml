@@ -2,6 +2,7 @@
 name = "dynamic-template-tests"
 version.workspace = true
 edition = "2021"  # original edition of the dissolved workspace (root is 2024)
+license.workspace = true
 publish = false
 
 [dependencies]

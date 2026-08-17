@@ -2,6 +2,7 @@
 name = "engraver"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 description = "Engraver facade — re-exports engraver-proto for chart layout and rendering"
 
 [features]

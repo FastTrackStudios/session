@@ -2,6 +2,7 @@
 name = "engraver-proto"
 version.workspace = true
 edition = "2024"
+license.workspace = true
 description = "Engraver types and rendering pipeline for Keyflow"
 
 [features]

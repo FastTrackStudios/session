@@ -2,6 +2,7 @@
 name = "keyflow-musx"
 version.workspace = true
 edition = "2021"  # matches keyflow-musicxml (dissolved-workspace edition)
+license.workspace = true
 description = "Finale .musx → MusicXML converter (Rust port of joris-vaneyghen/musx2mxl)"
 
 [dependencies]
