@@ -16,7 +16,6 @@ vox = []
 [dependencies]
 vox.workspace = true
 vox-types.workspace = true
-actions-proto.workspace = true
 architect = { workspace = true, features = ["vox"] }
 facet.workspace = true
 daw-proto.workspace = true
