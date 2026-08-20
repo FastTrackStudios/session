@@ -15,7 +15,6 @@ path = "src/main.rs"
 
 [dependencies]
 session-proto.workspace = true
-actions-proto.workspace = true
 # `platform` = the portable async-runtime seam (`architect::platform::{spawn,
 # sleep, timeout}` — tokio on native, browser timers/`spawn_local` on wasm),
 # replacing the retired moire.

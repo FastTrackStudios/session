@@ -13,7 +13,6 @@ facet = { workspace = true }
 daw-proto = { workspace = true }
 vox = { workspace = true }
 thiserror = { workspace = true }
-actions-proto = { workspace = true }
 
 [lints]
 workspace = true

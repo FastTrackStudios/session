@@ -2,7 +2,8 @@
 
 use crate::keyflow::actions as keyflow_actions;
 use crate::modes as mode_actions;
-use crate::session_actions;
+use session_proto::navigation_actions::NavigationActionsActions;
+use session_proto::track_template_actions::TrackTemplateActionsActions;
 // init/subscribe hooks only — the action *dispatch* for these now runs
 // entirely through their `#[architect::actions]` traits.
 use crate::color as auto_color;
@@ -59,20 +60,17 @@ where
     }
 
     fn actions(&self) -> Vec<ActionDef> {
-        session_actions::definitions()
-            .into_iter()
-            .map(|def| {
-                let cmd = def.id.to_command_id();
-                let name = def.display_name();
-                let action_id = def.id.as_str().to_string();
-                let cmd2 = cmd.clone();
-                let _ = &action_id;
-                ActionDef::new(cmd, name, move || {
-                    tracing::info!("[session] Action: {}", cmd2);
-                    if dynamic_template::daw_module::dispatch_session_command(&cmd2) {
-                        tracing::debug!("[session] Dispatched template action for {}", cmd2);
+        NavigationActionsActions::all()
+            .iter()
+            .chain(TrackTemplateActionsActions::all())
+            .map(|meta| {
+                let cmd = meta.id;
+                ActionDef::new(cmd.to_string(), meta.display_name.to_string(), move || {
+                    tracing::info!("[session] Action: {cmd}");
+                    if dynamic_template::daw_module::dispatch_session_command(cmd) {
+                        tracing::debug!("[session] Dispatched template action for {cmd}");
                     } else {
-                        tracing::debug!("[session] No DAW handler registered for {}", cmd2);
+                        tracing::debug!("[session] No DAW handler registered for {cmd}");
                     }
                 })
             })

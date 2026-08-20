@@ -23,12 +23,6 @@ utils::typed_uuid_id!(
     SectionId
 );
 
-// Re-export DefinesActions for convenience - session implements this
-pub use actions_proto::{
-    ActionCategory, ActionDefinition, ActionId, ActionResult, DefinesActions, DefinesActionsClient,
-    DefinesActionsDispatcher,
-};
-
 // Domain modules
 pub mod color;
 pub mod guide;
@@ -36,6 +30,7 @@ pub mod key;
 pub mod keyflow_actions;
 pub mod keyflow_scaffold;
 pub mod mode;
+pub mod navigation_actions;
 pub mod offset_map;
 pub mod playback;
 pub mod routing_project;
@@ -47,6 +42,7 @@ pub mod song;
 // Action contracts (`#[architect::actions]`), traits only — see
 // `track_manager` for the rationale; implementations live in `session`.
 pub mod track_manager;
+pub mod track_template_actions;
 pub mod track_structure;
 pub mod watch;
 

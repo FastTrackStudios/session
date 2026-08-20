@@ -14,10 +14,20 @@ use crate::{
     ItemMetadata, OrganizeIntoTracks, Structure, default_config, monarchy_sort,
     track_schema,
 };
-use dynamic_template_proto::{
-    actions::dynamic_template_actions,
-    visibility_manager::actions::visibility_manager_actions,
-};
+/// Every action this module declares, in one list.
+///
+/// The four `#[architect::actions]` traits below are the single source of
+/// truth for ids, names and descriptions; REAPER registration (`actions()`)
+/// and the command-name dispatch in `handle_action` both read from here, so
+/// an action cannot be registered without a handler or vice versa.
+fn architect_metas() -> Vec<&'static architect::action::ActionMeta> {
+    DynamicTemplateActionsActions::all()
+        .iter()
+        .chain(VisibilityManagerActionsActions::all())
+        .chain(CreateGroupActionsActions::all())
+        .chain(ToggleGroupActionsActions::all())
+        .collect()
+}
 
 struct State {
     group_cache: HashMap<String, Vec<String>>,
@@ -56,23 +66,14 @@ impl DawModule for DynamicTemplateModule {
     }
 
     fn actions(&self) -> Vec<ActionDef> {
-        let mut defs = Vec::new();
-
-        for def in dynamic_template_actions::definitions() {
-            let cmd = def.id.to_command_id();
-            let name = def.display_name();
-            let cmd2 = cmd.clone();
-            defs.push(ActionDef::new(cmd, name, move || dispatch(&cmd2)));
-        }
-
-        for def in visibility_manager_actions::definitions() {
-            let cmd = def.id.to_command_id();
-            let name = def.display_name();
-            let cmd2 = cmd.clone();
-            defs.push(ActionDef::new(cmd, name, move || dispatch(&cmd2)));
-        }
-
-        defs
+        architect_metas()
+            .into_iter()
+            .map(|m| {
+                ActionDef::new(m.id.to_string(), m.display_name.to_string(), move || {
+                    dispatch(m.id)
+                })
+            })
+            .collect()
     }
 
     fn init(&self, _ctx: &ModuleContext) {
@@ -133,17 +134,49 @@ pub fn dispatch_session_command(command_name: &str) -> bool {
     true
 }
 
-fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<()> {
-    use dynamic_template_actions as dt;
-    use visibility_manager_actions as vm;
+/// Actions that are declared and registered but have no working handler.
+///
+/// `import_and_sort` needs to apply a track hierarchy to the project, which
+/// the current DAW facade no longer exposes — the same gap `sort_tracks`
+/// warns about. It stays declared so its REAPER command id keeps its slot in
+/// user keymaps, and it is listed here so `every_registered_action_has_a_
+/// dispatch_arm` stays honest instead of being loosened into uselessness.
+const UNIMPLEMENTED: &[&str] = &["FTS_DYNAMIC_TEMPLATE_IMPORT_AND_SORT"];
 
-    let sort_selected = dt::SORT_SELECTED.to_id().to_command_id();
-    let sort_all = dt::SORT_ALL.to_id().to_command_id();
-    let log_status = dt::LOG_STATUS.to_id().to_command_id();
-    let log_groups = dt::LOG_GROUPS.to_id().to_command_id();
-    let show_all_cmd = vm::SHOW_ALL.to_id().to_command_id();
-    let hide_all_cmd = vm::HIDE_ALL.to_id().to_command_id();
-    let rebuild_cache_cmd = vm::REBUILD_CACHE.to_id().to_command_id();
+/// Whether `handle_action` recognises `id` — the match arms below, minus the
+/// REAPER calls, so a test can walk every registered id without a project.
+#[cfg_attr(not(test), allow(dead_code))]
+fn is_dispatchable(id: &str) -> bool {
+    const KNOWN: &[&str] = &[
+        "FTS_DYNAMIC_TEMPLATE_SORT_SELECTED",
+        "FTS_DYNAMIC_TEMPLATE_SORT_ALL",
+        "FTS_DYNAMIC_TEMPLATE_LOG_STATUS",
+        "FTS_DYNAMIC_TEMPLATE_LOG_GROUPS",
+        "FTS_DYNAMIC_TEMPLATE_ORGANIZE_DEMO",
+        "FTS_VISIBILITY_MANAGER_SHOW_ALL",
+        "FTS_VISIBILITY_MANAGER_HIDE_ALL",
+        "FTS_VISIBILITY_MANAGER_REBUILD_CACHE",
+    ];
+    const PREFIXES: &[&str] = &[
+        "FTS_VISIBILITY_MANAGER_TOGGLE_",
+        "FTS_VISIBILITY_MANAGER_PROFILE_",
+        "FTS_VISIBILITY_MANAGER_MODE_",
+        "FTS_DYNAMIC_TEMPLATE_CREATE_NEW_",
+    ];
+
+    KNOWN.contains(&id)
+        || UNIMPLEMENTED.contains(&id)
+        || PREFIXES.iter().any(|p| id.starts_with(p))
+}
+
+fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<()> {
+    let sort_selected = SORT_SELECTED.id;
+    let sort_all = SORT_ALL.id;
+    let log_status = LOG_STATUS.id;
+    let log_groups = LOG_GROUPS.id;
+    let show_all_cmd = SHOW_ALL.id;
+    let hide_all_cmd = HIDE_ALL.id;
+    let rebuild_cache_cmd = REBUILD_CACHE.id;
     let vis_toggle_prefix = "FTS_VISIBILITY_MANAGER_TOGGLE_";
     let vis_profile_prefix = "FTS_VISIBILITY_MANAGER_PROFILE_";
     let vis_mode_prefix = "FTS_VISIBILITY_MANAGER_MODE_";
@@ -154,6 +187,7 @@ fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<
         n if n == sort_all => sort_tracks(false)?,
         n if n == log_status => log_status_action(state),
         n if n == log_groups => log_groups_action(),
+        n if n == ORGANIZE_DEMO.id => organize_demo_action()?,
         n if n == show_all_cmd => show_all_tracks()?,
         n if n == hide_all_cmd => hide_all_group_tracks(state)?,
         n if n == rebuild_cache_cmd => {
@@ -180,6 +214,9 @@ fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<
             let suffix = cmd.strip_prefix(create_prefix).unwrap();
             create_template_group(suffix)?;
         }
+        n if UNIMPLEMENTED.contains(&n) => tracing::warn!(
+            "[dynamic-template] {command_name} is declared but not implemented yet"
+        ),
         _ => tracing::debug!("[dynamic-template] unhandled action: {command_name}"),
     }
     Ok(())
@@ -461,6 +498,42 @@ fn log_groups_action() {
         "[dynamic-template] configured groups: {}",
         groups.join(", ")
     );
+}
+
+/// Run the organizer over a built-in set of track names and log the shape it
+/// produces.
+///
+/// A dev action: it touches no project, so it answers "is the organizer
+/// behaving?" from inside REAPER without needing a session to sacrifice.
+fn organize_demo_action() -> eyre::Result<()> {
+    const SAMPLE: &[&str] = &[
+        "Kick In",
+        "Kick Out",
+        "Snare Top",
+        "Snare Btm",
+        "OH L",
+        "OH R",
+        "Bass DI",
+        "Bass Amp",
+        "Gtr L",
+        "Gtr R",
+        "Lead Vox",
+        "BGV 1",
+        "BGV 2",
+    ];
+
+    let names: Vec<String> = SAMPLE.iter().map(|n| n.to_string()).collect();
+    let hierarchy = names.organize_into_tracks(&default_config(), None)?;
+
+    tracing::info!(
+        "[dynamic-template] demo: {} names organized into {} tracks",
+        SAMPLE.len(),
+        hierarchy.tracks.len(),
+    );
+    for track in &hierarchy.tracks {
+        tracing::info!("[dynamic-template] demo track: {}", track.name);
+    }
+    Ok(())
 }
 
 fn create_template_group(command_suffix: &str) -> eyre::Result<()> {
@@ -1136,28 +1209,16 @@ trait DynamicTemplateActions {
 
 impl DynamicTemplateActions for DynamicTemplateActionsImpl {
     fn sort_selected(&self) {
-        dispatch(
-            &dynamic_template_actions::SORT_SELECTED
-                .to_id()
-                .to_command_id(),
-        );
+        dispatch(SORT_SELECTED.id);
     }
     fn sort_all(&self) {
-        dispatch(&dynamic_template_actions::SORT_ALL.to_id().to_command_id());
+        dispatch(SORT_ALL.id);
     }
     fn import_and_sort(&self) {
-        dispatch(
-            &dynamic_template_actions::IMPORT_AND_SORT
-                .to_id()
-                .to_command_id(),
-        );
+        dispatch(IMPORT_AND_SORT.id);
     }
     fn organize_demo(&self) {
-        dispatch(
-            &dynamic_template_actions::ORGANIZE_DEMO
-                .to_id()
-                .to_command_id(),
-        );
+        dispatch(ORGANIZE_DEMO.id);
     }
     fn log_status(&self) {
         log_status_action(&state());
@@ -1816,6 +1877,30 @@ pub fn register_architect_actions<B: architect::action::ActionBackend>(backend: 
 #[cfg(test)]
 mod architect_actions_id_tests {
     use super::*;
+
+    /// Every action REAPER can invoke reaches a handler.
+    ///
+    /// `actions()` registers straight from `architect_metas()`, so a
+    /// command id exists in REAPER's action list purely because a trait
+    /// method declares it — with nothing forcing `handle_action` to know
+    /// what to do when it fires. This walks the same list through the
+    /// dispatch match, so a new method with no arm is a failing test
+    /// rather than a menu entry that silently does nothing.
+    #[test]
+    fn every_registered_action_has_a_dispatch_arm() {
+        let unhandled: Vec<&str> = architect_metas()
+            .into_iter()
+            .map(|m| m.id)
+            .filter(|id| !is_dispatchable(id))
+            .collect();
+
+        assert!(
+            unhandled.is_empty(),
+            "{} registered ids reach no handler:\n  {}",
+            unhandled.len(),
+            unhandled.join("\n  "),
+        );
+    }
 
     #[test]
     fn create_group_ids_match_existing_reaper_command_convention() {

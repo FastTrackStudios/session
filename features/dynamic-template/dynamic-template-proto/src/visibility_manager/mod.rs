@@ -4,4 +4,3 @@
 //! The reaper-extension implements the `LocalActionBinder` trait to register
 //! actual REAPER track visibility handlers.
 
-pub mod actions;
