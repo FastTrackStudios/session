@@ -204,7 +204,11 @@ pub async fn resolve_arrangement_urls<'a, S: AttachmentService>(
 /// Best-effort mime type from a filename extension. Deliberately tiny — a
 /// dependency-free hint, not a full mime database.
 fn guess_mime(filename: &str) -> &'static str {
-    let ext = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     match ext.as_str() {
         "wav" => "audio/wav",
         "mp3" => "audio/mpeg",
@@ -363,6 +367,8 @@ mod tests {
             id: arr_id,
             name: "Default".to_string(),
             key: Key::c_major(),
+            tempo_bpm: None,
+            time_signature: None,
             chart_ref: None,
             parts: PartsManifest::default(),
             attachment_refs: vec![],
@@ -401,16 +407,26 @@ mod tests {
                 .expect("pdf upload");
 
         // Recorded by content hash (== sha256 of the bytes), kind derived.
-        assert_eq!(wav_ref.sha256.as_deref(), Some(sha256_hex(&wav_bytes).as_str()));
+        assert_eq!(
+            wav_ref.sha256.as_deref(),
+            Some(sha256_hex(&wav_bytes).as_str())
+        );
         assert_eq!(wav_ref.id, sha256_hex(&wav_bytes));
         assert_eq!(wav_ref.kind.as_deref(), Some("audio"));
         assert!(wav_ref.path.is_none());
 
-        assert_eq!(pdf_ref.sha256.as_deref(), Some(sha256_hex(&pdf_bytes).as_str()));
+        assert_eq!(
+            pdf_ref.sha256.as_deref(),
+            Some(sha256_hex(&pdf_bytes).as_str())
+        );
         assert_eq!(pdf_ref.kind.as_deref(), Some("pdf"));
 
         let arr = song.arrangement(arr_id).unwrap();
-        assert_eq!(arr.attachment_refs.len(), 2, "both refs recorded on arrangement");
+        assert_eq!(
+            arr.attachment_refs.len(),
+            2,
+            "both refs recorded on arrangement"
+        );
 
         // (b) resolve the recorded refs to signed download URLs.
         let resolved = resolve_arrangement_urls(&mock, &song, arr_id)
@@ -456,16 +472,10 @@ mod tests {
         let path = dir.path().join("x.wav");
         std::fs::write(&path, b"x").unwrap();
 
-        let err = upload_arrangement_attachment(
-            &mock,
-            &mock,
-            &mut song,
-            Uuid::new_v4(),
-            &path,
-            None,
-        )
-        .await
-        .unwrap_err();
+        let err =
+            upload_arrangement_attachment(&mock, &mock, &mut song, Uuid::new_v4(), &path, None)
+                .await
+                .unwrap_err();
         assert!(matches!(err, AttachError::NoArrangement(_)));
     }
 
@@ -479,6 +489,9 @@ mod tests {
             kind: None,
         };
         let err = resolve_attachment_url(&mock, &att).await.unwrap_err();
-        assert!(matches!(err, AttachError::Service(AttachmentError::NotFound)));
+        assert!(matches!(
+            err,
+            AttachError::Service(AttachmentError::NotFound)
+        ));
     }
 }

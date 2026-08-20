@@ -23,7 +23,11 @@ fn main() {
     let mut fail = 0;
     for d in &dirs {
         let path = std::path::PathBuf::from(d);
-        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         if !path.join("reference.ogg").is_file() {
             eprintln!("skip {name}: no reference.ogg rendered");
             continue;

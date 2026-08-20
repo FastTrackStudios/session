@@ -173,8 +173,14 @@ impl FromStr for Key {
         // Optional accidental immediately after the letter.
         let rest = chars.as_str();
         let (accidental, after_acc) = match rest.chars().next() {
-            Some('#') | Some('♯') => (Accidental::Sharp, &rest[rest.chars().next().unwrap().len_utf8()..]),
-            Some('b') | Some('♭') => (Accidental::Flat, &rest[rest.chars().next().unwrap().len_utf8()..]),
+            Some('#') | Some('♯') => (
+                Accidental::Sharp,
+                &rest[rest.chars().next().unwrap().len_utf8()..],
+            ),
+            Some('b') | Some('♭') => (
+                Accidental::Flat,
+                &rest[rest.chars().next().unwrap().len_utf8()..],
+            ),
             _ => (Accidental::Natural, rest),
         };
 
@@ -209,7 +215,13 @@ mod tests {
 
     #[test]
     fn round_trips_common_keys() {
-        for s in ["C Major", "Bb Minor", "F# Dorian", "A Minor", "Eb Mixolydian"] {
+        for s in [
+            "C Major",
+            "Bb Minor",
+            "F# Dorian",
+            "A Minor",
+            "Eb Mixolydian",
+        ] {
             let k: Key = s.parse().unwrap();
             assert_eq!(k.to_string(), s);
         }

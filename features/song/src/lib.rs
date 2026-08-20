@@ -33,7 +33,7 @@ pub use folder::{ReadError, WriteError, from_folder, to_folder};
 pub use key::{Accidental, Key, Letter, Mode, ParseKeyError};
 pub use model::{
     Arrangement, ArrangementId, AttachmentRef, ChartRef, Part, PartsManifest, ResourceRef, Song,
-    SongId,
+    SongId, TimeSignature,
 };
 
 #[cfg(test)]
@@ -49,21 +49,33 @@ mod tests {
             id: default_id,
             name: "Default".to_string(),
             key: "Bb Major".parse().unwrap(),
+            tempo_bpm: Some(72.0),
+            time_signature: Some(TimeSignature::COMMON),
             chart_ref: Some(ChartRef::from_path("arrangements/default/chart.kf")),
             parts: PartsManifest {
                 parts: vec![
                     Part {
-                        name: "Lead Vocal".to_string(),
+                        name: "Verse 1".to_string(),
+                        bars: Some(8),
+                        patch: Some("Dry Piano".to_string()),
                         resource_refs: vec![ResourceRef {
-                            path: Some("arrangements/default/lead-vocal.md".to_string()),
+                            path: Some("arrangements/default/verse-1.md".to_string()),
                             attachment_id: None,
                             kind: Some("chart".to_string()),
                         }],
+                        ..Part::default()
                     },
+                    // The overriding part: half-time and in 6/8, so it exercises
+                    // both inheritance escapes at once.
                     Part {
-                        name: "Click".to_string(),
-                        resource_refs: vec![],
+                        name: "Bridge".to_string(),
+                        bars: Some(16),
+                        tempo_bpm: Some(36.0),
+                        time_signature: Some(TimeSignature::new(6, 8)),
+                        notes: Some("drop to pad under the leader".to_string()),
+                        ..Part::default()
                     },
+                    Part::new("Chorus"),
                 ],
             },
             attachment_refs: vec![AttachmentRef {
@@ -78,6 +90,11 @@ mod tests {
             id: alt_id,
             name: "Acoustic".to_string(),
             key: "G Minor".parse().unwrap(),
+            // An arrangement that declares neither: both stay None and
+            // round-trip as absent, which is the backward-compatible shape a
+            // song written before these fields existed has on disk.
+            tempo_bpm: None,
+            time_signature: None,
             chart_ref: None,
             parts: PartsManifest::default(),
             attachment_refs: vec![],
@@ -119,9 +136,39 @@ mod tests {
         assert_eq!(back.default().unwrap().name, "Default");
         assert_eq!(back.default().unwrap().key.to_string(), "Bb Major");
         assert_eq!(
-            back.arrangement(song.arrangements[1].id).unwrap().key.to_string(),
+            back.arrangement(song.arrangements[1].id)
+                .unwrap()
+                .key
+                .to_string(),
             "G Minor"
         );
+    }
+
+    #[test]
+    fn tempo_meter_and_parts_survive_a_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("song");
+        to_folder(&sample_song(), &root).unwrap();
+        let back = from_folder(&root).unwrap();
+        let arr = back.default().unwrap();
+
+        assert_eq!(arr.tempo_bpm, Some(72.0));
+        assert_eq!(arr.time_signature, Some(TimeSignature::COMMON));
+        assert_eq!(arr.parts.parts.len(), 3, "parts keep their running order");
+        assert_eq!(arr.parts.parts[0].name, "Verse 1");
+        assert_eq!(arr.parts.parts[2].name, "Chorus");
+        assert_eq!(arr.parts.total_bars(), None, "Chorus declares no bars");
+
+        // A part that overrides both, and one that inherits both.
+        let bridge = &arr.parts.parts[1];
+        assert_eq!(bridge.tempo_bpm, Some(36.0));
+        assert_eq!(bridge.time_signature, Some(TimeSignature::new(6, 8)));
+        assert_eq!(bridge.time_signature.unwrap().to_string(), "6/8");
+        assert_eq!(
+            arr.parts.parts[2].tempo_bpm, None,
+            "inherits the arrangement"
+        );
+        assert_eq!(arr.parts.parts[0].patch.as_deref(), Some("Dry Piano"));
     }
 
     #[test]
@@ -140,6 +187,8 @@ mod tests {
                     id: a,
                     name: "Default".to_string(),
                     key: Key::c_major(),
+                    tempo_bpm: None,
+                    time_signature: None,
                     chart_ref: None,
                     parts: PartsManifest::default(),
                     attachment_refs: vec![],
@@ -148,6 +197,8 @@ mod tests {
                     id: b,
                     name: "Default".to_string(),
                     key: Key::c_major(),
+                    tempo_bpm: None,
+                    time_signature: None,
                     chart_ref: None,
                     parts: PartsManifest::default(),
                     attachment_refs: vec![],
