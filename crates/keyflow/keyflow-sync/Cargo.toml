@@ -32,7 +32,10 @@ whisper = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:t
 whisper-cuda = ["whisper", "candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 
 [dependencies]
-# Pure-Rust WAV I/O. Compressed formats go through ffmpeg upstream (see docs).
+# Shared audio loading (mono decode). Compressed formats go through ffmpeg
+# upstream (see docs).
+fts-sample = { workspace = true, features = ["load"] }
+# 16-bit WAV writing for stems handed to external tools.
 hound = "3.5"
 
 # Pure-Rust Standard MIDI File writer for the lyrics/karaoke MIDI export.

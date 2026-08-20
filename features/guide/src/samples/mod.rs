@@ -1,9 +1,10 @@
 //! Preloaded PCM samples and wav loading.
 //!
 //! The guide engine mixes preloaded PCM at scheduled sample positions
-//! (same approach as the legacy fts-guide plugin). The legacy crate used
-//! symphonium for decoding; all guide library assets are wav, so this port
-//! uses `hound` plus a small linear resampler — no platform audio I/O.
+//! (same approach as the legacy fts-guide plugin). Decoding goes through
+//! the shared `fts-sample` loader (its `load` feature only, keeping this
+//! crate iOS-lean); the small linear resampler below stays for in-memory
+//! rate changes — no platform audio I/O.
 
 mod bank;
 mod loader;

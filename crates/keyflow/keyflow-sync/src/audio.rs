@@ -30,37 +30,11 @@ impl AudioBuffer {
     /// Load a WAV file, downmixing to mono.
     pub fn load_wav(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let mut reader = hound::WavReader::open(path)
-            .map_err(|e| SyncError::Audio(format!("open {}: {e}", path.display())))?;
-        let spec = reader.spec();
-        let channels = spec.channels.max(1) as usize;
-
-        // Normalize every sample format to f32 in [-1, 1].
-        let raw: Vec<f32> = match spec.sample_format {
-            hound::SampleFormat::Float => reader
-                .samples::<f32>()
-                .collect::<std::result::Result<_, _>>()
-                .map_err(|e| SyncError::Audio(format!("decode float: {e}")))?,
-            hound::SampleFormat::Int => {
-                let max = (1i64 << (spec.bits_per_sample - 1)) as f32;
-                reader
-                    .samples::<i32>()
-                    .map(|s| s.map(|v| v as f32 / max))
-                    .collect::<std::result::Result<_, _>>()
-                    .map_err(|e| SyncError::Audio(format!("decode int: {e}")))?
-            }
-        };
-
-        // Downmix channels to mono by averaging.
-        let mono: Vec<f32> = if channels == 1 {
-            raw
-        } else {
-            raw.chunks(channels)
-                .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-                .collect()
-        };
-
-        Ok(Self::new(mono, spec.sample_rate))
+        // No resample here — callers pick the model rate via [`resample`].
+        let (mono, sample_rate) =
+            fts_sample::load_mono_f32(path, None, fts_sample::ResampleQuality::Low)
+                .map_err(|e| SyncError::Audio(e.to_string()))?;
+        Ok(Self::new(mono, sample_rate))
     }
 
     /// Linear-resample to `target` Hz. No-op when already at rate. This is a

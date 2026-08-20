@@ -1,4 +1,5 @@
-//! wav file loading (replaces the legacy symphonium-based `SampleLoader`).
+//! wav file loading, via the shared `fts-sample` loader (`load` feature
+//! only — the heavy pack engine stays out of this iOS-clean crate).
 
 use std::path::Path;
 
@@ -6,39 +7,21 @@ use crate::GuideError;
 
 use super::AudioSample;
 
-/// Load a wav file as planar f32 PCM, resampled to `target_sample_rate`.
+/// Load an audio file as planar f32 PCM, resampled to `target_sample_rate`.
 ///
-/// Supports 16/24/32-bit integer and 32-bit float wav.
+/// Guide assets are wav, but anything symphonium decodes works.
 pub fn load_wav(path: &Path, target_sample_rate: u32) -> Result<AudioSample, GuideError> {
-    let mut reader = hound::WavReader::open(path)
-        .map_err(|e| GuideError::SampleLoad(format!("{}: {e}", path.display())))?;
-    let spec = reader.spec();
-    let channels = spec.channels.max(1) as usize;
+    // Low quality = linear interpolation — the same fidelity the old local
+    // resampler had, which is plenty for click/voice cues.
+    let loaded = fts_sample::load_planar_f32(
+        path,
+        Some(target_sample_rate),
+        fts_sample::ResampleQuality::Low,
+    )
+    .map_err(|e| GuideError::SampleLoad(e.to_string()))?;
 
-    let interleaved: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Float => reader
-            .samples::<f32>()
-            .collect::<Result<_, _>>()
-            .map_err(|e| GuideError::SampleLoad(format!("{}: {e}", path.display())))?,
-        hound::SampleFormat::Int => {
-            let scale = 1.0f32 / (1i64 << (spec.bits_per_sample - 1)) as f32;
-            reader
-                .samples::<i32>()
-                .map(|s| s.map(|v| v as f32 * scale))
-                .collect::<Result<_, _>>()
-                .map_err(|e| GuideError::SampleLoad(format!("{}: {e}", path.display())))?
-        }
-    };
-
-    let frames = interleaved.len() / channels;
-    let mut data = vec![Vec::with_capacity(frames); channels];
-    for (i, s) in interleaved.iter().enumerate() {
-        data[i % channels].push(*s);
-    }
-
-    let sample = AudioSample {
-        data,
-        sample_rate: spec.sample_rate,
-    };
-    Ok(sample.resampled_to(target_sample_rate))
+    Ok(AudioSample {
+        data: loaded.channels,
+        sample_rate: loaded.sample_rate,
+    })
 }

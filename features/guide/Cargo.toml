@@ -26,8 +26,12 @@ tts = ["dep:chatterbox-rs", "dep:ort", "ort/load-dynamic"]
 # session-guide is itself part of the session domain.
 session-proto.workspace = true
 
-# wav I/O for preloaded PCM samples (click / count / guide voices) and for
-# the TTS cue cache. Always on — reading cached cues must not need `tts`.
+# Preloaded PCM decode (click / count / guide voices / cached TTS cues) via
+# the shared loader — `load` only, so the heavy pack engine stays out of the
+# iOS-clean session-demo build.
+fts-sample = { workspace = true, features = ["load"] }
+# 16-bit wav writing for the TTS cue cache. Always on — reading cached cues
+# must not need `tts`.
 hound = "3.5"
 # Cache key hashing for TTS cues: SHA-256 of (text + voice id).
 sha2 = "0.10"
