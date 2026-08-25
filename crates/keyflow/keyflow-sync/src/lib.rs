@@ -30,6 +30,7 @@ pub mod click;
 pub mod error;
 pub mod guide_chart;
 pub mod karaoke;
+
 pub mod lanes;
 pub mod models;
 #[cfg(feature = "onnx")]
@@ -40,11 +41,11 @@ pub mod timing;
 #[cfg(feature = "whisper")]
 pub mod whisper;
 
-pub use align::{EmissionModel, WordTiming, align_words};
+pub use align::{align_words, EmissionModel, WordTiming};
 pub use audio::AudioBuffer;
-pub use click::{ClickGrid, detect_click_grid};
-pub use guide_chart::{RecoveredSection, SectionCue, cues_to_keyflow, recover_sections};
+pub use click::{detect_click_grid, ClickGrid};
 pub use error::{Result, SyncError};
-pub use pipeline::{SectionLyrics, prepare_vocals, run_alignment};
+pub use guide_chart::{cues_to_keyflow, recover_sections, RecoveredSection, SectionCue};
+pub use pipeline::{prepare_vocals, run_alignment, SectionLyrics};
 pub use separator::{StemSelection, StemSeparator, Stems};
 pub use timing::{Rating, RatingThresholds, TimingMap, WordEntry};
