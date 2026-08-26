@@ -24,8 +24,7 @@ F C G Am
 
     let chart1 = keyflow_text::chart::parse_chart(input).expect("Should parse successfully");
     let output = chart1.to_syntax();
-    let chart2 =
-        keyflow_text::chart::parse_chart(&output).expect("Should parse serialized output");
+    let chart2 = keyflow_text::chart::parse_chart(&output).expect("Should parse serialized output");
 
     assert_eq!(chart1.metadata.title, chart2.metadata.title);
     assert_eq!(chart1.metadata.artist, chart2.metadata.artist);
