@@ -22,8 +22,8 @@
 //! ```
 
 // Re-export the Color type and palette
-pub use color_palette::Color;
 pub use color_palette::palette;
+pub use color_palette::Color;
 
 // Re-export all instrument color modules from music-catalog
 pub use music_catalog::instruments::bass;

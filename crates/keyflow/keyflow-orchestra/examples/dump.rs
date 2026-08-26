@@ -3,7 +3,7 @@
 //!
 //! cargo run -p keyflow-orchestra --example dump -- <score> <part-substr> [profile]
 
-use keyflow_orchestra::{Config, ProfileKind, process_part};
+use keyflow_orchestra::{process_part, Config, ProfileKind};
 
 fn main() {
     let mut args = std::env::args().skip(1);

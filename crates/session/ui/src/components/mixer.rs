@@ -99,7 +99,9 @@ impl Inst {
             Inst::Reference
         } else if has(&["click", "cue", "guide", "metronome", "count"]) {
             Inst::Click
-        } else if has(&["drum", "kick", "snare", "tom", "hat", "perc", "cymbal", "ride", "crash"]) {
+        } else if has(&[
+            "drum", "kick", "snare", "tom", "hat", "perc", "cymbal", "ride", "crash",
+        ]) {
             Inst::Drums
         } else if has(&["bass"]) {
             Inst::Bass
@@ -113,7 +115,9 @@ impl Inst {
             Inst::Strings
         } else if has(&["vox", "vocal", "choir", "bgv", "lead", "singer"]) {
             Inst::Vocals
-        } else if has(&["loop", "sample", "sequence", "playback", "sfx", "stem", "track"]) {
+        } else if has(&[
+            "loop", "sample", "sequence", "playback", "sfx", "stem", "track",
+        ]) {
             Inst::Tracks
         } else {
             Inst::Other
@@ -289,7 +293,10 @@ fn organize_dynamic(tracks: &[Track]) -> Vec<MixNode> {
     // organizer carries in each leaf's `items`).
     let mut by_name: HashMap<String, VecDeque<Track>> = HashMap::new();
     for t in &leaves {
-        by_name.entry(t.name.clone()).or_default().push_back(t.clone());
+        by_name
+            .entry(t.name.clone())
+            .or_default()
+            .push_back(t.clone());
     }
 
     let names: Vec<String> = leaves.iter().map(|t| t.name.clone()).collect();
@@ -545,7 +552,11 @@ fn MixGroup(
     } else {
         "border-primary/25"
     };
-    let id_attr = if anchor.is_empty() { None } else { Some(anchor) };
+    let id_attr = if anchor.is_empty() {
+        None
+    } else {
+        Some(anchor)
+    };
 
     rsx! {
         div {

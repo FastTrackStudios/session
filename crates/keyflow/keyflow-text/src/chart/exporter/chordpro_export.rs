@@ -1,10 +1,10 @@
 //! ChordPro export - convert Chart to ChordPro format text
 
-use keyflow_proto::Chart;
 use keyflow_proto::chart::{Track, TrackType};
 use keyflow_proto::chord::{
     ChordProChunk, ChordProDirective, ChordProDocument, ChordProLine, ChordProSection,
 };
+use keyflow_proto::Chart;
 
 /// Export a Chart to ChordPro format
 ///

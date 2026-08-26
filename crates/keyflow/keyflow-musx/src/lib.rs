@@ -101,7 +101,10 @@ mod tests {
         cipher::decrypt(&mut buf);
         assert_ne!(buf, original, "cipher should transform the buffer");
         cipher::decrypt(&mut buf);
-        assert_eq!(buf, original, "applying the cipher twice restores the input");
+        assert_eq!(
+            buf, original,
+            "applying the cipher twice restores the input"
+        );
     }
 
     #[test]

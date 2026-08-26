@@ -1,12 +1,12 @@
+use architect::platform::Instant;
 use daw::module::ModuleContext;
 use daw::service::transport::service::Transport as TransportService;
 use daw::service::{Markers, MusicalPosition, ProjectContext, Projects, Region, Regions, TempoMap};
 use keyflow::sections::colors_for_section_type;
 use session_proto::SectionType;
+use session_proto::keyflow_actions::{KeyflowActions, register_keyflow_actions};
 use session_proto::ruler_lanes::{CoreLane, FtsLane, InstrumentLane, classify_marker_lane};
 use std::collections::{HashMap, HashSet};
-use architect::platform::Instant;
-use session_proto::keyflow_actions::{KeyflowActions, register_keyflow_actions};
 use tracing::{debug, warn};
 
 const TOUCH_EPSILON_SECONDS: f64 = 0.001;
@@ -677,7 +677,10 @@ fn normalized_section_updates(regions: Vec<Region>) -> Vec<SectionUpdate> {
     let mut by_song: std::collections::BTreeMap<usize, Vec<SectionRegion>> =
         std::collections::BTreeMap::new();
     for section in sections {
-        by_song.entry(song_of(section.start)).or_default().push(section);
+        by_song
+            .entry(song_of(section.start))
+            .or_default()
+            .push(section);
     }
 
     let mut updates = Vec::new();
@@ -1180,5 +1183,4 @@ mod tests {
             Some(MarkerKind::End.default_color())
         );
     }
-
 }

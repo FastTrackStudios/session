@@ -11,7 +11,7 @@
 //! `analyze` is stable.
 
 use super::{Diagnostic, Severity};
-use crate::chart::{Chart, parse_chart};
+use crate::chart::{parse_chart, Chart};
 use crate::parsing::TextSpan;
 
 /// Parse `text` line-by-line, accumulating diagnostics for failed segments.

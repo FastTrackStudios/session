@@ -7,10 +7,10 @@ use session_proto::track_template_actions::TrackTemplateActionsActions;
 // init/subscribe hooks only — the action *dispatch* for these now runs
 // entirely through their `#[architect::actions]` traits.
 use crate::color as auto_color;
-use daw_actions::preroll;
 use daw::module::{ActionDef, DawModule, ModuleContext};
 use daw::service::transport::service::Transport as TransportService;
 use daw::service::{ActionRegistration, Markers, Projects, Regions, TempoMap};
+use daw_actions::preroll;
 
 pub trait SessionDaw:
     Projects

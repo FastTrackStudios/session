@@ -12,8 +12,8 @@
 use std::path::PathBuf;
 
 use serde::Deserialize;
-use session::setlist::chart_import::chart_to_layout;
 use session::keyflow::actions::SectionKind;
+use session::setlist::chart_import::chart_to_layout;
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -47,14 +47,22 @@ fn main() {
     dirs.sort();
 
     for dir in dirs {
-        let slug = dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let slug = dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         if !only.is_empty() && !only.contains(&slug) {
             continue;
         }
         let chart = std::fs::read_to_string(dir.join("chart.kf")).unwrap_or_default();
-        let manifest: Manifest =
-            serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap_or_default())
-                .unwrap_or(Manifest { duration_sec: 0.0, sections: vec![] });
+        let manifest: Manifest = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("manifest.json")).unwrap_or_default(),
+        )
+        .unwrap_or(Manifest {
+            duration_sec: 0.0,
+            sections: vec![],
+        });
         let layout = match chart_to_layout(&chart) {
             Ok(l) => l,
             Err(e) => {
@@ -70,16 +78,25 @@ fn main() {
             .filter(|s| s.kind != SectionKind::CountIn)
             .collect();
 
-        println!("── {slug} ──  manifest {}s vs chart {:.1}s (Δ {:+.1}s)",
-            manifest.duration_sec, layout.song_end_seconds,
-            layout.song_end_seconds - manifest.duration_sec);
-        println!("   manifest sections: {}, chart sections: {}", manifest.sections.len(), derived.len());
+        println!(
+            "── {slug} ──  manifest {}s vs chart {:.1}s (Δ {:+.1}s)",
+            manifest.duration_sec,
+            layout.song_end_seconds,
+            layout.song_end_seconds - manifest.duration_sec
+        );
+        println!(
+            "   manifest sections: {}, chart sections: {}",
+            manifest.sections.len(),
+            derived.len()
+        );
         let n = manifest.sections.len().min(derived.len());
         let mut max_delta = 0.0f64;
         for i in 0..n {
             let ms = &manifest.sections[i];
             let cs = derived[i];
-            let d = (ms.start_sec - cs.start_seconds).abs().max((ms.end_sec - cs.end_seconds).abs());
+            let d = (ms.start_sec - cs.start_seconds)
+                .abs()
+                .max((ms.end_sec - cs.end_seconds).abs());
             max_delta = max_delta.max(d);
             if d > 1.0 {
                 println!(

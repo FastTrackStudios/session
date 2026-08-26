@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::profile::{ProfileKind, detect_profile};
+use crate::profile::{detect_profile, ProfileKind};
 use crate::score::{MarkingKind, Part, Score};
 
 /// Per-part analysis summary.

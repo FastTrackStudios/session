@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use monarchy::{FieldName, Group, Parser};
 
 use crate::item_metadata::{ItemMetadata, ItemMetadataField};
-use crate::{DynamicTemplateConfig, default_config};
+use crate::{default_config, DynamicTemplateConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackDimension {

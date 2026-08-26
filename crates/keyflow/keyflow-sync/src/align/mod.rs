@@ -15,8 +15,8 @@ pub mod trellis;
 pub mod wav2vec2;
 
 use crate::error::Result;
-use tokenizer::{Vocab, tokenize};
-use trellis::{Emission, forced_align};
+use tokenizer::{tokenize, Vocab};
+use trellis::{forced_align, Emission};
 
 /// An acoustic model: audio (mono, at [`Self::sample_rate`]) → CTC emissions.
 pub trait EmissionModel {

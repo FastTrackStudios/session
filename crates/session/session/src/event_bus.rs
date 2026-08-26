@@ -3,8 +3,8 @@
 //! [`EventBus`] wraps `tokio::sync::broadcast` for multi-consumer event streaming.
 //! [`WatchBus`] wraps `tokio::sync::watch` for single-latest-value streaming.
 
-use tokio::sync::{broadcast, watch};
 use tokio::sync::watch as tokio_watch;
+use tokio::sync::{broadcast, watch};
 
 /// Multi-consumer event bus backed by `tokio::sync::broadcast`.
 ///

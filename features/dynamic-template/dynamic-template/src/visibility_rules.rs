@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 
-use crate::DynamicTemplateConfig;
 use crate::track_schema::classify_track_with_config;
+use crate::DynamicTemplateConfig;
 
 /// Minimal structural view of a track the engine needs (taken from
 /// `daw_reaper::Reaper.all`).

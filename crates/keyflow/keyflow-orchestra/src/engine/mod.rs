@@ -8,13 +8,13 @@
 mod shaping;
 
 pub use shaping::Phrase;
-use shaping::{EPS, arch_at, build_phrasing, dyn_interp, fade_shape, micro_for, vib_bloom_at};
+use shaping::{arch_at, build_phrasing, dyn_interp, fade_shape, micro_for, vib_bloom_at, EPS};
 
 use std::collections::BTreeMap;
 
 use crate::config::{Config, LegatoMode};
 use crate::profile::{Profile, VibratoMode};
-use crate::score::{ArtSet, Marking, MarkingKind, Part, RawNote, TempoPoint, bpm_at, chord_pcs};
+use crate::score::{bpm_at, chord_pcs, ArtSet, Marking, MarkingKind, Part, RawNote, TempoPoint};
 
 /// Semantic articulation keywords (string parity with the Lua engine).
 pub type Artic = &'static str;
@@ -1281,7 +1281,11 @@ pub fn process_part(part: &Part, cfg: &Config) -> PartOutput {
                 // CC2 vibrato: xfade follows CC1 (+bloom), switch is on/off
                 if prof.vib != VibratoMode::None {
                     let mut v2 = if prof.vib == VibratoMode::Switch {
-                        if tenuto_active { 0.0 } else { 127.0 }
+                        if tenuto_active {
+                            0.0
+                        } else {
+                            127.0
+                        }
                     } else {
                         let mut v = v1 * cfg.vib_follow + cfg.vib_base;
                         if tenuto_active {

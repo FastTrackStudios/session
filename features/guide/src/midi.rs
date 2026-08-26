@@ -228,7 +228,11 @@ pub fn click_notes(
                 } else {
                     off_pitch
                 },
-                velocity: if downbeat { ACCENT_VELOCITY } else { NORMAL_VELOCITY },
+                velocity: if downbeat {
+                    ACCENT_VELOCITY
+                } else {
+                    NORMAL_VELOCITY
+                },
             });
             index += 1;
         }
@@ -448,7 +452,10 @@ mod section_note_tests {
             midi_note_for_section(&SectionType::Custom("Tag".into())),
             Some(94)
         );
-        assert_eq!(midi_note_for_section(&SectionType::Custom("Nope".into())), None);
+        assert_eq!(
+            midi_note_for_section(&SectionType::Custom("Nope".into())),
+            None
+        );
     }
 
     /// Count-ins belong on the Count track; putting them on Guide too

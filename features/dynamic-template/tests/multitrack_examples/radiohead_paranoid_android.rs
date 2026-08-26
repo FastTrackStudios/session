@@ -1,4 +1,4 @@
-use daw_proto::{TrackGroup, TrackNode, TrackStructureBuilder, assert_tracks_equal};
+use daw_proto::{assert_tracks_equal, TrackGroup, TrackNode, TrackStructureBuilder};
 use dynamic_template::*;
 use monarchy::{
     cleanup_display_names, expand_items_to_children, monarchy_sort, move_unsorted_to_group,

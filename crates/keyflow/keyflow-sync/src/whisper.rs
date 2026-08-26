@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use candle_core::{Device, IndexOp, Tensor};
 use candle_nn::VarBuilder;
-use candle_transformers::models::whisper::{self as cw, Config, model::Whisper};
+use candle_transformers::models::whisper::{self as cw, model::Whisper, Config};
 use tokenizers::Tokenizer;
 
 use crate::error::{Result, SyncError};

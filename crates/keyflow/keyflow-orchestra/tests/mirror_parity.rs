@@ -5,7 +5,7 @@
 //! score-faithful while the performance track plays correctly.
 
 use keyflow_orchestra::engine::CcEvent;
-use keyflow_orchestra::{Config, MidiNote, ProfileKind, mirror_part, process_part};
+use keyflow_orchestra::{mirror_part, process_part, Config, MidiNote, ProfileKind};
 
 /// The notated articulation for a stage-1 note: engine artic, except that a
 /// marcato with no written strong-accent is a fast-run conversion — notated

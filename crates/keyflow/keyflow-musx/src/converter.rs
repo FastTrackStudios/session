@@ -82,7 +82,8 @@ fn lookup_meas_expressions(root: N, meas_spec_cmper: &str) -> Vec<Expression> {
         let staff_assign = path_text(mea, &["staffAssign"]);
         let horz_edu_off = path_text(mea, &["horzEduOff"]);
 
-        let Some(text_expr_def) = find_by_attr(root, "others", "textExprDef", "cmper", &text_expr_id)
+        let Some(text_expr_def) =
+            find_by_attr(root, "others", "textExprDef", "cmper", &text_expr_id)
         else {
             continue;
         };
@@ -103,8 +104,8 @@ fn lookup_meas_expressions(root: N, meas_spec_cmper: &str) -> Vec<Expression> {
                 let text_id = path_text(text_block, &["textID"]);
                 category_type = path_text(markings_category, &["categoryType"]);
                 if let Some(text_id) = text_id {
-                    expression_text =
-                        find_by_attr(root, "texts", "expression", "number", &text_id).and_then(text);
+                    expression_text = find_by_attr(root, "texts", "expression", "number", &text_id)
+                        .and_then(text);
                 }
             }
         } else {
@@ -319,11 +320,23 @@ fn lookup_staff_groups(root: N) -> Vec<StaffGroup> {
 }
 
 /// `find_staff_group_name` — join the names of every group that spans the staff.
-fn find_staff_group_name(full: bool, staff_spec_cmper: &str, staff_groups: &[StaffGroup]) -> Option<String> {
+fn find_staff_group_name(
+    full: bool,
+    staff_spec_cmper: &str,
+    staff_groups: &[StaffGroup],
+) -> Option<String> {
     let mut names = Vec::new();
     for group in staff_groups {
-        let name = if full { &group.full_name } else { &group.abbrv_name };
-        if between(group.start_inst.as_deref(), staff_spec_cmper, group.end_inst.as_deref()) {
+        let name = if full {
+            &group.full_name
+        } else {
+            &group.abbrv_name
+        };
+        if between(
+            group.start_inst.as_deref(),
+            staff_spec_cmper,
+            group.end_inst.as_deref(),
+        ) {
             if let Some(name) = name {
                 if !name.is_empty() {
                     names.push(name.clone());
@@ -345,7 +358,11 @@ fn get_piano_brace_staff_group<'g>(
     staff_groups.iter().find(|g| {
         g.bracket_id.as_deref() == Some(PIANO_BRACE)
             && g.start_inst != g.end_inst
-            && between(g.start_inst.as_deref(), staff_spec_cmper, g.end_inst.as_deref())
+            && between(
+                g.start_inst.as_deref(),
+                staff_spec_cmper,
+                g.end_inst.as_deref(),
+            )
     })
 }
 
@@ -368,8 +385,11 @@ pub fn convert(root: N, meta_root: Option<N>) -> String {
         &["options", "timeSignatureOptions", "timeSigDoAbrvCommon"],
     )
     .is_some();
-    let time_sig_do_abrv_cut =
-        find_path(root, &["options", "timeSignatureOptions", "timeSigDoAbrvCut"]).is_some();
+    let time_sig_do_abrv_cut = find_path(
+        root,
+        &["options", "timeSignatureOptions", "timeSigDoAbrvCut"],
+    )
+    .is_some();
 
     let staff_groups = lookup_staff_groups(root);
 
@@ -412,8 +432,11 @@ pub fn convert(root: N, meta_root: Option<N>) -> String {
             let (instrument_name, instrument_sound) = translate_instrument(&inst_uuid);
             // Python guards with `if instrument_name:` — an empty name is falsy.
             if let Some(instrument_name) = instrument_name.filter(|s| !s.is_empty()) {
-                let score_instrument =
-                    sub_attrs(&score_part, "score-instrument", &[("id", &format!("{part_id}-I1"))]);
+                let score_instrument = sub_attrs(
+                    &score_part,
+                    "score-instrument",
+                    &[("id", &format!("{part_id}-I1"))],
+                );
                 sub_text(&score_instrument, "instrument-name", &instrument_name);
                 if let Some(instrument_sound) = instrument_sound.filter(|s| !s.is_empty()) {
                     sub_text(&score_instrument, "instrument-sound", &instrument_sound);
@@ -465,7 +488,8 @@ pub fn convert(root: N, meta_root: Option<N>) -> String {
             let beats = path_text(meas_spec, &["beats"]);
             let divbeat = path_text(meas_spec, &["divbeat"]);
             let key_ = path_text(meas_spec, &["keySig", "key"]);
-            let mut barline_ = path_text(meas_spec, &["barline"]).unwrap_or_else(|| "normal".to_string());
+            let mut barline_ =
+                path_text(meas_spec, &["barline"]).unwrap_or_else(|| "normal".to_string());
             if meas_idx == nb_measures - 1 {
                 barline_ = "final".to_string();
             }
@@ -493,17 +517,20 @@ pub fn convert(root: N, meta_root: Option<N>) -> String {
                 {
                     match txt_repeat.rpt_text.as_deref() {
                         Some("%") => {
-                            let direction = sub_attrs(&measure, "direction", &[("placement", "above")]);
+                            let direction =
+                                sub_attrs(&measure, "direction", &[("placement", "above")]);
                             let dt = sub(&direction, "direction-type");
                             sub(&dt, "segno");
                         }
                         Some("\u{00DE}") => {
-                            let direction = sub_attrs(&measure, "direction", &[("placement", "above")]);
+                            let direction =
+                                sub_attrs(&measure, "direction", &[("placement", "above")]);
                             let dt = sub(&direction, "direction-type");
                             sub(&dt, "coda");
                         }
                         other => {
-                            let direction = sub_attrs(&measure, "direction", &[("placement", "below")]);
+                            let direction =
+                                sub_attrs(&measure, "direction", &[("placement", "below")]);
                             let dt = sub(&direction, "direction-type");
                             sub_text(&dt, "words", other.unwrap_or(""));
                         }
@@ -646,7 +673,12 @@ pub fn convert(root: N, meta_root: Option<N>) -> String {
                     transp_interval,
                 );
                 if clef_id != current_clef_single {
-                    attributes = Some(handle_clef_change(root, &measure, attributes, clef_id.as_deref()));
+                    attributes = Some(handle_clef_change(
+                        root,
+                        &measure,
+                        attributes,
+                        clef_id.as_deref(),
+                    ));
                     current_clef_single = clef_id;
                 }
             }
@@ -802,19 +834,41 @@ fn handle_meta_data(score_partwise: &El, meta_root: N) {
 
     if let Some(title) = find_path(meta_root, &["fileInfo", "title"]).and_then(text) {
         add_credit(
-            score_partwise, 1, "title", &title, "616.935484", "1511.049022", "center", "top", "22",
+            score_partwise,
+            1,
+            "title",
+            &title,
+            "616.935484",
+            "1511.049022",
+            "center",
+            "top",
+            "22",
         );
     }
     if let Some(subtitle) = find_path(meta_root, &["fileInfo", "subtitle"]).and_then(text) {
         add_credit(
-            score_partwise, 1, "subtitle", &subtitle, "616.935484", "1453.898908", "center", "top",
+            score_partwise,
+            1,
+            "subtitle",
+            &subtitle,
+            "616.935484",
+            "1453.898908",
+            "center",
+            "top",
             "14",
         );
     }
     if let Some(composer) = find_path(meta_root, &["fileInfo", "composer"]).and_then(text) {
         add_credit(
-            score_partwise, 1, "composer", &composer, "1148.145796", "1411.049022", "right",
-            "bottom", "10",
+            score_partwise,
+            1,
+            "composer",
+            &composer,
+            "1148.145796",
+            "1411.049022",
+            "right",
+            "bottom",
+            "10",
         );
     }
 }
@@ -833,17 +887,21 @@ struct ClefInfo {
 
 fn lookup_clef_info(root: N, clef_id: Option<&str>) -> ClefInfo {
     if let Some(clef_id) = clef_id {
-        if let Some(clef_def) =
-            find_by_attr(root, "clefOptions", "clefDef", "index", clef_id).or_else(|| {
+        if let Some(clef_def) = find_by_attr(root, "clefOptions", "clefDef", "index", clef_id)
+            .or_else(|| {
                 // clefOptions lives under <options>; search there too.
                 find_path(root, &["options", "clefOptions"])
                     .map(|co| children(co, "clefDef"))
-                    .and_then(|defs| defs.into_iter().find(|d| attr(*d, "index").as_deref() == Some(clef_id)))
+                    .and_then(|defs| {
+                        defs.into_iter()
+                            .find(|d| attr(*d, "index").as_deref() == Some(clef_id))
+                    })
             })
         {
             let clef_char = path_text(clef_def, &["clefChar"]);
             let (sign, clef_octave_change) = translate_clef_sign(clef_char.as_deref());
-            let clef_y_disp = parse_i64(path_text(clef_def, &["clefYDisp"]).as_deref()).unwrap_or(0);
+            let clef_y_disp =
+                parse_i64(path_text(clef_def, &["clefYDisp"]).as_deref()).unwrap_or(0);
             let line = (5 + clef_y_disp.div_euclid(2)).to_string();
             return ClefInfo {
                 sign,
@@ -892,7 +950,13 @@ fn handle_clef_change(root: N, measure: &El, attributes: Option<El>, clef_id: Op
     attributes
 }
 
-fn handle_chords(measure: &El, chords: &[Chord], key: Option<i64>, transp_key_adjust: i64, staff_id: i64) {
+fn handle_chords(
+    measure: &El,
+    chords: &[Chord],
+    key: Option<i64>,
+    transp_key_adjust: i64,
+    staff_id: i64,
+) {
     for chord in chords {
         let suffix = translate_chord_suffix(Some(&chord.suffix_text));
         let harmony = sub(measure, "harmony");
@@ -1095,21 +1159,35 @@ fn handle_tuplet_start(root: N, entry: N, notations: &El, tuplet_attributes: &mu
         }
         idx += 1;
         let number = idx.to_string();
-        let symbolic_num = parse_i64(path_text(tuplet_def, &["symbolicNum"]).as_deref()).unwrap_or(0);
-        let symbolic_dur = parse_i64(path_text(tuplet_def, &["symbolicDur"]).as_deref()).unwrap_or(1);
+        let symbolic_num =
+            parse_i64(path_text(tuplet_def, &["symbolicNum"]).as_deref()).unwrap_or(0);
+        let symbolic_dur =
+            parse_i64(path_text(tuplet_def, &["symbolicDur"]).as_deref()).unwrap_or(1);
         let ref_num = parse_i64(path_text(tuplet_def, &["refNum"]).as_deref()).unwrap_or(0);
         let ref_dur = parse_i64(path_text(tuplet_def, &["refDur"]).as_deref()).unwrap_or(1);
 
-        let tuplet = sub_attrs(notations, "tuplet", &[("number", &number), ("type", "start")]);
+        let tuplet = sub_attrs(
+            notations,
+            "tuplet",
+            &[("number", &number), ("type", "start")],
+        );
         if idx > 1 {
             let (actual_type, _) = calculate_type_and_dots(symbolic_dur);
             let (normal_type, _) = calculate_type_and_dots(ref_dur);
             let tuplet_actual = sub(&tuplet, "tuplet-actual");
             sub_text(&tuplet_actual, "tuplet-number", &symbolic_num.to_string());
-            sub_text(&tuplet_actual, "tuplet-type", actual_type.as_deref().unwrap_or(""));
+            sub_text(
+                &tuplet_actual,
+                "tuplet-type",
+                actual_type.as_deref().unwrap_or(""),
+            );
             let tuplet_normal = sub(&tuplet, "tuplet-normal");
             sub_text(&tuplet_normal, "tuplet-number", &ref_num.to_string());
-            sub_text(&tuplet_normal, "tuplet-type", normal_type.as_deref().unwrap_or(""));
+            sub_text(
+                &tuplet_normal,
+                "tuplet-type",
+                normal_type.as_deref().unwrap_or(""),
+            );
         }
 
         tuplet_attributes.push(TupletAttr {
@@ -1137,7 +1215,8 @@ fn handle_smart_shape_detail(root: N, entry: N, notations: &El) {
         if let Some(smart_shape) = find_by_attr(root, "others", "smartShape", "cmper", &shape_num) {
             let shape_type = path_text(smart_shape, &["shapeType"]);
             let start_entry = path_text(smart_shape, &["startTermSeg", "endPt", "entryNum"]);
-            if shape_type.as_deref() == Some("slurAuto") || shape_type.as_deref() == Some("slurUp") {
+            if shape_type.as_deref() == Some("slurAuto") || shape_type.as_deref() == Some("slurUp")
+            {
                 let slur_type = if start_entry.as_deref() == Some(entnum.as_str()) {
                     "start"
                 } else {
@@ -1164,7 +1243,8 @@ fn lookup_artic_detail(root: N, entnum: &str) -> Vec<ArticDetail> {
         let Some(artic_def_cmper) = path_text(aa, &["articDef"]) else {
             continue;
         };
-        if let Some(artic_def) = find_by_attr(root, "others", "articDef", "cmper", &artic_def_cmper) {
+        if let Some(artic_def) = find_by_attr(root, "others", "articDef", "cmper", &artic_def_cmper)
+        {
             details.push(ArticDetail {
                 char_main: path_text(artic_def, &["charMain"]),
             });
@@ -1211,18 +1291,22 @@ fn lookup_lyric_details(root: N, entnum: &str) -> Vec<LyricDetail> {
 fn add_rest_to_empty_measure(root: N, measure: &El, meas_spec_cmper: &str, staff_id: Option<i64>) {
     let first_gfhold = grandchildren(root, "details", "gfhold")
         .into_iter()
-        .find(|g| attr(*g, "cmper2").as_deref() == Some(meas_spec_cmper) && has_child(*g, "frame1"));
+        .find(|g| {
+            attr(*g, "cmper2").as_deref() == Some(meas_spec_cmper) && has_child(*g, "frame1")
+        });
     let Some(first_gfhold) = first_gfhold else {
         return;
     };
     let Some(frame) = path_text(first_gfhold, &["frame1"]) else {
         return;
     };
-    let frame_spec = grandchildren(root, "others", "frameSpec").into_iter().find(|f| {
-        attr(*f, "cmper").as_deref() == Some(frame.as_str())
-            && has_child(*f, "startEntry")
-            && has_child(*f, "endEntry")
-    });
+    let frame_spec = grandchildren(root, "others", "frameSpec")
+        .into_iter()
+        .find(|f| {
+            attr(*f, "cmper").as_deref() == Some(frame.as_str())
+                && has_child(*f, "startEntry")
+                && has_child(*f, "endEntry")
+        });
     let Some(frame_spec) = frame_spec else {
         return;
     };
@@ -1251,7 +1335,11 @@ fn add_rest_to_empty_measure(root: N, measure: &El, meas_spec_cmper: &str, staff
     let (type_name, nb_dots) = calculate_type_and_dots(dura);
     let note = sub(measure, "note");
     sub(&note, "rest");
-    sub_text(&note, "duration", &edu_offset(&dura.to_string()).unwrap_or_default());
+    sub_text(
+        &note,
+        "duration",
+        &edu_offset(&dura.to_string()).unwrap_or_default(),
+    );
     let voice = match staff_id {
         Some(sid) => (sid - 1) * 4 + 1,
         None => 1,
@@ -1309,12 +1397,12 @@ fn process_gfholds(
     if has_child(meas_spec, "hasExpr") {
         let expressions = lookup_meas_expressions(root, meas_spec_cmper);
         for mut expression in expressions {
-            let placement = if expression.vert_meas_expr_align.as_deref() == Some("belowStaffOrEntry")
-            {
-                "below"
-            } else {
-                "above"
-            };
+            let placement =
+                if expression.vert_meas_expr_align.as_deref() == Some("belowStaffOrEntry") {
+                    "below"
+                } else {
+                    "above"
+                };
 
             let is_this_staff = expression.staff_assign.as_deref() == Some(staff_spec_cmper);
 
@@ -1445,7 +1533,11 @@ fn process_gfholds(
         set_text(&ending, &format!("{ending_cnt}."));
     }
     if bac_rep_bar {
-        sub_attrs(&barline, "repeat", &[("direction", "backward"), ("winged", "none")]);
+        sub_attrs(
+            &barline,
+            "repeat",
+            &[("direction", "backward"), ("winged", "none")],
+        );
     }
 
     clef_id
@@ -1512,12 +1604,24 @@ fn apply_tuplets(note: &El, notations: &El, dura: i64, tuplet_attributes: &mut V
     tuplet_attributes.retain(|a| !finished.contains(&a.number));
 
     let time_modification = sub(note, "time-modification");
-    sub_text(&time_modification, "actual-notes", &actual_notes.to_string());
-    sub_text(&time_modification, "normal-notes", &normal_notes.to_string());
+    sub_text(
+        &time_modification,
+        "actual-notes",
+        &actual_notes.to_string(),
+    );
+    sub_text(
+        &time_modification,
+        "normal-notes",
+        &normal_notes.to_string(),
+    );
     if is_nested {
         if let Some(first) = tuplet_attributes.first() {
             let (normal_type, _) = calculate_type_and_dots(first.symbolic_dur);
-            sub_text(&time_modification, "normal-type", normal_type.as_deref().unwrap_or(""));
+            sub_text(
+                &time_modification,
+                "normal-type",
+                normal_type.as_deref().unwrap_or(""),
+            );
         }
     }
 }

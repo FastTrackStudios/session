@@ -18,14 +18,14 @@
 use std::collections::BTreeMap;
 
 use crate::config::Config;
-use crate::engine::{CcEvent, OutNote, total_delay_ms};
-use crate::score::{TempoPoint, bpm_at};
+use crate::engine::{total_delay_ms, CcEvent, OutNote};
+use crate::score::{bpm_at, TempoPoint};
 
 /// The annotation model itself lives in `keyflow-annotate` (shared with
 /// signal-sampler's document mode); re-exported for consumers of this pass.
 pub use keyflow_annotate::{
-    CcTimeline, EPS, EdgeParams, LineNote, NoteAnnotation, annotate_line, ks_blocks_rebow,
-    ks_is_con_sord, ks_is_legato_toggle, ks_is_marcato,
+    annotate_line, ks_blocks_rebow, ks_is_con_sord, ks_is_legato_toggle, ks_is_marcato, CcTimeline,
+    EdgeParams, LineNote, NoteAnnotation, EPS,
 };
 
 /// A plain MIDI note (QN domain, 1-based channel) — the exchange type between

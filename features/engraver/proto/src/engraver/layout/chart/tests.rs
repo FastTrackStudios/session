@@ -2397,10 +2397,9 @@ mod slash_continuation_guard {
     fn bare_continuation_slashes_keep_next_chord_on_its_beat() {
         let style = test_style();
         let engine = ChartLayoutEngine::new(style, Arc::new(Vec::new()), Arc::new(Vec::new()));
-        let chart = keyflow_text::chart::parse_chart(
-            "Slash Test\n#A 120bpm 4/4\n\nVS 2\nA //// // D //",
-        )
-        .expect("chart should parse");
+        let chart =
+            keyflow_text::chart::parse_chart("Slash Test\n#A 120bpm 4/4\n\nVS 2\nA //// // D //")
+                .expect("chart should parse");
         let result = engine.layout_chart(&chart, &LayoutMode::default());
 
         let texts = collect_text_command_positions(&result.scene);

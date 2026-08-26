@@ -38,5 +38,8 @@ A //// // D //";
         .iter()
         .filter(|e| matches!(e, RhythmElement::Space(_)))
         .count();
-    assert_eq!(space_beats, 2, "the bare // should become two beats of continuation");
+    assert_eq!(
+        space_beats, 2,
+        "the bare // should become two beats of continuation"
+    );
 }

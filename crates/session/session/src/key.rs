@@ -70,7 +70,11 @@ fn normalize_root(text: &str) -> String {
     match chars.next() {
         Some(first) => {
             let rest: String = chars.collect();
-            format!("{}{}", first.to_ascii_uppercase(), rest.to_ascii_lowercase())
+            format!(
+                "{}{}",
+                first.to_ascii_uppercase(),
+                rest.to_ascii_lowercase()
+            )
         }
         None => String::new(),
     }
@@ -253,7 +257,11 @@ fn keysig_fields(key: &Key) -> (u8, i8, u32) {
     // REAPER's mask describes the scale from its root. A minor key is the
     // major scale rotated, which REAPER spells by giving the relative
     // major's mask against the minor root — so both use the major mask.
-    (key.root.semitone % 12, accidental, dawfile_reaper::keysig::SCALE_MASK_MAJOR)
+    (
+        key.root.semitone % 12,
+        accidental,
+        dawfile_reaper::keysig::SCALE_MASK_MAJOR,
+    )
 }
 
 /// Write the KEY track's changes into the project file's `<KEYSIG>`
@@ -382,7 +390,11 @@ mod tests {
         assert_eq!(parse_key("A aeolian"), parse_key("A minor"));
 
         let from_ionian = parse_key("C ionian").expect("C ionian");
-        assert_eq!(format_key(&from_ionian), "C major", "written as the common name");
+        assert_eq!(
+            format_key(&from_ionian),
+            "C major",
+            "written as the common name"
+        );
     }
 
     #[test]

@@ -606,11 +606,10 @@ VS 1: | 1 4 |
 
         let words = line.derive_segments(LyricSyncLevel::Word);
         assert!(words.iter().any(|word| word.text == "song"));
-        assert!(
-            line.syllables
-                .iter()
-                .any(|syl| syl.text == "ng" && syl.chord.as_deref() == Some("C/G"))
-        );
+        assert!(line
+            .syllables
+            .iter()
+            .any(|syl| syl.text == "ng" && syl.chord.as_deref() == Some("C/G")));
     }
 
     #[test]

@@ -2,7 +2,6 @@
 //!
 //! This exporter writes idiomatic `.kf` syntax for imported charts.
 
-use keyflow_proto::Note;
 use keyflow_proto::chart::melody::Melody;
 use keyflow_proto::chart::notations::{
     Dynamic, FiguredBass, Hairpin, HairpinKind, Placement, RepeatMark, StaffText,
@@ -10,6 +9,7 @@ use keyflow_proto::chart::notations::{
 use keyflow_proto::chart::types::{Measure, RhythmElement};
 use keyflow_proto::key::ScaleMode;
 use keyflow_proto::time::{MusicalDuration, MusicalPositionExt, TimeSignature};
+use keyflow_proto::Note;
 use keyflow_proto::{Chart, ChordRhythm, SectionType};
 
 #[must_use]

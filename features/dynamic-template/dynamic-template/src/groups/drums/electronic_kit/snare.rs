@@ -1,7 +1,7 @@
 //! Electronic snare drum group definition
 
-use crate::item_metadata::ItemMetadataField;
 use crate::item_metadata::prelude::*;
+use crate::item_metadata::ItemMetadataField;
 use monarchy::FieldValueDescriptor;
 
 /// Electronic snare drum group
@@ -45,7 +45,7 @@ impl From<Snare> for ItemMetadataGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DynamicTemplateConfig, default_config};
+    use crate::{default_config, DynamicTemplateConfig};
     use monarchy::{Config, Parser};
 
     type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

@@ -303,7 +303,14 @@ impl CueSchedule {
                 let count_start = section.start_seconds - measure_secs;
                 if count_start >= 0.0 {
                     Self::push_count_pattern(
-                        &mut cues, count_start, 1, num, den, beat_secs, options, true,
+                        &mut cues,
+                        count_start,
+                        1,
+                        num,
+                        den,
+                        beat_secs,
+                        options,
+                        true,
                     );
                 }
             }
@@ -337,7 +344,8 @@ impl CueSchedule {
                     time_seconds: guide_time,
                     event: CueEvent::Guide {
                         keys,
-                        section_type: session_proto::SectionType::parse(&section.section_type_name).ok(),
+                        section_type: session_proto::SectionType::parse(&section.section_type_name)
+                            .ok(),
                     },
                 });
                 guide_times.push(guide_time);

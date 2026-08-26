@@ -14,7 +14,7 @@
 //!   than the Lua engine's on parts with overlapping re-bow runs
 //!   (Trombone 1: 274→272, Violon 1: 1202→1190).
 
-use keyflow_orchestra::{Config, PartOutput, ProfileKind, process_part};
+use keyflow_orchestra::{process_part, Config, PartOutput, ProfileKind};
 
 fn run(part_name: &str, profile: ProfileKind) -> PartOutput {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

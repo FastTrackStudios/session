@@ -25,8 +25,8 @@
 //! No music theory lives here. Grid, labels, pitches and inversions all
 //! come from `keyflow::chord::palette`.
 
-use dioxus::prelude::*;
 use architect_ui::components::{Select, SelectContent, SelectItem};
+use dioxus::prelude::*;
 use keyflow::chord::palette::{ChordCandidate, grid};
 use keyflow::key::Key;
 use keyflow::primitives::MusicalNote;
@@ -68,13 +68,18 @@ struct Slot {
 fn build_key(tonic: &str, minor: bool) -> Key {
     let root = MusicalNote::from_string(tonic)
         .unwrap_or_else(|| MusicalNote::from_string("C").expect("C parses"));
-    if minor { Key::minor(root) } else { Key::major(root) }
+    if minor {
+        Key::minor(root)
+    } else {
+        Key::major(root)
+    }
 }
 
 /// Cell styling carries three facts at once: whether it's the selection,
 /// whether it's in the key, and (via ring) whether it's sounding.
 fn cell_class(selected: bool, in_scale: bool, playing: bool) -> String {
-    let base = "rounded-md border px-1 py-1.5 text-xs text-center cursor-pointer truncate select-none";
+    let base =
+        "rounded-md border px-1 py-1.5 text-xs text-center cursor-pointer truncate select-none";
     let tone = match (selected, in_scale) {
         (true, _) => "bg-primary text-primary-foreground border-primary font-semibold",
         (false, true) => "bg-secondary text-secondary-foreground border-border hover:bg-accent",
@@ -95,7 +100,8 @@ pub fn ChordToolPanel() -> Element {
     let mut inversion = use_signal(|| 0usize);
     let mut selected = use_signal(|| None::<(usize, usize)>);
     let mut playing = use_signal(Vec::<u8>::new);
-    let mut status = use_signal(|| "click to preview · ctrl invert · shift insert · alt add".to_string());
+    let mut status =
+        use_signal(|| "click to preview · ctrl invert · shift insert · alt add".to_string());
     let mut progression = use_signal(Vec::<Slot>::new);
     // Whoever mounted the panel decides where chords go. Nothing
     // provided (the standalone example) falls back to a sink that
@@ -107,7 +113,11 @@ pub fn ChordToolPanel() -> Element {
     let minor = mode() == "minor";
     let key = build_key(&tonic(), minor);
     let columns = grid(&key);
-    let numerals = if minor { MINOR_NUMERALS } else { MAJOR_NUMERALS };
+    let numerals = if minor {
+        MINOR_NUMERALS
+    } else {
+        MAJOR_NUMERALS
+    };
 
     rsx! {
         document::Style { {FTS_THEME} }

@@ -36,7 +36,9 @@ fn xml_text(path: &Path) -> String {
             let lower = name.to_lowercase();
             if !name.starts_with("META-INF")
                 && (lower.ends_with(".xml") || lower.ends_with(".musicxml"))
-                && best.as_ref().is_none_or(|(size, _)| entry.size() as usize > *size)
+                && best
+                    .as_ref()
+                    .is_none_or(|(size, _)| entry.size() as usize > *size)
             {
                 best = Some((entry.size() as usize, name));
             }
@@ -61,8 +63,7 @@ fn check_invariants(path: &Path) {
     let model_notes: usize = inventories.iter().map(|i| i.notes).sum();
     let model_rests: usize = inventories.iter().map(|i| i.rests).sum();
     assert_eq!(
-        model_notes,
-        raw_pitched,
+        model_notes, raw_pitched,
         "every <pitch>/<unpitched> must become one model note ({path:?})"
     );
     assert_eq!(
@@ -149,11 +150,13 @@ fn games_people_play_is_a_full_orchestra() {
     // parts (zero <staves> elements in the file) — assert the clef spread
     // instead: treble and bass families must both be present.
     assert!(
-        inv.iter().any(|i| i.clefs.iter().any(|c| c.starts_with('G'))),
+        inv.iter()
+            .any(|i| i.clefs.iter().any(|c| c.starts_with('G'))),
         "some parts should be treble clef"
     );
     assert!(
-        inv.iter().any(|i| i.clefs.iter().any(|c| c.starts_with('F'))),
+        inv.iter()
+            .any(|i| i.clefs.iter().any(|c| c.starts_with('F'))),
         "some parts should be bass clef"
     );
     // Finale writes plain <rest/> with full-bar durations, never

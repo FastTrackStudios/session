@@ -49,7 +49,7 @@ pub use types::{DetectedChord, MidiChartData, MidiChartRequest};
 // `keyflow-proto`.
 #[cfg(feature = "vox")]
 pub use service::{
+    midi_charts_rpc_service_descriptor as descriptor, midi_charts_service_descriptor, serve,
     MidiChartsClient as Client, MidiChartsClient, MidiChartsDispatcher as Dispatcher,
-    MidiChartsDispatcher, midi_charts_rpc_service_descriptor as descriptor,
-    midi_charts_service_descriptor, serve,
+    MidiChartsDispatcher,
 };

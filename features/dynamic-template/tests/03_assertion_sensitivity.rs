@@ -4,7 +4,7 @@
 //! If any of these tests pass without panicking, it means our assertion is not
 //! sensitive enough to catch the specified type of error.
 
-use daw_proto::{TrackStructureBuilder, assert_tracks_equal};
+use daw_proto::{assert_tracks_equal, TrackStructureBuilder};
 use dynamic_template::*;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

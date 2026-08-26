@@ -12,12 +12,12 @@ use engraver::export::pdf::PdfSerializer;
 use engraver::export::svg::{SvgExportConfig, SvgSerializer};
 use engraver::fonts::ChartFontBundle;
 use engraver::import::{
-    MarkerEvent, MarkerType, MidiChartConfig, MidiFile, MidiNote, MidiTrack, TempoEvent,
-    TimeSignatureEvent, generate_chart_text,
+    generate_chart_text, MarkerEvent, MarkerType, MidiChartConfig, MidiFile, MidiNote, MidiTrack,
+    TempoEvent, TimeSignatureEvent,
 };
 use engraver::layout::chart::{ChartLayoutConfig, LayoutMode};
 use engraver::style::MStyle;
-use keyflow::chord::{MidiNote as KeyflowMidiNote, detect_chords_from_midi_notes};
+use keyflow::chord::{detect_chords_from_midi_notes, MidiNote as KeyflowMidiNote};
 
 fn output_dir() -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/output");

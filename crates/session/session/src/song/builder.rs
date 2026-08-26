@@ -18,10 +18,10 @@
 // `daw::rpc::Project` handle). Native-only.
 #[cfg(not(target_arch = "wasm32"))]
 use daw::reaper::Reaper;
-#[cfg(not(target_arch = "wasm32"))]
-use daw::service::{Markers, ProjectContext, Projects, Regions, TempoMap};
 use daw::rpc::Project;
 use daw::service::{Marker, Region};
+#[cfg(not(target_arch = "wasm32"))]
+use daw::service::{Markers, ProjectContext, Projects, Regions, TempoMap};
 use session_proto::{Comment, Section, SectionId, SectionType, Song, SongId};
 use tracing::{Level, debug, warn};
 

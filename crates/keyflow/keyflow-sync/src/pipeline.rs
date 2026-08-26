@@ -6,7 +6,7 @@
 //! robust than aligning each section against the full mix independently). The
 //! resulting words are then partitioned back to their sections by count.
 
-use crate::align::{EmissionModel, align_words_star, tokenizer::tokenize, transcribe};
+use crate::align::{align_words_star, tokenizer::tokenize, transcribe, EmissionModel};
 use crate::audio::AudioBuffer;
 use crate::error::Result;
 use crate::separator::{StemSelection, StemSeparator};

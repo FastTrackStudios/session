@@ -228,14 +228,10 @@ fn font_size_color_directives_classify_as_style() {
         })
         .collect();
     assert!(styles.iter().any(|(n, v)| *n == "textsize" && *v == "14"));
-    assert!(
-        styles
-            .iter()
-            .any(|(n, v)| *n == "titlefont" && *v == "Helvetica")
-    );
-    assert!(
-        styles
-            .iter()
-            .any(|(n, v)| *n == "tabcolour" && *v == "blue")
-    );
+    assert!(styles
+        .iter()
+        .any(|(n, v)| *n == "titlefont" && *v == "Helvetica"));
+    assert!(styles
+        .iter()
+        .any(|(n, v)| *n == "tabcolour" && *v == "blue"));
 }

@@ -9,7 +9,6 @@ use daw_proto::MusicalPosition;
 use facet::Facet;
 use vox::Tx;
 
-
 /// Measure information for RPC
 #[derive(Clone, Debug, PartialEq, Facet)]
 pub struct MeasureInfo {
@@ -381,7 +380,6 @@ pub use setlist_service::{
     serve as serve_setlist_service, setlist_service_rpc_service_descriptor,
     setlist_service_rpc_service_descriptor as setlist_service_service_descriptor,
 };
-
 
 /// Complete audio latency information for display
 #[derive(Clone, Debug, Default, PartialEq, Facet)]

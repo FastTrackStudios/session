@@ -12,8 +12,8 @@ use musicxml::elements::{
 };
 
 use super::{
-    ArtSet, DegreeKind, DynamicPoint, HarmonyDegree, HarmonyPoint, Marking, MarkingKind,
-    MeterPoint, Part, RawNote, Score, ScoreMeta, TempoPoint, dynamic_from_text, dynamic_mark_value,
+    dynamic_from_text, dynamic_mark_value, ArtSet, DegreeKind, DynamicPoint, HarmonyDegree,
+    HarmonyPoint, Marking, MarkingKind, MeterPoint, Part, RawNote, Score, ScoreMeta, TempoPoint,
 };
 use crate::Error;
 

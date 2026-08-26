@@ -549,24 +549,20 @@ I_2. IV_2. vi_2. V_2.
     // Intro: explicit qualities with slash notation
     let intro = &chart.sections[0];
     assert_eq!(intro.measures().len(), 2);
-    assert!(
-        intro
-            .measures()
-            .iter()
-            .all(|m| matches!(m.chords[0].rhythm, ChordRhythm::Slashes { count: 4, .. }))
-    );
+    assert!(intro
+        .measures()
+        .iter()
+        .all(|m| matches!(m.chords[0].rhythm, ChordRhythm::Slashes { count: 4, .. })));
 
     // Verse: note names with underscore notation (recalls memory)
     // g_4 (1) + c_4 (1) + d_4 (1) + g_4 (1) = 4 beats = 1 measure
     let verse = &chart.sections[1];
     assert_eq!(verse.measures().len(), 1);
     assert_eq!(verse.measures()[0].chords.len(), 4);
-    assert!(
-        verse.measures()[0]
-            .chords
-            .iter()
-            .all(|c| c.rhythm.has_lily_duration())
-    );
+    assert!(verse.measures()[0]
+        .chords
+        .iter()
+        .all(|c| c.rhythm.has_lily_duration()));
 
     // Pre-chorus: scale degrees with slash notation (infers from key)
     // 1// (2) + 4// (2) = 4 beats = measure 0

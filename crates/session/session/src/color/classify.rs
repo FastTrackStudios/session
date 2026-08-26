@@ -163,11 +163,32 @@ mod tests {
     /// trait that no longer exist.
     fn marc_martel_track_names() -> Vec<String> {
         [
-            "Kick In", "Kick Out", "Kick Sample", "Snare Top", "Snare Bottom",
-            "Snare Sample", "Snare Sample Two", "Tom1", "Tom2", "Tom3",
-            "Overhead L", "Overhead R", "Room L", "Room R", "Hat",
-            "Bass DI", "Bass Amp", "Gtr L", "Gtr R", "Gtr Solo",
-            "Piano", "Organ", "Vocal", "BGV1", "BGV2", "BGV3",
+            "Kick In",
+            "Kick Out",
+            "Kick Sample",
+            "Snare Top",
+            "Snare Bottom",
+            "Snare Sample",
+            "Snare Sample Two",
+            "Tom1",
+            "Tom2",
+            "Tom3",
+            "Overhead L",
+            "Overhead R",
+            "Room L",
+            "Room R",
+            "Hat",
+            "Bass DI",
+            "Bass Amp",
+            "Gtr L",
+            "Gtr R",
+            "Gtr Solo",
+            "Piano",
+            "Organ",
+            "Vocal",
+            "BGV1",
+            "BGV2",
+            "BGV3",
         ]
         .into_iter()
         .map(String::from)

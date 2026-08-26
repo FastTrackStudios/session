@@ -1414,9 +1414,7 @@ mod tests {
         let mut style = make_test_style();
         style.text_font_metrics = None;
         style.symbol_font_metrics = None;
-        let params = HarmonyParams::major("C")
-            .at(100.0, 50.0)
-            .with_style(style);
+        let params = HarmonyParams::major("C").at(100.0, 50.0).with_style(style);
 
         let (layout, node) = layout_harmony(&params, &ctx);
 

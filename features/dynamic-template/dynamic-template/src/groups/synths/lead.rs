@@ -1,7 +1,7 @@
 //! Synth lead group definition
 
-use crate::item_metadata::ItemMetadata;
 use crate::item_metadata::prelude::ItemMetadataGroupExt;
+use crate::item_metadata::ItemMetadata;
 use monarchy::Group;
 
 /// Lead synth group

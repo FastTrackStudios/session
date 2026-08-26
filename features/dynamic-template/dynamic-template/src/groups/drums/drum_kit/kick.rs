@@ -44,7 +44,7 @@ impl From<Kick> for ItemMetadataGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DynamicTemplateConfig, default_config};
+    use crate::{default_config, DynamicTemplateConfig};
     use monarchy::{Config, Parser};
 
     type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

@@ -212,16 +212,14 @@ mod tests {
     #[test]
     fn delegates_to_v2_aliases_and_meta() {
         let doc = parse_chordpro("{t: Hi}\n{artist: Trad}\n").unwrap();
-        assert!(
-            doc.directives
-                .iter()
-                .any(|d| d.name == "title" && d.value == "Hi")
-        );
-        assert!(
-            doc.directives
-                .iter()
-                .any(|d| d.name == "artist" && d.value == "Trad")
-        );
+        assert!(doc
+            .directives
+            .iter()
+            .any(|d| d.name == "title" && d.value == "Hi"));
+        assert!(doc
+            .directives
+            .iter()
+            .any(|d| d.name == "artist" && d.value == "Trad"));
     }
 
     #[test]

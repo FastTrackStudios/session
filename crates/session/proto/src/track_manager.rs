@@ -43,7 +43,10 @@ pub trait TrackManagerActions {
     )]
     fn add_multi_mic(&self) -> DawResult<()>;
 
-    #[action(undo, description = "Add a performer folder to the selected track scope")]
+    #[action(
+        undo,
+        description = "Add a performer folder to the selected track scope"
+    )]
     fn add_performer(&self) -> DawResult<()>;
 
     #[action(

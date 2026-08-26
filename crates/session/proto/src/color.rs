@@ -50,7 +50,10 @@ mod tests {
     /// asserts REAPER has them.
     #[test]
     fn ids_match_pre_move_command_ids() {
-        let ids: Vec<_> = AutoColorActionsActions::all().iter().map(|m| m.id).collect();
+        let ids: Vec<_> = AutoColorActionsActions::all()
+            .iter()
+            .map(|m| m.id)
+            .collect();
         assert_eq!(
             ids,
             vec![

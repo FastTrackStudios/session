@@ -4,7 +4,7 @@
 //! toggles (Legato On, Con Sordino On/Off) that have no UACC codes.
 
 use keyflow_orchestra::score::{ArtSet, Part, RawNote};
-use keyflow_orchestra::{Config, process_part};
+use keyflow_orchestra::{process_part, Config};
 
 fn raw(onset: f64, dur: f64, pitch: i32, tags: &[&str]) -> RawNote {
     let mut art = ArtSet::default();

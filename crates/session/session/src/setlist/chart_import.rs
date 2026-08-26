@@ -83,8 +83,7 @@ const DEFAULT_TEMPO_BPM: f64 = 120.0;
 /// section starts at `count_in_seconds`. A section with no explicit bar count
 /// falls back to its kind's default.
 pub fn chart_to_layout(chart_text: &str) -> Result<ChartLayout, ChartImportError> {
-    let chart =
-        keyflow::text::chart::parse_chart(chart_text).map_err(ChartImportError::Parse)?;
+    let chart = keyflow::text::chart::parse_chart(chart_text).map_err(ChartImportError::Parse)?;
     if chart.sections.is_empty() {
         return Err(ChartImportError::Empty);
     }

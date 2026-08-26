@@ -68,15 +68,15 @@ media-type=\"application/vnd.recordare.musicxml+xml\"/>\n  </rootfiles>\n</conta
     {
         let mut zip = zip::ZipWriter::new(&mut cursor);
 
-        let stored = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
+        let stored =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file("mimetype", stored)
             .map_err(|e| Error::Container(e.to_string()))?;
         zip.write_all(b"application/vnd.recordare.musicxml")
             .map_err(|e| Error::Container(e.to_string()))?;
 
-        let deflated = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let deflated =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         zip.start_file(musicxml_filename, deflated)
             .map_err(|e| Error::Container(e.to_string()))?;
         zip.write_all(musicxml)
@@ -87,8 +87,7 @@ media-type=\"application/vnd.recordare.musicxml+xml\"/>\n  </rootfiles>\n</conta
         zip.write_all(container.as_bytes())
             .map_err(|e| Error::Container(e.to_string()))?;
 
-        zip.finish()
-            .map_err(|e| Error::Container(e.to_string()))?;
+        zip.finish().map_err(|e| Error::Container(e.to_string()))?;
     }
     Ok(cursor.into_inner())
 }

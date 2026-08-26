@@ -4,8 +4,8 @@
 
 use session_guide::count_in::{CountInCalculator, CountInPattern};
 use session_guide::{
-    AudioSample, BlockClock, CueEvent, CueSchedule, GuideConfig, GuideEngine, GuideSection,
-    GuideSongTiming, ScheduleOptions, tts_cue_key,
+    tts_cue_key, AudioSample, BlockClock, CueEvent, CueSchedule, GuideConfig, GuideEngine,
+    GuideSection, GuideSongTiming, ScheduleOptions,
 };
 
 // ─── CountInCalculator ──────────────────────────────────────────────────
@@ -708,7 +708,10 @@ fn counts_into_each_new_section_and_dedupes_repeats() {
         .collect();
     assert!(count_ones.contains(&6.0), "no count into Verse 1");
     assert!(count_ones.contains(&14.0), "no count into Chorus 3");
-    assert!(count_ones.contains(&30.0), "no count into the returning Verse 1");
+    assert!(
+        count_ones.contains(&30.0),
+        "no count into the returning Verse 1"
+    );
     assert!(
         !count_ones.contains(&22.0),
         "the repeated Chorus 3 must NOT be counted into"
@@ -743,7 +746,11 @@ struct TwoTempoMap {
 
 impl TwoTempoMap {
     fn tempo_at(&self, seconds: f64) -> f64 {
-        if seconds < self.change_seconds { self.bpm_a } else { self.bpm_b }
+        if seconds < self.change_seconds {
+            self.bpm_a
+        } else {
+            self.bpm_b
+        }
     }
 
     fn seconds_to_beat(&self, seconds: f64) -> f64 {
@@ -773,7 +780,11 @@ fn tempo_map_render_places_clicks_and_counts_sample_accurately() {
     const TOTAL: usize = 6000; // 6 s
 
     // 120 bpm for the first 2 s (beats 0..=4), then 60 bpm.
-    let map = TwoTempoMap { bpm_a: 120.0, bpm_b: 60.0, change_seconds: 2.0 };
+    let map = TwoTempoMap {
+        bpm_a: 120.0,
+        bpm_b: 60.0,
+        change_seconds: 2.0,
+    };
 
     let mut engine = GuideEngine::new(GuideConfig {
         enable_measure_accent: false, // plain beat everywhere: positions only
@@ -822,7 +833,11 @@ fn tempo_map_render_places_clicks_and_counts_sample_accurately() {
     }
 
     let hits = |buf: &[f32]| -> Vec<usize> {
-        buf.iter().enumerate().filter(|(_, v)| **v != 0.0).map(|(i, _)| i).collect()
+        buf.iter()
+            .enumerate()
+            .filter(|(_, v)| **v != 0.0)
+            .map(|(i, _)| i)
+            .collect()
     };
 
     // Quarter notes: every 0.5 s at 120 bpm, every 1.0 s at 60 bpm.

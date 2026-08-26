@@ -159,7 +159,9 @@ async fn per_song_project_demo_setlist_holds_order_and_tempo() -> eyre::Result<(
             "  {:<24} tempo={:?} ts={:?} start={:.2}s count_in={:?} {} sections",
             s.name,
             s.tempo,
-            s.time_signature.as_ref().map(|t| (t.numerator, t.denominator)),
+            s.time_signature
+                .as_ref()
+                .map(|t| (t.numerator, t.denominator)),
             s.start_seconds,
             s.count_in_seconds,
             s.sections.len(),
@@ -301,7 +303,10 @@ async fn section_numbering_resets_per_song() -> eyre::Result<()> {
 
     let bundle = build_in_process_daw(seeded_stamped()).await?;
     let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
-    assert!(setlist.songs.len() >= 2, "need multiple songs to test per-song reset");
+    assert!(
+        setlist.songs.len() >= 2,
+        "need multiple songs to test per-song reset"
+    );
 
     for song in &setlist.songs {
         // Collect the trailing number of each numbered section, keyed by its
@@ -417,7 +422,9 @@ async fn transport_stream_inner() -> eyre::Result<()> {
     }
 
     let reported = project.transport().get_position().await.unwrap_or(-1.0);
-    println!("[transport] ticks={ticks} first={first_pos:?} last={last_pos} reported={reported:.3}");
+    println!(
+        "[transport] ticks={ticks} first={first_pos:?} last={last_pos} reported={reported:.3}"
+    );
 
     assert!(
         ticks > 3,

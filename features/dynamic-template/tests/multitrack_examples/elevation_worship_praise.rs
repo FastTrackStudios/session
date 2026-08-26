@@ -92,8 +92,18 @@ fn elevation_worship_praise() -> Result<()> {
     );
 
     // Helper: assert an item's top-level folder + owning node name.
-    let top_of = |file: &str| placement.get(file).map(|(t, _)| t.clone()).unwrap_or_default();
-    let node_of = |file: &str| placement.get(file).map(|(_, n)| n.clone()).unwrap_or_default();
+    let top_of = |file: &str| {
+        placement
+            .get(file)
+            .map(|(t, _)| t.clone())
+            .unwrap_or_default()
+    };
+    let node_of = |file: &str| {
+        placement
+            .get(file)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_default()
+    };
 
     // ── Guide: Click + Cue (Cue is a proper Cue track, not "Dynamic Cues") ──
     assert_eq!(top_of("01 - Click.wav"), "Guide");
@@ -117,7 +127,11 @@ fn elevation_worship_praise() -> Result<()> {
     assert_eq!(node_of("06 - Choir.wav"), "Choir");
 
     // ── Bass: electric + synth basses under the Bass folder ──
-    for f in ["10 - Electric Bass 1.wav", "11 - Electric Bass 2.wav", "12 - Synth Bass.wav"] {
+    for f in [
+        "10 - Electric Bass 1.wav",
+        "11 - Electric Bass 2.wav",
+        "12 - Synth Bass.wav",
+    ] {
         assert_eq!(top_of(f), "Bass", "{f} should be under Bass");
     }
 

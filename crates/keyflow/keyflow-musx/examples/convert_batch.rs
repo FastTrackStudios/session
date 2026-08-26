@@ -15,11 +15,16 @@ use rayon::prelude::*;
 
 fn collect(path: &std::path::Path, out: &mut Vec<PathBuf>) {
     if path.is_dir() {
-        let Ok(entries) = std::fs::read_dir(path) else { return };
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
         for e in entries.flatten() {
             collect(&e.path(), out);
         }
-    } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("musx")) {
+    } else if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("musx"))
+    {
         out.push(path.to_path_buf());
     }
 }
@@ -40,7 +45,11 @@ fn main() {
     }
     inputs.sort();
 
-    let (done, skipped, failed) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0));
+    let (done, skipped, failed) = (
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    );
     let started = Instant::now();
     inputs.par_iter().for_each(|input| {
         let out = input.with_extension("musicxml");
@@ -58,12 +67,20 @@ fn main() {
         match result {
             Ok(()) => {
                 done.fetch_add(1, Ordering::Relaxed);
-                eprintln!("ok   {:>7.1}s  {}", t.elapsed().as_secs_f32(), input.display());
+                eprintln!(
+                    "ok   {:>7.1}s  {}",
+                    t.elapsed().as_secs_f32(),
+                    input.display()
+                );
             }
             Err(e) => {
                 failed.fetch_add(1, Ordering::Relaxed);
                 let _ = std::fs::remove_file(&out);
-                eprintln!("FAIL {:>7.1}s  {} — {e}", t.elapsed().as_secs_f32(), input.display());
+                eprintln!(
+                    "FAIL {:>7.1}s  {} — {e}",
+                    t.elapsed().as_secs_f32(),
+                    input.display()
+                );
             }
         }
     });

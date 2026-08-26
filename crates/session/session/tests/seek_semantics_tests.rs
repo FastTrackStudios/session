@@ -17,9 +17,9 @@ use daw_proto::transport::service::Transport;
 use daw_proto::{ProjectContext, ProjectInfo};
 use daw_standalone::bootstrap::build_in_process_daw;
 use daw_standalone::sync::Standalone;
+use session::SetlistServiceImpl;
 use session::services::SetlistService;
 use session::setlist::service::demo::stamp_demo_setlist_with;
-use session::SetlistServiceImpl;
 
 fn seeded_stamped() -> Standalone {
     let standalone = Standalone::new();
@@ -79,7 +79,9 @@ async fn inner() -> eyre::Result<()> {
     svc.seek_to_section(0, 0)
         .await
         .map_err(|e| eyre::eyre!("seek_to_section: {e:?}"))?;
-    let active = svc.active_song().map_err(|e| eyre::eyre!("active_song: {e:?}"))?;
+    let active = svc
+        .active_song()
+        .map_err(|e| eyre::eyre!("active_song: {e:?}"))?;
     assert_eq!(active.name, song0.name, "opened on song 0");
 
     // ── 1. A PAUSED mid-song seek must land ────────────────────────────────
@@ -93,7 +95,9 @@ async fn inner() -> eyre::Result<()> {
         (p - want).abs() < 0.5,
         "paused seek_to({mid:.2}) must land at {want:.2}s abs (got {p:.2}s)"
     );
-    let active = svc.active_song().map_err(|e| eyre::eyre!("active_song: {e:?}"))?;
+    let active = svc
+        .active_song()
+        .map_err(|e| eyre::eyre!("active_song: {e:?}"))?;
     assert_eq!(active.name, song0.name, "mid-song seek stays on song 0");
 
     // ── 2. An out-of-range seek CLAMPS inside the song (never crosses) ─────
@@ -107,7 +111,9 @@ async fn inner() -> eyre::Result<()> {
             "seek_to({wild:.1}) must clamp INSIDE song 0 (end {:.2}s), got {p:.2}s",
             song0.end_seconds()
         );
-        let active = svc.active_song().map_err(|e| eyre::eyre!("active_song: {e:?}"))?;
+        let active = svc
+            .active_song()
+            .map_err(|e| eyre::eyre!("active_song: {e:?}"))?;
         assert_eq!(
             active.name, song0.name,
             "seek_to({wild:.1}) must not jump to another song"

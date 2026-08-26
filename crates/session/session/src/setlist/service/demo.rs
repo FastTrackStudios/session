@@ -634,7 +634,11 @@ fn layout_worship_song(
     let song_end = duration_s.max(song_start + measure);
     let tail = 4.0;
 
-    let total_w: f64 = sections.iter().map(|(_, w)| (*w).max(1) as f64).sum::<f64>().max(1.0);
+    let total_w: f64 = sections
+        .iter()
+        .map(|(_, w)| (*w).max(1) as f64)
+        .sum::<f64>()
+        .max(1.0);
     let span = song_end - song_start;
     let mut demo_sections = Vec::with_capacity(sections.len());
     let mut t = song_start;
@@ -727,7 +731,10 @@ const SONG_CHARTS: &[(&str, &str)] = &[
 /// serve it to remotes even without a MIDI chart-analysis service — the
 /// browser chart pane renders from exactly this text.
 pub fn demo_chart_for(name: &str) -> Option<&'static str> {
-    SONG_CHARTS.iter().find(|(n, _)| *n == name).map(|&(_, c)| c)
+    SONG_CHARTS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|&(_, c)| c)
 }
 
 /// The setlist order. Each song uses its chart if we have one, else the

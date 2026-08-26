@@ -55,11 +55,7 @@ pub fn attr(node: Node, name: &str) -> Option<String> {
 
 /// All `container/name` grandchildren under `root` — the common
 /// `/f:finale/f:<container>/f:<name>` XPath shape.
-pub fn grandchildren<'a, 'i>(
-    root: Node<'a, 'i>,
-    container: &str,
-    name: &str,
-) -> Vec<Node<'a, 'i>> {
+pub fn grandchildren<'a, 'i>(root: Node<'a, 'i>, container: &str, name: &str) -> Vec<Node<'a, 'i>> {
     let mut out = Vec::new();
     for c in children(root, container) {
         out.extend(children(c, name));

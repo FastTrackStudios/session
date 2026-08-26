@@ -179,9 +179,21 @@ mod tests {
         assert_eq!(
             secs,
             vec![
-                RecoveredSection { kf: "In", start_bar: 0, bars: 4 },
-                RecoveredSection { kf: "Refrain", start_bar: 4, bars: 8 },
-                RecoveredSection { kf: "CH", start_bar: 12, bars: 1 },
+                RecoveredSection {
+                    kf: "In",
+                    start_bar: 0,
+                    bars: 4
+                },
+                RecoveredSection {
+                    kf: "Refrain",
+                    start_bar: 4,
+                    bars: 8
+                },
+                RecoveredSection {
+                    kf: "CH",
+                    start_bar: 12,
+                    bars: 1
+                },
             ]
         );
     }

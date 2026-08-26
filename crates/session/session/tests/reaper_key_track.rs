@@ -19,7 +19,11 @@ use keyflow::primitives::MusicalNote;
 
 fn key_of(root: &str, major: bool) -> Key {
     let note = MusicalNote::from_string(root).expect("a note");
-    if major { Key::major(note) } else { Key::minor(note) }
+    if major {
+        Key::major(note)
+    } else {
+        Key::minor(note)
+    }
 }
 
 /// A key written into an item's label comes back as the same key. This is
@@ -52,9 +56,7 @@ async fn key_track_round_trips_through_reaper(
 /// Several changes, each on its own item, stay distinct and keep their
 /// positions — the property "the key at bar N" depends on.
 #[reaper_test(isolated)]
-async fn key_changes_keep_their_positions(
-    ctx: &daw::test::ReaperTestContext,
-) -> eyre::Result<()> {
+async fn key_changes_keep_their_positions(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let project = ctx.project().clone();
     let track = project.tracks().add(KEY_TRACK, None).await?;
 
@@ -72,7 +74,6 @@ async fn key_changes_keep_their_positions(
 
     let items = track.items().all().await?;
     assert_eq!(items.len(), 3, "one item per change");
-
 
     let mut found: Vec<(f64, String)> = Vec::new();
     for info in items {
@@ -148,7 +149,9 @@ async fn key_positions_convert_to_the_right_measures(
     let bar = 2.0; // 120bpm, 4/4
     for (i, seconds) in [0.0, bar * 4.0, bar * 8.0].iter().enumerate() {
         let (measure, beat, _) = project.tempo_map().time_to_musical(*seconds).await?;
-        ctx.log(&format!("{seconds}s -> REAPER measure {measure}, beat {beat}"));
+        ctx.log(&format!(
+            "{seconds}s -> REAPER measure {measure}, beat {beat}"
+        ));
         assert_eq!(
             measure as usize,
             i * 4 + 1,

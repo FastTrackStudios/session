@@ -29,9 +29,9 @@ pub mod profile;
 pub mod score;
 
 pub use config::Config;
-pub use engine::{PartOutput, process_part};
-pub use mirror::{MidiNote, MirrorOutput, mirror_part};
-pub use profile::{Profile, ProfileKind, detect_profile};
+pub use engine::{process_part, PartOutput};
+pub use mirror::{mirror_part, MidiNote, MirrorOutput};
+pub use profile::{detect_profile, Profile, ProfileKind};
 pub use score::Score;
 
 #[derive(Debug, thiserror::Error)]

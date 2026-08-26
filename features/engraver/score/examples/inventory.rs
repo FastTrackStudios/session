@@ -18,9 +18,9 @@ fn main() {
                 .filter_map(Result::ok)
                 .map(|e| e.path())
                 .filter(|p| {
-                    p.extension()
-                        .and_then(|e| e.to_str())
-                        .is_some_and(|e| e.eq_ignore_ascii_case("musicxml") || e.eq_ignore_ascii_case("mxl"))
+                    p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                        e.eq_ignore_ascii_case("musicxml") || e.eq_ignore_ascii_case("mxl")
+                    })
                 })
                 .collect();
             entries.sort();
@@ -47,13 +47,24 @@ fn main() {
                     measures,
                     notes,
                     rests,
-                    score.work_title.or(score.movement_title).unwrap_or_default(),
+                    score
+                        .work_title
+                        .or(score.movement_title)
+                        .unwrap_or_default(),
                 );
                 if std::env::var("INVENTORY_VERBOSE").is_ok() {
                     for i in &inv {
                         println!(
                             "     - {:32} staves={} chords={:5} notes={:6} rests={:5} voices={:?} clefs={:?} keys={:?} times={:?}",
-                            i.name, i.staves, i.chords, i.notes, i.rests, i.voices, i.clefs, i.keys, i.times
+                            i.name,
+                            i.staves,
+                            i.chords,
+                            i.notes,
+                            i.rests,
+                            i.voices,
+                            i.clefs,
+                            i.keys,
+                            i.times
                         );
                     }
                 }

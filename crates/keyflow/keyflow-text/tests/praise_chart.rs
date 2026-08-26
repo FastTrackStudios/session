@@ -91,10 +91,6 @@ fn praise_chart_round_trips() {
         let s = &chart.sections[i].section;
         assert_eq!(s.section_type.full_name(), *ty, "section {i} type");
         assert_eq!(s.measure_count, Some(*measures), "section {i} measures");
-        assert_eq!(
-            s.comment.as_deref(),
-            *comment,
-            "section {i} comment"
-        );
+        assert_eq!(s.comment.as_deref(), *comment, "section {i} comment");
     }
 }

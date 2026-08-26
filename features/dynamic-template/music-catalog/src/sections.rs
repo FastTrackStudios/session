@@ -3,8 +3,8 @@
 //! This is the canonical source for section colors used by both the
 //! auto-color system (REAPER regions/markers) and the keyflow UI.
 
-use color_palette::Color;
 use color_palette::palette;
+use color_palette::Color;
 
 // ============================================================================
 // Guide / Utility track colors

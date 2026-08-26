@@ -5,6 +5,7 @@ use super::{
     ACTIVE_INDICES_PROGRESS_EMIT_MS, PROJECT_SWITCH_DEBOUNCE_MS, SetlistServiceImpl,
     TRANSPORT_PROGRESS_EPSILON, TRANSPORT_TIME_EPSILON_SECS,
 };
+use architect::platform::Instant;
 use daw::rpc::Daw;
 use daw::service::transport::service::Transport;
 use daw::service::{AudioEngine, ProjectContext, Projects};
@@ -17,7 +18,6 @@ use smallvec::SmallVec;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use architect::platform::Instant;
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError as BroadcastRecvError;
 use tokio::sync::{broadcast, mpsc, watch};
@@ -549,7 +549,8 @@ where
             let setlist = this.setlist.read().await;
             if let Some(ref sl) = *setlist {
                 // Send initial setlist state.
-                self.events_hub.publish(SetlistEvent::SetlistChanged(sl.clone()));
+                self.events_hub
+                    .publish(SetlistEvent::SetlistChanged(sl.clone()));
                 sl.songs.clone()
             } else {
                 // Build produced nothing (e.g. no open projects). Stay
@@ -717,7 +718,8 @@ where
                 .enumerate()
                 .map(|(idx, song)| (song.id.to_string(), idx))
                 .collect();
-            self.events_hub.publish(SetlistEvent::SetlistChanged(setlist));
+            self.events_hub
+                .publish(SetlistEvent::SetlistChanged(setlist));
         }
         ControlFlow::Continue(())
     }
@@ -775,7 +777,10 @@ where
         &self,
         st: &mut StreamState,
         daw: &Daw,
-        ev: Result<Option<vox::SelfRef<daw::service::transport::TransportStreamEvent>>, vox::RxError>,
+        ev: Result<
+            Option<vox::SelfRef<daw::service::transport::TransportStreamEvent>>,
+            vox::RxError,
+        >,
     ) -> ControlFlow<()> {
         let this = self;
         // Only position ticks drive per-song updates; state-only
@@ -819,8 +824,7 @@ where
                     .and_then(|id| st.song_id_to_index.get(id).copied());
 
                 if let Some(song_indices) = st.guid_to_indices.get(&project_guid) {
-                    let is_playing = transport_state.play_state
-                        == daw::service::PlayState::Playing
+                    let is_playing = transport_state.play_state == daw::service::PlayState::Playing
                         || transport_state.play_state == daw::service::PlayState::Recording;
 
                     // Use playhead position when playing, edit cursor when stopped
@@ -849,20 +853,29 @@ where
                         })
                         // Fallback: nearest song in this project
                         .or_else(|| {
-                            song_indices
-                                .iter()
-                                .copied()
-                                .min_by(|&a, &b| {
-                                    let dist_a = setlist_ref.songs.get(a).map(|s| {
-                                        (pos_secs - s.start_seconds).abs()
+                            song_indices.iter().copied().min_by(|&a, &b| {
+                                let dist_a = setlist_ref
+                                    .songs
+                                    .get(a)
+                                    .map(|s| {
+                                        (pos_secs - s.start_seconds)
+                                            .abs()
                                             .min((pos_secs - s.end_seconds).abs())
-                                    }).unwrap_or(f64::MAX);
-                                    let dist_b = setlist_ref.songs.get(b).map(|s| {
-                                        (pos_secs - s.start_seconds).abs()
+                                    })
+                                    .unwrap_or(f64::MAX);
+                                let dist_b = setlist_ref
+                                    .songs
+                                    .get(b)
+                                    .map(|s| {
+                                        (pos_secs - s.start_seconds)
+                                            .abs()
                                             .min((pos_secs - s.end_seconds).abs())
-                                    }).unwrap_or(f64::MAX);
-                                    dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
-                                })
+                                    })
+                                    .unwrap_or(f64::MAX);
+                                dist_a
+                                    .partial_cmp(&dist_b)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
                         });
 
                     // Emit transport for all songs in this project
@@ -890,7 +903,9 @@ where
 
                                 if current_section != last_section {
                                     if let Some(sec_idx) = last_section {
-                                        let section_id = song.sections.get(sec_idx)
+                                        let section_id = song
+                                            .sections
+                                            .get(sec_idx)
                                             .map(|s| s.section_id.clone())
                                             .unwrap_or_else(session_proto::SectionId::new);
                                         pending_section_events.push(SetlistEvent::SectionExited {
@@ -902,15 +917,16 @@ where
                                     }
 
                                     if let Some(sec_idx) = current_section
-                                        && let Some(section) = song.sections.get(sec_idx) {
-                                            pending_section_events.push(SetlistEvent::SectionEntered {
-                                                song_id: song.id.clone(),
-                                                song_index,
-                                                section_id: section.section_id.clone(),
-                                                section_index: sec_idx,
-                                                section: section.clone(),
-                                            });
-                                        }
+                                        && let Some(section) = song.sections.get(sec_idx)
+                                    {
+                                        pending_section_events.push(SetlistEvent::SectionEntered {
+                                            song_id: song.id.clone(),
+                                            song_index,
+                                            section_id: section.section_id.clone(),
+                                            section_index: sec_idx,
+                                            section: section.clone(),
+                                        });
+                                    }
 
                                     st.last_section_by_song.insert(song_index, current_section);
                                 }
@@ -969,17 +985,14 @@ where
 
                     // Only send if changed. Structural changes are immediate;
                     // progress-only changes are throttled to reduce UI churn.
-                    let structural_change = Self::active_indices_structural_changed(
-                        &st.last_indices,
-                        &current_indices,
-                    );
+                    let structural_change =
+                        Self::active_indices_structural_changed(&st.last_indices, &current_indices);
                     let progress_change = current_indices.song_progress
                         != st.last_indices.song_progress
                         || current_indices.section_progress != st.last_indices.section_progress;
                     let can_emit_progress = st.last_indices_progress_emit.elapsed()
                         >= Duration::from_millis(ACTIVE_INDICES_PROGRESS_EMIT_MS);
-                    let song_changed =
-                        current_indices.song_index != st.last_indices.song_index;
+                    let song_changed = current_indices.song_index != st.last_indices.song_index;
 
                     // ── Auto-advance: when a song ends, optionally navigate to next ──
                     if let Some(song_idx) = current_indices.song_index {
@@ -994,10 +1007,7 @@ where
                             st.auto_advance_triggered_for = None;
                         }
 
-                        if near_end
-                            && stopped
-                            && st.auto_advance_triggered_for != Some(song_idx)
-                        {
+                        if near_end && stopped && st.auto_advance_triggered_for != Some(song_idx) {
                             // Extract advance decision under the read lock, then drop it
                             // before performing any async navigation.
                             let should_advance = {
@@ -1211,8 +1221,8 @@ where
                     st.chart_update_count += 1;
                     st.chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
                 } else if elapsed >= Duration::from_millis(25) {
-                    st.chart_probe_poll_ms =
-                        (st.chart_probe_poll_ms.saturating_mul(2)).min(ACTIVE_HYDRATION_POLL_MAX_MS);
+                    st.chart_probe_poll_ms = (st.chart_probe_poll_ms.saturating_mul(2))
+                        .min(ACTIVE_HYDRATION_POLL_MAX_MS);
                 } else {
                     // Keep lightweight probes responsive while idle.
                     st.chart_probe_poll_ms =
@@ -1858,8 +1868,6 @@ where
     // Subscriptions — delegate to polling.rs
     // =========================================================================
 
-
-
     async fn get_audio_latency(&self) -> Result<f64, SessionServiceError> {
         self.get_audio_latency_impl().await
     }
@@ -1940,11 +1948,11 @@ mod tests {
             &song,
             1,
             position,
-            false,   // is_playing
-            false,   // is_looping
-            None,    // loop_region
-            127.0,   // project transport tempo (WRONG for this song)
-            (4, 4),  // project transport time sig (WRONG for this song)
+            false,  // is_playing
+            false,  // is_looping
+            None,   // loop_region
+            127.0,  // project transport tempo (WRONG for this song)
+            (4, 4), // project transport time sig (WRONG for this song)
         );
 
         assert_eq!(t.bpm, 72.0, "badge must show the song's own tempo, not 127");
@@ -1968,7 +1976,14 @@ mod tests {
         let position = Position::from_time(PositionInSeconds::from_seconds(1.0));
 
         let t = SetlistServiceImpl::<Standalone>::calculate_song_transport(
-            &song, 0, position, false, false, None, 140.0, (3, 4),
+            &song,
+            0,
+            position,
+            false,
+            false,
+            None,
+            140.0,
+            (3, 4),
         );
 
         assert_eq!(t.bpm, 140.0);

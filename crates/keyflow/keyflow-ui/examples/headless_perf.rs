@@ -7,9 +7,9 @@ use anyrender::ImageRenderer;
 #[cfg(feature = "desktop-panels")]
 use anyrender_vello::VelloImageRenderer;
 #[cfg(feature = "desktop-panels")]
-use keyflow_ui::ChartLayoutManager;
-#[cfg(feature = "desktop-panels")]
 use keyflow_ui::examples::{EMPTY_CHART, EXAMPLE_THRILLER};
+#[cfg(feature = "desktop-panels")]
+use keyflow_ui::ChartLayoutManager;
 #[cfg(feature = "desktop-panels")]
 use kurbo::Affine;
 

@@ -11,8 +11,7 @@ use daw_reaper::track::{
 };
 
 use crate::{
-    ItemMetadata, OrganizeIntoTracks, Structure, default_config, monarchy_sort,
-    track_schema,
+    default_config, monarchy_sort, track_schema, ItemMetadata, OrganizeIntoTracks, Structure,
 };
 /// Every action this module declares, in one list.
 ///
@@ -164,9 +163,7 @@ fn is_dispatchable(id: &str) -> bool {
         "FTS_DYNAMIC_TEMPLATE_CREATE_NEW_",
     ];
 
-    KNOWN.contains(&id)
-        || UNIMPLEMENTED.contains(&id)
-        || PREFIXES.iter().any(|p| id.starts_with(p))
+    KNOWN.contains(&id) || UNIMPLEMENTED.contains(&id) || PREFIXES.iter().any(|p| id.starts_with(p))
 }
 
 fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<()> {
@@ -214,9 +211,9 @@ fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<
             let suffix = cmd.strip_prefix(create_prefix).unwrap();
             create_template_group(suffix)?;
         }
-        n if UNIMPLEMENTED.contains(&n) => tracing::warn!(
-            "[dynamic-template] {command_name} is declared but not implemented yet"
-        ),
+        n if UNIMPLEMENTED.contains(&n) => {
+            tracing::warn!("[dynamic-template] {command_name} is declared but not implemented yet")
+        }
         _ => tracing::debug!("[dynamic-template] unhandled action: {command_name}"),
     }
     Ok(())

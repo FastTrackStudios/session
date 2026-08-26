@@ -283,7 +283,8 @@ fn reorganize_actions_require_selection_and_no_op() {
     let electric_gtr = daw.insert_track("Electric GTR").unwrap();
     daw.select(&electric_gtr).unwrap();
     tm.reorganize_selected_by_performer().expect("performer");
-    tm.reorganize_selected_by_arrangement().expect("arrangement");
+    tm.reorganize_selected_by_arrangement()
+        .expect("arrangement");
 
     let expected = TrackStructureBuilder::new().track("Electric GTR").build();
     assert_tracks_equal(&hierarchy_of(&daw), &expected).unwrap();

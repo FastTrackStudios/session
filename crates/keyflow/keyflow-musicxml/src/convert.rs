@@ -1208,8 +1208,8 @@ fn ticks_to_lily_duration(ticks: u32, divisions: u32) -> (u8, bool) {
     // Express ticks as a fraction of a whole note (whole = 4 * divisions).
     let whole = (divisions as u64) * 4;
     let ratio = (ticks as u64 * 64) / whole.max(1); // 64ths
-    // Look up the closest entry in a small table. Each row is
-    // (64ths, lily_dur, dotted).
+                                                    // Look up the closest entry in a small table. Each row is
+                                                    // (64ths, lily_dur, dotted).
     let table: &[(u64, u8, bool)] = &[
         (96, 1, true),  // dotted whole
         (64, 1, false), // whole

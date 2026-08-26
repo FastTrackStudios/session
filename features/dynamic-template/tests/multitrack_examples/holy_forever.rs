@@ -37,7 +37,11 @@ fn holy_forever() {
     assert!(ing("Holy Forever - Bass.wav", "Bass"));
     assert!(ing("Holy Forever - Synth Bass.wav", "Bass"));
     // Guitars: acoustic + both electrics.
-    for f in ["Holy Forever - AG.wav", "Holy Forever - EG 1.wav", "Holy Forever - EG 2.wav"] {
+    for f in [
+        "Holy Forever - AG.wav",
+        "Holy Forever - EG 1.wav",
+        "Holy Forever - EG 2.wav",
+    ] {
         assert!(ing(f, "Guitars"), "{f} should be under Guitars");
     }
     // Keys: three keys layers + piano.

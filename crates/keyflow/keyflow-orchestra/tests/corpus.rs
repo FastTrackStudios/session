@@ -51,7 +51,7 @@ fn all_corpus_files_parse() {
 
 #[test]
 fn engine_runs_on_all_corpus_parts_and_invariants_hold() {
-    use keyflow_orchestra::{Config, detect_profile, process_part};
+    use keyflow_orchestra::{detect_profile, process_part, Config};
     for f in corpus_files() {
         let name = f.file_name().unwrap().to_string_lossy().to_string();
         let score = keyflow_orchestra::score::load(&f).expect("parse");

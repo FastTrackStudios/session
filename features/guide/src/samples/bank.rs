@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::warn;
 
-use super::{AudioSample, load_wav};
+use super::{load_wav, AudioSample};
 
 /// Click sound selection (legacy `ClickSound`, minus the nih-plug derive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -315,7 +315,11 @@ impl SampleBank {
         // a recognizable count-in, not a melodic run of random beeps.
         for (i, slot) in self.counts.iter_mut().enumerate() {
             if slot.is_none() {
-                let (freq, gain) = if i == 0 { (1_760.0, 0.6) } else { (1_320.0, 0.5) };
+                let (freq, gain) = if i == 0 {
+                    (1_760.0, 0.6)
+                } else {
+                    (1_320.0, 0.5)
+                };
                 *slot = Some(synth_tick(freq, 55.0, gain, sample_rate));
             }
         }

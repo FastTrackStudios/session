@@ -6,10 +6,10 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use daw::rpc::{Daw, Project};
-use keyflow::chord::{MidiNote as KeyflowMidiNote, detect_chords_from_midi_notes};
+use keyflow::chord::{detect_chords_from_midi_notes, MidiNote as KeyflowMidiNote};
 use keyflow::engraver::import::{
-    MarkerEvent, MarkerType, MidiChartConfig, MidiFile, MidiNote as ImportMidiNote, MidiTrack,
-    TempoEvent, TimeSignatureEvent, generate_chart_text,
+    generate_chart_text, MarkerEvent, MarkerType, MidiChartConfig, MidiFile,
+    MidiNote as ImportMidiNote, MidiTrack, TempoEvent, TimeSignatureEvent,
 };
 use tracing::warn;
 

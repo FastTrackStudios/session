@@ -19,8 +19,8 @@ use architect::action::ActionBackend;
 use daw::service::ProjectContext;
 use daw::service::transport::service::Transport as TransportService;
 use daw::service::{Markers, Projects, Regions, TempoMap};
-use tokio::sync::RwLock;
 use session_proto::{AdvanceMode, Setlist, Song};
+use tokio::sync::RwLock;
 
 use crate::setlist::service::SetlistServiceImpl;
 use crate::song::builder::SongBuilder;

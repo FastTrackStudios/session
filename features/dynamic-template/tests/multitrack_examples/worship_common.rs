@@ -57,11 +57,7 @@ pub fn organize(label: &str, items: &[&str]) -> (HashMap<String, (String, String
 /// True if `file` belongs to group `g` — either directly (a single-member
 /// group becomes a top-level track *named* after the group: node == g) or
 /// nested (a multi-member group becomes a folder: top-level folder == g).
-pub fn in_group(
-    placement: &HashMap<String, (String, String)>,
-    file: &str,
-    g: &str,
-) -> bool {
+pub fn in_group(placement: &HashMap<String, (String, String)>, file: &str, g: &str) -> bool {
     placement
         .get(file)
         .map(|(top, node)| top == g || node == g)

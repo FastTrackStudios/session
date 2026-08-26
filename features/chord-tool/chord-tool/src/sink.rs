@@ -58,6 +58,8 @@ impl ChordSink for LogSink {
     }
 
     fn insert(&self, notes: &[u8], beats: u32) -> Result<(), String> {
-        Err(format!("no DAW attached — would insert {notes:?} for {beats} beats"))
+        Err(format!(
+            "no DAW attached — would insert {notes:?} for {beats} beats"
+        ))
     }
 }

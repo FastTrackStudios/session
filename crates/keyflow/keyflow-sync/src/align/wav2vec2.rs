@@ -10,9 +10,9 @@ use ndarray::Array2;
 use ort::session::Session;
 use ort::value::Tensor;
 
-use super::EmissionModel;
 use super::tokenizer::Vocab;
 use super::trellis::Emission;
+use super::EmissionModel;
 use crate::error::{Result, SyncError};
 
 const IN_NAME: &str = "input_values";

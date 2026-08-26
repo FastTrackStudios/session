@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
+use crate::samples::{load_wav, AudioSample, SampleBank};
 use crate::GuideError;
-use crate::samples::{AudioSample, SampleBank, load_wav};
 
 /// The guide-sample key a spoken cue is stored under in the `SampleBank`.
 pub fn tts_cue_key(text: &str) -> String {

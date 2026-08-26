@@ -8,8 +8,8 @@ use crate::prelude::*;
 use session_proto::{ActiveIndices, SetlistEvent, SongTransportState};
 
 use crate::signals::{
-    ACTIVE_INDICES, ACTIVE_PLAYBACK_IS_PLAYING, ACTIVE_PLAYBACK_MUSICAL, PLAYBACK_STATE,
-    SETLIST_STRUCTURE, SONG_CHARTS, SONG_TRANSPORT, TransportState,
+    TransportState, ACTIVE_INDICES, ACTIVE_PLAYBACK_IS_PLAYING, ACTIVE_PLAYBACK_MUSICAL,
+    PLAYBACK_STATE, SETLIST_STRUCTURE, SONG_CHARTS, SONG_TRANSPORT,
 };
 
 /// Apply an active-song/section cursor update to the global UI signals.

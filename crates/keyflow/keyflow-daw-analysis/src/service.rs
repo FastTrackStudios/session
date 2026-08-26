@@ -21,5 +21,5 @@ pub trait MidiCharts {
     /// Run keyflow chord detection + chart text generation. Heavier than
     /// `source_fingerprint`.
     async fn generate_chart_data(&self, request: MidiChartRequest)
-    -> Result<MidiChartData, String>;
+        -> Result<MidiChartData, String>;
 }

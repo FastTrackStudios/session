@@ -20,12 +20,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use keyflow::Chart;
 use keyflow::engraver::layout::chart::{ChartLayoutConfig, ChartLayoutEngine, LayoutMode};
 use keyflow::engraver::scene::id::ElementType;
 use keyflow::engraver::scene::node::SceneNode;
 use keyflow::engraver::scene::traverse::SceneNodeExt;
 use keyflow::engraver::style::MStyle;
+use keyflow::Chart;
 
 /// The test chart source - Push Pull Triplets
 const TEST_CHART: &str = r#"Push Pull Triplets - Test
@@ -404,7 +404,11 @@ fn test_content_weight_calculation() {
             .map(|c| match &c.rhythm {
                 keyflow::chord::ChordRhythm::Slashes { count, dotted, .. } => {
                     let base = *count as f64;
-                    if *dotted { base * 1.5 } else { base }
+                    if *dotted {
+                        base * 1.5
+                    } else {
+                        base
+                    }
                 }
                 keyflow::chord::ChordRhythm::Default => 4.0,
                 keyflow::chord::ChordRhythm::Explicit(nd) => nd.total_ticks_480() as f64 / 480.0,

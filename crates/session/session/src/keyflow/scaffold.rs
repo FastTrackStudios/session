@@ -15,8 +15,8 @@ use tracing::{info, warn};
 
 use session_proto::keyflow_scaffold::{KeyflowScaffoldActions, register_keyflow_scaffold_actions};
 
-use crate::setlist::chart_import::{ChartLayout, chart_to_layout};
 use crate::keyflow::actions::{normalize_section_regions, section_type_color};
+use crate::setlist::chart_import::{ChartLayout, chart_to_layout};
 
 /// Everything a backend needs to scaffold a project from keyflow text.
 pub trait ScaffoldDaw:

@@ -1,7 +1,7 @@
 //! Synth keys group definition
 
-use crate::item_metadata::ItemMetadata;
 use crate::item_metadata::prelude::ItemMetadataGroupExt;
+use crate::item_metadata::ItemMetadata;
 use monarchy::Group;
 
 /// Keys group (for synthesizer keys sounds)

@@ -1,4 +1,4 @@
-use daw_proto::{TrackGroup, TrackStructureBuilder, assert_tracks_equal};
+use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

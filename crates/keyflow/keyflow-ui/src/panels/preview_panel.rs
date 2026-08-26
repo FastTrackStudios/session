@@ -7,14 +7,14 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use architect_ui::prelude::{Button, ButtonSize, ButtonVariant};
 use dioxus::prelude::*;
 use dioxus_core::Task;
-use architect_ui::prelude::{Button, ButtonSize, ButtonVariant};
 use kurbo::Affine;
 
 use crate::chart_graphics::ChartGraphics;
 use crate::{
-    CHART_CURSOR_TICK, CHART_CURSOR_VISIBLE, CHART_SOURCE, ChartLayoutManager, SESSION_CHART_SOURCE,
+    ChartLayoutManager, CHART_CURSOR_TICK, CHART_CURSOR_VISIBLE, CHART_SOURCE, SESSION_CHART_SOURCE,
 };
 use keyflow::engraver::layout::chart::{ChartLayoutConfig, ChartLayoutEngine, LayoutMode};
 use keyflow::engraver::style::MStyle;
@@ -22,9 +22,9 @@ use keyflow::engraver::style::MStyle;
 use dock_dioxus::DOCK_WORKSPACE;
 use dock_proto::PanelId;
 use session_ui::{
-    ACTIVE_INDICES, ACTIVE_PLAYBACK_IS_PLAYING, ACTIVE_PLAYBACK_MUSICAL, CHART_AREA_BOUNDS,
-    ChartAreaBounds, PERF_CHART_BASE_SCALE, PERF_CHART_CLICK, PERF_CHART_HOVER,
-    PERF_CHART_VIEWPORT, PerfChartViewport, Session,
+    ChartAreaBounds, PerfChartViewport, Session, ACTIVE_INDICES, ACTIVE_PLAYBACK_IS_PLAYING,
+    ACTIVE_PLAYBACK_MUSICAL, CHART_AREA_BOUNDS, PERF_CHART_BASE_SCALE, PERF_CHART_CLICK,
+    PERF_CHART_HOVER, PERF_CHART_VIEWPORT,
 };
 use tracing::info;
 

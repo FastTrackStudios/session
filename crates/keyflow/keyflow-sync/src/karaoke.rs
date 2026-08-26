@@ -8,8 +8,8 @@
 //! audio second-for-second when the project tempo matches.
 
 use midly::{
-    Format, Header, MetaMessage, MidiMessage, Smf, Timing, Track, TrackEvent, TrackEventKind,
-    num::u4,
+    num::u4, Format, Header, MetaMessage, MidiMessage, Smf, Timing, Track, TrackEvent,
+    TrackEventKind,
 };
 
 use crate::align::WordTiming;

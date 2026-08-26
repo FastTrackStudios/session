@@ -52,4 +52,4 @@ pub use ast::{
     Annotation, ChordChunk, ChordDefinition, Directive, DirectiveKind, Document, Environment, Line,
     MetaItem, ParseError, ParseErrorKind, Section, Span,
 };
-pub use parser::{ParseOptions, parse, parse_with_options};
+pub use parser::{parse, parse_with_options, ParseOptions};

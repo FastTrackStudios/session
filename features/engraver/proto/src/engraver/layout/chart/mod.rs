@@ -1040,7 +1040,8 @@ impl ChartLayoutEngine {
                         // Per-measure labels above the count-in snippet: a
                         // countdown into the downbeat, so 2 count-in measures are
                         // `-1, 0` and the first real measure is `1`.
-                        let count_in_labels = engine_helpers::count_in_countdown_labels(count_in_measures);
+                        let count_in_labels =
+                            engine_helpers::count_in_countdown_labels(count_in_measures);
                         let (header_height, count_in_geos) = self.add_title_header(
                             &mut root,
                             page_x,

@@ -8,8 +8,8 @@
 
 use musicxml::datatypes::{StartStop, StartStopContinue, YesNo};
 use musicxml::elements::{
-    ArticulationsType, AudibleType, GraceType, MeasureElement, NotationContentTypes, Note as XmlNote,
-    NoteType, PartElement, PartListElement, ScorePartwise,
+    ArticulationsType, AudibleType, GraceType, MeasureElement, NotationContentTypes,
+    Note as XmlNote, NoteType, PartElement, PartListElement, ScorePartwise,
 };
 
 use crate::model::{
@@ -235,12 +235,7 @@ fn import_part(
                         change.staves = Some(n);
                     }
                     for clef in &attrs.content.clef {
-                        let staff = clef
-                            .attributes
-                            .number
-                            .as_ref()
-                            .map(|n| **n)
-                            .unwrap_or(1);
+                        let staff = clef.attributes.number.as_ref().map(|n| **n).unwrap_or(1);
                         change.clefs.push((staff, convert_clef(clef)));
                     }
                     if let Some(t) = attrs.content.transpose.first() {
@@ -280,7 +275,13 @@ fn import_part(
                 }
 
                 MeasureElement::Note(note) => {
-                    import_note(note, &mut measure, &mut cursor, &mut prev_onset, &mut staves);
+                    import_note(
+                        note,
+                        &mut measure,
+                        &mut cursor,
+                        &mut prev_onset,
+                        &mut staves,
+                    );
                 }
 
                 _ => {}
@@ -397,11 +398,20 @@ fn import_note(
         .as_ref()
         .and_then(|v| v.content.parse().ok())
         .unwrap_or(1);
-    let staff = note.content.staff.as_ref().map(|s| *s.content as u8).unwrap_or(1);
+    let staff = note
+        .content
+        .staff
+        .as_ref()
+        .map(|s| *s.content as u8)
+        .unwrap_or(1);
     *staves = (*staves).max(staff);
 
     let written = WrittenDuration {
-        note_type: note.content.r#type.as_ref().map(|t| convert_type(&t.content)),
+        note_type: note
+            .content
+            .r#type
+            .as_ref()
+            .map(|t| convert_type(&t.content)),
         dots: note.content.dot.len() as u8,
         tuplet: note.content.time_modification.as_ref().map(|tm| {
             (
@@ -415,12 +425,15 @@ fn import_note(
         AudibleType::Pitch(p) => {
             let pitch = WrittenPitch {
                 step: convert_step(&p.content.step.content),
-                alter: p.content.alter.as_ref().map(|a| *a.content as i8).unwrap_or(0),
+                alter: p
+                    .content
+                    .alter
+                    .as_ref()
+                    .map(|a| *a.content as i8)
+                    .unwrap_or(0),
                 octave: *p.content.octave.content as i8,
             };
-            push_pitched(
-                note, &shape, measure, tick, voice, staff, written, pitch,
-            );
+            push_pitched(note, &shape, measure, tick, voice, staff, written, pitch);
         }
         AudibleType::Unpitched(u) => {
             // Percussion: keep the display position as the written pitch so
@@ -430,9 +443,7 @@ fn import_note(
                 alter: 0,
                 octave: *u.content.display_octave.content as i8,
             };
-            push_pitched(
-                note, &shape, measure, tick, voice, staff, written, pitch,
-            );
+            push_pitched(note, &shape, measure, tick, voice, staff, written, pitch);
         }
         AudibleType::Rest(r) => {
             measure.events.push(Event::Rest(Rest {
@@ -587,10 +598,7 @@ fn dynamics_tag(d: &musicxml::elements::DynamicsType) -> Option<&'static str> {
 }
 
 /// Collect articulation tags + slur flags from `<notations>`.
-fn read_notations(
-    note: &XmlNote,
-    cue: bool,
-) -> (std::collections::BTreeSet<String>, bool, bool) {
+fn read_notations(note: &XmlNote, cue: bool) -> (std::collections::BTreeSet<String>, bool, bool) {
     let mut art = std::collections::BTreeSet::new();
     if cue {
         art.insert("cue".to_string());

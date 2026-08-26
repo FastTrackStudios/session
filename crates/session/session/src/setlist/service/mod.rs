@@ -33,11 +33,11 @@ mod record;
 
 use crate::cache::Cache;
 use crate::event_bus::{EventBus, WatchBus};
-use tokio::sync::RwLock;
+use architect::platform::Instant;
 use session_proto::{ActiveIndices, QueuedTarget, Setlist, Song, SongChartHydration};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use architect::platform::Instant;
+use tokio::sync::RwLock;
 
 use position_sync::PositionSyncBridge;
 
@@ -139,8 +139,7 @@ impl<D> SetlistServiceImpl<D> {
             daw,
             setlist: Arc::new(RwLock::new(None)),
             active_song_id: Arc::new(RwLock::new(None)),
-            cached_indices: Arc::new(RwLock::new(ActiveIndices::default(),
-            )),
+            cached_indices: Arc::new(RwLock::new(ActiveIndices::default())),
             queued_target: Arc::new(RwLock::new(None)),
             events_hub: architect::PubSub::sliding(64),
             // Replay the last cursor to every new subscriber: a remote that
@@ -154,8 +153,7 @@ impl<D> SetlistServiceImpl<D> {
             hydration_bus: Arc::new(EventBus::new("session.setlist.hydration", 1024)),
             chart_hydration_bus: Arc::new(EventBus::new("session.setlist.chart_hydration", 1024)),
             chart_cache: Cache::named("session.setlist.chart_cache"),
-            fingerprint_method_supported: Arc::new(RwLock::new(None,
-            )),
+            fingerprint_method_supported: Arc::new(RwLock::new(None)),
             last_chart_refresh_attempt: Cache::named("session.setlist.chart_refresh_attempts"),
             build_generation: Arc::new(AtomicU64::new(0)),
             position_sync: Arc::new(RwLock::new(None)),

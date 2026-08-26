@@ -3,8 +3,8 @@
 //! Handles parsing of chord lines, individual chord tokens, and related
 //! functionality including duration calculation, slash chords, and push/pull notation.
 
-use super::ChartParser;
 use super::helpers::{PushPullModifier, RepeatCount};
+use super::ChartParser;
 use crate::chart::cues::TextCue;
 use crate::chart::dynamics::DynamicMarking;
 use crate::chart::melody::{Melody, MelodyNote};
@@ -82,7 +82,11 @@ impl<'a> ChartParser<'a> {
         }
         out.push_str(&line[cursor..]);
 
-        if changed { out } else { line.to_string() }
+        if changed {
+            out
+        } else {
+            line.to_string()
+        }
     }
 
     fn expand_alias_token(&self, token: &str) -> Option<String> {
@@ -394,10 +398,10 @@ impl<'a> ChartParser<'a> {
         };
         let root_part = &token[..caret];
         let trailing = &after[fig_len..]; // e.g. a `_4` duration
-        // The figure states the chord exactly, so it must ignore chord memory:
-        // append `7` for the seventh figures (explicit family), and prefix `!`
-        // on the triad figures so a remembered seventh can't sneak in
-        // (`V^65 V^6` → the `V^6` stays a triad).
+                                          // The figure states the chord exactly, so it must ignore chord memory:
+                                          // append `7` for the seventh figures (explicit family), and prefix `!`
+                                          // on the triad figures so a remembered seventh can't sneak in
+                                          // (`V^65 V^6` → the `V^6` stays a triad).
         let chord_token = if append_seventh {
             format!("{root_part}7{trailing}")
         } else {
@@ -1584,10 +1588,8 @@ impl<'a> ChartParser<'a> {
                 // Positions computed inside the line parse (key changes) are
                 // line-relative; publish the beats already consumed by earlier
                 // lines of this section so they come out section-relative.
-                self.section_beats_offset = measures
-                    .iter()
-                    .map(|m| f64::from(m.time_signature.0))
-                    .sum();
+                self.section_beats_offset =
+                    measures.iter().map(|m| f64::from(m.time_signature.0)).sum();
                 let mut line_measures = self.parse_chord_line_with_default_chord_length(
                     line,
                     section_type,
@@ -3185,7 +3187,7 @@ impl<'a> ChartParser<'a> {
                     let mut repeat_chord = prev_chord.clone();
                     repeat_chord.original_token = ".".to_string();
                     repeat_chord.position = AbsolutePosition::at_beginning(); // Will be recalculated
-                    // Clear push/pull - the dot repeat doesn't inherit the timing modifier
+                                                                              // Clear push/pull - the dot repeat doesn't inherit the timing modifier
                     repeat_chord.push_pull = None;
                     // Inherit the source chord's rhythm and duration
                     // "F/C ." = two measures (F/C for 4 beats, then F/C repeated for 4 beats)
@@ -3451,7 +3453,7 @@ impl<'a> ChartParser<'a> {
                             (time_sig.numerator as u8, time_sig.denominator as u8);
                         current_measure_beats = 0.0;
                         measure_has_slash_rhythm = false; // Reset for new measure
-                        // Auto-created measure, not by separator
+                                                          // Auto-created measure, not by separator
                     }
                 }
                 Err(_e) => {

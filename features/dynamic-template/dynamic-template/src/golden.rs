@@ -11,8 +11,8 @@
 use dynamic_template_proto::{IdealFullSessionTemplate, TemplateBus, TemplateNode};
 use monarchy::Group;
 
-use crate::ItemMetadata;
 use crate::colors::color_for_path;
+use crate::ItemMetadata;
 
 /// Sub-group names that are per-project **dimensions** rather than structural
 /// folders, in canonical deepening order. Multi-mic is handled separately

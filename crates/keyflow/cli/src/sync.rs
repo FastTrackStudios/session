@@ -15,7 +15,11 @@ use keyflow_sync::pipeline::SectionLyrics;
 fn note_quarters(note: &keyflow::chart::melody::MelodyNote) -> f32 {
     let base = 4.0 / (note.duration.max(1) as f32);
     let base = if note.dotted { base * 1.5 } else { base };
-    if note.triplet { base * 2.0 / 3.0 } else { base }
+    if note.triplet {
+        base * 2.0 / 3.0
+    } else {
+        base
+    }
 }
 
 /// Extract the chart's `voice` melody tracks into per-voice MIDI note lists with
@@ -257,7 +261,7 @@ pub fn cmd_sync(chart: &Chart, opts: SyncOpts<'_>) -> Result<(), String> {
     use keyflow_sync::audio::AudioBuffer;
     use keyflow_sync::models;
     use keyflow_sync::separator::demucs::DemucsOnnx;
-    use keyflow_sync::{TimingMap, pipeline};
+    use keyflow_sync::{pipeline, TimingMap};
 
     let sections = match opts.lyrics_file {
         Some(path) => {
@@ -471,8 +475,8 @@ pub struct KaraokeOpts<'a> {
 /// and optionally a Reaper project (audio + lyrics MIDI).
 #[cfg(feature = "onnx")]
 pub fn cmd_karaoke(opts: KaraokeOpts<'_>) -> Result<(), String> {
-    use keyflow_sync::karaoke::{LyricEvent, lyrics_lrc, lyrics_midi};
-    use keyflow_sync::{RatingThresholds, lanes};
+    use keyflow_sync::karaoke::{lyrics_lrc, lyrics_midi, LyricEvent};
+    use keyflow_sync::{lanes, RatingThresholds};
 
     let chart_text = std::fs::read_to_string(opts.chart).map_err(|e| e.to_string())?;
     let chart = lanes::parse(&chart_text).map_err(|e| e.to_string())?;
@@ -683,9 +687,9 @@ fn export_reaper_voices(
     bpm: f32,
     time_sig: (u8, u8),
 ) -> Result<String, String> {
-    use dawfile_reaper::RppSerialize;
     use dawfile_reaper::builder::ReaperProjectBuilder;
     use dawfile_reaper::types::item::{MidiEvent, MidiSourceEvent};
+    use dawfile_reaper::RppSerialize;
 
     const TPQN: u32 = 480;
     let to_ticks = |s: f32| -> u64 { (s.max(0.0) * (bpm / 60.0) * TPQN as f32).round() as u64 };
@@ -794,9 +798,9 @@ fn export_reaper(
     time_sig: (u8, u8),
     duration: f32,
 ) -> Result<String, String> {
-    use dawfile_reaper::RppSerialize;
     use dawfile_reaper::builder::ReaperProjectBuilder;
     use dawfile_reaper::types::item::{MidiEvent, MidiSourceEvent};
+    use dawfile_reaper::RppSerialize;
 
     const TPQN: u32 = 480;
     let to_ticks = |s: f32| -> u64 { (s.max(0.0) * (bpm / 60.0) * TPQN as f32).round() as u64 };
@@ -903,7 +907,7 @@ pub fn cmd_transcribe(opts: TranscribeOpts<'_>) -> Result<(), String> {
     use keyflow_sync::align::wav2vec2::Wav2Vec2Onnx;
     use keyflow_sync::audio::AudioBuffer;
     use keyflow_sync::separator::demucs::DemucsOnnx;
-    use keyflow_sync::{RatingThresholds, models, pipeline};
+    use keyflow_sync::{models, pipeline, RatingThresholds};
 
     let audio = AudioBuffer::load_wav(opts.audio).map_err(|e| e.to_string())?;
     let reg = models::load_registry().map_err(|e| e.to_string())?;
@@ -1022,7 +1026,7 @@ fn maybe_separate(
 #[cfg(feature = "whisper")]
 pub fn cmd_transcribe_whisper(opts: TranscribeOpts<'_>) -> Result<(), String> {
     use keyflow_sync::audio::AudioBuffer;
-    use keyflow_sync::whisper::{Segment, WhisperAsr, ensure_model};
+    use keyflow_sync::whisper::{ensure_model, Segment, WhisperAsr};
     use keyflow_sync::{Rating, RatingThresholds, TimingMap};
 
     let audio = AudioBuffer::load_wav(opts.audio).map_err(|e| e.to_string())?;
@@ -1117,7 +1121,7 @@ fn whisperx_align(
     segments: &[keyflow_sync::whisper::Segment],
 ) -> Result<(), String> {
     use keyflow_sync::align::{align_words_star, tokenizer::Vocab, wav2vec2::Wav2Vec2Onnx};
-    use keyflow_sync::{RatingThresholds, TimingMap, models};
+    use keyflow_sync::{models, RatingThresholds, TimingMap};
 
     let transcript = clean_transcript(segments);
     if transcript.is_empty() {
@@ -1217,7 +1221,7 @@ fn words_to_cues(words: &[keyflow_sync::WordTiming]) -> Vec<keyflow_sync::Sectio
 pub fn cmd_guide_chart(opts: GuideChartOpts<'_>) -> Result<(), String> {
     use keyflow_sync::align::{align_words_star, tokenizer::Vocab, wav2vec2::Wav2Vec2Onnx};
     use keyflow_sync::audio::AudioBuffer;
-    use keyflow_sync::whisper::{WhisperAsr, ensure_model};
+    use keyflow_sync::whisper::{ensure_model, WhisperAsr};
     use keyflow_sync::{cues_to_keyflow, detect_click_grid, models};
 
     // 1. Click track → tempo + bar grid.
@@ -1255,8 +1259,10 @@ pub fn cmd_guide_chart(opts: GuideChartOpts<'_>) -> Result<(), String> {
     }
     let vocab_path = path.with_extension("vocab.json");
     let vocab = if vocab_path.exists() {
-        Vocab::from_vocab_map_json(&std::fs::read_to_string(&vocab_path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?
+        Vocab::from_vocab_map_json(
+            &std::fs::read_to_string(&vocab_path).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?
     } else {
         Vocab::wav2vec2_en_960h()
     };

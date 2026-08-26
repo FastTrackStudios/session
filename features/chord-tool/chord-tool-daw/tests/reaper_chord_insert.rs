@@ -75,7 +75,10 @@ async fn chord_notes_survive_the_round_trip(
     actual.sort_unstable();
 
     ctx.log(&format!("REAPER holds {actual:?}"));
-    assert_eq!(actual, expected, "REAPER must hold exactly what keyflow computed");
+    assert_eq!(
+        actual, expected,
+        "REAPER must hold exactly what keyflow computed"
+    );
     Ok(())
 }
 

@@ -14,12 +14,12 @@
 use std::collections::BTreeMap;
 
 use keyflow::chord::{
-    DetectedChord, MidiNote as KeyflowMidiNote, PushPullAmount, PushPullBase,
-    detect_chords_from_midi_notes,
+    detect_chords_from_midi_notes, DetectedChord, MidiNote as KeyflowMidiNote, PushPullAmount,
+    PushPullBase,
 };
 use keyflow::engraver::import::{
-    ChordMarker, MidiFile, PushPull, SectionMarker, SectionType as MidiSectionType,
-    normalize_chord_name,
+    normalize_chord_name, ChordMarker, MidiFile, PushPull, SectionMarker,
+    SectionType as MidiSectionType,
 };
 use keyflow::key::{KeySpelling, SpellingMode};
 use keyflow::primitives::MusicalNote;
@@ -1952,7 +1952,7 @@ fn test_push_pull_detection_hits_section() {
 #[test]
 fn test_hits_section_rhythm_with_rests() {
     use keyflow::engraver::import::{
-        RhythmElement, format_measure_rhythm, generate_measure_rhythm,
+        format_measure_rhythm, generate_measure_rhythm, RhythmElement,
     };
 
     let bytes = include_bytes!("fixtures/thriller_dirty_loops.mid");

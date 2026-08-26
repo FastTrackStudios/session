@@ -27,21 +27,17 @@ mod multitrack_examples {
     mod ej_rios_echo;
     mod elevation_worship_praise;
     // Worship-multitracks grouping tests (share `worship_common`'s placement helper).
-    mod worship_common;
-    mod god_im_just_grateful;
-    mod holy_forever;
-    mod thank_god_im_free;
-    mod washed;
-    mod who_else;
     mod enda_reilly_cur_an_long;
     mod entwistle_dont_you_ever;
     mod family_band_again;
     mod fusion_jazz_sextet;
     mod gloria_anderson_households;
+    mod god_im_just_grateful;
     mod gospel_session;
     mod grieg_mountain_king;
     mod helado_negro_mitad;
     mod hezekiah_jones_borrowed_heart;
+    mod holy_forever;
     mod iron_maiden_the_trooper;
     mod james_dupre_another_love_song;
     mod james_may_eliza_jane;
@@ -79,8 +75,12 @@ mod multitrack_examples {
     mod swing_jazz_quartet;
     mod tabla_breakbeat_scorpio;
     mod tears_for_fears_shout;
+    mod thank_god_im_free;
     mod the_cure_friday_im_in_love;
     mod van_halen_aint_talkin_bout_love;
     mod van_halen_jump;
+    mod washed;
+    mod who_else;
     mod woodwind_quintet;
+    mod worship_common;
 }

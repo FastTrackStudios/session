@@ -702,8 +702,7 @@ impl<'a> ChartParser<'a> {
 
         // Default to Pre-Chorus
         let section_type = SectionType::Pre(Box::new(SectionType::Chorus));
-        let measure_count =
-            self.pre_post_measure_count(&section_type, parts.get(1).copied());
+        let measure_count = self.pre_post_measure_count(&section_type, parts.get(1).copied());
 
         self.parse_section_content(lines, start_idx, section_type, measure_count, false, None)
     }
@@ -739,8 +738,7 @@ impl<'a> ChartParser<'a> {
 
         // Default to Post-Chorus
         let section_type = SectionType::Post(Box::new(SectionType::Chorus));
-        let measure_count =
-            self.pre_post_measure_count(&section_type, parts.get(1).copied());
+        let measure_count = self.pre_post_measure_count(&section_type, parts.get(1).copied());
 
         self.parse_section_content(lines, start_idx, section_type, measure_count, false, None)
     }

@@ -18,5 +18,5 @@ pub mod lookup;
 pub mod sections;
 
 // Re-export the Color type for convenience
-pub use color_palette::Color;
 pub use color_palette::palette;
+pub use color_palette::Color;

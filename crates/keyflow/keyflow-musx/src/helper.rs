@@ -223,7 +223,10 @@ static CHORD_PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
         make("major-ninth", r"(?P<kind>(?:maj|ma|Δ)9)"),
         make("major-11th", r"(?P<kind>(?:maj|ma|Δ)11)"),
         make("major-13th", r"(?P<kind>(?:maj|ma|Δ)13)"),
-        make("major-minor", r"(?P<kind>min\(maj7\)|mi\(ma7\)|m\(ma7\)|-Δ7)"),
+        make(
+            "major-minor",
+            r"(?P<kind>min\(maj7\)|mi\(ma7\)|m\(ma7\)|-Δ7)",
+        ),
         make("minor-sixth", r"(?P<kind>(?:min|mi|m|-|−)6)"),
         make("minor-seventh", r"(?P<kind>(?:min|mi|m|-|−)7)"),
         make("minor-ninth", r"(?P<kind>(?:min|mi|m|-|−)9)"),
@@ -312,13 +315,18 @@ pub fn translate_chord_suffix(chord_suffix: Option<&str>) -> ChordSuffix {
             continue;
         };
         let mut kind = (*kind_name).to_string();
-        let mut text = caps.name("kind").map(|m| m.as_str()).unwrap_or("").to_string();
-        let mut parentheses_degrees =
-            if caps.name("parentheses_open").is_some() && caps.name("parentheses_closed").is_some() {
-                "yes".to_string()
-            } else {
-                "no".to_string()
-            };
+        let mut text = caps
+            .name("kind")
+            .map(|m| m.as_str())
+            .unwrap_or("")
+            .to_string();
+        let mut parentheses_degrees = if caps.name("parentheses_open").is_some()
+            && caps.name("parentheses_closed").is_some()
+        {
+            "yes".to_string()
+        } else {
+            "no".to_string()
+        };
 
         let mut degrees = Vec::new();
         if let Some(degrees_text) = caps.name("degrees").map(|m| m.as_str()) {
@@ -424,14 +432,12 @@ fn calculate_alter(step: &str, key_fifths: i64) -> i64 {
     if key_fifths == 0 {
         0
     } else if key_fifths > 0 {
-        if SHARPS_AND_FLATS[..key_fifths as usize].contains(&step)
-        {
+        if SHARPS_AND_FLATS[..key_fifths as usize].contains(&step) {
             1
         } else {
             0
         }
-    } else if SHARPS_AND_FLATS[(7 + key_fifths) as usize..].contains(&step)
-    {
+    } else if SHARPS_AND_FLATS[(7 + key_fifths) as usize..].contains(&step) {
         -1
     } else {
         0
@@ -548,7 +554,11 @@ pub fn translate_tempo_marks(text: &str) -> TempoMarks {
         if has_mm {
             words = Some(format!("{} M. M.", words.unwrap_or_default()));
         }
-        let beat_unit = note.chars().next().and_then(engraver_note_type).map(str::to_string);
+        let beat_unit = note
+            .chars()
+            .next()
+            .and_then(engraver_note_type)
+            .map(str::to_string);
         if has_ca {
             per_minute = per_minute.map(|p| format!("c. {p}"));
         }
@@ -621,7 +631,9 @@ pub fn translate_bar_style(bar_line_type: &str, bac_rep_bar: bool, bar_ending: b
     if bac_rep_bar || bar_ending {
         "light-heavy".to_string()
     } else {
-        map_bar_line_type(bar_line_type).unwrap_or("regular").to_string()
+        map_bar_line_type(bar_line_type)
+            .unwrap_or("regular")
+            .to_string()
     }
 }
 
@@ -646,10 +658,8 @@ pub fn count_tuplet(tuplet_attributes: &mut [TupletAttr], dura: i64) {
 }
 
 static STYLING_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"\^(?:font|fontid|Font|fontMus|fontTxt|fontNum|size|nfx|baseline)\([^)]*\)",
-    )
-    .expect("valid styling regex")
+    Regex::new(r"\^(?:font|fontid|Font|fontMus|fontTxt|fontNum|size|nfx|baseline)\([^)]*\)")
+        .expect("valid styling regex")
 });
 
 pub fn remove_styling_tags(text: &str) -> String {

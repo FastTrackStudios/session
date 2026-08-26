@@ -31,8 +31,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use session::setlist::chart_import::{ChartLayout, chart_to_layout};
 use session::keyflow::actions::SectionKind;
+use session::setlist::chart_import::{ChartLayout, chart_to_layout};
 use session::setlist::service::demo::{DemoSong, demo_chart_for, demo_songs_base};
 
 // ── Stem tables, replicated from apps/fasttrackstudio/src/session_engine.rs ──
@@ -72,9 +72,15 @@ const PRAISE_STEMS: &[(&str, &str, &str)] = &[
 /// On-disk folder (under `FTS_WORSHIP_STEMS`) for each globbed worship song.
 /// Mirrors `session_engine::WORSHIP_FOLDERS`.
 const WORSHIP_FOLDERS: &[(&str, &str)] = &[
-    ("God, I'm Just Grateful", "God, I_m Just Grateful _ Elevation Worship _ D"),
+    (
+        "God, I'm Just Grateful",
+        "God, I_m Just Grateful _ Elevation Worship _ D",
+    ),
     ("Holy Forever", "Holy Forever _ Bethel Music _ Bb"),
-    ("Thank God I'm Free", "Thank God I_m Free _ Elevation Rhythm _ E"),
+    (
+        "Thank God I'm Free",
+        "Thank God I_m Free _ Elevation Rhythm _ E",
+    ),
     ("Washed", "Washed _ Elevation Rhythm _ B"),
     ("Who Else", "Who Else _ Gateway Worship _ Ab"),
 ];
@@ -159,18 +165,34 @@ fn source_stems(song: &str) -> Vec<SourceStem> {
         Ok(rd) => rd
             .flatten()
             .map(|e| e.path())
-            .filter(|p| p.extension().map(|x| x.eq_ignore_ascii_case("wav")).unwrap_or(false))
+            .filter(|p| {
+                p.extension()
+                    .map(|x| x.eq_ignore_ascii_case("wav"))
+                    .unwrap_or(false)
+            })
             .collect(),
         Err(_) => return Vec::new(),
     };
     wavs.sort();
     wavs.iter()
         .map(|p| {
-            let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let stem = p
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
             // "Holy Forever - EG 2" → "EG 2"; "01 - Click" → "Click".
-            let name = stem.rsplit(" - ").next().unwrap_or(&stem).trim().to_string();
+            let name = stem
+                .rsplit(" - ")
+                .next()
+                .unwrap_or(&stem)
+                .trim()
+                .to_string();
             let group = group_for(&name).map(|g| g.to_string());
-            SourceStem { name, group, path: p.clone() }
+            SourceStem {
+                name,
+                group,
+                path: p.clone(),
+            }
         })
         .collect()
 }
@@ -261,7 +283,10 @@ fn probe_duration(path: &Path) -> Option<f64> {
         .arg(path)
         .output()
         .ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().ok()
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<f64>()
+        .ok()
 }
 
 fn main() {
@@ -277,12 +302,19 @@ fn main() {
 
     // Optional restriction: EXPORT_ONLY="Praise,Washed" transcodes only those,
     // others get manifest.json + chart.kf with an EMPTY stems array.
-    let only: Option<Vec<String>> = std::env::var("EXPORT_ONLY")
-        .ok()
-        .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
+    let only: Option<Vec<String>> = std::env::var("EXPORT_ONLY").ok().map(|v| {
+        v.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
 
     let songs = demo_songs_base();
-    println!("Exporting {} demo songs → {}", songs.len(), out_root.display());
+    println!(
+        "Exporting {} demo songs → {}",
+        songs.len(),
+        out_root.display()
+    );
 
     for song in &songs {
         export_song(song, &out_root, ffmpeg, only.as_deref());
@@ -307,7 +339,12 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
     //    the same chart via chart_to_layout (zipped in order). ──
     let chart_secs: Vec<&session::setlist::chart_import::LaidSection> = layout
         .as_ref()
-        .map(|l| l.sections.iter().filter(|s| s.kind != SectionKind::CountIn).collect())
+        .map(|l| {
+            l.sections
+                .iter()
+                .filter(|s| s.kind != SectionKind::CountIn)
+                .collect()
+        })
         .unwrap_or_default();
     // Pre-count kind occurrences so repeated kinds get "Verse 1 / Verse 2".
     let mut kind_totals: std::collections::HashMap<&'static str, u32> = Default::default();
@@ -369,7 +406,8 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
                 continue;
             }
             transcoded += 1;
-            if let Some(d) = probe_duration(&stems_dir.join(file_rel.trim_start_matches("stems/"))) {
+            if let Some(d) = probe_duration(&stems_dir.join(file_rel.trim_start_matches("stems/")))
+            {
                 longest_stem = longest_stem.max(d);
             }
             let group = src.group.clone().unwrap_or_else(|| "Other".to_string());
@@ -386,8 +424,14 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
     let duration = sections_end.max(longest_stem);
 
     // ── manifest.json ──
-    let key = layout.as_ref().and_then(|l| l.key.clone()).unwrap_or_default();
-    let artist = layout.as_ref().and_then(|l| l.artist.clone()).unwrap_or_default();
+    let key = layout
+        .as_ref()
+        .and_then(|l| l.key.clone())
+        .unwrap_or_default();
+    let artist = layout
+        .as_ref()
+        .and_then(|l| l.artist.clone())
+        .unwrap_or_default();
     let time_sig = format!("{}/{}", song.time_sig_num, song.time_sig_den);
     let bpm = song.tempo_bpm.round() as i64;
 

@@ -2,8 +2,8 @@
 //! song skeleton (no audio, no REAPER). Golden case for the chart→sections
 //! bridge behind the Praise demo song and live keyflow-text editing.
 
-use session::setlist::chart_import::{chart_to_layout, ChartLayout};
 use session::keyflow::actions::SectionKind;
+use session::setlist::chart_import::{ChartLayout, chart_to_layout};
 
 const PRAISE_CHART: &str = "\
 Praise - Elevation Worship

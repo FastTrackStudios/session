@@ -45,15 +45,13 @@ pub mod samples;
 mod schedule;
 pub mod tts;
 
-pub use engine::{
-    BlockClock, GuideBuses, GuideConfig, GuideEngine, GuideTrigger, TriggerSource,
-};
-pub use samples::{AudioSample, ClickSound, SampleBank, get_guide_key, section_to_guide_filename};
+pub use engine::{BlockClock, GuideBuses, GuideConfig, GuideEngine, GuideTrigger, TriggerSource};
+pub use samples::{get_guide_key, section_to_guide_filename, AudioSample, ClickSound, SampleBank};
 pub use schedule::{
-    CueEvent, CueSchedule, GuideSection, GuideSongTiming, ScheduleOptions, ScheduledCue,
-    sections_from_song,
+    sections_from_song, CueEvent, CueSchedule, GuideSection, GuideSongTiming, ScheduleOptions,
+    ScheduledCue,
 };
-pub use tts::{CueBank, TtsAudio, TtsRenderer, tts_cue_key};
+pub use tts::{tts_cue_key, CueBank, TtsAudio, TtsRenderer};
 
 #[cfg(feature = "tts")]
 pub use tts::{ChatterboxTts, ChatterboxTtsConfig};

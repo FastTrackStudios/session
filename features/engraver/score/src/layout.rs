@@ -12,7 +12,9 @@
 use engraver_proto::engraver::layout::chart::prefix_renderer::{
     PrefixRenderContext, calculate_prefix_width, render_system_prefix,
 };
-use engraver_proto::engraver::layout::chart::{constants, measure_layout, spacing as chart_spacing};
+use engraver_proto::engraver::layout::chart::{
+    constants, measure_layout, spacing as chart_spacing,
+};
 use engraver_proto::engraver::layout::context::LayoutContextOwned;
 use engraver_proto::engraver::layout::tlayout::{Accidental, ClefType, TupletRatio};
 use engraver_proto::engraver::model::{Octave, Pitch, PitchClass};
@@ -192,7 +194,15 @@ fn pitch_class(step: Step) -> PitchClass {
 /// Alteration the key signature implies for a step (sharps F C G D A E B,
 /// flats B E A D G C F).
 fn key_alteration(step: Step, fifths: i8) -> i8 {
-    const SHARPS: [Step; 7] = [Step::F, Step::C, Step::G, Step::D, Step::A, Step::E, Step::B];
+    const SHARPS: [Step; 7] = [
+        Step::F,
+        Step::C,
+        Step::G,
+        Step::D,
+        Step::A,
+        Step::E,
+        Step::B,
+    ];
     if fifths > 0 {
         let n = fifths.min(7) as usize;
         i8::from(SHARPS[..n].contains(&step))
@@ -237,9 +247,10 @@ impl AccidentalState {
 
 fn duration_from_type(t: NoteTypeValue, dots: u8, tuplet: Option<(u8, u8)>) -> Duration {
     let kind = match t {
-        NoteTypeValue::Maxima | NoteTypeValue::Long | NoteTypeValue::Breve | NoteTypeValue::Whole => {
-            DurationKind::Whole
-        }
+        NoteTypeValue::Maxima
+        | NoteTypeValue::Long
+        | NoteTypeValue::Breve
+        | NoteTypeValue::Whole => DurationKind::Whole,
         NoteTypeValue::Half => DurationKind::Half,
         NoteTypeValue::Quarter => DurationKind::Quarter,
         NoteTypeValue::Eighth => DurationKind::Eighth,
@@ -297,10 +308,7 @@ fn duration_from_ticks(ticks: u32, divisions: u32) -> Duration {
 
 /// Is this measure "empty" — nothing but rests (or nothing at all)?
 fn is_resting(measure: &model::Measure) -> bool {
-    measure
-        .events
-        .iter()
-        .all(|e| matches!(e, Event::Rest(_)))
+    measure.events.iter().all(|e| matches!(e, Event::Rest(_)))
 }
 
 /// Choose the primary voice for a staff-1 measure: the voice with the most
@@ -320,11 +328,7 @@ fn primary_voice(measure: &model::Measure) -> Option<u32> {
         .map(|(v, _)| v)
 }
 
-fn prepare_measures(
-    part: &Part,
-    opts: &LayoutOptions,
-    dropped: &mut usize,
-) -> Vec<Prepared> {
+fn prepare_measures(part: &Part, opts: &LayoutOptions, dropped: &mut usize) -> Vec<Prepared> {
     let mut state = AttrState {
         clef: ClefType::Treble,
         key_fifths: 0,
@@ -466,7 +470,9 @@ fn prepare_measures(
                         Event::Chord(c) => c.staff == 1 && !c.grace,
                         Event::Rest(r) => r.staff == 1,
                     };
-                if !keep && !is_merged_chord && !matches!((e, merged_voice), (Event::Rest(r), Some(mv)) if r.voice == mv)
+                if !keep
+                    && !is_merged_chord
+                    && !matches!((e, merged_voice), (Event::Rest(r), Some(mv)) if r.voice == mv)
                 {
                     *dropped += 1;
                 }
@@ -705,7 +711,9 @@ struct MeasureAnchors<'a> {
 }
 
 /// Map a MusicXML articulation tag to a tlayout articulation type.
-fn articulation_type(tag: &str) -> Option<engraver_proto::engraver::layout::tlayout::ArticulationType> {
+fn articulation_type(
+    tag: &str,
+) -> Option<engraver_proto::engraver::layout::tlayout::ArticulationType> {
     use engraver_proto::engraver::layout::tlayout::ArticulationType as A;
     Some(match tag {
         "staccato" => A::Staccato,
@@ -810,7 +818,8 @@ fn draw_directions(
                         &ctx.as_context(),
                     );
                     *id += 1;
-                    let mut container = SceneNode::group(SemanticId::new(ElementType::Dynamic, *id));
+                    let mut container =
+                        SceneNode::group(SemanticId::new(ElementType::Dynamic, *id));
                     container.transform = Affine::translate((0.0, 4.0 * spatium));
                     container.add_child(node);
                     sys_node.add_child(container);
@@ -883,17 +892,13 @@ fn draw_directions(
             // Stems point down for notes on/above the middle line, so the
             // mark goes above the notehead (and vice versa).
             let stem_up = primary_line < 0;
-            let top_line = a
-                .m
-                .stacks[i]
+            let top_line = a.m.stacks[i]
                 .iter()
                 .map(|(l, _)| *l)
                 .chain(std::iter::once(primary_line))
                 .max()
                 .unwrap_or(primary_line);
-            let bottom_line = a
-                .m
-                .stacks[i]
+            let bottom_line = a.m.stacks[i]
                 .iter()
                 .map(|(l, _)| *l)
                 .chain(std::iter::once(primary_line))
@@ -1136,7 +1141,11 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
     let mut dropped = 0usize;
     let prepared = prepare_measures(part, opts, &mut dropped);
     if dropped > 0 {
-        tracing::info!(part = part.name, dropped, "non-primary-voice events dropped (P2 single-voice)");
+        tracing::info!(
+            part = part.name,
+            dropped,
+            "non-primary-voice events dropped (P2 single-voice)"
+        );
     }
 
     let avail_width = opts.page_width - 2.0 * opts.margin;
@@ -1175,8 +1184,7 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
                     })
                     .collect();
                 let shortest = note_ticks.iter().copied().fold(f64::INFINITY, f64::min);
-                let dense =
-                    note_ticks.len() >= 4 || shortest <= constants::TICKS_PER_QUARTER / 2.0;
+                let dense = note_ticks.len() >= 4 || shortest <= constants::TICKS_PER_QUARTER / 2.0;
                 let duration_weight = if note_ticks.is_empty() || !dense {
                     chart_spacing::duration_stretch(
                         measure_ticks,
@@ -1187,11 +1195,7 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
                     note_ticks
                         .iter()
                         .map(|t| {
-                            chart_spacing::duration_stretch(
-                                *t,
-                                constants::TICKS_PER_QUARTER,
-                                SLOPE,
-                            )
+                            chart_spacing::duration_stretch(*t, constants::TICKS_PER_QUARTER, SLOPE)
                         })
                         .sum()
                 };
@@ -1253,9 +1257,10 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
     // rhythm or minimum actually demands it.
     let expansion_stretches = |weights: &[f64], min_widths: &[f64], base: f64| -> Vec<f64> {
         const RHYTHM_EXPANSION_THRESHOLD: f64 = 3.0;
-        let has_expander = weights.iter().zip(min_widths).any(|(w, m)| {
-            *w >= RHYTHM_EXPANSION_THRESHOLD || *m > base * 1.05
-        });
+        let has_expander = weights
+            .iter()
+            .zip(min_widths)
+            .any(|(w, m)| *w >= RHYTHM_EXPANSION_THRESHOLD || *m > base * 1.05);
         if !has_expander {
             return vec![1.0; weights.len()];
         }
@@ -1319,7 +1324,10 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
                 &composer,
                 "FreeSans",
                 10.0,
-                Point::new(opts.page_width - opts.margin, page_origin_y + opts.margin + 44.0),
+                Point::new(
+                    opts.page_width - opts.margin,
+                    page_origin_y + opts.margin + 44.0,
+                ),
                 TextAnchor::End,
                 FontWeight::Normal,
             ));
@@ -1335,7 +1343,8 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
         }
         let staff_y = page_origin_y + y;
 
-        let mut sys_node = SceneNode::group(SemanticId::new(ElementType::System, sys_idx as u64 + 1));
+        let mut sys_node =
+            SceneNode::group(SemanticId::new(ElementType::System, sys_idx as u64 + 1));
         sys_node.transform = Affine::translate((opts.margin, staff_y));
 
         // Prefix from the first item's attribute state.
@@ -1430,8 +1439,10 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
                         .map(|seg_x| x + seg_x)
                         .collect();
                     anchors.push(MeasureAnchors { m, entry_x });
-                    let mut container =
-                        SceneNode::group(SemanticId::new(ElementType::Measure, item_idx as u64 + 1));
+                    let mut container = SceneNode::group(SemanticId::new(
+                        ElementType::Measure,
+                        item_idx as u64 + 1,
+                    ));
                     // MeasureScene notation is authored around the MIDDLE
                     // line (y=0) — same +2sp shift the chart pipeline applies
                     // to its measure containers.
@@ -1459,8 +1470,10 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
                     sys_node.add_child(barline(x, spatium));
                 }
                 Prepared::MultiRest { count, number, .. } => {
-                    let mut container =
-                        SceneNode::group(SemanticId::new(ElementType::Measure, item_idx as u64 + 1));
+                    let mut container = SceneNode::group(SemanticId::new(
+                        ElementType::Measure,
+                        item_idx as u64 + 1,
+                    ));
                     container.transform = Affine::translate((x, 0.0));
                     container.add_child(multirest_scene(*count, width, spatium, id));
                     id += 10;
@@ -1480,8 +1493,21 @@ pub fn layout_part(score: &Score, part_index: usize, opts: &LayoutOptions) -> Pa
             }
         }
 
-        draw_ties_and_slurs(&mut sys_node, &anchors, prefix_w + content_width, spatium, &mut id);
-        draw_directions(&mut sys_node, &anchors, &ctx, prefix_w + content_width, spatium, &mut id);
+        draw_ties_and_slurs(
+            &mut sys_node,
+            &anchors,
+            prefix_w + content_width,
+            spatium,
+            &mut id,
+        );
+        draw_directions(
+            &mut sys_node,
+            &anchors,
+            &ctx,
+            prefix_w + content_width,
+            spatium,
+            &mut id,
+        );
 
         root.add_child(sys_node);
         y += opts.system_gap;

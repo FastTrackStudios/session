@@ -3,12 +3,12 @@
 use super::{HYDRATION_CONCURRENCY, SetlistServiceImpl};
 use daw::service::Projects;
 // `Semaphore` + `JoinSet` back the native-only background hydration pass below.
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::Semaphore;
 use rustc_hash::{FxHashMap, FxHashSet};
 use session_proto::{AdvanceMode, SessionServiceError, Setlist, Song};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::sync::Semaphore;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
@@ -188,8 +188,7 @@ where
         let this = Arc::new((*self).clone());
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move {
-            let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY,
-            ));
+            let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY));
             let mut join_set = JoinSet::new();
 
             for load in project_loads {

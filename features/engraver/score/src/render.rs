@@ -18,20 +18,16 @@ pub fn svg_pages(layout: &PartLayout, fonts: &ChartFontBundle) -> Vec<String> {
         .pages
         .iter()
         .map(|page| {
-            let config = SvgExportConfig::for_page(
-                page.x_offset,
-                page.y_offset,
-                page.width,
-                page.height,
-            )
-            .with_embedded_font("Leland", leland.clone())
-            .with_embedded_font("Bravura", bravura.clone())
-            .with_embedded_font("Leland Text", leland_text.clone())
-            .with_embedded_font("LelandText", leland_text.clone())
-            .with_embedded_font("Chicago", chicago.clone())
-            .with_embedded_font("ChicagoFLF", chicago.clone())
-            .with_embedded_font("FreeSans", freesans.clone())
-            .with_embedded_font("sans-serif", freesans.clone());
+            let config =
+                SvgExportConfig::for_page(page.x_offset, page.y_offset, page.width, page.height)
+                    .with_embedded_font("Leland", leland.clone())
+                    .with_embedded_font("Bravura", bravura.clone())
+                    .with_embedded_font("Leland Text", leland_text.clone())
+                    .with_embedded_font("LelandText", leland_text.clone())
+                    .with_embedded_font("Chicago", chicago.clone())
+                    .with_embedded_font("ChicagoFLF", chicago.clone())
+                    .with_embedded_font("FreeSans", freesans.clone())
+                    .with_embedded_font("sans-serif", freesans.clone());
             let mut serializer = SvgSerializer::new(config);
             serializer.serialize(&layout.scene)
         })

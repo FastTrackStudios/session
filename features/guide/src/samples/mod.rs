@@ -9,7 +9,9 @@
 mod bank;
 mod loader;
 
-pub use bank::{ClickSamplePaths, ClickSound, SampleBank, get_guide_key, section_to_guide_filename};
+pub use bank::{
+    get_guide_key, section_to_guide_filename, ClickSamplePaths, ClickSound, SampleBank,
+};
 pub use loader::load_wav;
 
 /// Decoded, planar (per-channel) f32 PCM.
@@ -54,9 +56,9 @@ impl AudioSample {
             return out;
         }
         let ratio = f64::from(self.sample_rate) / f64::from(target_rate);
-        let out_frames =
-            ((self.frames() as f64) * f64::from(target_rate) / f64::from(self.sample_rate)).round()
-                as usize;
+        let out_frames = ((self.frames() as f64) * f64::from(target_rate)
+            / f64::from(self.sample_rate))
+        .round() as usize;
         let data = self
             .data
             .iter()

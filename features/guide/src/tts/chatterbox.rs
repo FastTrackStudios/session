@@ -101,9 +101,10 @@ impl ChatterboxTts {
         let (profile, voice_name) = voice::voice_cache_dir()
             .ok()
             .and_then(|dir| {
-                let name = voice::pick_voice_for_model(&dir, &config.repo_id, &config.revision, dtype)
-                    .ok()
-                    .flatten()?;
+                let name =
+                    voice::pick_voice_for_model(&dir, &config.repo_id, &config.revision, dtype)
+                        .ok()
+                        .flatten()?;
                 let profile = voice::load_voice_profile(&dir, &name).ok()?;
                 Some((Some(profile), name))
             })

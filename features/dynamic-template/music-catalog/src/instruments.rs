@@ -3,8 +3,8 @@
 //! Canonical colors for every instrument family used in music production.
 //! These are referenced by the auto-color system and the track classification engine.
 
-use color_palette::Color;
 use color_palette::palette;
+use color_palette::Color;
 
 /// Top-level instrument group colors
 pub mod groups {

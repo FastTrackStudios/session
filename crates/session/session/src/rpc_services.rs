@@ -80,5 +80,4 @@ impl SessionModeService for SessionModeServiceImpl {
     async fn list_modes(&self) -> Result<Vec<String>, SessionServiceError> {
         Ok(Mode::ALL.iter().map(|m| m.slug().to_string()).collect())
     }
-
 }

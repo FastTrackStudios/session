@@ -295,8 +295,7 @@ impl GuideEngine {
         // the incoming notes ARE the guide.
         if self.config.source == TriggerSource::Midi {
             self.pending.sort_by_key(|(offset, _)| *offset);
-            self.prev_block_end_seconds =
-                Some(clock.pos_seconds + n as f64 / clock.sample_rate);
+            self.prev_block_end_seconds = Some(clock.pos_seconds + n as f64 / clock.sample_rate);
             return;
         }
         if n == 0 || clock.sample_rate <= 0.0 {
@@ -419,9 +418,12 @@ impl GuideEngine {
         }
         if self.config.enable_triplet {
             let mut tmp = std::mem::take(&mut self.pending);
-            schedule_grid(triplet_interval, &mut self.last_triplet_idx, &mut tmp, &|_| {
-                GuideTrigger::Triplet
-            });
+            schedule_grid(
+                triplet_interval,
+                &mut self.last_triplet_idx,
+                &mut tmp,
+                &|_| GuideTrigger::Triplet,
+            );
             self.pending = tmp;
         }
 
@@ -448,9 +450,9 @@ impl GuideEngine {
                 }
                 CueEvent::Guide { keys, .. } => {
                     if self.config.enable_guide {
-                        if let Some(key) = keys.iter().find(|k| self.bank.guides.contains_key(*k))
-                        {
-                            self.pending.push((offset, GuideTrigger::Guide(key.clone())));
+                        if let Some(key) = keys.iter().find(|k| self.bank.guides.contains_key(*k)) {
+                            self.pending
+                                .push((offset, GuideTrigger::Guide(key.clone())));
                         }
                     }
                 }
@@ -589,7 +591,10 @@ mod tests {
                 sample_rate: 48_000.0,
             },
         );
-        l.iter().chain(r.iter()).map(|s| (*s as f64) * (*s as f64)).sum()
+        l.iter()
+            .chain(r.iter())
+            .map(|s| (*s as f64) * (*s as f64))
+            .sum()
     }
 
     /// A backward seek (to an already-played section) must NOT silence the
@@ -609,9 +614,18 @@ mod tests {
         engine.set_bank(bank);
 
         // Roll forward a few beats so the grid trackers advance.
-        assert!(block_energy(&mut engine, 2.0, 4.0) > 0.0, "first block silent");
-        assert!(block_energy(&mut engine, 2.5, 5.0) > 0.0, "second block silent");
-        assert!(block_energy(&mut engine, 3.0, 6.0) > 0.0, "third block silent");
+        assert!(
+            block_energy(&mut engine, 2.0, 4.0) > 0.0,
+            "first block silent"
+        );
+        assert!(
+            block_energy(&mut engine, 2.5, 5.0) > 0.0,
+            "second block silent"
+        );
+        assert!(
+            block_energy(&mut engine, 3.0, 6.0) > 0.0,
+            "third block silent"
+        );
 
         // Seek BACKWARD to an earlier beat: the click must keep firing.
         let after_seek = block_energy(&mut engine, 1.0, 2.0);

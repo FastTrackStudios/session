@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use keyflow_orchestra::analysis::analyze;
-use keyflow_orchestra::{Config, ProfileKind, detect_profile, process_part};
+use keyflow_orchestra::{detect_profile, process_part, Config, ProfileKind};
 
 /// `kf score <file>` — instrumentation / articulation / structure report.
 pub fn score_report(input: &Path) -> Result<(), String> {

@@ -51,9 +51,26 @@ struct SectionDoc {
 /// performance directions (a2, cresc., Con sord., fingering numbers, …) that
 /// share the same expression list.
 const SECTION_KEYWORDS: &[&str] = &[
-    "intro", "re-intro", "verse", "pre-chorus", "prechorus", "chorus", "bridge",
-    "interlude", "solo", "outro", "coda", "tag", "turnaround", "vamp", "ending",
-    "refrain", "instrumental", "band enters", "breakdown", "hook",
+    "intro",
+    "re-intro",
+    "verse",
+    "pre-chorus",
+    "prechorus",
+    "chorus",
+    "bridge",
+    "interlude",
+    "solo",
+    "outro",
+    "coda",
+    "tag",
+    "turnaround",
+    "vamp",
+    "ending",
+    "refrain",
+    "instrumental",
+    "band enters",
+    "breakdown",
+    "hook",
 ];
 
 /// Strip Finale `^macro(args)` inline-format codes from an expression body.
@@ -99,16 +116,31 @@ fn looks_like_section(text: &str) -> bool {
 /// Very small fifths→major-key name table (concert pitch).
 fn fifths_to_key(fifths: i32) -> String {
     let name = match fifths {
-        -7 => "Cb", -6 => "Gb", -5 => "Db", -4 => "Ab", -3 => "Eb", -2 => "Bb",
-        -1 => "F", 0 => "C", 1 => "G", 2 => "D", 3 => "A", 4 => "E", 5 => "B",
-        6 => "F#", 7 => "C#", _ => "?",
+        -7 => "Cb",
+        -6 => "Gb",
+        -5 => "Db",
+        -4 => "Ab",
+        -3 => "Eb",
+        -2 => "Bb",
+        -1 => "F",
+        0 => "C",
+        1 => "G",
+        2 => "D",
+        3 => "A",
+        4 => "E",
+        5 => "B",
+        6 => "F#",
+        7 => "C#",
+        _ => "?",
     };
     format!("{name} major")
 }
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let input = args.next().expect("usage: section_doc <in.musx> [out.json]");
+    let input = args
+        .next()
+        .expect("usage: section_doc <in.musx> [out.json]");
     let out = args.next();
 
     let musx = std::fs::read(&input).expect("read input");
@@ -130,7 +162,10 @@ fn main() {
     // measExprAssign cmper="MEASURE" -> textExprID
     // Keep the earliest measure a given section label is assigned to.
     let mut section_hits: Vec<(u32, String)> = Vec::new();
-    for a in edoc.descendants().filter(|n| n.has_tag_name("measExprAssign")) {
+    for a in edoc
+        .descendants()
+        .filter(|n| n.has_tag_name("measExprAssign"))
+    {
         let Some(meas) = a.attribute("cmper").and_then(|s| s.parse::<u32>().ok()) else {
             continue;
         };
@@ -157,7 +192,7 @@ fn main() {
     for (m, label) in section_hits {
         match boundaries.last() {
             Some((_, prev)) if *prev == label => {} // re-cue of same section
-            Some((pm, _)) if *pm == m => {}          // two labels same bar; keep first
+            Some((pm, _)) if *pm == m => {}         // two labels same bar; keep first
             _ => boundaries.push((m, label)),
         }
     }
@@ -193,7 +228,10 @@ fn main() {
     let mut total_measures = 0u32;
     let mut ts_at: BTreeMap<u32, (u32, u32)> = BTreeMap::new();
     for meas in first_part.children().filter(|n| n.has_tag_name("measure")) {
-        let num: u32 = meas.attribute("number").and_then(|s| s.parse().ok()).unwrap_or(0);
+        let num: u32 = meas
+            .attribute("number")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         total_measures = total_measures.max(num);
         if let Some(time) = meas.descendants().find(|n| n.has_tag_name("time")) {
             let beats = time

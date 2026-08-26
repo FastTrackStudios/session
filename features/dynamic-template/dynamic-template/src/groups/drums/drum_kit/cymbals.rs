@@ -1,7 +1,7 @@
 //! Cymbals group definition
 
-use crate::item_metadata::ItemMetadataField;
 use crate::item_metadata::prelude::*;
+use crate::item_metadata::ItemMetadataField;
 use monarchy::FieldValueDescriptor;
 
 /// Cymbals group

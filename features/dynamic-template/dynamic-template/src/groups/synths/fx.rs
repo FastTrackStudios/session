@@ -3,8 +3,8 @@
 //! This is for synthesizer-based sound design that's clearly part of the synth section,
 //! NOT for generic "FX" tracks which should go to the top-level SFX group.
 
-use crate::item_metadata::ItemMetadata;
 use crate::item_metadata::prelude::ItemMetadataGroupExt;
+use crate::item_metadata::ItemMetadata;
 use monarchy::Group;
 
 /// FX group (for synthesizer effects/sound design)

@@ -82,7 +82,6 @@ impl<T> GuideDaw for T where
 {
 }
 
-
 impl<D: GuideDaw> session_proto::guide::GuideActions for Guide<D> {
     fn generate_guide_tracks(&self) -> DawResult<()> {
         self.generate(GuideScope::All)
@@ -142,12 +141,7 @@ impl<D: GuideDaw> Guide<D> {
     /// wants. Every tempo point is a segment boundary, so a click stamped
     /// through a tempo ramp or a time-signature change stays with the
     /// grid instead of drifting off a single nominal BPM.
-    fn tempo_segments(
-        &self,
-        project: ProjectContext,
-        start: f64,
-        end: f64,
-    ) -> Vec<TempoSegment> {
+    fn tempo_segments(&self, project: ProjectContext, start: f64, end: f64) -> Vec<TempoSegment> {
         let points = self.daw.get_tempo_points(project.clone());
         let mut segments: Vec<TempoSegment> = points
             .iter()
@@ -156,7 +150,9 @@ impl<D: GuideDaw> Guide<D> {
                 if at >= end {
                     return None;
                 }
-                let (num, den) = self.daw.get_time_signature_at(project.clone(), at.max(start));
+                let (num, den) = self
+                    .daw
+                    .get_time_signature_at(project.clone(), at.max(start));
                 Some(TempoSegment {
                     start_seconds: at.max(start),
                     tempo_bpm: point.bpm,
@@ -196,8 +192,7 @@ impl<D: GuideDaw> Guide<D> {
         end: f64,
     ) -> DawResult<()> {
         for role in GuideScope::All.roles() {
-            let for_role: Vec<&GuideMidiNote> =
-                notes.iter().filter(|n| n.role == *role).collect();
+            let for_role: Vec<&GuideMidiNote> = notes.iter().filter(|n| n.role == *role).collect();
             if for_role.is_empty() {
                 continue;
             }
@@ -305,9 +300,10 @@ impl<D: GuideDaw> Guide<D> {
             let item_start = item.position.as_seconds();
             let item_end = item_start + item.length.as_seconds();
             if item_end > start && item_start < end {
-                let _ = self
-                    .daw
-                    .delete_item(project.clone(), daw::service::ItemRef::Guid(item.guid.clone()));
+                let _ = self.daw.delete_item(
+                    project.clone(),
+                    daw::service::ItemRef::Guid(item.guid.clone()),
+                );
             }
         }
     }

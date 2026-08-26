@@ -169,8 +169,8 @@ pub fn SectionProgressBar(
         _ => 1.75,
     };
     let card_top_offset_rem = 2.0; // Card position in rem (negative, so -2rem)
-    // Card bottom position: card_top + card_height = -2rem + 1.75rem = -0.25rem
-    // Line height is distance from progress bar (0) to card bottom (-0.25rem) = 0.25rem
+                                   // Card bottom position: card_top + card_height = -2rem + 1.75rem = -0.25rem
+                                   // Line height is distance from progress bar (0) to card bottom (-0.25rem) = 0.25rem
     let card_bottom_rem = -card_top_offset_rem + card_height_rem; // -2 + 1.75 = -0.25
     let line_height_rem = -card_bottom_rem; // 0.25 (distance from 0 to -0.25rem)
     let _line_height = format!("{}rem", line_height_rem);

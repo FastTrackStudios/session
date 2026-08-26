@@ -4,13 +4,13 @@ use super::{
     CHART_REFRESH_FALLBACK_POLL_MS, HYDRATION_CONCURRENCY, MIDI_TRACK_TAG, SetlistServiceImpl,
 };
 use crate::song::builder::SongBuilder;
+use architect::platform::Instant;
 use daw::service::{ProjectContext, ProjectInfo, Projects};
 use keyflow_daw_analysis::{DetectedChord, MidiChartData, MidiChartRequest, MidiChartsClient};
-use tokio::sync::Semaphore;
 use session_proto::{Song, SongChartHydration, SongDetectedChord, SongId};
 use std::sync::Arc;
-use architect::platform::Instant;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
 #[derive(Clone)]
@@ -366,8 +366,7 @@ where
     }
 
     pub(crate) async fn fetch_project_loads(projects: Vec<ProjectInfo>) -> Vec<ProjectLoad> {
-        let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY,
-        ));
+        let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY));
         let mut loads = Vec::with_capacity(projects.len());
         for (index, project) in projects.into_iter().enumerate() {
             let _permit = semaphore
