@@ -1,12 +1,12 @@
 //! Chart graphics context for GPU-accelerated chart rendering.
 //!
 //! Provides platform-specific rendering backends:
-//! - **Desktop** (`desktop-panels`): `VelloWindowRenderer` with WGPU behind a transparent WebView
-//! - **WASM** (`wasm-panels`): `vello_hybrid::WebGlRenderer` rendering to an HTML canvas
+//! - **Desktop** (`desktop-graphics`): `VelloWindowRenderer` with WGPU behind a transparent WebView
+//! - **WASM** (`wasm-graphics`): `vello_hybrid::WebGlRenderer` rendering to an HTML canvas
 
 // ─── Desktop backend (VelloWindowRenderer + WGPU) ───────────────────────────
 
-#[cfg(feature = "desktop-panels")]
+#[cfg(feature = "desktop-graphics")]
 mod desktop {
     use std::sync::Arc;
 
@@ -112,12 +112,12 @@ mod desktop {
     }
 }
 
-#[cfg(feature = "desktop-panels")]
+#[cfg(feature = "desktop-graphics")]
 pub use desktop::ChartGraphics;
 
 // ─── WASM backend (vello_hybrid WebGlRenderer) ─────────────────────────────
 
-#[cfg(all(feature = "wasm-panels", target_arch = "wasm32"))]
+#[cfg(all(feature = "wasm-graphics", target_arch = "wasm32"))]
 mod wasm {
     use anyrender_vello_hybrid::{WebGlImageManager, WebGlScenePainter};
     use rustc_hash::FxHashMap;
@@ -203,5 +203,5 @@ mod wasm {
     }
 }
 
-#[cfg(all(feature = "wasm-panels", target_arch = "wasm32"))]
+#[cfg(all(feature = "wasm-graphics", target_arch = "wasm32"))]
 pub use wasm::ChartGraphics;

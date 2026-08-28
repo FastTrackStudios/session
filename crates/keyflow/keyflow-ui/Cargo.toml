@@ -40,20 +40,6 @@ vello_common = { workspace = true, optional = true }
 web-sys = { version = "0.3", optional = true, features = ["HtmlCanvasElement"] }
 rustc-hash = { version = "2", optional = true }
 
-# Session UI signals (for playback state, chart area bounds, etc.)
-session-ui = { workspace = true, default-features = false, optional = true }
-session = { workspace = true, optional = true }
-
-# DAW protocol types (for MusicalPosition)
-daw-proto = { workspace = true, optional = true }
-
-# Dock layout system (for panel visibility checks)
-dock-dioxus = { workspace = true, default-features = false, optional = true }
-dock-proto = { workspace = true, optional = true }
-
-# JSON parsing (for bounds eval results)
-serde_json = { workspace = true, optional = true }
-
 # MusicXML catalog extraction for local ignored reference corpora.
 roxmltree = "0.20"
 
@@ -70,22 +56,16 @@ web-time = "1.1.0"
 [features]
 default = ["web"]
 # Web/desktop (WebView-based) rendering
-web = ["dioxus", "dioxus/desktop", "desktop-panels"]
+web = ["dioxus", "dioxus/desktop", "desktop-graphics"]
 # Native GPU-accelerated rendering via Blitz
-native = ["dioxus", "dioxus-native", "desktop-panels"]
-# Desktop panel components (ChartView, ChartPreviewPanel) with full app dependencies
-desktop-panels = [
-    "anyrender_vello",
-    "peniko",
-    "session-ui",
-    "session",
-    "daw-proto",
-    "dock-dioxus",
-    "dock-proto",
-    "serde_json",
-]
-# WASM chart panels — WebGL2 rendering via vello_hybrid, no dock/desktop deps
-wasm-panels = [
+native = ["dioxus", "dioxus-native", "desktop-graphics"]
+# The desktop `ChartGraphics` surface: a WGPU/Vello scene mount the host app
+# renders into. Panel components that wire this to app state (dock layout,
+# transport signals) live in the consuming app, not here — keyflow-ui must
+# stay below the app layer.
+desktop-graphics = ["anyrender_vello", "peniko"]
+# WASM chart graphics — WebGL2 rendering via vello_hybrid.
+wasm-graphics = [
     "dioxus",
     "anyrender_vello_hybrid",
     "vello_hybrid",
@@ -93,9 +73,6 @@ wasm-panels = [
     "web-sys",
     "rustc-hash",
     "peniko",
-    "session-ui",
-    "daw-proto",
-    "serde_json",
 ]
 
 [lints]
