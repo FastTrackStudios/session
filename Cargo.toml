@@ -9,21 +9,6 @@ resolver = "3"
 
 members = [
     "apps/fasttrackstudio",
-    "crates/keyflow/cli",
-    "crates/keyflow/keyflow",
-    "crates/keyflow/keyflow-annotate",
-    "crates/keyflow/keyflow-chordpro",
-    "crates/keyflow/keyflow-daw-analysis",
-    "crates/keyflow/keyflow-live",
-    "crates/keyflow/keyflow-lsp",
-    "crates/keyflow/keyflow-midi",
-    "crates/keyflow/keyflow-musicxml",
-    "crates/keyflow/keyflow-musx",
-    "crates/keyflow/keyflow-orchestra",
-    "crates/keyflow/keyflow-sync",
-    "crates/keyflow/keyflow-text",
-    "crates/keyflow/keyflow-ui",
-    "crates/keyflow/tree-sitter-keyflow",
     "crates/session/proto",
     "crates/session/session",
     "crates/session/ui",
@@ -33,9 +18,6 @@ members = [
     "features/dynamic-template/dynamic-template-extension",
     "features/dynamic-template/dynamic-template-proto",
     "features/dynamic-template/tests",
-    "features/engraver/engraver",
-    "features/engraver/proto",
-    "features/engraver/score",
     "features/guide",
     "features/reaper/session-extension",
     "features/song",
@@ -177,30 +159,39 @@ session-guide = { path = "features/guide" }
 # (relative paths / attachment ids), never embedded keyflow::Chart types.
 song = { path = "features/song" }
 
-# ── keyflow domain (wave 3) ───────────────────────────────────────────
-# `keyflow` and `engraver` are the facades; keyflow-proto/-text/-midi/
-# -syntax/-live and engraver-proto are INTERNAL to the domain.
-keyflow = { path = "crates/keyflow/keyflow" }
+# ── keyflow domain — its own repo since the 2026-08 split ─────────────
+# (FastTrackStudios/keyflow: the chart language, its formats, the LSP and
+# tree-sitter grammar, and Engraver.) One tag pin shared by every entry so
+# the whole domain moves together.
+#
+# `keyflow` and `engraver` are the facades — depend on those. The rest are
+# listed only because in-tree consumers still name them directly; new code
+# should go through a facade.
+#
+# `keyflow-proto` and `keyflow-syntax` stay in `daw`: expression-editor-core,
+# which daw-reaper hard-depends on, needs them.
+keyflow = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
 keyflow-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.2" }
 keyflow-syntax = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.2" }
-keyflow-text = { path = "crates/keyflow/keyflow-text" }
-keyflow-chordpro = { path = "crates/keyflow/keyflow-chordpro" }
-keyflow-midi = { path = "crates/keyflow/keyflow-midi" }
-keyflow-live = { path = "crates/keyflow/keyflow-live" }
-keyflow-musicxml = { path = "crates/keyflow/keyflow-musicxml" }
-keyflow-musx = { path = "crates/keyflow/keyflow-musx" }
-keyflow-annotate = { path = "crates/keyflow/keyflow-annotate" }
-keyflow-orchestra = { path = "crates/keyflow/keyflow-orchestra" }
-keyflow-sync = { path = "crates/keyflow/keyflow-sync" }
-keyflow-daw-analysis = { path = "crates/keyflow/keyflow-daw-analysis" }
-keyflow-ui = { path = "crates/keyflow/keyflow-ui" }
-keyflow-cli = { path = "crates/keyflow/cli" }
-tree-sitter-keyflow = { path = "crates/keyflow/tree-sitter-keyflow" }
+keyflow-text = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-chordpro = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-midi = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-live = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-musicxml = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-musx = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-annotate = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-orchestra = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-sync = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-daw-analysis = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-ui = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-cli = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+keyflow-lsp = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
+tree-sitter-keyflow = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
 # Engraver — defaults OFF at the root (the full `engraver` feature drags
 # wgpu/vello + PDF export); consumers opt into `svg`/`wgpu`/`engraver`.
-engraver = { path = "features/engraver/engraver", default-features = false }
-engraver-proto = { path = "features/engraver/proto", default-features = false }
-engraver-score = { path = "features/engraver/score" }
+engraver = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0", default-features = false }
+engraver-proto = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0", default-features = false }
+engraver-score = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.1.0" }
 
 # ── signal domain (wave 4) ────────────────────────────────────────────
 # `signal` is the facade — the only public API surface for the signal
