@@ -7,6 +7,12 @@
 # flagship id — this binary is the whole FastTrackStudio app (rig today,
 # session/charts to follow), not the rig alone. Watch app is a separate
 # record (app.fasttrackstudio.watch).
+# This binary ships as SESSION — setlists, songs, charts, the guide. It is
+# NOT the old `app.fasttrackstudio` record (that id belongs to the original
+# combined app, which stays put), and it must differ from Signal's id even
+# though BOTH repos still call their app crate `fasttrackstudio`. Renaming
+# the crate is pending hygiene; the bundle id is what actually separates the
+# shipped products.
 [bundle]
-identifier = "app.fasttrackstudio"
+identifier = "app.fasttrackstudio.session"
 publisher = "FastTrackStudio"

@@ -29,7 +29,17 @@ default = ["session", "charts"]
 # daw-standalone, the guide) is native-only -- those optional deps live
 # exclusively in the `cfg(not(target_arch = "wasm32"))` table below, so
 # enabling them here is a no-op on the web build.
-session = [
+# `session` = the domain PLUS spoken cues. Split so iOS can take the domain
+# without the TTS backend: `tts` pulls ort/ONNX Runtime, which publishes no
+# prebuilt binary for aarch64-apple-ios (ort-sys' build.rs panics outright
+# with "downloaded binaries not available for target aarch64-apple-ios").
+# Desktop behaviour is unchanged -- `session` still implies `tts`.
+session = ["session-domain", "tts"]
+# Everything Session is except the TTS backend. The iOS build uses this:
+#   dx build --no-default-features --features "session-domain,charts"
+# The guide still runs; spoken section cues fall back to the synthesized
+# guide samples, exactly as they do when FTS_TTS is unset on desktop.
+session-domain = [
     "dep:session-proto",
     # Wasm-only collection browser dep (no-op on native — see note above).
     "dep:collection-proto",
@@ -52,10 +62,6 @@ session = [
     "dep:vox-websocket",
     "dep:tokio",
     "dep:eyre",
-    # Spoken section cues via Chatterbox TTS — auto-enabled with Session (the
-    # guide is core to it). A named sub-feature (below) so the app's guide code
-    # can gate on it; not one of the three domain axes.
-    "tts",
 ]
 # Charts: keyflow chart writing (the Charts workspace). Keyflow is also pulled
 # by Session (chart parsing), so this is additive; a charts-only build gets it
