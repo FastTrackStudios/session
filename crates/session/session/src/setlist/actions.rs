@@ -31,6 +31,7 @@ static SETLIST_STORE: OnceLock<Arc<RwLock<Option<Setlist>>>> = OnceLock::new();
 
 /// Stash the `SetlistServiceImpl`'s setlist cell so the action
 /// handler writes to the same `Arc<RwLock<>>` the RPC service reads.
+///
 /// Idempotent — first call wins; later calls ignored so re-mounting
 /// (shouldn't happen but defensive) can't blow up plugin startup.
 pub fn register<D>(svc: &SetlistServiceImpl<D>) {
@@ -185,14 +186,14 @@ where
     sorted_markers.sort_by(|a, b| {
         let lane_ord = a.lane.unwrap_or(0).cmp(&b.lane.unwrap_or(0));
         lane_ord.then_with(|| {
-            let ap = a.position.time.map(|t| t.as_seconds()).unwrap_or(0.0);
-            let bp = b.position.time.map(|t| t.as_seconds()).unwrap_or(0.0);
+            let ap = a.position.time.map_or(0.0, |t| t.as_seconds());
+            let bp = b.position.time.map_or(0.0, |t| t.as_seconds());
             ap.partial_cmp(&bp).unwrap_or(std::cmp::Ordering::Equal)
         })
     });
     tracing::info!("[session] === markers ===");
     for m in &sorted_markers {
-        let pos = m.position.time.map(|t| t.as_seconds()).unwrap_or(0.0);
+        let pos = m.position.time.map_or(0.0, |t| t.as_seconds());
         tracing::info!(
             "[session] marker  lane={:?}  pos={:>7.3}  color={:?}  name={:?}  id={:?}",
             m.lane,
@@ -208,30 +209,15 @@ where
     sorted_regions.sort_by(|a, b| {
         let lane_ord = a.lane.unwrap_or(0).cmp(&b.lane.unwrap_or(0));
         lane_ord.then_with(|| {
-            let ap = a
-                .time_range
-                .start
-                .time
-                .map(|t| t.as_seconds())
-                .unwrap_or(0.0);
-            let bp = b
-                .time_range
-                .start
-                .time
-                .map(|t| t.as_seconds())
-                .unwrap_or(0.0);
+            let ap = a.time_range.start.time.map_or(0.0, |t| t.as_seconds());
+            let bp = b.time_range.start.time.map_or(0.0, |t| t.as_seconds());
             ap.partial_cmp(&bp).unwrap_or(std::cmp::Ordering::Equal)
         })
     });
     tracing::info!("[session] === regions ===");
     for r in &sorted_regions {
-        let start = r
-            .time_range
-            .start
-            .time
-            .map(|t| t.as_seconds())
-            .unwrap_or(0.0);
-        let end = r.time_range.end.time.map(|t| t.as_seconds()).unwrap_or(0.0);
+        let start = r.time_range.start.time.map_or(0.0, |t| t.as_seconds());
+        let end = r.time_range.end.time.map_or(0.0, |t| t.as_seconds());
         tracing::info!(
             "[session] region  lane={:?}  start={:>7.3}  end={:>7.3}  color={:?}  name={:?}  id={:?}",
             r.lane,
@@ -273,10 +259,11 @@ where
     }
 }
 
-/// Registers all three setlist actions with `backend` (a REAPER
-/// `ActionBackend`, a CLI command-tree builder, an in-memory test double,
-/// …), dispatching each through a fresh `SetlistActionsImpl` bound to
-/// `daw`. Call once at module init, alongside [`register`].
+/// Registers all three setlist actions with `backend`.
+///
+/// Dispatches each through a fresh `SetlistActionsImpl` bound to `daw`.
+/// `backend` can be a REAPER `ActionBackend`, a CLI command-tree builder,
+/// an in-memory test double, etc. Call once at module init, alongside [`register`].
 ///
 /// Once `daw-reaper` grows an `ActionBackend` impl (architect migration
 /// phase 2), the call site is simply:

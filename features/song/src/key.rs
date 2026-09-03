@@ -23,7 +23,7 @@ pub enum Letter {
 }
 
 impl Letter {
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::C => "C",
             Self::D => "D",
@@ -35,7 +35,7 @@ impl Letter {
         }
     }
 
-    fn parse(c: char) -> Option<Self> {
+    const fn parse(c: char) -> Option<Self> {
         Some(match c.to_ascii_uppercase() {
             'C' => Self::C,
             'D' => Self::D,
@@ -59,7 +59,7 @@ pub enum Accidental {
 }
 
 impl Accidental {
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::Natural => "",
             Self::Sharp => "#",
@@ -82,7 +82,7 @@ pub enum Mode {
 }
 
 impl Mode {
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::Major => "Major",
             Self::Minor => "Minor",
@@ -121,7 +121,7 @@ pub struct Key {
 
 impl Key {
     #[must_use]
-    pub fn new(letter: Letter, accidental: Accidental, mode: Mode) -> Self {
+    pub const fn new(letter: Letter, accidental: Accidental, mode: Mode) -> Self {
         Self {
             letter,
             accidental,
@@ -131,7 +131,7 @@ impl Key {
 
     /// `C Major` — a sensible neutral default.
     #[must_use]
-    pub fn c_major() -> Self {
+    pub const fn c_major() -> Self {
         Self::new(Letter::C, Accidental::Natural, Mode::Major)
     }
 }
@@ -173,13 +173,13 @@ impl FromStr for Key {
         // Optional accidental immediately after the letter.
         let rest = chars.as_str();
         let (accidental, after_acc) = match rest.chars().next() {
-            Some('#') | Some('♯') => (
+            Some(c @ ('#' | '♯')) => (
                 Accidental::Sharp,
-                &rest[rest.chars().next().unwrap().len_utf8()..],
+                rest.get(c.len_utf8()..).unwrap_or_default(),
             ),
-            Some('b') | Some('♭') => (
+            Some(c @ ('b' | '♭')) => (
                 Accidental::Flat,
-                &rest[rest.chars().next().unwrap().len_utf8()..],
+                rest.get(c.len_utf8()..).unwrap_or_default(),
             ),
             _ => (Accidental::Natural, rest),
         };

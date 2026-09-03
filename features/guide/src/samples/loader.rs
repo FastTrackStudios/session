@@ -10,6 +10,10 @@ use super::AudioSample;
 /// Load an audio file as planar f32 PCM, resampled to `target_sample_rate`.
 ///
 /// Guide assets are wav, but anything symphonium decodes works.
+///
+/// # Errors
+///
+/// Returns `GuideError::SampleLoad` if the audio file cannot be loaded or decoded.
 pub fn load_wav(path: &Path, target_sample_rate: u32) -> Result<AudioSample, GuideError> {
     // Low quality = linear interpolation — the same fidelity the old local
     // resampler had, which is plenty for click/voice cues.

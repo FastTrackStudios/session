@@ -1,35 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn woodwind_quintet() -> Result<()> {
-    // -- Setup & Fixtures
-    // Fennel Cartwright - Flower Drum Song: 5-stem woodwind quintet from MedleyDB.
-    // French horn, oboe, clarinet, bassoon, and flute. Pure chamber music ensemble
-    // with no rhythm section or vocals. Tests woodwind + horn orchestral classification.
-    let items = vec![
-        "01_FrenchHorn.wav",
-        "02_Oboe.wav",
-        "03_Clarinet.wav",
-        "04_Bassoon.wav",
-        "05_Flute.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // French horn dual-classified: top-level Horns + Orchestra/Horns
+fn woodwind_quintet_expected() -> daw_proto::TrackHierarchy {
     let horns = TrackGroup::single_track("Horns", "01_FrenchHorn.wav");
 
     let woodwinds = TrackGroup::folder("Woodwinds")
@@ -53,8 +25,37 @@ fn woodwind_quintet() -> Result<()> {
         .group(horns)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn woodwind_quintet() {
+    // -- Setup & Fixtures
+    // Fennel Cartwright - Flower Drum Song: 5-stem woodwind quintet from MedleyDB.
+    // French horn, oboe, clarinet, bassoon, and flute. Pure chamber music ensemble
+    // with no rhythm section or vocals. Tests woodwind + horn orchestral classification.
+    let items = vec![
+        "01_FrenchHorn.wav",
+        "02_Oboe.wav",
+        "03_Clarinet.wav",
+        "04_Bassoon.wav",
+        "05_Flute.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // French horn dual-classified: top-level Horns + Orchestra/Horns
+    let expected = woodwind_quintet_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

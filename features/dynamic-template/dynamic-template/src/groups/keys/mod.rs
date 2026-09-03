@@ -24,9 +24,12 @@ pub struct Keys;
 
 impl From<Keys> for Group<ItemMetadata> {
     fn from(_val: Keys) -> Self {
-        Group::builder("Keys")
+        Self::builder("Keys")
             .prefix("Keys")
             .patterns(vec!["keys", "keyboard"])
+            // A talkback mic is named for whoever it belongs to ("TB Keys"),
+            // so without this it classifies as the thing it is listening to.
+            .exclude(["tb", "talkback", "vca", "hp", "headphone"])
             .group(Piano)
             .group(ElectricKeys)
             .group(Organ)

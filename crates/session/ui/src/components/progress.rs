@@ -1,7 +1,7 @@
 //! Progress Bar Components
 //!
 //! Progress visualization components for songs and sections.
-//! Copied from FastTrackStudio for exact styling match.
+//! Copied from `FastTrackStudio` for exact styling match.
 
 use crate::prelude::*;
 use session_proto::QueuedTarget;
@@ -19,7 +19,8 @@ pub struct LoopIndicatorData {
 
 impl LoopIndicatorData {
     /// Create a new loop indicator
-    pub fn new(enabled: bool, start_percent: f64, end_percent: f64) -> Self {
+    #[must_use]
+    pub const fn new(enabled: bool, start_percent: f64, end_percent: f64) -> Self {
         Self {
             enabled,
             start_percent: start_percent.clamp(0.0, 100.0),
@@ -40,33 +41,32 @@ pub fn TimeSignatureCard(
     #[props(default = "sm".to_string())] size: String,
 ) -> Element {
     // Parse time signature for fraction display
-    let (numerator, denominator) = if label.contains('/') {
-        if let Some(slash_pos) = label.find('/') {
+    let (numerator, denominator) = label.find('/').map_or_else(
+        || (label.clone(), String::new()),
+        |slash_pos| {
             (
-                label[..slash_pos].trim().to_string(),
-                label[slash_pos + 1..].trim().to_string(),
+                label.get(..slash_pos).unwrap_or("").trim().to_string(),
+                label
+                    .get(slash_pos.saturating_add(1)..)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
             )
-        } else {
-            (label.clone(), String::new())
-        }
-    } else {
-        (String::new(), String::new())
-    };
+        },
+    );
 
     // Size presets
     let (text_size, padding, spacing) = match size.as_str() {
         "xs" => ("text-xs", "px-0.5 py-0.5", "my-0.5"),
-        "sm" => ("text-xs", "px-1 py-0.5", "my-0.5"),
         "md" => ("text-sm", "px-1 py-1", "my-0.5"),
         "lg" => ("text-base", "px-2 py-1", "my-1"),
         _ => ("text-xs", "px-1 py-0.5", "my-0.5"),
     };
 
     let card_class = format!(
-        "{} font-medium text-center whitespace-nowrap {} rounded bg-accent text-accent-foreground border border-border",
-        text_size, padding
+        "{text_size} font-medium text-center whitespace-nowrap {padding} rounded bg-accent text-accent-foreground border border-border"
     );
-    let divider_class = format!("border-t border-current w-full {}", spacing);
+    let divider_class = format!("border-t border-current w-full {spacing}");
 
     rsx! {
         div {
@@ -111,15 +111,9 @@ pub fn TempoCard(
         "transform: translateX(-50%);"
     };
     let style = if position_above {
-        format!(
-            "left: {}%; {} top: {};",
-            position_percent, transform, bottom_offset
-        )
+        format!("left: {position_percent}%; {transform} top: {bottom_offset};")
     } else {
-        format!(
-            "left: {}%; {} top: calc(100% + {});",
-            position_percent, transform, bottom_offset
-        )
+        format!("left: {position_percent}%; {transform} top: calc(100% + {bottom_offset});")
     };
 
     let adjusted_card_class = if left_align && card_class.contains("text-center") {
@@ -218,37 +212,6 @@ pub fn SegmentedProgressBar(
     #[props(default)] loop_indicator: Option<LoopIndicatorData>,
     #[props(default)] queued_target: Option<QueuedTarget>,
 ) -> Element {
-    let current_progress = progress;
-
-    // Track progress changes to detect jumps and disable animations
-    let mut prev_progress = use_signal(|| None::<f64>);
-    let mut prev_song_key = use_signal(|| None::<String>);
-
-    let song_key_for_memo = song_key.clone();
-    let should_animate = use_memo(move || {
-        let prev = prev_progress();
-        let prev_key = prev_song_key();
-        let song_changed = prev_key != song_key_for_memo;
-        let large_jump = if let Some(prev_val) = prev {
-            (current_progress - prev_val).abs() > 5.0
-        } else {
-            false
-        };
-        !song_changed && !large_jump && prev.is_some()
-    });
-
-    let current_progress_for_effect = current_progress;
-    let song_key_for_effect = song_key.clone();
-    use_effect(move || {
-        prev_progress.set(Some(current_progress_for_effect));
-        if prev_song_key() != song_key_for_effect {
-            prev_song_key.set(song_key_for_effect.clone());
-        }
-    });
-
-    // Pre-calculate STATIC section data with intelligent text fitting
-    // This is memoized because it only depends on sections prop, not progress
-    //
     // Text width estimation constants (in pixels):
     // We use generous estimates since text will truncate with ellipsis if needed.
     // Better to show text that gets truncated than hide it entirely.
@@ -261,6 +224,38 @@ pub fn SegmentedProgressBar(
     const CHAR_WIDTH_COMMENT_PX: f64 = 4.5; // text-[10px] - lenient estimate
     const SECTION_PADDING_PX: f64 = 8.0; // minimal padding
 
+    // Helper function to check if two markers overlap
+    fn check_overlap(pos1: f64, pos2: f64) -> bool {
+        (pos1 - pos2).abs() < 2.0
+    }
+
+    let current_progress = progress;
+
+    // Track progress changes to detect jumps and disable animations
+    let mut prev_progress = use_signal(|| None::<f64>);
+    let mut prev_song_key = use_signal(|| None::<String>);
+
+    let song_key_for_memo = song_key.clone();
+    let should_animate = use_memo(move || {
+        let prev = prev_progress();
+        let prev_key = prev_song_key();
+        let song_changed = prev_key != song_key_for_memo;
+        let large_jump = prev.map_or(false, |prev_val| (current_progress - prev_val).abs() > 5.0);
+        !song_changed && !large_jump && prev.is_some()
+    });
+
+    let current_progress_for_effect = current_progress;
+    let song_key_for_effect = song_key;
+    use_effect(move || {
+        prev_progress.set(Some(current_progress_for_effect));
+        if prev_song_key() != song_key_for_effect {
+            prev_song_key.set(song_key_for_effect.clone());
+        }
+    });
+
+    // Pre-calculate STATIC section data with intelligent text fitting
+    // This is memoized because it only depends on sections prop, not progress
+
     // Compute static section data from props (text fitting, display names).
     // Not memoized — recomputes each render so prop changes are always reflected.
     let static_section_data: Vec<_> = sections
@@ -272,12 +267,15 @@ pub fn SegmentedProgressBar(
             let section_width_percent = section.end_percent - section.start_percent;
 
             // Estimate available pixel width for this section
-            let section_width_px =
-                (section_width_percent / 100.0) * ESTIMATED_BAR_WIDTH_PX - SECTION_PADDING_PX;
+            let section_width_px = (section_width_percent / 100.0)
+                .mul_add(ESTIMATED_BAR_WIDTH_PX, -SECTION_PADDING_PX);
 
             // Calculate text widths
-            let name_width_px = section.name.len() as f64 * CHAR_WIDTH_NAME_PX;
-            let short_name_width_px = section.short_name.len() as f64 * CHAR_WIDTH_NAME_PX;
+            let name_width_px =
+                f64::from(u32::try_from(section.name.len()).unwrap_or(0)) * CHAR_WIDTH_NAME_PX;
+            let short_name_width_px =
+                f64::from(u32::try_from(section.short_name.len()).unwrap_or(0))
+                    * CHAR_WIDTH_NAME_PX;
 
             // Decide which name to display based on available width
             let display_name = if name_width_px <= section_width_px {
@@ -292,16 +290,15 @@ pub fn SegmentedProgressBar(
             };
 
             // Show comment if it fits within the section width
-            let comment = if let Some(ref comment_text) = section.comment {
-                let comment_width_px = comment_text.len() as f64 * CHAR_WIDTH_COMMENT_PX;
+            let comment = section.comment.as_ref().and_then(|comment_text| {
+                let comment_width_px = f64::from(u32::try_from(comment_text.len()).unwrap_or(0))
+                    * CHAR_WIDTH_COMMENT_PX;
                 if comment_width_px <= section_width_px {
                     Some(comment_text.clone())
                 } else {
                     None
                 }
-            } else {
-                None
-            };
+            });
 
             (
                 index,
@@ -351,16 +348,10 @@ pub fn SegmentedProgressBar(
         )
         .collect();
 
-    // Helper function to check if two markers overlap
-    fn check_overlap(pos1: f64, pos2: f64) -> bool {
-        (pos1 - pos2).abs() < 2.0
-    }
-
     // Calculate card positions - these are constants
     let card_size = "sm";
     let card_height_rem = match card_size {
         "xs" => 2.5,
-        "sm" => 3.5,
         "md" => 4.0,
         "lg" => 5.0,
         _ => 3.5,
@@ -369,11 +360,11 @@ pub fn SegmentedProgressBar(
     let line_end_rem = -0.75;
     let line_height = format!("calc(5rem + {}rem)", -line_end_rem);
     let card_top_offset_rem = line_end_rem - card_height_rem;
-    let card_top_offset_str = format!("{}rem", card_top_offset_rem);
+    let card_top_offset_str = format!("{card_top_offset_rem}rem");
 
     // Memoize marker positions - only recalculate when tempo_markers changes
     let tempo_markers_for_memo = tempo_markers.clone();
-    let card_top_offset_for_memo = card_top_offset_str.clone();
+    let card_top_offset_for_memo = card_top_offset_str;
     let time_sig_with_positions = use_memo(move || {
         tempo_markers_for_memo
             .iter()
@@ -406,7 +397,7 @@ pub fn SegmentedProgressBar(
         let mut result = Vec::new();
         for (idx, (orig_idx, marker)) in tempo_markers_list.iter().enumerate() {
             let needs_stagger = if idx > 0 {
-                tempo_markers_list[..idx].iter().any(|(_, prev_marker)| {
+                tempo_markers_list.iter().take(idx).any(|(_, prev_marker)| {
                     check_overlap(marker.position_percent, prev_marker.position_percent)
                 })
             } else {
@@ -515,7 +506,7 @@ pub fn SegmentedProgressBar(
                                     comment.position_percent
                                 ),
                                 onclick: {
-                                    let callback_opt = on_comment_click.clone();
+                                    let callback_opt = on_comment_click;
                                     let position_seconds = comment.position_seconds;
                                     move |_| {
                                         if let Some(callback) = &callback_opt {
@@ -531,16 +522,16 @@ pub fn SegmentedProgressBar(
                                     } else {
                                         "text-xs font-medium text-center whitespace-nowrap px-2 py-1 rounded border"
                                     },
-                                    style: if let Some(ref color) = comment.color {
-                                        format!(
-                                            "background-color: {}20; border-color: {}; color: {};",
-                                            color, color, color
-                                        )
-                                    } else if comment.is_count_in {
-                                        "background-color: rgba(251, 191, 36, 0.2); border-color: #fbbf24; color: #fbbf24;".to_string()
-                                    } else {
-                                        "background-color: var(--color-accent); border-color: var(--color-border); color: var(--color-accent-foreground);".to_string()
-                                    },
+                                    style: comment.color.as_ref().map_or_else(
+                                        || {
+                                            if comment.is_count_in {
+                                                "background-color: rgba(251, 191, 36, 0.2); border-color: #fbbf24; color: #fbbf24;".to_string()
+                                            } else {
+                                                "background-color: var(--color-accent); border-color: var(--color-border); color: var(--color-accent-foreground);".to_string()
+                                            }
+                                        },
+                                        |color| format!("background-color: {color}20; border-color: {color}; color: {color};"),
+                                    ),
                                     "{comment.text}"
                                 }
                             }
@@ -549,22 +540,27 @@ pub fn SegmentedProgressBar(
                     // Vertical line from comment to progress bar
                     div {
                         class: "absolute pointer-events-none z-40",
-                        style: if let Some(ref color) = comment.color {
-                            format!(
-                                "left: {}%; width: 1px; top: -0.75rem; height: 0.75rem; background-color: {}80; transform: translateX(-50%);",
-                                comment.position_percent, color
-                            )
-                        } else if comment.is_count_in {
-                            format!(
-                                "left: {}%; width: 1px; top: -0.75rem; height: 0.75rem; background-color: rgba(251, 191, 36, 0.5); transform: translateX(-50%);",
-                                comment.position_percent
-                            )
-                        } else {
-                            format!(
-                                "left: {}%; width: 1px; top: -0.75rem; height: 0.75rem; background-color: rgba(255, 255, 255, 0.5); transform: translateX(-50%);",
-                                comment.position_percent
-                            )
-                        },
+                        style: comment.color.as_ref().map_or_else(
+                            || {
+                                if comment.is_count_in {
+                                    format!(
+                                        "left: {}%; width: 1px; top: -0.75rem; height: 0.75rem; background-color: rgba(251, 191, 36, 0.5); transform: translateX(-50%);",
+                                        comment.position_percent
+                                    )
+                                } else {
+                                    format!(
+                                        "left: {}%; width: 1px; top: -0.75rem; height: 0.75rem; background-color: rgba(255, 255, 255, 0.5); transform: translateX(-50%);",
+                                        comment.position_percent
+                                    )
+                                }
+                            },
+                            |color| {
+                                format!(
+                                    "left: {}%; width: 1px; top: -0.75rem; height: 0.75rem; background-color: {}80; transform: translateX(-50%);",
+                                    comment.position_percent, color
+                                )
+                            },
+                        ),
                     }
                 }
             }
@@ -595,7 +591,7 @@ pub fn SegmentedProgressBar(
                                 // segment is too narrow for a legible label.
                                 title: "{sections.get(*index).map(|s| s.name.as_str()).unwrap_or_default()}",
                                 onclick: {
-                                    let callback_opt = on_section_click.clone();
+                                    let callback_opt = on_section_click;
                                     let idx = *index;
                                     move |_| {
                                         if let Some(callback) = &callback_opt {
@@ -723,7 +719,7 @@ pub fn SegmentedProgressBar(
 
 /// Song progress bar component using segmented progress bar
 ///
-/// This is a wrapper around SegmentedProgressBar that handles song-specific logic.
+/// This is a wrapper around `SegmentedProgressBar` that handles song-specific logic.
 #[component]
 pub fn SongProgressBar(
     /// Current progress percentage (0-100)
@@ -742,7 +738,7 @@ pub fn SongProgressBar(
             class: "w-full relative",
             SegmentedProgressBar {
                 progress: progress,
-                sections: sections.clone(),
+                sections: sections,
                 tempo_markers: tempo_markers,
                 comment_markers: comment_markers,
                 song_key: song_key,

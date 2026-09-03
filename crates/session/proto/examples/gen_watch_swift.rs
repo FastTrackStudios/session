@@ -11,13 +11,14 @@
 //! anything else so a proto change can't silently drift from Swift.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use facet::{Def, Facet, Shape, Type, UserType};
 use session_proto::watch::WatchSessionState;
 
-fn main() {
+fn main() -> Result<(), String> {
     let mut structs = BTreeMap::new();
-    collect(WatchSessionState::SHAPE, &mut structs);
+    collect(WatchSessionState::SHAPE, &mut structs)?;
 
     let mut out = String::new();
     out.push_str(
@@ -28,11 +29,9 @@ fn main() {
          import Foundation\n\n",
     );
     for (name, body) in &structs {
-        out.push_str(&format!(
-            "public struct {name}: Codable, Equatable, Sendable {{\n"
-        ));
+        let _ = writeln!(out, "public struct {name}: Codable, Equatable, Sendable {{");
         for (field, ty) in body {
-            out.push_str(&format!("    public var {}: {ty}\n", camel(field)));
+            let _ = writeln!(out, "    public var {}: {ty}", camel(field));
         }
         // Memberwise init (public structs don't get one across module
         // boundaries for free).
@@ -45,48 +44,53 @@ fn main() {
         out.push_str("\n    ) {\n");
         for (field, _) in body {
             let f = camel(field);
-            out.push_str(&format!("        self.{f} = {f}\n"));
+            let _ = writeln!(out, "        self.{f} = {f}");
         }
         out.push_str("    }\n\n");
         // The wire is snake_case (facet-json uses the Rust field names).
         out.push_str("    enum CodingKeys: String, CodingKey {\n");
         for (field, _) in body {
-            out.push_str(&format!("        case {} = \"{field}\"\n", camel(field)));
+            let _ = writeln!(out, "        case {} = \"{field}\"", camel(field));
         }
         out.push_str("    }\n}\n\n");
     }
     print!("{out}");
+    Ok(())
 }
 
-/// Field list in declaration order: (rust_name, swift_type).
+/// Field list in declaration order: (`rust_name`, `swift_type`).
 type StructBody = Vec<(String, String)>;
 
 /// Recursively collect every user struct reachable from `shape`.
-fn collect(shape: &'static Shape, out: &mut BTreeMap<String, StructBody>) {
+fn collect(shape: &'static Shape, out: &mut BTreeMap<String, StructBody>) -> Result<(), String> {
     let Type::User(UserType::Struct(st)) = &shape.ty else {
-        panic!(
+        return Err(format!(
             "gen_watch_swift: expected a struct shape, got {}",
             shape.type_identifier
-        );
+        ));
     };
     if out.contains_key(shape.type_identifier) {
-        return;
+        return Ok(());
     }
     let mut body = StructBody::new();
     for field in st.fields {
-        body.push((field.name.to_string(), swift_type(field.shape(), out)));
+        body.push((field.name.to_string(), swift_type(field.shape(), out)?));
     }
     out.insert(shape.type_identifier.to_string(), body);
+    Ok(())
 }
 
 /// Map a facet shape to its Swift spelling, recursing into user structs.
-fn swift_type(shape: &'static Shape, out: &mut BTreeMap<String, StructBody>) -> String {
+fn swift_type(
+    shape: &'static Shape,
+    out: &mut BTreeMap<String, StructBody>,
+) -> Result<String, String> {
     match &shape.def {
-        Def::List(l) => return format!("[{}]", swift_type(l.t, out)),
-        Def::Option(o) => return format!("{}?", swift_type(o.t, out)),
+        Def::List(l) => return Ok(format!("[{}]", swift_type(l.t, out)?)),
+        Def::Option(o) => return Ok(format!("{}?", swift_type(o.t, out)?)),
         _ => {}
     }
-    match shape.type_identifier {
+    Ok(match shape.type_identifier {
         "String" => "String".into(),
         "bool" => "Bool".into(),
         "f32" => "Float".into(),
@@ -101,16 +105,18 @@ fn swift_type(shape: &'static Shape, out: &mut BTreeMap<String, StructBody>) -> 
         "i64" => "Int64".into(),
         other => {
             if let Type::User(UserType::Struct(_)) = &shape.ty {
-                collect(shape, out);
+                collect(shape, out)?;
                 other.into()
             } else {
-                panic!("gen_watch_swift: unsupported type {other} — extend the walker");
+                return Err(format!(
+                    "gen_watch_swift: unsupported type {other} — extend the walker"
+                ));
             }
         }
-    }
+    })
 }
 
-/// snake_case → camelCase (Swift field convention).
+/// `snake_case` → camelCase (Swift field convention).
 fn camel(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut upper_next = false;

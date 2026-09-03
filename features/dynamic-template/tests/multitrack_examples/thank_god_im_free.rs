@@ -49,7 +49,7 @@ fn thank_god_im_free() {
         "Thank God I_m Free - Synth Pad.wav",
         "Thank God I_m Free - Vox FX.wav",
     ];
-    let (placement, _) = organize("Thank God I'm Free", &items);
+    let (placement, _) = organize("Thank God I'm Free", &items).unwrap();
     let ing = |f: &str, g: &str| in_group(&placement, f, g);
 
     assert!(ing("Thank God I_m Free - Click.wav", "Guide"));

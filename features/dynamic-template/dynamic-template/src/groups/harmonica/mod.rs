@@ -8,7 +8,7 @@ pub struct Harmonica;
 
 impl From<Harmonica> for Group<ItemMetadata> {
     fn from(_val: Harmonica) -> Self {
-        Group::builder("Harmonica")
+        Self::builder("Harmonica")
             .patterns(vec![
                 "harmonica",
                 "harp", // Common blues term for harmonica

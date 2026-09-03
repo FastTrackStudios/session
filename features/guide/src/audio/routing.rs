@@ -38,16 +38,27 @@ impl AudioRouter {
     ) {
         if decoded_audio.data.len() == 1 {
             // Mono source: duplicate to both channels
-            let sample_val = decoded_audio.data[0][position];
+            let sample_val = decoded_audio
+                .data
+                .get(0)
+                .and_then(|ch| ch.get(position))
+                .copied()
+                .unwrap_or(0.0);
             Self::mix_mono_to_stereo(sample_val, gain, left, right);
         } else {
             // Stereo source: route channel 0 to left, channel 1 to right
-            let left_val = decoded_audio.data[0][position];
-            let right_val = if decoded_audio.data.len() > 1 {
-                decoded_audio.data[1][position]
-            } else {
-                0.0
-            };
+            let left_val = decoded_audio
+                .data
+                .get(0)
+                .and_then(|ch| ch.get(position))
+                .copied()
+                .unwrap_or(0.0);
+            let right_val = decoded_audio
+                .data
+                .get(1)
+                .and_then(|ch| ch.get(position))
+                .copied()
+                .unwrap_or(0.0);
             Self::mix_stereo_to_stereo(left_val, right_val, gain, left, right);
         }
     }

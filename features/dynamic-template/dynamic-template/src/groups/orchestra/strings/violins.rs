@@ -15,7 +15,7 @@ pub struct Violins;
 
 impl From<Violins> for Group<ItemMetadata> {
     fn from(_val: Violins) -> Self {
-        Group::builder("Violins")
+        Self::builder("Violins")
             .patterns(vec!["violin", "violins", "vln"])
             // Make transparent so First Violin and Second Violin appear at Strings level
             .transparent()

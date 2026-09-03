@@ -30,19 +30,24 @@ pub struct SyncWord {
 
 impl SyncRating {
     /// (border, background, label) styling per tier.
-    fn palette(self) -> (&'static str, &'static str, &'static str) {
+    const fn palette(self) -> (&'static str, &'static str, &'static str) {
         match self {
-            SyncRating::Verified => ("#16a34a", "rgba(22,163,74,0.16)", "Verified"),
-            SyncRating::Review => ("#d97706", "rgba(217,119,6,0.16)", "Review"),
-            SyncRating::Failed => ("#dc2626", "rgba(220,38,38,0.14)", "Failed"),
+            Self::Verified => ("#16a34a", "rgba(22,163,74,0.16)", "Verified"),
+            Self::Review => ("#d97706", "rgba(217,119,6,0.16)", "Review"),
+            Self::Failed => ("#dc2626", "rgba(220,38,38,0.14)", "Failed"),
         }
     }
 }
 
 fn fmt_time(t: f64) -> String {
-    let m = (t / 60.0).floor() as i64;
-    let s = t - (m as f64) * 60.0;
-    format!("{m}:{s:05.2}")
+    let minutes_f = (t / 60.0).floor();
+    let m = if minutes_f.is_finite() && minutes_f >= 0.0 {
+        minutes_f
+    } else {
+        0.0
+    };
+    let s = t - m * 60.0;
+    format!("{m:.0}:{s:05.2}")
 }
 
 /// An editable lyric-timing view bound to a word list.
@@ -54,11 +59,13 @@ pub fn LyricSyncView(
 ) -> Element {
     let mut selected = use_signal(|| None::<usize>);
 
-    let (v, r, f) = words.iter().fold((0, 0, 0), |(v, r, f), w| match w.rating {
-        SyncRating::Verified => (v + 1, r, f),
-        SyncRating::Review => (v, r + 1, f),
-        SyncRating::Failed => (v, r, f + 1),
-    });
+    let (v, r, f) = words
+        .iter()
+        .fold((0usize, 0usize, 0usize), |(v, r, f), w| match w.rating {
+            SyncRating::Verified => (v.saturating_add(1), r, f),
+            SyncRating::Review => (v, r.saturating_add(1), f),
+            SyncRating::Failed => (v, r, f.saturating_add(1)),
+        });
     let total = words.len().max(1);
     let sel = selected().and_then(|i| words.get(i).cloned().map(|w| (i, w)));
 

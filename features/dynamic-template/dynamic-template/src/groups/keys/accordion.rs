@@ -8,7 +8,7 @@ pub struct Accordion;
 
 impl From<Accordion> for Group<ItemMetadata> {
     fn from(_val: Accordion) -> Self {
-        Group::builder("Accordion")
+        Self::builder("Accordion")
             .patterns(vec!["accordion", "accordian", "squeeze box", "squeezebox"])
             .build()
     }

@@ -21,7 +21,7 @@ const CHATTERBOX_SAMPLE_RATE: u32 = 24_000;
 
 /// dtype string cbx uses to tag voice profiles / model variants (must match
 /// the `--dtype` naming so `pick_voice_for_model` resolves cached profiles).
-fn dtype_str(v: ModelVariant) -> &'static str {
+const fn dtype_str(v: ModelVariant) -> &'static str {
     match v {
         ModelVariant::Fp32 => "fp32",
         ModelVariant::Fp16 => "fp16",
@@ -71,9 +71,11 @@ impl ChatterboxTtsConfig {
     }
 }
 
-/// A [`TtsRenderer`] backed by a locally-loaded Chatterbox model. Prefers a
-/// cached voice profile (the bundled `default` — no user recording needed);
-/// falls back to re-encoding `config.voice_wav` when no profile matches.
+/// A [`TtsRenderer`] backed by a locally-loaded Chatterbox model.
+///
+/// Prefers a cached voice profile (the bundled `default` — no user
+/// recording needed); falls back to re-encoding `config.voice_wav` when no
+/// profile matches.
 pub struct ChatterboxTts {
     model: Chatterbox,
     config: ChatterboxTtsConfig,
@@ -87,6 +89,11 @@ impl ChatterboxTts {
     /// Download (into the HF cache) and load the model, then resolve a voice:
     /// the cached `default` profile if present, else the reference wav.
     /// Blocking and slow; never call from an audio thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the model assets can't be downloaded or the
+    /// model fails to load.
     pub fn load(config: ChatterboxTtsConfig) -> Result<Self, GuideError> {
         let paths =
             hf::download_chatterbox_assets(&config.repo_id, &config.revision, config.variant)
@@ -108,7 +115,7 @@ impl ChatterboxTts {
                 let profile = voice::load_voice_profile(&dir, &name).ok()?;
                 Some((Some(profile), name))
             })
-            .unwrap_or((None, config.voice_name.clone()));
+            .unwrap_or_else(|| (None, config.voice_name.clone()));
 
         let voice_id = format!(
             "chatterbox:{}@{}:{:?}:{}",

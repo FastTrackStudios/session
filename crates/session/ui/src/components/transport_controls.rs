@@ -1,7 +1,7 @@
 //! Transport Control Components
 //!
 //! Transport control bar with grid layout.
-//! Copied from FastTrackStudio for exact styling match.
+//! Copied from `FastTrackStudio` for exact styling match.
 
 use crate::prelude::*;
 use lucide_dioxus::{

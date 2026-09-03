@@ -4,7 +4,7 @@
 //! window for iteration, and `fts-extensions` will register it as a
 //! REAPER panel rendered by Blitz. Propless is what allows both.
 //!
-//! Layout follows ChordGun: seven columns, one per scale degree, and down
+//! Layout follows `ChordGun`: seven columns, one per scale degree, and down
 //! each column the whole chord vocabulary. Out-of-scale types are shown
 //! dimmed rather than hidden — you reach for a chromatic chord on
 //! purpose, and a grid that drops rows as the key changes reflows under
@@ -12,7 +12,7 @@
 //!
 //! ## Interactions
 //!
-//! Modelled on TK's ChordGun, where click is safe and modifiers commit:
+//! Modelled on TK's `ChordGun`, where click is safe and modifiers commit:
 //!
 //! - **click** — select and preview
 //! - **ctrl+click** — cycle the inversion
@@ -34,17 +34,16 @@ use keyflow::primitives::MusicalNote;
 use crate::sink::{LogSink, SinkHandle};
 
 const FTS_THEME: &str = architect_ui::THEME_CSS;
-const APP_TAILWIND: &str =
-    include_str!("../../../../apps/fasttrackstudio/assets/tailwind-signal.css");
+const APP_TAILWIND: &str = include_str!("../../../../apps/desktop/assets/tailwind-signal.css");
 
 /// Without `html,body{height:100%}` an `h-full` root resolves against
 /// `auto` and the panel collapses to its content. Mirrors the reset
-/// `apps/fasttrackstudio` injects.
-const HOST_RESET: &str = r#"
+/// `apps/desktop` injects.
+const HOST_RESET: &str = r"
 html, body { margin:0; padding:0; height:100%; width:100%; overflow:hidden; }
 * { box-sizing: border-box; }
 body > div { height:100%; }
-"#;
+";
 
 const TONICS: [&str; 12] = [
     "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B",
@@ -66,8 +65,7 @@ struct Slot {
 }
 
 fn build_key(tonic: &str, minor: bool) -> Key {
-    let root = MusicalNote::from_string(tonic)
-        .unwrap_or_else(|| MusicalNote::from_string("C").expect("C parses"));
+    let root = MusicalNote::from_string(tonic).unwrap_or_else(MusicalNote::c);
     if minor {
         Key::minor(root)
     } else {
@@ -237,7 +235,7 @@ pub fn ChordToolPanel() -> Element {
                         button {
                             class: "px-2 py-0.5 rounded border border-primary bg-primary text-primary-foreground text-[11px]",
                             onclick: {
-                                let sink = sink.clone();
+                                let sink = sink;
                                 move |_| {
                                 // Insert in order; each call advances the
                                 // cursor, so the progression lays itself out.

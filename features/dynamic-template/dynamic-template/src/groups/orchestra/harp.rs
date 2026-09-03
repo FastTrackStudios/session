@@ -8,7 +8,7 @@ pub struct Harp;
 
 impl From<Harp> for Group<ItemMetadata> {
     fn from(_val: Harp) -> Self {
-        Group::builder("Harp")
+        Self::builder("Harp")
             .patterns(vec!["harp", "harps"])
             .build()
     }

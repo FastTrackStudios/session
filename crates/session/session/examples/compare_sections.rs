@@ -36,7 +36,7 @@ fn main() {
         eprintln!("usage: compare_sections <songs-root> [slug ...]");
         std::process::exit(2);
     };
-    let only: Vec<String> = args[1..].to_vec();
+    let only: Vec<String> = args.get(1..).unwrap_or(&[]).to_vec();
 
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)
         .into_iter()
@@ -89,11 +89,8 @@ fn main() {
             manifest.sections.len(),
             derived.len()
         );
-        let n = manifest.sections.len().min(derived.len());
         let mut max_delta = 0.0f64;
-        for i in 0..n {
-            let ms = &manifest.sections[i];
-            let cs = derived[i];
+        for (i, (ms, cs)) in manifest.sections.iter().zip(derived.iter()).enumerate() {
             let d = (ms.start_sec - cs.start_seconds)
                 .abs()
                 .max((ms.end_sec - cs.end_seconds).abs());

@@ -1,58 +1,8 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn marc_martel_dont_stop_me_now() -> Result<()> {
-    // -- Setup & Fixtures
-    // Marc Martel - Don't Stop Me Now: Queen cover with layered drums and H3000 effects
-    let items = vec![
-        "Kick In",
-        "Kick Out",
-        "Kick Sample",
-        "Snare Top",
-        "Snare Bottom",
-        "Snare Sample",
-        "Snare Sample Two",
-        "Tom1",
-        "Tom2",
-        "HighHat",
-        "OH",
-        "Rooms",
-        "Percussion",
-        "Bass DI",
-        "Piano",
-        "Lead Guitar Amplitube Left",
-        "Lead Guitar Amplitube Right",
-        "Lead Guitar Clean DI Left",
-        "Lead Guitar Clean DI Right",
-        "Vocal",
-        "H3000.One",
-        "H3000.Two",
-        "H3000.Three",
-        "Vocal.Eko.Plate",
-        "Vocal.Magic",
-        "BGV1",
-        "BGV2",
-        "BGV3",
-        "BGV4",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
-    // Kick has SUM subfolder for In/Out mics, "Kick Sample" stays as sibling (no SUM pattern match)
+fn marc_martel_dont_stop_me_now_expected_leaves(
+) -> (TrackGroup, TrackGroup, TrackGroup, TrackGroup, TrackGroup) {
     let kick = TrackGroup::folder("Kick")
         .folder("SUM")
         .track("In")
@@ -125,6 +75,12 @@ fn marc_martel_dont_stop_me_now() -> Result<()> {
         .item("Lead Guitar Amplitube Right")
         .end();
 
+    (drums, percussion, bass, clean, lead_guitar)
+}
+
+fn marc_martel_dont_stop_me_now_expected() -> daw_proto::TrackHierarchy {
+    let (drums, percussion, bass, clean, lead_guitar) =
+        marc_martel_dont_stop_me_now_expected_leaves();
     let guitars = TrackGroup::folder("Guitars")
         .group(clean)
         .group(lead_guitar)
@@ -184,8 +140,60 @@ fn marc_martel_dont_stop_me_now() -> Result<()> {
         .group(vocals)
         .group(sfx)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn marc_martel_dont_stop_me_now() {
+    // -- Setup & Fixtures
+    // Marc Martel - Don't Stop Me Now: Queen cover with layered drums and H3000 effects
+    let items = vec![
+        "Kick In",
+        "Kick Out",
+        "Kick Sample",
+        "Snare Top",
+        "Snare Bottom",
+        "Snare Sample",
+        "Snare Sample Two",
+        "Tom1",
+        "Tom2",
+        "HighHat",
+        "OH",
+        "Rooms",
+        "Percussion",
+        "Bass DI",
+        "Piano",
+        "Lead Guitar Amplitube Left",
+        "Lead Guitar Amplitube Right",
+        "Lead Guitar Clean DI Left",
+        "Lead Guitar Clean DI Right",
+        "Vocal",
+        "H3000.One",
+        "H3000.Two",
+        "H3000.Three",
+        "Vocal.Eko.Plate",
+        "Vocal.Magic",
+        "BGV1",
+        "BGV2",
+        "BGV3",
+        "BGV4",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    // Kick has SUM subfolder for In/Out mics, "Kick Sample" stays as sibling (no SUM pattern match)
+    let expected = marc_martel_dont_stop_me_now_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

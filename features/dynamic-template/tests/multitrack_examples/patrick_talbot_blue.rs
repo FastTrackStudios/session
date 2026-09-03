@@ -1,55 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn patrick_talbot_blue() -> Result<()> {
-    // -- Setup & Fixtures
-    // Patrick Talbot - Blue: 23-track jazz-rock session with extensively mic'd drums
-    // (3 kick mics: in/out/sub, 3 snare mics: up1/up2/down, 4 toms, dual room mics),
-    // bass, 2 electric guitars, vibraphone, Rhodes electric piano, toy piano,
-    // and vocals with backing. Cambridge-MT multitrack library.
-    let items = vec![
-        "01_KickIn.wav",
-        "02_KickOut.wav",
-        "03_KickSub.wav",
-        "04_SnareUp1.wav",
-        "05_SnareUp2.wav",
-        "06_SnareDown.wav",
-        "07_Tom1.wav",
-        "08_Tom2.wav",
-        "09_Tom3.wav",
-        "10_Tom4.wav",
-        "11_HiHat.wav",
-        "12_Overheads.wav",
-        "13_DrumsRoom1.wav",
-        "14_DrumsRoom2.wav",
-        "15_Bass.wav",
-        "16_ElecGtr1.wav",
-        "17_ElecGtr2.wav",
-        "18_Vibes.wav",
-        "19_Rhodes.wav",
-        "20_ToyPiano.wav",
-        "21_LeadVox.wav",
-        "22_BackingVox1.wav",
-        "23_BackingVox2.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
-    // Extensive multi-mic kit
+fn patrick_talbot_blue_expected() -> daw_proto::TrackHierarchy {
     let kick_sum = TrackGroup::folder("SUM")
         .track("In")
         .item("01_KickIn.wav")
@@ -160,8 +112,57 @@ fn patrick_talbot_blue() -> Result<()> {
         .group(vocals)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn patrick_talbot_blue() {
+    // -- Setup & Fixtures
+    // Patrick Talbot - Blue: 23-track jazz-rock session with extensively mic'd drums
+    // (3 kick mics: in/out/sub, 3 snare mics: up1/up2/down, 4 toms, dual room mics),
+    // bass, 2 electric guitars, vibraphone, Rhodes electric piano, toy piano,
+    // and vocals with backing. Cambridge-MT multitrack library.
+    let items = vec![
+        "01_KickIn.wav",
+        "02_KickOut.wav",
+        "03_KickSub.wav",
+        "04_SnareUp1.wav",
+        "05_SnareUp2.wav",
+        "06_SnareDown.wav",
+        "07_Tom1.wav",
+        "08_Tom2.wav",
+        "09_Tom3.wav",
+        "10_Tom4.wav",
+        "11_HiHat.wav",
+        "12_Overheads.wav",
+        "13_DrumsRoom1.wav",
+        "14_DrumsRoom2.wav",
+        "15_Bass.wav",
+        "16_ElecGtr1.wav",
+        "17_ElecGtr2.wav",
+        "18_Vibes.wav",
+        "19_Rhodes.wav",
+        "20_ToyPiano.wav",
+        "21_LeadVox.wav",
+        "22_BackingVox1.wav",
+        "23_BackingVox2.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    // Extensive multi-mic kit
+    let expected = patrick_talbot_blue_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

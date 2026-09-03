@@ -6,11 +6,11 @@
 //! ```
 //!
 //! The iteration loop, not the shipping target. This uses Dioxus's
-//! desktop (WebView) renderer, while the REAPER panel renders through
+//! desktop (`WebView`) renderer, while the REAPER panel renders through
 //! Blitz — CSS support differs, so keep styles simple and check the
 //! REAPER panel before believing a layout.
 //!
-//! Window config mirrors `apps/fasttrackstudio`: undecorated and
+//! Window config mirrors `apps/desktop`: undecorated and
 //! menu-less, because the panel draws its own surface and a host
 //! titlebar is not part of what ships inside REAPER.
 use dioxus::desktop::tao::dpi::LogicalSize;

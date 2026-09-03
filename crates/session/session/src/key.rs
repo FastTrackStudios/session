@@ -6,11 +6,11 @@
 //! somewhere better than a hidden blob: a `KEY` track whose items carry
 //! the key in their label.
 //!
-//! That's the AikyaLabs Simple ChordTrack pattern. REAPER draws an item's
+//! That's the `AikyaLabs` Simple `ChordTrack` pattern. REAPER draws an item's
 //! `P_NOTES` as its on-screen text, so a key change is visible in the
 //! arrange view, draggable to a different bar, editable by hand, saved
 //! with the project, and readable back without a side-car store. An
-//! ExtState blob would be none of those things.
+//! `ExtState` blob would be none of those things.
 //!
 //! What this does *not* do is drive REAPER's key snap, which reads
 //! `<KEYSIG>`. [`crate::key::bake`] is the separate, explicit step for
@@ -34,7 +34,7 @@ pub const KEY_TRACK: &str = "KEY";
 const MARKER_SECONDS: f64 = 2.0;
 
 /// A dusky violet, distinct from the section and chord colours.
-const KEY_COLOR: u32 = 0x7C3AED;
+const KEY_COLOR: u32 = 0x007C_3AED;
 
 /// A key change at a point on the timeline.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +48,7 @@ pub struct KeyChange {
 /// Round-trips through [`parse_key`]. Deliberately the plainest thing
 /// that reads correctly to a human, since the whole point of storing it
 /// in the label is that a person can read and edit it.
+#[must_use]
 pub fn format_key(key: &Key) -> String {
     // Ionian and Aeolian get their common names. Musicians write "C
     // major", not "C ionian", and this string is meant to be read and
@@ -67,17 +68,14 @@ pub fn format_key(key: &Key) -> String {
 /// this. The label is hand-editable, so both spellings will happen.
 fn normalize_root(text: &str) -> String {
     let mut chars = text.chars();
-    match chars.next() {
-        Some(first) => {
-            let rest: String = chars.collect();
-            format!(
-                "{}{}",
-                first.to_ascii_uppercase(),
-                rest.to_ascii_lowercase()
-            )
-        }
-        None => String::new(),
-    }
+    chars.next().map_or_else(String::new, |first| {
+        let rest: String = chars.collect();
+        format!(
+            "{}{}",
+            first.to_ascii_uppercase(),
+            rest.to_ascii_lowercase()
+        )
+    })
 }
 
 /// Parse an item label back into a key. `None` for anything that isn't
@@ -105,6 +103,7 @@ pub fn parse_key(label: &str) -> Option<Key> {
 /// Exists so callers — the actions, the toolbar selector — can name a key
 /// without depending on keyflow directly. `None` if the root isn't a
 /// note.
+#[must_use]
 pub fn key_from_name(root: &str, major: bool) -> Option<Key> {
     let note = MusicalNote::from_string(&normalize_root(root))?;
     Some(if major {
@@ -132,6 +131,10 @@ fn ensure_key_track<D: Tracks>(daw: &D, project: ProjectContext) -> DawResult<Tr
 /// Replaces any change already at that spot — setting the key twice at
 /// one position should change it, not stack two labels on top of each
 /// other.
+///
+/// # Errors
+///
+/// Returns an error if the item cannot be created on the KEY track.
 pub fn set_key_at<D>(daw: &D, project: ProjectContext, seconds: f64, key: &Key) -> DawResult<()>
 where
     D: Tracks + Items,
@@ -163,7 +166,7 @@ where
 }
 
 /// Every key change on the KEY track, earliest first.
-pub fn key_changes<D>(daw: &D, project: ProjectContext) -> Vec<KeyChange>
+pub fn key_changes<D>(daw: &D, project: &ProjectContext) -> Vec<KeyChange>
 where
     D: Tracks + Items,
 {
@@ -191,14 +194,13 @@ where
 }
 
 /// The key in force at `seconds` — the latest change at or before it.
-pub fn key_at<D>(daw: &D, project: ProjectContext, seconds: f64) -> Option<Key>
+pub fn key_at<D>(daw: &D, project: &ProjectContext, seconds: f64) -> Option<Key>
 where
     D: Tracks + Items,
 {
     key_changes(daw, project)
         .into_iter()
-        .filter(|c| c.seconds <= seconds + 0.001)
-        .next_back()
+        .rfind(|c| c.seconds <= seconds + 0.001)
         .map(|c| c.key)
 }
 
@@ -206,7 +208,11 @@ where
 ///
 /// Deletes only items whose label parses as a key — a note-to-self
 /// parked on the track survives.
-pub fn clear_key_changes<D>(daw: &D, project: ProjectContext) -> DawResult<()>
+///
+/// # Errors
+///
+/// Returns an error if an item cannot be deleted from the KEY track.
+pub fn clear_key_changes<D>(daw: &D, project: &ProjectContext) -> DawResult<()>
 where
     D: Tracks + Items,
 {
@@ -235,8 +241,9 @@ where
 /// ruler does; the `<KEYSIG>` block counts from 0. Without this every
 /// baked key signature lands one bar late — an error that looks right in
 /// every unit test and wrong in every real project.
+#[must_use]
 pub fn keysig_measure(reaper_measure: i32) -> u32 {
-    (reaper_measure - 1).max(0) as u32
+    u32::try_from(reaper_measure.saturating_sub(1).max(0)).unwrap_or(0)
 }
 
 /// Convert a key into the `<KEYSIG>` triple: root pitch class, spelling,
@@ -249,10 +256,8 @@ pub fn keysig_measure(reaper_measure: i32) -> u32 {
 fn keysig_fields(key: &Key) -> (u8, i8, u32) {
     let accidental = if key.root.name.contains('b') {
         -1
-    } else if key.root.name.contains('#') {
-        1
     } else {
-        0
+        i8::from(key.root.name.contains('#'))
     };
     // REAPER's mask describes the scale from its root. A minor key is the
     // major scale rotated, which REAPER spells by giving the relative
@@ -281,11 +286,16 @@ fn keysig_fields(key: &Key) -> (u8, i8, u32) {
 /// Refuses to touch an unsaved project: without a path there is no file
 /// to edit, and inventing one would put a user's work somewhere they
 /// didn't ask for.
-pub fn bake_key_signatures<D>(daw: &D, project: ProjectContext) -> DawResult<usize>
+///
+/// # Errors
+///
+/// Returns an error if the project is unsaved, if the project file cannot be read or written,
+/// or if the project cannot be reopened after the file is modified.
+pub fn bake_key_signatures<D>(daw: &D, project: &ProjectContext) -> DawResult<usize>
 where
     D: Tracks + Items + Projects + TempoMap,
 {
-    let changes = key_changes(daw, project.clone());
+    let changes = key_changes(daw, project);
     if changes.is_empty() {
         return Ok(0);
     }

@@ -1,6 +1,6 @@
 //! The Ideal Full Session Template — the opinionated "golden session".
 //!
-//! This is the canonical full track/folder layout FastTrackStudio organizes
+//! This is the canonical full track/folder layout `FastTrackStudio` organizes
 //! every session toward. It is a **schema**, not a flat track list: fixed
 //! structural folders (instrument groups and sub-groups) followed by a chain
 //! of *dimension* nodes — Performer, Arrangement, Layers, Channel, Multi-mic —
@@ -67,7 +67,7 @@ pub struct TemplateNode {
     pub group_path: Vec<String>,
     /// Child nodes, in display order. For a dimension node these are the inner
     /// dimensions / captures; for a structural folder, its sub-folders.
-    pub children: Vec<TemplateNode>,
+    pub children: Vec<Self>,
     /// Per-track defaults (ignored for pure folders).
     pub defaults: TrackDefaults,
     /// Group-slot membership for this node (the canonical 128-slot partition).
@@ -126,24 +126,28 @@ impl TemplateNode {
     }
 
     /// Add a child node (builder-style).
-    pub fn with_child(mut self, child: TemplateNode) -> Self {
+    #[must_use]
+    pub fn with_child(mut self, child: Self) -> Self {
         self.children.push(child);
         self
     }
 
     /// Append several child nodes (builder-style).
-    pub fn with_children(mut self, children: impl IntoIterator<Item = TemplateNode>) -> Self {
+    #[must_use]
+    pub fn with_children(mut self, children: impl IntoIterator<Item = Self>) -> Self {
         self.children.extend(children);
         self
     }
 
     /// Set the canonical group path from string slices (builder-style).
+    #[must_use]
     pub fn with_path(mut self, path: &[&str]) -> Self {
         self.group_path = path.iter().map(|s| (*s).to_string()).collect();
         self
     }
 
     /// Assign this node to a canonical group-slot category (builder-style).
+    #[must_use]
     pub fn in_group(mut self, category: impl Into<String>) -> Self {
         self.group_membership = Some(GroupMembership {
             category: category.into(),
@@ -229,13 +233,104 @@ impl Default for NodeRouting {
     }
 }
 
+impl NodeRouting {
+    /// Route this node into `bus` instead of its parent folder.
+    ///
+    /// The bus attachment point is where the instrument-folder tree hands off
+    /// to the bus tree, so the parent send is dropped: a `Vocals / Lead`
+    /// folder attached to `LEAD VOX BUS` feeds the bus, not the `Vocals`
+    /// folder above it, which stays a pure organizational container. Nodes
+    /// above and below the attachment point keep the default parent send.
+    pub fn to_bus(bus: impl Into<String>) -> Self {
+        Self {
+            parent_send: false,
+            bus: Some(bus.into()),
+        }
+    }
+}
+
+/// Whether a bus is emitted unconditionally or only when something routes
+/// into it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[repr(u8)]
+pub enum BusMaterialization {
+    /// Emit the bus in every session, populated or not. Reserved for the
+    /// anchors of the bus tree (`MIX BUS`).
+    Always,
+    /// Emit the bus only when at least one node routes into it, directly or
+    /// through a descendant bus. This is the default and mirrors how the
+    /// engine already collapses empty folders.
+    WhenPopulated,
+}
+
 /// A routing destination (mix bus / stem) the layout sends into.
+///
+/// Buses form their own small tree alongside the instrument folders: a bus
+/// feeds [`parent`](TemplateBus::parent), or the project master when that is
+/// `None`. Instrument folders attach to a bus via
+/// [`NodeRouting::bus`]; [`sources`](TemplateBus::sources) is the same
+/// mapping read from the bus side, so a consumer can size the bus tree
+/// without walking every node.
 #[derive(Clone, Debug, Facet)]
 pub struct TemplateBus {
-    /// Bus name, e.g. `"Drum Bus"`, `"Stems"`.
+    /// Bus name, e.g. `"DRUM BUS"`, `"MIX BUS"`.
     pub name: String,
     /// Channel count (2 = stereo).
     pub channels: u32,
+    /// Bus this one feeds. `None` routes straight to the project master —
+    /// that is how `MIX BUS`, `GUIDE BUS` and `UTILITY BUS` sit in parallel,
+    /// so monitor-only material never prints into a bounce of the mix.
+    pub parent: Option<String>,
+    /// Canonical group paths that attach here (top-level first), e.g.
+    /// `[["Vocals", "Lead"]]`. Empty for a bus that only sums other buses.
+    pub sources: Vec<Vec<String>>,
+    /// Bus color as `#RRGGBB`, or `None` to leave it unset.
+    pub color_hex: Option<String>,
+    /// Whether this bus is emitted when nothing routes into it.
+    pub materialize: BusMaterialization,
+}
+
+impl TemplateBus {
+    /// A stereo bus feeding the project master, emitted only when populated.
+    pub fn stereo(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            channels: 2,
+            parent: None,
+            sources: Vec::new(),
+            color_hex: None,
+            materialize: BusMaterialization::WhenPopulated,
+        }
+    }
+
+    /// Feed this bus into `parent` rather than the master (builder-style).
+    #[must_use]
+    pub fn into_bus(mut self, parent: impl Into<String>) -> Self {
+        self.parent = Some(parent.into());
+        self
+    }
+
+    /// Attach a canonical group path as a source of this bus (builder-style).
+    #[must_use]
+    pub fn from_path(mut self, path: &[&str]) -> Self {
+        self.sources
+            .push(path.iter().map(|s| (*s).to_string()).collect());
+        self
+    }
+
+    /// Set the bus color (builder-style).
+    #[must_use]
+    pub fn colored(mut self, hex: impl Into<String>) -> Self {
+        self.color_hex = Some(hex.into());
+        self
+    }
+
+    /// Emit this bus unconditionally (builder-style).
+    #[must_use]
+    pub const fn always(mut self) -> Self {
+        self.materialize = BusMaterialization::Always;
+        self
+    }
 }
 
 #[cfg(test)]

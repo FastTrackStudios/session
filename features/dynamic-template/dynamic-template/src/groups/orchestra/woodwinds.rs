@@ -20,7 +20,7 @@ pub struct Woodwinds;
 
 impl From<Woodwinds> for Group<ItemMetadata> {
     fn from(_val: Woodwinds) -> Self {
-        Group::builder("Woodwinds")
+        Self::builder("Woodwinds")
             .patterns(vec!["woodwind", "woodwinds", "winds"])
             .group(Piccolo)
             .group(Flutes)

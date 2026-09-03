@@ -11,7 +11,7 @@
 //!   the song instead of running the playhead into the next song on the
 //!   shared timeline ("clicking the section bar jumped me to another song").
 //!
-//! Run: cargo test -p session --test seek_semantics_tests -- --nocapture
+//! Run: cargo test -p session --test `seek_semantics_tests` -- --nocapture
 
 use daw_proto::transport::service::Transport;
 use daw_proto::{ProjectContext, ProjectInfo};
@@ -21,15 +21,15 @@ use session::SetlistServiceImpl;
 use session::services::SetlistService;
 use session::setlist::service::demo::stamp_demo_setlist_with;
 
-fn seeded_stamped() -> Standalone {
+fn seeded_stamped() -> eyre::Result<Standalone> {
     let standalone = Standalone::new();
     standalone.seed_project(ProjectInfo {
         guid: "demo-proj".into(),
         name: "Demo".into(),
         path: String::new(),
     });
-    stamp_demo_setlist_with(&standalone).expect("stamp demo setlist");
-    standalone
+    stamp_demo_setlist_with(&standalone)?;
+    Ok(standalone)
 }
 
 /// One test fn (not several) because `daw::init_from_parts` installs a
@@ -49,7 +49,7 @@ fn seek_to_lands_and_never_leaves_the_song() -> eyre::Result<()> {
 async fn inner() -> eyre::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let standalone = seeded_stamped();
+    let standalone = seeded_stamped()?;
     let bundle = build_in_process_daw(standalone.clone()).await?;
     let runtime = std::sync::Arc::new(
         tokio::runtime::Builder::new_current_thread()
@@ -69,7 +69,11 @@ async fn inner() -> eyre::Result<()> {
         "need ≥2 songs to prove seeks can't cross songs (got {})",
         setlist.songs.len()
     );
-    let song0 = setlist.songs[0].clone();
+    let song0 = setlist
+        .songs
+        .first()
+        .ok_or_else(|| eyre::eyre!("no songs in setlist"))?
+        .clone();
     let dur0 = song0.duration();
     assert!(dur0 > 1.0, "demo song 0 too short to test ({dur0:.2}s)");
     let ctx = ProjectContext::Project(song0.project_guid.clone());

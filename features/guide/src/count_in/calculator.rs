@@ -10,6 +10,7 @@ impl CountInCalculator {
     ///
     /// For first sections: distance from Count-In marker to section start
     /// For SONGEND: always 2 measures before SONGEND
+    #[must_use]
     pub fn calculate_count_in_measures(
         count_start_quarters: f64,
         target_start_quarters: f64,
@@ -17,8 +18,9 @@ impl CountInCalculator {
     ) -> i32 {
         let distance_quarters = target_start_quarters - count_start_quarters;
         // Round to nearest measure instead of flooring
-        let measures = (distance_quarters / measure_length_quarters).round() as i32;
+        let rounded = (distance_quarters / measure_length_quarters).round();
+        let measures = crate::cast::i32_from_f64_saturating(rounded);
         // Clamp to 1-8 measures
-        measures.max(1).min(8)
+        measures.clamp(1, 8)
     }
 }

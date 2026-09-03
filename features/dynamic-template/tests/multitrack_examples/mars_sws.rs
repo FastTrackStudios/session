@@ -1,146 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn mars_sws() -> Result<()> {
-    // -- Setup & Fixtures
-    // Mars SWS: 124-track session with duplicate items and extensive BGV arrangements.
-    // No drums — only piano (with room mic), synth bass, lead vocals (Kim + Steve),
-    // and a large BGV stack (4 parts × SUM + A/B/C/D, many duplicates).
-    let items = vec![
-        "Bass Synth.L.wav",
-        "Bass Synth.R.wav",
-        "Bass Synth.wav",
-        "Bass Synth.wav",
-        "Bass Synth.wav",
-        "BGV1_SUM.wav",
-        "BGV1_SUM.wav",
-        "BGV1A.wav",
-        "BGV1A.wav",
-        "BGV1A.wav",
-        "BGV1A.wav",
-        "BGV1B.wav",
-        "BGV1B.wav",
-        "BGV1B.wav",
-        "BGV1B.wav",
-        "BGV1C.wav",
-        "BGV1C.wav",
-        "BGV1C.wav",
-        "BGV1C.wav",
-        "BGV1D.wav",
-        "BGV1D.wav",
-        "BGV1D.wav",
-        "BGV1D.wav",
-        "BGV2_SUM.wav",
-        "BGV2_SUM.wav",
-        "BGV2A.wav",
-        "BGV2A.wav",
-        "BGV2A.wav",
-        "BGV2A.wav",
-        "BGV2B.wav",
-        "BGV2B.wav",
-        "BGV2B.wav",
-        "BGV2B.wav",
-        "BGV2C.wav",
-        "BGV2C.wav",
-        "BGV2C.wav",
-        "BGV2C.wav",
-        "BGV2D.wav",
-        "BGV2D.wav",
-        "BGV2D.wav",
-        "BGV2D.wav",
-        "BGV3_SUM.wav",
-        "BGV3_SUM.wav",
-        "BGV3A.wav",
-        "BGV3A.wav",
-        "BGV3A.wav",
-        "BGV3A.wav",
-        "BGV3B.wav",
-        "BGV3B.wav",
-        "BGV3B.wav",
-        "BGV3B.wav",
-        "BGV3C.wav",
-        "BGV3C.wav",
-        "BGV3C.wav",
-        "BGV3C.wav",
-        "BGV3D.wav",
-        "BGV3D.wav",
-        "BGV3D.wav",
-        "BGV3D.wav",
-        "BGV4_SUM.wav",
-        "BGV4_SUM.wav",
-        "BGV4A.wav",
-        "BGV4A.wav",
-        "BGV4A.wav",
-        "BGV4A.wav",
-        "BGV4B.wav",
-        "BGV4B.wav",
-        "BGV4B.wav",
-        "BGV4B.wav",
-        "BGV4C.wav",
-        "BGV4C.wav",
-        "BGV4C.wav",
-        "BGV4C.wav",
-        "BGV4D.wav",
-        "BGV4D.wav",
-        "BGV4D.wav",
-        "BGV4D.wav",
-        "Crystalizer_Print_1.wav",
-        "Crystalizer_Print.wav",
-        "Crystalizer_Print.wav",
-        "Kim VOX_1.wav",
-        "Kim VOX_2.wav",
-        "Kim VOX_2.wav",
-        "Kim VOX_SUM.wav",
-        "Kim VOX_SUM.wav",
-        "Kim VOX.wav",
-        "Kim VOX.wav",
-        "Kim VOX.wav",
-        "Mars Kim vx.wav",
-        "Mars_PLAP.wav",
-        "Piano L.wav",
-        "Piano L.wav",
-        "Piano L.wav",
-        "Piano L.wav",
-        "Piano R.wav",
-        "Piano R.wav",
-        "Piano R.wav",
-        "Piano R.wav",
-        "Piano Room Mono.wav",
-        "Piano Room Mono.wav",
-        "Piano Room Mono.wav",
-        "Piano Room Mono.wav",
-        "Piano_Rough_76bpm.wav",
-        "Piano_SUM.wav",
-        "Piano_SUM.wav",
-        "Reverse Piano.wav",
-        "Reverse Piano.wav",
-        "Reverse Piano.wav",
-        "Reverse Piano.wav",
-        "Steve VOX_SUM.wav",
-        "Steve VOX_SUM.wav",
-        "Steve VOX.wav",
-        "Steve VOX.wav",
-        "Steve VOX.wav",
-        "Steve VOX.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Bass ---
-    // Bass Synth L/R are the stereo DI pair; remaining three are duplicate takes.
+fn mars_sws_bass_keys() -> (TrackGroup, TrackGroup) {
     let bass = TrackGroup::folder("Bass")
         .track("Synth 1")
         .item("Bass Synth.L.wav")
@@ -199,6 +60,10 @@ fn mars_sws() -> Result<()> {
         .item("Reverse Piano.wav")
         .end();
 
+    (bass, keys)
+}
+
+fn mars_sws_vocals() -> (TrackGroup, TrackGroup) {
     // --- Vocals ---
     // Kim: VOX_SUM (×2) and bare VOX (×3) share the same base name and group into
     // an inner Kim folder. VOX_1 (playlist take 1) lands beside it as a sibling
@@ -245,161 +110,101 @@ fn mars_sws() -> Result<()> {
         .item("Steve VOX.wav")
         .end();
 
-    // BGVs: 4 parts × (SUM×2 + A×4 + B×4 + C×4 + D×4) = 72 flat tracks.
-    // Note: the first two BGV4A entries render without a sequence number — this is
-    // a monarchy counter quirk when the embedded layer digit "4" clashes with the
-    // existing sequence state.
-    let bgvs = TrackGroup::folder("BGVs")
-        // BGV1
-        .track("BGVs 1")
-        .item("BGV1_SUM.wav")
-        .track("BGVs 2")
-        .item("BGV1_SUM.wav")
-        .track("BGVs 3")
-        .item("BGV1A.wav")
-        .track("BGVs 4")
-        .item("BGV1A.wav")
-        .track("BGVs 5")
-        .item("BGV1A.wav")
-        .track("BGVs 6")
-        .item("BGV1A.wav")
-        .track("BGVs 7")
-        .item("BGV1B.wav")
-        .track("BGVs 8")
-        .item("BGV1B.wav")
-        .track("BGVs 9")
-        .item("BGV1B.wav")
-        .track("BGVs 10")
-        .item("BGV1B.wav")
-        .track("BGVs 11")
-        .item("BGV1C.wav")
-        .track("BGVs 12")
-        .item("BGV1C.wav")
-        .track("BGVs 13")
-        .item("BGV1C.wav")
-        .track("BGVs 14")
-        .item("BGV1C.wav")
-        .track("BGVs 15")
-        .item("BGV1D.wav")
-        .track("BGVs 16")
-        .item("BGV1D.wav")
-        .track("BGVs 17")
-        .item("BGV1D.wav")
-        .track("BGVs 18")
-        .item("BGV1D.wav")
-        // BGV2
-        .track("BGVs 19")
-        .item("BGV2_SUM.wav")
-        .track("BGVs 20")
-        .item("BGV2_SUM.wav")
-        .track("BGVs 21")
-        .item("BGV2A.wav")
-        .track("BGVs 22")
-        .item("BGV2A.wav")
-        .track("BGVs 23")
-        .item("BGV2A.wav")
-        .track("BGVs 24")
-        .item("BGV2A.wav")
-        .track("BGVs 25")
-        .item("BGV2B.wav")
-        .track("BGVs 26")
-        .item("BGV2B.wav")
-        .track("BGVs 27")
-        .item("BGV2B.wav")
-        .track("BGVs 28")
-        .item("BGV2B.wav")
-        .track("BGVs 29")
-        .item("BGV2C.wav")
-        .track("BGVs 30")
-        .item("BGV2C.wav")
-        .track("BGVs 31")
-        .item("BGV2C.wav")
-        .track("BGVs 32")
-        .item("BGV2C.wav")
-        .track("BGVs 33")
-        .item("BGV2D.wav")
-        .track("BGVs 34")
-        .item("BGV2D.wav")
-        .track("BGVs 35")
-        .item("BGV2D.wav")
-        .track("BGVs 36")
-        .item("BGV2D.wav")
-        // BGV3
-        .track("BGVs 37")
-        .item("BGV3_SUM.wav")
-        .track("BGVs 38")
-        .item("BGV3_SUM.wav")
-        .track("BGVs 39")
-        .item("BGV3A.wav")
-        .track("BGVs 40")
-        .item("BGV3A.wav")
-        .track("BGVs 41")
-        .item("BGV3A.wav")
-        .track("BGVs 42")
-        .item("BGV3A.wav")
-        .track("BGVs 43")
-        .item("BGV3B.wav")
-        .track("BGVs 44")
-        .item("BGV3B.wav")
-        .track("BGVs 45")
-        .item("BGV3B.wav")
-        .track("BGVs 46")
-        .item("BGV3B.wav")
-        .track("BGVs 47")
-        .item("BGV3C.wav")
-        .track("BGVs 48")
-        .item("BGV3C.wav")
-        .track("BGVs 49")
-        .item("BGV3C.wav")
-        .track("BGVs 50")
-        .item("BGV3C.wav")
-        .track("BGVs 51")
-        .item("BGV3D.wav")
-        .track("BGVs 52")
-        .item("BGV3D.wav")
-        .track("BGVs 53")
-        .item("BGV3D.wav")
-        .track("BGVs 54")
-        .item("BGV3D.wav")
-        // BGV4 (first two BGV4A entries render without a sequence number)
-        .track("BGVs 55")
-        .item("BGV4_SUM.wav")
-        .track("BGVs 56")
-        .item("BGV4_SUM.wav")
-        .track("BGVs")
-        .item("BGV4A.wav")
-        .track("BGVs")
-        .item("BGV4A.wav")
-        .track("BGVs 59")
-        .item("BGV4A.wav")
-        .track("BGVs 60")
-        .item("BGV4A.wav")
-        .track("BGVs 61")
-        .item("BGV4B.wav")
-        .track("BGVs 62")
-        .item("BGV4B.wav")
-        .track("BGVs 63")
-        .item("BGV4B.wav")
-        .track("BGVs 64")
-        .item("BGV4B.wav")
-        .track("BGVs 65")
-        .item("BGV4C.wav")
-        .track("BGVs 66")
-        .item("BGV4C.wav")
-        .track("BGVs 67")
-        .item("BGV4C.wav")
-        .track("BGVs 68")
-        .item("BGV4C.wav")
-        .track("BGVs 69")
-        .item("BGV4D.wav")
-        .track("BGVs 70")
-        .item("BGV4D.wav")
-        .track("BGVs 71")
-        .item("BGV4D.wav")
-        .track("BGVs 72")
-        .item("BGV4D.wav")
-        .end();
+    (kim, steve)
+}
 
+/// BGVs: 4 parts × (SUM×2 + A×4 + B×4 + C×4 + D×4) = 72 flat tracks.
+/// Note: the first two BGV4A entries render without a sequence number — this is
+/// a monarchy counter quirk when the embedded layer digit "4" clashes with the
+/// existing sequence state. Data-driven (rather than one 150-line builder
+/// chain) to stay under the line-count lint.
+fn mars_sws_bgvs() -> TrackGroup {
+    let tracks: &[(&str, &str)] = &[
+        ("BGVs 1", "BGV1_SUM.wav"),
+        ("BGVs 2", "BGV1_SUM.wav"),
+        ("BGVs 3", "BGV1A.wav"),
+        ("BGVs 4", "BGV1A.wav"),
+        ("BGVs 5", "BGV1A.wav"),
+        ("BGVs 6", "BGV1A.wav"),
+        ("BGVs 7", "BGV1B.wav"),
+        ("BGVs 8", "BGV1B.wav"),
+        ("BGVs 9", "BGV1B.wav"),
+        ("BGVs 10", "BGV1B.wav"),
+        ("BGVs 11", "BGV1C.wav"),
+        ("BGVs 12", "BGV1C.wav"),
+        ("BGVs 13", "BGV1C.wav"),
+        ("BGVs 14", "BGV1C.wav"),
+        ("BGVs 15", "BGV1D.wav"),
+        ("BGVs 16", "BGV1D.wav"),
+        ("BGVs 17", "BGV1D.wav"),
+        ("BGVs 18", "BGV1D.wav"),
+        ("BGVs 19", "BGV2_SUM.wav"),
+        ("BGVs 20", "BGV2_SUM.wav"),
+        ("BGVs 21", "BGV2A.wav"),
+        ("BGVs 22", "BGV2A.wav"),
+        ("BGVs 23", "BGV2A.wav"),
+        ("BGVs 24", "BGV2A.wav"),
+        ("BGVs 25", "BGV2B.wav"),
+        ("BGVs 26", "BGV2B.wav"),
+        ("BGVs 27", "BGV2B.wav"),
+        ("BGVs 28", "BGV2B.wav"),
+        ("BGVs 29", "BGV2C.wav"),
+        ("BGVs 30", "BGV2C.wav"),
+        ("BGVs 31", "BGV2C.wav"),
+        ("BGVs 32", "BGV2C.wav"),
+        ("BGVs 33", "BGV2D.wav"),
+        ("BGVs 34", "BGV2D.wav"),
+        ("BGVs 35", "BGV2D.wav"),
+        ("BGVs 36", "BGV2D.wav"),
+        ("BGVs 37", "BGV3_SUM.wav"),
+        ("BGVs 38", "BGV3_SUM.wav"),
+        ("BGVs 39", "BGV3A.wav"),
+        ("BGVs 40", "BGV3A.wav"),
+        ("BGVs 41", "BGV3A.wav"),
+        ("BGVs 42", "BGV3A.wav"),
+        ("BGVs 43", "BGV3B.wav"),
+        ("BGVs 44", "BGV3B.wav"),
+        ("BGVs 45", "BGV3B.wav"),
+        ("BGVs 46", "BGV3B.wav"),
+        ("BGVs 47", "BGV3C.wav"),
+        ("BGVs 48", "BGV3C.wav"),
+        ("BGVs 49", "BGV3C.wav"),
+        ("BGVs 50", "BGV3C.wav"),
+        ("BGVs 51", "BGV3D.wav"),
+        ("BGVs 52", "BGV3D.wav"),
+        ("BGVs 53", "BGV3D.wav"),
+        ("BGVs 54", "BGV3D.wav"),
+        // First two BGV4A entries render without a sequence number.
+        ("BGVs 55", "BGV4_SUM.wav"),
+        ("BGVs 56", "BGV4_SUM.wav"),
+        ("BGVs", "BGV4A.wav"),
+        ("BGVs", "BGV4A.wav"),
+        ("BGVs 59", "BGV4A.wav"),
+        ("BGVs 60", "BGV4A.wav"),
+        ("BGVs 61", "BGV4B.wav"),
+        ("BGVs 62", "BGV4B.wav"),
+        ("BGVs 63", "BGV4B.wav"),
+        ("BGVs 64", "BGV4B.wav"),
+        ("BGVs 65", "BGV4C.wav"),
+        ("BGVs 66", "BGV4C.wav"),
+        ("BGVs 67", "BGV4C.wav"),
+        ("BGVs 68", "BGV4C.wav"),
+        ("BGVs 69", "BGV4D.wav"),
+        ("BGVs 70", "BGV4D.wav"),
+        ("BGVs 71", "BGV4D.wav"),
+        ("BGVs 72", "BGV4D.wav"),
+    ];
+    let mut builder = TrackGroup::folder("BGVs");
+    for (name, item) in tracks {
+        builder = builder.track(*name).item(*item);
+    }
+    builder.end()
+}
+
+fn mars_sws_expected() -> daw_proto::TrackHierarchy {
+    let (bass, keys) = mars_sws_bass_keys();
+    let (kim, steve) = mars_sws_vocals();
+    let bgvs = mars_sws_bgvs();
     let lead = TrackGroup::folder("Lead").group(kim).group(steve).end();
 
     let vocals = TrackGroup::folder("Vocals").group(lead).group(bgvs).end();
@@ -434,8 +239,158 @@ fn mars_sws() -> Result<()> {
         .group(reference)
         .group(unsorted)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+fn mars_sws_items_a() -> Vec<&'static str> {
+    vec![
+        "Bass Synth.L.wav",
+        "Bass Synth.R.wav",
+        "Bass Synth.wav",
+        "Bass Synth.wav",
+        "Bass Synth.wav",
+        "BGV1_SUM.wav",
+        "BGV1_SUM.wav",
+        "BGV1A.wav",
+        "BGV1A.wav",
+        "BGV1A.wav",
+        "BGV1A.wav",
+        "BGV1B.wav",
+        "BGV1B.wav",
+        "BGV1B.wav",
+        "BGV1B.wav",
+        "BGV1C.wav",
+        "BGV1C.wav",
+        "BGV1C.wav",
+        "BGV1C.wav",
+        "BGV1D.wav",
+        "BGV1D.wav",
+        "BGV1D.wav",
+        "BGV1D.wav",
+        "BGV2_SUM.wav",
+        "BGV2_SUM.wav",
+        "BGV2A.wav",
+        "BGV2A.wav",
+        "BGV2A.wav",
+        "BGV2A.wav",
+        "BGV2B.wav",
+        "BGV2B.wav",
+        "BGV2B.wav",
+        "BGV2B.wav",
+        "BGV2C.wav",
+        "BGV2C.wav",
+        "BGV2C.wav",
+        "BGV2C.wav",
+        "BGV2D.wav",
+        "BGV2D.wav",
+        "BGV2D.wav",
+        "BGV2D.wav",
+        "BGV3_SUM.wav",
+        "BGV3_SUM.wav",
+        "BGV3A.wav",
+        "BGV3A.wav",
+        "BGV3A.wav",
+        "BGV3A.wav",
+        "BGV3B.wav",
+        "BGV3B.wav",
+        "BGV3B.wav",
+        "BGV3B.wav",
+        "BGV3C.wav",
+        "BGV3C.wav",
+        "BGV3C.wav",
+        "BGV3C.wav",
+        "BGV3D.wav",
+        "BGV3D.wav",
+    ]
+}
 
-    Ok(())
+/// Mars SWS: 124-track session with duplicate items and extensive BGV arrangements.
+/// No drums — only piano (with room mic), synth bass, lead vocals (Kim + Steve),
+/// and a large BGV stack (4 parts × SUM + A/B/C/D, many duplicates).
+fn mars_sws_items() -> Vec<&'static str> {
+    let mut items = mars_sws_items_a();
+    items.extend([
+        "BGV3D.wav",
+        "BGV3D.wav",
+        "BGV4_SUM.wav",
+        "BGV4_SUM.wav",
+        "BGV4A.wav",
+        "BGV4A.wav",
+        "BGV4A.wav",
+        "BGV4A.wav",
+        "BGV4B.wav",
+        "BGV4B.wav",
+        "BGV4B.wav",
+        "BGV4B.wav",
+        "BGV4C.wav",
+        "BGV4C.wav",
+        "BGV4C.wav",
+        "BGV4C.wav",
+        "BGV4D.wav",
+        "BGV4D.wav",
+        "BGV4D.wav",
+        "BGV4D.wav",
+        "Crystalizer_Print_1.wav",
+        "Crystalizer_Print.wav",
+        "Crystalizer_Print.wav",
+        "Kim VOX_1.wav",
+        "Kim VOX_2.wav",
+        "Kim VOX_2.wav",
+        "Kim VOX_SUM.wav",
+        "Kim VOX_SUM.wav",
+        "Kim VOX.wav",
+        "Kim VOX.wav",
+        "Kim VOX.wav",
+        "Mars Kim vx.wav",
+        "Mars_PLAP.wav",
+        "Piano L.wav",
+        "Piano L.wav",
+        "Piano L.wav",
+        "Piano L.wav",
+        "Piano R.wav",
+        "Piano R.wav",
+        "Piano R.wav",
+        "Piano R.wav",
+        "Piano Room Mono.wav",
+        "Piano Room Mono.wav",
+        "Piano Room Mono.wav",
+        "Piano Room Mono.wav",
+        "Piano_Rough_76bpm.wav",
+        "Piano_SUM.wav",
+        "Piano_SUM.wav",
+        "Reverse Piano.wav",
+        "Reverse Piano.wav",
+        "Reverse Piano.wav",
+        "Reverse Piano.wav",
+        "Steve VOX_SUM.wav",
+        "Steve VOX_SUM.wav",
+        "Steve VOX.wav",
+        "Steve VOX.wav",
+        "Steve VOX.wav",
+        "Steve VOX.wav",
+    ]);
+    items
+}
+
+#[test]
+fn mars_sws() {
+    let items = mars_sws_items();
+    let config = default_config();
+
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Bass ---
+    // Bass Synth L/R are the stereo DI pair; remaining three are duplicate takes.
+    let expected = mars_sws_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

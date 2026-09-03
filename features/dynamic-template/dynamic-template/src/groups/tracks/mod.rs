@@ -13,9 +13,13 @@ pub struct Tracks;
 
 impl From<Tracks> for Group<ItemMetadata> {
     fn from(_val: Tracks) -> Self {
-        Group::builder("Tracks")
+        Self::builder("Tracks")
             .prefix("TRK")
             .patterns(vec![
+                // The bare plural is the folder name for this group. It is a
+                // generic word, but every content group is registered ahead of
+                // Tracks, so "Vocal Tracks" still reaches Vocals first.
+                "tracks",
                 "loop",
                 "loops",
                 "playback",

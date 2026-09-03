@@ -3,8 +3,8 @@
 //! Verifies that navigating between songs and sections (next/previous)
 //! correctly moves the transport playhead to the expected positions.
 //!
-//! These tests exercise the same pipeline as SetlistService navigation:
-//! stamp demo data → SongBuilder → seek to section/song positions → verify.
+//! These tests exercise the same pipeline as `SetlistService` navigation:
+//! stamp demo data → `SongBuilder` → seek to section/song positions → verify.
 //!
 //! Run with:
 //!   cargo xtask reaper-test -- navigation
@@ -23,10 +23,13 @@ async fn setup_song(project: &daw::rpc::Project) -> eyre::Result<session::Song> 
         !songs.is_empty(),
         "SongBuilder should produce at least 1 song"
     );
-    Ok(songs.into_iter().next().unwrap())
+    songs
+        .into_iter()
+        .next()
+        .ok_or_else(|| eyre::eyre!("SongBuilder should produce at least 1 song"))
 }
 
-/// Navigate to each section by index (simulates go_to_section).
+/// Navigate to each section by index (simulates `go_to_section`).
 /// Verifies the playhead lands at the correct section start.
 #[reaper_test]
 async fn navigate_to_each_section(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
@@ -46,19 +49,20 @@ async fn navigate_to_each_section(ctx: &daw::test::ReaperTestContext) -> eyre::R
             "  [{i}] '{}': seek to {:.2}s → got {:.2}s (diff: {:.4}s)",
             section.name, section.start_seconds, pos, diff
         );
-        assert!(
-            diff < 0.5,
-            "Section '{}' seek failed: expected {:.2}s, got {:.2}s",
-            section.name,
-            section.start_seconds,
-            pos
-        );
+        if !(diff < 0.5) {
+            return Err(eyre::eyre!(
+                "Section '{}' seek failed: expected {:.2}s, got {:.2}s",
+                section.name,
+                section.start_seconds,
+                pos
+            ));
+        }
     }
 
     Ok(())
 }
 
-/// Simulate next_section: start at first section, step forward through all sections.
+/// Simulate `next_section`: start at first section, step forward through all sections.
 /// Verifies each step lands at the next section's start position.
 #[reaper_test]
 async fn next_section_navigation(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
@@ -90,19 +94,20 @@ async fn next_section_navigation(ctx: &daw::test::ReaperTestContext) -> eyre::Re
             "  next → [{i}] '{}': expected {:.2}s, got {:.2}s",
             target.name, target.start_seconds, pos
         );
-        assert!(
-            diff < 0.5,
-            "Next section '{}' missed: expected {:.2}s, got {:.2}s",
-            target.name,
-            target.start_seconds,
-            pos
-        );
+        if !(diff < 0.5) {
+            return Err(eyre::eyre!(
+                "Next section '{}' missed: expected {:.2}s, got {:.2}s",
+                target.name,
+                target.start_seconds,
+                pos
+            ));
+        }
     }
 
     Ok(())
 }
 
-/// Simulate previous_section: start at last section, step backward.
+/// Simulate `previous_section`: start at last section, step backward.
 /// Verifies each step lands at the previous section's start position.
 #[reaper_test]
 async fn previous_section_navigation(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
@@ -110,7 +115,7 @@ async fn previous_section_navigation(ctx: &daw::test::ReaperTestContext) -> eyre
     let transport = ctx.project.transport();
     transport.stop().await?;
 
-    let last_idx = song.sections.len() - 1;
+    let last_idx = song.sections.len().saturating_sub(1);
     let last = &song.sections[last_idx];
     transport.set_position(last.start_seconds).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -132,19 +137,20 @@ async fn previous_section_navigation(ctx: &daw::test::ReaperTestContext) -> eyre
             "  prev → [{i}] '{}': expected {:.2}s, got {:.2}s",
             target.name, target.start_seconds, pos
         );
-        assert!(
-            diff < 0.5,
-            "Previous section '{}' missed: expected {:.2}s, got {:.2}s",
-            target.name,
-            target.start_seconds,
-            pos
-        );
+        if !(diff < 0.5) {
+            return Err(eyre::eyre!(
+                "Previous section '{}' missed: expected {:.2}s, got {:.2}s",
+                target.name,
+                target.start_seconds,
+                pos
+            ));
+        }
     }
 
     Ok(())
 }
 
-/// Simulate previous_section "smart rewind": if we're mid-section (>5% progress),
+/// Simulate `previous_section` "smart rewind": if we're mid-section (>5% progress),
 /// previous should go to the START of the current section, not the previous one.
 #[reaper_test]
 async fn previous_section_smart_rewind(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
@@ -162,7 +168,7 @@ async fn previous_section_smart_rewind(ctx: &daw::test::ReaperTestContext) -> ey
     let verse = &song.sections[verse_idx];
 
     // Seek to 50% through the section
-    let mid_point = verse.start_seconds + (verse.end_seconds - verse.start_seconds) * 0.5;
+    let mid_point = (verse.end_seconds - verse.start_seconds).mul_add(0.5, verse.start_seconds);
     transport.set_position(mid_point).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -177,10 +183,11 @@ async fn previous_section_smart_rewind(ctx: &daw::test::ReaperTestContext) -> ey
     let section_duration = verse.end_seconds - verse.start_seconds;
     let progress = (pos - verse.start_seconds) / section_duration;
     println!("  Progress in section: {:.1}%", progress * 100.0);
-    assert!(
-        progress > 0.05,
-        "Should be past 5% of section for smart rewind test"
-    );
+    if !(progress > 0.05) {
+        return Err(eyre::eyre!(
+            "Should be past 5% of section for smart rewind test"
+        ));
+    }
 
     // Simulate what previous_section_impl does when progress > 5%:
     // go to start of CURRENT section
@@ -193,20 +200,21 @@ async fn previous_section_smart_rewind(ctx: &daw::test::ReaperTestContext) -> ey
         "  Smart rewind → {:.2}s (expected {:.2}s, diff: {:.4}s)",
         rewound_pos, verse.start_seconds, diff
     );
-    assert!(
-        diff < 0.5,
-        "Smart rewind should go to section start {:.2}s, got {:.2}s",
-        verse.start_seconds,
-        rewound_pos
-    );
+    if !(diff < 0.5) {
+        return Err(eyre::eyre!(
+            "Smart rewind should go to section start {:.2}s, got {:.2}s",
+            verse.start_seconds,
+            rewound_pos
+        ));
+    }
 
     // Now seek to the very start of the section (<5% progress)
-    let near_start = verse.start_seconds + section_duration * 0.02; // 2% in
+    let near_start = section_duration.mul_add(0.02, verse.start_seconds); // 2% in
     transport.set_position(near_start).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Simulate previous_section when at start: should go to PREVIOUS section
-    let prev_section = &song.sections[verse_idx - 1];
+    let prev_section = &song.sections[verse_idx.saturating_sub(1)];
     transport.set_position(prev_section.start_seconds).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -216,13 +224,14 @@ async fn previous_section_smart_rewind(ctx: &daw::test::ReaperTestContext) -> ey
         "  At start → prev section '{}' at {:.2}s (got {:.2}s, diff: {:.4}s)",
         prev_section.name, prev_section.start_seconds, prev_pos, diff
     );
-    assert!(
-        diff < 0.5,
-        "Should go to previous section '{}' at {:.2}s, got {:.2}s",
-        prev_section.name,
-        prev_section.start_seconds,
-        prev_pos
-    );
+    if !(diff < 0.5) {
+        return Err(eyre::eyre!(
+            "Should go to previous section '{}' at {:.2}s, got {:.2}s",
+            prev_section.name,
+            prev_section.start_seconds,
+            prev_pos
+        ));
+    }
 
     Ok(())
 }
@@ -241,7 +250,7 @@ async fn playback_crosses_section_boundary(ctx: &daw::test::ReaperTestContext) -
         .position(|s| s.name == "Intro")
         .expect("Should have Intro");
     let intro = &song.sections[intro_idx];
-    let verse1 = &song.sections[intro_idx + 1];
+    let verse1 = &song.sections[intro_idx.saturating_add(1)];
 
     // Seek to 1 second before the boundary
     let near_boundary = intro.end_seconds - 1.0;
@@ -261,30 +270,32 @@ async fn playback_crosses_section_boundary(ctx: &daw::test::ReaperTestContext) -
     let pos = transport.get_position().await?;
     transport.stop().await?;
 
-    println!("Position after crossing boundary: {:.2}s", pos);
+    println!("Position after crossing boundary: {pos:.2}s");
 
     // Should now be in Verse 1 territory
-    assert!(
-        pos >= verse1.start_seconds,
-        "Playhead should have crossed into '{}' (>= {:.2}s), got {:.2}s",
-        verse1.name,
-        verse1.start_seconds,
-        pos
-    );
-    assert!(
-        pos < verse1.end_seconds,
-        "Playhead should still be in '{}' (< {:.2}s), got {:.2}s",
-        verse1.name,
-        verse1.end_seconds,
-        pos
-    );
+    if !(pos >= verse1.start_seconds) {
+        return Err(eyre::eyre!(
+            "Playhead should have crossed into '{}' (>= {:.2}s), got {:.2}s",
+            verse1.name,
+            verse1.start_seconds,
+            pos
+        ));
+    }
+    if !(pos < verse1.end_seconds) {
+        return Err(eyre::eyre!(
+            "Playhead should still be in '{}' (< {:.2}s), got {:.2}s",
+            verse1.name,
+            verse1.end_seconds,
+            pos
+        ));
+    }
 
     println!("Section boundary crossing verified: Intro → Verse 1");
     Ok(())
 }
 
 /// Verify section index calculation: given a position, determine which section we're in.
-/// This is what the polling loop does to compute ActiveIndices.section_index.
+/// This is what the polling loop does to compute `ActiveIndices.section_index`.
 #[reaper_test]
 async fn section_index_from_position(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let song = setup_song(&ctx.project).await?;
@@ -298,7 +309,7 @@ async fn section_index_from_position(ctx: &daw::test::ReaperTestContext) -> eyre
 
     for (expected_idx, section) in song.sections.iter().enumerate() {
         // Seek to the middle of each section
-        let mid = (section.start_seconds + section.end_seconds) / 2.0;
+        let mid = f64::midpoint(section.start_seconds, section.end_seconds);
         transport.set_position(mid).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -312,25 +323,23 @@ async fn section_index_from_position(ctx: &daw::test::ReaperTestContext) -> eyre
             .position(|s| pos >= s.start_seconds && pos < s.end_seconds);
 
         println!(
-            "  pos {:.2}s → section {:?} (expected [{expected_idx}] '{}')",
-            pos, computed_idx, section.name
+            "  pos {pos:.2}s → section {computed_idx:?} (expected [{expected_idx}] '{}')",
+            section.name
         );
 
-        assert_eq!(
-            computed_idx,
-            Some(expected_idx),
-            "Position {:.2}s should be in section [{expected_idx}] '{}', got {:?}",
-            pos,
-            section.name,
-            computed_idx
-        );
+        if computed_idx != Some(expected_idx) {
+            return Err(eyre::eyre!(
+                "Position {pos:.2}s should be in section [{expected_idx}] '{}', got {computed_idx:?}",
+                section.name
+            ));
+        }
     }
 
     Ok(())
 }
 
 /// Song-level navigation: seek to song start (count-in position).
-/// In a single-song setlist, this verifies the song_seek_position logic.
+/// In a single-song setlist, this verifies the `song_seek_position` logic.
 #[reaper_test]
 async fn navigate_to_song_start(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let song = setup_song(&ctx.project).await?;
@@ -356,34 +365,29 @@ async fn navigate_to_song_start(ctx: &daw::test::ReaperTestContext) -> eyre::Res
 
     let pos = transport.get_position().await?;
     let diff = (pos - seek_pos).abs();
-    println!(
-        "Seeked to song start: {:.2}s (expected {:.2}s, diff: {:.4}s)",
-        pos, seek_pos, diff
-    );
+    println!("Seeked to song start: {pos:.2}s (expected {seek_pos:.2}s, diff: {diff:.4}s)");
 
-    assert!(
-        diff < 0.5,
-        "Should be at song start {:.2}s, got {:.2}s",
-        seek_pos,
-        pos
-    );
+    if !(diff < 0.5) {
+        return Err(eyre::eyre!(
+            "Should be at song start {seek_pos:.2}s, got {pos:.2}s"
+        ));
+    }
 
     // Verify count-in: with COUNT-IN at 0s and SONGSTART at 4s,
     // the count-in duration should be ~4s
     if let Some(ci) = song.count_in_seconds {
-        println!("Count-in duration: {:.2}s", ci);
-        assert!(
-            (ci - 4.0).abs() < 0.5,
-            "Count-in should be ~4s, got {:.2}s",
-            ci
-        );
+        println!("Count-in duration: {ci:.2}s");
+        if !((ci - 4.0).abs() < 0.5) {
+            return Err(eyre::eyre!("Count-in should be ~4s, got {ci:.2}s"));
+        }
 
         // Song start (with count-in) should be at 0s
-        assert!(
-            song.start_seconds() < 1.0,
-            "Song start with count-in should be ~0s, got {:.2}s",
-            song.start_seconds()
-        );
+        if !(song.start_seconds() < 1.0) {
+            return Err(eyre::eyre!(
+                "Song start with count-in should be ~0s, got {:.2}s",
+                song.start_seconds()
+            ));
+        }
     }
 
     Ok(())
@@ -417,14 +421,11 @@ async fn navigate_to_song_end(ctx: &daw::test::ReaperTestContext) -> eyre::Resul
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let pos = transport.get_position().await?;
-    println!("Position near song end: {:.2}s", pos);
+    println!("Position near song end: {pos:.2}s");
 
-    assert!(
-        (pos - near_end).abs() < 0.5,
-        "Should be near {:.2}s, got {:.2}s",
-        near_end,
-        pos
-    );
+    if !((pos - near_end).abs() < 0.5) {
+        return Err(eyre::eyre!("Should be near {near_end:.2}s, got {pos:.2}s"));
+    }
 
     // Verify the song end boundary
     println!(

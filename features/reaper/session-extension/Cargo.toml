@@ -15,7 +15,7 @@ test = false
 daw = { workspace = true, features = ["reaper"] }
 daw-reaper.workspace = true
 daw-extension-runtime.workspace = true
-session.workspace = true
+session = { workspace = true, features = ["reaper"] }
 eyre.workspace = true
 fragile = "2"
 crossbeam-channel = "0.5"

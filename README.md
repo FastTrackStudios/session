@@ -36,7 +36,7 @@ features/engraver/   MusicXML -> scores and parts
 features/guide/      click / count-in / spoken section cues
 features/chord-tool/ chord entry and analysis
 features/dynamic-template/  dynamic session templates
-apps/fasttrackstudio/       the Session app
+apps/desktop/                the Session app
 ```
 
 ## Build

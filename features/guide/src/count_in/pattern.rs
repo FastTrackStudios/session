@@ -7,7 +7,7 @@ use tracing::debug;
 /// Calculate count number for odd time signatures split into groups ending with 4
 ///
 /// For 9/8: splits into [5 beats] + [4 beats]
-/// Returns: beat_in_group or None if beat is in a non-counted group
+/// Returns: `beat_in_group` or None if beat is in a non-counted group
 ///
 /// Only applies to:
 /// - Odd time signatures with /16 denominator, OR
@@ -48,12 +48,14 @@ pub fn calculate_odd_time_count(
     }
 
     // Last group is always 4 beats
-    let last_group_start = time_sig_num - 3; // For 9/8: beat 6
+    let last_group_start = time_sig_num.saturating_sub(3); // For 9/8: beat 6
 
     if beat_in_measure >= last_group_start && beat_in_measure <= time_sig_num {
         // This beat is in the last group (4 beats)
         // Count 1-4 within this group
-        let beat_in_group = beat_in_measure - last_group_start + 1;
+        let beat_in_group = beat_in_measure
+            .saturating_sub(last_group_start)
+            .saturating_add(1);
         return Some(beat_in_group);
     }
 
@@ -64,26 +66,28 @@ pub fn calculate_odd_time_count(
     }
 
     // Calculate which group and beat within that group
-    let first_group_end = last_group_start - 1;
+    let first_group_end = last_group_start.saturating_sub(1);
     let mut current_start = 1;
 
     while current_start <= first_group_end {
         // Calculate group size (up to 8 beats per group, but may be smaller)
-        let remaining_before_last = last_group_start - current_start;
+        let remaining_before_last = last_group_start.saturating_sub(current_start);
         let group_size = if remaining_before_last > 8 {
             8 // Maximum group size is 8 (max count number)
         } else {
             remaining_before_last
         };
-        let current_end = current_start + group_size - 1;
+        let current_end = current_start.saturating_add(group_size).saturating_sub(1);
 
         if beat_in_measure >= current_start && beat_in_measure <= current_end {
             // This beat is in the current group
-            let beat_in_group = beat_in_measure - current_start + 1;
+            let beat_in_group = beat_in_measure
+                .saturating_sub(current_start)
+                .saturating_add(1);
             return Some(beat_in_group);
         }
 
-        current_start = current_end + 1;
+        current_start = current_end.saturating_add(1);
     }
 
     None
@@ -101,9 +105,9 @@ impl CountInPattern {
     /// - Measure N: Full count (all beats: "1 2 3 4")
     ///
     /// Returns:
-    /// - Some(count_number) if we should count on this beat (1-indexed count number)
+    /// - `Some(count_number)` if we should count on this beat (1-indexed count number)
     /// - None if we should not count on this beat
-    #[allow(clippy::too_many_arguments)]
+    #[must_use]
     pub fn should_count(
         measure_index: i32,
         beat_in_measure: i32,
@@ -123,9 +127,11 @@ impl CountInPattern {
             // For multi-measure count-ins: count once per measure at beat 1
             if beat_in_measure == 1 {
                 let count_number = if offset_by_one {
-                    total_measures - measure_index - 1
+                    total_measures
+                        .saturating_sub(measure_index)
+                        .saturating_sub(1)
                 } else {
-                    total_measures - measure_index
+                    total_measures.saturating_sub(measure_index)
                 };
                 if (1..=8).contains(&count_number) {
                     return Some(count_number);
@@ -154,7 +160,7 @@ impl CountInPattern {
         }
 
         // Extended pattern
-        let measure_1_indexed = measure_index + 1;
+        let measure_1_indexed = measure_index.saturating_add(1);
 
         if total_measures == 2 {
             // Special case: 2 measures
@@ -182,13 +188,13 @@ impl CountInPattern {
                 return Some(beat_in_measure);
             }
             return None;
-        } else if measure_1_indexed <= total_measures - 2 {
+        } else if measure_1_indexed <= total_measures.saturating_sub(2) {
             // Measures 1 to (N-2): Count only on beat 1
             if beat_in_measure == 1 {
                 return Some(measure_1_indexed);
             }
             return None;
-        } else if measure_1_indexed == total_measures - 1 {
+        } else if measure_1_indexed == total_measures.saturating_sub(1) {
             // Measure (N-1): Count on beats 1 and 3
             if beat_in_measure == 1 {
                 return Some(1);

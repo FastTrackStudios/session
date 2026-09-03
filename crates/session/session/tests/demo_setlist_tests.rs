@@ -1,7 +1,7 @@
 //! REAPER integration tests for the demo setlist stamping.
 //!
 //! Verifies that `stamp_demo_into_project` creates persistent markers and regions
-//! in a REAPER project, and that SongBuilder can parse them into valid Songs.
+//! in a REAPER project, and that `SongBuilder` can parse them into valid Songs.
 //!
 //! The demo setlist has 3 songs with lane-organized markers and regions:
 //!   Song 1: "Great Is Thy Faithfulness" (0–120s)
@@ -9,7 +9,7 @@
 //!   Song 3: "Way Maker" (280–430s)
 //!
 //! Run with:
-//!   cargo xtask reaper-test -- demo_setlist
+//!   cargo xtask reaper-test -- `demo_setlist`
 
 use daw::rpc::Project;
 use daw::test::reaper_test;
@@ -50,12 +50,12 @@ async fn demo_setlist_creates_markers(ctx: &daw::test::ReaperTestContext) -> eyr
         println!("  - {} @ {:.2}s", m.name, m.position_seconds());
     }
 
-    assert_eq!(
-        markers.len(),
-        12,
-        "Expected 12 markers (4 per song × 3), got {}",
-        markers.len()
-    );
+    if markers.len() != 12 {
+        return Err(eyre::eyre!(
+            "Expected 12 markers (4 per song × 3), got {}",
+            markers.len()
+        ));
+    }
 
     // Each marker type should appear 3 times (once per song)
     let count_ins = markers.iter().filter(|m| m.name == "COUNT-IN").count();
@@ -63,13 +63,20 @@ async fn demo_setlist_creates_markers(ctx: &daw::test::ReaperTestContext) -> eyr
     let song_ends = markers.iter().filter(|m| m.name == "SONGEND").count();
     let abs_ends = markers.iter().filter(|m| m.name == "=END").count();
 
-    assert_eq!(count_ins, 3, "Expected 3 COUNT-IN markers, got {count_ins}");
-    assert_eq!(
-        song_starts, 3,
-        "Expected 3 SONGSTART markers, got {song_starts}"
-    );
-    assert_eq!(song_ends, 3, "Expected 3 SONGEND markers, got {song_ends}");
-    assert_eq!(abs_ends, 3, "Expected 3 =END markers, got {abs_ends}");
+    if count_ins != 3 {
+        return Err(eyre::eyre!("Expected 3 COUNT-IN markers, got {count_ins}"));
+    }
+    if song_starts != 3 {
+        return Err(eyre::eyre!(
+            "Expected 3 SONGSTART markers, got {song_starts}"
+        ));
+    }
+    if song_ends != 3 {
+        return Err(eyre::eyre!("Expected 3 SONGEND markers, got {song_ends}"));
+    }
+    if abs_ends != 3 {
+        return Err(eyre::eyre!("Expected 3 =END markers, got {abs_ends}"));
+    }
 
     Ok(())
 }
@@ -94,35 +101,51 @@ async fn demo_setlist_creates_regions(ctx: &daw::test::ReaperTestContext) -> eyr
         );
     }
 
-    assert_eq!(
-        regions.len(),
-        23,
-        "Expected 23 regions (3 parent + 20 section), got {}",
-        regions.len()
-    );
+    if regions.len() != 23 {
+        return Err(eyre::eyre!(
+            "Expected 23 regions (3 parent + 20 section), got {}",
+            regions.len()
+        ));
+    }
 
     let names: Vec<&str> = regions.iter().map(|r| r.name.as_str()).collect();
 
     // Parent song regions
-    assert!(
-        names.contains(&"Great Is Thy Faithfulness"),
-        "Missing Song 1 parent region"
-    );
-    assert!(
-        names.contains(&"Build My Life"),
-        "Missing Song 2 parent region"
-    );
-    assert!(names.contains(&"Way Maker"), "Missing Song 3 parent region");
+    if !names.contains(&"Great Is Thy Faithfulness") {
+        return Err(eyre::eyre!("Missing Song 1 parent region"));
+    }
+    if !names.contains(&"Build My Life") {
+        return Err(eyre::eyre!("Missing Song 2 parent region"));
+    }
+    if !names.contains(&"Way Maker") {
+        return Err(eyre::eyre!("Missing Song 3 parent region"));
+    }
 
     // Section regions (present across multiple songs)
-    assert!(names.contains(&"Intro"), "Missing Intro");
-    assert!(names.contains(&"Verse 1"), "Missing Verse 1");
-    assert!(names.contains(&"Chorus"), "Missing Chorus");
-    assert!(names.contains(&"Verse 2"), "Missing Verse 2");
-    assert!(names.contains(&"Bridge"), "Missing Bridge");
-    assert!(names.contains(&"Outro"), "Missing Outro");
-    assert!(names.contains(&"Pre-Chorus"), "Missing Pre-Chorus");
-    assert!(names.contains(&"Tag"), "Missing Tag");
+    if !names.contains(&"Intro") {
+        return Err(eyre::eyre!("Missing Intro"));
+    }
+    if !names.contains(&"Verse 1") {
+        return Err(eyre::eyre!("Missing Verse 1"));
+    }
+    if !names.contains(&"Chorus") {
+        return Err(eyre::eyre!("Missing Chorus"));
+    }
+    if !names.contains(&"Verse 2") {
+        return Err(eyre::eyre!("Missing Verse 2"));
+    }
+    if !names.contains(&"Bridge") {
+        return Err(eyre::eyre!("Missing Bridge"));
+    }
+    if !names.contains(&"Outro") {
+        return Err(eyre::eyre!("Missing Outro"));
+    }
+    if !names.contains(&"Pre-Chorus") {
+        return Err(eyre::eyre!("Missing Pre-Chorus"));
+    }
+    if !names.contains(&"Tag") {
+        return Err(eyre::eyre!("Missing Tag"));
+    }
 
     Ok(())
 }
@@ -142,40 +165,42 @@ async fn demo_setlist_marker_positions(ctx: &daw::test::ReaperTestContext) -> ey
         markers
             .iter()
             .filter(|m| m.name == name)
-            .map(|m| m.position_seconds())
+            .map(daw::rpc::Marker::position_seconds)
             .next()
             .unwrap()
     };
 
     // Song 1: COUNT-IN@0, SONGSTART@4, SONGEND@116, =END@120
-    assert!((first("COUNT-IN") - 0.0).abs() < eps, "First COUNT-IN @ 0s");
-    assert!(
-        (first("SONGSTART") - 4.0).abs() < eps,
-        "First SONGSTART @ 4s"
-    );
-    assert!(
-        (first("SONGEND") - 116.0).abs() < eps,
-        "First SONGEND @ 116s"
-    );
-    assert!((first("=END") - 120.0).abs() < eps, "First =END @ 120s");
+    if (first("COUNT-IN") - 0.0).abs() >= eps {
+        return Err(eyre::eyre!("First COUNT-IN @ 0s"));
+    }
+    if (first("SONGSTART") - 4.0).abs() >= eps {
+        return Err(eyre::eyre!("First SONGSTART @ 4s"));
+    }
+    if (first("SONGEND") - 116.0).abs() >= eps {
+        return Err(eyre::eyre!("First SONGEND @ 116s"));
+    }
+    if (first("=END") - 120.0).abs() >= eps {
+        return Err(eyre::eyre!("First =END @ 120s"));
+    }
 
     // Song 2 markers (second occurrence)
     let mut song_starts: Vec<f64> = markers
         .iter()
         .filter(|m| m.name == "SONGSTART")
-        .map(|m| m.position_seconds())
+        .map(daw::rpc::Marker::position_seconds)
         .collect();
     song_starts.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-    assert!(song_starts.len() == 3, "Should have 3 SONGSTART markers");
-    assert!(
-        (song_starts[1] - 134.0).abs() < eps,
-        "Song 2 SONGSTART @ 134s"
-    );
-    assert!(
-        (song_starts[2] - 284.0).abs() < eps,
-        "Song 3 SONGSTART @ 284s"
-    );
+    if song_starts.len() != 3 {
+        return Err(eyre::eyre!("Should have 3 SONGSTART markers"));
+    }
+    if (song_starts[1] - 134.0).abs() >= eps {
+        return Err(eyre::eyre!("Song 2 SONGSTART @ 134s"));
+    }
+    if (song_starts[2] - 284.0).abs() >= eps {
+        return Err(eyre::eyre!("Song 3 SONGSTART @ 284s"));
+    }
 
     Ok(())
 }
@@ -211,44 +236,43 @@ async fn demo_setlist_regions_contiguous(ctx: &daw::test::ReaperTestContext) -> 
         );
     }
 
-    assert_eq!(
-        song1_sections.len(),
-        6,
-        "Song 1 should have 6 section regions"
-    );
+    if song1_sections.len() != 6 {
+        return Err(eyre::eyre!("Song 1 should have 6 section regions"));
+    }
 
     // Each region's end == next region's start
     for w in song1_sections.windows(2) {
         let gap = (w[1].start_seconds() - w[0].end_seconds()).abs();
-        assert!(
-            gap < 0.01,
-            "Gap between '{}' and '{}': {:.4}s",
-            w[0].name,
-            w[1].name,
-            gap
-        );
+        if gap >= 0.01 {
+            return Err(eyre::eyre!(
+                "Gap between '{}' and '{}': {:.4}s",
+                w[0].name,
+                w[1].name,
+                gap
+            ));
+        }
     }
 
     // First section starts at SONGSTART, last ends at SONGEND
-    assert!(
-        (song1_sections[0].start_seconds() - 4.0).abs() < 0.01,
-        "First section starts at 4s"
-    );
-    assert!(
-        (song1_sections.last().unwrap().end_seconds() - 116.0).abs() < 0.01,
-        "Last section ends at 116s"
-    );
+    if (song1_sections[0].start_seconds() - 4.0).abs() >= 0.01 {
+        return Err(eyre::eyre!("First section starts at 4s"));
+    }
+    if (song1_sections.last().unwrap().end_seconds() - 116.0).abs() >= 0.01 {
+        return Err(eyre::eyre!("Last section ends at 116s"));
+    }
 
     Ok(())
 }
 
-/// End-to-end: stamp demo data → SongBuilder → verify Song structure.
+/// End-to-end: stamp demo data → `SongBuilder` → verify Song structure.
 ///
 /// This is the full pipeline test: create markers/regions in REAPER,
-/// then run SongBuilder to parse them, and confirm the resulting Songs
+/// then run `SongBuilder` to parse them, and confirm the resulting Songs
 /// have the expected sections, timing, and structure.
 #[reaper_test]
 async fn demo_setlist_end_to_end(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
+    use session::SectionType;
+
     // ── Step 1: Clear and stamp demo markers and regions ─────────
     clear_project(&ctx.project).await?;
     stamp_demo_into_project(&ctx.project).await?;
@@ -258,7 +282,9 @@ async fn demo_setlist_end_to_end(ctx: &daw::test::ReaperTestContext) -> eyre::Re
     let songs = SongBuilder::build(&ctx.project).await?;
 
     println!("\nSongBuilder produced {} song(s):", songs.len());
-    assert_eq!(songs.len(), 3, "SongBuilder should produce 3 songs");
+    if songs.len() != 3 {
+        return Err(eyre::eyre!("SongBuilder should produce 3 songs"));
+    }
 
     for (si, song) in songs.iter().enumerate() {
         println!("\n  Song {si}: {}", song.name);
@@ -276,49 +302,54 @@ async fn demo_setlist_end_to_end(ctx: &daw::test::ReaperTestContext) -> eyre::Re
 
     // ── Step 3: Verify Song 1 ("Great Is Thy Faithfulness") ──────
     let song1 = &songs[0];
-    assert_eq!(song1.name, "Great Is Thy Faithfulness");
+    if song1.name != "Great Is Thy Faithfulness" {
+        return Err(eyre::eyre!("Song 1 name mismatch"));
+    }
 
     let eps = 2.0;
-    assert!(
-        song1.start_seconds < 1.0,
-        "Song 1 start should be ~0s (includes count-in), got {:.2}",
-        song1.start_seconds
-    );
-    assert!(
-        (song1.end_seconds - 120.0).abs() < eps,
-        "Song 1 end should be ~120s, got {:.2}",
-        song1.end_seconds
-    );
+    if song1.start_seconds >= 1.0 {
+        return Err(eyre::eyre!(
+            "Song 1 start should be ~0s (includes count-in), got {:.2}",
+            song1.start_seconds
+        ));
+    }
+    if (song1.end_seconds - 120.0).abs() >= eps {
+        return Err(eyre::eyre!(
+            "Song 1 end should be ~120s, got {:.2}",
+            song1.end_seconds
+        ));
+    }
 
     // Count-in should be detected from MARKS-lane COUNT-IN → SONGSTART markers
     let ci = song1
         .count_in_seconds
         .expect("Song 1 should have count-in detected");
     println!("  Count-in detected: {ci:.2}s");
-    assert!(
-        (ci - 4.0).abs() < eps,
-        "Count-in should be ~4s, got {:.2}",
-        ci
-    );
+    if (ci - 4.0).abs() >= eps {
+        return Err(eyre::eyre!("Count-in should be ~4s, got {ci:.2}"));
+    }
 
     // Verify Song 1 section names
     let section_names: Vec<&str> = song1.sections.iter().map(|s| s.name.as_str()).collect();
-    println!("\n  Song 1 section names: {:?}", section_names);
+    println!("\n  Song 1 section names: {section_names:?}");
 
-    assert!(section_names.contains(&"Intro"), "Missing Intro section");
-    assert!(
-        section_names.contains(&"Verse 1"),
-        "Missing Verse 1 section"
-    );
-    assert!(section_names.contains(&"Chorus"), "Missing Chorus section");
-    assert!(
-        section_names.contains(&"Verse 2"),
-        "Missing Verse 2 section"
-    );
-    assert!(section_names.contains(&"Outro"), "Missing Outro section");
+    if !section_names.contains(&"Intro") {
+        return Err(eyre::eyre!("Missing Intro section"));
+    }
+    if !section_names.contains(&"Verse 1") {
+        return Err(eyre::eyre!("Missing Verse 1 section"));
+    }
+    if !section_names.contains(&"Chorus") {
+        return Err(eyre::eyre!("Missing Chorus section"));
+    }
+    if !section_names.contains(&"Verse 2") {
+        return Err(eyre::eyre!("Missing Verse 2 section"));
+    }
+    if !section_names.contains(&"Outro") {
+        return Err(eyre::eyre!("Missing Outro section"));
+    }
 
     // Verify section types (including Count-In and End from structural markers)
-    use session::SectionType;
     let has_count_in = song1
         .sections
         .iter()
@@ -344,56 +375,80 @@ async fn demo_setlist_end_to_end(ctx: &daw::test::ReaperTestContext) -> eyre::Re
         .iter()
         .any(|s| s.section_type == SectionType::End);
 
-    assert!(has_count_in, "Should detect Count-In section type");
-    assert!(has_intro, "Should detect Intro section type");
-    assert!(has_verse, "Should detect Verse section type");
-    assert!(has_chorus, "Should detect Chorus section type");
-    assert!(has_outro, "Should detect Outro section type");
-    assert!(has_end, "Should detect End section type");
+    if !has_count_in {
+        return Err(eyre::eyre!("Should detect Count-In section type"));
+    }
+    if !has_intro {
+        return Err(eyre::eyre!("Should detect Intro section type"));
+    }
+    if !has_verse {
+        return Err(eyre::eyre!("Should detect Verse section type"));
+    }
+    if !has_chorus {
+        return Err(eyre::eyre!("Should detect Chorus section type"));
+    }
+    if !has_outro {
+        return Err(eyre::eyre!("Should detect Outro section type"));
+    }
+    if !has_end {
+        return Err(eyre::eyre!("Should detect End section type"));
+    }
 
     // ── Step 4: Verify sections are contiguous within each song ──
     for song in &songs {
         for w in song.sections.windows(2) {
             let gap = (w[1].start_seconds - w[0].end_seconds).abs();
-            assert!(
-                gap < 0.5,
-                "Gap in '{}' between '{}' (end {:.2}s) and '{}' (start {:.2}s): {:.4}s",
-                song.name,
-                w[0].name,
-                w[0].end_seconds,
-                w[1].name,
-                w[1].start_seconds,
-                gap
-            );
+            if gap >= 0.5 {
+                return Err(eyre::eyre!(
+                    "Gap in '{}' between '{}' (end {:.2}s) and '{}' (start {:.2}s): {:.4}s",
+                    song.name,
+                    w[0].name,
+                    w[0].end_seconds,
+                    w[1].name,
+                    w[1].start_seconds,
+                    gap
+                ));
+            }
         }
     }
 
     // ── Step 5: Verify Song 2 has Bridge, Pre-Chorus, and count-in ──
     let song2 = &songs[1];
-    assert_eq!(song2.name, "Build My Life");
-    assert!(
-        song2.count_in_seconds.is_some(),
-        "Song 2 should have count-in"
-    );
+    if song2.name != "Build My Life" {
+        return Err(eyre::eyre!("Song 2 name mismatch"));
+    }
+    if song2.count_in_seconds.is_none() {
+        return Err(eyre::eyre!("Song 2 should have count-in"));
+    }
     let song2_names: Vec<&str> = song2.sections.iter().map(|s| s.name.as_str()).collect();
-    assert!(song2_names.contains(&"Count-In"), "Song 2 missing Count-In");
-    assert!(
-        song2_names.contains(&"Pre-Chorus"),
-        "Song 2 missing Pre-Chorus"
-    );
-    assert!(song2_names.contains(&"Bridge"), "Song 2 missing Bridge");
+    if !song2_names.contains(&"Count-In") {
+        return Err(eyre::eyre!("Song 2 missing Count-In"));
+    }
+    if !song2_names.contains(&"Pre-Chorus") {
+        return Err(eyre::eyre!("Song 2 missing Pre-Chorus"));
+    }
+    if !song2_names.contains(&"Bridge") {
+        return Err(eyre::eyre!("Song 2 missing Bridge"));
+    }
 
     // ── Step 6: Verify Song 3 has Tag and count-in ──────────────
     let song3 = &songs[2];
-    assert_eq!(song3.name, "Way Maker");
-    assert!(
-        song3.count_in_seconds.is_some(),
-        "Song 3 should have count-in"
-    );
+    if song3.name != "Way Maker" {
+        return Err(eyre::eyre!("Song 3 name mismatch"));
+    }
+    if song3.count_in_seconds.is_none() {
+        return Err(eyre::eyre!("Song 3 should have count-in"));
+    }
     let song3_names: Vec<&str> = song3.sections.iter().map(|s| s.name.as_str()).collect();
-    assert!(song3_names.contains(&"Count-In"), "Song 3 missing Count-In");
-    assert!(song3_names.contains(&"Tag"), "Song 3 missing Tag");
-    assert!(song3_names.contains(&"Bridge"), "Song 3 missing Bridge");
+    if !song3_names.contains(&"Count-In") {
+        return Err(eyre::eyre!("Song 3 missing Count-In"));
+    }
+    if !song3_names.contains(&"Tag") {
+        return Err(eyre::eyre!("Song 3 missing Tag"));
+    }
+    if !song3_names.contains(&"Bridge") {
+        return Err(eyre::eyre!("Song 3 missing Bridge"));
+    }
 
     println!("\nEnd-to-end test passed: 3-song demo data → SongBuilder → valid Songs");
     Ok(())

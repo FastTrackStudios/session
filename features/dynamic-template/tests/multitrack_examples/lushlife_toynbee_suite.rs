@@ -1,57 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn lushlife_toynbee_suite() -> Result<()> {
-    // -- Setup & Fixtures
-    // Lushlife - Toynbee Suite: 26-stem hip-hop/jazz fusion session from MedleyDB.
-    // Brass section, 3 drum machines, live drums, claps, clarinet, glockenspiel,
-    // 3 clean electric guitars, horn section, trumpet section, FX sounds, 4 synths,
-    // 3 male rapper takes, piano, string section, and DJ scratches.
-    // Tests massive cross-genre session with orchestral + electronic + hip-hop.
-    let items = vec![
-        "01_BrassSection.wav",
-        "02_DrumMachine1.wav",
-        "03_Claps.wav",
-        "04_Clarinet.wav",
-        "05_Synth1.wav",
-        "06_DrumMachine2.wav",
-        "07_Drums.wav",
-        "08_ElecBass.wav",
-        "09_Glockenspiel.wav",
-        "10_ElecGtr1.wav",
-        "11_ElecGtr2.wav",
-        "12_ElecGtr3.wav",
-        "13_HornSection.wav",
-        "14_TrumpetSection.wav",
-        "15_FX1.wav",
-        "16_Synth2.wav",
-        "17_LeadVox1.wav",
-        "18_LeadVox2.wav",
-        "19_Synth3.wav",
-        "20_FX2.wav",
-        "21_Synth4.wav",
-        "22_DrumMachine3.wav",
-        "23_Piano.wav",
-        "24_Strings.wav",
-        "25_Scratches.wav",
-        "26_LeadVox3.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn lushlife_toynbee_suite_expected() -> daw_proto::TrackHierarchy {
     let ekit = TrackGroup::folder("Electronic Kit")
         .track("Electronic Kit 1")
         .item("02_DrumMachine1.wav")
@@ -111,7 +61,7 @@ fn lushlife_toynbee_suite() -> Result<()> {
         .item("26_LeadVox3.wav")
         .end();
 
-    let brass = TrackGroup::folder("Brass")
+    let brass_folder = TrackGroup::folder("Brass")
         .track("Trumpets")
         .item("14_TrumpetSection.wav")
         .track("Horns")
@@ -123,7 +73,7 @@ fn lushlife_toynbee_suite() -> Result<()> {
     let orchestra = TrackGroup::folder("Orchestra")
         .track("Strings")
         .item("24_Strings.wav")
-        .group(brass)
+        .group(brass_folder)
         .track("Clarinets")
         .item("04_Clarinet.wav")
         .track("Percussion")
@@ -152,8 +102,59 @@ fn lushlife_toynbee_suite() -> Result<()> {
         .group(orchestra)
         .group(sfx)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn lushlife_toynbee_suite() {
+    // -- Setup & Fixtures
+    // Lushlife - Toynbee Suite: 26-stem hip-hop/jazz fusion session from MedleyDB.
+    // Brass section, 3 drum machines, live drums, claps, clarinet, glockenspiel,
+    // 3 clean electric guitars, horn section, trumpet section, FX sounds, 4 synths,
+    // 3 male rapper takes, piano, string section, and DJ scratches.
+    // Tests massive cross-genre session with orchestral + electronic + hip-hop.
+    let items = vec![
+        "01_BrassSection.wav",
+        "02_DrumMachine1.wav",
+        "03_Claps.wav",
+        "04_Clarinet.wav",
+        "05_Synth1.wav",
+        "06_DrumMachine2.wav",
+        "07_Drums.wav",
+        "08_ElecBass.wav",
+        "09_Glockenspiel.wav",
+        "10_ElecGtr1.wav",
+        "11_ElecGtr2.wav",
+        "12_ElecGtr3.wav",
+        "13_HornSection.wav",
+        "14_TrumpetSection.wav",
+        "15_FX1.wav",
+        "16_Synth2.wav",
+        "17_LeadVox1.wav",
+        "18_LeadVox2.wav",
+        "19_Synth3.wav",
+        "20_FX2.wav",
+        "21_Synth4.wav",
+        "22_DrumMachine3.wav",
+        "23_Piano.wav",
+        "24_Strings.wav",
+        "25_Scratches.wav",
+        "26_LeadVox3.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = lushlife_toynbee_suite_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

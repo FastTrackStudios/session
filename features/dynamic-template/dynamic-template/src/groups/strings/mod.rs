@@ -11,7 +11,7 @@ pub struct Strings;
 
 impl From<Strings> for Group<ItemMetadata> {
     fn from(_val: Strings) -> Self {
-        Group::builder("Fiddle")
+        Self::builder("Fiddle")
             .prefix("FDL")
             .patterns(vec![
                 // Fiddle (folk/country/bluegrass)

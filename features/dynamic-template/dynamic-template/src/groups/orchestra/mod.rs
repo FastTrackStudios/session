@@ -20,7 +20,7 @@ pub struct Orchestra;
 
 impl From<Orchestra> for Group<ItemMetadata> {
     fn from(_val: Orchestra) -> Self {
-        Group::builder("Orchestra")
+        Self::builder("Orchestra")
             .prefix("Orch")
             .patterns(vec!["orchestra", "orchestral", "symphonic", "symphony"])
             .group(Strings)

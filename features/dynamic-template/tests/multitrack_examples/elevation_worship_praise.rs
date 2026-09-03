@@ -1,9 +1,6 @@
-use daw_proto::FolderDepthChange;
-use dynamic_template::*;
+use super::worship_common::organize;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-/// Elevation Worship – "Praise" official MultiTracks stem set (23 stems).
+/// Elevation Worship – "Praise" official `MultiTracks` stem set (23 stems).
 /// A / 127 bpm / 4-4 modern-worship session: click + cue guide tracks, an
 /// original-mix reference, layered BGVs + choir, organ/keys/piano, electric +
 /// synth bass, one acoustic and seven electric guitars, plus a loop and
@@ -23,7 +20,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 ///     against the top-level group, whose name doubles as a match token. Route
 ///     Choir to the vocal VCA in the DAW instead.
 #[test]
-fn elevation_worship_praise() -> Result<()> {
+fn elevation_worship_praise() {
     let items = vec![
         "01 - Click.wav",
         "02 - Cue.wav",
@@ -49,47 +46,7 @@ fn elevation_worship_praise() -> Result<()> {
         "22 - Hand Percussion.wav",
         "23 - Percussion.wav",
     ];
-    let item_count = items.len();
-    let config = default_config();
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    println!("\nElevation Worship – Praise track list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ── Reconstruct each item's top-level folder from folder-depth deltas ──
-    // The hierarchy is a flat REAPER-style list: FolderStart opens a level,
-    // ClosesLevels(-n) closes n levels at the end of that track.
-    let mut stack: Vec<String> = Vec::new();
-    // item filename → (top-level folder or "" if none, owning node name)
-    let mut placement: std::collections::HashMap<String, (String, String)> =
-        std::collections::HashMap::new();
-    for node in &tracks.tracks {
-        if matches!(node.folder_depth_change, FolderDepthChange::FolderStart) {
-            stack.push(node.name.clone());
-        }
-        let top = stack.first().cloned().unwrap_or_default();
-        for item in &node.items {
-            placement.insert(item.clone(), (top.clone(), node.name.clone()));
-        }
-        if let FolderDepthChange::ClosesLevels(n) = node.folder_depth_change {
-            for _ in 0..(-n) {
-                stack.pop();
-            }
-        }
-    }
-
-    // Every stem is placed exactly once (nothing lost, nothing duplicated).
-    assert_eq!(
-        placement.len(),
-        item_count,
-        "every stem should be placed exactly once"
-    );
-
-    // Nothing falls through to Unsorted.
-    assert!(
-        !tracks.tracks.iter().any(|n| n.name == "Unsorted"),
-        "no stem should land in Unsorted"
-    );
+    let (placement, _) = organize("Elevation Worship – Praise", &items).unwrap();
 
     // Helper: assert an item's top-level folder + owning node name.
     let top_of = |file: &str| {
@@ -158,6 +115,4 @@ fn elevation_worship_praise() -> Result<()> {
     ] {
         assert_eq!(top_of(f), "Guitars", "{f} should be under Guitars");
     }
-
-    Ok(())
 }

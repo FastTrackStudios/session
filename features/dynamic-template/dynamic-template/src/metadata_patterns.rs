@@ -1,22 +1,16 @@
 //! Default metadata field patterns for extracting metadata from input strings
 //!
 //! These patterns are used in a metadata-only group that extracts metadata fields
-//! like Section, MultiMic, Arrangement, etc. across all groups without creating
+//! like Section, `MultiMic`, Arrangement, etc. across all groups without creating
 //! structure nodes in the hierarchy.
 
 use crate::item_metadata::prelude::*;
 
-/// Creates a default metadata field patterns group
-///
-/// This is a metadata-only group that extracts metadata fields like Section, MultiMic,
-/// Arrangement, etc. from input strings. It doesn't create a structure node in the
-/// hierarchy but provides metadata extraction across all groups.
-pub fn default_metadata_field_patterns() -> Group<ItemMetadata> {
-    // Define each field's patterns separately for clarity
+fn build_section_group() -> Group<ItemMetadata> {
     // Section patterns for song structure elements
     // NOTE: Longer/compound patterns must come BEFORE shorter patterns
     // so "Pre-Chorus" matches before "Chorus" does
-    let section = Group::builder("Section")
+    Group::builder("Section")
         .patterns([
             // Pre/Post modifiers (MUST come before Verse/Chorus/etc.)
             "Pre-Chorus",
@@ -75,9 +69,11 @@ pub fn default_metadata_field_patterns() -> Group<ItemMetadata> {
             "Transition",
             "Ending",
         ])
-        .build();
+        .build()
+}
 
-    let arrangement = Group::builder("Arrangement")
+fn build_arrangement_group() -> Group<ItemMetadata> {
+    Group::builder("Arrangement")
         .patterns([
             "Down",
             "Big",
@@ -88,9 +84,11 @@ pub fn default_metadata_field_patterns() -> Group<ItemMetadata> {
             "Fingerpick",
             "Tremolo",
         ])
-        .build();
+        .build()
+}
 
-    let layers = Group::builder("Layers")
+fn build_layers_group() -> Group<ItemMetadata> {
+    Group::builder("Layers")
         .patterns([
             "DBL",
             "TPL",
@@ -105,21 +103,29 @@ pub fn default_metadata_field_patterns() -> Group<ItemMetadata> {
             "4",
             "5",
         ])
-        .build();
+        .build()
+}
 
-    let channel = Group::builder("Channel")
+fn build_channel_group() -> Group<ItemMetadata> {
+    Group::builder("Channel")
         .patterns(["L", "C", "R", "Left", "Center", "Right"])
-        .build();
+        .build()
+}
 
-    let playlist = Group::builder("Playlist")
+fn build_playlist_group() -> Group<ItemMetadata> {
+    Group::builder("Playlist")
         .patterns([".1", ".2", ".3", ".4", ".5"])
-        .build();
+        .build()
+}
 
-    let multi_mic = Group::builder("MultiMic")
+fn build_multi_mic_group() -> Group<ItemMetadata> {
+    Group::builder("MultiMic")
         .patterns(["Top", "Bottom", "In", "Out", "DI", "Amp", "Amplitube"])
-        .build();
+        .build()
+}
 
-    let performer = Group::builder("Performer")
+fn build_performer_group() -> Group<ItemMetadata> {
+    Group::builder("Performer")
         .patterns([
             // Common first names - add more as needed
             "Aaron", "Adam", "Alex", "Amanda", "Amy", "Andrew", "Angela", "Anna", "Ben", "Beth",
@@ -141,17 +147,21 @@ pub fn default_metadata_field_patterns() -> Group<ItemMetadata> {
             "Thomas", "Tit", "Tim", "Timothy", "Todd", "Tom", "Tony", "Travis", "Tyler", "Victor",
             "Victoria", "Warren", "Will", "William", "Zach", "Zachary", "Zoe",
         ])
-        .build();
+        .build()
+}
 
-    let rec_tag = Group::builder("RecTag")
+fn build_rec_tag_group() -> Group<ItemMetadata> {
+    Group::builder("RecTag")
         .patterns([
             "PASS 1", "PASS 2", "PASS 3", "PASS 4", "PASS-1", "PASS-2", "PASS-3", "PASS-4",
         ])
-        .build();
+        .build()
+}
 
+fn build_effect_group() -> Group<ItemMetadata> {
     // Effect patterns - audio processing effects applied to tracks
     // These can appear on any instrument track (e.g., "Snare Verb", "Vocal Comp")
-    let effect = Group::builder("Effect")
+    Group::builder("Effect")
         .patterns([
             // Reverb variations
             "Verb",
@@ -200,7 +210,24 @@ pub fn default_metadata_field_patterns() -> Group<ItemMetadata> {
             "Aux",
             // Note: "FX" intentionally excluded - too generic, matches SFX filenames
         ])
-        .build();
+        .build()
+}
+
+/// Creates a default metadata field patterns group
+///
+/// This is a metadata-only group that extracts metadata fields like Section, `MultiMic`,
+/// Arrangement, etc. from input strings. It doesn't create a structure node in the
+/// hierarchy but provides metadata extraction across all groups.
+pub fn default_metadata_field_patterns() -> Group<ItemMetadata> {
+    let section = build_section_group();
+    let arrangement = build_arrangement_group();
+    let layers = build_layers_group();
+    let channel = build_channel_group();
+    let playlist = build_playlist_group();
+    let multi_mic = build_multi_mic_group();
+    let performer = build_performer_group();
+    let rec_tag = build_rec_tag_group();
+    let effect = build_effect_group();
 
     // Combine all field patterns into a single metadata-only group
     Group::builder("MetadataFields")

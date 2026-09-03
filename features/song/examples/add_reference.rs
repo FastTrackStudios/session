@@ -19,8 +19,8 @@ fn main() {
         eprintln!("usage: add_reference <song-dir> [<song-dir> ...]");
         std::process::exit(2);
     }
-    let mut ok = 0;
-    let mut fail = 0;
+    let mut ok: u32 = 0;
+    let mut fail: u32 = 0;
     for d in &dirs {
         let path = std::path::PathBuf::from(d);
         let name = path
@@ -36,14 +36,14 @@ fn main() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("FAIL {name}: read: {e}");
-                fail += 1;
+                fail = fail.saturating_add(1);
                 continue;
             }
         };
         let arr_id = song.default_arrangement;
         let Some(arr) = song.arrangements.iter_mut().find(|a| a.id == arr_id) else {
             eprintln!("FAIL {name}: no default arrangement");
-            fail += 1;
+            fail = fail.saturating_add(1);
             continue;
         };
         if arr
@@ -67,11 +67,11 @@ fn main() {
         match to_folder(&song, &path) {
             Ok(()) => {
                 println!("added reference to {name}");
-                ok += 1;
+                ok = ok.saturating_add(1);
             }
             Err(e) => {
                 eprintln!("FAIL {name}: write: {e}");
-                fail += 1;
+                fail = fail.saturating_add(1);
             }
         }
     }

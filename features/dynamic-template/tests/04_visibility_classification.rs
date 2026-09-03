@@ -2,7 +2,7 @@
 //!
 //! Verifies that every track in a multitrack session is correctly classified
 //! into its top-level visibility group (Drums, Bass, Guitars, etc.) when
-//! walking the organized TrackHierarchy using folder-depth propagation.
+//! walking the organized `TrackHierarchy` using folder-depth propagation.
 //!
 //! This mirrors the algorithm in `visibility.rs::rebuild_cache()` which
 //! propagates group membership from parent folders to all descendants.
@@ -10,8 +10,6 @@
 use daw_proto::{FolderDepthChange, TrackHierarchy};
 use dynamic_template::*;
 use std::collections::HashMap;
-
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Classification results: both item-level and track-level group mappings.
 struct Classification {
@@ -23,7 +21,7 @@ struct Classification {
     tracks: Vec<(String, String)>,
 }
 
-/// Walk a TrackHierarchy and classify each track into its top-level visibility group.
+/// Walk a `TrackHierarchy` and classify each track into its top-level visibility group.
 ///
 /// This replicates the folder-depth propagation algorithm from visibility.rs:
 /// - Folder tracks that start at depth 0 define a top-level group
@@ -43,7 +41,7 @@ fn classify_tracks(hierarchy: &TrackHierarchy) -> Classification {
             // This track IS a top-level entry
             track.name.clone()
         } else {
-            group_stack[0].clone()
+            group_stack.first().cloned().unwrap_or_default()
         };
 
         // Record this track's group assignment
@@ -59,7 +57,7 @@ fn classify_tracks(hierarchy: &TrackHierarchy) -> Classification {
             group_stack.push(track.name.clone());
         }
         if let FolderDepthChange::ClosesLevels(n) = track.folder_depth_change {
-            let levels = n.unsigned_abs() as usize;
+            let levels = usize::try_from(n.unsigned_abs()).unwrap_or(usize::MAX);
             for _ in 0..levels {
                 group_stack.pop();
             }
@@ -78,9 +76,9 @@ fn classify_tracks(hierarchy: &TrackHierarchy) -> Classification {
 // Groups: Drums (12 items), Percussion (1), Bass (1), Guitars (4), Keys (1),
 //         Vocals (7), SFX (3)
 
-#[test]
-fn marc_martel_visibility_groups() -> Result<()> {
-    let items = vec![
+/// The Marc Martel session's raw item names, shared by every test below.
+fn marc_martel_items() -> Vec<&'static str> {
+    vec![
         "Kick In",
         "Kick Out",
         "Kick Sample",
@@ -110,107 +108,80 @@ fn marc_martel_visibility_groups() -> Result<()> {
         "BGV2",
         "BGV3",
         "BGV4",
-    ];
+    ]
+}
 
+/// Assert that `item` was classified into `expected_group`.
+fn assert_group(groups: &HashMap<String, String>, item: &str, expected_group: &str) {
+    assert_eq!(
+        groups.get(item).map(String::as_str),
+        Some(expected_group),
+        "{item} → {expected_group}"
+    );
+}
+
+#[test]
+fn marc_martel_visibility_groups() {
+    let items = marc_martel_items();
     let config = default_config();
-    let tracks = items.clone().organize_into_tracks(&config, None)?;
+    let tracks = items.clone().organize_into_tracks(&config, None).unwrap();
     let classification = classify_tracks(&tracks);
     let groups = &classification.items;
 
     // --- Drums: all kick, snare, tom, cymbal, and room tracks ---
-    assert_eq!(groups.get("Kick In").unwrap(), "Drums", "Kick In → Drums");
-    assert_eq!(groups.get("Kick Out").unwrap(), "Drums", "Kick Out → Drums");
-    assert_eq!(
-        groups.get("Kick Sample").unwrap(),
-        "Drums",
-        "Kick Sample → Drums"
-    );
-    assert_eq!(
-        groups.get("Snare Top").unwrap(),
-        "Drums",
-        "Snare Top → Drums"
-    );
-    assert_eq!(
-        groups.get("Snare Bottom").unwrap(),
-        "Drums",
-        "Snare Bottom → Drums"
-    );
-    assert_eq!(
-        groups.get("Snare Sample").unwrap(),
-        "Drums",
-        "Snare Sample → Drums"
-    );
-    assert_eq!(
-        groups.get("Snare Sample Two").unwrap(),
-        "Drums",
-        "Snare Sample Two → Drums"
-    );
-    assert_eq!(groups.get("Tom1").unwrap(), "Drums", "Tom1 → Drums");
-    assert_eq!(groups.get("Tom2").unwrap(), "Drums", "Tom2 → Drums");
-    assert_eq!(groups.get("HighHat").unwrap(), "Drums", "HighHat → Drums");
-    assert_eq!(groups.get("OH").unwrap(), "Drums", "OH → Drums");
-    assert_eq!(groups.get("Rooms").unwrap(), "Drums", "Rooms → Drums");
+    for name in [
+        "Kick In",
+        "Kick Out",
+        "Kick Sample",
+        "Snare Top",
+        "Snare Bottom",
+        "Snare Sample",
+        "Snare Sample Two",
+        "Tom1",
+        "Tom2",
+        "HighHat",
+        "OH",
+        "Rooms",
+    ] {
+        assert_group(groups, name, "Drums");
+    }
 
     // --- Percussion ---
-    assert_eq!(
-        groups.get("Percussion").unwrap(),
-        "Percussion",
-        "Percussion → Percussion"
-    );
+    assert_group(groups, "Percussion", "Percussion");
 
     // --- Bass ---
-    assert_eq!(groups.get("Bass DI").unwrap(), "Bass", "Bass DI → Bass");
+    assert_group(groups, "Bass DI", "Bass");
 
     // --- Guitars: all lead guitar tracks (clean and amplitube) ---
-    assert_eq!(
-        groups.get("Lead Guitar Amplitube Left").unwrap(),
-        "Guitars",
-        "Lead Guitar Amplitube Left → Guitars"
-    );
-    assert_eq!(
-        groups.get("Lead Guitar Amplitube Right").unwrap(),
-        "Guitars",
-        "Lead Guitar Amplitube Right → Guitars"
-    );
-    assert_eq!(
-        groups.get("Lead Guitar Clean DI Left").unwrap(),
-        "Guitars",
-        "Lead Guitar Clean DI Left → Guitars"
-    );
-    assert_eq!(
-        groups.get("Lead Guitar Clean DI Right").unwrap(),
-        "Guitars",
-        "Lead Guitar Clean DI Right → Guitars"
-    );
+    for name in [
+        "Lead Guitar Amplitube Left",
+        "Lead Guitar Amplitube Right",
+        "Lead Guitar Clean DI Left",
+        "Lead Guitar Clean DI Right",
+    ] {
+        assert_group(groups, name, "Guitars");
+    }
 
     // --- Keys ---
-    assert_eq!(groups.get("Piano").unwrap(), "Keys", "Piano → Keys");
+    assert_group(groups, "Piano", "Keys");
 
     // --- Vocals: lead vocal, effects, and BGVs ---
-    assert_eq!(groups.get("Vocal").unwrap(), "Vocals", "Vocal → Vocals");
-    assert_eq!(
-        groups.get("Vocal.Eko.Plate").unwrap(),
-        "Vocals",
-        "Vocal.Eko.Plate → Vocals"
-    );
-    assert_eq!(
-        groups.get("Vocal.Magic").unwrap(),
-        "Vocals",
-        "Vocal.Magic → Vocals"
-    );
-    assert_eq!(groups.get("BGV1").unwrap(), "Vocals", "BGV1 → Vocals");
-    assert_eq!(groups.get("BGV2").unwrap(), "Vocals", "BGV2 → Vocals");
-    assert_eq!(groups.get("BGV3").unwrap(), "Vocals", "BGV3 → Vocals");
-    assert_eq!(groups.get("BGV4").unwrap(), "Vocals", "BGV4 → Vocals");
+    for name in [
+        "Vocal",
+        "Vocal.Eko.Plate",
+        "Vocal.Magic",
+        "BGV1",
+        "BGV2",
+        "BGV3",
+        "BGV4",
+    ] {
+        assert_group(groups, name, "Vocals");
+    }
 
     // --- SFX: H3000 harmonizer effects ---
-    assert_eq!(groups.get("H3000.One").unwrap(), "SFX", "H3000.One → SFX");
-    assert_eq!(groups.get("H3000.Two").unwrap(), "SFX", "H3000.Two → SFX");
-    assert_eq!(
-        groups.get("H3000.Three").unwrap(),
-        "SFX",
-        "H3000.Three → SFX"
-    );
+    for name in ["H3000.One", "H3000.Two", "H3000.Three"] {
+        assert_group(groups, name, "SFX");
+    }
 
     // Verify all 29 items are classified
     assert_eq!(
@@ -218,8 +189,6 @@ fn marc_martel_visibility_groups() -> Result<()> {
         items.len(),
         "Every input item should be classified"
     );
-
-    Ok(())
 }
 
 /// Verify that ALL tracks in the hierarchy — including intermediate folder tracks
@@ -229,42 +198,20 @@ fn marc_martel_visibility_groups() -> Result<()> {
 /// This is the critical test for the visibility manager: in REAPER, these tracks
 /// exist as real tracks with names that don't match any monarchy pattern. They
 /// must inherit their group from the parent folder chain.
-#[test]
-fn marc_martel_all_tracks_inherit_group() -> Result<()> {
-    let items = vec![
-        "Kick In",
-        "Kick Out",
-        "Kick Sample",
-        "Snare Top",
-        "Snare Bottom",
-        "Snare Sample",
-        "Snare Sample Two",
-        "Tom1",
-        "Tom2",
-        "HighHat",
-        "OH",
-        "Rooms",
-        "Percussion",
-        "Bass DI",
-        "Piano",
-        "Lead Guitar Amplitube Left",
-        "Lead Guitar Amplitube Right",
-        "Lead Guitar Clean DI Left",
-        "Lead Guitar Clean DI Right",
-        "Vocal",
-        "H3000.One",
-        "H3000.Two",
-        "H3000.Three",
-        "Vocal.Eko.Plate",
-        "Vocal.Magic",
-        "BGV1",
-        "BGV2",
-        "BGV3",
-        "BGV4",
-    ];
+/// Assert some track named `name` was classified into `expected_group`.
+fn assert_track_in_group(tracks: &[(String, String)], name: &str, expected_group: &str) {
+    let found = tracks.iter().any(|(n, g)| n == name && g == expected_group);
+    assert!(
+        found,
+        "Track '{name}' should be classified as {expected_group} (via folder inheritance)"
+    );
+}
 
+#[test]
+fn marc_martel_all_tracks_inherit_group() {
+    let items = marc_martel_items();
     let config = default_config();
-    let tracks = items.organize_into_tracks(&config, None)?;
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
     let classification = classify_tracks(&tracks);
 
     // Every track in the hierarchy (folders, subfolders, and leaves) must belong
@@ -290,9 +237,7 @@ fn marc_martel_all_tracks_inherit_group() -> Result<()> {
     for (track_name, group) in &classification.tracks {
         assert!(
             known_groups.contains(&group.as_str()),
-            "Track '{}' classified as '{}' which is not a known visibility group",
-            track_name,
-            group
+            "Track '{track_name}' classified as '{group}' which is not a known visibility group"
         );
     }
 
@@ -300,104 +245,35 @@ fn marc_martel_all_tracks_inherit_group() -> Result<()> {
     // but MUST inherit from their parent folder:
 
     // Drums substructure: folder and leaf tracks
-    let drums_tracks = [
+    for name in [
         "Drums", "Kick", "SUM", "In", "Out", "Snare", "Top", "Bottom", "Trig", "Toms", "T1", "T2",
         "Cymbals", "OH", "Hi Hat", "Rooms",
-    ];
-    for name in &drums_tracks {
-        let found = classification
-            .tracks
-            .iter()
-            .find(|(n, g)| n == name && g == "Drums");
-        assert!(
-            found.is_some(),
-            "Track '{}' should be classified as Drums (via folder inheritance)",
-            name
-        );
+    ] {
+        assert_track_in_group(&classification.tracks, name, "Drums");
     }
 
     // Guitars substructure
-    let guitar_tracks = ["Guitars", "Clean", "Lead", "Left", "Right"];
-    for name in &guitar_tracks {
-        let found = classification
-            .tracks
-            .iter()
-            .any(|(n, g)| n == name && g == "Guitars");
-        assert!(
-            found,
-            "Track '{}' should be classified as Guitars (via folder inheritance)",
-            name
-        );
+    for name in ["Guitars", "Clean", "Lead", "Left", "Right"] {
+        assert_track_in_group(&classification.tracks, name, "Guitars");
     }
 
     // Vocals substructure
-    let vocal_tracks = ["Vocals", "Lead", "BGVs"];
-    for name in &vocal_tracks {
-        let found = classification
-            .tracks
-            .iter()
-            .any(|(n, g)| n == name && g == "Vocals");
-        assert!(
-            found,
-            "Track '{}' should be classified as Vocals (via folder inheritance)",
-            name
-        );
+    for name in ["Vocals", "Lead", "BGVs"] {
+        assert_track_in_group(&classification.tracks, name, "Vocals");
     }
 
     // SFX tracks
-    let sfx_tracks = ["SFX", "H3000.One", "H3000.Two", "H3000.Three"];
-    for name in &sfx_tracks {
-        let found = classification
-            .tracks
-            .iter()
-            .any(|(n, g)| n == name && g == "SFX");
-        assert!(
-            found,
-            "Track '{}' should be classified as SFX (via folder inheritance)",
-            name
-        );
+    for name in ["SFX", "H3000.One", "H3000.Two", "H3000.Three"] {
+        assert_track_in_group(&classification.tracks, name, "SFX");
     }
-
-    Ok(())
 }
 
 /// Verify group counts: the number of items per group should match expectations.
 #[test]
-fn marc_martel_group_counts() -> Result<()> {
-    let items = vec![
-        "Kick In",
-        "Kick Out",
-        "Kick Sample",
-        "Snare Top",
-        "Snare Bottom",
-        "Snare Sample",
-        "Snare Sample Two",
-        "Tom1",
-        "Tom2",
-        "HighHat",
-        "OH",
-        "Rooms",
-        "Percussion",
-        "Bass DI",
-        "Piano",
-        "Lead Guitar Amplitube Left",
-        "Lead Guitar Amplitube Right",
-        "Lead Guitar Clean DI Left",
-        "Lead Guitar Clean DI Right",
-        "Vocal",
-        "H3000.One",
-        "H3000.Two",
-        "H3000.Three",
-        "Vocal.Eko.Plate",
-        "Vocal.Magic",
-        "BGV1",
-        "BGV2",
-        "BGV3",
-        "BGV4",
-    ];
-
+fn marc_martel_group_counts() {
+    let items = marc_martel_items();
     let config = default_config();
-    let tracks = items.clone().organize_into_tracks(&config, None)?;
+    let tracks = items.clone().organize_into_tracks(&config, None).unwrap();
     let classification = classify_tracks(&tracks);
     let groups = &classification.items;
 
@@ -426,45 +302,12 @@ fn marc_martel_group_counts() -> Result<()> {
     // Total should equal input count
     let total: usize = counts.values().sum();
     assert_eq!(total, 29, "Total classified items should be 29");
-
-    Ok(())
 }
 
 /// Verify that no items are left unclassified (every item maps to a known group).
 #[test]
-fn marc_martel_no_unclassified() -> Result<()> {
-    let items = vec![
-        "Kick In",
-        "Kick Out",
-        "Kick Sample",
-        "Snare Top",
-        "Snare Bottom",
-        "Snare Sample",
-        "Snare Sample Two",
-        "Tom1",
-        "Tom2",
-        "HighHat",
-        "OH",
-        "Rooms",
-        "Percussion",
-        "Bass DI",
-        "Piano",
-        "Lead Guitar Amplitube Left",
-        "Lead Guitar Amplitube Right",
-        "Lead Guitar Clean DI Left",
-        "Lead Guitar Clean DI Right",
-        "Vocal",
-        "H3000.One",
-        "H3000.Two",
-        "H3000.Three",
-        "Vocal.Eko.Plate",
-        "Vocal.Magic",
-        "BGV1",
-        "BGV2",
-        "BGV3",
-        "BGV4",
-    ];
-
+fn marc_martel_no_unclassified() {
+    let items = marc_martel_items();
     let known_groups = [
         "Drums",
         "Percussion",
@@ -483,21 +326,17 @@ fn marc_martel_no_unclassified() -> Result<()> {
     ];
 
     let config = default_config();
-    let tracks = items.clone().organize_into_tracks(&config, None)?;
+    let tracks = items.clone().organize_into_tracks(&config, None).unwrap();
     let classification = classify_tracks(&tracks);
     let groups = &classification.items;
 
     for item in &items {
         let group = groups
             .get(*item)
-            .unwrap_or_else(|| panic!("Item '{}' should be classified", item));
+            .unwrap_or_else(|| panic!("Item '{item}' should be classified"));
         assert!(
             known_groups.contains(&group.as_str()),
-            "Item '{}' classified as '{}' which is not a known visibility group",
-            item,
-            group
+            "Item '{item}' classified as '{group}' which is not a known visibility group"
         );
     }
-
-    Ok(())
 }

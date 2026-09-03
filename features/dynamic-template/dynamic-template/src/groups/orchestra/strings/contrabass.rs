@@ -8,7 +8,7 @@ pub struct Contrabass;
 
 impl From<Contrabass> for Group<ItemMetadata> {
     fn from(_val: Contrabass) -> Self {
-        Group::builder("Contrabass")
+        Self::builder("Contrabass")
             .patterns(vec![
                 "contrabass",
                 "double_bass",

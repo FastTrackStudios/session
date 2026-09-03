@@ -56,3 +56,27 @@ pub enum MarkerKind {
     SongStart,
     SongEnd,
 }
+
+impl MarkerKind {
+    /// The plain RGB each marker gets — the single source both
+    /// `keyflow::actions::MarkerKind::default_color` (packed into
+    /// REAPER's native marker-color format) and a toolbar CSS pill
+    /// (`css_color`) build on, so the REAPER-side marker and the
+    /// standalone toolbar button render the literal same color.
+    #[must_use]
+    pub const fn rgb(self) -> u32 {
+        match self {
+            Self::CountIn => 0x00EC_4899,   // pink-500
+            Self::SongStart => 0x0022_C55E, // green-500
+            Self::Start => 0x0073_7373,     // neutral-500
+            Self::End => 0x00DC_2626,       // red-600
+            Self::SongEnd => 0x0047_5569,   // slate-600
+        }
+    }
+
+    /// `rgb()` as a CSS hex string (`#RRGGBB`).
+    #[must_use]
+    pub fn css_color(self) -> String {
+        format!("#{:06X}", self.rgb())
+    }
+}

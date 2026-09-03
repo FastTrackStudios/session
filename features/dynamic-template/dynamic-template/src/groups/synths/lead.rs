@@ -7,12 +7,12 @@ use monarchy::Group;
 /// Lead synth group
 ///
 /// Note: Uses specific synth-lead patterns to avoid matching guitar/vocal leads.
-/// Generic "lead" pattern would incorrectly match "Lead Voc" or "JohnyLead" guitar.
+/// Generic "lead" pattern would incorrectly match "Lead Voc" or "`JohnyLead`" guitar.
 pub struct Lead;
 
 impl From<Lead> for Group<ItemMetadata> {
     fn from(_val: Lead) -> Self {
-        Group::builder("Lead")
+        Self::builder("Lead")
             .patterns(vec![
                 "synth lead",
                 "lead synth",

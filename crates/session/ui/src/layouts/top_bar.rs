@@ -9,7 +9,7 @@
 pub const VERSION: &str = "v0.1.0-alpha";
 
 /// Connection state surfaced by the shell's connection badge.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ConnectionState {
     #[default]
     Disconnected,

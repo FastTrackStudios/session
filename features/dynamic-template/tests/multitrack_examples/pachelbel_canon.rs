@@ -1,33 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn pachelbel_canon() -> Result<()> {
-    // -- Setup & Fixtures
-    // MusicDelta Pachelbel Canon: 4-stem baroque string quartet from MedleyDB.
-    // Two violins, viola, and cello. Pure classical string arrangement with no
-    // drums, vocals, or modern instruments. Tests minimal orchestral classification.
-    let items = vec![
-        "01_Violin1.wav",
-        "02_Cello.wav",
-        "03_Viola.wav",
-        "04_Violin2.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn pachelbel_canon_expected() -> daw_proto::TrackHierarchy {
     let violins = TrackGroup::folder("Violins")
         .track("First Violin")
         .item("01_Violin1.wav")
@@ -44,8 +18,35 @@ fn pachelbel_canon() -> Result<()> {
         .end();
 
     let expected = TrackStructureBuilder::new().group(orchestra).build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn pachelbel_canon() {
+    // -- Setup & Fixtures
+    // MusicDelta Pachelbel Canon: 4-stem baroque string quartet from MedleyDB.
+    // Two violins, viola, and cello. Pure classical string arrangement with no
+    // drums, vocals, or modern instruments. Tests minimal orchestral classification.
+    let items = vec![
+        "01_Violin1.wav",
+        "02_Cello.wav",
+        "03_Viola.wav",
+        "04_Violin2.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = pachelbel_canon_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

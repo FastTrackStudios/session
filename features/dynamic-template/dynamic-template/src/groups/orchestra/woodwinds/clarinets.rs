@@ -8,7 +8,7 @@ pub struct Clarinets;
 
 impl From<Clarinets> for Group<ItemMetadata> {
     fn from(_val: Clarinets) -> Self {
-        Group::builder("Clarinets")
+        Self::builder("Clarinets")
             .patterns(vec!["clarinet", "clarinets", "cl"])
             .build()
     }

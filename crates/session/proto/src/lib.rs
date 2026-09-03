@@ -13,15 +13,23 @@
 
 // ─── Typed IDs ─────────────────────────────────────────────────
 
-utils::typed_uuid_id!(
-    /// Unique identifier for a song in a session setlist.
-    SongId
-);
+// `typed_uuid_id!` derives `Deserialize` on a newtype that also derives
+// `Facet`, whose `Reborrow` impl is `unsafe` but does not touch the
+// deserialized bytes — nothing for `unsafe_derive_deserialize` to protect
+// against here.
+#[allow(clippy::unsafe_derive_deserialize)]
+mod typed_ids {
+    utils::typed_uuid_id!(
+        /// Unique identifier for a song in a session setlist.
+        SongId
+    );
 
-utils::typed_uuid_id!(
-    /// Unique identifier for a section within a song.
-    SectionId
-);
+    utils::typed_uuid_id!(
+        /// Unique identifier for a section within a song.
+        SectionId
+    );
+}
+pub use typed_ids::{SectionId, SongId};
 
 // Domain modules
 pub mod color;

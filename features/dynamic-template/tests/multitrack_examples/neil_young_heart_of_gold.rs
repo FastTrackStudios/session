@@ -1,51 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn neil_young_heart_of_gold() -> Result<()> {
-    // -- Setup & Fixtures
-    // Neil Young - Heart of Gold: Simple folk session with acoustic guitars, mandolin,
-    // steel guitar, piano, and vocals. All tracked through OptoComp/260VU preamps.
-    let items = vec![
-        "01.Kick OptoComp_01.wav",
-        "02.Snare No Compression_01.wav",
-        "03.OH L 260VU_01.wav",
-        "04.OH R 260VU_01.wav",
-        "05.Bass DI OptoComp_01.wav",
-        "06.Bass Amp 44A. 260VU_01.wav",
-        "07.Bass Amp 421 260VU_01.wav",
-        "08.Acoustic OptoComp_01.wav",
-        "09.Acoustic Dbl OptoComp_01.wav",
-        "10.Acoustic Harmonics OptoComp_01.wav",
-        "11.Acoustic Outro Strum OptoComp_01.wav",
-        "12.Mando OptoComp_01.wav",
-        "13.Steel Guitar OptoComp_01.wav",
-        "14.Piano 260VU_01.wav",
-        "15.Piano Lead 260VU_01.wav",
-        "16.Vocal OptoComp_01.wav",
-        "17.Vocal.DBL OptoComp_01.wav",
-        "18.Vocal.Triple OptoComp_01.wav",
-        "19.Vocal.HARMONY OptoComp_01.wav",
-        "20.Vocal.HARMONY Dbl OptoComp_01.wav",
-        "21.Heart Of Gold Mix_01.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
-    // Simple kit: kick, snare, OH L/R stereo pair
+fn neil_young_heart_of_gold_expected() -> daw_proto::TrackHierarchy {
     let oh = TrackGroup::folder("OH")
         .track("L")
         .item("03.OH L 260VU_01.wav")
@@ -136,8 +92,53 @@ fn neil_young_heart_of_gold() -> Result<()> {
         .track("Reference")
         .item("21.Heart Of Gold Mix_01.wav")
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn neil_young_heart_of_gold() {
+    // -- Setup & Fixtures
+    // Neil Young - Heart of Gold: Simple folk session with acoustic guitars, mandolin,
+    // steel guitar, piano, and vocals. All tracked through OptoComp/260VU preamps.
+    let items = vec![
+        "01.Kick OptoComp_01.wav",
+        "02.Snare No Compression_01.wav",
+        "03.OH L 260VU_01.wav",
+        "04.OH R 260VU_01.wav",
+        "05.Bass DI OptoComp_01.wav",
+        "06.Bass Amp 44A. 260VU_01.wav",
+        "07.Bass Amp 421 260VU_01.wav",
+        "08.Acoustic OptoComp_01.wav",
+        "09.Acoustic Dbl OptoComp_01.wav",
+        "10.Acoustic Harmonics OptoComp_01.wav",
+        "11.Acoustic Outro Strum OptoComp_01.wav",
+        "12.Mando OptoComp_01.wav",
+        "13.Steel Guitar OptoComp_01.wav",
+        "14.Piano 260VU_01.wav",
+        "15.Piano Lead 260VU_01.wav",
+        "16.Vocal OptoComp_01.wav",
+        "17.Vocal.DBL OptoComp_01.wav",
+        "18.Vocal.Triple OptoComp_01.wav",
+        "19.Vocal.HARMONY OptoComp_01.wav",
+        "20.Vocal.HARMONY Dbl OptoComp_01.wav",
+        "21.Heart Of Gold Mix_01.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    // Simple kit: kick, snare, OH L/R stereo pair
+    let expected = neil_young_heart_of_gold_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

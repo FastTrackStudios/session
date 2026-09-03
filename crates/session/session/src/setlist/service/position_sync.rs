@@ -5,7 +5,7 @@
 //! [`SetlistOffsetMap`] and applied to the other side:
 //!
 //! - **Song → Setlist**: Seek in song tab → compute global position → seek setlist tab
-//! - **Setlist → Song**: Seek in setlist tab → compute (song_index, local_pos) → switch + seek song tab
+//! - **Setlist → Song**: Seek in setlist tab → compute (`song_index`, `local_pos`) → switch + seek song tab
 //!
 //! Echo suppression prevents infinite feedback loops.
 
@@ -51,8 +51,7 @@ impl Suppression {
         }
         self.last_target_guid
             .as_deref()
-            .map(|g| g == source_guid)
-            .unwrap_or(false)
+            .is_some_and(|g| g == source_guid)
     }
 }
 
@@ -77,6 +76,7 @@ pub struct PositionSyncBridge {
 #[allow(dead_code)]
 impl PositionSyncBridge {
     /// Create a new bridge with the given offset map and setlist project GUID.
+    #[must_use]
     pub fn new(offset_map: SetlistOffsetMap, setlist_guid: Option<String>) -> Self {
         Self {
             offset_map,
@@ -99,7 +99,7 @@ impl PositionSyncBridge {
     }
 
     /// Enable/disable position sync.
-    pub fn set_enabled(&mut self, enabled: bool) {
+    pub const fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
@@ -117,30 +117,28 @@ impl PositionSyncBridge {
         };
 
         // Get all open projects
-        let projects = match daw.projects().await {
-            Ok(p) => p,
-            Err(_) => return,
+        let Ok(projects) = daw.projects().await else {
+            return;
         };
 
         // Collect current positions
         for project in &projects {
             let guid = project.guid().to_string();
-            let transport = match project.transport().get_state().await {
-                Ok(t) => t,
-                Err(_) => continue,
+            let Ok(transport) = project.transport().get_state().await else {
+                continue;
             };
 
             let pos = transport
                 .playhead_position
                 .time
                 .as_ref()
-                .map(|t| t.as_seconds())
+                .map(daw_proto::PositionInSeconds::as_seconds)
                 .or_else(|| {
                     transport
                         .edit_position
                         .time
                         .as_ref()
-                        .map(|t| t.as_seconds())
+                        .map(daw_proto::PositionInSeconds::as_seconds)
                 })
                 .unwrap_or(0.0);
 
@@ -192,9 +190,8 @@ impl PositionSyncBridge {
         setlist_guid: &str,
     ) {
         // Find which song this project corresponds to
-        let song_offset = match self.offset_map.song_by_guid(song_guid) {
-            Some(s) => s,
-            None => return, // Not a known song project
+        let Some(song_offset) = self.offset_map.song_by_guid(song_guid) else {
+            return;
         };
 
         let global_pos = song_offset.global_start_seconds + local_pos;
@@ -219,14 +216,12 @@ impl PositionSyncBridge {
         global_pos: f64,
         _setlist_guid: &str,
     ) {
-        let (song_index, local_pos) = match self.offset_map.setlist_to_project(global_pos) {
-            Some(r) => r,
-            None => return,
+        let Some((song_index, local_pos)) = self.offset_map.setlist_to_project(global_pos) else {
+            return;
         };
 
-        let song_offset = match self.offset_map.songs.get(song_index) {
-            Some(s) => s,
-            None => return,
+        let Some(song_offset) = self.offset_map.songs.get(song_index) else {
+            return;
         };
 
         debug!(
@@ -275,14 +270,12 @@ impl PositionSyncBridge {
         global_pos: f64,
         _setlist_guid: &str,
     ) {
-        let (song_index, _local_pos) = match self.offset_map.setlist_to_project(global_pos) {
-            Some(r) => r,
-            None => return,
+        let Some((song_index, _local_pos)) = self.offset_map.setlist_to_project(global_pos) else {
+            return;
         };
 
-        let song_offset = match self.offset_map.songs.get(song_index) {
-            Some(s) => s,
-            None => return,
+        let Some(song_offset) = self.offset_map.songs.get(song_index) else {
+            return;
         };
 
         for project in projects {

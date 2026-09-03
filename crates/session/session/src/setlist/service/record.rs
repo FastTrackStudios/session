@@ -11,15 +11,12 @@ use tracing::{debug, warn};
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: Transport + Tracks,
+    D: Transport + Tracks + Sync,
 {
     pub(crate) async fn record_impl(&self) -> Result<(), SessionServiceError> {
         debug!("record");
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self
-                .daw
-                .record(ProjectContext::Project(song.project_guid.clone()))
-            {
+            if let Err(e) = self.daw.record(ProjectContext::Project(song.project_guid)) {
                 warn!("Failed to record: {}", e);
             }
         } else {
@@ -33,7 +30,7 @@ where
         if let Some(song) = self.get_cached_active_song().await {
             if let Err(e) = self
                 .daw
-                .stop_recording(ProjectContext::Project(song.project_guid.clone()))
+                .stop_recording(ProjectContext::Project(song.project_guid))
             {
                 warn!("Failed to stop recording: {}", e);
             }
@@ -48,7 +45,7 @@ where
         if let Some(song) = self.get_cached_active_song().await {
             if let Err(e) = self
                 .daw
-                .toggle_recording(ProjectContext::Project(song.project_guid.clone()))
+                .toggle_recording(ProjectContext::Project(song.project_guid))
             {
                 warn!("Failed to toggle recording: {}", e);
             }

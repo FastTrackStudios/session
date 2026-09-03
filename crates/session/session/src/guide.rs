@@ -47,7 +47,7 @@ impl GuideScope {
     /// Which tracks this scope owns — and therefore which ones it clears
     /// before writing. A scope must never clear a track it isn't going to
     /// rewrite, or "generate click" would silently wipe the guide.
-    fn roles(self) -> &'static [GuideTrackRole] {
+    const fn roles(self) -> &'static [GuideTrackRole] {
         match self {
             Self::Click => &[GuideTrackRole::Click],
             Self::Cues => &[GuideTrackRole::Count, GuideTrackRole::Guide],
@@ -66,7 +66,7 @@ pub struct Guide<D> {
 }
 
 impl<D> Guide<D> {
-    pub fn new(daw: D) -> Self {
+    pub const fn new(daw: D) -> Self {
         Self { daw }
     }
 }
@@ -100,7 +100,7 @@ impl<D: GuideDaw> session_proto::guide::GuideActions for Guide<D> {
         let (start, end) = self.song_span(project.clone())?;
         for role in GuideScope::All.roles() {
             if let Some(track) = self.find_track(project.clone(), *role) {
-                self.clear_span(project.clone(), &track, start, end);
+                self.clear_span(&project, &track, start, end);
             }
         }
         Ok(())
@@ -109,9 +109,14 @@ impl<D: GuideDaw> session_proto::guide::GuideActions for Guide<D> {
 
 impl<D: GuideDaw> Guide<D> {
     /// Resolve the song, build the note list, and stamp it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the song cannot be resolved, the song has no length (missing SONGSTART/SONGEND markers),
+    /// or if a required track cannot be created or found.
     pub fn generate(&self, scope: GuideScope) -> DawResult<()> {
         let project = ProjectContext::Current;
-        let song = self.current_song()?;
+        let song = Self::current_song()?;
         let timing = GuideSongTiming::from_song(&song);
         let sections = sections_from_song(&song);
         let (start, end) = self.song_span(project.clone())?;
@@ -132,9 +137,9 @@ impl<D: GuideDaw> Guide<D> {
         // Clear first, then write — and only the roles this scope owns.
         for role in scope.roles() {
             let track = self.ensure_track(project.clone(), *role)?;
-            self.clear_span(project.clone(), &track, start, end);
+            self.clear_span(&project, &track, start, end);
         }
-        self.stamp(project, &notes, start, end)
+        self.stamp(&project, &notes, start, end)
     }
 
     /// Read the project tempo map as the segment list the click grid
@@ -156,8 +161,8 @@ impl<D: GuideDaw> Guide<D> {
                 Some(TempoSegment {
                     start_seconds: at.max(start),
                     tempo_bpm: point.bpm,
-                    time_sig_num: num.max(1) as u32,
-                    time_sig_den: den.max(1) as u32,
+                    time_sig_num: u32::try_from(num.max(1)).unwrap_or(4),
+                    time_sig_den: u32::try_from(den.max(1)).unwrap_or(4),
                 })
             })
             .collect();
@@ -171,8 +176,8 @@ impl<D: GuideDaw> Guide<D> {
                 TempoSegment {
                     start_seconds: start,
                     tempo_bpm: self.daw.get_tempo_at(project, start),
-                    time_sig_num: num.max(1) as u32,
-                    time_sig_den: den.max(1) as u32,
+                    time_sig_num: u32::try_from(num.max(1)).unwrap_or(4),
+                    time_sig_den: u32::try_from(den.max(1)).unwrap_or(4),
                 },
             );
         }
@@ -186,7 +191,7 @@ impl<D: GuideDaw> Guide<D> {
     /// `start_ppq` as a QN position and converts on the way in).
     fn stamp(
         &self,
-        project: ProjectContext,
+        project: &ProjectContext,
         notes: &[GuideMidiNote],
         start: f64,
         end: f64,
@@ -208,14 +213,14 @@ impl<D: GuideDaw> Guide<D> {
                 })?;
             let creates: Vec<MidiNoteCreate> = for_role
                 .iter()
-                .map(|note| self.note_create(project.clone(), note))
+                .map(|note| self.note_create(project, note))
                 .collect();
             self.daw.add_notes(location, creates);
         }
         Ok(())
     }
 
-    fn note_create(&self, project: ProjectContext, note: &GuideMidiNote) -> MidiNoteCreate {
+    fn note_create(&self, project: &ProjectContext, note: &GuideMidiNote) -> MidiNoteCreate {
         let qn = |seconds: f64| {
             self.daw
                 .time_to_quarter_notes(project.clone(), PositionInSeconds::from_seconds(seconds))
@@ -241,7 +246,7 @@ impl<D: GuideDaw> Guide<D> {
     /// The song's extent. Falls back to the project's own bounds when the
     /// song carries no explicit end.
     fn song_span(&self, project: ProjectContext) -> DawResult<(f64, f64)> {
-        let song = self.current_song()?;
+        let song = Self::current_song()?;
         let start = song.start_seconds;
         let end = if song.end_seconds > start {
             song.end_seconds
@@ -262,7 +267,7 @@ impl<D: GuideDaw> Guide<D> {
         Ok((start, end))
     }
 
-    fn current_song(&self) -> DawResult<session_proto::Song> {
+    fn current_song() -> DawResult<session_proto::Song> {
         SongBuilder::build_native(ProjectContext::Current)
             .map_err(|err| DawError::OperationFailed(format!("could not build song: {err}")))?
             .into_iter()
@@ -295,7 +300,7 @@ impl<D: GuideDaw> Guide<D> {
     }
 
     /// Drop every item on `track` that overlaps `[start, end)`.
-    fn clear_span(&self, project: ProjectContext, track: &TrackRef, start: f64, end: f64) {
+    fn clear_span(&self, project: &ProjectContext, track: &TrackRef, start: f64, end: f64) {
         for item in self.daw.get_items(project.clone(), track.clone()) {
             let item_start = item.position.as_seconds();
             let item_end = item_start + item.length.as_seconds();

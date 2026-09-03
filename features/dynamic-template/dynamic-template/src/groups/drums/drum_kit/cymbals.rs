@@ -20,7 +20,7 @@ impl From<Cymbals> for ItemMetadataGroup {
                 .build(),
         ];
 
-        let oh_group = ItemMetadataGroup::builder("OH")
+        let oh_group = Self::builder("OH")
             .patterns([
                 "oh",
                 "ohd",
@@ -60,7 +60,7 @@ impl From<Cymbals> for ItemMetadataGroup {
 
         // Use field_value_descriptors for MultiMic to distinguish cymbal types
         // This allows "Hi Hat" and "Ride" to be separate entries
-        ItemMetadataGroup::builder("Cymbals")
+        Self::builder("Cymbals")
             .patterns([
                 "cymbal",
                 "cymbals",

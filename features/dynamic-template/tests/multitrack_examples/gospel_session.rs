@@ -1,35 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn gospel_session() -> Result<()> {
-    // -- Setup & Fixtures
-    // MusicDelta Gospel: 6-stem gospel session from MedleyDB. Drum set, electric bass,
-    // 2 clean electric guitars, hand claps, and female lead vocal. Tests gospel
-    // arrangement with claps classification.
-    let items = vec![
-        "01_Drums.wav",
-        "02_ElecBass.wav",
-        "03_ElecGtr1.wav",
-        "04_ElecGtr2.wav",
-        "05_Claps.wav",
-        "06_LeadVox.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn gospel_session_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::single_track("Drums", "01_Drums.wav");
 
     // Claps now correctly classified as Percussion
@@ -54,8 +26,37 @@ fn gospel_session() -> Result<()> {
         .group(guitars)
         .group(vocals)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn gospel_session() {
+    // -- Setup & Fixtures
+    // MusicDelta Gospel: 6-stem gospel session from MedleyDB. Drum set, electric bass,
+    // 2 clean electric guitars, hand claps, and female lead vocal. Tests gospel
+    // arrangement with claps classification.
+    let items = vec![
+        "01_Drums.wav",
+        "02_ElecBass.wav",
+        "03_ElecGtr1.wav",
+        "04_ElecGtr2.wav",
+        "05_Claps.wav",
+        "06_LeadVox.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = gospel_session_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

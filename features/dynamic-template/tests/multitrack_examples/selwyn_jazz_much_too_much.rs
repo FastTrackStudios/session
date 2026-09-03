@@ -1,46 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn selwyn_jazz_much_too_much() -> Result<()> {
-    // -- Setup & Fixtures
-    // Selwyn Jazz - Much Too Much: Full jazz big-band session with saxophone section,
-    // trumpet pair, trombone, piano, guitar, bass, drums, room mic, and two vocal takes
-    // (scratch + overdub). Cambridge-MT multitrack library.
-    let items = vec![
-        "01_Kick.wav",
-        "02_Snare.wav",
-        "03_Overheads.wav",
-        "04_Bass.wav",
-        "05_Guitar.wav",
-        "06_Piano.wav",
-        "07_Saxophone1.wav",
-        "08_Saxophone2.wav",
-        "09_Saxophone3.wav",
-        "10_Trumpet1.wav",
-        "11_Trumpet2.wav",
-        "12_Trombone.wav",
-        "13_Room.wav",
-        "14_LeadVoxScratch.wav",
-        "15_LeadVoxOverdub.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
-    // Standard jazz kit: kick, snare, overheads, room mic
+fn selwyn_jazz_much_too_much_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::folder("Drums")
         .track("Kick")
         .item("01_Kick.wav")
@@ -109,8 +70,48 @@ fn selwyn_jazz_much_too_much() -> Result<()> {
         .group(vocals)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn selwyn_jazz_much_too_much() {
+    // -- Setup & Fixtures
+    // Selwyn Jazz - Much Too Much: Full jazz big-band session with saxophone section,
+    // trumpet pair, trombone, piano, guitar, bass, drums, room mic, and two vocal takes
+    // (scratch + overdub). Cambridge-MT multitrack library.
+    let items = vec![
+        "01_Kick.wav",
+        "02_Snare.wav",
+        "03_Overheads.wav",
+        "04_Bass.wav",
+        "05_Guitar.wav",
+        "06_Piano.wav",
+        "07_Saxophone1.wav",
+        "08_Saxophone2.wav",
+        "09_Saxophone3.wav",
+        "10_Trumpet1.wav",
+        "11_Trumpet2.wav",
+        "12_Trombone.wav",
+        "13_Room.wav",
+        "14_LeadVoxScratch.wav",
+        "15_LeadVoxOverdub.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    // Standard jazz kit: kick, snare, overheads, room mic
+    let expected = selwyn_jazz_much_too_much_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

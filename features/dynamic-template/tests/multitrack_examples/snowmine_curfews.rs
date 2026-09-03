@@ -1,41 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn snowmine_curfews() -> Result<()> {
-    // -- Setup & Fixtures
-    // Snowmine - Curfews: 11-stem indie pop session from MedleyDB. Auxiliary percussion,
-    // electric bass, lead + backing vocals, vibraphone, drums, sampler, 2 clean electric
-    // guitars, synthesizer, and tack piano. Tests eclectic indie instrumentation with
-    // vibraphone and sampler classification.
-    let items = vec![
-        "01_AuxPerc.wav",
-        "02_ElecBass.wav",
-        "03_LeadVox.wav",
-        "04_Vibraphone.wav",
-        "05_Drums.wav",
-        "06_Sampler.wav",
-        "07_ElecGtr1.wav",
-        "08_ElecGtr2.wav",
-        "09_Synth.wav",
-        "10_BackingVox.wav",
-        "11_TackPiano.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn snowmine_curfews_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::single_track("Drums", "05_Drums.wav");
 
     // Vibraphone dual-classified
@@ -85,8 +51,43 @@ fn snowmine_curfews() -> Result<()> {
         .group(vocals)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn snowmine_curfews() {
+    // -- Setup & Fixtures
+    // Snowmine - Curfews: 11-stem indie pop session from MedleyDB. Auxiliary percussion,
+    // electric bass, lead + backing vocals, vibraphone, drums, sampler, 2 clean electric
+    // guitars, synthesizer, and tack piano. Tests eclectic indie instrumentation with
+    // vibraphone and sampler classification.
+    let items = vec![
+        "01_AuxPerc.wav",
+        "02_ElecBass.wav",
+        "03_LeadVox.wav",
+        "04_Vibraphone.wav",
+        "05_Drums.wav",
+        "06_Sampler.wav",
+        "07_ElecGtr1.wav",
+        "08_ElecGtr2.wav",
+        "09_Synth.wav",
+        "10_BackingVox.wav",
+        "11_TackPiano.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = snowmine_curfews_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

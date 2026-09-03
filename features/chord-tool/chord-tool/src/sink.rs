@@ -23,6 +23,11 @@ pub trait ChordSink: Send + Sync + 'static {
     /// Returns a message on failure rather than an error type: the only
     /// consumer is a status line, and a panel should say "no track
     /// selected" rather than swallow it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a human-readable message when there is nowhere to insert
+    /// (e.g. no track/edit cursor selected).
     fn insert(&self, notes: &[u8], beats: u32) -> Result<(), String>;
 }
 

@@ -38,6 +38,7 @@
 //! feature adds a local Chatterbox backend.
 
 pub mod audio;
+mod cast;
 pub mod count_in;
 mod engine;
 pub mod midi;
@@ -45,11 +46,14 @@ pub mod samples;
 mod schedule;
 pub mod tts;
 
-pub use engine::{BlockClock, GuideBuses, GuideConfig, GuideEngine, GuideTrigger, TriggerSource};
+pub use engine::{
+    BlockClock, ClickSubdivisions, GuideBuses, GuideConfig, GuideEngine, GuideTrigger,
+    TriggerSource,
+};
 pub use samples::{get_guide_key, section_to_guide_filename, AudioSample, ClickSound, SampleBank};
 pub use schedule::{
-    sections_from_song, CueEvent, CueSchedule, GuideSection, GuideSongTiming, ScheduleOptions,
-    ScheduledCue,
+    sections_from_song, CountInOptions, CueEvent, CueSchedule, GuideSection, GuideSongTiming,
+    ScheduleOptions, ScheduledCue,
 };
 pub use tts::{tts_cue_key, CueBank, TtsAudio, TtsRenderer};
 

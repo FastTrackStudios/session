@@ -14,8 +14,8 @@ use crate::prelude::*;
 
 /// Register all session panels with the renderer registry.
 ///
-/// Panels whose components live in the app binary (e.g. ChartView,
-/// ChartPreviewPanel, SetlistView, SettingsView) are not registered here
+/// Panels whose components live in the app binary (e.g. `ChartView`,
+/// `ChartPreviewPanel`, `SetlistView`, `SettingsView`) are not registered here
 /// -- the app registers those directly.
 pub fn register_panels(registry: &mut PanelRendererRegistry) {
     registry.register(PanelId::Performance, || {

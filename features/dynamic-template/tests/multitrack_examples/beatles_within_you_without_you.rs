@@ -1,38 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn beatles_within_you_without_you() -> Result<()> {
-    // -- Setup & Fixtures
-    // Beatles - Within You Without You: 7-stem Indian classical/psychedelic session
-    // from MedleyDB. Features sitar, dilruba (Indian bowed string), tabla (Indian
-    // percussion), tambura (Indian drone instrument), string section, cello, and vocals.
-    // Tests exotic/non-Western instrument classification.
-    let items = vec![
-        "01_Sitar.wav",
-        "02_Dilruba.wav",
-        "03_Tabla.wav",
-        "04_Tambura.wav",
-        "05_Strings.wav",
-        "06_Cello.wav",
-        "07_LeadVox.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // Tabla now correctly classified as Percussion
+fn beatles_within_you_without_you_expected() -> daw_proto::TrackHierarchy {
     let percussion = TrackGroup::single_track("Percussion", "03_Tabla.wav");
 
     let vocals = TrackGroup::single_track("Vocals", "07_LeadVox.wav");
@@ -60,8 +29,40 @@ fn beatles_within_you_without_you() -> Result<()> {
         .group(orchestra)
         .group(unsorted)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn beatles_within_you_without_you() {
+    // -- Setup & Fixtures
+    // Beatles - Within You Without You: 7-stem Indian classical/psychedelic session
+    // from MedleyDB. Features sitar, dilruba (Indian bowed string), tabla (Indian
+    // percussion), tambura (Indian drone instrument), string section, cello, and vocals.
+    // Tests exotic/non-Western instrument classification.
+    let items = vec![
+        "01_Sitar.wav",
+        "02_Dilruba.wav",
+        "03_Tabla.wav",
+        "04_Tambura.wav",
+        "05_Strings.wav",
+        "06_Cello.wav",
+        "07_LeadVox.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // Tabla now correctly classified as Percussion
+    let expected = beatles_within_you_without_you_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

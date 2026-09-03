@@ -40,6 +40,7 @@ pub struct ClickSamplePaths {
 impl ClickSamplePaths {
     /// Get file paths for a given click sound under `base_path`
     /// (the `Library/FTS-GUIDE/Click/` directory).
+    #[must_use]
     pub fn for_sound(base_path: &Path, click_sound: ClickSound) -> Self {
         let (sound_dir, beat_file, eighth_file, sixteenth_file, accent_file) = match click_sound {
             ClickSound::Blip => (
@@ -114,6 +115,7 @@ impl ClickSamplePaths {
 ///
 /// Ported verbatim from the legacy `section_to_guide_filename`.
 /// Always uses the unnumbered filename (e.g. "Chorus", never "Chorus 1").
+#[must_use]
 pub fn section_to_guide_filename(
     section_type_name: &str,
     _section_number: Option<u32>,
@@ -121,7 +123,7 @@ pub fn section_to_guide_filename(
     // Normalize section type name (capitalize first letter)
     let type_lower = section_type_name.to_lowercase();
     let type_capitalized = if let Some(first) = type_lower.chars().next() {
-        first.to_uppercase().to_string() + &type_lower[1..]
+        first.to_uppercase().to_string() + type_lower.get(1..).unwrap_or("")
     } else {
         type_lower
     };
@@ -155,10 +157,9 @@ pub fn section_to_guide_filename(
 /// Get guide sample key for a section: `"{section_type}_{number}"`.
 ///
 /// Ported verbatim from the legacy `get_guide_key`.
+#[must_use]
 pub fn get_guide_key(section_type_name: &str, section_number: Option<u32>) -> String {
-    let number_str = section_number
-        .map(|n| n.to_string())
-        .unwrap_or_else(|| "None".to_string());
+    let number_str = section_number.map_or_else(|| "None".to_string(), |n| n.to_string());
     format!("{section_type_name}_{number_str}")
 }
 
@@ -174,14 +175,13 @@ fn filename_to_key(filename: &str) -> String {
         .unwrap_or(without_prefix);
 
     let parts: Vec<&str> = without_ext.split(' ').collect();
-    if parts.len() == 1 {
-        format!("{}_None", parts[0])
-    } else if parts.len() == 2 {
-        format!("{}_{}", parts[0], parts[1])
-    } else {
-        let section_type = parts[0..parts.len() - 1].join(" ");
-        let number = parts[parts.len() - 1];
-        format!("{section_type}_{number}")
+    match parts.as_slice() {
+        [single] => format!("{single}_None"),
+        [first, second] => format!("{first}_{second}"),
+        [type_parts @ .., number] => {
+            format!("{}_{}", type_parts.join(" "), number)
+        }
+        _ => "None_None".to_string(),
     }
 }
 
@@ -232,7 +232,8 @@ impl SampleBank {
     /// (`"{voice_prefix} - {n}.wav"`, legacy prefix `"English Female"`).
     pub fn load_counts(&mut self, counts_base_path: &Path, voice_prefix: &str, sample_rate: u32) {
         for (i, slot) in self.counts.iter_mut().enumerate() {
-            let path = counts_base_path.join(format!("{voice_prefix} - {}.wav", i + 1));
+            let count_num = i.saturating_add(1);
+            let path = counts_base_path.join(format!("{voice_prefix} - {count_num}.wav"));
             match load_wav(&path, sample_rate) {
                 Ok(audio) => *slot = Some(audio),
                 Err(e) => {
@@ -333,12 +334,18 @@ impl SampleBank {
 
 /// A short exponentially-decaying sine burst (hard attack, tau = dur/6).
 fn synth_tick(freq_hz: f32, dur_ms: f32, gain: f32, sample_rate: u32) -> AudioSample {
-    let sr = sample_rate.max(1) as f32;
-    let frames = ((dur_ms / 1000.0) * sr).round().max(1.0) as usize;
+    let sr = f64::from(sample_rate.max(1));
+    // Calculate frame count with explicit bounds checking to avoid unsafe casts
+    let frames_f64 = ((f64::from(dur_ms) / 1000.0) * sr).round().max(1.0);
+    let frames: usize = crate::cast::usize_from_f64_round(frames_f64).max(1);
     let tau = (dur_ms / 1000.0) / 6.0;
     let samples = (0..frames)
         .map(|i| {
-            let t = i as f32 / sr;
+            // Convert loop index to u32 first to avoid precision loss in f64 conversion
+            let i_u32 = u32::try_from(i).unwrap_or(0);
+            let t_seconds = f64::from(i_u32) / sr;
+            // Clamp to f32 range before conversion to handle precision loss explicitly
+            let t: f32 = crate::cast::f32_from_f64_saturating(t_seconds);
             gain * (std::f32::consts::TAU * freq_hz * t).sin() * (-t / tau).exp()
         })
         .collect();

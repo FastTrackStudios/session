@@ -2,7 +2,7 @@
 //!
 //! Handles detection and removal of equipment-related metadata from track names:
 //! - Microphone models (U47, SM57, C414, etc.)
-//! - Preamp/compressor models (OptoComp, LA2A, 1176, etc.)
+//! - Preamp/compressor models (`OptoComp`, LA2A, 1176, etc.)
 //! - Processing markers (LIM, EDT, etc.)
 //! - Synth/keyboard hardware (CASIO, Roland FA06, Nord, etc.)
 //!
@@ -11,7 +11,7 @@
 /// Known microphone models and their variations
 ///
 /// These are common microphone models used in professional recording.
-/// Format: (pattern, canonical_name) - canonical_name is for potential future use
+/// Format: (pattern, `canonical_name`) - `canonical_name` is for potential future use
 pub const MIC_MODELS: &[(&str, &str)] = &[
     // Neumann
     ("u47", "Neumann U47"),
@@ -279,6 +279,7 @@ pub const SYNTH_HARDWARE: &[(&str, &str)] = &[
 ];
 
 /// Check if a string contains a mic model
+#[must_use]
 pub fn contains_mic_model(input: &str) -> bool {
     let lower = input.to_lowercase();
     MIC_MODELS.iter().any(|(pattern, _)| {
@@ -288,6 +289,7 @@ pub fn contains_mic_model(input: &str) -> bool {
 }
 
 /// Check if a string contains a preamp/compressor model
+#[must_use]
 pub fn contains_preamp_model(input: &str) -> bool {
     let lower = input.to_lowercase();
     PREAMP_MODELS
@@ -296,6 +298,7 @@ pub fn contains_preamp_model(input: &str) -> bool {
 }
 
 /// Check if a string contains synth hardware
+#[must_use]
 pub fn contains_synth_hardware(input: &str) -> bool {
     let lower = input.to_lowercase();
     SYNTH_HARDWARE
@@ -317,6 +320,7 @@ pub fn contains_synth_hardware(input: &str) -> bool {
 /// assert_eq!(strip_equipment("OH L 260VU"), "OH L");
 /// assert_eq!(strip_equipment("Synth - CASIO CTK-601 Briteness"), "Synth");
 /// ```
+#[must_use]
 pub fn strip_equipment(input: &str) -> String {
     let mut result = input.to_string();
 
@@ -345,6 +349,7 @@ pub fn strip_equipment(input: &str) -> String {
 }
 
 /// Strip only synth hardware from a string (for synth tracks specifically)
+#[must_use]
 pub fn strip_synth_hardware(input: &str) -> String {
     let mut result = input.to_string();
 
@@ -356,6 +361,7 @@ pub fn strip_synth_hardware(input: &str) -> String {
 }
 
 /// Strip only mic/preamp models from a string
+#[must_use]
 pub fn strip_recording_equipment(input: &str) -> String {
     let mut result = input.to_string();
 
@@ -371,6 +377,7 @@ pub fn strip_recording_equipment(input: &str) -> String {
 }
 
 /// Strip only processing markers from a string
+#[must_use]
 pub fn strip_processing_markers(input: &str) -> String {
     let mut result = input.to_string();
 
@@ -388,10 +395,22 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
     let needle_lower = needle.to_lowercase();
 
     for (idx, _) in haystack.match_indices(&needle_lower) {
-        let before_ok = idx == 0 || !haystack.as_bytes()[idx - 1].is_ascii_alphanumeric();
-        let after_idx = idx + needle_lower.len();
-        let after_ok =
-            after_idx >= haystack.len() || !haystack.as_bytes()[after_idx].is_ascii_alphanumeric();
+        let before_ok = idx.checked_sub(1).map_or(true, |idx_minus_1| {
+            haystack
+                .as_bytes()
+                .get(idx_minus_1)
+                .map_or(false, |b| !b.is_ascii_alphanumeric())
+        });
+
+        let after_idx = idx.checked_add(needle_lower.len()).unwrap_or(usize::MAX);
+        let after_ok = if after_idx >= haystack.len() {
+            true
+        } else {
+            haystack
+                .as_bytes()
+                .get(after_idx)
+                .map_or(false, |b| !b.is_ascii_alphanumeric())
+        };
 
         if before_ok && after_ok {
             return true;
@@ -411,19 +430,35 @@ fn strip_pattern(input: &str, pattern: &str) -> String {
     let mut last_end = 0;
 
     for (idx, _) in lower.match_indices(&pattern_lower) {
-        let before_ok = idx == 0 || !lower.as_bytes()[idx - 1].is_ascii_alphanumeric();
-        let after_idx = idx + pattern_lower.len();
-        let after_ok =
-            after_idx >= lower.len() || !lower.as_bytes()[after_idx].is_ascii_alphanumeric();
+        let before_ok = idx.checked_sub(1).map_or(true, |idx_minus_1| {
+            lower
+                .as_bytes()
+                .get(idx_minus_1)
+                .map_or(false, |b| !b.is_ascii_alphanumeric())
+        });
+
+        let after_idx = idx.checked_add(pattern_lower.len()).unwrap_or(usize::MAX);
+        let after_ok = if after_idx >= lower.len() {
+            true
+        } else {
+            lower
+                .as_bytes()
+                .get(after_idx)
+                .map_or(false, |b| !b.is_ascii_alphanumeric())
+        };
 
         if before_ok && after_ok {
             // Found a word boundary match - skip it
-            result.push_str(&input[last_end..idx]);
+            if let Some(slice) = input.get(last_end..idx) {
+                result.push_str(slice);
+            }
             last_end = after_idx;
         }
     }
 
-    result.push_str(&input[last_end..]);
+    if let Some(slice) = input.get(last_end..) {
+        result.push_str(slice);
+    }
     result
 }
 

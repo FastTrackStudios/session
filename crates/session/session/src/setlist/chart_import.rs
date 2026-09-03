@@ -63,7 +63,7 @@ pub struct ChartLayout {
     /// Initial key (note name, e.g. "A"), if the chart declares one.
     pub key: Option<String>,
     /// Count-in duration before the first musical downbeat (0 if no leading
-    /// CountIn section).
+    /// `CountIn` section).
     pub count_in_seconds: f64,
     /// The first musical downbeat, in seconds (== `count_in_seconds`).
     pub song_start_seconds: f64,
@@ -82,6 +82,12 @@ const DEFAULT_TEMPO_BPM: f64 = 120.0;
 /// 0; a leading `CountIn` section occupies the front, so the first musical
 /// section starts at `count_in_seconds`. A section with no explicit bar count
 /// falls back to its kind's default.
+///
+/// # Errors
+///
+/// Returns [`ChartImportError::Parse`] if the keyflow chart parser rejects the
+/// input text. Returns [`ChartImportError::Empty`] if the chart parses
+/// successfully but contains no sections.
 pub fn chart_to_layout(chart_text: &str) -> Result<ChartLayout, ChartImportError> {
     let chart = keyflow::text::chart::parse_chart(chart_text).map_err(ChartImportError::Parse)?;
     if chart.sections.is_empty() {
@@ -95,8 +101,7 @@ pub fn chart_to_layout(chart_text: &str) -> Result<ChartLayout, ChartImportError
         .unwrap_or(DEFAULT_TEMPO_BPM);
     let (num, den) = chart
         .time_signature
-        .map(|ts| (ts.numerator, ts.denominator))
-        .unwrap_or((4, 4));
+        .map_or((4, 4), |ts| (ts.numerator, ts.denominator));
     // Beat = 60/bpm; a measure is `num` beats (beat unit assumed quarter, i.e.
     // den == 4 — true for these worship charts).
     let measure_secs = f64::from(num.max(1)) * 60.0 / tempo_bpm;
@@ -109,11 +114,11 @@ pub fn chart_to_layout(chart_text: &str) -> Result<ChartLayout, ChartImportError
         let kind = SectionKind::from_section_type(&s.section_type);
         let measures = s
             .measure_count
-            .map(|m| m as u32)
+            .and_then(|m| u32::try_from(m).ok())
             .filter(|m| *m > 0)
             .unwrap_or_else(|| kind.default_measure_count());
         let start_seconds = f64::from(cursor_measures) * measure_secs;
-        cursor_measures += measures;
+        cursor_measures = cursor_measures.saturating_add(measures);
         let end_seconds = f64::from(cursor_measures) * measure_secs;
         sections.push(LaidSection {
             kind,
@@ -130,13 +135,12 @@ pub fn chart_to_layout(chart_text: &str) -> Result<ChartLayout, ChartImportError
     let count_in_seconds = sections
         .first()
         .filter(|s| s.kind == SectionKind::CountIn)
-        .map(|s| s.end_seconds - s.start_seconds)
-        .unwrap_or(0.0);
-    let song_end_seconds = sections.last().map(|s| s.end_seconds).unwrap_or(0.0);
+        .map_or(0.0, |s| s.end_seconds - s.start_seconds);
+    let song_end_seconds = sections.last().map_or(0.0, |s| s.end_seconds);
 
     Ok(ChartLayout {
         title: chart.metadata.title.clone(),
-        artist: chart.metadata.artist.clone(),
+        artist: chart.metadata.artist,
         tempo_bpm,
         time_sig_num: num,
         time_sig_den: den,

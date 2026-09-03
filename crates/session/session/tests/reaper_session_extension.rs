@@ -1,10 +1,10 @@
 //! REAPER integration test for the session-extension test host.
 //!
 //! Verifies that the session-extension REAPER plugin was loaded and wrote its
-//! health beacon to ExtState.
+//! health beacon to `ExtState`.
 //!
 //! Run with:
-//!   cargo xtask reaper-test -- session_extension_health
+//!   cargo xtask reaper-test -- `session_extension_health`
 
 use std::time::Duration;
 
@@ -31,15 +31,23 @@ async fn session_extension_health(ctx: &daw::test::ReaperTestContext) -> eyre::R
         }
     }
 
-    let status = status.expect("session-extension should have written FTS_SESSION_EXT/status");
-    assert_eq!(status, "ready", "status should be 'ready', got '{status}'");
+    let status = status.ok_or_else(|| {
+        eyre::eyre!("session-extension should have written FTS_SESSION_EXT/status")
+    })?;
+    if status != "ready" {
+        return Err(eyre::eyre!("status should be 'ready', got '{}'", status));
+    }
 
     let pid = ext
         .get("FTS_SESSION_EXT", "pid")
         .await?
-        .expect("session-extension should have written FTS_SESSION_EXT/pid");
-    let pid: u32 = pid.parse().expect("pid should be a valid u32");
-    assert!(pid > 0, "pid should be a real process id");
+        .ok_or_else(|| eyre::eyre!("session-extension should have written FTS_SESSION_EXT/pid"))?;
+    let pid: u32 = pid
+        .parse()
+        .map_err(|e| eyre::eyre!("pid should be a valid u32: {}", e))?;
+    if pid == 0 {
+        return Err(eyre::eyre!("pid should be a real process id"));
+    }
 
     println!("session-extension is healthy: status={status}, pid={pid}");
 

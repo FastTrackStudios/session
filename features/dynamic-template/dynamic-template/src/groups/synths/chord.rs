@@ -9,7 +9,7 @@ pub struct Chord;
 
 impl From<Chord> for Group<ItemMetadata> {
     fn from(_val: Chord) -> Self {
-        Group::builder("Chord")
+        Self::builder("Chord")
             .patterns(vec!["chord", "stab"])
             .layers(super::layers_dimension())
             .channel(super::channel_dimension())

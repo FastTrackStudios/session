@@ -1,47 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn james_may_eliza_jane() -> Result<()> {
-    // -- Setup & Fixtures
-    // James May - Eliza Jane: 16-track country/folk session with standard drum kit,
-    // bass, 2 acoustic guitars, 2 mandolins, Hammond organ (dual-mic: hi/lo rotary),
-    // pedal steel guitar, lead vocals, and backing vocals. Tests country instrumentation
-    // with pedal steel and Hammond organ classification. Cambridge-MT multitrack library.
-    let items = vec![
-        "01_Kick.wav",
-        "02_Snare.wav",
-        "03_HiHat.wav",
-        "04_Tom1.wav",
-        "05_Tom2.wav",
-        "06_Overheads.wav",
-        "07_Bass.wav",
-        "08_AcousticGtr1.wav",
-        "09_AcousticGtr2.wav",
-        "10_Mandolin1.wav",
-        "11_Mandolin2.wav",
-        "12_HammondMic1Hi.wav",
-        "13_HammondMic2Lo.wav",
-        "14_PedalSteel.wav",
-        "15_LeadVox.wav",
-        "16_BackingVox.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
+fn james_may_eliza_jane_expected() -> daw_proto::TrackHierarchy {
     let toms = TrackGroup::folder("Toms")
         .track("T1")
         .item("04_Tom1.wav")
@@ -119,8 +79,49 @@ fn james_may_eliza_jane() -> Result<()> {
         .group(keys)
         .group(vocals)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn james_may_eliza_jane() {
+    // -- Setup & Fixtures
+    // James May - Eliza Jane: 16-track country/folk session with standard drum kit,
+    // bass, 2 acoustic guitars, 2 mandolins, Hammond organ (dual-mic: hi/lo rotary),
+    // pedal steel guitar, lead vocals, and backing vocals. Tests country instrumentation
+    // with pedal steel and Hammond organ classification. Cambridge-MT multitrack library.
+    let items = vec![
+        "01_Kick.wav",
+        "02_Snare.wav",
+        "03_HiHat.wav",
+        "04_Tom1.wav",
+        "05_Tom2.wav",
+        "06_Overheads.wav",
+        "07_Bass.wav",
+        "08_AcousticGtr1.wav",
+        "09_AcousticGtr2.wav",
+        "10_Mandolin1.wav",
+        "11_Mandolin2.wav",
+        "12_HammondMic1Hi.wav",
+        "13_HammondMic2Lo.wav",
+        "14_PedalSteel.wav",
+        "15_LeadVox.wav",
+        "16_BackingVox.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    let expected = james_may_eliza_jane_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

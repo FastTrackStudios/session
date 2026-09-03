@@ -99,7 +99,7 @@ fn lay_out_sections<D: Regions>(
             daw,
             project.clone(),
             id,
-            section_type_color(section.kind.section_type()),
+            section_type_color(&section.kind.section_type()),
         )?;
     }
     let regions = Regions::all(daw, project.clone());

@@ -18,6 +18,7 @@ architect = { workspace = true }
 daw = { workspace = true, features = ["reaper"] }
 daw-proto = { workspace = true }
 daw-reaper = { workspace = true, default-features = true }
+dawfile-reaper = { workspace = true }
 eyre = { workspace = true }
 monarchy = { workspace = true }
 color-palette = { workspace = true }

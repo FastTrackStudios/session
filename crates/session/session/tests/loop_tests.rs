@@ -23,7 +23,9 @@ async fn loop_initially_off(ctx: &daw::test::ReaperTestContext) -> eyre::Result<
 
     let looping = transport.is_looping().await?;
     println!("Loop initially: {looping}");
-    assert!(!looping, "Loop should be off by default");
+    if looping {
+        return Err(eyre::eyre!("Loop should be off by default"));
+    }
 
     Ok(())
 }
@@ -36,21 +38,27 @@ async fn loop_toggle(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     // Ensure off first
     transport.set_loop(false).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(!transport.is_looping().await?, "Loop should be off");
+    if transport.is_looping().await? {
+        return Err(eyre::eyre!("Loop should be off"));
+    }
 
     // Toggle on
     transport.toggle_loop().await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
     let on = transport.is_looping().await?;
     println!("After toggle on: {on}");
-    assert!(on, "Loop should be on after toggle");
+    if !on {
+        return Err(eyre::eyre!("Loop should be on after toggle"));
+    }
 
     // Toggle off
     transport.toggle_loop().await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
     let off = !transport.is_looping().await?;
     println!("After toggle off: {off}");
-    assert!(off, "Loop should be off after second toggle");
+    if !off {
+        return Err(eyre::eyre!("Loop should be off after second toggle"));
+    }
 
     Ok(())
 }
@@ -62,30 +70,27 @@ async fn loop_set_explicit(ctx: &daw::test::ReaperTestContext) -> eyre::Result<(
 
     transport.set_loop(true).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        transport.is_looping().await?,
-        "set_loop(true) should enable"
-    );
+    if !transport.is_looping().await? {
+        return Err(eyre::eyre!("set_loop(true) should enable"));
+    }
 
     transport.set_loop(false).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        !transport.is_looping().await?,
-        "set_loop(false) should disable"
-    );
+    if transport.is_looping().await? {
+        return Err(eyre::eyre!("set_loop(false) should disable"));
+    }
 
     // Idempotent
     transport.set_loop(false).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        !transport.is_looping().await?,
-        "set_loop(false) twice should still be off"
-    );
+    if transport.is_looping().await? {
+        return Err(eyre::eyre!("set_loop(false) twice should still be off"));
+    }
 
     Ok(())
 }
 
-/// Verify loop state is reflected in get_state().
+/// Verify loop state is reflected in `get_state()`.
 #[reaper_test]
 async fn loop_state_in_transport(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let transport = ctx.project.transport();
@@ -93,12 +98,16 @@ async fn loop_state_in_transport(ctx: &daw::test::ReaperTestContext) -> eyre::Re
     transport.set_loop(false).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
     let state = transport.get_state().await?;
-    assert!(!state.looping, "Transport state should show looping=false");
+    if state.looping {
+        return Err(eyre::eyre!("Transport state should show looping=false"));
+    }
 
     transport.set_loop(true).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
     let state = transport.get_state().await?;
-    assert!(state.looping, "Transport state should show looping=true");
+    if !state.looping {
+        return Err(eyre::eyre!("Transport state should show looping=true"));
+    }
 
     // Clean up
     transport.set_loop(false).await?;
@@ -140,7 +149,9 @@ async fn loop_playback_wraps(ctx: &daw::test::ReaperTestContext) -> eyre::Result
     // The position should be somewhere — the key assertion is that playback
     // didn't just stop or go silent. Position should have advanced.
     // Exact wrap behavior depends on REAPER's loop region configuration.
-    assert!(pos > 0.0, "Playback should have advanced, got {pos:.2}s");
+    if pos <= 0.0 {
+        return Err(eyre::eyre!("Playback should have advanced, got {pos:.2}s"));
+    }
 
     Ok(())
 }

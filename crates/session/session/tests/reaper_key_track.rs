@@ -17,12 +17,13 @@ use session::key::{KEY_TRACK, format_key, parse_key};
 use keyflow::key::Key;
 use keyflow::primitives::MusicalNote;
 
-fn key_of(root: &str, major: bool) -> Key {
-    let note = MusicalNote::from_string(root).expect("a note");
+fn key_of(root: &str, major: bool) -> eyre::Result<Key> {
+    let note =
+        MusicalNote::from_string(root).ok_or_else(|| eyre::eyre!("invalid note: {}", root))?;
     if major {
-        Key::major(note)
+        Ok(Key::major(note))
     } else {
-        Key::minor(note)
+        Ok(Key::minor(note))
     }
 }
 
@@ -36,7 +37,7 @@ async fn key_track_round_trips_through_reaper(
     let project = ctx.project().clone();
     let track = project.tracks().add(KEY_TRACK, None).await?;
 
-    let key = key_of("Eb", true);
+    let key = key_of("Eb", true)?;
     let item = track
         .items()
         .add(
@@ -48,8 +49,12 @@ async fn key_track_round_trips_through_reaper(
 
     let read_back = item.label().await?.expect("the label should persist");
     ctx.log(&format!("label survived as {read_back:?}"));
-    assert_eq!(read_back, "Eb major");
-    assert_eq!(parse_key(&read_back), Some(key), "same key after the trip");
+    if read_back != "Eb major" {
+        return Err(eyre::eyre!("expected 'Eb major', got '{read_back}'"));
+    }
+    if parse_key(&read_back) != Some(key) {
+        return Err(eyre::eyre!("same key after the trip"));
+    }
     Ok(())
 }
 
@@ -69,11 +74,17 @@ async fn key_changes_keep_their_positions(ctx: &daw::test::ReaperTestContext) ->
                 Duration::from_seconds(2.0),
             )
             .await?;
-        item.set_label(&format_key(&key_of(root, major))).await?;
+        let key = key_of(root, major)?;
+        item.set_label(&format_key(&key)).await?;
     }
 
     let items = track.items().all().await?;
-    assert_eq!(items.len(), 3, "one item per change");
+    if items.len() != 3 {
+        return Err(eyre::eyre!(
+            "one item per change: expected 3, got {}",
+            items.len()
+        ));
+    }
 
     let mut found: Vec<(f64, String)> = Vec::new();
     for info in items {
@@ -88,9 +99,24 @@ async fn key_changes_keep_their_positions(ctx: &daw::test::ReaperTestContext) ->
     found.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     ctx.log(&format!("{found:?}"));
-    assert_eq!(found[0], (0.0, "C major".to_string()));
-    assert_eq!(found[1], (4.0, "A minor".to_string()));
-    assert_eq!(found[2], (8.0, "F# minor".to_string()));
+    if found.get(0) != Some(&(0.0, "C major".to_string())) {
+        return Err(eyre::eyre!(
+            "expected found[0] = (0.0, \"C major\"), got {:?}",
+            found.get(0)
+        ));
+    }
+    if found.get(1) != Some(&(4.0, "A minor".to_string())) {
+        return Err(eyre::eyre!(
+            "expected found[1] = (4.0, \"A minor\"), got {:?}",
+            found.get(1)
+        ));
+    }
+    if found.get(2) != Some(&(8.0, "F# minor".to_string())) {
+        return Err(eyre::eyre!(
+            "expected found[2] = (8.0, \"F# minor\"), got {:?}",
+            found.get(2)
+        ));
+    }
     Ok(())
 }
 
@@ -105,22 +131,24 @@ async fn accidentals_survive_the_round_trip(
     let track = project.tracks().add(KEY_TRACK, None).await?;
 
     for (i, root) in ["C#", "Db", "F#", "Gb", "Bb"].iter().enumerate() {
-        let key = key_of(root, true);
+        let key = key_of(root, true)?;
+        let i_u32 = u32::try_from(i).unwrap_or(0);
         let item = track
             .items()
             .add(
-                PositionInSeconds::from_seconds(i as f64 * 2.0),
+                PositionInSeconds::from_seconds(f64::from(i_u32) * 2.0),
                 Duration::from_seconds(1.0),
             )
             .await?;
         item.set_label(&format_key(&key)).await?;
 
         let back = item.label().await?.expect("label");
-        assert_eq!(
-            parse_key(&back),
-            Some(key),
-            "{root} major came back as {back:?}"
-        );
+        if parse_key(&back) != Some(key.clone()) {
+            return Err(eyre::eyre!(
+                "{root} major came back as {back:?}, expected {:?}",
+                Some(key)
+            ));
+        }
         ctx.log(&format!("{root} major ok"));
     }
     Ok(())
@@ -152,17 +180,30 @@ async fn key_positions_convert_to_the_right_measures(
         ctx.log(&format!(
             "{seconds}s -> REAPER measure {measure}, beat {beat}"
         ));
-        assert_eq!(
-            measure as usize,
-            i * 4 + 1,
-            "REAPER numbers measures from 1"
-        );
-        assert_eq!(
-            session::key::keysig_measure(measure),
-            (i * 4) as u32,
-            "KEYSIG numbers them from 0"
-        );
-        assert_eq!(beat, 1, "a downbeat — REAPER numbers beats from 1 as well");
+        let measure_usize = usize::try_from(measure).unwrap_or(0);
+        let expected_measure = i.saturating_mul(4).saturating_add(1);
+        if measure_usize != expected_measure {
+            return Err(eyre::eyre!(
+                "REAPER numbers measures from 1: expected {}, got {}",
+                expected_measure,
+                measure_usize
+            ));
+        }
+        let keysig_measure_val = i.saturating_mul(4);
+        let keysig_measure_u32 = u32::try_from(keysig_measure_val).unwrap_or(u32::MAX);
+        if session::key::keysig_measure(measure) != keysig_measure_u32 {
+            return Err(eyre::eyre!(
+                "KEYSIG numbers them from 0: expected {}, got {}",
+                keysig_measure_u32,
+                session::key::keysig_measure(measure)
+            ));
+        }
+        if beat != 1 {
+            return Err(eyre::eyre!(
+                "a downbeat — REAPER numbers beats from 1 as well: expected 1, got {}",
+                beat
+            ));
+        }
     }
     Ok(())
 }

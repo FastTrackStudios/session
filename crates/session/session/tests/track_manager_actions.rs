@@ -17,7 +17,7 @@
 //! helpers `dynamic-template`'s guitar-layer tests build expected
 //! hierarchies with) rather than a one-off comparison type.
 //!
-//! Run: cargo test -p session --test track_manager_actions -- --nocapture
+//! Run: cargo test -p session --test `track_manager_actions` -- --nocapture
 
 use daw::service::{ProjectContext, Tracks, TracksExt};
 use daw_proto::{
@@ -62,8 +62,8 @@ fn setup() -> (Standalone, TrackManager<Standalone>) {
 }
 
 /// Insert Electric GTR, then Add Multi-Mic twice -> Amp, DI (in the order
-/// electric_guitar.rs declares its multi-mic descriptors), selection stays
-/// on Electric GTR throughout (run_track_edit restores the pre-edit
+/// `electric_guitar.rs` declares its multi-mic descriptors), selection stays
+/// on Electric GTR throughout (`run_track_edit` restores the pre-edit
 /// selection after every action).
 #[test]
 fn multi_mic_then_channel_on_electric_guitar() {

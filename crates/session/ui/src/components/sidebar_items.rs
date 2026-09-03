@@ -1,7 +1,7 @@
 //! Sidebar Item Components
 //!
 //! Components for displaying songs and sections in the sidebar navigator.
-//! Copied from FastTrackStudio for exact styling match.
+//! Copied from `FastTrackStudio` for exact styling match.
 
 use crate::prelude::*;
 use architect_ui::prelude::*;

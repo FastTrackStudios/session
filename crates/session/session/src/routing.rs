@@ -11,16 +11,24 @@
 
 use daw::service::{ExtState, ProjectContext, Projects, RecordInput, Routing, TrackRef, Tracks};
 use session_proto::SessionServiceError;
-use session_proto::routing_project::*;
+use session_proto::routing_project::{
+    EXT_STATE_KEY_IS_ROUTING, EXT_STATE_SECTION, EXT_STATE_VALUE_TRUE, LoopbackConfig,
+    ROUTING_PROJECT_FILENAME, RoutingChannel, RoutingGroup,
+};
 use tracing::info;
 
 // r[impl routing.project.ensure]
 /// Ensure the FTS routing project exists and is open. Returns the project GUID.
 ///
 /// Resolution order:
-/// 1. Scan open projects for ExtState `FTS/is_routing_project == "1"`
+/// 1. Scan open projects for `ExtState` `FTS/is_routing_project == "1"`
 /// 2. Check disk at `<fts_home>/Reaper/FTS-Routing.RPP` and open if found
 /// 3. Create from scratch with the canonical track hierarchy
+///
+/// # Errors
+///
+/// Returns `SessionServiceError::DawError` if opening an existing routing project fails,
+/// or if creating a new routing project fails.
 pub fn ensure_routing_project<D>(
     daw: &D,
     config: &LoopbackConfig,
@@ -29,7 +37,7 @@ where
     D: Projects + ExtState + Tracks + Routing,
 {
     // Step 1: Check open projects for existing routing project
-    if let Some(guid) = find_open_routing_project(daw)? {
+    if let Some(guid) = find_open_routing_project(daw) {
         info!("Found open routing project: {guid}");
         return Ok(guid);
     }
@@ -54,8 +62,8 @@ where
     create_routing_project(daw, config)
 }
 
-/// Scan open projects for one with the routing project ExtState marker.
-fn find_open_routing_project<D>(daw: &D) -> Result<Option<String>, SessionServiceError>
+/// Scan open projects for one with the routing project `ExtState` marker.
+fn find_open_routing_project<D>(daw: &D) -> Option<String>
 where
     D: Projects + ExtState,
 {
@@ -63,11 +71,11 @@ where
         let ctx = ProjectContext::Project(project.guid.clone());
         let value = daw.get_project(ctx, EXT_STATE_SECTION, EXT_STATE_KEY_IS_ROUTING);
         if value.as_deref() == Some(EXT_STATE_VALUE_TRUE) {
-            return Ok(Some(project.guid));
+            return Some(project.guid);
         }
     }
 
-    Ok(None)
+    None
 }
 
 // r[impl routing.project.structure]
@@ -97,7 +105,7 @@ where
     // Create "Click + Guide" folder with children
     create_folder_with_channels(
         daw,
-        ctx.clone(),
+        &ctx,
         RoutingGroup::ClickGuide.display_name(),
         RoutingChannel::click_guide_channels(),
         config,
@@ -106,7 +114,7 @@ where
     // Create "TRACKS" folder with children
     create_folder_with_channels(
         daw,
-        ctx.clone(),
+        &ctx,
         RoutingGroup::Tracks.display_name(),
         RoutingChannel::track_channels(),
         config,
@@ -123,7 +131,7 @@ where
 /// Create a folder track with child routing channel tracks.
 fn create_folder_with_channels<D>(
     daw: &D,
-    project: ProjectContext,
+    project: &ProjectContext,
     folder_name: &str,
     channels: &[RoutingChannel],
     config: &LoopbackConfig,
@@ -141,7 +149,7 @@ where
         .map_err(map_err)?;
 
     // Create child tracks
-    let last_idx = channels.len() - 1;
+    let last_idx = channels.len().saturating_sub(1);
     for (i, channel) in channels.iter().enumerate() {
         let track_guid = daw
             .add(project.clone(), channel.display_name(), None)

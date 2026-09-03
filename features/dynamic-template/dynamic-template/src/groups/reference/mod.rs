@@ -6,7 +6,10 @@
 //! - 2-track bounces
 //! - Rehearsal mixes
 //! - Any bounced version of the song for reference
+//! - Stem-split output (`Reference/Stem Split`), which is reference material
+//!   too: a demucs/LALAL separation of the finished record, not tracked parts
 
+use crate::groups::stem_split::StemSplit;
 use crate::item_metadata::ItemMetadata;
 use monarchy::Group;
 
@@ -15,7 +18,7 @@ pub struct Reference;
 
 impl From<Reference> for Group<ItemMetadata> {
     fn from(_val: Reference) -> Self {
-        Group::builder("Reference")
+        Self::builder("Reference")
             .prefix("REF")
             .patterns(vec![
                 // Master/mix patterns
@@ -61,6 +64,12 @@ impl From<Reference> for Group<ItemMetadata> {
                 "render",
                 "rendered",
             ])
+            // Stem splits are reference material — a separation of the finished
+            // record, not parts anyone played. Nesting them here means the path
+            // is ["Reference", "Stem Split"], which routes to the same
+            // monitor bus as the rest of Reference and keeps them out of the
+            // mix.
+            .group(StemSplit)
             .build()
     }
 }

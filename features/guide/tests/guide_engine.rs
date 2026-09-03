@@ -4,9 +4,28 @@
 
 use session_guide::count_in::{CountInCalculator, CountInPattern};
 use session_guide::{
-    tts_cue_key, AudioSample, BlockClock, CueEvent, CueSchedule, GuideConfig, GuideEngine,
-    GuideSection, GuideSongTiming, ScheduleOptions,
+    tts_cue_key, AudioSample, BlockClock, ClickSubdivisions, CountInOptions, CueEvent, CueSchedule,
+    GuideConfig, GuideEngine, GuideSection, GuideSongTiming, ScheduleOptions,
 };
+
+/// `x` as `f64`, for the small (sub-second-sample-count) values used in
+/// this file's block-rendering loops — never large enough to lose
+/// precision, but `usize`→`f64` has no non-`as` conversion in `std`.
+fn f64_from_usize(x: usize) -> f64 {
+    u32::try_from(x).map_or_else(|_| f64::from(u32::MAX), f64::from)
+}
+
+/// Exact-value float assertion helpers: the samples compared in these
+/// tests are discrete impulses written verbatim (no summation or scaling
+/// that would introduce rounding error), so an epsilon compare is exact
+/// in practice while staying off `clippy::float_cmp`.
+fn f_eq(a: f32, b: f32) -> bool {
+    (a - b).abs() < f32::EPSILON
+}
+
+fn f_eq64(a: f64, b: f64) -> bool {
+    (a - b).abs() < f64::EPSILON
+}
 
 // ─── CountInCalculator ──────────────────────────────────────────────────
 
@@ -151,7 +170,7 @@ fn sixteenth_denominator_multi_measure_counts_down_measures() {
     assert_eq!(p[1][0], Some(1));
     assert_eq!(p[2][0], None); // count 0 is out of range 1..=8
     for row in &p {
-        assert!(row[1..].iter().all(|c| c.is_none()));
+        assert!(row[1..].iter().all(Option::is_none));
     }
 }
 
@@ -196,7 +215,7 @@ fn schedule_one_measure_count_in_at_120_bpm() {
         .iter()
         .filter_map(|c| match &c.event {
             CueEvent::Count { index } => Some((c.time_seconds, *index)),
-            _ => None,
+            CueEvent::Guide { .. } => None,
         })
         .collect();
     assert_eq!(counts, vec![(8.0, 0), (8.5, 1), (9.0, 2), (9.5, 3)]);
@@ -207,7 +226,7 @@ fn schedule_one_measure_count_in_at_120_bpm() {
         .iter()
         .filter_map(|c| match &c.event {
             CueEvent::Guide { .. } => Some(&c.time_seconds),
-            _ => None,
+            CueEvent::Count { .. } => None,
         })
         .collect();
     assert_eq!(guides, vec![&8.0]);
@@ -237,7 +256,7 @@ fn guide_replaces_beat_one() {
         .iter()
         .filter_map(|c| match &c.event {
             CueEvent::Count { .. } => Some(c.time_seconds),
-            _ => None,
+            CueEvent::Guide { .. } => None,
         })
         .collect();
     assert_eq!(counts, vec![8.5, 9.0, 9.5]);
@@ -256,7 +275,10 @@ fn songend_gets_two_measure_count_out_and_ending_guide() {
     let options = ScheduleOptions {
         guide_replace_beat1: false,
         // Isolate the SONGEND count-out from the per-section count-in.
-        count_into_sections: false,
+        count_in: CountInOptions {
+            count_into_sections: false,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let schedule = CueSchedule::build(&[last], &timing, &options);
@@ -267,7 +289,7 @@ fn songend_gets_two_measure_count_out_and_ending_guide() {
         .iter()
         .filter_map(|c| match &c.event {
             CueEvent::Count { index } => Some((c.time_seconds, *index)),
-            _ => None,
+            CueEvent::Guide { .. } => None,
         })
         .collect();
     assert_eq!(
@@ -285,7 +307,7 @@ fn songend_gets_two_measure_count_out_and_ending_guide() {
     // "Ending" announcement at the count-out start.
     assert!(schedule.cues.iter().any(|c| matches!(
         &c.event,
-        CueEvent::Guide { keys, .. } if c.time_seconds == 26.0 && keys.contains(&"Ending_None".to_string())
+        CueEvent::Guide { keys, .. } if f_eq64(c.time_seconds, 26.0) && keys.contains(&"Ending_None".to_string())
     )));
 }
 
@@ -294,7 +316,7 @@ fn push_speak_inserts_sorted_tts_cue() {
     let mut schedule = CueSchedule::default();
     schedule.push_speak(5.0, "Bridge in 2");
     schedule.push_speak(1.0, "Chorus");
-    assert_eq!(schedule.cues[0].time_seconds, 1.0);
+    assert!(f_eq64(schedule.cues[0].time_seconds, 1.0));
     assert_eq!(
         schedule.cues[1].event,
         CueEvent::Guide {
@@ -314,15 +336,17 @@ fn impulse(sample_rate: u32) -> AudioSample {
 #[test]
 fn engine_renders_clicks_and_cues_sample_accurately() {
     const SR: f64 = 1000.0; // 1 kHz keeps offsets human-readable
+    const SR_U32: u32 = 1000;
     let mut engine = GuideEngine::new(GuideConfig {
-        enable_measure_accent: false,
+        click: ClickSubdivisions {
+            measure_accent: false,
+            ..Default::default()
+        },
         ..Default::default()
     });
-    engine.bank_mut().beat = Some(impulse(SR as u32));
-    engine.bank_mut().counts[0] = Some(impulse(SR as u32));
-    engine
-        .bank_mut()
-        .insert_guide("Verse_1", impulse(SR as u32));
+    engine.bank_mut().beat = Some(impulse(SR_U32));
+    engine.bank_mut().counts[0] = Some(impulse(SR_U32));
+    engine.bank_mut().insert_guide("Verse_1", impulse(SR_U32));
 
     // One cue schedule: count "1" at 0.25 s, guide "Verse_1" at 0.75 s.
     let mut first = section(1.0, 2.0, "Verse 1", "Verse");
@@ -348,10 +372,10 @@ fn engine_renders_clicks_and_cues_sample_accurately() {
     let mut guide = vec![0.0f32; 1000];
     for block in 0..2 {
         let start = block * 500;
-        let clock = BlockClock {
+        let block_clock = BlockClock {
             playing: true,
-            pos_seconds: start as f64 / SR,
-            pos_beats: (start as f64 / SR) * 2.0, // 120 bpm = 2 quarters/s
+            pos_seconds: f64_from_usize(start) / SR,
+            pos_beats: (f64_from_usize(start) / SR) * 2.0, // 120 bpm = 2 quarters/s
             tempo_bpm: 120.0,
             time_sig_num: 4,
             time_sig_den: 4,
@@ -368,14 +392,14 @@ fn engine_renders_clicks_and_cues_sample_accurately() {
             guide_l: gl,
             guide_r: gr,
         };
-        engine.render(&mut buses, &clock);
+        engine.render(&mut buses, &block_clock);
     }
 
     // Beat clicks at samples 0 and 500 (0.0 s and 0.5 s), nowhere else.
     let click_hits: Vec<usize> = click
         .iter()
         .enumerate()
-        .filter(|(_, v)| **v != 0.0)
+        .filter(|(_, v)| v.abs() > 0.0)
         .map(|(i, _)| i)
         .collect();
     assert_eq!(click_hits, vec![0, 500]);
@@ -384,7 +408,7 @@ fn engine_renders_clicks_and_cues_sample_accurately() {
     let count_hits: Vec<usize> = count
         .iter()
         .enumerate()
-        .filter(|(_, v)| **v != 0.0)
+        .filter(|(_, v)| v.abs() > 0.0)
         .map(|(i, _)| i)
         .collect();
     assert_eq!(count_hits, vec![250]);
@@ -393,7 +417,7 @@ fn engine_renders_clicks_and_cues_sample_accurately() {
     let guide_hits: Vec<usize> = guide
         .iter()
         .enumerate()
-        .filter(|(_, v)| **v != 0.0)
+        .filter(|(_, v)| v.abs() > 0.0)
         .map(|(i, _)| i)
         .collect();
     assert_eq!(guide_hits, vec![750]);
@@ -402,9 +426,10 @@ fn engine_renders_clicks_and_cues_sample_accurately() {
 #[test]
 fn engine_stops_triggering_when_not_playing() {
     const SR: f64 = 1000.0;
+    const SR_U32: u32 = 1000;
     let mut engine = GuideEngine::default();
-    engine.bank_mut().beat = Some(impulse(SR as u32));
-    engine.bank_mut().measure_accent = Some(impulse(SR as u32));
+    engine.bank_mut().beat = Some(impulse(SR_U32));
+    engine.bank_mut().measure_accent = Some(impulse(SR_U32));
 
     let mut l = vec![0.0f32; 500];
     let mut r = vec![0.0f32; 500];
@@ -418,7 +443,7 @@ fn engine_stops_triggering_when_not_playing() {
         sample_rate: SR,
     };
     engine.render_stereo(&mut l, &mut r, &clock);
-    assert!(l.iter().all(|v| *v == 0.0));
+    assert!(l.iter().all(|v| v.abs() <= 0.0));
 }
 
 // ─── SampleBank::synthesize_defaults ────────────────────────────────────
@@ -453,7 +478,8 @@ fn synthesize_defaults_fills_all_slots_non_silent_and_bounded() {
         assert!(p <= 1.0, "{name} exceeds full scale (peak {p})");
         assert_eq!(sample.sample_rate, SR);
         // Bounded length: every placeholder is well under half a second.
-        assert!(sample.frames() < SR as usize / 2, "{name} too long");
+        let sr_usize = usize::try_from(SR).unwrap_or(usize::MAX);
+        assert!(sample.frames() < sr_usize / 2, "{name} too long");
     }
     for (i, slot) in bank.counts.iter().enumerate() {
         let sample = slot.as_ref().unwrap_or_else(|| panic!("count {i} missing"));
@@ -492,8 +518,9 @@ fn synthesized_bank_renders_audible_guide() {
     // End-to-end: a zero-asset engine + demo-like schedule produces
     // non-silent output through render_stereo.
     const SR: f64 = 48_000.0;
+    const SR_U32: u32 = 48_000;
     let mut engine = GuideEngine::default();
-    engine.bank_mut().synthesize_defaults(SR as u32);
+    engine.bank_mut().synthesize_defaults(SR_U32);
 
     let mut first = section(4.0, 12.0, "Verse 1", "Verse");
     first.is_first_section = true;
@@ -528,10 +555,11 @@ fn synthesized_bank_renders_audible_guide() {
 #[test]
 fn measure_accent_replaces_beat_one() {
     const SR: f64 = 1000.0;
+    const SR_U32: u32 = 1000;
     let mut engine = GuideEngine::default();
     // Distinguish accent (amplitude 2.0) from beat (1.0).
-    engine.bank_mut().beat = Some(impulse(SR as u32));
-    engine.bank_mut().measure_accent = Some(AudioSample::mono(vec![2.0], SR as u32));
+    engine.bank_mut().beat = Some(impulse(SR_U32));
+    engine.bank_mut().measure_accent = Some(AudioSample::mono(vec![2.0], SR_U32));
 
     // Render one 4/4 measure at 120 bpm = 2 s = 2000 samples.
     let mut l = vec![0.0f32; 2000];
@@ -547,10 +575,10 @@ fn measure_accent_replaces_beat_one() {
     };
     engine.render_stereo(&mut l, &mut r, &clock);
 
-    assert_eq!(l[0], 2.0); // accent on beat 1
-    assert_eq!(l[500], 1.0); // plain beats 2-4
-    assert_eq!(l[1000], 1.0);
-    assert_eq!(l[1500], 1.0);
+    assert!(f_eq(l[0], 2.0)); // accent on beat 1
+    assert!(f_eq(l[500], 1.0)); // plain beats 2-4
+    assert!(f_eq(l[1000], 1.0));
+    assert!(f_eq(l[1500], 1.0));
 }
 
 // ─── sections_from_song: count-in attaches to the first MUSICAL section ──
@@ -628,7 +656,10 @@ fn count_in_song_schedules_full_count_into_the_downbeat() {
     // Count cues) so only the first section's explicit count-in remains.
     let options = ScheduleOptions {
         extend_songend_count: false,
-        count_into_sections: false,
+        count_in: CountInOptions {
+            count_into_sections: false,
+            ..Default::default()
+        },
         ..ScheduleOptions::default()
     };
     let schedule = CueSchedule::build(&sections, &timing, &options);
@@ -638,7 +669,7 @@ fn count_in_song_schedules_full_count_into_the_downbeat() {
         .iter()
         .filter_map(|c| match c.event {
             CueEvent::Count { index } => Some((c.time_seconds, index)),
-            _ => None,
+            CueEvent::Guide { .. } => None,
         })
         .collect();
 
@@ -657,7 +688,7 @@ fn count_in_song_schedules_full_count_into_the_downbeat() {
         CueEvent::Guide { keys, .. } if keys.iter().any(|k| k.contains("Intro")) => {
             Some(c.time_seconds)
         }
-        _ => None,
+        CueEvent::Guide { .. } | CueEvent::Count { .. } => None,
     });
     assert_eq!(
         intro_guide_time,
@@ -703,7 +734,7 @@ fn counts_into_each_new_section_and_dedupes_repeats() {
         .iter()
         .filter_map(|c| match c.event {
             CueEvent::Count { index: 0 } => Some(c.time_seconds),
-            _ => None,
+            CueEvent::Count { .. } | CueEvent::Guide { .. } => None,
         })
         .collect();
     assert!(count_ones.contains(&6.0), "no count into Verse 1");
@@ -776,6 +807,7 @@ impl TwoTempoMap {
 #[test]
 fn tempo_map_render_places_clicks_and_counts_sample_accurately() {
     const SR: f64 = 1000.0; // 1 kHz keeps sample offsets == milliseconds
+    const SR_U32: u32 = 1000;
     const BLOCK: usize = 250;
     const TOTAL: usize = 6000; // 6 s
 
@@ -787,12 +819,15 @@ fn tempo_map_render_places_clicks_and_counts_sample_accurately() {
     };
 
     let mut engine = GuideEngine::new(GuideConfig {
-        enable_measure_accent: false, // plain beat everywhere: positions only
+        click: ClickSubdivisions {
+            measure_accent: false, // plain beat everywhere: positions only
+            ..Default::default()
+        },
         ..Default::default()
     });
-    engine.bank_mut().beat = Some(AudioSample::mono(vec![1.0], SR as u32));
+    engine.bank_mut().beat = Some(AudioSample::mono(vec![1.0], SR_U32));
     for i in 0..4 {
-        engine.bank_mut().counts[i] = Some(AudioSample::mono(vec![1.0], SR as u32));
+        engine.bank_mut().counts[i] = Some(AudioSample::mono(vec![1.0], SR_U32));
     }
 
     // Count-in "1 2 3 4" on beats 4..8 — i.e. into a section whose
@@ -801,7 +836,7 @@ fn tempo_map_render_places_clicks_and_counts_sample_accurately() {
     let mut schedule = CueSchedule::default();
     for (i, beat) in (4..8).enumerate() {
         schedule.cues.push(session_guide::ScheduledCue {
-            time_seconds: map.beat_to_seconds(beat as f64),
+            time_seconds: map.beat_to_seconds(f64::from(beat)),
             event: CueEvent::Count { index: i },
         });
     }
@@ -811,8 +846,8 @@ fn tempo_map_render_places_clicks_and_counts_sample_accurately() {
     let mut count = vec![0.0f32; TOTAL];
     let mut guide = vec![0.0f32; TOTAL];
     for start in (0..TOTAL).step_by(BLOCK) {
-        let pos_seconds = start as f64 / SR;
-        let clock = BlockClock {
+        let pos_seconds = f64_from_usize(start) / SR;
+        let block_clock = BlockClock {
             playing: true,
             pos_seconds,
             pos_beats: map.seconds_to_beat(pos_seconds),
@@ -829,13 +864,13 @@ fn tempo_map_render_places_clicks_and_counts_sample_accurately() {
             guide_l: &mut guide[start..start + BLOCK],
             guide_r: &mut vec![0.0f32; BLOCK],
         };
-        engine.render(&mut buses, &clock);
+        engine.render(&mut buses, &block_clock);
     }
 
     let hits = |buf: &[f32]| -> Vec<usize> {
         buf.iter()
             .enumerate()
-            .filter(|(_, v)| **v != 0.0)
+            .filter(|(_, v)| v.abs() > 0.0)
             .map(|(i, _)| i)
             .collect()
     };

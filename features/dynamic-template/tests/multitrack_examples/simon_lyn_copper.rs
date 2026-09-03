@@ -1,59 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn simon_lyn_copper() -> Result<()> {
-    // -- Setup & Fixtures
-    // Simon Lyn - Copper: 26-track purely orchestral string session. No drums, no vocals.
-    // Pizzicato strings (5 tracks), arco rhythm section (6 tracks), theme/counter-theme
-    // parts, lyrical melodic lines with octave doubles, SFX transitions, and doubled
-    // theme tracks. Tests pure orchestral classification without typical rock instruments.
-    // Most tracks end up unsorted since "Pizz", "Arco", "Theme", "Lyrical" etc. are
-    // not standard instrument keywords. Cambridge-MT multitrack library.
-    let items = vec![
-        "01_Pizz1.wav",
-        "02_Pizz2.wav",
-        "03_Pizz3.wav",
-        "04_Pizz4.wav",
-        "05_Pizz5.wav",
-        "06_ArcoRhythm1.wav",
-        "07_ArcoRhythm2.wav",
-        "08_ArcoRhythm3.wav",
-        "09_ArcoRhythm4.wav",
-        "10_ArcoRhythm5.wav",
-        "11_ArcoRhythm6.wav",
-        "12_SFX1.wav",
-        "13_SFX2.wav",
-        "14_Theme.wav",
-        "15_ThemeDT.wav",
-        "16_ThemeCounter.wav",
-        "17_Lyrical1.wav",
-        "18_Lyrical2.wav",
-        "19_Lyrical3.wav",
-        "20_Lyrical3DT.wav",
-        "21_Lyrical4.wav",
-        "22_Lyrical4Octave.wav",
-        "23_Lyrical5.wav",
-        "24_Lyrical5Octave.wav",
-        "25_Lyrical6.wav",
-        "26_Lyrical6Octave.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- SFX ---
+fn simon_lyn_copper_expected() -> daw_proto::TrackHierarchy {
     let sfx = TrackGroup::folder("SFX")
         .track("SFX 1")
         .item("12_SFX1.wav")
@@ -123,8 +71,61 @@ fn simon_lyn_copper() -> Result<()> {
         .group(sfx)
         .group(unsorted)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn simon_lyn_copper() {
+    // -- Setup & Fixtures
+    // Simon Lyn - Copper: 26-track purely orchestral string session. No drums, no vocals.
+    // Pizzicato strings (5 tracks), arco rhythm section (6 tracks), theme/counter-theme
+    // parts, lyrical melodic lines with octave doubles, SFX transitions, and doubled
+    // theme tracks. Tests pure orchestral classification without typical rock instruments.
+    // Most tracks end up unsorted since "Pizz", "Arco", "Theme", "Lyrical" etc. are
+    // not standard instrument keywords. Cambridge-MT multitrack library.
+    let items = vec![
+        "01_Pizz1.wav",
+        "02_Pizz2.wav",
+        "03_Pizz3.wav",
+        "04_Pizz4.wav",
+        "05_Pizz5.wav",
+        "06_ArcoRhythm1.wav",
+        "07_ArcoRhythm2.wav",
+        "08_ArcoRhythm3.wav",
+        "09_ArcoRhythm4.wav",
+        "10_ArcoRhythm5.wav",
+        "11_ArcoRhythm6.wav",
+        "12_SFX1.wav",
+        "13_SFX2.wav",
+        "14_Theme.wav",
+        "15_ThemeDT.wav",
+        "16_ThemeCounter.wav",
+        "17_Lyrical1.wav",
+        "18_Lyrical2.wav",
+        "19_Lyrical3.wav",
+        "20_Lyrical3DT.wav",
+        "21_Lyrical4.wav",
+        "22_Lyrical4Octave.wav",
+        "23_Lyrical5.wav",
+        "24_Lyrical5Octave.wav",
+        "25_Lyrical6.wav",
+        "26_Lyrical6Octave.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- SFX ---
+    let expected = simon_lyn_copper_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

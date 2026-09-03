@@ -15,7 +15,7 @@ pub struct Guide;
 
 impl From<Guide> for Group<ItemMetadata> {
     fn from(_val: Guide) -> Self {
-        Group::builder("Guide")
+        Self::builder("Guide")
             .prefix("GDE")
             .patterns(vec![
                 // Generic patterns (matched by subgroups)
@@ -25,6 +25,11 @@ impl From<Guide> for Group<ItemMetadata> {
                 "guide",
                 "cue",
             ])
+            // A cue *bus* is a per-player monitor mix, not a guide track. The
+            // exclusion has to sit on the container as well as on Cues: the
+            // parser matches each group on its own patterns, so blocking only
+            // the child leaves the parent claiming "Cue Buss 1".
+            .exclude(["buss", "bus", "headphone", "headphones"])
             .group(Click)
             .group(Count)
             .group(Cues)
@@ -39,7 +44,7 @@ pub struct Click;
 
 impl From<Click> for Group<ItemMetadata> {
     fn from(_val: Click) -> Self {
-        Group::builder("Click")
+        Self::builder("Click")
             .patterns(vec![
                 "click",
                 "click track",
@@ -57,7 +62,7 @@ pub struct Count;
 
 impl From<Count> for Group<ItemMetadata> {
     fn from(_val: Count) -> Self {
-        Group::builder("Count")
+        Self::builder("Count")
             .patterns(vec![
                 "count",
                 "count in",
@@ -77,7 +82,7 @@ pub struct Cues;
 
 impl From<Cues> for Group<ItemMetadata> {
     fn from(_val: Cues) -> Self {
-        Group::builder("Cues")
+        Self::builder("Cues")
             .patterns(vec![
                 // Guide patterns
                 "guide",
@@ -103,6 +108,10 @@ impl From<Cues> for Group<ItemMetadata> {
                 "monitor cue",
                 "ear cue",
             ])
+            // A cue *bus* is a per-player monitor mix, not a spoken callout —
+            // "Cue Buss 1" belongs to Headphones. Guide is registered first, so
+            // without this it takes every cue name in the project.
+            .exclude(["buss", "bus", "headphone", "headphones"])
             .build()
     }
 }
@@ -115,7 +124,7 @@ pub struct Sections;
 
 impl From<Sections> for Group<ItemMetadata> {
     fn from(_val: Sections) -> Self {
-        Group::builder("Sections")
+        Self::builder("Sections")
             .patterns(vec![
                 // Explicit section markers (multi-word or unambiguous — avoids stealing
                 // "Solo Gtr", "Outro Gtr", "Chorus Harmony" etc. from instrument groups)
@@ -157,7 +166,7 @@ pub struct DynamicCues;
 
 impl From<DynamicCues> for Group<ItemMetadata> {
     fn from(_val: DynamicCues) -> Self {
-        Group::builder("Dynamic Cues")
+        Self::builder("Dynamic Cues")
             .patterns(vec![
                 // Energy/intensity cues
                 "build",

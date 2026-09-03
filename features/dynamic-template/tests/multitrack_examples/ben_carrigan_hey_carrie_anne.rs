@@ -1,55 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn ben_carrigan_hey_carrie_anne() -> Result<()> {
-    // -- Setup & Fixtures
-    // Ben Carrigan - Hey Carrie Anne: Full string section (violin, viola, cello, double bass)
-    // with both live and sampled versions, plus glockenspiel, piano, electric guitar,
-    // harmonica, percussion, and vocals. Cambridge-MT multitrack library.
-    let items = vec![
-        "01_Snare.wav",
-        "02_Shaker.wav",
-        "03_Tambo.wav",
-        "04_Timp.wav",
-        "05_Cymbal.wav",
-        "06_Piano.wav",
-        "07_Glockenspiel.wav",
-        "08_Violin1.wav",
-        "09_Violin2.wav",
-        "10_Viola.wav",
-        "11_Cello.wav",
-        "12_StringsMix.wav",
-        "13_ViolinSamples.wav",
-        "14_ViolaSamples.wav",
-        "15_CelloSamples.wav",
-        "16_DoubleBassSamples1.wav",
-        "17_DoubleBassSamples2.wav",
-        "18_ElecGtr.wav",
-        "19_ElecGtr.wav",
-        "20_Harmonica.wav",
-        "21_LeadVox.wav",
-        "22_BackingVox1.wav",
-        "23_BackingVox2.wav",
-        "24_BackingVox3.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
-    // Only snare and cymbal from the drum kit (no kick in this session)
+fn ben_carrigan_hey_carrie_anne_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::folder("Drums")
         .track("Snare")
         .item("01_Snare.wav")
@@ -167,8 +119,57 @@ fn ben_carrigan_hey_carrie_anne() -> Result<()> {
         .group(vocals)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn ben_carrigan_hey_carrie_anne() {
+    // -- Setup & Fixtures
+    // Ben Carrigan - Hey Carrie Anne: Full string section (violin, viola, cello, double bass)
+    // with both live and sampled versions, plus glockenspiel, piano, electric guitar,
+    // harmonica, percussion, and vocals. Cambridge-MT multitrack library.
+    let items = vec![
+        "01_Snare.wav",
+        "02_Shaker.wav",
+        "03_Tambo.wav",
+        "04_Timp.wav",
+        "05_Cymbal.wav",
+        "06_Piano.wav",
+        "07_Glockenspiel.wav",
+        "08_Violin1.wav",
+        "09_Violin2.wav",
+        "10_Viola.wav",
+        "11_Cello.wav",
+        "12_StringsMix.wav",
+        "13_ViolinSamples.wav",
+        "14_ViolaSamples.wav",
+        "15_CelloSamples.wav",
+        "16_DoubleBassSamples1.wav",
+        "17_DoubleBassSamples2.wav",
+        "18_ElecGtr.wav",
+        "19_ElecGtr.wav",
+        "20_Harmonica.wav",
+        "21_LeadVox.wav",
+        "22_BackingVox1.wav",
+        "23_BackingVox2.wav",
+        "24_BackingVox3.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    // Only snare and cymbal from the drum kit (no kick in this session)
+    let expected = ben_carrigan_hey_carrie_anne_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

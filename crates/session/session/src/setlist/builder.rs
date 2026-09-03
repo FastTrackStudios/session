@@ -1,12 +1,12 @@
-//! SetlistBuilder - Build setlists from open DAW projects
+//! `SetlistBuilder` - Build setlists from open DAW projects
 //!
 //! Scans open projects and combines their song structures into a setlist.
 
 use crate::song::builder::SongBuilder;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "reaper")]
 use daw::reaper::Reaper;
 use daw::rpc::Daw;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "reaper")]
 use daw::service::{ProjectContext, Projects};
 use session_proto::Setlist;
 use tracing::{debug, warn};
@@ -16,7 +16,11 @@ pub struct SetlistBuilder;
 
 impl SetlistBuilder {
     /// Build a setlist from open REAPER projects using sync native service traits.
-    #[cfg(not(target_arch = "wasm32"))]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if extracting song structure from any open project fails.
+    #[cfg(feature = "reaper")]
     pub fn build_from_open_projects_native() -> eyre::Result<Setlist> {
         debug!("SETLIST BUILDER: Building native setlist from open projects...");
 
@@ -25,7 +29,11 @@ impl SetlistBuilder {
 
         let mut songs = Vec::new();
         for (idx, project) in projects.iter().enumerate() {
-            debug!("Processing native project {}: {}", idx + 1, project.guid);
+            debug!(
+                "Processing native project {}: {}",
+                idx.saturating_add(1),
+                project.guid
+            );
             match SongBuilder::build_native(ProjectContext::Project(project.guid.clone())) {
                 Ok(project_songs) => {
                     for song in &project_songs {
@@ -59,6 +67,11 @@ impl SetlistBuilder {
     /// Iterates through all open projects, attempts to extract a Song from each,
     /// and combines them into a complete Setlist. Projects that don't contain
     /// valid song structure are skipped with a warning.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if fetching the list of projects fails, or if the DAW
+    /// connection is unavailable.
     pub async fn build_from_open_projects(daw: &Daw) -> eyre::Result<Setlist> {
         debug!("============================================================");
         debug!("SETLIST BUILDER: Building setlist from open projects...");
@@ -76,7 +89,7 @@ impl SetlistBuilder {
         for (idx, project) in projects.into_iter().enumerate() {
             let guid = project.guid().to_string();
             debug!("------------------------------------------------------------");
-            debug!("Processing project {}: {}", idx + 1, guid);
+            debug!("Processing project {}: {}", idx.saturating_add(1), guid);
 
             match SongBuilder::build(&project).await {
                 Ok(project_songs) => {

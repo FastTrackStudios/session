@@ -1,61 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn james_dupre_another_love_song() -> Result<()> {
-    // -- Setup & Fixtures
-    // James Dupre - Another Love Song: Country/americana with B3 organ and various guitars
-    let items = vec![
-        "01.Kick_01.wav",
-        "02.Kick Out_01.wav",
-        "03.Kick Sample_01.wav",
-        "04.Snare _01.wav",
-        "05.Snare Sample Stereo_01.wav",
-        "06.Snare Sample Stereo 2_01.wav",
-        "07.Snare Bottom_01.wav",
-        "08.Hat_01.wav",
-        "09.Tom 1_01.wav",
-        "10.Tom 2_01.wav",
-        "11.OH_01.wav",
-        "12.Room Stereo_01.wav",
-        "13.Room Mono_01.wav",
-        "14.Kit Mono_01.wav",
-        "15.Bass_01.wav",
-        "16.AG1_01.wav",
-        "17.Banjo  _01.wav",
-        "18.EG2 (57)_01.wav",
-        "19.EG2 (FH)_01.wav",
-        "20.EG1 (57)_01.wav",
-        "21.EG1 (FH)_01.wav",
-        "22.EG3 (57)_01.wav",
-        "23.EG3 (FH)_01.wav",
-        "24.Steel_01.wav",
-        "25.Keys_01.wav",
-        "26.B3_01.wav",
-        "27.B3 Low_01.wav",
-        "28.Lead Vocal_01.wav",
-        "29.BGV 1_01.wav",
-        "30.BGV 2_01.wav",
-        "31.AnotherLoveSong Joe MIX_01.wav",
-        "Click 128.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
-    // Kick: "Out" matches SUM pattern, others are siblings
+fn james_dupre_another_love_song_expected_leaves() -> (TrackGroup, TrackGroup, TrackGroup) {
     let kick = TrackGroup::folder("Kick")
         .track("SUM")
         .item("02.Kick Out_01.wav")
@@ -130,6 +76,11 @@ fn james_dupre_another_love_song() -> Result<()> {
         .item("23.EG3 (FH)_01.wav")
         .end();
 
+    (drums, bass, electric)
+}
+
+fn james_dupre_another_love_song_expected() -> daw_proto::TrackHierarchy {
+    let (drums, bass, electric) = james_dupre_another_love_song_expected_leaves();
     let guitars = TrackGroup::folder("Guitars")
         .group(electric)
         .track("Acoustic")
@@ -187,8 +138,63 @@ fn james_dupre_another_love_song() -> Result<()> {
         .group(guide)
         .group(reference)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn james_dupre_another_love_song() {
+    // -- Setup & Fixtures
+    // James Dupre - Another Love Song: Country/americana with B3 organ and various guitars
+    let items = vec![
+        "01.Kick_01.wav",
+        "02.Kick Out_01.wav",
+        "03.Kick Sample_01.wav",
+        "04.Snare _01.wav",
+        "05.Snare Sample Stereo_01.wav",
+        "06.Snare Sample Stereo 2_01.wav",
+        "07.Snare Bottom_01.wav",
+        "08.Hat_01.wav",
+        "09.Tom 1_01.wav",
+        "10.Tom 2_01.wav",
+        "11.OH_01.wav",
+        "12.Room Stereo_01.wav",
+        "13.Room Mono_01.wav",
+        "14.Kit Mono_01.wav",
+        "15.Bass_01.wav",
+        "16.AG1_01.wav",
+        "17.Banjo  _01.wav",
+        "18.EG2 (57)_01.wav",
+        "19.EG2 (FH)_01.wav",
+        "20.EG1 (57)_01.wav",
+        "21.EG1 (FH)_01.wav",
+        "22.EG3 (57)_01.wav",
+        "23.EG3 (FH)_01.wav",
+        "24.Steel_01.wav",
+        "25.Keys_01.wav",
+        "26.B3_01.wav",
+        "27.B3 Low_01.wav",
+        "28.Lead Vocal_01.wav",
+        "29.BGV 1_01.wav",
+        "30.BGV 2_01.wav",
+        "31.AnotherLoveSong Joe MIX_01.wav",
+        "Click 128.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    // Kick: "Out" matches SUM pattern, others are siblings
+    let expected = james_dupre_another_love_song_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

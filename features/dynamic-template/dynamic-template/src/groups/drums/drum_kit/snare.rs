@@ -33,12 +33,12 @@ impl From<Snare> for ItemMetadataGroup {
         // Define SUM tagged collection - all items go into SUM EXCEPT effect prints
         // Effect prints (VERB, DLY, etc.) will NOT match and stay as siblings to SUM
         // Empty patterns = matches everything, exclude() adds negative patterns for effects
-        let sum_collection = ItemMetadataGroup::builder("SUM")
+        let sum_collection = Self::builder("SUM")
             .exclude(["verb", "vrb", "rev", "dly", "delay", "crush", "dist", "fx"])
             .build();
 
         // Use the convenience method - extension trait is in scope via prelude
-        ItemMetadataGroup::builder("Snare")
+        Self::builder("Snare")
             .patterns([
                 "snare",
                 "snr",

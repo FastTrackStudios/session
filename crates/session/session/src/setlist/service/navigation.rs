@@ -1,4 +1,4 @@
-//! Navigation methods: go_to_song, next/previous song/section, seeking
+//! Navigation methods: `go_to_song`, next/previous song/section, seeking
 
 use super::SetlistServiceImpl;
 use daw::service::transport::service::Transport;
@@ -82,11 +82,11 @@ where
     /// Compute the seek position for a song: count-in position if available,
     /// otherwise song start (SONGSTART marker).
     ///
-    /// Song.start_seconds already includes the count-in offset (it's the count-in
+    /// `Song.start_seconds` already includes the count-in offset (it's the count-in
     /// start, not SONGSTART). So the SONGSTART position is:
-    ///   start_seconds + count_in_seconds
+    ///   `start_seconds` + `count_in_seconds`
     ///
-    /// We want to seek to start_seconds (the count-in position), but if that's
+    /// We want to seek to `start_seconds` (the count-in position), but if that's
     /// negative (count-in marker is before timeline origin), fall back to SONGSTART.
     pub(crate) fn song_seek_position(song: &Song) -> f64 {
         let count_in_pos = song.start_seconds();
@@ -116,8 +116,7 @@ where
         let already_on_project = self
             .current_project_guid()
             .await
-            .map(|guid| guid == skeleton.project_guid)
-            .unwrap_or(false);
+            .is_some_and(|guid| guid == skeleton.project_guid);
 
         if !already_on_project {
             self.stop_previous_project_if_idle(&skeleton.project_guid)
@@ -133,20 +132,17 @@ where
             return;
         }
 
-        let song = match architect::platform::timeout(
+        let Ok(Some(song)) = Box::pin(architect::platform::timeout(
             Duration::from_secs(5),
             self.ensure_song_hydrated(song_index),
-        )
+        ))
         .await
-        {
-            Ok(Some(song)) => song,
-            _ => {
-                warn!(
-                    "seek_to_song_internal: hydration failed for song {} ({})",
-                    song_index, skeleton.name
-                );
-                return;
-            }
+        else {
+            warn!(
+                "seek_to_song_internal: hydration failed for song {} ({})",
+                song_index, skeleton.name
+            );
+            return;
         };
 
         let seek_pos = Self::song_seek_position(&song);
@@ -194,10 +190,10 @@ where
         }
 
         // Now try to hydrate (best-effort, with timeout to prevent freezes)
-        let song = match architect::platform::timeout(
+        let song = match Box::pin(architect::platform::timeout(
             Duration::from_secs(5),
             self.ensure_song_hydrated(index),
-        )
+        ))
         .await
         {
             Ok(Some(song)) => song,
@@ -246,7 +242,7 @@ where
         let active = self.get_cached_indices().await;
         info!("next_song: cached song_index={:?}", active.song_index);
         if let Some(current_idx) = active.song_index {
-            let next_idx = current_idx + 1;
+            let next_idx = current_idx.saturating_add(1);
             self.go_to_song_impl(next_idx).await?;
         } else {
             warn!("next_song: no active song index, cannot navigate");
@@ -259,7 +255,7 @@ where
         info!("previous_song: cached song_index={:?}", active.song_index);
         if let Some(current_idx) = active.song_index {
             if current_idx > 0 {
-                let prev_idx = current_idx - 1;
+                let prev_idx = current_idx.saturating_sub(1);
                 self.go_to_song_impl(prev_idx).await?;
             } else {
                 info!("previous_song: already at first song (index 0)");
@@ -328,7 +324,7 @@ where
         // Use cached indices for instant response (updated at 60Hz by polling loop)
         let active = self.get_cached_indices().await;
         if let Some(section_idx) = active.section_index {
-            let next_idx = section_idx + 1;
+            let next_idx = section_idx.saturating_add(1);
             self.go_to_section_impl(next_idx).await?;
         }
         Ok(())
@@ -343,14 +339,11 @@ where
             // Smart previous: if we're past the beginning of the section (>5% progress),
             // go to the start of the current section. Only go to previous section
             // if we're already at/near the beginning.
-            let at_section_start = active
-                .section_progress
-                .map(|p| p < 0.05) // Within first 5% of section
-                .unwrap_or(true);
+            let at_section_start = active.section_progress.is_none_or(|p| p < 0.05);
 
             if at_section_start && section_idx > 0 {
                 // Already at the start, go to previous section
-                let prev_idx = section_idx - 1;
+                let prev_idx = section_idx.saturating_sub(1);
                 self.go_to_section_impl(prev_idx).await?;
             } else {
                 // Not at start, go to beginning of current section
@@ -480,8 +473,7 @@ where
         let already_on_project = self
             .current_project_guid()
             .await
-            .map(|guid| guid == skeleton.project_guid)
-            .unwrap_or(false);
+            .is_some_and(|guid| guid == skeleton.project_guid);
 
         // Only stop previous project if we're actually changing projects
         if !already_on_project {
@@ -502,10 +494,10 @@ where
         }
 
         // Now try to hydrate (best-effort, with timeout to prevent freezes)
-        let song = match architect::platform::timeout(
+        let song = match Box::pin(architect::platform::timeout(
             Duration::from_secs(5),
             self.ensure_song_hydrated(song_index),
-        )
+        ))
         .await
         {
             Ok(Some(song)) => song,
@@ -628,7 +620,7 @@ where
                 if !daw.select(&project_guid) {
                     return Err("select_failed");
                 }
-                let fraction = subdivision as f64 / 1000.0;
+                let fraction = f64::from(subdivision) / 1000.0;
                 let relative_seconds =
                     daw.musical_to_time(project_ctx(&project_guid), measure, beat, fraction);
                 let absolute_pos = song_start + relative_seconds;

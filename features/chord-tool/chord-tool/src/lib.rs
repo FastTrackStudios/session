@@ -1,7 +1,7 @@
 //! chord-tool — the chord-firing panel.
 //!
-//! GUI only. This is the ChordGun workflow (pick a key, hear and place
-//! scale chords) but none of its theory: ChordGun carries its own
+//! GUI only. This is the `ChordGun` workflow (pick a key, hear and place
+//! scale chords) but none of its theory: `ChordGun` carries its own
 //! scales/chords tables, and everything they describe already exists in
 //! `keyflow`. Pitches come from `keyflow::chord::realize`; if logic in
 //! here starts computing intervals, it belongs there instead.

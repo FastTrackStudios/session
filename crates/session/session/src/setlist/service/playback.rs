@@ -10,14 +10,17 @@ impl<D> SetlistServiceImpl<D>
 where
     D: Transport,
 {
-    pub(crate) async fn toggle_playback_impl(&self) -> Result<(), SessionServiceError> {
+    pub(crate) async fn toggle_playback_impl(&self) -> Result<(), SessionServiceError>
+    where
+        D: Sync,
+    {
         debug!("toggle_playback");
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
             if let Err(e) = self
                 .daw
-                .play_pause(ProjectContext::Project(song.project_guid.clone()))
+                .play_pause(ProjectContext::Project(song.project_guid))
             {
                 warn!("Failed to toggle playback: {}", e);
             }
@@ -27,15 +30,15 @@ where
         Ok(())
     }
 
-    pub(crate) async fn play_impl(&self) -> Result<(), SessionServiceError> {
+    pub(crate) async fn play_impl(&self) -> Result<(), SessionServiceError>
+    where
+        D: Sync,
+    {
         debug!("play");
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self
-                .daw
-                .play(ProjectContext::Project(song.project_guid.clone()))
-            {
+            if let Err(e) = self.daw.play(ProjectContext::Project(song.project_guid)) {
                 warn!("Failed to play: {}", e);
             }
         } else {
@@ -44,15 +47,15 @@ where
         Ok(())
     }
 
-    pub(crate) async fn pause_impl(&self) -> Result<(), SessionServiceError> {
+    pub(crate) async fn pause_impl(&self) -> Result<(), SessionServiceError>
+    where
+        D: Sync,
+    {
         debug!("pause");
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self
-                .daw
-                .pause(ProjectContext::Project(song.project_guid.clone()))
-            {
+            if let Err(e) = self.daw.pause(ProjectContext::Project(song.project_guid)) {
                 warn!("Failed to pause: {}", e);
             }
         } else {
@@ -61,15 +64,15 @@ where
         Ok(())
     }
 
-    pub(crate) async fn stop_impl(&self) -> Result<(), SessionServiceError> {
+    pub(crate) async fn stop_impl(&self) -> Result<(), SessionServiceError>
+    where
+        D: Sync,
+    {
         debug!("stop");
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self
-                .daw
-                .stop(ProjectContext::Project(song.project_guid.clone()))
-            {
+            if let Err(e) = self.daw.stop(ProjectContext::Project(song.project_guid)) {
                 warn!("Failed to stop: {}", e);
             }
         } else {
@@ -78,39 +81,31 @@ where
         Ok(())
     }
 
-    pub(crate) async fn toggle_song_loop_impl(&self) -> Result<(), SessionServiceError> {
+    pub(crate) fn toggle_song_loop_impl(&self) {
         debug!("toggle_song_loop");
 
         if let Err(e) = self.daw.toggle_loop(ProjectContext::Current) {
             warn!("Failed to toggle song loop: {}", e);
         }
-        Ok(())
     }
 
-    pub(crate) async fn toggle_section_loop_impl(&self) -> Result<(), SessionServiceError> {
+    pub(crate) fn toggle_section_loop_impl() {
         debug!("toggle_section_loop");
         // TODO: Implement section-specific loop using loop points
         warn!("toggle_section_loop not yet implemented");
-        Ok(())
     }
 
-    pub(crate) async fn set_loop_region_impl(
-        &self,
-        _start_seconds: f64,
-        _end_seconds: f64,
-    ) -> Result<(), SessionServiceError> {
-        debug!("set_loop_region: {} - {}", _start_seconds, _end_seconds);
+    pub(crate) fn set_loop_region_impl(start_seconds: f64, end_seconds: f64) {
+        debug!("set_loop_region: {} - {}", start_seconds, end_seconds);
         // TODO: Implement setting loop region
         warn!("set_loop_region not yet implemented");
-        Ok(())
     }
 
-    pub(crate) async fn clear_loop_impl(&self) -> Result<(), SessionServiceError> {
+    pub(crate) fn clear_loop_impl(&self) {
         debug!("clear_loop");
 
         if let Err(e) = self.daw.set_loop(ProjectContext::Current, false) {
             warn!("Failed to clear loop: {}", e);
         }
-        Ok(())
     }
 }

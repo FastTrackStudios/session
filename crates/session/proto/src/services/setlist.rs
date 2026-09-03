@@ -114,7 +114,7 @@ pub enum SetlistEvent {
         section_id: SectionId,
         section_index: usize,
     },
-    /// Position changed (legacy - prefer TransportUpdate)
+    /// Position changed (legacy - prefer `TransportUpdate`)
     PositionChanged {
         seconds: f64,
         indices: ActiveIndices,
@@ -137,18 +137,38 @@ pub mod setlist_service {
         // =========================================================================
 
         /// Get the full setlist
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if the setlist has not been built yet.
         fn setlist(&self) -> Result<Setlist, SessionServiceError>;
 
         /// Get all songs in the setlist
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if the setlist has not been built yet.
         fn songs(&self) -> Result<Vec<Song>, SessionServiceError>;
 
         /// Get a specific song by index
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if `index` is out of range.
         fn song(&self, index: usize) -> Result<Song, SessionServiceError>;
 
         /// Get all sections for a specific song
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if `song_index` is out of range.
         fn sections(&self, song_index: usize) -> Result<Vec<Section>, SessionServiceError>;
 
         /// Get a specific section by song and section index
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if `song_index` or `section_index` is out of range.
         fn section(
             &self,
             song_index: usize,
@@ -156,6 +176,10 @@ pub mod setlist_service {
         ) -> Result<Section, SessionServiceError>;
 
         /// Get measure information for a song
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if `song_index` is out of range.
         fn measures(&self, song_index: usize) -> Result<Vec<MeasureInfo>, SessionServiceError>;
 
         /// Get the hydrated chart payload (keyflow chart text + detected
@@ -175,15 +199,31 @@ pub mod setlist_service {
         // =========================================================================
 
         /// Get the currently active song
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if no song is currently active.
         fn active_song(&self) -> Result<Song, SessionServiceError>;
 
         /// Get the currently active section
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if no section is currently active.
         fn active_section(&self) -> Result<Section, SessionServiceError>;
 
         /// Get the song at a specific position in seconds
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if `seconds` falls outside the setlist.
         fn song_at(&self, seconds: f64) -> Result<Song, SessionServiceError>;
 
         /// Get the section at a specific position in seconds
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if `seconds` falls outside any section.
         fn section_at(&self, seconds: f64) -> Result<Section, SessionServiceError>;
 
         // =========================================================================
@@ -328,7 +368,7 @@ pub mod setlist_service {
         /// Generate a combined setlist project from all open song projects.
         ///
         /// Scans open projects, skips any that are already combined setlists
-        /// (identified by ExtState `FTS/is_combined_setlist`), builds songs,
+        /// (identified by `ExtState` `FTS/is_combined_setlist`), builds songs,
         /// generates a combined RPP with configurable gap between songs,
         /// and opens it as a new project tab.
         ///
@@ -344,8 +384,8 @@ pub mod setlist_service {
 
         /// Every setlist change, as it happens — remotes render from this
         /// stream instead of polling (architect `#[subscribe]`; works on
-        /// wasm over WsLink, replacing the old reverse-dispatch
-        /// WebClientService push).
+        /// wasm over `WsLink`, replacing the old reverse-dispatch
+        /// `WebClientService` push).
         #[subscribe]
         fn events(&self) -> SetlistEvent;
 
@@ -359,7 +399,7 @@ pub mod setlist_service {
 
         /// Get audio output latency in seconds
         ///
-        /// This proxies to the DAW's AudioEngineService. The latency represents
+        /// This proxies to the DAW's `AudioEngineService`. The latency represents
         /// the delay between when audio is rendered and when it reaches the speakers.
         /// Clients can use this to compensate visual display during playback.
         ///
@@ -399,5 +439,5 @@ pub struct AudioLatencyInfo {
 // SelfRef compatibility: SetlistEvent has no lifetime parameters, so Ref<'a> = Self.
 #[allow(unsafe_code)]
 unsafe impl vox_types::Reborrow for SetlistEvent {
-    type Ref<'a> = SetlistEvent;
+    type Ref<'a> = Self;
 }

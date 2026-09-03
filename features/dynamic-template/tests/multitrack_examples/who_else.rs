@@ -34,7 +34,7 @@ fn who_else() {
         "Who Else - Synth Bass.wav",
         "Who Else - Synth FX.wav",
     ];
-    let (placement, _) = organize("Who Else", &items);
+    let (placement, _) = organize("Who Else", &items).unwrap();
     let ing = |f: &str, g: &str| in_group(&placement, f, g);
 
     assert!(ing("Who Else - Click.wav", "Guide"));

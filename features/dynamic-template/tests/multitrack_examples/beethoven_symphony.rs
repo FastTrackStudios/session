@@ -1,50 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn beethoven_symphony() -> Result<()> {
-    // -- Setup & Fixtures
-    // MusicDelta Beethoven: 18-stem full orchestral arrangement from the MedleyDB dataset.
-    // Complete classical orchestra: 2 violin sections, viola, cello, double bass, 2 flutes,
-    // 2 clarinets, 2 oboes, 2 bassoons, 2 trumpets, 2 french horns, and timpani.
-    // Tests pure orchestral classification with no modern instruments.
-    let items = vec![
-        "01_Violin1.wav",
-        "02_Violin2.wav",
-        "03_Viola.wav",
-        "04_Cello.wav",
-        "05_DoubleBass.wav",
-        "06_Flute1.wav",
-        "07_Flute2.wav",
-        "08_Clarinet1.wav",
-        "09_Clarinet2.wav",
-        "10_Oboe1.wav",
-        "11_Oboe2.wav",
-        "12_Bassoon1.wav",
-        "13_Bassoon2.wav",
-        "14_Trumpet1.wav",
-        "15_Trumpet2.wav",
-        "16_FrenchHorn1.wav",
-        "17_FrenchHorn2.wav",
-        "18_Timpani.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Percussion ---
-    // Timpani dual-classified as percussion
+fn beethoven_symphony_expected() -> daw_proto::TrackHierarchy {
     let percussion = TrackGroup::single_track("Percussion", "18_Timpani.wav");
 
     // --- Horns ---
@@ -145,8 +102,52 @@ fn beethoven_symphony() -> Result<()> {
         .group(horns)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn beethoven_symphony() {
+    // -- Setup & Fixtures
+    // MusicDelta Beethoven: 18-stem full orchestral arrangement from the MedleyDB dataset.
+    // Complete classical orchestra: 2 violin sections, viola, cello, double bass, 2 flutes,
+    // 2 clarinets, 2 oboes, 2 bassoons, 2 trumpets, 2 french horns, and timpani.
+    // Tests pure orchestral classification with no modern instruments.
+    let items = vec![
+        "01_Violin1.wav",
+        "02_Violin2.wav",
+        "03_Viola.wav",
+        "04_Cello.wav",
+        "05_DoubleBass.wav",
+        "06_Flute1.wav",
+        "07_Flute2.wav",
+        "08_Clarinet1.wav",
+        "09_Clarinet2.wav",
+        "10_Oboe1.wav",
+        "11_Oboe2.wav",
+        "12_Bassoon1.wav",
+        "13_Bassoon2.wav",
+        "14_Trumpet1.wav",
+        "15_Trumpet2.wav",
+        "16_FrenchHorn1.wav",
+        "17_FrenchHorn2.wav",
+        "18_Timpani.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Percussion ---
+    // Timpani dual-classified as percussion
+    let expected = beethoven_symphony_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

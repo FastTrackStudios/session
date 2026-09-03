@@ -22,8 +22,16 @@ use keyflow::primitives::MusicalNote;
 
 const PPQ: f64 = 960.0;
 
-fn c_major() -> Key {
-    Key::major(MusicalNote::from_string("C").expect("C parses"))
+fn c_major() -> eyre::Result<Key> {
+    let root = MusicalNote::from_string("C").ok_or_else(|| eyre::eyre!("C parses"))?;
+    Ok(Key::major(root))
+}
+
+/// `x` as `f64`, for the small (bar-index) values used in the progression
+/// layout test below — never large enough to lose precision, but
+/// `usize`→`f64` has no non-`as` conversion in `std`.
+fn f64_from_usize(x: usize) -> f64 {
+    u32::try_from(x).map_or_else(|_| f64::from(u32::MAX), f64::from)
 }
 
 /// The pitches keyflow computes for a chord must be the pitches REAPER
@@ -36,13 +44,16 @@ async fn chord_notes_survive_the_round_trip(
     let track = project.tracks().add("Chord Insert", None).await?;
 
     // C major triad, degree 1, root position.
-    let chord = variations(&c_major(), 1)
+    let chord = variations(&c_major()?, 1)
         .into_iter()
         .next()
-        .expect("degree 1 offers a chord");
+        .ok_or_else(|| eyre::eyre!("degree 1 offers a chord"))?;
     let expected = chord.notes_inverted(4, 0);
     ctx.log(&format!("{} → {expected:?}", chord.label));
-    assert_eq!(expected, vec![60, 64, 67], "C major at octave 4");
+    eyre::ensure!(
+        expected == vec![60, 64, 67],
+        "C major at octave 4: got {expected:?}"
+    );
 
     let item = track
         .items()
@@ -75,9 +86,9 @@ async fn chord_notes_survive_the_round_trip(
     actual.sort_unstable();
 
     ctx.log(&format!("REAPER holds {actual:?}"));
-    assert_eq!(
-        actual, expected,
-        "REAPER must hold exactly what keyflow computed"
+    eyre::ensure!(
+        actual == expected,
+        "REAPER must hold exactly what keyflow computed: got {actual:?}, expected {expected:?}"
     );
     Ok(())
 }
@@ -89,10 +100,10 @@ async fn chord_voices_are_simultaneous(ctx: &daw::test::ReaperTestContext) -> ey
     let project = ctx.project().clone();
     let track = project.tracks().add("Simultaneity", None).await?;
 
-    let chord = variations(&c_major(), 5)
+    let chord = variations(&c_major()?, 5)
         .into_iter()
         .find(|c| c.semitones.len() == 4 && c.in_scale)
-        .expect("the fifth degree offers a seventh chord");
+        .ok_or_else(|| eyre::eyre!("the fifth degree offers a seventh chord"))?;
     let pitches = chord.notes_inverted(4, 0);
     ctx.log(&format!("{} → {pitches:?}", chord.label));
 
@@ -120,17 +131,22 @@ async fn chord_voices_are_simultaneous(ctx: &daw::test::ReaperTestContext) -> ey
         .await?;
 
     let notes = take.midi().notes().await?;
-    assert_eq!(notes.len(), pitches.len(), "one note per voice");
-    assert_eq!(
-        track.items().count().await?,
-        1,
-        "a chord is one item, not one per voice"
+    eyre::ensure!(
+        notes.len() == pitches.len(),
+        "one note per voice: got {} notes, {} pitches",
+        notes.len(),
+        pitches.len()
+    );
+    let item_count = track.items().count().await?;
+    eyre::ensure!(
+        item_count == 1,
+        "a chord is one item, not one per voice: got {item_count}"
     );
 
     let starts: Vec<f64> = notes.iter().map(|n| n.start_ppq).collect();
     let first = starts.first().copied().unwrap_or_default();
     for start in &starts {
-        assert!(
+        eyre::ensure!(
             (start - first).abs() < 1.0,
             "voices must start together, got {starts:?}"
         );
@@ -146,16 +162,16 @@ async fn progression_lays_out_in_order(ctx: &daw::test::ReaperTestContext) -> ey
     let track = project.tracks().add("Progression", None).await?;
 
     // I - IV - V, one bar each at 120bpm 4/4 (2s per bar).
-    let columns = grid(&c_major());
+    let columns = grid(&c_major()?);
     let degrees = [1usize, 4, 5];
     let bar = 2.0;
 
     for (i, degree) in degrees.iter().enumerate() {
-        let chord = columns[degree - 1]
+        let chord = columns[degree.saturating_sub(1)]
             .iter()
             .find(|c| c.in_scale)
-            .expect("degree offers an in-key chord");
-        let start = bar * i as f64;
+            .ok_or_else(|| eyre::eyre!("degree offers an in-key chord"))?;
+        let start = bar * f64_from_usize(i);
         let item = track
             .items()
             .add(
@@ -182,20 +198,21 @@ async fn progression_lays_out_in_order(ctx: &daw::test::ReaperTestContext) -> ey
         ctx.log(&format!("bar {i}: {}", chord.label));
     }
 
-    assert_eq!(
-        track.items().count().await?,
-        degrees.len() as u32,
-        "one item per chord"
+    let item_count = track.items().count().await?;
+    let expected_count = u32::try_from(degrees.len()).unwrap_or(u32::MAX);
+    eyre::ensure!(
+        item_count == expected_count,
+        "one item per chord: got {item_count}, expected {expected_count}"
     );
 
     let items = track.items().all().await?;
     let mut positions: Vec<f64> = items.iter().map(|i| i.position.as_seconds()).collect();
     positions.sort_by(f64::total_cmp);
     for (i, pos) in positions.iter().enumerate() {
-        assert!(
-            (pos - bar * i as f64).abs() < 0.01,
-            "chord {i} should sit at {}s, got {pos}s",
-            bar * i as f64
+        let expected_pos = bar * f64_from_usize(i);
+        eyre::ensure!(
+            (pos - expected_pos).abs() < 0.01,
+            "chord {i} should sit at {expected_pos}s, got {pos}s"
         );
     }
     Ok(())
@@ -231,19 +248,19 @@ async fn keyflow_folder_spawns_with_its_four_tracks(
     // The last child closes the folder.
     children
         .last()
-        .expect("four children")
+        .ok_or_else(|| eyre::eyre!("four children"))?
         .set_folder_depth(-1)
         .await?;
 
-    assert_eq!(
-        tracks.count().await?,
-        5,
-        "one folder parent plus four children"
+    let track_count = tracks.count().await?;
+    eyre::ensure!(
+        track_count == 5,
+        "one folder parent plus four children: got {track_count}"
     );
 
     for name in KEYFLOW_TRACKS {
         let found = tracks.by_name(name).await?;
-        assert!(found.is_some(), "{name} track should exist");
+        eyre::ensure!(found.is_some(), "{name} track should exist");
         ctx.log(&format!("{name} present"));
     }
 
@@ -254,11 +271,14 @@ async fn keyflow_folder_spawns_with_its_four_tracks(
     let keyflow_at = names
         .iter()
         .position(|n| n == "Keyflow")
-        .expect("folder parent present");
-    let after: Vec<&String> = names.iter().skip(keyflow_at + 1).take(4).collect();
-    assert_eq!(
-        after,
-        KEYFLOW_TRACKS.iter().collect::<Vec<_>>(),
+        .ok_or_else(|| eyre::eyre!("folder parent present"))?;
+    let after: Vec<&String> = names
+        .iter()
+        .skip(keyflow_at.saturating_add(1))
+        .take(4)
+        .collect();
+    eyre::ensure!(
+        after == KEYFLOW_TRACKS.iter().collect::<Vec<_>>(),
         "children follow the parent in scaffold order, got {names:?}"
     );
 
@@ -289,6 +309,7 @@ async fn fresh_project_has_no_key_signature(
     // A fresh tab starts empty; the marker here is that nothing in the
     // current API surface reports a key signature at all.
     ctx.log("key signature lives in the project chunk (<KEYSIG>), not the API");
-    assert_eq!(project.tracks().count().await?, 0, "fresh isolated tab");
+    let track_count = project.tracks().count().await?;
+    eyre::ensure!(track_count == 0, "fresh isolated tab: got {track_count}");
     Ok(())
 }

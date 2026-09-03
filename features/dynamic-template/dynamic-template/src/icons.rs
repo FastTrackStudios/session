@@ -4,7 +4,7 @@
 //! by REAPER extensions to automatically assign track icons based on classification.
 //!
 //! REAPER looks for icons in:
-//! - REAPER/Data/track_icons/ (built-in icons)
+//! - `REAPER/Data/track_icons`/ (built-in icons)
 //! - Custom paths specified with full path
 //!
 //! Icon formats supported: .png, .ico, .bmp
@@ -306,7 +306,7 @@ static ICON_MAP: LazyLock<HashMap<&'static str, IconName>> = LazyLock::new(|| {
 /// - Top-level: "Drums", "guitars", "VOCALS"
 /// - Path-based: "Guitars/Electric", "vocals/bgvs"
 /// - Space-separated: "Electric Guitar", "Lead Vocals"
-/// - Underscore-separated: "electric_guitar", "lead_vocals"
+/// - Underscore-separated: "`electric_guitar`", "`lead_vocals`"
 ///
 /// Returns `None` if no icon is defined for the given group.
 ///
@@ -358,15 +358,19 @@ pub fn icon_for_path(path: &[&str]) -> Option<IconName> {
 
     // Fall back through parent groups
     for i in (0..path.len()).rev() {
-        let parent_path = path[..=i].join("/").to_lowercase();
-        if let Some(&icon) = ICON_MAP.get(parent_path.as_str()) {
-            return Some(icon);
+        if let Some(slice) = path.get(..=i) {
+            let parent_path = slice.join("/").to_lowercase();
+            if let Some(&icon) = ICON_MAP.get(parent_path.as_str()) {
+                return Some(icon);
+            }
         }
 
         // Also try just the group name at this level
-        let group_name = path[i].to_lowercase();
-        if let Some(&icon) = ICON_MAP.get(group_name.as_str()) {
-            return Some(icon);
+        if let Some(group_name_str) = path.get(i) {
+            let group_name = group_name_str.to_lowercase();
+            if let Some(&icon) = ICON_MAP.get(group_name.as_str()) {
+                return Some(icon);
+            }
         }
     }
 

@@ -8,7 +8,7 @@ pub struct SteelGuitar;
 
 impl From<SteelGuitar> for Group<ItemMetadata> {
     fn from(_val: SteelGuitar) -> Self {
-        Group::builder("Steel")
+        Self::builder("Steel")
             .patterns(vec![
                 "steel",
                 "pedal steel",

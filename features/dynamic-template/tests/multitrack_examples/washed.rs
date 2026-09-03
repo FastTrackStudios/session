@@ -29,7 +29,7 @@ fn washed() {
         "Washed - Piano.wav",
         "Washed - Saxophone.wav",
     ];
-    let (placement, _) = organize("Washed", &items);
+    let (placement, _) = organize("Washed", &items).unwrap();
     let ing = |f: &str, g: &str| in_group(&placement, f, g);
 
     assert!(ing("Washed - Click.wav", "Guide"));

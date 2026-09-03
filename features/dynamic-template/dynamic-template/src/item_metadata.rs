@@ -2,18 +2,18 @@ use monarchy::{Group, Metadata, ToDisplayName};
 use serde::{Deserialize, Serialize};
 
 /// Represents a parsed or constructed track name with all its components.
-/// This is stored in Track.ext_state as JSON and represents the full FTS naming convention.
+/// This is stored in `Track.ext_state` as JSON and represents the full FTS naming convention.
 ///
 /// Note: `Metadata` derive automatically includes `MetadataBuilder` functionality,
 /// so you only need to derive `Metadata` to get both the trait implementation
-/// and the GroupBuilder extension methods (like `.multi_mic()`, `.layers()`, etc.).
+/// and the `GroupBuilder` extension methods (like `.multi_mic()`, `.layers()`, etc.).
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, Metadata)]
 pub struct ItemMetadata {
     /// Recording tag (e.g., "PASS-01", "TAKE-02", "REC-01")
     pub rec_tag: Option<String>,
 
     /// Full hierarchy of groups that matched, from top-level to most specific
-    /// Example: ["Drums", "Drum_Kit", "Kick"]
+    /// Example: [`Drums`, `Drum_Kit`, `Kick`]
     /// The last element is the most specific group that matched
     pub group: Option<Vec<String>>,
 
@@ -29,10 +29,10 @@ pub struct ItemMetadata {
     /// Layer information (e.g., "DBL", "OCT", "L", "R", "Stereo")
     pub layers: Option<String>,
 
-    /// Multi-mic positions (e.g., ["Top", "Bottom"], ["In", "Out"], ["Close", "Room"])
+    /// Multi-mic positions (e.g., [`Top`, `Bottom`], [`In`, `Out`], [`Close`, `Room`])
     pub multi_mic: Option<Vec<String>>,
 
-    /// Effect/send indicators (e.g., ["Verb"], ["Delay"], ["Chorus", "Verb"])
+    /// Effect/send indicators (e.g., [`Verb`], [`Delay`], [`Chorus`, `Verb`])
     pub effect: Option<Vec<String>>,
 
     /// Increment number for numbered instances (e.g., "1", "2" for Tom 1, Tom 2)
@@ -51,7 +51,7 @@ pub struct ItemMetadata {
     /// This identifies the specific type or make of an instrument
     pub variant: Option<String>,
 
-    /// Tagged collections that this item matches (e.g., ["SUM"] if it matches a tagged collection's patterns)
+    /// Tagged collections that this item matches (e.g., [`SUM`] if it matches a tagged collection's patterns)
     /// An item can match multiple tagged collections
     pub tagged_collection: Option<Vec<String>>,
 
@@ -77,7 +77,7 @@ pub struct ItemMetadata {
 /// Type alias for `Group<ItemMetadata>`
 pub type ItemMetadataGroup = Group<ItemMetadata>;
 
-/// Builder for ItemMetadata with flexible input types
+/// Builder for `ItemMetadata` with flexible input types
 ///
 /// Allows passing strings, vectors, or arrays directly without explicit conversions.
 #[derive(Default, Clone)]
@@ -238,12 +238,12 @@ impl ItemMetadataBuilder {
     }
 
     /// Set the tempo in BPM
-    pub fn tempo(mut self, value: f32) -> Self {
+    pub const fn tempo(mut self, value: f32) -> Self {
         self.tempo = Some(value);
         self
     }
 
-    /// Build the ItemMetadata
+    /// Build the `ItemMetadata`
     pub fn build(self) -> ItemMetadata {
         ItemMetadata {
             rec_tag: self.rec_tag,
@@ -271,7 +271,7 @@ impl ItemMetadataBuilder {
 // Re-export IntoVec from monarchy for convenience
 pub use monarchy::IntoVec;
 
-/// Prelude module that exports everything needed to work with ItemMetadata groups
+/// Prelude module that exports everything needed to work with `ItemMetadata` groups
 ///
 /// Import this to get all types and the extension trait in scope:
 /// ```ignore
@@ -290,33 +290,32 @@ pub mod prelude {
 impl ToDisplayName for ItemMetadata {
     /// Generate a full canonical display name from metadata
     ///
-    /// Build order: group → performer → section → arrangement → layers → increment → channel → multi_mic → track_type
+    /// Build order: group → performer → section → arrangement → layers → increment → channel → `multi_mic` → `track_type`
     ///
     /// If we have meaningful metadata (beyond just group name), use that.
     /// If we only have group name and no other metadata, return empty string to trigger
-    /// fallback to item.original in derive_display_name().
+    /// fallback to item.original in `derive_display_name()`.
     ///
     /// "Meaningful metadata" means metadata that describes WHAT the item is, not just
     /// version/layer information. Increment alone (".2") or playlist alone are not
     /// considered meaningful - they only make sense when combined with identifying info.
     ///
-    /// The prefixes and group_names from matched_groups provide context that can be used
+    /// The prefixes and `group_names` from `matched_groups` provide context that can be used
     /// to strip redundant information in a later cleanup pass.
     ///
     /// # Examples
-    /// - Kick with multi_mic=["In"] → "D Kick In" (with D prefix from Drums)
+    /// - Kick with `multi_mic`=[`In`] → "D Kick In" (with D prefix from Drums)
     /// - Electric Guitar with performer="Ed", arrangement="Crunch" → "GTR Ed Crunch"
     /// - Snare with increment="1" → "D Snare 1" (but only if has mic info too)
     /// - Acoustic Guitar → "GTR Acoustic" (not "GTR AG Acoustic" - skip redundant prefix)
-    /// - DX7 .2_03.wav → "" (triggers fallback to original)
+    /// - DX7 .`2_03.wav` → "" (triggers fallback to original)
     fn to_display_name(&self, prefixes: &[String], group_names: &[String]) -> String {
         // Helper to capitalize first letter of a string
         fn title_case(s: &str) -> String {
             let mut chars = s.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-            }
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().collect::<String>() + chars.as_str()
+            })
         }
 
         let mut parts = Vec::new();
@@ -325,34 +324,30 @@ impl ToDisplayName for ItemMetadata {
         // This lets us skip the last prefix if it would be redundant with the group name
 
         // Track if we have any PRIMARY metadata (identifies what the item is)
-        // vs SECONDARY metadata (version/layer info that only makes sense with primary)
-        let mut has_primary_metadata = false;
-
-        // PRIMARY metadata fields - these identify WHAT the item is
+        // vs SECONDARY metadata (version/layer info that only makes sense with primary).
+        // Every branch below that pushes onto `parts` is primary metadata, so
+        // whether any of them ran is exactly whether `parts` grew.
+        let before_primary = parts.len();
 
         // Add variant (e.g., "808", "Gibson", "Rhodes")
         // This comes first as it modifies the instrument type
         if let Some(ref variant) = self.variant {
             parts.push(variant.clone());
-            has_primary_metadata = true;
         }
 
         // Add performer (e.g., "Ed", "Johny")
         if let Some(ref performer) = self.performer {
             parts.push(performer.clone());
-            has_primary_metadata = true;
         }
 
         // Add section (e.g., "Verse", "Chorus") - title case
         if let Some(ref section) = self.section {
             parts.push(title_case(section));
-            has_primary_metadata = true;
         }
 
         // Add arrangement (e.g., "Crunch", "Clean", "Lead") - title case
         if let Some(ref arrangement) = self.arrangement {
             parts.push(title_case(arrangement));
-            has_primary_metadata = true;
         }
 
         // Add multi-mic positions (e.g., "In", "Out", "Top", "Bottom") - title case
@@ -360,7 +355,6 @@ impl ToDisplayName for ItemMetadata {
         if let Some(ref multi_mic) = self.multi_mic {
             for mic in multi_mic {
                 parts.push(title_case(mic));
-                has_primary_metadata = true;
             }
         }
 
@@ -368,7 +362,6 @@ impl ToDisplayName for ItemMetadata {
         // This is primary because it identifies the track's role
         if let Some(ref track_type) = self.track_type {
             parts.push(track_type.to_uppercase());
-            has_primary_metadata = true;
         }
 
         // Add effect (e.g., "Verb", "Comp", "Delay") - title case
@@ -376,9 +369,10 @@ impl ToDisplayName for ItemMetadata {
         if let Some(ref effect) = self.effect {
             for fx in effect {
                 parts.push(title_case(fx));
-                has_primary_metadata = true;
             }
         }
+
+        let has_primary_metadata = parts.len() > before_primary;
 
         // SECONDARY metadata fields - only include if we have primary metadata
         // These provide additional context but don't identify the item alone
@@ -408,7 +402,7 @@ impl ToDisplayName for ItemMetadata {
         //
         // If we only matched a top-level group by pattern without the group name in original,
         // return empty to use the original name (e.g., "Robot Voice" stays as "Robot Voice")
-        let should_include_group = if let Some(last_group) = group_names.last() {
+        let should_include_group = group_names.last().map_or(false, |last_group| {
             if has_primary_metadata {
                 true
             } else if group_names.len() > 1 && !has_primary_metadata {
@@ -422,9 +416,7 @@ impl ToDisplayName for ItemMetadata {
             } else {
                 false
             }
-        } else {
-            false
-        };
+        });
 
         if should_include_group {
             if let Some(last_group) = group_names.last() {
@@ -464,7 +456,7 @@ impl ToDisplayName for ItemMetadata {
 
                 // Add remaining parts (everything after variant, which is first in parts if present)
                 // Parts order: variant?, performer?, section?, arrangement?, multi_mic?, track_type?, effect?
-                let skip_count = if self.variant.is_some() { 1 } else { 0 };
+                let skip_count = usize::from(self.variant.is_some());
                 for part in parts.iter().skip(skip_count) {
                     final_parts.push(part.clone());
                 }

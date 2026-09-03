@@ -1,8 +1,15 @@
 use daw_proto::{FolderDepthChange, TrackHierarchy, TrackNode};
-use monarchy::*;
+#[cfg(test)]
+use monarchy::StructureAssertions;
+use monarchy::{
+    cleanup_display_names, collapse_single_child_folders, expand_items_to_children, Config,
+    Metadata, Target, ToDisplayName,
+};
 
 // region: --- Modules
 
+pub mod apply;
+pub mod buses;
 pub mod colors;
 pub mod daw_module;
 pub mod equipment;
@@ -19,16 +26,18 @@ mod tempo;
 pub mod track_schema;
 pub mod visibility_rules;
 
+pub use apply::{apply_buses, route_to_bus, AppliedBuses, TemplateTarget};
+pub use buses::{bus_for_path, bus_nodes, bus_nodes_for_paths, buses_for_paths, BusSpec, BUS_TREE};
 pub use error::{Error, Result};
 pub use golden::golden_template;
 pub use groups::{
-    Bass, Choir, Drums, Guide, Guitars, Harmonica, Horns, Keys, Orchestra, Percussion, Reference,
-    StemSplit, Strings, Synths, Tracks, Vocals, SFX,
+    Bass, Choir, Drums, Guide, Guitars, Harmonica, Headphones, Horns, Keys, Orchestra, Percussion,
+    Reference, StemSplit, Strings, Synths, Talkback, Tracks, Vca, Vocals, SFX,
 };
 pub use item_metadata::ItemMetadata;
 
 // Re-export monarchy types needed for direct classification
-pub use groups::stem_split::is_stem_split_set;
+pub use groups::stem_split::{is_stem_split_set, stem_category, stem_source};
 pub use monarchy::{monarchy_sort, Structure};
 pub use protools::{extract_protools_metadata, strip_protools_markers, ProToolsMetadata};
 pub use song_name::{
@@ -38,7 +47,7 @@ pub use tempo::{extract_tempo, strip_tempo};
 
 // endregion: --- Modules
 
-/// Type alias for our standard Config with ItemMetadata
+/// Type alias for our standard Config with `ItemMetadata`
 pub type DynamicTemplateConfig = Config<ItemMetadata>;
 
 /// Dynamic template system for organizing DAW items
@@ -46,16 +55,26 @@ pub type DynamicTemplateConfig = Config<ItemMetadata>;
 pub struct DynamicTemplate;
 
 impl DynamicTemplate {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 }
 
 /// Creates a default configuration for the dynamic template system
+#[must_use]
 pub fn default_config() -> DynamicTemplateConfig {
     Config::builder()
         // Add metadata field patterns first (metadata-only group)
         .group(metadata_patterns::default_metadata_field_patterns())
+        // Talkback first: monarchy takes the first matching group, and a
+        // talkback mic is named after whoever it belongs to ("TB Bass",
+        // "TB Drums"). Registered after the instruments, every one of those
+        // matches the instrument it names and the chatter lands in the mix.
+        .group(Talkback)
+        // VCAs are control tracks, not audio; recognising them early keeps a
+        // "Drums VCA" from classifying as drums.
+        .group(Vca)
         // Then add regular groups
         .group(Drums)
         .group(Percussion)
@@ -77,10 +96,13 @@ pub fn default_config() -> DynamicTemplateConfig {
         .group(SFX)
         // Backing/playback tracks (loops, sequences) — a live-rig top-level group.
         .group(Tracks)
-        // Utility tracks at the bottom
+        // Utility tracks at the bottom. Guide precedes Headphones so a
+        // section-cue track reaches Guide rather than the cue-mix group.
         .group(Guide)
+        .group(Headphones)
+        // Reference carries Stem Split as a sub-group; a separation of the
+        // finished record is reference material, not tracked parts.
         .group(Reference)
-        .group(StemSplit)
         .build()
 }
 
@@ -108,7 +130,8 @@ impl Default for OrganizeOptions {
 
 impl OrganizeOptions {
     /// Create options with no transformations (raw monarchy sort output)
-    pub fn none() -> Self {
+    #[must_use]
+    pub const fn none() -> Self {
         Self {
             expand_items: false,
             cleanup_names: false,
@@ -117,7 +140,7 @@ impl OrganizeOptions {
     }
 }
 
-/// Trait for organizing item names into a TrackHierarchy using monarchy sort
+/// Trait for organizing item names into a `TrackHierarchy` using monarchy sort
 ///
 /// This trait accepts anything that can be converted into item names (strings),
 /// allowing you to pass strings directly.
@@ -126,6 +149,10 @@ pub trait OrganizeIntoTracks {
     ///
     /// If `existing_tracks` is provided, items will be matched to existing tracks
     /// and new tracks will only be created when needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the monarchy sort fails due to invalid configuration or input.
     fn organize_into_tracks(
         self,
         config: &DynamicTemplateConfig,
@@ -135,6 +162,10 @@ pub trait OrganizeIntoTracks {
     /// Organize items into tracks with additional options
     ///
     /// Use `OrganizeOptions::with_expansion()` to enable item expansion and name cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the monarchy sort fails due to invalid configuration or input.
     fn organize_into_tracks_with_options(
         self,
         config: &DynamicTemplateConfig,
@@ -163,7 +194,7 @@ where
         options: OrganizeOptions,
     ) -> monarchy::Result<TrackHierarchy> {
         // Convert input to strings
-        let input_strings: Vec<String> = self.into_iter().map(|t| t.into()).collect();
+        let input_strings: Vec<String> = self.into_iter().map(std::convert::Into::into).collect();
 
         // Detect song/project names that appear in 80%+ of inputs
         let song_name_config = song_name::SongNameConfig::default().with_threshold(0.8);
@@ -209,7 +240,7 @@ where
     }
 }
 
-/// Implement Target trait for TrackHierarchy so monarchy can work with existing tracks
+/// Implement Target trait for `TrackHierarchy` so monarchy can work with existing tracks
 impl Target<ItemMetadata> for TrackHierarchy {
     fn existing_items(&self) -> Vec<monarchy::Item<ItemMetadata>> {
         // Extract items from existing tracks and convert to monarchy Items
@@ -253,12 +284,12 @@ fn merge_hierarchies(existing: &TrackHierarchy, new: TrackHierarchy) -> TrackHie
     }
 }
 
-/// Trait for converting monarchy Structure to TrackHierarchy
+/// Trait for converting monarchy Structure to `TrackHierarchy`
 ///
-/// This recursively converts the hierarchical Structure into a flat list of TrackNodes
-/// where folder relationships are represented using folder_depth_change.
+/// This recursively converts the hierarchical Structure into a flat list of `TrackNodes`
+/// where folder relationships are represented using `folder_depth_change`.
 pub trait IntoTracks<M: Metadata> {
-    /// Convert the Structure to a TrackHierarchy
+    /// Convert the Structure to a `TrackHierarchy`
     ///
     /// # Example
     /// ```ignore
@@ -277,14 +308,14 @@ impl<M: Metadata + ToDisplayName> IntoTracks<M> for Structure<M> {
     }
 }
 
-/// Convert a monarchy Structure to a TrackHierarchy
+/// Convert a monarchy Structure to a `TrackHierarchy`
 fn structure_to_hierarchy<M: Metadata + ToDisplayName>(structure: &Structure<M>) -> TrackHierarchy {
     let mut tracks = Vec::new();
     structure_to_tracks_recursive(structure, &mut tracks, true, &[]);
     TrackHierarchy { tracks }
 }
 
-/// Helper function to recursively convert Structure to TrackNodes
+/// Helper function to recursively convert Structure to `TrackNodes`
 ///
 /// The `group_path` parameter tracks the hierarchy of group names from root to
 /// current node, used for color lookup via `colors::color_for_path()`.
@@ -311,7 +342,7 @@ fn structure_to_tracks_recursive<M: Metadata + ToDisplayName>(
     let mut track = TrackNode::new(structure.name.clone());
 
     // Look up color from the hierarchical path
-    track.color = colors::color_for_path(&current_path).map(|c| c.to_hex());
+    track.color = colors::color_for_path(&current_path).map(color_palette::Color::to_hex);
 
     // Add items from monarchy structure to the track
     for monarchy_item in &structure.items {
@@ -319,7 +350,10 @@ fn structure_to_tracks_recursive<M: Metadata + ToDisplayName>(
     }
 
     // If this structure has children, it's a folder
-    if !structure.children.is_empty() {
+    if structure.children.is_empty() {
+        // Leaf track
+        tracks.push(track);
+    } else {
         track.is_folder = true;
         track.folder_depth_change = FolderDepthChange::FolderStart;
         tracks.push(track);
@@ -331,16 +365,14 @@ fn structure_to_tracks_recursive<M: Metadata + ToDisplayName>(
             structure_to_tracks_recursive(child, tracks, false, &current_path);
 
             // If this is the last child, apply folder closing to the last track added
-            if i == num_children - 1 && tracks.len() > tracks_before {
+            if i.saturating_add(1) == num_children && tracks.len() > tracks_before {
                 if let Some(last_track) = tracks.last_mut() {
                     let current = last_track.folder_depth_change.to_raw_value();
-                    last_track.folder_depth_change = FolderDepthChange::from_raw_value(current - 1);
+                    last_track.folder_depth_change =
+                        FolderDepthChange::from_raw_value(current.saturating_sub(1));
                 }
             }
         }
-    } else {
-        // Leaf track
-        tracks.push(track);
     }
 }
 
@@ -428,7 +460,7 @@ fn strip_protools_from_structure(structure: &mut Structure<ItemMetadata>) {
 /// Strip equipment names from structure display names
 ///
 /// This function recursively traverses the structure and strips equipment-related
-/// metadata like mic models (U47, SM57), preamp models (OptoComp, 1176),
+/// metadata like mic models (U47, SM57), preamp models (`OptoComp`, 1176),
 /// processing markers (LIM, EDT), and synth hardware (CASIO, Roland FA06).
 fn strip_equipment_from_structure(structure: &mut Structure<ItemMetadata>) {
     // Strip equipment from this node's display name
@@ -454,13 +486,13 @@ mod tests {
     type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
     #[test]
-    fn test_acc_guitar_structure() -> Result<()> {
+    fn test_acc_guitar_structure() {
         // -- Setup & Fixtures
         let inputs = vec!["Acc Guitar"];
         let config = default_config();
 
         // -- Exec
-        let result = monarchy_sort(inputs, &config)?;
+        let result = monarchy_sort(inputs, &config).unwrap();
 
         // -- Check
         // Guitars is not transparent, so it keeps its name even with a single item
@@ -473,8 +505,6 @@ mod tests {
             .expect("Should have Guitars folder");
         assert_eq!(guitars.items.len(), 1, "Guitars should have 1 item");
         assert_eq!(guitars.items[0].original, "Acc Guitar");
-
-        Ok(())
     }
 
     #[test]

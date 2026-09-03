@@ -8,7 +8,7 @@ pub struct ElectricKeys;
 
 impl From<ElectricKeys> for Group<ItemMetadata> {
     fn from(_val: ElectricKeys) -> Self {
-        Group::builder("Electric")
+        Self::builder("Electric")
             .patterns(vec![
                 "electric_piano",
                 "electric piano",
@@ -35,7 +35,7 @@ pub struct Rhodes;
 
 impl From<Rhodes> for Group<ItemMetadata> {
     fn from(_val: Rhodes) -> Self {
-        Group::builder("Rhodes")
+        Self::builder("Rhodes")
             .patterns(vec!["rhodes", "fender_rhodes", "fender rhodes"])
             .build()
     }
@@ -46,7 +46,7 @@ pub struct Wurlitzer;
 
 impl From<Wurlitzer> for Group<ItemMetadata> {
     fn from(_val: Wurlitzer) -> Self {
-        Group::builder("Wurlitzer")
+        Self::builder("Wurlitzer")
             .patterns(vec!["wurlitzer", "wurli", "wurly"])
             .build()
     }
@@ -57,7 +57,7 @@ pub struct DX7;
 
 impl From<DX7> for Group<ItemMetadata> {
     fn from(_val: DX7) -> Self {
-        Group::builder("DX7")
+        Self::builder("DX7")
             .patterns(vec!["dx7", "dx-7", "dx 7", "fm piano", "fm_piano"])
             .build()
     }
@@ -68,7 +68,7 @@ pub struct Mellotron;
 
 impl From<Mellotron> for Group<ItemMetadata> {
     fn from(_val: Mellotron) -> Self {
-        Group::builder("Mellotron")
+        Self::builder("Mellotron")
             .patterns(vec!["mellotron", "chamberlin"])
             .build()
     }
@@ -79,7 +79,7 @@ pub struct Clavinet;
 
 impl From<Clavinet> for Group<ItemMetadata> {
     fn from(_val: Clavinet) -> Self {
-        Group::builder("Clavinet")
+        Self::builder("Clavinet")
             .patterns(vec!["clav", "clavinet"])
             .build()
     }
@@ -90,7 +90,7 @@ pub struct Pianet;
 
 impl From<Pianet> for Group<ItemMetadata> {
     fn from(_val: Pianet) -> Self {
-        Group::builder("Pianet")
+        Self::builder("Pianet")
             .patterns(vec!["pianet", "hohner"])
             .build()
     }

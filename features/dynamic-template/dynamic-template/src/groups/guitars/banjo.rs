@@ -8,7 +8,7 @@ pub struct Banjo;
 
 impl From<Banjo> for Group<ItemMetadata> {
     fn from(_val: Banjo) -> Self {
-        Group::builder("Banjo")
+        Self::builder("Banjo")
             .patterns(vec!["banjo", "bjo"])
             .build()
     }

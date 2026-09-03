@@ -8,7 +8,7 @@ pub struct Percussion;
 
 impl From<Percussion> for Group<ItemMetadata> {
     fn from(_val: Percussion) -> Self {
-        Group::builder("Percussion")
+        Self::builder("Percussion")
             .patterns(vec![
                 "timpani",
                 "timps",

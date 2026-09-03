@@ -22,6 +22,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_c_major(&self) -> DawResult<()>;
 
     #[action(
@@ -30,6 +34,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_g_major(&self) -> DawResult<()>;
 
     #[action(
@@ -38,6 +46,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_d_major(&self) -> DawResult<()>;
 
     #[action(
@@ -46,6 +58,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_a_major(&self) -> DawResult<()>;
 
     #[action(
@@ -54,6 +70,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_e_major(&self) -> DawResult<()>;
 
     #[action(
@@ -62,6 +82,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_b_major(&self) -> DawResult<()>;
 
     #[action(
@@ -70,6 +94,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_f_sharp_major(&self) -> DawResult<()>;
 
     #[action(
@@ -78,6 +106,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_c_sharp_major(&self) -> DawResult<()>;
 
     #[action(
@@ -86,6 +118,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_f_major(&self) -> DawResult<()>;
 
     #[action(
@@ -94,6 +130,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_b_flat_major(&self) -> DawResult<()>;
 
     #[action(
@@ -102,6 +142,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_e_flat_major(&self) -> DawResult<()>;
 
     #[action(
@@ -110,6 +154,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_a_flat_major(&self) -> DawResult<()>;
 
     #[action(
@@ -118,6 +166,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_d_flat_major(&self) -> DawResult<()>;
 
     #[action(
@@ -126,6 +178,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_g_flat_major(&self) -> DawResult<()>;
 
     #[action(
@@ -134,6 +190,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_c_flat_major(&self) -> DawResult<()>;
 
     #[action(
@@ -142,6 +202,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_a_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -150,6 +214,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_e_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -158,6 +226,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_b_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -166,6 +238,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_f_sharp_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -174,6 +250,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_c_sharp_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -182,6 +262,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_g_sharp_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -190,6 +274,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_d_sharp_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -198,6 +286,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_a_sharp_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -206,6 +298,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_d_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -214,6 +310,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_g_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -222,6 +322,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_c_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -230,6 +334,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_f_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -238,6 +346,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_b_flat_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -246,6 +358,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_e_flat_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -254,6 +370,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn set_key_a_flat_minor(&self) -> DawResult<()>;
 
     #[action(
@@ -262,6 +382,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn bake_key_signatures(&self) -> DawResult<()>;
 
     #[action(
@@ -270,6 +394,10 @@ pub trait KeyActions {
         category = "Session",
         group = "Key"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the key change
+    /// cannot be written at the edit cursor.
     fn clear_key_changes(&self) -> DawResult<()>;
 }
 

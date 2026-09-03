@@ -27,7 +27,7 @@
 //!
 //! Purely presentational: reports edits via callbacks; the state of record is
 //! always the `Track` props. Meters are prop-driven (the app feeds real peaks
-//! from per-stem AnalyserNodes) — this component never invents motion.
+//! from per-stem `AnalyserNodes`) — this component never invents motion.
 
 use crate::prelude::*;
 use daw_proto::Track;
@@ -43,7 +43,7 @@ const DB_TICKS: &[&str] = &["0", "-5", "-10", "-20", "-40", "-∞"];
 /// highlight, sliding in a visibly inset dark groove. Injected once. `--fader`
 /// is a per-strip CSS custom property (the track color) — the only raw color;
 /// everything else is theme tokens / neutral shading.
-const FADER_CSS: &str = r#"
+const FADER_CSS: &str = r"
 .fts-fader{-webkit-appearance:none;appearance:none;background:transparent;cursor:pointer;}
 .fts-fader::-webkit-slider-runnable-track{width:8px;border-radius:5px;
   background:linear-gradient(to right,#000,color-mix(in oklab,var(--muted) 55%,#000),#000);
@@ -66,7 +66,7 @@ const FADER_CSS: &str = r#"
     repeating-linear-gradient(to bottom,rgba(0,0,0,.30) 0 1.5px,transparent 1.5px 6px),
     linear-gradient(to bottom,rgba(255,255,255,.42),rgba(255,255,255,0) 45%),
     var(--fader,var(--primary));}
-"#;
+";
 
 /// Instrument category derived from a track / group name.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -96,48 +96,48 @@ impl Inst {
         // Reference FIRST so "Original Track" lands in Reference, not Tracks
         // (it contains "track") — and never in an instrument folder.
         if has(&["reference", "original", "backing"]) {
-            Inst::Reference
+            Self::Reference
         } else if has(&["click", "cue", "guide", "metronome", "count"]) {
-            Inst::Click
+            Self::Click
         } else if has(&[
             "drum", "kick", "snare", "tom", "hat", "perc", "cymbal", "ride", "crash",
         ]) {
-            Inst::Drums
+            Self::Drums
         } else if has(&["bass"]) {
-            Inst::Bass
+            Self::Bass
         } else if has(&["guitar", "gtr", "electric", "acoustic"]) {
-            Inst::Guitars
+            Self::Guitars
         } else if has(&["synth", "arp", "saw", "pluck"]) {
-            Inst::Synths
+            Self::Synths
         } else if has(&["key", "piano", "organ", "pad", "rhodes", "wurli", "ep "]) {
-            Inst::Keys
+            Self::Keys
         } else if has(&["string", "violin", "viola", "cello", "orchestr"]) {
-            Inst::Strings
+            Self::Strings
         } else if has(&["vox", "vocal", "choir", "bgv", "lead", "singer"]) {
-            Inst::Vocals
+            Self::Vocals
         } else if has(&[
             "loop", "sample", "sequence", "playback", "sfx", "stem", "track",
         ]) {
-            Inst::Tracks
+            Self::Tracks
         } else {
-            Inst::Other
+            Self::Other
         }
     }
 
     /// Group label / folder name.
-    fn label(self) -> &'static str {
+    const fn label(self) -> &'static str {
         match self {
-            Inst::Reference => "Reference",
-            Inst::Drums => "Drums",
-            Inst::Bass => "Bass",
-            Inst::Guitars => "Guitars",
-            Inst::Synths => "Synths",
-            Inst::Keys => "Keys",
-            Inst::Strings => "Strings",
-            Inst::Vocals => "Vocals",
-            Inst::Tracks => "Tracks",
-            Inst::Click => "Click",
-            Inst::Other => "Other",
+            Self::Reference => "Reference",
+            Self::Drums => "Drums",
+            Self::Bass => "Bass",
+            Self::Guitars => "Guitars",
+            Self::Synths => "Synths",
+            Self::Keys => "Keys",
+            Self::Strings => "Strings",
+            Self::Vocals => "Vocals",
+            Self::Tracks => "Tracks",
+            Self::Click => "Click",
+            Self::Other => "Other",
         }
     }
 }
@@ -174,11 +174,27 @@ fn fader_db_label(v: f64) -> String {
     }
 }
 
+/// A `0.0..=1.0` ratio as a whole percentage (`0..=100`).
+fn pct_from_ratio(ratio: f64) -> i32 {
+    let clamped = (ratio * 100.0).round().clamp(0.0, 100.0);
+    // Range-checked above (0.0..=100.0); std has no non-`as` float-to-int
+    // conversion.
+    #[allow(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    {
+        clamped as i32
+    }
+}
+
 /// `#RRGGBB` for a track color, or a neutral grey fallback.
 fn color_hex(color: Option<u32>) -> String {
-    color
-        .map(|c| format!("#{:06x}", c & 0xFF_FF_FF))
-        .unwrap_or_else(|| "#52525b".to_string())
+    color.map_or_else(
+        || "#52525b".to_string(),
+        |c| format!("#{:06x}", c & 0xFF_FF_FF),
+    )
 }
 
 // ── Submix tree ─────────────────────────────────────────────────────────────
@@ -244,17 +260,20 @@ fn organize_builtin(tracks: &[Track]) -> Vec<MixNode> {
         groups.entry(c).or_default().push(t);
     }
     if order.len() <= 1 {
-        return groups
-            .remove(&order[0])
-            .unwrap_or_default()
-            .into_iter()
-            .map(MixNode::Leaf)
-            .collect();
+        if let Some(&key) = order.first() {
+            return groups
+                .remove(&key)
+                .unwrap_or_default()
+                .into_iter()
+                .map(MixNode::Leaf)
+                .collect();
+        }
+        return Vec::new();
     }
     // Reference is the dedicated, always-leftmost home for the reference /
     // original track — pull it to the front regardless of stem order. Stable,
     // so every other category keeps its first-seen order behind it.
-    order.sort_by_key(|c| if *c == Inst::Reference { 0 } else { 1 });
+    order.sort_by_key(|c| i32::from(*c != Inst::Reference));
     let mut out = Vec::new();
     for c in order {
         let items = groups.remove(&c).unwrap_or_default();
@@ -263,7 +282,7 @@ fn organize_builtin(tracks: &[Track]) -> Vec<MixNode> {
         // categories collapse a single track to a bare strip.
         let always_folder = matches!(c, Inst::Reference | Inst::Tracks);
         if items.len() == 1 && !always_folder {
-            out.push(MixNode::Leaf(items.into_iter().next().unwrap()));
+            out.extend(items.into_iter().map(MixNode::Leaf));
         } else {
             out.push(MixNode::Folder(FolderNode {
                 name: c.label().to_string(),
@@ -301,21 +320,20 @@ fn organize_dynamic(tracks: &[Track]) -> Vec<MixNode> {
 
     let names: Vec<String> = leaves.iter().map(|t| t.name.clone()).collect();
     let cfg = default_config();
-    let hierarchy = match names.organize_into_tracks(&cfg, None) {
-        Ok(h) => h,
-        Err(_) => return organize_builtin(tracks),
+    let Ok(hierarchy) = names.organize_into_tracks(&cfg, None) else {
+        return organize_builtin(tracks);
     };
 
     // Absolute folder depth per node (mirrors TrackHierarchy::print_tree).
     let mut depth = 0i32;
     let mut entries: Vec<(i32, &daw_proto::TrackNode)> = Vec::new();
-    for node in hierarchy.tracks.iter() {
+    for node in &hierarchy.tracks {
         if let FolderDepthChange::ClosesLevels(n) = node.folder_depth_change {
-            depth = (depth + n as i32).max(0);
+            depth = depth.saturating_add(i32::from(n)).max(0);
         }
         entries.push((depth, node));
         if node.folder_depth_change == FolderDepthChange::FolderStart {
-            depth += 1;
+            depth = depth.saturating_add(1);
         }
     }
 
@@ -346,11 +364,13 @@ fn parse_entries(
     consumed: &mut std::collections::HashSet<String>,
 ) -> Vec<MixNode> {
     let mut out = Vec::new();
-    while *i < entries.len() && entries[*i].0 == level {
-        let node = entries[*i].1;
+    while let Some(&(entry_level, node)) = entries.get(*i) {
+        if entry_level != level {
+            break;
+        }
+        *i = i.saturating_add(1);
         if node.is_folder {
-            *i += 1;
-            let children = parse_entries(entries, i, level + 1, by_name, consumed);
+            let children = parse_entries(entries, i, level.saturating_add(1), by_name, consumed);
             if !children.is_empty() {
                 out.push(MixNode::Folder(FolderNode {
                     name: node.name.clone(),
@@ -358,7 +378,6 @@ fn parse_entries(
                 }));
             }
         } else {
-            *i += 1;
             let keys = if node.items.is_empty() {
                 vec![node.name.clone()]
             } else {
@@ -401,7 +420,7 @@ pub fn MixerView(
     on_pan: Option<Callback<(String, f64)>>,
     /// Optional live meter levels: `track_guid -> peak 0.0..=1.0`. When absent
     /// (or missing a guid) the strip shows a static gutter. The app feeds this
-    /// from per-stem AnalyserNodes; this component only reads it.
+    /// from per-stem `AnalyserNodes`; this component only reads it.
     #[props(default)]
     levels: Option<HashMap<String, f32>>,
 ) -> Element {
@@ -446,7 +465,7 @@ pub fn MixerView(
                                     text-[10px] font-semibold text-muted-foreground \
                                     hover:bg-accent hover:text-foreground",
                             onclick: {
-                                let anchor = g.anchor.clone();
+                                let anchor = g.anchor;
                                 move |_| {
                                     let _ = dioxus::document::eval(&format!(
                                         "document.getElementById('{anchor}')?.scrollIntoView({{inline:'start',block:'nearest',behavior:'smooth'}});"
@@ -537,7 +556,8 @@ fn MixGroup(
     let avg_vol = if leaves.is_empty() {
         1.0
     } else {
-        leaves.iter().map(|t| t.volume).sum::<f64>() / leaves.len() as f64
+        let count = u32::try_from(leaves.len()).unwrap_or(1);
+        leaves.iter().map(|t| t.volume).sum::<f64>() / f64::from(count)
     };
     let accent = color_hex(leaves.iter().find_map(|t| t.color));
     let db_label = fader_db_label(avg_vol);
@@ -545,7 +565,7 @@ fn MixGroup(
     // Snapshots captured by the group-control closures.
     let leaves_m = leaves.clone();
     let leaves_s = leaves.clone();
-    let leaves_v = leaves.clone();
+    let leaves_v = leaves;
 
     let border = if depth == 0 {
         "border-primary/40"
@@ -646,7 +666,7 @@ fn MixGroup(
                             },
                             title: "Mute group",
                             onclick: move |_| {
-                                let desired = !(!leaves_m.is_empty() && leaves_m.iter().all(|t| t.muted));
+                                let desired = leaves_m.is_empty() || leaves_m.iter().any(|t| !t.muted);
                                 for t in &leaves_m {
                                     if t.muted != desired {
                                         on_mute.call(t.guid.clone());
@@ -735,9 +755,11 @@ fn ChannelStrip(
     let pan_label = if track.pan.abs() < 0.02 {
         "C".to_string()
     } else if track.pan < 0.0 {
-        format!("L{}", (track.pan.abs() * 100.0).round() as i32)
+        let pan_pct = pct_from_ratio(track.pan.abs());
+        format!("L{pan_pct}")
     } else {
-        format!("R{}", (track.pan * 100.0).round() as i32)
+        let pan_pct = pct_from_ratio(track.pan);
+        format!("R{pan_pct}")
     };
 
     let ring = if focused {
@@ -753,25 +775,22 @@ fn ChannelStrip(
     // Meter fill: live level → height + green/yellow/red gradient (color rises
     // toward the top as the fill grows). Static fallback is a faint
     // volume-proportional bar (no motion, no fake data).
-    let (meter_h, meter_style) = match level {
-        Some(l) => {
-            let pct = (l.clamp(0.0, 1.0) * 100.0) as i32;
-            (
-                pct,
-                "background:linear-gradient(to top,#22c55e,#eab308 70%,#ef4444);".to_string(),
-            )
-        }
-        None => {
-            let pct = (track.volume.clamp(0.0, 1.0) * 100.0) as i32;
-            (
-                pct,
-                "background:var(--muted-foreground);opacity:0.3;".to_string(),
-            )
-        }
+    let (meter_h, meter_style) = if let Some(l) = level {
+        let pct = pct_from_ratio(f64::from(l.clamp(0.0, 1.0)));
+        (
+            pct,
+            "background:linear-gradient(to top,#22c55e,#eab308 70%,#ef4444);".to_string(),
+        )
+    } else {
+        let pct = pct_from_ratio(track.volume.clamp(0.0, 1.0));
+        (
+            pct,
+            "background:var(--muted-foreground);opacity:0.3;".to_string(),
+        )
     };
 
     let (g_vol, g_mute, g_solo, g_pan) = (guid.clone(), guid.clone(), guid.clone(), guid.clone());
-    let h_enter = guid.clone();
+    let h_enter = guid;
 
     rsx! {
         div {

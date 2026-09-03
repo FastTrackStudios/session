@@ -1,6 +1,6 @@
-//! Offline repro: encode the exact payloads SetlistService.setlist()
+//! Offline repro: encode the exact payloads `SetlistService.setlist()`
 //! returns through the facet wire codec (facet-postcard, the 0.50-line
-//! successor to the old vox_postcard re-export), with no network.
+//! successor to the old `vox_postcard` re-export), with no network.
 use facet::Facet;
 use session_proto::services::SessionServiceError;
 use session_proto::setlist::Setlist;

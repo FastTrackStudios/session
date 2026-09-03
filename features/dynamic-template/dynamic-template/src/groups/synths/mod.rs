@@ -36,7 +36,7 @@ pub struct Prophet;
 
 impl From<Prophet> for Group<ItemMetadata> {
     fn from(_val: Prophet) -> Self {
-        Group::builder("Prophet").patterns(vec!["prophet"]).build()
+        Self::builder("Prophet").patterns(vec!["prophet"]).build()
     }
 }
 
@@ -45,9 +45,12 @@ pub struct Synths;
 
 impl From<Synths> for Group<ItemMetadata> {
     fn from(_val: Synths) -> Self {
-        Group::builder("Synths")
+        Self::builder("Synths")
             .prefix("SY")
-            .patterns(vec!["synth", "synthesizer", "bells", "sampler"])
+            .patterns(vec!["synth", "synths", "synthesizer", "bells", "sampler"])
+            // A talkback mic is named for whoever it belongs to ("TB Synth"),
+            // so without this it classifies as the thing it is listening to.
+            .exclude(["tb", "talkback", "vca", "hp", "headphone"])
             .group(Prophet)
             .group(Lead)
             .group(Pad)

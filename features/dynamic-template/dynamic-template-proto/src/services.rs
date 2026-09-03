@@ -3,7 +3,9 @@
 //! Defines the `DynamicTemplateService` trait for organizing items into
 //! track hierarchies.
 
-use crate::types::*;
+use crate::types::{
+    ExtractMetadataRequest, ExtractMetadataResponse, GroupInfo, OrganizeRequest, OrganizeResponse,
+};
 use vox::service;
 
 /// Service for dynamic template organization

@@ -17,15 +17,20 @@ async fn project_list(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
         println!("  [{i}] GUID: {}", p.guid());
     }
 
-    assert!(
-        !projects.is_empty(),
-        "Should have at least 1 open project (the test project)"
-    );
+    if projects.is_empty() {
+        return Err(eyre::eyre!(
+            "Should have at least 1 open project (the test project)"
+        ));
+    }
 
     // Our test project should be among them
     let test_guid = ctx.project.guid().to_string();
     let found = projects.iter().any(|p| p.guid() == test_guid);
-    assert!(found, "Test project GUID should be in the project list");
+    if !found {
+        return Err(eyre::eyre!(
+            "Test project GUID should be in the project list"
+        ));
+    }
 
     Ok(())
 }
@@ -41,11 +46,11 @@ async fn project_current(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()>
     println!("Current project GUID: {}", current.guid());
     println!("Test project GUID:    {}", ctx.project.guid());
 
-    assert_eq!(
-        current.guid(),
-        ctx.project.guid(),
-        "Current project should be the test project after select"
-    );
+    if current.guid() != ctx.project.guid() {
+        return Err(eyre::eyre!(
+            "Current project should be the test project after select"
+        ));
+    }
 
     Ok(())
 }
@@ -64,14 +69,19 @@ async fn project_create_and_close(ctx: &daw::test::ReaperTestContext) -> eyre::R
 
     let after_create = ctx.daw.projects().await?;
     println!("Projects after create: {}", after_create.len());
-    assert_eq!(
-        after_create.len(),
-        count_before + 1,
-        "Should have one more project after create"
-    );
+    let expected_count = count_before.saturating_add(1);
+    if after_create.len() != expected_count {
+        return Err(eyre::eyre!(
+            "Should have one more project after create, expected {}, got {}",
+            expected_count,
+            after_create.len()
+        ));
+    }
 
     let found = after_create.iter().any(|p| p.guid() == new_guid);
-    assert!(found, "New project GUID should be in the list");
+    if !found {
+        return Err(eyre::eyre!("New project GUID should be in the list"));
+    }
 
     // Close the new project
     // Remove all tracks first to avoid save dialog
@@ -81,14 +91,18 @@ async fn project_create_and_close(ctx: &daw::test::ReaperTestContext) -> eyre::R
 
     let after_close = ctx.daw.projects().await?;
     println!("Projects after close: {}", after_close.len());
-    assert_eq!(
-        after_close.len(),
-        count_before,
-        "Should be back to original count after close"
-    );
+    if after_close.len() != count_before {
+        return Err(eyre::eyre!(
+            "Should be back to original count after close, expected {}, got {}",
+            count_before,
+            after_close.len()
+        ));
+    }
 
     let still_exists = after_close.iter().any(|p| p.guid() == new_guid);
-    assert!(!still_exists, "Closed project should no longer be in list");
+    if still_exists {
+        return Err(eyre::eyre!("Closed project should no longer be in list"));
+    }
 
     Ok(())
 }
@@ -107,7 +121,9 @@ async fn project_switch(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> 
 
     let current = ctx.daw.current_project().await?;
     println!("After switching to B: current={}", current.guid());
-    assert_eq!(current.guid(), guid_b, "Current should be project B");
+    if current.guid() != guid_b {
+        return Err(eyre::eyre!("Current should be project B"));
+    }
 
     // Switch back to test project
     ctx.daw.select_project(ctx.project.guid()).await?;
@@ -115,11 +131,9 @@ async fn project_switch(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> 
 
     let current = ctx.daw.current_project().await?;
     println!("After switching back: current={}", current.guid());
-    assert_eq!(
-        current.guid(),
-        ctx.project.guid(),
-        "Current should be test project"
-    );
+    if current.guid() != ctx.project.guid() {
+        return Err(eyre::eyre!("Current should be test project"));
+    }
 
     // Cleanup: close project B
     project_b.tracks().remove_all().await?;
@@ -157,20 +171,18 @@ async fn project_independent_transport(ctx: &daw::test::ReaperTestContext) -> ey
     // Read project B position (currently active)
     let pos_b = transport_b.get_position().await?;
     println!("Project B position: {pos_b:.2}s (expected ~50s)");
-    assert!(
-        (pos_b - 50.0).abs() < 1.0,
-        "Project B should be at ~50s, got {pos_b:.2}"
-    );
+    if (pos_b - 50.0).abs() >= 1.0 {
+        return Err(eyre::eyre!("Project B should be at ~50s, got {pos_b:.2}"));
+    }
 
     // Switch back to project A and verify it kept its position
     ctx.daw.select_project(ctx.project.guid()).await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
     let pos_a = transport_a.get_position().await?;
     println!("Project A position: {pos_a:.2}s (expected ~10s)");
-    assert!(
-        (pos_a - 10.0).abs() < 1.0,
-        "Project A should be at ~10s, got {pos_a:.2}"
-    );
+    if (pos_a - 10.0).abs() >= 1.0 {
+        return Err(eyre::eyre!("Project A should be at ~10s, got {pos_a:.2}"));
+    }
 
     // Cleanup
     ctx.daw.select_project(&guid_b).await?;
@@ -188,7 +200,9 @@ async fn project_get_by_guid(ctx: &daw::test::ReaperTestContext) -> eyre::Result
 
     let project = ctx.daw.project(&guid).await?;
     println!("Got project by GUID: {}", project.guid());
-    assert_eq!(project.guid(), guid, "GUID should match");
+    if project.guid() != guid {
+        return Err(eyre::eyre!("GUID should match"));
+    }
 
     Ok(())
 }

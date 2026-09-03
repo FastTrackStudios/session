@@ -8,7 +8,7 @@ pub struct Trumpet;
 
 impl From<Trumpet> for Group<ItemMetadata> {
     fn from(_val: Trumpet) -> Self {
-        Group::builder("Trumpet")
+        Self::builder("Trumpet")
             .patterns(vec![
                 "trumpet",
                 "tpt",

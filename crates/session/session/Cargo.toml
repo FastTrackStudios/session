@@ -51,25 +51,30 @@ keyflow-daw-analysis = { workspace = true }
 smallvec = "1.13"
 rustc-hash = "2"
 
-# Native-only backends. The REAPER FFI + file/reaper daw backends, the
-# SynchronizationEngine (itself REAPER-linked), the raw reaper-rs crates
-# (used by `take_ranking`), `dynamic-template` (native template engine, used
-# by `daw_module` / `track_manager_actions`), and vox's `transport-local`
-# (Unix-socket transport → tokio-net → mio) do not build for wasm32. The
-# browser build gets none of these; the corresponding session modules are
-# `#[cfg(not(target_arch = "wasm32"))]`.
+# Native-only backends. `dynamic-template` (native template engine, used
+# by `daw_module` / `track_manager_actions`) and vox's `transport-local`
+# (Unix-socket transport → tokio-net → mio) do not build for wasm32, but
+# ARE backend-agnostic (no REAPER dependency) — unconditional here. The
+# REAPER-only crates (`daw-reaper`, `daw-actions`, `daw-synchronization`,
+# `reaper-high`/`reaper-low`/`reaper-medium`) are optional, gated by the
+# `reaper` feature below — a REAPER-hosted consumer (the extension) opts
+# in; a `daw-standalone`-only consumer (apps/desktop) does not, and must
+# not: those crates declare REAPER-process-only native symbols
+# (`delete_midi_output`, `MIDI_eventlist_AddItem`, ...) that can never
+# resolve in a standalone executable's link — pulling them in
+# unconditionally is what broke `session-desktop`'s build.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-daw = { workspace = true, features = ["file", "reaper"] }
-daw-reaper = { workspace = true }
+daw = { workspace = true, features = ["file"] }
+daw-reaper = { workspace = true, optional = true }
 # Pre-roll / record / grouping / take-ranking / auto-colour actions —
 # generic DAW operations, moved out of this crate.
-daw-actions = { workspace = true }
-daw-synchronization.workspace = true
+daw-actions = { workspace = true, optional = true }
+daw-synchronization = { workspace = true, optional = true }
 # Raw REAPER FFI — used by take_ranking for cursor / item / take-marker ops
 # that aren't covered by the daw service traits.
-reaper-high = { workspace = true }
-reaper-low = { workspace = true }
-reaper-medium = { workspace = true }
+reaper-high = { workspace = true, optional = true }
+reaper-low = { workspace = true, optional = true }
+reaper-medium = { workspace = true, optional = true }
 dynamic-template.workspace = true
 vox = { workspace = true, features = ["transport-local"] }
 
@@ -89,12 +94,33 @@ daw = { workspace = true, features = ["standalone", "file", "test-harness"] }
 # same workaround dynamic-template carries.
 daw-standalone = { workspace = true, features = ["bootstrap", "audio"] }
 daw-proto = { workspace = true }
+# Test-only: `standalone_setlist_harness.rs` exercises the live DAW sync
+# bridge directly. Dev-dependencies never leak into a consumer's build
+# (unlike the `[target...dependencies]` table above), so this doesn't
+# reintroduce REAPER linkage into `session-desktop` or any other consumer.
+daw-synchronization = { workspace = true }
 tokio = { workspace = true }
 tracing-subscriber = { workspace = true }
 eyre.workspace = true
 # `compare_sections` example reads the legacy `manifest.json`.
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+
+[features]
+# Real REAPER integration: window-layout modes (screensets), auto-colour
+# action registration, the DawModule extension glue, take-ranking, live
+# cross-window DAW sync. Off by default. A REAPER-hosted binary (the
+# extension) enables this explicitly; `apps/desktop` (daw-standalone
+# only) must not — see the dependency-table comment above.
+reaper = [
+    "daw/reaper",
+    "dep:daw-reaper",
+    "dep:daw-actions",
+    "dep:daw-synchronization",
+    "dep:reaper-high",
+    "dep:reaper-low",
+    "dep:reaper-medium",
+]
 
 [lints]
 workspace = true

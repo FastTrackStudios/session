@@ -34,6 +34,7 @@ pub enum RoutingChannel {
 
 impl RoutingChannel {
     /// Human-readable track name in REAPER.
+    #[must_use]
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Click => "Click",
@@ -51,6 +52,7 @@ impl RoutingChannel {
     }
 
     /// Which folder group this channel belongs to.
+    #[must_use]
     pub const fn group(&self) -> RoutingGroup {
         match self {
             Self::Click | Self::Loop | Self::Count | Self::Guide => RoutingGroup::ClickGuide,
@@ -61,12 +63,26 @@ impl RoutingChannel {
     /// Default 0-based stereo pair offset for hardware loopback.
     ///
     /// The actual hardware pair index = `config.base_pair + default_loopback_pair_index()`.
+    #[must_use]
     pub const fn default_loopback_pair_index(&self) -> u32 {
-        *self as u32
+        match self {
+            Self::Click => 0,
+            Self::Loop => 1,
+            Self::Count => 2,
+            Self::Guide => 3,
+            Self::Drums => 4,
+            Self::Percussion => 5,
+            Self::Bass => 6,
+            Self::Guitar => 7,
+            Self::Keys => 8,
+            Self::Vocals => 9,
+            Self::SFX => 10,
+        }
     }
 
     /// All routing channels in canonical order.
-    pub const fn all() -> &'static [RoutingChannel] {
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
         &[
             Self::Click,
             Self::Loop,
@@ -83,12 +99,14 @@ impl RoutingChannel {
     }
 
     /// Channels in the Click + Guide folder.
-    pub const fn click_guide_channels() -> &'static [RoutingChannel] {
+    #[must_use]
+    pub const fn click_guide_channels() -> &'static [Self] {
         &[Self::Click, Self::Loop, Self::Count, Self::Guide]
     }
 
     /// Channels in the Tracks (instrument) folder.
-    pub const fn track_channels() -> &'static [RoutingChannel] {
+    #[must_use]
+    pub const fn track_channels() -> &'static [Self] {
         &[
             Self::Drums,
             Self::Percussion,
@@ -116,6 +134,7 @@ pub enum RoutingGroup {
 
 impl RoutingGroup {
     /// Folder name in REAPER.
+    #[must_use]
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::ClickGuide => "Click + Guide",
@@ -139,13 +158,16 @@ pub struct LoopbackConfig {
 
 impl LoopbackConfig {
     /// Create a config with a custom base pair offset.
-    pub fn with_base_pair(base_pair: u32) -> Self {
+    #[must_use]
+    pub const fn with_base_pair(base_pair: u32) -> Self {
         Self { base_pair }
     }
 
     /// Get the hardware loopback stereo pair index for a channel.
-    pub fn pair_index(&self, channel: RoutingChannel) -> u32 {
-        self.base_pair + channel.default_loopback_pair_index()
+    #[must_use]
+    pub const fn pair_index(&self, channel: RoutingChannel) -> u32 {
+        self.base_pair
+            .saturating_add(channel.default_loopback_pair_index())
     }
 
     /// Encode the record input value for REAPER's `I_RECINPUT` track parameter.
@@ -154,14 +176,15 @@ impl LoopbackConfig {
     /// `(pair_index * 2) | 1024` (1024 = stereo flag) + loopback offset.
     ///
     /// REAPER loopback inputs use channel indices starting at the loopback base.
-    /// The formula: `channel_index | 1024` where channel_index is the first
+    /// The formula: `channel_index | 1024` where `channel_index` is the first
     /// channel of the stereo pair (0-based within the loopback range).
+    #[must_use]
     pub fn recinput_value(&self, channel: RoutingChannel) -> i32 {
         let pair = self.pair_index(channel);
         // Stereo input from loopback: (first_channel) | 1024 (stereo flag)
         // Loopback channels in REAPER use indices 512+
-        let first_channel = 512 + (pair * 2);
-        (first_channel | 1024) as i32
+        let first_channel = 512u32.saturating_add(pair.saturating_mul(2));
+        i32::try_from(first_channel | 1024).unwrap_or(i32::MAX)
     }
 }
 
@@ -171,13 +194,13 @@ impl LoopbackConfig {
 pub const ROUTING_PROJECT_FILENAME: &str = "FTS-Routing.RPP";
 
 // r[impl routing.project.extstate]
-/// ExtState section for routing project identification.
+/// `ExtState` section for routing project identification.
 pub const EXT_STATE_SECTION: &str = "FTS";
 
-/// ExtState key to identify a project as the routing project.
+/// `ExtState` key to identify a project as the routing project.
 pub const EXT_STATE_KEY_IS_ROUTING: &str = "is_routing_project";
 
-/// ExtState value indicating this is the routing project.
+/// `ExtState` value indicating this is the routing project.
 pub const EXT_STATE_VALUE_TRUE: &str = "1";
 
 // ── Tests ──────────────────────────────────────────────────────────────────

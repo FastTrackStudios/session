@@ -19,7 +19,8 @@ pub struct GuidePlayerState {
 }
 
 impl GuidePlayerState {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             playback_position_guide: 0,
             is_playing_guide: false,
@@ -28,7 +29,7 @@ impl GuidePlayerState {
     }
 
     /// Reset playback state
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.playback_position_guide = 0;
         self.is_playing_guide = false;
         self.guide_has_triggered = false;
@@ -70,7 +71,7 @@ impl GuidePlayer {
                         guide_left,
                         guide_right,
                     );
-                    state.playback_position_guide += 1;
+                    state.playback_position_guide = state.playback_position_guide.saturating_add(1);
 
                     if state.playback_position_guide >= guide_audio.frames() {
                         // Finished playing

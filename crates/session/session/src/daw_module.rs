@@ -1,4 +1,4 @@
-//! DawModule implementation for session.
+//! `DawModule` implementation for session.
 
 use crate::keyflow::actions as keyflow_actions;
 use crate::modes as mode_actions;
@@ -52,10 +52,10 @@ impl<D> DawModule for SessionModule<D>
 where
     D: SessionDaw,
 {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "session"
     }
-    fn display_name(&self) -> &str {
+    fn display_name(&self) -> &'static str {
         "Session Control"
     }
 

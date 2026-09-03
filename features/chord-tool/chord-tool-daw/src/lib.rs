@@ -5,7 +5,7 @@
 //! with no DAW behind it — the standalone example provides
 //! `chord_tool::LogSink` instead of this.
 //!
-//! Placement follows ChordGun: a chord lands at the edit cursor on the
+//! Placement follows `ChordGun`: a chord lands at the edit cursor on the
 //! selected track, and the cursor advances past it so repeated inserts
 //! lay out a progression left to right.
 
@@ -34,7 +34,7 @@ pub struct DawChordSink<D> {
 }
 
 impl<D> DawChordSink<D> {
-    pub fn new(daw: D) -> Self {
+    pub const fn new(daw: D) -> Self {
         Self {
             daw,
             playing: Mutex::new(Vec::new()),
@@ -84,7 +84,7 @@ impl<D: ChordDaw> DawChordSink<D> {
             .daw
             .create_midi_item(
                 project.clone(),
-                daw::service::TrackRef::Guid(track.guid.clone()),
+                daw::service::TrackRef::Guid(track.guid),
                 start,
                 end,
             )

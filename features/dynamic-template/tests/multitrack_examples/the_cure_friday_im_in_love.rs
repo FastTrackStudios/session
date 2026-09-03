@@ -1,52 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn the_cure_friday_im_in_love() -> Result<()> {
-    // -- Setup & Fixtures
-    // The Cure - Friday I'm In Love: Pop rock with multiple guitar overdubs and harmonies
-    let items = vec![
-        "01.Kick_01.wav",
-        "02.Snare_01.wav",
-        "03.Ohd_01 L.wav",
-        "04.Ohd_01 R.wav",
-        "05.Tambo_01.wav",
-        "06.Bass DI_01.wav",
-        "07.Bass Amp_01.wav",
-        "08.Acoustic_01.wav",
-        "09.Acoustic.dbl_01.wav",
-        "10.Acoustic OD_01.wav",
-        "11.Acoustic OD Dbl_01.wav",
-        "12.Gtr 1 DI_01.wav",
-        "13.Gtr 1 Amp_01.wav",
-        "14.Gtr 2 DI_01.wav",
-        "15.Gtr 2 Amp_01.wav",
-        "16.Gtr 2 DI Overlap_01.wav",
-        "17.Gtr 2 Amp Overlap_01.wav",
-        "18.Gtr Solo DI_01.wav",
-        "19.Gtr Solo Amp_01.wav",
-        "20.Gtr Root Note DI_01.wav",
-        "21.Gtr Root Note Amp_01.wav",
-        "23.Pad_01.wav",
-        "24.Vocal_01.wav",
-        "25.Vocal Overlap_01.wav",
-        "26. Vocal Dbl_01.wav",
-        "27.HARM_01.wav",
-        "28.Harm Overlap_01.wav",
-        "29.Friday I'm In Love Mix_01.wav",
-    ];
-
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
+fn the_cure_friday_im_in_love_expected() -> daw_proto::TrackHierarchy {
     let expected = TrackStructureBuilder::new()
         .folder("Drums")
         .track("Kick")
@@ -135,8 +90,54 @@ fn the_cure_friday_im_in_love() -> Result<()> {
         .item("28.Harm Overlap_01.wav")
         .end()
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn the_cure_friday_im_in_love() {
+    // -- Setup & Fixtures
+    // The Cure - Friday I'm In Love: Pop rock with multiple guitar overdubs and harmonies
+    let items = vec![
+        "01.Kick_01.wav",
+        "02.Snare_01.wav",
+        "03.Ohd_01 L.wav",
+        "04.Ohd_01 R.wav",
+        "05.Tambo_01.wav",
+        "06.Bass DI_01.wav",
+        "07.Bass Amp_01.wav",
+        "08.Acoustic_01.wav",
+        "09.Acoustic.dbl_01.wav",
+        "10.Acoustic OD_01.wav",
+        "11.Acoustic OD Dbl_01.wav",
+        "12.Gtr 1 DI_01.wav",
+        "13.Gtr 1 Amp_01.wav",
+        "14.Gtr 2 DI_01.wav",
+        "15.Gtr 2 Amp_01.wav",
+        "16.Gtr 2 DI Overlap_01.wav",
+        "17.Gtr 2 Amp Overlap_01.wav",
+        "18.Gtr Solo DI_01.wav",
+        "19.Gtr Solo Amp_01.wav",
+        "20.Gtr Root Note DI_01.wav",
+        "21.Gtr Root Note Amp_01.wav",
+        "23.Pad_01.wav",
+        "24.Vocal_01.wav",
+        "25.Vocal Overlap_01.wav",
+        "26. Vocal Dbl_01.wav",
+        "27.HARM_01.wav",
+        "28.Harm Overlap_01.wav",
+        "29.Friday I'm In Love Mix_01.wav",
+    ];
 
-    Ok(())
+    let config = default_config();
+
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    let expected = the_cure_friday_im_in_love_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

@@ -9,7 +9,7 @@ pub struct Pad;
 
 impl From<Pad> for Group<ItemMetadata> {
     fn from(_val: Pad) -> Self {
-        Group::builder("Pad")
+        Self::builder("Pad")
             .patterns(vec!["pad", "pads", "ambient"])
             .layers(super::layers_dimension())
             .channel(super::channel_dimension())

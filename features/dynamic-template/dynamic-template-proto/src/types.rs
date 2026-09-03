@@ -19,6 +19,7 @@ pub struct OrganizeRequest {
 
 impl OrganizeRequest {
     /// Create a new organize request with default options
+    #[must_use]
     pub fn new(items: Vec<String>) -> Self {
         Self {
             items,
@@ -28,13 +29,15 @@ impl OrganizeRequest {
     }
 
     /// Create a request with existing tracks to match against
+    #[must_use]
     pub fn with_existing_tracks(mut self, tracks: Vec<String>) -> Self {
         self.existing_tracks = Some(tracks);
         self
     }
 
     /// Set organization options
-    pub fn with_options(mut self, options: OrganizeOptions) -> Self {
+    #[must_use]
+    pub const fn with_options(mut self, options: OrganizeOptions) -> Self {
         self.options = options;
         self
     }
@@ -43,16 +46,37 @@ impl OrganizeRequest {
 /// Options for organizing items into tracks
 #[derive(Clone, Debug, Facet)]
 pub struct OrganizeOptions {
+    /// Track/folder shape toggles
+    pub structure: StructureOptions,
+    /// Display-name cleanup toggles
+    pub naming: NamingOptions,
+    /// Marker- and split-detection toggles
+    pub detection: DetectionOptions,
+}
+
+/// Toggles that affect the shape of the generated track hierarchy.
+#[derive(Clone, Debug, Facet)]
+pub struct StructureOptions {
     /// Expand multiple items on a node into individual child tracks
     pub expand_items: bool,
-    /// Clean up display names by stripping redundant context
-    pub cleanup_names: bool,
     /// Collapse single-child intermediate folders (e.g., Cymbals/OH -> OH)
     pub collapse_single_child: bool,
+}
+
+/// Toggles that clean up display names by stripping redundant context.
+#[derive(Clone, Debug, Facet)]
+pub struct NamingOptions {
+    /// Clean up display names by stripping redundant context
+    pub cleanup_names: bool,
     /// Strip detected song/project names from display names
     pub strip_song_names: bool,
     /// Strip tempo markers (e.g., "126bpm") from display names
     pub strip_tempo: bool,
+}
+
+/// Toggles that detect and strip equipment/session markers.
+#[derive(Clone, Debug, Facet)]
+pub struct DetectionOptions {
     /// Strip Pro Tools markers (e.g., "_01", ".01-02") from display names
     pub strip_protools: bool,
     /// Strip equipment names (mics, preamps) from display names
@@ -65,44 +89,64 @@ impl Default for OrganizeOptions {
     /// Default options enable all cleanup transformations
     fn default() -> Self {
         Self {
-            expand_items: true,
-            cleanup_names: true,
-            collapse_single_child: true,
-            strip_song_names: true,
-            strip_tempo: true,
-            strip_protools: true,
-            strip_equipment: true,
-            detect_stem_splits: true,
+            structure: StructureOptions {
+                expand_items: true,
+                collapse_single_child: true,
+            },
+            naming: NamingOptions {
+                cleanup_names: true,
+                strip_song_names: true,
+                strip_tempo: true,
+            },
+            detection: DetectionOptions {
+                strip_protools: true,
+                strip_equipment: true,
+                detect_stem_splits: true,
+            },
         }
     }
 }
 
 impl OrganizeOptions {
     /// Create options with no transformations (raw monarchy output)
-    pub fn none() -> Self {
+    #[must_use]
+    pub const fn none() -> Self {
         Self {
-            expand_items: false,
-            cleanup_names: false,
-            collapse_single_child: false,
-            strip_song_names: false,
-            strip_tempo: false,
-            strip_protools: false,
-            strip_equipment: false,
-            detect_stem_splits: false,
+            structure: StructureOptions {
+                expand_items: false,
+                collapse_single_child: false,
+            },
+            naming: NamingOptions {
+                cleanup_names: false,
+                strip_song_names: false,
+                strip_tempo: false,
+            },
+            detection: DetectionOptions {
+                strip_protools: false,
+                strip_equipment: false,
+                detect_stem_splits: false,
+            },
         }
     }
 
     /// Create options with only basic cleanup (no stripping)
-    pub fn basic() -> Self {
+    #[must_use]
+    pub const fn basic() -> Self {
         Self {
-            expand_items: true,
-            cleanup_names: true,
-            collapse_single_child: true,
-            strip_song_names: false,
-            strip_tempo: false,
-            strip_protools: false,
-            strip_equipment: false,
-            detect_stem_splits: true,
+            structure: StructureOptions {
+                expand_items: true,
+                collapse_single_child: true,
+            },
+            naming: NamingOptions {
+                cleanup_names: true,
+                strip_song_names: false,
+                strip_tempo: false,
+            },
+            detection: DetectionOptions {
+                strip_protools: false,
+                strip_equipment: false,
+                detect_stem_splits: true,
+            },
         }
     }
 }
@@ -124,6 +168,7 @@ pub struct OrganizeResponse {
 
 impl OrganizeResponse {
     /// Create an empty response
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             hierarchy: TrackHierarchy::default(),
@@ -163,13 +208,14 @@ pub struct ItemMetadata {
     pub protools_playlist: Option<String>,
     /// Pro Tools take number
     pub protools_take: Option<u32>,
-    /// Matched group names (e.g., ["Drums", "Kick"])
+    /// Matched group names (e.g., `["Drums", "Kick"]`)
     pub matched_groups: Vec<String>,
 }
 
 impl ItemMetadata {
     /// Check if any metadata was extracted
-    pub fn has_metadata(&self) -> bool {
+    #[must_use]
+    pub const fn has_metadata(&self) -> bool {
         self.tempo.is_some()
             || self.song_name.is_some()
             || !self.equipment.is_empty()

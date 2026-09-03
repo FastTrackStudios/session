@@ -16,7 +16,8 @@ pub struct CountPlayerState {
 }
 
 impl CountPlayerState {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             playback_position_count: [0; 8],
             is_playing_count: [false; 8],
@@ -25,7 +26,7 @@ impl CountPlayerState {
     }
 
     /// Reset all playback states
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.playback_position_count = [0; 8];
         self.is_playing_count = [false; 8];
         self.current_count_number = -1;
@@ -51,28 +52,40 @@ impl CountPlayer {
         count_left: &mut f32,
         count_right: &mut f32,
     ) {
-        if count_idx >= 8 || !state.is_playing_count[count_idx] {
+        if count_idx >= 8 || state.is_playing_count.get(count_idx).map_or(false, |&v| !v) {
             return;
         }
 
         if let Some(decoded_audio) = sample_data {
-            if state.playback_position_count[count_idx] < decoded_audio.frames() {
-                AudioRouter::mix_decoded_audio(
-                    decoded_audio,
-                    state.playback_position_count[count_idx],
-                    gain,
-                    count_left,
-                    count_right,
-                );
-                state.playback_position_count[count_idx] += 1;
+            if let Some(&playback_pos) = state.playback_position_count.get(count_idx) {
+                if playback_pos < decoded_audio.frames() {
+                    AudioRouter::mix_decoded_audio(
+                        decoded_audio,
+                        playback_pos,
+                        gain,
+                        count_left,
+                        count_right,
+                    );
+                    if let Some(pos) = state.playback_position_count.get_mut(count_idx) {
+                        *pos = pos.saturating_add(1);
 
-                if state.playback_position_count[count_idx] >= decoded_audio.frames() {
-                    state.is_playing_count[count_idx] = false;
-                    state.playback_position_count[count_idx] = 0;
+                        if *pos >= decoded_audio.frames() {
+                            if let Some(playing) = state.is_playing_count.get_mut(count_idx) {
+                                *playing = false;
+                            }
+                            if let Some(p) = state.playback_position_count.get_mut(count_idx) {
+                                *p = 0;
+                            }
+                        }
+                    }
+                } else {
+                    if let Some(playing) = state.is_playing_count.get_mut(count_idx) {
+                        *playing = false;
+                    }
+                    if let Some(p) = state.playback_position_count.get_mut(count_idx) {
+                        *p = 0;
+                    }
                 }
-            } else {
-                state.is_playing_count[count_idx] = false;
-                state.playback_position_count[count_idx] = 0;
             }
         }
     }
@@ -85,11 +98,11 @@ impl CountPlayer {
         count_left: &mut f32,
         count_right: &mut f32,
     ) {
-        for count_idx in 0..8 {
+        for (count_idx, sample) in sample_data_count.iter().enumerate() {
             Self::play_count(
                 state,
                 count_idx,
-                sample_data_count[count_idx].as_ref(),
+                sample.as_ref(),
                 gain,
                 count_left,
                 count_right,
