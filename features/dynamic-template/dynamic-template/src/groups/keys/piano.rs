@@ -8,7 +8,7 @@ pub struct Piano;
 
 impl From<Piano> for Group<ItemMetadata> {
     fn from(_val: Piano) -> Self {
-        Group::builder("Piano")
+        Self::builder("Piano")
             .patterns(vec!["piano", "grand", "upright_piano", "steinway"])
             .build()
     }

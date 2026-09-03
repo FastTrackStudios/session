@@ -169,7 +169,7 @@ pub struct PartsManifest {
 
 impl PartsManifest {
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.parts.is_empty()
     }
 
@@ -264,7 +264,7 @@ impl TimeSignature {
     };
 
     #[must_use]
-    pub fn new(numerator: u8, denominator: u8) -> Self {
+    pub const fn new(numerator: u8, denominator: u8) -> Self {
         Self {
             numerator,
             denominator,
@@ -274,7 +274,7 @@ impl TimeSignature {
     /// Whether this is musically well-formed: a non-zero beat count over a
     /// power-of-two note value.
     #[must_use]
-    pub fn is_valid(&self) -> bool {
+    pub const fn is_valid(&self) -> bool {
         self.numerator > 0 && self.denominator.is_power_of_two() && self.denominator > 0
     }
 }

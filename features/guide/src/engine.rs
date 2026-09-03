@@ -44,20 +44,54 @@ pub struct GuideBuses<'a> {
     pub guide_r: &'a mut [f32],
 }
 
+/// Finer click subdivision settings.
+#[derive(Debug, Clone, Copy)]
+pub struct SubdivisionSettings {
+    /// Click on eighth notes.
+    pub eighth: bool,
+    /// Click on sixteenth notes.
+    pub sixteenth: bool,
+    /// Click on beat-unit triplets.
+    pub triplet: bool,
+}
+
+impl Default for SubdivisionSettings {
+    fn default() -> Self {
+        Self {
+            eighth: false,
+            sixteenth: false,
+            triplet: false,
+        }
+    }
+}
+
+/// Click subdivision grid settings.
+#[derive(Debug, Clone)]
+pub struct ClickSubdivisions {
+    /// Click on every beat (quarter note).
+    pub beat: bool,
+    /// Accent click on beat 1 of each measure.
+    pub measure_accent: bool,
+    /// Finer subdivisions.
+    pub subdivisions: SubdivisionSettings,
+}
+
+impl Default for ClickSubdivisions {
+    fn default() -> Self {
+        Self {
+            beat: true,
+            measure_accent: true,
+            subdivisions: SubdivisionSettings::default(),
+        }
+    }
+}
+
 /// Engine configuration (the legacy plugin's parameters, minus the
 /// REAPER/GUI plumbing).
 #[derive(Debug, Clone)]
 pub struct GuideConfig {
-    /// Click on every beat (quarter note).
-    pub enable_beat: bool,
-    /// Click on eighth notes.
-    pub enable_eighth: bool,
-    /// Click on sixteenth notes.
-    pub enable_sixteenth: bool,
-    /// Click on beat-unit triplets.
-    pub enable_triplet: bool,
-    /// Accent click on beat 1 of each measure.
-    pub enable_measure_accent: bool,
+    /// Click subdivision settings.
+    pub click: ClickSubdivisions,
     /// Count-in voices.
     pub enable_count: bool,
     /// Section guide announcements.
@@ -98,11 +132,7 @@ pub enum TriggerSource {
 impl Default for GuideConfig {
     fn default() -> Self {
         Self {
-            enable_beat: true,
-            enable_eighth: false,
-            enable_sixteenth: false,
-            enable_triplet: false,
-            enable_measure_accent: true,
+            click: ClickSubdivisions::default(),
             enable_count: true,
             enable_guide: true,
             click_gain: 1.0,
@@ -119,7 +149,7 @@ impl Default for GuideConfig {
 /// Public because the engine can be driven from outside its own grid —
 /// the plugin shell maps incoming MIDI notes onto these and hands them to
 /// [`GuideEngine::trigger`]. See [`TriggerSource`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuideTrigger {
     Beat,
     Accent,
@@ -164,6 +194,7 @@ pub struct GuideEngine {
 }
 
 impl GuideEngine {
+    #[must_use] 
     pub fn new(config: GuideConfig) -> Self {
         Self {
             config,
@@ -185,11 +216,12 @@ impl GuideEngine {
     }
 
     /// Access the sample bank (to load click/count/guide PCM into it).
-    pub fn bank_mut(&mut self) -> &mut SampleBank {
+    pub const fn bank_mut(&mut self) -> &mut SampleBank {
         &mut self.bank
     }
 
-    pub fn bank(&self) -> &SampleBank {
+    #[must_use] 
+    pub const fn bank(&self) -> &SampleBank {
         &self.bank
     }
 
@@ -212,7 +244,8 @@ impl GuideEngine {
         self.next_cue = 0;
     }
 
-    pub fn schedule(&self) -> &CueSchedule {
+    #[must_use] 
+    pub const fn schedule(&self) -> &CueSchedule {
         &self.schedule
     }
 
@@ -249,12 +282,12 @@ impl GuideEngine {
         );
         self.prepare_block(n, clock);
         self.mix_block(n, |i, [cl, cr, nl, nr, gl, gr]| {
-            buses.click_l[i] += cl;
-            buses.click_r[i] += cr;
-            buses.count_l[i] += nl;
-            buses.count_r[i] += nr;
-            buses.guide_l[i] += gl;
-            buses.guide_r[i] += gr;
+            if let Some(v) = buses.click_l.get_mut(i) { *v += cl; }
+            if let Some(v) = buses.click_r.get_mut(i) { *v += cr; }
+            if let Some(v) = buses.count_l.get_mut(i) { *v += nl; }
+            if let Some(v) = buses.count_r.get_mut(i) { *v += nr; }
+            if let Some(v) = buses.guide_l.get_mut(i) { *v += gl; }
+            if let Some(v) = buses.guide_r.get_mut(i) { *v += gr; }
         });
     }
 
@@ -264,8 +297,8 @@ impl GuideEngine {
         let n = left.len().min(right.len());
         self.prepare_block(n, clock);
         self.mix_block(n, |i, [cl, cr, nl, nr, gl, gr]| {
-            left[i] += cl + nl + gl;
-            right[i] += cr + nr + gr;
+            if let Some(v) = left.get_mut(i) { *v += cl + nl + gl; }
+            if let Some(v) = right.get_mut(i) { *v += cr + nr + gr; }
         });
     }
 
@@ -283,6 +316,152 @@ impl GuideEngine {
         self.external.push((offset_frames, trigger));
     }
 
+    /// Schedule grid-based triggers (click subdivisions) for this block.
+    fn schedule_grid_triggers(
+        &mut self,
+        n: usize,
+        samples_per_quarter: f64,
+        beats_start: f64,
+        beats_end: f64,
+        clock: &BlockClock,
+    ) {
+        let num = i64::from(clock.time_sig_num.max(1));
+        let beat_unit_quarters = 4.0 / f64::from(clock.time_sig_den.max(1));
+        let triplet_interval = beat_unit_quarters / 3.0;
+
+        let mut schedule_grid = |interval: f64,
+                                 last_idx: &mut i64,
+                                 pending: &mut Vec<(usize, GuideTrigger)>,
+                                 make: &dyn Fn(i64) -> GuideTrigger| {
+            if interval <= 0.0 {
+                return;
+            }
+            if *last_idx == i64::MIN {
+                let base_idx = ((beats_start / interval) - 1e-6).ceil();
+                *last_idx = crate::cast::i64_from_f64_round(base_idx).saturating_sub(1);
+            }
+            while let Some(k) = (*last_idx).checked_add(1) {
+                // k is a beat grid index; convert to f64 for beat time calculation.
+                // Precision loss from i64->f64 is acceptable for beat-level granularity.
+                let k_beats = crate::cast::f64_from_i64(k);
+                let t = k_beats * interval;
+                if t >= beats_end {
+                    break;
+                }
+                let sample_offset = (t - beats_start) * samples_per_quarter;
+                let offset = if sample_offset.is_finite() && sample_offset >= 0.0 {
+                    let offset_nonneg = crate::cast::i64_from_f64_round(sample_offset).max(0);
+                    // offset_nonneg is guaranteed non-negative, safe to cast to usize
+                    crate::cast::usize_from_i64_nonneg(offset_nonneg).min(n.saturating_sub(1))
+                } else {
+                    0
+                };
+                pending.push((offset, make(k)));
+                *last_idx = k;
+            }
+        };
+
+        if self.config.click.beat || self.config.click.measure_accent {
+            let enable_beat = self.config.click.beat;
+            let enable_accent = self.config.click.measure_accent;
+            let mut tmp: Vec<(usize, GuideTrigger)> = Vec::new();
+            schedule_grid(1.0, &mut self.last_beat_idx, &mut tmp, &|k| {
+                if enable_accent && k.rem_euclid(num) == 0 {
+                    GuideTrigger::Accent
+                } else {
+                    GuideTrigger::Beat
+                }
+            });
+            for (offset, trig) in tmp {
+                match trig {
+                    GuideTrigger::Accent => {
+                        if self.bank.measure_accent.is_some() {
+                            self.pending.push((offset, GuideTrigger::Accent));
+                        } else if enable_beat {
+                            self.pending.push((offset, GuideTrigger::Beat));
+                        }
+                    }
+                    trig => {
+                        if enable_beat {
+                            self.pending.push((offset, trig));
+                        }
+                    }
+                }
+            }
+        }
+        if self.config.click.subdivisions.eighth {
+            let mut tmp = std::mem::take(&mut self.pending);
+            schedule_grid(0.5, &mut self.last_eighth_idx, &mut tmp, &|_| {
+                GuideTrigger::Eighth
+            });
+            self.pending = tmp;
+        }
+        if self.config.click.subdivisions.sixteenth {
+            let mut tmp = std::mem::take(&mut self.pending);
+            schedule_grid(0.25, &mut self.last_sixteenth_idx, &mut tmp, &|_| {
+                GuideTrigger::Sixteenth
+            });
+            self.pending = tmp;
+        }
+        if self.config.click.subdivisions.triplet {
+            let mut tmp = std::mem::take(&mut self.pending);
+            schedule_grid(triplet_interval, &mut self.last_triplet_idx, &mut tmp, &|_| {
+                GuideTrigger::Triplet
+            });
+            self.pending = tmp;
+        }
+    }
+
+    /// Schedule cue-based triggers (count-in voices, guide announcements) for this block.
+    fn schedule_cue_triggers(
+        &mut self,
+        n: usize,
+        sec_start: f64,
+        sec_end: f64,
+        continuous: bool,
+        clock: &BlockClock,
+    ) {
+        if !continuous {
+            self.next_cue = self
+                .schedule
+                .cues
+                .partition_point(|c| c.time_seconds < sec_start - 1e-9);
+        }
+        while let Some(cue) = self.schedule.cues.get(self.next_cue) {
+            if cue.time_seconds >= sec_end {
+                break;
+            }
+            let time_delta = cue.time_seconds - sec_start;
+            let sample_offset = time_delta * clock.sample_rate;
+            let offset = if sample_offset.is_finite() && sample_offset >= 0.0 {
+                let offset_nonneg = crate::cast::i64_from_f64_round(sample_offset).max(0);
+                // offset_nonneg is guaranteed non-negative, safe to cast to usize
+                crate::cast::usize_from_i64_nonneg(offset_nonneg).min(n.saturating_sub(1))
+            } else {
+                0
+            };
+            match &cue.event {
+                CueEvent::Count { index } => {
+                    if self.config.enable_count && *index < 8 {
+                        self.pending.push((offset, GuideTrigger::Count(*index)));
+                    }
+                }
+                CueEvent::Guide { keys, .. } => {
+                    if self.config.enable_guide {
+                        if let Some(key) = keys.iter().find(|k| self.bank.guides.contains_key(*k)) {
+                            self.pending
+                                .push((offset, GuideTrigger::Guide(key.clone())));
+                        }
+                    }
+                }
+            }
+            let Some(next_cue) = self.next_cue.checked_add(1) else {
+                break;
+            };
+            self.next_cue = next_cue;
+        }
+    }
+
     /// Gather this block's triggers into `self.pending` (sorted by offset).
     fn prepare_block(&mut self, n: usize, clock: &BlockClock) {
         self.pending.clear();
@@ -295,7 +474,10 @@ impl GuideEngine {
         // the incoming notes ARE the guide.
         if self.config.source == TriggerSource::Midi {
             self.pending.sort_by_key(|(offset, _)| *offset);
-            self.prev_block_end_seconds = Some(clock.pos_seconds + n as f64 / clock.sample_rate);
+            // n is typically much smaller than 2^53, so usize->f64 precision is acceptable
+            let block_samples_f64 = crate::cast::f64_from_usize(n);
+            let block_duration = block_samples_f64 / clock.sample_rate;
+            self.prev_block_end_seconds = Some(clock.pos_seconds + block_duration);
             return;
         }
         if n == 0 || clock.sample_rate <= 0.0 {
@@ -314,18 +496,15 @@ impl GuideEngine {
         }
 
         let samples_per_quarter = clock.sample_rate * 60.0 / clock.tempo_bpm.max(1.0);
-        let block_quarters = n as f64 / samples_per_quarter;
+        // n is typically much smaller than 2^53, so usize->f64 precision is acceptable
+        let block_samples_f64 = crate::cast::f64_from_usize(n);
+        let block_quarters = block_samples_f64 / samples_per_quarter;
         let beats_start = clock.pos_beats;
         let beats_end = beats_start + block_quarters;
 
         // Detect a seek up front: this block's start doesn't continue from
         // the previous block's end. On a seek we must re-anchor BOTH the
-        // click grid trackers and the cue cursor to the new position —
-        // otherwise a *backward* seek leaves the monotonic grid indices
-        // ahead of the playhead and every `k = last_idx + 1` grid point is
-        // already past `beats_end`, so the click goes silent until playback
-        // catches back up to where it was. Resetting to `i64::MIN` makes
-        // `schedule_grid` re-anchor on the new `beats_start`.
+        // click grid trackers and the cue cursor to the new position.
         let sec_start = clock.pos_seconds;
         let continuous = self
             .prev_block_end_seconds
@@ -338,130 +517,58 @@ impl GuideEngine {
         }
 
         // ── Click subdivisions (grid-index walk; sample accurate) ────────
-        let num = clock.time_sig_num.max(1) as i64;
-        let beat_unit_quarters = 4.0 / f64::from(clock.time_sig_den.max(1));
-        let triplet_interval = beat_unit_quarters / 3.0;
-
-        let mut schedule_grid =
-            |interval: f64,
-             last_idx: &mut i64,
-             pending: &mut Vec<(usize, GuideTrigger)>,
-             make: &dyn Fn(i64) -> GuideTrigger| {
-                if interval <= 0.0 {
-                    return;
-                }
-                if *last_idx == i64::MIN {
-                    // Fresh start / after seek: include a grid point that
-                    // lands exactly on the block start (legacy "just
-                    // started on a beat" handling).
-                    *last_idx = ((beats_start / interval) - 1e-6).ceil() as i64 - 1;
-                }
-                loop {
-                    let k = *last_idx + 1;
-                    let t = k as f64 * interval;
-                    if t >= beats_end {
-                        break;
-                    }
-                    let offset = (((t - beats_start) * samples_per_quarter).round() as i64)
-                        .clamp(0, n as i64 - 1) as usize;
-                    pending.push((offset, make(k)));
-                    *last_idx = k;
-                }
-            };
-
-        if self.config.enable_beat || self.config.enable_measure_accent {
-            let enable_beat = self.config.enable_beat;
-            let enable_accent = self.config.enable_measure_accent;
-            // Legacy parity: "beats" are quarter notes and the measure
-            // accent fires when the quarter-note index is a multiple of the
-            // time-signature numerator.
-            let mut tmp: Vec<(usize, GuideTrigger)> = Vec::new();
-            schedule_grid(1.0, &mut self.last_beat_idx, &mut tmp, &|k| {
-                if enable_accent && k.rem_euclid(num) == 0 {
-                    GuideTrigger::Accent
-                } else {
-                    GuideTrigger::Beat
-                }
-            });
-            for (offset, trig) in tmp {
-                match trig {
-                    GuideTrigger::Accent => {
-                        // Accent replaces the plain beat click on beat 1
-                        // only when the accent sample is present.
-                        if self.bank.measure_accent.is_some() {
-                            self.pending.push((offset, GuideTrigger::Accent));
-                        } else if enable_beat {
-                            self.pending.push((offset, GuideTrigger::Beat));
-                        }
-                    }
-                    trig => {
-                        if enable_beat {
-                            self.pending.push((offset, trig));
-                        }
-                    }
-                }
-            }
-        }
-        if self.config.enable_eighth {
-            let mut tmp = std::mem::take(&mut self.pending);
-            schedule_grid(0.5, &mut self.last_eighth_idx, &mut tmp, &|_| {
-                GuideTrigger::Eighth
-            });
-            self.pending = tmp;
-        }
-        if self.config.enable_sixteenth {
-            let mut tmp = std::mem::take(&mut self.pending);
-            schedule_grid(0.25, &mut self.last_sixteenth_idx, &mut tmp, &|_| {
-                GuideTrigger::Sixteenth
-            });
-            self.pending = tmp;
-        }
-        if self.config.enable_triplet {
-            let mut tmp = std::mem::take(&mut self.pending);
-            schedule_grid(
-                triplet_interval,
-                &mut self.last_triplet_idx,
-                &mut tmp,
-                &|_| GuideTrigger::Triplet,
-            );
-            self.pending = tmp;
-        }
+        self.schedule_grid_triggers(n, samples_per_quarter, beats_start, beats_end, clock);
 
         // ── Scheduled cues (count-in voices, guide announcements) ────────
-        let sec_end = sec_start + n as f64 / clock.sample_rate;
-        if !continuous {
-            // Seek (or first rolling block): relocate the cue cursor.
-            self.next_cue = self
-                .schedule
-                .cues
-                .partition_point(|c| c.time_seconds < sec_start - 1e-9);
-        }
-        while let Some(cue) = self.schedule.cues.get(self.next_cue) {
-            if cue.time_seconds >= sec_end {
-                break;
-            }
-            let offset = (((cue.time_seconds - sec_start) * clock.sample_rate).round() as i64)
-                .clamp(0, n as i64 - 1) as usize;
-            match &cue.event {
-                CueEvent::Count { index } => {
-                    if self.config.enable_count && *index < 8 {
-                        self.pending.push((offset, GuideTrigger::Count(*index)));
-                    }
-                }
-                CueEvent::Guide { keys, .. } => {
-                    if self.config.enable_guide {
-                        if let Some(key) = keys.iter().find(|k| self.bank.guides.contains_key(*k)) {
-                            self.pending
-                                .push((offset, GuideTrigger::Guide(key.clone())));
-                        }
-                    }
-                }
-            }
-            self.next_cue += 1;
-        }
-        self.prev_block_end_seconds = Some(sec_end);
+        // n is typically much smaller than 2^53, so usize->f64 precision is acceptable
+        let block_samples_f64 = crate::cast::f64_from_usize(n);
+        let block_duration = block_samples_f64 / clock.sample_rate;
+        let sec_end = sec_start + block_duration;
+        self.schedule_cue_triggers(n, sec_start, sec_end, continuous, clock);
 
+        self.prev_block_end_seconds = Some(sec_end);
         self.pending.sort_by_key(|(offset, _)| *offset);
+    }
+
+    /// Apply a pending trigger to the player states.
+    fn apply_trigger(&mut self, trigger: &GuideTrigger) {
+        match trigger {
+            GuideTrigger::Beat => {
+                self.click_state.beat.is_playing = true;
+                self.click_state.beat.playback_position = 0;
+            }
+            GuideTrigger::Accent => {
+                self.click_state.measure_accent.is_playing = true;
+                self.click_state.measure_accent.playback_position = 0;
+            }
+            GuideTrigger::Eighth => {
+                self.click_state.eighth.is_playing = true;
+                self.click_state.eighth.playback_position = 0;
+            }
+            GuideTrigger::Sixteenth => {
+                self.click_state.sixteenth.is_playing = true;
+                self.click_state.sixteenth.playback_position = 0;
+            }
+            GuideTrigger::Triplet => {
+                self.click_state.triplet.is_playing = true;
+                self.click_state.triplet.playback_position = 0;
+            }
+            GuideTrigger::Count(index) => {
+                if let Some(is_playing) = self.count_state.is_playing_count.get_mut(*index) {
+                    *is_playing = true;
+                }
+                if let Some(pos) = self.count_state.playback_position_count.get_mut(*index) {
+                    *pos = 0;
+                }
+                let count_num = i32::try_from(*index).unwrap_or(0).saturating_add(1);
+                self.count_state.current_count_number = count_num;
+            }
+            GuideTrigger::Guide(key) => {
+                self.current_guide_key = Some(key.clone());
+                self.guide_state.is_playing_guide = true;
+                self.guide_state.playback_position_guide = 0;
+            }
+        }
     }
 
     /// Mix `n` frames, applying pending triggers at their offsets.
@@ -473,40 +580,19 @@ impl GuideEngine {
         let pending = std::mem::take(&mut self.pending);
         let mut ti = 0;
         for i in 0..n {
-            while ti < pending.len() && pending[ti].0 == i {
-                match &pending[ti].1 {
-                    GuideTrigger::Beat => {
-                        self.click_state.is_playing_beat = true;
-                        self.click_state.playback_position_beat = 0;
+            while ti < pending.len() {
+                if let Some(p) = pending.get(ti) {
+                    if p.0 != i {
+                        break;
                     }
-                    GuideTrigger::Accent => {
-                        self.click_state.is_playing_measure_accent = true;
-                        self.click_state.playback_position_measure_accent = 0;
-                    }
-                    GuideTrigger::Eighth => {
-                        self.click_state.is_playing_eighth = true;
-                        self.click_state.playback_position_eighth = 0;
-                    }
-                    GuideTrigger::Sixteenth => {
-                        self.click_state.is_playing_sixteenth = true;
-                        self.click_state.playback_position_sixteenth = 0;
-                    }
-                    GuideTrigger::Triplet => {
-                        self.click_state.is_playing_triplet = true;
-                        self.click_state.playback_position_triplet = 0;
-                    }
-                    GuideTrigger::Count(index) => {
-                        self.count_state.is_playing_count[*index] = true;
-                        self.count_state.playback_position_count[*index] = 0;
-                        self.count_state.current_count_number = *index as i32 + 1;
-                    }
-                    GuideTrigger::Guide(key) => {
-                        self.current_guide_key = Some(key.clone());
-                        self.guide_state.is_playing_guide = true;
-                        self.guide_state.playback_position_guide = 0;
-                    }
+                    self.apply_trigger(&p.1);
+                    let Some(next_ti) = ti.checked_add(1) else {
+                        break;
+                    };
+                    ti = next_ti;
+                } else {
+                    break;
                 }
-                ti += 1;
             }
 
             let mut click_left = 0.0f32;
@@ -593,7 +679,10 @@ mod tests {
         );
         l.iter()
             .chain(r.iter())
-            .map(|s| (*s as f64) * (*s as f64))
+            .map(|s| {
+                let s_f64 = f64::from(*s);
+                s_f64 * s_f64
+            })
             .sum()
     }
 
@@ -606,10 +695,11 @@ mod tests {
     fn backward_seek_keeps_click_playing() {
         let mut bank = SampleBank::default();
         bank.synthesize_defaults(48_000);
-        let mut config = GuideConfig::default();
-        // Isolate the click grid from the (empty) cue schedule.
-        config.enable_count = false;
-        config.enable_guide = false;
+        let config = GuideConfig {
+            enable_count: false,
+            enable_guide: false,
+            ..Default::default()
+        };
         let mut engine = GuideEngine::new(config);
         engine.set_bank(bank);
 

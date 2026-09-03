@@ -16,7 +16,7 @@ pub struct SongNameConfig {
     pub threshold: f32,
 
     /// Enable case-insensitive fuzzy matching
-    /// When true, "TheTrooper" and "Trooper" are considered equivalent
+    /// When true, "`TheTrooper`" and "Trooper" are considered equivalent
     /// Default: true
     pub fuzzy_match: bool,
 }
@@ -32,13 +32,15 @@ impl Default for SongNameConfig {
 
 impl SongNameConfig {
     /// Create config with custom threshold (0.0 to 1.0)
-    pub fn with_threshold(mut self, threshold: f32) -> Self {
+    #[must_use] 
+    pub const fn with_threshold(mut self, threshold: f32) -> Self {
         self.threshold = threshold.clamp(0.0, 1.0);
         self
     }
 
     /// Enable or disable fuzzy matching
-    pub fn with_fuzzy_match(mut self, enabled: bool) -> Self {
+    #[must_use] 
+    pub const fn with_fuzzy_match(mut self, enabled: bool) -> Self {
         self.fuzzy_match = enabled;
         self
     }
@@ -196,6 +198,7 @@ const EXCLUDED_PATTERNS: &[&str] = &[
 /// let song_names = detect_song_names(&inputs);
 /// assert!(song_names.contains("TheTrooper") || song_names.contains("thetrooper"));
 /// ```
+#[must_use] 
 pub fn detect_song_names(inputs: &[String]) -> HashSet<String> {
     detect_song_names_with_config(inputs, &SongNameConfig::default())
 }
@@ -208,6 +211,7 @@ pub fn detect_song_names(inputs: &[String]) -> HashSet<String> {
 ///
 /// # Returns
 /// Set of detected song name tokens (lowercase if fuzzy matching enabled)
+#[must_use] 
 pub fn detect_song_names_with_config(
     inputs: &[String],
     config: &SongNameConfig,
@@ -217,6 +221,13 @@ pub fn detect_song_names_with_config(
     }
 
     let total_inputs = inputs.len();
+    // Safe: threshold is clamped to [0.0, 1.0], so result is guaranteed in [0, total_inputs]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions,
+        clippy::cast_precision_loss
+    )]
     let min_count = (total_inputs as f32 * config.threshold).ceil() as usize;
 
     if config.fuzzy_match {
@@ -233,7 +244,10 @@ fn detect_exact_matching(inputs: &[String], min_count: usize) -> HashSet<String>
     for input in inputs {
         let tokens: HashSet<String> = tokenize(input).into_iter().collect();
         for token in tokens {
-            *token_counts.entry(token).or_insert(0) += 1;
+            token_counts
+                .entry(token)
+                .and_modify(|count: &mut usize| *count = count.saturating_add(1))
+                .or_insert(1);
         }
     }
 
@@ -243,7 +257,7 @@ fn detect_exact_matching(inputs: &[String], min_count: usize) -> HashSet<String>
 /// Detect song names with case-insensitive fuzzy matching
 ///
 /// This normalizes all tokens to lowercase and also checks for containment
-/// (e.g., "TheTrooper" contains "Trooper", so they're grouped together)
+/// (e.g., "`TheTrooper`" contains "Trooper", so they're grouped together)
 fn detect_with_fuzzy_matching(inputs: &[String], min_count: usize) -> HashSet<String> {
     // First pass: collect all normalized tokens per input
     let mut all_normalized_tokens: Vec<HashSet<String>> = Vec::new();
@@ -260,7 +274,10 @@ fn detect_with_fuzzy_matching(inputs: &[String], min_count: usize) -> HashSet<St
     let mut token_counts: HashMap<String, usize> = HashMap::new();
     for tokens in &all_normalized_tokens {
         for token in tokens {
-            *token_counts.entry(token.clone()).or_insert(0) += 1;
+            token_counts
+                .entry(token.clone())
+                .and_modify(|count: &mut usize| *count = count.saturating_add(1))
+                .or_insert(1);
         }
     }
 
@@ -298,12 +315,10 @@ fn detect_with_fuzzy_matching(inputs: &[String], min_count: usize) -> HashSet<St
 
     // For each containment group, count inputs that have ANY of the group members
     for (base, group) in &containment_groups {
-        let mut inputs_with_group = 0;
-        for tokens in &all_normalized_tokens {
-            if group.iter().any(|t| tokens.contains(t)) {
-                inputs_with_group += 1;
-            }
-        }
+        let inputs_with_group = all_normalized_tokens
+            .iter()
+            .filter(|tokens| group.iter().any(|t| tokens.contains(t)))
+            .count();
         // Update the base token count to reflect the group
         token_counts.insert(base.clone(), inputs_with_group);
     }
@@ -358,15 +373,19 @@ fn tokenize(input: &str) -> Vec<String> {
     input
         .split([' ', '-', '_', '.', '/', '\\'])
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect()
 }
 
 /// Strip detected song names from a string
 ///
 /// Removes the song name tokens while preserving the rest of the string structure.
-/// Handles case-insensitive matching and containment (e.g., "trooper" matches "TheTrooper").
-pub fn strip_song_names(input: &str, song_names: &HashSet<String>) -> String {
+/// Handles case-insensitive matching and containment (e.g., "trooper" matches "`TheTrooper`").
+#[must_use]
+pub fn strip_song_names<S: std::hash::BuildHasher>(
+    input: &str,
+    song_names: &HashSet<String, S>,
+) -> String {
     if song_names.is_empty() {
         return input.to_string();
     }
@@ -387,8 +406,11 @@ pub fn strip_song_names(input: &str, song_names: &HashSet<String>) -> String {
             if lower_token == lower_song || lower_token.contains(&lower_song) {
                 // Remove this token from the result
                 if let Some(idx) = result.find(&token) {
-                    let before = &result[..idx];
-                    let after = &result[idx + token.len()..];
+                    let before = result.get(..idx).unwrap_or_default();
+                    let after = idx
+                        .checked_add(token.len())
+                        .and_then(|end| result.get(end..))
+                        .unwrap_or_default();
 
                     // Clean up separators around the removed token
                     let before = before.trim_end_matches(['-', '_', '.', ' ']);
@@ -399,7 +421,7 @@ pub fn strip_song_names(input: &str, song_names: &HashSet<String>) -> String {
                     } else if after.is_empty() {
                         before.to_string()
                     } else {
-                        format!("{} {}", before, after)
+                        format!("{before} {after}")
                     };
                     break; // Only remove first occurrence per song name
                 }
@@ -489,7 +511,7 @@ mod tests {
     #[test]
     fn strip_song_name_from_string() {
         // With fuzzy matching, song names are lowercase
-        let song_names: HashSet<String> = ["thetrooper".to_string()].into_iter().collect();
+        let song_names: HashSet<String> = std::iter::once("thetrooper".to_string()).collect();
 
         assert_eq!(
             strip_song_names("15-Rhy Gtr L-TheTrooper", &song_names),
@@ -501,7 +523,7 @@ mod tests {
     #[test]
     fn strip_handles_containment() {
         // When we detect "trooper" (shorter form), it should strip "TheTrooper" too
-        let song_names: HashSet<String> = ["trooper".to_string()].into_iter().collect();
+        let song_names: HashSet<String> = std::iter::once("trooper".to_string()).collect();
 
         assert_eq!(
             strip_song_names("15-Rhy Gtr L-TheTrooper", &song_names),

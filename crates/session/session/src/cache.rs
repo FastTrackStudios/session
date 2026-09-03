@@ -29,11 +29,13 @@ impl<K, V> Clone for Cache<K, V> {
 
 impl<K, V> Cache<K, V>
 where
-    K: Eq + Hash,
+    K: Eq + Hash + Send + Sync,
+    V: Send + Sync,
 {
     /// Create an empty cache with no dashboard name.
     ///
     /// Prefer [`Cache::named`] when a descriptive name is available.
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(FxHashMap::default())),
@@ -41,6 +43,7 @@ where
     }
 
     /// Create an empty cache with a descriptive name (retained for API compatibility; the moire dashboard is retired).
+    #[must_use] 
     pub fn named(_name: &'static str) -> Self {
         Self {
             inner: Arc::new(RwLock::new(FxHashMap::default())),
@@ -71,7 +74,7 @@ where
     }
 
     /// Return the value for `key`, inserting it with `f()` if absent.
-    pub async fn get_or_insert_with(&self, key: K, f: impl FnOnce() -> V) -> V
+    pub async fn get_or_insert_with(&self, key: K, f: impl FnOnce() -> V + Send) -> V
     where
         V: Clone,
     {
@@ -104,7 +107,7 @@ where
     }
 
     /// Retain only entries for which `f` returns `true`.
-    pub async fn retain(&self, f: impl FnMut(&K, &mut V) -> bool) {
+    pub async fn retain(&self, f: impl FnMut(&K, &mut V) -> bool + Send) {
         self.inner.write().await.retain(f);
     }
 
@@ -125,19 +128,19 @@ where
     /// Escape hatch for operations not covered by the typed API
     /// (e.g. `should_run_fallback_chart_refresh` which reads + writes
     /// in a single critical section).
-    pub async fn with_write<R>(&self, f: impl FnOnce(&mut FxHashMap<K, V>) -> R) -> R {
+    pub async fn with_write<R>(&self, f: impl FnOnce(&mut FxHashMap<K, V>) -> R + Send) -> R {
         let mut guard = self.inner.write().await;
         f(&mut guard)
     }
 
     /// Acquire a read lock and pass the underlying map to `f`.
-    pub async fn with_read<R>(&self, f: impl FnOnce(&FxHashMap<K, V>) -> R) -> R {
+    pub async fn with_read<R>(&self, f: impl FnOnce(&FxHashMap<K, V>) -> R + Send) -> R {
         let guard = self.inner.read().await;
         f(&guard)
     }
 }
 
-impl<K: Eq + Hash, V> Default for Cache<K, V> {
+impl<K: Eq + Hash + Send + Sync, V: Send + Sync> Default for Cache<K, V> {
     fn default() -> Self {
         Self::new()
     }

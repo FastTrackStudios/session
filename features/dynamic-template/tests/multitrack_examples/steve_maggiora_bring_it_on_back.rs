@@ -1,116 +1,8 @@
 use daw_proto::{assert_tracks_equal, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn steve_maggiora_bring_it_on_back() -> Result<()> {
-    // -- Setup & Fixtures
-    // Steve Maggiora - Bring It On Back: 71-track soul/R&B session with horn section and layered BGVs
-    let items = vec![
-        "01 Trumpet - Bring It On Back.wav",
-        "02 Trombone - Bring It On Back.wav",
-        "03 Tenor sax - Bring It On Back.wav",
-        "04 Bari sax - Bring It On Back.wav",
-        "05Sax fills - Bring It On  Back Multis.wav",
-        "06 Sax FX only - Bring It On  Back Multis.wav",
-        "07 MG_s Bridge BG_s - Bring It On  Back Multis.wav",
-        "08 MG_s Bridge BG_s FX only - Bring It On  Back Multis.wav",
-        "Bass Amp.wav",
-        "Bass DI.wav",
-        "Bass_SUM.wav",
-        "BGV1_SUM.wav",
-        "BGV1A.wav",
-        "BGV1B.wav",
-        "BGV1C.wav",
-        "BGV1D.wav",
-        "Boho Synth Pluck.wav",
-        "Cymbal Swell.wav",
-        "Floor Tom Bottom.wav",
-        "Floor Tom Top.wav",
-        "Floor Tom_SUM.wav",
-        "Guitar Amp 1A.wav",
-        "Guitar Amp 1B.wav",
-        "Guitar DI.wav",
-        "Guitar_SUM.wav",
-        "HH.wav",
-        "Kick In.wav",
-        "Kick Out.wav",
-        "Kick_SUM.wav",
-        "Kim VOX 1A.wav",
-        "Kim VOX 1B.wav",
-        "Kim VOX_SUM.wav",
-        "Lead Guitar Amp.wav",
-        "Lead Guitar DI.wav",
-        "Lead Guitar_SUM.wav",
-        "Lead VOX Double 1.wav",
-        "Lead VOX Double 2.wav",
-        "Lead VOX Double_SUM.wav",
-        "Lead VOX.wav",
-        "OH_SUM.wav",
-        "OHL.wav",
-        "OHR.wav",
-        "Piano L.wav",
-        "Piano R.wav",
-        "Piano_SUM.wav",
-        "Rack Tom Bottom.wav",
-        "Rack Tom Top.wav",
-        "Rack Tom_SUM.wav",
-        "Room C.wav",
-        "Room L.wav",
-        "Room Mono.wav",
-        "Room R.wav",
-        "Rooms_SUM.wav",
-        "Snare Bottom.wav",
-        "Snare Top.wav",
-        "Snare_SUM.wav",
-        "Synth Rise Run 1.wav",
-        "Synth Rise Run 2.wav",
-        "Wurlitzer L.wav",
-        "Wurlitzer R.wav",
-        "Wurlitzer_SUM.wav",
-        "Xavier VOX.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // Expected structure:
-    // Drums/
-    //   ├─ Kick/                    ← SUM (In/Out) and Kick
-    //   ├─ Snare/                   ← Top, Bottom, Snare
-    //   ├─ Toms/                    ← Floor, Bottom, Top, Tom
-    //   ├─ Cymbals/
-    //   │   ├─ Hi Hat               ← HH.wav
-    //   │   ├─ OH/                  ← OH_SUM, OHL, OHR
-    //   │   └─ Cymbals              ← Cymbal Swell
-    //   └─ Rooms/                   ← L, R, Mono, C, Rooms_SUM
-    // Bass/                         ← Amp, Bass 1 (DI), Bass 2 (SUM)
-    // Guitars/
-    //   ├─ Lead/                    ← Lead Guitar Amp/DI/SUM
-    //   ├─ Guitars/                 ← Guitar DI/SUM
-    //   └─ Guitars 1/               ← Guitar Amp 1A/1B
-    // Keys/
-    //   ├─ Piano/                   ← Piano L/R/SUM
-    //   └─ Wurlitzer/               ← Wurlitzer L/R/SUM
-    // Synths/                       ← Boho Synth Pluck, Synth Rise Run 1/2
-    // Horns/
-    //   └─ Saxophone 1-3            ← Tenor sax, Bari sax, Sax FX
-    // Vocals/
-    //   ├─ Lead/                    ← Kim VOX, Lead VOX, Xavier VOX, Doubles
-    //   └─ BGVs/
-    //       ├─ Bridge/              ← MG's Bridge BG's (now recognized as BG)
-    //       └─ BGVs/                ← BGV1_SUM, BGV1A-D
-    // Orchestra/
-    //   ├─ Trumpets                 ← 01 Trumpet
-    //   └─ Trombone                 ← 02 Trombone
-    // Unsorted                      ← 05Sax fills (single track, not a folder)
-    let expected = TrackStructureBuilder::new()
+fn steve_maggiora_bring_it_on_back_expected_a() -> TrackStructureBuilder {
+    TrackStructureBuilder::new()
         .folder("Drums")
         .folder("Kick")
         .folder("SUM")
@@ -205,6 +97,10 @@ fn steve_maggiora_bring_it_on_back() -> Result<()> {
         .item("Guitar Amp 1B.wav")
         .end()
         .end()
+}
+
+fn steve_maggiora_bring_it_on_back_expected() -> daw_proto::TrackHierarchy {
+    steve_maggiora_bring_it_on_back_expected_a()
         .folder("Keys")
         .folder("Piano")
         .track("Piano 1")
@@ -295,9 +191,117 @@ fn steve_maggiora_bring_it_on_back() -> Result<()> {
         .end()
         .track("Unsorted")
         .item("05Sax fills - Bring It On  Back Multis.wav")
-        .build();
+        .build()
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn steve_maggiora_bring_it_on_back() {
+    // -- Setup & Fixtures
+    // Steve Maggiora - Bring It On Back: 71-track soul/R&B session with horn section and layered BGVs
+    let items = vec![
+        "01 Trumpet - Bring It On Back.wav",
+        "02 Trombone - Bring It On Back.wav",
+        "03 Tenor sax - Bring It On Back.wav",
+        "04 Bari sax - Bring It On Back.wav",
+        "05Sax fills - Bring It On  Back Multis.wav",
+        "06 Sax FX only - Bring It On  Back Multis.wav",
+        "07 MG_s Bridge BG_s - Bring It On  Back Multis.wav",
+        "08 MG_s Bridge BG_s FX only - Bring It On  Back Multis.wav",
+        "Bass Amp.wav",
+        "Bass DI.wav",
+        "Bass_SUM.wav",
+        "BGV1_SUM.wav",
+        "BGV1A.wav",
+        "BGV1B.wav",
+        "BGV1C.wav",
+        "BGV1D.wav",
+        "Boho Synth Pluck.wav",
+        "Cymbal Swell.wav",
+        "Floor Tom Bottom.wav",
+        "Floor Tom Top.wav",
+        "Floor Tom_SUM.wav",
+        "Guitar Amp 1A.wav",
+        "Guitar Amp 1B.wav",
+        "Guitar DI.wav",
+        "Guitar_SUM.wav",
+        "HH.wav",
+        "Kick In.wav",
+        "Kick Out.wav",
+        "Kick_SUM.wav",
+        "Kim VOX 1A.wav",
+        "Kim VOX 1B.wav",
+        "Kim VOX_SUM.wav",
+        "Lead Guitar Amp.wav",
+        "Lead Guitar DI.wav",
+        "Lead Guitar_SUM.wav",
+        "Lead VOX Double 1.wav",
+        "Lead VOX Double 2.wav",
+        "Lead VOX Double_SUM.wav",
+        "Lead VOX.wav",
+        "OH_SUM.wav",
+        "OHL.wav",
+        "OHR.wav",
+        "Piano L.wav",
+        "Piano R.wav",
+        "Piano_SUM.wav",
+        "Rack Tom Bottom.wav",
+        "Rack Tom Top.wav",
+        "Rack Tom_SUM.wav",
+        "Room C.wav",
+        "Room L.wav",
+        "Room Mono.wav",
+        "Room R.wav",
+        "Rooms_SUM.wav",
+        "Snare Bottom.wav",
+        "Snare Top.wav",
+        "Snare_SUM.wav",
+        "Synth Rise Run 1.wav",
+        "Synth Rise Run 2.wav",
+        "Wurlitzer L.wav",
+        "Wurlitzer R.wav",
+        "Wurlitzer_SUM.wav",
+        "Xavier VOX.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // Expected structure:
+    // Drums/
+    //   ├─ Kick/                    ← SUM (In/Out) and Kick
+    //   ├─ Snare/                   ← Top, Bottom, Snare
+    //   ├─ Toms/                    ← Floor, Bottom, Top, Tom
+    //   ├─ Cymbals/
+    //   │   ├─ Hi Hat               ← HH.wav
+    //   │   ├─ OH/                  ← OH_SUM, OHL, OHR
+    //   │   └─ Cymbals              ← Cymbal Swell
+    //   └─ Rooms/                   ← L, R, Mono, C, Rooms_SUM
+    // Bass/                         ← Amp, Bass 1 (DI), Bass 2 (SUM)
+    // Guitars/
+    //   ├─ Lead/                    ← Lead Guitar Amp/DI/SUM
+    //   ├─ Guitars/                 ← Guitar DI/SUM
+    //   └─ Guitars 1/               ← Guitar Amp 1A/1B
+    // Keys/
+    //   ├─ Piano/                   ← Piano L/R/SUM
+    //   └─ Wurlitzer/               ← Wurlitzer L/R/SUM
+    // Synths/                       ← Boho Synth Pluck, Synth Rise Run 1/2
+    // Horns/
+    //   └─ Saxophone 1-3            ← Tenor sax, Bari sax, Sax FX
+    // Vocals/
+    //   ├─ Lead/                    ← Kim VOX, Lead VOX, Xavier VOX, Doubles
+    //   └─ BGVs/
+    //       ├─ Bridge/              ← MG's Bridge BG's (now recognized as BG)
+    //       └─ BGVs/                ← BGV1_SUM, BGV1A-D
+    // Orchestra/
+    //   ├─ Trumpets                 ← 01 Trumpet
+    //   └─ Trombone                 ← 02 Trombone
+    // Unsorted                      ← 05Sax fills (single track, not a folder)
+    let expected = steve_maggiora_bring_it_on_back_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

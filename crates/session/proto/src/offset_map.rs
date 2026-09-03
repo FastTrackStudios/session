@@ -35,11 +35,13 @@ pub struct SongOffset {
 
 impl SongOffset {
     /// Global end time of this song in the setlist timeline.
+    #[must_use] 
     pub fn global_end_seconds(&self) -> f64 {
         self.global_start_seconds + self.duration_seconds
     }
 
     /// Global end position of this song in quarter-notes.
+    #[must_use] 
     pub fn global_end_qn(&self) -> f64 {
         self.global_start_qn + self.duration_qn
     }
@@ -62,6 +64,7 @@ impl SetlistOffsetMap {
     ///
     /// Each song's allocated time = `duration_with_count_in()`. Quarter-note
     /// durations are estimated from tempo (seconds × BPM / 60).
+    #[must_use] 
     pub fn from_setlist(setlist: &Setlist) -> Self {
         let mut songs = Vec::with_capacity(setlist.songs.len());
         let mut cumulative_seconds = 0.0;
@@ -104,6 +107,7 @@ impl SetlistOffsetMap {
     ///
     /// `local_seconds` is relative to the song's start (0 = beginning of song,
     /// including count-in time).
+    #[must_use] 
     pub fn project_to_setlist(&self, song_index: usize, local_seconds: f64) -> Option<f64> {
         let offset = self.songs.get(song_index)?;
         Some(offset.global_start_seconds + local_seconds)
@@ -113,36 +117,40 @@ impl SetlistOffsetMap {
     ///
     /// Returns `(song_index, local_seconds)` where `local_seconds` is relative
     /// to that song's start. Uses binary search for O(log n) lookup.
+    #[must_use] 
     pub fn setlist_to_project(&self, global_seconds: f64) -> Option<(usize, f64)> {
         if self.songs.is_empty() || global_seconds < 0.0 {
             return None;
         }
 
         // Binary search: find the last song whose global_start_seconds <= global_seconds
-        let idx = match self
-            .songs
-            .binary_search_by(|s| s.global_start_seconds.partial_cmp(&global_seconds).unwrap())
-        {
-            Ok(i) => i,            // exact match on a boundary
-            Err(0) => return None, // before the first song
-            Err(i) => i - 1,
+        let idx = match self.songs.binary_search_by(|s| {
+            s.global_start_seconds
+                .partial_cmp(&global_seconds)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            Ok(i) => i,                        // exact match on a boundary
+            Err(0) => return None,             // before the first song
+            Err(i) => i.checked_sub(1)?,
         };
 
-        let offset = &self.songs[idx];
+        let offset = self.songs.get(idx)?;
         let local = global_seconds - offset.global_start_seconds;
 
         // Clamp: if past this song's end, still return it (last song case)
-        if local > offset.duration_seconds && idx + 1 < self.songs.len() {
+        if local > offset.duration_seconds {
             // Actually in the next song — shouldn't happen with correct binary search,
             // but guard against floating-point edge cases
-            let next = &self.songs[idx + 1];
-            return Some((next.index, global_seconds - next.global_start_seconds));
+            if let Some(next) = self.songs.get(idx.checked_add(1)?) {
+                return Some((next.index, global_seconds - next.global_start_seconds));
+            }
         }
 
         Some((offset.index, local))
     }
 
     /// Convert a song-local position (quarter-notes) to a setlist-global QN position.
+    #[must_use] 
     pub fn project_to_setlist_qn(&self, song_index: usize, local_qn: f64) -> Option<f64> {
         let offset = self.songs.get(song_index)?;
         Some(offset.global_start_qn + local_qn)
@@ -151,32 +159,36 @@ impl SetlistOffsetMap {
     /// Convert a setlist-global QN position to a song-local QN position.
     ///
     /// Returns `(song_index, local_qn)`. Uses binary search.
+    #[must_use] 
     pub fn setlist_to_project_qn(&self, global_qn: f64) -> Option<(usize, f64)> {
         if self.songs.is_empty() || global_qn < 0.0 {
             return None;
         }
 
-        let idx = match self
-            .songs
-            .binary_search_by(|s| s.global_start_qn.partial_cmp(&global_qn).unwrap())
-        {
+        let idx = match self.songs.binary_search_by(|s| {
+            s.global_start_qn
+                .partial_cmp(&global_qn)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
             Ok(i) => i,
             Err(0) => return None,
-            Err(i) => i - 1,
+            Err(i) => i.checked_sub(1)?,
         };
 
-        let offset = &self.songs[idx];
+        let offset = self.songs.get(idx)?;
         let local = global_qn - offset.global_start_qn;
 
-        if local > offset.duration_qn && idx + 1 < self.songs.len() {
-            let next = &self.songs[idx + 1];
-            return Some((next.index, global_qn - next.global_start_qn));
+        if local > offset.duration_qn {
+            if let Some(next) = self.songs.get(idx.checked_add(1)?) {
+                return Some((next.index, global_qn - next.global_start_qn));
+            }
         }
 
         Some((offset.index, local))
     }
 
     /// Look up a song by its project GUID.
+    #[must_use] 
     pub fn song_by_guid(&self, project_guid: &str) -> Option<&SongOffset> {
         self.songs.iter().find(|s| s.project_guid == project_guid)
     }
@@ -230,9 +242,9 @@ mod tests {
         let map = SetlistOffsetMap::from_setlist(&setlist);
 
         assert_eq!(map.songs.len(), 1);
-        assert_eq!(map.songs[0].global_start_seconds, 0.0);
-        assert_eq!(map.songs[0].duration_seconds, 60.0);
-        assert_eq!(map.total_seconds, 60.0);
+        assert!((map.songs[0].global_start_seconds - 0.0).abs() < 1e-9);
+        assert!((map.songs[0].duration_seconds - 60.0).abs() < 1e-9);
+        assert!((map.total_seconds - 60.0).abs() < 1e-9);
         // 60s at 120 BPM = 120 QN
         assert!((map.total_qn - 120.0).abs() < 1e-9);
     }
@@ -249,19 +261,19 @@ mod tests {
         assert_eq!(map.songs.len(), 3);
 
         // Song A: starts at 0, duration 30s
-        assert_eq!(map.songs[0].global_start_seconds, 0.0);
-        assert_eq!(map.songs[0].duration_seconds, 30.0);
+        assert!((map.songs[0].global_start_seconds - 0.0).abs() < 1e-9);
+        assert!((map.songs[0].duration_seconds - 30.0).abs() < 1e-9);
 
         // Song B: starts at 30s, duration 45s
-        assert_eq!(map.songs[1].global_start_seconds, 30.0);
-        assert_eq!(map.songs[1].duration_seconds, 45.0);
+        assert!((map.songs[1].global_start_seconds - 30.0).abs() < 1e-9);
+        assert!((map.songs[1].duration_seconds - 45.0).abs() < 1e-9);
 
         // Song C: starts at 75s, duration 65s (60 + 5 count-in)
-        assert_eq!(map.songs[2].global_start_seconds, 75.0);
-        assert_eq!(map.songs[2].duration_seconds, 65.0);
-        assert_eq!(map.songs[2].count_in_seconds, 5.0);
+        assert!((map.songs[2].global_start_seconds - 75.0).abs() < 1e-9);
+        assert!((map.songs[2].duration_seconds - 65.0).abs() < 1e-9);
+        assert!((map.songs[2].count_in_seconds - 5.0).abs() < 1e-9);
 
-        assert_eq!(map.total_seconds, 140.0);
+        assert!((map.total_seconds - 140.0).abs() < 1e-9);
     }
 
     #[test]
@@ -328,7 +340,7 @@ mod tests {
         ]);
         let map = SetlistOffsetMap::from_setlist(&setlist);
 
-        assert_eq!(map.songs[0].global_start_qn, 0.0);
+        assert!((map.songs[0].global_start_qn - 0.0).abs() < 1e-9);
         assert!((map.songs[0].duration_qn - 60.0).abs() < 1e-9);
         assert!((map.songs[1].global_start_qn - 60.0).abs() < 1e-9);
         assert!((map.songs[1].duration_qn - 30.0).abs() < 1e-9);
@@ -363,8 +375,8 @@ mod tests {
         let map = SetlistOffsetMap::from_setlist(&setlist);
 
         assert!(map.songs.is_empty());
-        assert_eq!(map.total_seconds, 0.0);
-        assert_eq!(map.total_qn, 0.0);
+        assert!((map.total_seconds - 0.0).abs() < 1e-9);
+        assert!((map.total_qn - 0.0).abs() < 1e-9);
         assert_eq!(map.setlist_to_project(0.0), None);
         assert_eq!(map.project_to_setlist(0, 0.0), None);
     }

@@ -30,7 +30,7 @@ fn god_im_just_grateful() {
         "God, I_m Just Grateful - Synth Bass.wav",
         "God, I_m Just Grateful - Synths.wav",
     ];
-    let (placement, _) = organize("God, I'm Just Grateful", &items);
+    let (placement, _) = organize("God, I'm Just Grateful", &items).unwrap();
     let ing = |f: &str, g: &str| in_group(&placement, f, g);
 
     assert!(ing("God, I_m Just Grateful - Click.wav", "Guide"));
@@ -66,8 +66,6 @@ fn god_im_just_grateful() {
     assert!(ing("God, I_m Just Grateful - Choir 2.wav", "Choir"));
     // Strings → the Orchestra group.
     assert!(ing("God, I_m Just Grateful - Strings.wav", "Orchestra"));
-    // KNOWN GAP: bare "Synths" (plural) isn't classified and lands in Unsorted
-    // (the Synths group matches "Synth <subtype>" like Who Else's "Synth FX",
-    // but not a lone "Synths"). Documented, not asserted as correct.
-    assert!(ing("God, I_m Just Grateful - Synths.wav", "Unsorted"));
+    // Bare "Synths" (plural) matches its own top-level Synths group.
+    assert!(ing("God, I_m Just Grateful - Synths.wav", "Synths"));
 }

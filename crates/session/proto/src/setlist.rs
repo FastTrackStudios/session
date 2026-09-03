@@ -70,21 +70,25 @@ pub struct Setlist {
 
 impl Setlist {
     /// Get total duration of all songs in the setlist
+    #[must_use] 
     pub fn total_duration(&self) -> f64 {
-        self.songs.iter().map(|s| s.duration()).sum()
+        self.songs.iter().map(super::song::Song::duration).sum()
     }
 
     /// Get total duration including count-ins
+    #[must_use] 
     pub fn total_duration_with_count_in(&self) -> f64 {
-        self.songs.iter().map(|s| s.duration_with_count_in()).sum()
+        self.songs.iter().map(super::song::Song::duration_with_count_in).sum()
     }
 
     /// Get a song by index
+    #[must_use] 
     pub fn get_song(&self, index: usize) -> Option<&Song> {
         self.songs.get(index)
     }
 
     /// Find the song containing a given absolute position
+    #[must_use] 
     pub fn song_at(&self, seconds: f64) -> Option<(usize, &Song)> {
         self.songs
             .iter()
@@ -124,5 +128,5 @@ pub struct ActiveIndices {
 // `#[subscribe]` stream through a `vox::channel::<ActiveIndices>()`.
 #[allow(unsafe_code)]
 unsafe impl vox_types::Reborrow for ActiveIndices {
-    type Ref<'a> = ActiveIndices;
+    type Ref<'a> = Self;
 }

@@ -34,7 +34,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use song::{Arrangement, AttachmentRef, ChartRef, Key, Song};
+use song::{Arrangement, AttachmentRef, ChartRef, Key, PartsManifest, Song};
 use uuid::Uuid;
 
 /// The fields we need out of a legacy `manifest.json`.
@@ -52,7 +52,7 @@ struct LegacyStem {
     file: String,
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut apply = false;
     let mut verify = false;
@@ -64,7 +64,7 @@ fn main() {
             "--verify" => verify = true,
             "-h" | "--help" => {
                 eprintln!("usage: migrate_flat_songs <songs-root> [--apply] [slug ...]");
-                return;
+                return std::process::ExitCode::SUCCESS;
             }
             _ if root.is_none() => root = Some(PathBuf::from(a)),
             slug => only.push(slug.to_string()),
@@ -72,72 +72,83 @@ fn main() {
     }
     let Some(root) = root else {
         eprintln!("error: missing <songs-root>");
-        std::process::exit(2);
+        return std::process::ExitCode::from(2);
     };
 
-    // --verify: read every migrated folder back through `song::from_folder`
-    // and print what the reader sees (round-trip validation, no writes).
     if verify {
-        let mut ok = 0;
-        let mut bad = 0;
-        let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)
-            .into_iter()
-            .flatten()
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.join("song.md").is_file())
-            .collect();
-        dirs.sort();
-        for dir in dirs {
-            let slug = dir
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
-            if !only.is_empty() && !only.contains(&slug) {
-                continue;
+        run_verify(&root, &only)
+    } else {
+        run_migrate(&root, &only, apply)
+    }
+}
+
+/// `--verify`: read every migrated folder back through `song::from_folder`
+/// and print what the reader sees (round-trip validation, no writes).
+fn run_verify(root: &Path, only: &[String]) -> std::process::ExitCode {
+    let mut ok: u32 = 0;
+    let mut bad: u32 = 0;
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.join("song.md").is_file())
+        .collect();
+    dirs.sort();
+    for dir in dirs {
+        let slug = dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        if !only.is_empty() && !only.contains(&slug) {
+            continue;
+        }
+        match song::from_folder(&dir) {
+            Ok(s) => {
+                let a = s.default().or_else(|| s.arrangements.first());
+                let (chart, stems) = a.map_or((None, 0), |a| {
+                    (
+                        a.chart_ref.as_ref().and_then(|c| c.path.clone()),
+                        a.attachment_refs.len(),
+                    )
+                });
+                println!(
+                    "ok     {slug}  \"{}\"  arrangements={}  default-key={}  chart={:?}  stems={stems}",
+                    s.title,
+                    s.arrangements.len(),
+                    a.map(|a| a.key.to_string()).unwrap_or_default(),
+                    chart
+                );
+                ok = ok.saturating_add(1);
             }
-            match song::from_folder(&dir) {
-                Ok(s) => {
-                    let a = s.default().or_else(|| s.arrangements.first());
-                    let (chart, stems) = a
-                        .map(|a| {
-                            (
-                                a.chart_ref.as_ref().and_then(|c| c.path.clone()),
-                                a.attachment_refs.len(),
-                            )
-                        })
-                        .unwrap_or((None, 0));
-                    println!(
-                        "ok     {slug}  \"{}\"  arrangements={}  default-key={}  chart={:?}  stems={stems}",
-                        s.title,
-                        s.arrangements.len(),
-                        a.map(|a| a.key.to_string()).unwrap_or_default(),
-                        chart
-                    );
-                    ok += 1;
-                }
-                Err(e) => {
-                    eprintln!("BAD    {slug}: {e}");
-                    bad += 1;
-                }
+            Err(e) => {
+                eprintln!("BAD    {slug}: {e}");
+                bad = bad.saturating_add(1);
             }
         }
-        println!("\nverified {ok} ok, {bad} bad");
-        std::process::exit(if bad > 0 { 1 } else { 0 });
     }
+    println!("\nverified {ok} ok, {bad} bad");
+    if bad > 0 {
+        std::process::ExitCode::FAILURE
+    } else {
+        std::process::ExitCode::SUCCESS
+    }
+}
 
-    let mut migrated = 0usize;
-    let mut skipped = 0usize;
-    let mut failed = 0usize;
+fn run_migrate(root: &Path, only: &[String], apply: bool) -> std::process::ExitCode {
+    let mut migrated: u32 = 0;
+    let mut skipped: u32 = 0;
+    let mut failed: u32 = 0;
 
-    let mut dirs: Vec<PathBuf> = match std::fs::read_dir(&root) {
+    let dirs = std::fs::read_dir(root);
+    let mut dirs: Vec<PathBuf> = match dirs {
         Ok(rd) => rd
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.is_dir())
             .collect(),
         Err(e) => {
             eprintln!("error: reading {}: {e}", root.display());
-            std::process::exit(1);
+            return std::process::ExitCode::FAILURE;
         }
     };
     dirs.sort();
@@ -157,12 +168,16 @@ fn main() {
         }
         if dir.join("song.md").exists() {
             println!("skip   {slug} (already has song.md)");
-            skipped += 1;
+            skipped = skipped.saturating_add(1);
             continue;
         }
         match build_song(&dir, &slug) {
             Ok(song) => {
-                let arr = &song.arrangements[0];
+                let Some(arr) = song.arrangements.first() else {
+                    eprintln!("FAIL   {slug}: built song has no arrangements");
+                    failed = failed.saturating_add(1);
+                    continue;
+                };
                 let stem_count = arr.attachment_refs.len();
                 let has_chart = arr.chart_ref.is_some();
                 if apply {
@@ -172,11 +187,11 @@ fn main() {
                                 "wrote  {slug}  (\"{}\", key {}, chart={}, {stem_count} stems)",
                                 song.title, arr.key, has_chart
                             );
-                            migrated += 1;
+                            migrated = migrated.saturating_add(1);
                         }
                         Err(e) => {
                             eprintln!("FAIL   {slug}: {e}");
-                            failed += 1;
+                            failed = failed.saturating_add(1);
                         }
                     }
                 } else {
@@ -184,12 +199,12 @@ fn main() {
                         "would  {slug}  (\"{}\", key {}, chart={}, {stem_count} stems)",
                         song.title, arr.key, has_chart
                     );
-                    migrated += 1;
+                    migrated = migrated.saturating_add(1);
                 }
             }
             Err(e) => {
                 eprintln!("FAIL   {slug}: {e}");
-                failed += 1;
+                failed = failed.saturating_add(1);
             }
         }
     }
@@ -199,7 +214,9 @@ fn main() {
         if apply { "migrated" } else { "would migrate" }
     );
     if failed > 0 {
-        std::process::exit(1);
+        std::process::ExitCode::FAILURE
+    } else {
+        std::process::ExitCode::SUCCESS
     }
 }
 
@@ -257,7 +274,7 @@ fn build_song(dir: &Path, slug: &str) -> Result<Song, String> {
         tempo_bpm: None,
         time_signature: None,
         chart_ref,
-        parts: Default::default(),
+        parts: PartsManifest::default(),
         attachment_refs,
     };
     Ok(Song {
@@ -276,10 +293,8 @@ fn titleize(slug: &str) -> String {
         .filter(|w| !w.is_empty())
         .map(|w| {
             let mut c = w.chars();
-            match c.next() {
-                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                None => String::new(),
-            }
+            c.next()
+                .map_or_else(String::new, |f| f.to_uppercase().collect::<String>() + c.as_str())
         })
         .collect::<Vec<_>>()
         .join(" ")

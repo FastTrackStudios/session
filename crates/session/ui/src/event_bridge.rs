@@ -49,8 +49,8 @@ pub fn apply_setlist_event(event: &SetlistEvent) {
 
         SetlistEvent::SongHydrated { index, song, .. } => {
             let mut setlist = SETLIST_STRUCTURE.write();
-            if *index < setlist.songs.len() {
-                setlist.songs[*index] = song.clone();
+            if let Some(song_mut) = setlist.songs.get_mut(*index) {
+                *song_mut = song.clone();
             }
         }
 
@@ -114,8 +114,8 @@ fn apply_transport_update(transports: &[SongTransportState]) {
             let next_state = TransportState {
                 position: transport.position.clone(),
                 bpm: transport.bpm,
-                time_sig_num: transport.time_sig_num as i32,
-                time_sig_denom: transport.time_sig_denom as i32,
+                time_sig_num: i32::try_from(transport.time_sig_num).unwrap_or(4),
+                time_sig_denom: i32::try_from(transport.time_sig_denom).unwrap_or(4),
                 is_playing: transport.is_playing,
                 is_looping: transport.is_looping,
                 loop_region: loop_region_pct,
@@ -123,8 +123,7 @@ fn apply_transport_update(transports: &[SongTransportState]) {
 
             let changed = existing
                 .get(&transport.song_index)
-                .map(|e| *e != next_state)
-                .unwrap_or(true);
+                .is_none_or(|e| *e != next_state);
 
             if changed {
                 transport_updates.push((transport.song_index, next_state));
@@ -132,7 +131,7 @@ fn apply_transport_update(transports: &[SongTransportState]) {
 
             if Some(transport.song_index) == active_song_index {
                 active_transport_update =
-                    Some((transport.is_playing, transport.position.musical.clone()));
+                    Some((transport.is_playing, transport.position.musical));
             }
         }
     }

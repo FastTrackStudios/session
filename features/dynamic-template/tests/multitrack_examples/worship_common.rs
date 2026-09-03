@@ -10,12 +10,16 @@ use std::collections::HashMap;
 /// Organize `items`, print the tree, assert nothing lands in Unsorted, and
 /// return `(placement, count)` where `placement[file] = (top_folder, owning_node)`.
 /// `top_folder` is "" for a stem that sits at the top level (no folder).
-pub fn organize(label: &str, items: &[&str]) -> (HashMap<String, (String, String)>, usize) {
+///
+/// # Errors
+///
+/// Returns an error if `organize_into_tracks` fails.
+pub fn organize(
+    label: &str,
+    items: &[&str],
+) -> monarchy::Result<(HashMap<String, (String, String)>, usize)> {
     let config = default_config();
-    let tracks = items
-        .to_vec()
-        .organize_into_tracks(&config, None)
-        .expect("organize_into_tracks");
+    let tracks = items.to_vec().organize_into_tracks(&config, None)?;
 
     println!("\n{label} track list:");
     daw_proto::display_tracklist(&tracks);
@@ -33,7 +37,7 @@ pub fn organize(label: &str, items: &[&str]) -> (HashMap<String, (String, String
             placement.insert(item.clone(), (top.clone(), node.name.clone()));
         }
         if let FolderDepthChange::ClosesLevels(n) = node.folder_depth_change {
-            for _ in 0..(-n) {
+            for _ in 0..n.unsigned_abs() {
                 stack.pop();
             }
         }
@@ -46,12 +50,14 @@ pub fn organize(label: &str, items: &[&str]) -> (HashMap<String, (String, String
     if let Some(u) = tracks.tracks.iter().find(|n| n.name == "Unsorted") {
         println!("  NOTE [{label}] Unsorted: {:?}", u.items);
     }
-    assert_eq!(
-        placement.len(),
-        items.len(),
-        "{label}: every stem should be placed exactly once"
-    );
-    (placement, items.len())
+    if placement.len() != items.len() {
+        return Err(monarchy::MonarchyError::InvalidField(format!(
+            "{label}: every stem should be placed exactly once (placed {}, expected {})",
+            placement.len(),
+            items.len()
+        )));
+    }
+    Ok((placement, items.len()))
 }
 
 /// True if `file` belongs to group `g` — either directly (a single-member
@@ -60,6 +66,5 @@ pub fn organize(label: &str, items: &[&str]) -> (HashMap<String, (String, String
 pub fn in_group(placement: &HashMap<String, (String, String)>, file: &str, g: &str) -> bool {
     placement
         .get(file)
-        .map(|(top, node)| top == g || node == g)
-        .unwrap_or(false)
+        .is_some_and(|(top, node)| top == g || node == g)
 }

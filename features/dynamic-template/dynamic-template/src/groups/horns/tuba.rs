@@ -8,7 +8,7 @@ pub struct Tuba;
 
 impl From<Tuba> for Group<ItemMetadata> {
     fn from(_val: Tuba) -> Self {
-        Group::builder("Tuba")
+        Self::builder("Tuba")
             .patterns(vec!["tuba", "euphonium", "euph"])
             .build()
     }

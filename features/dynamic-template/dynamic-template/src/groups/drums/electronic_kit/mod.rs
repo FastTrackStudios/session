@@ -42,7 +42,7 @@ impl From<ElectronicKit> for Group<ItemMetadata> {
                 .build(),
         ];
 
-        Group::builder("Electronic Kit")
+        Self::builder("Electronic Kit")
             .patterns(vec![
                 "electronic",
                 "e-kit",

@@ -10,7 +10,7 @@ pub struct Snare;
 impl From<Snare> for ItemMetadataGroup {
     fn from(_val: Snare) -> Self {
         // Define multi-mic positions as a Group
-        let multi_mic = ItemMetadataGroup::builder("MultiMic")
+        let multi_mic = Self::builder("MultiMic")
             .patterns(["Top", "Bottom", "Side", "OH"])
             .build();
 
@@ -31,7 +31,7 @@ impl From<Snare> for ItemMetadataGroup {
 
         // Use the convenience method - extension trait is in scope via prelude
         // Require parent match so this only matches when "Electronic Kit" also matches
-        ItemMetadataGroup::builder("Snare")
+        Self::builder("Snare")
             .patterns(["snare", "snr", "sn"])
             .multi_mic(multi_mic)
             .field_value_descriptors(ItemMetadataField::Variant, variant_descriptors)
@@ -47,8 +47,6 @@ mod tests {
     use super::*;
     use crate::{default_config, DynamicTemplateConfig};
     use monarchy::{Config, Parser};
-
-    type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
     /// Shared test cases - define input strings and expected metadata once
     /// Note: Electronic Kit snare requires parent match, so inputs must contain
@@ -102,14 +100,14 @@ mod tests {
         }
 
         #[test]
-        fn snare_matches_group_and_has_original_name() -> Result<()> {
+        fn snare_matches_group_and_has_original_name() {
             // -- Setup & Fixtures
             let (input, mut expected) = test_cases::snare_matches_group_and_has_original_name();
             let config = isolated_config();
             let parser = Parser::new(&config);
 
             // -- Exec
-            let item = parser.parse(input.to_string())?;
+            let item = parser.parse(input.to_string()).unwrap();
 
             // -- Check
             expected.group = item.metadata.group.clone();
@@ -117,19 +115,17 @@ mod tests {
                 item.metadata, expected,
                 "Isolated config: '808 Snare' should match Snare group and have original_name"
             );
-
-            Ok(())
         }
 
         #[test]
-        fn snare_top_parses_multi_mic_field() -> Result<()> {
+        fn snare_top_parses_multi_mic_field() {
             // -- Setup & Fixtures
             let (input, mut expected) = test_cases::snare_top_parses_multi_mic();
             let config = isolated_config();
             let parser = Parser::new(&config);
 
             // -- Exec
-            let item = parser.parse(input.to_string())?;
+            let item = parser.parse(input.to_string()).unwrap();
 
             // -- Check
             expected.group = item.metadata.group.clone();
@@ -143,19 +139,17 @@ mod tests {
                 display_name, "808 Snare Top",
                 "Display name should be '808 Snare Top'"
             );
-
-            Ok(())
         }
 
         #[test]
-        fn snare_bottom_parses_multi_mic_field() -> Result<()> {
+        fn snare_bottom_parses_multi_mic_field() {
             // -- Setup & Fixtures
             let (input, mut expected) = test_cases::snare_bottom_parses_multi_mic();
             let config = isolated_config();
             let parser = Parser::new(&config);
 
             // -- Exec
-            let item = parser.parse(input.to_string())?;
+            let item = parser.parse(input.to_string()).unwrap();
 
             // -- Check
             expected.group = item.metadata.group.clone();
@@ -169,8 +163,6 @@ mod tests {
                 display_name, "808 Snare Bottom",
                 "Display name should be '808 Snare Bottom'"
             );
-
-            Ok(())
         }
     }
 
@@ -179,14 +171,14 @@ mod tests {
         use super::*;
 
         #[test]
-        fn snare_matches_group_and_has_original_name() -> Result<()> {
+        fn snare_matches_group_and_has_original_name() {
             // -- Setup & Fixtures
             let (input, mut expected) = test_cases::snare_matches_group_and_has_original_name();
             let config = default_config();
             let parser = Parser::new(&config);
 
             // -- Exec
-            let item = parser.parse(input.to_string())?;
+            let item = parser.parse(input.to_string()).unwrap();
 
             // -- Check
             expected.group = item.metadata.group.clone();
@@ -200,19 +192,17 @@ mod tests {
                 display_name, "D 808 Snare",
                 "Integration config: display name should be 'D 808 Snare'"
             );
-
-            Ok(())
         }
 
         #[test]
-        fn snare_top_parses_multi_mic_field() -> Result<()> {
+        fn snare_top_parses_multi_mic_field() {
             // -- Setup & Fixtures
             let (input, mut expected) = test_cases::snare_top_parses_multi_mic();
             let config = default_config();
             let parser = Parser::new(&config);
 
             // -- Exec
-            let item = parser.parse(input.to_string())?;
+            let item = parser.parse(input.to_string()).unwrap();
 
             // -- Check
             expected.group = item.metadata.group.clone();
@@ -226,19 +216,17 @@ mod tests {
                 display_name, "D 808 Snare Top",
                 "Integration config: display name should be 'D 808 Snare Top'"
             );
-
-            Ok(())
         }
 
         #[test]
-        fn snare_bottom_parses_multi_mic_field() -> Result<()> {
+        fn snare_bottom_parses_multi_mic_field() {
             // -- Setup & Fixtures
             let (input, mut expected) = test_cases::snare_bottom_parses_multi_mic();
             let config = default_config();
             let parser = Parser::new(&config);
 
             // -- Exec
-            let item = parser.parse(input.to_string())?;
+            let item = parser.parse(input.to_string()).unwrap();
 
             // -- Check
             expected.group = item.metadata.group.clone();
@@ -252,8 +240,6 @@ mod tests {
                 display_name, "D 808 Snare Bottom",
                 "Integration config: display name should be 'D 808 Snare Bottom'"
             );
-
-            Ok(())
         }
     }
 }

@@ -8,39 +8,46 @@ use crate::samples::AudioSample;
 
 use super::routing::AudioRouter;
 
+/// State of a single click slot: playback position and whether it's currently playing
+#[derive(Debug, Clone, Copy)]
+pub struct ClickSlot {
+    pub playback_position: usize,
+    pub is_playing: bool,
+}
+
+impl ClickSlot {
+    const fn new() -> Self {
+        Self {
+            playback_position: 0,
+            is_playing: false,
+        }
+    }
+}
+
 /// Click sample player state
 #[derive(Debug, Clone)]
 pub struct ClickPlayerState {
-    pub playback_position_beat: usize,
-    pub playback_position_eighth: usize,
-    pub playback_position_sixteenth: usize,
-    pub playback_position_triplet: usize,
-    pub playback_position_measure_accent: usize,
-    pub is_playing_beat: bool,
-    pub is_playing_eighth: bool,
-    pub is_playing_sixteenth: bool,
-    pub is_playing_triplet: bool,
-    pub is_playing_measure_accent: bool,
+    pub beat: ClickSlot,
+    pub eighth: ClickSlot,
+    pub sixteenth: ClickSlot,
+    pub triplet: ClickSlot,
+    pub measure_accent: ClickSlot,
 }
 
 impl ClickPlayerState {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
-            playback_position_beat: 0,
-            playback_position_eighth: 0,
-            playback_position_sixteenth: 0,
-            playback_position_triplet: 0,
-            playback_position_measure_accent: 0,
-            is_playing_beat: false,
-            is_playing_eighth: false,
-            is_playing_sixteenth: false,
-            is_playing_triplet: false,
-            is_playing_measure_accent: false,
+            beat: ClickSlot::new(),
+            eighth: ClickSlot::new(),
+            sixteenth: ClickSlot::new(),
+            triplet: ClickSlot::new(),
+            measure_accent: ClickSlot::new(),
         }
     }
 
     /// Reset all playback states
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         *self = Self::new();
     }
 }
@@ -55,28 +62,27 @@ impl Default for ClickPlayerState {
 /// Shared body of the per-subdivision `play_*` fns (logic unchanged from
 /// the legacy per-slot implementations).
 fn play_slot(
-    is_playing: &mut bool,
-    position: &mut usize,
+    slot: &mut ClickSlot,
     sample_data: Option<&AudioSample>,
     gain: f32,
     left: &mut f32,
     right: &mut f32,
 ) {
-    if !*is_playing {
+    if !slot.is_playing {
         return;
     }
     if let Some(decoded_audio) = sample_data {
-        if *position < decoded_audio.frames() {
-            AudioRouter::mix_decoded_audio(decoded_audio, *position, gain, left, right);
-            *position += 1;
+        if slot.playback_position < decoded_audio.frames() {
+            AudioRouter::mix_decoded_audio(decoded_audio, slot.playback_position, gain, left, right);
+            slot.playback_position = slot.playback_position.saturating_add(1);
 
-            if *position >= decoded_audio.frames() {
-                *is_playing = false;
-                *position = 0;
+            if slot.playback_position >= decoded_audio.frames() {
+                slot.is_playing = false;
+                slot.playback_position = 0;
             }
         } else {
-            *is_playing = false;
-            *position = 0;
+            slot.is_playing = false;
+            slot.playback_position = 0;
         }
     }
 }
@@ -94,8 +100,7 @@ impl ClickPlayer {
         click_right: &mut f32,
     ) {
         play_slot(
-            &mut state.is_playing_beat,
-            &mut state.playback_position_beat,
+            &mut state.beat,
             sample_data,
             gain,
             click_left,
@@ -112,8 +117,7 @@ impl ClickPlayer {
         click_right: &mut f32,
     ) {
         play_slot(
-            &mut state.is_playing_eighth,
-            &mut state.playback_position_eighth,
+            &mut state.eighth,
             sample_data,
             gain,
             click_left,
@@ -130,8 +134,7 @@ impl ClickPlayer {
         click_right: &mut f32,
     ) {
         play_slot(
-            &mut state.is_playing_sixteenth,
-            &mut state.playback_position_sixteenth,
+            &mut state.sixteenth,
             sample_data,
             gain,
             click_left,
@@ -148,8 +151,7 @@ impl ClickPlayer {
         click_right: &mut f32,
     ) {
         play_slot(
-            &mut state.is_playing_triplet,
-            &mut state.playback_position_triplet,
+            &mut state.triplet,
             sample_data,
             gain,
             click_left,
@@ -166,8 +168,7 @@ impl ClickPlayer {
         click_right: &mut f32,
     ) {
         play_slot(
-            &mut state.is_playing_measure_accent,
-            &mut state.playback_position_measure_accent,
+            &mut state.measure_accent,
             sample_data,
             gain,
             click_left,
@@ -176,7 +177,6 @@ impl ClickPlayer {
     }
 
     /// Play all active click samples and mix to output
-    #[allow(clippy::too_many_arguments)]
     pub fn play_all(
         state: &mut ClickPlayerState,
         sample_data_beat: Option<&AudioSample>,

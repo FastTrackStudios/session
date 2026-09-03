@@ -19,7 +19,7 @@ pub struct KeyActionsImpl<D> {
 }
 
 impl<D> KeyActionsImpl<D> {
-    pub fn new(daw: D) -> Self {
+    pub const fn new(daw: D) -> Self {
         Self { daw }
     }
 }
@@ -164,7 +164,7 @@ impl<D: KeyDaw> KeyActions for KeyActionsImpl<D> {
     }
 
     fn bake_key_signatures(&self) -> DawResult<()> {
-        let count = key::bake_key_signatures(&self.daw, ProjectContext::Current)?;
+        let count = key::bake_key_signatures(&self.daw, &ProjectContext::Current)?;
         tracing::info!(
             count,
             "[session] baked key signatures into the project file"
@@ -173,7 +173,7 @@ impl<D: KeyDaw> KeyActions for KeyActionsImpl<D> {
     }
 
     fn clear_key_changes(&self) -> DawResult<()> {
-        key::clear_key_changes(&self.daw, ProjectContext::Current)
+        key::clear_key_changes(&self.daw, &ProjectContext::Current)
     }
 }
 

@@ -1,50 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn bon_jovi_you_give_love_a_bad_name() -> Result<()> {
-    // -- Setup & Fixtures
-    // Bon Jovi - You Give Love A Bad Name: Live/session recording with fiddle, banjo,
-    // slide guitar, and full folk-rock arrangement.
-    let items = vec![
-        "095 Pop Tamb.L.wav",
-        "095 Pop Tamb.R.wav",
-        "Acoustic.Right.wav",
-        "Acoustic.wav",
-        "banjo.One.wav",
-        "banjo.Solo.wav",
-        "banjo.Two.wav",
-        "Bass.wav",
-        "Drums.PNT.L.wav",
-        "Drums.PNT.R.wav",
-        "Fiddle PNT.L.wav",
-        "Fiddle PNT.R.wav",
-        "Guitar Slide.wav",
-        "Guitar Solo.wav",
-        "Mando.wav",
-        "Vocal.Harmony.One.wav",
-        "Vocal.Harmony.Two.wav",
-        "Vocal.Tune.Lead.wav",
-        "You Give Love A Bad Name.PRINT.L.wav",
-        "You Give Love A Bad Name.PRINT.R.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
-    // Stereo print drum bus (L/R)
+fn bon_jovi_you_give_love_a_bad_name_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::folder("Drums")
         .track("Drum Kit 1")
         .item("Drums.PNT.L.wav")
@@ -143,8 +100,52 @@ fn bon_jovi_you_give_love_a_bad_name() -> Result<()> {
         .group(vocals)
         .group(reference)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn bon_jovi_you_give_love_a_bad_name() {
+    // -- Setup & Fixtures
+    // Bon Jovi - You Give Love A Bad Name: Live/session recording with fiddle, banjo,
+    // slide guitar, and full folk-rock arrangement.
+    let items = vec![
+        "095 Pop Tamb.L.wav",
+        "095 Pop Tamb.R.wav",
+        "Acoustic.Right.wav",
+        "Acoustic.wav",
+        "banjo.One.wav",
+        "banjo.Solo.wav",
+        "banjo.Two.wav",
+        "Bass.wav",
+        "Drums.PNT.L.wav",
+        "Drums.PNT.R.wav",
+        "Fiddle PNT.L.wav",
+        "Fiddle PNT.R.wav",
+        "Guitar Slide.wav",
+        "Guitar Solo.wav",
+        "Mando.wav",
+        "Vocal.Harmony.One.wav",
+        "Vocal.Harmony.Two.wav",
+        "Vocal.Tune.Lead.wav",
+        "You Give Love A Bad Name.PRINT.L.wav",
+        "You Give Love A Bad Name.PRINT.R.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    // Stereo print drum bus (L/R)
+    let expected = bon_jovi_you_give_love_a_bad_name_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

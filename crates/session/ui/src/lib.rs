@@ -13,7 +13,7 @@
 //! This crate provides UI components that work with `session-proto` types and clients:
 //!
 //! - **Components**: Reusable UI primitives (progress bars, transport controls, etc.)
-//! - **Layouts**: Complete view layouts (PerformanceLayout, etc.)
+//! - **Layouts**: Complete view layouts (`PerformanceLayout`, etc.)
 //! - **Signals**: Global state management via Dioxus signals
 //! - **Session**: Singleton access to service clients (similar to `Daw::get()`)
 //!

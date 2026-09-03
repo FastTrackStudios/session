@@ -18,7 +18,7 @@ pub struct Brass;
 
 impl From<Brass> for Group<ItemMetadata> {
     fn from(_val: Brass) -> Self {
-        Group::builder("Brass")
+        Self::builder("Brass")
             .patterns(vec!["brass"])
             .group(Trumpets)
             .group(Horns)

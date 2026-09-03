@@ -28,6 +28,7 @@
 //! # optionally: EXPORT_ONLY="Praise,Washed" to transcode only those two
 //! ```
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -138,12 +139,11 @@ fn home() -> PathBuf {
 fn source_stems(song: &str) -> Vec<SourceStem> {
     if song == "Praise" {
         let dir = std::env::var("FTS_PRAISE_STEMS")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
+            .map_or_else(|_| {
                 home().join(
                     "Downloads/Elevation Worship - Praise-20260712T200150Z-2-001/Elevation Worship - Praise/- MultiTracks",
                 )
-            });
+            }, PathBuf::from);
         return PRAISE_STEMS
             .iter()
             .map(|(name, file, group)| SourceStem {
@@ -158,8 +158,7 @@ fn source_stems(song: &str) -> Vec<SourceStem> {
         return Vec::new();
     };
     let base = std::env::var("FTS_WORSHIP_STEMS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| home().join("Downloads/Worship MultiTracks"));
+        .map_or_else(|_| home().join("Downloads/Worship MultiTracks"), PathBuf::from);
     let dir = base.join(folder);
     let mut wavs: Vec<PathBuf> = match std::fs::read_dir(&dir) {
         Ok(rd) => rd
@@ -167,8 +166,7 @@ fn source_stems(song: &str) -> Vec<SourceStem> {
             .map(|e| e.path())
             .filter(|p| {
                 p.extension()
-                    .map(|x| x.eq_ignore_ascii_case("wav"))
-                    .unwrap_or(false)
+                    .is_some_and(|x| x.eq_ignore_ascii_case("wav"))
             })
             .collect(),
         Err(_) => return Vec::new(),
@@ -187,7 +185,7 @@ fn source_stems(song: &str) -> Vec<SourceStem> {
                 .unwrap_or(&stem)
                 .trim()
                 .to_string();
-            let group = group_for(&name).map(|g| g.to_string());
+            let group = group_for(&name).map(ToString::to_string);
             SourceStem {
                 name,
                 group,
@@ -199,7 +197,7 @@ fn source_stems(song: &str) -> Vec<SourceStem> {
 
 // ── Section naming ───────────────────────────────────────────────────────────
 
-fn section_base_name(kind: SectionKind) -> &'static str {
+const fn section_base_name(kind: SectionKind) -> &'static str {
     match kind {
         SectionKind::Intro => "Intro",
         SectionKind::Verse => "Verse",
@@ -291,7 +289,10 @@ fn probe_duration(path: &Path) -> Option<f64> {
 
 fn main() {
     let out_root = home().join(".fts-scratch/data/orgs/days-to-praise/resources/songs");
-    std::fs::create_dir_all(&out_root).expect("create songs root");
+    if let Err(e) = std::fs::create_dir_all(&out_root) {
+        eprintln!("ERROR: Failed to create songs root: {e}");
+        std::process::exit(1);
+    }
 
     let ffmpeg = have_ffmpeg();
     if !ffmpeg {
@@ -322,23 +323,11 @@ fn main() {
     println!("\nDone.");
 }
 
-fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[String]>) {
-    let title = song.name;
-    let slug = kebab(title);
-    let chart = demo_chart_for(title).unwrap_or("");
-    let layout: Option<ChartLayout> = chart_to_layout(chart).ok();
-
-    let dir = out_root.join(&slug);
-    let stems_dir = dir.join("stems");
-    std::fs::create_dir_all(&stems_dir).expect("create song dir");
-
-    // chart.kf — the keyflow source text.
-    std::fs::write(dir.join("chart.kf"), chart).expect("write chart.kf");
-
-    // ── Sections: seconds STRAIGHT from demo_songs_base(); names/labels from
-    //    the same chart via chart_to_layout (zipped in order). ──
+fn export_sections(
+    song: &DemoSong,
+    layout: Option<&ChartLayout>,
+) -> (Vec<String>, f64) {
     let chart_secs: Vec<&session::setlist::chart_import::LaidSection> = layout
-        .as_ref()
         .map(|l| {
             l.sections
                 .iter()
@@ -346,47 +335,59 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
                 .collect()
         })
         .unwrap_or_default();
-    // Pre-count kind occurrences so repeated kinds get "Verse 1 / Verse 2".
-    let mut kind_totals: std::collections::HashMap<&'static str, u32> = Default::default();
+
+    let mut kind_totals: std::collections::HashMap<&'static str, u32> = HashMap::default();
     for ds in &song.sections {
-        *kind_totals.entry(section_base_name(ds.kind)).or_default() += 1;
+        kind_totals
+            .entry(section_base_name(ds.kind))
+            .and_modify(|c| *c = c.saturating_add(1))
+            .or_insert(1);
     }
-    let mut kind_seen: std::collections::HashMap<&'static str, u32> = Default::default();
+    let mut kind_seen: std::collections::HashMap<&'static str, u32> = HashMap::default();
 
     let mut sections_json = Vec::new();
     for (i, ds) in song.sections.iter().enumerate() {
         let base = section_base_name(ds.kind);
-        let mut name = base.to_string();
-        if kind_totals.get(base).copied().unwrap_or(0) > 1 {
-            let n = kind_seen.entry(base).or_default();
-            *n += 1;
-            name = format!("{base} {n}");
-        }
-        // Attach the chart's quoted comment as a parenthetical label.
-        if let Some(cs) = chart_secs.get(i)
+        let name = if kind_totals.get(base).copied().unwrap_or(0) > 1 {
+            let n = kind_seen.entry(base).or_insert(0);
+            *n = n.saturating_add(1);
+            format!("{base} {n}")
+        } else {
+            base.to_string()
+        };
+        let final_name = if let Some(cs) = chart_secs.get(i)
             && let Some(label) = &cs.label
         {
-            name = format!("{name} ({label})");
-        }
+            format!("{name} ({label})")
+        } else {
+            name
+        };
         sections_json.push(format!(
             "    {{ \"name\": {}, \"start_sec\": {}, \"end_sec\": {} }}",
-            json_str(&name),
+            json_str(&final_name),
             fmt_f(ds.start),
             fmt_f(ds.end),
         ));
     }
-    let sections_end = song.sections.last().map(|s| s.end).unwrap_or(0.0);
+    let sections_end = song.sections.last().map_or(0.0, |s| s.end);
+    (sections_json, sections_end)
+}
 
-    // ── Stems ──
+fn export_stems(
+    title: &str,
+    stems_dir: &Path,
+    ffmpeg: bool,
+    only: Option<&[String]>,
+) -> (Vec<String>, f64, usize) {
     let sources = source_stems(title);
-    let do_stems = ffmpeg && only.map(|o| o.iter().any(|n| n == title)).unwrap_or(true);
+    let do_stems = ffmpeg && only.is_none_or(|o| o.iter().any(|n| n == title));
 
     let mut stems_json = Vec::new();
     let mut longest_stem = 0.0_f64;
     let mut transcoded = 0usize;
     if do_stems && !sources.is_empty() {
         for (i, src) in sources.iter().enumerate() {
-            let idx = i + 1;
+            let idx = i.saturating_add(1);
             let default_muted = is_click_or_guide(src.group.as_deref(), &src.name);
             let file_slug = kebab(&src.name);
             let (file_rel, ok) = if ffmpeg {
@@ -395,7 +396,6 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
                 let ok = transcode_opus(&src.path, &dst).unwrap_or(false);
                 (format!("stems/{fname}"), ok)
             } else {
-                // Fallback: copy the WAV verbatim.
                 let fname = format!("{idx:02}-{file_slug}.wav");
                 let dst = stems_dir.join(&fname);
                 let ok = std::fs::copy(&src.path, &dst).is_ok();
@@ -405,7 +405,7 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
                 eprintln!("  {title}: FAILED to encode {}", src.path.display());
                 continue;
             }
-            transcoded += 1;
+            transcoded = transcoded.saturating_add(1);
             if let Some(d) = probe_duration(&stems_dir.join(file_rel.trim_start_matches("stems/")))
             {
                 longest_stem = longest_stem.max(d);
@@ -420,10 +420,33 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
             ));
         }
     }
+    (stems_json, longest_stem, transcoded)
+}
+
+fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[String]>) {
+    let title = song.name;
+    let slug = kebab(title);
+    let chart = demo_chart_for(title).unwrap_or("");
+    let layout: Option<ChartLayout> = chart_to_layout(chart).ok();
+
+    let dir = out_root.join(&slug);
+    let stems_dir = dir.join("stems");
+    if let Err(e) = std::fs::create_dir_all(&stems_dir) {
+        eprintln!("ERROR: Failed to create song dir: {e}");
+        return;
+    }
+
+    if let Err(e) = std::fs::write(dir.join("chart.kf"), chart) {
+        eprintln!("ERROR: Failed to write chart.kf: {e}");
+        return;
+    }
+
+    let (sections_json, sections_end) = export_sections(song, layout.as_ref());
+
+    let (stems_json, longest_stem, transcoded) = export_stems(title, &stems_dir, ffmpeg, only);
 
     let duration = sections_end.max(longest_stem);
 
-    // ── manifest.json ──
     let key = layout
         .as_ref()
         .and_then(|l| l.key.clone())
@@ -433,11 +456,15 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
         .and_then(|l| l.artist.clone())
         .unwrap_or_default();
     let time_sig = format!("{}/{}", song.time_sig_num, song.time_sig_den);
-    let bpm = song.tempo_bpm.round() as i64;
+    let bpm = if song.tempo_bpm.is_finite() && song.tempo_bpm >= 0.0 {
+        song.tempo_bpm.round()
+    } else {
+        0.0
+    };
 
     let manifest = format!(
         "{{\n  \"slug\": {slug}, \"title\": {title}, \"artist\": {artist},\n  \
-         \"key\": {key}, \"bpm\": {bpm}, \"time_signature\": {ts}, \"duration_sec\": {dur},\n  \
+         \"key\": {key}, \"bpm\": {bpm:.0}, \"time_signature\": {ts}, \"duration_sec\": {dur},\n  \
          \"sections\": [\n{sections}\n  ],\n  \"stems\": [\n{stems}\n  ]\n}}\n",
         slug = json_str(&slug),
         title = json_str(title),
@@ -449,8 +476,13 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
         sections = sections_json.join(",\n"),
         stems = stems_json.join(",\n"),
     );
-    std::fs::write(dir.join("manifest.json"), &manifest).expect("write manifest.json");
+    if let Err(e) = std::fs::write(dir.join("manifest.json"), &manifest) {
+        eprintln!("ERROR: Failed to write manifest.json: {e}");
+        return;
+    }
 
+    let sources = source_stems(title);
+    let do_stems = ffmpeg && only.is_none_or(|o| o.iter().any(|n| n == title));
     println!(
         "  {title:26} slug={slug:20} key={key:3} {bpm}bpm {time_sig}  sections={:2}  stems={}{}",
         song.sections.len(),
@@ -465,7 +497,7 @@ fn export_song(song: &DemoSong, out_root: &Path, ffmpeg: bool, only: Option<&[St
 
 // Minimal JSON string escaper (ASCII-only content here).
 fn json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
+    let mut out = String::with_capacity(s.len().saturating_add(2));
     out.push('"');
     for ch in s.chars() {
         match ch {

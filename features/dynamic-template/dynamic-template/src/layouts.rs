@@ -27,10 +27,12 @@ pub struct TrackLayout {
 }
 
 impl TrackLayout {
+    #[must_use] 
     pub const fn new(tcp: LayoutName, mcp: LayoutName) -> Self {
         Self { tcp, mcp }
     }
 
+    #[must_use] 
     pub const fn same(layout: LayoutName) -> Self {
         Self {
             tcp: layout,
@@ -108,7 +110,7 @@ static LAYOUT_MAP: LazyLock<HashMap<&'static str, TrackLayout>> = LazyLock::new(
 /// Supports various lookup formats:
 /// - Top-level: "Drums", "guitars", "VOCALS"
 /// - Space-separated: "Electric Guitar", "Lead Vocals"
-/// - Underscore-separated: "electric_guitar", "lead_vocals"
+/// - Underscore-separated: "`electric_guitar`", "`lead_vocals`"
 ///
 /// Returns `None` if no specific layout is defined for the given group.
 ///
@@ -149,15 +151,19 @@ pub fn layout_for_path(path: &[&str]) -> Option<TrackLayout> {
 
     // Fall back through parent groups
     for i in (0..path.len()).rev() {
-        let parent_path = path[..=i].join("/").to_lowercase();
-        if let Some(&layout) = LAYOUT_MAP.get(parent_path.as_str()) {
-            return Some(layout);
+        if let Some(slice) = path.get(..=i) {
+            let parent_path = slice.join("/").to_lowercase();
+            if let Some(&layout) = LAYOUT_MAP.get(parent_path.as_str()) {
+                return Some(layout);
+            }
         }
 
         // Also try just the group name at this level
-        let group_name = path[i].to_lowercase();
-        if let Some(&layout) = LAYOUT_MAP.get(group_name.as_str()) {
-            return Some(layout);
+        if let Some(group) = path.get(i) {
+            let group_name = group.to_lowercase();
+            if let Some(&layout) = LAYOUT_MAP.get(group_name.as_str()) {
+                return Some(layout);
+            }
         }
     }
 

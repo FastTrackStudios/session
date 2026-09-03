@@ -1,42 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn night_panther_fire() -> Result<()> {
-    // -- Setup & Fixtures
-    // Night Panther - Fire: 12-stem pop/funk session from MedleyDB. Electric bass,
-    // male + female vocals, drum machine + live drums, brass section, string section,
-    // 3 synths, and auxiliary percussion. Tests layered electronic/live hybrid with
-    // orchestral elements.
-    let items = vec![
-        "01_ElecBass.wav",
-        "02_BackingVox1.wav",
-        "03_BackingVox2.wav",
-        "04_DrumMachine.wav",
-        "05_Drums.wav",
-        "06_BrassSection.wav",
-        "07_LeadVox.wav",
-        "08_AuxPerc.wav",
-        "09_Strings.wav",
-        "10_Synth1.wav",
-        "11_Synth2.wav",
-        "12_Synth3.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn night_panther_fire_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::folder("Drums")
         .track("Drum Kit")
         .item("05_Drums.wav")
@@ -86,8 +51,44 @@ fn night_panther_fire() -> Result<()> {
         .group(vocals)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn night_panther_fire() {
+    // -- Setup & Fixtures
+    // Night Panther - Fire: 12-stem pop/funk session from MedleyDB. Electric bass,
+    // male + female vocals, drum machine + live drums, brass section, string section,
+    // 3 synths, and auxiliary percussion. Tests layered electronic/live hybrid with
+    // orchestral elements.
+    let items = vec![
+        "01_ElecBass.wav",
+        "02_BackingVox1.wav",
+        "03_BackingVox2.wav",
+        "04_DrumMachine.wav",
+        "05_Drums.wav",
+        "06_BrassSection.wav",
+        "07_LeadVox.wav",
+        "08_AuxPerc.wav",
+        "09_Strings.wav",
+        "10_Synth1.wav",
+        "11_Synth2.wav",
+        "12_Synth3.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = night_panther_fire_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

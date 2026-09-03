@@ -11,7 +11,7 @@ pub struct Mandolin;
 
 impl From<Mandolin> for Group<ItemMetadata> {
     fn from(_val: Mandolin) -> Self {
-        Group::builder("Mando")
+        Self::builder("Mando")
             .patterns(vec!["mando", "mandolin"])
             .build()
     }

@@ -18,7 +18,7 @@ pub struct Strings;
 
 impl From<Strings> for Group<ItemMetadata> {
     fn from(_val: Strings) -> Self {
-        Group::builder("Strings")
+        Self::builder("Strings")
             .patterns(vec!["strings", "string_section"])
             .group(Violins)
             .group(Viola)

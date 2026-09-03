@@ -15,7 +15,7 @@ pub struct Fx;
 
 impl From<Fx> for Group<ItemMetadata> {
     fn from(_val: Fx) -> Self {
-        Group::builder("FX")
+        Self::builder("FX")
             // Removed generic "fx" and "effect" - those go to SFX group
             // These patterns are specific to synth-based sound design
             .patterns(vec![

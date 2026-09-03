@@ -44,7 +44,7 @@ use std::sync::OnceLock;
 /// Tracks latency for roundtrip measurements (action -> state update received)
 #[derive(Debug, Clone, Default)]
 pub struct LatencyTracker {
-    /// Timestamp when play/pause was triggered (waiting for PlayState change)
+    /// Timestamp when play/pause was triggered (waiting for `PlayState` change)
     pub pending_play_toggle: Option<f64>,
     /// Most recent measured latencies (last N measurements)
     pub recent_latencies: Vec<LatencyMeasurement>,
@@ -64,7 +64,7 @@ pub struct LatencyMeasurement {
 }
 
 /// Types of actions we track latency for
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LatencyAction {
     PlayToggle,
     LoopToggle,
@@ -72,7 +72,8 @@ pub enum LatencyAction {
 }
 
 impl LatencyTracker {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self {
             pending_play_toggle: None,
             recent_latencies: Vec::new(),
@@ -87,13 +88,11 @@ impl LatencyTracker {
 
     /// Complete a play/pause measurement when state change is received
     pub fn complete_play_toggle(&mut self) -> Option<f64> {
-        if let Some(start) = self.pending_play_toggle.take() {
+        self.pending_play_toggle.take().and_then(|start| {
             let latency = now_ms() - start;
             self.record_measurement(LatencyAction::PlayToggle, latency);
             Some(latency)
-        } else {
-            None
-        }
+        })
     }
 
     /// Record a latency measurement
@@ -111,6 +110,7 @@ impl LatencyTracker {
     }
 
     /// Get average latency for a specific action type
+    #[must_use]
     pub fn average_latency(&self, action: LatencyAction) -> Option<f64> {
         let matching: Vec<_> = self
             .recent_latencies
@@ -122,11 +122,12 @@ impl LatencyTracker {
             None
         } else {
             let sum: f64 = matching.iter().map(|m| m.latency_ms).sum();
-            Some(sum / matching.len() as f64)
+            Some(sum / f64::from(u32::try_from(matching.len()).unwrap_or(1)))
         }
     }
 
     /// Get the most recent latency measurement
+    #[must_use] 
     pub fn last_latency(&self) -> Option<&LatencyMeasurement> {
         self.recent_latencies.last()
     }
@@ -137,8 +138,7 @@ impl LatencyTracker {
 fn now_ms() -> f64 {
     web_sys::window()
         .and_then(|w| w.performance())
-        .map(|p| p.now())
-        .unwrap_or(0.0)
+        .map_or(0.0, |p| p.now())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -177,6 +177,7 @@ pub struct LatencyInfo {
 
 impl LatencyInfo {
     /// Total latency for visual compensation (output + half network RTT)
+    #[must_use] 
     pub fn total_compensation_ms(&self) -> f64 {
         self.output_ms + (self.network_rtt_ms / 2.0)
     }
@@ -187,12 +188,12 @@ pub static LATENCY_INFO: GlobalSignal<LatencyInfo> = Signal::global(LatencyInfo:
 
 /// Global setlist structure (songs, sections, timing)
 /// Updates when setlist is rebuilt or structure changes
-pub static SETLIST_STRUCTURE: GlobalSignal<Setlist> = Signal::global(|| Setlist::default());
+pub static SETLIST_STRUCTURE: GlobalSignal<Setlist> = Signal::global(Setlist::default);
 
 /// Current playback position and progress
 /// Updates frequently during playback (10-60 times per second)
 pub static ACTIVE_INDICES: GlobalSignal<ActiveIndices> =
-    Signal::global(|| ActiveIndices::default());
+    Signal::global(ActiveIndices::default);
 
 /// Per-song transport state (playhead position, tempo, time signature)
 /// Key is song index, updates when transport state changes for that song
@@ -217,11 +218,13 @@ pub static ACTIVE_PLAYBACK_IS_PLAYING: GlobalSignal<bool> = Signal::global(|| fa
 pub static SONG_CHARTS: GlobalSignal<HashMap<String, SongChartHydration>> =
     Signal::global(HashMap::new);
 
-/// A non-destructive chart display override for one song — transpose to a key,
-/// re-spell in Nashville numbers / Roman numerals, and/or finger with a capo.
-/// It NEVER changes the keyflow source; the chart is re-engraved through
-/// `keyflow::transpose::apply_view`. Keyed by `project_guid` in [`SONG_VIEWS`].
-#[derive(Clone, PartialEq)]
+/// A non-destructive chart display override for one song.
+///
+/// Transpose to a key, re-spell in Nashville numbers / Roman numerals, and/or
+/// finger with a capo. It NEVER changes the keyflow source; the chart is
+/// re-engraved through `keyflow::transpose::apply_view`. Keyed by `project_guid`
+/// in [`SONG_VIEWS`].
+#[derive(Clone, PartialEq, Eq)]
 pub struct SongView {
     /// Render sounding in this key (keyflow key string, e.g. `"G"`); `None` =
     /// the song's own key.
@@ -244,6 +247,7 @@ impl Default for SongView {
 
 impl SongView {
     /// True when this view renders the chart exactly as written.
+    #[must_use] 
     pub fn is_identity(&self) -> bool {
         self.target_key.is_none()
             && self.capo == 0
@@ -251,6 +255,7 @@ impl SongView {
     }
 
     /// Build the keyflow transposition view (target key parsed from the string).
+    #[must_use] 
     pub fn to_chart_view(&self) -> keyflow::ChartView {
         keyflow::ChartView {
             target_key: self
@@ -263,6 +268,7 @@ impl SongView {
     }
 
     /// Discriminant for a layout cache key (so switching the view re-renders).
+    #[must_use] 
     pub fn cache_hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -280,6 +286,7 @@ impl SongView {
     /// The effective sounding key label shown to the player: the fingered shape
     /// key when a capo is set (that's what they play), else the target key.
     /// `None` when the view leaves the song in its own key.
+    #[must_use] 
     pub fn display_key_label(&self) -> Option<String> {
         let target = self.target_key.as_deref()?;
         let key = keyflow::Key::parse(target).ok()?;
@@ -329,7 +336,8 @@ impl Default for ChartAreaBounds {
 }
 
 impl ChartAreaBounds {
-    pub fn new(x: f64, y: f64, width: f64, height: f64, dpr: f64) -> Self {
+    #[must_use] 
+    pub const fn new(x: f64, y: f64, width: f64, height: f64, dpr: f64) -> Self {
         Self {
             x,
             y,
@@ -339,6 +347,7 @@ impl ChartAreaBounds {
         }
     }
 
+    #[must_use] 
     pub fn is_valid(&self) -> bool {
         self.width > 0.0 && self.height > 0.0
     }
@@ -355,7 +364,7 @@ pub static CHART_AREA_BOUNDS: GlobalSignal<ChartAreaBounds> =
 ///
 /// When `auto_follow` is true, the render effect computes scroll automatically
 /// to track the cursor. When false, the user has manually panned/zoomed and
-/// the stored scroll_x/scroll_y/zoom are used directly.
+/// the stored `scroll_x/scroll_y/zoom` are used directly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PerfChartViewport {
     pub scroll_x: f64,
@@ -381,7 +390,7 @@ pub static PERF_CHART_VIEWPORT: GlobalSignal<PerfChartViewport> =
     Signal::global(PerfChartViewport::default);
 
 /// Hover point in scene coordinates for the performance chart view.
-/// Separate from CHART_HOVER_SCENE_POINT (which is for the chart editor).
+/// Separate from `CHART_HOVER_SCENE_POINT` (which is for the chart editor).
 pub static PERF_CHART_HOVER: GlobalSignal<Option<(f64, f64)>> = Signal::global(|| None);
 
 /// Click point in scene coordinates for the performance chart view.
@@ -405,7 +414,7 @@ thread_local! {
     static GLOBAL_SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
 }
 
-/// For non-WASM targets, use OnceLock (no reconnection support needed for tests/native)
+/// For non-WASM targets, use `OnceLock` (no reconnection support needed for tests/native)
 #[cfg(not(target_arch = "wasm32"))]
 static GLOBAL_SESSION: OnceLock<Session> = OnceLock::new();
 
@@ -449,15 +458,18 @@ impl Session {
     #[cfg(target_arch = "wasm32")]
     pub fn init(setlist_client: SetlistServiceClient) -> eyre::Result<()> {
         GLOBAL_SESSION.with(|cell| {
-            *cell.borrow_mut() = Some(Session { setlist_client });
+            *cell.borrow_mut() = Some(Self { setlist_client });
         });
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// On native targets, returns an error if the Session is already initialized.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn init(setlist_client: SetlistServiceClient) -> eyre::Result<()> {
         GLOBAL_SESSION
-            .set(Session { setlist_client })
+            .set(Self { setlist_client })
             .map_err(|_| eyre::eyre!("Session already initialized"))
     }
 
@@ -465,9 +477,15 @@ impl Session {
     ///
     /// # Panics
     ///
-    /// Panics if `init()` has not been called.
+    /// Panics if `init()` has not been called. There is no meaningful
+    /// fallback `SetlistServiceClient` to construct (it needs a live
+    /// `Caller`), and every UI call site (`Session::get().setlist()...`)
+    /// assumes this always succeeds, so returning `Option` here would just
+    /// push the same "must call `init()` first" panic into every caller.
     #[cfg(target_arch = "wasm32")]
-    pub fn get() -> Session {
+    #[must_use]
+    #[allow(clippy::expect_used)]
+    pub fn get() -> Self {
         GLOBAL_SESSION.with(|cell| {
             cell.borrow()
                 .clone()
@@ -475,21 +493,25 @@ impl Session {
         })
     }
 
+    /// # Panics
+    ///
+    /// Panics if `init()` has not been called. See the wasm `get()` above
+    /// for why there is no non-panicking fallback here.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn get() -> &'static Session {
-        GLOBAL_SESSION
-            .get()
-            .expect("Session not initialized. Call Session::init() first.")
+    #[allow(clippy::expect_used)]
+    #[must_use]
+    pub fn get() -> &'static Self {
+        Self::try_get().expect("Session not initialized. Call Session::init() first.")
     }
 
     /// Get the global Session instance if initialized, or `None`.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn try_get() -> Option<&'static Session> {
+    pub fn try_get() -> Option<&'static Self> {
         GLOBAL_SESSION.get()
     }
 
-    /// Get the SetlistService client
-    pub fn setlist(&self) -> &SetlistServiceClient {
+    /// Get the `SetlistService` client
+    pub const fn setlist(&self) -> &SetlistServiceClient {
         &self.setlist_client
     }
 }
@@ -533,7 +555,8 @@ impl Default for TransportState {
 
 impl TransportState {
     /// Create a new transport state
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         position: daw_proto::Position,
         bpm: f64,
         time_sig_num: i32,
@@ -551,6 +574,7 @@ impl TransportState {
     }
 
     /// Set loop region (as time values in seconds)
+    #[must_use] 
     pub fn with_loop_region(mut self, start: f64, end: f64, song_duration: f64) -> Self {
         self.is_looping = true;
         self.loop_region = Some((start / song_duration, end / song_duration));

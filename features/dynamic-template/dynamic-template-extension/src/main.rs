@@ -11,10 +11,9 @@
 //! Until this crate is ported to that model, the binary just logs a notice and
 //! exits so the workspace still builds.
 
-use eyre::Result;
 use tracing::warn;
 
-fn main() -> Result<()> {
+fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
@@ -28,6 +27,4 @@ fn main() -> Result<()> {
          the in-process DawModule (crate `dynamic-template`, module \
          `DynamicTemplateModule`) loaded by a REAPER cdylib instead."
     );
-
-    Ok(())
 }

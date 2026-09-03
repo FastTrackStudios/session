@@ -8,7 +8,7 @@ pub struct Choir;
 
 impl From<Choir> for Group<ItemMetadata> {
     fn from(_val: Choir) -> Self {
-        Group::builder("Choir")
+        Self::builder("Choir")
             .prefix("Choir")
             .patterns(vec![
                 "choir",

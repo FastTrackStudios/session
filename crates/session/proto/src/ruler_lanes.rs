@@ -1,4 +1,4 @@
-//! FTS Ruler Manager — standardized ruler lane layout for FastTrackStudio projects.
+//! FTS Ruler Manager — standardized ruler lane layout for `FastTrackStudio` projects.
 //!
 // The retired `CoreLane::Key` variant is intentionally retained for its
 // explicit discriminant / RPP layout compatibility; allow its self-referential
@@ -54,8 +54,9 @@ pub enum CoreLane {
 impl CoreLane {
     /// All core lanes that should be created in every project, in
     /// the user-visible order SONG → SECTIONS → MARKS.
-    pub const fn all() -> &'static [CoreLane] {
-        &[CoreLane::Song, CoreLane::Sections, CoreLane::Marks]
+    #[must_use] 
+    pub const fn all() -> &'static [Self] {
+        &[Self::Song, Self::Sections, Self::Marks]
     }
 
     /// 0-based lane index. Same value used for **both** REAPER's
@@ -69,19 +70,27 @@ impl CoreLane {
     /// So `I_LANENUMBER` is the same 0-based index — REAPER's docs
     /// reading "0 = automatic" appears to be wrong or version-
     /// dependent here.
+    #[must_use]
     pub const fn lane_index(&self) -> u32 {
-        *self as u32
+        match self {
+            Self::Song => 0,
+            Self::Sections => 1,
+            Self::Marks => 2,
+            Self::Key => 3,
+        }
     }
 
     /// Same as `lane_index`. Kept as a separate name so call sites
     /// targeting the project-info name table read self-documenting
     /// (we used to need a 0/1-based offset between them).
+    #[must_use]
     pub const fn name_key_index(&self) -> u32 {
-        *self as u32
+        Self::lane_index(self)
     }
 
     /// Display name shown in the REAPER ruler.
     #[allow(deprecated)] // matches the retired `Key` variant for completeness
+    #[must_use] 
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Song => "SONG",
@@ -104,6 +113,7 @@ impl CoreLane {
     /// default-marker (slot 0) vs default-region (slot 1). We arrange
     /// `all()` so MARKS occupies slot 0 and SONG occupies slot 1,
     /// and let REAPER's intrinsic defaults do the routing.
+    #[must_use] 
     pub const fn flags(&self) -> i32 {
         match self {
             Self::Marks => 4, // documented: default marker lane (slot 0)
@@ -117,10 +127,12 @@ impl CoreLane {
     /// rest of the numbering offset off this value, and shifting it
     /// would silently renumber every existing project's instrument
     /// lanes.
+    #[must_use] 
     pub const fn count() -> u32 {
         4
     }
 
+    #[must_use] 
     pub fn from_index(index: u32) -> Option<Self> {
         Self::all()
             .iter()
@@ -128,6 +140,7 @@ impl CoreLane {
             .copied()
     }
 
+    #[must_use] 
     pub fn from_name(name: &str) -> Option<Self> {
         let upper = name.to_uppercase();
         Self::all()
@@ -158,25 +171,38 @@ pub enum InstrumentLane {
 
 impl InstrumentLane {
     /// All well-known instrument lanes.
-    pub const fn all() -> &'static [InstrumentLane] {
+    #[must_use] 
+    pub const fn all() -> &'static [Self] {
         &[
-            InstrumentLane::Drums,
-            InstrumentLane::Bass,
-            InstrumentLane::Guitar,
-            InstrumentLane::Guitar2,
-            InstrumentLane::Keys,
-            InstrumentLane::Keys2,
-            InstrumentLane::Lead,
-            InstrumentLane::BGVs,
+            Self::Drums,
+            Self::Bass,
+            Self::Guitar,
+            Self::Guitar2,
+            Self::Keys,
+            Self::Keys2,
+            Self::Lead,
+            Self::BGVs,
         ]
     }
 
     /// REAPER ruler lane index (1-based), offset after core lanes.
+    #[must_use]
     pub const fn lane_index(&self) -> u32 {
-        CoreLane::count() + *self as u32 + 1
+        let discriminant = match self {
+            Self::Drums => 0,
+            Self::Bass => 1,
+            Self::Guitar => 2,
+            Self::Guitar2 => 3,
+            Self::Keys => 4,
+            Self::Keys2 => 5,
+            Self::Lead => 6,
+            Self::BGVs => 7,
+        };
+        CoreLane::count().saturating_add(discriminant).saturating_add(1)
     }
 
     /// Display name shown in the REAPER ruler.
+    #[must_use] 
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Drums => "Drums",
@@ -190,6 +216,7 @@ impl InstrumentLane {
         }
     }
 
+    #[must_use] 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::all()
             .iter()
@@ -209,21 +236,24 @@ pub enum FtsLane {
 }
 
 impl FtsLane {
-    pub fn lane_index(&self) -> u32 {
+    #[must_use] 
+    pub const fn lane_index(&self) -> u32 {
         match self {
             Self::Core(l) => l.lane_index(),
             Self::Instrument(l) => l.lane_index(),
         }
     }
 
-    pub fn display_name(&self) -> &'static str {
+    #[must_use] 
+    pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Core(l) => l.display_name(),
             Self::Instrument(l) => l.display_name(),
         }
     }
 
-    pub fn flags(&self) -> i32 {
+    #[must_use] 
+    pub const fn flags(&self) -> i32 {
         match self {
             Self::Core(l) => l.flags(),
             Self::Instrument(_) => 0,
@@ -234,26 +264,23 @@ impl FtsLane {
 // ── Marker Classification ────────────────────────────────────────────────────
 
 /// Classify a marker name to determine which lane it belongs to.
-pub fn classify_marker_lane(name: &str) -> FtsLane {
-    let trimmed = name.trim();
-    let upper = trimmed.to_uppercase();
-
-    // SONG lane is reserved for the song-bounded REGION (named after
-    // the song). *All* structural markers — song bounds, count-ins,
-    // render bounds — collapse into MARKS so the SONG lane reads as
-    // "here is one named row per song" without bracket-marker noise.
-    match upper.as_str() {
-        "SONGSTART" | "SONGEND" => FtsLane::Core(CoreLane::Marks),
-        "COUNT-IN" | "COUNT IN" | "COUNTIN" => FtsLane::Core(CoreLane::Marks),
-        "=START" | "=END" | "PREROLL" | "=PREROLL" => FtsLane::Core(CoreLane::Marks),
-        _ => FtsLane::Core(CoreLane::Marks),
-    }
+///
+/// Every structural marker — `SONGSTART`/`SONGEND`, `COUNT-IN`/`COUNT
+/// IN`/`COUNTIN`, `=START`/`=END`/`PREROLL`/`=PREROLL` — and anything
+/// unrecognized currently collapses into MARKS, so the SONG lane reads as
+/// "here is one named row per song" without bracket-marker noise. `name`
+/// is unused today; it stays part of the signature for when one of those
+/// families needs its own lane.
+#[must_use]
+pub const fn classify_marker_lane(_name: &str) -> FtsLane {
+    FtsLane::Core(CoreLane::Marks)
 }
 
 /// Classify a region name to determine which lane it belongs to.
 ///
 /// Looks at both the region name and whether it spans the full song
 /// (in which case it's a SONG region, not a section).
+#[must_use] 
 pub fn classify_region_lane(name: &str) -> FtsLane {
     let upper = name.trim().to_uppercase();
 
@@ -285,6 +312,7 @@ pub fn classify_region_lane(name: &str) -> FtsLane {
 ///
 /// Call this with `is_full_song = true` when the region's start matches
 /// the song start and its end matches the song end.
+#[must_use] 
 pub fn classify_region_lane_with_context(name: &str, is_full_song: bool) -> FtsLane {
     if is_full_song {
         FtsLane::Core(CoreLane::Song)
@@ -303,7 +331,7 @@ mod tests {
     #[ignore = "pre-existing: ruler-lane indices shifted after KEY-lane retirement; expectations stale — revisit"]
     fn core_lane_indices_sequential() {
         for (i, lane) in CoreLane::all().iter().enumerate() {
-            assert_eq!(lane.lane_index(), i as u32 + 1);
+            assert_eq!(lane.lane_index(), u32::try_from(i).unwrap() + 1);
         }
     }
 

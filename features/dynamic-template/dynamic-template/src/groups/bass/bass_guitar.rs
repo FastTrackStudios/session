@@ -34,7 +34,7 @@ impl From<BassGuitar> for ItemMetadataGroup {
                 .build(),
         ];
 
-        ItemMetadataGroup::builder("Guitar")
+        Self::builder("Guitar")
             .patterns([
                 "bass_guitar",
                 "bassguitar",

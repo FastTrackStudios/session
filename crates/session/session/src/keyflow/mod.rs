@@ -5,3 +5,4 @@
 
 pub mod actions;
 pub mod scaffold;
+pub mod time_signature;

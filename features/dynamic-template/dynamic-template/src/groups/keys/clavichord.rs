@@ -8,7 +8,7 @@ pub struct Clavichord;
 
 impl From<Clavichord> for Group<ItemMetadata> {
     fn from(_val: Clavichord) -> Self {
-        Group::builder("Clavichord")
+        Self::builder("Clavichord")
             .patterns(vec!["clavichord", "clavi"])
             .build()
     }

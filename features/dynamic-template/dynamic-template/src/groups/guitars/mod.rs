@@ -19,11 +19,23 @@ pub struct Guitars;
 
 impl From<Guitars> for Group<ItemMetadata> {
     fn from(_val: Guitars) -> Self {
-        Group::builder("Guitars")
+        Self::builder("Guitars")
             .prefix("GTR")
-            .patterns(vec!["guitar", "gtr", "gui"])
+            // The plural matters: a folder named "Guitars" is the canonical
+            // group name, and whole-word matching does not derive it from
+            // "guitar".
+            .patterns(vec!["guitar", "guitars", "gtr", "gtrs", "gui"])
             // Negative patterns to avoid matching bass guitars
-            .exclude(vec!["bass_guitar", "bassguitar", "bg"])
+            .exclude(vec![
+                "bass_guitar",
+                "bassguitar",
+                "bg",
+                "tb",
+                "talkback",
+                "vca",
+                "hp",
+                "headphone",
+            ])
             .group(ElectricGuitar)
             .group(AcousticGuitar)
             .group(SteelGuitar)

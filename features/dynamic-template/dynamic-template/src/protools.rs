@@ -12,7 +12,7 @@
 use std::borrow::Cow;
 
 /// Information extracted from Pro Tools naming conventions
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProToolsMetadata {
     /// Playlist number (1-indexed, from `_01`, `.01`, etc.)
     pub playlist: Option<u32>,
@@ -24,7 +24,8 @@ pub struct ProToolsMetadata {
 
 impl ProToolsMetadata {
     /// Returns true if any Pro Tools metadata was extracted
-    pub fn has_metadata(&self) -> bool {
+    #[must_use] 
+    pub const fn has_metadata(&self) -> bool {
         self.playlist.is_some() || self.take.is_some() || self.region.is_some()
     }
 }
@@ -49,6 +50,7 @@ impl ProToolsMetadata {
 /// assert_eq!(meta.playlist, Some(2));
 /// assert_eq!(meta.take, Some(3));
 /// ```
+#[must_use] 
 pub fn extract_protools_metadata(input: &str) -> ProToolsMetadata {
     let mut metadata = ProToolsMetadata::default();
 
@@ -96,6 +98,7 @@ pub fn extract_protools_metadata(input: &str) -> ProToolsMetadata {
 /// assert_eq!(strip_protools_markers("Bass_02-03.wav"), "Bass.wav");
 /// assert_eq!(strip_protools_markers("Drums.01_02.wav"), "Drums.wav");
 /// ```
+#[must_use] 
 pub fn strip_protools_markers(input: &str) -> String {
     // Handle file extension
     let (name, ext) = split_extension(input);
@@ -110,7 +113,7 @@ pub fn strip_protools_markers(input: &str) -> String {
     if ext.is_empty() {
         stripped.into_owned()
     } else {
-        format!("{}.{}", stripped, ext)
+        format!("{stripped}.{ext}")
     }
 }
 
@@ -118,6 +121,7 @@ pub fn strip_protools_markers(input: &str) -> String {
 ///
 /// Returns true if the string contains patterns that look like Pro Tools
 /// playlist or take markers.
+#[must_use] 
 pub fn has_protools_markers(input: &str) -> bool {
     let name = strip_extension(input);
     extract_simple_playlist(name).is_some()
@@ -130,9 +134,9 @@ pub fn has_protools_markers(input: &str) -> bool {
 fn strip_extension(input: &str) -> &str {
     // Find last dot that's preceded by something and followed by 2-4 chars
     if let Some(dot_pos) = input.rfind('.') {
-        let ext = &input[dot_pos + 1..];
+        let ext = input.get(dot_pos.saturating_add(1)..).unwrap_or_default();
         if ext.len() >= 2 && ext.len() <= 4 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return &input[..dot_pos];
+            return input.get(..dot_pos).unwrap_or_default();
         }
     }
     input
@@ -140,9 +144,9 @@ fn strip_extension(input: &str) -> &str {
 
 fn split_extension(input: &str) -> (&str, &str) {
     if let Some(dot_pos) = input.rfind('.') {
-        let ext = &input[dot_pos + 1..];
+        let ext = input.get(dot_pos.saturating_add(1)..).unwrap_or_default();
         if ext.len() >= 2 && ext.len() <= 4 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return (&input[..dot_pos], ext);
+            return (input.get(..dot_pos).unwrap_or_default(), ext);
         }
     }
     (input, "")
@@ -160,14 +164,14 @@ fn extract_simple_playlist(name: &str) -> Option<u32> {
     }
 
     // Check for _NN or .NN at end
-    let sep = bytes[len - 3];
+    let sep = bytes.get(len.saturating_sub(3)).copied().unwrap_or(0);
     if sep != b'_' && sep != b'.' {
         return None;
     }
 
     // Check that the last two chars are digits
-    let d1 = bytes[len - 2];
-    let d2 = bytes[len - 1];
+    let d1 = bytes.get(len.saturating_sub(2)).copied().unwrap_or(0);
+    let d2 = bytes.get(len.saturating_sub(1)).copied().unwrap_or(0);
     if !d1.is_ascii_digit() || !d2.is_ascii_digit() {
         return None;
     }
@@ -177,7 +181,7 @@ fn extract_simple_playlist(name: &str) -> Option<u32> {
     // Already at end, so this is fine
 
     // Parse the number
-    let num_str = &name[len - 2..];
+    let num_str = &name.get(len.saturating_sub(2)..).unwrap_or_default();
     num_str.parse::<u32>().ok()
 }
 
@@ -193,29 +197,29 @@ fn extract_playlist_take(name: &str) -> Option<(u32, u32)> {
     }
 
     // Check for pattern _DD-DD at end
-    if bytes[len - 6] != b'_' {
+    if bytes.get(len.saturating_sub(6)).copied().unwrap_or(0) != b'_' {
         return None;
     }
-    if bytes[len - 3] != b'-' {
+    if bytes.get(len.saturating_sub(3)).copied().unwrap_or(0) != b'-' {
         return None;
     }
 
     // Check digits
-    if !bytes[len - 5].is_ascii_digit()
-        || !bytes[len - 4].is_ascii_digit()
-        || !bytes[len - 2].is_ascii_digit()
-        || !bytes[len - 1].is_ascii_digit()
+    if !bytes.get(len.saturating_sub(5)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(4)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(2)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(1)).copied().unwrap_or(0).is_ascii_digit()
     {
         return None;
     }
 
-    let playlist = name[len - 5..len - 3].parse::<u32>().ok()?;
-    let take = name[len - 2..].parse::<u32>().ok()?;
+    let playlist = name.get(len.saturating_sub(5)..len.saturating_sub(3)).unwrap_or_default().parse::<u32>().ok()?;
+    let take = name.get(len.saturating_sub(2)..).unwrap_or_default().parse::<u32>().ok()?;
 
     Some((playlist, take))
 }
 
-/// Extract playlist-region format: .01_01, .02_03
+/// Extract playlist-region format: .`01_01`, .`02_03`
 fn extract_playlist_region(name: &str) -> Option<(u32, u32)> {
     // Look for pattern: .NN_NN at end
     let bytes = name.as_bytes();
@@ -227,24 +231,24 @@ fn extract_playlist_region(name: &str) -> Option<(u32, u32)> {
     }
 
     // Check for pattern .DD_DD at end
-    if bytes[len - 6] != b'.' {
+    if bytes.get(len.saturating_sub(6)).copied().unwrap_or(0) != b'.' {
         return None;
     }
-    if bytes[len - 3] != b'_' {
+    if bytes.get(len.saturating_sub(3)).copied().unwrap_or(0) != b'_' {
         return None;
     }
 
     // Check digits
-    if !bytes[len - 5].is_ascii_digit()
-        || !bytes[len - 4].is_ascii_digit()
-        || !bytes[len - 2].is_ascii_digit()
-        || !bytes[len - 1].is_ascii_digit()
+    if !bytes.get(len.saturating_sub(5)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(4)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(2)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(1)).copied().unwrap_or(0).is_ascii_digit()
     {
         return None;
     }
 
-    let playlist = name[len - 5..len - 3].parse::<u32>().ok()?;
-    let region = name[len - 2..].parse::<u32>().ok()?;
+    let playlist = name.get(len.saturating_sub(5)..len.saturating_sub(3)).unwrap_or_default().parse::<u32>().ok()?;
+    let region = name.get(len.saturating_sub(2)..).unwrap_or_default().parse::<u32>().ok()?;
 
     Some((playlist, region))
 }
@@ -258,13 +262,13 @@ fn strip_simple_playlist(name: &str) -> Option<Cow<'_, str>> {
         return None;
     }
 
-    let sep = bytes[len - 3];
+    let sep = bytes.get(len.saturating_sub(3)).copied().unwrap_or(0);
     if sep != b'_' && sep != b'.' {
         return None;
     }
 
-    let d1 = bytes[len - 2];
-    let d2 = bytes[len - 1];
+    let d1 = bytes.get(len.saturating_sub(2)).copied().unwrap_or(0);
+    let d2 = bytes.get(len.saturating_sub(1)).copied().unwrap_or(0);
     if !d1.is_ascii_digit() || !d2.is_ascii_digit() {
         return None;
     }
@@ -279,7 +283,7 @@ fn strip_simple_playlist(name: &str) -> Option<Cow<'_, str>> {
         return None;
     }
 
-    Some(Cow::Borrowed(&name[..len - 3]))
+    Some(Cow::Borrowed(name.get(..len.saturating_sub(3)).unwrap_or_default()))
 }
 
 /// Strip playlist-take marker from end
@@ -291,22 +295,22 @@ fn strip_playlist_take(name: &str) -> Option<Cow<'_, str>> {
         return None;
     }
 
-    if bytes[len - 6] != b'_' {
+    if bytes.get(len.saturating_sub(6)).copied().unwrap_or(0) != b'_' {
         return None;
     }
-    if bytes[len - 3] != b'-' {
+    if bytes.get(len.saturating_sub(3)).copied().unwrap_or(0) != b'-' {
         return None;
     }
 
-    if !bytes[len - 5].is_ascii_digit()
-        || !bytes[len - 4].is_ascii_digit()
-        || !bytes[len - 2].is_ascii_digit()
-        || !bytes[len - 1].is_ascii_digit()
+    if !bytes.get(len.saturating_sub(5)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(4)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(2)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(1)).copied().unwrap_or(0).is_ascii_digit()
     {
         return None;
     }
 
-    Some(Cow::Borrowed(&name[..len - 6]))
+    Some(Cow::Borrowed(name.get(..len.saturating_sub(6)).unwrap_or_default()))
 }
 
 /// Strip playlist-region marker from end
@@ -318,22 +322,22 @@ fn strip_playlist_region(name: &str) -> Option<Cow<'_, str>> {
         return None;
     }
 
-    if bytes[len - 6] != b'.' {
+    if bytes.get(len.saturating_sub(6)).copied().unwrap_or(0) != b'.' {
         return None;
     }
-    if bytes[len - 3] != b'_' {
+    if bytes.get(len.saturating_sub(3)).copied().unwrap_or(0) != b'_' {
         return None;
     }
 
-    if !bytes[len - 5].is_ascii_digit()
-        || !bytes[len - 4].is_ascii_digit()
-        || !bytes[len - 2].is_ascii_digit()
-        || !bytes[len - 1].is_ascii_digit()
+    if !bytes.get(len.saturating_sub(5)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(4)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(2)).copied().unwrap_or(0).is_ascii_digit()
+        || !bytes.get(len.saturating_sub(1)).copied().unwrap_or(0).is_ascii_digit()
     {
         return None;
     }
 
-    Some(Cow::Borrowed(&name[..len - 6]))
+    Some(Cow::Borrowed(name.get(..len.saturating_sub(6)).unwrap_or_default()))
 }
 
 #[cfg(test)]

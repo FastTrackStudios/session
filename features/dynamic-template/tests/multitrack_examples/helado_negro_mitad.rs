@@ -1,40 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn helado_negro_mitad() -> Result<()> {
-    // -- Setup & Fixtures
-    // Helado Negro - Mitad del Mundo: 10-stem electronic/experimental session from MedleyDB.
-    // FX/processed sounds, 4 synthesizers, dual male vocal takes, drum machine,
-    // vibraphone, and tack piano. Tests heavily electronic arrangement with
-    // unusual keyboard instruments.
-    let items = vec![
-        "01_FX.wav",
-        "02_Synth1.wav",
-        "03_LeadVox1.wav",
-        "04_DrumMachine.wav",
-        "05_Synth2.wav",
-        "06_Synth3.wav",
-        "07_Vibraphone.wav",
-        "08_LeadVox2.wav",
-        "09_Synth4.wav",
-        "10_TackPiano.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn helado_negro_mitad_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::single_track("Drums", "04_DrumMachine.wav");
     // Vibraphone dual-classified as percussion and orchestral
     let percussion = TrackGroup::single_track("Percussion", "07_Vibraphone.wav");
@@ -70,8 +37,42 @@ fn helado_negro_mitad() -> Result<()> {
         .group(orchestra)
         .group(sfx)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn helado_negro_mitad() {
+    // -- Setup & Fixtures
+    // Helado Negro - Mitad del Mundo: 10-stem electronic/experimental session from MedleyDB.
+    // FX/processed sounds, 4 synthesizers, dual male vocal takes, drum machine,
+    // vibraphone, and tack piano. Tests heavily electronic arrangement with
+    // unusual keyboard instruments.
+    let items = vec![
+        "01_FX.wav",
+        "02_Synth1.wav",
+        "03_LeadVox1.wav",
+        "04_DrumMachine.wav",
+        "05_Synth2.wav",
+        "06_Synth3.wav",
+        "07_Vibraphone.wav",
+        "08_LeadVox2.wav",
+        "09_Synth4.wav",
+        "10_TackPiano.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = helado_negro_mitad_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

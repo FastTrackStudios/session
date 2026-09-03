@@ -1,46 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn eagles_hotel_california() -> Result<()> {
-    // -- Setup & Fixtures
-    // Eagles - Hotel California: 15-channel classic rock session. 3 acoustic guitars
-    // (one with flanger effect), 4 electric guitar styles (muted, wah-wah, distortion,
-    // lead solo), piano, bass, full drums, SFX, and dual vocal tracks.
-    // Tests varied guitar technique descriptors and effect-based naming.
-    let items = vec![
-        "01_Drums.wav",
-        "02_Bass.wav",
-        "03_AcousticGtr1.wav",
-        "04_AcousticGtr2.wav",
-        "05_AcousticGtr3Flanger.wav",
-        "06_ElecGtrMuted.wav",
-        "07_ElecGtrWahWah.wav",
-        "08_ElecGtrDistortion.wav",
-        "09_ElecGtrLeadSolo.wav",
-        "10_Piano.wav",
-        "11_SFX.wav",
-        "12_LeadVox.wav",
-        "13_BackingVox1.wav",
-        "14_BackingVox2.wav",
-        "15_BackingVox3.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
+fn eagles_hotel_california_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::single_track("Drums", "01_Drums.wav");
 
     // --- Bass ---
@@ -106,8 +67,48 @@ fn eagles_hotel_california() -> Result<()> {
         .group(vocals)
         .group(sfx)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn eagles_hotel_california() {
+    // -- Setup & Fixtures
+    // Eagles - Hotel California: 15-channel classic rock session. 3 acoustic guitars
+    // (one with flanger effect), 4 electric guitar styles (muted, wah-wah, distortion,
+    // lead solo), piano, bass, full drums, SFX, and dual vocal tracks.
+    // Tests varied guitar technique descriptors and effect-based naming.
+    let items = vec![
+        "01_Drums.wav",
+        "02_Bass.wav",
+        "03_AcousticGtr1.wav",
+        "04_AcousticGtr2.wav",
+        "05_AcousticGtr3Flanger.wav",
+        "06_ElecGtrMuted.wav",
+        "07_ElecGtrWahWah.wav",
+        "08_ElecGtrDistortion.wav",
+        "09_ElecGtrLeadSolo.wav",
+        "10_Piano.wav",
+        "11_SFX.wav",
+        "12_LeadVox.wav",
+        "13_BackingVox1.wav",
+        "14_BackingVox2.wav",
+        "15_BackingVox3.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    let expected = eagles_hotel_california_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

@@ -1,56 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn beatles_day_tripper() -> Result<()> {
-    // -- Setup & Fixtures
-    let items = vec![
-        "bass hofner_01.wav",
-        "bass hofner.Duplicate _01.wav",
-        "click.Edit_01.wav",
-        "fernando strat_02.wav",
-        "gretsch fernando_02.wav",
-        "kick_01.wav",
-        "oh_01.wav",
-        "snare_01.wav",
-        "Steve BGV1_SUM.06_01.wav",
-        "Steve BGV1A.06_01.wav",
-        "Steve BGV1B.06_01.wav",
-        "Steve BGV1C.06_01.wav",
-        "Steve BGV1D.06_01.wav",
-        "Steve BGV2_SUM.06_01.wav",
-        "Steve BGV2A.06_01.wav",
-        "Steve BGV2B.06_01.wav",
-        "Steve BGV2C.06_01.wav",
-        "Steve BGV2D.06_01.wav",
-        "Steve Lead VOX Take 1.06_01.wav",
-        "Steve Lead VOX Take 2.06_01.wav",
-        "swell_01.wav",
-        "tambourine_01.wav",
-        "warren strat_02.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure (WITH EXPANSION)
-    // ============================================================================
-    // With default expansion enabled:
-    // - Cymbals folder collapses to OH (single child)
-    // - Bass items expand to separate tracks
-    // - BGVs items expand to separate tracks
-    // - Lead vocals expand to Lead 1, Lead 2
-
-    // --- Drums ---
-    // Cymbals folder collapsed since only one cymbal (OH)
+fn beatles_day_tripper_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::folder("Drums")
         .track("Kick")
         .item("kick_01.wav")
@@ -143,9 +94,59 @@ fn beatles_day_tripper() -> Result<()> {
         .group(sfx)
         .group(guide)
         .build();
+    expected
+}
+
+#[test]
+fn beatles_day_tripper() {
+    // -- Setup & Fixtures
+    let items = vec![
+        "bass hofner_01.wav",
+        "bass hofner.Duplicate _01.wav",
+        "click.Edit_01.wav",
+        "fernando strat_02.wav",
+        "gretsch fernando_02.wav",
+        "kick_01.wav",
+        "oh_01.wav",
+        "snare_01.wav",
+        "Steve BGV1_SUM.06_01.wav",
+        "Steve BGV1A.06_01.wav",
+        "Steve BGV1B.06_01.wav",
+        "Steve BGV1C.06_01.wav",
+        "Steve BGV1D.06_01.wav",
+        "Steve BGV2_SUM.06_01.wav",
+        "Steve BGV2A.06_01.wav",
+        "Steve BGV2B.06_01.wav",
+        "Steve BGV2C.06_01.wav",
+        "Steve BGV2D.06_01.wav",
+        "Steve Lead VOX Take 1.06_01.wav",
+        "Steve Lead VOX Take 2.06_01.wav",
+        "swell_01.wav",
+        "tambourine_01.wav",
+        "warren strat_02.wav",
+    ];
+    let config = default_config();
+
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure (WITH EXPANSION)
+    // ============================================================================
+    // With default expansion enabled:
+    // - Cymbals folder collapses to OH (single child)
+    // - Bass items expand to separate tracks
+    // - BGVs items expand to separate tracks
+    // - Lead vocals expand to Lead 1, Lead 2
+
+    // --- Drums ---
+    // Cymbals folder collapsed since only one cymbal (OH)
+    let expected = beatles_day_tripper_expected();
 
     // Full structure assertion
-    assert_tracks_equal(&tracks, &expected)?;
-
-    Ok(())
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

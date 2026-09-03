@@ -1,54 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn queen_bohemian_rhapsody() -> Result<()> {
-    // -- Setup & Fixtures
-    // Queen - Bohemian Rhapsody: 24-stem multi-section epic rock session. Features
-    // full drum kit, bass, layered guitars (rhythm, lead, harmonized), piano, gong,
-    // timpani, multiple lead vocal takes (ballad, opera, rock sections), and
-    // extensive multi-part backing vocal choir. Tests complex vocal layering.
-    let items = vec![
-        "01_Kick.wav",
-        "02_Snare.wav",
-        "03_HiHat.wav",
-        "04_Toms.wav",
-        "05_Overheads.wav",
-        "06_Bass.wav",
-        "07_RhythmGtr.wav",
-        "08_LeadGtr1.wav",
-        "09_LeadGtr2.wav",
-        "10_GtrHarmony.wav",
-        "11_Piano.wav",
-        "12_Gong.wav",
-        "13_Timpani.wav",
-        "14_LeadVox1.wav",
-        "15_LeadVox2.wav",
-        "16_LeadVox3.wav",
-        "17_BackingVox1.wav",
-        "18_BackingVox2.wav",
-        "19_BackingVox3.wav",
-        "20_BackingVox4.wav",
-        "21_BackingVox5.wav",
-        "22_BackingVox6.wav",
-        "23_OperaVox1.wav",
-        "24_OperaVox2.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn queen_bohemian_rhapsody_expected() -> daw_proto::TrackHierarchy {
     let cymbals = TrackGroup::folder("Cymbals")
         .track("OH")
         .item("05_Overheads.wav")
@@ -142,8 +95,56 @@ fn queen_bohemian_rhapsody() -> Result<()> {
         .group(vocals)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn queen_bohemian_rhapsody() {
+    // -- Setup & Fixtures
+    // Queen - Bohemian Rhapsody: 24-stem multi-section epic rock session. Features
+    // full drum kit, bass, layered guitars (rhythm, lead, harmonized), piano, gong,
+    // timpani, multiple lead vocal takes (ballad, opera, rock sections), and
+    // extensive multi-part backing vocal choir. Tests complex vocal layering.
+    let items = vec![
+        "01_Kick.wav",
+        "02_Snare.wav",
+        "03_HiHat.wav",
+        "04_Toms.wav",
+        "05_Overheads.wav",
+        "06_Bass.wav",
+        "07_RhythmGtr.wav",
+        "08_LeadGtr1.wav",
+        "09_LeadGtr2.wav",
+        "10_GtrHarmony.wav",
+        "11_Piano.wav",
+        "12_Gong.wav",
+        "13_Timpani.wav",
+        "14_LeadVox1.wav",
+        "15_LeadVox2.wav",
+        "16_LeadVox3.wav",
+        "17_BackingVox1.wav",
+        "18_BackingVox2.wav",
+        "19_BackingVox3.wav",
+        "20_BackingVox4.wav",
+        "21_BackingVox5.wav",
+        "22_BackingVox6.wav",
+        "23_OperaVox1.wav",
+        "24_OperaVox2.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = queen_bohemian_rhapsody_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

@@ -23,7 +23,7 @@ pub struct Horns;
 
 impl From<Horns> for Group<ItemMetadata> {
     fn from(_val: Horns) -> Self {
-        Group::builder("Horns")
+        Self::builder("Horns")
             .prefix("Horn")
             .patterns(vec![
                 // Generic horn/brass patterns

@@ -1,80 +1,8 @@
 use daw_proto::{assert_tracks_equal, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn jared_james_nichols() -> Result<()> {
-    // -- Setup & Fixtures
-    // Jared James Nichols: 35-track rock session with detailed drum room mics and guitar buses
-    let items = vec![
-        "01 Kick In .wav",
-        "02 Kick Out .wav",
-        "03 Sub Kick .wav",
-        "04 Snare Top .wav",
-        "05 Snare Top.dup2 .wav",
-        "06 Snare Bot .wav",
-        "07 Hat .wav",
-        "08 Rack .wav",
-        "09 Floor .wav",
-        "10 OH Hat .wav",
-        "11 OH Ride .wav",
-        "12 OH Mono .wav",
-        "13 Crotch .wav",
-        "14 Close RM Hat .wav",
-        "15 Close RM Ride .wav",
-        "16 Mid RM Hat .wav",
-        "17 Mid RM Ride .wav",
-        "18 Far RM Hat .wav",
-        "19 Far RM Ride .wav",
-        "20 Mono .wav",
-        "21 Mono U47 .wav",
-        "22 Bass DI .wav",
-        "23 Bass Mic .wav",
-        "24 Gtr Bus .wav",
-        "25 Gtr Bus.dup1 .wav",
-        "26 SoloGtr Bus.d .wav",
-        "27 SoloGtr RM Left .wav",
-        "28 SoloGtr RM Right .wav",
-        "29 Talk Box .wav",
-        "30 Jared .wav",
-        "31 Jared call back .wav",
-        "32 Jared Harm .wav",
-        "33 Jared Harm.dup1 .wav",
-        "Man In the Box Print 20220502 v2 .wav",
-        "Smart Tempo Multitrack Set 1.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // Expected structure:
-    // Drums/
-    //   ├─ Kick/
-    //   │   ├─ SUM/                 ← In/Out
-    //   │   └─ Kick                 ← Sub Kick
-    //   ├─ Snare/
-    //   │   ├─ Top/                 ← Top 1/2 (dup)
-    //   │   └─ Bottom               ← Snare Bot
-    //   ├─ Toms/
-    //   │   ├─ Floor                ← 09 Floor
-    //   │   └─ Toms                 ← 08 Rack
-    //   ├─ Cymbals/
-    //   │   ├─ Hi Hat/              ← Hat, Close RM Hat, Mid RM Hat, Far RM Hat
-    //   │   ├─ Ride/                ← Close/Mid/Far RM Ride
-    //   │   └─ OH/                  ← OH Hat, OH Ride, OH Mono
-    //   └─ Rooms                    ← Crotch (now matches Drums/Rooms group)
-    // Bass/                         ← Bass DI, Bass Mic
-    // Guitars/                      ← Solo folder (SoloGtr tracks) + Guitars folder (Gtr Bus)
-    // Guide                         ← Smart Tempo Multitrack Set 1
-    // Reference                     ← Man In the Box Print
-    // Unsorted/                     ← Mono, Mono U47, Talk Box, Jared vox
-    let expected = TrackStructureBuilder::new()
+fn jared_james_nichols_expected_a() -> TrackStructureBuilder {
+    TrackStructureBuilder::new()
         .folder("Drums")
         .folder("Kick")
         .folder("SUM")
@@ -133,6 +61,10 @@ fn jared_james_nichols() -> Result<()> {
         .track("Rooms")
         .item("13 Crotch .wav")
         .end()
+}
+
+fn jared_james_nichols_expected() -> daw_proto::TrackHierarchy {
+    jared_james_nichols_expected_a()
         .folder("Bass")
         .track("Bass 1")
         .item("22 Bass DI .wav")
@@ -175,9 +107,81 @@ fn jared_james_nichols() -> Result<()> {
         .track("Jared Harm 2")
         .item("33 Jared Harm.dup1 .wav")
         .end()
-        .build();
+        .build()
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn jared_james_nichols() {
+    // -- Setup & Fixtures
+    // Jared James Nichols: 35-track rock session with detailed drum room mics and guitar buses
+    let items = vec![
+        "01 Kick In .wav",
+        "02 Kick Out .wav",
+        "03 Sub Kick .wav",
+        "04 Snare Top .wav",
+        "05 Snare Top.dup2 .wav",
+        "06 Snare Bot .wav",
+        "07 Hat .wav",
+        "08 Rack .wav",
+        "09 Floor .wav",
+        "10 OH Hat .wav",
+        "11 OH Ride .wav",
+        "12 OH Mono .wav",
+        "13 Crotch .wav",
+        "14 Close RM Hat .wav",
+        "15 Close RM Ride .wav",
+        "16 Mid RM Hat .wav",
+        "17 Mid RM Ride .wav",
+        "18 Far RM Hat .wav",
+        "19 Far RM Ride .wav",
+        "20 Mono .wav",
+        "21 Mono U47 .wav",
+        "22 Bass DI .wav",
+        "23 Bass Mic .wav",
+        "24 Gtr Bus .wav",
+        "25 Gtr Bus.dup1 .wav",
+        "26 SoloGtr Bus.d .wav",
+        "27 SoloGtr RM Left .wav",
+        "28 SoloGtr RM Right .wav",
+        "29 Talk Box .wav",
+        "30 Jared .wav",
+        "31 Jared call back .wav",
+        "32 Jared Harm .wav",
+        "33 Jared Harm.dup1 .wav",
+        "Man In the Box Print 20220502 v2 .wav",
+        "Smart Tempo Multitrack Set 1.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // Expected structure:
+    // Drums/
+    //   ├─ Kick/
+    //   │   ├─ SUM/                 ← In/Out
+    //   │   └─ Kick                 ← Sub Kick
+    //   ├─ Snare/
+    //   │   ├─ Top/                 ← Top 1/2 (dup)
+    //   │   └─ Bottom               ← Snare Bot
+    //   ├─ Toms/
+    //   │   ├─ Floor                ← 09 Floor
+    //   │   └─ Toms                 ← 08 Rack
+    //   ├─ Cymbals/
+    //   │   ├─ Hi Hat/              ← Hat, Close RM Hat, Mid RM Hat, Far RM Hat
+    //   │   ├─ Ride/                ← Close/Mid/Far RM Ride
+    //   │   └─ OH/                  ← OH Hat, OH Ride, OH Mono
+    //   └─ Rooms                    ← Crotch (now matches Drums/Rooms group)
+    // Bass/                         ← Bass DI, Bass Mic
+    // Guitars/                      ← Solo folder (SoloGtr tracks) + Guitars folder (Gtr Bus)
+    // Guide                         ← Smart Tempo Multitrack Set 1
+    // Reference                     ← Man In the Box Print
+    // Unsorted/                     ← Mono, Mono U47, Talk Box, Jared vox
+    let expected = jared_james_nichols_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

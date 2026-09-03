@@ -3,21 +3,39 @@
 //! Complete performance view layout with sidebar navigation and main progress display.
 //! This is a reusable layout component that apps can import and use directly.
 //!
-//! Based on the FastTrackStudio desktop app performance view.
+//! Based on the `FastTrackStudio` desktop app performance view.
 //! Uses Tailwind CSS for styling.
 //!
 //! Components call `SetlistService` methods directly via `Session::get().setlist()`.
 //! The consuming app must call `Session::init()` during startup.
 
-use crate::components::*;
+use crate::components::{LyricSyncViewPropsBuilder_Optional, NudgeBtnPropsBuilder_Optional, MixerViewPropsBuilder_Optional, MixGroupPropsBuilder_Optional, ChannelStripPropsBuilder_Optional, TimeSignatureCardPropsBuilder_Optional, TempoCardPropsBuilder_Optional, SegmentedProgressBarPropsBuilder_Optional, SongProgressBarPropsBuilder_Optional, SectionProgressBarPropsBuilder_Optional, SongItemPropsBuilder_Optional, SongTitlePropsBuilder_Optional, FadedSongTitlePropsBuilder_Optional, TransportControlBarPropsBuilder_Optional, SectionItem, SongItemData, SongItem, TransportControlBar, ProgressSection, TempoMarkerData, CommentMarker, MeasureIndicator, LoopIndicatorData, SongTitle, SongProgressBar, SectionProgressBar, FadedSongTitle};
 use crate::prelude::*;
-use crate::signals::*;
+use crate::signals::{SETLIST_STRUCTURE, SONG_VIEWS, SONG_CHARTS, ACTIVE_INDICES, SONG_TRANSPORT, Session, PLAYBACK_STATE, LATENCY_TRACKER};
 
 /// The `#<KEY>` metadata token from a keyflow chart (`"A"` from `#A 127bpm`).
+/// A finite `f64`, clamped to `i32`'s range, as an `i32`.
+fn clamped_i32(x: f64) -> i32 {
+    let clamped = x.clamp(f64::from(i32::MIN), f64::from(i32::MAX));
+    // Range-checked above; std has no non-`as` float-to-int conversion.
+    #[allow(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    {
+        clamped as i32
+    }
+}
+
 fn chart_meta_key(text: &str) -> Option<String> {
     text.split_whitespace()
-        .find(|t| t.len() > 1 && t.starts_with('#') && t.as_bytes()[1].is_ascii_alphabetic())
-        .map(|t| t[1..].to_string())
+        .find(|t| {
+            t.len() > 1
+                && t.starts_with('#')
+                && t.as_bytes().get(1).is_some_and(u8::is_ascii_alphabetic)
+        })
+        .and_then(|t| t.get(1..).map(str::to_string))
 }
 
 /// Key label for a setlist song in the navigator: the setlist override's
@@ -29,7 +47,7 @@ fn nav_key_label(song_idx: usize) -> Option<String> {
     if let Some(k) = SONG_VIEWS
         .read()
         .get(&song.project_guid)
-        .and_then(|v| v.display_key_label())
+        .and_then(super::super::signals::SongView::display_key_label)
     {
         return Some(k);
     }
@@ -104,8 +122,8 @@ struct SidebarSectionStructure {
 /// Displays song list with expandable sections and progress bars.
 /// Shows progress for ALL songs that have transport state (independent playback).
 ///
-/// PERFORMANCE: This component only subscribes to ACTIVE_INDICES for selection state.
-/// Transport updates (60Hz) are handled by individual SidebarSongItem components
+/// PERFORMANCE: This component only subscribes to `ACTIVE_INDICES` for selection state.
+/// Transport updates (60Hz) are handled by individual `SidebarSongItem` components
 /// to avoid re-rendering the entire sidebar.
 #[component]
 pub fn PerformanceSidebar(
@@ -198,7 +216,7 @@ pub fn PerformanceSidebar(
 /// Reactive song item that subscribes to its own transport updates
 ///
 /// PERFORMANCE: Only subscribes to transport if song is expanded or playing.
-/// Collapsed/inactive songs use peek() to avoid 60Hz re-renders.
+/// Collapsed/inactive songs use `peek()` to avoid 60Hz re-renders.
 /// Section progress is only calculated for expanded songs.
 #[component]
 fn SidebarSongItemReactive(
@@ -214,8 +232,7 @@ fn SidebarSongItemReactive(
     let is_song_playing = SONG_TRANSPORT
         .peek()
         .get(&song_idx)
-        .map(|t| t.is_playing)
-        .unwrap_or(false);
+        .is_some_and(|t| t.is_playing);
 
     // PERFORMANCE: Only subscribe to transport updates if we need to show progress
     // (song is expanded or actively playing). Otherwise, use static 0% progress.
@@ -234,13 +251,11 @@ fn SidebarSongItemReactive(
         let song_start = song_structure
             .sections
             .first()
-            .map(|s| s.start_seconds)
-            .unwrap_or(0.0);
+            .map_or(0.0, |s| s.start_seconds);
         let song_end = song_structure
             .sections
             .last()
-            .map(|s| s.end_seconds)
-            .unwrap_or(0.0);
+            .map_or(0.0, |s| s.end_seconds);
         let song_duration = song_end - song_start;
         let progress = if song_duration > 0.0 && transport.is_some() {
             ((pos - song_start) / song_duration * 100.0).clamp(0.0, 100.0)
@@ -291,7 +306,7 @@ fn SidebarSongItemReactive(
         label: song_structure.name.clone(),
         progress: song_progress,
         bright_color: song_structure.bright_color.clone(),
-        muted_color: song_structure.muted_color.clone(),
+        muted_color: song_structure.muted_color,
         sections,
         key_label: nav_key_label(song_idx),
     };
@@ -304,13 +319,13 @@ fn SidebarSongItemReactive(
             is_playing: is_song_playing,
             current_section_index: current_section_index,
             plain_selection: plain_selection,
-            on_song_click: Callback::new(move |_| {
+            on_song_click: Callback::new(move |()| {
                 if let Some(cb) = on_song_select {
                     cb.call(song_idx);
                 } else {
                     spawn(async move {
                         match Session::get().setlist().seek_to_song(song_idx).await {
-                            Ok(_) => tracing::info!("seek_to_song({}) ok", song_idx),
+                            Ok(()) => tracing::info!("seek_to_song({}) ok", song_idx),
                             Err(e) => tracing::error!("seek_to_song({}) failed: {:?}", song_idx, e),
                         }
                     });
@@ -334,7 +349,14 @@ fn SidebarSongItemReactive(
 /// Reads playback state and loop state from global signals, wires up
 /// callbacks to `Session::get().setlist()` service methods.
 #[component]
-pub fn TransportPanel() -> Element {
+pub fn TransportPanel(
+    /// Show the Arm + Record controls. Recording environments (a REAPER-
+    /// connected desktop) want them; a playback-only setlist surface
+    /// (the in-process daw-standalone player, the browser remote) does
+    /// not — there's nothing here to arm or record into. Defaults true.
+    #[props(default = true)]
+    show_recording: bool,
+) -> Element {
     let indices = ACTIVE_INDICES.read();
     let is_looping = indices.looping;
     drop(indices);
@@ -359,35 +381,36 @@ pub fn TransportPanel() -> Element {
                 is_looping: is_looping,
                 is_recording: is_recording,
                 is_armed: is_armed(),
-                on_play_pause: Callback::new(move |_| {
+                show_recording: show_recording,
+                on_play_pause: Callback::new(move |()| {
                     LATENCY_TRACKER.write().start_play_toggle();
                     spawn(async move {
                         let _ = Session::get().setlist().toggle_playback().await;
                     });
                 }),
-                on_loop_toggle: Callback::new(move |_| {
+                on_loop_toggle: Callback::new(move |()| {
                     spawn(async move {
                         let _ = Session::get().setlist().toggle_song_loop().await;
                     });
                 }),
-                on_record_toggle: Callback::new(move |_| {
+                on_record_toggle: Callback::new(move |()| {
                     spawn(async move {
                         let _ = Session::get().setlist().toggle_recording().await;
                     });
                 }),
-                on_arm_toggle: Callback::new(move |_| {
+                on_arm_toggle: Callback::new(move |()| {
                     let next = !is_armed();
                     is_armed.set(next);
                     spawn(async move {
                         let _ = Session::get().setlist().set_song_record_arm(next).await;
                     });
                 }),
-                on_back: Callback::new(move |_| {
+                on_back: Callback::new(move |()| {
                     spawn(async move {
                         let _ = Session::get().setlist().previous_section().await;
                     });
                 }),
-                on_forward: Callback::new(move |_| {
+                on_forward: Callback::new(move |()| {
                     spawn(async move {
                         let _ = Session::get().setlist().next_section().await;
                     });
@@ -402,7 +425,7 @@ pub fn TransportPanel() -> Element {
 /// Displays song title, both progress bars (song and section), transport info badges,
 /// and transport controls at the bottom.
 ///
-/// PERFORMANCE: This component subscribes to ACTIVE_INDICES and SONG_TRANSPORT.
+/// PERFORMANCE: This component subscribes to `ACTIVE_INDICES` and `SONG_TRANSPORT`.
 /// Static song data (progress sections, markers) is memoized and only recalculates
 /// when song selection changes.
 #[component]
@@ -445,13 +468,11 @@ fn PerformanceMainContent() -> Element {
                 let sections_start = song
                     .sections
                     .first()
-                    .map(|s| s.start_seconds)
-                    .unwrap_or(song.start_seconds);
+                    .map_or(song.start_seconds, |s| s.start_seconds);
                 let sections_end = song
                     .sections
                     .last()
-                    .map(|s| s.end_seconds)
-                    .unwrap_or(song.end_seconds);
+                    .map_or(song.end_seconds, |s| s.end_seconds);
                 let sections_duration = sections_end - sections_start;
 
                 if sections_duration <= 0.0 {
@@ -487,17 +508,15 @@ fn PerformanceMainContent() -> Element {
             .and_then(|song| {
                 transport_state.as_ref().map(|t| {
                     let position_seconds =
-                        t.position.time.map(|time| time.as_seconds()).unwrap_or(0.0);
+                        t.position.time.map_or(0.0, |time| time.as_seconds());
                     let sections_start = song
                         .sections
                         .first()
-                        .map(|s| s.start_seconds)
-                        .unwrap_or(song.start_seconds);
+                        .map_or(song.start_seconds, |s| s.start_seconds);
                     let sections_end = song
                         .sections
                         .last()
-                        .map(|s| s.end_seconds)
-                        .unwrap_or(song.end_seconds);
+                        .map_or(song.end_seconds, |s| s.end_seconds);
                     let sections_duration = sections_end - sections_start;
 
                     if sections_duration <= 0.0 {
@@ -519,7 +538,7 @@ fn PerformanceMainContent() -> Element {
             .and_then(|section| {
                 transport_state.as_ref().map(|t| {
                     let position_seconds =
-                        t.position.time.map(|time| time.as_seconds()).unwrap_or(0.0);
+                        t.position.time.map_or(0.0, |time| time.as_seconds());
                     let section_duration = section.end_seconds - section.start_seconds;
                     if section_duration > 0.0
                         && position_seconds >= section.start_seconds
@@ -540,10 +559,12 @@ fn PerformanceMainContent() -> Element {
     let next_song_info = {
         let setlist = SETLIST_STRUCTURE.peek();
         song_index.and_then(|idx| {
-            setlist
-                .songs
-                .get(idx + 1)
-                .map(|song| (song.name.clone(), song.bright_color()))
+            idx.checked_add(1).and_then(|next_idx| {
+                setlist
+                    .songs
+                    .get(next_idx)
+                    .map(|song| (song.name.clone(), song.bright_color()))
+            })
         })
     };
 
@@ -562,7 +583,7 @@ fn PerformanceMainContent() -> Element {
                 if let Some(tempo) = song.tempo {
                     markers.push(TempoMarkerData {
                         position_percent: 0.0,
-                        label: format!("{:.0} bpm", tempo),
+                        label: format!("{tempo:.0} bpm"),
                         is_tempo: true,
                         is_time_sig: false,
                         show_line_only: false,
@@ -629,13 +650,11 @@ fn PerformanceMainContent() -> Element {
                 let sections_start = song
                     .sections
                     .first()
-                    .map(|s| s.start_seconds)
-                    .unwrap_or(song.start_seconds);
+                    .map_or(song.start_seconds, |s| s.start_seconds);
                 let sections_end = song
                     .sections
                     .last()
-                    .map(|s| s.end_seconds)
-                    .unwrap_or(song.end_seconds);
+                    .map_or(song.end_seconds, |s| s.end_seconds);
                 let sections_duration = sections_end - sections_start;
 
                 if sections_duration <= 0.0 {
@@ -670,15 +689,13 @@ fn PerformanceMainContent() -> Element {
 
     // PERFORMANCE: Extract tempo/time sig values and memoize measure indicators
     // These only change when tempo/time signature actually changes, not every frame
-    let current_bpm = transport_state.as_ref().map(|t| t.bpm).unwrap_or(120.0);
+    let current_bpm = transport_state.as_ref().map_or(120.0, |t| t.bpm);
     let current_time_sig_num = transport_state
         .as_ref()
-        .map(|t| t.time_sig_num)
-        .unwrap_or(4);
+        .map_or(4, |t| t.time_sig_num);
     let current_time_sig_denom = transport_state
         .as_ref()
-        .map(|t| t.time_sig_denom)
-        .unwrap_or(4);
+        .map_or(4, |t| t.time_sig_denom);
 
     // Memoize measure indicators - reads ACTIVE_INDICES to ensure reactivity on song/section change
     let measure_indicators = use_memo(move || {
@@ -699,28 +716,27 @@ fn PerformanceMainContent() -> Element {
                 let time_sig_denom = current_time_sig_denom;
 
                 let seconds_per_beat = 60.0 / bpm;
-                let seconds_per_measure = seconds_per_beat * time_sig_num as f64;
-                let num_measures = (section_duration / seconds_per_measure).ceil() as i32;
+                let seconds_per_measure = seconds_per_beat * f64::from(time_sig_num);
+                let num_measures = clamped_i32((section_duration / seconds_per_measure).ceil().max(0.0));
 
                 // Determine the content start (SONGSTART marker position)
                 let content_start = song
                     .as_ref()
-                    .map(|song| song.start_seconds + song.count_in_seconds.unwrap_or(0.0))
-                    .unwrap_or(0.0);
+                    .map_or(0.0, |song| song.start_seconds + song.count_in_seconds.unwrap_or(0.0));
 
                 // Calculate measure number relative to content start (SONGSTART = measure 1)
                 // Measures before SONGSTART are 0, -1, -2, etc.
                 let section_start_measure =
-                    ((section_start - content_start) / seconds_per_measure).floor() as i32;
+                    clamped_i32(((section_start - content_start) / seconds_per_measure).floor());
 
                 (0..num_measures)
                     .map(|i| {
                         let position_percent =
-                            (i as f64 * seconds_per_measure / section_duration) * 100.0;
-                        let measure_from_content_start = section_start_measure + i;
+                            (f64::from(i) * seconds_per_measure / section_duration) * 100.0;
+                        let measure_from_content_start = section_start_measure.saturating_add(i);
 
                         let display_number = if measure_from_content_start >= 0 {
-                            measure_from_content_start + 1
+                            measure_from_content_start.saturating_add(1)
                         } else {
                             measure_from_content_start
                         };
@@ -728,7 +744,10 @@ fn PerformanceMainContent() -> Element {
                         MeasureIndicator {
                             position_percent: position_percent.min(100.0),
                             measure_number: display_number,
-                            time_signature: Some((time_sig_num as u8, time_sig_denom as u8)),
+                            time_signature: Some((
+                                u8::try_from(time_sig_num).unwrap_or(4),
+                                u8::try_from(time_sig_denom).unwrap_or(4),
+                            )),
                             musical_position: daw_proto::MusicalPosition::new(
                                 measure_from_content_start,
                                 0,
@@ -856,7 +875,7 @@ fn PerformanceMainContent() -> Element {
                                 tempo_markers: tempo_markers.read().clone(),
                                 comment_markers: comment_markers.read().clone(),
                                 song_key: song_key.clone(),
-                                loop_indicator: loop_indicator.clone(),
+                                loop_indicator: loop_indicator,
                                 queued_target: queued_target.clone(),
                             }
                         }
@@ -873,7 +892,7 @@ fn PerformanceMainContent() -> Element {
                                 sections: progress_sections.read().clone(),
                                 measure_indicators: measure_indicators.read().clone(),
                                 comment_markers: section_comment_markers.read().clone(),
-                                song_key: song_key.clone(),
+                                song_key: song_key,
                                 on_measure_click: Some(Callback::new({
                                     move |musical_position: daw_proto::MusicalPosition| {
                                         if let Some(song_idx) = song_index {
@@ -910,7 +929,7 @@ fn PerformanceMainContent() -> Element {
                                         }
                                     }
                                 })),
-                                queued_target: queued_target.clone(),
+                                queued_target: queued_target,
                             }
                         }
                     }
@@ -926,19 +945,18 @@ fn PerformanceMainContent() -> Element {
                             if let Some(ref transport) = transport_state {
                                 {
                                     // Get time position from transport Position struct
-                                    let position_seconds = transport.position.time.map(|t| t.as_seconds()).unwrap_or(0.0);
-                                    let minutes = (position_seconds / 60.0).floor() as i32;
-                                    let seconds = (position_seconds % 60.0).floor() as i32;
-                                    let millis = ((position_seconds % 1.0) * 1000.0).floor() as i32;
-                                    let time_str = format!("{}:{:02}.{:03}", minutes, seconds, millis);
+                                    let position_seconds = transport.position.time.map_or(0.0, |t| t.as_seconds());
+                                    let minutes = clamped_i32((position_seconds / 60.0).floor().max(0.0));
+                                    let seconds = clamped_i32((position_seconds % 60.0).floor().max(0.0));
+                                    let millis = clamped_i32(((position_seconds % 1.0) * 1000.0).floor().max(0.0));
+                                    let time_str = format!("{minutes}:{seconds:02}.{millis:03}");
 
                                     // Get musical position from transport Position struct
                                     // This comes from REAPER's TimeMap2_timeToBeats and properly handles tempo changes
-                                    let musical_str = if let Some(ref musical) = transport.position.musical {
-                                        format!("{}.{}.{:03}", musical.measure, musical.beat, musical.subdivision)
-                                    } else {
-                                        "1.1.000".to_string()
-                                    };
+                                    let musical_str = transport.position.musical.as_ref().map_or_else(
+                                        || "1.1.000".to_string(),
+                                        |musical| format!("{}.{}.{:03}", musical.measure, musical.beat, musical.subdivision),
+                                    );
 
                                     rsx! {
                                         div {

@@ -7,9 +7,10 @@ use dynamic_template::track_schema::{self, TrackDimension};
 // is macro-emitted alongside the trait there.
 pub use session_proto::track_manager::{TrackManagerActions, register_track_manager_actions};
 
-/// Session's track-tree editor for one DAW backend. This is what callers
-/// actually use: `TrackManager::new(daw).add_channel()`, never
-/// `daw.add_channel()` — adding a dynamic-template channel/multi-mic/
+/// Session's track-tree editor for one DAW backend.
+///
+/// This is what callers actually use: `TrackManager::new(daw).add_channel()`,
+/// never `daw.add_channel()` — adding a dynamic-template channel/multi-mic/
 /// arrangement isn't a generic DAW capability, it's session business logic
 /// layered on top of one (`daw::service::Tracks`/`Items`/`Projects`), so it
 /// isn't blanket-impl'd onto every backend the way `daw::service::TracksExt`
@@ -22,7 +23,6 @@ pub use session_proto::track_manager::{TrackManagerActions, register_track_manag
 /// always acts on `ProjectContext::Current` (matches how a REAPER named
 /// command works — there's no "target a background project" for a
 /// user-triggered action).
-///
 /// Production wraps `daw::reaper::Reaper`; tests wrap
 /// `daw_standalone::sync::Standalone` to drive the tree logic headless,
 /// with no live REAPER process — same trait impl either way.
@@ -31,7 +31,7 @@ pub struct TrackManager<D> {
 }
 
 impl<D> TrackManager<D> {
-    pub fn new(daw: D) -> Self {
+    pub const fn new(daw: D) -> Self {
         Self { daw }
     }
 }
@@ -59,10 +59,10 @@ impl<D: Tracks + Items + Projects> TrackManagerActions for TrackManager<D> {
 
         if let Some(existing) = children
             .iter()
-            .find(|t| self.dimension_of(t, &scope) == TrackDimension::Channel)
+            .find(|t| Self::dimension_of(t, &scope) == TrackDimension::Channel)
         {
             let taken: Vec<&str> = children.iter().map(|t| t.name.as_str()).collect();
-            let next = self.next_value(TrackDimension::Channel, &scope, &taken)?;
+            let next = Self::next_value(TrackDimension::Channel, &scope, &taken)?;
             // Mirror the existing channel's own subtree onto the new one,
             // so a second channel arrives with the same mics as the first.
             let inherited = tree.shape_of_children(&existing.guid);
@@ -71,7 +71,7 @@ impl<D: Tracks + Items + Projects> TrackManagerActions for TrackManager<D> {
 
         let bare_multi_mics: Vec<String> = children
             .iter()
-            .filter(|t| self.dimension_of(t, &scope) == TrackDimension::MultiMic)
+            .filter(|t| Self::dimension_of(t, &scope) == TrackDimension::MultiMic)
             .map(|t| t.name.clone())
             .collect();
         if !bare_multi_mics.is_empty() {
@@ -94,7 +94,7 @@ impl<D: Tracks + Items + Projects> TrackManagerActions for TrackManager<D> {
             .collect();
         let taken: Vec<&str> = taken.iter().map(String::as_str).collect();
 
-        let next = self.next_value(TrackDimension::MultiMic, &scope, &taken)?;
+        let next = Self::next_value(TrackDimension::MultiMic, &scope, &taken)?;
         self.append_child(&scope.guid, &next)
     }
 
@@ -104,7 +104,7 @@ impl<D: Tracks + Items + Projects> TrackManagerActions for TrackManager<D> {
 
     fn add_arrangement(&self) -> DawResult<()> {
         let selected = self.selected_scope()?;
-        let scope = self.instrument_scope(&self.track_tree(), selected);
+        let scope = Self::instrument_scope(&self.track_tree(), selected);
         self.append_child(&scope.guid, "<ArrangementDescriptor>")
     }
 
@@ -128,8 +128,8 @@ impl<D: Tracks + Items + Projects> TrackManager<D> {
     fn scaffold_first_channels(&self, scope: &Track) -> DawResult<()> {
         let [left, right] = Self::INITIAL_CHANNELS;
         self.set_depth(&scope.guid, 1)?;
-        let l = self.insert_track_at(left, scope.index + 1)?;
-        let r = self.insert_track_at(right, scope.index + 2)?;
+        let l = self.insert_track_at(left, scope.index.saturating_add(1))?;
+        let r = self.insert_track_at(right, scope.index.saturating_add(2))?;
         self.set_depth(&l, 0)?;
         self.set_depth(&r, -1)?;
         self.move_items(&scope.guid, &l)
@@ -147,7 +147,7 @@ impl<D: Tracks + Items + Projects> TrackManager<D> {
         let [left, right] = Self::INITIAL_CHANNELS;
         let existing: Vec<&Track> = tree
             .children_of(&scope.guid)
-            .filter(|t| self.dimension_of(t, scope) == TrackDimension::MultiMic)
+            .filter(|t| Self::dimension_of(t, scope) == TrackDimension::MultiMic)
             .collect();
         let (Some(first), Some(last)) = (existing.first(), existing.last()) else {
             return Ok(());
@@ -159,7 +159,7 @@ impl<D: Tracks + Items + Projects> TrackManager<D> {
         // The mics are now L's children; the last one closes L (only L —
         // the R subtree appended below is what closes `scope`).
         for (i, track) in existing.iter().enumerate() {
-            let closes_l = i + 1 == existing.len();
+            let closes_l = i.saturating_add(1) == existing.len();
             self.set_depth(&track.guid, if closes_l { -1 } else { 0 })?;
         }
 
@@ -171,7 +171,7 @@ impl<D: Tracks + Items + Projects> TrackManager<D> {
         let mirrored = multi_mic_names.iter().map(TrackShape::leaf).collect();
         self.insert_shape_at(
             &[TrackShape::with_children(right, mirrored)],
-            last.index + 2,
+            last.index.saturating_add(2),
         )
     }
 }
@@ -191,7 +191,7 @@ impl<D: Tracks + Items + Projects> TrackManager<D> {
             .find_map(|dimension| {
                 let matching: Vec<TrackShape> = children
                     .iter()
-                    .filter(|shape| self.dimension_of_name(&shape.name, &scope) == dimension)
+                    .filter(|shape| Self::dimension_of_name(&shape.name, &scope) == dimension)
                     .cloned()
                     .collect();
                 (!matching.is_empty()).then_some(matching)
@@ -208,13 +208,13 @@ impl<D: Tracks + Items + Projects> TrackManager<D> {
     /// part of an instrument (guitar/keys/drums/...), stopping at the
     /// outermost one — that's the scope a new arrangement variant nests
     /// under, not whatever leaf track happened to be selected.
-    fn instrument_scope(&self, tree: &TrackTree, track: Track) -> Track {
+    fn instrument_scope(tree: &TrackTree, track: Track) -> Track {
         let mut current = track;
         while let Some(parent) = tree.parent_of(&current) {
-            let child_is_dimensional = self.dimension_of(&current, parent) != TrackDimension::Other;
+            let child_is_dimensional = Self::dimension_of(&current, parent) != TrackDimension::Other;
             let parent_is_dimensional = tree
                 .parent_of(parent)
-                .is_some_and(|gp| self.dimension_of(parent, gp) != TrackDimension::Other);
+                .is_some_and(|gp| Self::dimension_of(parent, gp) != TrackDimension::Other);
 
             if !child_is_dimensional && !parent_is_dimensional {
                 break;
@@ -236,18 +236,17 @@ impl<D: Tracks + Items + Projects> TrackManager<D> {
 
     /// Which metadata dimension `track`'s name reads as, interpreted in
     /// the context of the scope it sits under.
-    fn dimension_of(&self, track: &Track, scope: &Track) -> TrackDimension {
-        self.dimension_of_name(&track.name, scope)
+    fn dimension_of(track: &Track, scope: &Track) -> TrackDimension {
+        Self::dimension_of_name(&track.name, scope)
     }
 
-    fn dimension_of_name(&self, name: &str, scope: &Track) -> TrackDimension {
+    fn dimension_of_name(name: &str, scope: &Track) -> TrackDimension {
         track_schema::classify_track_dimension(name, std::slice::from_ref(&scope.name))
     }
 
     /// The next unused configured value for `dimension` within `scope`
     /// (e.g. the next channel after L/R, the next mic after Amp/DI).
     fn next_value(
-        &self,
         dimension: TrackDimension,
         scope: &Track,
         taken: &[&str],

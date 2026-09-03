@@ -100,6 +100,7 @@ impl SongFileWatcher {
 
     /// Spawn the polling loop. Returns a join handle that runs until all
     /// receivers are dropped (channel closes) or the task is aborted.
+    #[must_use] 
     pub fn start(mut self) -> architect::platform::JoinHandle<()> {
         architect::platform::spawn(async move {
             loop {

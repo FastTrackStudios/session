@@ -7,7 +7,7 @@ pub struct UprightBass;
 
 impl From<UprightBass> for ItemMetadataGroup {
     fn from(_val: UprightBass) -> Self {
-        ItemMetadataGroup::builder("Upright Bass")
+        Self::builder("Upright Bass")
             .patterns(["upright", "double_bass", "acoustic_bass"])
             .build()
     }

@@ -14,14 +14,14 @@ use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
 #[derive(Clone)]
-pub(crate) struct SongCacheEntry {
+pub struct SongCacheEntry {
     pub(crate) project_name: String,
     pub(crate) chart_fingerprint: Option<String>,
     pub(crate) songs: Vec<Song>,
 }
 
 #[derive(Clone)]
-pub(crate) struct ProjectLoad {
+pub struct ProjectLoad {
     pub(crate) index: usize,
     pub(crate) guid: String,
     pub(crate) project_name: String,
@@ -29,7 +29,7 @@ pub(crate) struct ProjectLoad {
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: Projects,
+    D: Projects + Send + Sync,
 {
     /// Chart source of last resort: keyflow chart text stamped onto the
     /// project itself (ext-state `FTS/chart_text`, read over the global
@@ -78,9 +78,7 @@ where
 
         let project_name = self
             .daw
-            .get(&current.project_guid)
-            .map(|info| info.name)
-            .unwrap_or_else(|| current.project_guid.clone());
+            .get(&current.project_guid).map_or_else(|| current.project_guid.clone(), |info| info.name);
         let load = ProjectLoad {
             index,
             guid: current.project_guid.clone(),
@@ -95,20 +93,20 @@ where
         let mut rebuilt_light = rebuilt.clone();
         Self::strip_song_chart_payload(&mut rebuilt_light);
 
-        let updated_setlist = {
+        let updated = {
             let mut guard = self.setlist.write().await;
             let Some(ref mut setlist) = *guard else {
                 return Some(rebuilt_light);
             };
-            if index < setlist.songs.len() {
-                setlist.songs[index] = rebuilt_light.clone();
-                Some(setlist.clone())
-            } else {
-                None
-            }
+            let result = setlist.songs.get_mut(index).map_or(false, |song| {
+                *song = rebuilt_light.clone();
+                true
+            });
+            drop(guard);
+            result
         };
 
-        if updated_setlist.is_some() {
+        if updated {
             self.hydration_bus.emit((index, rebuilt_light.clone()));
             self.emit_cached_chart_payload_for_song(index, &rebuilt_light.project_guid)
                 .await;
@@ -122,9 +120,13 @@ where
         let base = base.split(" - ").next().unwrap_or(base).trim();
         // Drop a leading zero-padded setlist-order prefix ("00 Praise" → "Praise")
         // so transient name-only placeholders don't show the ordering index.
-        let digits = base.chars().take_while(|c| c.is_ascii_digit()).count();
-        let base = if (2..=3).contains(&digits) && base[digits..].starts_with(' ') {
-            base[digits + 1..].trim_start()
+        let digits = base.chars().take_while(char::is_ascii_digit).count();
+        let base = if (2..=3).contains(&digits)
+            && base.get(digits..).is_some_and(|s| s.starts_with(' '))
+        {
+            base.get(digits.saturating_add(1)..)
+                .unwrap_or("")
+                .trim_start()
         } else {
             base
         };
@@ -213,20 +215,14 @@ where
         );
         // Same 2s safety cap as fetch_midi_source_fingerprint — see
         // the comment there for the rationale.
-        let client = match Self::chart_client() {
-            Some(c) => c,
-            None => return None,
-        };
+        let client = Self::chart_client()?;
         let call = client.generate_chart_data(req);
-        let res = match architect::platform::timeout(Duration::from_secs(2), call).await {
-            Ok(r) => r,
-            Err(_) => {
-                debug!(
-                    "MIDI chart generation timed out (>2s) for project {} — skipping",
-                    project_guid
-                );
-                return None;
-            }
+        let Ok(res) = architect::platform::timeout(Duration::from_secs(2), call).await else {
+            debug!(
+                "MIDI chart generation timed out (>2s) for project {} — skipping",
+                project_guid
+            );
+            return None;
         };
         match res {
             Ok(data) => Some(data),
@@ -255,20 +251,14 @@ where
         // wedge `build_from_open_projects` forever. On timeout we treat
         // it as "fingerprint unavailable" — the build still produces
         // valid songs, just without chart hydration.
-        let client = match Self::chart_client() {
-            Some(c) => c,
-            None => return None,
-        };
+        let client = Self::chart_client()?;
         let call = client.source_fingerprint(req);
-        let res = match architect::platform::timeout(Duration::from_secs(2), call).await {
-            Ok(r) => r,
-            Err(_) => {
-                debug!(
-                    "MIDI source fingerprint timed out (>2s) for project {} — skipping",
-                    project_guid
-                );
-                return None;
-            }
+        let Ok(res) = architect::platform::timeout(Duration::from_secs(2), call).await else {
+            debug!(
+                "MIDI source fingerprint timed out (>2s) for project {} — skipping",
+                project_guid
+            );
+            return None;
         };
         match res {
             Ok(fingerprint) => {
@@ -369,16 +359,13 @@ where
         let semaphore = Arc::new(Semaphore::new(HYDRATION_CONCURRENCY));
         let mut loads = Vec::with_capacity(projects.len());
         for (index, project) in projects.into_iter().enumerate() {
-            let _permit = semaphore
-                .clone()
-                .acquire_owned()
-                .await
-                .expect("semaphore closed");
-            loads.push(ProjectLoad {
-                index,
-                guid: project.guid,
-                project_name: project.name,
-            });
+            if let Ok(_permit) = semaphore.clone().acquire_owned().await {
+                loads.push(ProjectLoad {
+                    index,
+                    guid: project.guid,
+                    project_name: project.name,
+                });
+            }
         }
         loads
     }
@@ -463,7 +450,7 @@ where
             Err(e) => {
                 warn!(
                     "Failed to extract song from project {} ({}): {}",
-                    load.index + 1,
+                    load.index.saturating_add(1),
                     load.guid,
                     e
                 );
@@ -497,7 +484,9 @@ where
             else {
                 return false;
             };
-            (index, song.clone())
+            let result = (index, song.clone());
+            drop(guard);
+            result
         };
 
         let fingerprint_supported = *self.fingerprint_method_supported.read().await != Some(false);
@@ -547,11 +536,12 @@ where
             let Some(ref mut setlist) = *guard else {
                 return false;
             };
-            if song_index >= setlist.songs.len() {
-                return false;
-            }
-            setlist.songs[song_index] = updated_song_light.clone();
-            true
+            let result = setlist.songs.get_mut(song_index).map_or(false, |song| {
+                *song = updated_song_light.clone();
+                true
+            });
+            drop(guard);
+            result
         };
 
         if updated {
@@ -561,9 +551,7 @@ where
                 .await;
             let project_name = self
                 .daw
-                .get(&song_snapshot.project_guid)
-                .map(|info| info.name)
-                .unwrap_or_else(|| song_snapshot.project_guid.clone());
+                .get(&song_snapshot.project_guid).map_or_else(|| song_snapshot.project_guid.clone(), |info| info.name);
             self.song_cache
                 .insert(
                     song_snapshot.project_guid.clone(),

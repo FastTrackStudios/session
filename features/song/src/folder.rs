@@ -83,6 +83,11 @@ struct IndexEntry {
 
 /// Write `song` to a folder rooted at `root`, creating it (and the
 /// `arrangements/` subfolders) as needed.
+///
+/// # Errors
+///
+/// Returns [`WriteError`] if a directory or file cannot be written, or if
+/// an arrangement/index fails to serialize.
 pub fn to_folder(song: &Song, root: &Path) -> Result<(), WriteError> {
     std::fs::create_dir_all(root).map_err(|e| WriteError::Io(e.to_string()))?;
     let arr_root = root.join(ARRANGEMENTS_DIR);
@@ -126,6 +131,11 @@ pub fn to_folder(song: &Song, root: &Path) -> Result<(), WriteError> {
 ///
 /// Arrangements are returned in the order listed in `song.md`; each is read
 /// from its `arrangement.md` (the authoritative record).
+///
+/// # Errors
+///
+/// Returns [`ReadError`] if `song.md` or an arrangement file is missing,
+/// unreadable, missing its frontmatter fence, or fails to parse as YAML.
 pub fn from_folder(root: &Path) -> Result<Song, ReadError> {
     let song_path = root.join(SONG_FILE);
     let raw = std::fs::read_to_string(&song_path).map_err(|e| ReadError::Io(e.to_string()))?;
@@ -173,7 +183,9 @@ fn frontmatter(yaml: &str) -> String {
 fn split_frontmatter(src: &str) -> Option<&str> {
     let rest = src.strip_prefix("---\n")?;
     let end = rest.find("\n---")?;
-    Some(&rest[..=end]) // keep the trailing newline for yaml
+    // `end` sits on the `\n` that opens the closing fence, an ASCII byte,
+    // so `..=end` is always a valid UTF-8 boundary.
+    rest.get(..=end) // keep the trailing newline for yaml
 }
 
 /// Slugify a name into a folder-safe token.
@@ -204,7 +216,7 @@ fn unique_dir(name: &str, id: ArrangementId, used: &[String]) -> String {
         return base;
     }
     let short = id.simple().to_string();
-    let short = &short[..8.min(short.len())];
+    let short = short.get(..8.min(short.len())).unwrap_or(&short);
     let candidate = format!("{base}-{short}");
     if !used.contains(&candidate) {
         return candidate;

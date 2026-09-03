@@ -1,4 +1,4 @@
-//! DawModule implementation for dynamic-template.
+//! `DawModule` implementation for dynamic-template.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -32,6 +32,13 @@ struct State {
     group_cache: HashMap<String, Vec<String>>,
 }
 
+/// Lock `STATE`, recovering the guard even if the mutex was poisoned by a
+/// prior panic — `group_cache` is a rebuildable cache, not invariant-bearing
+/// state, so there's nothing to lose by continuing to use it.
+fn lock_state(state: &Mutex<State>) -> std::sync::MutexGuard<'_, State> {
+    state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 struct CreateTemplateSpec {
     command_suffix: &'static str,
     folders: &'static [&'static str],
@@ -56,11 +63,11 @@ fn state() -> Arc<Mutex<State>> {
 pub struct DynamicTemplateModule;
 
 impl DawModule for DynamicTemplateModule {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "dynamic-template"
     }
 
-    fn display_name(&self) -> &str {
+    fn display_name(&self) -> &'static str {
         "Dynamic Template"
     }
 
@@ -69,7 +76,7 @@ impl DawModule for DynamicTemplateModule {
             .into_iter()
             .map(|m| {
                 ActionDef::new(m.id.to_string(), m.display_name.to_string(), move || {
-                    dispatch(m.id)
+                    dispatch(m.id);
                 })
             })
             .collect()
@@ -112,6 +119,7 @@ fn dispatch(command_name: &str) {
 ///
 /// Returns `false` for anything it doesn't recognise, so the caller can
 /// fall through.
+#[must_use] 
 pub fn dispatch_session_command(command_name: &str) -> bool {
     let mapped = match command_name {
         "FTS_SESSION_ORGANIZE_EVERYTHING" => "FTS_DYNAMIC_TEMPLATE_SORT_ALL".to_string(),
@@ -193,33 +201,33 @@ fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<
                 "[dynamic-template] rebuilt visibility cache for {} groups",
                 cache.len()
             );
-            state.lock().unwrap().group_cache = cache;
+            lock_state(state).group_cache = cache;
         }
         cmd if cmd.starts_with(vis_toggle_prefix) => {
-            let group = cmd.strip_prefix(vis_toggle_prefix).unwrap();
+            let group = cmd.strip_prefix(vis_toggle_prefix).unwrap_or(cmd);
             toggle_group_visibility(state, group)?;
         }
         cmd if cmd.starts_with(vis_profile_prefix) => {
-            let profile = cmd.strip_prefix(vis_profile_prefix).unwrap();
+            let profile = cmd.strip_prefix(vis_profile_prefix).unwrap_or(cmd);
             apply_visibility_profile(profile)?;
         }
         cmd if cmd.starts_with(vis_mode_prefix) => {
-            let slug = cmd.strip_prefix(vis_mode_prefix).unwrap().to_lowercase();
+            let slug = cmd.strip_prefix(vis_mode_prefix).unwrap_or(cmd).to_lowercase();
             apply_mode_visibility(&slug)?;
         }
         cmd if cmd.starts_with(create_prefix) => {
-            let suffix = cmd.strip_prefix(create_prefix).unwrap();
-            create_template_group(suffix)?;
+            let suffix = cmd.strip_prefix(create_prefix).unwrap_or(cmd);
+            create_template_group(suffix);
         }
         n if UNIMPLEMENTED.contains(&n) => {
-            tracing::warn!("[dynamic-template] {command_name} is declared but not implemented yet")
+            tracing::warn!("[dynamic-template] {command_name} is declared but not implemented yet");
         }
         _ => tracing::debug!("[dynamic-template] unhandled action: {command_name}"),
     }
     Ok(())
 }
 
-fn project() -> ProjectContext {
+const fn project() -> ProjectContext {
     ProjectContext::Current
 }
 
@@ -340,7 +348,7 @@ fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
         // checkout and isn't yet published to the git dep this builds against.
         // Re-enable once that primitive lands. See visibility_rules::TrackPlan.
         if plan.arrange_fold.is_some() || plan.mixer_fold.is_some() {
-            fold_pending += 1;
+            fold_pending = fold_pending.saturating_add(1);
         }
     }
 
@@ -394,7 +402,7 @@ fn profile_matches_track(profile: &str, track_name: &str) -> bool {
     }
 }
 
-fn profile_track_height(visible_count: usize) -> u32 {
+const fn profile_track_height(visible_count: usize) -> u32 {
     match visible_count {
         0 => 0,
         1..=4 => 180,
@@ -405,12 +413,12 @@ fn profile_track_height(visible_count: usize) -> u32 {
 }
 
 fn ensure_group_cache(state: &Arc<Mutex<State>>) -> eyre::Result<HashMap<String, Vec<String>>> {
-    let existing = state.lock().unwrap().group_cache.clone();
+    let existing = lock_state(state).group_cache.clone();
     if !existing.is_empty() {
         return Ok(existing);
     }
     let cache = rebuild_group_cache()?;
-    state.lock().unwrap().group_cache = cache.clone();
+    lock_state(state).group_cache.clone_from(&cache);
     Ok(cache)
 }
 
@@ -465,11 +473,8 @@ fn collect_group_cache(
 }
 
 fn log_status_action(state: &Arc<Mutex<State>>) {
-    let locked = state.lock().unwrap();
-    tracing::info!(
-        "[dynamic-template] status: cached_groups={}",
-        locked.group_cache.len()
-    );
+    let cached_groups = lock_state(state).group_cache.len();
+    tracing::info!("[dynamic-template] status: cached_groups={cached_groups}");
 }
 
 fn log_groups_action() {
@@ -519,7 +524,7 @@ fn organize_demo_action() -> eyre::Result<()> {
         "BGV 2",
     ];
 
-    let names: Vec<String> = SAMPLE.iter().map(|n| n.to_string()).collect();
+    let names: Vec<String> = SAMPLE.iter().map(std::string::ToString::to_string).collect();
     let hierarchy = names.organize_into_tracks(&default_config(), None)?;
 
     tracing::info!(
@@ -533,7 +538,7 @@ fn organize_demo_action() -> eyre::Result<()> {
     Ok(())
 }
 
-fn create_template_group(command_suffix: &str) -> eyre::Result<()> {
+fn create_template_group(command_suffix: &str) {
     let Some(spec) = create_template_specs()
         .iter()
         .find(|spec| spec.command_suffix == command_suffix)
@@ -541,7 +546,7 @@ fn create_template_group(command_suffix: &str) -> eyre::Result<()> {
         tracing::warn!(
             "[dynamic-template] unknown create-template action suffix: {command_suffix}"
         );
-        return Ok(());
+        return;
     };
 
     let command_suffix = spec.command_suffix;
@@ -556,105 +561,125 @@ fn create_template_group(command_suffix: &str) -> eyre::Result<()> {
         let reaper = daw_reaper::Reaper;
         let project = ProjectContext::Current;
 
-        if !is_drum_create_action(command_suffix) {
-            let root = folders[0];
-            let insert_index = insertion_index_for_top_level_group(&project_tracks, root);
-            let suffix = next_version_suffix(&existing, root);
-            if let Some(guid) =
-                add_track_on_main_thread(&with_suffix(root, &suffix), Some(insert_index))
-            {
-                save_created_track_state(&reaper, project, &guid, command_suffix, root);
-                tracing::info!(
-                    "[dynamic-template] created top-level template group {} at index {}",
-                    root,
-                    insert_index
-                );
-            }
-            return;
-        }
-
-        let plan = plan_create_insertion(&project_tracks, folders);
-        let suffix = next_version_suffix(&existing, plan.version_root);
-        let mut created = 0usize;
-        let mut insert_index = plan.insert_index;
-
-        tracing::info!(
-            "[dynamic-template] create plan group={} root={} insert_index={} folders_to_create={} closing_depth={} existing_tracks={}",
-            folders.last().unwrap_or(&command_suffix),
-            plan.version_root,
-            plan.insert_index,
-            plan.folders_to_create.join("/"),
-            plan.closing_depth,
-            project_tracks.len()
-        );
-
-        if let Some(adjustment) = plan.previous_folder_close_adjustment {
-            if let Err(err) =
-                set_folder_depth_on_main_thread(&adjustment.guid, adjustment.new_depth)
-            {
-                tracing::warn!(
-                    "[dynamic-template] failed to prepare parent folder insertion: {err}"
-                );
-            }
-        }
-
-        if let (true, Some(root_index)) = (plan.collapsed_root, plan.root_index) {
-            if promote_collapsed_template_group(
-                &reaper,
-                project.clone(),
+        if is_drum_create_action(command_suffix) {
+            create_drum_kit_group(
+                reaper,
+                &project,
                 &project_tracks,
-                root_index,
-            ) {
-                insert_index += 1;
-                created += 1;
-            }
+                &existing,
+                folders,
+                tracks,
+                command_suffix,
+            );
+        } else {
+            create_top_level_group(reaper, project, &project_tracks, &existing, folders, command_suffix);
         }
+    });
+}
 
-        for folder in plan.folders_to_create {
-            if let Some(guid) =
-                add_track_on_main_thread(&with_suffix(folder, &suffix), Some(insert_index))
-            {
-                save_created_track_state(&reaper, project.clone(), &guid, command_suffix, folder);
-                if let Err(err) = set_folder_depth_on_main_thread(&guid, 1) {
+fn create_top_level_group(
+    reaper: daw_reaper::Reaper,
+    project: ProjectContext,
+    project_tracks: &[daw::service::Track],
+    existing: &HashSet<String>,
+    folders: &'static [&'static str],
+    command_suffix: &'static str,
+) {
+    let Some(root) = folders.first().copied() else {
+        return;
+    };
+    let insert_index = insertion_index_for_top_level_group(project_tracks, root);
+    let suffix = next_version_suffix(existing, root);
+    if let Some(guid) = add_track_on_main_thread(&with_suffix(root, &suffix), Some(insert_index)) {
+        save_created_track_state(reaper, project, &guid, command_suffix, root);
+        tracing::info!(
+            "[dynamic-template] created top-level template group {} at index {}",
+            root,
+            insert_index
+        );
+    }
+}
+
+fn create_drum_kit_group(
+    reaper: daw_reaper::Reaper,
+    project: &ProjectContext,
+    project_tracks: &[daw::service::Track],
+    existing: &HashSet<String>,
+    folders: &'static [&'static str],
+    tracks: &'static [&'static str],
+    command_suffix: &'static str,
+) {
+    let plan = plan_create_insertion(project_tracks, folders);
+    let suffix = next_version_suffix(existing, plan.version_root);
+    let mut created: usize = 0;
+    let mut insert_index = plan.insert_index;
+
+    tracing::info!(
+        "[dynamic-template] create plan group={} root={} insert_index={} folders_to_create={} closing_depth={} existing_tracks={}",
+        folders.last().unwrap_or(&command_suffix),
+        plan.version_root,
+        plan.insert_index,
+        plan.folders_to_create.join("/"),
+        plan.closing_depth,
+        project_tracks.len()
+    );
+
+    if let Some(adjustment) = plan.previous_folder_close_adjustment {
+        if let Err(err) = set_folder_depth_on_main_thread(&adjustment.guid, adjustment.new_depth) {
+            tracing::warn!("[dynamic-template] failed to prepare parent folder insertion: {err}");
+        }
+    }
+
+    if let (true, Some(root_index)) = (plan.collapsed_root, plan.root_index) {
+        if promote_collapsed_template_group(reaper, project.clone(), project_tracks, root_index) {
+            insert_index = insert_index.saturating_add(1);
+            created = created.saturating_add(1);
+        }
+    }
+
+    for folder in plan.folders_to_create {
+        if let Some(guid) =
+            add_track_on_main_thread(&with_suffix(folder, &suffix), Some(insert_index))
+        {
+            save_created_track_state(reaper, project.clone(), &guid, command_suffix, folder);
+            if let Err(err) = set_folder_depth_on_main_thread(&guid, 1) {
+                tracing::warn!(
+                    "[dynamic-template] failed to set folder depth for {folder}: {err}"
+                );
+            }
+            insert_index = insert_index.saturating_add(1);
+            created = created.saturating_add(1);
+        }
+    }
+
+    let leaf_tracks: Vec<&str> = if tracks.is_empty() {
+        vec!["Main"]
+    } else {
+        tracks.to_vec()
+    };
+    for (index, track) in leaf_tracks.iter().copied().enumerate() {
+        if let Some(guid) =
+            add_track_on_main_thread(&with_suffix(track, &suffix), Some(insert_index))
+        {
+            save_created_track_state(reaper, project.clone(), &guid, command_suffix, track);
+            if index.saturating_add(1) == leaf_tracks.len() {
+                let depth = plan.closing_depth.saturating_neg();
+                if let Err(err) = set_folder_depth_on_main_thread(&guid, depth) {
                     tracing::warn!(
-                        "[dynamic-template] failed to set folder depth for {folder}: {err}"
+                        "[dynamic-template] failed to close folder depth for {track}: {err}"
                     );
                 }
-                insert_index += 1;
-                created += 1;
             }
+            insert_index = insert_index.saturating_add(1);
+            created = created.saturating_add(1);
         }
-
-        let leaf_tracks: Vec<&str> = if tracks.is_empty() {
-            vec!["Main"]
-        } else {
-            tracks.to_vec()
-        };
-        for (index, track) in leaf_tracks.iter().copied().enumerate() {
-            if let Some(guid) =
-                add_track_on_main_thread(&with_suffix(track, &suffix), Some(insert_index))
-            {
-                save_created_track_state(&reaper, project.clone(), &guid, command_suffix, track);
-                if index == leaf_tracks.len() - 1 {
-                    let depth = -plan.closing_depth;
-                    if let Err(err) = set_folder_depth_on_main_thread(&guid, depth) {
-                        tracing::warn!(
-                            "[dynamic-template] failed to close folder depth for {track}: {err}"
-                        );
-                    }
-                }
-                insert_index += 1;
-                created += 1;
-            }
-        }
-        tracing::info!(
-            "[dynamic-template] created template group {} at index {} with {} tracks",
-            folders.last().unwrap_or(&command_suffix),
-            plan.insert_index,
-            created
-        );
-    });
-    Ok(())
+    }
+    tracing::info!(
+        "[dynamic-template] created template group {} at index {} with {} tracks",
+        folders.last().unwrap_or(&command_suffix),
+        plan.insert_index,
+        created
+    );
 }
 
 struct CreateInsertionPlan {
@@ -687,20 +712,32 @@ fn plan_create_insertion(
     tracks: &[daw::service::Track],
     folders: &'static [&'static str],
 ) -> CreateInsertionPlan {
-    let root = folders[0];
+    let Some(&root) = folders.first() else {
+        return CreateInsertionPlan {
+            insert_index: insertion_index_for_top_level_group(tracks, ""),
+            folders_to_create: folders,
+            version_root: "",
+            closing_depth: 1,
+            previous_folder_close_adjustment: None,
+            collapsed_root: false,
+            root_index: None,
+        };
+    };
     if folders.len() > 1 {
         if let Some(parent) = find_top_level_folder(tracks, root) {
             let (insert_index, previous_folder_close_adjustment) =
                 insertion_point_inside_folder(tracks, parent);
-            return CreateInsertionPlan {
-                insert_index,
-                folders_to_create: &folders[1..],
-                version_root: folders[1],
-                closing_depth: folders.len() as i32,
-                previous_folder_close_adjustment,
-                collapsed_root: is_collapsed_template_root(tracks, parent),
-                root_index: Some(parent),
-            };
+            if let (Some(rest), Some(&version_root)) = (folders.get(1..), folders.get(1)) {
+                return CreateInsertionPlan {
+                    insert_index,
+                    folders_to_create: rest,
+                    version_root,
+                    closing_depth: i32::try_from(folders.len()).unwrap_or(i32::MAX),
+                    previous_folder_close_adjustment,
+                    collapsed_root: is_collapsed_template_root(tracks, parent),
+                    root_index: Some(parent),
+                };
+            }
         }
     }
 
@@ -708,7 +745,7 @@ fn plan_create_insertion(
     CreateInsertionPlan {
         insert_index: insertion_index_for_top_level_group(tracks, root),
         folders_to_create: if collapse_subtype_into_root {
-            &folders[..1]
+            folders.get(..1).unwrap_or(folders)
         } else {
             folders
         },
@@ -716,7 +753,7 @@ fn plan_create_insertion(
         closing_depth: if collapse_subtype_into_root {
             1
         } else {
-            folders.len() as i32
+            i32::try_from(folders.len()).unwrap_or(i32::MAX)
         },
         previous_folder_close_adjustment: None,
         collapsed_root: false,
@@ -725,7 +762,7 @@ fn plan_create_insertion(
 }
 
 fn promote_collapsed_template_group(
-    reaper: &daw_reaper::Reaper,
+    reaper: daw_reaper::Reaper,
     project: ProjectContext,
     tracks: &[daw::service::Track],
     root_index: usize,
@@ -734,33 +771,39 @@ fn promote_collapsed_template_group(
         return false;
     };
     let Some(kind_name) =
-        created_track_kind(reaper, project.clone(), &root.guid).and_then(create_kind_display_name)
+        created_track_kind(reaper, project.clone(), &root.guid)
+            .as_deref()
+            .and_then(create_kind_display_name)
     else {
         return false;
     };
     let end = folder_end_exclusive(tracks, root_index);
-    if end <= root_index + 1 {
+    if end <= root_index.saturating_add(1) {
         return false;
     }
-    let Some(last_child) = tracks.get(end - 1) else {
+    let Some(last_child) = end.checked_sub(1).and_then(|i| tracks.get(i)) else {
         return false;
     };
-    let mut promoted = false;
-    if let Some(guid) = add_track_on_main_thread(kind_name, Some(root.index + 1)) {
-        save_created_track_state(
-            reaper,
-            project,
-            &guid,
-            &kind_name_to_suffix(kind_name),
-            kind_name,
-        );
-        if let Err(err) = set_folder_depth_on_main_thread(&guid, 1) {
-            tracing::warn!("[dynamic-template] failed to promote collapsed group: {err}");
-        }
-        promoted = true;
-    }
-    if let Err(err) = set_folder_depth_on_main_thread(&last_child.guid, last_child.folder_depth - 1)
-    {
+    let promoted = add_track_on_main_thread(kind_name, Some(root.index.saturating_add(1))).map_or(
+        false,
+        |guid| {
+            save_created_track_state(
+                reaper,
+                project,
+                &guid,
+                &kind_name_to_suffix(kind_name),
+                kind_name,
+            );
+            if let Err(err) = set_folder_depth_on_main_thread(&guid, 1) {
+                tracing::warn!("[dynamic-template] failed to promote collapsed group: {err}");
+            }
+            true
+        },
+    );
+    if let Err(err) = set_folder_depth_on_main_thread(
+        &last_child.guid,
+        last_child.folder_depth.saturating_sub(1),
+    ) {
         tracing::warn!("[dynamic-template] failed to close promoted collapsed group: {err}");
     }
     promoted
@@ -774,25 +817,28 @@ fn is_collapsed_template_root(tracks: &[daw::service::Track], root_index: usize)
         return false;
     }
     let end = folder_end_exclusive(tracks, root_index);
-    tracks[root_index + 1..end]
+    root_index
+        .checked_add(1)
+        .and_then(|start| tracks.get(start..end))
+        .unwrap_or_default()
         .iter()
         .filter(|track| track.parent_guid.as_deref() == Some(&root.guid))
         .all(|track| track.folder_depth <= 0)
 }
 
 fn created_track_kind(
-    reaper: &daw_reaper::Reaper,
+    reaper: daw_reaper::Reaper,
     project: ProjectContext,
     guid: &str,
 ) -> Option<String> {
     let key = format!("{CREATE_STATE_KEY_PREFIX}{guid}");
-    let state = ExtState::get_project(reaper, project, CREATE_STATE_SECTION, &key)?;
+    let state = ExtState::get_project(&reaper, project, CREATE_STATE_SECTION, &key)?;
     state
         .lines()
         .find_map(|line| line.strip_prefix("kind=").map(str::to_string))
 }
 
-fn create_kind_display_name(kind: String) -> Option<&'static str> {
+fn create_kind_display_name(kind: &str) -> Option<&'static str> {
     create_template_specs()
         .iter()
         .find(|spec| spec.command_suffix == kind)
@@ -804,7 +850,7 @@ fn kind_name_to_suffix(kind_name: &str) -> String {
 }
 
 fn save_created_track_state(
-    reaper: &daw_reaper::Reaper,
+    reaper: daw_reaper::Reaper,
     project: ProjectContext,
     guid: &str,
     command_suffix: &str,
@@ -812,7 +858,7 @@ fn save_created_track_state(
 ) {
     let key = format!("{CREATE_STATE_KEY_PREFIX}{guid}");
     let value = format!("kind={command_suffix}\nrole={role}");
-    if let Err(err) = ExtState::set_project(reaper, project, CREATE_STATE_SECTION, &key, &value) {
+    if let Err(err) = ExtState::set_project(&reaper, project, CREATE_STATE_SECTION, &key, &value) {
         tracing::warn!("[dynamic-template] failed to save create state for {guid}: {err}");
     }
 }
@@ -831,13 +877,18 @@ fn insertion_point_inside_folder(
     folder_index: usize,
 ) -> (u32, Option<FolderCloseAdjustment>) {
     let end = folder_end_exclusive(tracks, folder_index);
-    if end <= folder_index + 1 {
-        return (tracks[folder_index].index + 1, None);
+    if end <= folder_index.saturating_add(1) {
+        let index = tracks
+            .get(folder_index)
+            .map_or(0, |t| t.index.saturating_add(1));
+        return (index, None);
     }
-    let previous = &tracks[end - 1];
+    let Some(previous) = end.checked_sub(1).and_then(|i| tracks.get(i)) else {
+        return (track_insert_index_at(tracks, end), None);
+    };
     let adjustment = (previous.folder_depth < 0).then(|| FolderCloseAdjustment {
         guid: previous.guid.clone(),
-        new_depth: previous.folder_depth + 1,
+        new_depth: previous.folder_depth.saturating_add(1),
     });
     (track_insert_index_at(tracks, end), adjustment)
 }
@@ -868,8 +919,10 @@ fn insertion_index_for_top_level_group(tracks: &[daw::service::Track], group_nam
 fn track_insert_index_at(tracks: &[daw::service::Track], position: usize) -> u32 {
     tracks
         .get(position)
-        .map(|track| track.index)
-        .unwrap_or(tracks.len() as u32)
+        .map_or_else(
+            || u32::try_from(tracks.len()).unwrap_or(u32::MAX),
+            |track| track.index,
+        )
 }
 
 fn folder_end_exclusive(tracks: &[daw::service::Track], folder_index: usize) -> usize {
@@ -877,14 +930,14 @@ fn folder_end_exclusive(tracks: &[daw::service::Track], folder_index: usize) -> 
         .get(folder_index)
         .is_none_or(|track| track.folder_depth <= 0)
     {
-        return folder_index + 1;
+        return folder_index.saturating_add(1);
     }
 
     let mut depth = 0i32;
     for (index, track) in tracks.iter().enumerate().skip(folder_index) {
-        depth += track.folder_depth;
+        depth = depth.saturating_add(track.folder_depth);
         if index > folder_index && depth <= 0 {
-            return index + 1;
+            return index.saturating_add(1);
         }
     }
     tracks.len()
@@ -928,13 +981,14 @@ fn next_version_suffix(existing: &HashSet<String>, root_name: &str) -> String {
     if !existing.contains(root_name) {
         return String::new();
     }
-    for index in 2.. {
+    let mut index = 2u32;
+    loop {
         let suffix = format!(" {index}");
         if !existing.contains(&format!("{root_name}{suffix}")) {
             return suffix;
         }
+        index = index.saturating_add(1);
     }
-    unreachable!()
 }
 
 fn with_suffix(name: &str, suffix: &str) -> String {
@@ -959,182 +1013,49 @@ fn normalize_key(value: &str) -> String {
     key
 }
 
-fn create_template_specs() -> &'static [CreateTemplateSpec] {
+// One static table entry per template group; splitting it up would only
+// obscure the 1:1 mapping to REAPER command suffixes.
+const fn create_template_specs() -> &'static [CreateTemplateSpec] {
     &[
-        CreateTemplateSpec {
-            command_suffix: "DRUMS",
-            folders: &["Drums"],
-            tracks: &["Kick", "Snare", "Toms", "Hi-Hat", "Overheads", "Room"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "DRUM_KIT",
-            folders: &["Drums", "Drum Kit"],
-            tracks: &["Kick", "Snare", "Toms", "Hi-Hat", "Overheads", "Room"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "ELECTRONIC_KIT",
-            folders: &["Drums", "Electronic Kit"],
-            tracks: &["Kick", "Snare", "Clap", "Hats", "Perc"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "PERCUSSION",
-            folders: &["Percussion"],
-            tracks: &["Shaker", "Tambourine", "Conga", "Perc Loop"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "BASS",
-            folders: &["Bass"],
-            tracks: &["Bass"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "BASS_GUITAR",
-            folders: &["Bass", "Bass Guitar"],
-            tracks: &["DI", "Amp"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "BASS_SYNTH",
-            folders: &["Bass", "Bass Synth"],
-            tracks: &["Bass Synth"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "UPRIGHT_BASS",
-            folders: &["Bass", "Upright Bass"],
-            tracks: &["Upright Bass"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "GUITARS",
-            folders: &["Guitars"],
-            tracks: &["Electric Guitar", "Acoustic Guitar"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "ELECTRIC_GUITAR",
-            folders: &["Guitars", "Electric Guitar"],
-            tracks: &["DI", "Amp", "Lead"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "ACOUSTIC_GUITAR",
-            folders: &["Guitars", "Acoustic Guitar"],
-            tracks: &["Acoustic Guitar"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "KEYS",
-            folders: &["Keys"],
-            tracks: &["Piano", "Organ", "Electric Keys"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "PIANO",
-            folders: &["Keys", "Piano"],
-            tracks: &["Piano"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "ORGAN",
-            folders: &["Keys", "Organ"],
-            tracks: &["Organ"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "ELECTRIC_KEYS",
-            folders: &["Keys", "Electric Keys"],
-            tracks: &["Electric Keys"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "SYNTHS",
-            folders: &["Synths"],
-            tracks: &["Lead", "Pad", "Arp", "FX"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "SYNTH_LEAD",
-            folders: &["Synths", "Lead"],
-            tracks: &["Synth Lead"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "SYNTH_PAD",
-            folders: &["Synths", "Pad"],
-            tracks: &["Synth Pad"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "SYNTH_ARP",
-            folders: &["Synths", "Arp"],
-            tracks: &["Synth Arp"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "HORNS",
-            folders: &["Horns"],
-            tracks: &["Trumpet", "Trombone", "Saxophone"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "TRUMPET",
-            folders: &["Horns", "Trumpet"],
-            tracks: &["Trumpet"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "TROMBONE",
-            folders: &["Horns", "Trombone"],
-            tracks: &["Trombone"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "SAXOPHONE",
-            folders: &["Horns", "Saxophone"],
-            tracks: &["Saxophone"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "HARMONICA",
-            folders: &["Harmonica"],
-            tracks: &["Harmonica"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "STRINGS",
-            folders: &["Strings"],
-            tracks: &["Violin", "Viola", "Cello", "Bass"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "VOCALS",
-            folders: &["Vocals"],
-            tracks: &["Lead Vocal", "Background Vocal", "Harmony"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "LEAD_VOCALS",
-            folders: &["Vocals", "Lead Vocals"],
-            tracks: &["Lead Vocal"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "BACKGROUND_VOCALS",
-            folders: &["Vocals", "Background Vocals"],
-            tracks: &["Background Vocal"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "CHOIR",
-            folders: &["Choir"],
-            tracks: &["Soprano", "Alto", "Tenor", "Bass"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "ORCHESTRA",
-            folders: &["Orchestra"],
-            tracks: &["Strings", "Brass", "Woodwinds", "Percussion"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "SFX",
-            folders: &["SFX"],
-            tracks: &["SFX"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "GUIDE",
-            folders: &["Guide"],
-            tracks: &["Guide"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "REFERENCE",
-            folders: &["Reference"],
-            tracks: &["Reference"],
-        },
-        CreateTemplateSpec {
-            command_suffix: "STEM_SPLIT",
-            folders: &["Stem Split"],
-            tracks: &["Vocal", "Drums", "Bass", "Other"],
-        },
+        CreateTemplateSpec { command_suffix: "DRUMS", folders: &["Drums"], tracks: &["Kick", "Snare", "Toms", "Hi-Hat", "Overheads", "Room"], },
+        CreateTemplateSpec { command_suffix: "DRUM_KIT", folders: &["Drums", "Drum Kit"], tracks: &["Kick", "Snare", "Toms", "Hi-Hat", "Overheads", "Room"], },
+        CreateTemplateSpec { command_suffix: "ELECTRONIC_KIT", folders: &["Drums", "Electronic Kit"], tracks: &["Kick", "Snare", "Clap", "Hats", "Perc"], },
+        CreateTemplateSpec { command_suffix: "PERCUSSION", folders: &["Percussion"], tracks: &["Shaker", "Tambourine", "Conga", "Perc Loop"], },
+        CreateTemplateSpec { command_suffix: "BASS", folders: &["Bass"], tracks: &["Bass"], },
+        CreateTemplateSpec { command_suffix: "BASS_GUITAR", folders: &["Bass", "Bass Guitar"], tracks: &["DI", "Amp"], },
+        CreateTemplateSpec { command_suffix: "BASS_SYNTH", folders: &["Bass", "Bass Synth"], tracks: &["Bass Synth"], },
+        CreateTemplateSpec { command_suffix: "UPRIGHT_BASS", folders: &["Bass", "Upright Bass"], tracks: &["Upright Bass"], },
+        CreateTemplateSpec { command_suffix: "GUITARS", folders: &["Guitars"], tracks: &["Electric Guitar", "Acoustic Guitar"], },
+        CreateTemplateSpec { command_suffix: "ELECTRIC_GUITAR", folders: &["Guitars", "Electric Guitar"], tracks: &["DI", "Amp", "Lead"], },
+        CreateTemplateSpec { command_suffix: "ACOUSTIC_GUITAR", folders: &["Guitars", "Acoustic Guitar"], tracks: &["Acoustic Guitar"], },
+        CreateTemplateSpec { command_suffix: "KEYS", folders: &["Keys"], tracks: &["Piano", "Organ", "Electric Keys"], },
+        CreateTemplateSpec { command_suffix: "PIANO", folders: &["Keys", "Piano"], tracks: &["Piano"], },
+        CreateTemplateSpec { command_suffix: "ORGAN", folders: &["Keys", "Organ"], tracks: &["Organ"], },
+        CreateTemplateSpec { command_suffix: "ELECTRIC_KEYS", folders: &["Keys", "Electric Keys"], tracks: &["Electric Keys"], },
+        CreateTemplateSpec { command_suffix: "SYNTHS", folders: &["Synths"], tracks: &["Lead", "Pad", "Arp", "FX"], },
+        CreateTemplateSpec { command_suffix: "SYNTH_LEAD", folders: &["Synths", "Lead"], tracks: &["Synth Lead"], },
+        CreateTemplateSpec { command_suffix: "SYNTH_PAD", folders: &["Synths", "Pad"], tracks: &["Synth Pad"], },
+        CreateTemplateSpec { command_suffix: "SYNTH_ARP", folders: &["Synths", "Arp"], tracks: &["Synth Arp"], },
+        CreateTemplateSpec { command_suffix: "HORNS", folders: &["Horns"], tracks: &["Trumpet", "Trombone", "Saxophone"], },
+        CreateTemplateSpec { command_suffix: "TRUMPET", folders: &["Horns", "Trumpet"], tracks: &["Trumpet"], },
+        CreateTemplateSpec { command_suffix: "TROMBONE", folders: &["Horns", "Trombone"], tracks: &["Trombone"], },
+        CreateTemplateSpec { command_suffix: "SAXOPHONE", folders: &["Horns", "Saxophone"], tracks: &["Saxophone"], },
+        CreateTemplateSpec { command_suffix: "HARMONICA", folders: &["Harmonica"], tracks: &["Harmonica"], },
+        CreateTemplateSpec { command_suffix: "STRINGS", folders: &["Strings"], tracks: &["Violin", "Viola", "Cello", "Bass"], },
+        CreateTemplateSpec { command_suffix: "VOCALS", folders: &["Vocals"], tracks: &["Lead Vocal", "Background Vocal", "Harmony"], },
+        CreateTemplateSpec { command_suffix: "LEAD_VOCALS", folders: &["Vocals", "Lead Vocals"], tracks: &["Lead Vocal"], },
+        CreateTemplateSpec { command_suffix: "BACKGROUND_VOCALS", folders: &["Vocals", "Background Vocals"], tracks: &["Background Vocal"], },
+        CreateTemplateSpec { command_suffix: "CHOIR", folders: &["Choir"], tracks: &["Soprano", "Alto", "Tenor", "Bass"], },
+        CreateTemplateSpec { command_suffix: "ORCHESTRA", folders: &["Orchestra"], tracks: &["Strings", "Brass", "Woodwinds", "Percussion"], },
+        CreateTemplateSpec { command_suffix: "SFX", folders: &["SFX"], tracks: &["SFX"], },
+        CreateTemplateSpec { command_suffix: "GUIDE", folders: &["Guide"], tracks: &["Guide"], },
+        CreateTemplateSpec { command_suffix: "REFERENCE", folders: &["Reference"], tracks: &["Reference"], },
+        CreateTemplateSpec { command_suffix: "STEM_SPLIT", folders: &["Stem Split"], tracks: &["Vocal", "Drums", "Bass", "Other"], },
     ]
 }
 
 /// Export the module.
+#[must_use] 
 pub fn module() -> Box<dyn DawModule> {
     Box::new(DynamicTemplateModule)
 }
@@ -1331,7 +1252,7 @@ impl VisibilityManagerActions for VisibilityManagerActionsImpl {
     }
     fn rebuild_cache(&self) {
         if let Ok(cache) = rebuild_group_cache() {
-            state().lock().unwrap().group_cache = cache;
+            lock_state(&state()).group_cache = cache;
         }
     }
     fn mode_organize(&self) {
@@ -1611,106 +1532,106 @@ trait CreateGroupActions {
 
 impl CreateGroupActions for CreateGroupActionsImpl {
     fn create_new_drums(&self) {
-        create_template_group("DRUMS").ok();
+        create_template_group("DRUMS");
     }
     fn create_new_drum_kit(&self) {
-        create_template_group("DRUM_KIT").ok();
+        create_template_group("DRUM_KIT");
     }
     fn create_new_electronic_kit(&self) {
-        create_template_group("ELECTRONIC_KIT").ok();
+        create_template_group("ELECTRONIC_KIT");
     }
     fn create_new_percussion(&self) {
-        create_template_group("PERCUSSION").ok();
+        create_template_group("PERCUSSION");
     }
     fn create_new_bass(&self) {
-        create_template_group("BASS").ok();
+        create_template_group("BASS");
     }
     fn create_new_bass_guitar(&self) {
-        create_template_group("BASS_GUITAR").ok();
+        create_template_group("BASS_GUITAR");
     }
     fn create_new_bass_synth(&self) {
-        create_template_group("BASS_SYNTH").ok();
+        create_template_group("BASS_SYNTH");
     }
     fn create_new_upright_bass(&self) {
-        create_template_group("UPRIGHT_BASS").ok();
+        create_template_group("UPRIGHT_BASS");
     }
     fn create_new_guitars(&self) {
-        create_template_group("GUITARS").ok();
+        create_template_group("GUITARS");
     }
     fn create_new_electric_guitar(&self) {
-        create_template_group("ELECTRIC_GUITAR").ok();
+        create_template_group("ELECTRIC_GUITAR");
     }
     fn create_new_acoustic_guitar(&self) {
-        create_template_group("ACOUSTIC_GUITAR").ok();
+        create_template_group("ACOUSTIC_GUITAR");
     }
     fn create_new_keys(&self) {
-        create_template_group("KEYS").ok();
+        create_template_group("KEYS");
     }
     fn create_new_piano(&self) {
-        create_template_group("PIANO").ok();
+        create_template_group("PIANO");
     }
     fn create_new_organ(&self) {
-        create_template_group("ORGAN").ok();
+        create_template_group("ORGAN");
     }
     fn create_new_electric_keys(&self) {
-        create_template_group("ELECTRIC_KEYS").ok();
+        create_template_group("ELECTRIC_KEYS");
     }
     fn create_new_synths(&self) {
-        create_template_group("SYNTHS").ok();
+        create_template_group("SYNTHS");
     }
     fn create_new_synth_lead(&self) {
-        create_template_group("SYNTH_LEAD").ok();
+        create_template_group("SYNTH_LEAD");
     }
     fn create_new_synth_pad(&self) {
-        create_template_group("SYNTH_PAD").ok();
+        create_template_group("SYNTH_PAD");
     }
     fn create_new_synth_arp(&self) {
-        create_template_group("SYNTH_ARP").ok();
+        create_template_group("SYNTH_ARP");
     }
     fn create_new_horns(&self) {
-        create_template_group("HORNS").ok();
+        create_template_group("HORNS");
     }
     fn create_new_trumpet(&self) {
-        create_template_group("TRUMPET").ok();
+        create_template_group("TRUMPET");
     }
     fn create_new_trombone(&self) {
-        create_template_group("TROMBONE").ok();
+        create_template_group("TROMBONE");
     }
     fn create_new_saxophone(&self) {
-        create_template_group("SAXOPHONE").ok();
+        create_template_group("SAXOPHONE");
     }
     fn create_new_harmonica(&self) {
-        create_template_group("HARMONICA").ok();
+        create_template_group("HARMONICA");
     }
     fn create_new_strings(&self) {
-        create_template_group("STRINGS").ok();
+        create_template_group("STRINGS");
     }
     fn create_new_vocals(&self) {
-        create_template_group("VOCALS").ok();
+        create_template_group("VOCALS");
     }
     fn create_new_lead_vocals(&self) {
-        create_template_group("LEAD_VOCALS").ok();
+        create_template_group("LEAD_VOCALS");
     }
     fn create_new_background_vocals(&self) {
-        create_template_group("BACKGROUND_VOCALS").ok();
+        create_template_group("BACKGROUND_VOCALS");
     }
     fn create_new_choir(&self) {
-        create_template_group("CHOIR").ok();
+        create_template_group("CHOIR");
     }
     fn create_new_orchestra(&self) {
-        create_template_group("ORCHESTRA").ok();
+        create_template_group("ORCHESTRA");
     }
     fn create_new_sfx(&self) {
-        create_template_group("SFX").ok();
+        create_template_group("SFX");
     }
     fn create_new_guide(&self) {
-        create_template_group("GUIDE").ok();
+        create_template_group("GUIDE");
     }
     fn create_new_reference(&self) {
-        create_template_group("REFERENCE").ok();
+        create_template_group("REFERENCE");
     }
     fn create_new_stem_split(&self) {
-        create_template_group("STEM_SPLIT").ok();
+        create_template_group("STEM_SPLIT");
     }
 }
 

@@ -1,7 +1,8 @@
-//! The watch remote's session-domain wire DTOs — a tiny JSON projection of
-//! the setlist/transport/mixer surface served by the engine's `/watch/v1`
-//! HTTP+SSE bridge (watchOS can't speak vox over WebSocket; see
-//! `signal-guitar-proto::watch` for the rig-side twin).
+//! The watch remote's session-domain wire DTOs.
+//!
+//! A tiny JSON projection of the setlist/transport/mixer surface served by
+//! the engine's `/watch/v1` HTTP+SSE bridge (watchOS can't speak vox over
+//! WebSocket; see `signal-guitar-proto::watch` for the rig-side twin).
 //!
 //! These shapes are the source of truth for the Swift side: the
 //! `gen_watch_swift` example reflects them through facet and emits the
@@ -30,7 +31,7 @@ pub struct WatchTrack {
 }
 
 /// One chord of the watch's chord window (the current chord + the next 3).
-#[derive(Clone, Debug, Default, PartialEq, Facet)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Facet)]
 pub struct WatchChord {
     /// Display symbol (e.g. "Gmaj7", "/D").
     pub symbol: String,

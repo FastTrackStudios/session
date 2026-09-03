@@ -5,8 +5,6 @@ use monarchy::{
     reapply_collapse,
 };
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
 /// Count all items in a flat track list
 #[allow(dead_code)]
 fn count_items(tracks: &[TrackNode]) -> usize {
@@ -14,7 +12,7 @@ fn count_items(tracks: &[TrackNode]) -> usize {
 }
 
 #[test]
-fn radiohead_paranoid_android() -> Result<()> {
+fn radiohead_paranoid_android() {
     // -- Setup & Fixtures
     let items = vec![
         "1 Kick In.05_04.wav",
@@ -82,10 +80,10 @@ fn radiohead_paranoid_android() -> Result<()> {
     let config = default_config();
 
     // -- Exec
-    let mut structure = monarchy_sort(items, &config)?;
+    let mut structure = monarchy_sort(items, &config).unwrap();
 
     println!("\n=== STEP 1: Initial monarchy_sort ===");
-    println!("{}", structure);
+    println!("{structure}");
 
     // Move Ed/Johny guitar tracks from Unsorted to Electric Guitar
     println!("\n=== STEP 2: Moving guitar tracks from Unsorted to Electric Guitar ===");
@@ -95,8 +93,8 @@ fn radiohead_paranoid_android() -> Result<()> {
         &["Unsorted"],
         "Electric",
         &["Guitars"],
-    )?;
-    println!("Sorted {} guitar items", guitar_sorted);
+    ).unwrap();
+    println!("Sorted {guitar_sorted} guitar items");
 
     // Note: FX1/FX2 now automatically go to SFX group (no manual step needed)
 
@@ -112,7 +110,7 @@ fn radiohead_paranoid_android() -> Result<()> {
     cleanup_display_names(&mut structure);
 
     println!("\n=== STEP 5: Final structure after cleanup_display_names ===");
-    println!("{}", structure);
+    println!("{structure}");
 
     // Convert to tracks for display
     let tracks = structure.clone().to_tracks();
@@ -120,10 +118,13 @@ fn radiohead_paranoid_android() -> Result<()> {
     println!("\n=== Final Track list ===");
     daw_proto::display_tracklist(&tracks);
 
-    // ============================================================================
-    // Define individual track groups (composable, readable structure)
-    // ============================================================================
+    let expected = radiohead_paranoid_android_expected();
 
+    // -- Check
+    assert_tracks_equal(&tracks, &expected).unwrap();
+}
+
+fn radiohead_paranoid_android_expected_a() -> (TrackGroup, TrackGroup) {
     // --- Drums ---
     let kick = TrackGroup::folder("Kick")
         .track("In")
@@ -197,7 +198,10 @@ fn radiohead_paranoid_android() -> Result<()> {
         .track("Vibraslap")
         .item("23 Vibraslap_03.wav")
         .end();
+    (drums, percussion)
+}
 
+fn radiohead_paranoid_android_expected_b() -> (TrackGroup, TrackGroup) {
     // --- Guitars ---
     let ed_crunch = TrackGroup::folder("Crunch")
         .track("Crunch 1")
@@ -270,7 +274,10 @@ fn radiohead_paranoid_android() -> Result<()> {
         .group(electric_keys)
         .group(organ)
         .end();
+    (guitars, keys)
+}
 
+fn radiohead_paranoid_android_expected_c() -> (TrackGroup, TrackGroup) {
     // --- Synths ---
     let synths = TrackGroup::folder("Synths")
         .track("Prophet")
@@ -341,7 +348,10 @@ fn radiohead_paranoid_android() -> Result<()> {
         .item("59 Vocal 3_03.wav")
         .group(vocal_dbl)
         .end();
+    (synths, lead)
+}
 
+fn radiohead_paranoid_android_expected_d() -> (TrackGroup, TrackGroup, TrackGroup, TrackGroup) {
     // --- SFX ---
     let sfx = TrackGroup::folder("SFX")
         .track("Robot Voice")
@@ -365,12 +375,15 @@ fn radiohead_paranoid_android() -> Result<()> {
 
     // --- Unsorted ---
     let unsorted = TrackGroup::single_track("Unsorted", "40 CK MAP]_03.wav");
+    (sfx, guide, reference, unsorted)
+}
 
-    // ============================================================================
-    // Compose final structure
-    // ============================================================================
-
-    let expected = TrackStructureBuilder::new()
+fn radiohead_paranoid_android_expected() -> daw_proto::TrackHierarchy {
+    let (drums, percussion) = radiohead_paranoid_android_expected_a();
+    let (guitars, keys) = radiohead_paranoid_android_expected_b();
+    let (synths, lead) = radiohead_paranoid_android_expected_c();
+    let (sfx, guide, reference, unsorted) = radiohead_paranoid_android_expected_d();
+    TrackStructureBuilder::new()
         .group(drums)
         .group(percussion)
         .track("Bass")
@@ -383,15 +396,11 @@ fn radiohead_paranoid_android() -> Result<()> {
         .group(guide)
         .group(reference)
         .group(unsorted)
-        .build();
+        .build()
+}
 
-    // -- Check
-    assert_tracks_equal(&tracks, &expected)?;
-
-    Ok(())
-
-    // ============================================================================
-    // EXPECTED TRACK HIERARCHY (documented version)
+// ============================================================================
+// EXPECTED TRACK HIERARCHY (documented version)
     // ============================================================================
     //
     // Drums/
@@ -501,4 +510,3 @@ fn radiohead_paranoid_android() -> Result<()> {
     // - Other vocals in Main section (Vocal 3, Quad, Extra) are separate parts
     // - PLP = Play Along Print, JH = initials (mixer?)
     // ============================================================================
-}

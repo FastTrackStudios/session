@@ -1,42 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn allman_brothers_whipping_post() -> Result<()> {
-    // -- Setup & Fixtures
-    // Allman Brothers Band - Whipping Post: 12-stem Southern rock session from MedleyDB.
-    // Dual drummer setup (classic ABB), bass, dual lead guitars (Duane + Dickey),
-    // Hammond organ, congas, lead vocals and backing vocals. Tests dual drum kit
-    // and dual lead guitar arrangement.
-    let items = vec![
-        "01_Drums1.wav",
-        "02_Drums2.wav",
-        "03_Bass.wav",
-        "04_ElecGtr1.wav",
-        "05_ElecGtr2.wav",
-        "06_Organ.wav",
-        "07_Congas.wav",
-        "08_LeadVox.wav",
-        "09_BackingVox1.wav",
-        "10_BackingVox2.wav",
-        "11_BackingVox3.wav",
-        "12_Tambourine.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn allman_brothers_whipping_post_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::folder("Drums")
         .track("Drum Kit 1")
         .item("01_Drums1.wav")
@@ -86,8 +51,44 @@ fn allman_brothers_whipping_post() -> Result<()> {
         .group(keys)
         .group(vocals)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn allman_brothers_whipping_post() {
+    // -- Setup & Fixtures
+    // Allman Brothers Band - Whipping Post: 12-stem Southern rock session from MedleyDB.
+    // Dual drummer setup (classic ABB), bass, dual lead guitars (Duane + Dickey),
+    // Hammond organ, congas, lead vocals and backing vocals. Tests dual drum kit
+    // and dual lead guitar arrangement.
+    let items = vec![
+        "01_Drums1.wav",
+        "02_Drums2.wav",
+        "03_Bass.wav",
+        "04_ElecGtr1.wav",
+        "05_ElecGtr2.wav",
+        "06_Organ.wav",
+        "07_Congas.wav",
+        "08_LeadVox.wav",
+        "09_BackingVox1.wav",
+        "10_BackingVox2.wav",
+        "11_BackingVox3.wav",
+        "12_Tambourine.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = allman_brothers_whipping_post_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

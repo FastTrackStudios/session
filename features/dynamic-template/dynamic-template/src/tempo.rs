@@ -16,6 +16,7 @@
 /// assert_eq!(strip_tempo("83.5BPM_song"), "song");
 /// assert_eq!(strip_tempo("AD.Big Kit.83.5BPM.L.wav"), "AD.Big Kit.L.wav");
 /// ```
+#[must_use] 
 pub fn strip_tempo(input: &str) -> String {
     let lower = input.to_lowercase();
 
@@ -24,10 +25,10 @@ pub fn strip_tempo(input: &str) -> String {
         return input.to_string();
     };
 
-    let bpm_end = bpm_idx + 3; // length of "bpm"
+    let bpm_end = bpm_idx.saturating_add(3); // length of "bpm"
 
     // Look backwards from bpm to find the start of the number
-    let prefix = &input[..bpm_idx];
+    let prefix = input.get(..bpm_idx).unwrap_or_default();
     let prefix_trimmed = prefix.trim_end();
 
     let mut num_start = prefix_trimmed.len();
@@ -51,8 +52,8 @@ pub fn strip_tempo(input: &str) -> String {
     }
 
     // Build the result by removing the tempo pattern
-    let before = &input[..num_start];
-    let after = &input[bpm_end..];
+    let before = input.get(..num_start).unwrap_or_default();
+    let after = input.get(bpm_end..).unwrap_or_default();
 
     // Clean up separators around the removed portion
     let before = before.trim_end_matches(['.', '_', ' ', '-']);
@@ -65,11 +66,9 @@ pub fn strip_tempo(input: &str) -> String {
     } else {
         // Try to preserve the original separator style by looking at what was around the tempo
         // Look at the character immediately before the number in the original string
-        let sep_before = if num_start > 0 {
-            input.chars().nth(num_start - 1)
-        } else {
-            None
-        };
+        let sep_before = num_start
+            .checked_sub(1)
+            .and_then(|idx| input.chars().nth(idx));
 
         let separator = match sep_before {
             Some('_') => "_",
@@ -86,7 +85,7 @@ pub fn strip_tempo(input: &str) -> String {
 /// Looks for patterns like:
 /// - "126bpm"
 /// - "83.5BPM"
-/// - "120_bpm"
+/// - "`120_bpm`"
 /// - "140 BPM"
 ///
 /// Returns the tempo as f32 if found, None otherwise.
@@ -100,6 +99,7 @@ pub fn strip_tempo(input: &str) -> String {
 /// assert_eq!(extract_tempo("83.5BPM_song"), Some(83.5));
 /// assert_eq!(extract_tempo("No tempo here"), None);
 /// ```
+#[must_use] 
 pub fn extract_tempo(input: &str) -> Option<f32> {
     let lower = input.to_lowercase();
 
@@ -107,7 +107,7 @@ pub fn extract_tempo(input: &str) -> Option<f32> {
     let bpm_idx = lower.find("bpm")?;
 
     // Look backwards from bpm to find the number
-    let prefix = &input[..bpm_idx];
+    let prefix = input.get(..bpm_idx).unwrap_or_default();
 
     // Find where the number ends (right before bpm or any separator before bpm)
     let prefix_trimmed = prefix.trim_end();
@@ -122,7 +122,7 @@ pub fn extract_tempo(input: &str) -> Option<f32> {
         if c.is_ascii_digit() {
             num_start = i;
             if !found_digit {
-                num_end = i + c.len_utf8();
+                num_end = i.saturating_add(c.len_utf8());
             }
             found_digit = true;
         } else if c == '.' && found_digit && !has_decimal {
@@ -141,7 +141,7 @@ pub fn extract_tempo(input: &str) -> Option<f32> {
     }
 
     // Extract the number substring
-    let num_str = &prefix_trimmed[num_start..num_end];
+    let num_str = prefix_trimmed.get(num_start..num_end).unwrap_or_default();
 
     // Handle leading decimal point (e.g., ".5bpm" -> not valid)
     let num_str = num_str.trim_start_matches(|c: char| !c.is_ascii_digit());

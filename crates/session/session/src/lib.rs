@@ -44,7 +44,7 @@ pub mod song;
 // REAPER-hotkey action domains driving the `daw::reaper` backend directly.
 // Not needed by the browser setlist engine — native-only. `track_manager`
 // also drives `dynamic-template` (the native template engine).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "reaper"))]
 pub mod color;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod guide;
@@ -77,7 +77,7 @@ pub mod track_manager;
 // moved to the `daw-actions` crate: they're plain DAW operations with
 // nothing session-specific about them.
 pub mod cache;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "reaper"))]
 pub mod daw_module;
 pub mod event_bus;
 // Composes the mode actions behind a tokio-runtime pump.
@@ -128,11 +128,13 @@ where
         + 'static,
     B: architect::action::ActionBackend + Clone,
 {
+    #[cfg(feature = "reaper")]
     color::register_actions(backend);
     guide::register_actions(backend, daw.clone());
     key_actions::register_actions(backend, daw.clone());
     keyflow::actions::register_actions(backend, daw.clone());
     keyflow::scaffold::register_actions(backend, daw.clone());
+    #[cfg(feature = "reaper")]
     modes::register_actions(backend);
     playback::register_actions(backend, daw.clone());
     setlist::actions::register_actions(backend, daw.clone());
@@ -153,7 +155,12 @@ pub struct SessionServices;
 
 #[cfg(not(target_arch = "wasm32"))]
 impl SessionServices {
-    pub fn mounted_services_with_daw<D>(daw: D) -> Vec<daw::Mounted>
+    /// Build the setlist/song/MIDI-chart services, sharing one
+    /// `SetlistServiceImpl` between the RPC mount and the action-handler
+    /// chain (so the REAPER `build_setlist` hotkey and `fts session setlist`
+    /// see the same in-memory state — it's `Clone` over `Arc`'d fields, so
+    /// cloning gives a handle to the same setlist / `song_cache` / etc).
+    fn mounted_service_triple<D>(daw: D) -> (daw::Mounted, daw::Mounted, daw::Mounted)
     where
         D: Clone
             + daw::service::AudioEngine
@@ -170,14 +177,9 @@ impl SessionServices {
             KeyflowMidiAnalysis, MidiChartsDispatcher, midi_charts_service_descriptor,
         };
 
-        // Share one SetlistServiceImpl between the RPC mount and the
-        // action-handler chain (so the REAPER `build_setlist` hotkey
-        // and `fts session setlist` see the same in-memory state).
-        // SetlistServiceImpl is Clone over Arc'd fields, so cloning
-        // gives a handle to the same setlist / song_cache / etc.
-        let setlist_impl = SetlistServiceImpl::with_daw(daw.clone());
+        let setlist_impl = SetlistServiceImpl::with_daw(daw);
         setlist::actions::register(&setlist_impl);
-        vec![
+        (
             daw::Mounted::new(
                 setlist_service_service_descriptor(),
                 serve_setlist_service(setlist_impl),
@@ -190,9 +192,27 @@ impl SessionServices {
                 midi_charts_service_descriptor(),
                 MidiChartsDispatcher::new(KeyflowMidiAnalysis::from_global_daw()),
             ),
-        ]
+        )
     }
 
+    pub fn mounted_services_with_daw<D>(daw: D) -> Vec<daw::Mounted>
+    where
+        D: Clone
+            + daw::service::AudioEngine
+            + daw::service::ExtState
+            + daw::service::Projects
+            + daw::service::TempoMap
+            + daw::service::transport::service::Transport
+            + daw::service::Tracks
+            + Send
+            + Sync
+            + 'static,
+    {
+        let (setlist, song, midi) = Self::mounted_service_triple(daw);
+        vec![setlist, song, midi]
+    }
+
+    /// Builds a composite layer from session services with the given DAW backend.
     pub fn mounted_layers_with_daw<D>(daw: D) -> impl daw::Layer<Self>
     where
         D: Clone
@@ -206,10 +226,7 @@ impl SessionServices {
             + Sync
             + 'static,
     {
-        let mut services = Self::mounted_services_with_daw(daw);
-        let midi = services.pop().expect("session midi chart service");
-        let song = services.pop().expect("session song service");
-        let setlist = services.pop().expect("session setlist service");
+        let (setlist, song, midi) = Self::mounted_service_triple(daw);
         daw::layers![setlist, song, midi]
     }
 
@@ -256,11 +273,14 @@ pub mod daw_services {
         crate::SessionServices::merge_into_with_daw(handler, daw)
     }
 
-    /// Mount the session control surfaces (mode / take-ranking /
-    /// record control) onto the in-process DAW router. These are
-    /// independent of the chart / setlist services and don't need a
-    /// `D` backend — each handler bounces to REAPER's main thread
-    /// via `daw_reaper::main_thread`.
+    /// Mount the session control surfaces onto the in-process DAW router.
+    ///
+    /// These surfaces (mode / take-ranking / record control) are independent of
+    /// the chart / setlist services and don't need a `D` backend — each handler
+    /// bounces to REAPER's main thread via `daw_reaper::main_thread`. REAPER-only
+    /// — see the `reaper` Cargo feature.
+    #[cfg(feature = "reaper")]
+    #[must_use] 
     pub fn layer_control_surfaces(mut handler: daw::LayerRouter) -> daw::LayerRouter {
         use crate::rpc_services::SessionModeServiceImpl;
         use daw::service::{

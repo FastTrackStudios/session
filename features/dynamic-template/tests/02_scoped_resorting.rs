@@ -9,17 +9,15 @@ use dynamic_template::*;
 use monarchy::test_utils::StructureAssertions;
 use monarchy::{monarchy_sort, move_unsorted_to_group, reapply_collapse};
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
 /// Test: Initial sort with performer names that don't match any group go to Unsorted
 #[test]
-fn performer_items_go_to_unsorted() -> Result<()> {
+fn performer_items_go_to_unsorted() {
     // -- Setup & Fixtures
     let items = vec!["Guitar Crunch", "John Crunch", "John Clean"];
     let config = default_config();
 
     // -- Exec
-    let structure = monarchy_sort(items, &config)?;
+    let structure = monarchy_sort(items, &config).unwrap();
 
     // -- Check
     println!("\nStructure after initial sort:");
@@ -48,13 +46,11 @@ fn performer_items_go_to_unsorted() -> Result<()> {
 
     let unsorted = structure.find_child("Unsorted").expect("Unsorted folder");
     assert_eq!(unsorted.items.len(), 2, "Unsorted should have 2 items");
-
-    Ok(())
 }
 
 /// Test: Full workflow - initial sort, then scoped re-sort of John items to Guitars
 #[test]
-fn full_scoped_resort_workflow() -> Result<()> {
+fn full_scoped_resort_workflow() {
     // -- Setup & Fixtures
     let items = vec![
         "Guitar Crunch", // Matches Guitars directly
@@ -64,7 +60,7 @@ fn full_scoped_resort_workflow() -> Result<()> {
     let config = default_config();
 
     // -- Exec (Step 1: Initial sort)
-    let mut structure = monarchy_sort(items, &config)?;
+    let mut structure = monarchy_sort(items, &config).unwrap();
 
     println!("\n=== STEP 1: Initial sort ===");
     println!("{structure}");
@@ -87,7 +83,7 @@ fn full_scoped_resort_workflow() -> Result<()> {
         &["Unsorted"], // Extract all items from Unsorted
         "Electric",    // Sort within Electric's subgroups (renamed from "Electric Guitar")
         &["Guitars"],  // Merge result into Guitars folder
-    )?;
+    ).unwrap();
 
     println!("Sorted {sorted_count} items");
 
@@ -117,13 +113,11 @@ fn full_scoped_resort_workflow() -> Result<()> {
             "Unsorted should be empty after moving items"
         );
     }
-
-    Ok(())
 }
 
 /// Test: Scoped re-sort with items that still can't be sorted
 #[test]
-fn scoped_resort_with_remaining_unsorted() -> Result<()> {
+fn scoped_resort_with_remaining_unsorted() {
     // -- Setup & Fixtures
     let items = vec![
         "Guitar Crunch",  // Matches Guitars
@@ -133,7 +127,7 @@ fn scoped_resort_with_remaining_unsorted() -> Result<()> {
     let config = default_config();
 
     // -- Exec
-    let mut structure = monarchy_sort(items, &config)?;
+    let mut structure = monarchy_sort(items, &config).unwrap();
 
     println!("\n=== Initial sort ===");
     println!("{structure}");
@@ -144,7 +138,7 @@ fn scoped_resort_with_remaining_unsorted() -> Result<()> {
         &["Unsorted"],
         "Electric",
         &["Guitars"],
-    )?;
+    ).unwrap();
 
     reapply_collapse(&mut structure, &config);
 
@@ -179,13 +173,11 @@ fn scoped_resort_with_remaining_unsorted() -> Result<()> {
             "RandomNonsense should remain in Unsorted"
         );
     }
-
-    Ok(())
 }
 
 /// Test: Guitars sorted by performer, then arrangement
 #[test]
-fn guitars_with_performer_creates_nested_hierarchy() -> Result<()> {
+fn guitars_with_performer_creates_nested_hierarchy() {
     // -- Setup & Fixtures
     let items = vec![
         "Guitar Crunch",      // No performer, just arrangement
@@ -195,7 +187,7 @@ fn guitars_with_performer_creates_nested_hierarchy() -> Result<()> {
     let config = default_config();
 
     // -- Exec
-    let structure = monarchy_sort(items, &config)?;
+    let structure = monarchy_sort(items, &config).unwrap();
 
     // -- Check
     println!("\nStructure with performer grouping:");
@@ -229,19 +221,17 @@ fn guitars_with_performer_creates_nested_hierarchy() -> Result<()> {
     }
 
     structure.assert().has_total_items(3);
-
-    Ok(())
 }
 
 /// Test: Single guitar track stays flat (no unnecessary nesting)
 #[test]
-fn single_guitar_stays_flat() -> Result<()> {
+fn single_guitar_stays_flat() {
     // -- Setup & Fixtures
     let items = vec!["Guitar Crunch"];
     let config = default_config();
 
     // -- Exec
-    let structure = monarchy_sort(items, &config)?;
+    let structure = monarchy_sort(items, &config).unwrap();
 
     // -- Check
     println!("\nSingle guitar structure:");
@@ -278,19 +268,17 @@ fn single_guitar_stays_flat() -> Result<()> {
             "Should contain Guitar Crunch"
         );
     }
-
-    Ok(())
 }
 
 /// Test: Two arrangements create folder structure
 #[test]
-fn two_arrangements_create_folders() -> Result<()> {
+fn two_arrangements_create_folders() {
     // -- Setup & Fixtures
     let items = vec!["Guitar Crunch", "Guitar Clean"];
     let config = default_config();
 
     // -- Exec
-    let structure = monarchy_sort(items, &config)?;
+    let structure = monarchy_sort(items, &config).unwrap();
 
     // -- Check
     println!("\nTwo arrangements structure:");
@@ -322,26 +310,24 @@ fn two_arrangements_create_folders() -> Result<()> {
             "Guitars should have 2 arrangement children"
         );
     }
-
-    Ok(())
 }
 
 /// Test: Merge new items into existing hierarchy
 #[test]
-fn merge_new_items_into_existing() -> Result<()> {
+fn merge_new_items_into_existing() {
     // -- Setup & Fixtures
     let initial_items = vec!["Guitar Crunch", "Guitar Clean"];
     let config = default_config();
 
     // -- Exec (initial sort)
-    let mut structure = monarchy_sort(initial_items, &config)?;
+    let mut structure = monarchy_sort(initial_items, &config).unwrap();
 
     println!("\n=== Initial structure ===");
     println!("{structure}");
 
     // Add more items via merge
     let new_items = vec!["Guitar Drive", "John Guitar Crunch"];
-    let new_structure = monarchy_sort(new_items, &config)?;
+    let new_structure = monarchy_sort(new_items, &config).unwrap();
 
     println!("\n=== New items structure ===");
     println!("{new_structure}");
@@ -378,6 +364,4 @@ fn merge_new_items_into_existing() -> Result<()> {
             .expect("Guitars/Electric should exist");
         assert_eq!(guitars.total_items(), 4, "All items should be in Guitars");
     }
-
-    Ok(())
 }

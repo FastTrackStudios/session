@@ -38,16 +38,12 @@ pub fn SectionProgressBar(
         let prev = prev_progress();
         let prev_key = prev_song_key();
         let song_changed = prev_key != song_key_for_memo;
-        let large_jump = if let Some(prev_val) = prev {
-            (current_progress - prev_val).abs() > 5.0
-        } else {
-            false
-        };
+        let large_jump = prev.is_some_and(|prev_val| (current_progress - prev_val).abs() > 5.0);
         !song_changed && !large_jump && prev.is_some()
     });
 
     let current_progress_for_effect = current_progress;
-    let song_key_for_effect = song_key.clone();
+    let song_key_for_effect = song_key;
     use_effect(move || {
         prev_progress.set(Some(current_progress_for_effect));
         if prev_song_key() != song_key_for_effect {
@@ -66,21 +62,15 @@ pub fn SectionProgressBar(
             setlist
                 .songs
                 .get(song_idx)
-                .and_then(|song| song.sections.get(section_idx))
-                .map(|section| section.bright_color())
-                .unwrap_or_else(|| {
+                .and_then(|song| song.sections.get(section_idx)).map_or_else(|| {
                     // Fallback to first section color if no active section
                     sections
-                        .first()
-                        .map(|s| s.color.clone())
-                        .unwrap_or_else(|| "rgb(100, 100, 100)".to_string())
-                })
+                        .first().map_or_else(|| "rgb(100, 100, 100)".to_string(), |s| s.color.clone())
+                }, session_proto::Section::bright_color)
         } else {
             // Fallback to first section color if no active section
             sections
-                .first()
-                .map(|s| s.color.clone())
-                .unwrap_or_else(|| "rgb(100, 100, 100)".to_string())
+                .first().map_or_else(|| "rgb(100, 100, 100)".to_string(), |s| s.color.clone())
         }
     };
 
@@ -91,11 +81,9 @@ pub fn SectionProgressBar(
         .map(|(idx, measure)| {
             let measure_start = measure.position_percent;
             // End position is the next measure's start, or 100% if this is the last measure
-            let measure_end = if idx + 1 < measure_indicators.len() {
-                measure_indicators[idx + 1].position_percent
-            } else {
-                100.0
-            };
+            let measure_end = measure_indicators
+                .get(idx.saturating_add(1))
+                .map_or(100.0, |m| m.position_percent);
             let measure_width = measure_end - measure_start;
 
             // Calculate how much of this measure is filled
@@ -163,17 +151,16 @@ pub fn SectionProgressBar(
     let card_size = "sm"; // Section progress bar uses small cards
     let card_height_rem = match card_size {
         "xs" => 1.25,  // text-xs + py-0.5 + border
-        "sm" => 1.75,  // text-xs + py-0.5 + border (horizontal text, more accurate)
         "md" => 2.125, // text-sm + py-1 + border
         "lg" => 2.625, // text-base + py-1 + border
-        _ => 1.75,
+        _ => 1.75,    // text-xs + py-0.5 + border (horizontal text, more accurate)
     };
     let card_top_offset_rem = 2.0; // Card position in rem (negative, so -2rem)
                                    // Card bottom position: card_top + card_height = -2rem + 1.75rem = -0.25rem
                                    // Line height is distance from progress bar (0) to card bottom (-0.25rem) = 0.25rem
     let card_bottom_rem = -card_top_offset_rem + card_height_rem; // -2 + 1.75 = -0.25
     let line_height_rem = -card_bottom_rem; // 0.25 (distance from 0 to -0.25rem)
-    let _line_height = format!("{}rem", line_height_rem);
+    let _line_height = format!("{line_height_rem}rem");
 
     // Pre-calculate positions for tempo markers with staggering
     let tempo_with_positions: Vec<_> = {
@@ -187,8 +174,10 @@ pub fn SectionProgressBar(
         for (idx, (orig_idx, marker)) in tempo_markers_list.iter().enumerate() {
             // Check if this marker overlaps with previous ones
             let needs_stagger = if idx > 0 {
-                tempo_markers_list[..idx].iter().any(|(_, prev_marker)| {
-                    check_overlap(marker.position_percent, prev_marker.position_percent)
+                tempo_markers_list.get(..idx).is_some_and(|slice| {
+                    slice.iter().any(|(_, prev_marker)| {
+                        check_overlap(marker.position_percent, prev_marker.position_percent)
+                    })
                 })
             } else {
                 false
@@ -218,14 +207,13 @@ pub fn SectionProgressBar(
             // index is 0-indexed within this section
             // We want lines after measures 4, 8, 12... (index 3, 7, 11...)
             // So we check if (index + 1) % 4 == 0
-            let measure_in_section = index + 1; // 1-indexed measure within section
+            let measure_in_section = index.saturating_add(1); // 1-indexed measure within section
             if measure_in_section % 4 == 0 {
                 // Get the end position of this measure (start of next measure, or 100%)
-                let phrase_line_percent = if index + 1 < measure_indicators.len() {
-                    measure_indicators[index + 1].position_percent
-                } else {
-                    100.0
-                };
+                let next_index = index.saturating_add(1);
+                let phrase_line_percent = measure_indicators
+                    .get(next_index)
+                    .map_or(100.0, |m| m.position_percent);
                 // Only include if not at the very end (100%)
                 if phrase_line_percent < 99.5 {
                     Some((index, phrase_line_percent))
@@ -294,7 +282,7 @@ pub fn SectionProgressBar(
                                     comment.position_percent
                                 ),
                                 onclick: {
-                                    let callback_opt = on_comment_click.clone();
+                                    let callback_opt = on_comment_click;
                                     let position_seconds = comment.position_seconds;
                                     move |_| {
                                         if let Some(callback) = &callback_opt {
@@ -310,16 +298,20 @@ pub fn SectionProgressBar(
                                     } else {
                                         "text-[10px] font-medium text-center whitespace-nowrap px-1.5 py-0.5 rounded border"
                                     },
-                                    style: if let Some(ref color) = comment.color {
-                                        format!(
-                                            "background-color: {}20; border-color: {}; color: {};",
-                                            color, color, color
-                                        )
-                                    } else if comment.is_count_in {
-                                        "background-color: rgba(251, 191, 36, 0.2); border-color: #fbbf24; color: #fbbf24;".to_string()
-                                    } else {
-                                        "background-color: var(--color-accent); border-color: var(--color-border); color: var(--color-accent-foreground);".to_string()
-                                    },
+                                    style: comment.color.as_ref().map_or_else(
+                                        || {
+                                            if comment.is_count_in {
+                                                "background-color: rgba(251, 191, 36, 0.2); border-color: #fbbf24; color: #fbbf24;".to_string()
+                                            } else {
+                                                "background-color: var(--color-accent); border-color: var(--color-border); color: var(--color-accent-foreground);".to_string()
+                                            }
+                                        },
+                                        |color| {
+                                            format!(
+                                                "background-color: {color}20; border-color: {color}; color: {color};"
+                                            )
+                                        }
+                                    ),
                                     "{comment.text}"
                                 }
                             }
@@ -361,11 +353,11 @@ pub fn SectionProgressBar(
                                 measure_width
                             ),
                             onclick: {
-                                let callback_opt = on_measure_click.clone();
-                                let musical_pos = measure.musical_position.clone();
+                                let callback_opt = on_measure_click;
+                                let musical_pos = measure.musical_position;
                                 move |_| {
                                     if let Some(callback) = &callback_opt {
-                                        callback.call(musical_pos.clone());
+                                        callback.call(musical_pos);
                                     }
                                 }
                             },

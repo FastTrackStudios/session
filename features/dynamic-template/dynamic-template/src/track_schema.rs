@@ -39,11 +39,13 @@ pub struct TrackClassification {
     pub matched_groups: Vec<String>,
 }
 
+#[must_use] 
 pub fn classify_track(name: &str) -> TrackClassification {
     let config = default_config();
     classify_track_with_config(name, &config)
 }
 
+#[must_use] 
 pub fn classify_track_with_config(
     name: &str,
     config: &DynamicTemplateConfig,
@@ -65,6 +67,7 @@ pub fn classify_track_with_config(
     }
 }
 
+#[must_use] 
 pub fn track_is_in_visibility_group(name: &str, group: &str) -> bool {
     let config = default_config();
     classify_track_with_config(name, &config)
@@ -73,11 +76,13 @@ pub fn track_is_in_visibility_group(name: &str, group: &str) -> bool {
         .any(|candidate| normalize(candidate) == normalize(group))
 }
 
+#[must_use] 
 pub fn classify_track_dimension(name: &str, context: &[String]) -> TrackDimension {
     let config = default_config();
     classify_track_dimension_with_config(name, context, &config)
 }
 
+#[must_use] 
 pub fn classify_track_dimension_with_config(
     name: &str,
     context: &[String],
@@ -122,6 +127,7 @@ pub fn classify_track_dimension_with_config(
     }
 }
 
+#[must_use] 
 pub fn configured_values_for_dimension(
     dimension: TrackDimension,
     context: &[String],
@@ -130,6 +136,7 @@ pub fn configured_values_for_dimension(
     configured_values_for_dimension_with_config(dimension, context, &config)
 }
 
+#[must_use] 
 pub fn configured_values_for_dimension_with_config(
     dimension: TrackDimension,
     context: &[String],
@@ -145,7 +152,7 @@ pub fn configured_values_for_dimension_with_config(
         .map(|item| {
             item.matched_groups
                 .into_iter()
-                .map(|group| group.name.clone())
+                .map(|group| group.name)
                 .collect()
         })
         .unwrap_or_default();
@@ -182,6 +189,7 @@ pub fn next_configured_value(
         .find(|name| !existing.contains(&normalize(name)))
 }
 
+#[must_use] 
 pub fn initial_values_for_dimension(
     dimension: TrackDimension,
     context: &[String],
@@ -267,7 +275,7 @@ fn is_configured_value(
         .any(|configured| normalize(configured) == normalize(value))
 }
 
-fn field_for_dimension(dimension: TrackDimension) -> Option<ItemMetadataField> {
+const fn field_for_dimension(dimension: TrackDimension) -> Option<ItemMetadataField> {
     match dimension {
         TrackDimension::Channel => Some(ItemMetadataField::Channel),
         TrackDimension::Layer => Some(ItemMetadataField::Layers),
@@ -363,6 +371,32 @@ mod tests {
         assert!(multi_mics.iter().any(|value| value == "DI"));
         assert!(!multi_mics.iter().any(|value| value == "Top"));
         assert!(!multi_mics.iter().any(|value| value == "In"));
+    }
+
+    /// Every top-level group's own name must classify into that group.
+    ///
+    /// Folder names in a real project *are* these names, and routing decides
+    /// what a folder feeds by classifying its name — a folder named "Guitars"
+    /// that classifies to nothing gets no send, and every guitar inside it
+    /// routes individually instead, which is the doubling the outermost-only
+    /// rule exists to prevent.
+    #[test]
+    fn every_group_name_classifies_as_itself() {
+        let config = default_config();
+        let mut missing = Vec::new();
+        for group in &config.groups {
+            if group.metadata_only || group.transparent {
+                continue;
+            }
+            let matched = classify_track_with_config(&group.name, &config).matched_groups;
+            if !matched.iter().any(|g| g == &group.name) {
+                missing.push((group.name.clone(), matched));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "group names that do not classify as themselves: {missing:#?}"
+        );
     }
 
     #[test]

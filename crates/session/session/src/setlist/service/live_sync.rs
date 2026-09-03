@@ -38,6 +38,7 @@ pub struct LiveSyncState {
 
 impl LiveSyncState {
     /// Create a new sync state from song paths and a generated setlist.
+    #[must_use] 
     pub fn new(
         song_paths: Vec<PathBuf>,
         setlist_path: PathBuf,
@@ -85,16 +86,15 @@ impl LiveSyncState {
         };
 
         // Get the old snapshot (or skip if we don't have one)
-        let old_song = match &self.song_snapshots[idx] {
-            Some(s) => s,
-            None => {
-                info!(
-                    "No previous snapshot for song {}, taking initial snapshot",
-                    idx
-                );
-                self.song_snapshots[idx] = Some(new_song);
-                return false;
+        let Some(old_song) = self.song_snapshots.get(idx).and_then(|opt| opt.as_ref()) else {
+            info!(
+                "No previous snapshot for song {}, taking initial snapshot",
+                idx
+            );
+            if let Some(slot) = self.song_snapshots.get_mut(idx) {
+                *slot = Some(new_song);
             }
+            return false;
         };
 
         // Get offset for this song
@@ -102,14 +102,12 @@ impl LiveSyncState {
             .offset_map
             .songs
             .get(idx)
-            .map(|s| s.global_start_seconds)
-            .unwrap_or(0.0);
+            .map_or(0.0, |s| s.global_start_seconds);
         let song_end = self
             .offset_map
             .songs
             .get(idx)
-            .map(|s| s.global_start_seconds + s.duration_seconds)
-            .unwrap_or(f64::MAX);
+            .map_or(f64::MAX, |s| s.global_start_seconds + s.duration_seconds);
 
         // Diff the old song against the setlist section
         let diff_options = DiffOptions {
@@ -124,7 +122,9 @@ impl LiveSyncState {
 
         if project_diff.is_empty() {
             debug!("No changes detected for song {} ({})", idx, event.song_name);
-            self.song_snapshots[idx] = Some(new_song);
+            if let Some(slot) = self.song_snapshots.get_mut(idx) {
+                *slot = Some(new_song);
+            }
             return false;
         }
 
@@ -141,7 +141,9 @@ impl LiveSyncState {
                 "Song {} ({}) has structural changes — triggering full setlist regeneration",
                 idx, event.song_name
             );
-            self.song_snapshots[idx] = Some(new_song);
+            if let Some(slot) = self.song_snapshots.get_mut(idx) {
+                *slot = Some(new_song);
+            }
             return self.regenerate_setlist();
         }
 
@@ -158,7 +160,9 @@ impl LiveSyncState {
         diff::apply::apply_diff(&mut self.setlist_project, &new_diff, &apply_options);
 
         // Update the snapshot
-        self.song_snapshots[idx] = Some(new_song);
+        if let Some(slot) = self.song_snapshots.get_mut(idx) {
+            *slot = Some(new_song);
+        }
 
         // Write the updated setlist to disk
         self.write_setlist();
@@ -173,6 +177,7 @@ impl LiveSyncState {
         use daw::file::setlist_rpp::{
             build_song_infos_from_projects, concatenate_projects, measures_to_seconds,
         };
+        use session_proto::{SongId, offset_map::{SetlistOffsetMap, SongOffset}};
 
         // Re-read all song RPPs
         let mut projects = Vec::new();
@@ -181,8 +186,10 @@ impl LiveSyncState {
             match read_project(path) {
                 Ok(project) => {
                     projects.push(project.clone());
-                    names.push(format!("Song {}", i + 1));
-                    self.song_snapshots[i] = Some(project);
+                    names.push(format!("Song {}", i.saturating_add(1)));
+                    if let Some(slot) = self.song_snapshots.get_mut(i) {
+                        *slot = Some(project);
+                    }
                 }
                 Err(e) => {
                     warn!("Failed to re-read song {}: {}", path.display(), e);
@@ -193,13 +200,11 @@ impl LiveSyncState {
 
         // Rebuild with 2-measure gap at 120 BPM (TODO: make configurable)
         let gap = measures_to_seconds(2, 120.0, 4);
-        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        let name_refs: Vec<&str> = names.iter().map(std::string::String::as_str).collect();
         let song_infos = build_song_infos_from_projects(&projects, &name_refs, gap);
         let combined = concatenate_projects(&projects, &song_infos);
 
         // Update the offset map
-        use session_proto::SongId;
-        use session_proto::offset_map::{SetlistOffsetMap, SongOffset};
         self.offset_map = SetlistOffsetMap {
             songs: song_infos
                 .iter()
@@ -219,8 +224,7 @@ impl LiveSyncState {
                 .collect(),
             total_seconds: song_infos
                 .last()
-                .map(|s| s.global_start_seconds + s.duration_seconds)
-                .unwrap_or(0.0),
+                .map_or(0.0, |s| s.global_start_seconds + s.duration_seconds),
             total_qn: 0.0,
         };
 
@@ -258,7 +262,7 @@ impl LiveSyncState {
         let output_dir = self
             .setlist_path
             .parent()
-            .unwrap_or(std::path::Path::new("."));
+            .unwrap_or_else(|| std::path::Path::new("."));
         let setlist_stem = self
             .setlist_path
             .file_stem()
@@ -268,7 +272,7 @@ impl LiveSyncState {
         for role in roles {
             let shell = generate_shell_copy(&self.setlist_project, role);
             let shell_text = project_to_rpp_text(&shell);
-            let shell_path = output_dir.join(format!("{} - {}.RPP", role, setlist_stem));
+            let shell_path = output_dir.join(format!("{role} - {setlist_stem}.RPP"));
             match std::fs::write(&shell_path, &shell_text) {
                 Ok(()) => debug!(
                     "Shell copy written: {} ({} bytes)",
@@ -285,6 +289,7 @@ impl LiveSyncState {
 ///
 /// Creates a file watcher for all song RPPs and spawns a task that
 /// processes change events.
+#[must_use] 
 pub fn start_live_sync(
     state: LiveSyncState,
 ) -> (
@@ -296,7 +301,7 @@ pub fn start_live_sync(
         .song_paths
         .iter()
         .enumerate()
-        .map(|(i, p)| (p.clone(), i, format!("Song {}", i + 1)))
+        .map(|(i, p)| (p.clone(), i, format!("Song {}", i.saturating_add(1))))
         .collect();
 
     let (watcher, rx) = SongFileWatcher::new(songs);

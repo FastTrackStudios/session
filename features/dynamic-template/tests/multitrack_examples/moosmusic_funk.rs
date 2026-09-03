@@ -1,66 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn moosmusic_funk() -> Result<()> {
-    // -- Setup & Fixtures
-    // MR0903 Moosmusic: 34-track funk/soul session with extensive drum setup (samples +
-    // live multi-mic kit + dual room mics), full percussion section (woodblock, cowbell,
-    // shaker, tambourine, claps), bass DI, Rhodes electric piano, 7 electric guitars,
-    // and a vocal stack with 5 backing vocals. Cambridge-MT multitrack library.
-    let items = vec![
-        "01_KickSample.wav",
-        "02_SnareSample.wav",
-        "03_HiHatSample.wav",
-        "04_KickIn.wav",
-        "05_KickOut.wav",
-        "06_SnareDown.wav",
-        "07_SnareUp.wav",
-        "08_HiHat.wav",
-        "09_Overheads.wav",
-        "10_DrumsRoom1.wav",
-        "11_DrumsRoom2.wav",
-        "12_Tom.wav",
-        "13_Cymbal.wav",
-        "14_Woodblock.wav",
-        "15_Cowbell.wav",
-        "16_Shaker.wav",
-        "17_Tambourine.wav",
-        "18_Claps.wav",
-        "19_RevCymbal.wav",
-        "20_BassDI.wav",
-        "21_Rhodes.wav",
-        "22_ElecGtr1.wav",
-        "23_ElecGtr2.wav",
-        "24_ElecGtr3.wav",
-        "25_ElecGtr4.wav",
-        "26_ElecGtr5.wav",
-        "27_ElecGtr6.wav",
-        "28_ElecGtr7.wav",
-        "29_LeadVox.wav",
-        "30_BackingVox1.wav",
-        "31_BackingVox2.wav",
-        "32_BackingVox3.wav",
-        "33_BackingVox4.wav",
-        "34_BackingVox5.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
-    // Multi-mic kit with samples, overheads, dual room mics
+fn moosmusic_funk_expected_leaves() -> (TrackGroup, TrackGroup) {
     let kick_sum = TrackGroup::folder("SUM")
         .track("In")
         .item("04_KickIn.wav")
@@ -132,6 +73,11 @@ fn moosmusic_funk() -> Result<()> {
         .end();
 
     // --- Bass ---
+    (drums, percussion)
+}
+
+fn moosmusic_funk_expected() -> daw_proto::TrackHierarchy {
+    let (drums, percussion) = moosmusic_funk_expected_leaves();
     let bass = TrackGroup::single_track("Bass", "20_BassDI.wav");
 
     // --- Guitars ---
@@ -188,8 +134,68 @@ fn moosmusic_funk() -> Result<()> {
         .group(keys)
         .group(vocals)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn moosmusic_funk() {
+    // -- Setup & Fixtures
+    // MR0903 Moosmusic: 34-track funk/soul session with extensive drum setup (samples +
+    // live multi-mic kit + dual room mics), full percussion section (woodblock, cowbell,
+    // shaker, tambourine, claps), bass DI, Rhodes electric piano, 7 electric guitars,
+    // and a vocal stack with 5 backing vocals. Cambridge-MT multitrack library.
+    let items = vec![
+        "01_KickSample.wav",
+        "02_SnareSample.wav",
+        "03_HiHatSample.wav",
+        "04_KickIn.wav",
+        "05_KickOut.wav",
+        "06_SnareDown.wav",
+        "07_SnareUp.wav",
+        "08_HiHat.wav",
+        "09_Overheads.wav",
+        "10_DrumsRoom1.wav",
+        "11_DrumsRoom2.wav",
+        "12_Tom.wav",
+        "13_Cymbal.wav",
+        "14_Woodblock.wav",
+        "15_Cowbell.wav",
+        "16_Shaker.wav",
+        "17_Tambourine.wav",
+        "18_Claps.wav",
+        "19_RevCymbal.wav",
+        "20_BassDI.wav",
+        "21_Rhodes.wav",
+        "22_ElecGtr1.wav",
+        "23_ElecGtr2.wav",
+        "24_ElecGtr3.wav",
+        "25_ElecGtr4.wav",
+        "26_ElecGtr5.wav",
+        "27_ElecGtr6.wav",
+        "28_ElecGtr7.wav",
+        "29_LeadVox.wav",
+        "30_BackingVox1.wav",
+        "31_BackingVox2.wav",
+        "32_BackingVox3.wav",
+        "33_BackingVox4.wav",
+        "34_BackingVox5.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    // Multi-mic kit with samples, overheads, dual room mics
+    let expected = moosmusic_funk_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

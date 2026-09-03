@@ -1,95 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn ej_rios_echo() -> Result<()> {
-    // -- Setup & Fixtures
-    // EJ Rios - Echo: Massive 63-track orchestral rock session. Multi-layered drums
-    // (close kit + overheads + room + timpani), 3 bass tracks, 4 electric guitars (with
-    // doubles), 6 synths, piano, full string section (violins, cellos, pizzicato),
-    // multiple lead vocal takes with doubles and ad-libs, and 9+ backing vocals.
-    // Cambridge-MT multitrack library.
-    let items = vec![
-        "01_Kick1.wav",
-        "02_Kick2.wav",
-        "03_Kick3.wav",
-        "04_Snare1.wav",
-        "05_Snare2.wav",
-        "06_Clap.wav",
-        "07_HiHat1.wav",
-        "08_HiHat2.wav",
-        "09_HiHat3.wav",
-        "10_Tom.wav",
-        "11_Crash.wav",
-        "12_Impact1.wav",
-        "13_Impact2.wav",
-        "14_DrumkitClose.wav",
-        "15_DrumkitOverheads.wav",
-        "16_DrumkitRoom.wav",
-        "17_DrumkitTom1.wav",
-        "18_DrumkitTom2.wav",
-        "19_Timpani1.wav",
-        "20_Timpani2.wav",
-        "21_Crash.wav",
-        "22_SFX.wav",
-        "23_Bass1.wav",
-        "24_Bass2.wav",
-        "25_Bass3.wav",
-        "26_ElecGtr1.wav",
-        "27_ElecGtr1DT.wav",
-        "28_ElecGtr2.wav",
-        "29_ElecGtr2DT.wav",
-        "30_ElecGtr3.wav",
-        "31_ElecGtr4.wav",
-        "32_Synth1.wav",
-        "33_Synth2.wav",
-        "34_Synth3.wav",
-        "35_Synth4.wav",
-        "36_Synth5.wav",
-        "37_Synth6.wav",
-        "38_Piano.wav",
-        "39_Violins.wav",
-        "40_Cellos1.wav",
-        "41_Cellos2.wav",
-        "42_StringsPizz.wav",
-        "43_LeadVox1.wav",
-        "44_LeadVox1DT1.wav",
-        "45_LeadVox1DT2.wav",
-        "46_LeadVox1SFX.wav",
-        "47_LeadVox2.wav",
-        "48_LeadVox2DT1.wav",
-        "49_LeadVox2DT2.wav",
-        "50_LeadVox2AdLibs.wav",
-        "51_BackingVox1.wav",
-        "52_BackingVox1DT.wav",
-        "53_BackingVox2.wav",
-        "54_BackingVox2DT.wav",
-        "55_BackingVox3.wav",
-        "56_BackingVox3DT.wav",
-        "57_BackingVox4.wav",
-        "58_BackingVox4DT.wav",
-        "59_BackingVox5.wav",
-        "60_BackingVox6.wav",
-        "61_BackingVox7.wav",
-        "62_BackingVox8.wav",
-        "63_BackingVox9.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
+fn ej_rios_echo_expected_leaves() -> (TrackGroup, TrackGroup, TrackGroup, TrackGroup, TrackGroup, TrackGroup) {
     let kick = TrackGroup::folder("Kick")
         .track("Kick 1")
         .item("01_Kick1.wav")
@@ -205,6 +117,11 @@ fn ej_rios_echo() -> Result<()> {
         .end();
 
     // --- Vocals ---
+    (drums, percussion, bass, guitars, keys, synths)
+}
+
+fn ej_rios_echo_expected() -> daw_proto::TrackHierarchy {
+    let (drums, percussion, bass, guitars, keys, synths) = ej_rios_echo_expected_leaves();
     let lead = TrackGroup::folder("Lead")
         .track("Lead 1")
         .item("43_LeadVox1.wav")
@@ -314,8 +231,97 @@ fn ej_rios_echo() -> Result<()> {
         .group(sfx)
         .group(unsorted)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn ej_rios_echo() {
+    // -- Setup & Fixtures
+    // EJ Rios - Echo: Massive 63-track orchestral rock session. Multi-layered drums
+    // (close kit + overheads + room + timpani), 3 bass tracks, 4 electric guitars (with
+    // doubles), 6 synths, piano, full string section (violins, cellos, pizzicato),
+    // multiple lead vocal takes with doubles and ad-libs, and 9+ backing vocals.
+    // Cambridge-MT multitrack library.
+    let items = vec![
+        "01_Kick1.wav",
+        "02_Kick2.wav",
+        "03_Kick3.wav",
+        "04_Snare1.wav",
+        "05_Snare2.wav",
+        "06_Clap.wav",
+        "07_HiHat1.wav",
+        "08_HiHat2.wav",
+        "09_HiHat3.wav",
+        "10_Tom.wav",
+        "11_Crash.wav",
+        "12_Impact1.wav",
+        "13_Impact2.wav",
+        "14_DrumkitClose.wav",
+        "15_DrumkitOverheads.wav",
+        "16_DrumkitRoom.wav",
+        "17_DrumkitTom1.wav",
+        "18_DrumkitTom2.wav",
+        "19_Timpani1.wav",
+        "20_Timpani2.wav",
+        "21_Crash.wav",
+        "22_SFX.wav",
+        "23_Bass1.wav",
+        "24_Bass2.wav",
+        "25_Bass3.wav",
+        "26_ElecGtr1.wav",
+        "27_ElecGtr1DT.wav",
+        "28_ElecGtr2.wav",
+        "29_ElecGtr2DT.wav",
+        "30_ElecGtr3.wav",
+        "31_ElecGtr4.wav",
+        "32_Synth1.wav",
+        "33_Synth2.wav",
+        "34_Synth3.wav",
+        "35_Synth4.wav",
+        "36_Synth5.wav",
+        "37_Synth6.wav",
+        "38_Piano.wav",
+        "39_Violins.wav",
+        "40_Cellos1.wav",
+        "41_Cellos2.wav",
+        "42_StringsPizz.wav",
+        "43_LeadVox1.wav",
+        "44_LeadVox1DT1.wav",
+        "45_LeadVox1DT2.wav",
+        "46_LeadVox1SFX.wav",
+        "47_LeadVox2.wav",
+        "48_LeadVox2DT1.wav",
+        "49_LeadVox2DT2.wav",
+        "50_LeadVox2AdLibs.wav",
+        "51_BackingVox1.wav",
+        "52_BackingVox1DT.wav",
+        "53_BackingVox2.wav",
+        "54_BackingVox2DT.wav",
+        "55_BackingVox3.wav",
+        "56_BackingVox3DT.wav",
+        "57_BackingVox4.wav",
+        "58_BackingVox4DT.wav",
+        "59_BackingVox5.wav",
+        "60_BackingVox6.wav",
+        "61_BackingVox7.wav",
+        "62_BackingVox8.wav",
+        "63_BackingVox9.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    let expected = ej_rios_echo_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

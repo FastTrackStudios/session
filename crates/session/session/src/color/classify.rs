@@ -17,6 +17,7 @@
 //! runtime.
 
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 
 use color_palette::Color;
 use monarchy::Metadata;
@@ -26,6 +27,7 @@ use monarchy::Metadata;
 /// Names that don't classify, or whose group has no colour, are absent
 /// from the map — the caller decides what to do with them (the runtime
 /// falls back to inheriting the nearest coloured parent).
+#[must_use] 
 pub fn classify_and_color(track_names: Vec<String>) -> HashMap<String, Color> {
     let config = dynamic_template::default_config();
     let Ok(structure) = monarchy::monarchy_sort(track_names, &config) else {
@@ -42,6 +44,7 @@ pub fn classify_and_color(track_names: Vec<String>) -> HashMap<String, Color> {
 /// Keyed by name rather than guid because that's what the classifier
 /// works in. Two tracks sharing a name share a colour, which is the
 /// intent — they're the same thing twice.
+#[must_use] 
 pub fn colors_by_track_name(tracks: &[daw::service::Track]) -> HashMap<String, u32> {
     let names: Vec<String> = tracks.iter().map(|track| track.name.clone()).collect();
     let mut out: HashMap<String, u32> = classify_and_color(names)
@@ -100,7 +103,7 @@ use daw::service::{ProjectContext, Track, TrackRef, Tracks};
 
 /// Classify every track in `project` and paint it. Returns how many
 /// tracks were coloured.
-pub fn apply_colors(service: &impl Tracks, project: ProjectContext) -> u32 {
+pub fn apply_colors(service: &impl Tracks, project: &ProjectContext) -> u32 {
     let tracks = service.all(project.clone());
     if tracks.is_empty() {
         return 0;
@@ -113,16 +116,16 @@ pub fn apply_colors(service: &impl Tracks, project: ProjectContext) -> u32 {
 /// Paint a pre-computed map. Split out from [`apply_colors`] so a caller
 /// with its own opinion about colour — a section-aware pass, say — can
 /// reuse the application half.
-pub fn apply_color_map(
+pub fn apply_color_map<S: BuildHasher>(
     service: &impl Tracks,
-    project: ProjectContext,
+    project: &ProjectContext,
     tracks: &[Track],
-    color_map: &HashMap<String, Color>,
+    color_map: &HashMap<String, Color, S>,
 ) -> u32 {
-    let mut colored = 0;
+    let mut colored: u32 = 0;
     for track in tracks {
-        if let Some(color) = color_map.get(&track.name) {
-            if service
+        if let Some(color) = color_map.get(&track.name)
+            && service
                 .set_color(
                     project.clone(),
                     TrackRef::Guid(track.guid.clone()),
@@ -130,22 +133,21 @@ pub fn apply_color_map(
                 )
                 .is_ok()
             {
-                colored += 1;
+                colored = colored.saturating_add(1);
             }
-        }
     }
     colored
 }
 
 /// Reset every track in `project` to the DAW's default colour.
-pub fn clear_colors(service: &impl Tracks, project: ProjectContext) -> u32 {
-    let mut cleared = 0;
+pub fn clear_colors(service: &impl Tracks, project: &ProjectContext) -> u32 {
+    let mut cleared: u32 = 0;
     for track in &service.all(project.clone()) {
         if service
             .set_color(project.clone(), TrackRef::Guid(track.guid.clone()), 0)
             .is_ok()
         {
-            cleared += 1;
+            cleared = cleared.saturating_add(1);
         }
     }
     cleared

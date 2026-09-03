@@ -1,43 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn marvin_gaye_whats_going_on() -> Result<()> {
-    // -- Setup & Fixtures
-    // Marvin Gaye - What's Going On: 12-stem soul/R&B session from MedleyDB.
-    // Alto sax, piano, vibraphone, string section, full drum kit, bass, acoustic guitar,
-    // clean electric guitar, bongo, lead vocals, and backing vocals. Tests jazz/soul
-    // instrumentation with orchestral and percussion crossover elements.
-    let items = vec![
-        "01_Drums.wav",
-        "02_Bass.wav",
-        "03_AcousticGtr.wav",
-        "04_ElecGtr.wav",
-        "05_Piano.wav",
-        "06_Vibraphone.wav",
-        "07_AltoSax.wav",
-        "08_Strings.wav",
-        "09_Bongo.wav",
-        "10_LeadVox.wav",
-        "11_BackingVox1.wav",
-        "12_BackingVox2.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
+fn marvin_gaye_whats_going_on_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::single_track("Drums", "01_Drums.wav");
 
     // --- Percussion ---
@@ -102,8 +66,45 @@ fn marvin_gaye_whats_going_on() -> Result<()> {
         .group(vocals)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn marvin_gaye_whats_going_on() {
+    // -- Setup & Fixtures
+    // Marvin Gaye - What's Going On: 12-stem soul/R&B session from MedleyDB.
+    // Alto sax, piano, vibraphone, string section, full drum kit, bass, acoustic guitar,
+    // clean electric guitar, bongo, lead vocals, and backing vocals. Tests jazz/soul
+    // instrumentation with orchestral and percussion crossover elements.
+    let items = vec![
+        "01_Drums.wav",
+        "02_Bass.wav",
+        "03_AcousticGtr.wav",
+        "04_ElecGtr.wav",
+        "05_Piano.wav",
+        "06_Vibraphone.wav",
+        "07_AltoSax.wav",
+        "08_Strings.wav",
+        "09_Bongo.wav",
+        "10_LeadVox.wav",
+        "11_BackingVox1.wav",
+        "12_BackingVox2.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    let expected = marvin_gaye_whats_going_on_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

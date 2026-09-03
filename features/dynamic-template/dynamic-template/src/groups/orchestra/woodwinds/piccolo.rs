@@ -8,7 +8,7 @@ pub struct Piccolo;
 
 impl From<Piccolo> for Group<ItemMetadata> {
     fn from(_val: Piccolo) -> Self {
-        Group::builder("Piccolo")
+        Self::builder("Piccolo")
             .patterns(vec!["piccolo", "picc"])
             .build()
     }

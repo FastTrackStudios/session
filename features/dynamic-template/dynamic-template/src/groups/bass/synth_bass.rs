@@ -7,7 +7,7 @@ pub struct SynthBass;
 
 impl From<SynthBass> for ItemMetadataGroup {
     fn from(_val: SynthBass) -> Self {
-        ItemMetadataGroup::builder("Synth")
+        Self::builder("Synth")
             .patterns([
                 "synth_bass",
                 "synthbass",
@@ -18,7 +18,7 @@ impl From<SynthBass> for ItemMetadataGroup {
             ])
             .exclude(["808"]) // Exclude 808 to avoid matching electronic kick drums
             // Synth bass stacks into per-project layers (named per take).
-            .layers(ItemMetadataGroup::builder("Layers").build())
+            .layers(Self::builder("Layers").build())
             .build()
     }
 }

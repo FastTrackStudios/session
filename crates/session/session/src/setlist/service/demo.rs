@@ -67,7 +67,7 @@ pub struct DemoSong {
 /// A section fixture within a [`DemoSong`].
 pub struct DemoSection {
     /// Section kind — drives both the inserted region's name (via
-    /// keyflow_actions' abbreviation table) and which template colour
+    /// `keyflow_actions`' abbreviation table) and which template colour
     /// the keyflow insert action picks. We carry the kind itself
     /// rather than a string so the demo can dispatch through the
     /// existing `insert_<kind>_region` actions and inherit all their
@@ -82,12 +82,19 @@ pub struct DemoSection {
 /// This is a free function that takes a `&Daw` so it works both with
 /// the global singleton and with a locally-held `Daw` instance (e.g.
 /// from `daw_extension_runtime::connect()`).
+///
+/// # Errors
+///
+/// Returns an error if the backend is not a native DAW (requires calling [`stamp_demo_setlist_with`] instead).
 pub async fn stamp_demo_setlist() -> Result<(), SessionServiceError> {
     Err(SessionServiceError::DawError(
         "stamp_demo_setlist requires a native DAW backend; use stamp_demo_setlist_with".to_string(),
     ))
 }
 
+/// # Errors
+///
+/// Returns an error if there is no current project or if stamping fails.
 pub fn stamp_demo_setlist_with<D>(daw: &D) -> Result<(), SessionServiceError>
 where
     D: Projects + TransportService + Markers + Regions + TempoMap,
@@ -95,13 +102,18 @@ where
     let project = daw
         .current()
         .ok_or_else(|| SessionServiceError::DawError("No current project".to_string()))?;
-    stamp_demo_into_project_native(daw, ProjectContext::Project(project.guid))
+    let pc = ProjectContext::Project(project.guid);
+    stamp_demo_into_project_native(daw, &pc)
 }
 
 /// Stamp demo markers and regions into a specific REAPER project.
 ///
 /// Use this when you already have a `Project` handle (e.g. in tests
 /// where each test gets its own isolated project tab).
+///
+/// # Errors
+///
+/// Returns an error if the backend is not a native DAW (requires calling [`stamp_demo_into_project_native`] instead).
 pub async fn stamp_demo_into_project(project: &rpc::Project) -> Result<(), SessionServiceError> {
     let _ = project;
     Err(SessionServiceError::DawError(
@@ -111,9 +123,13 @@ pub async fn stamp_demo_into_project(project: &rpc::Project) -> Result<(), Sessi
 }
 
 /// Native sync version for in-process extension/session paths.
+///
+/// # Errors
+///
+/// Returns an error if the project cannot be focused or if stamping fails.
 pub fn stamp_demo_into_project_native<D>(
     daw: &D,
-    project: ProjectContext,
+    project: &ProjectContext,
 ) -> Result<(), SessionServiceError>
 where
     D: Projects + TransportService + Markers + Regions + TempoMap,
@@ -149,8 +165,8 @@ where
             .map_err(|e| SessionServiceError::DawError(format!("set demo tempo: {e}")))?;
         daw.set_default_time_signature(
             project.clone(),
-            first.time_sig_num as i32,
-            first.time_sig_den as i32,
+            first.time_sig_num.cast_signed(),
+            first.time_sig_den.cast_signed(),
         )
         .map_err(|e| SessionServiceError::DawError(format!("set demo time sig: {e}")))?;
     }
@@ -161,8 +177,8 @@ where
         daw.set_time_signature_at_point(
             project.clone(),
             idx,
-            song.time_sig_num as i32,
-            song.time_sig_den as i32,
+            song.time_sig_num.cast_signed(),
+            song.time_sig_den.cast_signed(),
         )
         .map_err(|e| SessionServiceError::DawError(format!("set song time sig: {e}")))?;
     }
@@ -171,9 +187,9 @@ where
     let mut total_regions = 0u32;
 
     for song in &songs {
-        let (m, r) = stamp_song_native(daw, project.clone(), song)?;
-        total_markers += m;
-        total_regions += r;
+        let (m, r) = stamp_song_native(daw, project, song)?;
+        total_markers = total_markers.saturating_add(m);
+        total_regions = total_regions.saturating_add(r);
     }
 
     info!(
@@ -192,9 +208,13 @@ where
 /// Reused by [`stamp_demo_into_project_native`] and by test harnesses that
 /// seed one song per project (see [`fixture_songs`]). The caller is
 /// responsible for focusing `project` first if the backend requires it.
+///
+/// # Errors
+///
+/// Returns an error if the project cannot be focused or if stamping fails.
 pub fn stamp_song_native<D>(
     daw: &D,
-    project: ProjectContext,
+    project: &ProjectContext,
     song: &DemoSong,
 ) -> Result<(u32, u32), SessionServiceError>
 where
@@ -224,36 +244,43 @@ where
         .map_err(|e| SessionServiceError::DawError(format!("{e}")))?;
 
     // Structural markers via the keyflow insert actions (lane/colour/convention).
-    place_marker_via_action(daw, &project, song.count_in, MarkerKind::CountIn)?;
-    place_marker_via_action(daw, &project, song.song_start, MarkerKind::SongStart)?;
-    place_marker_via_action(daw, &project, song.song_end, MarkerKind::SongEnd)?;
-    place_marker_via_action(daw, &project, song.abs_end, MarkerKind::End)?;
+    place_marker_via_action(daw, project, song.count_in, MarkerKind::CountIn)?;
+    place_marker_via_action(daw, project, song.song_start, MarkerKind::SongStart)?;
+    place_marker_via_action(daw, project, song.song_end, MarkerKind::SongEnd)?;
+    place_marker_via_action(daw, project, song.abs_end, MarkerKind::End)?;
 
     // Section regions via the per-section insert actions (carve/colour/SECTIONS lane).
     for section in &song.sections {
-        place_section_via_action(daw, &project, section)?;
+        place_section_via_action(daw, project, section)?;
     }
 
-    Ok((4, 1 + song.sections.len() as u32))
+    let section_count = u32::try_from(song.sections.len()).unwrap_or(u32::MAX);
+    Ok((4, 1u32.saturating_add(section_count)))
 }
 
-/// Stamp one [`DemoSong`] into its OWN project: set the project DEFAULT tempo
-/// and time-signature at t=0 (no tempo points, no time-signature points), then
-/// stamp the song's regions/markers via [`stamp_song_native`].
+/// Stamp one [`DemoSong`] into its OWN project.
+///
+/// Sets the project DEFAULT tempo and time-signature at t=0 (no tempo points,
+/// no time-signature points), then stamps the song's regions/markers via
+/// [`stamp_song_native`].
 ///
 /// This is the per-song-project path — each song owns a project whose entire
 /// timeline runs at that song's tempo, so the first downbeat lands on measure 1
 /// and the guide/click grid + count-in line up natively. The caller must have
 /// already created (`seed_project`) the target project; this focuses it.
+///
+/// # Errors
+///
+/// Returns an error if the project cannot be focused or if stamping fails.
 pub fn stamp_song_with_default_tempo_native<D>(
     daw: &D,
-    project: ProjectContext,
+    project: &ProjectContext,
     song: &DemoSong,
 ) -> Result<(u32, u32), SessionServiceError>
 where
     D: Projects + TransportService + Markers + Regions + TempoMap,
 {
-    if let ProjectContext::Project(guid) = &project
+    if let ProjectContext::Project(guid) = project
         && !daw.select(guid)
     {
         return Err(SessionServiceError::DawError(format!(
@@ -264,18 +291,25 @@ where
         .map_err(|e| SessionServiceError::DawError(format!("set song tempo: {e}")))?;
     daw.set_default_time_signature(
         project.clone(),
-        song.time_sig_num as i32,
-        song.time_sig_den as i32,
+        song.time_sig_num.cast_signed(),
+        song.time_sig_den.cast_signed(),
     )
     .map_err(|e| SessionServiceError::DawError(format!("set song time sig: {e}")))?;
     stamp_song_native(daw, project, song)
 }
 
-/// Generate `count` self-contained song fixtures, each starting near time 0 so
-/// it can be stamped into its own project (one song per project). Songs cycle
-/// through a few section layouts of increasing complexity and alternate
+/// Generate `count` self-contained song fixtures.
+///
+/// Each song starts near time 0 and can be stamped into its own project (one song per project).
+/// Songs cycle through a few section layouts of increasing complexity and alternate
 /// count-in presence, to exercise the full setlist view: count-in handling,
 /// many sections, repeated section kinds, and short/long songs.
+///
+/// # Panics
+///
+/// Panics if the arrays of layouts or song names are empty (which they never are, as they
+/// are statically initialized with non-empty content).
+#[must_use]
 pub fn fixture_songs(count: usize) -> Vec<DemoSong> {
     const NAMES: [&str; 12] = [
         "Cornerstone",
@@ -330,7 +364,10 @@ pub fn fixture_songs(count: usize) -> Vec<DemoSong> {
 
     (0..count)
         .map(|i| {
-            let layout = layouts[i % layouts.len()];
+            let layout = i
+                .checked_rem(layouts.len())
+                .and_then(|idx| layouts.get(idx))
+                .unwrap_or(&layouts[0]);
             let has_count_in = i % 2 == 0;
             // Every song lives in its own project timeline starting at 0.
             // count-in occupies the first 4s when present; song body is 16s/section.
@@ -339,7 +376,7 @@ pub fn fixture_songs(count: usize) -> Vec<DemoSong> {
             let sec_len = 16.0;
             let mut sections = Vec::with_capacity(layout.len());
             let mut t = song_start;
-            for &kind in layout {
+            for &kind in *layout {
                 sections.push(DemoSection {
                     kind,
                     start: t,
@@ -350,7 +387,10 @@ pub fn fixture_songs(count: usize) -> Vec<DemoSong> {
             let song_end = t;
             let abs_end = song_end + 4.0;
             DemoSong {
-                name: NAMES[i % NAMES.len()],
+                name: i
+                    .checked_rem(NAMES.len())
+                    .and_then(|idx| NAMES.get(idx))
+                    .unwrap_or(&NAMES[0]),
                 region_start: 0.0,
                 region_end: abs_end,
                 count_in: count_in_pos,
@@ -551,12 +591,21 @@ PRE";
 
 /// Build a [`DemoSong`] from a keyflow chart (the accurate path — tempo, time
 /// signature, and real section lengths all come from the chart). The leading
-/// CountIn section becomes the count-in marker (`count_in`/`song_start`); the
+/// `CountIn` section becomes the count-in marker (`count_in`/`song_start`); the
 /// musical sections become SECTION-lane regions. Used for every song we have a
 /// real chart for; songs without one fall back to `layout_worship_song`.
-fn chart_song(name: &'static str, chart: &str) -> DemoSong {
-    let layout = crate::setlist::chart_import::chart_to_layout(chart)
-        .unwrap_or_else(|e| panic!("bundled chart for {name} must parse: {e:?}"));
+///
+/// Returns `None` if the bundled chart text fails to parse (a bug in the
+/// bundled demo data, not something a caller can recover from — logged and
+/// skipped rather than crashing the demo-setlist load).
+fn chart_song(name: &'static str, chart: &str) -> Option<DemoSong> {
+    let layout = match crate::setlist::chart_import::chart_to_layout(chart) {
+        Ok(layout) => layout,
+        Err(e) => {
+            tracing::error!("[demo] bundled chart for {name:?} failed to parse: {e}");
+            return None;
+        }
+    };
     let sections: Vec<DemoSection> = layout
         .sections
         .iter()
@@ -568,7 +617,7 @@ fn chart_song(name: &'static str, chart: &str) -> DemoSong {
         })
         .collect();
     let tail = 4.0; // ring-out after the last section
-    DemoSong {
+    Some(DemoSong {
         name,
         region_start: 0.0,
         region_end: layout.song_end_seconds + tail,
@@ -580,7 +629,7 @@ fn chart_song(name: &'static str, chart: &str) -> DemoSong {
         time_sig_num: layout.time_sig_num,
         time_sig_den: layout.time_sig_den,
         sections,
-    }
+    })
 }
 
 /// Map a lyrics-sheet section label to a [`SectionKind`]. Trailing numbers
@@ -612,9 +661,9 @@ fn label_to_kind(label: &str) -> SectionKind {
     }
 }
 
-/// Build a worship song `DemoSong` at region_start 0 (the caller shifts it into
+/// Build a worship song `DemoSong` at `region_start` 0 (the caller shifts it into
 /// place). 4/4 with a 2-measure count-in; the `duration_s` musical span (from
-/// song_start to the audio end) is split among `sections` weighted by their
+/// `song_start` to the audio end) is split among `sections` weighted by their
 /// lyric line-count, so longer parts get proportionally more time. Section
 /// timings are APPROXIMATE — derived from lyrics + a detected tempo, not a real
 /// chart — but give a navigable, playable song over its seeded stems.
@@ -628,7 +677,7 @@ fn layout_worship_song(
 ) -> DemoSong {
     // A measure is `num` beats, each beat = the `den`-th note. In seconds:
     // num * (60/tempo) * (4/den) — so 4/4 → 4*(60/tempo), 6/8 → 6*(60/tempo)*0.5.
-    let measure = time_sig_num as f64 * (60.0 / tempo_bpm) * (4.0 / time_sig_den as f64);
+    let measure = f64::from(time_sig_num) * (60.0 / tempo_bpm) * (4.0 / f64::from(time_sig_den));
     let count_in = 0.0;
     let song_start = 2.0 * measure;
     let song_end = duration_s.max(song_start + measure);
@@ -636,14 +685,14 @@ fn layout_worship_song(
 
     let total_w: f64 = sections
         .iter()
-        .map(|(_, w)| (*w).max(1) as f64)
+        .map(|(_, w)| f64::from((*w).max(1)))
         .sum::<f64>()
         .max(1.0);
     let span = song_end - song_start;
     let mut demo_sections = Vec::with_capacity(sections.len());
     let mut t = song_start;
     for (label, w) in sections {
-        let dur = span * (*w).max(1) as f64 / total_w;
+        let dur = span * f64::from((*w).max(1)) / total_w;
         let end = (t + dur).min(song_end);
         demo_sections.push(DemoSection {
             kind: label_to_kind(label),
@@ -706,7 +755,8 @@ fn shift_song(mut song: DemoSong, delta: f64) -> DemoSong {
 /// time_sig_den, duration_s, [(lyric-section-label, line-weight)])`. Tempos are
 /// the real published BPMs; section timings are lyric-proportional (approximate,
 /// not a real chart) — replace a song here with a chart to make it accurate.
-const WORSHIP_SONGS: &[(&str, f64, u32, u32, f64, &[(&str, u32)])] = &[
+type WorshipSongLayout = (&'static str, f64, u32, u32, f64, &'static [(&'static str, u32)]);
+const WORSHIP_SONGS: &[WorshipSongLayout] = &[
     // All six songs now have real keyflow charts (see SONG_CHARTS); this
     // lyric-derived fallback is currently empty but kept for future songs.
 ];
@@ -730,6 +780,7 @@ const SONG_CHARTS: &[(&str, &str)] = &[
 /// song's project (ext-state `FTS/chart_text`) so setlist hydration can
 /// serve it to remotes even without a MIDI chart-analysis service — the
 /// browser chart pane renders from exactly this text.
+#[must_use] 
 pub fn demo_chart_for(name: &str) -> Option<&'static str> {
     SONG_CHARTS
         .iter()
@@ -755,11 +806,14 @@ const ORDER: &[&str] = &[
 /// OWN standalone project with its own default tempo/time-signature at t=0, so
 /// there are no shared-timeline GAP offsets and no tempo points. The
 /// (legacy) single-project [`demo_songs`] shifts these sequentially instead.
+#[must_use] 
 pub fn demo_songs_base() -> Vec<DemoSong> {
     let mut base_songs: Vec<DemoSong> = Vec::with_capacity(ORDER.len());
     for &name in ORDER {
         if let Some(&(_, chart)) = SONG_CHARTS.iter().find(|(n, _)| *n == name) {
-            base_songs.push(chart_song(name, chart));
+            if let Some(song) = chart_song(name, chart) {
+                base_songs.push(song);
+            }
         } else if let Some(&(n, tempo, num, den, dur, sections)) =
             WORSHIP_SONGS.iter().find(|e| e.0 == name)
         {
@@ -789,6 +843,7 @@ fn demo_songs() -> Vec<DemoSong> {
 /// The setlist layout for media seeding: `(song name, region_start, length)` in
 /// timeline order. The app seeds each song's stems at its `region_start` so the
 /// audio lines up with the stamped song region.
+#[must_use] 
 pub fn demo_song_layout() -> Vec<(&'static str, f64, f64)> {
     demo_songs()
         .iter()

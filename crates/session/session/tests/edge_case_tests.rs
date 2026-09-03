@@ -1,10 +1,10 @@
 //! REAPER integration tests for edge cases.
 //!
-//! Tests SongBuilder with empty projects, partial markers, and transport
+//! Tests `SongBuilder` with empty projects, partial markers, and transport
 //! seek edge cases (negative position, past project end, exact boundaries).
 //!
 //! Run with:
-//!   cargo xtask reaper-test -- edge_case
+//!   cargo xtask reaper-test -- `edge_case`
 
 use daw::rpc::Project;
 use daw::test::reaper_test;
@@ -32,7 +32,7 @@ async fn clear_project(project: &Project) -> eyre::Result<()> {
 //  SongBuilder edge cases
 // ═════════════════════════════════════════════════════════════════════
 
-/// SongBuilder on an empty project (no markers, no regions).
+/// `SongBuilder` on an empty project (no markers, no regions).
 #[reaper_test]
 async fn songbuilder_empty_project(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     clear_project(&ctx.project).await?;
@@ -56,7 +56,7 @@ async fn songbuilder_empty_project(ctx: &daw::test::ReaperTestContext) -> eyre::
     Ok(())
 }
 
-/// SongBuilder with only structural markers (no regions).
+/// `SongBuilder` with only structural markers (no regions).
 /// Should build sections from marker boundaries.
 #[reaper_test]
 async fn songbuilder_markers_only(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
@@ -76,10 +76,9 @@ async fn songbuilder_markers_only(ctx: &daw::test::ReaperTestContext) -> eyre::R
     let songs = SongBuilder::build(&ctx.project).await?;
     println!("Songs from markers-only project: {}", songs.len());
 
-    assert!(
-        !songs.is_empty(),
-        "Should produce at least 1 song from markers"
-    );
+    if songs.is_empty() {
+        return Err(eyre::eyre!("Should produce at least 1 song from markers"));
+    }
 
     let song = &songs[0];
     println!(
@@ -94,15 +93,14 @@ async fn songbuilder_markers_only(ctx: &daw::test::ReaperTestContext) -> eyre::R
         );
     }
 
-    assert!(
-        song.sections.len() >= 2,
-        "Should have at least 2 sections from markers"
-    );
+    if song.sections.len() < 2 {
+        return Err(eyre::eyre!("Should have at least 2 sections from markers"));
+    }
 
     Ok(())
 }
 
-/// SongBuilder with regions but no structural markers (no SONGSTART/SONGEND).
+/// `SongBuilder` with regions but no structural markers (no SONGSTART/SONGEND).
 /// Should still produce a song and detect at least some sections from regions.
 #[reaper_test]
 async fn songbuilder_regions_no_structural_markers(
@@ -119,10 +117,9 @@ async fn songbuilder_regions_no_structural_markers(
     let songs = SongBuilder::build(&ctx.project).await?;
     println!("Songs from regions-only project: {}", songs.len());
 
-    assert!(
-        !songs.is_empty(),
-        "Should produce at least 1 song from regions"
-    );
+    if songs.is_empty() {
+        return Err(eyre::eyre!("Should produce at least 1 song from regions"));
+    }
 
     let song = &songs[0];
     println!(
@@ -139,21 +136,19 @@ async fn songbuilder_regions_no_structural_markers(
 
     // Without structural markers, SongBuilder uses heuristics to determine
     // song bounds. It should produce at least some sections from the regions.
-    assert!(
-        !song.sections.is_empty(),
-        "Should have at least 1 section from regions"
-    );
+    if song.sections.is_empty() {
+        return Err(eyre::eyre!("Should have at least 1 section from regions"));
+    }
 
     // The song should span at least part of the region range
-    assert!(
-        song.end_seconds > song.start_seconds,
-        "Song should have positive duration"
-    );
+    if song.end_seconds <= song.start_seconds {
+        return Err(eyre::eyre!("Song should have positive duration"));
+    }
 
     Ok(())
 }
 
-/// SongBuilder with SONGSTART but no SONGEND.
+/// `SongBuilder` with SONGSTART but no SONGEND.
 #[reaper_test]
 async fn songbuilder_missing_songend(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let markers_api = ctx.project.markers();
@@ -181,7 +176,7 @@ async fn songbuilder_missing_songend(ctx: &daw::test::ReaperTestContext) -> eyre
     Ok(())
 }
 
-/// SongBuilder with only SONGSTART and SONGEND (no section regions/markers).
+/// `SongBuilder` with only SONGSTART and SONGEND (no section regions/markers).
 #[reaper_test]
 async fn songbuilder_structural_only(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let markers_api = ctx.project.markers();
@@ -193,7 +188,9 @@ async fn songbuilder_structural_only(ctx: &daw::test::ReaperTestContext) -> eyre
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let songs = SongBuilder::build(&ctx.project).await?;
-    assert!(!songs.is_empty(), "Should produce a song");
+    if songs.is_empty() {
+        return Err(eyre::eyre!("Should produce a song"));
+    }
 
     let song = &songs[0];
     println!("Song from structural markers only:");
@@ -238,7 +235,9 @@ async fn seek_to_zero(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
 
     let pos = transport.get_position().await?;
     println!("Position after seek to 0: {pos:.4}s");
-    assert!(pos.abs() < 0.5, "Should be at 0, got {pos:.2}");
+    if pos.abs() >= 0.5 {
+        return Err(eyre::eyre!("Should be at 0, got {pos:.2}"));
+    }
 
     Ok(())
 }
@@ -260,10 +259,9 @@ async fn seek_past_end(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     println!("Position after seek to 1000s: {pos:.2}s");
 
     // REAPER allows seeking past content — position should be at or near 1000s
-    assert!(
-        pos > 500.0,
-        "Should have seeked to a large position, got {pos:.2}s"
-    );
+    if pos <= 500.0 {
+        return Err(eyre::eyre!("Should have seeked to a large position, got {pos:.2}s"));
+    }
 
     Ok(())
 }
@@ -287,16 +285,15 @@ async fn seek_exact_boundaries(ctx: &daw::test::ReaperTestContext) -> eyre::Resu
         let pos = transport.get_position().await?;
         let diff = (pos - boundary).abs();
         println!("Boundary {boundary:.1}s → {pos:.4}s (diff: {diff:.4}s)");
-        assert!(
-            diff < 0.5,
-            "Seek to boundary {boundary:.1}s failed: got {pos:.2}s"
-        );
+        if diff >= 0.5 {
+            return Err(eyre::eyre!("Seek to boundary {boundary:.1}s failed: got {pos:.2}s"));
+        }
     }
 
     Ok(())
 }
 
-/// goto_start resets to position 0.
+/// `goto_start` resets to position 0.
 #[reaper_test]
 async fn transport_goto_start(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let transport = ctx.project.transport();
@@ -310,7 +307,9 @@ async fn transport_goto_start(ctx: &daw::test::ReaperTestContext) -> eyre::Resul
 
     let pos = transport.get_position().await?;
     println!("Position after goto_start: {pos:.4}s");
-    assert!(pos < 1.0, "goto_start should go to ~0, got {pos:.2}s");
+    if pos >= 1.0 {
+        return Err(eyre::eyre!("goto_start should go to ~0, got {pos:.2}s"));
+    }
 
     Ok(())
 }
@@ -341,18 +340,24 @@ async fn rapid_play_stop_play(ctx: &daw::test::ReaperTestContext) -> eyre::Resul
 
     // Final state should be stopped
     let is_playing = transport.is_playing().await?;
-    assert!(!is_playing, "Should be stopped after rapid transitions");
+    if is_playing {
+        return Err(eyre::eyre!("Should be stopped after rapid transitions"));
+    }
 
     // One more play to confirm it still works
     transport.play().await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let is_playing = transport.is_playing().await?;
-    assert!(is_playing, "Should be playing after final play()");
+    if !is_playing {
+        return Err(eyre::eyre!("Should be playing after final play()"));
+    }
 
     let pos = transport.get_position().await?;
     println!("Position after rapid transitions: {pos:.2}s");
-    assert!(pos > 0.0, "Should have advanced");
+    if pos <= 0.0 {
+        return Err(eyre::eyre!("Should have advanced"));
+    }
 
     transport.stop().await?;
     Ok(())
@@ -379,10 +384,9 @@ async fn rapid_seek(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let pos = transport.get_position().await?;
     let diff = (pos - 4.0).abs();
     println!("Position after rapid seeks: {pos:.4}s (expected ~4.0s, diff: {diff:.4}s)");
-    assert!(
-        diff < 0.5,
-        "Should be at last seek position (4.0s), got {pos:.2}s"
-    );
+    if diff >= 0.5 {
+        return Err(eyre::eyre!("Should be at last seek position (4.0s), got {pos:.2}s"));
+    }
 
     Ok(())
 }
@@ -414,10 +418,9 @@ async fn rapid_play_pause_play(ctx: &daw::test::ReaperTestContext) -> eyre::Resu
 
     println!("Position after rapid pause/play: {pos:.2}s");
     // Should have advanced past 10s (we played for ~1.2s total across cycles)
-    assert!(
-        pos > 10.5,
-        "Position should advance through pause/play cycles, got {pos:.2}s"
-    );
+    if pos <= 10.5 {
+        return Err(eyre::eyre!("Position should advance through pause/play cycles, got {pos:.2}s"));
+    }
 
     Ok(())
 }

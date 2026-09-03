@@ -1,141 +1,8 @@
 use daw_proto::{assert_tracks_equal, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn carter_thomas_ryder() -> Result<()> {
-    // -- Setup & Fixtures
-    // Carter Thomas - Ryder: Electronic production with drum loops, arps, and extensive BGV layers
-    let items = vec![
-        "12 THROW.wav",
-        "14TH THROW.wav",
-        "AD LIB 1.wav",
-        "ARP 1.wav",
-        "ARP TRANSITION.wav",
-        "BASS.wav",
-        "D-50.wav",
-        "DBL 1.wav",
-        "DBL 2.wav",
-        "DBL 3.wav",
-        "DBL 4.wav",
-        "DBL 5.wav",
-        "DBL 6.wav",
-        "DBL 7.wav",
-        "DBL 8.wav",
-        "DRUM LOOP 2.wav",
-        "DRUM LOOP.wav",
-        "GTR STAB L.wav",
-        "GTR STAB R.wav",
-        "HK BGV L.wav",
-        "HK BGV L2.wav",
-        "HK BGV R.wav",
-        "HK BGV R2.wav",
-        "HK BGV2 L1.wav",
-        "HK BGV2 L2.wav",
-        "HK BGV2 L3.wav",
-        "HK BGV2 L4.wav",
-        "HK BGV2 L5.wav",
-        "HK BGV2 L6.wav",
-        "HK BGV2 R1.wav",
-        "HK BGV2 R2.wav",
-        "HK BGV2 R3.wav",
-        "HK BGV2 R4.wav",
-        "HK BGV2 R5.wav",
-        "HK BGV2 R6.wav",
-        "HK BGV3 L1.wav",
-        "HK BGV3 L2.wav",
-        "HK BGV3 L3.wav",
-        "HK BGV3 L4.wav",
-        "HK BGV3 L5.wav",
-        "HK BGV3 L6.wav",
-        "HK BGV3 R1.wav",
-        "HK BGV3 R2.wav",
-        "HK BGV3 R3.wav",
-        "HK BGV3 R4.wav",
-        "HK BGV3 R5.wav",
-        "HK BGV3 R6.wav",
-        "HK BGV4 L1.wav",
-        "HK BGV4 R1.wav",
-        "HK BGV5 L1.wav",
-        "HK BGV5 R1.wav",
-        "HK VLD 1.wav",
-        "HK VLD 2.wav",
-        "PADS.wav",
-        "V1 BGV1 L1.wav",
-        "V1 BGV1 L2.wav",
-        "V1 BGV1 L3.wav",
-        "V1 BGV1 L4.wav",
-        "V1 BGV1 R1.wav",
-        "V1 BGV1 R2.wav",
-        "V1 BGV1 R3.wav",
-        "V1 BGV1 R4.wav",
-        "V1 BGV2 L1.wav",
-        "V1 BGV2 L2.wav",
-        "V1 BGV2 L3.wav",
-        "V1 BGV2 L4.wav",
-        "V1 BGV2 L5.wav",
-        "V1 BGV2 L6.wav",
-        "V1 BGV2 L7.wav",
-        "V1 BGV2 R1.wav",
-        "V1 BGV2 R2.wav",
-        "V1 BGV2 R3.wav",
-        "V1 BGV2 R4.wav",
-        "V1 BGV2 R5.wav",
-        "V1 BGV2 R6.wav",
-        "V1 BGV2 R7.wav",
-        "V2 BGV1 L1.wav",
-        "V2 BGV1 R2.wav",
-        "V2 BGV2 L1.wav",
-        "V2 BGV2 L2.wav",
-        "V2 BGV2 L3.wav",
-        "V2 BGV2 R1.wav",
-        "V2 BGV2 R2.wav",
-        "V2 BGV2 R3.wav",
-        "V2 BGV3 L1.wav",
-        "V2 BGV3 L2.wav",
-        "V2 BGV3 L3.wav",
-        "V2 BGV3 R1.wav",
-        "V2 BGV3 R2.wav",
-        "V2 BGV3 R3.wav",
-        "V2 BGV4 L1.wav",
-        "V2 BGV4 L2.wav",
-        "V2 BGV4 L3.wav",
-        "V2 BGV4 L4.wav",
-        "V2 BGV4 R1.wav",
-        "V2 BGV4 R2.wav",
-        "V2 BGV4 R3.wav",
-        "V2 BGV4 R4.wav",
-        "V2 BGV5 L1.wav",
-        "V2 BGV5 L2.wav",
-        "V2 BGV5 L3.wav",
-        "V2 BGV5 R1.wav",
-        "V2 BGV5 R2.wav",
-        "V2 BGV5 R3.wav",
-        "VERB THROW.wav",
-        "Vocal EFX _12 DLY.wav",
-        "Vocal EFX _14TH DLY.wav",
-        "Vocal EFX _480L.wav",
-        "Vocal EFX _DIM D.wav",
-        "Vocal EFX _DOUBLER.wav",
-        "Vocal EFX _EMT 140.wav",
-        "Vocal EFX _MONO DLY.wav",
-        "Vocal EFX _SLAP DLY.wav",
-        "VRS LD 1.wav",
-        "VRS LD 2.wav",
-        "VRS LD 3.wav",
-        "WAVES SFX.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    let expected = TrackStructureBuilder::new()
+fn carter_thomas_ryder_expected_a() -> TrackStructureBuilder {
+    TrackStructureBuilder::new()
         .folder("Drums")
         .track("Drum Kit 1")
         .item("DRUM LOOP 2.wav")
@@ -178,6 +45,10 @@ fn carter_thomas_ryder() -> Result<()> {
         .track("Dly Slap")
         .item("Vocal EFX _SLAP DLY.wav")
         .end()
+}
+
+fn carter_thomas_ryder_expected_b() -> TrackStructureBuilder {
+    carter_thomas_ryder_expected_a()
         .track("Mono")
         .item("Vocal EFX _MONO DLY.wav")
         .end()
@@ -232,6 +103,10 @@ fn carter_thomas_ryder() -> Result<()> {
         .item("V1 BGV2 R7.wav")
         .end()
         .end()
+}
+
+fn carter_thomas_ryder_expected_c() -> TrackStructureBuilder {
+    carter_thomas_ryder_expected_b()
         .folder("V2")
         .folder("L")
         .track("BGVs 1")
@@ -294,6 +169,10 @@ fn carter_thomas_ryder() -> Result<()> {
         .item("V2 BGV5 R3.wav")
         .end()
         .end()
+}
+
+fn carter_thomas_ryder_expected_d() -> TrackStructureBuilder {
+    carter_thomas_ryder_expected_c()
         .track("Ad Lib")
         .item("AD LIB 1.wav")
         .folder("BGVs")
@@ -368,6 +247,10 @@ fn carter_thomas_ryder() -> Result<()> {
         .end()
         .end()
         .end()
+}
+
+fn carter_thomas_ryder_expected() -> daw_proto::TrackHierarchy {
+    carter_thomas_ryder_expected_d()
         .track("SFX")
         .item("WAVES SFX.wav")
         .folder("Unsorted")
@@ -406,9 +289,153 @@ fn carter_thomas_ryder() -> Result<()> {
         .track("VRS LD 3")
         .item("VRS LD 3.wav")
         .end()
-        .build();
+        .build()
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+fn carter_thomas_ryder_items_a() -> Vec<&'static str> {
+    vec![
+        "12 THROW.wav",
+        "14TH THROW.wav",
+        "AD LIB 1.wav",
+        "ARP 1.wav",
+        "ARP TRANSITION.wav",
+        "BASS.wav",
+        "D-50.wav",
+        "DBL 1.wav",
+        "DBL 2.wav",
+        "DBL 3.wav",
+        "DBL 4.wav",
+        "DBL 5.wav",
+        "DBL 6.wav",
+        "DBL 7.wav",
+        "DBL 8.wav",
+        "DRUM LOOP 2.wav",
+        "DRUM LOOP.wav",
+        "GTR STAB L.wav",
+        "GTR STAB R.wav",
+        "HK BGV L.wav",
+        "HK BGV L2.wav",
+        "HK BGV R.wav",
+        "HK BGV R2.wav",
+        "HK BGV2 L1.wav",
+        "HK BGV2 L2.wav",
+        "HK BGV2 L3.wav",
+        "HK BGV2 L4.wav",
+        "HK BGV2 L5.wav",
+        "HK BGV2 L6.wav",
+        "HK BGV2 R1.wav",
+        "HK BGV2 R2.wav",
+        "HK BGV2 R3.wav",
+        "HK BGV2 R4.wav",
+        "HK BGV2 R5.wav",
+        "HK BGV2 R6.wav",
+        "HK BGV3 L1.wav",
+        "HK BGV3 L2.wav",
+        "HK BGV3 L3.wav",
+        "HK BGV3 L4.wav",
+        "HK BGV3 L5.wav",
+        "HK BGV3 L6.wav",
+        "HK BGV3 R1.wav",
+        "HK BGV3 R2.wav",
+        "HK BGV3 R3.wav",
+        "HK BGV3 R4.wav",
+        "HK BGV3 R5.wav",
+        "HK BGV3 R6.wav",
+        "HK BGV4 L1.wav",
+        "HK BGV4 R1.wav",
+        "HK BGV5 L1.wav",
+        "HK BGV5 R1.wav",
+        "HK VLD 1.wav",
+        "HK VLD 2.wav",
+        "PADS.wav",
+        "V1 BGV1 L1.wav",
+        "V1 BGV1 L2.wav",
+        "V1 BGV1 L3.wav",
+        "V1 BGV1 L4.wav",
+    ]
+}
 
-    Ok(())
+/// Carter Thomas - Ryder: Electronic production with drum loops, arps, and extensive BGV layers
+fn carter_thomas_ryder_items() -> Vec<&'static str> {
+    let mut items = carter_thomas_ryder_items_a();
+    items.extend([
+        "V1 BGV1 R1.wav",
+        "V1 BGV1 R2.wav",
+        "V1 BGV1 R3.wav",
+        "V1 BGV1 R4.wav",
+        "V1 BGV2 L1.wav",
+        "V1 BGV2 L2.wav",
+        "V1 BGV2 L3.wav",
+        "V1 BGV2 L4.wav",
+        "V1 BGV2 L5.wav",
+        "V1 BGV2 L6.wav",
+        "V1 BGV2 L7.wav",
+        "V1 BGV2 R1.wav",
+        "V1 BGV2 R2.wav",
+        "V1 BGV2 R3.wav",
+        "V1 BGV2 R4.wav",
+        "V1 BGV2 R5.wav",
+        "V1 BGV2 R6.wav",
+        "V1 BGV2 R7.wav",
+        "V2 BGV1 L1.wav",
+        "V2 BGV1 R2.wav",
+        "V2 BGV2 L1.wav",
+        "V2 BGV2 L2.wav",
+        "V2 BGV2 L3.wav",
+        "V2 BGV2 R1.wav",
+        "V2 BGV2 R2.wav",
+        "V2 BGV2 R3.wav",
+        "V2 BGV3 L1.wav",
+        "V2 BGV3 L2.wav",
+        "V2 BGV3 L3.wav",
+        "V2 BGV3 R1.wav",
+        "V2 BGV3 R2.wav",
+        "V2 BGV3 R3.wav",
+        "V2 BGV4 L1.wav",
+        "V2 BGV4 L2.wav",
+        "V2 BGV4 L3.wav",
+        "V2 BGV4 L4.wav",
+        "V2 BGV4 R1.wav",
+        "V2 BGV4 R2.wav",
+        "V2 BGV4 R3.wav",
+        "V2 BGV4 R4.wav",
+        "V2 BGV5 L1.wav",
+        "V2 BGV5 L2.wav",
+        "V2 BGV5 L3.wav",
+        "V2 BGV5 R1.wav",
+        "V2 BGV5 R2.wav",
+        "V2 BGV5 R3.wav",
+        "VERB THROW.wav",
+        "Vocal EFX _12 DLY.wav",
+        "Vocal EFX _14TH DLY.wav",
+        "Vocal EFX _480L.wav",
+        "Vocal EFX _DIM D.wav",
+        "Vocal EFX _DOUBLER.wav",
+        "Vocal EFX _EMT 140.wav",
+        "Vocal EFX _MONO DLY.wav",
+        "Vocal EFX _SLAP DLY.wav",
+        "VRS LD 1.wav",
+        "VRS LD 2.wav",
+        "VRS LD 3.wav",
+        "WAVES SFX.wav",
+    ]);
+    items
+}
+
+#[test]
+fn carter_thomas_ryder() {
+    // -- Setup & Fixtures
+    let items = carter_thomas_ryder_items();
+    let config = default_config();
+
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    let expected = carter_thomas_ryder_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

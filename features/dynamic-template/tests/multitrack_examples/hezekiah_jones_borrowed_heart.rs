@@ -1,42 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn hezekiah_jones_borrowed_heart() -> Result<()> {
-    // -- Setup & Fixtures
-    // Hezekiah Jones - Borrowed Heart: 12-stem folk/Americana session from MedleyDB.
-    // Acoustic guitar, backing + lead vocals, banjo, electric bass, vibraphone,
-    // cymbal, auxiliary percussion, drums, violin section, and lap steel guitar.
-    // Tests folk instrumentation with banjo, lap steel, and vibraphone.
-    let items = vec![
-        "01_AcousticGtr.wav",
-        "02_BackingVox1.wav",
-        "03_Banjo.wav",
-        "04_ElecBass.wav",
-        "05_Vibraphone.wav",
-        "06_BackingVox2.wav",
-        "07_Cymbal.wav",
-        "08_AuxPerc.wav",
-        "09_Drums.wav",
-        "10_LeadVox.wav",
-        "11_Violins.wav",
-        "12_LapSteel.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn hezekiah_jones_borrowed_heart_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::folder("Drums")
         .track("Cymbals")
         .item("07_Cymbal.wav")
@@ -92,8 +57,44 @@ fn hezekiah_jones_borrowed_heart() -> Result<()> {
         .group(vocals)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn hezekiah_jones_borrowed_heart() {
+    // -- Setup & Fixtures
+    // Hezekiah Jones - Borrowed Heart: 12-stem folk/Americana session from MedleyDB.
+    // Acoustic guitar, backing + lead vocals, banjo, electric bass, vibraphone,
+    // cymbal, auxiliary percussion, drums, violin section, and lap steel guitar.
+    // Tests folk instrumentation with banjo, lap steel, and vibraphone.
+    let items = vec![
+        "01_AcousticGtr.wav",
+        "02_BackingVox1.wav",
+        "03_Banjo.wav",
+        "04_ElecBass.wav",
+        "05_Vibraphone.wav",
+        "06_BackingVox2.wav",
+        "07_Cymbal.wav",
+        "08_AuxPerc.wav",
+        "09_Drums.wav",
+        "10_LeadVox.wav",
+        "11_Violins.wav",
+        "12_LapSteel.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = hezekiah_jones_borrowed_heart_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

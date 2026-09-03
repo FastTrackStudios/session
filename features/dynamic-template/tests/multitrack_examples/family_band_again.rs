@@ -1,41 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn family_band_again() -> Result<()> {
-    // -- Setup & Fixtures
-    // Family Band - Again: 11-stem country/Americana session from MedleyDB. Electric bass,
-    // backing + lead vocals, drums, acoustic guitar, clean + distorted electric guitars,
-    // 2 lap steel guitars, melodica, and auxiliary percussion. Tests lap steel guitar
-    // and melodica classification.
-    let items = vec![
-        "01_ElecBass.wav",
-        "02_BackingVox.wav",
-        "03_Drums.wav",
-        "04_AcousticGtr.wav",
-        "05_ElecGtr.wav",
-        "06_DistortedGtr.wav",
-        "07_LapSteel1.wav",
-        "08_LapSteel2.wav",
-        "09_LeadVox.wav",
-        "10_Melodica.wav",
-        "11_AuxPerc.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn family_band_again_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::single_track("Drums", "03_Drums.wav");
     let percussion = TrackGroup::single_track("Percussion", "11_AuxPerc.wav");
 
@@ -81,8 +47,43 @@ fn family_band_again() -> Result<()> {
         .group(keys)
         .group(vocals)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn family_band_again() {
+    // -- Setup & Fixtures
+    // Family Band - Again: 11-stem country/Americana session from MedleyDB. Electric bass,
+    // backing + lead vocals, drums, acoustic guitar, clean + distorted electric guitars,
+    // 2 lap steel guitars, melodica, and auxiliary percussion. Tests lap steel guitar
+    // and melodica classification.
+    let items = vec![
+        "01_ElecBass.wav",
+        "02_BackingVox.wav",
+        "03_Drums.wav",
+        "04_AcousticGtr.wav",
+        "05_ElecGtr.wav",
+        "06_DistortedGtr.wav",
+        "07_LapSteel1.wav",
+        "08_LapSteel2.wav",
+        "09_LeadVox.wav",
+        "10_Melodica.wav",
+        "11_AuxPerc.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = family_band_again_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

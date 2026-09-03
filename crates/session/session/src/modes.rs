@@ -8,6 +8,7 @@
 use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(feature = "reaper")]
 use session_proto::mode::{ModeActions, register_mode_actions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -29,74 +30,78 @@ pub enum Mode {
 }
 
 impl Mode {
-    pub const ALL: [Mode; 10] = [
-        Mode::Organize,
-        Mode::Write,
-        Mode::Produce,
-        Mode::Record,
-        Mode::Edit,
-        Mode::Mix,
-        Mode::Master,
-        Mode::Live,
-        Mode::Video,
-        Mode::Scoring,
+    pub const ALL: [Self; 10] = [
+        Self::Organize,
+        Self::Write,
+        Self::Produce,
+        Self::Record,
+        Self::Edit,
+        Self::Mix,
+        Self::Master,
+        Self::Live,
+        Self::Video,
+        Self::Scoring,
     ];
 
     /// Stable lowercase identifier used in action IDs.
-    pub fn slug(self) -> &'static str {
+    #[must_use] 
+    pub const fn slug(self) -> &'static str {
         match self {
-            Mode::Organize => "organize",
-            Mode::Write => "write",
-            Mode::Produce => "produce",
-            Mode::Record => "record",
-            Mode::Edit => "edit",
-            Mode::Mix => "mix",
-            Mode::Master => "master",
-            Mode::Live => "live",
-            Mode::Video => "video",
-            Mode::Scoring => "scoring",
+            Self::Organize => "organize",
+            Self::Write => "write",
+            Self::Produce => "produce",
+            Self::Record => "record",
+            Self::Edit => "edit",
+            Self::Mix => "mix",
+            Self::Master => "master",
+            Self::Live => "live",
+            Self::Video => "video",
+            Self::Scoring => "scoring",
         }
     }
 
     /// Reverse of [`Mode::slug`]. Case-insensitive, trims whitespace.
     /// Returns `None` for any string that doesn't match a known mode.
+    #[must_use] 
     pub fn from_slug(slug: &str) -> Option<Self> {
         match slug.trim().to_ascii_lowercase().as_str() {
-            "organize" => Some(Mode::Organize),
-            "write" => Some(Mode::Write),
-            "produce" => Some(Mode::Produce),
-            "record" => Some(Mode::Record),
-            "edit" => Some(Mode::Edit),
-            "mix" => Some(Mode::Mix),
-            "master" => Some(Mode::Master),
-            "live" => Some(Mode::Live),
-            "video" => Some(Mode::Video),
-            "scoring" => Some(Mode::Scoring),
+            "organize" => Some(Self::Organize),
+            "write" => Some(Self::Write),
+            "produce" => Some(Self::Produce),
+            "record" => Some(Self::Record),
+            "edit" => Some(Self::Edit),
+            "mix" => Some(Self::Mix),
+            "master" => Some(Self::Master),
+            "live" => Some(Self::Live),
+            "video" => Some(Self::Video),
+            "scoring" => Some(Self::Scoring),
             _ => None,
         }
     }
 
     /// Title-cased display name.
-    pub fn display_name(self) -> &'static str {
+    #[must_use] 
+    pub const fn display_name(self) -> &'static str {
         match self {
-            Mode::Organize => "Organize",
-            Mode::Write => "Write",
-            Mode::Produce => "Produce",
-            Mode::Record => "Record",
-            Mode::Edit => "Edit",
-            Mode::Mix => "Mix",
-            Mode::Master => "Master",
-            Mode::Live => "Live",
-            Mode::Video => "Video",
-            Mode::Scoring => "Scoring",
+            Self::Organize => "Organize",
+            Self::Write => "Write",
+            Self::Produce => "Produce",
+            Self::Record => "Record",
+            Self::Edit => "Edit",
+            Self::Mix => "Mix",
+            Self::Master => "Master",
+            Self::Live => "Live",
+            Self::Video => "Video",
+            Self::Scoring => "Scoring",
         }
     }
 
     /// Whether this mode owns the standard 3 floating toolbars. Most
     /// modes do; `Scoring` is the lone exception (no toolbars reserved
     /// in `reaper-menu.ini`, no mode-toolbar slots auto-renamed).
-    pub fn has_toolbars(self) -> bool {
-        !matches!(self, Mode::Scoring)
+    #[must_use] 
+    pub const fn has_toolbars(self) -> bool {
+        !matches!(self, Self::Scoring)
     }
 }
 
@@ -179,8 +184,12 @@ fn current_cell() -> &'static Mutex<Mode> {
     CURRENT.get_or_init(|| Mutex::new(Mode::Organize))
 }
 
+/// # Panics
+///
+/// Panics if the mode mutex has been poisoned by a previous panic in another thread.
+#[must_use]
 pub fn current_mode() -> Mode {
-    *current_cell().lock().expect("mode mutex poisoned")
+    *current_cell().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Callback fired after `set_mode` updates the global slot, only when
@@ -197,10 +206,11 @@ fn listeners_cell() -> &'static Mutex<Vec<ModeChangeListener>> {
     MODE_CHANGE_LISTENERS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// Register a callback to run whenever [`set_mode`] transitions to a new
-/// mode. Listeners run synchronously on the caller's thread after the
-/// global slot has been updated and before the window layout is applied,
-/// so they can observe the new mode via [`current_mode`].
+/// Register a callback to run whenever [`set_mode`] transitions to a new mode.
+///
+/// Listeners run synchronously on the caller's thread after the global slot has
+/// been updated and before the window layout is applied, so they can observe the
+/// new mode via [`current_mode`].
 pub fn add_mode_change_listener<F>(listener: F)
 where
     F: Fn(Mode) + Send + Sync + 'static,
@@ -225,7 +235,7 @@ fn fire_mode_change_listeners(mode: Mode) {
 
 /// Switch the active mode.
 ///
-/// Updates the global current-mode slot and asks the DAW's WindowManager
+/// Updates the global current-mode slot and asks the DAW's `WindowManager`
 /// to apply the layout whose name matches the mode's display name (e.g.
 /// `Organize`, `Write`, ...). The layout is resolved against REAPER's
 /// `reaper-screensets.ini` and applied via REAPER's native `Screenset:
@@ -237,22 +247,35 @@ fn fire_mode_change_listeners(mode: Mode) {
 /// to call), and `daw::block_on` would deadlock us against ourselves
 /// since the RPC dispatcher would queue work back onto the main thread
 /// that's blocked waiting for the RPC to return.
+///
+/// # Panics
+///
+/// Panics if the mode mutex has been poisoned by a previous panic in another thread.
 pub fn set_mode(mode: Mode) {
-    use daw::service::{WindowLayoutOptions, WindowManager as _};
-
     let prev = {
-        let mut slot = current_cell().lock().expect("mode mutex poisoned");
+        let mut slot = current_cell().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let prev = *slot;
         *slot = mode;
         prev
     };
-    if prev != mode {
+    if prev == mode {
+        tracing::debug!(mode = %mode, "[session] set_mode called with current mode (no-op)");
+    } else {
         tracing::info!(from = %prev, to = %mode, "[session] Mode changed");
         fire_mode_change_listeners(mode);
         persist_current_mode(mode);
-    } else {
-        tracing::debug!(mode = %mode, "[session] set_mode called with current mode (no-op)");
     }
+
+    apply_window_layout(mode);
+}
+
+/// Fire REAPER's native screenset load for `mode`, when built with the
+/// `reaper` feature. A no-op otherwise — a `daw-standalone`-only host
+/// (no REAPER window to lay out) still gets the state update/broadcast
+/// above; there's just nothing to apply.
+#[cfg(feature = "reaper")]
+fn apply_window_layout(mode: Mode) {
+    use daw::service::{WindowLayoutOptions, WindowManager as _};
 
     let result = daw::reaper::Reaper.apply_layout(
         mode.display_name().to_string(),
@@ -267,6 +290,11 @@ pub fn set_mode(mode: Mode) {
             "[session] Window layout apply reported failure"
         );
     }
+}
+
+#[cfg(not(feature = "reaper"))]
+fn apply_window_layout(mode: Mode) {
+    tracing::debug!(mode = %mode, "[session] no REAPER window to lay out (reaper feature off)");
 }
 
 // ─── Action wiring ──────────────────────────────────────────────────────────
@@ -300,9 +328,12 @@ pub fn mode_broadcast() -> &'static tokio::sync::broadcast::Sender<String> {
     })
 }
 
-/// Capture REAPER's current window state into the mode's native
-/// screenset slot. Calls the sync trait method on `daw::reaper::Reaper`
+/// Capture REAPER's current window state into the mode's native screenset slot.
+///
+/// Calls the sync trait method on `daw::reaper::Reaper`
 /// (same pattern as `set_mode`) so it runs on REAPER's main thread.
+/// REAPER-only — see the `reaper` Cargo feature.
+#[cfg(feature = "reaper")]
 pub fn save_layout(mode: Mode) {
     use daw::service::{WindowLayout, WindowManager as _};
 
@@ -325,14 +356,21 @@ pub fn save_layout(mode: Mode) {
 }
 
 // ─── Persistence ────────────────────────────────────────────────────────────
+//
+// REAPER ExtState-backed — no standalone equivalent exists (nothing to
+// persist mode across, outside a REAPER install's `reaper-extstate.ini`).
+// REAPER-only — see the `reaper` Cargo feature.
 
-/// REAPER ExtState section + key used for the persisted mode slug.
+/// REAPER `ExtState` section + key used for the persisted mode slug.
 /// Lives in `reaper-extstate.ini` (global, not per-project) so the
 /// extension restores the same mode regardless of which project loads
 /// at startup.
+#[cfg(feature = "reaper")]
 const EXTSTATE_SECTION: &str = "FTS_SESSION";
+#[cfg(feature = "reaper")]
 const EXTSTATE_KEY_MODE: &str = "current_mode";
 
+#[cfg(feature = "reaper")]
 fn persist_current_mode(mode: Mode) {
     use daw::service::ExtState as _;
 
@@ -342,9 +380,14 @@ fn persist_current_mode(mode: Mode) {
     tracing::debug!(mode = %mode, "[session] Persisted mode to extstate");
 }
 
-/// Read the persisted mode slug from REAPER ExtState. Returns `None`
+#[cfg(not(feature = "reaper"))]
+const fn persist_current_mode(_mode: Mode) {}
+
+/// Read the persisted mode slug from REAPER `ExtState`. Returns `None`
 /// when no value has been stored yet (first launch) or the stored
 /// value doesn't match a known mode.
+#[cfg(feature = "reaper")]
+#[must_use] 
 pub fn persisted_mode() -> Option<Mode> {
     use daw::service::ExtState as _;
 
@@ -355,10 +398,16 @@ pub fn persisted_mode() -> Option<Mode> {
     Mode::from_slug(&raw)
 }
 
-/// Convenience: if there's a persisted mode, switch to it. Intended to
-/// run once at extension startup, after session module init but before
-/// other listeners depend on the active mode. Returns the restored mode
-/// if any.
+#[cfg(not(feature = "reaper"))]
+#[must_use]
+pub const fn persisted_mode() -> Option<Mode> {
+    None
+}
+
+/// Convenience: if there's a persisted mode, switch to it.
+///
+/// Intended to run once at extension startup, after session module init but before
+/// other listeners depend on the active mode. Returns the restored mode if any.
 pub fn restore_persisted_mode() -> Option<Mode> {
     let mode = persisted_mode()?;
     tracing::info!(mode = %mode, "[session] Restoring persisted mode from extstate");
@@ -375,8 +424,14 @@ pub fn restore_persisted_mode() -> Option<Mode> {
 // the same `FTS_SESSION_MODE_*` command ids a second time.
 
 /// Serves the twenty-one mode actions (10 switch + 10 save-layout + log).
+///
+/// `save_*` needs `save_layout`, REAPER-only — the whole impl is gated
+/// with it rather than leaving 10 of 21 methods unimplementable without
+/// the `reaper` feature.
+#[cfg(feature = "reaper")]
 pub struct ModeActionsImpl;
 
+#[cfg(feature = "reaper")]
 impl ModeActions for ModeActionsImpl {
     fn organize(&self) {
         set_mode(Mode::Organize);
@@ -444,6 +499,7 @@ impl ModeActions for ModeActionsImpl {
 }
 
 /// Registers all twenty-one mode actions with `backend`.
+#[cfg(feature = "reaper")]
 pub fn register_actions<B>(backend: &B)
 where
     B: ::architect::action::ActionBackend + ?Sized,

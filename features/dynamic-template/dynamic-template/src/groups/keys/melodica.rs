@@ -8,7 +8,7 @@ pub struct Melodica;
 
 impl From<Melodica> for Group<ItemMetadata> {
     fn from(_val: Melodica) -> Self {
-        Group::builder("Melodica")
+        Self::builder("Melodica")
             .patterns(vec!["melodica", "melodion", "pianica"])
             .build()
     }

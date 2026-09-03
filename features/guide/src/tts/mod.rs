@@ -25,6 +25,7 @@ use crate::samples::{load_wav, AudioSample, SampleBank};
 use crate::GuideError;
 
 /// The guide-sample key a spoken cue is stored under in the `SampleBank`.
+#[must_use] 
 pub fn tts_cue_key(text: &str) -> String {
     format!("tts:{text}")
 }
@@ -45,6 +46,10 @@ pub trait TtsRenderer {
     fn voice_id(&self) -> &str;
 
     /// Synthesize `text` to mono PCM.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if synthesis fails.
     fn render(&mut self, text: &str) -> Result<TtsAudio, GuideError>;
 }
 
@@ -65,13 +70,18 @@ impl CueBank {
     }
 
     /// The wav path a cue text caches to: `<dir>/<sha256(text \0 voice)>.wav`.
+    #[must_use] 
     pub fn cache_path(&self, text: &str) -> PathBuf {
         let mut hasher = Sha256::new();
         hasher.update(text.as_bytes());
         hasher.update([0u8]);
         hasher.update(self.voice_id.as_bytes());
         let digest = hasher.finalize();
-        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        let hex: String = digest.iter().fold(String::new(), |mut s, b| {
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
+            s
+        });
         self.cache_dir.join(format!("{hex}.wav"))
     }
 
@@ -92,6 +102,10 @@ impl CueBank {
     }
 
     /// Get a cue's PCM, rendering + caching it via `tts` on a cache miss.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GuideError` if the text cannot be synthesized.
     pub fn get_or_render(
         &self,
         text: &str,
@@ -132,16 +146,16 @@ impl CueBank {
     ) -> Vec<String> {
         let mut loaded = Vec::new();
         for text in texts {
-            let sample = match tts.as_deref_mut() {
-                Some(renderer) => match self.get_or_render(text, target_sample_rate, renderer) {
+            let sample = tts.as_deref_mut().map_or_else(
+                || self.load_cached(text, target_sample_rate),
+                |renderer| match self.get_or_render(text, target_sample_rate, renderer) {
                     Ok(sample) => Some(sample),
                     Err(e) => {
                         warn!(text, error = %e, "TTS render failed for cue");
                         None
                     }
                 },
-                None => self.load_cached(text, target_sample_rate),
-            };
+            );
             match sample {
                 Some(sample) => {
                     bank.insert_guide(tts_cue_key(text), sample);
@@ -171,7 +185,13 @@ fn write_wav_mono(path: &Path, audio: &TtsAudio) -> Result<(), GuideError> {
     let mut writer = hound::WavWriter::create(path, spec)
         .map_err(|e| GuideError::CueCache(format!("{}: {e}", path.display())))?;
     for s in &audio.samples {
-        let v = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+        // Safe to use to_int_unchecked: value is clamped to i16 range
+        let v = unsafe {
+            (s.clamp(-1.0, 1.0) * f32::from(i16::MAX))
+                .round()
+                .clamp(f32::from(i16::MIN), f32::from(i16::MAX))
+                .to_int_unchecked::<i16>()
+        };
         writer
             .write_sample(v)
             .map_err(|e| GuideError::CueCache(format!("{}: {e}", path.display())))?;

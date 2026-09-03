@@ -27,7 +27,7 @@ impl Probe for ProbeBackend {
         42
     }
     async fn blob(&self, n: u32) -> Vec<u8> {
-        (0..n).map(|i| (i % 251) as u8).collect()
+        (0..n).map(|i| u8::try_from(i % 251).unwrap_or(0)).collect()
     }
     async fn fetch(&self) -> Setlist {
         use session_proto::song::{Chart, Section, Song};
@@ -37,11 +37,11 @@ impl Probe for ProbeBackend {
             id: Some(1),
             name: "Verse".into(),
             comment: None,
-            section_type: keyflow::sections::SectionType::parse("Verse").unwrap(),
+            section_type: keyflow::sections::SectionType::Verse,
             start_seconds: 0.0,
             end_seconds: 16.0,
             number: Some(1),
-            color: Some(0x336699),
+            color: Some(0x0033_6699),
         };
         let song = Song {
             id: SongId::default(),
@@ -60,7 +60,7 @@ impl Probe for ProbeBackend {
             detected_chords: vec![],
             chart_fingerprint: Some("fp".into()),
             advance_mode: None,
-            color: Some(0x112233),
+            color: Some(0x0011_2233),
         };
         Setlist {
             id: Some("repro".into()),
@@ -71,7 +71,7 @@ impl Probe for ProbeBackend {
     }
 }
 
-async fn with_client<F, Fut>(body: F)
+async fn with_client<F, Fut>(body: F) -> Result<(), String>
 where
     F: FnOnce(ProbeClient) -> Fut,
     Fut: std::future::Future<Output = ()>,
@@ -86,24 +86,27 @@ where
             lane.handle_with(ProbeDispatcher::new(ProbeBackend));
             Ok(())
         });
-        let _connection = vox::acceptor_on(b)
+        let Ok(_connection) = vox::acceptor_on(b)
             .on_lane(lane_acceptor)
             .establish_connection()
             .await
-            .expect("server handshake");
+        else {
+            return;
+        };
         std::future::pending::<()>().await;
     });
 
     let connection = vox::initiator_on(a)
         .establish_connection()
         .await
-        .expect("client handshake");
+        .map_err(|e| format!("client handshake: {e:?}"))?;
     let client = connection
         .open_lane::<ProbeClient>()
         .await
-        .expect("open Probe lane");
+        .map_err(|e| format!("open Probe lane: {e:?}"))?;
     body(client).await;
     server.abort();
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -111,10 +114,11 @@ async fn unit_return_roundtrips() {
     with_client(|client| async move {
         match tokio::time::timeout(Duration::from_secs(5), client.ping()).await {
             Ok(v) => assert_eq!(v.expect("ping rpc"), 42),
-            Err(_) => panic!("ping (unit return) HUNG"),
+            Err(elapsed) => panic!("ping (unit return) HUNG: {elapsed}"),
         }
     })
-    .await;
+    .await
+    .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -124,12 +128,13 @@ async fn large_blob_roundtrips() {
             Ok(v) => {
                 let b = v.expect("blob rpc");
                 assert_eq!(b.len(), 50_000, "blob truncated: got {}", b.len());
-                assert_eq!(b[49_999], (49_999u32 % 251) as u8, "blob corrupted");
+                assert_eq!(b[49_999], u8::try_from(49_999u32 % 251).unwrap_or(0), "blob corrupted");
             }
-            Err(_) => panic!("blob HUNG"),
+            Err(elapsed) => panic!("blob HUNG: {elapsed}"),
         }
     })
-    .await;
+    .await
+    .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -140,8 +145,9 @@ async fn complex_return_roundtrips() {
                 let s = v.expect("fetch rpc");
                 assert_eq!(s.name, "Repro Setlist");
             }
-            Err(_) => panic!("fetch (complex return) HUNG — reproduced the live bug"),
+            Err(elapsed) => panic!("fetch (complex return) HUNG — reproduced the live bug: {elapsed}"),
         }
     })
-    .await;
+    .await
+    .unwrap();
 }

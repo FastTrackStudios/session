@@ -32,6 +32,10 @@ pub trait GuideActions {
         category = "Session",
         group = "Guide"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the tracks
+    /// cannot be written.
     fn generate_guide_tracks(&self) -> DawResult<()>;
 
     #[action(
@@ -40,6 +44,10 @@ pub trait GuideActions {
         category = "Session",
         group = "Guide"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the tracks
+    /// cannot be written.
     fn generate_click_track(&self) -> DawResult<()>;
 
     #[action(
@@ -48,6 +56,10 @@ pub trait GuideActions {
         category = "Session",
         group = "Guide"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the tracks
+    /// cannot be written.
     fn generate_cue_tracks(&self) -> DawResult<()>;
 
     #[action(
@@ -56,6 +68,10 @@ pub trait GuideActions {
         category = "Session",
         group = "Guide"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the tracks
+    /// cannot be written.
     fn clear_guide_tracks(&self) -> DawResult<()>;
 }
 

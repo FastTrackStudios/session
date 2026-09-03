@@ -18,10 +18,15 @@ pub struct Drums;
 
 impl From<Drums> for Group<ItemMetadata> {
     fn from(_val: Drums) -> Self {
-        Group::builder("Drums")
+        Self::builder("Drums")
             .prefix("D")
             // No patterns - this is just a container group
             // The nested groups will handle pattern matching
+            // A talkback mic is named for whoever it belongs to ("TB Drums"),
+            // so without this it classifies as the thing it is listening to.
+            // The exclusion sits on the container because a pattern-less group
+            // matches everything, so blocking it here blocks the whole subtree.
+            .exclude(["tb", "talkback", "vca", "hp", "headphone"])
             .group(DrumKit)
             .group(ElectronicKit)
             .build()

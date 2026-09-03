@@ -1,41 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn cherry_poppin_daddies_zoot_suit() -> Result<()> {
-    // -- Setup & Fixtures
-    // Cherry Poppin' Daddies - Zoot Suit Riot: 11-stem swing/ska session from MedleyDB.
-    // Horn section with trumpets and trombone, double bass, clean electric guitar, piano,
-    // full drums, tambourine, lead vocals and backing vocals. Tests big band / swing
-    // instrumentation with horn section classification.
-    let items = vec![
-        "01_Drums.wav",
-        "02_DoubleBass.wav",
-        "03_ElecGtr.wav",
-        "04_Piano.wav",
-        "05_Trumpet1.wav",
-        "06_Trumpet2.wav",
-        "07_Trombone.wav",
-        "08_HornSection.wav",
-        "09_Tambourine.wav",
-        "10_LeadVox.wav",
-        "11_BackingVox.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
+fn cherry_poppin_daddies_zoot_suit_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::single_track("Drums", "01_Drums.wav");
     let percussion = TrackGroup::single_track("Percussion", "09_Tambourine.wav");
     let guitars = TrackGroup::single_track("Guitars", "03_ElecGtr.wav");
@@ -80,8 +46,43 @@ fn cherry_poppin_daddies_zoot_suit() -> Result<()> {
         .group(vocals)
         .group(orchestra)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn cherry_poppin_daddies_zoot_suit() {
+    // -- Setup & Fixtures
+    // Cherry Poppin' Daddies - Zoot Suit Riot: 11-stem swing/ska session from MedleyDB.
+    // Horn section with trumpets and trombone, double bass, clean electric guitar, piano,
+    // full drums, tambourine, lead vocals and backing vocals. Tests big band / swing
+    // instrumentation with horn section classification.
+    let items = vec![
+        "01_Drums.wav",
+        "02_DoubleBass.wav",
+        "03_ElecGtr.wav",
+        "04_Piano.wav",
+        "05_Trumpet1.wav",
+        "06_Trumpet2.wav",
+        "07_Trombone.wav",
+        "08_HornSection.wav",
+        "09_Tambourine.wav",
+        "10_LeadVox.wav",
+        "11_BackingVox.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    let expected = cherry_poppin_daddies_zoot_suit_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

@@ -26,9 +26,16 @@ struct SectionRegion {
     section_type: SectionType,
 }
 
-pub fn init(_ctx: &ModuleContext) {}
+pub const fn init(_ctx: &ModuleContext) {}
 
-pub(crate) fn dispatch<D>(daw: &D, action: KeyflowAction)
+/// Run one keyflow section/marker action directly against `daw`.
+///
+/// `register_actions` is the REAPER-facing path (wires these up as named
+/// actions an `ActionBackend` can bind a keystroke to). A host with no
+/// action menu — a standalone toolbar button, say — has nothing to bind
+/// to and just wants to fire the action once; this is that entry point,
+/// same dispatch either way.
+pub fn dispatch<D>(daw: &D, action: KeyflowAction)
 where
     D: Projects + TransportService + Markers + Regions + TempoMap,
 {
@@ -116,8 +123,8 @@ where
         // place_marker_via_action handle existing entities.
         daw.set_project_info(
             project.clone(),
-            &format!("RULER_LANE_FLAGS:{}", key_idx),
-            lane.flags() as f64,
+            &format!("RULER_LANE_FLAGS:{key_idx}"),
+            f64::from(lane.flags()),
         );
     }
 }
@@ -133,8 +140,8 @@ where
     let project = ProjectContext::Current;
     let valid_names: HashSet<&str> = CoreLane::all()
         .iter()
-        .map(|l| l.display_name())
-        .chain(InstrumentLane::all().iter().map(|l| l.display_name()))
+        .map(session_proto::ruler_lanes::CoreLane::display_name)
+        .chain(InstrumentLane::all().iter().map(session_proto::ruler_lanes::InstrumentLane::display_name))
         .collect();
 
     let mut used_lanes: HashSet<u32> = HashSet::new();
@@ -192,15 +199,17 @@ where
         .filter(|m| m.position.seconds().is_some())
         .collect();
     all_markers.sort_by(|a, b| {
-        a.position
-            .seconds()
-            .unwrap()
-            .total_cmp(&b.position.seconds().unwrap())
+        match (a.position.seconds(), b.position.seconds()) {
+            (Some(a_sec), Some(b_sec)) => a_sec.total_cmp(&b_sec),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
     });
 
     let marker_positions: Vec<f64> = all_markers
         .iter()
-        .map(|m| m.position.seconds().unwrap())
+        .filter_map(|m| m.position.seconds())
         .collect();
 
     let songstart_pos = all_markers
@@ -224,10 +233,12 @@ where
             continue;
         };
 
-        let start = marker_positions[i];
+        let Some(start) = marker_positions.get(i).copied() else {
+            continue;
+        };
         let end = marker_positions
             .iter()
-            .skip(i + 1)
+            .skip(i.saturating_add(1))
             .find(|&&p| p > start + TOUCH_EPSILON_SECONDS)
             .copied()
             .or(songend_pos)
@@ -248,7 +259,7 @@ where
             daw,
             project.clone(),
             region_id,
-            section_type_color(section_type),
+            section_type_color(&section_type),
         )?;
         Markers::remove(daw, project.clone(), id)?;
 
@@ -257,8 +268,8 @@ where
     }
 
     let song_start =
-        songstart_pos.or_else(|| converted_section_starts.iter().cloned().reduce(f64::min));
-    let song_end = songend_pos.or_else(|| converted_section_ends.iter().cloned().reduce(f64::max));
+        songstart_pos.or_else(|| converted_section_starts.iter().copied().reduce(f64::min));
+    let song_end = songend_pos.or_else(|| converted_section_ends.iter().copied().reduce(f64::max));
 
     if let (Some(start), Some(end)) = (song_start, song_end)
         && end > start
@@ -268,7 +279,7 @@ where
             .any(|r| r.lane == Some(song_lane));
         if !already_has_song_region {
             let id = Regions::add(daw, project.clone(), start, end, &project_name)?;
-            Regions::set_lane(daw, project.clone(), id, Some(song_lane))?;
+            Regions::set_lane(daw, project, id, Some(song_lane))?;
         }
     }
 
@@ -309,7 +320,7 @@ where
     D: TempoMap,
 {
     let (measure, beat, fraction) = daw.time_to_musical(project.clone(), position);
-    daw.musical_to_time(project, measure + 2, beat, fraction)
+    daw.musical_to_time(project, measure.saturating_add(2), beat, fraction)
 }
 
 fn insert_section_region<D>(daw: &D, kind: SectionKind) -> eyre::Result<()>
@@ -352,7 +363,7 @@ where
         daw,
         project.clone(),
         id,
-        section_type_color(kind.section_type()),
+        section_type_color(&kind.section_type()),
     )?;
     debug!(id, "[session] Keyflow section insert: color complete");
     debug!(
@@ -383,15 +394,13 @@ where
     Ok(())
 }
 
-fn edit_cursor_position<D>(daw: &D, project: ProjectContext) -> f64
+pub(crate) fn edit_cursor_position<D>(daw: &D, project: ProjectContext) -> f64
 where
     D: TransportService,
 {
     daw.get_state(project.clone())
         .edit_position
-        .time
-        .map(|position| position.as_seconds())
-        .unwrap_or_else(|| daw.get_position(project))
+        .time.map_or_else(|| daw.get_position(project), |position| position.as_seconds())
 }
 
 fn infer_insert_bounds<D>(
@@ -497,8 +506,7 @@ where
 fn choose_default_end(position: f64, musical_end: f64, next_section_start: Option<f64>) -> f64 {
     next_section_start
         .filter(|next| next.is_finite())
-        .map(|next| next.min(musical_end))
-        .unwrap_or(musical_end)
+        .map_or(musical_end, |next| next.min(musical_end))
         .max(position + TOUCH_EPSILON_SECONDS)
 }
 
@@ -517,18 +525,33 @@ where
     let project = ProjectContext::Current;
     let (measure, beat, fraction) = daw.time_to_musical(project.clone(), position);
     let start = musical_position_from_fraction(measure, beat, fraction);
+    let measure_count = i32::try_from(kind.default_measure_count()).unwrap_or(4);
     let end = MusicalPosition::new(
-        start.measure + kind.default_measure_count() as i32,
+        start.measure.saturating_add(measure_count),
         start.beat,
         start.subdivision,
     );
-    let end_fraction = end.subdivision as f64 / 1000.0;
+    let end_fraction = f64::from(end.subdivision) / 1000.0;
     daw.musical_to_time(project, end.measure, end.beat, end_fraction)
 }
 
 fn musical_position_from_fraction(measure: i32, beat: i32, fraction: f64) -> MusicalPosition {
     let subdivision = if fraction.is_finite() {
-        (fraction * 1000.0).round() as i32
+        let millis = (fraction * 1000.0).round();
+        if millis >= 0.0 && millis <= 1000.0 {
+            // Range-checked above (0.0..=1000.0); std has no non-`as`
+            // float-to-int conversion.
+            #[allow(
+                clippy::as_conversions,
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss
+            )]
+            {
+                millis as i32
+            }
+        } else {
+            0
+        }
     } else {
         0
     };
@@ -551,18 +574,16 @@ where
             name,
             section_type,
         } = update;
-        let desired_color = section_type_color(section_type);
+        let desired_color = section_type_color(&section_type);
         let current = existing.get(&id);
         if current
-            .map(|(current_name, _, _)| current_name != &name)
-            .unwrap_or(true)
+            .is_none_or(|(current_name, _, _)| current_name != &name)
         {
             debug!(id, name, "[session] Normalizing section region: rename");
             Regions::rename(daw, project.clone(), id, &name)?;
         }
         if current
-            .map(|(_, _, current_color)| *current_color != Some(desired_color))
-            .unwrap_or(true)
+            .is_none_or(|(_, _, current_color)| *current_color != Some(desired_color))
         {
             debug!(
                 id,
@@ -580,8 +601,7 @@ where
         // regions stick in lane 0 (REAPER's unnamed default).
         let section_lane = CoreLane::Sections.lane_index();
         if current
-            .map(|(_, current_lane, _)| *current_lane != Some(section_lane))
-            .unwrap_or(true)
+            .is_none_or(|(_, current_lane, _)| *current_lane != Some(section_lane))
         {
             debug!(
                 id,
@@ -639,7 +659,7 @@ fn normalized_section_updates(regions: Vec<Region>) -> Vec<SectionUpdate> {
     let mut song_starts: Vec<f64> = regions
         .iter()
         .filter(|region| region.lane == Some(song_lane))
-        .map(|region| region.start_seconds())
+        .map(daw_proto::Region::start_seconds)
         .collect();
     song_starts.sort_by(f64::total_cmp);
 
@@ -713,11 +733,13 @@ fn number_sections_in_song(sections: Vec<SectionRegion>) -> Vec<SectionUpdate> {
         let multiple_groups = groups.len() > 1;
 
         for (group_index, group) in groups.iter().enumerate() {
-            let group_number = group_index + 1;
+            let group_number = group_index.saturating_add(1);
             let multiple_in_group = group.len() > 1;
 
             for (letter_index, section_index) in group.iter().enumerate() {
-                let section = &same_type[*section_index];
+                let Some(section) = same_type.get(*section_index) else {
+                    continue;
+                };
                 let new_name = section_name(
                     &section.section_type,
                     multiple_groups,
@@ -742,12 +764,11 @@ fn section_groups(sections: &[SectionRegion]) -> Vec<Vec<usize>> {
     for (idx, section) in sections.iter().enumerate() {
         if let Some(group) = groups.last_mut()
             && let Some(prev_idx) = group.last()
+            && let Some(prev) = sections.get(*prev_idx)
+            && (prev.end - section.start).abs() <= TOUCH_EPSILON_SECONDS
         {
-            let prev = &sections[*prev_idx];
-            if (prev.end - section.start).abs() <= TOUCH_EPSILON_SECONDS {
-                group.push(idx);
-                continue;
-            }
+            group.push(idx);
+            continue;
         }
         groups.push(vec![idx]);
     }
@@ -765,7 +786,7 @@ fn section_name(
     match (multiple_groups, multiple_in_group) {
         (false, false) => base,
         (false, true) => format!("{} {}", base, alpha_suffix(letter_index)),
-        (true, false) => format!("{} {}", base, group_number),
+        (true, false) => format!("{base} {group_number}"),
         (true, true) => format!("{} {}{}", base, group_number, alpha_suffix(letter_index)),
     }
 }
@@ -774,12 +795,15 @@ fn alpha_suffix(index: usize) -> String {
     let mut n = index;
     let mut chars = Vec::new();
     loop {
-        chars.push((b'A' + (n % 26) as u8) as char);
-        n /= 26;
+        let offset = u8::try_from(n % 26).unwrap_or(0);
+        if let Some(c) = char::from_u32(u32::from(b'A').saturating_add(u32::from(offset))) {
+            chars.push(c);
+        }
+        n = n.saturating_div(26);
         if n == 0 {
             break;
         }
-        n -= 1;
+        n = n.saturating_sub(1);
     }
     chars.iter().rev().collect()
 }
@@ -792,7 +816,7 @@ fn parse_region_section_type(name: &str) -> Option<SectionType> {
 
     let mut token = trimmed.split_whitespace().next()?;
     if token.ends_with(':') {
-        token = &token[..token.len() - 1];
+        token = token.get(..token.len().saturating_sub(1)).unwrap_or("");
     }
 
     SectionType::parse(token)
@@ -800,14 +824,13 @@ fn parse_region_section_type(name: &str) -> Option<SectionType> {
         .or_else(|| SectionType::parse(trimmed).ok())
 }
 
-pub(crate) fn section_type_color(section_type: SectionType) -> u32 {
+pub(crate) fn section_type_color(section_type: &SectionType) -> u32 {
     if matches!(section_type, SectionType::CountIn) {
         return MarkerKind::CountIn.default_color();
     }
 
-    colors_for_section_type(&section_type)
-        .bright
-        .to_reaper_native() as u32
+    let color_i32 = colors_for_section_type(section_type).bright.to_reaper_native();
+    u32::try_from(color_i32).unwrap_or(0)
 }
 
 fn marker_color_for_name(name: &str) -> Option<u32> {
@@ -823,7 +846,12 @@ fn marker_color_for_name(name: &str) -> Option<u32> {
 }
 
 impl SectionKind {
-    pub(crate) fn section_type(self) -> SectionType {
+    /// The keyflow `SectionType` this kind stamps a region as — also
+    /// what a non-REAPER caller (a toolbar button) uses to look up the
+    /// same color the region gets, via
+    /// `keyflow::sections::colors_for_section_type`.
+    #[must_use] 
+    pub fn section_type(self) -> SectionType {
         match self {
             Self::Intro => SectionType::Intro,
             Self::Verse => SectionType::Verse,
@@ -850,14 +878,14 @@ impl SectionKind {
     /// session model has no free-form section kind, so a custom section is
     /// stamped as a generic instrumental region (its label is carried
     /// separately).
-    pub(crate) fn from_section_type(st: &SectionType) -> SectionKind {
+    pub(crate) const fn from_section_type(st: &SectionType) -> Self {
         match st {
-            SectionType::Intro => Self::Intro,
+            SectionType::Intro | SectionType::Opening => Self::Intro,
             SectionType::Verse => Self::Verse,
             SectionType::Chorus => Self::Chorus,
             SectionType::Bridge => Self::Bridge,
-            SectionType::Outro => Self::Outro,
-            SectionType::Instrumental => Self::Instrumental,
+            SectionType::Outro | SectionType::Post(_) => Self::Outro,
+            SectionType::Instrumental | SectionType::Custom(_) => Self::Instrumental,
             SectionType::Solo => Self::Solo,
             SectionType::CountIn => Self::CountIn,
             SectionType::End => Self::End,
@@ -868,9 +896,6 @@ impl SectionKind {
             SectionType::Refrain => Self::Refrain,
             SectionType::Turnaround => Self::Turnaround,
             SectionType::Pre(_) => Self::PreChorus,
-            SectionType::Opening => Self::Intro,
-            SectionType::Post(_) => Self::Outro,
-            SectionType::Custom(_) => Self::Instrumental,
         }
     }
 
@@ -878,7 +903,7 @@ impl SectionKind {
         self.verified_default_measure_count().unwrap_or(4)
     }
 
-    fn verified_default_measure_count(self) -> Option<u32> {
+    const fn verified_default_measure_count(self) -> Option<u32> {
         match self {
             Self::CountIn | Self::Turnaround => Some(2),
             Self::Verse | Self::Chorus | Self::Bridge | Self::Refrain => Some(8),
@@ -895,7 +920,7 @@ impl SectionKind {
 }
 
 impl MarkerKind {
-    fn name(self) -> &'static str {
+    const fn name(self) -> &'static str {
         match self {
             Self::CountIn => "COUNT-IN",
             Self::Start => "=START",
@@ -905,14 +930,8 @@ impl MarkerKind {
         }
     }
 
-    fn default_color(self) -> u32 {
-        match self {
-            Self::CountIn => reaper_native_rgb(0xEC4899), // pink-500
-            Self::SongStart => reaper_native_rgb(0x22C55E), // green-500
-            Self::Start => reaper_native_rgb(0x737373),   // neutral-500
-            Self::End => reaper_native_rgb(0xDC2626),     // red-600
-            Self::SongEnd => reaper_native_rgb(0x475569), // slate-600
-        }
+    const fn default_color(self) -> u32 {
+        reaper_native_rgb(self.rgb())
     }
 }
 
@@ -926,7 +945,7 @@ const fn reaper_native_rgb(rgb: u32) -> u32 {
 
 #[cfg(not(target_os = "windows"))]
 const fn reaper_native_rgb(rgb: u32) -> u32 {
-    0x01000000 | (rgb & 0xFFFFFF)
+    0x0100_0000 | (rgb & 0x00FF_FFFF)
 }
 
 // ── architect::actions implementation ───────────────────────────────────
@@ -1106,12 +1125,14 @@ mod tests {
 
     #[test]
     fn default_end_is_capped_by_next_section() {
-        assert_eq!(choose_default_end(4.0, 20.0, Some(12.0)), 12.0);
+        let result = choose_default_end(4.0, 20.0, Some(12.0));
+        assert!((result - 12.0).abs() < 1e-10);
     }
 
     #[test]
     fn default_end_uses_musical_end_without_next_section() {
-        assert_eq!(choose_default_end(4.0, 20.0, None), 20.0);
+        let result = choose_default_end(4.0, 20.0, None);
+        assert!((result - 20.0).abs() < 1e-10);
     }
 
     #[test]
@@ -1156,14 +1177,14 @@ mod tests {
 
     #[test]
     fn section_colors_use_keyflow_palette() {
+        let chorus_reaper_color = colors_for_section_type(&SectionType::Chorus).bright.to_reaper_native();
+        let chorus_color = u32::try_from(chorus_reaper_color).unwrap_or(0);
         assert_eq!(
-            section_type_color(SectionType::Chorus),
-            colors_for_section_type(&SectionType::Chorus)
-                .bright
-                .to_reaper_native() as u32
+            section_type_color(&SectionType::Chorus),
+            chorus_color
         );
         assert_eq!(
-            section_type_color(SectionType::CountIn),
+            section_type_color(&SectionType::CountIn),
             MarkerKind::CountIn.default_color()
         );
     }

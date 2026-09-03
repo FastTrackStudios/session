@@ -4,6 +4,12 @@
 //! between individual song projects and the merged setlist project.
 //! All types are pure data with no DAW dependency.
 
+// The `Facet` derive below expands to offset arithmetic internally (the
+// lint fires at the derive macro's own generated code, per clippy's "this
+// error originates in the derive macro `Facet`" note) — there is no
+// hand-written code here to rewrite without forking the `facet` crate.
+#![allow(clippy::arithmetic_side_effects)]
+
 use facet::Facet;
 
 // ─── Track Identity ──────────────────────────────────────────
@@ -29,6 +35,7 @@ pub enum TrackIdentity {
 
 impl TrackIdentity {
     /// Create a GUID-preferred identity with name-path fallback.
+    #[must_use] 
     pub fn new(guid: Option<String>, name_path: Vec<String>) -> Self {
         match guid {
             Some(guid) => Self::GuidWithFallback { guid, name_path },
@@ -37,6 +44,7 @@ impl TrackIdentity {
     }
 
     /// Returns the GUID if available.
+    #[must_use] 
     pub fn guid(&self) -> Option<&str> {
         match self {
             Self::Guid(g) | Self::GuidWithFallback { guid: g, .. } => Some(g),
@@ -45,6 +53,7 @@ impl TrackIdentity {
     }
 
     /// Returns the name path if available.
+    #[must_use] 
     pub fn name_path(&self) -> Option<&[String]> {
         match self {
             Self::NamePath(p) | Self::GuidWithFallback { name_path: p, .. } => Some(p),
@@ -53,6 +62,7 @@ impl TrackIdentity {
     }
 
     /// Check if two identities match (GUID takes priority).
+    #[must_use] 
     pub fn matches(&self, other: &Self) -> bool {
         // Try GUID match first
         if let (Some(a), Some(b)) = (self.guid(), other.guid()) {
@@ -83,7 +93,8 @@ pub enum GuideTrackRole {
 
 impl GuideTrackRole {
     /// Canonical track name in the DAW.
-    pub fn name(&self) -> &'static str {
+    #[must_use] 
+    pub const fn name(&self) -> &'static str {
         match self {
             Self::Click => "Click",
             Self::Loop => "Loop",
@@ -93,7 +104,8 @@ impl GuideTrackRole {
     }
 
     /// All guide track roles in display order.
-    pub fn all() -> &'static [GuideTrackRole] {
+    #[must_use] 
+    pub const fn all() -> &'static [Self] {
         &[Self::Click, Self::Loop, Self::Count, Self::Guide]
     }
 }
@@ -122,7 +134,7 @@ pub struct SongTrackMapping {
 
 /// A guide track entry — identifies a track in the song project that maps
 /// to a shared guide track in the setlist project.
-#[derive(Clone, Debug, PartialEq, Facet)]
+#[derive(Clone, Debug, PartialEq, Eq, Facet)]
 pub struct GuideTrackEntry {
     pub role: GuideTrackRole,
     pub identity: TrackIdentity,
@@ -138,7 +150,7 @@ pub struct TrackEntry {
     /// Whether this is a folder track.
     pub is_folder: bool,
     /// Child tracks (if this is a folder).
-    pub children: Vec<TrackEntry>,
+    pub children: Vec<Self>,
 }
 
 /// Reference track structure within a song.
@@ -183,16 +195,19 @@ pub struct SetlistTrackStructure {
 
 impl SetlistTrackStructure {
     /// Create a new setlist track structure from song mappings.
-    pub fn new(song_mappings: Vec<SongTrackMapping>) -> Self {
+    #[must_use] 
+    pub const fn new(song_mappings: Vec<SongTrackMapping>) -> Self {
         Self { song_mappings }
     }
 
     /// Get the mapping for a specific song by index.
+    #[must_use] 
     pub fn song_mapping(&self, song_index: usize) -> Option<&SongTrackMapping> {
         self.song_mappings.get(song_index)
     }
 
     /// Find a song mapping by name.
+    #[must_use] 
     pub fn song_mapping_by_name(&self, name: &str) -> Option<&SongTrackMapping> {
         self.song_mappings.iter().find(|m| m.song_name == name)
     }

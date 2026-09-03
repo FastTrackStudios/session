@@ -13,7 +13,7 @@ pub struct Trombones;
 
 impl From<Trombones> for Group<ItemMetadata> {
     fn from(_val: Trombones) -> Self {
-        Group::builder("Trombones")
+        Self::builder("Trombones")
             .patterns(vec!["trombone", "trombones", "tbn"])
             // Transparent so Trombone / Bass Trombone appear directly under Brass.
             .transparent()

@@ -29,39 +29,67 @@ pub trait TrackManagerActions {
         undo,
         description = "Add the next dynamic-template channel to the selected track scope"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the track
+    /// structure cannot be built.
     fn add_channel(&self) -> DawResult<()>;
 
     #[action(
         undo,
         description = "Add the next dynamic-template layer to the selected track scope"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the track
+    /// structure cannot be built.
     fn add_layer(&self) -> DawResult<()>;
 
     #[action(
         undo,
         description = "Add the next dynamic-template multi-mic track to the selected track scope"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the track
+    /// structure cannot be built.
     fn add_multi_mic(&self) -> DawResult<()>;
 
     #[action(
         undo,
         description = "Add a performer folder to the selected track scope"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the track
+    /// structure cannot be built.
     fn add_performer(&self) -> DawResult<()>;
 
     #[action(
         undo,
         description = "Add the next dynamic-template arrangement to the selected instrument scope"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the track
+    /// structure cannot be built.
     fn add_arrangement(&self) -> DawResult<()>;
 
     #[action(
         description = "Reorganize selected tracks with performer as the top metadata dimension"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the track
+    /// structure cannot be built.
     fn reorganize_selected_by_performer(&self) -> DawResult<()>;
 
     #[action(
         description = "Reorganize selected tracks with arrangement as the top metadata dimension"
     )]
+    /// # Errors
+    ///
+    /// Returns an error if the DAW is unavailable or the track
+    /// structure cannot be built.
     fn reorganize_selected_by_arrangement(&self) -> DawResult<()>;
 }

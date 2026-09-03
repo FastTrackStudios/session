@@ -25,7 +25,7 @@ fn holy_forever() {
         "Holy Forever - Piano.wav",
         "Holy Forever - Synth Bass.wav",
     ];
-    let (placement, _) = organize("Holy Forever", &items);
+    let (placement, _) = organize("Holy Forever", &items).unwrap();
     let ing = |f: &str, g: &str| in_group(&placement, f, g);
 
     // Guide folder: click + spoken guide.

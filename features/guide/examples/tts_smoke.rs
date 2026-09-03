@@ -1,6 +1,6 @@
 //! Isolated Chatterbox TTS smoke test — model download + ort load + synth.
-//! Run: nix develop -c cargo run -p session-guide --features tts --example tts_smoke
-//! (needs ORT_DYLIB_PATH from the flake and ~/.config/fts/tts-voice.wav)
+//! Run: `nix develop -c cargo run -p session-guide --features tts --example tts_smoke`
+//! (needs `ORT_DYLIB_PATH` from the flake and `~/.config/fts/tts-voice.wav`)
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let home = std::env::var("HOME")?;
     let voice = format!("{home}/.config/fts/tts-voice.wav");

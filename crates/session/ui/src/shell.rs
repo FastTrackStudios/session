@@ -4,7 +4,7 @@
 //! dock layout with Navigator | Performance + Transport panels, and
 //! connection state screens (connecting / disconnected).
 //!
-//! Both the standalone session apps and the full FastTrackStudio app use this
+//! Both the standalone session apps and the full `FastTrackStudio` app use this
 //! shell — they just provide the connection state from their own backends.
 
 use std::rc::Rc;
@@ -72,7 +72,7 @@ pub fn SessionShell(
             class: "h-screen flex flex-col bg-background text-foreground",
             tabindex: 0,
             onkeydown: move |evt: KeyboardEvent| {
-                handle_hotkey(evt);
+                handle_hotkey(&evt);
             },
 
             // ── Top bar ────────────────────────────────────────────
@@ -92,7 +92,7 @@ pub fn SessionShell(
                     span { class: "text-xs text-muted-foreground font-mono", "{VERSION}" }
                     ConnectionBadge {
                         state: connection_state(),
-                        on_click: move |_| show_connection_info.toggle(),
+                        on_click: move |()| show_connection_info.toggle(),
                     }
                 }
             }
@@ -101,13 +101,13 @@ pub fn SessionShell(
             if show_connection_info() {
                 ConnectionInfoPanel {
                     state: connection_state(),
-                    on_close: move |_| show_connection_info.set(false),
+                    on_close: move |()| show_connection_info.set(false),
                 }
             }
 
             // ── Main content ───────────────────────────────────────
             if connection_state() == ConnectionState::Connected {
-                DockProvider { render_panel: render_panel.clone(),
+                DockProvider { render_panel: render_panel,
                     div { class: "flex-1 overflow-hidden relative",
                         DockRoot {}
                     }
@@ -134,7 +134,7 @@ pub fn SessionShell(
 }
 
 /// Handle global keyboard shortcuts.
-fn handle_hotkey(evt: KeyboardEvent) {
+fn handle_hotkey(evt: &KeyboardEvent) {
     use dioxus::prelude::Key;
 
     match evt.key() {

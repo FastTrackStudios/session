@@ -1,52 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn def_leppard_rock_of_ages() -> Result<()> {
-    // -- Setup & Fixtures
-    // Def Leppard - Rock of Ages: 22-track 80s rock session with synth bass variants
-    // (Saw, FM, generic), FM synth, "KeyGtr" hybrid keyboard-guitar tracks, cowbell with
-    // gang vocals, chorus claps, and dual lead vocals. Tests unusual instrument naming.
-    let items = vec![
-        "01_Kick.wav",
-        "02_Snare.wav",
-        "03_Tom1.wav",
-        "04_Tom2.wav",
-        "05_Hat.wav",
-        "06_Ovh_Snare.wav",
-        "07_Ovh_Ride.wav",
-        "08_Bass.wav",
-        "09_BassSynth1Saw.wav",
-        "10_BassSynth2FM.wav",
-        "11_BassSynth3.wav",
-        "12_SynthFM.wav",
-        "13_KeyGtr1.wav",
-        "14_KeyGtr2.wav",
-        "15_Gtr-Rh1.wav",
-        "16_Gtr-Rh2.wav",
-        "17_Gtr-Solo.wav",
-        "18_Chorus-Clap1.wav",
-        "19_Chorus-Clap2.wav",
-        "20_Cowbell-GangVox.wav",
-        "21_LeadVox.wav",
-        "22_LeadVox2.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
+fn def_leppard_rock_of_ages_expected() -> daw_proto::TrackHierarchy {
     let toms = TrackGroup::folder("Toms")
         .track("T1")
         .item("03_Tom1.wav")
@@ -147,8 +102,54 @@ fn def_leppard_rock_of_ages() -> Result<()> {
         .group(synths)
         .group(vocals)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn def_leppard_rock_of_ages() {
+    // -- Setup & Fixtures
+    // Def Leppard - Rock of Ages: 22-track 80s rock session with synth bass variants
+    // (Saw, FM, generic), FM synth, "KeyGtr" hybrid keyboard-guitar tracks, cowbell with
+    // gang vocals, chorus claps, and dual lead vocals. Tests unusual instrument naming.
+    let items = vec![
+        "01_Kick.wav",
+        "02_Snare.wav",
+        "03_Tom1.wav",
+        "04_Tom2.wav",
+        "05_Hat.wav",
+        "06_Ovh_Snare.wav",
+        "07_Ovh_Ride.wav",
+        "08_Bass.wav",
+        "09_BassSynth1Saw.wav",
+        "10_BassSynth2FM.wav",
+        "11_BassSynth3.wav",
+        "12_SynthFM.wav",
+        "13_KeyGtr1.wav",
+        "14_KeyGtr2.wav",
+        "15_Gtr-Rh1.wav",
+        "16_Gtr-Rh2.wav",
+        "17_Gtr-Solo.wav",
+        "18_Chorus-Clap1.wav",
+        "19_Chorus-Clap2.wav",
+        "20_Cowbell-GangVox.wav",
+        "21_LeadVox.wav",
+        "22_LeadVox2.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    let expected = def_leppard_rock_of_ages_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

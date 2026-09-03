@@ -1,44 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn enda_reilly_cur_an_long() -> Result<()> {
-    // -- Setup & Fixtures
-    // Enda Reilly - Cur An Long Ag Seol: Irish folk session with drum brushes, dual-mic
-    // bass, acoustic guitar, dual-mic mandolin, dual-mic fiddle, accordion, and lead
-    // vocals. Tests folk/traditional instruments and dual-mic grouping.
-    // Cambridge-MT multitrack library.
-    let items = vec![
-        "01_DrumMic1.wav",
-        "02_DrumMic2.wav",
-        "03_Brushes.wav",
-        "04_BassMic1.wav",
-        "05_BassMic2.wav",
-        "06_AcousticGtr.wav",
-        "07_MandolinMic1.wav",
-        "08_MandolinMic2.wav",
-        "09_Fiddle1.wav",
-        "10_Fiddle2.wav",
-        "11_Accordion.wav",
-        "12_LeadVox.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // ============================================================================
-    // Expected structure
-    // ============================================================================
-
-    // --- Drums ---
-    // Dual-mic drum setup plus brushes (classified as Drum Kit via "brush"/"brushes" pattern)
+fn enda_reilly_cur_an_long_expected() -> daw_proto::TrackHierarchy {
     let drums = TrackGroup::folder("Drums")
         .track("Drum Kit 1")
         .item("01_DrumMic1.wav")
@@ -103,8 +66,46 @@ fn enda_reilly_cur_an_long() -> Result<()> {
         .group(fiddle)
         .group(vocals)
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn enda_reilly_cur_an_long() {
+    // -- Setup & Fixtures
+    // Enda Reilly - Cur An Long Ag Seol: Irish folk session with drum brushes, dual-mic
+    // bass, acoustic guitar, dual-mic mandolin, dual-mic fiddle, accordion, and lead
+    // vocals. Tests folk/traditional instruments and dual-mic grouping.
+    // Cambridge-MT multitrack library.
+    let items = vec![
+        "01_DrumMic1.wav",
+        "02_DrumMic2.wav",
+        "03_Brushes.wav",
+        "04_BassMic1.wav",
+        "05_BassMic2.wav",
+        "06_AcousticGtr.wav",
+        "07_MandolinMic1.wav",
+        "08_MandolinMic2.wav",
+        "09_Fiddle1.wav",
+        "10_Fiddle2.wav",
+        "11_Accordion.wav",
+        "12_LeadVox.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // ============================================================================
+    // Expected structure
+    // ============================================================================
+
+    // --- Drums ---
+    // Dual-mic drum setup plus brushes (classified as Drum Kit via "brush"/"brushes" pattern)
+    let expected = enda_reilly_cur_an_long_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

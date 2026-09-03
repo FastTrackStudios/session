@@ -1,4 +1,4 @@
-//! SetlistService implementation
+//! `SetlistService` implementation
 //!
 //! Split into focused sub-modules:
 //! - `hydration` — Song hydration, chart extraction, caching
@@ -21,6 +21,7 @@ mod hydration;
 // The SynchronizationEngine is REAPER-linked (daw-synchronization pulls the
 // reaper daw backend), so the live daw-sync bridge is native-only.
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "reaper")]
 pub mod live_daw_sync;
 // Holds a spawned JoinHandle forwarding a `.base` file's changes — native-only.
 #[cfg(not(target_arch = "wasm32"))]
@@ -62,7 +63,7 @@ pub(crate) const PROJECT_SWITCH_DEBOUNCE_MS: u64 = 900;
 pub(crate) const TRANSPORT_TIME_EPSILON_SECS: f64 = 0.002;
 pub(crate) const TRANSPORT_PROGRESS_EPSILON: f64 = 0.0005;
 
-/// Implementation of SetlistService
+/// Implementation of `SetlistService`
 pub struct SetlistServiceImpl<D = ()> {
     /// Native in-process DAW backend. Host crates provide the concrete backend
     /// (for example daw-reaper); session only calls daw-proto service traits.
@@ -79,7 +80,7 @@ pub struct SetlistServiceImpl<D = ()> {
     /// Only one target can be queued at a time
     pub(crate) queued_target: Arc<RwLock<Option<QueuedTarget>>>,
     /// `#[subscribe]` hubs — the stream layer serves subscribers from these;
-    /// the pumps (subscribe_impl / subscribe_active_impl) publish into them.
+    /// the pumps (`subscribe_impl` / `subscribe_active_impl`) publish into them.
     pub(crate) events_hub: architect::PubSub<session_proto::SetlistEvent>,
     pub(crate) indices_hub: architect::PubSub<session_proto::ActiveIndices>,
     /// Monotonic setlist revision stream for subscribers (hydration/build updates)
@@ -94,7 +95,7 @@ pub struct SetlistServiceImpl<D = ()> {
     pub(crate) chart_hydration_bus: Arc<EventBus<(usize, SongChartHydration)>>,
     /// Chart payload cache keyed by project GUID
     pub(crate) chart_cache: Cache<String, SongChartHydration>,
-    /// Whether the connected DAW backend supports source_fingerprint().
+    /// Whether the connected DAW backend supports `source_fingerprint()`.
     /// None = unknown, Some(true) = supported, Some(false) = unsupported.
     pub(crate) fingerprint_method_supported: Arc<RwLock<Option<bool>>>,
     /// Last fallback chart refresh attempt when fingerprint API is unavailable.
@@ -162,6 +163,7 @@ impl<D> SetlistServiceImpl<D> {
 }
 
 impl SetlistServiceImpl<()> {
+    #[must_use] 
     pub fn new() -> Self {
         Self::with_daw(())
     }
@@ -173,7 +175,7 @@ impl Default for SetlistServiceImpl<()> {
     }
 }
 
-impl<D> SetlistServiceImpl<D> {
+impl<D: Sync> SetlistServiceImpl<D> {
     /// Get the cached active indices (updated by polling loop, no RPC calls)
     pub(crate) async fn get_cached_indices(&self) -> ActiveIndices {
         self.cached_indices.read().await.clone()
@@ -208,8 +210,8 @@ impl<D> SetlistServiceImpl<D> {
     /// Get a specific song by ID (internal helper)
     pub(crate) async fn get_song_by_id(&self, id: &str) -> Option<Song> {
         let setlist = self.setlist.read().await;
-        let setlist = setlist.as_ref()?;
         setlist
+            .as_ref()?
             .songs
             .iter()
             .find(|song| song.id.as_str() == id)
@@ -229,7 +231,7 @@ impl<D> SetlistServiceImpl<D> {
     }
 
     pub(crate) fn notify_setlist_changed(&self) {
-        let revision = self.setlist_revision.fetch_add(1, Ordering::SeqCst) + 1;
+        let revision = self.setlist_revision.fetch_add(1, Ordering::SeqCst).saturating_add(1);
         self.setlist_update_bus.send(revision);
     }
 }

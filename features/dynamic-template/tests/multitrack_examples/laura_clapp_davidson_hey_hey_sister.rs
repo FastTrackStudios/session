@@ -1,52 +1,7 @@
 use daw_proto::{assert_tracks_equal, TrackStructureBuilder};
 use dynamic_template::*;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-#[test]
-fn laura_clapp_davidson_hey_hey_sister() -> Result<()> {
-    // -- Setup & Fixtures
-    // Laura Clapp Davidson - Hey Hey Sister: Folk/pop with harmony layers
-    let items = vec![
-        "01.KICK_01.wav",
-        "02.SNARE_01.wav",
-        "03.HH_01.wav",
-        "04.OHS_01.wav",
-        "05.ROOM_01.wav",
-        "06.Hey_Sister_Bass DI_01.wav",
-        "07.Hey_Sister_Bass_Tone_X_01.wav",
-        "08.Hey_Sister_Acoustic_L_01.wav",
-        "09.Hey_Sister_Acoustic_R_01.wav",
-        "10.Hey_Sister_Gtr_1_L_01.wav",
-        "11.Hey_Sister_Gtr_2_R_01.wav",
-        "12.Hey_Sister_Licks_01.wav",
-        "13.Hey_Sister_Solo_01.wav",
-        "14.Laura Lead Vocal_01.wav",
-        "15.Laura Verse Harmony_01.wav",
-        "16.Laura Chorus Double_01.wav",
-        "17.Laura Chorus Harmony 1_01.wav",
-        "18.Laura Chorus Harmony 2_01.wav",
-        "19.Laura Hey Hey High 1_01.wav",
-        "20.Laura Hey Hey High 2_01.wav",
-        "21.Laura Hey Hey Highest 1_01.wav",
-        "22.Laura Hey Hey Highest 2_01.wav",
-        "23.Laura Hey Hey Low 1_01.wav",
-        "24.Laura Hey Hey Low 2_01.wav",
-        "25.Laura Hey Hey Mid 1_01.wav",
-        "26.Laura Hey Hey Mid 2_01.wav",
-        "27. Hey Hey Sister_01.wav",
-    ];
-    let config = default_config();
-
-    // -- Exec
-    let tracks = items.organize_into_tracks(&config, None)?;
-
-    // -- Check
-    println!("\nTrack list:");
-    daw_proto::display_tracklist(&tracks);
-
-    // Note: "Hey Hey" patterns now match BGVs, so the harmony parts are properly organized
-    // The "Hey Hey Sister" reference also matches due to containing "hey hey"
+fn laura_clapp_davidson_hey_hey_sister_expected() -> daw_proto::TrackHierarchy {
     let expected = TrackStructureBuilder::new()
         .folder("Drums")
         .track("Kick")
@@ -133,8 +88,54 @@ fn laura_clapp_davidson_hey_hey_sister() -> Result<()> {
         .item("13.Hey_Sister_Solo_01.wav")
         .end()
         .build();
+    expected
+}
 
-    assert_tracks_equal(&tracks, &expected)?;
+#[test]
+fn laura_clapp_davidson_hey_hey_sister() {
+    // -- Setup & Fixtures
+    // Laura Clapp Davidson - Hey Hey Sister: Folk/pop with harmony layers
+    let items = vec![
+        "01.KICK_01.wav",
+        "02.SNARE_01.wav",
+        "03.HH_01.wav",
+        "04.OHS_01.wav",
+        "05.ROOM_01.wav",
+        "06.Hey_Sister_Bass DI_01.wav",
+        "07.Hey_Sister_Bass_Tone_X_01.wav",
+        "08.Hey_Sister_Acoustic_L_01.wav",
+        "09.Hey_Sister_Acoustic_R_01.wav",
+        "10.Hey_Sister_Gtr_1_L_01.wav",
+        "11.Hey_Sister_Gtr_2_R_01.wav",
+        "12.Hey_Sister_Licks_01.wav",
+        "13.Hey_Sister_Solo_01.wav",
+        "14.Laura Lead Vocal_01.wav",
+        "15.Laura Verse Harmony_01.wav",
+        "16.Laura Chorus Double_01.wav",
+        "17.Laura Chorus Harmony 1_01.wav",
+        "18.Laura Chorus Harmony 2_01.wav",
+        "19.Laura Hey Hey High 1_01.wav",
+        "20.Laura Hey Hey High 2_01.wav",
+        "21.Laura Hey Hey Highest 1_01.wav",
+        "22.Laura Hey Hey Highest 2_01.wav",
+        "23.Laura Hey Hey Low 1_01.wav",
+        "24.Laura Hey Hey Low 2_01.wav",
+        "25.Laura Hey Hey Mid 1_01.wav",
+        "26.Laura Hey Hey Mid 2_01.wav",
+        "27. Hey Hey Sister_01.wav",
+    ];
+    let config = default_config();
 
-    Ok(())
+    // -- Exec
+    let tracks = items.organize_into_tracks(&config, None).unwrap();
+
+    // -- Check
+    println!("\nTrack list:");
+    daw_proto::display_tracklist(&tracks);
+
+    // Note: "Hey Hey" patterns now match BGVs, so the harmony parts are properly organized
+    // The "Hey Hey Sister" reference also matches due to containing "hey hey"
+    let expected = laura_clapp_davidson_hey_hey_sister_expected();
+
+    assert_tracks_equal(&tracks, &expected).unwrap();
 }

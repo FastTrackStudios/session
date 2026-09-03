@@ -10,14 +10,14 @@ impl From<Organ> for Group<ItemMetadata> {
     fn from(_val: Organ) -> Self {
         // Organ playing styles and parts
         // "Organ Chords" = chord/pad part, "Organ Notes" = melodic line, "Organ Slide" = glissando/slide
-        let arrangement = ItemMetadataGroup::builder("Arrangement")
+        let arrangement = Self::builder("Arrangement")
             .patterns(vec![
                 "chords", "chord", "pad", "pads", "notes", "note", "melody", "melodic", "slide",
                 "gliss", "stab", "stabs", "bass", "lead", "solo", "riff", "lick",
             ])
             .build();
 
-        ItemMetadataGroup::builder("Organ")
+        Self::builder("Organ")
             .patterns(vec![
                 "organ",
                 "hammond",

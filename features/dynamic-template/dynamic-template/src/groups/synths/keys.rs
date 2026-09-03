@@ -9,7 +9,7 @@ pub struct Keys;
 
 impl From<Keys> for Group<ItemMetadata> {
     fn from(_val: Keys) -> Self {
-        Group::builder("Keys")
+        Self::builder("Keys")
             .patterns(vec!["polysynth", "poly"])
             .layers(super::layers_dimension())
             .channel(super::channel_dimension())

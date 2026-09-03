@@ -16,6 +16,7 @@ pub struct EventBus<T: Clone> {
 
 impl<T: Clone> EventBus<T> {
     /// Create a new event bus with the given name and channel capacity.
+    #[must_use] 
     pub fn new(_name: &str, capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity);
         Self { tx }
@@ -29,6 +30,7 @@ impl<T: Clone> EventBus<T> {
     }
 
     /// Create a new receiver that will observe future events.
+    #[must_use] 
     pub fn subscribe(&self) -> broadcast::Receiver<T> {
         self.tx.subscribe()
     }
@@ -55,11 +57,13 @@ impl<T: Clone> WatchBus<T> {
     }
 
     /// Create a new receiver that will see the current and future values.
+    #[must_use] 
     pub fn subscribe(&self) -> watch::Receiver<T> {
         self.rx.clone()
     }
 
     /// Borrow the current value.
+    #[must_use] 
     pub fn borrow(&self) -> tokio_watch::Ref<'_, T> {
         self.rx.borrow()
     }

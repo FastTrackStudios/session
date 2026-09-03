@@ -40,7 +40,7 @@ impl Default for CountInState {
 
 impl CountInState {
     /// Reset all count-in state (called on measure boundaries)
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.last_count_beat = -1.0;
         self.last_count_beat_raw = None;
         self.current_count_number = -1;

@@ -8,9 +8,10 @@
 //! axes — with their configured descriptor vocabularies attached. The engine
 //! later expands and collapses that schema per project.
 
-use dynamic_template_proto::{IdealFullSessionTemplate, TemplateBus, TemplateNode};
+use dynamic_template_proto::{IdealFullSessionTemplate, NodeRouting, TemplateNode};
 use monarchy::Group;
 
+use crate::buses::{all_buses, bus_for_path, is_attachment_point};
 use crate::colors::color_for_path;
 use crate::ItemMetadata;
 
@@ -48,6 +49,7 @@ fn band_for_exact_path(path: &[String]) -> Option<&'static music_catalog::groups
 /// Build the canonical FTS golden session by walking [`default_config`].
 ///
 /// [`default_config`]: crate::default_config
+#[must_use] 
 pub fn golden_template() -> IdealFullSessionTemplate {
     let cfg = crate::default_config();
     let mut root = Vec::new();
@@ -63,12 +65,12 @@ pub fn golden_template() -> IdealFullSessionTemplate {
 
     IdealFullSessionTemplate {
         name: "FTS Golden Session".to_string(),
-        version: 1,
+        version: 2,
         root,
-        buses: vec![TemplateBus {
-            name: "Mix Bus".to_string(),
-            channels: 2,
-        }],
+        // The golden template is the schema, not a session, so it carries the
+        // whole bus tree. Per-project pruning is
+        // [`buses_for_paths`](crate::buses::buses_for_paths).
+        buses: all_buses(),
     }
 }
 
@@ -79,7 +81,7 @@ fn build_node(g: &Group<ItemMetadata>, path: &mut Vec<String>) -> TemplateNode {
 
     let group_path: Vec<&str> = path.iter().map(String::as_str).collect();
     let mut node = TemplateNode::folder(&g.name, path.clone());
-    node.defaults.color_hex = color_for_path(&group_path).map(|c| c.to_hex_string());
+    node.defaults.color_hex = color_for_path(&group_path).map(color_palette::Color::to_hex_string);
 
     // Group-slot membership where this node's full canonical path maps to a
     // 128-slot band (e.g. ["Guitars","Electric"] → Electric Gtr; ["Drums"] →
@@ -87,6 +89,15 @@ fn build_node(g: &Group<ItemMetadata>, path: &mut Vec<String>) -> TemplateNode {
     // Keys/Electric don't inherit an unrelated band.
     if let Some(band) = band_for_exact_path(path) {
         node = node.in_group(band.label);
+    }
+
+    // Bus attachment. Only the exact attachment point carries the send — a
+    // descendant like Guitars/Electric feeds Guitars, which feeds GTR BUS, so
+    // giving it its own send would double the guitars into the mix.
+    if is_attachment_point(path) {
+        if let Some(bus) = bus_for_path(path) {
+            node.routing = NodeRouting::to_bus(bus);
+        }
     }
 
     // Structural sub-groups become child folders (recurse); dimension
@@ -146,7 +157,8 @@ fn dimension_chain(dims: &[&Group<ItemMetadata>], mic_vocab: &[String]) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dynamic_template_proto::NodeKind;
+    use crate::buses::names as bus;
+    use dynamic_template_proto::{BusMaterialization, NodeKind};
 
     fn find<'a>(node: &'a TemplateNode, name: &str) -> Option<&'a TemplateNode> {
         node.children.iter().find(|c| c.name == name)
@@ -234,6 +246,145 @@ mod tests {
         assert!(channel.vocabulary.contains(&"L".to_string()));
         let mics = find(channel, "MultiMic").expect("MultiMic captures");
         assert_eq!(mics.vocabulary, vec!["Amp", "DI"]);
+    }
+
+    #[test]
+    fn top_level_groups_carry_their_bus_send() {
+        let t = golden_template();
+        let bus_of = |name: &str| {
+            t.root
+                .iter()
+                .find(|n| n.name == name)
+                .unwrap_or_else(|| panic!("no {name} folder"))
+                .routing
+                .clone()
+        };
+
+        for (group, expected) in [
+            ("Drums", bus::DRUM),
+            ("Percussion", bus::DRUM),
+            ("Bass", bus::BASS),
+            ("Guitars", bus::GUITAR),
+            ("Keys", bus::KEYS),
+            ("Synths", bus::KEYS),
+            ("Orchestra", bus::ORCH),
+            ("Horns", bus::ORCH),
+            ("SFX", bus::FX),
+            ("Tracks", bus::FX),
+            ("Choir", bus::BGV),
+            ("Guide", bus::GUIDE),
+            ("Reference", bus::UTILITY),
+        ] {
+            let routing = bus_of(group);
+            assert_eq!(routing.bus.as_deref(), Some(expected), "{group}");
+            // The attachment point feeds the bus, not the master.
+            assert!(!routing.parent_send, "{group} should not also parent-send");
+        }
+    }
+
+    #[test]
+    fn vocals_attach_per_sub_group_not_at_the_folder() {
+        let t = golden_template();
+        let vocals = t.root.iter().find(|n| n.name == "Vocals").unwrap();
+        // Lead and BGVs each leave the Vocals folder for their own bus, so the
+        // folder carries only vocals that classified as neither — which are
+        // leads by default, and land on the lead bus.
+        assert_eq!(vocals.routing.bus.as_deref(), Some(bus::LEAD_VOX));
+
+        let lead = find(vocals, "Lead").expect("Vocals/Lead");
+        assert_eq!(lead.routing.bus.as_deref(), Some(bus::LEAD_VOX));
+        let bgvs = find(vocals, "BGVs").expect("Vocals/BGVs");
+        assert_eq!(bgvs.routing.bus.as_deref(), Some(bus::BGV));
+    }
+
+    #[test]
+    fn sub_folders_inherit_rather_than_re_send() {
+        let t = golden_template();
+        let drums = t.root.iter().find(|n| n.name == "Drums").unwrap();
+        let kit = find(drums, "Drum Kit").expect("Drums/Drum Kit");
+        // Drum Kit feeds Drums, which feeds DRUM BUS. A second send here would
+        // double the kit into the mix.
+        assert_eq!(kit.routing.bus, None);
+        assert!(kit.routing.parent_send);
+    }
+
+    #[test]
+    fn guitar_sub_folders_attach_to_their_own_buses() {
+        let t = golden_template();
+        let guitars = t.root.iter().find(|n| n.name == "Guitars").unwrap();
+        // Guitars itself still carries GUITAR BUS, for the steel/banjo/mandolin
+        // that have no sub-bus of their own.
+        assert_eq!(guitars.routing.bus.as_deref(), Some(bus::GUITAR));
+
+        let acoustic = find(guitars, "Acoustic").expect("Guitars/Acoustic");
+        assert_eq!(acoustic.routing.bus.as_deref(), Some(bus::ACOUSTIC));
+        assert!(!acoustic.routing.parent_send);
+
+        let electric = find(guitars, "Electric").expect("Guitars/Electric");
+        assert_eq!(electric.routing.bus.as_deref(), Some(bus::ELECTRIC));
+        assert!(!electric.routing.parent_send);
+    }
+
+    #[test]
+    fn golden_carries_the_whole_bus_tree() {
+        let t = golden_template();
+        let names: Vec<&str> = t.buses.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names[0], bus::MIX);
+        assert!(names.contains(&bus::GUIDE));
+        assert!(names.contains(&bus::UTILITY));
+
+        let mix = t.buses.iter().find(|b| b.name == bus::MIX).unwrap();
+        assert_eq!(mix.parent, None);
+        // The golden template is the schema, so it carries every bus. Nothing
+        // is unconditional: a real session only gets the buses it feeds.
+        for b in &t.buses {
+            assert_eq!(
+                b.materialize,
+                BusMaterialization::WhenPopulated,
+                "{} should not exist unless something feeds it",
+                b.name
+            );
+        }
+
+        // Every bus reaches the master: group buses through a stem bus,
+        // stem buses through the mix, monitor buses directly.
+        for b in &t.buses {
+            let mut cursor = b.parent.clone();
+            let mut hops = 0;
+            while let Some(name) = cursor {
+                let parent = t
+                    .buses
+                    .iter()
+                    .find(|x| x.name == name)
+                    .unwrap_or_else(|| panic!("{} feeds unknown bus {name}", b.name));
+                cursor = parent.parent.clone();
+                hops += 1;
+                assert!(hops < t.buses.len(), "cycle above {}", b.name);
+            }
+        }
+
+        // The guitar sub-buses sum through GUITAR BUS, not straight to INST.
+        for name in [bus::ACOUSTIC, bus::ELECTRIC] {
+            let b = t.buses.iter().find(|b| b.name == name).unwrap();
+            assert_eq!(b.parent.as_deref(), Some(bus::GUITAR));
+        }
+
+        // The two stem buses are the only things under the mix.
+        let under_mix: Vec<&str> = t
+            .buses
+            .iter()
+            .filter(|b| b.parent.as_deref() == Some(bus::MIX))
+            .map(|b| b.name.as_str())
+            .collect();
+        assert_eq!(under_mix, vec![bus::INST, bus::VOX]);
+
+        // Guide and reference material never reaches the mix.
+        for name in [bus::GUIDE, bus::UTILITY] {
+            assert_eq!(
+                t.buses.iter().find(|b| b.name == name).unwrap().parent,
+                None
+            );
+        }
     }
 
     #[test]

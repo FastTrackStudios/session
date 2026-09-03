@@ -16,7 +16,7 @@ pub struct SFX;
 
 impl From<SFX> for Group<ItemMetadata> {
     fn from(_val: SFX) -> Self {
-        Group::builder("SFX")
+        Self::builder("SFX")
             .prefix("SFX")
             .patterns(vec![
                 // Generic FX patterns

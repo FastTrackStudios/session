@@ -15,11 +15,21 @@ pub struct Bass;
 
 impl From<Bass> for ItemMetadataGroup {
     fn from(_val: Bass) -> Self {
-        ItemMetadataGroup::builder("Bass")
+        Self::builder("Bass")
             .prefix("Bass")
             .patterns(["bass"])
             // Negative patterns to avoid matching bass drums
-            .exclude(["bassdrum", "bass_drum", "bd", "kick"])
+            .exclude([
+                "bassdrum",
+                "bass_drum",
+                "bd",
+                "kick",
+                "tb",
+                "talkback",
+                "vca",
+                "hp",
+                "headphone",
+            ])
             .group(BassGuitar)
             .group(SynthBass)
             .group(UprightBass)

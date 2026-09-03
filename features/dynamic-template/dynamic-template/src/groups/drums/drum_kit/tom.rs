@@ -56,7 +56,7 @@ impl From<Tom> for ItemMetadataGroup {
         ];
 
         // Use field_value_descriptors for MultiMic to get descriptive tom names
-        ItemMetadataGroup::builder("Toms")
+        Self::builder("Toms")
             .patterns(["tom", "toms", "rack", "floor", "ft", "t1", "t2", "t3", "t4"])
             .field_value_descriptors(ItemMetadataField::MultiMic, tom_type_descriptors)
             .build()

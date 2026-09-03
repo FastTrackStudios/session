@@ -9,10 +9,11 @@
 //!   `SetlistServiceImpl` behind a `LayerRouter` over vox, then drives it
 //!   through a `SetlistServiceClient` (`build_from_open_projects`, `setlist`,
 //!   `seek_to_section`, active-song queries). Live streaming rides the
-//!   `events` / `active_indices` `#[subscribe]` streams (architect PubSub).
+//!   `events` / `active_indices` `#[subscribe]` streams (architect `PubSub`).
 //!
-//! Run: cargo test -p session --test standalone_setlist_harness -- --nocapture
+//! Run: cargo test -p session --test `standalone_setlist_harness` -- --nocapture
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use daw_proto::ProjectInfo;
@@ -24,23 +25,23 @@ use session::{
     setlist_service_service_descriptor,
 };
 
-fn seeded_stamped() -> Standalone {
+fn seeded_stamped() -> eyre::Result<Standalone> {
     let standalone = Standalone::new();
     standalone.seed_project(ProjectInfo {
         guid: "demo-proj".into(),
         name: "Demo".into(),
         path: String::new(),
     });
-    stamp_demo_setlist_with(&standalone).expect("stamp demo setlist");
-    standalone
+    stamp_demo_setlist_with(&standalone)?;
+    Ok(standalone)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn build_setlist_from_standalone_demo() -> eyre::Result<()> {
+async fn build_setlist_from_standalone_demo() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let bundle = build_in_process_daw(seeded_stamped()).await?;
-    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
+    let bundle = build_in_process_daw(seeded_stamped().expect("seeded_stamped")).await.expect("build_in_process_daw");
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await.expect("build_from_open_projects");
 
     println!(
         "[v1] built '{}' with {} songs",
@@ -48,14 +49,13 @@ async fn build_setlist_from_standalone_demo() -> eyre::Result<()> {
         setlist.songs.len()
     );
     assert!(!setlist.songs.is_empty(), "expected demo songs");
-    Ok(())
 }
 
 /// Rich scenario: 10 projects, one song each, varied complex section layouts
 /// and alternating count-in. Verifies the full setlist view structure builds
 /// correctly over the daw facade (no REAPER).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
+async fn rich_setlist_ten_projects_one_song_each() {
     use daw::service::ProjectContext;
     use session::setlist::service::demo::{fixture_songs, stamp_song_native};
 
@@ -69,12 +69,12 @@ async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
             name: format!("Project {i:02}"),
             path: String::new(),
         });
-        stamp_song_native(&standalone, ProjectContext::Project(guid), song)
-            .map_err(|e| eyre::eyre!("stamp song {i}: {e:?}"))?;
+        stamp_song_native(&standalone, &ProjectContext::Project(guid), song)
+            .map_err(|e| eyre::eyre!("stamp song {i}: {e:?}")).expect("stamp_song_native");
     }
 
-    let bundle = build_in_process_daw(standalone).await?;
-    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
+    let bundle = build_in_process_daw(standalone).await.expect("build_in_process_daw");
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await.expect("build_from_open_projects");
 
     println!("[v3] {} songs:", setlist.songs.len());
     for s in &setlist.songs {
@@ -118,7 +118,6 @@ async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
         with_count_in > 0,
         "expected at least one song with a count-in"
     );
-    Ok(())
 }
 
 /// Per-song-project demo setlist (the model the app now stamps): each song is
@@ -128,7 +127,7 @@ async fn rich_setlist_ten_projects_one_song_each() -> eyre::Result<()> {
 /// the setlist keeps ORDER and every song reports ITS OWN tempo (the payoff over
 /// the shared-timeline model, where every song reported the first song's tempo).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn per_song_project_demo_setlist_holds_order_and_tempo() -> eyre::Result<()> {
+async fn per_song_project_demo_setlist_holds_order_and_tempo() {
     use daw::service::ProjectContext;
     use session::setlist::service::demo::{demo_songs_base, stamp_song_with_default_tempo_native};
 
@@ -145,14 +144,14 @@ async fn per_song_project_demo_setlist_holds_order_and_tempo() -> eyre::Result<(
         });
         stamp_song_with_default_tempo_native(
             &standalone,
-            ProjectContext::Project(guid.clone()),
+            &ProjectContext::Project(guid.clone()),
             song,
         )
-        .map_err(|e| eyre::eyre!("stamp song {i}: {e:?}"))?;
+        .map_err(|e| eyre::eyre!("stamp song {i}: {e:?}")).expect("stamp_song_with_default_tempo_native");
     }
 
-    let bundle = build_in_process_daw(standalone).await?;
-    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
+    let bundle = build_in_process_daw(standalone).await.expect("build_in_process_daw");
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await.expect("build_from_open_projects");
 
     for s in &setlist.songs {
         println!(
@@ -212,8 +211,6 @@ async fn per_song_project_demo_setlist_holds_order_and_tempo() -> eyre::Result<(
             "song '{name}' built with no sections"
         );
     }
-
-    Ok(())
 }
 
 /// Structural contract for the demo setlist the desktop app plays: every
@@ -223,11 +220,11 @@ async fn per_song_project_demo_setlist_holds_order_and_tempo() -> eyre::Result<(
 /// through the same standalone → `SetlistBuilder` path the desktop uses —
 /// no global daw, no vox.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn demo_setlist_songs_have_sections_with_timing() -> eyre::Result<()> {
+async fn demo_setlist_songs_have_sections_with_timing() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let bundle = build_in_process_daw(seeded_stamped()).await?;
-    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
+    let bundle = build_in_process_daw(seeded_stamped().expect("seeded_stamped")).await.expect("build_in_process_daw");
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await.expect("build_from_open_projects");
 
     println!("setlist '{}' — {} songs", setlist.name, setlist.songs.len());
     assert!(!setlist.songs.is_empty(), "demo setlist has no songs");
@@ -289,7 +286,6 @@ async fn demo_setlist_songs_have_sections_with_timing() -> eyre::Result<()> {
             song.name
         );
     }
-    Ok(())
 }
 
 /// Section numbering resets per song: within each song, every repeated
@@ -298,11 +294,11 @@ async fn demo_setlist_songs_have_sections_with_timing() -> eyre::Result<()> {
 /// timeline, so a global counter would render song 2's first verse as
 /// "Verse 4"). Single-occurrence types carry no number.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn section_numbering_resets_per_song() -> eyre::Result<()> {
+async fn section_numbering_resets_per_song() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let bundle = build_in_process_daw(seeded_stamped()).await?;
-    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await?;
+    let bundle = build_in_process_daw(seeded_stamped().expect("seeded_stamped")).await.expect("build_in_process_daw");
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await.expect("build_from_open_projects");
     assert!(
         setlist.songs.len() >= 2,
         "need multiple songs to test per-song reset"
@@ -311,14 +307,14 @@ async fn section_numbering_resets_per_song() -> eyre::Result<()> {
     for song in &setlist.songs {
         // Collect the trailing number of each numbered section, keyed by its
         // base label ("VS 2" -> base "VS", n 2; "Intro" -> unnumbered).
-        let mut by_base: std::collections::BTreeMap<String, Vec<u32>> = Default::default();
+        let mut by_base: BTreeMap<String, Vec<u32>> = BTreeMap::default();
         for sec in &song.sections {
             let name = sec.display_name();
             if let Some((base, n)) = name.rsplit_once(' ').and_then(|(b, tok)| {
                 // A group with several touching same-type sections renders as
                 // "PRE-CH 2A" / "2B" — strip the trailing group letter so the
                 // group number ("2") still counts.
-                let digits: String = tok.chars().take_while(|c| c.is_ascii_digit()).collect();
+                let digits: String = tok.chars().take_while(char::is_ascii_digit).collect();
                 digits.parse::<u32>().ok().map(|n| (b.to_string(), n))
             }) {
                 by_base.entry(base).or_default().push(n);
@@ -341,7 +337,7 @@ async fn section_numbering_resets_per_song() -> eyre::Result<()> {
             for (i, n) in nums.iter().enumerate() {
                 assert_eq!(
                     *n,
-                    i as u32 + 1,
+                    u32::try_from(i + 1).expect("i + 1 fits in u32"),
                     "song '{}' type '{}' numbering not contiguous from 1: {:?}",
                     song.name,
                     base,
@@ -350,7 +346,6 @@ async fn section_numbering_resets_per_song() -> eyre::Result<()> {
             }
         }
     }
-    Ok(())
 }
 
 /// End-to-end transport streaming, headless (no REAPER, no GUI): the
@@ -377,7 +372,7 @@ async fn transport_stream_inner() -> eyre::Result<()> {
 
     // Isolated: drive the daw handle from THIS build directly (no global
     // `init_from_parts`) so parallel tests can't cross-wire the transport.
-    let bundle = build_in_process_daw(seeded_stamped()).await?;
+    let bundle = build_in_process_daw(seeded_stamped()?).await?;
     let daw = bundle.daw.clone();
 
     // Subscribe to the architect transport stream first.
@@ -405,18 +400,22 @@ async fn transport_stream_inner() -> eyre::Result<()> {
     let mut ticks = 0usize;
     let mut first_pos: Option<f64> = None;
     let mut last_pos = 0.0f64;
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(1500);
+    let now = tokio::time::Instant::now();
+    let deadline = now
+        .checked_add(Duration::from_millis(1500))
+        .or_else(|| now.checked_add(Duration::from_secs(60)))
+        .unwrap_or(now);
     while tokio::time::Instant::now() < deadline {
         match tokio::time::timeout(Duration::from_millis(300), stream.recv()).await {
             Ok(Ok(Some(ev))) => {
                 if let TransportStreamEvent::Position(tick) = ev.get() {
-                    let pos = tick.playhead.time.map(|t| t.as_seconds()).unwrap_or(0.0);
-                    ticks += 1;
+                    let pos = tick.playhead.time.map_or(0.0, |t| t.as_seconds());
+                    ticks = ticks.saturating_add(1);
                     first_pos.get_or_insert(pos);
                     last_pos = pos;
                 }
             }
-            Ok(Ok(None)) | Ok(Err(_)) => break,
+            Ok(Ok(None) | Err(_)) => break,
             Err(_) => { /* idle tick; keep waiting */ }
         }
     }
@@ -457,7 +456,7 @@ async fn sync_engine_inner() -> eyre::Result<()> {
 
     let _ = tracing_subscriber::fmt::try_init();
 
-    let bundle = build_in_process_daw(seeded_stamped()).await?;
+    let bundle = build_in_process_daw(seeded_stamped()?).await?;
     let daw = bundle.daw.clone();
 
     let engine = SynchronizationEngine::new(
@@ -527,7 +526,11 @@ async fn sync_engine_inner() -> eyre::Result<()> {
     let mut got_marker = false;
     let mut got_item = false;
     let mut got_routing = false;
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(2000);
+    let now = tokio::time::Instant::now();
+    let deadline = now
+        .checked_add(Duration::from_millis(2000))
+        .or_else(|| now.checked_add(Duration::from_secs(60)))
+        .unwrap_or(now);
     while tokio::time::Instant::now() < deadline {
         if got_marker && got_item && got_routing {
             break;
@@ -562,89 +565,92 @@ async fn sync_engine_inner() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Full desktop path over vox, no REAPER: host SetlistService behind a
-/// LayerRouter, drive it through SetlistServiceClient — build, query the
+/// Minimal `FromVoxLane` client capturing the lane's `Caller`.
+#[derive(Clone)]
+struct HarnessLaneClient {
+    caller: vox::Caller,
+}
+
+impl vox::FromVoxLane for HarnessLaneClient {
+    const SERVICE_NAME: &'static str = "setlist-harness";
+    fn from_vox_lane(caller: vox::Caller, _connection: Option<vox::ConnectionHandle>) -> Self {
+        Self { caller }
+    }
+}
+
+/// Full desktop path over vox, no REAPER: host `SetlistService` behind a
+/// `LayerRouter`, drive it through `SetlistServiceClient` — build, query the
 /// setlist, and confirm seeking selects the active song/section.
 #[test]
 fn setlist_service_over_vox() -> eyre::Result<()> {
     // Manual runtime instead of #[tokio::test]: vox 0.10's debug-build
     // channel encode recurses deeply on the Setlist payload, overflowing
     // tokio's default 2 MiB worker stacks — give the workers more room.
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
+    // Use current-thread to avoid Send requirement on vox::connect's future.
+    let rt = tokio::runtime::Builder::new_current_thread()
         .thread_stack_size(16 * 1024 * 1024)
         .enable_all()
         .build()?;
-    rt.block_on(setlist_service_over_vox_inner())
+    rt.block_on(async {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        // Standalone backend, shared between the service's own handle and the
+        // global `daw` facade. The service builds songs through `daw::get()`
+        // (backend-agnostic), so wire the global facade to a standalone-backed
+        // client — exactly as REAPER wires the global facade to the REAPER daw.
+        let standalone = seeded_stamped()?;
+        let bundle = build_in_process_daw(standalone.clone()).await?;
+        // Current-thread runtime: init_from_parts only needs it for daw::block_on
+        // (unused here, since everything is async), and a current-thread runtime
+        // spawns no worker threads to keep the test process alive after it passes.
+        let runtime = std::sync::Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?,
+        );
+        // Single init: this now installs the one global Daw (owned by daw-control)
+        // that both `daw::get()` and the service's background tasks resolve through.
+        daw::init_from_parts(bundle.daw.clone(), runtime);
+
+        let setlist_impl = SetlistServiceImpl::with_daw(standalone);
+        let router = daw::LayerRouter::new().merge(daw::Mounted::new(
+            setlist_service_service_descriptor(),
+            serve_setlist_service(setlist_impl),
+        ));
+
+        // Serve over a real Unix socket — the desktop's actual transport — so this
+        // exercises the same conduit/channel path REAPER uses (memory_link masked
+        // the streaming behaviour). vox 0.10 lane model: hand every inbound lane
+        // to the shared LayerRouter (dispatches by method id).
+        let sock = format!("/tmp/fts-setlist-harness-{}.sock", std::process::id());
+        let _ = std::fs::remove_file(&sock);
+        let addr = format!("local://{sock}");
+        let serve_addr = addr.clone();
+        tokio::spawn(async move {
+            let lane_acceptor = vox::lane_acceptor_fn(move |_req, lane: vox::PendingLane| {
+                lane.handle_with(router.clone());
+                Ok(())
+            });
+            if let Err(e) = vox::serve(&serve_addr, lane_acceptor).await {
+                eprintln!("[v2] serve failed: {e:?}");
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let connection = vox::connect(&addr)
+            .await
+            .map_err(|e| eyre::eyre!("connect: {e:?}"))?;
+        let lane = connection
+            .open_lane::<HarnessLaneClient>()
+            .await
+            .map_err(|e| eyre::eyre!("open lane: {e:?}"))?;
+        let client = SetlistServiceClient::new(lane.caller);
+
+        verify_setlist_over_vox_client(client).await
+    })
 }
 
-async fn setlist_service_over_vox_inner() -> eyre::Result<()> {
-    let _ = tracing_subscriber::fmt::try_init();
-
-    // Standalone backend, shared between the service's own handle and the
-    // global `daw` facade. The service builds songs through `daw::get()`
-    // (backend-agnostic), so wire the global facade to a standalone-backed
-    // client — exactly as REAPER wires the global facade to the REAPER daw.
-    let standalone = seeded_stamped();
-    let bundle = build_in_process_daw(standalone.clone()).await?;
-    // Current-thread runtime: init_from_parts only needs it for daw::block_on
-    // (unused here, since everything is async), and a current-thread runtime
-    // spawns no worker threads to keep the test process alive after it passes.
-    let runtime = std::sync::Arc::new(
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?,
-    );
-    // Single init: this now installs the one global Daw (owned by daw-control)
-    // that both `daw::get()` and the service's background tasks resolve through.
-    daw::init_from_parts(bundle.daw.clone(), runtime);
-
-    let setlist_impl = SetlistServiceImpl::with_daw(standalone);
-    let router = daw::LayerRouter::new().merge(daw::Mounted::new(
-        setlist_service_service_descriptor(),
-        serve_setlist_service(setlist_impl),
-    ));
-
-    // Serve over a real Unix socket — the desktop's actual transport — so this
-    // exercises the same conduit/channel path REAPER uses (memory_link masked
-    // the streaming behaviour). vox 0.10 lane model: hand every inbound lane
-    // to the shared LayerRouter (dispatches by method id).
-    let sock = format!("/tmp/fts-setlist-harness-{}.sock", std::process::id());
-    let _ = std::fs::remove_file(&sock);
-    let addr = format!("local://{sock}");
-    let serve_addr = addr.clone();
-    tokio::spawn(async move {
-        let lane_acceptor = vox::lane_acceptor_fn(move |_req, lane: vox::PendingLane| {
-            lane.handle_with(router.clone());
-            Ok(())
-        });
-        if let Err(e) = vox::serve(&serve_addr, lane_acceptor).await {
-            eprintln!("[v2] serve failed: {e:?}");
-        }
-    });
-    tokio::time::sleep(Duration::from_millis(150)).await;
-
-    /// Minimal `FromVoxLane` client capturing the lane's `Caller`.
-    #[derive(Clone)]
-    struct HarnessLaneClient {
-        caller: vox::Caller,
-    }
-    impl vox::FromVoxLane for HarnessLaneClient {
-        const SERVICE_NAME: &'static str = "setlist-harness";
-        fn from_vox_lane(caller: vox::Caller, _connection: Option<vox::ConnectionHandle>) -> Self {
-            Self { caller }
-        }
-    }
-
-    let connection = vox::connect(&addr)
-        .await
-        .map_err(|e| eyre::eyre!("connect: {e:?}"))?;
-    let lane = connection
-        .open_lane::<HarnessLaneClient>()
-        .await
-        .map_err(|e| eyre::eyre!("open lane: {e:?}"))?;
-    let client = SetlistServiceClient::new(lane.caller);
-
+async fn verify_setlist_over_vox_client(client: SetlistServiceClient) -> eyre::Result<()> {
     // Desktop's exact order: BUILD first, THEN subscribe, then pump. The
     // subscriber must receive the already-built setlist as the initial snapshot.
     client
@@ -657,7 +663,8 @@ async fn setlist_service_over_vox_inner() -> eyre::Result<()> {
         Ok(sl) => {
             println!("[v2] setlist() query: {} songs", sl.songs.len());
             assert!(!sl.songs.is_empty(), "service built an empty setlist");
-            let first = &sl.songs[0];
+            let first = sl.songs.first()
+                .ok_or_else(|| eyre::eyre!("expected at least one song"))?;
             assert!(
                 !first.sections.is_empty(),
                 "song 0 ('{}') built with no sections",
@@ -665,7 +672,7 @@ async fn setlist_service_over_vox_inner() -> eyre::Result<()> {
             );
             first.name.clone()
         }
-        Err(e) => panic!("[v2] setlist() error: {e:?}"),
+        Err(e) => return Err(eyre::eyre!("[v2] setlist() error: {e:?}")),
     };
 
     // ── Selecting an active song (the sidebar-expand path) ──────────────
@@ -715,8 +722,10 @@ async fn setlist_service_over_vox_inner() -> eyre::Result<()> {
         active_song.name, expected_first_song,
         "seek_to_section(0,0) did not make song 0 ('{expected_first_song}') active — the sidebar would never expand it"
     );
+    let active_song_first_section = active_song.sections.first()
+        .ok_or_else(|| eyre::eyre!("active song has no sections"))?;
     assert_eq!(
-        active_section.section_id, active_song.sections[0].section_id,
+        active_section.section_id, active_song_first_section.section_id,
         "seek_to_section(0,0) did not make section 0 active"
     );
 

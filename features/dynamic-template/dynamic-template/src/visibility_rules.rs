@@ -64,11 +64,11 @@ pub enum FoldState {
 }
 
 impl FoldState {
-    fn to_compact(self) -> i32 {
+    const fn to_compact(self) -> i32 {
         match self {
-            FoldState::Open => 0,
-            FoldState::Small => 1,
-            FoldState::Collapsed => 2,
+            Self::Open => 0,
+            Self::Small => 1,
+            Self::Collapsed => 2,
         }
     }
 }
@@ -95,19 +95,22 @@ pub struct SurfaceEffect {
 }
 
 impl SurfaceEffect {
-    pub fn show() -> Self {
+    #[must_use] 
+    pub const fn show() -> Self {
         Self {
             show: true,
             fold: None,
         }
     }
-    pub fn hide() -> Self {
+    #[must_use] 
+    pub const fn hide() -> Self {
         Self {
             show: false,
             fold: None,
         }
     }
-    pub fn show_collapsed() -> Self {
+    #[must_use] 
+    pub const fn show_collapsed() -> Self {
         Self {
             show: true,
             fold: Some(FoldState::Collapsed),
@@ -134,7 +137,7 @@ pub struct ModeVisibility {
 }
 
 /// Resolved per-track action for the caller to apply.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackPlan {
     pub guid: String,
     pub arrange_show: bool,
@@ -171,7 +174,7 @@ fn parse_track(t: &TrackInput, config: &DynamicTemplateConfig) -> Parsed {
     }
 }
 
-fn eq_ci(a: &str, b: &str) -> bool {
+const fn eq_ci(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
@@ -186,12 +189,12 @@ fn matches_basic(sel: &Selector, track: &TrackInput, parsed: &Parsed) -> bool {
         return false;
     }
     if let Some(band) = &sel.band {
-        if parsed.band.as_deref().map(|x| eq_ci(x, band)) != Some(true) {
+        if parsed.band.as_deref().is_none_or(|x| !eq_ci(x, band)) {
             return false;
         }
     }
     if let Some(inst) = &sel.instrument {
-        if parsed.instrument.as_deref().map(|x| eq_ci(x, inst)) != Some(true) {
+        if parsed.instrument.as_deref().is_none_or(|x| !eq_ci(x, inst)) {
             return false;
         }
     }
@@ -202,9 +205,13 @@ fn matches_basic(sel: &Selector, track: &TrackInput, parsed: &Parsed) -> bool {
 fn topmost_per_instrument(base: &[usize], tracks: &[TrackInput], parsed: &[Parsed]) -> Vec<usize> {
     let mut best: HashMap<&str, usize> = HashMap::new();
     for &i in base {
-        let key = parsed[i].group_key.as_str();
+        let Some(p) = parsed.get(i) else { continue };
+        let Some(track_i) = tracks.get(i) else {
+            continue;
+        };
+        let key = p.group_key.as_str();
         match best.get(key) {
-            Some(&j) if tracks[j].index <= tracks[i].index => {}
+            Some(&j) if tracks.get(j).is_some_and(|t| t.index <= track_i.index) => {}
             _ => {
                 best.insert(key, i);
             }
@@ -218,6 +225,7 @@ fn topmost_per_instrument(base: &[usize], tracks: &[TrackInput], parsed: &[Parse
 /// Pure: no REAPER calls. Rules are evaluated in order; for each surface the
 /// last rule that both matches a track and specifies that surface wins, falling
 /// back to the mode default.
+#[must_use]
 pub fn resolve(
     tracks: &[TrackInput],
     config: &DynamicTemplateConfig,
@@ -233,7 +241,11 @@ pub fn resolve(
 
     for rule in &mode.rules {
         let base: Vec<usize> = (0..n)
-            .filter(|&i| matches_basic(&rule.selector, &tracks[i], &parsed[i]))
+            .filter(|&i| {
+                tracks.get(i).zip(parsed.get(i)).is_some_and(|(t, p)| {
+                    matches_basic(&rule.selector, t, p)
+                })
+            })
             .collect();
         let applies = match rule.selector.rank {
             Rank::All => base,
@@ -241,12 +253,20 @@ pub fn resolve(
         };
         for i in applies {
             if let Some(e) = rule.arrange {
-                arrange_show[i] = e.show;
-                arrange_fold[i] = e.fold;
+                if let Some(show) = arrange_show.get_mut(i) {
+                    *show = e.show;
+                }
+                if let Some(fold) = arrange_fold.get_mut(i) {
+                    *fold = e.fold;
+                }
             }
             if let Some(e) = rule.mixer {
-                mixer_show[i] = e.show;
-                mixer_fold[i] = e.fold;
+                if let Some(show) = mixer_show.get_mut(i) {
+                    *show = e.show;
+                }
+                if let Some(fold) = mixer_fold.get_mut(i) {
+                    *fold = e.fold;
+                }
             }
         }
     }
@@ -256,25 +276,28 @@ pub fn resolve(
         .enumerate()
         .map(|(i, t)| TrackPlan {
             guid: t.guid.clone(),
-            arrange_show: arrange_show[i],
-            mixer_show: mixer_show[i],
+            arrange_show: arrange_show.get(i).copied().unwrap_or(mode.default_arrange_show),
+            mixer_show: mixer_show.get(i).copied().unwrap_or(mode.default_mixer_show),
             // Folder-compact only applies to folder tracks.
             arrange_fold: t
                 .is_folder
-                .then(|| arrange_fold[i].map(FoldState::to_compact))
+                .then(|| arrange_fold.get(i).copied().flatten().map(FoldState::to_compact))
                 .flatten(),
             mixer_fold: t
                 .is_folder
-                .then(|| mixer_fold[i].map(FoldState::to_compact))
+                .then(|| mixer_fold.get(i).copied().flatten().map(FoldState::to_compact))
                 .flatten(),
         })
         .collect()
 }
 
-/// Built-in mode rule sets. Returns `None` for modes we don't touch (their
-/// tracks are left as-is). This is the temporary in-Rust source of rules; it
-/// will be superseded by per-mode styx config, but the engine above is already
-/// config-shaped so that swap is a deserialize.
+/// Built-in mode rule sets.
+///
+/// Returns `None` for modes we don't touch (their tracks are left as-is).
+/// This is the temporary in-Rust source of rules; it will be superseded by
+/// per-mode styx config, but the engine above is already config-shaped so
+/// that swap is a deserialize.
+#[must_use]
 pub fn mode_visibility_for(slug: &str) -> Option<ModeVisibility> {
     match slug {
         "edit" => Some(edit_mode()),

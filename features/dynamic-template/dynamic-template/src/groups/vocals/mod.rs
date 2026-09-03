@@ -16,7 +16,7 @@ pub struct Vocals;
 
 impl From<Vocals> for ItemMetadataGroup {
     fn from(_val: Vocals) -> Self {
-        ItemMetadataGroup::builder("Vocals")
+        Self::builder("Vocals")
             .prefix("V")
             .patterns([
                 "vocal", "vocals", "vox", "voc", "voca", "voice", "lv", "bv", "bg", "bgv", "bgvs",
@@ -24,7 +24,17 @@ impl From<Vocals> for ItemMetadataGroup {
             ])
             // Exclude non-vocal voice effects (these should go to SFX)
             // Also exclude "cowbell" to prevent compound names like "CowbellGangVox" from matching
-            .exclude(["robot", "vocoder", "talkbox", "cowbell"])
+            .exclude([
+                "robot",
+                "vocoder",
+                "talkbox",
+                "cowbell",
+                "tb",
+                "talkback",
+                "vca",
+                "hp",
+                "headphone",
+            ])
             // The Vocals folder is the vocal summing bus (VCA target) for Lead +
             // BGVs. Choir routes to the top-level Choir group (a monarchy
             // limitation: a "Choir" subgroup here duplicates against that group,

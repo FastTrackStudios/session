@@ -9,7 +9,7 @@ pub struct Arp;
 
 impl From<Arp> for Group<ItemMetadata> {
     fn from(_val: Arp) -> Self {
-        Group::builder("Arp")
+        Self::builder("Arp")
             .patterns(vec!["arp", "arpeggio"])
             .layers(super::layers_dimension())
             .channel(super::channel_dimension())

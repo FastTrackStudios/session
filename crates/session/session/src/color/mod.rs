@@ -100,21 +100,15 @@ pub fn subscribe(ctx: &daw::module::ModuleContext) {
     register_timer();
     tracing::info!("[session] Auto-color subscribe: timer registered");
 
-    match load_enabled() {
-        Ok(enabled) => {
-            set_enabled(enabled);
-            tracing::info!(enabled, "[session] Auto-color loaded enabled state");
-        }
-        Err(err) => {
-            tracing::warn!(?err, "[session] Failed to load auto-color enabled state");
-        }
-    }
+    let enabled = load_enabled();
+    set_enabled(enabled);
+    tracing::info!(enabled, "[session] Auto-color loaded enabled state");
 
     ctx.spawn(async {
         match ensure_reactive_updates() {
             Ok(()) => tracing::info!("[session] Auto-color reactive subscription started"),
             Err(err) => {
-                tracing::warn!(?err, "[session] Failed to start auto-color subscription")
+                tracing::warn!(?err, "[session] Failed to start auto-color subscription");
             }
         }
 
@@ -211,7 +205,7 @@ fn ensure_reactive_updates() -> eyre::Result<()> {
     Ok(())
 }
 
-fn should_schedule(event: &TrackEvent) -> bool {
+const fn should_schedule(event: &TrackEvent) -> bool {
     matches!(
         event,
         TrackEvent::Added(_)
@@ -288,21 +282,21 @@ fn auto_color_timer() {
 }
 
 fn apply_to_current_project(selected_only: bool, force: bool) -> eyre::Result<()> {
-    apply_to_project(ProjectContext::Current, selected_only, force)
+    apply_to_project(&ProjectContext::Current, selected_only, force)
 }
 
 fn apply_to_project_guid(project_guid: &str, selected_only: bool, force: bool) -> eyre::Result<()> {
     apply_to_project(
-        ProjectContext::Project(project_guid.to_string()),
+        &ProjectContext::Project(project_guid.to_string()),
         selected_only,
         force,
     )
 }
 
-fn apply_to_project(project: ProjectContext, selected_only: bool, force: bool) -> eyre::Result<()> {
+fn apply_to_project(project: &ProjectContext, selected_only: bool, force: bool) -> eyre::Result<()> {
     let state = state()?.clone();
-    let project_key = project_key(&project);
-    load_applied_colors_for_project(&project, &project_key)?;
+    let project_key = project_key(project);
+    load_applied_colors_for_project(project, &project_key)?;
     let all = daw::reaper::Reaper.all(project.clone());
     let selected: HashSet<String> = if selected_only {
         daw::reaper::Reaper
@@ -346,7 +340,7 @@ fn apply_to_project(project: ProjectContext, selected_only: bool, force: bool) -
                     TrackRef::Guid(track.guid.clone()),
                     desired,
                 )?;
-                changed += 1;
+                changed = changed.saturating_add(1);
             }
             applied_colors.insert(key, desired);
         } else if previous != 0 {
@@ -356,13 +350,15 @@ fn apply_to_project(project: ProjectContext, selected_only: bool, force: bool) -
                     TrackRef::Guid(track.guid.clone()),
                     0,
                 )?;
-                changed += 1;
+                changed = changed.saturating_add(1);
             }
             applied_colors.remove(&key);
         }
     }
+    let applied_colors_snapshot = applied_colors.clone();
+    drop(applied_colors);
 
-    save_applied_colors_for_project(&project, &project_key, &applied_colors)?;
+    save_applied_colors_for_project(&project, &project_key, &applied_colors_snapshot)?;
 
     tracing::debug!(
         changed,
@@ -414,9 +410,7 @@ fn set_enabled(enabled: bool) {
 fn project_key(project: &ProjectContext) -> String {
     match project {
         ProjectContext::Current => daw::reaper::Reaper
-            .current()
-            .map(|project| project.guid)
-            .unwrap_or_else(|| "current".to_string()),
+            .current().map_or_else(|| "current".to_string(), |project| project.guid),
         ProjectContext::Project(guid) => guid.clone(),
     }
 }
@@ -483,6 +477,7 @@ fn load_applied_colors_for_project(
             applied_colors.insert(auto_color_key(project_key, guid.trim()), color);
         }
     }
+    drop(applied_colors);
     Ok(())
 }
 
@@ -538,18 +533,18 @@ fn save_applied_colors_for_project(
     Ok(())
 }
 
-fn load_enabled() -> eyre::Result<bool> {
+fn load_enabled() -> bool {
     let Some(value) = ExtState::get(
         &daw::reaper::Reaper,
         EXT_STATE_SECTION,
         EXT_STATE_ENABLED_KEY,
     ) else {
-        return Ok(true);
+        return true;
     };
-    Ok(!matches!(
+    !matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "0" | "false" | "off" | "no"
-    ))
+    )
 }
 
 fn save_enabled(enabled: bool) -> eyre::Result<()> {
