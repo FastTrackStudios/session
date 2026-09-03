@@ -46,6 +46,10 @@ fn main() {
 fn App() -> Element {
     rsx! {
         document::Title { "Session — your setlist, live" }
+        // Dark-only site: force it ahead of any CSS load so native chrome
+        // (form controls, scrollbars) never flashes light before
+        // tailwind.css's `color-scheme: dark` takes over.
+        document::Meta { name: "color-scheme", content: "dark" }
         // The desktop app's own launcher icon (apps/desktop/assets/icon.svg)
         // — one FTS icon across every surface, not a bespoke site mark.
         document::Link { rel: "icon", r#type: "image/svg+xml", href: asset!("/assets/favicon.svg") }

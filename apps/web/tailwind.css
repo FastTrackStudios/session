@@ -37,3 +37,12 @@
 
 /* architect-ui: a git dep with no stable path on disk. */
 @source "./.tailwind-src/architect-ui/src/**/*.rs";
+
+/* The site is dark-only by design — force it regardless of the visitor's
+ * OS theme, so native form controls, scrollbars, and any `light-dark()`
+ * / prefers-color-scheme CSS resolve dark rather than following a light
+ * system preference. */
+:root {
+  color-scheme: dark;
+}
+
