@@ -108,6 +108,11 @@ vox-websocket = { workspace = true, optional = true }
 
 eyre = { workspace = true, optional = true }
 
+[dev-dependencies]
+# demo_midi_gen: authors the browser keys rig's bundled demo SMFs via
+# daw-proto's SMF codec. Example-only — never a runtime dep of the app.
+daw-proto.workspace = true
+
 # The same app on every surface: the desktop binary gets the dioxus
 # desktop renderer; the web build (dx build --platform web) is the SAME
 # UI served over the network — no desktop-only pages. Native extras:

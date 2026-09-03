@@ -10295,6 +10295,7 @@ dependencies = [
  "collection-proto",
  "daw 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.7)",
  "daw-control 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.7)",
+ "daw-proto 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.7)",
  "daw-standalone",
  "daw-ui",
  "dawfile-reaper",
