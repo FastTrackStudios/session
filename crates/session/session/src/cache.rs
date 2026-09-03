@@ -35,7 +35,7 @@ where
     /// Create an empty cache with no dashboard name.
     ///
     /// Prefer [`Cache::named`] when a descriptive name is available.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(FxHashMap::default())),
@@ -43,7 +43,7 @@ where
     }
 
     /// Create an empty cache with a descriptive name (retained for API compatibility; the moire dashboard is retired).
-    #[must_use] 
+    #[must_use]
     pub fn named(_name: &'static str) -> Self {
         Self {
             inner: Arc::new(RwLock::new(FxHashMap::default())),

@@ -76,7 +76,7 @@ pub struct PositionSyncBridge {
 #[allow(dead_code)]
 impl PositionSyncBridge {
     /// Create a new bridge with the given offset map and setlist project GUID.
-    #[must_use] 
+    #[must_use]
     pub fn new(offset_map: SetlistOffsetMap, setlist_guid: Option<String>) -> Self {
         Self {
             offset_map,
@@ -117,12 +117,16 @@ impl PositionSyncBridge {
         };
 
         // Get all open projects
-        let Ok(projects) = daw.projects().await else { return };
+        let Ok(projects) = daw.projects().await else {
+            return;
+        };
 
         // Collect current positions
         for project in &projects {
             let guid = project.guid().to_string();
-            let Ok(transport) = project.transport().get_state().await else { continue };
+            let Ok(transport) = project.transport().get_state().await else {
+                continue;
+            };
 
             let pos = transport
                 .playhead_position
@@ -186,7 +190,9 @@ impl PositionSyncBridge {
         setlist_guid: &str,
     ) {
         // Find which song this project corresponds to
-        let Some(song_offset) = self.offset_map.song_by_guid(song_guid) else { return };
+        let Some(song_offset) = self.offset_map.song_by_guid(song_guid) else {
+            return;
+        };
 
         let global_pos = song_offset.global_start_seconds + local_pos;
 
@@ -210,9 +216,13 @@ impl PositionSyncBridge {
         global_pos: f64,
         _setlist_guid: &str,
     ) {
-        let Some((song_index, local_pos)) = self.offset_map.setlist_to_project(global_pos) else { return };
+        let Some((song_index, local_pos)) = self.offset_map.setlist_to_project(global_pos) else {
+            return;
+        };
 
-        let Some(song_offset) = self.offset_map.songs.get(song_index) else { return };
+        let Some(song_offset) = self.offset_map.songs.get(song_index) else {
+            return;
+        };
 
         debug!(
             "Position sync: setlist @ {:.2}s → song {} @ {:.2}s",
@@ -260,9 +270,13 @@ impl PositionSyncBridge {
         global_pos: f64,
         _setlist_guid: &str,
     ) {
-        let Some((song_index, _local_pos)) = self.offset_map.setlist_to_project(global_pos) else { return };
+        let Some((song_index, _local_pos)) = self.offset_map.setlist_to_project(global_pos) else {
+            return;
+        };
 
-        let Some(song_offset) = self.offset_map.songs.get(song_index) else { return };
+        let Some(song_offset) = self.offset_map.songs.get(song_index) else {
+            return;
+        };
 
         for project in projects {
             if project.guid() == song_offset.project_guid {

@@ -95,21 +95,21 @@ pub struct SurfaceEffect {
 }
 
 impl SurfaceEffect {
-    #[must_use] 
+    #[must_use]
     pub const fn show() -> Self {
         Self {
             show: true,
             fold: None,
         }
     }
-    #[must_use] 
+    #[must_use]
     pub const fn hide() -> Self {
         Self {
             show: false,
             fold: None,
         }
     }
-    #[must_use] 
+    #[must_use]
     pub const fn show_collapsed() -> Self {
         Self {
             show: true,
@@ -242,9 +242,10 @@ pub fn resolve(
     for rule in &mode.rules {
         let base: Vec<usize> = (0..n)
             .filter(|&i| {
-                tracks.get(i).zip(parsed.get(i)).is_some_and(|(t, p)| {
-                    matches_basic(&rule.selector, t, p)
-                })
+                tracks
+                    .get(i)
+                    .zip(parsed.get(i))
+                    .is_some_and(|(t, p)| matches_basic(&rule.selector, t, p))
             })
             .collect();
         let applies = match rule.selector.rank {
@@ -276,16 +277,34 @@ pub fn resolve(
         .enumerate()
         .map(|(i, t)| TrackPlan {
             guid: t.guid.clone(),
-            arrange_show: arrange_show.get(i).copied().unwrap_or(mode.default_arrange_show),
-            mixer_show: mixer_show.get(i).copied().unwrap_or(mode.default_mixer_show),
+            arrange_show: arrange_show
+                .get(i)
+                .copied()
+                .unwrap_or(mode.default_arrange_show),
+            mixer_show: mixer_show
+                .get(i)
+                .copied()
+                .unwrap_or(mode.default_mixer_show),
             // Folder-compact only applies to folder tracks.
             arrange_fold: t
                 .is_folder
-                .then(|| arrange_fold.get(i).copied().flatten().map(FoldState::to_compact))
+                .then(|| {
+                    arrange_fold
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .map(FoldState::to_compact)
+                })
                 .flatten(),
             mixer_fold: t
                 .is_folder
-                .then(|| mixer_fold.get(i).copied().flatten().map(FoldState::to_compact))
+                .then(|| {
+                    mixer_fold
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .map(FoldState::to_compact)
+                })
                 .flatten(),
         })
         .collect()

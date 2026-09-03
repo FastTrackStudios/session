@@ -131,10 +131,11 @@ pub fn tempo_from_chart(chart: &str) -> (f64, i32, i32) {
                     bpm = parsed;
                 }
             } else if let Some((n, d)) = token.split_once('/')
-                && let (Ok(n), Ok(d)) = (n.parse(), d.parse()) {
-                    num = n;
-                    den = d;
-                }
+                && let (Ok(n), Ok(d)) = (n.parse(), d.parse())
+            {
+                num = n;
+                den = d;
+            }
         }
     }
     (bpm, num, den)

@@ -38,7 +38,7 @@ pub struct LiveSyncState {
 
 impl LiveSyncState {
     /// Create a new sync state from song paths and a generated setlist.
-    #[must_use] 
+    #[must_use]
     pub fn new(
         song_paths: Vec<PathBuf>,
         setlist_path: PathBuf,
@@ -177,7 +177,10 @@ impl LiveSyncState {
         use daw::file::setlist_rpp::{
             build_song_infos_from_projects, concatenate_projects, measures_to_seconds,
         };
-        use session_proto::{SongId, offset_map::{SetlistOffsetMap, SongOffset}};
+        use session_proto::{
+            SongId,
+            offset_map::{SetlistOffsetMap, SongOffset},
+        };
 
         // Re-read all song RPPs
         let mut projects = Vec::new();
@@ -289,7 +292,7 @@ impl LiveSyncState {
 ///
 /// Creates a file watcher for all song RPPs and spawns a task that
 /// processes change events.
-#[must_use] 
+#[must_use]
 pub fn start_live_sync(
     state: LiveSyncState,
 ) -> (

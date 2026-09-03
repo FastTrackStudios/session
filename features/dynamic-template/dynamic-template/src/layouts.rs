@@ -27,12 +27,12 @@ pub struct TrackLayout {
 }
 
 impl TrackLayout {
-    #[must_use] 
+    #[must_use]
     pub const fn new(tcp: LayoutName, mcp: LayoutName) -> Self {
         Self { tcp, mcp }
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn same(layout: LayoutName) -> Self {
         Self {
             tcp: layout,

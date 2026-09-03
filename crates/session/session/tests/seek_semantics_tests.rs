@@ -69,7 +69,9 @@ async fn inner() -> eyre::Result<()> {
         "need ≥2 songs to prove seeks can't cross songs (got {})",
         setlist.songs.len()
     );
-    let song0 = setlist.songs.first()
+    let song0 = setlist
+        .songs
+        .first()
         .ok_or_else(|| eyre::eyre!("no songs in setlist"))?
         .clone();
     let dur0 = song0.duration();

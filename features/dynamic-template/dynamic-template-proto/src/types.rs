@@ -19,7 +19,7 @@ pub struct OrganizeRequest {
 
 impl OrganizeRequest {
     /// Create a new organize request with default options
-    #[must_use] 
+    #[must_use]
     pub fn new(items: Vec<String>) -> Self {
         Self {
             items,
@@ -29,14 +29,14 @@ impl OrganizeRequest {
     }
 
     /// Create a request with existing tracks to match against
-    #[must_use] 
+    #[must_use]
     pub fn with_existing_tracks(mut self, tracks: Vec<String>) -> Self {
         self.existing_tracks = Some(tracks);
         self
     }
 
     /// Set organization options
-    #[must_use] 
+    #[must_use]
     pub const fn with_options(mut self, options: OrganizeOptions) -> Self {
         self.options = options;
         self
@@ -168,7 +168,7 @@ pub struct OrganizeResponse {
 
 impl OrganizeResponse {
     /// Create an empty response
-    #[must_use] 
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             hierarchy: TrackHierarchy::default(),
@@ -214,7 +214,7 @@ pub struct ItemMetadata {
 
 impl ItemMetadata {
     /// Check if any metadata was extracted
-    #[must_use] 
+    #[must_use]
     pub const fn has_metadata(&self) -> bool {
         self.tempo.is_some()
             || self.song_name.is_some()

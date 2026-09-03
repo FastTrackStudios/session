@@ -157,17 +157,16 @@ fn source_stems(song: &str) -> Vec<SourceStem> {
     let Some((_, folder)) = WORSHIP_FOLDERS.iter().find(|(n, _)| *n == song) else {
         return Vec::new();
     };
-    let base = std::env::var("FTS_WORSHIP_STEMS")
-        .map_or_else(|_| home().join("Downloads/Worship MultiTracks"), PathBuf::from);
+    let base = std::env::var("FTS_WORSHIP_STEMS").map_or_else(
+        |_| home().join("Downloads/Worship MultiTracks"),
+        PathBuf::from,
+    );
     let dir = base.join(folder);
     let mut wavs: Vec<PathBuf> = match std::fs::read_dir(&dir) {
         Ok(rd) => rd
             .flatten()
             .map(|e| e.path())
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|x| x.eq_ignore_ascii_case("wav"))
-            })
+            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("wav")))
             .collect(),
         Err(_) => return Vec::new(),
     };
@@ -323,10 +322,7 @@ fn main() {
     println!("\nDone.");
 }
 
-fn export_sections(
-    song: &DemoSong,
-    layout: Option<&ChartLayout>,
-) -> (Vec<String>, f64) {
+fn export_sections(song: &DemoSong, layout: Option<&ChartLayout>) -> (Vec<String>, f64) {
     let chart_secs: Vec<&session::setlist::chart_import::LaidSection> = layout
         .map(|l| {
             l.sections

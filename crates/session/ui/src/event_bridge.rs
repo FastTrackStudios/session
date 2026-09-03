@@ -130,8 +130,7 @@ fn apply_transport_update(transports: &[SongTransportState]) {
             }
 
             if Some(transport.song_index) == active_song_index {
-                active_transport_update =
-                    Some((transport.is_playing, transport.position.musical));
+                active_transport_update = Some((transport.is_playing, transport.position.musical));
             }
         }
     }

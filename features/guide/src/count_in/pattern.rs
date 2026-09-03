@@ -53,7 +53,9 @@ pub fn calculate_odd_time_count(
     if beat_in_measure >= last_group_start && beat_in_measure <= time_sig_num {
         // This beat is in the last group (4 beats)
         // Count 1-4 within this group
-        let beat_in_group = beat_in_measure.saturating_sub(last_group_start).saturating_add(1);
+        let beat_in_group = beat_in_measure
+            .saturating_sub(last_group_start)
+            .saturating_add(1);
         return Some(beat_in_group);
     }
 
@@ -79,7 +81,9 @@ pub fn calculate_odd_time_count(
 
         if beat_in_measure >= current_start && beat_in_measure <= current_end {
             // This beat is in the current group
-            let beat_in_group = beat_in_measure.saturating_sub(current_start).saturating_add(1);
+            let beat_in_group = beat_in_measure
+                .saturating_sub(current_start)
+                .saturating_add(1);
             return Some(beat_in_group);
         }
 
@@ -123,7 +127,9 @@ impl CountInPattern {
             // For multi-measure count-ins: count once per measure at beat 1
             if beat_in_measure == 1 {
                 let count_number = if offset_by_one {
-                    total_measures.saturating_sub(measure_index).saturating_sub(1)
+                    total_measures
+                        .saturating_sub(measure_index)
+                        .saturating_sub(1)
                 } else {
                     total_measures.saturating_sub(measure_index)
                 };

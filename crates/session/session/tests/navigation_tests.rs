@@ -23,7 +23,10 @@ async fn setup_song(project: &daw::rpc::Project) -> eyre::Result<session::Song> 
         !songs.is_empty(),
         "SongBuilder should produce at least 1 song"
     );
-    songs.into_iter().next().ok_or_else(|| eyre::eyre!("SongBuilder should produce at least 1 song"))
+    songs
+        .into_iter()
+        .next()
+        .ok_or_else(|| eyre::eyre!("SongBuilder should produce at least 1 song"))
 }
 
 /// Navigate to each section by index (simulates `go_to_section`).
@@ -362,9 +365,7 @@ async fn navigate_to_song_start(ctx: &daw::test::ReaperTestContext) -> eyre::Res
 
     let pos = transport.get_position().await?;
     let diff = (pos - seek_pos).abs();
-    println!(
-        "Seeked to song start: {pos:.2}s (expected {seek_pos:.2}s, diff: {diff:.4}s)"
-    );
+    println!("Seeked to song start: {pos:.2}s (expected {seek_pos:.2}s, diff: {diff:.4}s)");
 
     if !(diff < 0.5) {
         return Err(eyre::eyre!(
@@ -377,9 +378,7 @@ async fn navigate_to_song_start(ctx: &daw::test::ReaperTestContext) -> eyre::Res
     if let Some(ci) = song.count_in_seconds {
         println!("Count-in duration: {ci:.2}s");
         if !((ci - 4.0).abs() < 0.5) {
-            return Err(eyre::eyre!(
-                "Count-in should be ~4s, got {ci:.2}s"
-            ));
+            return Err(eyre::eyre!("Count-in should be ~4s, got {ci:.2}s"));
         }
 
         // Song start (with count-in) should be at 0s
@@ -425,9 +424,7 @@ async fn navigate_to_song_end(ctx: &daw::test::ReaperTestContext) -> eyre::Resul
     println!("Position near song end: {pos:.2}s");
 
     if !((pos - near_end).abs() < 0.5) {
-        return Err(eyre::eyre!(
-            "Should be near {near_end:.2}s, got {pos:.2}s"
-        ));
+        return Err(eyre::eyre!("Should be near {near_end:.2}s, got {pos:.2}s"));
     }
 
     // Verify the song end boundary

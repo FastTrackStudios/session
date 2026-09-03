@@ -293,7 +293,11 @@ fn apply_to_project_guid(project_guid: &str, selected_only: bool, force: bool) -
     )
 }
 
-fn apply_to_project(project: &ProjectContext, selected_only: bool, force: bool) -> eyre::Result<()> {
+fn apply_to_project(
+    project: &ProjectContext,
+    selected_only: bool,
+    force: bool,
+) -> eyre::Result<()> {
     let state = state()?.clone();
     let project_key = project_key(project);
     load_applied_colors_for_project(project, &project_key)?;
@@ -410,7 +414,8 @@ fn set_enabled(enabled: bool) {
 fn project_key(project: &ProjectContext) -> String {
     match project {
         ProjectContext::Current => daw::reaper::Reaper
-            .current().map_or_else(|| "current".to_string(), |project| project.guid),
+            .current()
+            .map_or_else(|| "current".to_string(), |project| project.guid),
         ProjectContext::Project(guid) => guid.clone(),
     }
 }

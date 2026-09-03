@@ -44,7 +44,7 @@ impl Mode {
     ];
 
     /// Stable lowercase identifier used in action IDs.
-    #[must_use] 
+    #[must_use]
     pub const fn slug(self) -> &'static str {
         match self {
             Self::Organize => "organize",
@@ -62,7 +62,7 @@ impl Mode {
 
     /// Reverse of [`Mode::slug`]. Case-insensitive, trims whitespace.
     /// Returns `None` for any string that doesn't match a known mode.
-    #[must_use] 
+    #[must_use]
     pub fn from_slug(slug: &str) -> Option<Self> {
         match slug.trim().to_ascii_lowercase().as_str() {
             "organize" => Some(Self::Organize),
@@ -80,7 +80,7 @@ impl Mode {
     }
 
     /// Title-cased display name.
-    #[must_use] 
+    #[must_use]
     pub const fn display_name(self) -> &'static str {
         match self {
             Self::Organize => "Organize",
@@ -99,7 +99,7 @@ impl Mode {
     /// Whether this mode owns the standard 3 floating toolbars. Most
     /// modes do; `Scoring` is the lone exception (no toolbars reserved
     /// in `reaper-menu.ini`, no mode-toolbar slots auto-renamed).
-    #[must_use] 
+    #[must_use]
     pub const fn has_toolbars(self) -> bool {
         !matches!(self, Self::Scoring)
     }
@@ -189,7 +189,9 @@ fn current_cell() -> &'static Mutex<Mode> {
 /// Panics if the mode mutex has been poisoned by a previous panic in another thread.
 #[must_use]
 pub fn current_mode() -> Mode {
-    *current_cell().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    *current_cell()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Callback fired after `set_mode` updates the global slot, only when
@@ -253,7 +255,9 @@ fn fire_mode_change_listeners(mode: Mode) {
 /// Panics if the mode mutex has been poisoned by a previous panic in another thread.
 pub fn set_mode(mode: Mode) {
     let prev = {
-        let mut slot = current_cell().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut slot = current_cell()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let prev = *slot;
         *slot = mode;
         prev
@@ -387,7 +391,7 @@ const fn persist_current_mode(_mode: Mode) {}
 /// when no value has been stored yet (first launch) or the stored
 /// value doesn't match a known mode.
 #[cfg(feature = "reaper")]
-#[must_use] 
+#[must_use]
 pub fn persisted_mode() -> Option<Mode> {
     use daw::service::ExtState as _;
 

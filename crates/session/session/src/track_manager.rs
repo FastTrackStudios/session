@@ -211,7 +211,8 @@ impl<D: Tracks + Items + Projects> TrackManager<D> {
     fn instrument_scope(tree: &TrackTree, track: Track) -> Track {
         let mut current = track;
         while let Some(parent) = tree.parent_of(&current) {
-            let child_is_dimensional = Self::dimension_of(&current, parent) != TrackDimension::Other;
+            let child_is_dimensional =
+                Self::dimension_of(&current, parent) != TrackDimension::Other;
             let parent_is_dimensional = tree
                 .parent_of(parent)
                 .is_some_and(|gp| Self::dimension_of(parent, gp) != TrackDimension::Other);
@@ -246,11 +247,7 @@ impl<D: Tracks + Items + Projects> TrackManager<D> {
 
     /// The next unused configured value for `dimension` within `scope`
     /// (e.g. the next channel after L/R, the next mic after Amp/DI).
-    fn next_value(
-        dimension: TrackDimension,
-        scope: &Track,
-        taken: &[&str],
-    ) -> DawResult<String> {
+    fn next_value(dimension: TrackDimension, scope: &Track, taken: &[&str]) -> DawResult<String> {
         track_schema::next_configured_value(
             dimension,
             std::slice::from_ref(&scope.name),

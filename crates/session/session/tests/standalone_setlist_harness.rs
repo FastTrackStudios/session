@@ -40,8 +40,12 @@ fn seeded_stamped() -> eyre::Result<Standalone> {
 async fn build_setlist_from_standalone_demo() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let bundle = build_in_process_daw(seeded_stamped().expect("seeded_stamped")).await.expect("build_in_process_daw");
-    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await.expect("build_from_open_projects");
+    let bundle = build_in_process_daw(seeded_stamped().expect("seeded_stamped"))
+        .await
+        .expect("build_in_process_daw");
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw)
+        .await
+        .expect("build_from_open_projects");
 
     println!(
         "[v1] built '{}' with {} songs",
@@ -70,11 +74,16 @@ async fn rich_setlist_ten_projects_one_song_each() {
             path: String::new(),
         });
         stamp_song_native(&standalone, &ProjectContext::Project(guid), song)
-            .map_err(|e| eyre::eyre!("stamp song {i}: {e:?}")).expect("stamp_song_native");
+            .map_err(|e| eyre::eyre!("stamp song {i}: {e:?}"))
+            .expect("stamp_song_native");
     }
 
-    let bundle = build_in_process_daw(standalone).await.expect("build_in_process_daw");
-    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await.expect("build_from_open_projects");
+    let bundle = build_in_process_daw(standalone)
+        .await
+        .expect("build_in_process_daw");
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw)
+        .await
+        .expect("build_from_open_projects");
 
     println!("[v3] {} songs:", setlist.songs.len());
     for s in &setlist.songs {
@@ -147,11 +156,16 @@ async fn per_song_project_demo_setlist_holds_order_and_tempo() {
             &ProjectContext::Project(guid.clone()),
             song,
         )
-        .map_err(|e| eyre::eyre!("stamp song {i}: {e:?}")).expect("stamp_song_with_default_tempo_native");
+        .map_err(|e| eyre::eyre!("stamp song {i}: {e:?}"))
+        .expect("stamp_song_with_default_tempo_native");
     }
 
-    let bundle = build_in_process_daw(standalone).await.expect("build_in_process_daw");
-    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await.expect("build_from_open_projects");
+    let bundle = build_in_process_daw(standalone)
+        .await
+        .expect("build_in_process_daw");
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw)
+        .await
+        .expect("build_from_open_projects");
 
     for s in &setlist.songs {
         println!(
@@ -223,8 +237,12 @@ async fn per_song_project_demo_setlist_holds_order_and_tempo() {
 async fn demo_setlist_songs_have_sections_with_timing() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let bundle = build_in_process_daw(seeded_stamped().expect("seeded_stamped")).await.expect("build_in_process_daw");
-    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await.expect("build_from_open_projects");
+    let bundle = build_in_process_daw(seeded_stamped().expect("seeded_stamped"))
+        .await
+        .expect("build_in_process_daw");
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw)
+        .await
+        .expect("build_from_open_projects");
 
     println!("setlist '{}' — {} songs", setlist.name, setlist.songs.len());
     assert!(!setlist.songs.is_empty(), "demo setlist has no songs");
@@ -297,8 +315,12 @@ async fn demo_setlist_songs_have_sections_with_timing() {
 async fn section_numbering_resets_per_song() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let bundle = build_in_process_daw(seeded_stamped().expect("seeded_stamped")).await.expect("build_in_process_daw");
-    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw).await.expect("build_from_open_projects");
+    let bundle = build_in_process_daw(seeded_stamped().expect("seeded_stamped"))
+        .await
+        .expect("build_in_process_daw");
+    let setlist = SetlistBuilder::build_from_open_projects(&bundle.daw)
+        .await
+        .expect("build_from_open_projects");
     assert!(
         setlist.songs.len() >= 2,
         "need multiple songs to test per-song reset"
@@ -663,7 +685,9 @@ async fn verify_setlist_over_vox_client(client: SetlistServiceClient) -> eyre::R
         Ok(sl) => {
             println!("[v2] setlist() query: {} songs", sl.songs.len());
             assert!(!sl.songs.is_empty(), "service built an empty setlist");
-            let first = sl.songs.first()
+            let first = sl
+                .songs
+                .first()
                 .ok_or_else(|| eyre::eyre!("expected at least one song"))?;
             assert!(
                 !first.sections.is_empty(),
@@ -722,7 +746,9 @@ async fn verify_setlist_over_vox_client(client: SetlistServiceClient) -> eyre::R
         active_song.name, expected_first_song,
         "seek_to_section(0,0) did not make song 0 ('{expected_first_song}') active — the sidebar would never expand it"
     );
-    let active_song_first_section = active_song.sections.first()
+    let active_song_first_section = active_song
+        .sections
+        .first()
         .ok_or_else(|| eyre::eyre!("active song has no sections"))?;
     assert_eq!(
         active_section.section_id, active_song_first_section.section_id,

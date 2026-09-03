@@ -9,9 +9,22 @@
 //! Components call `SetlistService` methods directly via `Session::get().setlist()`.
 //! The consuming app must call `Session::init()` during startup.
 
-use crate::components::{LyricSyncViewPropsBuilder_Optional, NudgeBtnPropsBuilder_Optional, MixerViewPropsBuilder_Optional, MixGroupPropsBuilder_Optional, ChannelStripPropsBuilder_Optional, TimeSignatureCardPropsBuilder_Optional, TempoCardPropsBuilder_Optional, SegmentedProgressBarPropsBuilder_Optional, SongProgressBarPropsBuilder_Optional, SectionProgressBarPropsBuilder_Optional, SongItemPropsBuilder_Optional, SongTitlePropsBuilder_Optional, FadedSongTitlePropsBuilder_Optional, TransportControlBarPropsBuilder_Optional, SectionItem, SongItemData, SongItem, TransportControlBar, ProgressSection, TempoMarkerData, CommentMarker, MeasureIndicator, LoopIndicatorData, SongTitle, SongProgressBar, SectionProgressBar, FadedSongTitle};
+use crate::components::{
+    ChannelStripPropsBuilder_Optional, CommentMarker, FadedSongTitle,
+    FadedSongTitlePropsBuilder_Optional, LoopIndicatorData, LyricSyncViewPropsBuilder_Optional,
+    MeasureIndicator, MixGroupPropsBuilder_Optional, MixerViewPropsBuilder_Optional,
+    NudgeBtnPropsBuilder_Optional, ProgressSection, SectionItem, SectionProgressBar,
+    SectionProgressBarPropsBuilder_Optional, SegmentedProgressBarPropsBuilder_Optional, SongItem,
+    SongItemData, SongItemPropsBuilder_Optional, SongProgressBar,
+    SongProgressBarPropsBuilder_Optional, SongTitle, SongTitlePropsBuilder_Optional,
+    TempoCardPropsBuilder_Optional, TempoMarkerData, TimeSignatureCardPropsBuilder_Optional,
+    TransportControlBar, TransportControlBarPropsBuilder_Optional,
+};
 use crate::prelude::*;
-use crate::signals::{SETLIST_STRUCTURE, SONG_VIEWS, SONG_CHARTS, ACTIVE_INDICES, SONG_TRANSPORT, Session, PLAYBACK_STATE, LATENCY_TRACKER};
+use crate::signals::{
+    Session, ACTIVE_INDICES, LATENCY_TRACKER, PLAYBACK_STATE, SETLIST_STRUCTURE, SONG_CHARTS,
+    SONG_TRANSPORT, SONG_VIEWS,
+};
 
 /// The `#<KEY>` metadata token from a keyflow chart (`"A"` from `#A 127bpm`).
 /// A finite `f64`, clamped to `i32`'s range, as an `i32`.
@@ -507,8 +520,7 @@ fn PerformanceMainContent() -> Element {
         song.as_ref()
             .and_then(|song| {
                 transport_state.as_ref().map(|t| {
-                    let position_seconds =
-                        t.position.time.map_or(0.0, |time| time.as_seconds());
+                    let position_seconds = t.position.time.map_or(0.0, |time| time.as_seconds());
                     let sections_start = song
                         .sections
                         .first()
@@ -537,8 +549,7 @@ fn PerformanceMainContent() -> Element {
             .as_ref()
             .and_then(|section| {
                 transport_state.as_ref().map(|t| {
-                    let position_seconds =
-                        t.position.time.map_or(0.0, |time| time.as_seconds());
+                    let position_seconds = t.position.time.map_or(0.0, |time| time.as_seconds());
                     let section_duration = section.end_seconds - section.start_seconds;
                     if section_duration > 0.0
                         && position_seconds >= section.start_seconds
@@ -690,12 +701,8 @@ fn PerformanceMainContent() -> Element {
     // PERFORMANCE: Extract tempo/time sig values and memoize measure indicators
     // These only change when tempo/time signature actually changes, not every frame
     let current_bpm = transport_state.as_ref().map_or(120.0, |t| t.bpm);
-    let current_time_sig_num = transport_state
-        .as_ref()
-        .map_or(4, |t| t.time_sig_num);
-    let current_time_sig_denom = transport_state
-        .as_ref()
-        .map_or(4, |t| t.time_sig_denom);
+    let current_time_sig_num = transport_state.as_ref().map_or(4, |t| t.time_sig_num);
+    let current_time_sig_denom = transport_state.as_ref().map_or(4, |t| t.time_sig_denom);
 
     // Memoize measure indicators - reads ACTIVE_INDICES to ensure reactivity on song/section change
     let measure_indicators = use_memo(move || {
@@ -717,12 +724,13 @@ fn PerformanceMainContent() -> Element {
 
                 let seconds_per_beat = 60.0 / bpm;
                 let seconds_per_measure = seconds_per_beat * f64::from(time_sig_num);
-                let num_measures = clamped_i32((section_duration / seconds_per_measure).ceil().max(0.0));
+                let num_measures =
+                    clamped_i32((section_duration / seconds_per_measure).ceil().max(0.0));
 
                 // Determine the content start (SONGSTART marker position)
-                let content_start = song
-                    .as_ref()
-                    .map_or(0.0, |song| song.start_seconds + song.count_in_seconds.unwrap_or(0.0));
+                let content_start = song.as_ref().map_or(0.0, |song| {
+                    song.start_seconds + song.count_in_seconds.unwrap_or(0.0)
+                });
 
                 // Calculate measure number relative to content start (SONGSTART = measure 1)
                 // Measures before SONGSTART are 0, -1, -2, etc.

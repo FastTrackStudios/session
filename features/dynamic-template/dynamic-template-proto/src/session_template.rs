@@ -126,7 +126,7 @@ impl TemplateNode {
     }
 
     /// Add a child node (builder-style).
-    #[must_use] 
+    #[must_use]
     pub fn with_child(mut self, child: Self) -> Self {
         self.children.push(child);
         self
@@ -140,7 +140,7 @@ impl TemplateNode {
     }
 
     /// Set the canonical group path from string slices (builder-style).
-    #[must_use] 
+    #[must_use]
     pub fn with_path(mut self, path: &[&str]) -> Self {
         self.group_path = path.iter().map(|s| (*s).to_string()).collect();
         self
@@ -311,7 +311,7 @@ impl TemplateBus {
     }
 
     /// Attach a canonical group path as a source of this bus (builder-style).
-    #[must_use] 
+    #[must_use]
     pub fn from_path(mut self, path: &[&str]) -> Self {
         self.sources
             .push(path.iter().map(|s| (*s).to_string()).collect());
@@ -326,7 +326,7 @@ impl TemplateBus {
     }
 
     /// Emit this bus unconditionally (builder-style).
-    #[must_use] 
+    #[must_use]
     pub const fn always(mut self) -> Self {
         self.materialize = BusMaterialization::Always;
         self

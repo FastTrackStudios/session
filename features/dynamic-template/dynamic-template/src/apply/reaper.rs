@@ -29,7 +29,7 @@ impl ReaperTarget {
     }
 
     /// Target a specific project.
-    #[must_use] 
+    #[must_use]
     pub const fn new(project: ProjectContext) -> Self {
         Self {
             daw: Reaper,
@@ -78,11 +78,8 @@ impl TemplateTarget for ReaperTarget {
         // wrapper around unsigned bit patterns, so reinterpret rather than
         // convert.
         let color_u32 = color.to_reaper_native().cast_unsigned();
-        self.daw.set_color(
-            self.project.clone(),
-            TrackRef::Guid(id.clone()),
-            color_u32,
-        )
+        self.daw
+            .set_color(self.project.clone(), TrackRef::Guid(id.clone()), color_u32)
     }
 
     fn set_channel_count(&mut self, id: &String, channels: u32) -> Result<(), Self::Error> {
@@ -142,14 +139,13 @@ impl TemplateTarget for ReaperTarget {
 
         let folder_guid = self.daw.add(self.project.clone(), folder, None)?;
         let folder_index = u32::try_from(
-            self
-                .daw
+            self.daw
                 .all(self.project.clone())
                 .iter()
                 .position(|t| t.guid == folder_guid)
                 .ok_or_else(|| {
                     daw_proto::DawError::NotFound(format!("track {folder_guid} vanished after add"))
-                })?
+                })?,
         )
         .map_err(|_| daw_proto::DawError::NotFound("track index out of range".to_string()))?;
 

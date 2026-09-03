@@ -48,7 +48,7 @@ pub struct KeyChange {
 /// Round-trips through [`parse_key`]. Deliberately the plainest thing
 /// that reads correctly to a human, since the whole point of storing it
 /// in the label is that a person can read and edit it.
-#[must_use] 
+#[must_use]
 pub fn format_key(key: &Key) -> String {
     // Ionian and Aeolian get their common names. Musicians write "C
     // major", not "C ionian", and this string is meant to be read and
@@ -103,7 +103,7 @@ pub fn parse_key(label: &str) -> Option<Key> {
 /// Exists so callers — the actions, the toolbar selector — can name a key
 /// without depending on keyflow directly. `None` if the root isn't a
 /// note.
-#[must_use] 
+#[must_use]
 pub fn key_from_name(root: &str, major: bool) -> Option<Key> {
     let note = MusicalNote::from_string(&normalize_root(root))?;
     Some(if major {
@@ -199,7 +199,8 @@ where
     D: Tracks + Items,
 {
     key_changes(daw, project)
-        .into_iter().rfind(|c| c.seconds <= seconds + 0.001)
+        .into_iter()
+        .rfind(|c| c.seconds <= seconds + 0.001)
         .map(|c| c.key)
 }
 
@@ -255,7 +256,9 @@ pub fn keysig_measure(reaper_measure: i32) -> u32 {
 fn keysig_fields(key: &Key) -> (u8, i8, u32) {
     let accidental = if key.root.name.contains('b') {
         -1
-    } else { i8::from(key.root.name.contains('#')) };
+    } else {
+        i8::from(key.root.name.contains('#'))
+    };
     // REAPER's mask describes the scale from its root. A minor key is the
     // major scale rotated, which REAPER spells by giving the relative
     // major's mask against the minor root — so both use the major mask.

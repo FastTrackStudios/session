@@ -93,7 +93,8 @@ fn radiohead_paranoid_android() {
         &["Unsorted"],
         "Electric",
         &["Guitars"],
-    ).unwrap();
+    )
+    .unwrap();
     println!("Sorted {guitar_sorted} guitar items");
 
     // Note: FX1/FX2 now automatically go to SFX group (no manual step needed)
@@ -401,112 +402,112 @@ fn radiohead_paranoid_android_expected() -> daw_proto::TrackHierarchy {
 
 // ============================================================================
 // EXPECTED TRACK HIERARCHY (documented version)
-    // ============================================================================
-    //
-    // Drums/
-    //   ├─ Kick/
-    //   │   ├─ In             ← 1 Kick In.05_04.wav
-    //   │   └─ Out            ← 3 Kick Out.05_04.wav
-    //   ├─ Snare/
-    //   │   ├─ Sum/                           (tagged collection for mic positions)
-    //   │   │   ├─ Top        ← 5 Snare.05_03.wav (default = Top when Bottom exists)
-    //   │   │   ├─ Top 2      ← 6 Snare.dup1.05_03.wav
-    //   │   │   └─ Bottom     ← 8 Snare Btm.05_03.wav
-    //   │   └─ Verb           ← 9 SNR VERB.05_03.wav (FX print, sibling to Sum)
-    //   ├─ Toms/
-    //   │   ├─ Rack 10        ← 10 Rack 10-St.01.R.05_03.wav (10" rack tom)
-    //   │   ├─ Rack 12        ← 11 Rack 12.01.R.05_03.wav (12" rack tom)
-    //   │   └─ Floor          ← 12 Floor.01.R.05_03.wav
-    //   ├─ Cymbals/
-    //   │   ├─ OH Mono        ← 14 Mono Ovh.01.R.05_03.wav (OVH → Cymbals)
-    //   │   └─ HH             ← 15 Room HH.05_03.wav (HH → Cymbals, despite "Room" prefix)
-    //   └─ Rooms/
-    //       └─ Knee Mic       ← 13 Knee Mic.01.R.05_03.wav
-    //
-    // Percussion/
-    //   ├─ Cabasa             ← 19 Cabasa_03.wav
-    //   ├─ Clave              ← 20 Clave_03.wav
-    //   ├─ Guiro Shaker       ← 21 Guiro Shaker_03.wav
-    //   ├─ Guiro              ← 22 Guiro_03.wav
-    //   ├─ Vibraslap          ← 23 Vibraslap_03.wav
-    //   └─ Shaker             ← 24 SHAKER_03.wav
-    //
-    // Bass                     ← 25 _Bass.01_03.wav (single item, no subfolder needed)
-    //
-    // Guitars/
-    //   └─ Electric/
-    //       ├─ Ed/
-    //       │   ├─ Crunch     ← 28 EdCrunch_03.wav
-    //       │   ├─ Crunch 2   ← 30 EdCrunch2_03.wav
-    //       │   └─ Pitch      ← 33 EdPitch_03.wav
-    //       └─ Johny/
-    //           ├─ Crunch 1   ← 29 JohnyCrunch1_03.wav
-    //           ├─ Crunch 2   ← 31 JohnyCrunch2_03.wav
-    //           ├─ Lead       ← 34 JohnyLead_03.wav
-    //           ├─ Phaser 1   ← 35 JohnyPhaser1_03.wav
-    //           ├─ Phaser 1 2 ← 36 JohnyPhaser1.dup1_03.wav (dup = layer 2)
-    //           └─ Phaser 2   ← 39 JohnyPhaser2_03.wav
-    //
-    // Keys/
-    //   ├─ Piano              ← 52 Piano_03.wav
-    //   ├─ Electric/
-    //   │   ├─ Rhodes         ← 53 rhodes_david bennett_03.wav
-    //   │   ├─ DX7            ← 45 DX7 .2_03.wav
-    //   │   └─ Mellotron      ← 48 Mellotron.2_03.wav
-    //   └─ Organ/
-    //       ├─ Chords         ← 49 Organ Chords.2_03.wav
-    //       ├─ Notes          ← 50 Organ Notes.2_03.wav
-    //       └─ Slide          ← 51 Organ Slide.2_03.wav
-    //
-    // Synths/
-    //   └─ Prophet            ← 54 prophet synth_david bennett_03.wav
-    //
-    // Vocals/
-    //   ├─ Lead/
-    //   │   ├─ Bridge         ← 61 Bridge vocal extra_03.wav
-    //   │   ├─ Outro/
-    //   │   │   ├─ 1          ← 62 Outro vocal 1_03.wav
-    //   │   │   ├─ 2          ← 63 Outro vocal 2_03.wav
-    //   │   │   └─ 3          ← 64 Outro vocal 3_03.wav
-    //   │   ├─ Main/
-    //   │   │   ├─ Voc        ← 56 Lead Voc_03.wav
-    //   │   │   ├─ Dbl        ← 57 Lead Voc Dbl_03.wav
-    //   │   │   └─ Dbl 2      ← 58 Lead Voc Dbl.dup1_03.wav
-    //   │   ├─ 3              ← 59 Vocal 3_03.wav
-    //   │   └─ DBL/
-    //   │       ├─ Voc 1      ← 57 Lead Voc Dbl_03.wav
-    //   │       └─ Voc 2      ← 58 Lead Voc Dbl.dup1_03.wav
-    //   ├─ Bridge 1           ← 67 Voca Middle Bridge1_03.wav
-    //   ├─ Bridge 2           ← 68 Voca Middle Bridge2_03.wav
-    //   ├─ Bridge 3           ← 69 Voca Middle Bridge3_03.wav
-    //   ├─ Bridge 4           ← 70 Voca Middle Bridge4_03.wav
-    //   └─ Bridge 5           ← 71 Voca Middle Bridge5_03.wav
-    //
-    // SFX/
-    //   ├─ FX1                ← 46 FX1.2_03.wav
-    //   ├─ FX2                ← 47 FX2.2_03.wav
-    //   ├─ Robot Voice        ← 43 Robot Voice_03.wav
-    //   └─ Intro Count        ← 42 intro count.1_03.wav
-    //
-    // Unsorted/
-    //   ├─ CK MAP             ← 40 CK MAP]_03.wav (likely click/map track)
-    //   └─ Mix Master         ← Paranoid_Android_Cover_PLP_JH_MIX_1_Master.wav
-    //
-    // ============================================================================
-    // NOTES:
-    // - Track numbers (1-71) are original session order, not sorting priority
-    // - "Ed" and "Johny" are guitarists (Ed O'Brien, Jonny Greenwood)
-    // - ".dup1" suffix indicates duplicate/layer 2 track
-    // - ".2_03" and ".05_03" suffixes are likely Pro Tools region identifiers
-    // - Snare default is "Top" (not "Main") when Bottom mic exists
-    // - Snare mic positions go in Sum folder, FX prints (Verb) are siblings to Sum
-    // - OVH/Overheads and HH/Hi-Hat → Cymbals bus (not Rooms)
-    // - Rack tom numbers indicate size (10", 12")
-    // - DX7 is a Yamaha FM synthesizer → Electric Keys
-    // - Mellotron is a tape-replay keyboard → Electric Keys
-    // - Prophet is a Sequential Circuits synthesizer
-    // - Vocals organized by Section first (Main, Bridge, Outro)
-    // - Within Main section: "Lead" is an arrangement with layers (Main, Dbl, Dbl 2)
-    // - Other vocals in Main section (Vocal 3, Quad, Extra) are separate parts
-    // - PLP = Play Along Print, JH = initials (mixer?)
-    // ============================================================================
+// ============================================================================
+//
+// Drums/
+//   ├─ Kick/
+//   │   ├─ In             ← 1 Kick In.05_04.wav
+//   │   └─ Out            ← 3 Kick Out.05_04.wav
+//   ├─ Snare/
+//   │   ├─ Sum/                           (tagged collection for mic positions)
+//   │   │   ├─ Top        ← 5 Snare.05_03.wav (default = Top when Bottom exists)
+//   │   │   ├─ Top 2      ← 6 Snare.dup1.05_03.wav
+//   │   │   └─ Bottom     ← 8 Snare Btm.05_03.wav
+//   │   └─ Verb           ← 9 SNR VERB.05_03.wav (FX print, sibling to Sum)
+//   ├─ Toms/
+//   │   ├─ Rack 10        ← 10 Rack 10-St.01.R.05_03.wav (10" rack tom)
+//   │   ├─ Rack 12        ← 11 Rack 12.01.R.05_03.wav (12" rack tom)
+//   │   └─ Floor          ← 12 Floor.01.R.05_03.wav
+//   ├─ Cymbals/
+//   │   ├─ OH Mono        ← 14 Mono Ovh.01.R.05_03.wav (OVH → Cymbals)
+//   │   └─ HH             ← 15 Room HH.05_03.wav (HH → Cymbals, despite "Room" prefix)
+//   └─ Rooms/
+//       └─ Knee Mic       ← 13 Knee Mic.01.R.05_03.wav
+//
+// Percussion/
+//   ├─ Cabasa             ← 19 Cabasa_03.wav
+//   ├─ Clave              ← 20 Clave_03.wav
+//   ├─ Guiro Shaker       ← 21 Guiro Shaker_03.wav
+//   ├─ Guiro              ← 22 Guiro_03.wav
+//   ├─ Vibraslap          ← 23 Vibraslap_03.wav
+//   └─ Shaker             ← 24 SHAKER_03.wav
+//
+// Bass                     ← 25 _Bass.01_03.wav (single item, no subfolder needed)
+//
+// Guitars/
+//   └─ Electric/
+//       ├─ Ed/
+//       │   ├─ Crunch     ← 28 EdCrunch_03.wav
+//       │   ├─ Crunch 2   ← 30 EdCrunch2_03.wav
+//       │   └─ Pitch      ← 33 EdPitch_03.wav
+//       └─ Johny/
+//           ├─ Crunch 1   ← 29 JohnyCrunch1_03.wav
+//           ├─ Crunch 2   ← 31 JohnyCrunch2_03.wav
+//           ├─ Lead       ← 34 JohnyLead_03.wav
+//           ├─ Phaser 1   ← 35 JohnyPhaser1_03.wav
+//           ├─ Phaser 1 2 ← 36 JohnyPhaser1.dup1_03.wav (dup = layer 2)
+//           └─ Phaser 2   ← 39 JohnyPhaser2_03.wav
+//
+// Keys/
+//   ├─ Piano              ← 52 Piano_03.wav
+//   ├─ Electric/
+//   │   ├─ Rhodes         ← 53 rhodes_david bennett_03.wav
+//   │   ├─ DX7            ← 45 DX7 .2_03.wav
+//   │   └─ Mellotron      ← 48 Mellotron.2_03.wav
+//   └─ Organ/
+//       ├─ Chords         ← 49 Organ Chords.2_03.wav
+//       ├─ Notes          ← 50 Organ Notes.2_03.wav
+//       └─ Slide          ← 51 Organ Slide.2_03.wav
+//
+// Synths/
+//   └─ Prophet            ← 54 prophet synth_david bennett_03.wav
+//
+// Vocals/
+//   ├─ Lead/
+//   │   ├─ Bridge         ← 61 Bridge vocal extra_03.wav
+//   │   ├─ Outro/
+//   │   │   ├─ 1          ← 62 Outro vocal 1_03.wav
+//   │   │   ├─ 2          ← 63 Outro vocal 2_03.wav
+//   │   │   └─ 3          ← 64 Outro vocal 3_03.wav
+//   │   ├─ Main/
+//   │   │   ├─ Voc        ← 56 Lead Voc_03.wav
+//   │   │   ├─ Dbl        ← 57 Lead Voc Dbl_03.wav
+//   │   │   └─ Dbl 2      ← 58 Lead Voc Dbl.dup1_03.wav
+//   │   ├─ 3              ← 59 Vocal 3_03.wav
+//   │   └─ DBL/
+//   │       ├─ Voc 1      ← 57 Lead Voc Dbl_03.wav
+//   │       └─ Voc 2      ← 58 Lead Voc Dbl.dup1_03.wav
+//   ├─ Bridge 1           ← 67 Voca Middle Bridge1_03.wav
+//   ├─ Bridge 2           ← 68 Voca Middle Bridge2_03.wav
+//   ├─ Bridge 3           ← 69 Voca Middle Bridge3_03.wav
+//   ├─ Bridge 4           ← 70 Voca Middle Bridge4_03.wav
+//   └─ Bridge 5           ← 71 Voca Middle Bridge5_03.wav
+//
+// SFX/
+//   ├─ FX1                ← 46 FX1.2_03.wav
+//   ├─ FX2                ← 47 FX2.2_03.wav
+//   ├─ Robot Voice        ← 43 Robot Voice_03.wav
+//   └─ Intro Count        ← 42 intro count.1_03.wav
+//
+// Unsorted/
+//   ├─ CK MAP             ← 40 CK MAP]_03.wav (likely click/map track)
+//   └─ Mix Master         ← Paranoid_Android_Cover_PLP_JH_MIX_1_Master.wav
+//
+// ============================================================================
+// NOTES:
+// - Track numbers (1-71) are original session order, not sorting priority
+// - "Ed" and "Johny" are guitarists (Ed O'Brien, Jonny Greenwood)
+// - ".dup1" suffix indicates duplicate/layer 2 track
+// - ".2_03" and ".05_03" suffixes are likely Pro Tools region identifiers
+// - Snare default is "Top" (not "Main") when Bottom mic exists
+// - Snare mic positions go in Sum folder, FX prints (Verb) are siblings to Sum
+// - OVH/Overheads and HH/Hi-Hat → Cymbals bus (not Rooms)
+// - Rack tom numbers indicate size (10", 12")
+// - DX7 is a Yamaha FM synthesizer → Electric Keys
+// - Mellotron is a tape-replay keyboard → Electric Keys
+// - Prophet is a Sequential Circuits synthesizer
+// - Vocals organized by Section first (Main, Bridge, Outro)
+// - Within Main section: "Lead" is an arrangement with layers (Main, Dbl, Dbl 2)
+// - Other vocals in Main section (Vocal 3, Quad, Extra) are separate parts
+// - PLP = Play Along Print, JH = initials (mixer?)
+// ============================================================================

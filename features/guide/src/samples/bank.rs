@@ -40,7 +40,7 @@ pub struct ClickSamplePaths {
 impl ClickSamplePaths {
     /// Get file paths for a given click sound under `base_path`
     /// (the `Library/FTS-GUIDE/Click/` directory).
-    #[must_use] 
+    #[must_use]
     pub fn for_sound(base_path: &Path, click_sound: ClickSound) -> Self {
         let (sound_dir, beat_file, eighth_file, sixteenth_file, accent_file) = match click_sound {
             ClickSound::Blip => (
@@ -115,7 +115,7 @@ impl ClickSamplePaths {
 ///
 /// Ported verbatim from the legacy `section_to_guide_filename`.
 /// Always uses the unnumbered filename (e.g. "Chorus", never "Chorus 1").
-#[must_use] 
+#[must_use]
 pub fn section_to_guide_filename(
     section_type_name: &str,
     _section_number: Option<u32>,
@@ -157,7 +157,7 @@ pub fn section_to_guide_filename(
 /// Get guide sample key for a section: `"{section_type}_{number}"`.
 ///
 /// Ported verbatim from the legacy `get_guide_key`.
-#[must_use] 
+#[must_use]
 pub fn get_guide_key(section_type_name: &str, section_number: Option<u32>) -> String {
     let number_str = section_number.map_or_else(|| "None".to_string(), |n| n.to_string());
     format!("{section_type_name}_{number_str}")

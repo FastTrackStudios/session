@@ -56,9 +56,13 @@ impl SetlistItemIndex {
 
         for track_info in &tracks {
             let track = setlist.tracks().by_guid(&track_info.guid).await;
-            let Ok(Some(track_handle)) = track else { continue };
+            let Ok(Some(track_handle)) = track else {
+                continue;
+            };
 
-            let Ok(items) = track_handle.items().all().await else { continue };
+            let Ok(items) = track_handle.items().all().await else {
+                continue;
+            };
 
             for item in &items {
                 // Get the active take's name
@@ -85,7 +89,7 @@ impl SetlistItemIndex {
     /// Find a setlist item by track name, take name, and expected position.
     ///
     /// Returns the item GUID if found within position tolerance.
-    #[must_use] 
+    #[must_use]
     pub fn find(&self, track_name: &str, take_name: &str, expected_position: f64) -> Option<&str> {
         let key = (track_name.to_string(), take_name.to_string());
         let candidates = self.entries.get(&key)?;

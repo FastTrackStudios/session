@@ -1120,7 +1120,12 @@ fn mode_toolbar_actions(
             let mut actions = vec![
                 marker_button("count-in", "Count In", "", MarkerKind::CountIn),
                 marker_button("mark-start", "=START", "", MarkerKind::Start),
-                marker_button("song-start", "Song Start", "\u{2691}", MarkerKind::SongStart),
+                marker_button(
+                    "song-start",
+                    "Song Start",
+                    "\u{2691}",
+                    MarkerKind::SongStart,
+                ),
                 section_button("sec-intro", "Intro", SectionKind::Intro),
                 section_button("sec-verse", "Verse", SectionKind::Verse),
                 section_button("sec-prechorus", "Pre-CH", SectionKind::PreChorus),

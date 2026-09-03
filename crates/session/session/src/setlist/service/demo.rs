@@ -755,7 +755,14 @@ fn shift_song(mut song: DemoSong, delta: f64) -> DemoSong {
 /// time_sig_den, duration_s, [(lyric-section-label, line-weight)])`. Tempos are
 /// the real published BPMs; section timings are lyric-proportional (approximate,
 /// not a real chart) — replace a song here with a chart to make it accurate.
-type WorshipSongLayout = (&'static str, f64, u32, u32, f64, &'static [(&'static str, u32)]);
+type WorshipSongLayout = (
+    &'static str,
+    f64,
+    u32,
+    u32,
+    f64,
+    &'static [(&'static str, u32)],
+);
 const WORSHIP_SONGS: &[WorshipSongLayout] = &[
     // All six songs now have real keyflow charts (see SONG_CHARTS); this
     // lyric-derived fallback is currently empty but kept for future songs.
@@ -780,7 +787,7 @@ const SONG_CHARTS: &[(&str, &str)] = &[
 /// song's project (ext-state `FTS/chart_text`) so setlist hydration can
 /// serve it to remotes even without a MIDI chart-analysis service — the
 /// browser chart pane renders from exactly this text.
-#[must_use] 
+#[must_use]
 pub fn demo_chart_for(name: &str) -> Option<&'static str> {
     SONG_CHARTS
         .iter()
@@ -806,7 +813,7 @@ const ORDER: &[&str] = &[
 /// OWN standalone project with its own default tempo/time-signature at t=0, so
 /// there are no shared-timeline GAP offsets and no tempo points. The
 /// (legacy) single-project [`demo_songs`] shifts these sequentially instead.
-#[must_use] 
+#[must_use]
 pub fn demo_songs_base() -> Vec<DemoSong> {
     let mut base_songs: Vec<DemoSong> = Vec::with_capacity(ORDER.len());
     for &name in ORDER {
@@ -843,7 +850,7 @@ fn demo_songs() -> Vec<DemoSong> {
 /// The setlist layout for media seeding: `(song name, region_start, length)` in
 /// timeline order. The app seeds each song's stems at its `region_start` so the
 /// audio lines up with the stamped song region.
-#[must_use] 
+#[must_use]
 pub fn demo_song_layout() -> Vec<(&'static str, f64, f64)> {
     demo_songs()
         .iter()

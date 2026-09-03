@@ -124,7 +124,9 @@ where
                                 .iter()
                                 .position(|s| s.project_guid == project_guid);
                             let Some(first_idx) = first else { continue };
-                            let count = current_setlist.songs.get(first_idx..)
+                            let count = current_setlist
+                                .songs
+                                .get(first_idx..)
                                 .unwrap_or(&[])
                                 .iter()
                                 .take_while(|s| s.project_guid == project_guid)
@@ -163,7 +165,8 @@ where
                         this.notify_setlist_changed();
                         for (song_index, song) in indexed_songs.iter().map(|(i, s)| (i, s)) {
                             this.hydration_bus.emit((*song_index, song.clone()));
-                            this.emit_cached_chart_payload_for_song(*song_index, &project_guid).await;
+                            this.emit_cached_chart_payload_for_song(*song_index, &project_guid)
+                                .await;
                         }
                     }
                     Ok((_project_guid, _)) => {
@@ -238,7 +241,10 @@ where
     pub(crate) async fn build_from_open_projects_impl(&self) -> Result<(), SessionServiceError> {
         debug!("Building setlist from open projects...");
 
-        let build_generation = self.build_generation.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+        let build_generation = self
+            .build_generation
+            .fetch_add(1, Ordering::SeqCst)
+            .saturating_add(1);
 
         // `Projects::list` / `Projects::current` on `daw_reaper::Reaper`
         // hit REAPER's main-thread-only FFI (EnumProjects, etc.). Run
@@ -290,9 +296,14 @@ where
         // what lights up the navigator + chart pane for songs beyond the
         // focused one. Native is byte-for-byte unchanged (`full_build` reduces
         // to `load.index == focused_index`).
-        let (setlist, focused_song_count) =
-            self.perform_phase1_build(&project_loads, &existing_songs_by_guid, &cached_songs, focused_index)
-                .await;
+        let (setlist, focused_song_count) = self
+            .perform_phase1_build(
+                &project_loads,
+                &existing_songs_by_guid,
+                &cached_songs,
+                focused_index,
+            )
+            .await;
 
         // Compute the actual song index of the first focused song
         let focused_song_start = project_loads
@@ -330,7 +341,12 @@ where
         #[cfg(target_arch = "wasm32")]
         let _ = build_generation;
         #[cfg(not(target_arch = "wasm32"))]
-        self.spawn_phase2_hydration(project_loads, existing_songs_by_guid, build_generation, focused_index);
+        self.spawn_phase2_hydration(
+            project_loads,
+            existing_songs_by_guid,
+            build_generation,
+            focused_index,
+        );
         Ok(())
     }
 

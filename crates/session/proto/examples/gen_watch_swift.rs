@@ -81,7 +81,10 @@ fn collect(shape: &'static Shape, out: &mut BTreeMap<String, StructBody>) -> Res
 }
 
 /// Map a facet shape to its Swift spelling, recursing into user structs.
-fn swift_type(shape: &'static Shape, out: &mut BTreeMap<String, StructBody>) -> Result<String, String> {
+fn swift_type(
+    shape: &'static Shape,
+    out: &mut BTreeMap<String, StructBody>,
+) -> Result<String, String> {
     match &shape.def {
         Def::List(l) => return Ok(format!("[{}]", swift_type(l.t, out)?)),
         Def::Option(o) => return Ok(format!("{}?", swift_type(o.t, out)?)),

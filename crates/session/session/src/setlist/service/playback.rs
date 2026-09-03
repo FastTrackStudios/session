@@ -38,10 +38,7 @@ where
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self
-                .daw
-                .play(ProjectContext::Project(song.project_guid))
-            {
+            if let Err(e) = self.daw.play(ProjectContext::Project(song.project_guid)) {
                 warn!("Failed to play: {}", e);
             }
         } else {
@@ -58,10 +55,7 @@ where
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self
-                .daw
-                .pause(ProjectContext::Project(song.project_guid))
-            {
+            if let Err(e) = self.daw.pause(ProjectContext::Project(song.project_guid)) {
                 warn!("Failed to pause: {}", e);
             }
         } else {
@@ -78,10 +72,7 @@ where
 
         // Use cached active song ID for instant lookup (no RPC calls)
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self
-                .daw
-                .stop(ProjectContext::Project(song.project_guid))
-            {
+            if let Err(e) = self.daw.stop(ProjectContext::Project(song.project_guid)) {
                 warn!("Failed to stop: {}", e);
             }
         } else {
@@ -104,10 +95,7 @@ where
         warn!("toggle_section_loop not yet implemented");
     }
 
-    pub(crate) fn set_loop_region_impl(
-        start_seconds: f64,
-        end_seconds: f64,
-    ) {
+    pub(crate) fn set_loop_region_impl(start_seconds: f64, end_seconds: f64) {
         debug!("set_loop_region: {} - {}", start_seconds, end_seconds);
         // TODO: Implement setting loop region
         warn!("set_loop_region not yet implemented");

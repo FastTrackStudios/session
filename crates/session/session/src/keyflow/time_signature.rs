@@ -40,7 +40,13 @@ pub const TIME_SIGNATURES: &[(i32, i32)] = &[
 /// existing tempo point there if one already sits at that exact
 /// position, otherwise add a new one carrying the tempo already in
 /// effect (so the tempo map itself is unchanged).
-fn upsert_timesig_at<D>(daw: &D, project: ProjectContext, seconds: f64, num: i32, denom: i32) -> eyre::Result<()>
+fn upsert_timesig_at<D>(
+    daw: &D,
+    project: ProjectContext,
+    seconds: f64,
+    num: i32,
+    denom: i32,
+) -> eyre::Result<()>
 where
     D: TempoMap,
 {
@@ -90,10 +96,12 @@ where
 
     if single_measure && prev != (num, denom) {
         let next_start = daw.musical_to_time(project.clone(), measure.saturating_add(1), 0, 0.0);
-        let already_changes = daw
-            .get_tempo_points(project.clone())
-            .iter()
-            .any(|p| p.time_signature.is_some() && p.position.seconds().is_some_and(|s| (s - next_start).abs() < 1e-6));
+        let already_changes = daw.get_tempo_points(project.clone()).iter().any(|p| {
+            p.time_signature.is_some()
+                && p.position
+                    .seconds()
+                    .is_some_and(|s| (s - next_start).abs() < 1e-6)
+        });
         if !already_changes {
             upsert_timesig_at(daw, project, next_start, prev.0, prev.1)?;
         }

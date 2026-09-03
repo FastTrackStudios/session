@@ -32,14 +32,14 @@ impl Default for SongNameConfig {
 
 impl SongNameConfig {
     /// Create config with custom threshold (0.0 to 1.0)
-    #[must_use] 
+    #[must_use]
     pub const fn with_threshold(mut self, threshold: f32) -> Self {
         self.threshold = threshold.clamp(0.0, 1.0);
         self
     }
 
     /// Enable or disable fuzzy matching
-    #[must_use] 
+    #[must_use]
     pub const fn with_fuzzy_match(mut self, enabled: bool) -> Self {
         self.fuzzy_match = enabled;
         self
@@ -198,7 +198,7 @@ const EXCLUDED_PATTERNS: &[&str] = &[
 /// let song_names = detect_song_names(&inputs);
 /// assert!(song_names.contains("TheTrooper") || song_names.contains("thetrooper"));
 /// ```
-#[must_use] 
+#[must_use]
 pub fn detect_song_names(inputs: &[String]) -> HashSet<String> {
     detect_song_names_with_config(inputs, &SongNameConfig::default())
 }
@@ -211,7 +211,7 @@ pub fn detect_song_names(inputs: &[String]) -> HashSet<String> {
 ///
 /// # Returns
 /// Set of detected song name tokens (lowercase if fuzzy matching enabled)
-#[must_use] 
+#[must_use]
 pub fn detect_song_names_with_config(
     inputs: &[String],
     config: &SongNameConfig,

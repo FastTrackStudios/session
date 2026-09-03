@@ -17,7 +17,7 @@ impl Default for SongServiceImpl {
 }
 
 impl SongServiceImpl {
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self
     }

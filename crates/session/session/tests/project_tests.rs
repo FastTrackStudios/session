@@ -18,14 +18,18 @@ async fn project_list(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     }
 
     if projects.is_empty() {
-        return Err(eyre::eyre!("Should have at least 1 open project (the test project)"));
+        return Err(eyre::eyre!(
+            "Should have at least 1 open project (the test project)"
+        ));
     }
 
     // Our test project should be among them
     let test_guid = ctx.project.guid().to_string();
     let found = projects.iter().any(|p| p.guid() == test_guid);
     if !found {
-        return Err(eyre::eyre!("Test project GUID should be in the project list"));
+        return Err(eyre::eyre!(
+            "Test project GUID should be in the project list"
+        ));
     }
 
     Ok(())
@@ -168,9 +172,7 @@ async fn project_independent_transport(ctx: &daw::test::ReaperTestContext) -> ey
     let pos_b = transport_b.get_position().await?;
     println!("Project B position: {pos_b:.2}s (expected ~50s)");
     if (pos_b - 50.0).abs() >= 1.0 {
-        return Err(eyre::eyre!(
-            "Project B should be at ~50s, got {pos_b:.2}"
-        ));
+        return Err(eyre::eyre!("Project B should be at ~50s, got {pos_b:.2}"));
     }
 
     // Switch back to project A and verify it kept its position
@@ -179,9 +181,7 @@ async fn project_independent_transport(ctx: &daw::test::ReaperTestContext) -> ey
     let pos_a = transport_a.get_position().await?;
     println!("Project A position: {pos_a:.2}s (expected ~10s)");
     if (pos_a - 10.0).abs() >= 1.0 {
-        return Err(eyre::eyre!(
-            "Project A should be at ~10s, got {pos_a:.2}"
-        ));
+        return Err(eyre::eyre!("Project A should be at ~10s, got {pos_a:.2}"));
     }
 
     // Cleanup

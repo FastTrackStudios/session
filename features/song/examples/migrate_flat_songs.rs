@@ -293,8 +293,9 @@ fn titleize(slug: &str) -> String {
         .filter(|w| !w.is_empty())
         .map(|w| {
             let mut c = w.chars();
-            c.next()
-                .map_or_else(String::new, |f| f.to_uppercase().collect::<String>() + c.as_str())
+            c.next().map_or_else(String::new, |f| {
+                f.to_uppercase().collect::<String>() + c.as_str()
+            })
         })
         .collect::<Vec<_>>()
         .join(" ")

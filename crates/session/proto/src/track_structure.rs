@@ -35,7 +35,7 @@ pub enum TrackIdentity {
 
 impl TrackIdentity {
     /// Create a GUID-preferred identity with name-path fallback.
-    #[must_use] 
+    #[must_use]
     pub fn new(guid: Option<String>, name_path: Vec<String>) -> Self {
         match guid {
             Some(guid) => Self::GuidWithFallback { guid, name_path },
@@ -44,7 +44,7 @@ impl TrackIdentity {
     }
 
     /// Returns the GUID if available.
-    #[must_use] 
+    #[must_use]
     pub fn guid(&self) -> Option<&str> {
         match self {
             Self::Guid(g) | Self::GuidWithFallback { guid: g, .. } => Some(g),
@@ -53,7 +53,7 @@ impl TrackIdentity {
     }
 
     /// Returns the name path if available.
-    #[must_use] 
+    #[must_use]
     pub fn name_path(&self) -> Option<&[String]> {
         match self {
             Self::NamePath(p) | Self::GuidWithFallback { name_path: p, .. } => Some(p),
@@ -62,7 +62,7 @@ impl TrackIdentity {
     }
 
     /// Check if two identities match (GUID takes priority).
-    #[must_use] 
+    #[must_use]
     pub fn matches(&self, other: &Self) -> bool {
         // Try GUID match first
         if let (Some(a), Some(b)) = (self.guid(), other.guid()) {
@@ -93,7 +93,7 @@ pub enum GuideTrackRole {
 
 impl GuideTrackRole {
     /// Canonical track name in the DAW.
-    #[must_use] 
+    #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Click => "Click",
@@ -104,7 +104,7 @@ impl GuideTrackRole {
     }
 
     /// All guide track roles in display order.
-    #[must_use] 
+    #[must_use]
     pub const fn all() -> &'static [Self] {
         &[Self::Click, Self::Loop, Self::Count, Self::Guide]
     }
@@ -195,19 +195,19 @@ pub struct SetlistTrackStructure {
 
 impl SetlistTrackStructure {
     /// Create a new setlist track structure from song mappings.
-    #[must_use] 
+    #[must_use]
     pub const fn new(song_mappings: Vec<SongTrackMapping>) -> Self {
         Self { song_mappings }
     }
 
     /// Get the mapping for a specific song by index.
-    #[must_use] 
+    #[must_use]
     pub fn song_mapping(&self, song_index: usize) -> Option<&SongTrackMapping> {
         self.song_mappings.get(song_index)
     }
 
     /// Find a song mapping by name.
-    #[must_use] 
+    #[must_use]
     pub fn song_mapping_by_name(&self, name: &str) -> Option<&SongTrackMapping> {
         self.song_mappings.iter().find(|m| m.song_name == name)
     }

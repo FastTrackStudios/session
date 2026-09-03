@@ -35,7 +35,7 @@ impl<'a> RppTarget<'a> {
     }
 
     /// The wrapped project.
-    #[must_use] 
+    #[must_use]
     pub const fn project(&self) -> &ReaperProject {
         self.project
     }
@@ -53,7 +53,7 @@ impl<'a> RppTarget<'a> {
     /// [`gather_into_folder`](TemplateTarget::gather_into_folder), which will
     /// only move genuinely top-level tracks) is working from bad data until it
     /// is repaired.
-    #[must_use] 
+    #[must_use]
     pub fn negative_depths(&self) -> Vec<(usize, String, i32)> {
         let mut depth: i32 = 0;
         let mut out = Vec::new();
@@ -170,9 +170,7 @@ impl TemplateTarget for RppTarget<'_> {
     fn has_send(&self, source: &usize, dest: &usize) -> bool {
         self.project.tracks.get(*dest).is_some_and(|t| {
             i32::try_from(*source).map_or(false, |src_i32| {
-                t.receives
-                    .iter()
-                    .any(|r| r.source_track_index == src_i32)
+                t.receives.iter().any(|r| r.source_track_index == src_i32)
             })
         })
     }
@@ -287,7 +285,12 @@ impl TemplateTarget for RppTarget<'_> {
             .map(Some)
             .collect();
         for old in &staying {
-            reordered.push(taken.get_mut(*old).and_then(Option::take).unwrap_or_default());
+            reordered.push(
+                taken
+                    .get_mut(*old)
+                    .and_then(Option::take)
+                    .unwrap_or_default(),
+            );
         }
         reordered.push(Track {
             name: folder.to_string(),
@@ -298,7 +301,10 @@ impl TemplateTarget for RppTarget<'_> {
             ..Track::default()
         });
         for old in &movable {
-            let mut track = taken.get_mut(*old).and_then(Option::take).unwrap_or_default();
+            let mut track = taken
+                .get_mut(*old)
+                .and_then(Option::take)
+                .unwrap_or_default();
             // These carried no folder structure (checked above); inside the
             // folder they are plain members.
             track.folder = Some(FolderSettings {
@@ -437,7 +443,10 @@ mod tests {
         // The send lives on the destination as an AUXRECV naming the source.
         let bus_track = &project.tracks[drum_bus];
         assert_eq!(bus_track.receives.len(), 1);
-        assert_eq!(bus_track.receives[0].source_track_index, i32::try_from(drums).unwrap());
+        assert_eq!(
+            bus_track.receives[0].source_track_index,
+            i32::try_from(drums).unwrap()
+        );
         assert_eq!(bus_track.receives[0].mode, 0, "post-fader");
 
         // ...and the source no longer feeds the master directly.

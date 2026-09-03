@@ -25,7 +25,7 @@ use crate::samples::{load_wav, AudioSample, SampleBank};
 use crate::GuideError;
 
 /// The guide-sample key a spoken cue is stored under in the `SampleBank`.
-#[must_use] 
+#[must_use]
 pub fn tts_cue_key(text: &str) -> String {
     format!("tts:{text}")
 }
@@ -70,7 +70,7 @@ impl CueBank {
     }
 
     /// The wav path a cue text caches to: `<dir>/<sha256(text \0 voice)>.wav`.
-    #[must_use] 
+    #[must_use]
     pub fn cache_path(&self, text: &str) -> PathBuf {
         let mut hasher = Sha256::new();
         hasher.update(text.as_bytes());

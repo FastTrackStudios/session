@@ -62,15 +62,21 @@ pub fn SectionProgressBar(
             setlist
                 .songs
                 .get(song_idx)
-                .and_then(|song| song.sections.get(section_idx)).map_or_else(|| {
-                    // Fallback to first section color if no active section
-                    sections
-                        .first().map_or_else(|| "rgb(100, 100, 100)".to_string(), |s| s.color.clone())
-                }, session_proto::Section::bright_color)
+                .and_then(|song| song.sections.get(section_idx))
+                .map_or_else(
+                    || {
+                        // Fallback to first section color if no active section
+                        sections
+                            .first()
+                            .map_or_else(|| "rgb(100, 100, 100)".to_string(), |s| s.color.clone())
+                    },
+                    session_proto::Section::bright_color,
+                )
         } else {
             // Fallback to first section color if no active section
             sections
-                .first().map_or_else(|| "rgb(100, 100, 100)".to_string(), |s| s.color.clone())
+                .first()
+                .map_or_else(|| "rgb(100, 100, 100)".to_string(), |s| s.color.clone())
         }
     };
 
@@ -153,7 +159,7 @@ pub fn SectionProgressBar(
         "xs" => 1.25,  // text-xs + py-0.5 + border
         "md" => 2.125, // text-sm + py-1 + border
         "lg" => 2.625, // text-base + py-1 + border
-        _ => 1.75,    // text-xs + py-0.5 + border (horizontal text, more accurate)
+        _ => 1.75,     // text-xs + py-0.5 + border (horizontal text, more accurate)
     };
     let card_top_offset_rem = 2.0; // Card position in rem (negative, so -2rem)
                                    // Card bottom position: card_top + card_height = -2rem + 1.75rem = -0.25rem

@@ -58,7 +58,7 @@ const STEM_CATEGORIES: &[&str] = &[
 /// [`is_stem_split_set`] has decided the folder holds a separation. Without
 /// this the whole folder gets reclassified, sweeping in anything that merely
 /// sat alongside the stems.
-#[must_use] 
+#[must_use]
 pub fn stem_category(name: &str) -> Option<&'static str> {
     let lower = name.to_lowercase();
     let stem = lower
@@ -78,13 +78,17 @@ pub fn stem_category(name: &str) -> Option<&'static str> {
 /// `"02 LORD OF THE FIGHT_Vocals"` → `"02 lord of the fight"`. Stems from one
 /// separation share this; unrelated tracks that merely happen to be called
 /// `Drums` and `Bass` do not.
-#[must_use] 
+#[must_use]
 pub fn stem_source(name: &str) -> Option<String> {
     let cat = stem_category(name)?;
     let lower = name.to_lowercase();
     let stem = lower.rsplit_once('.').map_or(lower.as_str(), |(n, _)| n);
     let cut = stem.len().checked_sub(cat.len())?;
-    Some(stem.get(..cut)?.trim_end_matches(['_', '-', ' ']).to_string())
+    Some(
+        stem.get(..cut)?
+            .trim_end_matches(['_', '-', ' '])
+            .to_string(),
+    )
 }
 
 /// Check if a set of item names looks like stem-split outputs.
@@ -92,7 +96,7 @@ pub fn stem_source(name: &str) -> Option<String> {
 /// Returns `true` if 3+ items match standard stem category names from the
 /// same apparent source. This helps distinguish AI-separated stems from
 /// live-recorded tracks that happen to be named "drums", "bass", etc.
-#[must_use] 
+#[must_use]
 pub fn is_stem_split_set(items: &[String]) -> bool {
     if items.len() < 3 {
         return false;

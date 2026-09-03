@@ -279,7 +279,7 @@ pub const SYNTH_HARDWARE: &[(&str, &str)] = &[
 ];
 
 /// Check if a string contains a mic model
-#[must_use] 
+#[must_use]
 pub fn contains_mic_model(input: &str) -> bool {
     let lower = input.to_lowercase();
     MIC_MODELS.iter().any(|(pattern, _)| {
@@ -289,7 +289,7 @@ pub fn contains_mic_model(input: &str) -> bool {
 }
 
 /// Check if a string contains a preamp/compressor model
-#[must_use] 
+#[must_use]
 pub fn contains_preamp_model(input: &str) -> bool {
     let lower = input.to_lowercase();
     PREAMP_MODELS
@@ -298,7 +298,7 @@ pub fn contains_preamp_model(input: &str) -> bool {
 }
 
 /// Check if a string contains synth hardware
-#[must_use] 
+#[must_use]
 pub fn contains_synth_hardware(input: &str) -> bool {
     let lower = input.to_lowercase();
     SYNTH_HARDWARE
@@ -320,7 +320,7 @@ pub fn contains_synth_hardware(input: &str) -> bool {
 /// assert_eq!(strip_equipment("OH L 260VU"), "OH L");
 /// assert_eq!(strip_equipment("Synth - CASIO CTK-601 Briteness"), "Synth");
 /// ```
-#[must_use] 
+#[must_use]
 pub fn strip_equipment(input: &str) -> String {
     let mut result = input.to_string();
 
@@ -349,7 +349,7 @@ pub fn strip_equipment(input: &str) -> String {
 }
 
 /// Strip only synth hardware from a string (for synth tracks specifically)
-#[must_use] 
+#[must_use]
 pub fn strip_synth_hardware(input: &str) -> String {
     let mut result = input.to_string();
 
@@ -361,7 +361,7 @@ pub fn strip_synth_hardware(input: &str) -> String {
 }
 
 /// Strip only mic/preamp models from a string
-#[must_use] 
+#[must_use]
 pub fn strip_recording_equipment(input: &str) -> String {
     let mut result = input.to_string();
 
@@ -377,7 +377,7 @@ pub fn strip_recording_equipment(input: &str) -> String {
 }
 
 /// Strip only processing markers from a string
-#[must_use] 
+#[must_use]
 pub fn strip_processing_markers(input: &str) -> String {
     let mut result = input.to_string();
 
@@ -406,7 +406,9 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
         let after_ok = if after_idx >= haystack.len() {
             true
         } else {
-            haystack.as_bytes().get(after_idx)
+            haystack
+                .as_bytes()
+                .get(after_idx)
                 .map_or(false, |b| !b.is_ascii_alphanumeric())
         };
 
@@ -439,7 +441,9 @@ fn strip_pattern(input: &str, pattern: &str) -> String {
         let after_ok = if after_idx >= lower.len() {
             true
         } else {
-            lower.as_bytes().get(after_idx)
+            lower
+                .as_bytes()
+                .get(after_idx)
                 .map_or(false, |b| !b.is_ascii_alphanumeric())
         };
 

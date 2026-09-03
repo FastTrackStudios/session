@@ -191,7 +191,10 @@ fn pct_from_ratio(ratio: f64) -> i32 {
 
 /// `#RRGGBB` for a track color, or a neutral grey fallback.
 fn color_hex(color: Option<u32>) -> String {
-    color.map_or_else(|| "#52525b".to_string(), |c| format!("#{:06x}", c & 0xFF_FF_FF))
+    color.map_or_else(
+        || "#52525b".to_string(),
+        |c| format!("#{:06x}", c & 0xFF_FF_FF),
+    )
 }
 
 // ── Submix tree ─────────────────────────────────────────────────────────────

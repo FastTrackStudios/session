@@ -164,7 +164,8 @@ fn beatles_girl() {
         &["Unsorted"],
         "BGVs",
         &["Vocals"],
-    ).unwrap();
+    )
+    .unwrap();
 
     // Step 3: Re-apply collapse to clean up hierarchy
     reapply_collapse(&mut structure, &config);

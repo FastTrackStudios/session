@@ -194,7 +194,7 @@ pub struct GuideEngine {
 }
 
 impl GuideEngine {
-    #[must_use] 
+    #[must_use]
     pub fn new(config: GuideConfig) -> Self {
         Self {
             config,
@@ -220,7 +220,7 @@ impl GuideEngine {
         &mut self.bank
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn bank(&self) -> &SampleBank {
         &self.bank
     }
@@ -244,7 +244,7 @@ impl GuideEngine {
         self.next_cue = 0;
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn schedule(&self) -> &CueSchedule {
         &self.schedule
     }
@@ -282,12 +282,24 @@ impl GuideEngine {
         );
         self.prepare_block(n, clock);
         self.mix_block(n, |i, [cl, cr, nl, nr, gl, gr]| {
-            if let Some(v) = buses.click_l.get_mut(i) { *v += cl; }
-            if let Some(v) = buses.click_r.get_mut(i) { *v += cr; }
-            if let Some(v) = buses.count_l.get_mut(i) { *v += nl; }
-            if let Some(v) = buses.count_r.get_mut(i) { *v += nr; }
-            if let Some(v) = buses.guide_l.get_mut(i) { *v += gl; }
-            if let Some(v) = buses.guide_r.get_mut(i) { *v += gr; }
+            if let Some(v) = buses.click_l.get_mut(i) {
+                *v += cl;
+            }
+            if let Some(v) = buses.click_r.get_mut(i) {
+                *v += cr;
+            }
+            if let Some(v) = buses.count_l.get_mut(i) {
+                *v += nl;
+            }
+            if let Some(v) = buses.count_r.get_mut(i) {
+                *v += nr;
+            }
+            if let Some(v) = buses.guide_l.get_mut(i) {
+                *v += gl;
+            }
+            if let Some(v) = buses.guide_r.get_mut(i) {
+                *v += gr;
+            }
         });
     }
 
@@ -297,8 +309,12 @@ impl GuideEngine {
         let n = left.len().min(right.len());
         self.prepare_block(n, clock);
         self.mix_block(n, |i, [cl, cr, nl, nr, gl, gr]| {
-            if let Some(v) = left.get_mut(i) { *v += cl + nl + gl; }
-            if let Some(v) = right.get_mut(i) { *v += cr + nr + gr; }
+            if let Some(v) = left.get_mut(i) {
+                *v += cl + nl + gl;
+            }
+            if let Some(v) = right.get_mut(i) {
+                *v += cr + nr + gr;
+            }
         });
     }
 
@@ -329,37 +345,38 @@ impl GuideEngine {
         let beat_unit_quarters = 4.0 / f64::from(clock.time_sig_den.max(1));
         let triplet_interval = beat_unit_quarters / 3.0;
 
-        let mut schedule_grid = |interval: f64,
-                                 last_idx: &mut i64,
-                                 pending: &mut Vec<(usize, GuideTrigger)>,
-                                 make: &dyn Fn(i64) -> GuideTrigger| {
-            if interval <= 0.0 {
-                return;
-            }
-            if *last_idx == i64::MIN {
-                let base_idx = ((beats_start / interval) - 1e-6).ceil();
-                *last_idx = crate::cast::i64_from_f64_round(base_idx).saturating_sub(1);
-            }
-            while let Some(k) = (*last_idx).checked_add(1) {
-                // k is a beat grid index; convert to f64 for beat time calculation.
-                // Precision loss from i64->f64 is acceptable for beat-level granularity.
-                let k_beats = crate::cast::f64_from_i64(k);
-                let t = k_beats * interval;
-                if t >= beats_end {
-                    break;
+        let mut schedule_grid =
+            |interval: f64,
+             last_idx: &mut i64,
+             pending: &mut Vec<(usize, GuideTrigger)>,
+             make: &dyn Fn(i64) -> GuideTrigger| {
+                if interval <= 0.0 {
+                    return;
                 }
-                let sample_offset = (t - beats_start) * samples_per_quarter;
-                let offset = if sample_offset.is_finite() && sample_offset >= 0.0 {
-                    let offset_nonneg = crate::cast::i64_from_f64_round(sample_offset).max(0);
-                    // offset_nonneg is guaranteed non-negative, safe to cast to usize
-                    crate::cast::usize_from_i64_nonneg(offset_nonneg).min(n.saturating_sub(1))
-                } else {
-                    0
-                };
-                pending.push((offset, make(k)));
-                *last_idx = k;
-            }
-        };
+                if *last_idx == i64::MIN {
+                    let base_idx = ((beats_start / interval) - 1e-6).ceil();
+                    *last_idx = crate::cast::i64_from_f64_round(base_idx).saturating_sub(1);
+                }
+                while let Some(k) = (*last_idx).checked_add(1) {
+                    // k is a beat grid index; convert to f64 for beat time calculation.
+                    // Precision loss from i64->f64 is acceptable for beat-level granularity.
+                    let k_beats = crate::cast::f64_from_i64(k);
+                    let t = k_beats * interval;
+                    if t >= beats_end {
+                        break;
+                    }
+                    let sample_offset = (t - beats_start) * samples_per_quarter;
+                    let offset = if sample_offset.is_finite() && sample_offset >= 0.0 {
+                        let offset_nonneg = crate::cast::i64_from_f64_round(sample_offset).max(0);
+                        // offset_nonneg is guaranteed non-negative, safe to cast to usize
+                        crate::cast::usize_from_i64_nonneg(offset_nonneg).min(n.saturating_sub(1))
+                    } else {
+                        0
+                    };
+                    pending.push((offset, make(k)));
+                    *last_idx = k;
+                }
+            };
 
         if self.config.click.beat || self.config.click.measure_accent {
             let enable_beat = self.config.click.beat;
@@ -405,9 +422,12 @@ impl GuideEngine {
         }
         if self.config.click.subdivisions.triplet {
             let mut tmp = std::mem::take(&mut self.pending);
-            schedule_grid(triplet_interval, &mut self.last_triplet_idx, &mut tmp, &|_| {
-                GuideTrigger::Triplet
-            });
+            schedule_grid(
+                triplet_interval,
+                &mut self.last_triplet_idx,
+                &mut tmp,
+                &|_| GuideTrigger::Triplet,
+            );
             self.pending = tmp;
         }
     }

@@ -30,7 +30,9 @@ pub struct SongBuilder;
 
 /// Helper to get seconds from Position
 fn position_to_seconds(pos: &daw::service::Position) -> f64 {
-    pos.time.as_ref().map_or(0.0, daw_proto::PositionInSeconds::as_seconds)
+    pos.time
+        .as_ref()
+        .map_or(0.0, daw_proto::PositionInSeconds::as_seconds)
 }
 
 /// Resolved lane indices for a specific project (looked up by name).
@@ -250,36 +252,37 @@ impl SongBuilder {
         let end_marker =
             songend_marker.or_else(|| markers.iter().find(|m| m.name.starts_with("=SONGEND")));
 
-        let (start_seconds, songend_seconds, end_seconds) = if let (Some(start), Some(end)) = (start_marker, end_marker) {
-            let song_start = position_to_seconds(&start.position);
-            let song_end = position_to_seconds(&end.position);
-            let absolute_end = absolute_end_marker
-                .map_or(song_end, |m| position_to_seconds(&m.position));
-            let outer_end = postroll_marker
-                .map_or(absolute_end, |m| position_to_seconds(&m.position));
-            let snapped_end = Self::snap_to_next_barline(tempo_map, outer_end)
-                .await
-                .unwrap_or(outer_end);
-            (song_start, song_end, snapped_end)
-        } else if let Some(song_region) = song_region {
-            let end = song_region.time_range.end_seconds();
-            let start = song_region.time_range.start_seconds();
-            (start, end, end)
-        } else {
-            let start = markers
-                .iter()
-                .map(|m| position_to_seconds(&m.position))
-                .chain(regions.iter().map(|r| r.time_range.start_seconds()))
-                .min_by(|a: &f64, b: &f64| a.total_cmp(b))
-                .unwrap_or(0.0);
-            let end = markers
-                .iter()
-                .map(|m| position_to_seconds(&m.position))
-                .chain(regions.iter().map(|r| r.time_range.end_seconds()))
-                .max_by(|a: &f64, b: &f64| a.total_cmp(b))
-                .unwrap_or(60.0);
-            (start, end, end)
-        };
+        let (start_seconds, songend_seconds, end_seconds) =
+            if let (Some(start), Some(end)) = (start_marker, end_marker) {
+                let song_start = position_to_seconds(&start.position);
+                let song_end = position_to_seconds(&end.position);
+                let absolute_end =
+                    absolute_end_marker.map_or(song_end, |m| position_to_seconds(&m.position));
+                let outer_end =
+                    postroll_marker.map_or(absolute_end, |m| position_to_seconds(&m.position));
+                let snapped_end = Self::snap_to_next_barline(tempo_map, outer_end)
+                    .await
+                    .unwrap_or(outer_end);
+                (song_start, song_end, snapped_end)
+            } else if let Some(song_region) = song_region {
+                let end = song_region.time_range.end_seconds();
+                let start = song_region.time_range.start_seconds();
+                (start, end, end)
+            } else {
+                let start = markers
+                    .iter()
+                    .map(|m| position_to_seconds(&m.position))
+                    .chain(regions.iter().map(|r| r.time_range.start_seconds()))
+                    .min_by(|a: &f64, b: &f64| a.total_cmp(b))
+                    .unwrap_or(0.0);
+                let end = markers
+                    .iter()
+                    .map(|m| position_to_seconds(&m.position))
+                    .chain(regions.iter().map(|r| r.time_range.end_seconds()))
+                    .max_by(|a: &f64, b: &f64| a.total_cmp(b))
+                    .unwrap_or(60.0);
+                (start, end, end)
+            };
 
         Ok((start_seconds, songend_seconds, end_seconds))
     }
@@ -302,12 +305,8 @@ impl SongBuilder {
         let song_region = Self::find_song_region(regions, lanes);
 
         // Determine song bounds
-        let (start_seconds, songend_seconds, end_seconds) = Self::determine_song_bounds(
-            markers,
-            regions,
-            tempo_map,
-            song_region,
-        ).await?;
+        let (start_seconds, songend_seconds, end_seconds) =
+            Self::determine_song_bounds(markers, regions, tempo_map, song_region).await?;
 
         // Calculate count-in duration
         let count_in_marker = markers.iter().find(|m| Self::is_count_in_marker(&m.name));
@@ -350,7 +349,8 @@ impl SongBuilder {
         }
 
         // Add Count-In section at the beginning if there's a count-in
-        let song_start_seconds = Self::add_count_in_section(&mut sections, count_in_seconds, start_seconds);
+        let song_start_seconds =
+            Self::add_count_in_section(&mut sections, count_in_seconds, start_seconds);
 
         // Add END section if there's a gap between SONGEND and =END
         Self::add_end_section(&mut sections, end_seconds, songend_seconds);
@@ -421,7 +421,9 @@ impl SongBuilder {
             .time_signature_at(start_seconds)
             .await
             .ok()
-            .map(|(num, denom)| daw::service::TimeSignature::new(num.cast_unsigned(), denom.cast_unsigned()));
+            .map(|(num, denom)| {
+                daw::service::TimeSignature::new(num.cast_unsigned(), denom.cast_unsigned())
+            });
 
         // Build measure positions if we have tempo and time signature
         let measure_positions = if let (Some(bpm), Some(ts)) = (tempo, time_sig) {
@@ -437,8 +439,8 @@ impl SongBuilder {
             .first()
             .map_or(song_start_seconds, |s| s.start_seconds);
         let count_in_marker_pos = count_in_marker.map(|m| position_to_seconds(&m.position));
-        let count_in_is_mid_song = count_in_marker_pos
-            .is_some_and(|pos| pos > first_section_start + 0.01);
+        let count_in_is_mid_song =
+            count_in_marker_pos.is_some_and(|pos| pos > first_section_start + 0.01);
 
         let comments = Self::extract_comments_with_mid_song_count_in(
             markers,
@@ -489,10 +491,10 @@ impl SongBuilder {
         if let (Some(start), Some(end)) = (start_marker, end_marker) {
             let song_start = position_to_seconds(&start.position);
             let song_end = position_to_seconds(&end.position);
-            let absolute_end = absolute_end_marker
-                .map_or(song_end, |m| position_to_seconds(&m.position));
-            let outer_end = postroll_marker
-                .map_or(absolute_end, |m| position_to_seconds(&m.position));
+            let absolute_end =
+                absolute_end_marker.map_or(song_end, |m| position_to_seconds(&m.position));
+            let outer_end =
+                postroll_marker.map_or(absolute_end, |m| position_to_seconds(&m.position));
             let snapped_end = Self::snap_to_next_barline_native(project, outer_end);
             (song_start, song_end, snapped_end)
         } else if let Some(song_region) = song_region {
@@ -571,8 +573,8 @@ impl SongBuilder {
             .first()
             .map_or(song_start_seconds, |s| s.start_seconds);
         let count_in_marker_pos = count_in_marker.map(|m| position_to_seconds(&m.position));
-        let count_in_is_mid_song = count_in_marker_pos
-            .is_some_and(|pos| pos > first_section_start + 0.01);
+        let count_in_is_mid_song =
+            count_in_marker_pos.is_some_and(|pos| pos > first_section_start + 0.01);
 
         let comments = Self::extract_comments_with_mid_song_count_in(
             markers,
@@ -650,12 +652,11 @@ impl SongBuilder {
             .find(|m| m.name == "=END" && in_region(position_to_seconds(&m.position)));
 
         // Derive song boundaries from markers, falling back to region edges.
-        let marker_songstart_seconds = songstart_marker
-            .map_or(region_start, |m| position_to_seconds(&m.position));
-        let songend_seconds = songend_marker
-            .map_or(region_end, |m| position_to_seconds(&m.position));
-        let end_seconds = abs_end_marker
-            .map_or(region_end, |m| position_to_seconds(&m.position));
+        let marker_songstart_seconds =
+            songstart_marker.map_or(region_start, |m| position_to_seconds(&m.position));
+        let songend_seconds =
+            songend_marker.map_or(region_end, |m| position_to_seconds(&m.position));
+        let end_seconds = abs_end_marker.map_or(region_end, |m| position_to_seconds(&m.position));
 
         debug!(
             "  markers: SONGSTART={:.3} SONGEND={:.3} =END={:.3}",
@@ -663,17 +664,18 @@ impl SongBuilder {
         );
 
         // Extract sections from child regions within this song region
-        let mut sections =
-            Self::extract_sections_from_song_region(all_regions, song_region, lanes);
+        let mut sections = Self::extract_sections_from_song_region(all_regions, song_region, lanes);
 
         // Calculate count-in: duration from COUNT-IN marker to SONGSTART
         let count_in_seconds = count_in_marker.and_then(|m| {
             let marker_time = position_to_seconds(&m.position);
-            (marker_time < marker_songstart_seconds).then_some(marker_songstart_seconds - marker_time)
+            (marker_time < marker_songstart_seconds)
+                .then_some(marker_songstart_seconds - marker_time)
         });
 
         // Add Count-In section if present
-        let song_start_seconds = Self::add_count_in_section(&mut sections, count_in_seconds, marker_songstart_seconds);
+        let song_start_seconds =
+            Self::add_count_in_section(&mut sections, count_in_seconds, marker_songstart_seconds);
 
         // Add End section if there's space after SONGEND
         Self::add_end_section(&mut sections, end_seconds, songend_seconds);
@@ -684,7 +686,9 @@ impl SongBuilder {
             .time_signature_at(marker_songstart_seconds)
             .await
             .ok()
-            .map(|(num, denom)| daw::service::TimeSignature::new(num.cast_unsigned(), denom.cast_unsigned()));
+            .map(|(num, denom)| {
+                daw::service::TimeSignature::new(num.cast_unsigned(), denom.cast_unsigned())
+            });
 
         let measure_positions = if let (Some(bpm), Some(ts)) = (tempo, time_sig) {
             Self::calculate_measure_positions(song_start_seconds, end_seconds, bpm, ts)
@@ -747,19 +751,18 @@ impl SongBuilder {
             .iter()
             .find(|m| m.name == "=END" && in_region(position_to_seconds(&m.position)));
 
-        let marker_songstart_seconds = songstart_marker
-            .map_or(region_start, |m| position_to_seconds(&m.position));
-        let songend_seconds = songend_marker
-            .map_or(region_end, |m| position_to_seconds(&m.position));
-        let end_seconds = abs_end_marker
-            .map_or(region_end, |m| position_to_seconds(&m.position));
+        let marker_songstart_seconds =
+            songstart_marker.map_or(region_start, |m| position_to_seconds(&m.position));
+        let songend_seconds =
+            songend_marker.map_or(region_end, |m| position_to_seconds(&m.position));
+        let end_seconds = abs_end_marker.map_or(region_end, |m| position_to_seconds(&m.position));
 
-        let mut sections =
-            Self::extract_sections_from_song_region(all_regions, song_region, lanes);
+        let mut sections = Self::extract_sections_from_song_region(all_regions, song_region, lanes);
 
         let count_in_seconds = count_in_marker.and_then(|m| {
             let marker_time = position_to_seconds(&m.position);
-            (marker_time < marker_songstart_seconds).then_some(marker_songstart_seconds - marker_time)
+            (marker_time < marker_songstart_seconds)
+                .then_some(marker_songstart_seconds - marker_time)
         });
 
         let song_start_seconds =
@@ -834,7 +837,11 @@ impl SongBuilder {
     /// Add a Count-In section at the beginning if there's a count-in duration.
     ///
     /// Returns the adjusted song start seconds.
-    fn add_count_in_section(sections: &mut Vec<Section>, count_in_seconds: Option<f64>, base_start: f64) -> f64 {
+    fn add_count_in_section(
+        sections: &mut Vec<Section>,
+        count_in_seconds: Option<f64>,
+        base_start: f64,
+    ) -> f64 {
         count_in_seconds.map_or(base_start, |count_in_duration| {
             if count_in_duration > 0.0 {
                 let count_in_start = base_start - count_in_duration;
@@ -869,9 +876,7 @@ impl SongBuilder {
     /// Add an END section if there's a gap between SONGEND and the absolute end.
     fn add_end_section(sections: &mut Vec<Section>, end_seconds: f64, songend_seconds: f64) {
         if end_seconds > songend_seconds + 0.01 {
-            let end_section_start = sections
-                .last()
-                .map_or(songend_seconds, |s| s.end_seconds);
+            let end_section_start = sections.last().map_or(songend_seconds, |s| s.end_seconds);
             debug!(
                 "Adding END section: start={:.3} end={:.3} (last_section_end={:.3}, marker_songend={:.3})",
                 end_section_start, end_seconds, end_section_start, songend_seconds
@@ -925,7 +930,8 @@ impl SongBuilder {
                 let pos = position_to_seconds(&m.position);
                 let in_bounds = pos >= start && pos <= end;
                 let is_structural = Self::is_structural_marker(&m.name);
-                let is_mid_song_count_in = Self::is_count_in_marker(&m.name) && count_in_is_mid_song;
+                let is_mid_song_count_in =
+                    Self::is_count_in_marker(&m.name) && count_in_is_mid_song;
                 in_bounds && (!is_structural || is_mid_song_count_in)
             })
             .map(Self::marker_to_comment)
@@ -960,18 +966,21 @@ impl SongBuilder {
         let name = Self::strip_order_prefix(name);
 
         // Look for " - " separator (with spaces around dash)
-        name.find(" - ").map_or_else(|| (name.to_string(), None), |sep_pos| {
-            let title = name.get(..sep_pos).unwrap_or(name);
-            let artist = name.get(sep_pos.saturating_add(3)..).unwrap_or("");
-            let title_trimmed = title.trim();
-            let artist_trimmed = artist.trim();
+        name.find(" - ").map_or_else(
+            || (name.to_string(), None),
+            |sep_pos| {
+                let title = name.get(..sep_pos).unwrap_or(name);
+                let artist = name.get(sep_pos.saturating_add(3)..).unwrap_or("");
+                let title_trimmed = title.trim();
+                let artist_trimmed = artist.trim();
 
-            if artist_trimmed.is_empty() {
-                (title_trimmed.to_string(), None)
-            } else {
-                (title_trimmed.to_string(), Some(artist_trimmed.to_string()))
-            }
-        })
+                if artist_trimmed.is_empty() {
+                    (title_trimmed.to_string(), None)
+                } else {
+                    (title_trimmed.to_string(), Some(artist_trimmed.to_string()))
+                }
+            },
+        )
     }
 
     /// Strip a leading `NN ` (2–3 digit, space) setlist-order prefix from a
@@ -1064,12 +1073,7 @@ impl SongBuilder {
         let snapped = tempo_map.musical_to_time(next_measure, 1, 0.0).await?;
         debug!(
             "snap_to_next_barline: {:.3}s (m{}.{}.{:.3}) → {:.3}s (m{})",
-            seconds,
-            measure,
-            beat,
-            fraction,
-            snapped,
-            next_measure
+            seconds, measure, beat, fraction, snapped, next_measure
         );
         Ok(snapped)
     }
@@ -1084,12 +1088,7 @@ impl SongBuilder {
         let snapped = Reaper.musical_to_time(project, next_measure, 1, 0.0);
         debug!(
             "snap_to_next_barline_native: {:.3}s (m{}.{}.{:.3}) -> {:.3}s (m{})",
-            seconds,
-            measure,
-            beat,
-            fraction,
-            snapped,
-            next_measure
+            seconds, measure, beat, fraction, snapped, next_measure
         );
         snapped
     }
@@ -1236,7 +1235,11 @@ impl SongBuilder {
             let start = position_to_seconds(&marker.position);
 
             // End is at the next marker or song end
-            let end = section_markers.get(idx.saturating_add(1)).map_or(song_end, |next_marker| position_to_seconds(&next_marker.position));
+            let end = section_markers
+                .get(idx.saturating_add(1))
+                .map_or(song_end, |next_marker| {
+                    position_to_seconds(&next_marker.position)
+                });
 
             let (section_type, number, clean_name, comment) =
                 Self::parse_section_name(&marker.name);
@@ -1301,11 +1304,7 @@ impl SongBuilder {
     }
 
     /// Extract sections from regions within song bounds (fallback when no song region)
-    fn extract_sections_from_regions(
-        regions: &[Region],
-        start: f64,
-        end: f64,
-    ) -> Vec<Section> {
+    fn extract_sections_from_regions(regions: &[Region], start: f64, end: f64) -> Vec<Section> {
         let mut sections: Vec<Section> = regions
             .iter()
             .filter(|r| r.time_range.start_seconds() >= start && r.time_range.end_seconds() <= end)
@@ -1426,7 +1425,10 @@ impl SongBuilder {
         }
 
         if num_start < name.len() {
-            name.get(..num_start).map_or_else(|| name.to_string(), |type_part| type_part.trim().to_string())
+            name.get(..num_start).map_or_else(
+                || name.to_string(),
+                |type_part| type_part.trim().to_string(),
+            )
         } else {
             name.to_string()
         }
@@ -1478,7 +1480,8 @@ impl SongBuilder {
             let comment = comment_str.trim();
             // Only treat as comment if it's not just a number
             if let Some(name_part) = name.get(..open_paren)
-                && !comment.is_empty() && !comment.chars().all(|c| c.is_ascii_digit())
+                && !comment.is_empty()
+                && !comment.chars().all(|c| c.is_ascii_digit())
             {
                 return (name_part.trim(), Some(comment.to_string()));
             }
@@ -1494,7 +1497,8 @@ impl SongBuilder {
             && let Some(potential_num) = name.get(last_space.saturating_add(1)..)
         {
             if let Ok(num) = potential_num.parse::<u32>()
-                && let Some(type_part) = name.get(..last_space) {
+                && let Some(type_part) = name.get(..last_space)
+            {
                 return (type_part, Some(num));
             }
             // Try single letter variant (A=1, B=2, C=3, etc.) for cases like "Interlude C"
@@ -1503,7 +1507,9 @@ impl SongBuilder {
                 && c.is_ascii_uppercase()
             {
                 // A=1, B=2, C=3, etc.
-                let num = u32::from(c).saturating_sub(u32::from('A')).saturating_add(1);
+                let num = u32::from(c)
+                    .saturating_sub(u32::from('A'))
+                    .saturating_add(1);
                 if let Some(type_part) = name.get(..last_space) {
                     return (type_part, Some(num));
                 }

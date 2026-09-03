@@ -163,7 +163,7 @@ impl<D> SetlistServiceImpl<D> {
 }
 
 impl SetlistServiceImpl<()> {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::with_daw(())
     }
@@ -231,7 +231,10 @@ impl<D: Sync> SetlistServiceImpl<D> {
     }
 
     pub(crate) fn notify_setlist_changed(&self) {
-        let revision = self.setlist_revision.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+        let revision = self
+            .setlist_revision
+            .fetch_add(1, Ordering::SeqCst)
+            .saturating_add(1);
         self.setlist_update_bus.send(revision);
     }
 }

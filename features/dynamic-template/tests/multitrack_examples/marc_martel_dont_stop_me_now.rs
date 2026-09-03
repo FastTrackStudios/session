@@ -1,7 +1,8 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-fn marc_martel_dont_stop_me_now_expected_leaves() -> (TrackGroup, TrackGroup, TrackGroup, TrackGroup, TrackGroup) {
+fn marc_martel_dont_stop_me_now_expected_leaves(
+) -> (TrackGroup, TrackGroup, TrackGroup, TrackGroup, TrackGroup) {
     let kick = TrackGroup::folder("Kick")
         .folder("SUM")
         .track("In")
@@ -78,7 +79,8 @@ fn marc_martel_dont_stop_me_now_expected_leaves() -> (TrackGroup, TrackGroup, Tr
 }
 
 fn marc_martel_dont_stop_me_now_expected() -> daw_proto::TrackHierarchy {
-    let (drums, percussion, bass, clean, lead_guitar) = marc_martel_dont_stop_me_now_expected_leaves();
+    let (drums, percussion, bass, clean, lead_guitar) =
+        marc_martel_dont_stop_me_now_expected_leaves();
     let guitars = TrackGroup::folder("Guitars")
         .group(clean)
         .group(lead_guitar)

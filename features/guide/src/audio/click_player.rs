@@ -73,7 +73,13 @@ fn play_slot(
     }
     if let Some(decoded_audio) = sample_data {
         if slot.playback_position < decoded_audio.frames() {
-            AudioRouter::mix_decoded_audio(decoded_audio, slot.playback_position, gain, left, right);
+            AudioRouter::mix_decoded_audio(
+                decoded_audio,
+                slot.playback_position,
+                gain,
+                left,
+                right,
+            );
             slot.playback_position = slot.playback_position.saturating_add(1);
 
             if slot.playback_position >= decoded_audio.frames() {
@@ -99,13 +105,7 @@ impl ClickPlayer {
         click_left: &mut f32,
         click_right: &mut f32,
     ) {
-        play_slot(
-            &mut state.beat,
-            sample_data,
-            gain,
-            click_left,
-            click_right,
-        );
+        play_slot(&mut state.beat, sample_data, gain, click_left, click_right);
     }
 
     /// Play eighth sample and mix to output

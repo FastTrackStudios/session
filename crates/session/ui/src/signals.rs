@@ -72,7 +72,7 @@ pub enum LatencyAction {
 }
 
 impl LatencyTracker {
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             pending_play_toggle: None,
@@ -127,7 +127,7 @@ impl LatencyTracker {
     }
 
     /// Get the most recent latency measurement
-    #[must_use] 
+    #[must_use]
     pub fn last_latency(&self) -> Option<&LatencyMeasurement> {
         self.recent_latencies.last()
     }
@@ -177,7 +177,7 @@ pub struct LatencyInfo {
 
 impl LatencyInfo {
     /// Total latency for visual compensation (output + half network RTT)
-    #[must_use] 
+    #[must_use]
     pub fn total_compensation_ms(&self) -> f64 {
         self.output_ms + (self.network_rtt_ms / 2.0)
     }
@@ -192,8 +192,7 @@ pub static SETLIST_STRUCTURE: GlobalSignal<Setlist> = Signal::global(Setlist::de
 
 /// Current playback position and progress
 /// Updates frequently during playback (10-60 times per second)
-pub static ACTIVE_INDICES: GlobalSignal<ActiveIndices> =
-    Signal::global(ActiveIndices::default);
+pub static ACTIVE_INDICES: GlobalSignal<ActiveIndices> = Signal::global(ActiveIndices::default);
 
 /// Per-song transport state (playhead position, tempo, time signature)
 /// Key is song index, updates when transport state changes for that song
@@ -247,7 +246,7 @@ impl Default for SongView {
 
 impl SongView {
     /// True when this view renders the chart exactly as written.
-    #[must_use] 
+    #[must_use]
     pub fn is_identity(&self) -> bool {
         self.target_key.is_none()
             && self.capo == 0
@@ -255,7 +254,7 @@ impl SongView {
     }
 
     /// Build the keyflow transposition view (target key parsed from the string).
-    #[must_use] 
+    #[must_use]
     pub fn to_chart_view(&self) -> keyflow::ChartView {
         keyflow::ChartView {
             target_key: self
@@ -268,7 +267,7 @@ impl SongView {
     }
 
     /// Discriminant for a layout cache key (so switching the view re-renders).
-    #[must_use] 
+    #[must_use]
     pub fn cache_hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -286,7 +285,7 @@ impl SongView {
     /// The effective sounding key label shown to the player: the fingered shape
     /// key when a capo is set (that's what they play), else the target key.
     /// `None` when the view leaves the song in its own key.
-    #[must_use] 
+    #[must_use]
     pub fn display_key_label(&self) -> Option<String> {
         let target = self.target_key.as_deref()?;
         let key = keyflow::Key::parse(target).ok()?;
@@ -336,7 +335,7 @@ impl Default for ChartAreaBounds {
 }
 
 impl ChartAreaBounds {
-    #[must_use] 
+    #[must_use]
     pub const fn new(x: f64, y: f64, width: f64, height: f64, dpr: f64) -> Self {
         Self {
             x,
@@ -347,7 +346,7 @@ impl ChartAreaBounds {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.width > 0.0 && self.height > 0.0
     }
@@ -555,7 +554,7 @@ impl Default for TransportState {
 
 impl TransportState {
     /// Create a new transport state
-    #[must_use] 
+    #[must_use]
     pub const fn new(
         position: daw_proto::Position,
         bpm: f64,
@@ -574,7 +573,7 @@ impl TransportState {
     }
 
     /// Set loop region (as time values in seconds)
-    #[must_use] 
+    #[must_use]
     pub fn with_loop_region(mut self, start: f64, end: f64, song_duration: f64) -> Self {
         self.is_looping = true;
         self.loop_region = Some((start / song_duration, end / song_duration));

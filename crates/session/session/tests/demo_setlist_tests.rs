@@ -67,7 +67,9 @@ async fn demo_setlist_creates_markers(ctx: &daw::test::ReaperTestContext) -> eyr
         return Err(eyre::eyre!("Expected 3 COUNT-IN markers, got {count_ins}"));
     }
     if song_starts != 3 {
-        return Err(eyre::eyre!("Expected 3 SONGSTART markers, got {song_starts}"));
+        return Err(eyre::eyre!(
+            "Expected 3 SONGSTART markers, got {song_starts}"
+        ));
     }
     if song_ends != 3 {
         return Err(eyre::eyre!("Expected 3 SONGEND markers, got {song_ends}"));
@@ -324,9 +326,7 @@ async fn demo_setlist_end_to_end(ctx: &daw::test::ReaperTestContext) -> eyre::Re
         .expect("Song 1 should have count-in detected");
     println!("  Count-in detected: {ci:.2}s");
     if (ci - 4.0).abs() >= eps {
-        return Err(eyre::eyre!(
-            "Count-in should be ~4s, got {ci:.2}"
-        ));
+        return Err(eyre::eyre!("Count-in should be ~4s, got {ci:.2}"));
     }
 
     // Verify Song 1 section names

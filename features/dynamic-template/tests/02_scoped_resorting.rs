@@ -83,7 +83,8 @@ fn full_scoped_resort_workflow() {
         &["Unsorted"], // Extract all items from Unsorted
         "Electric",    // Sort within Electric's subgroups (renamed from "Electric Guitar")
         &["Guitars"],  // Merge result into Guitars folder
-    ).unwrap();
+    )
+    .unwrap();
 
     println!("Sorted {sorted_count} items");
 
@@ -138,7 +139,8 @@ fn scoped_resort_with_remaining_unsorted() {
         &["Unsorted"],
         "Electric",
         &["Guitars"],
-    ).unwrap();
+    )
+    .unwrap();
 
     reapply_collapse(&mut structure, &config);
 

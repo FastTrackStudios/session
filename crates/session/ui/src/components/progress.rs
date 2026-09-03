@@ -19,7 +19,7 @@ pub struct LoopIndicatorData {
 
 impl LoopIndicatorData {
     /// Create a new loop indicator
-    #[must_use] 
+    #[must_use]
     pub const fn new(enabled: bool, start_percent: f64, end_percent: f64) -> Self {
         Self {
             enabled,
@@ -46,7 +46,11 @@ pub fn TimeSignatureCard(
         |slash_pos| {
             (
                 label.get(..slash_pos).unwrap_or("").trim().to_string(),
-                label.get(slash_pos.saturating_add(1)..).unwrap_or("").trim().to_string(),
+                label
+                    .get(slash_pos.saturating_add(1)..)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
             )
         },
     );
@@ -107,13 +111,9 @@ pub fn TempoCard(
         "transform: translateX(-50%);"
     };
     let style = if position_above {
-        format!(
-            "left: {position_percent}%; {transform} top: {bottom_offset};"
-        )
+        format!("left: {position_percent}%; {transform} top: {bottom_offset};")
     } else {
-        format!(
-            "left: {position_percent}%; {transform} top: calc(100% + {bottom_offset});"
-        )
+        format!("left: {position_percent}%; {transform} top: calc(100% + {bottom_offset});")
     };
 
     let adjusted_card_class = if left_align && card_class.contains("text-center") {
@@ -267,12 +267,15 @@ pub fn SegmentedProgressBar(
             let section_width_percent = section.end_percent - section.start_percent;
 
             // Estimate available pixel width for this section
-            let section_width_px =
-                (section_width_percent / 100.0).mul_add(ESTIMATED_BAR_WIDTH_PX, -SECTION_PADDING_PX);
+            let section_width_px = (section_width_percent / 100.0)
+                .mul_add(ESTIMATED_BAR_WIDTH_PX, -SECTION_PADDING_PX);
 
             // Calculate text widths
-            let name_width_px = f64::from(u32::try_from(section.name.len()).unwrap_or(0)) * CHAR_WIDTH_NAME_PX;
-            let short_name_width_px = f64::from(u32::try_from(section.short_name.len()).unwrap_or(0)) * CHAR_WIDTH_NAME_PX;
+            let name_width_px =
+                f64::from(u32::try_from(section.name.len()).unwrap_or(0)) * CHAR_WIDTH_NAME_PX;
+            let short_name_width_px =
+                f64::from(u32::try_from(section.short_name.len()).unwrap_or(0))
+                    * CHAR_WIDTH_NAME_PX;
 
             // Decide which name to display based on available width
             let display_name = if name_width_px <= section_width_px {
@@ -288,7 +291,8 @@ pub fn SegmentedProgressBar(
 
             // Show comment if it fits within the section width
             let comment = section.comment.as_ref().and_then(|comment_text| {
-                let comment_width_px = f64::from(u32::try_from(comment_text.len()).unwrap_or(0)) * CHAR_WIDTH_COMMENT_PX;
+                let comment_width_px = f64::from(u32::try_from(comment_text.len()).unwrap_or(0))
+                    * CHAR_WIDTH_COMMENT_PX;
                 if comment_width_px <= section_width_px {
                     Some(comment_text.clone())
                 } else {

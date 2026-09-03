@@ -389,21 +389,17 @@ where
             .find(|(_, song)| position >= song.start_seconds && position < song.end_seconds)
             .or_else(|| {
                 // Fallback: nearest song in the same project
-                setlist
-                    .songs
-                    .iter()
-                    .enumerate()
-                    .min_by(|(_, a), (_, b)| {
-                        let dist_a = (position - a.start_seconds)
-                            .abs()
-                            .min((position - a.end_seconds).abs());
-                        let dist_b = (position - b.start_seconds)
-                            .abs()
-                            .min((position - b.end_seconds).abs());
-                        dist_a
-                            .partial_cmp(&dist_b)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    })
+                setlist.songs.iter().enumerate().min_by(|(_, a), (_, b)| {
+                    let dist_a = (position - a.start_seconds)
+                        .abs()
+                        .min((position - a.end_seconds).abs());
+                    let dist_b = (position - b.start_seconds)
+                        .abs()
+                        .min((position - b.end_seconds).abs());
+                    dist_a
+                        .partial_cmp(&dist_b)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
             });
 
         if let Some((song_index, song)) = song_data {
@@ -545,7 +541,9 @@ where
     }
 
     // ── Shared setup helpers ────────────────────────────────────────────────
-    fn build_guid_maps(songs: &[Song]) -> (FxHashMap<String, Vec<usize>>, FxHashMap<String, usize>) {
+    fn build_guid_maps(
+        songs: &[Song],
+    ) -> (FxHashMap<String, Vec<usize>>, FxHashMap<String, usize>) {
         let mut guid_to_indices: FxHashMap<String, Vec<usize>> = FxHashMap::default();
         for (idx, song) in songs.iter().enumerate() {
             guid_to_indices
@@ -750,10 +748,7 @@ where
         ControlFlow::Continue(())
     }
 
-    fn on_hydration(
-        &self,
-        hydrated: Result<(usize, Song), BroadcastRecvError>,
-    ) -> ControlFlow<()> {
+    fn on_hydration(&self, hydrated: Result<(usize, Song), BroadcastRecvError>) -> ControlFlow<()> {
         match hydrated {
             Ok((index, song)) => {
                 self.events_hub.publish(SetlistEvent::SongHydrated {
@@ -780,7 +775,8 @@ where
                     let setlist = self.setlist.read().await;
                     setlist
                         .as_ref()
-                        .and_then(|sl| sl.songs.get(index)).map_or_else(session_proto::SongId::new, |s| s.id.clone())
+                        .and_then(|sl| sl.songs.get(index))
+                        .map_or_else(session_proto::SongId::new, |s| s.id.clone())
                 };
                 self.events_hub.publish(SetlistEvent::SongChartHydrated {
                     song_id,
@@ -806,29 +802,24 @@ where
             .iter()
             .copied()
             .find(|&idx| {
-                setlist.songs.get(idx).is_some_and(|s| {
-                    pos_secs >= s.start_seconds && pos_secs < s.end_seconds
-                })
+                setlist
+                    .songs
+                    .get(idx)
+                    .is_some_and(|s| pos_secs >= s.start_seconds && pos_secs < s.end_seconds)
             })
             // Fallback: nearest song in this project
             .or_else(|| {
                 song_indices.iter().copied().min_by(|&a, &b| {
-                    let dist_a = setlist
-                        .songs
-                        .get(a)
-                        .map_or(f64::MAX, |s| {
-                            (pos_secs - s.start_seconds)
-                                .abs()
-                                .min((pos_secs - s.end_seconds).abs())
-                        });
-                    let dist_b = setlist
-                        .songs
-                        .get(b)
-                        .map_or(f64::MAX, |s| {
-                            (pos_secs - s.start_seconds)
-                                .abs()
-                                .min((pos_secs - s.end_seconds).abs())
-                        });
+                    let dist_a = setlist.songs.get(a).map_or(f64::MAX, |s| {
+                        (pos_secs - s.start_seconds)
+                            .abs()
+                            .min((pos_secs - s.end_seconds).abs())
+                    });
+                    let dist_b = setlist.songs.get(b).map_or(f64::MAX, |s| {
+                        (pos_secs - s.start_seconds)
+                            .abs()
+                            .min((pos_secs - s.end_seconds).abs())
+                    });
                     dist_a
                         .partial_cmp(&dist_b)
                         .unwrap_or(std::cmp::Ordering::Equal)
@@ -851,7 +842,8 @@ where
             if let Some(sec_idx) = last_section {
                 let section_id = song
                     .sections
-                    .get(sec_idx).map_or_else(session_proto::SectionId::new, |s| s.section_id.clone());
+                    .get(sec_idx)
+                    .map_or_else(session_proto::SectionId::new, |s| s.section_id.clone());
                 pending_section_events.push(SetlistEvent::SectionExited {
                     song_id: song.id.clone(),
                     song_index,
@@ -883,14 +875,18 @@ where
         daw: &Daw,
         project_guid: String,
         transport_state: daw::rpc::TransportState,
-    ) -> (SmallVec<[SongTransportState; 16]>, SmallVec<[SetlistEvent; 8]>) {
+    ) -> (
+        SmallVec<[SongTransportState; 16]>,
+        SmallVec<[SetlistEvent; 8]>,
+    ) {
         let mut song_transports: SmallVec<[SongTransportState; 16]> = SmallVec::new();
         let mut pending_section_events: SmallVec<[SetlistEvent; 8]> = SmallVec::new();
 
         let setlist_clone = self.setlist.read().await.clone();
         if let Some(setlist_ref) = setlist_clone {
             if let Some(song_indices_ref) = st.guid_to_indices.get(&project_guid) {
-                let song_indices: SmallVec<[usize; 16]> = song_indices_ref.iter().copied().collect();
+                let song_indices: SmallVec<[usize; 16]> =
+                    song_indices_ref.iter().copied().collect();
                 let is_playing = transport_state.play_state == daw::service::PlayState::Playing
                     || transport_state.play_state == daw::service::PlayState::Recording;
 
@@ -905,7 +901,8 @@ where
                     .as_ref()
                     .map_or(0.0, daw_proto::PositionInSeconds::as_seconds);
 
-                let resolved_index = Self::resolve_song_index_from_position(&song_indices, &setlist_ref, pos_secs);
+                let resolved_index =
+                    Self::resolve_song_index_from_position(&song_indices, &setlist_ref, pos_secs);
 
                 for &song_index in &song_indices {
                     if let Some(song) = setlist_ref.songs.get(song_index) {
@@ -983,7 +980,8 @@ where
             self.events_hub
                 .publish(SetlistEvent::TransportUpdate(changed_transports));
             st.transport_events_sent = st.transport_events_sent.saturating_add(1);
-            st.transport_song_updates_sent = st.transport_song_updates_sent.saturating_add(changed_count);
+            st.transport_song_updates_sent =
+                st.transport_song_updates_sent.saturating_add(changed_count);
         }
     }
 
@@ -1096,7 +1094,9 @@ where
                 daw::service::transport::TransportStreamEvent::Position(tick) => {
                     tick.project_guid.clone()
                 }
-                daw::service::transport::TransportStreamEvent::State(_) => return ControlFlow::Continue(()),
+                daw::service::transport::TransportStreamEvent::State(_) => {
+                    return ControlFlow::Continue(());
+                }
             },
             _ => return ControlFlow::Break(()),
         };
@@ -1116,17 +1116,24 @@ where
             .as_ref()
             .and_then(|id| st.song_id_to_index.get(id).copied());
 
-        let (song_transports, pending_section_events) =
-            self.process_transport_for_project(st, daw, project_guid, transport_state)
-                .await;
+        let (song_transports, pending_section_events) = self
+            .process_transport_for_project(st, daw, project_guid, transport_state)
+            .await;
 
         if !song_transports.is_empty() {
-            self.handle_transport_updates(st, song_transports, pending_section_events, active_song_index)
-                .await;
+            self.handle_transport_updates(
+                st,
+                song_transports,
+                pending_section_events,
+                active_song_index,
+            )
+            .await;
         }
 
         st.transport_tick_count = st.transport_tick_count.saturating_add(1);
-        st.transport_compute_total = st.transport_compute_total.saturating_add(transport_started.elapsed());
+        st.transport_compute_total = st
+            .transport_compute_total
+            .saturating_add(transport_started.elapsed());
         ControlFlow::Continue(())
     }
 
@@ -1267,8 +1274,8 @@ where
                 st.chart_update_count = st.chart_update_count.saturating_add(1);
                 st.chart_probe_poll_ms = ACTIVE_HYDRATION_POLL_MS;
             } else if elapsed >= Duration::from_millis(25) {
-                st.chart_probe_poll_ms = (st.chart_probe_poll_ms.saturating_mul(2))
-                    .min(ACTIVE_HYDRATION_POLL_MAX_MS);
+                st.chart_probe_poll_ms =
+                    (st.chart_probe_poll_ms.saturating_mul(2)).min(ACTIVE_HYDRATION_POLL_MAX_MS);
             } else {
                 // Keep lightweight probes responsive while idle.
                 st.chart_probe_poll_ms =
@@ -1289,12 +1296,14 @@ where
         }
 
         let transport_avg_ms = if st.transport_tick_count > 0 {
-            (st.transport_compute_total.as_secs_f64() * 1000.0) / f64::from(u32::try_from(st.transport_tick_count).unwrap_or(u32::MAX))
+            (st.transport_compute_total.as_secs_f64() * 1000.0)
+                / f64::from(u32::try_from(st.transport_tick_count).unwrap_or(u32::MAX))
         } else {
             0.0
         };
         let chart_avg_ms = if st.chart_check_count > 0 {
-            (st.chart_compute_total.as_secs_f64() * 1000.0) / f64::from(u32::try_from(st.chart_check_count).unwrap_or(u32::MAX))
+            (st.chart_compute_total.as_secs_f64() * 1000.0)
+                / f64::from(u32::try_from(st.chart_check_count).unwrap_or(u32::MAX))
         } else {
             0.0
         };
@@ -1514,9 +1523,7 @@ where
         self.daw.output_latency_seconds()
     }
 
-    pub(crate) fn get_audio_latency_info_impl(
-        &self,
-    ) -> session_proto::AudioLatencyInfo {
+    pub(crate) fn get_audio_latency_info_impl(&self) -> session_proto::AudioLatencyInfo {
         let state = self.daw.state();
         session_proto::AudioLatencyInfo {
             input_samples: state.latency.input_samples,
@@ -1615,7 +1622,10 @@ where
         &self,
         song_index: usize,
     ) -> Result<Option<session_proto::SongChartHydration>, SessionServiceError> {
-        let project_guid = self.setlist.read().await
+        let project_guid = self
+            .setlist
+            .read()
+            .await
             .as_ref()
             .and_then(|sl| sl.songs.get(song_index))
             .map(|song| song.project_guid.clone())
@@ -1647,7 +1657,10 @@ where
                 .enumerate()
                 .map(|(idx, pos)| MeasureInfo {
                     measure: i32::try_from(idx).unwrap_or(i32::MAX),
-                    time_seconds: pos.time.as_ref().map_or(0.0, daw_proto::PositionInSeconds::as_seconds),
+                    time_seconds: pos
+                        .time
+                        .as_ref()
+                        .map_or(0.0, daw_proto::PositionInSeconds::as_seconds),
                     time_sig_numerator: ts.numerator().cast_signed(),
                     time_sig_denominator: ts.denominator().cast_signed(),
                 })
@@ -1762,7 +1775,9 @@ where
             .and_then(|(_, song)| {
                 song.section_at_position_with_index(seconds)
                     .map(|(_, section)| section.clone())
-                    .ok_or_else(|| SessionServiceError::not_found("Section", &format!("at {seconds}s")))
+                    .ok_or_else(|| {
+                        SessionServiceError::not_found("Section", &format!("at {seconds}s"))
+                    })
             })
     }
 
@@ -2011,18 +2026,23 @@ mod tests {
                 is_playing: false,
                 is_looping: false,
                 loop_region: None,
-                tempo: 127.0,  // project transport tempo (WRONG for this song)
+                tempo: 127.0,     // project transport tempo (WRONG for this song)
                 time_sig: (4, 4), // project transport time sig (WRONG for this song)
             },
         );
 
-        assert!((t.bpm - 72.0).abs() < f64::EPSILON, "badge must show the song's own tempo, not 127");
+        assert!(
+            (t.bpm - 72.0).abs() < f64::EPSILON,
+            "badge must show the song's own tempo, not 127"
+        );
         assert_eq!(t.time_sig_num, 6);
         assert_eq!(t.time_sig_denom, 8);
         // Position is carried through so the time/musical badges move on seek.
         let pos_secs = t.position.time.map(|p| p.as_seconds());
-        assert!((pos_secs.unwrap_or(0.0) - 360.0).abs() < f64::EPSILON,
-            "seek position must reach the transport state for the badge");
+        assert!(
+            (pos_secs.unwrap_or(0.0) - 360.0).abs() < f64::EPSILON,
+            "seek position must reach the transport state for the badge"
+        );
     }
 
     /// When a song hasn't authored a tempo (no chart), fall back to the project

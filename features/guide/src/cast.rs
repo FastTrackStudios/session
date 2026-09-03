@@ -71,7 +71,11 @@ pub fn usize_from_f64_round(x: f64) -> usize {
 ///
 /// Bounds are `2.0f64.powi(64)` (exactly representable) rather than a cast
 /// of `u64::MAX`, so the comparison itself needs no `as`.
-#[allow(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 pub fn u64_from_f64_round(x: f64) -> u64 {
     const U64_MAX_BOUND_F64: f64 = 18_446_744_073_709_551_616.0; // 2^64, exact
 

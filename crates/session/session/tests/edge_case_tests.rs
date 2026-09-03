@@ -260,7 +260,9 @@ async fn seek_past_end(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
 
     // REAPER allows seeking past content — position should be at or near 1000s
     if pos <= 500.0 {
-        return Err(eyre::eyre!("Should have seeked to a large position, got {pos:.2}s"));
+        return Err(eyre::eyre!(
+            "Should have seeked to a large position, got {pos:.2}s"
+        ));
     }
 
     Ok(())
@@ -286,7 +288,9 @@ async fn seek_exact_boundaries(ctx: &daw::test::ReaperTestContext) -> eyre::Resu
         let diff = (pos - boundary).abs();
         println!("Boundary {boundary:.1}s → {pos:.4}s (diff: {diff:.4}s)");
         if diff >= 0.5 {
-            return Err(eyre::eyre!("Seek to boundary {boundary:.1}s failed: got {pos:.2}s"));
+            return Err(eyre::eyre!(
+                "Seek to boundary {boundary:.1}s failed: got {pos:.2}s"
+            ));
         }
     }
 
@@ -385,7 +389,9 @@ async fn rapid_seek(ctx: &daw::test::ReaperTestContext) -> eyre::Result<()> {
     let diff = (pos - 4.0).abs();
     println!("Position after rapid seeks: {pos:.4}s (expected ~4.0s, diff: {diff:.4}s)");
     if diff >= 0.5 {
-        return Err(eyre::eyre!("Should be at last seek position (4.0s), got {pos:.2}s"));
+        return Err(eyre::eyre!(
+            "Should be at last seek position (4.0s), got {pos:.2}s"
+        ));
     }
 
     Ok(())
@@ -419,7 +425,9 @@ async fn rapid_play_pause_play(ctx: &daw::test::ReaperTestContext) -> eyre::Resu
     println!("Position after rapid pause/play: {pos:.2}s");
     // Should have advanced past 10s (we played for ~1.2s total across cycles)
     if pos <= 10.5 {
-        return Err(eyre::eyre!("Position should advance through pause/play cycles, got {pos:.2}s"));
+        return Err(eyre::eyre!(
+            "Position should advance through pause/play cycles, got {pos:.2}s"
+        ));
     }
 
     Ok(())

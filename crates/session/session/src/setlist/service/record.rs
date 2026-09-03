@@ -16,10 +16,7 @@ where
     pub(crate) async fn record_impl(&self) -> Result<(), SessionServiceError> {
         debug!("record");
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self
-                .daw
-                .record(ProjectContext::Project(song.project_guid))
-            {
+            if let Err(e) = self.daw.record(ProjectContext::Project(song.project_guid)) {
                 warn!("Failed to record: {}", e);
             }
         } else {

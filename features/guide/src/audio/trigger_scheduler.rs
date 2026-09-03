@@ -133,7 +133,7 @@ pub struct TriggerScheduler;
 
 impl TriggerScheduler {
     /// Calculate subdivision intervals based on time signature
-    #[must_use] 
+    #[must_use]
     pub fn calculate_intervals(time_sig_den: i32) -> SubdivisionIntervals {
         let eighth_interval = 0.5; // Always 0.5 quarter notes
         let sixteenth_interval = 0.25; // Always 0.25 quarter notes
@@ -150,7 +150,7 @@ impl TriggerScheduler {
     }
 
     /// Calculate the current beat start position in quarter notes
-    #[must_use] 
+    #[must_use]
     pub fn calculate_current_beat_start(params: &TriggerSchedulingParams) -> f64 {
         let bar_start = params.current_bar_start_quarters;
         if bar_start.is_finite() {
@@ -171,7 +171,7 @@ impl TriggerScheduler {
     }
 
     /// Calculate the next beat start position (boundary for clamping subdivisions)
-    #[must_use] 
+    #[must_use]
     pub fn calculate_next_beat_start(
         params: &TriggerSchedulingParams,
         current_beat_start_quarter: f64,
@@ -282,7 +282,9 @@ impl TriggerScheduler {
 
         // Handle negative values (target already passed) - trigger at sample 0
         let buffer_len_i64 = i64::try_from(params.buffer_len).unwrap_or(i64::MAX);
-        if samples_until_triplet < buffer_len_i64 && samples_until_triplet >= buffer_len_i64.saturating_neg() {
+        if samples_until_triplet < buffer_len_i64
+            && samples_until_triplet >= buffer_len_i64.saturating_neg()
+        {
             let trigger_sample = if samples_until_triplet <= 0 {
                 0 // Target already passed, trigger as early as possible
             } else {
@@ -319,13 +321,15 @@ impl TriggerScheduler {
         if last_eighth < 0.0 {
             let eighth_within_beat =
                 (position_within_beat_quarter / intervals.eighth_interval).floor();
-            last_eighth = eighth_within_beat.mul_add(intervals.eighth_interval, current_beat_start_quarter)
+            last_eighth = eighth_within_beat
+                .mul_add(intervals.eighth_interval, current_beat_start_quarter)
                 - intervals.eighth_interval;
         }
         if last_sixteenth < 0.0 {
             let sixteenth_within_beat =
                 (position_within_beat_quarter / intervals.sixteenth_interval).floor();
-            last_sixteenth = sixteenth_within_beat.mul_add(intervals.sixteenth_interval, current_beat_start_quarter)
+            last_sixteenth = sixteenth_within_beat
+                .mul_add(intervals.sixteenth_interval, current_beat_start_quarter)
                 - intervals.sixteenth_interval;
         }
 
@@ -333,13 +337,15 @@ impl TriggerScheduler {
         if last_triplet < 0.0 {
             let triplet_within_beat =
                 (position_within_beat_quarter / intervals.triplet_interval).floor();
-            last_triplet = triplet_within_beat.mul_add(intervals.triplet_interval, current_beat_start_quarter)
+            last_triplet = triplet_within_beat
+                .mul_add(intervals.triplet_interval, current_beat_start_quarter)
                 - intervals.triplet_interval;
         } else if last_triplet < current_beat_start_quarter {
             // Reset if we're in a new beat
             let triplet_within_beat =
                 (position_within_beat_quarter / intervals.triplet_interval).floor();
-            last_triplet = triplet_within_beat.mul_add(intervals.triplet_interval, current_beat_start_quarter)
+            last_triplet = triplet_within_beat
+                .mul_add(intervals.triplet_interval, current_beat_start_quarter)
                 - intervals.triplet_interval;
         }
 
@@ -348,7 +354,8 @@ impl TriggerScheduler {
             let position_within_beat =
                 params.current_beat_position_quarter_notes - current_beat_start_quarter;
             let eighth_within_beat = (position_within_beat / intervals.eighth_interval).floor();
-            last_eighth = eighth_within_beat.mul_add(intervals.eighth_interval, current_beat_start_quarter)
+            last_eighth = eighth_within_beat
+                .mul_add(intervals.eighth_interval, current_beat_start_quarter)
                 - intervals.eighth_interval;
         }
 
@@ -357,7 +364,8 @@ impl TriggerScheduler {
                 params.current_beat_position_quarter_notes - current_beat_start_quarter;
             let sixteenth_within_beat =
                 (position_within_beat / intervals.sixteenth_interval).floor();
-            last_sixteenth = sixteenth_within_beat.mul_add(intervals.sixteenth_interval, current_beat_start_quarter)
+            last_sixteenth = sixteenth_within_beat
+                .mul_add(intervals.sixteenth_interval, current_beat_start_quarter)
                 - intervals.sixteenth_interval;
         }
 
@@ -365,12 +373,18 @@ impl TriggerScheduler {
         let next_beat = next_beat_to_trigger;
 
         // Triplet: clamp to not exceed next beat boundary
-        let next_triplet_quarter_raw = (last_triplet / intervals.triplet_interval).floor().mul_add(intervals.triplet_interval, intervals.triplet_interval);
+        let next_triplet_quarter_raw = (last_triplet / intervals.triplet_interval)
+            .floor()
+            .mul_add(intervals.triplet_interval, intervals.triplet_interval);
         let next_triplet_quarter = next_triplet_quarter_raw.min(next_beat_start_quarter);
 
         // Eighth and sixteenth: calculate relative to current beat start, clamp to beat boundary
-        let next_eighth_quarter_raw = (last_eighth / intervals.eighth_interval).floor().mul_add(intervals.eighth_interval, intervals.eighth_interval);
-        let next_sixteenth_quarter_raw = (last_sixteenth / intervals.sixteenth_interval).floor().mul_add(intervals.sixteenth_interval, intervals.sixteenth_interval);
+        let next_eighth_quarter_raw = (last_eighth / intervals.eighth_interval)
+            .floor()
+            .mul_add(intervals.eighth_interval, intervals.eighth_interval);
+        let next_sixteenth_quarter_raw = (last_sixteenth / intervals.sixteenth_interval)
+            .floor()
+            .mul_add(intervals.sixteenth_interval, intervals.sixteenth_interval);
 
         let next_eighth_quarter_clamped = next_eighth_quarter_raw.min(next_beat_start_quarter);
         let next_sixteenth_quarter_clamped =
@@ -431,7 +445,7 @@ impl TriggerScheduler {
     /// Apply priority mode filtering to triggers
     ///
     /// In priority mode, if multiple triggers occur at the same sample, only keep the highest priority one.
-    #[must_use] 
+    #[must_use]
     pub fn apply_priority_mode(triggers: Vec<TriggerResult>) -> Vec<TriggerResult> {
         let mut sample_map: HashMap<usize, usize> = HashMap::new();
         for (sample, priority) in triggers {

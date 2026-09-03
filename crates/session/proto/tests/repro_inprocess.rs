@@ -128,7 +128,11 @@ async fn large_blob_roundtrips() {
             Ok(v) => {
                 let b = v.expect("blob rpc");
                 assert_eq!(b.len(), 50_000, "blob truncated: got {}", b.len());
-                assert_eq!(b[49_999], u8::try_from(49_999u32 % 251).unwrap_or(0), "blob corrupted");
+                assert_eq!(
+                    b[49_999],
+                    u8::try_from(49_999u32 % 251).unwrap_or(0),
+                    "blob corrupted"
+                );
             }
             Err(elapsed) => panic!("blob HUNG: {elapsed}"),
         }
@@ -145,7 +149,9 @@ async fn complex_return_roundtrips() {
                 let s = v.expect("fetch rpc");
                 assert_eq!(s.name, "Repro Setlist");
             }
-            Err(elapsed) => panic!("fetch (complex return) HUNG — reproduced the live bug: {elapsed}"),
+            Err(elapsed) => {
+                panic!("fetch (complex return) HUNG — reproduced the live bug: {elapsed}")
+            }
         }
     })
     .await

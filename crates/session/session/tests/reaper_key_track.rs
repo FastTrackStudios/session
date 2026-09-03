@@ -18,8 +18,8 @@ use keyflow::key::Key;
 use keyflow::primitives::MusicalNote;
 
 fn key_of(root: &str, major: bool) -> eyre::Result<Key> {
-    let note = MusicalNote::from_string(root)
-        .ok_or_else(|| eyre::eyre!("invalid note: {}", root))?;
+    let note =
+        MusicalNote::from_string(root).ok_or_else(|| eyre::eyre!("invalid note: {}", root))?;
     if major {
         Ok(Key::major(note))
     } else {
@@ -80,7 +80,10 @@ async fn key_changes_keep_their_positions(ctx: &daw::test::ReaperTestContext) ->
 
     let items = track.items().all().await?;
     if items.len() != 3 {
-        return Err(eyre::eyre!("one item per change: expected 3, got {}", items.len()));
+        return Err(eyre::eyre!(
+            "one item per change: expected 3, got {}",
+            items.len()
+        ));
     }
 
     let mut found: Vec<(f64, String)> = Vec::new();
@@ -97,13 +100,22 @@ async fn key_changes_keep_their_positions(ctx: &daw::test::ReaperTestContext) ->
 
     ctx.log(&format!("{found:?}"));
     if found.get(0) != Some(&(0.0, "C major".to_string())) {
-        return Err(eyre::eyre!("expected found[0] = (0.0, \"C major\"), got {:?}", found.get(0)));
+        return Err(eyre::eyre!(
+            "expected found[0] = (0.0, \"C major\"), got {:?}",
+            found.get(0)
+        ));
     }
     if found.get(1) != Some(&(4.0, "A minor".to_string())) {
-        return Err(eyre::eyre!("expected found[1] = (4.0, \"A minor\"), got {:?}", found.get(1)));
+        return Err(eyre::eyre!(
+            "expected found[1] = (4.0, \"A minor\"), got {:?}",
+            found.get(1)
+        ));
     }
     if found.get(2) != Some(&(8.0, "F# minor".to_string())) {
-        return Err(eyre::eyre!("expected found[2] = (8.0, \"F# minor\"), got {:?}", found.get(2)));
+        return Err(eyre::eyre!(
+            "expected found[2] = (8.0, \"F# minor\"), got {:?}",
+            found.get(2)
+        ));
     }
     Ok(())
 }

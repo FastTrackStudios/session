@@ -59,13 +59,13 @@ pub use music_catalog::lookup::color_for_region;
 // ============================================================================
 
 /// Convert a color to REAPER's native format
-#[must_use] 
+#[must_use]
 pub const fn to_reaper_color(color: Color) -> i32 {
     color.to_reaper_native()
 }
 
 /// Convert REAPER's native color format back to Color
-#[must_use] 
+#[must_use]
 pub const fn from_reaper_color(native: i32) -> Color {
     Color::from_reaper_native(native)
 }
@@ -75,38 +75,38 @@ pub const fn from_reaper_color(native: i32) -> Color {
 // ============================================================================
 
 /// Convert RGB color to HSL
-#[must_use] 
+#[must_use]
 pub fn rgb_to_hsl(color: Color) -> (f32, f32, f32) {
     color.to_hsl()
 }
 
 /// Convert HSL to RGB color
-#[must_use] 
+#[must_use]
 pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> Color {
     Color::from_hsl(h, s, l)
 }
 
 /// Adjust the lightness of a color
-#[must_use] 
+#[must_use]
 pub fn adjust_lightness(color: Color, delta: f32) -> Color {
     let (h, s, l) = color.to_hsl();
     Color::from_hsl(h, s, (l + delta).clamp(0.0, 1.0))
 }
 
 /// Get a shade of a color (0-9 scale, 4 = base)
-#[must_use] 
+#[must_use]
 pub fn get_shade(color: Color, shade: u8) -> Color {
     color.shade(shade)
 }
 
 /// Calculate a color on a gradient between two colors
-#[must_use] 
+#[must_use]
 pub fn calc_gradient(start: Color, end: Color, position: f32) -> Color {
     start.mix(end, position)
 }
 
 /// Generate a full gradient between two colors
-#[must_use] 
+#[must_use]
 pub fn generate_gradient(start: Color, end: Color, steps: usize) -> Vec<Color> {
     Color::gradient(start, end, steps)
 }

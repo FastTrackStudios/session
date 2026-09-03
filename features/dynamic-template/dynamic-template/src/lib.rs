@@ -1,7 +1,10 @@
 use daw_proto::{FolderDepthChange, TrackHierarchy, TrackNode};
-use monarchy::{Config, collapse_single_child_folders, expand_items_to_children, cleanup_display_names, Target, Metadata, ToDisplayName};
 #[cfg(test)]
 use monarchy::StructureAssertions;
+use monarchy::{
+    cleanup_display_names, collapse_single_child_folders, expand_items_to_children, Config,
+    Metadata, Target, ToDisplayName,
+};
 
 // region: --- Modules
 
@@ -52,14 +55,14 @@ pub type DynamicTemplateConfig = Config<ItemMetadata>;
 pub struct DynamicTemplate;
 
 impl DynamicTemplate {
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self
     }
 }
 
 /// Creates a default configuration for the dynamic template system
-#[must_use] 
+#[must_use]
 pub fn default_config() -> DynamicTemplateConfig {
     Config::builder()
         // Add metadata field patterns first (metadata-only group)
@@ -127,7 +130,7 @@ impl Default for OrganizeOptions {
 
 impl OrganizeOptions {
     /// Create options with no transformations (raw monarchy sort output)
-    #[must_use] 
+    #[must_use]
     pub const fn none() -> Self {
         Self {
             expand_items: false,
@@ -365,7 +368,8 @@ fn structure_to_tracks_recursive<M: Metadata + ToDisplayName>(
             if i.saturating_add(1) == num_children && tracks.len() > tracks_before {
                 if let Some(last_track) = tracks.last_mut() {
                     let current = last_track.folder_depth_change.to_raw_value();
-                    last_track.folder_depth_change = FolderDepthChange::from_raw_value(current.saturating_sub(1));
+                    last_track.folder_depth_change =
+                        FolderDepthChange::from_raw_value(current.saturating_sub(1));
                 }
             }
         }

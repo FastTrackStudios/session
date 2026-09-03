@@ -27,7 +27,7 @@ use monarchy::Metadata;
 /// Names that don't classify, or whose group has no colour, are absent
 /// from the map — the caller decides what to do with them (the runtime
 /// falls back to inheriting the nearest coloured parent).
-#[must_use] 
+#[must_use]
 pub fn classify_and_color(track_names: Vec<String>) -> HashMap<String, Color> {
     let config = dynamic_template::default_config();
     let Ok(structure) = monarchy::monarchy_sort(track_names, &config) else {
@@ -44,7 +44,7 @@ pub fn classify_and_color(track_names: Vec<String>) -> HashMap<String, Color> {
 /// Keyed by name rather than guid because that's what the classifier
 /// works in. Two tracks sharing a name share a colour, which is the
 /// intent — they're the same thing twice.
-#[must_use] 
+#[must_use]
 pub fn colors_by_track_name(tracks: &[daw::service::Track]) -> HashMap<String, u32> {
     let names: Vec<String> = tracks.iter().map(|track| track.name.clone()).collect();
     let mut out: HashMap<String, u32> = classify_and_color(names)
@@ -132,9 +132,9 @@ pub fn apply_color_map<S: BuildHasher>(
                     color.to_hex(),
                 )
                 .is_ok()
-            {
-                colored = colored.saturating_add(1);
-            }
+        {
+            colored = colored.saturating_add(1);
+        }
     }
     colored
 }

@@ -148,7 +148,7 @@ impl BusSpec {
     /// Resolve this bus's color from the first of its source group paths that
     /// has one — so `DRUM BUS` takes the drums color, `GTR BUS` the guitars
     /// color. A bus that only sums other buses has no color of its own.
-    #[must_use] 
+    #[must_use]
     pub fn color_hex(&self) -> Option<String> {
         self.sources
             .iter()
@@ -319,7 +319,7 @@ pub const BUS_TREE: &[BusSpec] = &[
 /// assert_eq!(bus_for_path(&["Vocals".into(), "BGVs".into()]), Some(names::BGV));
 /// assert_eq!(bus_for_path(&["Guitars".into(), "Electric".into()]), None);
 /// ```
-#[must_use] 
+#[must_use]
 pub fn bus_for_path(path: &[String]) -> Option<&'static str> {
     let mut best: Option<(usize, &'static str)> = None;
     for spec in BUS_TREE {
@@ -341,7 +341,7 @@ pub fn bus_for_path(path: &[String]) -> Option<&'static str> {
 /// Whether `path` is exactly a bus attachment point — the node that carries
 /// the [`NodeRouting`](dynamic_template_proto::NodeRouting) into a bus, as
 /// opposed to a descendant that merely inherits it.
-#[must_use] 
+#[must_use]
 pub fn is_attachment_point(path: &[String]) -> bool {
     BUS_TREE.iter().any(|spec| {
         spec.sources.iter().any(|source| {
@@ -356,7 +356,7 @@ pub fn is_attachment_point(path: &[String]) -> bool {
 
 /// The spec for a bus by canonical name or [`alias`](BusSpec::aliases),
 /// case-insensitively.
-#[must_use] 
+#[must_use]
 pub fn spec(name: &str) -> Option<&'static BusSpec> {
     let needle = name.trim();
     BUS_TREE.iter().find(|s| {
@@ -375,7 +375,7 @@ pub fn spec(name: &str) -> Option<&'static BusSpec> {
 pub const UNROUTED_GROUPS: &[&str] = &["VCA"];
 
 /// Whether `path` belongs to a group that deliberately reaches no bus.
-#[must_use] 
+#[must_use]
 pub fn is_deliberately_unrouted(path: &[String]) -> bool {
     path.first()
         .is_some_and(|top| UNROUTED_GROUPS.iter().any(|g| g.eq_ignore_ascii_case(top)))
@@ -390,7 +390,7 @@ pub fn is_deliberately_unrouted(path: &[String]) -> bool {
 /// content justifying its own existence, and a project with buses but no vocals
 /// still grows a vocal bus — defeating the whole point of building a bus only
 /// when something feeds it.
-#[must_use] 
+#[must_use]
 pub fn is_bus_name(name: &str) -> bool {
     spec(name).is_some()
 }
@@ -437,7 +437,7 @@ pub fn buses_for_paths<'a>(paths: impl IntoIterator<Item = &'a [String]>) -> Vec
 /// The full bus tree as proto types, ignoring materialization — every bus,
 /// populated or not. Used for the golden template, which is the schema rather
 /// than any one session.
-#[must_use] 
+#[must_use]
 pub fn all_buses() -> Vec<TemplateBus> {
     BUS_TREE.iter().map(|s| s.to_template_bus()).collect()
 }
@@ -453,7 +453,7 @@ pub fn all_buses() -> Vec<TemplateBus> {
 ///
 /// A bus whose parent is not in `buses` is emitted as a root rather than
 /// dropped, so a partial slice still renders everything it was given.
-#[must_use] 
+#[must_use]
 pub fn bus_nodes(buses: &[TemplateBus]) -> Vec<TemplateNode> {
     fn build(bus: &TemplateBus, buses: &[TemplateBus]) -> TemplateNode {
         let children: Vec<TemplateNode> = buses

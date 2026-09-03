@@ -129,9 +129,10 @@ fn find_lyrics(song_dir: &Path) -> Option<LyricsFile> {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("json")
             && let Ok(text) = std::fs::read_to_string(&path)
-                && let Ok(parsed) = serde_json::from_str::<LyricsFile>(&text) {
-                    return Some(parsed);
-                }
+            && let Ok(parsed) = serde_json::from_str::<LyricsFile>(&text)
+        {
+            return Some(parsed);
+        }
     }
     None
 }
@@ -144,9 +145,10 @@ fn find_chart_kf(song_dir: &Path) -> Option<String> {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("kf")
-            && let Ok(text) = std::fs::read_to_string(&path) {
-                return Some(text);
-            }
+            && let Ok(text) = std::fs::read_to_string(&path)
+        {
+            return Some(text);
+        }
     }
     None
 }

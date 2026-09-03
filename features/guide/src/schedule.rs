@@ -130,7 +130,7 @@ impl Default for GuideSongTiming {
 
 impl GuideSongTiming {
     /// Build from a `session_proto::Song`'s tempo / time signature fields.
-    #[must_use] 
+    #[must_use]
     pub fn from_song(song: &session_proto::Song) -> Self {
         let default = Self::default();
         Self {
@@ -145,25 +145,25 @@ impl GuideSongTiming {
     }
 
     /// Duration of one time-signature beat unit in seconds.
-    #[must_use] 
+    #[must_use]
     pub fn beat_seconds(&self) -> f64 {
         (60.0 / self.tempo_bpm) * (4.0 / f64::from(self.time_sig_den))
     }
 
     /// Duration of one measure in seconds.
-    #[must_use] 
+    #[must_use]
     pub fn measure_seconds(&self) -> f64 {
         self.beat_seconds() * f64::from(self.time_sig_num)
     }
 
     /// Duration of one measure in quarter notes.
-    #[must_use] 
+    #[must_use]
     pub fn measure_quarters(&self) -> f64 {
         f64::from(self.time_sig_num) * 4.0 / f64::from(self.time_sig_den)
     }
 
     /// Convert seconds to quarter notes.
-    #[must_use] 
+    #[must_use]
     pub fn seconds_to_quarters(&self, seconds: f64) -> f64 {
         seconds * self.tempo_bpm / 60.0
     }
@@ -380,7 +380,8 @@ impl CueSchedule {
                 timing.seconds_to_quarters(section.start_seconds),
                 timing.measure_quarters(),
             );
-            let count_start = f64::from(total_measures).mul_add(-measure_secs, section.start_seconds);
+            let count_start =
+                f64::from(total_measures).mul_add(-measure_secs, section.start_seconds);
             Self::push_count_pattern(
                 cues,
                 count_start,
@@ -397,16 +398,7 @@ impl CueSchedule {
             // section). This is what makes the guide count the band in.
             let count_start = section.start_seconds - measure_secs;
             if count_start >= 0.0 {
-                Self::push_count_pattern(
-                    cues,
-                    count_start,
-                    1,
-                    num,
-                    den,
-                    beat_secs,
-                    options,
-                    true,
-                );
+                Self::push_count_pattern(cues, count_start, 1, num, den, beat_secs, options, true);
             }
         }
     }
@@ -473,7 +465,16 @@ impl CueSchedule {
         let total_measures = 2;
         let count_start = song_end - f64::from(total_measures) * measure_secs;
         // The count-OUT always ramps (never final-measure-only).
-        Self::push_count_pattern(cues, count_start, total_measures, num, den, beat_secs, options, false);
+        Self::push_count_pattern(
+            cues,
+            count_start,
+            total_measures,
+            num,
+            den,
+            beat_secs,
+            options,
+            false,
+        );
         let ending_time = count_start.max(0.0);
         cues.push(ScheduledCue {
             time_seconds: ending_time,
@@ -527,7 +528,9 @@ impl CueSchedule {
                     continue;
                 }
                 let beat_offset = beat_in_measure.saturating_sub(1);
-                let time = f64::from(measure_index).mul_add(f64::from(time_sig_num), f64::from(beat_offset)).mul_add(beat_secs, count_start);
+                let time = f64::from(measure_index)
+                    .mul_add(f64::from(time_sig_num), f64::from(beat_offset))
+                    .mul_add(beat_secs, count_start);
                 if time < 0.0 {
                     continue;
                 }
@@ -559,7 +562,7 @@ impl CueSchedule {
 
     /// Every distinct text this schedule would speak via TTS, in order —
     /// feed this to `CueBank::prepare` at setlist-build time.
-    #[must_use] 
+    #[must_use]
     pub fn tts_texts(sections: &[GuideSection]) -> Vec<String> {
         let mut texts = Vec::new();
         for section in sections {

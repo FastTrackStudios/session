@@ -39,13 +39,13 @@ pub struct TrackClassification {
     pub matched_groups: Vec<String>,
 }
 
-#[must_use] 
+#[must_use]
 pub fn classify_track(name: &str) -> TrackClassification {
     let config = default_config();
     classify_track_with_config(name, &config)
 }
 
-#[must_use] 
+#[must_use]
 pub fn classify_track_with_config(
     name: &str,
     config: &DynamicTemplateConfig,
@@ -67,7 +67,7 @@ pub fn classify_track_with_config(
     }
 }
 
-#[must_use] 
+#[must_use]
 pub fn track_is_in_visibility_group(name: &str, group: &str) -> bool {
     let config = default_config();
     classify_track_with_config(name, &config)
@@ -76,13 +76,13 @@ pub fn track_is_in_visibility_group(name: &str, group: &str) -> bool {
         .any(|candidate| normalize(candidate) == normalize(group))
 }
 
-#[must_use] 
+#[must_use]
 pub fn classify_track_dimension(name: &str, context: &[String]) -> TrackDimension {
     let config = default_config();
     classify_track_dimension_with_config(name, context, &config)
 }
 
-#[must_use] 
+#[must_use]
 pub fn classify_track_dimension_with_config(
     name: &str,
     context: &[String],
@@ -127,7 +127,7 @@ pub fn classify_track_dimension_with_config(
     }
 }
 
-#[must_use] 
+#[must_use]
 pub fn configured_values_for_dimension(
     dimension: TrackDimension,
     context: &[String],
@@ -136,7 +136,7 @@ pub fn configured_values_for_dimension(
     configured_values_for_dimension_with_config(dimension, context, &config)
 }
 
-#[must_use] 
+#[must_use]
 pub fn configured_values_for_dimension_with_config(
     dimension: TrackDimension,
     context: &[String],
@@ -189,7 +189,7 @@ pub fn next_configured_value(
         .find(|name| !existing.contains(&normalize(name)))
 }
 
-#[must_use] 
+#[must_use]
 pub fn initial_values_for_dimension(
     dimension: TrackDimension,
     context: &[String],

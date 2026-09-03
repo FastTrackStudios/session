@@ -298,24 +298,16 @@ where
                     continue;
                 }
 
-                let _ = daw.set_project(
-                    ctx.clone(),
-                    SYNC_SECTION,
-                    SYNC_KEY_SETLIST_ID,
-                    &setlist_id,
-                );
+                let _ =
+                    daw.set_project(ctx.clone(), SYNC_SECTION, SYNC_KEY_SETLIST_ID, &setlist_id);
                 let _ = daw.set_project(
                     ctx.clone(),
                     SYNC_SECTION,
                     SYNC_KEY_SONG_INDEX,
                     &song_idx.to_string(),
                 );
-                let _ = daw.set_project(
-                    ctx,
-                    SYNC_SECTION,
-                    SYNC_KEY_SETLIST_PATH,
-                    &setlist_path_str,
-                );
+                let _ =
+                    daw.set_project(ctx, SYNC_SECTION, SYNC_KEY_SETLIST_PATH, &setlist_path_str);
 
                 debug!(
                     "Song {} ({}) tagged with setlist_id={}",
@@ -407,7 +399,8 @@ where
                         ProjectContext::Project(project.guid.clone()),
                         COMBINED_EXT_SECTION,
                         COMBINED_EXT_KEY,
-                    ).is_none_or(|v| v != "1")
+                    )
+                    .is_none_or(|v| v != "1")
                 })
                 .map(|project| project.guid)
                 .collect()

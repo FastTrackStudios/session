@@ -163,7 +163,7 @@ impl<Id> Default for AppliedBuses<Id> {
 
 impl<Id: Clone> AppliedBuses<Id> {
     /// The track carrying `bus`, if it was created or found.
-    #[must_use] 
+    #[must_use]
     pub fn get(&self, bus: &str) -> Option<&Id> {
         self.by_name.get(bus)
     }
@@ -193,7 +193,7 @@ pub struct FlatBusTrack {
 /// leaf's folder depth depends on what follows it, which is why this is one
 /// pass over the flattened rows rather than something the recursion can decide
 /// on its own.
-#[must_use] 
+#[must_use]
 pub fn flatten_buses(nodes: &[TemplateNode]) -> Vec<FlatBusTrack> {
     fn walk(node: &TemplateNode, depth: usize, out: &mut Vec<FlatBusTrack>) {
         out.push(FlatBusTrack {
@@ -278,7 +278,11 @@ pub fn apply_buses<T: TemplateTarget>(
     let found: Vec<Option<T::TrackId>> = rows
         .iter()
         .map(|row| {
-            crate::buses::spec(&row.name).map_or_else(|| vec![row.name.as_str()], |s| s.known_names().collect::<Vec<_>>())
+            crate::buses::spec(&row.name)
+                .map_or_else(
+                    || vec![row.name.as_str()],
+                    |s| s.known_names().collect::<Vec<_>>(),
+                )
                 .into_iter()
                 .find_map(|candidate| target.find_track(candidate))
         })
@@ -538,7 +542,7 @@ pub fn contextual_paths<T: TemplateTarget>(target: &T) -> Vec<TrackContext<T::Tr
 /// Both matter: grouping by folder alone puts every top-level track in one
 /// bucket, and reclassifying a whole qualifying bucket sweeps in whatever
 /// merely sat beside the stems. Returns the reclassified list.
-#[must_use] 
+#[must_use]
 pub fn reclassify_stem_splits<Id>(entries: Vec<TrackContext<Id>>) -> Vec<TrackContext<Id>> {
     use std::collections::HashMap;
 

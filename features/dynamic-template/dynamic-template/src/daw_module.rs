@@ -36,7 +36,9 @@ struct State {
 /// prior panic — `group_cache` is a rebuildable cache, not invariant-bearing
 /// state, so there's nothing to lose by continuing to use it.
 fn lock_state(state: &Mutex<State>) -> std::sync::MutexGuard<'_, State> {
-    state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 struct CreateTemplateSpec {
@@ -119,7 +121,7 @@ fn dispatch(command_name: &str) {
 ///
 /// Returns `false` for anything it doesn't recognise, so the caller can
 /// fall through.
-#[must_use] 
+#[must_use]
 pub fn dispatch_session_command(command_name: &str) -> bool {
     let mapped = match command_name {
         "FTS_SESSION_ORGANIZE_EVERYTHING" => "FTS_DYNAMIC_TEMPLATE_SORT_ALL".to_string(),
@@ -212,7 +214,10 @@ fn handle_action(command_name: &str, state: &Arc<Mutex<State>>) -> eyre::Result<
             apply_visibility_profile(profile)?;
         }
         cmd if cmd.starts_with(vis_mode_prefix) => {
-            let slug = cmd.strip_prefix(vis_mode_prefix).unwrap_or(cmd).to_lowercase();
+            let slug = cmd
+                .strip_prefix(vis_mode_prefix)
+                .unwrap_or(cmd)
+                .to_lowercase();
             apply_mode_visibility(&slug)?;
         }
         cmd if cmd.starts_with(create_prefix) => {
@@ -524,7 +529,10 @@ fn organize_demo_action() -> eyre::Result<()> {
         "BGV 2",
     ];
 
-    let names: Vec<String> = SAMPLE.iter().map(std::string::ToString::to_string).collect();
+    let names: Vec<String> = SAMPLE
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     let hierarchy = names.organize_into_tracks(&default_config(), None)?;
 
     tracing::info!(
@@ -572,7 +580,14 @@ fn create_template_group(command_suffix: &str) {
                 command_suffix,
             );
         } else {
-            create_top_level_group(reaper, project, &project_tracks, &existing, folders, command_suffix);
+            create_top_level_group(
+                reaper,
+                project,
+                &project_tracks,
+                &existing,
+                folders,
+                command_suffix,
+            );
         }
     });
 }
@@ -643,9 +658,7 @@ fn create_drum_kit_group(
         {
             save_created_track_state(reaper, project.clone(), &guid, command_suffix, folder);
             if let Err(err) = set_folder_depth_on_main_thread(&guid, 1) {
-                tracing::warn!(
-                    "[dynamic-template] failed to set folder depth for {folder}: {err}"
-                );
+                tracing::warn!("[dynamic-template] failed to set folder depth for {folder}: {err}");
             }
             insert_index = insert_index.saturating_add(1);
             created = created.saturating_add(1);
@@ -770,10 +783,9 @@ fn promote_collapsed_template_group(
     let Some(root) = tracks.get(root_index) else {
         return false;
     };
-    let Some(kind_name) =
-        created_track_kind(reaper, project.clone(), &root.guid)
-            .as_deref()
-            .and_then(create_kind_display_name)
+    let Some(kind_name) = created_track_kind(reaper, project.clone(), &root.guid)
+        .as_deref()
+        .and_then(create_kind_display_name)
     else {
         return false;
     };
@@ -800,10 +812,9 @@ fn promote_collapsed_template_group(
             true
         },
     );
-    if let Err(err) = set_folder_depth_on_main_thread(
-        &last_child.guid,
-        last_child.folder_depth.saturating_sub(1),
-    ) {
+    if let Err(err) =
+        set_folder_depth_on_main_thread(&last_child.guid, last_child.folder_depth.saturating_sub(1))
+    {
         tracing::warn!("[dynamic-template] failed to close promoted collapsed group: {err}");
     }
     promoted
@@ -917,12 +928,10 @@ fn insertion_index_for_top_level_group(tracks: &[daw::service::Track], group_nam
 }
 
 fn track_insert_index_at(tracks: &[daw::service::Track], position: usize) -> u32 {
-    tracks
-        .get(position)
-        .map_or_else(
-            || u32::try_from(tracks.len()).unwrap_or(u32::MAX),
-            |track| track.index,
-        )
+    tracks.get(position).map_or_else(
+        || u32::try_from(tracks.len()).unwrap_or(u32::MAX),
+        |track| track.index,
+    )
 }
 
 fn folder_end_exclusive(tracks: &[daw::service::Track], folder_index: usize) -> usize {
@@ -1017,45 +1026,181 @@ fn normalize_key(value: &str) -> String {
 // obscure the 1:1 mapping to REAPER command suffixes.
 const fn create_template_specs() -> &'static [CreateTemplateSpec] {
     &[
-        CreateTemplateSpec { command_suffix: "DRUMS", folders: &["Drums"], tracks: &["Kick", "Snare", "Toms", "Hi-Hat", "Overheads", "Room"], },
-        CreateTemplateSpec { command_suffix: "DRUM_KIT", folders: &["Drums", "Drum Kit"], tracks: &["Kick", "Snare", "Toms", "Hi-Hat", "Overheads", "Room"], },
-        CreateTemplateSpec { command_suffix: "ELECTRONIC_KIT", folders: &["Drums", "Electronic Kit"], tracks: &["Kick", "Snare", "Clap", "Hats", "Perc"], },
-        CreateTemplateSpec { command_suffix: "PERCUSSION", folders: &["Percussion"], tracks: &["Shaker", "Tambourine", "Conga", "Perc Loop"], },
-        CreateTemplateSpec { command_suffix: "BASS", folders: &["Bass"], tracks: &["Bass"], },
-        CreateTemplateSpec { command_suffix: "BASS_GUITAR", folders: &["Bass", "Bass Guitar"], tracks: &["DI", "Amp"], },
-        CreateTemplateSpec { command_suffix: "BASS_SYNTH", folders: &["Bass", "Bass Synth"], tracks: &["Bass Synth"], },
-        CreateTemplateSpec { command_suffix: "UPRIGHT_BASS", folders: &["Bass", "Upright Bass"], tracks: &["Upright Bass"], },
-        CreateTemplateSpec { command_suffix: "GUITARS", folders: &["Guitars"], tracks: &["Electric Guitar", "Acoustic Guitar"], },
-        CreateTemplateSpec { command_suffix: "ELECTRIC_GUITAR", folders: &["Guitars", "Electric Guitar"], tracks: &["DI", "Amp", "Lead"], },
-        CreateTemplateSpec { command_suffix: "ACOUSTIC_GUITAR", folders: &["Guitars", "Acoustic Guitar"], tracks: &["Acoustic Guitar"], },
-        CreateTemplateSpec { command_suffix: "KEYS", folders: &["Keys"], tracks: &["Piano", "Organ", "Electric Keys"], },
-        CreateTemplateSpec { command_suffix: "PIANO", folders: &["Keys", "Piano"], tracks: &["Piano"], },
-        CreateTemplateSpec { command_suffix: "ORGAN", folders: &["Keys", "Organ"], tracks: &["Organ"], },
-        CreateTemplateSpec { command_suffix: "ELECTRIC_KEYS", folders: &["Keys", "Electric Keys"], tracks: &["Electric Keys"], },
-        CreateTemplateSpec { command_suffix: "SYNTHS", folders: &["Synths"], tracks: &["Lead", "Pad", "Arp", "FX"], },
-        CreateTemplateSpec { command_suffix: "SYNTH_LEAD", folders: &["Synths", "Lead"], tracks: &["Synth Lead"], },
-        CreateTemplateSpec { command_suffix: "SYNTH_PAD", folders: &["Synths", "Pad"], tracks: &["Synth Pad"], },
-        CreateTemplateSpec { command_suffix: "SYNTH_ARP", folders: &["Synths", "Arp"], tracks: &["Synth Arp"], },
-        CreateTemplateSpec { command_suffix: "HORNS", folders: &["Horns"], tracks: &["Trumpet", "Trombone", "Saxophone"], },
-        CreateTemplateSpec { command_suffix: "TRUMPET", folders: &["Horns", "Trumpet"], tracks: &["Trumpet"], },
-        CreateTemplateSpec { command_suffix: "TROMBONE", folders: &["Horns", "Trombone"], tracks: &["Trombone"], },
-        CreateTemplateSpec { command_suffix: "SAXOPHONE", folders: &["Horns", "Saxophone"], tracks: &["Saxophone"], },
-        CreateTemplateSpec { command_suffix: "HARMONICA", folders: &["Harmonica"], tracks: &["Harmonica"], },
-        CreateTemplateSpec { command_suffix: "STRINGS", folders: &["Strings"], tracks: &["Violin", "Viola", "Cello", "Bass"], },
-        CreateTemplateSpec { command_suffix: "VOCALS", folders: &["Vocals"], tracks: &["Lead Vocal", "Background Vocal", "Harmony"], },
-        CreateTemplateSpec { command_suffix: "LEAD_VOCALS", folders: &["Vocals", "Lead Vocals"], tracks: &["Lead Vocal"], },
-        CreateTemplateSpec { command_suffix: "BACKGROUND_VOCALS", folders: &["Vocals", "Background Vocals"], tracks: &["Background Vocal"], },
-        CreateTemplateSpec { command_suffix: "CHOIR", folders: &["Choir"], tracks: &["Soprano", "Alto", "Tenor", "Bass"], },
-        CreateTemplateSpec { command_suffix: "ORCHESTRA", folders: &["Orchestra"], tracks: &["Strings", "Brass", "Woodwinds", "Percussion"], },
-        CreateTemplateSpec { command_suffix: "SFX", folders: &["SFX"], tracks: &["SFX"], },
-        CreateTemplateSpec { command_suffix: "GUIDE", folders: &["Guide"], tracks: &["Guide"], },
-        CreateTemplateSpec { command_suffix: "REFERENCE", folders: &["Reference"], tracks: &["Reference"], },
-        CreateTemplateSpec { command_suffix: "STEM_SPLIT", folders: &["Stem Split"], tracks: &["Vocal", "Drums", "Bass", "Other"], },
+        CreateTemplateSpec {
+            command_suffix: "DRUMS",
+            folders: &["Drums"],
+            tracks: &["Kick", "Snare", "Toms", "Hi-Hat", "Overheads", "Room"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "DRUM_KIT",
+            folders: &["Drums", "Drum Kit"],
+            tracks: &["Kick", "Snare", "Toms", "Hi-Hat", "Overheads", "Room"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "ELECTRONIC_KIT",
+            folders: &["Drums", "Electronic Kit"],
+            tracks: &["Kick", "Snare", "Clap", "Hats", "Perc"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "PERCUSSION",
+            folders: &["Percussion"],
+            tracks: &["Shaker", "Tambourine", "Conga", "Perc Loop"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "BASS",
+            folders: &["Bass"],
+            tracks: &["Bass"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "BASS_GUITAR",
+            folders: &["Bass", "Bass Guitar"],
+            tracks: &["DI", "Amp"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "BASS_SYNTH",
+            folders: &["Bass", "Bass Synth"],
+            tracks: &["Bass Synth"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "UPRIGHT_BASS",
+            folders: &["Bass", "Upright Bass"],
+            tracks: &["Upright Bass"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "GUITARS",
+            folders: &["Guitars"],
+            tracks: &["Electric Guitar", "Acoustic Guitar"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "ELECTRIC_GUITAR",
+            folders: &["Guitars", "Electric Guitar"],
+            tracks: &["DI", "Amp", "Lead"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "ACOUSTIC_GUITAR",
+            folders: &["Guitars", "Acoustic Guitar"],
+            tracks: &["Acoustic Guitar"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "KEYS",
+            folders: &["Keys"],
+            tracks: &["Piano", "Organ", "Electric Keys"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "PIANO",
+            folders: &["Keys", "Piano"],
+            tracks: &["Piano"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "ORGAN",
+            folders: &["Keys", "Organ"],
+            tracks: &["Organ"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "ELECTRIC_KEYS",
+            folders: &["Keys", "Electric Keys"],
+            tracks: &["Electric Keys"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "SYNTHS",
+            folders: &["Synths"],
+            tracks: &["Lead", "Pad", "Arp", "FX"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "SYNTH_LEAD",
+            folders: &["Synths", "Lead"],
+            tracks: &["Synth Lead"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "SYNTH_PAD",
+            folders: &["Synths", "Pad"],
+            tracks: &["Synth Pad"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "SYNTH_ARP",
+            folders: &["Synths", "Arp"],
+            tracks: &["Synth Arp"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "HORNS",
+            folders: &["Horns"],
+            tracks: &["Trumpet", "Trombone", "Saxophone"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "TRUMPET",
+            folders: &["Horns", "Trumpet"],
+            tracks: &["Trumpet"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "TROMBONE",
+            folders: &["Horns", "Trombone"],
+            tracks: &["Trombone"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "SAXOPHONE",
+            folders: &["Horns", "Saxophone"],
+            tracks: &["Saxophone"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "HARMONICA",
+            folders: &["Harmonica"],
+            tracks: &["Harmonica"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "STRINGS",
+            folders: &["Strings"],
+            tracks: &["Violin", "Viola", "Cello", "Bass"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "VOCALS",
+            folders: &["Vocals"],
+            tracks: &["Lead Vocal", "Background Vocal", "Harmony"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "LEAD_VOCALS",
+            folders: &["Vocals", "Lead Vocals"],
+            tracks: &["Lead Vocal"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "BACKGROUND_VOCALS",
+            folders: &["Vocals", "Background Vocals"],
+            tracks: &["Background Vocal"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "CHOIR",
+            folders: &["Choir"],
+            tracks: &["Soprano", "Alto", "Tenor", "Bass"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "ORCHESTRA",
+            folders: &["Orchestra"],
+            tracks: &["Strings", "Brass", "Woodwinds", "Percussion"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "SFX",
+            folders: &["SFX"],
+            tracks: &["SFX"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "GUIDE",
+            folders: &["Guide"],
+            tracks: &["Guide"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "REFERENCE",
+            folders: &["Reference"],
+            tracks: &["Reference"],
+        },
+        CreateTemplateSpec {
+            command_suffix: "STEM_SPLIT",
+            folders: &["Stem Split"],
+            tracks: &["Vocal", "Drums", "Bass", "Other"],
+        },
     ]
 }
 
 /// Export the module.
-#[must_use] 
+#[must_use]
 pub fn module() -> Box<dyn DawModule> {
     Box::new(DynamicTemplateModule)
 }

@@ -10,7 +10,7 @@ impl CountInCalculator {
     ///
     /// For first sections: distance from Count-In marker to section start
     /// For SONGEND: always 2 measures before SONGEND
-    #[must_use] 
+    #[must_use]
     pub fn calculate_count_in_measures(
         count_start_quarters: f64,
         target_start_quarters: f64,

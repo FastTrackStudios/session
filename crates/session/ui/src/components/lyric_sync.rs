@@ -59,11 +59,13 @@ pub fn LyricSyncView(
 ) -> Element {
     let mut selected = use_signal(|| None::<usize>);
 
-    let (v, r, f) = words.iter().fold((0usize, 0usize, 0usize), |(v, r, f), w| match w.rating {
-        SyncRating::Verified => (v.saturating_add(1), r, f),
-        SyncRating::Review => (v, r.saturating_add(1), f),
-        SyncRating::Failed => (v, r, f.saturating_add(1)),
-    });
+    let (v, r, f) = words
+        .iter()
+        .fold((0usize, 0usize, 0usize), |(v, r, f), w| match w.rating {
+            SyncRating::Verified => (v.saturating_add(1), r, f),
+            SyncRating::Review => (v, r.saturating_add(1), f),
+            SyncRating::Failed => (v, r, f.saturating_add(1)),
+        });
     let total = words.len().max(1);
     let sel = selected().and_then(|i| words.get(i).cloned().map(|w| (i, w)));
 

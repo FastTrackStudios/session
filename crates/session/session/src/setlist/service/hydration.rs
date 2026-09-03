@@ -78,7 +78,8 @@ where
 
         let project_name = self
             .daw
-            .get(&current.project_guid).map_or_else(|| current.project_guid.clone(), |info| info.name);
+            .get(&current.project_guid)
+            .map_or_else(|| current.project_guid.clone(), |info| info.name);
         let load = ProjectLoad {
             index,
             guid: current.project_guid.clone(),
@@ -551,7 +552,8 @@ where
                 .await;
             let project_name = self
                 .daw
-                .get(&song_snapshot.project_guid).map_or_else(|| song_snapshot.project_guid.clone(), |info| info.name);
+                .get(&song_snapshot.project_guid)
+                .map_or_else(|| song_snapshot.project_guid.clone(), |info| info.name);
             self.song_cache
                 .insert(
                     song_snapshot.project_guid.clone(),

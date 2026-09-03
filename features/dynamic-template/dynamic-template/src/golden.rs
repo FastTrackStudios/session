@@ -49,7 +49,7 @@ fn band_for_exact_path(path: &[String]) -> Option<&'static music_catalog::groups
 /// Build the canonical FTS golden session by walking [`default_config`].
 ///
 /// [`default_config`]: crate::default_config
-#[must_use] 
+#[must_use]
 pub fn golden_template() -> IdealFullSessionTemplate {
     let cfg = crate::default_config();
     let mut root = Vec::new();

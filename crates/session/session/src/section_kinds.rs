@@ -63,7 +63,7 @@ impl MarkerKind {
     /// REAPER's native marker-color format) and a toolbar CSS pill
     /// (`css_color`) build on, so the REAPER-side marker and the
     /// standalone toolbar button render the literal same color.
-    #[must_use] 
+    #[must_use]
     pub const fn rgb(self) -> u32 {
         match self {
             Self::CountIn => 0x00EC_4899,   // pink-500
@@ -75,7 +75,7 @@ impl MarkerKind {
     }
 
     /// `rgb()` as a CSS hex string (`#RRGGBB`).
-    #[must_use] 
+    #[must_use]
     pub fn css_color(self) -> String {
         format!("#{:06X}", self.rgb())
     }

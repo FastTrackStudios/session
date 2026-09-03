@@ -16,7 +16,7 @@
 /// assert_eq!(strip_tempo("83.5BPM_song"), "song");
 /// assert_eq!(strip_tempo("AD.Big Kit.83.5BPM.L.wav"), "AD.Big Kit.L.wav");
 /// ```
-#[must_use] 
+#[must_use]
 pub fn strip_tempo(input: &str) -> String {
     let lower = input.to_lowercase();
 
@@ -99,7 +99,7 @@ pub fn strip_tempo(input: &str) -> String {
 /// assert_eq!(extract_tempo("83.5BPM_song"), Some(83.5));
 /// assert_eq!(extract_tempo("No tempo here"), None);
 /// ```
-#[must_use] 
+#[must_use]
 pub fn extract_tempo(input: &str) -> Option<f32> {
     let lower = input.to_lowercase();
 

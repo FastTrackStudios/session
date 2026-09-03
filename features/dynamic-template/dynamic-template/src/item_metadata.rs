@@ -313,7 +313,9 @@ impl ToDisplayName for ItemMetadata {
         // Helper to capitalize first letter of a string
         fn title_case(s: &str) -> String {
             let mut chars = s.chars();
-            chars.next().map_or_else(String::new, |first| first.to_uppercase().collect::<String>() + chars.as_str())
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().collect::<String>() + chars.as_str()
+            })
         }
 
         let mut parts = Vec::new();

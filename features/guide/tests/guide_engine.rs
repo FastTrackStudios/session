@@ -4,8 +4,8 @@
 
 use session_guide::count_in::{CountInCalculator, CountInPattern};
 use session_guide::{
-    tts_cue_key, AudioSample, BlockClock, ClickSubdivisions, CountInOptions, CueEvent,
-    CueSchedule, GuideConfig, GuideEngine, GuideSection, GuideSongTiming, ScheduleOptions,
+    tts_cue_key, AudioSample, BlockClock, ClickSubdivisions, CountInOptions, CueEvent, CueSchedule,
+    GuideConfig, GuideEngine, GuideSection, GuideSongTiming, ScheduleOptions,
 };
 
 /// `x` as `f64`, for the small (sub-second-sample-count) values used in

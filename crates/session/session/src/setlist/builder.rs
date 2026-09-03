@@ -29,7 +29,11 @@ impl SetlistBuilder {
 
         let mut songs = Vec::new();
         for (idx, project) in projects.iter().enumerate() {
-            debug!("Processing native project {}: {}", idx.saturating_add(1), project.guid);
+            debug!(
+                "Processing native project {}: {}",
+                idx.saturating_add(1),
+                project.guid
+            );
             match SongBuilder::build_native(ProjectContext::Project(project.guid.clone())) {
                 Ok(project_songs) => {
                     for song in &project_songs {

@@ -1,7 +1,14 @@
 use daw_proto::{assert_tracks_equal, TrackGroup, TrackStructureBuilder};
 use dynamic_template::*;
 
-fn ej_rios_echo_expected_leaves() -> (TrackGroup, TrackGroup, TrackGroup, TrackGroup, TrackGroup, TrackGroup) {
+fn ej_rios_echo_expected_leaves() -> (
+    TrackGroup,
+    TrackGroup,
+    TrackGroup,
+    TrackGroup,
+    TrackGroup,
+    TrackGroup,
+) {
     let kick = TrackGroup::folder("Kick")
         .track("Kick 1")
         .item("01_Kick1.wav")

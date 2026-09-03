@@ -24,7 +24,7 @@ pub struct ProToolsMetadata {
 
 impl ProToolsMetadata {
     /// Returns true if any Pro Tools metadata was extracted
-    #[must_use] 
+    #[must_use]
     pub const fn has_metadata(&self) -> bool {
         self.playlist.is_some() || self.take.is_some() || self.region.is_some()
     }
@@ -50,7 +50,7 @@ impl ProToolsMetadata {
 /// assert_eq!(meta.playlist, Some(2));
 /// assert_eq!(meta.take, Some(3));
 /// ```
-#[must_use] 
+#[must_use]
 pub fn extract_protools_metadata(input: &str) -> ProToolsMetadata {
     let mut metadata = ProToolsMetadata::default();
 
@@ -98,7 +98,7 @@ pub fn extract_protools_metadata(input: &str) -> ProToolsMetadata {
 /// assert_eq!(strip_protools_markers("Bass_02-03.wav"), "Bass.wav");
 /// assert_eq!(strip_protools_markers("Drums.01_02.wav"), "Drums.wav");
 /// ```
-#[must_use] 
+#[must_use]
 pub fn strip_protools_markers(input: &str) -> String {
     // Handle file extension
     let (name, ext) = split_extension(input);
@@ -121,7 +121,7 @@ pub fn strip_protools_markers(input: &str) -> String {
 ///
 /// Returns true if the string contains patterns that look like Pro Tools
 /// playlist or take markers.
-#[must_use] 
+#[must_use]
 pub fn has_protools_markers(input: &str) -> bool {
     let name = strip_extension(input);
     extract_simple_playlist(name).is_some()
@@ -205,16 +205,40 @@ fn extract_playlist_take(name: &str) -> Option<(u32, u32)> {
     }
 
     // Check digits
-    if !bytes.get(len.saturating_sub(5)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(4)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(2)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(1)).copied().unwrap_or(0).is_ascii_digit()
+    if !bytes
+        .get(len.saturating_sub(5))
+        .copied()
+        .unwrap_or(0)
+        .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(4))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(2))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(1))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
     {
         return None;
     }
 
-    let playlist = name.get(len.saturating_sub(5)..len.saturating_sub(3)).unwrap_or_default().parse::<u32>().ok()?;
-    let take = name.get(len.saturating_sub(2)..).unwrap_or_default().parse::<u32>().ok()?;
+    let playlist = name
+        .get(len.saturating_sub(5)..len.saturating_sub(3))
+        .unwrap_or_default()
+        .parse::<u32>()
+        .ok()?;
+    let take = name
+        .get(len.saturating_sub(2)..)
+        .unwrap_or_default()
+        .parse::<u32>()
+        .ok()?;
 
     Some((playlist, take))
 }
@@ -239,16 +263,40 @@ fn extract_playlist_region(name: &str) -> Option<(u32, u32)> {
     }
 
     // Check digits
-    if !bytes.get(len.saturating_sub(5)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(4)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(2)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(1)).copied().unwrap_or(0).is_ascii_digit()
+    if !bytes
+        .get(len.saturating_sub(5))
+        .copied()
+        .unwrap_or(0)
+        .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(4))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(2))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(1))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
     {
         return None;
     }
 
-    let playlist = name.get(len.saturating_sub(5)..len.saturating_sub(3)).unwrap_or_default().parse::<u32>().ok()?;
-    let region = name.get(len.saturating_sub(2)..).unwrap_or_default().parse::<u32>().ok()?;
+    let playlist = name
+        .get(len.saturating_sub(5)..len.saturating_sub(3))
+        .unwrap_or_default()
+        .parse::<u32>()
+        .ok()?;
+    let region = name
+        .get(len.saturating_sub(2)..)
+        .unwrap_or_default()
+        .parse::<u32>()
+        .ok()?;
 
     Some((playlist, region))
 }
@@ -283,7 +331,9 @@ fn strip_simple_playlist(name: &str) -> Option<Cow<'_, str>> {
         return None;
     }
 
-    Some(Cow::Borrowed(name.get(..len.saturating_sub(3)).unwrap_or_default()))
+    Some(Cow::Borrowed(
+        name.get(..len.saturating_sub(3)).unwrap_or_default(),
+    ))
 }
 
 /// Strip playlist-take marker from end
@@ -302,15 +352,33 @@ fn strip_playlist_take(name: &str) -> Option<Cow<'_, str>> {
         return None;
     }
 
-    if !bytes.get(len.saturating_sub(5)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(4)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(2)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(1)).copied().unwrap_or(0).is_ascii_digit()
+    if !bytes
+        .get(len.saturating_sub(5))
+        .copied()
+        .unwrap_or(0)
+        .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(4))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(2))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(1))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
     {
         return None;
     }
 
-    Some(Cow::Borrowed(name.get(..len.saturating_sub(6)).unwrap_or_default()))
+    Some(Cow::Borrowed(
+        name.get(..len.saturating_sub(6)).unwrap_or_default(),
+    ))
 }
 
 /// Strip playlist-region marker from end
@@ -329,15 +397,33 @@ fn strip_playlist_region(name: &str) -> Option<Cow<'_, str>> {
         return None;
     }
 
-    if !bytes.get(len.saturating_sub(5)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(4)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(2)).copied().unwrap_or(0).is_ascii_digit()
-        || !bytes.get(len.saturating_sub(1)).copied().unwrap_or(0).is_ascii_digit()
+    if !bytes
+        .get(len.saturating_sub(5))
+        .copied()
+        .unwrap_or(0)
+        .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(4))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(2))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
+        || !bytes
+            .get(len.saturating_sub(1))
+            .copied()
+            .unwrap_or(0)
+            .is_ascii_digit()
     {
         return None;
     }
 
-    Some(Cow::Borrowed(name.get(..len.saturating_sub(6)).unwrap_or_default()))
+    Some(Cow::Borrowed(
+        name.get(..len.saturating_sub(6)).unwrap_or_default(),
+    ))
 }
 
 #[cfg(test)]

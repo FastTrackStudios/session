@@ -28,7 +28,7 @@ pub struct AudioSample {
 
 impl AudioSample {
     /// Create a mono sample from raw PCM.
-    #[must_use] 
+    #[must_use]
     pub fn mono(samples: Vec<f32>, sample_rate: u32) -> Self {
         Self {
             data: vec![samples],
@@ -37,13 +37,13 @@ impl AudioSample {
     }
 
     /// Number of frames (samples per channel).
-    #[must_use] 
+    #[must_use]
     pub fn frames(&self) -> usize {
         self.data.first().map_or(0, std::vec::Vec::len)
     }
 
     /// Number of channels.
-    #[must_use] 
+    #[must_use]
     pub const fn channels(&self) -> usize {
         self.data.len()
     }

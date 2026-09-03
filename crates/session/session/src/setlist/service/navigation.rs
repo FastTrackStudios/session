@@ -136,7 +136,8 @@ where
             Duration::from_secs(5),
             self.ensure_song_hydrated(song_index),
         ))
-        .await else {
+        .await
+        else {
             warn!(
                 "seek_to_song_internal: hydration failed for song {} ({})",
                 song_index, skeleton.name
@@ -338,9 +339,7 @@ where
             // Smart previous: if we're past the beginning of the section (>5% progress),
             // go to the start of the current section. Only go to previous section
             // if we're already at/near the beginning.
-            let at_section_start = active
-                .section_progress
-                .is_none_or(|p| p < 0.05);
+            let at_section_start = active.section_progress.is_none_or(|p| p < 0.05);
 
             if at_section_start && section_idx > 0 {
                 // Already at the start, go to previous section

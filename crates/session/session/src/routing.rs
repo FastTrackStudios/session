@@ -11,7 +11,10 @@
 
 use daw::service::{ExtState, ProjectContext, Projects, RecordInput, Routing, TrackRef, Tracks};
 use session_proto::SessionServiceError;
-use session_proto::routing_project::{LoopbackConfig, ROUTING_PROJECT_FILENAME, EXT_STATE_SECTION, EXT_STATE_KEY_IS_ROUTING, EXT_STATE_VALUE_TRUE, RoutingGroup, RoutingChannel};
+use session_proto::routing_project::{
+    EXT_STATE_KEY_IS_ROUTING, EXT_STATE_SECTION, EXT_STATE_VALUE_TRUE, LoopbackConfig,
+    ROUTING_PROJECT_FILENAME, RoutingChannel, RoutingGroup,
+};
 use tracing::info;
 
 // r[impl routing.project.ensure]

@@ -280,7 +280,7 @@ pub mod daw_services {
     /// bounces to REAPER's main thread via `daw_reaper::main_thread`. REAPER-only
     /// — see the `reaper` Cargo feature.
     #[cfg(feature = "reaper")]
-    #[must_use] 
+    #[must_use]
     pub fn layer_control_surfaces(mut handler: daw::LayerRouter) -> daw::LayerRouter {
         use crate::rpc_services::SessionModeServiceImpl;
         use daw::service::{

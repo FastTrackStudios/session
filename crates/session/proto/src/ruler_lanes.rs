@@ -54,7 +54,7 @@ pub enum CoreLane {
 impl CoreLane {
     /// All core lanes that should be created in every project, in
     /// the user-visible order SONG → SECTIONS → MARKS.
-    #[must_use] 
+    #[must_use]
     pub const fn all() -> &'static [Self] {
         &[Self::Song, Self::Sections, Self::Marks]
     }
@@ -90,7 +90,7 @@ impl CoreLane {
 
     /// Display name shown in the REAPER ruler.
     #[allow(deprecated)] // matches the retired `Key` variant for completeness
-    #[must_use] 
+    #[must_use]
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Song => "SONG",
@@ -113,7 +113,7 @@ impl CoreLane {
     /// default-marker (slot 0) vs default-region (slot 1). We arrange
     /// `all()` so MARKS occupies slot 0 and SONG occupies slot 1,
     /// and let REAPER's intrinsic defaults do the routing.
-    #[must_use] 
+    #[must_use]
     pub const fn flags(&self) -> i32 {
         match self {
             Self::Marks => 4, // documented: default marker lane (slot 0)
@@ -127,12 +127,12 @@ impl CoreLane {
     /// rest of the numbering offset off this value, and shifting it
     /// would silently renumber every existing project's instrument
     /// lanes.
-    #[must_use] 
+    #[must_use]
     pub const fn count() -> u32 {
         4
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn from_index(index: u32) -> Option<Self> {
         Self::all()
             .iter()
@@ -140,7 +140,7 @@ impl CoreLane {
             .copied()
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         let upper = name.to_uppercase();
         Self::all()
@@ -171,7 +171,7 @@ pub enum InstrumentLane {
 
 impl InstrumentLane {
     /// All well-known instrument lanes.
-    #[must_use] 
+    #[must_use]
     pub const fn all() -> &'static [Self] {
         &[
             Self::Drums,
@@ -198,11 +198,13 @@ impl InstrumentLane {
             Self::Lead => 6,
             Self::BGVs => 7,
         };
-        CoreLane::count().saturating_add(discriminant).saturating_add(1)
+        CoreLane::count()
+            .saturating_add(discriminant)
+            .saturating_add(1)
     }
 
     /// Display name shown in the REAPER ruler.
-    #[must_use] 
+    #[must_use]
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Drums => "Drums",
@@ -216,7 +218,7 @@ impl InstrumentLane {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Self::all()
             .iter()
@@ -236,7 +238,7 @@ pub enum FtsLane {
 }
 
 impl FtsLane {
-    #[must_use] 
+    #[must_use]
     pub const fn lane_index(&self) -> u32 {
         match self {
             Self::Core(l) => l.lane_index(),
@@ -244,7 +246,7 @@ impl FtsLane {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Core(l) => l.display_name(),
@@ -252,7 +254,7 @@ impl FtsLane {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn flags(&self) -> i32 {
         match self {
             Self::Core(l) => l.flags(),
@@ -280,7 +282,7 @@ pub const fn classify_marker_lane(_name: &str) -> FtsLane {
 ///
 /// Looks at both the region name and whether it spans the full song
 /// (in which case it's a SONG region, not a section).
-#[must_use] 
+#[must_use]
 pub fn classify_region_lane(name: &str) -> FtsLane {
     let upper = name.trim().to_uppercase();
 
@@ -312,7 +314,7 @@ pub fn classify_region_lane(name: &str) -> FtsLane {
 ///
 /// Call this with `is_full_song = true` when the region's start matches
 /// the song start and its end matches the song end.
-#[must_use] 
+#[must_use]
 pub fn classify_region_lane_with_context(name: &str, is_full_song: bool) -> FtsLane {
     if is_full_song {
         FtsLane::Core(CoreLane::Song)

@@ -176,9 +176,7 @@ impl From<Clap> for Group<ItemMetadata> {
 pub struct Triangle;
 impl From<Triangle> for Group<ItemMetadata> {
     fn from(_val: Triangle) -> Self {
-        Self::builder("Triangle")
-            .patterns(vec!["triangle"])
-            .build()
+        Self::builder("Triangle").patterns(vec!["triangle"]).build()
     }
 }
 

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use dawfile_reaper::types::RppSerialize;
 use dynamic_template::apply::dawfile::RppTarget;
 use dynamic_template::apply::{
     apply_colors, apply_routing, gather_unsorted, normalize_folder_depths, TemplateTarget,
@@ -10,7 +11,6 @@ use dynamic_template::{
     OrganizeIntoTracks,
 };
 use dynamic_template_proto::{NodeKind, TemplateNode};
-use dawfile_reaper::types::RppSerialize;
 use monarchy::Parser;
 use std::env;
 
@@ -245,7 +245,10 @@ fn analyze_multiple(
     verbose: bool,
     json: bool,
 ) {
-    let input_strings: Vec<String> = inputs.iter().map(std::string::ToString::to_string).collect();
+    let input_strings: Vec<String> = inputs
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
 
     println!("═══════════════════════════════════════════════════════════════");
     println!("INPUTS ({} items):", inputs.len());
@@ -768,7 +771,12 @@ fn inspect_rpp(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let sources: Vec<&str> = track
             .receives
             .iter()
-            .filter_map(|r| usize::try_from(r.source_track_index).ok().and_then(|i| names.get(i)).copied())
+            .filter_map(|r| {
+                usize::try_from(r.source_track_index)
+                    .ok()
+                    .and_then(|i| names.get(i))
+                    .copied()
+            })
             .collect();
         let shown = sources
             .iter()
@@ -786,7 +794,8 @@ fn inspect_rpp(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // A track feeding two destinations arrives twice wherever they converge.
-    let mut fan_out: std::collections::HashMap<usize, Vec<&str>> = std::collections::HashMap::default();
+    let mut fan_out: std::collections::HashMap<usize, Vec<&str>> =
+        std::collections::HashMap::default();
     for (i, track) in project.tracks.iter().enumerate() {
         for r in &track.receives {
             fan_out

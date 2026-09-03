@@ -26,9 +26,7 @@ impl From<Kick> for ItemMetadataGroup {
         ];
 
         // Define SUM tagged collection - items matching these patterns will be grouped together
-        let sum_collection = Self::builder("SUM")
-            .patterns(["In", "Out", "Trig"])
-            .build();
+        let sum_collection = Self::builder("SUM").patterns(["In", "Out", "Trig"]).build();
 
         // Use field_value_descriptors for MultiMic, and keep tagged_collection for backward compatibility
         Self::builder("Kick")

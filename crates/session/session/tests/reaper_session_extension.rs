@@ -31,8 +31,9 @@ async fn session_extension_health(ctx: &daw::test::ReaperTestContext) -> eyre::R
         }
     }
 
-    let status = status
-        .ok_or_else(|| eyre::eyre!("session-extension should have written FTS_SESSION_EXT/status"))?;
+    let status = status.ok_or_else(|| {
+        eyre::eyre!("session-extension should have written FTS_SESSION_EXT/status")
+    })?;
     if status != "ready" {
         return Err(eyre::eyre!("status should be 'ready', got '{}'", status));
     }

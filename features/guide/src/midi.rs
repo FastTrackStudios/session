@@ -19,7 +19,7 @@ pub const MIDI_NOTES_COUNT: [u8; 8] = [72, 73, 74, 75, 76, 77, 78, 79]; // C5-C6
 /// [`SectionType`] variants (Tag, Rap, Acapella, Exhortation — these
 /// arrive as [`SectionType::Custom`]). Prefer
 /// [`midi_note_for_section`], which is exhaustive over the real enum.
-#[must_use] 
+#[must_use]
 pub fn get_midi_note_for_section_type(section_type: &str) -> Option<u8> {
     Some(match section_type {
         "Verse" => 84,                       // C6
@@ -56,7 +56,7 @@ pub fn get_midi_note_for_section_type(section_type: &str) -> Option<u8> {
 /// `None` means "no note for this" and the cue is simply not stamped —
 /// the audio cue still plays. `CountIn` is deliberately `None`: count-ins
 /// go to the Count track, not the Guide track.
-#[must_use] 
+#[must_use]
 pub fn midi_note_for_section(section_type: &SectionType) -> Option<u8> {
     Some(match section_type {
         SectionType::Verse => 84,
@@ -135,7 +135,7 @@ pub struct TempoSegment {
 impl TempoSegment {
     /// The whole span as one segment at a song's nominal tempo — what the
     /// guide engine itself assumes.
-    #[must_use] 
+    #[must_use]
     pub const fn from_timing(timing: &GuideSongTiming, start_seconds: f64) -> Self {
         Self {
             start_seconds,
@@ -186,7 +186,7 @@ const NORMAL_VELOCITY: u8 = 96;
 /// get the beat note; subdivisions between beats get the subdivision's
 /// own note. The measure count restarts at each segment boundary, which
 /// is what a time-signature change means.
-#[must_use] 
+#[must_use]
 pub fn click_notes(
     segments: &[TempoSegment],
     end_seconds: f64,
@@ -250,7 +250,7 @@ pub fn click_notes(
 /// [`CueSchedule::build`] decided, so the stamped MIDI lines up with what
 /// the engine plays by construction rather than by two implementations
 /// agreeing.
-#[must_use] 
+#[must_use]
 pub fn cue_notes(schedule: &CueSchedule) -> Vec<GuideMidiNote> {
     schedule
         .cues
@@ -279,7 +279,7 @@ pub fn cue_notes(schedule: &CueSchedule) -> Vec<GuideMidiNote> {
 /// `tempo` drives only the click; the cues come from `sections`/`timing`
 /// via [`CueSchedule::build`]. Pass `&[]` for `tempo` to skip the click
 /// track entirely.
-#[must_use] 
+#[must_use]
 pub fn guide_midi(
     sections: &[GuideSection],
     timing: &GuideSongTiming,
@@ -506,7 +506,7 @@ mod section_note_tests {
 /// Returns `None` for notes outside the layout, so an unrelated MIDI
 /// track routed in by accident stays silent rather than firing arbitrary
 /// cues.
-#[must_use] 
+#[must_use]
 pub fn trigger_for_midi_note(note: u8) -> Option<crate::GuideTrigger> {
     use crate::GuideTrigger;
 
@@ -530,7 +530,7 @@ pub fn trigger_for_midi_note(note: u8) -> Option<crate::GuideTrigger> {
 
 /// The section type a Guide-track note stands for — inverse of
 /// [`midi_note_for_section`].
-#[must_use] 
+#[must_use]
 pub fn section_for_midi_note(note: u8) -> Option<SectionType> {
     Some(match note {
         84 => SectionType::Verse,
@@ -560,7 +560,7 @@ pub fn section_for_midi_note(note: u8) -> Option<SectionType> {
 /// piano roll ("Chorus" rather than "C6").
 ///
 /// Every note the layout uses has one; anything else is `None`.
-#[must_use] 
+#[must_use]
 pub fn note_name(note: u8) -> Option<String> {
     if let Some(index) = MIDI_NOTES_COUNT.iter().position(|n| *n == note) {
         return Some(format!("Count {}", index.saturating_add(1)));
@@ -577,7 +577,7 @@ pub fn note_name(note: u8) -> Option<String> {
 
 /// Every named note in the layout, low to high. What a host's note-name
 /// list wants.
-#[must_use] 
+#[must_use]
 pub fn note_names() -> Vec<(u8, String)> {
     (0u8..=127)
         .filter_map(|note| note_name(note).map(|name| (note, name)))

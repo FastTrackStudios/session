@@ -209,26 +209,14 @@ where
     sorted_regions.sort_by(|a, b| {
         let lane_ord = a.lane.unwrap_or(0).cmp(&b.lane.unwrap_or(0));
         lane_ord.then_with(|| {
-            let ap = a
-                .time_range
-                .start
-                .time
-                .map_or(0.0, |t| t.as_seconds());
-            let bp = b
-                .time_range
-                .start
-                .time
-                .map_or(0.0, |t| t.as_seconds());
+            let ap = a.time_range.start.time.map_or(0.0, |t| t.as_seconds());
+            let bp = b.time_range.start.time.map_or(0.0, |t| t.as_seconds());
             ap.partial_cmp(&bp).unwrap_or(std::cmp::Ordering::Equal)
         })
     });
     tracing::info!("[session] === regions ===");
     for r in &sorted_regions {
-        let start = r
-            .time_range
-            .start
-            .time
-            .map_or(0.0, |t| t.as_seconds());
+        let start = r.time_range.start.time.map_or(0.0, |t| t.as_seconds());
         let end = r.time_range.end.time.map_or(0.0, |t| t.as_seconds());
         tracing::info!(
             "[session] region  lane={:?}  start={:>7.3}  end={:>7.3}  color={:?}  name={:?}  id={:?}",

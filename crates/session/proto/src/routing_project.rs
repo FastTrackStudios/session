@@ -34,7 +34,7 @@ pub enum RoutingChannel {
 
 impl RoutingChannel {
     /// Human-readable track name in REAPER.
-    #[must_use] 
+    #[must_use]
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Click => "Click",
@@ -52,7 +52,7 @@ impl RoutingChannel {
     }
 
     /// Which folder group this channel belongs to.
-    #[must_use] 
+    #[must_use]
     pub const fn group(&self) -> RoutingGroup {
         match self {
             Self::Click | Self::Loop | Self::Count | Self::Guide => RoutingGroup::ClickGuide,
@@ -81,7 +81,7 @@ impl RoutingChannel {
     }
 
     /// All routing channels in canonical order.
-    #[must_use] 
+    #[must_use]
     pub const fn all() -> &'static [Self] {
         &[
             Self::Click,
@@ -99,13 +99,13 @@ impl RoutingChannel {
     }
 
     /// Channels in the Click + Guide folder.
-    #[must_use] 
+    #[must_use]
     pub const fn click_guide_channels() -> &'static [Self] {
         &[Self::Click, Self::Loop, Self::Count, Self::Guide]
     }
 
     /// Channels in the Tracks (instrument) folder.
-    #[must_use] 
+    #[must_use]
     pub const fn track_channels() -> &'static [Self] {
         &[
             Self::Drums,
@@ -134,7 +134,7 @@ pub enum RoutingGroup {
 
 impl RoutingGroup {
     /// Folder name in REAPER.
-    #[must_use] 
+    #[must_use]
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::ClickGuide => "Click + Guide",
@@ -158,7 +158,7 @@ pub struct LoopbackConfig {
 
 impl LoopbackConfig {
     /// Create a config with a custom base pair offset.
-    #[must_use] 
+    #[must_use]
     pub const fn with_base_pair(base_pair: u32) -> Self {
         Self { base_pair }
     }
@@ -166,7 +166,8 @@ impl LoopbackConfig {
     /// Get the hardware loopback stereo pair index for a channel.
     #[must_use]
     pub const fn pair_index(&self, channel: RoutingChannel) -> u32 {
-        self.base_pair.saturating_add(channel.default_loopback_pair_index())
+        self.base_pair
+            .saturating_add(channel.default_loopback_pair_index())
     }
 
     /// Encode the record input value for REAPER's `I_RECINPUT` track parameter.

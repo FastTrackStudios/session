@@ -141,7 +141,11 @@ where
     let valid_names: HashSet<&str> = CoreLane::all()
         .iter()
         .map(session_proto::ruler_lanes::CoreLane::display_name)
-        .chain(InstrumentLane::all().iter().map(session_proto::ruler_lanes::InstrumentLane::display_name))
+        .chain(
+            InstrumentLane::all()
+                .iter()
+                .map(session_proto::ruler_lanes::InstrumentLane::display_name),
+        )
         .collect();
 
     let mut used_lanes: HashSet<u32> = HashSet::new();
@@ -198,13 +202,11 @@ where
         .into_iter()
         .filter(|m| m.position.seconds().is_some())
         .collect();
-    all_markers.sort_by(|a, b| {
-        match (a.position.seconds(), b.position.seconds()) {
-            (Some(a_sec), Some(b_sec)) => a_sec.total_cmp(&b_sec),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }
+    all_markers.sort_by(|a, b| match (a.position.seconds(), b.position.seconds()) {
+        (Some(a_sec), Some(b_sec)) => a_sec.total_cmp(&b_sec),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
     });
 
     let marker_positions: Vec<f64> = all_markers
@@ -400,7 +402,11 @@ where
 {
     daw.get_state(project.clone())
         .edit_position
-        .time.map_or_else(|| daw.get_position(project), |position| position.as_seconds())
+        .time
+        .map_or_else(
+            || daw.get_position(project),
+            |position| position.as_seconds(),
+        )
 }
 
 fn infer_insert_bounds<D>(
@@ -576,15 +582,11 @@ where
         } = update;
         let desired_color = section_type_color(&section_type);
         let current = existing.get(&id);
-        if current
-            .is_none_or(|(current_name, _, _)| current_name != &name)
-        {
+        if current.is_none_or(|(current_name, _, _)| current_name != &name) {
             debug!(id, name, "[session] Normalizing section region: rename");
             Regions::rename(daw, project.clone(), id, &name)?;
         }
-        if current
-            .is_none_or(|(_, _, current_color)| *current_color != Some(desired_color))
-        {
+        if current.is_none_or(|(_, _, current_color)| *current_color != Some(desired_color)) {
             debug!(
                 id,
                 color = desired_color,
@@ -600,9 +602,7 @@ where
         // applying the lane explicitly, freshly-stamped section
         // regions stick in lane 0 (REAPER's unnamed default).
         let section_lane = CoreLane::Sections.lane_index();
-        if current
-            .is_none_or(|(_, current_lane, _)| *current_lane != Some(section_lane))
-        {
+        if current.is_none_or(|(_, current_lane, _)| *current_lane != Some(section_lane)) {
             debug!(
                 id,
                 lane = section_lane,
@@ -829,7 +829,9 @@ pub(crate) fn section_type_color(section_type: &SectionType) -> u32 {
         return MarkerKind::CountIn.default_color();
     }
 
-    let color_i32 = colors_for_section_type(section_type).bright.to_reaper_native();
+    let color_i32 = colors_for_section_type(section_type)
+        .bright
+        .to_reaper_native();
     u32::try_from(color_i32).unwrap_or(0)
 }
 
@@ -850,7 +852,7 @@ impl SectionKind {
     /// what a non-REAPER caller (a toolbar button) uses to look up the
     /// same color the region gets, via
     /// `keyflow::sections::colors_for_section_type`.
-    #[must_use] 
+    #[must_use]
     pub fn section_type(self) -> SectionType {
         match self {
             Self::Intro => SectionType::Intro,
@@ -1177,12 +1179,11 @@ mod tests {
 
     #[test]
     fn section_colors_use_keyflow_palette() {
-        let chorus_reaper_color = colors_for_section_type(&SectionType::Chorus).bright.to_reaper_native();
+        let chorus_reaper_color = colors_for_section_type(&SectionType::Chorus)
+            .bright
+            .to_reaper_native();
         let chorus_color = u32::try_from(chorus_reaper_color).unwrap_or(0);
-        assert_eq!(
-            section_type_color(&SectionType::Chorus),
-            chorus_color
-        );
+        assert_eq!(section_type_color(&SectionType::Chorus), chorus_color);
         assert_eq!(
             section_type_color(&SectionType::CountIn),
             MarkerKind::CountIn.default_color()
