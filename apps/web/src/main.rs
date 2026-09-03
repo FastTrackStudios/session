@@ -45,6 +45,10 @@ fn main() {
 #[component]
 fn App() -> Element {
     rsx! {
+        document::Title { "Session — your setlist, live" }
+        // The desktop app's own launcher icon (apps/desktop/assets/icon.svg)
+        // — one FTS icon across every surface, not a bespoke site mark.
+        document::Link { rel: "icon", r#type: "image/svg+xml", href: asset!("/assets/favicon.svg") }
         document::Link { rel: "preconnect", href: "https://fonts.googleapis.com" }
         document::Link {
             rel: "preconnect",
