@@ -47,6 +47,11 @@ jobs:
         run: ${NIX_DEV} cargo metadata --locked --format-version 1 > /dev/null
       - name: cargo fmt --check
         run: ${NIX_DEV} cargo fmt --all --check
+      # apps/web/assets/tailwind.css is gitignored build output that
+      # `asset!()` demands at compile time (see apps/web/tailwind.css) —
+      # the sheet has to exist before any cargo step touches session-web.
+      - name: Web tailwind sheet
+        run: ${NIX_DEV} just web-tailwind
       - name: cargo check --workspace
         run: ${NIX_DEV} cargo check --workspace
       - name: cargo nextest
