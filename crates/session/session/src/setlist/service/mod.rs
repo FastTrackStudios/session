@@ -175,7 +175,7 @@ impl Default for SetlistServiceImpl<()> {
     }
 }
 
-impl<D: Sync> SetlistServiceImpl<D> {
+impl<D: architect::MaybeSendSync> SetlistServiceImpl<D> {
     /// Get the cached active indices (updated by polling loop, no RPC calls)
     pub(crate) async fn get_cached_indices(&self) -> ActiveIndices {
         self.cached_indices.read().await.clone()

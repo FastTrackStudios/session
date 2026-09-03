@@ -790,6 +790,43 @@ ee-shots *ARGS:
     cargo test -p expression-editor-ui --test screenshots \
         -- --ignored --test-threads 1 {{ARGS}}
 
+# ── apps/web (session.fasttrackstudio.app) ────────────────────────────────
+# `apps/web/tailwind.css` @sources this crate plus architect-ui, a GIT DEP
+# with no stable path on disk — the glob cannot be written literally.
+# `cargo metadata` knows where cargo actually resolved it; this recipe asks,
+# and symlinks the answer into apps/web/.tailwind-src/. Without it the
+# classes architect-ui's components use are simply absent from the sheet,
+# and the failure is SILENT (a `@source` matching nothing is not an error —
+# see keyflow's apps/web/tailwind.css, the same pattern this mirrors).
+_web-tw-link:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p apps/web/.tailwind-src
+    dir=$(cargo metadata --format-version 1 2>/dev/null \
+        | python3 -c "import json,sys,os;p=json.load(sys.stdin)['packages'];print(next(os.path.dirname(x['manifest_path']) for x in p if x['name']=='architect-ui'))")
+    if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+        echo "cannot resolve architect-ui — is it in the dependency graph?" >&2
+        exit 1
+    fi
+    ln -sfn "$dir" apps/web/.tailwind-src/architect-ui
+
+# Compile the site's Tailwind sheet. Gitignored output; `asset!()` needs it
+# at compile time, so this runs before any build of apps/web.
+web-tailwind: _web-tw-link
+    cd apps/web && tailwindcss -i ./tailwind.css -o ./assets/tailwind.css --minify
+
+# Serve apps/web with hot reload.
+web: web-tailwind
+    cd apps/web && dx serve --platform web
+
+# Build the shipping web bundle into target/dx/session-web/release/web/public.
+web-build: web-tailwind
+    cd apps/web && dx build --platform web --release
+
+# Type-check apps/web against the actual deploy target.
+web-check:
+    cargo check -p session-web --target wasm32-unknown-unknown
+
 # ── Aliases ──────────────────────────────────────────────────────────────
 
 alias c := check

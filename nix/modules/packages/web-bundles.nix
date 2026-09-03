@@ -30,6 +30,9 @@
         config.fts.dx.binaryen     # wasm-opt 129 — what dx 0.7.9 pins
       ] ++ (with pkgs; [
         tailwindcss_4
+        # Resolves architect-ui's git-dep checkout for the tailwind
+        # @source globs (session-web's preBuild).
+        jq
         # Pre-compression for --compression-static serving.
         brotli
         llvmPackages_18.clang-unwrapped
@@ -84,13 +87,45 @@
         appDir = "apps/site";
         dxName = "fts-site";
       };
+
+      # session.fasttrackstudio.app — landing page + the live in-browser
+      # setlist demo (`just web`). apps/web/tailwind.css @sources
+      # architect-ui, a GIT DEP with no stable path on disk — resolve it
+      # via cargo metadata and symlink it in first, the same way
+      # `just _web-tw-link` does locally. session-ui is a local path dep
+      # (crates/session/ui) and needs no symlink.
+      session-web = mkDxWebBundle {
+        pname = "session-web";
+        appDir = "apps/web";
+        dxName = "session-web";
+        preBuild = ''
+          mkdir -p apps/web/.tailwind-src
+          for crate in architect-ui; do
+            dir="$(cargo metadata --format-version 1 --offline \
+              | jq -er --arg c "$crate" \
+                  '.packages[] | select(.name == $c) | .manifest_path' \
+              | head -1)"
+            dir="''${dir%/Cargo.toml}"
+            if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+              echo "cannot resolve $crate for the tailwind @source globs" >&2
+              exit 1
+            fi
+            ln -sfn "$dir" "apps/web/.tailwind-src/$crate"
+          done
+          (cd apps/web && tailwindcss -i ./tailwind.css -o ./assets/tailwind.css --minify)
+        '';
+      };
     in
     {
-      packages = { inherit fts-site-web; }
+      packages = { inherit fts-site-web session-web; }
       // lib.optionalAttrs pkgs.stdenv.isLinux {
         fts-site-image = mkStaticSite {
           name = "fts-site";
           siteRoot = "${fts-site-web}/www";
+        };
+        session-web-image = mkStaticSite {
+          name = "session-web";
+          siteRoot = "${session-web}/www";
         };
       };
     };

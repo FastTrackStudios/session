@@ -29,7 +29,7 @@ pub struct ProjectLoad {
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: Projects + Send + Sync,
+    D: Projects + architect::MaybeSendSync,
 {
     /// Chart source of last resort: keyflow chart text stamped onto the
     /// project itself (ext-state `FTS/chart_text`, read over the global
