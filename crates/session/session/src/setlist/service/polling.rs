@@ -1475,7 +1475,7 @@ where
                 hydrated = hydration_fut => self.on_hydration(hydrated),
                 chart_hydrated = chart_hydration_fut => self.on_chart_hydration(chart_hydrated).await,
                 ev = transport_fut => self.on_transport(&mut state, &daw, ev).await,
-                chart_probe = chart_probe_fut => self.on_chart_probe(&mut state, chart_probe),
+                chart_probe = chart_probe_fut => Self::on_chart_probe(&mut state, chart_probe),
                 _ = project_check => {
                     project_check =
                         Box::pin(architect::platform::sleep(Duration::from_millis(500))).fuse();

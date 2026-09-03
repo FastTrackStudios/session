@@ -406,6 +406,42 @@ pub fn fixture_songs(count: usize) -> Vec<DemoSong> {
         .collect()
 }
 
+/// Convert a real chart layout (see [`crate::setlist::chart_import`]) into a
+/// [`DemoSong`] ready for [`stamp_song_native`].
+///
+/// `ChartLayout` already lays every section out on a seconds timeline
+/// (tempo/time-sig applied), so this is a direct field mapping rather than
+/// a re-derivation — `name` is supplied by the caller because `DemoSong`
+/// wants a `&'static str` and a parsed chart title is owned.
+#[must_use]
+pub fn chart_layout_to_demo_song(
+    name: &'static str,
+    layout: &crate::setlist::chart_import::ChartLayout,
+) -> DemoSong {
+    let abs_end = layout.song_end_seconds + 4.0;
+    DemoSong {
+        name,
+        region_start: 0.0,
+        region_end: abs_end,
+        count_in: 0.0,
+        song_start: layout.song_start_seconds,
+        song_end: layout.song_end_seconds,
+        abs_end,
+        tempo_bpm: layout.tempo_bpm,
+        time_sig_num: layout.time_sig_num,
+        time_sig_den: layout.time_sig_den,
+        sections: layout
+            .sections
+            .iter()
+            .map(|s| DemoSection {
+                kind: s.kind,
+                start: s.start_seconds,
+                end: s.end_seconds,
+            })
+            .collect(),
+    }
+}
+
 /// Move the edit cursor to `position`, then dispatch the matching
 /// `insert_<kind>_marker` keyflow action. The action handles
 /// lane / colour / convention — the helper just bridges between

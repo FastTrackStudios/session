@@ -49,3 +49,9 @@ css_ab*.tsv
 
 # Alternate target dir used by the old gate.sh helper
 /target-local
+
+# apps/web's compiled Tailwind sheet (just web-tailwind) and its
+# resolved-git-dep symlinks (architect-ui has no stable path on disk) —
+# both regenerable, same shape as keyflow's apps/web/.tailwind-src.
+apps/web/assets/tailwind.css
+apps/web/.tailwind-src/

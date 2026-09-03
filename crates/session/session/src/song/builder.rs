@@ -19,9 +19,9 @@
 #[cfg(not(target_arch = "wasm32"))]
 use daw::reaper::Reaper;
 use daw::rpc::Project;
-use daw::service::{Marker, Region};
+use daw::service::{Marker, ProjectContext, Region};
 #[cfg(not(target_arch = "wasm32"))]
-use daw::service::{Markers, ProjectContext, Projects, Regions, TempoMap};
+use daw::service::{Markers, Projects, Regions, TempoMap};
 use session_proto::{Comment, Section, SectionId, SectionType, Song, SongId};
 use tracing::{Level, debug, warn};
 

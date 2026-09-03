@@ -12,7 +12,7 @@ where
 {
     pub(crate) async fn toggle_playback_impl(&self) -> Result<(), SessionServiceError>
     where
-        D: Sync,
+        D: architect::MaybeSendSync,
     {
         debug!("toggle_playback");
 
@@ -32,7 +32,7 @@ where
 
     pub(crate) async fn play_impl(&self) -> Result<(), SessionServiceError>
     where
-        D: Sync,
+        D: architect::MaybeSendSync,
     {
         debug!("play");
 
@@ -49,7 +49,7 @@ where
 
     pub(crate) async fn pause_impl(&self) -> Result<(), SessionServiceError>
     where
-        D: Sync,
+        D: architect::MaybeSendSync,
     {
         debug!("pause");
 
@@ -66,7 +66,7 @@ where
 
     pub(crate) async fn stop_impl(&self) -> Result<(), SessionServiceError>
     where
-        D: Sync,
+        D: architect::MaybeSendSync,
     {
         debug!("stop");
 

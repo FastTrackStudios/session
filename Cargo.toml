@@ -11,6 +11,7 @@ members = [
     "apps/desktop",
     "apps/session-player",
     "apps/vault-sync",
+    "apps/web",
     "crates/session/proto",
     "crates/session/session",
     "crates/session/ui",
@@ -612,7 +613,13 @@ pulldown-cmark = { version = "0.10", default-features = false }
 dioxus-router = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", default-features = false }
 dioxus-icons = { git = "https://github.com/FastTrackStudios/dioxus-icons", branch = "main" }
 web-sys = "0.3.98"
-wasm-bindgen = "0.2"
+# Pinned exactly, and low: `dx build` refuses to run when the crate version
+# and the wasm-bindgen-cli in the dev shell disagree, and the CLI comes from
+# the pinned nixpkgs (nix/modules/dx.nix, nix/modules/shells/default.nix). A
+# floating "0.2" silently resolves past the CLI and breaks every web build
+# with "Incorrect wasm-bindgen-cli version". Bump this only together with
+# that pin.
+wasm-bindgen = "=0.2.126"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 gloo-timers = { version = "0.3", features = ["futures"] }

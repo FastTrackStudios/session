@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: Transport + Tracks + Sync,
+    D: Transport + Tracks + architect::MaybeSendSync,
 {
     pub(crate) async fn record_impl(&self) -> Result<(), SessionServiceError> {
         debug!("record");

@@ -1,0 +1,39 @@
+/*
+ * Tailwind input for the Session site.
+ *
+ * Compiled to `assets/tailwind.css` by `just tailwind`, which is
+ * gitignored build output — `asset!()` demands it at compile time, so a
+ * fresh clone must run that recipe (or `just web` / `just ci`, which
+ * depend on it) before `cargo check` will pass.
+ *
+ * `architect-ui` ships a prebuilt utilities sheet (`UTILITIES_CSS`) but
+ * that is only guaranteed to cover architect-ui's own components — this
+ * crate's own markup and session-ui's performance-view components need
+ * their classes generated too, so this compiles ONE sheet covering
+ * everything actually rendered, following keyflow's `apps/web/tailwind.css`
+ * pattern for the same reason: a `@source` matching nothing fails
+ * SILENTLY (fewer classes, not an error), so every real source is named
+ * explicitly below.
+ */
+
+/* `source(none)` disables Tailwind v4's automatic content detection,
+ * which is rooted at the working directory and would make the output
+ * depend on where the build ran from. Every source is named explicitly
+ * below, so the result is identical from any cwd. */
+@import "tailwindcss" source(none);
+
+/* The design tokens (--background, --border, --muted-foreground, …) that
+ * architect-ui's own components resolve against. Symlinked from the
+ * resolved architect-ui checkout by `just tailwind` (git dep — no stable
+ * path on disk). */
+@import "./.tailwind-src/architect-ui/assets/fts-theme.css";
+
+/* This crate's own markup. */
+@source "./src/**/*.rs";
+
+/* session-ui is a LOCAL path dep (crates/session/ui) — a literal relative
+ * glob works directly, no `.tailwind-src` symlink needed. */
+@source "../../crates/session/ui/src/**/*.rs";
+
+/* architect-ui: a git dep with no stable path on disk. */
+@source "./.tailwind-src/architect-ui/src/**/*.rs";
