@@ -370,6 +370,11 @@ musicxml = "1.1"
 # dioxus-* entry below AND the FTS fork branches of primitives/lumen/
 # lucide/sdk, which pin the same rev).
 dioxus = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", default-features = false, features = ["lib"] }
+# Direct, and only apps/web takes it: it is how the site turns on
+# `hydrate` for static generation without `dioxus/fullstack`, whose
+# reqwest would be a second major in the wasm binary. Same rev as the
+# meta-crate above — they are one repo and must not drift.
+dioxus-web = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", default-features = false }
 # Blitz native renderer — dioxus-native(-dom) moved into the dioxus repo
 # on the 0.8 line; blitz-* come from crates.io (0.3.0-beta.1), matching
 # dioxus git's own `=0.3.0-beta.1` pins. Feature union of the wave-1
@@ -594,6 +599,14 @@ editor = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 editor-keyflow = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 editor-keyflow-lang = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 view-knowledge-graph = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+
+# features/ssg — a vault (a directory of markdown notes) published as a
+# static site. apps/web's guide is one: `ssg-build` renders it to HTML in
+# build.rs, `ssg`/`ssg-ui` are the page model and the components, and
+# `dx build --ssg` pre-renders the routes the vault names.
+ssg = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+ssg-ui = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
+ssg-build = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 collection-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main", default-features = false }
 attachments-proto = { git = "https://github.com/FastTrackStudios/task", branch = "main" }
 

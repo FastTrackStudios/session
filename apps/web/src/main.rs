@@ -7,6 +7,7 @@
 //! RPC surface (see [`demo_backend`]) rather than a picture of it.
 
 mod demo_backend;
+mod guide;
 mod routes;
 
 use dioxus::prelude::*;
@@ -18,11 +19,15 @@ pub enum Route {
     Home {},
     #[route("/demo")]
     Demo {},
+    #[route("/guide")]
+    GuideIndex {},
+    #[route("/guide/:slug")]
+    GuidePage { slug: String },
     #[route("/:..segments")]
     NotFound { segments: Vec<String> },
 }
 
-use routes::{Demo, Home, NotFound};
+use routes::{Demo, GuideIndex, GuidePage, Home, NotFound};
 
 fn main() {
     #[cfg(target_arch = "wasm32")]
@@ -39,7 +44,46 @@ fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     tracing_subscriber::fmt::init();
 
-    dioxus::launch(App);
+    dioxus::LaunchBuilder::new()
+        .with_cfg(server_only! {
+            dioxus::server::ServeConfig::builder().incremental(
+                dioxus::server::IncrementalRendererConfig::new()
+                    // `public` beside the executable is where the CLI
+                    // also puts the web bundle, so the pre-rendered
+                    // pages and the assets they reference land in one
+                    // directory — and that directory is what deploys.
+                    .static_dir(
+                        std::env::current_exe()
+                            .expect("the server knows its own path")
+                            .parent()
+                            .expect("an executable has a parent directory")
+                            .join("public"),
+                    )
+                    // Emphatically false. The cache directory is shared
+                    // with the wasm bundle and every asset; clearing it
+                    // per render would delete the site around the pages
+                    // being written into it.
+                    .clear_cache(false),
+            )
+        })
+        .launch(App);
+}
+
+/// The paths `dx build --ssg` should pre-render.
+///
+/// The CLI looks for a server function at exactly this endpoint, calls
+/// it once, and requests every path it returns — which is what writes
+/// them to disk as HTML.
+///
+/// The guide, and nothing else. `/demo` is deliberately absent: it boots
+/// a real in-process backend and a transport that runs on a clock, so
+/// there is no meaningful "finished" form of it to write to a file. That
+/// is what makes this *partial* static generation — the documentation is
+/// pre-rendered, the live thing stays live.
+#[cfg(feature = "server")]
+#[server(endpoint = "static_routes")]
+async fn static_routes() -> ServerFnResult<Vec<String>> {
+    Ok(guide::VAULT.routes(guide::BASE))
 }
 
 #[component]
@@ -64,6 +108,10 @@ fn App() -> Element {
             href: "https://fonts.googleapis.com/css2?family=Geist:wght@300..800&family=Geist+Mono:wght@400..600&display=swap",
         }
         document::Link { rel: "stylesheet", href: asset!("/assets/tailwind.css") }
+        // The guide components' own sheet — prose, contents rail,
+        // chapter nav. Its colours are custom properties with inherited
+        // fallbacks, so Tailwind's palette wins where the two meet.
+        document::Stylesheet { href: ssg_ui::VAULT_STYLE }
         Router::<Route> {}
     }
 }

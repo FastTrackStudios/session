@@ -819,9 +819,32 @@ web-tailwind: _web-tw-link
 web: web-tailwind
     cd apps/web && dx serve --platform web
 
-# Build the shipping web bundle into target/dx/session-web/release/web/public.
+# Build the shipping web bundle into target/dx/session-web/release/web/public,
+# with the guide pre-rendered into it.
+#
+# `--ssg` builds the app's server as well as its client, runs it, asks it
+# for `static_routes` and requests each — which writes the guide's routes
+# to disk as finished HTML. Nothing deploys that server.
+#
+# `--fullstack` because dx decides whether to build a server from the
+# CLIENT's features, and `dioxus/fullstack` is on the `server` feature
+# alone here (its reqwest would be a second major in the wasm binary —
+# see apps/web/Cargo.toml). Without it there is no server target and
+# `--ssg` silently does nothing.
+#
+# `--force-sequential` because the pre-render borrows
+# `public/index.html` as its page shell and the CLIENT build writes that
+# file; in parallel the pages can come out in Dioxus's bare fallback
+# shell — no title, no charset, no hydration — with the build still
+# reporting success. (dioxus#3518.)
+#
+# The `rm` because the renderer's cache is `clear_cache(false)` (it must
+# be — the cache directory IS the bundle), so a route already in it is
+# served rather than re-rendered and a rebuild ships the old html.
 web-build: web-tailwind
-    cd apps/web && dx build --platform web --release
+    rm -rf target/dx/session-web/release/web/public
+    cd apps/web && dx build --platform web --release \
+        --ssg --fullstack --force-sequential
 
 # Type-check apps/web against the actual deploy target.
 web-check:
