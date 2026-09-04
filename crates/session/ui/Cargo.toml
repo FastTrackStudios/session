@@ -56,5 +56,23 @@ web-sys = { version = "0.3", features = ["Window", "Performance"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dynamic-template = { workspace = true }
 
+[dev-dependencies]
+# Integration test (tests/navigation.rs): a real in-process daw-standalone +
+# session setlist backend driving these exact components through
+# dioxus-test's headless blitz-dom renderer — no `session` dependency
+# above (this crate stays UI-only), only here. `session` does not depend
+# on `session-ui`, so this is not a cycle.
+session = { workspace = true }
+daw = { workspace = true }
+daw-proto = { workspace = true }
+daw-standalone = { workspace = true, features = ["bootstrap"] }
+architect = { workspace = true, features = ["vox", "platform"] }
+vox = { workspace = true }
+# Vendored DioxusLabs/dioxus-test — headless component tests on blitz-dom,
+# no browser (see Cargo.toml's own comment on the workspace entry).
+dioxus-test = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 [lints]
 workspace = true

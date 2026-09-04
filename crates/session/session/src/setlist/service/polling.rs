@@ -378,29 +378,67 @@ where
     /// Helper to calculate active indices for a given position
     fn calculate_indices_for_position(
         setlist: &session_proto::Setlist,
+        current_project_guid: &str,
         position: f64,
         is_playing: bool,
         looping: bool,
     ) -> ActiveIndices {
-        let song_data = setlist
-            .songs
-            .iter()
-            .enumerate()
-            .find(|(_, song)| position >= song.start_seconds && position < song.end_seconds)
-            .or_else(|| {
-                // Fallback: nearest song in the same project
-                setlist.songs.iter().enumerate().min_by(|(_, a), (_, b)| {
-                    let dist_a = (position - a.start_seconds)
-                        .abs()
-                        .min((position - a.end_seconds).abs());
-                    let dist_b = (position - b.start_seconds)
-                        .abs()
-                        .min((position - b.end_seconds).abs());
-                    dist_a
-                        .partial_cmp(&dist_b)
-                        .unwrap_or(std::cmp::Ordering::Equal)
+        // Two setlist shapes share this code path: a single REAPER project
+        // with every song laid out sequentially on one ruler (non-overlapping
+        // `start_seconds..end_seconds` ranges, project_guid identical across
+        // all songs — position alone disambiguates), and one-project-per-song
+        // (`stamp_song_native`/`fixture_songs`, the standalone/web demo
+        // backend) where EVERY song's local timeline starts at 0.0, so their
+        // ranges all overlap at the origin. Matching by position alone in the
+        // second shape always resolved to whichever song came first in the
+        // list, no matter which project was actually selected — clicking any
+        // other song's row seeked its project correctly (see
+        // `seek_to_song_impl`) but the active indices snapped straight back
+        // to song 0. Restrict the position match to the CURRENT project
+        // first; only widen to every song (the single-project shape, where
+        // this is a no-op — every song already shares that guid) if nothing
+        // in the current project matches.
+        let in_current_project = |song: &&Song| song.project_guid == current_project_guid;
+        let song_data =
+            setlist
+                .songs
+                .iter()
+                .enumerate()
+                .filter(|(_, song)| in_current_project(&song))
+                .find(|(_, song)| position >= song.start_seconds && position < song.end_seconds)
+                .or_else(|| {
+                    setlist.songs.iter().enumerate().find(|(_, song)| {
+                        position >= song.start_seconds && position < song.end_seconds
+                    })
                 })
-            });
+                .or_else(|| {
+                    // Fallback: nearest song, preferring one in the same project.
+                    fn nearest<'a>(
+                        songs: impl Iterator<Item = (usize, &'a Song)>,
+                        position: f64,
+                    ) -> Option<(usize, &'a Song)> {
+                        songs.min_by(|(_, a), (_, b)| {
+                            let dist_a = (position - a.start_seconds)
+                                .abs()
+                                .min((position - a.end_seconds).abs());
+                            let dist_b = (position - b.start_seconds)
+                                .abs()
+                                .min((position - b.end_seconds).abs());
+                            dist_a
+                                .partial_cmp(&dist_b)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                    }
+                    nearest(
+                        setlist
+                            .songs
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, song)| in_current_project(&song)),
+                        position,
+                    )
+                    .or_else(|| nearest(setlist.songs.iter().enumerate(), position))
+                });
 
         if let Some((song_index, song)) = song_data {
             // Calculate song progress
@@ -486,7 +524,8 @@ where
             return ActiveIndices::default();
         };
 
-        let (position, is_playing, looping) = (snapshot.1, snapshot.2, snapshot.3);
+        let (current_project_guid, position, is_playing, looping) =
+            (snapshot.0, snapshot.1, snapshot.2, snapshot.3);
 
         // Find which song corresponds to the current project
         let setlist_clone = self.setlist.read().await.clone();
@@ -498,7 +537,13 @@ where
             };
         };
 
-        Self::calculate_indices_for_position(&setlist, position, is_playing, looping)
+        Self::calculate_indices_for_position(
+            &setlist,
+            &current_project_guid,
+            position,
+            is_playing,
+            looping,
+        )
     }
 
     // =========================================================================

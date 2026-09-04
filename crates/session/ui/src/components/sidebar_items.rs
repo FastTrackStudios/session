@@ -55,6 +55,7 @@ pub fn SongItem(
     rsx! {
         div {
             key: "{index}",
+            "data-testid": "sidebar-song-{index}",
             class: "relative",
             // Key badge (setlist key / capo shape key) in the top-right corner.
             if let Some(key) = song_data.key_label.clone() {
@@ -81,18 +82,24 @@ pub fn SongItem(
                 }
                 div {
                     class: "flex-1 space-y-1",
-                    // Song progress bar
-                    ProgressBar {
-                        label: song_data.label.clone(),
-                        progress: song_data.progress,
-                        bright_color: song_data.bright_color.clone(),
-                        muted_color: song_data.muted_color.clone(),
-                        is_selected: is_expanded,
-                        is_inactive: !show_progress,
-                        always_black_bg: !plain_selection,
-                        on_click: Some(Callback::new(move |_| {
-                            on_song_click.call(());
-                        })),
+                    // Song progress bar. `data-testid` on a wrapper div, not
+                    // `ProgressBar` itself (an architect-ui component with
+                    // fixed markup) — the click still reaches its `onclick`
+                    // via normal DOM bubbling.
+                    div {
+                        "data-testid": "sidebar-song-click-{index}",
+                        ProgressBar {
+                            label: song_data.label.clone(),
+                            progress: song_data.progress,
+                            bright_color: song_data.bright_color.clone(),
+                            muted_color: song_data.muted_color.clone(),
+                            is_selected: is_expanded,
+                            is_inactive: !show_progress,
+                            always_black_bg: !plain_selection,
+                            on_click: Some(Callback::new(move |_| {
+                                on_song_click.call(());
+                            })),
+                        }
                     }
                     // Sections (only if expanded)
                     if is_expanded {
@@ -100,6 +107,7 @@ pub fn SongItem(
                             div {
                                 key: "{index}-{section_idx}",
                                 class: "pl-4",
+                                "data-testid": "sidebar-section-{index}-{section_idx}",
                                 ProgressBar {
                                     label: section.label.clone(),
                                     progress: section.progress,
