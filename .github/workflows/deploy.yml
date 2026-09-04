@@ -41,7 +41,7 @@ env:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, nix-host]
+    runs-on: [self-hosted, session]
     environment:
       name: session-production
       url: https://session.fasttrackstudio.app

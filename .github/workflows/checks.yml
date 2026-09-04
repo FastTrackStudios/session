@@ -33,7 +33,7 @@ env:
 jobs:
   check:
     name: Build + test
-    runs-on: [self-hosted, nix-host]
+    runs-on: [self-hosted, session]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
