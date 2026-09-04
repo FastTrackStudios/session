@@ -41,7 +41,7 @@
 
       # The dx build runs from the app dir but writes to the
       # WORKSPACE-ROOT target/dx/<name>/release/web/public.
-      mkDxWebBundle = { pname, appDir, dxName, preBuild ? "" }:
+      mkDxWebBundle = { pname, appDir, dxName, preBuild ? "", dxArgs ? "" }:
         craneLib.buildPackage (commonArgs // dxWebEnv // {
           inherit pname;
           version = "0.1.0";
@@ -57,7 +57,7 @@
             # --debug-symbols false: drop DWARF for a smaller release
             # bundle (and it sidesteps DWARF-version mismatches in
             # wasm-opt).
-            dx build --release --platform web --debug-symbols false
+            dx build --release --platform web --debug-symbols false ${dxArgs}
           '';
           # buildPhase ends inside ${appDir}; anchor the copy at the
           # workspace root explicitly.
@@ -114,6 +114,23 @@
           done
           (cd apps/web && tailwindcss -i ./tailwind.css -o ./assets/tailwind.css --minify)
         '';
+        # `--ssg` pre-renders the guide into the same `public` directory
+        # the bundle lands in: dx builds the app's server too, runs it,
+        # asks it for `static_routes` and requests each. Nothing deploys
+        # that server — what ships is still a directory of static files.
+        #
+        # `--fullstack` because dx decides whether to build a server from
+        # the CLIENT's features, and `dioxus/fullstack` is on the
+        # `server` feature alone (its reqwest would be a second major in
+        # the wasm binary). Without the flag there is no server target
+        # and `--ssg` silently does nothing.
+        #
+        # `--force-sequential` because the pre-render borrows
+        # `public/index.html` for its page shell and the client build
+        # writes that file; in parallel the pages can come out in
+        # Dioxus's bare fallback shell, with the build still reporting
+        # success. (dioxus#3518.)
+        dxArgs = "--ssg --fullstack --force-sequential";
       };
     in
     {
