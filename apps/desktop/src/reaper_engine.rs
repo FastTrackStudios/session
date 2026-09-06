@@ -232,6 +232,132 @@ pub fn spawn_connect(socket: Option<PathBuf>) -> tokio::sync::oneshot::Receiver<
     rx
 }
 
+/// Bumped every time the connection state changes — attached, or lost.
+///
+/// The UI cannot poll `is_connected()` on its own: Dioxus re-renders on
+/// signal changes, and this is a plain static. Anything that shows
+/// connection state reads this to subscribe.
+pub static CONNECTION_EPOCH: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+fn bump_epoch() {
+    CONNECTION_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How often the supervisor checks whether the REAPER it is attached to is
+/// still alive, and whether a new one has appeared to attach to.
+const SUPERVISE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Keep Recording Mode attached to *a* running REAPER, forever.
+///
+/// Two failures this handles, both of which used to leave the app wedged:
+///
+/// - **REAPER quits while connected.** Nothing noticed. `ENGINE` was only
+///   ever written, never cleared, so `is_connected()` stayed true, the
+///   workspace kept rendering a player wired to a dead vox link, and the
+///   subscription futures just logged "stream ended" and exited. The user
+///   saw a frozen setlist with no indication anything was wrong.
+/// - **REAPER comes back.** Nothing re-dialled, so the only recovery was
+///   restarting the app.
+///
+/// Liveness is a `kill(pid, 0)` on the socket's owning process, not an RPC
+/// round trip: it needs no timeout policy, cannot block on a REAPER that is
+/// alive but busy (loading a large project happily blocks its main thread
+/// for seconds), and is the same probe [`discover_all`] already uses.
+///
+/// Reconnects are attempted whenever a socket is available and we hold none.
+/// A failure is not fatal — REAPER publishes its socket slightly before the
+/// extension has finished mounting its services, so the first dial after a
+/// launch routinely loses that race and the next tick simply wins it.
+pub fn spawn_supervisor() {
+    runtime().spawn(async move {
+        loop {
+            tokio::time::sleep(SUPERVISE_INTERVAL).await;
+
+            let attached = engine().and_then(|e| socket_pid(&e.socket));
+            match supervise(attached, |pid| process_alive(pid), || discover_socket().is_some()) {
+                Action::Idle => {}
+                Action::Drop => {
+                    tracing::warn!(pid = attached, "REAPER exited; dropping the connection");
+                    disconnect();
+                }
+                Action::Attach => match ensure_connected_to(None).await {
+                    Ok(()) => tracing::info!("reattached to REAPER"),
+                    // Expected while REAPER is still coming up — it
+                    // publishes its socket before the extension behind it
+                    // has finished mounting services, so the first dial
+                    // after a launch routinely loses that race and the next
+                    // tick wins it.
+                    Err(e) => tracing::debug!("reattach attempt failed: {e:#}"),
+                },
+            }
+        }
+    });
+}
+
+/// What one supervisor tick should do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    /// Attached and healthy, or detached with nothing to attach to.
+    Idle,
+    /// The REAPER we were attached to is gone.
+    Drop,
+    /// We hold no connection and one is available.
+    Attach,
+}
+
+/// The supervisor's decision, as a pure function of what it can observe.
+///
+/// Split out from the loop so it can be tested at all: the loop itself needs
+/// a tokio runtime, a real vox handshake and a live REAPER, none of which a
+/// unit test can produce — but every *decision* it makes is this.
+fn supervise(
+    attached: Option<u32>,
+    alive: impl Fn(u32) -> bool,
+    any_available: impl Fn() -> bool,
+) -> Action {
+    match attached {
+        Some(pid) if alive(pid) => Action::Idle,
+        // Attached to something that is gone. Drop before attaching: the
+        // replacement is dialled on the *next* tick, so the UI passes
+        // through a truthful "not connected" state rather than appearing to
+        // hold a connection it doesn't have.
+        Some(_) => Action::Drop,
+        None if any_available() => Action::Attach,
+        None => Action::Idle,
+    }
+}
+
+/// Drop the current connection and tell the UI.
+///
+/// `session_ui::Session` is cleared too: it holds its own copy of the client,
+/// and a workspace that kept rendering from it would be driving a dead link.
+/// The vox connection itself closes when the last `Arc<ReaperEngine>` goes —
+/// `ReaperEngine` owns the `ConnectionHandle`.
+fn disconnect() {
+    if let Ok(mut slot) = ENGINE.write() {
+        *slot = None;
+    }
+    session_ui::Session::clear();
+    // Recording Mode owns `daw::get()` while it is connected (Live Mode
+    // installs its own and never reaches this path), so a dead REAPER should
+    // not stay reachable through it — the armed-track poll waits for a live
+    // one instead of reading a corpse.
+    daw::rpc::Daw::clear();
+    bump_epoch();
+}
+
+/// The pid encoded in a DAW socket's filename.
+fn socket_pid(socket: &Path) -> Option<u32> {
+    socket
+        .file_name()?
+        .to_str()?
+        .strip_prefix(SOCKET_PREFIX)?
+        .strip_suffix(SOCKET_SUFFIX)?
+        .parse()
+        .ok()
+}
+
 static RUNTIME: std::sync::OnceLock<std::sync::Arc<tokio::runtime::Runtime>> =
     std::sync::OnceLock::new();
 
@@ -258,9 +384,11 @@ fn runtime() -> &'static std::sync::Arc<tokio::runtime::Runtime> {
 /// runs (app boot with REAPER already up, and again after `load_playlist`
 /// launches it fresh).
 fn install_daw_singleton(daw: daw::rpc::Daw) {
-    if daw::get().is_some() {
-        return;
-    }
+    // No early return when one is already installed: `daw::init_from_parts`
+    // now *replaces* the global handle, which is exactly what a reconnect to
+    // a restarted REAPER needs. Skipping it left the Mixer panel, "Open in
+    // REAPER" and the armed-track poll all holding the dead connection after
+    // a bounce — connected UI, silent underneath.
     daw::init_from_parts(daw, runtime().clone());
 }
 
@@ -315,6 +443,7 @@ async fn ensure_connected_to(socket: Option<PathBuf>) -> eyre::Result<()> {
         .write()
         .map_err(|_| eyre::eyre!("the reaper engine lock is poisoned"))? =
         Some(std::sync::Arc::new(engine));
+    bump_epoch();
     Ok(())
 }
 
@@ -329,10 +458,15 @@ pub fn bootstrap_blocking() -> eyre::Result<()> {
     // Leak the runtime handle now so it's ready for `load_playlist`'s
     // later async calls even if this first connect attempt fails.
     let rt = runtime();
-    match rt.block_on(ensure_connected()) {
+    let outcome = rt.block_on(ensure_connected());
+    // Start supervising regardless of whether that first attempt worked:
+    // "REAPER isn't running yet" is the common case at app start, and the
+    // supervisor is what turns that into "attaches by itself when it is".
+    spawn_supervisor();
+    match outcome {
         Ok(()) => Ok(()),
         Err(e) => {
-            tracing::info!("REAPER not reachable yet ({e}); waiting for Load & Play");
+            tracing::info!("REAPER not reachable yet ({e}); the supervisor will keep trying");
             Ok(())
         }
     }
@@ -422,4 +556,74 @@ fn find_rpp(folder: &Path) -> Option<PathBuf> {
         })
         .or_else(|| entries.first())
         .cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn socket(pid: u32) -> PathBuf {
+        PathBuf::from(format!("{SOCKET_DIR}/{SOCKET_PREFIX}{pid}{SOCKET_SUFFIX}"))
+    }
+
+    #[test]
+    fn socket_pid_round_trips_the_naming_convention() {
+        // `socket_pid` and `discover_all` parse the same filenames; if they
+        // ever disagree the supervisor checks liveness of the wrong process
+        // and either drops a healthy connection or clings to a dead one.
+        assert_eq!(socket_pid(&socket(4242)), Some(4242));
+        assert_eq!(socket_pid(Path::new("/tmp/fts-daw-.sock")), None);
+        assert_eq!(socket_pid(Path::new("/tmp/fts-daw-abc.sock")), None);
+        assert_eq!(socket_pid(Path::new("/tmp/something-else.sock")), None);
+        assert_eq!(socket_pid(Path::new("/tmp/fts-daw-7")), None);
+    }
+
+    #[test]
+    fn a_healthy_connection_is_left_alone() {
+        assert_eq!(supervise(Some(7), |_| true, || true), Action::Idle);
+    }
+
+    #[test]
+    fn a_dead_reaper_is_dropped_even_when_another_is_available() {
+        // Drop first, attach next tick — never swap straight from one dead
+        // connection to a new one, so the UI shows the truth in between.
+        assert_eq!(supervise(Some(7), |_| false, || true), Action::Drop);
+    }
+
+    #[test]
+    fn detached_attaches_only_when_something_is_there() {
+        assert_eq!(supervise(None, |_| true, || true), Action::Attach);
+        assert_eq!(supervise(None, |_| true, || false), Action::Idle);
+    }
+
+    #[test]
+    fn liveness_is_asked_about_the_attached_pid_specifically() {
+        // Not "is any REAPER alive" — the one we hold. A second REAPER
+        // running must not keep a dead connection looking healthy.
+        assert_eq!(supervise(Some(7), |pid| pid == 9, || true), Action::Drop);
+        assert_eq!(supervise(Some(9), |pid| pid == 9, || true), Action::Idle);
+    }
+
+    #[test]
+    fn discovery_skips_processes_that_are_gone() {
+        // pid 1 is always alive; u32::MAX never is. `discover_all` reads the
+        // real /tmp, so assert on the property rather than exact contents.
+        let found = discover_all();
+        assert!(
+            found.iter().all(|r| process_alive(r.pid)),
+            "discover_all returned a socket whose process is gone: {found:?}"
+        );
+        let mut pids: Vec<u32> = found.iter().map(|r| r.pid).collect();
+        let sorted = {
+            let mut p = pids.clone();
+            p.sort_unstable_by(|a, b| b.cmp(a));
+            p
+        };
+        pids.dedup();
+        assert_eq!(
+            found.iter().map(|r| r.pid).collect::<Vec<_>>(),
+            sorted,
+            "newest-first ordering is what `connect()` relies on to pick a REAPER"
+        );
+    }
 }

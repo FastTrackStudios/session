@@ -423,9 +423,23 @@ thread_local! {
     static GLOBAL_SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
 }
 
-/// For non-WASM targets, use `OnceLock` (no reconnection support needed for tests/native)
+/// Native: the same replaceable slot wasm has, for the same reason.
+///
+/// This was a `OnceLock` on the assumption that native never reconnects.
+/// Recording Mode makes that false: it dials a REAPER extension's socket, and
+/// REAPER can be quit and reopened under a new pid while the app stays up. A
+/// `OnceLock` meant a re-dial had nowhere to go — the UI would hold a client
+/// pointing at a dead vox link forever.
+///
+/// The `Session` behind the pointer is leaked rather than dropped, so
+/// [`Session::get`] can keep handing out `&'static Self` and its ~30 call
+/// sites stay as they are. What leaks is one small struct holding a client
+/// handle, once per REAPER restart within a single app run — bounded by how
+/// often someone bounces REAPER, and the alternative (an owned return) makes
+/// every `Session::get().setlist()` a borrow of a temporary.
 #[cfg(not(target_arch = "wasm32"))]
-static GLOBAL_SESSION: OnceLock<Session> = OnceLock::new();
+static GLOBAL_SESSION: std::sync::RwLock<Option<&'static Session>> =
+    std::sync::RwLock::new(None);
 
 /// Session provides access to session service clients
 ///
@@ -472,14 +486,29 @@ impl Session {
         Ok(())
     }
 
+    /// Point the global Session at `setlist_client`, replacing any previous
+    /// one — a reconnect is exactly this call a second time.
+    ///
     /// # Errors
     ///
-    /// On native targets, returns an error if the Session is already initialized.
+    /// Returns an error only if the lock is poisoned.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn init(setlist_client: SetlistServiceClient) -> eyre::Result<()> {
-        GLOBAL_SESSION
-            .set(Self { setlist_client })
-            .map_err(|_| eyre::eyre!("Session already initialized"))
+        let session: &'static Self = Box::leak(Box::new(Self { setlist_client }));
+        *GLOBAL_SESSION
+            .write()
+            .map_err(|_| eyre::eyre!("the global Session lock is poisoned"))? = Some(session);
+        Ok(())
+    }
+
+    /// Forget the current Session, so `try_get` reports "not connected"
+    /// again. Used when the backend behind it goes away — a REAPER that
+    /// quit — so the UI stops rendering a player wired to a dead link.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn clear() {
+        if let Ok(mut slot) = GLOBAL_SESSION.write() {
+            *slot = None;
+        }
     }
 
     /// Get the global Session instance.
@@ -515,8 +544,9 @@ impl Session {
 
     /// Get the global Session instance if initialized, or `None`.
     #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
     pub fn try_get() -> Option<&'static Self> {
-        GLOBAL_SESSION.get()
+        *GLOBAL_SESSION.read().ok()?
     }
 
     /// Get the `SetlistService` client

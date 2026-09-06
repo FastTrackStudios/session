@@ -9,7 +9,7 @@
 use dioxus::prelude::*;
 use session_ui::{PerformanceLayout, PerformanceSidebar, TransportPanel};
 
-use crate::active_engine;
+use crate::{active_engine, reaper_engine};
 
 /// Wait until an engine is running, then hand back its clients.
 ///
@@ -35,8 +35,30 @@ async fn engine_when_ready() -> active_engine::ActiveClients {
 /// Mounted once in `App` so it survives workspace switches.
 #[component]
 pub fn SessionEventBridge() -> Element {
-    // ── Events stream: setlist structure + 60 Hz per-song transport ─────
+    // ── Connection state: mirror the engine's epoch into a signal ───────
+    // `reaper_engine`'s supervisor runs on its own runtime and can only
+    // touch plain statics; this is the one place that turns "the connection
+    // changed" into something Dioxus re-renders on.
     use_future(move || async move {
+        let mut seen = usize::MAX;
+        loop {
+            let epoch =
+                reaper_engine::CONNECTION_EPOCH.load(std::sync::atomic::Ordering::Relaxed);
+            if epoch != seen {
+                seen = epoch;
+                *REAPER_CONNECTIONS.write() = epoch;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        }
+    });
+
+    // ── Events stream: setlist structure + 60 Hz per-song transport ─────
+    // The outer loop is what survives a REAPER bounce: the stream ends when
+    // the connection dies, and this waits for the supervisor to attach a new
+    // one and re-subscribes against it. Without it a reconnect produced a
+    // connected, permanently silent player.
+    use_future(move || async move {
+        loop {
         let engine = engine_when_ready().await;
 
         // Consume the `events` `#[subscribe]` stream through the stream
@@ -70,7 +92,12 @@ pub fn SessionEventBridge() -> Element {
             }
             session_ui::apply_setlist_event(ev);
         }
-        tracing::warn!("setlist event stream ended");
+        tracing::warn!("setlist event stream ended; waiting to re-subscribe");
+        // Backoff before retrying. In Recording Mode the engine is gone and
+        // `engine_when_ready` blocks anyway, but in Live Mode it returns
+        // instantly — so without this a stream that ends immediately spins.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
     });
 
     // ── Active-indices stream: the cursor (which song/section is current) ─
@@ -78,6 +105,7 @@ pub fn SessionEventBridge() -> Element {
     // active-song schedule. Fed by the service's `active_indices`
     // `#[subscribe]` hub (architect PubSub), not the setlist-events stream.
     use_future(move || async move {
+        loop {
         let engine = engine_when_ready().await;
 
         // Consume the `active_indices` `#[subscribe]` stream through the
@@ -113,7 +141,9 @@ pub fn SessionEventBridge() -> Element {
             );
             session_ui::apply_active_indices(ai);
         }
-        tracing::warn!("active-indices stream ended");
+        tracing::warn!("active-indices stream ended; waiting to re-subscribe");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
     });
 
     // ── Armed-track count: feeds the Record button's live count ─────────
@@ -186,14 +216,14 @@ fn feed_guide(songs: &[session_proto::Song], scheduled: &mut Option<usize>, inde
     crate::guide::set_current_song(song.clone());
 }
 
-/// Bumped whenever Recording Mode attaches to a REAPER.
+/// Mirrors `reaper_engine::CONNECTION_EPOCH` into Dioxus.
 ///
 /// `SessionWorkspace` decides between the connect pane and the player by
 /// reading `active_engine::current()` — a plain static, not a signal, so
-/// nothing schedules a re-render when it starts returning `Some`. Without
-/// this the connect succeeds and the pane just sits there, which reads as
-/// the button not working. Reading it in `SessionWorkspace` subscribes that
-/// component; `ConnectToReaper` bumps it after a successful attach.
+/// nothing schedules a re-render when it changes. Both directions matter:
+/// without this a successful connect leaves the pane up (reading as a dead
+/// button), and a REAPER that quits leaves a frozen player up instead of
+/// the pane.
 static REAPER_CONNECTIONS: GlobalSignal<usize> = Signal::global(|| 0);
 
 /// Recording Mode's "attach to a running REAPER" pane.
@@ -232,13 +262,12 @@ fn ConnectToReaper() -> Element {
         let rx = crate::reaper_engine::spawn_connect(socket);
         spawn(async move {
             match rx.await {
-                Ok(Ok(())) => {
-                    connecting.set(false);
-                    // Wake `SessionWorkspace` so it re-reads
-                    // `active_engine::current()` and swaps this pane for the
-                    // player.
-                    *REAPER_CONNECTIONS.write() += 1;
-                }
+                // No signal bump here: `ensure_connected` bumps
+                // `CONNECTION_EPOCH`, and `SessionEventBridge`'s mirror
+                // future turns that into the signal change that swaps this
+                // pane for the player. One path for both a manual connect
+                // and the supervisor's automatic one.
+                Ok(Ok(())) => connecting.set(false),
                 Ok(Err(e)) => {
                     error.set(Some(e));
                     connecting.set(false);
