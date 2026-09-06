@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 dynamic-template.workspace = true
+dawfile-reaper.workspace = true
 daw-proto.workspace = true
 # daw-standalone dropped: only the parked 05_auto_color test used it, and on
 # the facet-0.50 daw branch it only compiles with the "audio" feature (cpal →
@@ -45,6 +46,10 @@ path = "04_visibility_classification.rs"
 # [[test]]
 # name = "05_auto_color"
 # path = "05_auto_color.rs"
+
+[[test]]
+name = "06_organize_is_lossless"
+path = "06_organize_is_lossless.rs"
 
 [[test]]
 name = "multitrack_examples"

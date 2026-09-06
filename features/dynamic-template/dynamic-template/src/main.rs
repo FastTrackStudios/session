@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
-use dawfile_reaper::types::RppSerialize;
-use dynamic_template::apply::dawfile::RppTarget;
+use dynamic_template::apply::chunk::RChunkTarget;
 use dynamic_template::apply::{
     apply_colors, apply_routing, gather_unsorted, normalize_folder_depths, TemplateTarget,
     UNSORTED_FOLDER,
@@ -522,8 +521,15 @@ fn apply_buses_to_rpp(input: &str, output: &str) -> Result<(), Box<dyn std::erro
         return Err("refusing to write over the input project".into());
     }
 
-    let mut project = dawfile_reaper::io::read_project(input)?;
-    let existing = project.tracks.len();
+    // The raw chunk tree, not `read_project`'s typed model. A typed model can
+    // only write back the fields it knows, so organizing through one silently
+    // dropped the master track, every RENDER_*/RECORD_CFG setting, per-item
+    // CHANMODE/YPOS and all the <EXT> blocks — REAPER opened the result with
+    // "11160 elements in the project were not understood". Editing the tree
+    // leaves every untouched line byte-identical. See `apply::chunk`.
+    let source = std::fs::read_to_string(input)?;
+    let mut project = dawfile_reaper::read_rpp_chunk(&source)?;
+    let existing = RChunkTarget::new(&mut project).track_count();
 
     // Classify every track name, then keep the group paths that resolve to a
     // bus. `matched_groups` is the canonical path, top-level first. A bus is
@@ -533,7 +539,7 @@ fn apply_buses_to_rpp(input: &str, output: &str) -> Result<(), Box<dyn std::erro
     let mut group_paths: Vec<Vec<String>> = Vec::new();
     let mut unclassified: Vec<String> = Vec::new();
     {
-        let probe = RppTarget::new(&mut project);
+        let probe = RChunkTarget::new(&mut project);
         let entries = dynamic_template::apply::reclassify_stem_splits(
             dynamic_template::apply::contextual_paths(&probe),
         );
@@ -557,7 +563,7 @@ fn apply_buses_to_rpp(input: &str, output: &str) -> Result<(), Box<dyn std::erro
 
     print_bus_summary(input, existing, unclassified.len(), &buses, &justified);
 
-    let mut target = RppTarget::new(&mut project);
+    let mut target = RChunkTarget::new(&mut project);
 
     // Repair the folder structure before anything reasons about folders. A
     // project whose depths go negative is not describing a tree, so bus
@@ -598,14 +604,11 @@ fn apply_buses_to_rpp(input: &str, output: &str) -> Result<(), Box<dyn std::erro
                 if !g.skipped.is_empty() {
                     // Say which of the two reasons applied, so "left in place"
                     // is a fact about the project rather than a shrug.
+                    let report = RChunkTarget::new(&mut project);
                     let carries = g
                         .skipped
                         .iter()
-                        .filter(|i| {
-                            project.tracks.get(**i).is_some_and(|t| {
-                                t.folder.as_ref().is_some_and(|f| f.indentation != 0)
-                            })
-                        })
+                        .filter(|i| report.carries_folder_structure(**i))
                         .count();
                     println!(
                         "  {} left in place: {} nested inside a folder, {carries} carry one",
@@ -613,14 +616,13 @@ fn apply_buses_to_rpp(input: &str, output: &str) -> Result<(), Box<dyn std::erro
                         g.skipped.len().saturating_sub(carries)
                     );
                     println!("    nested, would need moving out of their folder:");
-                    for i in g.skipped.iter().filter(|i| {
-                        project
-                            .tracks
-                            .get(**i)
-                            .is_some_and(|t| t.folder.as_ref().is_none_or(|f| f.indentation == 0))
-                    }) {
-                        if let Some(t) = project.tracks.get(*i) {
-                            println!("      {}", t.name);
+                    for i in g
+                        .skipped
+                        .iter()
+                        .filter(|i| !report.carries_folder_structure(**i))
+                    {
+                        if let Some(name) = report.name_of(*i) {
+                            println!("      {name}");
                         }
                     }
                 }
@@ -632,7 +634,20 @@ fn apply_buses_to_rpp(input: &str, output: &str) -> Result<(), Box<dyn std::erro
         }
     }
 
-    std::fs::write(output, project.to_rpp_string())?;
+    // Write back with the line endings the input used. REAPER reads either,
+    // but a session saved on macOS is CRLF throughout, and silently rewriting
+    // all 21k lines to LF makes the organize pass impossible to review as a
+    // diff — the one thing the chunk-tree backend exists to preserve.
+    let text = dawfile_reaper::stringify_rpp_node(&dawfile_reaper::RNodeTree::Chunk(project));
+    let mut text = if text.ends_with('\n') {
+        text
+    } else {
+        text + "\n"
+    };
+    if source.contains("\r\n") {
+        text = text.replace('\n', "\r\n");
+    }
+    std::fs::write(output, text)?;
     println!("  → {output}");
     Ok(())
 }

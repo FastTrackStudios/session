@@ -29,6 +29,7 @@ use dynamic_template_proto::{TemplateBus, TemplateNode};
 
 use crate::buses::bus_nodes;
 
+pub mod chunk;
 pub mod dawfile;
 pub mod reaper;
 

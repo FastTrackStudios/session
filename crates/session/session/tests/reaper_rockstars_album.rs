@@ -3,13 +3,22 @@
 //! setlist from them — the actual thing Recording Mode's `load_playlist`
 //! does with a real album, not a synthetic single project.
 //!
-//! Needs `--virtual`: REAPER's flake version doesn't recognize these real
-//! projects' newer format ("Project Load Warning" — thousands of unknown
-//! elements, likely fixed-lane/comping state from a newer REAPER build)
-//! and pops a native modal with no headless-safe suppression. `--virtual`
-//! runs a private Xvfb with a background dismisser closing it (and other
-//! stray REAPER dialogs) throughout the run — see
-//! `TestRunner::run_reaper_tests` / `VirtualDisplay::close_stray_dialogs`.
+//! Needs `--virtual` for REAPER's own startup dialogs (no audio device on an
+//! Xvfb host), which `TestRunner::run_reaper_tests` dismisses in the
+//! background — see `VirtualDisplay::close_stray_dialogs`.
+//!
+//! These projects used to trip a "Project Load Warning" modal on open —
+//! "11160 elements in the project were not understood", `LANE` and a wall of
+//! base64. That was long read as REAPER's flake version not recognizing a
+//! newer build's fixed-lane/comping state. It was not: `dynamic-template
+//! --apply-buses` was re-serializing each project through a *typed* model
+//! (`ReaperProject::to_rpp_string`), which could only write back the fields it
+//! modelled and dropped the rest — the master track, `<RECORD_CFG>`, every
+//! `RENDER_*`, per-item `CHANMODE`/`YPOS`, all the `<EXT>` blocks — while
+//! duplicating every take and emitting a `LANE` token REAPER has never had.
+//! The organize pass now edits the raw chunk tree instead (`apply::chunk`), so
+//! untouched lines come back unchanged and the modal is gone. If it ever
+//! returns, the pipeline has regressed — do not just dismiss it.
 //!
 //! Run via `session-extension-xtask` (needs `nix develop .#reaper-test`):
 //!   cargo run -p session-extension-xtask -- --virtual rockstars
