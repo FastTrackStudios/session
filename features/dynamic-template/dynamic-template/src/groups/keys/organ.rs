@@ -1,6 +1,6 @@
 //! Organ group definition
 
-use crate::item_metadata::{ItemMetadata, ItemMetadataGroup, ItemMetadataGroupExt};
+use crate::item_metadata::{ItemMetadata, ItemMetadataGroupExt};
 use monarchy::Group;
 
 /// Organ group

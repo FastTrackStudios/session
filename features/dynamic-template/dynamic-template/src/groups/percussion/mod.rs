@@ -1,6 +1,6 @@
 //! Percussion group definitions
 
-use crate::item_metadata::{ItemMetadata, ItemMetadataGroup, ItemMetadataGroupExt};
+use crate::item_metadata::{ItemMetadata, ItemMetadataGroupExt};
 use monarchy::Group;
 
 /// Top-level percussion group for non-drum kit percussion instruments

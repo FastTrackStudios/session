@@ -11,6 +11,24 @@ use session_ui::{PerformanceLayout, PerformanceSidebar, TransportPanel};
 
 use crate::active_engine;
 
+/// Wait until an engine is running, then hand back its clients.
+///
+/// Both subscription futures below are mounted once, at app start, and used
+/// to give up immediately if no engine was up yet. That was fine while the
+/// only way into Recording Mode was `FTS_SESSION_MODE=recording` with REAPER
+/// already running — the engine either existed before the UI mounted or
+/// never would. Now that the connect pane can attach to a REAPER started
+/// afterwards, giving up means the player comes up subscribed to nothing:
+/// connected, and permanently empty.
+async fn engine_when_ready() -> active_engine::ActiveClients {
+    loop {
+        if let Some(engine) = active_engine::current() {
+            return engine;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
 /// Invisible app-level component: bridges the setlist service's
 /// `#[subscribe]` events hub straight into session-ui's global signals
 /// (the in-process flavor of the desktop/web subscription loop).
@@ -19,10 +37,7 @@ use crate::active_engine;
 pub fn SessionEventBridge() -> Element {
     // ── Events stream: setlist structure + 60 Hz per-song transport ─────
     use_future(move || async move {
-        let Some(engine) = active_engine::current() else {
-            tracing::warn!("no engine running; setlist events unavailable");
-            return;
-        };
+        let engine = engine_when_ready().await;
 
         // Consume the `events` `#[subscribe]` stream through the stream
         // client so the vox lane pumps it. (Attaching a raw Tx to the
@@ -63,9 +78,7 @@ pub fn SessionEventBridge() -> Element {
     // active-song schedule. Fed by the service's `active_indices`
     // `#[subscribe]` hub (architect PubSub), not the setlist-events stream.
     use_future(move || async move {
-        let Some(engine) = active_engine::current() else {
-            return;
-        };
+        let engine = engine_when_ready().await;
 
         // Consume the `active_indices` `#[subscribe]` stream through the
         // stream client (pumps the vox lane).
@@ -173,6 +186,116 @@ fn feed_guide(songs: &[session_proto::Song], scheduled: &mut Option<usize>, inde
     crate::guide::set_current_song(song.clone());
 }
 
+/// Bumped whenever Recording Mode attaches to a REAPER.
+///
+/// `SessionWorkspace` decides between the connect pane and the player by
+/// reading `active_engine::current()` — a plain static, not a signal, so
+/// nothing schedules a re-render when it starts returning `Some`. Without
+/// this the connect succeeds and the pane just sits there, which reads as
+/// the button not working. Reading it in `SessionWorkspace` subscribes that
+/// component; `ConnectToReaper` bumps it after a successful attach.
+static REAPER_CONNECTIONS: GlobalSignal<usize> = Signal::global(|| 0);
+
+/// Recording Mode's "attach to a running REAPER" pane.
+///
+/// This used to be a dead end reading "check the logs": Recording Mode only
+/// ever connected at app startup, so the ordinary case — open the app, then
+/// open REAPER — meant quitting and relaunching. The connection machinery
+/// was always re-entrant (`reaper_engine::ensure_connected` is idempotent
+/// and documented for exactly this); nothing drove it from the UI.
+///
+/// Rescanning is on a timer rather than a manual Refresh, because the thing
+/// being waited for is REAPER finishing its own startup — the user has
+/// already done their part, and a list that fills itself in is the whole
+/// difference between "attach" and "retry until it works".
+#[component]
+fn ConnectToReaper() -> Element {
+    let mut found = use_signal(Vec::<crate::reaper_engine::LiveReaper>::new);
+    let mut error = use_signal(|| Option::<String>::None);
+    let mut connecting = use_signal(|| false);
+
+    // Poll for REAPERs appearing and disappearing. Cheap: a readdir over
+    // /tmp plus a `kill(pid, 0)` per candidate socket.
+    use_future(move || async move {
+        loop {
+            let live = crate::reaper_engine::discover_all();
+            if *found.peek() != live {
+                found.set(live);
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    });
+
+    let mut connect = move |socket: Option<std::path::PathBuf>| {
+        connecting.set(true);
+        error.set(None);
+        let rx = crate::reaper_engine::spawn_connect(socket);
+        spawn(async move {
+            match rx.await {
+                Ok(Ok(())) => {
+                    connecting.set(false);
+                    // Wake `SessionWorkspace` so it re-reads
+                    // `active_engine::current()` and swaps this pane for the
+                    // player.
+                    *REAPER_CONNECTIONS.write() += 1;
+                }
+                Ok(Err(e)) => {
+                    error.set(Some(e));
+                    connecting.set(false);
+                }
+                Err(_) => {
+                    error.set(Some("the connect task ended without answering".into()));
+                    connecting.set(false);
+                }
+            }
+        });
+    };
+
+    let live = found.read().clone();
+    let busy = *connecting.read();
+
+    rsx! {
+        div { style: "display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; height: 100%; width: 100%; text-align: center; padding: 24px;",
+            span { style: "font-size: 20px; font-weight: 700;", "Not connected to REAPER" }
+
+            if live.is_empty() {
+                span { style: "font-size: 13px; color: #a1a1aa; max-width: 520px;",
+                    "Waiting for a REAPER with the FTS extension loaded. Start REAPER — this will pick it up on its own."
+                }
+            } else {
+                span { style: "font-size: 13px; color: #a1a1aa; max-width: 520px;",
+                    if live.len() == 1 { "Found a running REAPER." } else { "Found several running REAPERs." }
+                }
+                div { style: "display: flex; flex-direction: column; gap: 6px; min-width: 320px;",
+                    for reaper in live.iter().cloned() {
+                        div {
+                            key: "{reaper.pid}",
+                            style: "display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border: 1px solid #3f3f46; border-radius: 6px;",
+                            span { style: "font-size: 13px; font-family: monospace;", "pid {reaper.pid}" }
+                            button {
+                                disabled: busy,
+                                style: "font-size: 13px; padding: 4px 14px; border-radius: 4px; cursor: pointer;",
+                                onclick: move |_| connect(Some(reaper.socket.clone())),
+                                if busy { "Connecting…" } else { "Connect" }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(message) = error.read().clone() {
+                // The real ConnectError, not "check the logs" — the common
+                // failures (socket vanished mid-connect, an extension that
+                // does not mount SetlistService) are only distinguishable
+                // from their text.
+                span { style: "font-size: 12px; color: #f87171; max-width: 520px; font-family: monospace;",
+                    "{message}"
+                }
+            }
+        }
+    }
+}
+
 /// The Session workspace: the full setlist-player surface —
 /// Navigator sidebar (left), performance display (center) and the
 /// transport control bar (bottom), assembled from session-ui's panels.
@@ -181,20 +304,21 @@ fn feed_guide(songs: &[session_proto::Song], scheduled: &mut Option<usize>, inde
 /// keeps fed.
 #[component]
 pub fn SessionWorkspace() -> Element {
+    // Subscribe to Recording Mode attaches, so a successful Connect swaps
+    // the pane below for the player instead of leaving it up.
+    let _ = REAPER_CONNECTIONS();
+
     if active_engine::current().is_none() {
-        let recording = crate::reaper_engine::engine().is_none()
+        let recording = !crate::reaper_engine::is_connected()
             && std::env::var("FTS_SESSION_MODE").as_deref() == Ok("recording");
+        if recording {
+            return rsx! { ConnectToReaper {} };
+        }
         return rsx! {
             div { style: "display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; width: 100%; text-align: center;",
-                span { style: "font-size: 20px; font-weight: 700;",
-                    if recording { "Not connected to REAPER" } else { "Session engine offline" }
-                }
+                span { style: "font-size: 20px; font-weight: 700;", "Session engine offline" }
                 span { style: "font-size: 13px; color: #a1a1aa; max-width: 480px;",
-                    if recording {
-                        "Recording Mode couldn't find a running REAPER with the FTS extension loaded — check the logs."
-                    } else {
-                        "The in-process daw-standalone backend failed to start — check the logs."
-                    }
+                    "The in-process daw-standalone backend failed to start — check the logs."
                 }
             }
         };

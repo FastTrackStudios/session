@@ -40,26 +40,53 @@ const SOCKET_SUFFIX: &str = ".sock";
 /// is the one that matters today.
 const REAPER_PROFILE: &str = "fts-dev";
 
-/// The most recently started live REAPER's socket, if any — the highest
-/// pid among sockets whose owning process is still alive. Stale sockets
-/// (REAPER exited without cleanup) are skipped, not deleted; this app has
-/// no business unlinking another process's files.
-fn discover_socket() -> Option<PathBuf> {
-    let entries = std::fs::read_dir(SOCKET_DIR).ok()?;
-    let mut sockets: Vec<(u32, PathBuf)> = entries
+/// A live REAPER this app could attach to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveReaper {
+    /// The REAPER process's pid, as encoded in its socket filename.
+    pub pid: u32,
+    /// Its DAW socket, ready to hand to [`connect_to`].
+    pub socket: PathBuf,
+}
+
+/// Every live REAPER publishing a DAW socket, newest first.
+///
+/// Stale sockets (REAPER exited without cleanup) are skipped, not deleted;
+/// this app has no business unlinking another process's files.
+///
+/// The extension behind the socket is not identified here, and can't be:
+/// the filename carries a pid and nothing else. Anything mounting
+/// `daw-reaper` publishes one — `fts-extensions` in normal use,
+/// `session-extension` under the test harness — and both mount
+/// `session::daw_services::layer_services_with_daw`, so either is a valid
+/// target. A REAPER whose extension *doesn't* mount `SetlistService` is
+/// only discoverable as a connect that opens the lane and fails, which
+/// [`connect_to`] reports as a handshake error.
+#[must_use]
+pub fn discover_all() -> Vec<LiveReaper> {
+    let Ok(entries) = std::fs::read_dir(SOCKET_DIR) else {
+        return Vec::new();
+    };
+    let mut sockets: Vec<LiveReaper> = entries
         .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            let filename = path.file_name()?.to_str()?;
+            let socket = entry.ok()?.path();
+            let filename = socket.file_name()?.to_str()?;
             let pid: u32 = filename
                 .strip_prefix(SOCKET_PREFIX)?
                 .strip_suffix(SOCKET_SUFFIX)?
                 .parse()
                 .ok()?;
-            process_alive(pid).then_some((pid, path))
+            process_alive(pid).then_some(LiveReaper { pid, socket })
         })
         .collect();
-    sockets.sort_by_key(|(pid, _)| std::cmp::Reverse(*pid));
-    sockets.into_iter().next().map(|(_, path)| path)
+    sockets.sort_by_key(|s| std::cmp::Reverse(s.pid));
+    sockets
+}
+
+/// The most recently started live REAPER's socket, if any — the highest
+/// pid among sockets whose owning process is still alive.
+fn discover_socket() -> Option<PathBuf> {
+    discover_all().into_iter().next().map(|s| s.socket)
 }
 
 #[cfg(unix)]
@@ -153,12 +180,56 @@ pub async fn connect_to(socket: &Path) -> Result<ReaperEngine, ConnectError> {
     })
 }
 
-static ENGINE: std::sync::OnceLock<ReaperEngine> = std::sync::OnceLock::new();
+/// The live connection, if there is one.
+///
+/// An `RwLock` rather than a `OnceLock` because Recording Mode is now
+/// connectable from the UI: REAPER usually isn't running when the app
+/// starts, and a user who launches it then presses Connect must not have
+/// to restart the app. Replaceable, not just settable, so a REAPER that
+/// was quit and reopened (a new pid, a new socket) can be attached to in
+/// the same session.
+static ENGINE: std::sync::RwLock<Option<std::sync::Arc<ReaperEngine>>> =
+    std::sync::RwLock::new(None);
 
-/// The Recording Mode connection, once established. `None` in Live Mode,
-/// before the first successful connect, or if REAPER isn't reachable.
-pub fn engine() -> Option<&'static ReaperEngine> {
-    ENGINE.get()
+/// The Recording Mode connection, if one is established. `None` in Live
+/// Mode, before the first successful connect, or if REAPER isn't reachable.
+///
+/// Returns an owned handle: the connection can be replaced by a later
+/// reconnect, so there is no `&'static` to hand out.
+#[must_use]
+pub fn engine() -> Option<std::sync::Arc<ReaperEngine>> {
+    ENGINE.read().ok()?.clone()
+}
+
+/// Whether a connection is currently established — the cheap check, for
+/// UI that only needs to know connected/not.
+#[must_use]
+pub fn is_connected() -> bool {
+    ENGINE.read().is_ok_and(|e| e.is_some())
+}
+
+/// Attach to a running REAPER, from the UI, without blocking it.
+///
+/// The vox connection has to live on this module's own leaked runtime (it
+/// hosts the link for the rest of the process), but the caller is a Dioxus
+/// event handler on the UI thread — so the work is spawned there and the
+/// outcome comes back over a oneshot the caller can await on whatever
+/// runtime it likes.
+///
+/// The error is a `String` rather than [`ConnectError`]: by the time it
+/// crosses this boundary it is a message to show someone, and the variants
+/// carry non-`Send`-friendly vox internals that the UI has no use for.
+pub fn spawn_connect(socket: Option<PathBuf>) -> tokio::sync::oneshot::Receiver<Result<(), String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    runtime().spawn(async move {
+        let outcome = ensure_connected_to(socket)
+            .await
+            .map_err(|e| format!("{e:#}"));
+        // A closed receiver just means the pane went away mid-connect; the
+        // connection itself is already installed either way.
+        let _ = tx.send(outcome);
+    });
+    rx
 }
 
 static RUNTIME: std::sync::OnceLock<std::sync::Arc<tokio::runtime::Runtime>> =
@@ -199,12 +270,27 @@ fn install_daw_singleton(daw: daw::rpc::Daw) {
 /// already be running from a previous session) and after
 /// [`load_playlist`] launches/attaches to REAPER later.
 async fn ensure_connected() -> eyre::Result<()> {
-    if ENGINE.get().is_some() {
+    ensure_connected_to(None).await
+}
+
+/// [`ensure_connected`] against a specific REAPER, or the newest one when
+/// `socket` is `None`. The UI's Connect button picks a socket from
+/// [`discover_all`]; boot and `load_playlist` pass `None`.
+///
+/// Already being connected wins over `socket`: this returns `Ok` without
+/// touching an existing link, so it cannot be used to *switch* REAPERs. The
+/// connect pane only appears while disconnected, so that never comes up
+/// today — but a "attach to a different REAPER" affordance would need to
+/// drop the current engine first, not just call this with another path.
+async fn ensure_connected_to(socket: Option<PathBuf>) -> eyre::Result<()> {
+    if is_connected() {
         return Ok(());
     }
-    let engine = connect()
-        .await
-        .map_err(|e| eyre::eyre!("connect to REAPER: {e}"))?;
+    let engine = match socket {
+        Some(ref path) => connect_to(path).await,
+        None => connect().await,
+    }
+    .map_err(|e| eyre::eyre!("connect to REAPER: {e}"))?;
 
     // REAPER was already running (this is the "app started after REAPER"
     // path) — `load_playlist` isn't guaranteed to run again this session,
@@ -225,9 +311,10 @@ async fn ensure_connected() -> eyre::Result<()> {
     // dials /vox).
     crate::reaper_lan_proxy::install(engine.client.clone(), engine.stream_client.clone());
 
-    ENGINE
-        .set(engine)
-        .map_err(|_| eyre::eyre!("reaper engine initialized twice"))?;
+    *ENGINE
+        .write()
+        .map_err(|_| eyre::eyre!("the reaper engine lock is poisoned"))? =
+        Some(std::sync::Arc::new(engine));
     Ok(())
 }
 

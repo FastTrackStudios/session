@@ -326,3 +326,108 @@ pub mod daw_services {
         handler
     }
 }
+
+/// Everything a REAPER extension host needs in order to mount session.
+///
+/// # Why this exists
+///
+/// Session reaches a REAPER host through four separate doors: the RPC
+/// router ([`daw_services`]), the control surfaces, the [`DawModule`]s that
+/// register REAPER actions, and the `architect::action` registrations. Both
+/// hosts — `fts-extensions` in production and `session-extension` under the
+/// test harness — used to open those doors by hand, which means "what
+/// session gives a host" was defined twice, in two repos, and drifted:
+/// `session-extension` never called [`register_all_actions`], so the tests
+/// ran against a strictly smaller surface than production without anything
+/// saying so.
+///
+/// So the list lives here, next to the things it names. A host calls these
+/// three functions and gets whatever session currently offers; adding a
+/// service or a module reaches both hosts without either being edited.
+///
+/// A host wires all three, with whatever backend it drives — `daw_reaper::Reaper`
+/// in an extension, a standalone backend in a test:
+///
+/// ```ignore
+/// let handler = session::host::layer_router(handler, daw_reaper::Reaper);
+/// let modules = session::host::modules(daw_reaper::Reaper);
+/// session::host::register_actions(&backend, daw_reaper::Reaper);
+/// ```
+///
+/// (`ignore`, not `no_run`: the backend types live in `daw-reaper`, which is
+/// a REAPER-hosted cdylib dependency this crate's doctests cannot link.)
+#[cfg(all(not(target_arch = "wasm32"), feature = "reaper"))]
+pub mod host {
+    use daw::DawModule;
+
+    /// Every session service and control surface, mounted onto `handler`.
+    ///
+    /// The composition of [`daw_services::layer_services_with_daw`](crate::daw_services::layer_services_with_daw)
+    /// and [`daw_services::layer_control_surfaces`](crate::daw_services::layer_control_surfaces) —
+    /// a host should not have to know there are two, or which order they go in.
+    #[must_use]
+    pub fn layer_router<D>(handler: daw::LayerRouter, daw: D) -> daw::LayerRouter
+    where
+        D: Clone
+            + daw::service::AudioEngine
+            + daw::service::ExtState
+            + daw::service::Projects
+            + daw::service::TempoMap
+            + daw::service::transport::service::Transport
+            + daw::service::Tracks
+            + Send
+            + Sync
+            + 'static,
+    {
+        let handler = crate::daw_services::layer_services_with_daw(handler, daw);
+        crate::daw_services::layer_control_surfaces(handler)
+    }
+
+    /// Every [`DawModule`] session contributes to a host's module list.
+    ///
+    /// `dynamic-template` is in here because session embeds it for
+    /// `FTS_SESSION_*` dispatch but never chains its action defs — so its
+    /// `FTS_VISIBILITY_MANAGER_*` / `FTS_DYNAMIC_TEMPLATE_*` /
+    /// `FTS_AUTO_COLOR_*` actions only reach REAPER's action list if the host
+    /// registers the module separately. Every host wants that, and forgetting
+    /// it fails silently (the actions simply aren't bindable), so it ships
+    /// here rather than in each host's hand-written vec.
+    #[must_use]
+    pub fn modules<D>(daw: D) -> Vec<Box<dyn DawModule>>
+    where
+        D: crate::daw_module::SessionDaw,
+    {
+        vec![
+            crate::daw_module::module_with_daw(daw),
+            dynamic_template::daw_module::module(),
+        ]
+    }
+
+    /// Every `architect::action` session and its embedded modules declare.
+    ///
+    /// Separate from [`modules`] because the two registries are separate:
+    /// `DawModule` puts actions in REAPER's own action list, while
+    /// `architect::action` is the declarative surface external peers resolve.
+    /// A host needs both.
+    pub fn register_actions<D, B>(backend: &B, daw: D)
+    where
+        D: daw::service::Projects
+            + daw::service::transport::service::Transport
+            + daw::service::Markers
+            + daw::service::Regions
+            + daw::service::TempoMap
+            + daw::service::Tracks
+            + daw::service::Items
+            + daw::service::Midi
+            + daw::service::PositionConversion
+            + daw::service::UiDialogs
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+        B: architect::action::ActionBackend + Clone,
+    {
+        crate::register_all_actions(backend, daw);
+        dynamic_template::daw_module::register_architect_actions(backend);
+    }
+}
