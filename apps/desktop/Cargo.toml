@@ -70,6 +70,18 @@ session-domain = [
     "dep:libc",
     "dep:tokio",
     "dep:eyre",
+    # --engine mode's /vox server: the axum WebSocket<->vox adapter
+    # (architect::axum_ws). `dep:axum` on a target-table-only dependency is
+    # a no-op on platforms where that table doesn't declare it (wasm never
+    # builds a server) — same trick collection-proto already uses. The
+    # matching `architect/server-axum` feature reference is NOT similarly
+    # free — Cargo features aren't per-target — so a wasm build of this
+    # feature set would also try to pull in axum's server bits and likely
+    # fail; nothing currently builds `session-domain` for wasm without
+    # trimming it back out first (see `web-stage`'s own `--features
+    # signal,session`, which doesn't go through this feature).
+    "architect/server-axum",
+    "dep:axum",
 ]
 # Charts: keyflow chart writing (the Charts workspace). Keyflow is also pulled
 # by Session (chart parsing), so this is additive; a charts-only build gets it
@@ -143,6 +155,7 @@ daw-ui = { workspace = true, features = ["web"], optional = true }
 dawfile-reaper = { workspace = true, optional = true }
 # Async runtime: session's in-process engine AND engine mode's server.
 tokio = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
 # Recording Mode: dials the REAPER extension's Unix-domain-socket vox
 # link (see reaper_engine.rs) the same way `daw::cli::connect()` does.
 vox-stream = { workspace = true, optional = true }

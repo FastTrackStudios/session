@@ -39,6 +39,10 @@ mod reaper_engine;
 mod active_engine;
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
 mod session_view;
+// `session-desktop --engine`: headless, serves the setlist over a
+// LAN-reachable `/vox` WebSocket instead of opening a GUI window.
+#[cfg(all(feature = "session", not(target_arch = "wasm32")))]
+mod engine_server;
 // Home page data layer: the on-disk track libraries + their setlist notes.
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
 mod setlist_library;
@@ -111,6 +115,31 @@ fn main() {
             None => registry.init(),
         }
         log_ring::install_panic_hook();
+    }
+
+    // `--engine`: headless, serves the setlist over a LAN-reachable /vox
+    // WebSocket for other devices on the network — no GUI window, never
+    // returns. Checked before the GUI's own session bootstrap below since
+    // it replaces the whole rest of `main` rather than adding to it.
+    #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
+    if std::env::args().any(|a| a == "--engine") {
+        match session_engine::bootstrap_blocking() {
+            Ok(()) => tracing::info!("--engine: live mode ready (in-process daw-standalone)"),
+            Err(e) => {
+                tracing::error!("--engine: session engine failed to start: {e:?}");
+                std::process::exit(1);
+            }
+        }
+        let port = std::env::args()
+            .position(|a| a == "--port")
+            .and_then(|i| std::env::args().nth(i + 1))
+            .and_then(|p| p.parse::<u16>().ok());
+        let rt = tokio::runtime::Runtime::new().expect("build the --engine server runtime");
+        if let Err(e) = rt.block_on(engine_server::run(port)) {
+            tracing::error!("--engine: server failed: {e:?}");
+            std::process::exit(1);
+        }
+        return;
     }
 
     // Session: bring up the engine before the UI. Failure is non-fatal —
