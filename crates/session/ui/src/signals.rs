@@ -305,6 +305,16 @@ pub static SONG_VIEWS: GlobalSignal<HashMap<String, SongView>> = Signal::global(
 /// Updates when play/pause/stop state changes
 pub static PLAYBACK_STATE: GlobalSignal<PlayState> = Signal::global(|| PlayState::Stopped);
 
+/// Number of tracks currently record-armed in the active project.
+///
+/// Fed by a live `daw::service::Tracks` subscription (not the setlist
+/// service — session's own `SetlistService` has no per-track visibility),
+/// so it stays accurate whether tracks were armed from this app, from
+/// REAPER's own UI, or from a control surface. `0` before that bridge has
+/// connected (Live Mode's daw-standalone backend has no armable tracks;
+/// Recording Mode wires this up once its REAPER connection is live).
+pub static ARMED_TRACK_COUNT: GlobalSignal<usize> = Signal::global(|| 0);
+
 /// Chart split view mode - when true, the main content area shows chart in top half
 /// This is controlled by the desktop app for hybrid WGPU/WebView rendering
 pub static SHOW_CHART_SPLIT: GlobalSignal<bool> = Signal::global(|| false);

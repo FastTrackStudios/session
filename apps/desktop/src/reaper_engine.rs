@@ -76,8 +76,6 @@ fn process_alive(pid: u32) -> bool {
 pub struct ReaperEngine {
     pub client: SetlistServiceClient,
     pub stream_client: SetlistServiceStreamClient,
-    /// Kept for a future connect-status display; not read yet.
-    #[allow(dead_code)]
     pub socket: PathBuf,
     /// Keeps the vox connection (and its socket) open for the engine's
     /// lifetime — both clients above borrow it implicitly through their
@@ -163,17 +161,36 @@ pub fn engine() -> Option<&'static ReaperEngine> {
     ENGINE.get()
 }
 
-static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+static RUNTIME: std::sync::OnceLock<std::sync::Arc<tokio::runtime::Runtime>> =
+    std::sync::OnceLock::new();
 
-fn runtime() -> &'static tokio::runtime::Runtime {
+fn runtime() -> &'static std::sync::Arc<tokio::runtime::Runtime> {
     RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("fts-reaper-engine")
-            .enable_all()
-            .build()
-            .expect("build the reaper-engine tokio runtime")
+        std::sync::Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_name("fts-reaper-engine")
+                .enable_all()
+                .build()
+                .expect("build the reaper-engine tokio runtime"),
+        )
     })
+}
+
+/// Install `daw::get()`'s global singleton against this Recording Mode
+/// connection, once. Live Mode installs it at boot
+/// (`session_engine::bootstrap_blocking` -> `daw::init_from_parts`); this
+/// module never did, so anything that self-connects through `daw::get()`
+/// — `daw_ui::MixerPanel` (the app's actual Mixer tab), `mixer_view.rs`'s
+/// "Open in REAPER" — silently found no DAW and rendered nothing in
+/// Recording Mode. Idempotent: safe to call every time `ensure_reaper_running`
+/// runs (app boot with REAPER already up, and again after `load_playlist`
+/// launches it fresh).
+fn install_daw_singleton(daw: daw::rpc::Daw) {
+    if daw::get().is_some() {
+        return;
+    }
+    daw::init_from_parts(daw, runtime().clone());
 }
 
 /// Connect to REAPER and install the client as session-ui's `Session`
@@ -188,6 +205,14 @@ async fn ensure_connected() -> eyre::Result<()> {
     let engine = connect()
         .await
         .map_err(|e| eyre::eyre!("connect to REAPER: {e}"))?;
+
+    // REAPER was already running (this is the "app started after REAPER"
+    // path) — `load_playlist` isn't guaranteed to run again this session,
+    // so this is the only chance to install `daw::get()`'s singleton
+    // before the Mixer tab (`daw_ui::MixerPanel`) tries to self-connect.
+    if let Ok(daw_connection) = daw::cli::connect(Some(engine.socket.clone())).await {
+        install_daw_singleton(daw_connection.daw);
+    }
 
     session_ui::Session::init(engine.client.clone())
         .map_err(|e| eyre::eyre!("Session::init: {e:?}"))?;
@@ -268,12 +293,15 @@ pub async fn load_playlist(songs: &[LibrarySong]) -> eyre::Result<()> {
 /// for it to come up if nothing's listening yet.
 async fn ensure_reaper_running() -> eyre::Result<daw::rpc::Daw> {
     if let Some(socket) = discover_socket() {
-        return Ok(daw::cli::connect(Some(socket)).await?.daw.clone());
+        let daw = daw::cli::connect(Some(socket)).await?.daw;
+        install_daw_singleton(daw.clone());
+        return Ok(daw);
     }
     tracing::info!("no live REAPER found; launching the '{REAPER_PROFILE}' profile");
     let (connection, pid, socket) = daw::cli::launch_and_connect(REAPER_PROFILE).await?;
     tracing::info!(pid, socket = %socket.display(), "REAPER launched");
-    Ok(connection.daw.clone())
+    install_daw_singleton(connection.daw.clone());
+    Ok(connection.daw)
 }
 
 /// The `.RPP` an already-organized song folder holds — there's exactly

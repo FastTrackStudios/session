@@ -24,6 +24,14 @@ pub fn TransportControlBar(
     is_looping: bool,
     is_recording: bool,
     is_armed: bool,
+    /// Number of tracks currently record-armed in the active project (from
+    /// a live `daw::service::Tracks` subscription, not this song's own
+    /// arm-intent toggle — see `ARMED_TRACK_COUNT`). Always shown on the
+    /// Record button so an operator can see at a glance whether the mics
+    /// they expect to be hot actually are before rolling tape — "0 armed"
+    /// is exactly as useful to see as "12 armed".
+    #[props(default = 0)]
+    armed_track_count: usize,
     on_play_pause: Callback<()>,
     on_loop_toggle: Callback<()>,
     on_record_toggle: Callback<()>,
@@ -96,7 +104,11 @@ pub fn TransportControlBar(
                         on_record_toggle.call(());
                     },
                     RecordIcon { size: icon, color: "currentColor" }
-                    if recording { "Recording" } else { "Record" }
+                    if recording {
+                        "Recording ({armed_track_count} armed)"
+                    } else {
+                        "Record ({armed_track_count} armed)"
+                    }
                 }
             }
 

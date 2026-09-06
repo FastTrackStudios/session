@@ -103,6 +103,61 @@ pub fn SessionEventBridge() -> Element {
         tracing::warn!("active-indices stream ended");
     });
 
+    // ── Armed-track count: feeds the Record button's live count ─────────
+    // Not part of the setlist wire at all — session's SetlistService has no
+    // per-track visibility, so this goes straight through `daw::get()`'s
+    // `Tracks` service (the same one `daw_ui::MixerPanel` self-connects
+    // through). Loops forever: `daw::get()` isn't installed yet at app
+    // boot in Recording Mode (only after `load_playlist` or a reconnect —
+    // see `reaper_engine::install_daw_singleton`), and re-runs the whole
+    // connect+seed+subscribe cycle if the stream ever ends (song switched
+    // to a different project, REAPER restarted, etc).
+    use_future(move || async move {
+        loop {
+            let Some(daw) = daw::get() else {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            };
+            let Ok(project) = daw.current_project().await else {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            };
+            let tracks = project.tracks();
+
+            let mut armed: std::collections::HashMap<String, bool> =
+                std::collections::HashMap::new();
+            match tracks.all().await {
+                Ok(all) => {
+                    for t in &all {
+                        armed.insert(t.guid.clone(), t.armed);
+                    }
+                    session_ui::ARMED_TRACK_COUNT
+                        .with_mut(|n| *n = armed.values().filter(|a| **a).count());
+                }
+                Err(e) => {
+                    tracing::warn!("armed-track count: seed failed: {e:?}");
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
+                }
+            }
+
+            let Ok(mut events) = tracks.subscribe().await else {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            };
+            while let Ok(Some(event)) = events.recv().await {
+                if let daw::service::TrackEvent::ArmChanged { guid, armed: is_armed } =
+                    event.get().event.clone()
+                {
+                    armed.insert(guid, is_armed);
+                    session_ui::ARMED_TRACK_COUNT
+                        .with_mut(|n| *n = armed.values().filter(|a| **a).count());
+                }
+            }
+            tracing::warn!("armed-track count: track stream ended, reconnecting");
+        }
+    });
+
     rsx! {}
 }
 

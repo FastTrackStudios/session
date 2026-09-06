@@ -22,8 +22,8 @@ use crate::components::{
 };
 use crate::prelude::*;
 use crate::signals::{
-    Session, ACTIVE_INDICES, LATENCY_TRACKER, PLAYBACK_STATE, SETLIST_STRUCTURE, SONG_CHARTS,
-    SONG_TRANSPORT, SONG_VIEWS,
+    Session, ACTIVE_INDICES, ARMED_TRACK_COUNT, LATENCY_TRACKER, PLAYBACK_STATE,
+    SETLIST_STRUCTURE, SONG_CHARTS, SONG_TRANSPORT, SONG_VIEWS,
 };
 
 /// The `#<KEY>` metadata token from a keyflow chart (`"A"` from `#A 127bpm`).
@@ -394,6 +394,7 @@ pub fn TransportPanel(
                 is_looping: is_looping,
                 is_recording: is_recording,
                 is_armed: is_armed(),
+                armed_track_count: *ARMED_TRACK_COUNT.read(),
                 show_recording: show_recording,
                 on_play_pause: Callback::new(move |()| {
                     LATENCY_TRACKER.write().start_play_toggle();
