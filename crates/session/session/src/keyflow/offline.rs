@@ -28,6 +28,22 @@ use super::actions::{
     normalize_marker_lanes,
 };
 
+/// A REAPER-shaped GUID for a freshly-created marker/region.
+///
+/// `dawfile_reaper`'s line tokenizer treats runs of whitespace as a single
+/// separator, so an *empty* guid field (as opposed to a real `{...}` token)
+/// disappears entirely on round-trip instead of parsing as a blank token —
+/// every field after it (`additional`, `lane`) then silently shifts left by
+/// one. A region added with an empty guid loses its lane on the very next
+/// parse, which is exactly what let `ensure_song_region`'s "does one already
+/// exist" check miss its own region and add another one on every rerun.
+fn new_guid() -> String {
+    format!(
+        "{{{}}}",
+        uuid::Uuid::new_v4().to_string().to_uppercase()
+    )
+}
+
 /// One in-memory `.RPP` project, playing the `daw::service` backend role
 /// that a live REAPER instance plays elsewhere.
 ///
@@ -183,7 +199,7 @@ impl Markers for OfflineDaw {
             color: 0,
             flags: 0,
             locked: 0,
-            guid: String::new(),
+            guid: new_guid(),
             additional: 0,
             end_position: None,
             lane: None,
@@ -251,9 +267,16 @@ impl Regions for OfflineDaw {
             position: start,
             name: name.to_string(),
             color: 0,
-            flags: 0,
+            // Bit 0 is the region marker `dawfile_reaper`'s own
+            // `MarkerRegionCollection` pairing logic gates on
+            // (`start.flags & 1 == 0` skips pairing) — without it, a
+            // region synthesized here degrades into two orphan point
+            // markers the moment the file is re-parsed, so the next
+            // pipeline run's "does one already exist" checks never find
+            // it and add another one every time.
+            flags: 1,
             locked: 0,
-            guid: String::new(),
+            guid: new_guid(),
             additional: 0,
             end_position: Some(end),
             lane: None,
@@ -489,4 +512,72 @@ pub fn auto_organize_regions(project: &mut ReaperProject, project_name: &str) ->
 
     *project = daw.into_inner();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dawfile_reaper::types::RppSerialize;
+
+    /// A region added offline (empty guid, no `flags` bit set) used to
+    /// degrade into two orphan point markers the moment it was serialized
+    /// and re-parsed: `dawfile_reaper`'s tokenizer collapses an empty guid
+    /// field instead of parsing it as blank, shifting every field after it
+    /// (including `lane`) left by one, and its region-pairing logic
+    /// separately requires `flags & 1 != 0` on the start marker. Together
+    /// these meant `ensure_song_region`'s "does one already exist" check
+    /// never recognized its own region on the next run, silently adding a
+    /// duplicate whole-song region every single time the pipeline ran —
+    /// found by rerunning it on the Rockstars album a second time.
+    #[test]
+    fn added_region_survives_a_serialize_reparse_round_trip_as_a_region_on_its_lane() {
+        // `ensure_song_region` derives the whole-song span from existing
+        // section regions, so seed one real section for it to work with.
+        let mut project = ReaperProject::default();
+        {
+            let daw = OfflineDaw::new(std::mem::take(&mut project), "Round Trip Test");
+            let id = Regions::add(&daw, ProjectContext::Current, 0.0, 8.0, "VS").unwrap();
+            Regions::set_lane(
+                &daw,
+                ProjectContext::Current,
+                id,
+                Some(CoreLane::Sections.lane_index()),
+            )
+            .unwrap();
+            project = daw.into_inner();
+        }
+        auto_organize_regions(&mut project, "Round Trip Test").unwrap();
+        let text = project.to_rpp_string();
+        let reparsed = dawfile_reaper::io::parse_project_text(&text).unwrap();
+
+        let daw = OfflineDaw::new(reparsed, "Round Trip Test");
+        let song_lane = CoreLane::Song.lane_index();
+        let song_regions: Vec<_> = Regions::all(&daw, ProjectContext::Current)
+            .into_iter()
+            .filter(|r| r.lane == Some(song_lane))
+            .collect();
+
+        assert_eq!(
+            song_regions.len(),
+            1,
+            "expected exactly one whole-song region to survive the round trip, got {song_regions:?}"
+        );
+
+        // And running the pipeline again on the reparsed project must not
+        // add a second one.
+        let mut project = daw.into_inner();
+        auto_organize_regions(&mut project, "Round Trip Test").unwrap();
+        let text = project.to_rpp_string();
+        let reparsed = dawfile_reaper::io::parse_project_text(&text).unwrap();
+        let daw = OfflineDaw::new(reparsed, "Round Trip Test");
+        let song_regions: Vec<_> = Regions::all(&daw, ProjectContext::Current)
+            .into_iter()
+            .filter(|r| r.lane == Some(song_lane))
+            .collect();
+        assert_eq!(
+            song_regions.len(),
+            1,
+            "a second pipeline run must not duplicate the whole-song region, got {song_regions:?}"
+        );
+    }
 }

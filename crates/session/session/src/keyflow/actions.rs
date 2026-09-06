@@ -665,6 +665,13 @@ fn normalized_section_updates(regions: Vec<Region>) -> Vec<SectionUpdate> {
 
     let mut sections: Vec<_> = regions
         .into_iter()
+        // A Song-lane region is never itself a section, no matter what it's
+        // named — but its name is the project/song title, which collides
+        // with a real `SectionType` word disturbingly often ("Intro",
+        // "Bridge", "Outro", …). Without this exclusion, a song literally
+        // titled "Intro" swept its own whole-song region into the section
+        // list below, corrupting every other section's numbering.
+        .filter(|region| region.lane != Some(CoreLane::Song.lane_index()))
         .filter(|region| {
             region.lane == Some(CoreLane::Sections.lane_index())
                 || parse_region_section_type(&region.name).is_some()
@@ -808,7 +815,7 @@ fn alpha_suffix(index: usize) -> String {
     chars.iter().rev().collect()
 }
 
-pub(crate) fn parse_region_section_type(name: &str) -> Option<SectionType> {
+pub fn parse_region_section_type(name: &str) -> Option<SectionType> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return None;
@@ -1084,6 +1091,28 @@ mod tests {
         assert_eq!(
             normalized_section_names(vec![region(1, 0.0, 8.0, "CH"), region(2, 8.0, 16.0, "CH"),]),
             vec![(1, "CH A".to_string()), (2, "CH B".to_string())]
+        );
+    }
+
+    /// A song titled "Intro" (or "Bridge", "Outro", …) has a whole-song
+    /// region whose name is also a real `SectionType` word. That region
+    /// must never be treated as a section itself — regardless of its name
+    /// — or it gets swept into the real sections' numbering and corrupts
+    /// it (a real bug found while validating the Rockstars album: the
+    /// song "Intro" lost one of its four real sections this way).
+    #[test]
+    fn song_lane_region_is_never_treated_as_a_section_even_if_named_like_one() {
+        let mut song_region = region(99, 0.0, 24.0, "Intro");
+        song_region.lane = Some(CoreLane::Song.lane_index());
+
+        assert_eq!(
+            normalized_section_names(vec![
+                song_region,
+                region(1, 0.0, 8.0, "IN"),
+                region(2, 8.0, 16.0, "IN"),
+            ]),
+            vec![(1, "IN A".to_string()), (2, "IN B".to_string())],
+            "the Song-lane region must be excluded, leaving only the two real sections"
         );
     }
 
