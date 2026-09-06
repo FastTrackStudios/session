@@ -99,6 +99,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             default_skips: vec![],
             test_binary: Some("reaper_setlist_recording_mode".into()),
         },
+        // Arm/record/stop through the exact SetlistService calls the
+        // transport bar's Arm/Record buttons make, against a real drum-kit
+        // track layout — proves the record pipeline actually captures
+        // items, not just that the RPCs return Ok.
+        TestPackage {
+            package: "session".into(),
+            features: vec![],
+            test_threads: 1,
+            default_skips: vec![],
+            test_binary: Some("reaper_drum_recording".into()),
+        },
         // Opens all 10 of the real Rockstars album's organized `.RPP`
         // projects and proves a real multi-song setlist builds from them —
         // exactly what Recording Mode's `load_playlist` does with a real

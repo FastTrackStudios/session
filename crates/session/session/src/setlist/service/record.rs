@@ -13,10 +13,18 @@ impl<D> SetlistServiceImpl<D>
 where
     D: Transport + Tracks + architect::MaybeSendSync,
 {
-    pub(crate) async fn record_impl(&self) -> Result<(), SessionServiceError> {
+    pub(crate) async fn record_impl(&self) -> Result<(), SessionServiceError>
+    where
+        D: Clone + 'static,
+    {
         debug!("record");
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self.daw.record(ProjectContext::Project(song.project_guid)) {
+            let daw = self.daw.clone();
+            let result = daw_proto::main_thread::query(move || {
+                daw.record(ProjectContext::Project(song.project_guid))
+            })
+            .await;
+            if let Some(Err(e)) = result {
                 warn!("Failed to record: {}", e);
             }
         } else {
@@ -25,13 +33,18 @@ where
         Ok(())
     }
 
-    pub(crate) async fn stop_recording_impl(&self) -> Result<(), SessionServiceError> {
+    pub(crate) async fn stop_recording_impl(&self) -> Result<(), SessionServiceError>
+    where
+        D: Clone + 'static,
+    {
         debug!("stop_recording");
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self
-                .daw
-                .stop_recording(ProjectContext::Project(song.project_guid))
-            {
+            let daw = self.daw.clone();
+            let result = daw_proto::main_thread::query(move || {
+                daw.stop_recording(ProjectContext::Project(song.project_guid))
+            })
+            .await;
+            if let Some(Err(e)) = result {
                 warn!("Failed to stop recording: {}", e);
             }
         } else {
@@ -40,13 +53,18 @@ where
         Ok(())
     }
 
-    pub(crate) async fn toggle_recording_impl(&self) -> Result<(), SessionServiceError> {
+    pub(crate) async fn toggle_recording_impl(&self) -> Result<(), SessionServiceError>
+    where
+        D: Clone + 'static,
+    {
         debug!("toggle_recording");
         if let Some(song) = self.get_cached_active_song().await {
-            if let Err(e) = self
-                .daw
-                .toggle_recording(ProjectContext::Project(song.project_guid))
-            {
+            let daw = self.daw.clone();
+            let result = daw_proto::main_thread::query(move || {
+                daw.toggle_recording(ProjectContext::Project(song.project_guid))
+            })
+            .await;
+            if let Some(Err(e)) = result {
                 warn!("Failed to toggle recording: {}", e);
             }
         } else {
@@ -61,27 +79,36 @@ where
     pub(crate) async fn set_song_record_arm_impl(
         &self,
         armed: bool,
-    ) -> Result<(), SessionServiceError> {
+    ) -> Result<(), SessionServiceError>
+    where
+        D: Clone + 'static,
+    {
         debug!("set_song_record_arm: {armed}");
         let Some(song) = self.get_cached_active_song().await else {
             warn!("No active song to arm (navigate to a song first)");
             return Ok(());
         };
-        let ctx = ProjectContext::Project(song.project_guid.clone());
-        let selected = self.daw.selected(ctx.clone());
-        if selected.is_empty() {
-            warn!(
-                "No tracks selected in '{}' to {}",
-                song.name,
-                if armed { "arm" } else { "disarm" }
-            );
-            return Ok(());
-        }
-        for track in selected {
-            if let Err(e) = self.daw.set_armed(ctx.clone(), track.as_ref(), armed) {
-                warn!("Failed to set arm on track '{}': {}", track.name, e);
+        let daw = self.daw.clone();
+        let project_guid = song.project_guid.clone();
+        let song_name = song.name.clone();
+        daw_proto::main_thread::query(move || {
+            let ctx = ProjectContext::Project(project_guid);
+            let selected = daw.selected(ctx.clone());
+            if selected.is_empty() {
+                warn!(
+                    "No tracks selected in '{}' to {}",
+                    song_name,
+                    if armed { "arm" } else { "disarm" }
+                );
+                return;
             }
-        }
+            for track in selected {
+                if let Err(e) = daw.set_armed(ctx.clone(), track.as_ref(), armed) {
+                    warn!("Failed to set arm on track '{}': {}", track.name, e);
+                }
+            }
+        })
+        .await;
         Ok(())
     }
 }
