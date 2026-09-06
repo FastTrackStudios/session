@@ -34,6 +34,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // this mainly matters for eyeballing REAPER's state mid-test.
     let gui = args.iter().any(|a| a == "--gui");
     let keep_open = args.iter().any(|a| a == "--keep-open");
+    // `--virtual`: a private Xvfb + window manager, with a background
+    // dismisser loop closing known stray dialogs throughout the run (see
+    // `TestRunner::run_reaper_tests`). Needed for any test that opens a
+    // real, pre-existing project — REAPER's "Project Load Warning" (a
+    // format mismatch between the project's REAPER version and this
+    // flake's) pops a native modal that has no headless-safe suppression
+    // and otherwise blocks the main thread forever, starving every RPC.
+    let virtual_display = args.iter().any(|a| a == "--virtual");
 
     // xtask lives at features/reaper/session-extension/xtask — repo root
     // is four path components up.
@@ -62,6 +70,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if gui {
         runner = runner.with_headless(false);
         println!("  Mode:      GUI (visible REAPER window)");
+    } else if virtual_display {
+        runner = runner.with_virtual_display()?;
+        println!("  Mode:      virtual display (private Xvfb, auto-dismisses stray dialogs)");
     }
     if keep_open {
         runner.keep_open = true;
@@ -87,6 +98,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             test_threads: 1,
             default_skips: vec![],
             test_binary: Some("reaper_setlist_recording_mode".into()),
+        },
+        // Opens all 10 of the real Rockstars album's organized `.RPP`
+        // projects and proves a real multi-song setlist builds from them —
+        // exactly what Recording Mode's `load_playlist` does with a real
+        // album, not a synthetic single-project fixture.
+        TestPackage {
+            package: "session".into(),
+            features: vec![],
+            test_threads: 1,
+            default_skips: vec![],
+            test_binary: Some("reaper_rockstars_album".into()),
         },
     ];
 
