@@ -317,7 +317,14 @@ pub const BUS_TREE: &[BusSpec] = &[
 ///
 /// assert_eq!(bus_for_path(&["Drums".into()]), Some(names::DRUM));
 /// assert_eq!(bus_for_path(&["Vocals".into(), "BGVs".into()]), Some(names::BGV));
-/// assert_eq!(bus_for_path(&["Guitars".into(), "Electric".into()]), None);
+///
+/// // Electric has a bus of its own, so the longer source wins.
+/// assert_eq!(bus_for_path(&["Guitars".into(), "Electric".into()]), Some(names::ELECTRIC));
+/// // Steel does not, so it falls back to the shorter ["Guitars"] source.
+/// assert_eq!(bus_for_path(&["Guitars".into(), "Steel".into()]), Some(names::GUITAR));
+///
+/// // A VCA carries no audio, so it deliberately attaches nowhere.
+/// assert_eq!(bus_for_path(&["VCA".into()]), None);
 /// ```
 #[must_use]
 pub fn bus_for_path(path: &[String]) -> Option<&'static str> {

@@ -357,10 +357,10 @@ chord-tool-daw = { path = "features/chord-tool/chord-tool-daw" }
 # dynamic-template runs on. These lived here as subtree copies until the
 # repo split; the in-tree copies were byte-identical to the extracted
 # repo and have been deleted in favour of the tag.
-music-catalog = { git = "https://github.com/FastTrackStudios/music-convention", tag = "v0.1.1" }
-color-palette = { git = "https://github.com/FastTrackStudios/music-convention", tag = "v0.1.1" }
-monarchy = { git = "https://github.com/FastTrackStudios/music-convention", tag = "v0.1.1" }
-monarchy_derive = { git = "https://github.com/FastTrackStudios/music-convention", tag = "v0.1.1" }
+music-catalog = { git = "https://github.com/FastTrackStudios/music-convention", tag = "v0.1.2" }
+color-palette = { git = "https://github.com/FastTrackStudios/music-convention", tag = "v0.1.2" }
+monarchy = { git = "https://github.com/FastTrackStudios/music-convention", tag = "v0.1.2" }
+monarchy_derive = { git = "https://github.com/FastTrackStudios/music-convention", tag = "v0.1.2" }
 
 # ── MusicXML parsing (keyflow) ─────────────────────────────────────────
 musicxml = "1.1"
