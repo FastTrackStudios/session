@@ -121,6 +121,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             default_skips: vec![],
             test_binary: Some("reaper_rockstars_album".into()),
         },
+        // Proves session-desktop --engine's LAN control surface — a real
+        // axum WebSocket, the same architect::axum_ws::serve_router path —
+        // actually works against a live REAPER, not just Live Mode's
+        // in-process player or the unix socket other tests use.
+        TestPackage {
+            package: "session".into(),
+            features: vec![],
+            test_threads: 1,
+            default_skips: vec![],
+            test_binary: Some("reaper_lan_engine".into()),
+        },
     ];
 
     runner.install_extension_package(

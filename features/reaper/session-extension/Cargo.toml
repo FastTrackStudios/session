@@ -17,6 +17,15 @@ daw-reaper.workspace = true
 daw-extension-runtime.workspace = true
 session = { workspace = true, features = ["reaper"] }
 eyre.workspace = true
+# LAN test server: serves the same router this extension already mounts
+# (session::daw_services::layer_services_with_daw(daw_reaper::Reaper)) over
+# a real axum WebSocket, so a `daw::test` can prove the exact
+# architect::axum_ws::serve_router path `session-desktop --engine` uses
+# actually works against a real REAPER, not just Live Mode's in-process
+# player. Test-only surface — never touches fts-extensions.
+architect = { workspace = true, features = ["server-axum"] }
+axum = { workspace = true, features = ["ws"] }
+tokio = { workspace = true, features = ["net"] }
 fragile = "2"
 crossbeam-channel = "0.5"
 reaper-low.workspace = true

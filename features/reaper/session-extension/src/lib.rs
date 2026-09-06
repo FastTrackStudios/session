@@ -63,6 +63,15 @@ impl TestExtension {
                     session::daw_services::layer_services_with_daw(handler, daw_reaper::Reaper);
                 let handler = session::daw_services::layer_control_surfaces(handler);
                 daw_reaper::socket_publisher::publish_extension_socket(handler.clone());
+                // LAN test server: the exact `architect::axum_ws::serve_router`
+                // path `session-desktop --engine` uses, serving this SAME
+                // router — proves the real WebSocket path works against real
+                // REAPER, not just the unix socket `daw::test` normally uses.
+                // Port 0 (OS-assigned) so parallel test runs never collide;
+                // the actual port is published via ExtState for the test to
+                // discover, the same way the health beacon below announces
+                // pid/status.
+                spawn_lan_test_server(&runtime, handler.clone());
                 daw_reaper::build_extension_daw_with(handler).await
             })
             .map_err(|e| eyre::eyre!("{e}"))?;
@@ -142,6 +151,50 @@ impl TestExtension {
             }
         }
     }
+}
+
+/// Bind a real axum `/vox` WebSocket server on `127.0.0.1:0` (OS-assigned
+/// port, so parallel test runs never collide) serving `handler` — the
+/// exact `architect::axum_ws::serve_router` path `session-desktop --engine`
+/// uses for its LAN control surface. Publishes the bound port to ExtState
+/// (`FTS_SESSION_EXT`/`lan_port`) so a `daw::test` can discover it and
+/// connect a real `vox_websocket::WsLink` client, proving the WebSocket
+/// path itself works against real REAPER — not just that the router works
+/// over the unix socket `daw::test` normally uses.
+fn spawn_lan_test_server(runtime: &ExtensionRuntime, handler: daw::LayerRouter) {
+    runtime.spawn(async move {
+        let listener = match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
+            Ok(l) => l,
+            Err(e) => {
+                warn!("session test extension: LAN test server bind failed: {e}");
+                return;
+            }
+        };
+        let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+        let _ = ExtState::set(
+            &daw_reaper::Reaper,
+            "FTS_SESSION_EXT",
+            "lan_port",
+            &port.to_string(),
+            false,
+        );
+        info!(port, "session test extension: LAN test server listening");
+
+        let app = axum::Router::new().route(
+            "/vox",
+            axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
+                let handler = handler.clone();
+                async move {
+                    ws.on_upgrade(move |socket| async move {
+                        architect::axum_ws::serve_router(socket, handler).await;
+                    })
+                }
+            }),
+        );
+        if let Err(e) = axum::serve(listener, app).await {
+            warn!("session test extension: LAN test server error: {e}");
+        }
+    });
 }
 
 extern "C" fn timer_callback() {

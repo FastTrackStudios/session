@@ -110,6 +110,11 @@ eyre.workspace = true
 # itself is already a normal (non-dev) dependency above; `vox-stream` is
 # the Unix-socket transport, only needed here.
 vox-stream = { workspace = true }
+# `reaper_lan_engine.rs`: connects a real `tokio-tungstenite`-backed vox
+# WebSocket client to session-extension's LAN test server — the exact
+# `architect::axum_ws`/vox-WebSocket path `session-desktop --engine` uses,
+# proven against real REAPER instead of just the unix socket.
+vox-websocket = { workspace = true }
 # `compare_sections` example reads the legacy `manifest.json`.
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
