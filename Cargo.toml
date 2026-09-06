@@ -735,7 +735,7 @@ phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.1.0" }
 # nightly is present (the pinned nix toolchain), so it compiled the `become`
 # (explicit tail calls) stencils on stable rustc 1.94 → E0658, breaking the
 # macOS-aarch64 build. Drop the vendor once phon-jit builds on stable.
-phon-jit = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.2.2" }
+phon-jit = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.2.3" }
 # mermaid-rs-renderer's patch died 2026-09: task moved it out again, into
 # its own `editor` repo (consumed there as `editor-mermaid`, tag v0.0.3) —
 # it now arrives as an ordinary transitive dep of `editor`/`editor-keyflow`,

@@ -9221,7 +9221,7 @@ dependencies = [
 [[package]]
 name = "phon-jit"
 version = "0.2.0-rc.7"
-source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.2.2#c38f6cd44434b97851a98e6eab88bad94344d667"
+source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.2.3#d7ef478dd397f68f752a7ed9260da9fea3c3adbc"
 dependencies = [
  "copypatch",
  "phon-ir",
