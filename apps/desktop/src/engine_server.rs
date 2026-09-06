@@ -4,13 +4,13 @@
 //! `SetlistServiceClient` wire surface the desktop UI and
 //! `session_remote_view.rs`'s wasm browser remote both already use.
 //!
-//! Live Mode only for now: `session_engine::router()` serves the
-//! in-process `daw-standalone` setlist directly. Recording Mode has no
-//! local `SetlistServiceImpl` to serve — it's a *client* of a REAPER
-//! extension's own socket (`reaper_engine.rs`) — so driving REAPER over
-//! LAN needs a proxy that forwards each RPC through that existing
-//! connection instead of serving a router; that's follow-up work, not
-//! implemented here yet.
+//! Serves whichever engine is actually running: Live Mode's
+//! `session_engine::router()` (the in-process `daw-standalone` setlist
+//! directly), or Recording Mode's `reaper_lan_proxy` (which forwards each
+//! call through the existing connection `reaper_engine.rs` holds to a
+//! real REAPER — session-desktop only ever gets a *client* to that
+//! service, so there's no local router to re-mount; see that module's own
+//! doc for why it's a hand-written proxy instead).
 //!
 //! Binds `0.0.0.0`, not `127.0.0.1` — the whole point is reachability
 //! from other devices on the network, not just this machine.
@@ -29,11 +29,18 @@ struct EngineState;
 
 async fn vox_handler(ws: WebSocketUpgrade, State(_state): State<EngineState>) -> Response {
     ws.on_upgrade(move |socket| async move {
-        let Some(engine) = crate::session_engine::engine() else {
-            tracing::warn!("--engine: /vox connection before the session engine finished booting");
+        if let Some(engine) = crate::session_engine::engine() {
+            axum_ws::serve_router(socket, engine.router()).await;
             return;
-        };
-        axum_ws::serve_router(socket, engine.router()).await;
+        }
+        if let Some(proxy) = crate::reaper_lan_proxy::proxy() {
+            axum_ws::serve_router(socket, crate::reaper_lan_proxy::router(proxy)).await;
+            return;
+        }
+        tracing::warn!(
+            "--engine: /vox connection before either engine (Live Mode or Recording Mode) \
+             finished booting"
+        );
     })
     .into_response()
 }

@@ -82,6 +82,7 @@ session-domain = [
     # signal,session`, which doesn't go through this feature).
     "architect/server-axum",
     "dep:axum",
+    "dep:daw-proto",
 ]
 # Charts: keyflow chart writing (the Charts workspace). Keyflow is also pulled
 # by Session (chart parsing), so this is additive; a charts-only build gets it
@@ -156,6 +157,11 @@ dawfile-reaper = { workspace = true, optional = true }
 # Async runtime: session's in-process engine AND engine mode's server.
 tokio = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
+# Recording Mode's LAN proxy (reaper_lan_proxy.rs) needs PositionInSeconds
+# to compute MeasureInfo the same way SetlistServiceImpl's own `measures()`
+# does. The existing `daw-proto` entry below is dev-only (example-only, per
+# its own comment) — this is the real, non-dev one.
+daw-proto = { workspace = true, optional = true }
 # Recording Mode: dials the REAPER extension's Unix-domain-socket vox
 # link (see reaper_engine.rs) the same way `daw::cli::connect()` does.
 vox-stream = { workspace = true, optional = true }

@@ -33,6 +33,12 @@ mod session_engine;
 // playing the setlist in-process. See its module doc for the split.
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
 mod reaper_engine;
+// Recording Mode's LAN control surface: forwards SetlistService calls to
+// the real REAPER connection reaper_engine.rs already holds. See its
+// module doc for why this needs to be a hand-implemented proxy rather
+// than just re-mounting a router.
+#[cfg(all(feature = "session", not(target_arch = "wasm32")))]
+mod reaper_lan_proxy;
 // Whichever of the two engines above is actually running, reduced to
 // what the performance view needs from either.
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
@@ -123,11 +129,26 @@ fn main() {
     // it replaces the whole rest of `main` rather than adding to it.
     #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
     if std::env::args().any(|a| a == "--engine") {
-        match session_engine::bootstrap_blocking() {
-            Ok(()) => tracing::info!("--engine: live mode ready (in-process daw-standalone)"),
-            Err(e) => {
-                tracing::error!("--engine: session engine failed to start: {e:?}");
-                std::process::exit(1);
+        // Same mode switch the GUI path uses below — `--engine` just
+        // replaces the GUI with a LAN server on top of whichever engine
+        // that env var selects.
+        if std::env::var("FTS_SESSION_MODE").as_deref() == Ok("recording") {
+            match reaper_engine::bootstrap_blocking() {
+                Ok(()) => {
+                    tracing::info!("--engine: recording mode ready (connected to live REAPER)");
+                }
+                Err(e) => {
+                    tracing::error!("--engine: recording mode failed to connect to REAPER: {e:?}");
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            match session_engine::bootstrap_blocking() {
+                Ok(()) => tracing::info!("--engine: live mode ready (in-process daw-standalone)"),
+                Err(e) => {
+                    tracing::error!("--engine: session engine failed to start: {e:?}");
+                    std::process::exit(1);
+                }
             }
         }
         let port = std::env::args()

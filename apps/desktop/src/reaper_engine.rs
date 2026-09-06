@@ -217,6 +217,14 @@ async fn ensure_connected() -> eyre::Result<()> {
     session_ui::Session::init(engine.client.clone())
         .map_err(|e| eyre::eyre!("Session::init: {e:?}"))?;
 
+    // `--engine` mode's LAN control surface (engine_server.rs) serves
+    // Recording Mode through this proxy — installed here, not there, so
+    // it's ready the moment REAPER is regardless of whether the LAN
+    // server is even running in this process (the GUI app installs it
+    // too; it's cheap — two subscriber tasks — and unused if nothing ever
+    // dials /vox).
+    crate::reaper_lan_proxy::install(engine.client.clone(), engine.stream_client.clone());
+
     ENGINE
         .set(engine)
         .map_err(|_| eyre::eyre!("reaper engine initialized twice"))?;
