@@ -1,0 +1,492 @@
+//! Offline (no live REAPER needed) driver for the Keyflow marker/region
+//! pipeline, against an `.RPP` loaded from disk via `dawfile-reaper`.
+//!
+//! `convert_markers_to_session_format`, `normalize_section_regions`, and the
+//! rest of `keyflow::actions` are written against `daw::service::{Projects,
+//! Markers, Regions}` — stateless-singleton service traits with a live
+//! REAPER instance as the only backend today. [`OfflineDaw`] is a second
+//! backend for the same traits, holding one in-memory `ReaperProject`
+//! instead of talking to a running REAPER, so a whole album of `.RPP` files
+//! can be batch-organized without opening any of them.
+//!
+//! [`auto_organize_regions`] is the entry point: it runs the same
+//! convert → normalize → song-region → lane-normalize → hide-stray sequence
+//! `run_action` runs for `KeyflowAction::ConvertMarkersToSessionFormat` live,
+//! then hands the mutated project back.
+
+use std::cell::RefCell;
+
+use daw::service::{DawError, DawResult, Marker, Position, ProjectContext, ProjectInfo, Region};
+use daw::service::{Markers, Projects, Regions};
+use dawfile_reaper::types::marker_region::MarkerRegion;
+use dawfile_reaper::types::project::RulerLane;
+use dawfile_reaper::types::ReaperProject;
+use session_proto::ruler_lanes::CoreLane;
+
+use super::actions::{
+    convert_markers_to_session_format, ensure_core_lanes, hide_stray_lanes,
+    normalize_marker_lanes,
+};
+
+/// One in-memory `.RPP` project, playing the `daw::service` backend role
+/// that a live REAPER instance plays elsewhere.
+///
+/// Interior mutability because the service traits take `&self` (mirroring
+/// the stateless-singleton `Reaper` backend, which resolves everything
+/// through FFI calls instead of owned state).
+pub struct OfflineDaw {
+    project: RefCell<ReaperProject>,
+    /// Best-effort project name for the synthesized `ProjectInfo` and the
+    /// whole-song region's default name — usually the `.RPP` file stem.
+    name: String,
+}
+
+impl OfflineDaw {
+    #[must_use]
+    pub fn new(project: ReaperProject, name: impl Into<String>) -> Self {
+        Self {
+            project: RefCell::new(project),
+            name: name.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> ReaperProject {
+        self.project.into_inner()
+    }
+
+    /// The id one more than every existing marker/region id, so a fresh one
+    /// never collides — REAPER shares one id space between markers and
+    /// regions (a region is two `MARKER` lines with the same id).
+    fn next_id(&self) -> i32 {
+        self.project
+            .borrow()
+            .markers_regions
+            .all
+            .iter()
+            .map(|m| m.id)
+            .max()
+            .map_or(0, |max| max.saturating_add(1))
+    }
+
+    fn with_entry_mut<T>(
+        &self,
+        id: u32,
+        f: impl FnOnce(&mut MarkerRegion) -> T,
+    ) -> DawResult<T> {
+        let id = id.cast_signed();
+        let mut project = self.project.borrow_mut();
+        let entry = project
+            .markers_regions
+            .all
+            .iter_mut()
+            .find(|m| m.id == id)
+            .ok_or_else(|| DawError::not_found("marker/region", &id.to_string()))?;
+        let result = f(entry);
+        // `all` is the source of truth the serializer reads; `markers`/
+        // `regions` are just filtered views of it. Rebuild them so a
+        // rename/recolor/relane is visible through either one too.
+        let all = project.markers_regions.all.clone();
+        project.markers_regions.markers = all.iter().filter(|m| m.is_marker()).cloned().collect();
+        project.markers_regions.regions = all.into_iter().filter(MarkerRegion::is_region).collect();
+        Ok(result)
+    }
+
+    /// Set the flags on the ruler lane at `index` (1-based, REAPER's own
+    /// `RULERLANE` chunk numbering), creating it if it doesn't exist yet.
+    fn set_lane_flags(project: &mut ReaperProject, index: i32, flags: i32) {
+        match project.ruler_lanes.iter_mut().find(|l| l.index == index) {
+            Some(lane) => lane.flags = flags,
+            None => project.ruler_lanes.push(RulerLane {
+                index,
+                flags,
+                name: String::new(),
+                color: 0,
+                extra: -1,
+            }),
+        }
+    }
+
+    /// Set the name on the ruler lane at `index` (1-based), creating it if
+    /// it doesn't exist yet.
+    fn set_lane_name(project: &mut ReaperProject, index: i32, name: &str) {
+        match project.ruler_lanes.iter_mut().find(|l| l.index == index) {
+            Some(lane) => lane.name = name.to_string(),
+            None => project.ruler_lanes.push(RulerLane {
+                index,
+                flags: 0,
+                name: name.to_string(),
+                color: 0,
+                extra: -1,
+            }),
+        }
+    }
+}
+
+fn marker_region_to_marker(entry: &MarkerRegion) -> Marker {
+    Marker {
+        id: Some(entry.id.cast_unsigned()),
+        position: Position::from_time(daw::service::PositionInSeconds::from_seconds(
+            entry.position,
+        )),
+        name: entry.name.clone(),
+        color: Some(entry.color.cast_unsigned()),
+        guid: Some(entry.guid.clone()),
+        lane: entry.lane.map(i32::cast_unsigned),
+    }
+}
+
+fn marker_region_to_region(entry: &MarkerRegion) -> Option<Region> {
+    let end = entry.end_position?;
+    Some(Region {
+        id: Some(entry.id.cast_unsigned()),
+        time_range: daw::service::TimeRange::from_seconds(entry.position, end),
+        name: entry.name.clone(),
+        color: Some(entry.color.cast_unsigned()),
+        guid: Some(entry.guid.clone()),
+        lane: entry.lane.map(i32::cast_unsigned),
+    })
+}
+
+impl Markers for OfflineDaw {
+    fn all(&self, _project: ProjectContext) -> Vec<Marker> {
+        self.project
+            .borrow()
+            .markers_regions
+            .markers
+            .iter()
+            .map(marker_region_to_marker)
+            .collect()
+    }
+
+    fn get(&self, _project: ProjectContext, id: u32) -> Option<Marker> {
+        let id = id.cast_signed();
+        self.project
+            .borrow()
+            .markers_regions
+            .markers
+            .iter()
+            .find(|m| m.id == id)
+            .map(marker_region_to_marker)
+    }
+
+    fn count(&self, _project: ProjectContext) -> u32 {
+        u32::try_from(self.project.borrow().markers_regions.markers.len()).unwrap_or(u32::MAX)
+    }
+
+    fn add(&self, _project: ProjectContext, position: f64, name: &str) -> DawResult<u32> {
+        let id = self.next_id();
+        self.project.borrow_mut().markers_regions.add(MarkerRegion {
+            id,
+            position,
+            name: name.to_string(),
+            color: 0,
+            flags: 0,
+            locked: 0,
+            guid: String::new(),
+            additional: 0,
+            end_position: None,
+            lane: None,
+            beat_position: None,
+        });
+        Ok(id.cast_unsigned())
+    }
+
+    fn remove(&self, _project: ProjectContext, id: u32) -> DawResult<()> {
+        let id = id.cast_signed();
+        let mut project = self.project.borrow_mut();
+        project.markers_regions.all.retain(|m| m.id != id);
+        project.markers_regions.markers.retain(|m| m.id != id);
+        project.markers_regions.regions.retain(|m| m.id != id);
+        Ok(())
+    }
+
+    fn set_position(&self, _project: ProjectContext, id: u32, position: f64) -> DawResult<()> {
+        self.with_entry_mut(id, |m| m.position = position)
+    }
+
+    fn rename(&self, _project: ProjectContext, id: u32, name: &str) -> DawResult<()> {
+        self.with_entry_mut(id, |m| m.name = name.to_string())
+    }
+
+    fn set_color(&self, _project: ProjectContext, id: u32, color: u32) -> DawResult<()> {
+        self.with_entry_mut(id, |m| m.color = color.cast_signed())
+    }
+
+    fn set_lane(&self, _project: ProjectContext, id: u32, lane: Option<u32>) -> DawResult<()> {
+        self.with_entry_mut(id, |m| m.lane = lane.map(u32::cast_signed))
+    }
+}
+
+impl Regions for OfflineDaw {
+    fn all(&self, _project: ProjectContext) -> Vec<Region> {
+        self.project
+            .borrow()
+            .markers_regions
+            .regions
+            .iter()
+            .filter_map(marker_region_to_region)
+            .collect()
+    }
+
+    fn get(&self, _project: ProjectContext, id: u32) -> Option<Region> {
+        let id = id.cast_signed();
+        self.project
+            .borrow()
+            .markers_regions
+            .regions
+            .iter()
+            .find(|m| m.id == id)
+            .and_then(marker_region_to_region)
+    }
+
+    fn count(&self, _project: ProjectContext) -> u32 {
+        u32::try_from(self.project.borrow().markers_regions.regions.len()).unwrap_or(u32::MAX)
+    }
+
+    fn add(&self, _project: ProjectContext, start: f64, end: f64, name: &str) -> DawResult<u32> {
+        let id = self.next_id();
+        self.project.borrow_mut().markers_regions.add(MarkerRegion {
+            id,
+            position: start,
+            name: name.to_string(),
+            color: 0,
+            flags: 0,
+            locked: 0,
+            guid: String::new(),
+            additional: 0,
+            end_position: Some(end),
+            lane: None,
+            beat_position: None,
+        });
+        Ok(id.cast_unsigned())
+    }
+
+    fn remove(&self, project: ProjectContext, id: u32) -> DawResult<()> {
+        Markers::remove(self, project, id)
+    }
+
+    fn set_bounds(&self, _project: ProjectContext, id: u32, start: f64, end: f64) -> DawResult<()> {
+        self.with_entry_mut(id, |m| {
+            m.position = start;
+            m.end_position = Some(end);
+        })
+    }
+
+    fn rename(&self, project: ProjectContext, id: u32, name: &str) -> DawResult<()> {
+        Markers::rename(self, project, id, name)
+    }
+
+    fn set_color(&self, project: ProjectContext, id: u32, color: u32) -> DawResult<()> {
+        Markers::set_color(self, project, id, color)
+    }
+
+    fn set_lane(&self, project: ProjectContext, id: u32, lane: Option<u32>) -> DawResult<()> {
+        Markers::set_lane(self, project, id, lane)
+    }
+}
+
+impl Projects for OfflineDaw {
+    fn info(&self, _project: ProjectContext) -> DawResult<ProjectInfo> {
+        Ok(ProjectInfo {
+            guid: String::new(),
+            name: self.name.clone(),
+            path: String::new(),
+        })
+    }
+
+    fn current(&self) -> Option<ProjectInfo> {
+        self.info(ProjectContext::Current).ok()
+    }
+
+    fn get(&self, _project_id: &str) -> Option<ProjectInfo> {
+        self.current()
+    }
+
+    fn list(&self) -> Vec<ProjectInfo> {
+        self.current().into_iter().collect()
+    }
+
+    fn get_by_slot(&self, _slot: u32) -> Option<ProjectInfo> {
+        self.current()
+    }
+
+    fn select(&self, _project_id: &str) -> bool {
+        true
+    }
+
+    fn open(&self, _path: &str) -> Option<ProjectInfo> {
+        None
+    }
+
+    fn create(&self) -> Option<ProjectInfo> {
+        None
+    }
+
+    fn close(&self, _project_id: &str) -> bool {
+        false
+    }
+
+    fn begin_undo_block(&self, _project: ProjectContext, _label: &str) {}
+
+    fn end_undo_block(
+        &self,
+        _project: ProjectContext,
+        _label: &str,
+        _scope: Option<daw::service::UndoScope>,
+    ) {
+    }
+
+    fn undo(&self, _project: ProjectContext) -> bool {
+        false
+    }
+
+    fn redo(&self, _project: ProjectContext) -> bool {
+        false
+    }
+
+    fn last_undo_label(&self, _project: ProjectContext) -> Option<String> {
+        None
+    }
+
+    fn last_redo_label(&self, _project: ProjectContext) -> Option<String> {
+        None
+    }
+
+    fn run_command(&self, _project: ProjectContext, _command: &str) -> bool {
+        false
+    }
+
+    fn save(&self, _project: ProjectContext) {}
+
+    fn save_all(&self) {}
+
+    fn get_project_info_string(&self, _project: ProjectContext, _key: &str) -> String {
+        String::new()
+    }
+
+    fn set_project_info_string(&self, _project: ProjectContext, _key: &str, _value: &str) {}
+
+    fn get_project_info(&self, _project: ProjectContext, _key: &str) -> f64 {
+        0.0
+    }
+
+    /// The only variant this offline backend actually needs: `ensure_core_lanes`
+    /// sets each core lane's flags via `RULER_LANE_FLAGS:{name_key_index}`.
+    /// Everything else is a no-op — nothing in the offline pipeline reads
+    /// back an arbitrary project-info key.
+    fn set_project_info(&self, _project: ProjectContext, key: &str, value: f64) {
+        let Some(index) = key
+            .strip_prefix("RULER_LANE_FLAGS:")
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            return;
+        };
+        // REAPER flag bitfields (0/4/8 here) arrive as f64 through the
+        // generic project-info surface; `daw-reaper`'s own
+        // `set_project_info` round-trips the same way on the live side.
+        #[allow(clippy::as_conversions, clippy::cast_possible_truncation)]
+        let flags = value.round() as i32;
+        let rpp_index = i32::try_from(index).unwrap_or(0).saturating_add(1);
+        Self::set_lane_flags(&mut self.project.borrow_mut(), rpp_index, flags);
+    }
+
+    fn get_project_config(&self, _project: ProjectContext, _key: &str) -> Option<f64> {
+        None
+    }
+
+    fn set_project_config(&self, _project: ProjectContext, _key: &str, _value: f64) -> bool {
+        false
+    }
+
+    /// `name_key_index` is 0-based (matches `I_LANENUMBER`); the `RULERLANE`
+    /// chunk's own `index` field is 1-based (matches the legacy
+    /// `setlist_rpp::organize_ruler_lanes` convention) — offset by one.
+    fn set_ruler_lane_name(&self, _project: ProjectContext, lane_index: u32, name: &str) {
+        let rpp_index = i32::try_from(lane_index).unwrap_or(0).saturating_add(1);
+        Self::set_lane_name(&mut self.project.borrow_mut(), rpp_index, name);
+    }
+
+    fn get_ruler_lane_name(&self, _project: ProjectContext, lane_index: u32) -> String {
+        let rpp_index = i32::try_from(lane_index).unwrap_or(0).saturating_add(1);
+        self.project
+            .borrow()
+            .ruler_lanes
+            .iter()
+            .find(|l| l.index == rpp_index)
+            .map(|l| l.name.clone())
+            .unwrap_or_default()
+    }
+
+    fn ruler_lane_count(&self, _project: ProjectContext) -> u32 {
+        u32::try_from(self.project.borrow().ruler_lanes.len()).unwrap_or(u32::MAX)
+    }
+}
+
+/// Ensure a whole-song region exists on the `Song` lane, spanning every
+/// section region's bounds. A no-op if one is already there — mirrors
+/// [`convert_markers_to_session_format`]'s own SONG-region synthesis, which
+/// only fires from *marker*-derived bounds and so never runs for a project
+/// whose sections already arrived as regions (the common case for an
+/// existing `.RPP`, as opposed to one built up marker-by-marker live).
+fn ensure_song_region<D>(daw: &D, project_name: &str) -> eyre::Result<()>
+where
+    D: Regions,
+{
+    let project = ProjectContext::Current;
+    let song_lane = CoreLane::Song.lane_index();
+    let regions = Regions::all(daw, project.clone());
+    if regions.iter().any(|r| r.lane == Some(song_lane)) {
+        return Ok(());
+    }
+
+    let start = regions
+        .iter()
+        .map(Region::start_seconds)
+        .fold(f64::INFINITY, f64::min);
+    let end = regions
+        .iter()
+        .map(Region::end_seconds)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if !start.is_finite() || !end.is_finite() || end <= start {
+        return Ok(());
+    }
+
+    let id = Regions::add(daw, project.clone(), start, end, project_name)?;
+    Regions::set_lane(daw, project, id, Some(song_lane))?;
+    Ok(())
+}
+
+/// Convert an offline `.RPP`'s markers/regions into the FTS lane system.
+///
+/// Stray point markers become regions (rare — most albums already track
+/// sections as regions, not markers), every section region is recolored,
+/// renamed (disambiguating touching/repeated sections), and pinned to the
+/// `Sections` lane, a whole-song region is added to the `Song` lane if
+/// missing, and stray non-FTS lanes are cleaned up.
+///
+/// Mirrors `run_action`'s handling of
+/// `KeyflowAction::ConvertMarkersToSessionFormat` live in REAPER, with one
+/// addition (`ensure_song_region`) to cover regions that were already
+/// regions on disk rather than markers this call converts itself.
+///
+/// # Errors
+///
+/// Returns an error if the underlying offline backend fails to add, rename,
+/// recolor, or relane a marker/region — in practice this backend's own
+/// operations never fail, so an error here would indicate a bug in the
+/// shared `keyflow::actions` pipeline rather than a bad input file.
+pub fn auto_organize_regions(project: &mut ReaperProject, project_name: &str) -> eyre::Result<()> {
+    let daw = OfflineDaw::new(std::mem::take(project), project_name);
+
+    ensure_core_lanes(&daw);
+    convert_markers_to_session_format(&daw)?;
+    let regions = Regions::all(&daw, ProjectContext::Current);
+    super::actions::normalize_section_regions(&daw, regions)?;
+    ensure_song_region(&daw, project_name)?;
+    normalize_marker_lanes(&daw)?;
+    hide_stray_lanes(&daw);
+
+    *project = daw.into_inner();
+    Ok(())
+}

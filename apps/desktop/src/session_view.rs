@@ -9,7 +9,7 @@
 use dioxus::prelude::*;
 use session_ui::{PerformanceLayout, PerformanceSidebar, TransportPanel};
 
-use crate::session_engine;
+use crate::active_engine;
 
 /// Invisible app-level component: bridges the setlist service's
 /// `#[subscribe]` events hub straight into session-ui's global signals
@@ -19,8 +19,8 @@ use crate::session_engine;
 pub fn SessionEventBridge() -> Element {
     // ── Events stream: setlist structure + 60 Hz per-song transport ─────
     use_future(move || async move {
-        let Some(engine) = session_engine::engine() else {
-            tracing::warn!("session engine not running; setlist events unavailable");
+        let Some(engine) = active_engine::current() else {
+            tracing::warn!("no engine running; setlist events unavailable");
             return;
         };
 
@@ -63,7 +63,7 @@ pub fn SessionEventBridge() -> Element {
     // active-song schedule. Fed by the service's `active_indices`
     // `#[subscribe]` hub (architect PubSub), not the setlist-events stream.
     use_future(move || async move {
-        let Some(engine) = session_engine::engine() else {
+        let Some(engine) = active_engine::current() else {
             return;
         };
 
@@ -126,12 +126,20 @@ fn feed_guide(songs: &[session_proto::Song], scheduled: &mut Option<usize>, inde
 /// keeps fed.
 #[component]
 pub fn SessionWorkspace() -> Element {
-    if session_engine::engine().is_none() {
+    if active_engine::current().is_none() {
+        let recording = crate::reaper_engine::engine().is_none()
+            && std::env::var("FTS_SESSION_MODE").as_deref() == Ok("recording");
         return rsx! {
             div { style: "display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; width: 100%; text-align: center;",
-                span { style: "font-size: 20px; font-weight: 700;", "Session engine offline" }
+                span { style: "font-size: 20px; font-weight: 700;",
+                    if recording { "Not connected to REAPER" } else { "Session engine offline" }
+                }
                 span { style: "font-size: 13px; color: #a1a1aa; max-width: 480px;",
-                    "The in-process daw-standalone backend failed to start — check the logs."
+                    if recording {
+                        "Recording Mode couldn't find a running REAPER with the FTS extension loaded — check the logs."
+                    } else {
+                        "The in-process daw-standalone backend failed to start — check the logs."
+                    }
                 }
             }
         };

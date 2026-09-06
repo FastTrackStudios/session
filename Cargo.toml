@@ -23,6 +23,7 @@ members = [
     "features/dynamic-template/tests",
     "features/guide",
     "features/reaper/session-extension",
+    "features/reaper/session-extension/xtask",
     "features/song",
 ]
 

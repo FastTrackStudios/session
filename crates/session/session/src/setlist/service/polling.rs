@@ -324,10 +324,31 @@ where
             return Vec::new();
         }
 
+        // `Transport::get_state` on `daw_reaper::Reaper` hits REAPER's
+        // main-thread-only FFI (EnumProjects to resolve each song's
+        // project, current position, tempo/time-sig). Called directly from
+        // this async fn it panics on a tokio worker
+        // ("enum_projects must only be called from main thread"); bounce
+        // the whole per-song batch through `main_thread::query` at once —
+        // same pattern `calculate_active_indices`/
+        // `build_from_open_projects_impl` already use.
+        let daw = self.daw.clone();
+        let guids: Vec<String> = songs.iter().map(|s| s.project_guid.clone()).collect();
+        let states = daw_proto::main_thread::query(move || {
+            guids
+                .into_iter()
+                .map(|guid| daw.get_state(ProjectContext::Project(guid)))
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default();
+        if states.len() != songs.len() {
+            warn!("get_all_song_transports: main thread unavailable, skipping this poll");
+            return Vec::new();
+        }
+
         let mut transports = Vec::with_capacity(songs.len());
-        for (song_index, song) in songs.into_iter().enumerate() {
-            let ctx = ProjectContext::Project(song.project_guid.clone());
-            let state = self.daw.get_state(ctx);
+        for (song_index, (song, state)) in songs.into_iter().zip(states).enumerate() {
             let is_playing = state.play_state == daw::service::PlayState::Playing
                 || state.play_state == daw::service::PlayState::Recording;
             let position = if is_playing {

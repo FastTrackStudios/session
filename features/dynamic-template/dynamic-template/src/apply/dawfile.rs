@@ -17,7 +17,8 @@
 use color_palette::Color;
 use daw_proto::FolderDepthChange;
 use dawfile_reaper::types::track::{
-    FolderSettings, FolderState, MasterSendSettings, ReceiveSettings, Track,
+    BusCompactSettings, FolderSettings, FolderState, MasterSendSettings, MuteSoloSettings,
+    ReceiveSettings, Track, TrackSoloState,
 };
 use dawfile_reaper::types::ReaperProject;
 
@@ -83,6 +84,102 @@ impl<'a> RppTarget<'a> {
             })
             .collect()
     }
+
+    /// Nest a "DI" capture under its sibling primary track, for any group
+    /// that opts in via [`monarchy::Group::nest_secondary_mics`] — electric
+    /// guitar turns this on for its DI feed.
+    ///
+    /// Only reshapes the exact adjacency the house convention already
+    /// tracks in: a "DI" track immediately following, at the same folder
+    /// depth, a non-DI sibling. No track changes position, so no `AUXRECV`
+    /// index needs rewriting — only folder nesting, mute, and collapse
+    /// flags change.
+    ///
+    /// Idempotent: once nested, "DI" sits inside its sibling rather than
+    /// beside it, so a second pass no longer sees them as siblings.
+    pub fn nest_secondary_mics(&mut self) {
+        let config = crate::default_config();
+        let entries = super::contextual_paths(self);
+
+        for pair in entries.windows(2) {
+            let [main, di] = pair else { continue };
+            if main.context != di.context {
+                continue; // not siblings
+            }
+            let is_di = |name: &str| name.trim().eq_ignore_ascii_case("di");
+            if !is_di(&di.name) || is_di(&main.name) {
+                continue;
+            }
+            let Some(leaf) = di.path.last() else {
+                continue;
+            };
+            if !find_group(&config, leaf).is_some_and(|g| g.nest_secondary_mics) {
+                continue;
+            }
+
+            let main_is_plain = self.project.tracks.get(main.track).is_some_and(|t| {
+                t.folder
+                    .as_ref()
+                    .is_none_or(|f| f.folder_state == FolderState::Regular && f.indentation == 0)
+            });
+            let di_indentation = self
+                .project
+                .tracks
+                .get(di.track)
+                .and_then(|t| t.folder.as_ref())
+                .map_or(0, |f| f.indentation);
+            if !main_is_plain || di_indentation > 0 {
+                // Not the plain "two siblings" shape this expects — leave
+                // whatever unusual structure is already there alone.
+                continue;
+            }
+
+            if let Some(t) = self.project.tracks.get_mut(main.track) {
+                t.folder = Some(FolderSettings {
+                    folder_state: FolderState::FolderParent,
+                    indentation: 1,
+                });
+                t.bus_compact = Some(BusCompactSettings {
+                    arrange_collapse: 2,
+                    mixer_collapse: 2,
+                    wiring_collapse: 0,
+                    wiring_x: 0,
+                    wiring_y: 0,
+                });
+            }
+            if let Some(t) = self.project.tracks.get_mut(di.track) {
+                t.folder = Some(FolderSettings {
+                    folder_state: FolderState::LastInFolder,
+                    // One more level to close than before: the DI folder we
+                    // just opened on `main`, on top of whatever it already closed.
+                    indentation: di_indentation.saturating_sub(1),
+                });
+                t.mutesolo = Some(MuteSoloSettings {
+                    mute: true,
+                    solo: TrackSoloState::NoSolo,
+                    solo_defeat: false,
+                });
+            }
+        }
+    }
+}
+
+/// Find a group by name anywhere in the config's tree (recursing into
+/// nested groups).
+fn find_group<'a>(
+    config: &'a crate::DynamicTemplateConfig,
+    name: &str,
+) -> Option<&'a monarchy::Group<crate::ItemMetadata>> {
+    fn search<'a>(
+        group: &'a monarchy::Group<crate::ItemMetadata>,
+        name: &str,
+    ) -> Option<&'a monarchy::Group<crate::ItemMetadata>> {
+        if group.name == name {
+            return Some(group);
+        }
+        group.groups.iter().find_map(|g| search(g, name))
+    }
+    config.groups.iter().find_map(|g| search(g, name))
 }
 
 /// This backend edits an in-memory project; nothing here can fail, so the
@@ -1094,6 +1191,90 @@ mod tests {
         let mut target = RppTarget::new(&mut project);
         assert!(gather_unsorted(&mut target, &[]).unwrap().is_none());
         assert_eq!(project.tracks.len(), 1, "no empty UNSORTED folder");
+    }
+
+    /// The exact real-world shape: a channel folder containing a plain
+    /// "Main" capture immediately followed by "DI". Electric guitar opts
+    /// into nesting, so DI ends up muted, folder-collapsed, inside Main.
+    #[test]
+    fn di_nests_under_its_sibling_main_for_an_opted_in_group() {
+        let mut project = with_depths(&[
+            ("Electric GTR", 1),
+            ("Clean", 1),
+            ("L", 1),
+            ("Main", 0),
+            ("DI", -3),
+        ]);
+        let mut target = RppTarget::new(&mut project);
+        target.nest_secondary_mics();
+
+        // Main is now the folder parent...
+        let main = project.tracks.iter().find(|t| t.name == "Main").unwrap();
+        assert_eq!(
+            main.folder.as_ref().unwrap().folder_state,
+            FolderState::FolderParent
+        );
+        assert_eq!(main.bus_compact.as_ref().unwrap().arrange_collapse, 2);
+
+        // ...DI is its only child, muted, closing one more level than before.
+        let di = project.tracks.iter().find(|t| t.name == "DI").unwrap();
+        assert_eq!(
+            di.folder.as_ref().unwrap().folder_state,
+            FolderState::LastInFolder
+        );
+        assert_eq!(di.folder.as_ref().unwrap().indentation, -4);
+        assert!(di.mutesolo.as_ref().unwrap().mute);
+
+        // The project stays balanced.
+        let total: i32 = project
+            .tracks
+            .iter()
+            .map(|t| t.folder.as_ref().map_or(0, |f| f.indentation))
+            .sum();
+        assert_eq!(total, 0);
+    }
+
+    /// A second pass must not double-nest — DI is no longer Main's sibling
+    /// once it is Main's child.
+    #[test]
+    fn nesting_di_is_idempotent() {
+        let mut project = with_depths(&[
+            ("Electric GTR", 1),
+            ("Clean", 1),
+            ("L", 1),
+            ("Main", 0),
+            ("DI", -3),
+        ]);
+        let mut target = RppTarget::new(&mut project);
+        target.nest_secondary_mics();
+        let after_first: Vec<_> = project
+            .tracks
+            .iter()
+            .map(|t| (t.folder.clone(), t.mutesolo.clone()))
+            .collect();
+
+        let mut target = RppTarget::new(&mut project);
+        target.nest_secondary_mics();
+        let after_second: Vec<_> = project
+            .tracks
+            .iter()
+            .map(|t| (t.folder.clone(), t.mutesolo.clone()))
+            .collect();
+
+        assert_eq!(after_first, after_second);
+    }
+
+    /// Bass DI is not opted in — the classic pair sits exactly as before.
+    #[test]
+    fn a_group_that_does_not_opt_in_is_left_alone() {
+        let mut project = with_depths(&[("Bass", 1), ("Main", 0), ("DI", -1)]);
+        let mut target = RppTarget::new(&mut project);
+        target.nest_secondary_mics();
+
+        let main = project.tracks.iter().find(|t| t.name == "Main").unwrap();
+        assert!(main.folder.as_ref().is_none_or(|f| f.indentation == 0));
+        let di = project.tracks.iter().find(|t| t.name == "DI").unwrap();
+        assert!(di.mutesolo.is_none());
     }
 
     #[test]

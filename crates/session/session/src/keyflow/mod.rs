@@ -4,5 +4,6 @@
 //! Contracts live in `session_proto::{keyflow_actions, keyflow_scaffold}`.
 
 pub mod actions;
+pub mod offline;
 pub mod scaffold;
 pub mod time_signature;

@@ -65,6 +65,9 @@ session-domain = [
     "dep:vox",
     "dep:vox-core",
     "dep:vox-websocket",
+    "dep:vox-stream",
+    "dep:thiserror",
+    "dep:libc",
     "dep:tokio",
     "dep:eyre",
 ]
@@ -140,6 +143,13 @@ daw-ui = { workspace = true, features = ["web"], optional = true }
 dawfile-reaper = { workspace = true, optional = true }
 # Async runtime: session's in-process engine AND engine mode's server.
 tokio = { workspace = true, optional = true }
+# Recording Mode: dials the REAPER extension's Unix-domain-socket vox
+# link (see reaper_engine.rs) the same way `daw::cli::connect()` does.
+vox-stream = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+# `kill(pid, 0)` liveness probe for socket discovery — Unix-only, which
+# Recording Mode already is (no REAPER extension on wasm/iOS).
+libc = { workspace = true, optional = true }
 
 # ── Session domain, in-process player (feature `session`, native only) ──
 # The session facade + the daw-standalone backend that PLAYS the setlist,
@@ -160,7 +170,11 @@ keyflow-sync = { workspace = true, optional = true }
 # standalone backend that plays the setlist without REAPER. "audio" is
 # required by daw-standalone's unconditional `sync` module (same
 # workaround session's dev-deps carry) and drives real cpal output.
-daw = { workspace = true, optional = true }
+# "cli": Recording Mode's REAPER launcher + socket discovery/connect
+# (daw::cli::{launch_and_connect, discover_socket, spawn_reaper}) — the
+# same code the `daw` CLI itself uses against a live REAPER, reused here
+# instead of reimplementing "find or launch REAPER" from scratch.
+daw = { workspace = true, optional = true, features = ["cli"] }
 # Backend-agnostic transport/track RPC client (play/pause, record toggle,
 # position) — used by the Arrangement workspace's mode-specific toolbar
 # actions (e.g. Record mode's record-toggle button) without depending on

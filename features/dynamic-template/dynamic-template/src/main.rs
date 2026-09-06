@@ -577,6 +577,8 @@ fn apply_buses_to_rpp(input: &str, output: &str) -> Result<(), Box<dyn std::erro
     let routing = apply_routing(&mut target, &applied)?;
     print_routing_report(&routing);
 
+    target.nest_secondary_mics();
+
     // Park whatever classified to nothing where it can be looked at, rather
     // than guessing a bus for it. Last, because gathering renumbers tracks.
     // Gather from the *routing* report, not the earlier per-track pass. Only

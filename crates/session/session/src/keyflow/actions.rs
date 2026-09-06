@@ -102,7 +102,7 @@ where
     daw.set_ruler_lane_name(ProjectContext::Current, key_idx, lane.display_name());
 }
 
-fn ensure_core_lanes<D>(daw: &D)
+pub(crate) fn ensure_core_lanes<D>(daw: &D)
 where
     D: Projects,
 {
@@ -133,7 +133,7 @@ where
 /// markers/regions on them. REAPER's fresh-project "1" fallback lane can
 /// linger after FTS lanes are registered; this clears it without touching
 /// lanes the user has actually populated.
-fn hide_stray_lanes<D>(daw: &D)
+pub(crate) fn hide_stray_lanes<D>(daw: &D)
 where
     D: Projects + Markers + Regions,
 {
@@ -183,7 +183,7 @@ where
     }
 }
 
-fn convert_markers_to_session_format<D>(daw: &D) -> eyre::Result<()>
+pub(crate) fn convert_markers_to_session_format<D>(daw: &D) -> eyre::Result<()>
 where
     D: Projects + Markers + Regions,
 {
@@ -614,7 +614,7 @@ where
     Ok(())
 }
 
-fn normalize_marker_lanes<D>(daw: &D) -> eyre::Result<()>
+pub(crate) fn normalize_marker_lanes<D>(daw: &D) -> eyre::Result<()>
 where
     D: Markers,
 {
@@ -808,7 +808,7 @@ fn alpha_suffix(index: usize) -> String {
     chars.iter().rev().collect()
 }
 
-fn parse_region_section_type(name: &str) -> Option<SectionType> {
+pub(crate) fn parse_region_section_type(name: &str) -> Option<SectionType> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return None;

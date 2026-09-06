@@ -70,16 +70,27 @@ where
         !song.sections.is_empty() || song.end_seconds > song.start_seconds
     }
 
-    pub(crate) async fn ensure_song_hydrated(&self, index: usize) -> Option<Song> {
+    pub(crate) async fn ensure_song_hydrated(&self, index: usize) -> Option<Song>
+    where
+        D: Clone + 'static,
+    {
         let current = self.get_song_internal(index).await?;
         if Self::song_is_hydrated(&current) {
             return Some(current);
         }
 
-        let project_name = self
-            .daw
-            .get(&current.project_guid)
-            .map_or_else(|| current.project_guid.clone(), |info| info.name);
+        // `Projects::get` on `daw_reaper::Reaper` hits REAPER's main-
+        // thread-only FFI (`file()` -> `EnumProjects` with a buffer, to
+        // read the project's filename) — bounce it, same as every other
+        // `self.daw.*` call reachable from an RPC handler.
+        let daw = self.daw.clone();
+        let project_guid = current.project_guid.clone();
+        let project_name = daw_proto::main_thread::query(move || {
+            daw.get(&project_guid).map(|info| info.name)
+        })
+        .await
+        .flatten()
+        .unwrap_or_else(|| current.project_guid.clone());
         let load = ProjectLoad {
             index,
             guid: current.project_guid.clone(),
@@ -460,7 +471,10 @@ where
         }
     }
 
-    pub(crate) async fn refresh_active_song_chart_if_changed(&self) -> bool {
+    pub(crate) async fn refresh_active_song_chart_if_changed(&self) -> bool
+    where
+        D: Clone + 'static,
+    {
         // Avoid expensive chart fingerprint/chart generation probes while playing.
         // These probes can take tens of milliseconds and compete with transport streaming.
         if self.get_cached_indices().await.is_playing {
@@ -499,7 +513,17 @@ where
             return false;
         }
 
-        if self.daw.get(&song_snapshot.project_guid).is_none() {
+        // `Projects::get` on `daw_reaper::Reaper` hits REAPER's main-thread-
+        // only FFI (EnumProjects to resolve the guid) — bounce it, same as
+        // every other `self.daw.*` call reachable from this background
+        // chart-refresh poll.
+        let daw = self.daw.clone();
+        let project_guid = song_snapshot.project_guid.clone();
+        let project_exists =
+            daw_proto::main_thread::query(move || -> bool { daw.get(&project_guid).is_some() })
+                .await
+                .unwrap_or(false);
+        if !project_exists {
             return false;
         }
         let source_fingerprint = if fingerprint_supported {

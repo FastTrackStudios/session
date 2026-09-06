@@ -32,7 +32,44 @@ struct TestExtension {
 impl TestExtension {
     fn new(context: PluginContext) -> eyre::Result<Self> {
         let runtime = ExtensionRuntime::new(context)?;
-        let _daw = runtime.build_daw()?;
+
+        // `runtime.build_daw()` mounts only the generic daw services
+        // (`create_daw_handler()`, unmodified). Session's own RPC surface —
+        // `SetlistServiceImpl<daw_reaper::Reaper>` plus the mode / take-ranking
+        // / record-control surfaces — is layered on top here exactly like
+        // `fts-extensions`' `initialize_daw` does, so this test extension can
+        // stand in for it without pulling in any of fts-extensions' other
+        // (tempo/mirror/expression-editor/...) modules. Published on the same
+        // `/tmp/fts-daw-{pid}.sock` `daw::test` already waits on, so a
+        // `#[reaper_test]`'s `ctx.daw` reaches these services, and a raw
+        // `SetlistServiceClient`/`SetlistServiceStreamClient` (opened the same
+        // way `session-desktop`'s Recording Mode does) reaches them too.
+        // `layer_control_surfaces` spawns a pump task (`tokio::spawn`) while
+        // building `SessionModeServiceImpl` — it needs a tokio runtime
+        // *entered*, which plugin_main's bare OS thread doesn't have. Build
+        // the whole router (and hand it to `build_extension_daw_with`)
+        // inside one `block_on`, exactly like `fts-extensions`'
+        // `initialize_daw` does — constructing it out here first panicked
+        // with "there is no reactor running".
+        info!(
+            main_thread_executor_installed = daw::main_thread::is_installed(),
+            "session test extension: after ExtensionRuntime::new"
+        );
+        let _daw = runtime
+            .handle()
+            .block_on(async {
+                let handler = daw_reaper::create_daw_handler();
+                let handler =
+                    session::daw_services::layer_services_with_daw(handler, daw_reaper::Reaper);
+                let handler = session::daw_services::layer_control_surfaces(handler);
+                daw_reaper::socket_publisher::publish_extension_socket(handler.clone());
+                daw_reaper::build_extension_daw_with(handler).await
+            })
+            .map_err(|e| eyre::eyre!("{e}"))?;
+        info!(
+            main_thread_executor_installed = daw::main_thread::is_installed(),
+            "session test extension: after build_extension_daw_with"
+        );
 
         let modules = vec![session::daw_module::module_with_daw(daw_reaper::Reaper)];
         let module_ctx = runtime.module_context();

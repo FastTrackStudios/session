@@ -160,7 +160,10 @@ impl SessionServices {
     /// chain (so the REAPER `build_setlist` hotkey and `fts session setlist`
     /// see the same in-memory state — it's `Clone` over `Arc`'d fields, so
     /// cloning gives a handle to the same setlist / `song_cache` / etc).
-    fn mounted_service_triple<D>(daw: D) -> (daw::Mounted, daw::Mounted, daw::Mounted)
+    #[allow(clippy::type_complexity)]
+    fn mounted_service_triple<D>(
+        daw: D,
+    ) -> (daw::Mounted, daw::Mounted, daw::Mounted, daw::Mounted)
     where
         D: Clone
             + daw::service::AudioEngine
@@ -176,13 +179,29 @@ impl SessionServices {
         use keyflow_daw_analysis::{
             KeyflowMidiAnalysis, MidiChartsDispatcher, midi_charts_service_descriptor,
         };
+        // The stream sibling (`events` / `active_indices` `#[subscribe]`
+        // hubs) was never mounted here — every consumer of
+        // `layer_services_with_daw` (fts-extensions included) got the
+        // plain setlist RPC but NOT its live-update streams, so a remote
+        // client's `SetlistServiceStreamClient::active_indices`/`events`
+        // subscribe calls silently found no such service. Live Mode's
+        // own `SessionEngine::router()` mounts this sibling by hand for
+        // exactly this reason; doing it here means every consumer gets
+        // it for free instead of needing to remember to.
+        use services::setlist_service::{
+            setlist_service_stream_service_descriptor, stream_serve as setlist_service_stream_serve,
+        };
 
         let setlist_impl = SetlistServiceImpl::with_daw(daw);
         setlist::actions::register(&setlist_impl);
         (
             daw::Mounted::new(
                 setlist_service_service_descriptor(),
-                serve_setlist_service(setlist_impl),
+                serve_setlist_service(setlist_impl.clone()),
+            ),
+            daw::Mounted::new(
+                setlist_service_stream_service_descriptor(),
+                setlist_service_stream_serve(setlist_impl),
             ),
             daw::Mounted::new(
                 song_service_service_descriptor(),
@@ -208,8 +227,8 @@ impl SessionServices {
             + Sync
             + 'static,
     {
-        let (setlist, song, midi) = Self::mounted_service_triple(daw);
-        vec![setlist, song, midi]
+        let (setlist, setlist_stream, song, midi) = Self::mounted_service_triple(daw);
+        vec![setlist, setlist_stream, song, midi]
     }
 
     /// Builds a composite layer from session services with the given DAW backend.
@@ -226,8 +245,8 @@ impl SessionServices {
             + Sync
             + 'static,
     {
-        let (setlist, song, midi) = Self::mounted_service_triple(daw);
-        daw::layers![setlist, song, midi]
+        let (setlist, setlist_stream, song, midi) = Self::mounted_service_triple(daw);
+        daw::layers![setlist, setlist_stream, song, midi]
     }
 
     pub fn merge_into_with_daw<D>(mut handler: daw::LayerRouter, daw: D) -> daw::LayerRouter

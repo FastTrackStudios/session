@@ -145,6 +145,9 @@ impl From<ElectricGuitar> for ItemMetadataGroup {
                 ItemMetadataField::MultiMic,
                 FieldGroupingStrategy::MainOnContainer,
             )
+            // The DI feed nests under its sibling amp track (muted,
+            // folder-collapsed) instead of sitting beside it as an equal.
+            .nest_secondary_mics(true)
             .build()
     }
 }

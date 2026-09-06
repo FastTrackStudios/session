@@ -102,6 +102,14 @@ daw-synchronization = { workspace = true }
 tokio = { workspace = true }
 tracing-subscriber = { workspace = true }
 eyre.workspace = true
+# `reaper_setlist_recording_mode.rs`: opens the SetlistService lanes
+# directly over the `#[reaper_test]` rig's Unix-socket vox link — the
+# same lanes `session-desktop`'s Recording Mode
+# (`apps/desktop/src/reaper_engine.rs`) opens, so this proves that
+# connection actually works against a live `daw_reaper::Reaper`. `vox`
+# itself is already a normal (non-dev) dependency above; `vox-stream` is
+# the Unix-socket transport, only needed here.
+vox-stream = { workspace = true }
 # `compare_sections` example reads the legacy `manifest.json`.
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

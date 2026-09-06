@@ -29,6 +29,14 @@ mod lyric_sync_view;
 mod mixer_view;
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
 mod session_engine;
+// Recording Mode: dials a real, running REAPER's DAW socket instead of
+// playing the setlist in-process. See its module doc for the split.
+#[cfg(all(feature = "session", not(target_arch = "wasm32")))]
+mod reaper_engine;
+// Whichever of the two engines above is actually running, reduced to
+// what the performance view needs from either.
+#[cfg(all(feature = "session", not(target_arch = "wasm32")))]
+mod active_engine;
 #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
 mod session_view;
 // Home page data layer: the on-disk track libraries + their setlist notes.
@@ -105,13 +113,30 @@ fn main() {
         log_ring::install_panic_hook();
     }
 
-    // Session: bring up the in-process engine (standalone daw + setlist
-    // service + demo setlist) before the UI. Failure is non-fatal — the
-    // Session workspace shows an offline notice.
+    // Session: bring up the engine before the UI. Failure is non-fatal —
+    // the Session workspace shows an offline notice.
+    //
+    // Live Mode (default): the in-process daw-standalone player. Recording
+    // Mode: dial a real, already-running REAPER instead — set
+    // `FTS_SESSION_MODE=recording` (a settings toggle is the next step;
+    // this is the fastest correct switch for now). Recording Mode needs
+    // REAPER already up with the FTS extension loaded (`just reaper
+    // install` in fts-extensions, then start REAPER) — there is
+    // deliberately no fallback to Live Mode on failure, so a
+    // misconfigured Recording Mode fails loudly instead of silently
+    // playing the setlist itself while someone thinks they're driving
+    // REAPER.
     #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
-    match session_engine::bootstrap_blocking() {
-        Ok(()) => tracing::info!("session engine ready (in-process daw-standalone)"),
-        Err(e) => tracing::error!("session engine failed to start: {e:?}"),
+    if std::env::var("FTS_SESSION_MODE").as_deref() == Ok("recording") {
+        match reaper_engine::bootstrap_blocking() {
+            Ok(()) => tracing::info!("recording mode ready (connected to live REAPER)"),
+            Err(e) => tracing::error!("recording mode failed to connect to REAPER: {e:?}"),
+        }
+    } else {
+        match session_engine::bootstrap_blocking() {
+            Ok(()) => tracing::info!("live mode ready (in-process daw-standalone)"),
+            Err(e) => tracing::error!("session engine failed to start: {e:?}"),
+        }
     }
 
     launch_app();
@@ -719,6 +744,34 @@ fn HomeLibraryView(current: Signal<Option<Workspace>>) -> Element {
             }
             Ok((songs, warnings)) => {
                 spawn(async move {
+                    // Recording Mode: open every song's real .RPP as its
+                    // own REAPER tab (launching REAPER if nothing's
+                    // running yet) instead of playing the setlist
+                    // ourselves — see reaper_engine::load_playlist.
+                    if std::env::var("FTS_SESSION_MODE").as_deref() == Ok("recording") {
+                        let titles: Vec<String> = songs.iter().map(|s| s.title.clone()).collect();
+                        match reaper_engine::load_playlist(&songs).await {
+                            Ok(()) => {
+                                let mut msg = format!(
+                                    "opened {} in REAPER — building the setlist from what's now open",
+                                    titles.join(" → ")
+                                );
+                                if !warnings.is_empty() {
+                                    msg.push_str(&format!(
+                                        " — {} link(s) unresolved: {}",
+                                        warnings.len(),
+                                        warnings.join(", ")
+                                    ));
+                                }
+                                load_status.set(Some(Ok(msg)));
+                                current.set(Some(Workspace::Session));
+                                store_last_workspace(Workspace::Session);
+                            }
+                            Err(e) => load_status.set(Some(Err(format!("{e:?}")))),
+                        }
+                        return;
+                    }
+
                     let Some(engine) = session_engine::engine() else {
                         load_status.set(Some(Err("session engine offline".to_string())));
                         return;
