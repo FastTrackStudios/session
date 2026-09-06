@@ -36,7 +36,10 @@ const SONGS: &[(&str, &str)] = &[
     ("unbreakable", "unbreakable.organized.RPP"),
 ];
 
-async fn connect_setlist_service() -> eyre::Result<session::SetlistServiceClient> {
+async fn connect_setlist_service() -> eyre::Result<(
+    session::SetlistServiceClient,
+    session::services::setlist_service::SetlistServiceStreamClient,
+)> {
     let socket = std::env::var("FTS_SOCKET").map_err(|_| {
         eyre::eyre!(
             "FTS_SOCKET not set — this test must run under session-extension-xtask, \
@@ -51,10 +54,46 @@ async fn connect_setlist_service() -> eyre::Result<session::SetlistServiceClient
         .establish_connection()
         .await
         .map_err(|e| eyre::eyre!("vox handshake with {socket}: {e:?}"))?;
-    connection
+    let client = connection
         .open_lane::<session::SetlistServiceClient>()
         .await
-        .map_err(|e| eyre::eyre!("open SetlistServiceClient lane: {e:?}"))
+        .map_err(|e| eyre::eyre!("open SetlistServiceClient lane: {e:?}"))?;
+    let stream_client = connection
+        .open_lane::<session::services::setlist_service::SetlistServiceStreamClient>()
+        .await
+        .map_err(|e| eyre::eyre!("open SetlistServiceStreamClient lane: {e:?}"))?;
+    Ok((client, stream_client))
+}
+
+/// Drain the `active_indices` stream until it reports the expected
+/// song/section, or time out. Mirrors `reaper_setlist_recording_mode.rs`'s
+/// own helper — the seek's `main_thread::query` bounce and the follow-up
+/// `refresh_active_indices` publish are both async round trips, so the
+/// cursor doesn't necessarily reflect the new position in the very next
+/// message when earlier in-flight publishes are still queued.
+async fn wait_for_active_section(
+    rx: &mut vox::Rx<session_proto::ActiveIndices>,
+    song_index: usize,
+    section_index: usize,
+) -> eyre::Result<session_proto::ActiveIndices> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(eyre::eyre!(
+                "active indices never reported song {song_index} / section {section_index}"
+            ));
+        }
+        let Ok(Ok(Some(active_ref))) = tokio::time::timeout(remaining, rx.recv()).await else {
+            return Err(eyre::eyre!(
+                "active indices stream ended waiting for song {song_index} / section {section_index}"
+            ));
+        };
+        let active = active_ref.get().clone();
+        if active.song_index == Some(song_index) && active.section_index == Some(section_index) {
+            return Ok(active);
+        }
+    }
 }
 
 #[daw_test]
@@ -89,7 +128,16 @@ async fn rockstars_album_opens_all_ten_songs(ctx: &daw::test::DawTestContext) ->
         );
     }
 
-    let client = connect_setlist_service().await?;
+    let (client, stream_client) = connect_setlist_service().await?;
+
+    // Subscribe before building/seeking, the same ordering
+    // `SessionEventBridge` uses, so no publish in between subscribing and
+    // the first seek can be missed.
+    let (tx, mut active_rx) = vox::channel::<session_proto::ActiveIndices>();
+    tokio::spawn(async move {
+        let _ = stream_client.active_indices(tx).await;
+    });
+
     client
         .build_from_open_projects()
         .await
@@ -151,6 +199,46 @@ async fn rockstars_album_opens_all_ten_songs(ctx: &daw::test::DawTestContext) ->
         assert!(
             !song.sections.is_empty(),
             "song '{}' should have sections after seeking to it but has none",
+            song.name
+        );
+    }
+
+    // Seek to *every* section of *every* song, in setlist order — moving
+    // between songs means REAPER switching its focused project tab
+    // between each one, not just moving the cursor within one project, so
+    // this exercises cross-project navigation the same way a performer
+    // paging through the whole album would. Each seek is confirmed
+    // against the live `active_indices` stream, not just a successful RPC
+    // return — a `seek_to_section` that silently no-ops on the wrong
+    // project/song would pass a bare `.is_ok()` check while leaving the
+    // performance view stuck on whatever it showed before.
+    for (song_index, song) in setlist.songs.iter().enumerate() {
+        if song.name == "Untitled" || song.name.starts_with("empty focus") {
+            continue;
+        }
+        for section_index in 0..song.sections.len() {
+            client
+                .seek_to_section(song_index, section_index)
+                .await
+                .map_err(|e| {
+                    eyre::eyre!(
+                        "seek_to_section({song_index}, {section_index}) for '{}': {e:?}",
+                        song.name
+                    )
+                })?;
+            let active =
+                wait_for_active_section(&mut active_rx, song_index, section_index).await?;
+            assert_eq!(
+                active.section_index,
+                Some(section_index),
+                "after seeking '{}' to section {section_index} ({}), active indices should report it",
+                song.name,
+                song.sections[section_index].name,
+            );
+        }
+        println!(
+            "seeked through all {} sections of '{}'",
+            song.sections.len(),
             song.name
         );
     }
