@@ -1729,7 +1729,7 @@ dependencies = [
 [[package]]
 name = "color-palette"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.2#99b5f24714c3008191062cdfc75fba28c0f3f712"
+source = "git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3#159958f933deac3619fa476fb047f8c32b761455"
 dependencies = [
  "facet",
  "thiserror 2.0.20",
@@ -3981,7 +3981,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "architect 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
- "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.2)",
+ "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3)",
  "daw 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.11)",
  "daw-proto 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.11)",
  "daw-reaper",
@@ -3990,7 +3990,7 @@ dependencies = [
  "eyre",
  "facet",
  "monarchy",
- "music-catalog 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.2)",
+ "music-catalog 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3)",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -4021,7 +4021,7 @@ dependencies = [
 name = "dynamic-template-tests"
 version = "0.1.0"
 dependencies = [
- "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.2)",
+ "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3)",
  "daw-proto 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.11)",
  "dawfile-reaper",
  "dynamic-template",
@@ -7566,7 +7566,7 @@ dependencies = [
 [[package]]
 name = "monarchy"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.2#99b5f24714c3008191062cdfc75fba28c0f3f712"
+source = "git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3#159958f933deac3619fa476fb047f8c32b761455"
 dependencies = [
  "facet",
  "monarchy_derive",
@@ -7579,7 +7579,7 @@ dependencies = [
 [[package]]
 name = "monarchy_derive"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.2#99b5f24714c3008191062cdfc75fba28c0f3f712"
+source = "git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3#159958f933deac3619fa476fb047f8c32b761455"
 dependencies = [
  "convert_case 0.6.0",
  "proc-macro2",
@@ -7658,9 +7658,9 @@ dependencies = [
 [[package]]
 name = "music-catalog"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.2#99b5f24714c3008191062cdfc75fba28c0f3f712"
+source = "git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3#159958f933deac3619fa476fb047f8c32b761455"
 dependencies = [
- "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.2)",
+ "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3)",
 ]
 
 [[package]]
@@ -11015,7 +11015,7 @@ version = "0.1.0"
 dependencies = [
  "architect 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
  "chrono",
- "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.2)",
+ "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3)",
  "daw 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.11)",
  "daw-actions",
  "daw-proto 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.11)",
@@ -11029,7 +11029,7 @@ dependencies = [
  "keyflow",
  "keyflow-daw-analysis",
  "monarchy",
- "music-catalog 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.2)",
+ "music-catalog 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3)",
  "reaper-high",
  "reaper-low",
  "reaper-medium",

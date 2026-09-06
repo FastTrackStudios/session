@@ -829,6 +829,60 @@ pub fn parse_region_section_type(name: &str) -> Option<SectionType> {
     SectionType::parse(token)
         .ok()
         .or_else(|| SectionType::parse(trimmed).ok())
+        .or_else(|| parse_loose(trimmed))
+}
+
+/// The spellings real REAPER regions actually carry, which the canonical
+/// vocabulary does not accept.
+///
+/// Surveyed against the Crescendum album's 58 distinct region names: the
+/// canonical parser already handles `pre-chorus`, `Pre- Chorus`, `CH 1`,
+/// `Solo {GTR}` and `OUT 2`, but not `pre chorus` — the plain space-separated
+/// form, and the single most common section name in the album after `chorus`
+/// itself. Those regions were silently dropped from every setlist.
+///
+/// # Order is the whole design
+///
+/// Hyphen-joining is tried **before** the trailing word. Reversed, `pre
+/// chorus` would parse as `Chorus` — not a failure anyone would notice,
+/// just five regions quietly filed under the wrong section for the rest of
+/// the song's life. A wrong answer here is worse than no answer.
+fn parse_loose(trimmed: &str) -> Option<SectionType> {
+    // "pre chorus/drum solo" — a region named for two things is named for the
+    // first one.
+    let head = trimmed.split('/').next().unwrap_or(trimmed).trim();
+    if head.is_empty() {
+        return None;
+    }
+
+    // A bare "PRE" is pre-chorus. Observed, not invented: it appears four
+    // times across the album, always in songs that also carry a plain
+    // "chorus", and the canonical vocabulary spells the code "PC". Kept as an
+    // explicit single alias rather than a rule about prefixes, because that
+    // is the only reading it has ever had here.
+    if head.eq_ignore_ascii_case("pre") {
+        return SectionType::parse("pre-chorus").ok();
+    }
+
+    // "pre chorus" -> "pre-chorus", which the canonical parser knows.
+    let hyphenated = head.split_whitespace().collect::<Vec<_>>().join("-");
+    if let Ok(parsed) = SectionType::parse(&hyphenated) {
+        return Some(parsed);
+    }
+    if head != trimmed
+        && let Ok(parsed) = SectionType::parse(head)
+    {
+        return Some(parsed);
+    }
+
+    // Only now the trailing word: "1st solo", "2nd solo", "drum solo" are all
+    // solos. Reaching this point means no whole-name reading worked, so a
+    // qualifier-plus-section shape is the remaining sensible guess.
+    let last = head.split_whitespace().last()?;
+    if last == head {
+        return None;
+    }
+    SectionType::parse(last).ok()
 }
 
 pub(crate) fn section_type_color(section_type: &SectionType) -> u32 {
