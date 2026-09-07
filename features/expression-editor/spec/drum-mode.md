@@ -235,6 +235,21 @@ the outliers being looked for and an average is dragged toward whatever
 it is meant to detect — on a song with four fills in sixty bars the mean
 tom count is inflated by the very bars that should stand out.
 
+r[drums.fills.sensitivity]
+Fill detection runs the transient detector at its own sensitivity, not
+the quantize panel's. The two jobs want opposite things: the panel
+*moves* every hit it reports, so a false one damages the take and it is
+tuned for precision, while fill detection only counts how busy a bar
+was, where a missed hit is the costly error and a spurious one is noise
+the median absorbs.
+
+The gap is large enough to matter. On `unbreakable` — 160bpm, the
+drummer playing around ten hits a second — the panel's default finds
+1.6 a second, about a fifth of what was played, confirmed against the
+project's own drum MIDI. Scoring bars against a fifth of the evidence is
+what made fill counts swing between three and twenty-four across the
+album.
+
 r[drums.fills.bars]
 Bar boundaries come from the host's tempo map, one query per measure —
 never a bar length multiplied out. A real take does not have one bar

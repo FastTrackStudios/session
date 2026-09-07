@@ -69,7 +69,7 @@ fn analyse(song: &str) -> Option<Found> {
     let host = host.as_ref();
 
     let panel = expression_editor_ui::quantize_panel::QuantizePanel::default();
-    let fills = host.fills(&panel, &FillConfig::default());
+    let fills = host.fills(&FillConfig::default());
     let bars = host.bar_count();
 
     // Section boundaries the detector never sees: markers and regions,
@@ -197,7 +197,7 @@ fn fills_land_where_a_drummer_puts_them() {
     let lift: f64 = found.iter().map(|f| f.observed / f.chance.max(1e-9)).sum::<f64>()
         / found.len() as f64;
     assert!(
-        lift >= 1.4,
+        lift >= 1.9,
         "fills are only {lift:.2}x more likely than chance to sit at a \
          section boundary — that is not a drummer's phrasing, it is noise"
     );

@@ -147,6 +147,46 @@ impl DrumHost {
         self.sums.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
+    /// Detection settings for counting activity rather than for
+    /// choosing what to quantize.
+    ///
+    /// The two jobs want opposite things. The quantize panel wants
+    /// precision — every hit it reports gets *moved*, so a false one
+    /// damages the take, and its default sensitivity of 0.5 is set for
+    /// that. Fill detection only counts how busy a bar was, where a
+    /// missed hit is the costly error and a spurious one is noise the
+    /// median absorbs.
+    ///
+    /// It matters more than it sounds. On `unbreakable` — 160bpm, the
+    /// drummer playing about ten hits a second — the panel's default
+    /// finds 1.6 a second, roughly a fifth of what was played. Counting
+    /// bars against a fifth of the evidence is what made fill counts
+    /// swing between three and twenty-four across the album.
+    fn fill_detect_panel() -> QuantizePanel {
+        let mut panel = QuantizePanel::default();
+        panel.detect.sensitivity = 0.9;
+        panel
+    }
+
+    /// Every detected hit with the drum it was played on, in seconds.
+    ///
+    /// Detection runs per role rather than on the merged list the
+    /// quantize panel uses: which drum was struck is thrown away by the
+    /// merge, and it is the whole signal for anything that reasons
+    /// about *what* was played rather than *when*.
+    pub fn role_hits(&self, panel: &QuantizePanel) -> Vec<(f64, LaneRole)> {
+        let detect = Self::detect_of(panel);
+        let mut hits: Vec<(f64, LaneRole)> = Vec::new();
+        for (role, signal) in self.role_sums() {
+            let lanes = vec![vec![signal.as_slice()]];
+            for t in panel_bridge::detect_group(&lanes, self.sample_rate, &detect) {
+                hits.push((t.at, role));
+            }
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        hits
+    }
+
     /// How many bars the host's tempo map places across the take.
     /// Zero when it cannot place a grid at all.
     pub fn bar_count(&self) -> usize {
@@ -172,22 +212,13 @@ impl DrumHost {
     // r[impl drums.fills.detect]
     pub fn fills(
         &self,
-        panel: &QuantizePanel,
         cfg: &expression_editor_core::fills::FillConfig,
     ) -> Vec<expression_editor_core::fills::Fill> {
         let bars = crate::bar_grid(&self.daw, &self.ctx, self.take_secs);
         if bars.len() < 2 {
             return Vec::new();
         }
-        let detect = Self::detect_of(panel);
-        let mut hits: Vec<(f64, LaneRole)> = Vec::new();
-        for (role, signal) in self.role_sums() {
-            let lanes = vec![vec![signal.as_slice()]];
-            for t in panel_bridge::detect_group(&lanes, self.sample_rate, &detect) {
-                hits.push((t.at, role));
-            }
-        }
-        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let hits = self.role_hits(&Self::fill_detect_panel());
         expression_editor_core::fills::detect_fills(&bars, &hits, cfg)
     }
 
