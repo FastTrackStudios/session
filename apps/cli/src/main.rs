@@ -269,7 +269,24 @@ async fn seek(song: usize, section: usize) -> eyre::Result<()> {
         .seek_to_section(song, section)
         .await
         .map_err(|e| eyre::eyre!("seek_to_section({song}, {section}): {e:?}"))?;
+
     println!("song {song} / section {section} — {name}");
+
+    // Read the cursor back rather than trusting the call. A `seek_to_section`
+    // that returns Ok has been accepted, not necessarily applied — it bounces
+    // to REAPER's main thread and the cursor update is a second, independent
+    // hop. Reporting success from the return value alone would hide exactly
+    // the failure this command exists to catch. (`active_song` is on the RPC
+    // client; per-section confirmation needs the subscribe stream, which a
+    // one-shot CLI process has no good place to pump.)
+    match client.active_song().await {
+        Ok(active) if active.name == name => println!("  REAPER is on this song"),
+        Ok(active) => println!(
+            "  WARNING: REAPER is on '{}', not '{name}' — the seek did not land",
+            active.name
+        ),
+        Err(e) => println!("  (could not read REAPER's position back: {e:?})"),
+    }
     Ok(())
 }
 
@@ -283,10 +300,16 @@ async fn status() -> eyre::Result<()> {
         println!("REAPER pid {pid}  {}", socket.display());
     }
     let client = connect().await?;
-    let setlist = client
-        .setlist()
-        .await
-        .map_err(|e| eyre::eyre!("setlist: {e:?}"))?;
+    // A REAPER that is up but has no setlist yet is the normal state right
+    // after launch, not an error — `setlist()` reports it as NotFound.
+    let Ok(setlist) = client.setlist().await else {
+        println!("connected, but no setlist built yet — `session open <list.RPL>`");
+        return Ok(());
+    };
     println!("{} song(s) in the setlist", setlist.songs.len());
+    match client.active_song().await {
+        Ok(active) => println!("cursor: {}", active.name),
+        Err(_) => println!("cursor: nowhere yet — `session seek <song>`"),
+    }
     Ok(())
 }
