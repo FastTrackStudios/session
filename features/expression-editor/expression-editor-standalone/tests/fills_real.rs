@@ -144,6 +144,64 @@ fn analyse(song: &str) -> Option<Found> {
     })
 }
 
+// r[verify drums.fills.protect]
+#[test]
+fn protecting_fills_keeps_them_out_of_the_quantize() {
+    let path = format!("{BASE}/set in stone/set in stone.organized.RPP");
+    if !std::path::Path::new(&path).exists() {
+        eprintln!("skipping: {path} not mounted");
+        return;
+    }
+    let runner = Runner::open(
+        &Source::Rpp(path.into()),
+        &Target {
+            drums: Some(None),
+            ..Target::default()
+        },
+        Viewport {
+            w: 1600.0,
+            h: 900.0,
+        },
+        None,
+    )
+    .expect("open drums");
+    let host = runner.host.as_ref().expect("a host").as_ref();
+
+    let fills = host.fills(&FillConfig::default());
+    assert!(!fills.is_empty(), "no fills to protect");
+
+    let mut panel = expression_editor_ui::quantize_panel::QuantizePanel::default();
+    assert!(panel.protect_fills, "protection is meant to be the default");
+    let (_, protected) = host.preview(&panel);
+    panel.protect_fills = false;
+    let (_, everything) = host.preview(&panel);
+
+    assert!(
+        protected.len() < everything.len(),
+        "protection changed nothing: {} previewed either way",
+        everything.len()
+    );
+    // And what it removed is exactly the hits inside fills — not some
+    // arbitrary thinning that happens to be smaller.
+    let inside = |t: f64| fills.iter().any(|f| t >= f.start && t < f.end);
+    assert!(
+        protected.iter().all(|h| !inside(h.at)),
+        "a hit inside a fill is still being quantized"
+    );
+    assert!(
+        everything.iter().any(|h| inside(h.at)),
+        "the unprotected pass should be moving fill hits — otherwise \
+         this test proves nothing about protection"
+    );
+    println!(
+        "set in stone: {} hits quantized of {}, {} left in {} fills",
+        protected.len(),
+        everything.len(),
+        everything.len() - protected.len(),
+        fills.len()
+    );
+}
+
 // r[verify drums.fills.detect]
 #[test]
 fn fills_land_where_a_drummer_puts_them() {

@@ -292,6 +292,24 @@ project's own drum MIDI. Scoring bars against a fifth of the evidence is
 what made fill counts swing between three and twenty-four across the
 album.
 
+r[drums.fills.protect]
+A quantize **leaves detected fills alone** by default. The hits inside a
+fill are still detected and still drawn — the user can see what was not
+moved rather than wondering where it went — they are simply excluded
+from the plan the Apply builds. The default is on because the damage is
+asymmetric: a fill quantized like groove has its phrasing flattened and
+undoing that means finding the fills by hand afterwards, while a fill
+wrongly left alone is merely un-quantized, which is visible and one
+gesture to fix.
+
+r[drums.fills.draw]
+Fills draw as a wash behind the lanes, not an outline: a fill is a
+*region* of the take, and the hits inside it still have to read as hits.
+The bands are on screen from load, because what a quantize will leave
+alone is worth knowing before it runs rather than after. They are
+recomputed when an edit lands, after the host has dropped its cached
+fills — asking earlier returns the fills of the audio as it used to be.
+
 r[drums.fills.calibration]
 Detector defaults are **computed, not chosen**:
 `cargo run -p expression-editor-standalone --example calibrate` sweeps

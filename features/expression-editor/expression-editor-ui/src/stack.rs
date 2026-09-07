@@ -971,6 +971,12 @@ pub fn StackView(
     /// the arrangement. `None` (a demo scene, a test) draws nothing.
     #[props(default)]
     playhead_secs: Option<Signal<f64>>,
+    /// The take's fills, as `(start, end)` in seconds — drawn as bands
+    /// behind the lanes so the parts a quantize will leave alone are
+    /// visible before it runs, not discovered afterwards.
+    // r[impl drums.fills.draw]
+    #[props(default)]
+    fills: Vec<(f64, f64)>,
 ) -> Element {
     let mut editor = editor;
     // Where a middle-drag pan last was.
@@ -1082,6 +1088,21 @@ pub fn StackView(
     let mark_row_h = CHROME_ROW_H;
     // One source for the height, shared with the pointer maths below.
     let ruler_h = CHROME_ROW_H * chrome_rows.len().max(1) as f64 + RULER_TICKS_H;
+
+    // Fill bands, clipped to the view.
+    // r[impl drums.fills.draw]
+    let fill_bands: Vec<(f64, f64)> = view_span_secs(&ed)
+        .map(|(v0, v1)| {
+            fills
+                .iter()
+                .filter(|(s, e)| *e > v0 && *s < v1)
+                .map(|(s, e)| {
+                    let px = |t: f64| (t - v0) / (v1 - v0).max(1e-9) * vp.w;
+                    (px(s.max(v0)).max(0.0), px(e.min(v1)).min(vp.w))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     let (view0, px_per_sec) = view_span_secs(&ed)
         .map(|(v0, v1)| {
@@ -1680,6 +1701,24 @@ pub fn StackView(
                                     stroke: "{color}",
                                     stroke_width: 1,
                                     opacity: "0.3",
+                                }
+                            }
+                            // r[impl drums.fills.draw]
+                            //
+                            // Behind everything, and a wash rather than
+                            // an outline: a fill is a *region* of the
+                            // take, and the hits inside it still have to
+                            // read as hits. An edge strong enough to
+                            // notice would compete with the markers it
+                            // sits under.
+                            for (x0, x1) in fill_bands.iter() {
+                                rect {
+                                    x: "{x0:.1}",
+                                    y: "{lane.y:.1}",
+                                    width: "{(x1 - x0).max(0.0):.1}",
+                                    height: "{lane.h:.1}",
+                                    fill: theme::TEXT_DIM,
+                                    opacity: "0.10",
                                 }
                             }
                             // Markers carry down the same way — the

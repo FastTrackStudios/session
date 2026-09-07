@@ -325,7 +325,7 @@ pub fn WorkstationApp() -> Element {
         on_apply,
         on_save,
         on_hit,
-    } = host_callbacks(editor, host.read().clone(), bins, previews_sig);
+    } = host_callbacks(editor, host.read().clone(), bins, previews_sig, use_signal(Vec::new));
 
     // One store + meter bank for every panel in the window: the TCP
     // rows, the strips and the sync/feed components must share them, so

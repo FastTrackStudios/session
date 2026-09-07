@@ -118,6 +118,12 @@ pub(crate) fn draw_hint_of(ed: &Editor) -> String {
 #[component]
 pub fn ExpressionEditor(
     editor: Signal<Editor>,
+    /// The take's fills, `(start, end)` in seconds, drawn as bands
+    /// behind the lanes. Empty for a host that has not found any, and
+    /// for every non-drum mode.
+    // r[impl drums.fills.draw]
+    #[props(default)]
+    fills: Vec<(f64, f64)>,
     /// Open the modulation drawer on mount. Hosts normally leave this
     /// alone — it exists so a caller can restore a session, and so the
     /// screenshot harness can shoot the drawer through the real path.
@@ -291,6 +297,7 @@ pub fn ExpressionEditor(
                             editor,
                             on_hit,
                             warp: quantize.read().mode == quantize_panel::WriteMode::Warp,
+                            fills: fills.clone(),
                             grid_secs: quantize
                                 .read()
                                 .grid_in(60.0 / editor.read().bpm.max(1.0)),

@@ -261,6 +261,14 @@ pub struct QuantizePanel {
     pub detect: DetectSettings,
     /// The advanced disclosure in the Detect section.
     pub advanced: bool,
+    /// Leave detected fills where the drummer played them.
+    ///
+    /// On by default, because the damage is asymmetric: a fill
+    /// quantized like groove has its phrasing flattened and the take is
+    /// worse, and undoing that means finding the fills by hand
+    /// afterwards. A fill wrongly left alone is merely un-quantized,
+    /// which is visible and one gesture to fix.
+    pub protect_fills: bool,
     /// Grid division and feel. `config.grid` is derived from these via
     /// [`QuantizePanel::grid_in`] whenever the host knows the beat
     /// length; a host without a tempo map can still set `config.grid`
@@ -288,6 +296,7 @@ impl Default for QuantizePanel {
         let config = QuantizeConfig::default();
         Self {
             config,
+            protect_fills: true,
             mode: WriteMode::default(),
             pad: 0.007,
             crossfade: 0.007,

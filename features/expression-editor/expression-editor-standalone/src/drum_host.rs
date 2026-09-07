@@ -64,6 +64,8 @@ pub struct DrumHost {
     /// loaded. `Arc` so a detect in flight keeps its snapshot.
     sums: Mutex<Vec<(LaneRole, Arc<Vec<f64>>)>>,
     manual: Mutex<ManualHits>,
+    /// The take's fills, computed on demand and dropped on refresh.
+    fills: Mutex<Option<Vec<expression_editor_core::fills::Fill>>>,
     pub sample_rate: f64,
     /// The group's shared take length, seconds — the longest edit item.
     pub take_secs: f64,
@@ -99,6 +101,7 @@ impl DrumHost {
             lanes,
             sums: Mutex::new(sums),
             manual: Mutex::new(ManualHits::default()),
+            fills: Mutex::new(None),
             sample_rate,
             take_secs,
             beat_secs,
@@ -222,6 +225,47 @@ impl DrumHost {
             .saturating_sub(1)
     }
 
+    /// The take's fills, computed once and kept until the audio changes.
+    ///
+    /// Cached because the panel previews on every change a slider makes
+    /// and fill detection runs the whole detector over every lane. The
+    /// cache is cleared by [`DrumHost::refresh`], which is the only
+    /// thing that alters the audio underneath it.
+    fn fills_cached(&self) -> Vec<expression_editor_core::fills::Fill> {
+        if let Ok(cache) = self.fills.lock()
+            && let Some(found) = cache.as_ref()
+        {
+            return found.clone();
+        }
+        let found = self.fills(&expression_editor_core::fills::FillConfig::default());
+        if let Ok(mut cache) = self.fills.lock() {
+            *cache = Some(found.clone());
+        }
+        found
+    }
+
+    /// The hits a quantize is allowed to move.
+    ///
+    /// Everything the detector found, less anything inside a fill when
+    /// the panel asks for fills to be protected. The hits are still
+    /// *shown* — the lane draws every one — they are simply not moved,
+    /// so the user can see what was left alone rather than wondering
+    /// where it went.
+    // r[impl drums.fills.protect]
+    fn quantizable(&self, panel: &QuantizePanel) -> Vec<Transient> {
+        let hits = self.hits(panel);
+        if !panel.protect_fills {
+            return hits;
+        }
+        let fills = self.fills_cached();
+        if fills.is_empty() {
+            return hits;
+        }
+        hits.into_iter()
+            .filter(|t| !fills.iter().any(|f| t.at >= f.start && t.at < f.end))
+            .collect()
+    }
+
     /// The bar boundaries the host's tempo map places across the take.
     pub fn bar_grid_secs(&self) -> Vec<f64> {
         crate::bar_grid(&self.daw, &self.ctx, self.take_secs)
@@ -257,7 +301,7 @@ impl DrumHost {
     /// bins and the per-hit preview the drawer shows.
     // r[impl drums.quantize.preview]
     pub fn preview(&self, panel: &QuantizePanel) -> (Vec<Bin>, Vec<HitPreview>) {
-        let hits = self.hits(panel);
+        let hits = self.quantizable(panel);
         let (_plan, previews) = panel_bridge::preview_hits(&hits, &self.target_of(panel));
         (histogram(&hits, 24), previews)
     }
@@ -337,7 +381,7 @@ impl DrumHost {
     /// Write the panel's plan to the whole kit, one undo step.
     // r[impl drums.quantize.apply]
     pub fn apply(&self, panel: &QuantizePanel) -> Result<Applied, GroupError> {
-        let hits = self.hits(panel);
+        let hits = self.quantizable(panel);
         let (plan, _) = panel_bridge::preview_hits(&hits, &self.target_of(panel));
         let items = self.group();
         self.daw.begin_undo_block(self.ctx.clone(), "Quantize kit");
@@ -485,6 +529,10 @@ impl DrumHost {
         }
         if let Ok(mut sums) = self.sums.lock() {
             *sums = new_sums;
+        }
+        // The audio moved, so the fills have to be found again.
+        if let Ok(mut fills) = self.fills.lock() {
+            *fills = None;
         }
         docs
     }

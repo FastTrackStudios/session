@@ -51,17 +51,25 @@ fn stage(ed: Editor) {
     STAGED.with(|s| *s.borrow_mut() = Some(ed));
 }
 
+thread_local! {
+    static FILLS: RefCell<Vec<(f64, f64)>> = const { RefCell::new(Vec::new()) };
+}
+
 #[component]
 fn Surface() -> Element {
     let editor = use_signal(|| STAGED.with(|s| s.borrow_mut().take()).expect("staged"));
     let ed = editor.read();
     let readout = format!("active={}", ed.tracks.active());
-    let view0 = format!("{}", ed.camera.time_span(ed.viewport).0);
+    let span = ed.camera.time_span(ed.viewport);
+    let ups = ed.doc.time_base.units_per_second(ed.bpm).max(1e-9);
+    let view0 = format!("{}", span.0);
+    let view_secs = format!("{} {} {}", span.0 / ups, span.1 / ups, ed.viewport.w);
     drop(ed);
     rsx! {
         div { "data-testid": "readout", "{readout}" }
         div { "data-testid": "view0", "{view0}" }
-        ExpressionEditor { editor }
+        div { "data-testid": "view-secs", "{view_secs}" }
+        ExpressionEditor { editor, fills: FILLS.with(|f| f.borrow().clone()) }
     }
 }
 
@@ -151,6 +159,65 @@ fn a_region_and_a_marker_sharing_a_lane_still_get_two_shelves() {
     assert_eq!(shelves.len(), 2, "same lane, different kinds, two shelves");
     assert_eq!(shelves[0], (Some(1), true, "SONG".into()));
     assert_eq!(shelves[1], (Some(1), false, "SONG".into()));
+}
+
+// ── fill bands ───────────────────────────────────────────────────────
+
+// r[verify drums.fills.draw]
+#[tokio::test]
+async fn a_fill_draws_a_band_where_it_happened() -> dioxus_test::Result<()> {
+    // Rendered geometry, not a signal round trip: the band has to land
+    // over the part of the take the fill covers, and the arithmetic that
+    // maps seconds to pixels is the part that can be wrong while
+    // everything still compiles.
+    let mut ed = three_tracks();
+    ed.doc.end = RATE * 40.0;
+    // A fill over the second quarter of a 40-second take.
+    FILLS.with(|f| *f.borrow_mut() = vec![(10.0, 20.0)]);
+    ed.zoom_to_box(0.0, RATE * 40.0, 0.0, 127.0);
+    stage(ed);
+
+    let tester = render(Surface).with_window_size(1400, 700).build();
+    let cell = tester.query(by_testid("stack-cell")).immediately()?;
+    let html = cell.inner_html();
+    FILLS.with(|f| f.borrow_mut().clear());
+
+    // The band is the only rect drawn at this opacity.
+    let band = html
+        .split("<rect")
+        .find(|r| r.contains("opacity=\"0.10\""))
+        .unwrap_or_else(|| panic!("no fill band in the rendered stack"));
+    let attr = |name: &str| -> f64 {
+        band.split(&format!("{name}=\""))
+            .nth(1)
+            .and_then(|v| v.split('"').next())
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(f64::NAN)
+    };
+    let (x, width) = (attr("x"), attr("width"));
+    // Against the span and viewport the editor *actually* rendered,
+    // read back from the mounted component. Two traps here, both hit:
+    // the editor resizes to its frame on mount, so the span it was
+    // built with is not the one it drew; and these coordinates are SVG
+    // user units, not element pixels, so measuring the element's width
+    // compares two different spaces and fails on correct code.
+    let secs = tester.query(by_testid("view-secs")).immediately()?.inner_html();
+    let mut it = secs.split_whitespace().filter_map(|v| v.parse::<f64>().ok());
+    let (v0, v1) = (it.next().unwrap_or(0.0), it.next().unwrap_or(1.0));
+    let lane_w = it.next().unwrap_or(1.0);
+    let want_x = (10.0 - v0) / (v1 - v0) * lane_w;
+    let want_w = 10.0 / (v1 - v0) * lane_w;
+    assert!(
+        (x - want_x).abs() < 0.05 * lane_w,
+        "band at x={x:.0} over a view of {v0:.1}s..{v1:.1}s; the fill at \
+         10s belongs at x={want_x:.0}"
+    );
+    assert!(
+        (width - want_w).abs() < 0.05 * lane_w,
+        "band is {width:.0}px for a 10s fill in a {:.1}s view; wanted {want_w:.0}px",
+        v1 - v0
+    );
+    Ok(())
 }
 
 // ── paging the view ──────────────────────────────────────────────────
