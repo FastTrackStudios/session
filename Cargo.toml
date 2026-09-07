@@ -8,6 +8,7 @@
 resolver = "3"
 
 members = [
+    "apps/cli",
     "apps/desktop",
     "apps/session-player",
     "apps/vault-sync",

@@ -11049,6 +11049,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "session-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "daw 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.13)",
+ "dawfile-reaper",
+ "eyre",
+ "libc",
+ "session",
+ "session-proto",
+ "tokio",
+ "vox",
+ "vox-stream",
+]
+
+[[package]]
 name = "session-desktop"
 version = "0.0.2-alpha"
 dependencies = [

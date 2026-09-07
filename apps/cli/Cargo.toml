@@ -1,0 +1,26 @@
+[package]
+name = "session-cli"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+publish = false
+description = "session — drive a real REAPER's setlist from the command line"
+
+[[bin]]
+name = "session"
+path = "src/main.rs"
+
+[dependencies]
+session = { workspace = true, features = ["reaper"] }
+session-proto = { workspace = true }
+dawfile-reaper = { workspace = true }
+daw = { workspace = true, features = ["reaper", "cli"] }
+vox = { workspace = true }
+vox-stream = { workspace = true }
+eyre = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
+libc = "0.2"
+
+[lints]
+workspace = true
