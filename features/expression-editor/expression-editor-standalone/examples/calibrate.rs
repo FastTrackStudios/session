@@ -419,8 +419,77 @@ fn sweep_detect(projects: &[Project]) {
             }
         }
     }
+    // The hybrid detector. It has no *sensitivity* — the flux stage
+    // scores each frame against its own neighbourhood — but the flux
+    // stage has settings of its own, and leaving those at a guess while
+    // sweeping the gate's would be comparing a tuned detector against
+    // an untuned one.
+    println!("\n  flux: thresh median  hop |  prec  recall     F1 | hits/s vs ref");
+    let mut hyb: Vec<(f64, String)> = Vec::new();
+    for threshold in [0.06, 0.09, 0.12, 0.18, 0.25] {
+        for median_frames in [8usize, 16, 24] {
+            for hop in [128usize, 256] {
+                let cfg = expression_editor_audio::hybrid::HybridConfig {
+                    onsets: expression_editor_audio::onsets::OnsetConfig {
+                        hop,
+                        median_frames,
+                        threshold,
+                        ..expression_editor_audio::onsets::OnsetConfig::default()
+                    },
+                    ..expression_editor_audio::hybrid::HybridConfig::default()
+                };
+                let (mut p, mut r, mut f, mut rate) = (0.0, 0.0, 0.0, 0.0);
+                for proj in &with_midi {
+                    let hits: Vec<f64> = proj
+                        .host
+                        .role_hits_hybrid_with(&cfg)
+                        .into_iter()
+                        .map(|(t, _)| t)
+                        .collect();
+                    let (pp, rr, ff) = score(&hits, &proj.reference);
+                    p += pp;
+                    r += rr;
+                    f += ff;
+                    let span = proj.bars.last().copied().unwrap_or(1.0).max(1.0);
+                    rate += hits.len() as f64 / span;
+                }
+                let n = with_midi.len() as f64;
+                let line = format!(
+                    "  {threshold:>11.2} {median_frames:>6} {hop:>4} | {:>5.2} {:>7.2} {:>6.3} | {:>6.1} {:>6.2}x",
+                    p / n, r / n, f / n, rate / n, (rate / n) / ref_rate.max(0.001)
+                );
+                println!("{line}");
+                hyb.push((f / n, line));
+            }
+        }
+    }
+    hyb.sort_by(|a, b| b.0.total_cmp(&a.0));
+    println!("\n  best hybrid:\n{}", hyb[0].1);
+    {
+        let (mut p, mut r, mut f, mut rate) = (0.0, 0.0, 0.0, 0.0);
+        for proj in &with_midi {
+            let hits: Vec<f64> =
+                proj.host.role_hits_hybrid().into_iter().map(|(t, _)| t).collect();
+            let (pp, rr, ff) = score(&hits, &proj.reference);
+            p += pp;
+            r += rr;
+            f += ff;
+            let span = proj.bars.last().copied().unwrap_or(1.0).max(1.0);
+            rate += hits.len() as f64 / span;
+        }
+        let n = with_midi.len() as f64;
+        println!(
+            "  hybrid at shipped defaults      | {:>5.2} {:>7.2} {:>6.3} | {:>6.1} {:>6.2}x",
+            p / n,
+            r / n,
+            f / n,
+            rate / n,
+            (rate / n) / ref_rate.max(0.001)
+        );
+    }
+
     rows.sort_by(|a, b| b.0.total_cmp(&a.0));
-    println!("\n  best by F1 alone:\n{}", rows[0].2);
+    println!("\n  best gate setting by F1 alone:\n{}", rows[0].2);
     // The one to take: best F1 among settings that do not invent hits.
     const MAX_RATE: f64 = 1.5;
     match rows.iter().find(|(_, ratio, _)| *ratio <= MAX_RATE) {
@@ -444,13 +513,14 @@ fn sweep_fill_threshold(projects: &[Project]) {
     // coupled, since more hits raise every bar's score.
     println!("   sens thresh | fills |  lift over chance");
     let mut rows: Vec<(f64, f64, usize)> = Vec::new();
-    for (sens, threshold) in [0.9, 0.98]
+    for (hybrid, sens, threshold) in [(false, 0.9), (true, 0.9)]
         .into_iter()
-        .flat_map(|s| [4.0, 5.0, 6.0, 7.0, 8.0, 10.0].map(|t| (s, t)))
+        .flat_map(|(h, s)| [4.0, 5.0, 6.0, 7.0, 8.0, 10.0].map(|t| (h, s, t)))
     {
         let cfg = FillConfig {
             threshold,
             detect_sensitivity: sens,
+            hybrid_detect: hybrid,
             ..FillConfig::default()
         };
         let (mut lift, mut total, mut n) = (0.0, 0usize, 0.0);
@@ -486,7 +556,8 @@ fn sweep_fill_threshold(projects: &[Project]) {
         }
         if n > 0.0 {
             println!(
-                "  s{sens:.2} t{threshold:>4.1} | {total:>5} | {:>6.2}x   ({:.1} per song)",
+                "  {:<6} t{threshold:>4.1} | {total:>5} | {:>6.2}x   ({:.1} per song)",
+                if hybrid { "hybrid" } else { "gate" },
                 lift / n,
                 total as f64 / n
             );

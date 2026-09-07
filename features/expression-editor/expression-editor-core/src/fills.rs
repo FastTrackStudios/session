@@ -86,6 +86,16 @@ pub struct FillConfig {
     /// threshold tuned at one sensitivity is wrong at another. They have
     /// to be chosen together, which is what `--example calibrate` does.
     pub detect_sensitivity: f64,
+    /// Find hits with the hybrid detector (spectral flux against a
+    /// moving median, refined by the envelope) rather than the envelope
+    /// gate, ignoring [`FillConfig::detect_sensitivity`].
+    ///
+    /// The two are a tie for *placing* hits, which is what the gate is
+    /// tuned for. Counting them is a different question: the flux stage
+    /// scores each frame against its own neighbourhood, so it needs no
+    /// sensitivity set per song, and a bar count wants exactly that
+    /// kind of robustness rather than millisecond precision.
+    pub hybrid_detect: bool,
 }
 
 impl Default for FillConfig {
@@ -108,6 +118,7 @@ impl Default for FillConfig {
             // section-aligned fill. The onset-detection optimum turned
             // out to be the same place.
             detect_sensitivity: 0.9,
+            hybrid_detect: false,
         }
     }
 }

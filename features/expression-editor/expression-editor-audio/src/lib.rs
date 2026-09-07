@@ -47,6 +47,7 @@ pub mod dynamics;
 pub mod frames;
 pub mod gate;
 pub mod group_detect;
+pub mod hybrid;
 pub mod lanes;
 pub mod onsets;
 pub mod panel_bridge;

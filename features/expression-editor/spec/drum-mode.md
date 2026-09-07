@@ -208,6 +208,27 @@ sessions declare `SONG`, `SECTIONS` and `MARKS` and then file every
 marker under `SONG`. Redistributing them would hide exactly the thing
 the ruler exists to show.
 
+r[drums.detect.hybrid]
+A second detector is available that finds hits with **spectral flux
+against a moving median** and then places them with the **envelope**.
+Each stage covers the other's weakness: the envelope gate is
+sample-accurate but its thresholds are absolute, so no one setting suits
+a whole album; spectral flux scores every frame against its own
+neighbourhood and so needs no setting, but an STFT answers only to the
+nearest hop. Flux decides *that* a hit happened, the envelope decides
+*when*, hunting the steepest rise in a window deliberately narrower than
+the gap between two hits so refinement can sharpen a hit but never move
+it onto its neighbour.
+
+It is **not the default**, because measurement does not support making
+it one. Against the album's drum MIDI the two are a tie — F1 0.342 for
+the best hybrid settings against 0.345 for the best gate settings, at
+precision around 0.4 where the reference (a different take) cannot
+discriminate further. Its advantage is that it reaches that without a
+dial: the gate needed a calibration pass to get there. It is kept for
+the jobs where robustness matters more than milliseconds, and so that
+the choice can be re-measured whenever either detector changes.
+
 ## Fills
 
 r[drums.fills.detect]

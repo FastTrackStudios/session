@@ -187,6 +187,33 @@ impl DrumHost {
         hits
     }
 
+    /// Every detected hit with its drum, using the hybrid detector —
+    /// spectral flux to find hits, the envelope to place them.
+    ///
+    /// No sensitivity to pass: the flux stage scores each frame against
+    /// its own neighbourhood, so it follows the material instead of
+    /// being told about it. That is the whole point of it.
+    // r[impl drums.detect.hybrid]
+    pub fn role_hits_hybrid(&self) -> Vec<(f64, LaneRole)> {
+        self.role_hits_hybrid_with(&expression_editor_audio::hybrid::HybridConfig::default())
+    }
+
+    /// The same, with the flux stage's own settings — for the sweep
+    /// that chooses them.
+    pub fn role_hits_hybrid_with(
+        &self,
+        cfg: &expression_editor_audio::hybrid::HybridConfig,
+    ) -> Vec<(f64, LaneRole)> {
+        let mut hits: Vec<(f64, LaneRole)> = Vec::new();
+        for (role, signal) in self.role_sums() {
+            for t in expression_editor_audio::hybrid::detect(signal.as_slice(), self.sample_rate, cfg) {
+                hits.push((t.at, role));
+            }
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        hits
+    }
+
     /// How many bars the host's tempo map places across the take.
     /// Zero when it cannot place a grid at all.
     pub fn bar_count(&self) -> usize {
@@ -218,7 +245,11 @@ impl DrumHost {
         if bars.len() < 2 {
             return Vec::new();
         }
-        let hits = self.role_hits(&Self::fill_detect_panel(cfg.detect_sensitivity));
+        let hits = if cfg.hybrid_detect {
+            self.role_hits_hybrid()
+        } else {
+            self.role_hits(&Self::fill_detect_panel(cfg.detect_sensitivity))
+        };
         expression_editor_core::fills::detect_fills(&bars, &hits, cfg)
     }
 
