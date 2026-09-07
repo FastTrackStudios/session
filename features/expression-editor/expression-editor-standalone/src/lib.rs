@@ -514,25 +514,41 @@ impl Runner {
 
         let tracks = Tracks::all(&daw, ctx.clone());
 
-        // The kit folder: named wins (case-insensitively, exact then
-        // substring), otherwise the first folder whose name classifies
-        // as a kit.
-        let kit = match kit_folder {
+        // The kit folder. Candidates come from the name — an explicit
+        // `--drums <name>` (exact, then substring) or, with no argument,
+        // any folder named like a kit — and the BEST-SCORING candidate
+        // wins, not the first.
+        //
+        // A session routinely has more than one folder called `Drums`: the
+        // tracked kit and a folder of reference stems or a printed mix.
+        // Name cannot separate them, so `--drums Drums` could not either.
+        // `score_kit` reads their shape instead — a kit covers kick, snare
+        // and toms and groups its mics in sub-folders; a stem folder is
+        // four flat tracks. Taking the first match opened the stems on a
+        // real project and presented as "the tom lanes are broken", since
+        // that folder has no toms.
+        let candidates: Vec<&daw::service::Track> = match kit_folder {
             Some(want) => {
                 let w = want.to_ascii_lowercase();
-                tracks
+                let exact: Vec<_> = tracks
                     .iter()
-                    .find(|t| t.is_folder && t.name.to_ascii_lowercase() == w)
-                    .or_else(|| {
-                        tracks
-                            .iter()
-                            .find(|t| t.is_folder && t.name.to_ascii_lowercase().contains(&w))
-                    })
+                    .filter(|t| t.is_folder && t.name.to_ascii_lowercase() == w)
+                    .collect();
+                if exact.is_empty() {
+                    tracks
+                        .iter()
+                        .filter(|t| t.is_folder && t.name.to_ascii_lowercase().contains(&w))
+                        .collect()
+                } else {
+                    exact
+                }
             }
             None => tracks
                 .iter()
-                .find(|t| t.is_folder && expression_editor_core::kit::is_kit_folder(&t.name)),
-        }
+                .filter(|t| t.is_folder && expression_editor_core::kit::is_kit_folder(&t.name))
+                .collect(),
+        };
+        let kit = pick_best_kit(&tracks, &candidates)
         .ok_or_else(|| LoadError::NoKitFolder {
             project: name.clone(),
             wanted: kit_folder.map(str::to_string),
@@ -558,9 +574,15 @@ impl Runner {
             name: String,
             folder: Option<String>,
             role: expression_editor_core::kit::LaneRole,
+            /// The whole track — its audio is composed from every playing
+            /// item, not read from one of them.
+            track: daw::service::Track,
+            /// The longest playing item, kept as the anchor edits are
+            /// written back through. Reading and writing want different
+            /// things: reading wants the whole performance, writing wants
+            /// a concrete item to address.
             item_guid: String,
             length_secs: f64,
-            volume: f64,
         }
         let mut jobs: Vec<Job> = Vec::new();
         let mut items_seen = 0usize;
@@ -587,9 +609,12 @@ impl Runner {
                 continue;
             }
             let role = expression_editor_core::kit::kit_role(&track.name, &chain);
+            // `edit_item` is still the audio-track test — a track with no
+            // playing audio item is not a lane — but its pick is no longer
+            // what gets read.
             let (seen, pick) = edit_item(&daw, &ctx, track);
             items_seen += seen;
-            let Some((item_guid, length_secs, volume)) = pick else {
+            let Some((item_guid, length_secs, _volume)) = pick else {
                 continue;
             };
             jobs.push(Job {
@@ -597,11 +622,40 @@ impl Runner {
                 name: track.name.clone(),
                 folder: chain.first().map(|s| s.to_string()),
                 role,
+                track: track.clone(),
                 item_guid,
                 length_secs,
-                volume,
             });
         }
+
+        // The span every lane is composed over: the furthest item end in
+        // the kit. Lanes must share one timeline or they cannot be
+        // compared, and a per-track length would make each mic its own
+        // clock.
+        let mut timeline_secs = 0.0f64;
+        for job in &jobs {
+            for item in Items::get_items(
+                &daw,
+                ctx.clone(),
+                daw::service::TrackRef::Guid(job.track.guid.clone()),
+            ) {
+                let end = item.position.as_seconds() + item.length.as_seconds();
+                if end > timeline_secs {
+                    timeline_secs = end;
+                }
+            }
+        }
+        // One rate for the composed buffers. Probed from a real take
+        // rather than assumed: `track_timeline` resamples anything that
+        // disagrees, but it needs a target to resample to.
+        let rate = jobs
+            .first()
+            .and_then(|job| {
+                let (_, pick) = edit_item(&daw, &ctx, &job.track);
+                pick
+            })
+            .and_then(|(guid, len, vol)| read_take_mono(&daw, &ctx, &guid, len, vol))
+            .map_or(48_000.0, |(_, r)| r);
 
         // The expensive half — reading each mic's audio and finding its
         // hits — is per-mic independent, so it runs one thread per mic.
@@ -615,13 +669,23 @@ impl Runner {
                         let daw = daw.clone();
                         let ctx = ctx.clone();
                         scope.spawn(move || {
-                            let (samples, rate) = read_take_mono(
-                                &daw,
-                                &ctx,
-                                &job.item_guid,
-                                job.length_secs,
-                                job.volume,
-                            )?;
+                            // Compose EVERY playing item on the track, not
+                            // the longest one.
+                            //
+                            // Reading a single item is right only for a
+                            // track recorded in one pass. A comped or
+                            // sliced track is hundreds of short pieces —
+                            // a real kit's tom trigger tracks came in at
+                            // 486 items, the longest 2.5s of a 314s take —
+                            // so "longest item" drew a two-second sliver
+                            // and detected hits in it, while the rest of
+                            // the performance was simply not loaded. It
+                            // looked like the trigger tracks held no audio.
+                            let samples =
+                                track_timeline(&daw, &ctx, &job.track, timeline_secs, rate);
+                            if samples.is_empty() {
+                                return None;
+                            }
                             let mut doc = percussion_doc(&samples, rate);
                             attach_regions(&daw, &ctx, &mut doc);
                             Some((job, samples, rate, doc))
@@ -1227,3 +1291,46 @@ fn file_label(path: &Path) -> String {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
+
+/// Every track beneath `folder`, as `(name, is_folder)` for scoring.
+///
+/// Walks `parent_guid` upward from each track rather than downward, so a
+/// project whose folder chain is malformed cannot loop; the depth cap is the
+/// same one the role walk uses.
+fn descendants_of<'a>(
+    tracks: &'a [daw::service::Track],
+    folder_guid: &str,
+) -> Vec<(&'a str, bool)> {
+    let by_guid: std::collections::HashMap<&str, &daw::service::Track> =
+        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
+    tracks
+        .iter()
+        .filter(|t| {
+            let mut cur = t.parent_guid.as_deref();
+            for _ in 0..64 {
+                let Some(parent) = cur.and_then(|g| by_guid.get(g)) else {
+                    return false;
+                };
+                if parent.guid == folder_guid {
+                    return true;
+                }
+                cur = parent.parent_guid.as_deref();
+            }
+            false
+        })
+        .map(|t| (t.name.as_str(), t.is_folder))
+        .collect()
+}
+
+/// The candidate that most looks like a tracked kit. Ties keep the earlier
+/// one, so a single-candidate project behaves exactly as before.
+fn pick_best_kit<'a>(
+    tracks: &'a [daw::service::Track],
+    candidates: &[&'a daw::service::Track],
+) -> Option<&'a daw::service::Track> {
+    candidates
+        .iter()
+        .copied()
+        .max_by_key(|c| expression_editor_core::kit::score_kit(&descendants_of(tracks, &c.guid)))
+}
+

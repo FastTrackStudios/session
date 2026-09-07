@@ -94,6 +94,60 @@ pub fn is_kit_folder(name: &str) -> bool {
     )
 }
 
+/// How much a folder looks like a real drum kit, for picking between
+/// several that are all *named* like one.
+///
+/// A session routinely carries more than one folder called `Drums`: the
+/// tracked kit, and a folder of reference stems or a printed drum mix. They
+/// are indistinguishable by name — the real kit is obvious only from its
+/// shape. Taking the first match opened the stems on a real session
+/// (`set in stone`: a four-stem `Drums` folder sitting above the 20-track
+/// kit), which then looked like "tom lanes are broken" because that folder
+/// has no toms.
+///
+/// Ordered by `roles` first — covering kick *and* snare *and* toms is what
+/// a kit is — then by role-claiming sub-folders, then by sheer size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct KitScore {
+    /// Distinct targeted roles present (`Kick`, `Snare`, `Toms`). `Other`
+    /// does not count: a folder of overheads is not a kit.
+    pub roles: usize,
+    /// Descendant folders that claim a role — `Kick/`, `Snare/`, `Toms/`.
+    /// A tracked kit groups its mics; a stem folder is flat.
+    pub sub_folders: usize,
+    /// Leaf tracks beneath it, as the final tie-break.
+    pub members: usize,
+}
+
+/// Score a candidate kit folder from its descendants, each `(name, is_folder)`.
+#[must_use]
+pub fn score_kit(descendants: &[(&str, bool)]) -> KitScore {
+    let mut roles = [false; 3];
+    let mut sub_folders = 0usize;
+    let mut members = 0usize;
+    for (name, is_folder) in descendants {
+        let role = folder_role(name);
+        if *is_folder {
+            if role.is_some_and(|r| r != LaneRole::Other) {
+                sub_folders = sub_folders.saturating_add(1);
+            }
+        } else {
+            members = members.saturating_add(1);
+        }
+        match role {
+            Some(LaneRole::Kick) => roles[0] = true,
+            Some(LaneRole::Snare) => roles[1] = true,
+            Some(LaneRole::Toms) => roles[2] = true,
+            _ => {}
+        }
+    }
+    KitScore {
+        roles: roles.iter().filter(|r| **r).count(),
+        sub_folders,
+        members,
+    }
+}
+
 /// The role a folder name claims for everything under it, if any.
 ///
 /// `SUM` and similar bus names claim nothing: the folder *above* them
