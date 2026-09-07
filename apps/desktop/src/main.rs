@@ -177,7 +177,7 @@ fn main() {
     // playing the setlist itself while someone thinks they're driving
     // REAPER.
     #[cfg(all(feature = "session", not(target_arch = "wasm32")))]
-    if std::env::var("FTS_SESSION_MODE").as_deref() == Ok("recording") {
+    if recording_mode_wanted() {
         match reaper_engine::bootstrap_blocking() {
             Ok(()) => tracing::info!("recording mode ready (connected to live REAPER)"),
             Err(e) => tracing::error!("recording mode failed to connect to REAPER: {e:?}"),
@@ -190,6 +190,32 @@ fn main() {
     }
 
     launch_app();
+}
+
+/// Whether to boot Recording Mode rather than Live Mode.
+///
+/// `FTS_SESSION_MODE` still decides when it is set — `recording` or `live`,
+/// so either can be forced. Unset, the answer is simply "is there a REAPER to
+/// drive?": if one is running with the FTS extension loaded, attaching to it
+/// is what someone opening this app next to an open REAPER means.
+///
+/// It used to default to Live Mode unconditionally, so opening the app the
+/// normal way (from the Dock, with REAPER already up) silently started the
+/// in-process player instead — no connection, no error, and a setlist that
+/// was not the one on screen in REAPER.
+#[cfg(all(feature = "session", not(target_arch = "wasm32")))]
+fn recording_mode_wanted() -> bool {
+    match std::env::var("FTS_SESSION_MODE").as_deref() {
+        Ok("recording") => true,
+        Ok("live") => false,
+        _ => {
+            let found = !reaper_engine::discover_all().is_empty();
+            if found {
+                tracing::info!("a live REAPER is running — booting Recording Mode");
+            }
+            found
+        }
+    }
 }
 
 /// Window position, inner size, and whether to go borderless
