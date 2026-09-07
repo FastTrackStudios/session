@@ -250,6 +250,16 @@ subsequent page; and paging stops at the last full page rather than
 scrolling past the take, where an empty screen reads as the editor
 having lost the project.
 
+r[drums.manual.undo]
+Undo rewinds the **daw's** last write, not the document's, whenever a
+host is attached. Every gesture in drum mode — slip, stretch, quantize
+Apply — writes through the host inside its own undo block and none of
+them touch the document's history, so undoing there rewinds a document
+nobody edited while the edit stays on disk. That is the worst shape the
+bug can take: nothing appears to happen, and the user believes the take
+is back the way it was. Surfaces with no host (the piano roll, demo
+scenes) keep the document stack, where their edits really are.
+
 ## Fills
 
 r[drums.fills.detect]

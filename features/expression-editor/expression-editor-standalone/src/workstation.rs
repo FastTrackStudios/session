@@ -325,6 +325,7 @@ pub fn WorkstationApp() -> Element {
         on_apply,
         on_save,
         on_hit,
+        on_undo,
     } = host_callbacks(editor, host.read().clone(), bins, previews_sig, use_signal(Vec::new));
 
     // One store + meter bank for every panel in the window: the TCP
@@ -673,6 +674,7 @@ pub fn WorkstationApp() -> Element {
                         on_quantize_apply: on_apply,
                         on_hit,
                         on_save,
+                        on_undo,
                         playhead_secs: playhead,
                     }
                 }

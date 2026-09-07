@@ -145,6 +145,7 @@ pub(crate) struct HostCallbacks {
     pub on_apply: Option<EventHandler<expression_editor_ui::QuantizePanel>>,
     pub on_save: Option<EventHandler<()>>,
     pub on_hit: Option<EventHandler<expression_editor_ui::stack::HitGesture>>,
+    pub on_undo: Option<EventHandler<()>>,
 }
 
 /// Build the callbacks against a host, or all-`None` without one (a
@@ -165,6 +166,20 @@ pub(crate) fn host_callbacks(
         let found = h.fills(&expression_editor_core::fills::FillConfig::default());
         fills.set(found.iter().map(|f| (f.start, f.end)).collect());
     }
+    // Undo the daw's edit, not the document's. Every gesture here wrote
+    // through a `begin_undo_block`/`end_undo_block` pair and none of it
+    // touched the document's own history, so the document stack has
+    // nothing to rewind and rewinding it would leave the slip on disk
+    // while the picture claimed otherwise.
+    // r[impl drums.manual.undo]
+    let on_undo = host.clone().map(|h| {
+        EventHandler::new(move |()| {
+            if h.undo() {
+                refresh_docs(&mut editor, &h);
+                refresh_fills(&mut fills, &h);
+            }
+        })
+    });
     let on_change = host.clone().map(|h| {
         EventHandler::new(move |p: expression_editor_ui::QuantizePanel| {
             let (b, pv) = h.preview(&p);
@@ -254,6 +269,7 @@ pub(crate) fn host_callbacks(
         on_apply,
         on_save,
         on_hit,
+        on_undo,
     }
 }
 
@@ -278,6 +294,7 @@ pub fn App() -> Element {
         on_apply,
         on_save,
         on_hit,
+        on_undo,
     } = host_callbacks(editor, host.read().clone(), bins, previews, fills);
     rsx! {
         style {
@@ -303,6 +320,7 @@ pub fn App() -> Element {
                 on_quantize_apply: on_apply,
                 on_hit,
                 on_save,
+                on_undo,
                 fills: fills(),
             }
         }

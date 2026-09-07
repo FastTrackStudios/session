@@ -170,6 +170,10 @@ pub fn ExpressionEditor(
     /// toolbar button only when present.
     #[props(default)]
     on_save: Option<EventHandler<()>>,
+    /// Undo the host's last write — see [`toolbar::Toolbar`].
+    // r[impl drums.manual.undo]
+    #[props(default)]
+    on_undo: Option<EventHandler<()>>,
     /// The transport's position, seconds — drawn as a playhead in the
     /// stacked view when present.
     #[props(default)]
@@ -282,7 +286,7 @@ pub fn ExpressionEditor(
                     width: 100%; height: 100%; \
                     min-height: 0; overflow: hidden; background: {theme::BG}; \
                     color: {theme::TEXT}; font-family: system-ui, sans-serif;",
-            toolbar::Toolbar { editor, drag, drawer, quantize_open, on_save }
+            toolbar::Toolbar { editor, drag, drawer, quantize_open, on_save, on_undo }
             switcher::TrackSwitcher { editor }
             div {
                 style: "display: flex; flex: 1 1 auto; min-height: 0;",
