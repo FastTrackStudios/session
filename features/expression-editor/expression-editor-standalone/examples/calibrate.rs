@@ -43,10 +43,18 @@ use expression_editor_ui::quantize_panel::QuantizePanel;
 
 /// How close a detected hit must be to a reference onset to count.
 ///
-/// 30 ms is about the width of a drum attack and comfortably inside the
-/// 94 ms of a sixteenth at 160bpm, so it cannot match a hit to its
-/// neighbour.
-const MATCH_TOL: f64 = 0.030;
+/// ±25 ms is the standard onset-detection evaluation window (Böck &
+/// Widmer, DAFx-13, following the MIREX convention), so the numbers
+/// here can be read against published results rather than only against
+/// each other.
+const MATCH_TOL: f64 = 0.025;
+
+/// Reference onsets closer together than this are one event.
+///
+/// 30 ms, the same convention's `combination_width`: a kick and a crash
+/// struck together are one moment, and counting them twice would make a
+/// detector that finds the moment look like it missed one.
+const COMBINE: f64 = 0.030;
 
 struct Project {
     name: String,
@@ -280,7 +288,7 @@ fn midi_take(text: &str, take: usize, spq: f64) -> Vec<f64> {
     out.sort_by(f64::total_cmp);
     // Distinct moments: a kick and a crash on the same beat are one
     // event as far as "was something struck here" goes.
-    out.dedup_by(|a, b| (*a - *b).abs() < 0.010);
+    out.dedup_by(|a, b| (*a - *b).abs() < COMBINE);
     out
 }
 
@@ -289,6 +297,32 @@ fn midi_take(text: &str, take: usize, spq: f64) -> Vec<f64> {
 fn near(sorted: &[f64], t: f64, tol: f64) -> bool {
     let i = sorted.partition_point(|&x| x < t - tol);
     sorted.get(i).is_some_and(|&x| (x - t).abs() <= tol)
+}
+
+/// True positives under **one-to-one** matching: each reference onset
+/// may be claimed by at most one detection, and vice versa.
+///
+/// The standard rule, and not a detail. Counting every detection that
+/// merely sits near *some* reference onset lets one reference absolve a
+/// whole burst of false positives, so a detector firing continuously
+/// scores well — which is exactly the failure that made F1 rank
+/// sensitivity 1.0 top while it fired thirty times a second. Both lists
+/// are sorted, so a two-pointer walk is enough.
+fn matched_pairs(detected: &[f64], reference: &[f64], tol: f64) -> usize {
+    let (mut i, mut j, mut tp) = (0usize, 0usize, 0usize);
+    while i < detected.len() && j < reference.len() {
+        let d = detected[i] - reference[j];
+        if d.abs() <= tol {
+            tp += 1;
+            i += 1;
+            j += 1;
+        } else if d < 0.0 {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    tp
 }
 
 /// Precision, recall and F1 of `detected` against `reference`, over the
@@ -306,10 +340,9 @@ fn score(detected: &[f64], reference: &[f64]) -> (f64, f64, f64) {
     if d.is_empty() || r.is_empty() {
         return (0.0, 0.0, 0.0);
     }
-    let tp_d = d.iter().filter(|t| near(&r, **t, MATCH_TOL)).count();
-    let tp_r = r.iter().filter(|t| near(&d, **t, MATCH_TOL)).count();
-    let precision = tp_d as f64 / d.len() as f64;
-    let recall = tp_r as f64 / r.len() as f64;
+    let tp = matched_pairs(&d, &r, MATCH_TOL);
+    let precision = tp as f64 / d.len() as f64;
+    let recall = tp as f64 / r.len() as f64;
     let f1 = if precision + recall > 0.0 {
         2.0 * precision * recall / (precision + recall)
     } else {

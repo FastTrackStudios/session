@@ -94,15 +94,19 @@ impl Default for FillConfig {
             threshold: 5.0,
             density_weight: 0.5,
             join_gap_bars: 0,
-            // Below the detector's own F1 optimum of 0.95, and
-            // deliberately so. Fill detection does not want maximum
-            // recall, it wants *contrast* between bars: a bar is a fill
-            // because it is busier than its neighbours. Pushing
-            // sensitivity to the F1 optimum adds marginal hits fairly
-            // evenly across groove and fill alike, which lifts the
-            // median as much as the outliers and flattens the very
-            // difference being measured — at 0.95 two of the six album
-            // projects drop to no section-aligned fills at all.
+            // The detector's calibrated optimum against the drum MIDI,
+            // under the standard one-to-one matching rule at a ±25ms
+            // window: F1 peaks here at 0.345 and falls either side
+            // (0.293 at 0.80, 0.286 at 0.98).
+            //
+            // Arrived at twice over, which is the reassuring part. It
+            // was first settled empirically because fill detection
+            // wants *contrast* between bars rather than raw recall —
+            // pushing higher adds marginal hits to groove and fill
+            // alike, lifting the median as much as the outliers, and at
+            // 0.95 two of the six album projects lost every
+            // section-aligned fill. The onset-detection optimum turned
+            // out to be the same place.
             detect_sensitivity: 0.9,
         }
     }

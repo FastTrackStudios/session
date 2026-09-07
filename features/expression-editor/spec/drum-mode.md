@@ -269,13 +269,25 @@ section boundary than a bar picked at random does — the "than random"
 half being the whole metric, since a third of each song is already near
 some marker and a detector firing blindly scores 30%.
 
+Matching is **one-to-one** at a ±25 ms window, with reference onsets
+closer than 30 ms combined into one event — the standard onset-detection
+evaluation convention (Böck & Widmer, DAFx-13), so the numbers can be
+read against published results rather than only against each other. The
+one-to-one part is not a detail: counting every detection that merely
+sits near *some* reference onset lets one onset absolve a whole burst of
+false positives, which is what made a detector firing thirty times a
+second tie for the best F1 on the sweep. Under the correct rule F1 peaks
+at sensitivity 0.90 and falls either side, and the rate constraint
+becomes a cross-check rather than a crutch.
+
 Neither metric may be taken at its argmax, and the reasons differ.
 **F1 cannot police over-detection here**: the reference is a different
 take, so precision is capped near 0.55 however good the detector is, and
 spurious hits cost almost nothing in F1 while recall keeps climbing —
 sensitivity 1.0 scores the best F1 on the sweep while firing thirty
 times a second against a drummer playing six. It is therefore
-constrained to settings whose hit rate stays near the drummer's.
+also constrained to settings whose hit rate stays near the drummer's,
+which under one-to-one matching agrees with the F1 optimum.
 **Section lift has no recall term**, so it rewards reporting fewer and
 safer fills until barely any remain; it is read next to the per-song
 fill count, and the tie is broken on cost, which is asymmetric — a
