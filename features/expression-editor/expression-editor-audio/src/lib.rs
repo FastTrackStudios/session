@@ -42,6 +42,8 @@ pub mod align_hits;
 pub mod analyze;
 #[cfg(feature = "daw")]
 pub mod apply_quantize;
+#[cfg(feature = "daw")]
+pub mod daw_bound;
 pub mod detect;
 pub mod dynamics;
 pub mod frames;

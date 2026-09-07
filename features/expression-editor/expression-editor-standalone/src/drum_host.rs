@@ -52,6 +52,14 @@ struct ManualHits {
 /// the pick radius of the gesture, not a detection window.
 const MANUAL_TOL: f64 = 0.015;
 
+/// `Standalone` satisfies the bound — the backend the workspace runs on
+/// today, asserted at compile time so a service added to [`DrumDaw`]
+/// that it cannot serve is a build error rather than a surprise.
+const _: fn() = || {
+    fn assert_impl<T: expression_editor_audio::daw_bound::DrumDaw>() {}
+    let _ = assert_impl::<Standalone>;
+};
+
 /// Everything a drum-workspace gesture needs to reach the daw.
 pub struct DrumHost {
     daw: Standalone,

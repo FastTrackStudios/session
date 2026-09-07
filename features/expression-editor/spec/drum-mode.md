@@ -250,6 +250,27 @@ subsequent page; and paging stops at the last full page rather than
 scrolling past the take, where an empty screen reads as the editor
 having lost the project.
 
+r[drums.host.daw-agnostic]
+Everything the workspace asks of a daw is named as one bound,
+`expression_editor_audio::daw_bound::DrumDaw`, so "will this work in
+REAPER" is a question the compiler answers rather than one someone
+argues about. Both `Standalone` and `daw::reaper::Reaper` are asserted
+against it at compile time; a service added to the bound that either
+cannot serve is a build error, not a discovery.
+
+The edit vocabulary is deliberately the one REAPER's item model already
+offers, and the same one its own audio quantizers use: **split** with a
+leading pad and a crossfade, or **warp** by writing stretch markers on
+transients, either way applied identically to every mic of a group so
+phase coherence survives. A split needs no facade call of its own — it
+is a duplicate with its position, length and start offset set. Detection
+reads samples through the audio-accessor service, which is REAPER's own
+API for exactly that, rather than going to the files on disk.
+
+`DrumHost` is still typed on `Standalone`, so none of the editing is
+reachable from the REAPER panel yet. That remaining work is a change of
+type parameter, not a compatibility problem.
+
 r[drums.manual.split]
 The **razor** cuts the kit. Arming it and clicking in a role lane puts
 an item boundary at the click on *every* mic at once — one cut time and

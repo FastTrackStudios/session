@@ -713,3 +713,22 @@ pub fn with_editor<R>(f: impl FnOnce(&mut expression_editor_core::Editor) -> R) 
 pub fn module() -> Box<dyn DawModule> {
     Box::new(ExpressionEditorModule)
 }
+
+/// REAPER satisfies the drum workspace's daw bound.
+///
+/// The editing in drum mode — slip, stretch, split, quantize Apply —
+/// reaches the daw only through [`expression_editor_audio::daw_bound::DrumDaw`],
+/// and none of it is reachable from this panel yet because `DrumHost`
+/// is still typed on `Standalone`. That is a Rust generics job, not a
+/// compatibility one, and this assertion is the evidence: REAPER
+/// already serves every operation the workspace asks for, so the port
+/// cannot fail on a missing API.
+///
+/// It is a compile-time claim on purpose. Left as a comment it would
+/// rot the first time the workspace needed a service REAPER lacks;
+/// written this way that becomes a build error here.
+// r[impl drums.host.daw-agnostic]
+const _: fn() = || {
+    fn assert_impl<T: expression_editor_audio::daw_bound::DrumDaw>() {}
+    let _ = assert_impl::<daw::reaper::Reaper>;
+};
