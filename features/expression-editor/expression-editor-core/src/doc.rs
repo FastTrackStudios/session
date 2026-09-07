@@ -736,6 +736,16 @@ pub struct ExpressionDoc {
     /// Must match, or pitch reads wrong on playback.
     pub bend_range: f64,
     pub markers: Vec<Marker>,
+    /// Bar lines, in document time, from the host's tempo map — `n + 1`
+    /// boundaries for `n` bars.
+    ///
+    /// Supplied rather than computed, because a take does not have one
+    /// bar length. `set in stone` is 6/8, changes tempo partway and has
+    /// a 7/4 section; multiplying out a single bpm and a beats-per-bar
+    /// of 4 drifts out of phase within a few bars. Empty when the host
+    /// has no tempo map, and anything reading this must cope with that
+    /// rather than falling back to a guessed grid.
+    pub bars: Vec<f64>,
     /// The song's sections, host-supplied and read-only — what the
     /// ruler shows so "where am I" has an answer better than a bar
     /// number.
@@ -790,6 +800,7 @@ impl ExpressionDoc {
             end,
             bend_range: 48.0,
             markers: Vec::new(),
+            bars: Vec::new(),
             regions: Vec::new(),
             cc: crate::cc::CcSet::default(),
             row_space: crate::rows::RowSpace::Pitch,

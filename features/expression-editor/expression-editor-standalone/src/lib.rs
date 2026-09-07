@@ -1225,6 +1225,15 @@ pub(crate) fn attach_timeline(
             lane: lane_of(r.lane),
         })
         .collect();
+    // Bar lines from the host's tempo map, so the view can page a
+    // phrase at a time and land on a downbeat in 6/8 and 7/4 as well as
+    // in 4/4.
+    // r[impl drums.view.page-bars]
+    let take_secs = if ups > 0.0 { doc.end / ups } else { 0.0 };
+    doc.bars = bar_grid(daw, ctx, take_secs)
+        .into_iter()
+        .map(|t| t * ups)
+        .collect();
     doc.markers = Markers::all(daw, ctx.clone())
         .into_iter()
         // A marker whose position will not resolve to seconds cannot be

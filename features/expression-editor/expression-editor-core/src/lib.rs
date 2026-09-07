@@ -1860,6 +1860,80 @@ impl Editor {
         self.settle_camera();
     }
 
+    /// Move the view `steps` pages of `bars_per_page` bars, keeping the
+    /// zoom, and land on a bar line.
+    ///
+    /// Editing drums is done a phrase at a time: zoom to four bars, fix
+    /// them, move on. Paging by a fixed number of *seconds* would drift
+    /// out of phase with the music within a few pages and put the
+    /// downbeat somewhere different every time — the thing you navigate
+    /// by would be the thing that moves. So the view snaps to the bar
+    /// line nearest where it already is, then counts bars from there.
+    ///
+    /// Returns whether the view moved. `false` when the host supplied no
+    /// bar lines, or the page would run off either end of the take —
+    /// paging past the last bar and landing on emptiness is worse than
+    /// not moving, because it looks like the editor lost the project.
+    // r[impl drums.view.page-bars]
+    pub fn page_bars(&mut self, bars_per_page: usize, steps: i64) -> bool {
+        let bars = self.doc.bars.clone();
+        if bars.len() < 2 || bars_per_page == 0 || steps == 0 {
+            return false;
+        }
+        let (t0, t1) = self.camera.time_span(self.viewport);
+        let span = t1 - t0;
+        if !(span.is_finite() && span > 0.0) {
+            return false;
+        }
+        // Where the view starts now, as a bar index: the nearest bar
+        // line, so a view nudged slightly off the grid re-aligns rather
+        // than carrying its error forward through every page.
+        let here = bars
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| (*a - t0).abs().total_cmp(&(*b - t0).abs()))
+            .map_or(0, |(i, _)| i);
+
+        let target = here as i64 + steps * bars_per_page as i64;
+        // The last page starts at the last bar that still has a full
+        // page behind it, so paging forward at the end stops rather than
+        // scrolling off into nothing.
+        let last_start = (bars.len() - 1).saturating_sub(bars_per_page);
+        let target = target.clamp(0, last_start as i64) as usize;
+        if target == here {
+            return false;
+        }
+        let start = bars[target];
+        // Keep the zoom: the page is as wide as the view already was,
+        // so paging never silently changes how much is on screen.
+        let (lo, hi) = self.camera.pitch_span(self.viewport);
+        self.zoom_to_box(start, start + span, lo, hi);
+        true
+    }
+
+    /// Frame exactly `bars_per_page` bars starting at the bar nearest
+    /// the view's left edge — what a "zoom to four bars" key does.
+    // r[impl drums.view.page-bars]
+    pub fn frame_bars(&mut self, bars_per_page: usize) -> bool {
+        let bars = self.doc.bars.clone();
+        if bars.len() < 2 || bars_per_page == 0 {
+            return false;
+        }
+        let (t0, _) = self.camera.time_span(self.viewport);
+        let here = bars
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| (*a - t0).abs().total_cmp(&(*b - t0).abs()))
+            .map_or(0, |(i, _)| i);
+        let end = (here + bars_per_page).min(bars.len() - 1);
+        if end <= here {
+            return false;
+        }
+        let (lo, hi) = self.camera.pitch_span(self.viewport);
+        self.zoom_to_box(bars[here], bars[end], lo, hi);
+        true
+    }
+
     pub fn pan_px(&mut self, dx: f64, dy: f64) {
         self.camera.pan_px(dx, dy);
         self.settle_camera();

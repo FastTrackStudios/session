@@ -932,6 +932,13 @@ const ACTIVE_BOOST: f32 = CoreEditor::ACTIVE_BOOST;
 /// to.
 const MIN_LANE: f32 = 22.0;
 
+/// Bars the view pages by, and frames.
+///
+/// Four, because that is the phrase drummers play in and the unit a
+/// take gets edited in — fix a bar of a fill and you want the three
+/// around it for context, not a screen of the whole song.
+const BARS_PER_PAGE: usize = 4;
+
 /// Every track at once, on one timeline.
 ///
 /// Read-only by design. The stack answers "which track needs work" and
@@ -1139,6 +1146,30 @@ pub fn StackView(
                     };
                     if let Some(f) = factor {
                         editor.write().zoom_time_at(vp.w * 0.5, f);
+                        e.prevent_default();
+                        return;
+                    }
+                    // Page the view a phrase at a time — the way drums
+                    // actually get edited: frame four bars, fix them,
+                    // move on. Bracket keys because they sit under the
+                    // hand that is not on the mouse, and because
+                    // PageUp/PageDown are a scroll on every other
+                    // surface and would read as one here.
+                    // r[impl drums.view.page-bars]
+                    let step = match c.as_str() {
+                        "]" => Some(1),
+                        "[" => Some(-1),
+                        _ => None,
+                    };
+                    if let Some(step) = step {
+                        editor.write().page_bars(BARS_PER_PAGE, step);
+                        e.prevent_default();
+                        return;
+                    }
+                    // Frame the page without moving off it: the way back
+                    // from a zoom that got away.
+                    if c.as_str() == "\\" {
+                        editor.write().frame_bars(BARS_PER_PAGE);
                         e.prevent_default();
                         return;
                     }

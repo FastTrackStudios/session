@@ -229,6 +229,27 @@ dial: the gate needed a calibration pass to get there. It is kept for
 the jobs where robustness matters more than milliseconds, and so that
 the choice can be re-measured whenever either detector changes.
 
+r[drums.view.page-bars]
+`]` and `[` move the view forward and back one **page of four bars**,
+keeping the zoom; `\` frames the page without moving off it. Four
+because that is the phrase drummers play in and the unit a take is
+edited in — fixing a bar of a fill wants the three around it for
+context, not a screen of the whole song.
+
+A page lands on a **bar line**, and the bar lines come from the host's
+tempo map (`ExpressionDoc::bars`), never from a bar length multiplied
+out. Paging by a fixed number of seconds would drift out of phase within
+a few pages and put the downbeat somewhere different each time, making
+the thing being navigated by the thing that moves. `set in stone` has
+198 bars in three different lengths — 1.33s, 1.68s and 2.95s — so this
+is the common case, not an edge one.
+
+The view snaps to the nearest bar line before counting, so a view nudged
+off the grid re-aligns instead of carrying its error into every
+subsequent page; and paging stops at the last full page rather than
+scrolling past the take, where an empty screen reads as the editor
+having lost the project.
+
 ## Fills
 
 r[drums.fills.detect]

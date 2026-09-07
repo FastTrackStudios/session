@@ -15,6 +15,7 @@
 //! pixel, and ask which track it selected.
 
 use dioxus::prelude::*;
+use dioxus_test::keyboard_types::Modifiers;
 use dioxus_test::{by_testid, render};
 use expression_editor_core::doc::{Marker, Region};
 use expression_editor_core::tracks::Track;
@@ -55,9 +56,11 @@ fn Surface() -> Element {
     let editor = use_signal(|| STAGED.with(|s| s.borrow_mut().take()).expect("staged"));
     let ed = editor.read();
     let readout = format!("active={}", ed.tracks.active());
+    let view0 = format!("{}", ed.camera.time_span(ed.viewport).0);
     drop(ed);
     rsx! {
         div { "data-testid": "readout", "{readout}" }
+        div { "data-testid": "view0", "{view0}" }
         ExpressionEditor { editor }
     }
 }
@@ -150,6 +153,51 @@ fn a_region_and_a_marker_sharing_a_lane_still_get_two_shelves() {
     assert_eq!(shelves[1], (Some(1), false, "SONG".into()));
 }
 
+// ── paging the view ──────────────────────────────────────────────────
+
+// r[verify drums.view.page-bars]
+#[tokio::test]
+async fn the_bracket_key_pages_the_view_by_four_bars() -> dioxus_test::Result<()> {
+    // The binding, not the arithmetic — `page_bars` has its own tests
+    // in core. What this pins is that the key reaches it at all, on the
+    // stacked surface, without being swallowed by another handler.
+    let mut ed = three_tracks();
+    let bar = RATE * 2.0;
+    ed.doc.bars = (0..=32).map(|i| i as f64 * bar).collect();
+    // The document has to be as long as the bars claim. The camera
+    // clamps to the document, so a four-second doc with a sixty-second
+    // grid pages one bar and then stops against the end — correctly,
+    // and confusingly.
+    ed.doc.end = *ed.doc.bars.last().unwrap();
+    ed.frame_bars(4);
+    let before = ed.camera.time_span(ed.viewport).0;
+
+    stage(ed);
+    let tester = render(Surface).with_window_size(1400, 700).build();
+    let cell = tester.query(by_testid("stack-cell")).immediately()?;
+    let (ox, oy) = cell.document_origin();
+    // Focus the surface first: keys go to whatever holds focus, and an
+    // unfocused test types into nothing and passes for the wrong reason.
+    tester.pointer_down_mods(ox + 400.0, oy + 200.0, Modifiers::empty());
+    tester.pointer_up_mods(ox + 400.0, oy + 200.0, Modifiers::empty());
+    tester.drain();
+    tester.key_down(dioxus_test::keyboard_types::Key::Character("]".into()), Modifiers::empty());
+    let _ = tester.pump().await;
+
+    let after = tester
+        .query(by_testid("view0"))
+        .immediately()?
+        .inner_html()
+        .trim()
+        .parse::<f64>()
+        .unwrap_or(f64::NAN);
+    assert!(
+        (after - before - 4.0 * bar).abs() < 1.0,
+        "`]` moved the view from {before} to {after}, not four bars on"
+    );
+    Ok(())
+}
+
 // ── the height and the mouse agree ───────────────────────────────────
 
 /// Click `into_lane` pixels below the top of the lane area and report
@@ -166,9 +214,9 @@ async fn click_below_the_ruler(ed: Editor, into_lane: f64) -> dioxus_test::Resul
     let (ox, oy) = cell.document_origin();
     let x = ox + expression_editor_ui::canvas::GUTTER_W + 300.0;
     let y = oy + ruler_h + into_lane;
-    tester.pointer_down_mods(x, y, dioxus_test::keyboard_types::Modifiers::empty());
+    tester.pointer_down_mods(x, y, Modifiers::empty());
     tester.drain();
-    tester.pointer_up_mods(x, y, dioxus_test::keyboard_types::Modifiers::empty());
+    tester.pointer_up_mods(x, y, Modifiers::empty());
     let _ = tester.pump().await;
     let html = tester
         .query(by_testid("readout"))
