@@ -8,6 +8,24 @@
 resolver = "3"
 
 members = [
+    "features/expression-editor/expression-editor-audio",
+    "features/expression-editor/expression-editor-core",
+    "features/expression-editor/expression-editor-corpus",
+    "features/expression-editor/expression-editor-daw",
+    "features/expression-editor/expression-editor-demo",
+    "features/expression-editor/expression-editor-guitarpro",
+    "features/expression-editor/expression-editor-reaper",
+    "features/expression-editor/expression-editor-standalone",
+    "features/expression-editor/expression-editor-tools",
+    "features/expression-editor/expression-editor-ui",
+    "features/ui/daw-ui",
+    "features/ui/daw-theme",
+    "features/ui/daw-theme-art",
+    "features/ui/daw-theme-reaper",
+    "features/ui/fts-themer",
+    "features/ui/fts-themer-ui",
+    "features/ui/daw-reaper-dioxus-ext",
+    "features/ui/daw-reaper-dioxus-ext-test",
     "apps/cli",
     "apps/desktop",
     "apps/session-player",
@@ -125,12 +143,12 @@ daw-bridge = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" 
 # Extension runtime — integrated REAPER extension helpers
 daw-extension-runtime = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 daw-reaper-dioxus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-daw-reaper-dioxus-ext = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
+daw-reaper-dioxus-ext = { path = "features/ui/daw-reaper-dioxus-ext" }
 daw-reaper-embed = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 reaper-launcher = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 fts-icons = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-fts-themer = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13", default-features = false }
-fts-themer-ui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
+fts-themer = { path = "features/ui/fts-themer", default-features = false }
+fts-themer-ui = { path = "features/ui/fts-themer-ui" }
 reaper-config = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 reaper-kbd = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 reaper-hwnd = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
@@ -143,10 +161,10 @@ reaper-input = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13
 fts-launcher = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 daw-standalone = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 daw-csi = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-daw-ui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13", default-features = false }
-daw-theme = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-daw-theme-art = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13", default-features = false }
-daw-theme-reaper = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
+daw-ui = { path = "features/ui/daw-ui", default-features = false }
+daw-theme = { path = "features/ui/daw-theme" }
+daw-theme-art = { path = "features/ui/daw-theme-art", default-features = false }
+daw-theme-reaper = { path = "features/ui/daw-theme-reaper" }
 
 # ── session domain (wave 3) ───────────────────────────────────────────
 # `session` is the facade — the only public API surface for the session
@@ -220,16 +238,16 @@ pitch-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 world-sys = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 tune-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 align-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-expression-editor-audio = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-expression-editor-core = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-expression-editor-corpus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-expression-editor-daw = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-expression-editor-demo = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-expression-editor-guitarpro = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-expression-editor-reaper = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-expression-editor-standalone = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-expression-editor-tools = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
-expression-editor-ui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
+expression-editor-audio = { path = "features/expression-editor/expression-editor-audio" }
+expression-editor-core = { path = "features/expression-editor/expression-editor-core" }
+expression-editor-corpus = { path = "features/expression-editor/expression-editor-corpus" }
+expression-editor-daw = { path = "features/expression-editor/expression-editor-daw" }
+expression-editor-demo = { path = "features/expression-editor/expression-editor-demo" }
+expression-editor-guitarpro = { path = "features/expression-editor/expression-editor-guitarpro" }
+expression-editor-reaper = { path = "features/expression-editor/expression-editor-reaper" }
+expression-editor-standalone = { path = "features/expression-editor/expression-editor-standalone" }
+expression-editor-tools = { path = "features/expression-editor/expression-editor-tools" }
+expression-editor-ui = { path = "features/expression-editor/expression-editor-ui" }
 level-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.13" }
 # Internal DSP cores (behind the facades).
 
