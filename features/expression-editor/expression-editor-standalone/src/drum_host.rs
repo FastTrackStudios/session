@@ -27,10 +27,13 @@ use expression_editor_ui::quantize_panel::{Bin, HitPreview, QuantizePanel, Write
 pub struct HostLane {
     pub role: LaneRole,
     pub items: Vec<ItemRef>,
-    /// The members' mean, kept only for lanes that detect
-    /// (`LaneRole::is_detection_source`). `None` elsewhere — the sum of
-    /// the room mics would cost memory nothing reads.
-    pub summed: Option<Vec<f64>>,
+    /// The signals detection runs on: one per detection *unit*, not one
+    /// per lane. Toms are a unit each — so a hit can be attributed to
+    /// the tom that made it rather than to "some tom" — and within a
+    /// unit a trigger is weighted over the mics it shares a drum with.
+    /// Empty for lanes that do not detect (`LaneRole::is_detection_source`);
+    /// summing the room mics would cost memory nothing reads.
+    pub signals: Vec<Vec<f64>>,
 }
 
 /// Hand edits to the hit list, layered over detection.
@@ -54,11 +57,12 @@ pub struct DrumHost {
     daw: Standalone,
     ctx: ProjectContext,
     lanes: Vec<HostLane>,
-    /// The trigger lanes' summed signal, parallel to `lanes`. Behind a
-    /// lock because [`DrumHost::refresh`] recomputes it after an edit
+    /// Every detection signal across all lanes, flattened — one per
+    /// detection unit, so four triggered toms contribute four. Behind a
+    /// lock because [`DrumHost::refresh`] recomputes them after an edit
     /// lands — detection must run on the audio as it *is*, not as it
     /// loaded. `Arc` so a detect in flight keeps its snapshot.
-    sums: Mutex<Vec<Option<Arc<Vec<f64>>>>>,
+    sums: Mutex<Vec<Arc<Vec<f64>>>>,
     manual: Mutex<ManualHits>,
     pub sample_rate: f64,
     /// The group's shared take length, seconds — the longest edit item.
@@ -77,9 +81,10 @@ impl DrumHost {
         take_secs: f64,
         beat_secs: f64,
     ) -> Self {
-        let sums = lanes
+        let sums: Vec<Arc<Vec<f64>>> = lanes
             .iter_mut()
-            .map(|l| l.summed.take().map(Arc::new))
+            .flat_map(|l| std::mem::take(&mut l.signals))
+            .map(Arc::new)
             .collect();
         Self {
             daw,
@@ -124,12 +129,12 @@ impl DrumHost {
         }
     }
 
-    /// Snapshot of the trigger lanes' sums — `Arc`s, so a detect keeps
+    /// Snapshot of every detection signal — `Arc`s, so a detect keeps
     /// reading the audio it started with even across a refresh.
     fn trigger_sums(&self) -> Vec<Arc<Vec<f64>>> {
         self.sums
             .lock()
-            .map(|s| s.iter().flatten().cloned().collect())
+            .map(|s| s.clone())
             .unwrap_or_default()
     }
 
@@ -315,7 +320,7 @@ impl DrumHost {
     pub fn refresh(&self) -> Vec<(String, expression_editor_core::ExpressionDoc)> {
         use daw::service::{Items, Tracks};
         let mut docs = Vec::new();
-        let mut new_sums: Vec<Option<Arc<Vec<f64>>>> = Vec::with_capacity(self.lanes.len());
+        let mut new_sums: Vec<Arc<Vec<f64>>> = Vec::with_capacity(self.lanes.len());
         for lane in &self.lanes {
             // Member tracks, from the lanes' anchor items (piece 0 of a
             // split keeps the original item guid, so this stays valid
@@ -328,8 +333,12 @@ impl DrumHost {
                     track_guids.push(info.track_guid);
                 }
             }
-            let mut lane_sum: Option<Vec<f64>> = None;
-            let mut members = 0usize;
+            // Re-read every member, then rebuild this lane's detection
+            // units from the *current* audio. The unit split and the
+            // trigger weighting must match the load path exactly, or a
+            // detect would silently change meaning after the first edit.
+            let mut names: Vec<String> = Vec::new();
+            let mut takes: Vec<Vec<f64>> = Vec::new();
             for guid in &track_guids {
                 let Some(track) = Tracks::all(&self.daw, self.ctx.clone())
                     .into_iter()
@@ -344,24 +353,20 @@ impl DrumHost {
                     self.take_secs,
                     self.sample_rate,
                 );
-                if lane.role.is_detection_source() {
-                    let sum = lane_sum.get_or_insert_with(|| vec![0.0; samples.len()]);
-                    for (o, v) in sum.iter_mut().zip(samples.iter()) {
-                        *o += v;
-                    }
-                    members += 1;
-                }
                 let mut doc = crate::percussion_doc(&samples, self.sample_rate);
                 crate::attach_regions(&self.daw, &self.ctx, &mut doc);
                 docs.push((guid.clone(), doc));
+                names.push(track.name.clone());
+                takes.push(samples);
             }
-            new_sums.push(lane_sum.map(|mut sum| {
-                let scale = 1.0 / members.max(1) as f64;
-                for v in &mut sum {
-                    *v *= scale;
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            // r[impl drums.group.detection-source]
+            for unit in expression_editor_core::kit::detection_units(lane.role, &refs) {
+                let sig = crate::blend(unit.iter().map(|&(u, w)| (takes[u].as_slice(), w)));
+                if !sig.is_empty() {
+                    new_sums.push(Arc::new(sig));
                 }
-                Arc::new(sum)
-            }));
+            }
         }
         if let Ok(mut sums) = self.sums.lock() {
             *sums = new_sums;

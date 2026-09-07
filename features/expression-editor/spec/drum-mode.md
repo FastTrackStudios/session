@@ -175,12 +175,26 @@ start are reported, and SPLIT is refused for the group until they do
 (WARP remains available).
 
 r[drums.group.detection-source]
-Transients are detected on the `Kick` and `Snare` lanes' **summed**
-signal (their member mean) — not per mic — and the two hit lists are
-merged (union, nearest-duplicate within the retrigger window collapses
-to the louder). Tom sub-lanes detect on their own signal and join the
-merged list only when the user arms them. The detector is the envelope
-gate of `grid-quantize.md`, with its `DetectConfig` exposed per lane.
+Transients are detected per **detection unit**, and the units' hit lists
+are merged (union, nearest-duplicate within the retrigger window
+collapses to the louder). A unit is one blended signal, not one mic:
+`Kick` and `Snare` are a unit each, and `Toms` is **one unit per tom**,
+so a hit can be attributed to the tom that made it rather than to "some
+tom". `Other` never detects. `Unused` members are excluded everywhere.
+The detector is the envelope gate of `grid-quantize.md`, with its
+`DetectConfig` exposed per lane.
+
+Within a unit, a **trigger is weighted over the acoustic mics it shares
+a drum with** — 4:1. A trigger is a contact mic: almost no bleed, almost
+no decay, a near-vertical attack, and so better evidence of *when* the
+drum was hit. It is not infallible — it can drop out, double-fire on a
+rim shot, or sit slightly out of alignment — so the mics keep a vote
+rather than sitting detection out; the trigger merely outweighs them.
+At 4:1 one trigger outweighs any realistic number of mics on one drum
+while still being pulled by them where they agree, and where the trigger
+misses a hit entirely the mics can still put one there. Weights within a
+unit sum to 1, so every unit's signal arrives at a comparable level and a
+threshold means the same thing across the kit.
 
 r[drums.group.tempo]
 Grid targets are the project tempo map (here 84 bpm 6/8), taken from the

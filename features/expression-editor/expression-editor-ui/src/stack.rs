@@ -465,9 +465,12 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
     } else {
         ed.viewport.w
     };
-    // Never below hairline — a marker that thin stops being visible at
-    // all, which is the opposite of the problem being solved.
-    let hit_width = (spacing / 8.0).clamp(0.4, 2.0);
+    // Floored at one whole pixel. Below that the rasterizer cannot draw
+    // a line, only a fraction of one: a 0.4px marker comes out as ~40%
+    // alpha and washes into the waveform behind it, which is the
+    // problem being solved, not the fix. One crisp pixel is the thinnest
+    // *visible* marker, so that is the floor.
+    let hit_width = (spacing / 8.0).clamp(1.0, 2.5);
     // The flag is 9px wide; below roughly that spacing the flags overlap
     // into a band and read as fill rather than as onsets.
     let hit_flag = spacing >= 14.0;

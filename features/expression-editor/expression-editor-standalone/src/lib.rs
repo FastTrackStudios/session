@@ -698,30 +698,45 @@ impl Runner {
                     .collect()
             });
 
-        // The trigger lanes' running sums (mean of the members), built
-        // while the samples are in hand — the host detects on these.
+        // The lanes' detection signals, built while the samples are in
+        // hand — the host detects on these. One signal per detection
+        // *unit*, not per lane: toms are a unit each, so a hit can be
+        // attributed to the tom that made it, and a trigger is weighted
+        // over the mics it shares a drum with.
         // r[impl drums.group.detection-source]
-        let mut members: Vec<Member> = Vec::new();
-        let mut sums: std::collections::HashMap<
+        let rows: Vec<(Job, Vec<f64>, f64, expression_editor_core::ExpressionDoc)> =
+            analysed.into_iter().flatten().collect();
+        let sample_rate = rows.first().map_or(0.0f64, |(_, _, rate, _)| *rate);
+
+        let mut signals: std::collections::HashMap<
             expression_editor_core::kit::LaneRole,
-            (Vec<f64>, usize),
+            Vec<Vec<f64>>,
         > = std::collections::HashMap::new();
-        let mut sample_rate = 0.0f64;
-        for (job, samples, rate, doc) in analysed.into_iter().flatten() {
-            if sample_rate <= 0.0 {
-                sample_rate = rate;
+        for role in expression_editor_core::kit::LaneRole::ALL {
+            let idx: Vec<usize> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, (job, _, _, _))| job.role == role)
+                .map(|(i, _)| i)
+                .collect();
+            if idx.is_empty() {
+                continue;
             }
-            if job.role.is_detection_source() {
-                let (sum, count) = sums.entry(job.role).or_default();
-                if sum.len() < samples.len() {
-                    sum.resize(samples.len(), 0.0);
-                }
-                for (o, v) in sum.iter_mut().zip(samples.iter()) {
-                    *o += v;
-                }
-                *count += 1;
+            let names: Vec<&str> = idx.iter().map(|&i| rows[i].0.name.as_str()).collect();
+            let units = expression_editor_core::kit::detection_units(role, &names);
+            let built: Vec<Vec<f64>> = units
+                .iter()
+                .map(|unit| blend(unit.iter().map(|&(u, w)| (rows[idx[u]].1.as_slice(), w))))
+                .filter(|sig: &Vec<f64>| !sig.is_empty())
+                .collect();
+            if !built.is_empty() {
+                signals.insert(role, built);
             }
-            members.push(Member {
+        }
+
+        let members: Vec<Member> = rows
+            .into_iter()
+            .map(|(job, _, _, doc)| Member {
                 guid: job.guid,
                 name: job.name,
                 folder: job.folder,
@@ -729,8 +744,8 @@ impl Runner {
                 doc,
                 item: ItemRef::Guid(job.item_guid),
                 length_secs: job.length_secs,
-            });
-        }
+            })
+            .collect();
 
         if members.is_empty() {
             return Err(LoadError::NoEditableItem {
@@ -754,17 +769,10 @@ impl Runner {
                 if items.is_empty() {
                     return None;
                 }
-                let summed = sums.remove(&role).map(|(mut sum, count)| {
-                    let scale = 1.0 / count.max(1) as f64;
-                    for v in &mut sum {
-                        *v *= scale;
-                    }
-                    sum
-                });
                 Some(drum_host::HostLane {
                     role,
                     items,
-                    summed,
+                    signals: signals.remove(&role).unwrap_or_default(),
                 })
             })
             .collect();
@@ -1188,6 +1196,28 @@ pub(crate) fn attach_regions(
             color: r.color.map(|c| format!("#{c:06x}")),
         })
         .collect();
+}
+
+/// Blend weighted member signals into one detection signal.
+///
+/// The weights come from [`expression_editor_core::kit::detection_units`]
+/// and already sum to 1, so the result sits at the same level however
+/// many members fed it — a unit of one trigger and a unit of three mics
+/// hand the detector comparable material, and a threshold means the same
+/// thing in both.
+///
+/// Length is the longest member, so a trigger that stops short of the
+/// take does not truncate the mics that did not.
+fn blend<'a>(members: impl IntoIterator<Item = (&'a [f64], f64)>) -> Vec<f64> {
+    let members: Vec<(&[f64], f64)> = members.into_iter().collect();
+    let len = members.iter().map(|(s, _)| s.len()).max().unwrap_or(0);
+    let mut out = vec![0.0f64; len];
+    for (samples, weight) in members {
+        for (o, v) in out.iter_mut().zip(samples.iter()) {
+            *o += v * weight;
+        }
+    }
+    out
 }
 
 /// that segments by spectral flux over an STFT, which quantises every

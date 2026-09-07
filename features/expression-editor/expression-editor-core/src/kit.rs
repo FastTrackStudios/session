@@ -57,10 +57,11 @@ impl LaneRole {
     }
 
     /// Whether hits are detected on this lane's signal by default.
-    /// `Other` is never a source; toms join only when armed.
+    /// `Other` is never a source — it is rooms, hats and returns, where
+    /// a "hit" means nothing the editor can act on.
     // r[impl drums.lanes.other]
     pub fn is_detection_source(self) -> bool {
-        matches!(self, LaneRole::Kick | LaneRole::Snare)
+        matches!(self, LaneRole::Kick | LaneRole::Snare | LaneRole::Toms)
     }
 
     /// The role's hue — the drum map's own kit palette, so a kick is
@@ -265,6 +266,88 @@ pub fn trigger_sub_rows(names: &[&str]) -> Vec<(usize, Vec<usize>)> {
     rows
 }
 
+/// How much more a trigger counts than an acoustic mic in the same
+/// detection unit.
+///
+/// A trigger is a contact mic on the drum: almost no bleed, almost no
+/// decay, a near-vertical attack — better evidence of *when* the drum
+/// was hit than any acoustic mic. But it is not infallible: a trigger
+/// can drop out, double-fire on a rim shot, or sit slightly out of
+/// alignment. So the mics keep a vote rather than sitting the detection
+/// out; the trigger just outweighs them. At 4:1 one trigger outweighs
+/// any realistic number of mics on one drum while still being pulled by
+/// them where they agree — and where the trigger misses a hit entirely,
+/// the mics can still put one there.
+const TRIGGER_WEIGHT: f64 = 4.0;
+
+/// The signals a lane detects on: groups of `(member index, weight)`
+/// into `names`, each group blended into one signal the detector runs
+/// over. Weights within a unit sum to 1, so every unit's signal comes
+/// out at a comparable level regardless of how many mics it has.
+///
+/// Two rules, and both exist because the alternative loses hits.
+///
+/// **A trigger is weighted over the mics it shares a drum with** — see
+/// [`TRIGGER_WEIGHT`]. It dominates the onset without silencing the
+/// mics that corroborate it.
+///
+/// **Toms detect per tom, not as a lane.** A summed toms signal answers
+/// "a tom was hit" when the question is "which one". With four triggers
+/// the toms are four clean independent signals, so they are four units.
+/// Un-numbered tom tracks share a unit of their own rather than being
+/// dropped.
+///
+/// `Unused` members are excluded everywhere (r[drums.lanes.toms-split]),
+/// and a lane that is not a detection source yields nothing.
+// r[impl drums.group.detection-source]
+pub fn detection_units(role: LaneRole, names: &[&str]) -> Vec<Vec<(usize, f64)>> {
+    if !role.is_detection_source() {
+        return Vec::new();
+    }
+    let live: Vec<usize> = (0..names.len())
+        .filter(|&i| !is_unused_name(names[i]))
+        .collect();
+
+    // Toms split by which tom; every other role is one unit.
+    let units: Vec<Vec<usize>> = if role.splits_members() {
+        let mut keys: Vec<Option<u8>> = Vec::new();
+        for &i in &live {
+            let k = tom_number(names[i]);
+            if !keys.contains(&k) {
+                keys.push(k);
+            }
+        }
+        keys.into_iter()
+            .map(|k| {
+                live.iter()
+                    .copied()
+                    .filter(|&i| tom_number(names[i]) == k)
+                    .collect()
+            })
+            .collect()
+    } else {
+        vec![live]
+    };
+
+    units
+        .into_iter()
+        .filter(|unit| !unit.is_empty())
+        .map(|unit| {
+            let weight = |i: usize| {
+                if is_trigger_name(names[i]) {
+                    TRIGGER_WEIGHT
+                } else {
+                    1.0
+                }
+            };
+            let total: f64 = unit.iter().map(|&i| weight(i)).sum();
+            unit.into_iter()
+                .map(|i| (i, weight(i) / total))
+                .collect()
+        })
+        .collect()
+}
+
 impl Workspace {
     /// Rebuild the layout as role lanes over `members` (`(guid, role)`),
     /// top to bottom `Other`, `Toms`, `Snare`, `Kick`; roles with no
@@ -385,6 +468,79 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], (0, vec![2]), "the trigger rides the first match");
         assert_eq!(rows[1], (1, vec![]));
+    }
+
+    /// Just the member indices of each unit, for the tests that care
+    /// about grouping rather than weighting.
+    fn members_of(units: &[Vec<(usize, f64)>]) -> Vec<Vec<usize>> {
+        units
+            .iter()
+            .map(|u| u.iter().map(|&(i, _)| i).collect())
+            .collect()
+    }
+
+    // r[verify drums.group.detection-source]
+    #[test]
+    fn a_trigger_outweighs_the_mics_without_silencing_them() {
+        let u = detection_units(LaneRole::Kick, &["In", "Out", "Trig"]);
+        assert_eq!(members_of(&u), vec![vec![0, 1, 2]], "the mics still vote");
+
+        // 4:1 over each mic, and the unit normalised to 1.
+        let w: Vec<f64> = u[0].iter().map(|&(_, w)| w).collect();
+        assert!((w[2] / w[0] - 4.0).abs() < 1e-9, "trigger is 4x a mic");
+        assert!((w[0] - w[1]).abs() < 1e-9, "the two mics are equal");
+        assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-9, "normalised");
+        // The trigger dominates but does not own the unit outright.
+        assert!(w[2] > 0.5 && w[2] < 1.0);
+    }
+
+    // r[verify drums.group.detection-source]
+    #[test]
+    fn without_a_trigger_the_mics_weigh_equally() {
+        let u = detection_units(LaneRole::Snare, &["Top", "Bottom"]);
+        assert_eq!(members_of(&u), vec![vec![0, 1]]);
+        assert_eq!(u[0], vec![(0, 0.5), (1, 0.5)]);
+    }
+
+    // r[verify drums.group.detection-source]
+    #[test]
+    fn toms_detect_one_unit_per_tom() {
+        // Four toms with triggers are four independent signals — a
+        // summed lane could only say "a tom was hit", not which.
+        let u = detection_units(
+            LaneRole::Toms,
+            &["T1", "T2", "T3", "T4", "T1 Trig", "T2 Trig", "T3 Trig", "T4 Trig"],
+        );
+        assert_eq!(
+            members_of(&u),
+            vec![vec![0, 4], vec![1, 5], vec![2, 6], vec![3, 7]],
+            "each tom with its own trigger, and nothing crossing units"
+        );
+    }
+
+    // r[verify drums.group.detection-source]
+    #[test]
+    fn a_tom_without_a_trigger_falls_back_to_its_mics() {
+        // Mixed kit: T1 triggered, T2 not. Each still detects alone.
+        let u = detection_units(LaneRole::Toms, &["T1", "T1 Trig", "T2 Close", "T2 Far"]);
+        assert_eq!(members_of(&u), vec![vec![0, 1], vec![2, 3]]);
+        assert_eq!(u[1], vec![(2, 0.5), (3, 0.5)], "no trigger, equal mics");
+    }
+
+    // r[verify drums.group.detection-source]
+    #[test]
+    fn unused_members_never_detect() {
+        let u = detection_units(LaneRole::Toms, &["T1", "T2 Unused"]);
+        assert_eq!(members_of(&u), vec![vec![0]], "the parked tom is out");
+        // And a lane of nothing but parked members yields no signal at
+        // all rather than an empty one the detector would chew on.
+        assert!(detection_units(LaneRole::Kick, &["Unused"]).is_empty());
+    }
+
+    // r[verify drums.lanes.other]
+    #[test]
+    fn the_other_lane_is_never_a_detection_source() {
+        assert!(detection_units(LaneRole::Other, &["OH L", "Room"]).is_empty());
     }
 
     // r[verify drums.lanes.roles]
