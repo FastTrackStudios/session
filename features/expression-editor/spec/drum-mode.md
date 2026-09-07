@@ -250,6 +250,24 @@ subsequent page; and paging stops at the last full page rather than
 scrolling past the take, where an empty screen reads as the editor
 having lost the project.
 
+r[drums.manual.split]
+The **razor** cuts the kit. Arming it and clicking in a role lane puts
+an item boundary at the click on *every* mic at once — one cut time and
+one undo step, because mics cut at different places are no longer
+phase-coherent and cannot be repaired by hand afterwards.
+
+The cut lands a leading pad *before* the click, like every other cut
+here: anyone splitting a drum take aims at a hit, and a cut on the
+attack clips it. A split moves nothing; it only creates the boundary, so
+the piece either side can then be dragged, deleted or replaced. It is
+the one edit with no other gesture available, since every other one
+starts by grabbing a hit and a cut is precisely for where there is not
+one.
+
+A click at or beyond either end is refused, and so is one that would
+leave a piece shorter than 20 ms: the first is not a split, and the
+second is a sliver the user then has to find and delete.
+
 r[drums.manual.undo]
 Undo rewinds the **daw's** last write, not the document's, whenever a
 host is attached. Every gesture in drum mode — slip, stretch, quantize

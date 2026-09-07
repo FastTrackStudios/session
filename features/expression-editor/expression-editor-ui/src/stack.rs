@@ -218,6 +218,13 @@ pub enum HitGesture {
         /// neighbours.
         both: bool,
     },
+    /// Cut every member of the kit at `at` seconds.
+    ///
+    /// Unlike the others this moves nothing: it only puts an item
+    /// boundary where the user asked for one, so the piece either side
+    /// can then be dragged, deleted or replaced.
+    // r[impl drums.manual.split]
+    Split { at: f64 },
     /// r[impl drums.manual.add-remove]
     Add { lane: String, at: f64 },
     /// r[impl drums.manual.add-remove]
@@ -1420,6 +1427,25 @@ pub fn StackView(
                     drop(ed);
                     let ly = c.y - ruler_h;
                     let lx = c.x - canvas::GUTTER_W;
+                    // The razor cuts. It is in the toolbar already and
+                    // in drum mode it did nothing at all — the stacked
+                    // view never consulted the tool, so arming it armed
+                    // a no-op. A cut is the one edit that has no other
+                    // gesture, since every other one starts by grabbing
+                    // a hit and a cut is precisely for where there
+                    // isn't one.
+                    // r[impl drums.manual.split]
+                    if editor.read().tool == expression_editor_core::Tool::Razor
+                        && let Some(on_hit) = on_hit.as_ref()
+                        && let Some((v0, v1)) = view_span_secs(&editor.read())
+                    {
+                        let at = v0 + (lx / vp.w.max(1.0)) * (v1 - v0);
+                        if views.iter().any(|l| l.is_role && ly >= l.y && ly < l.y + l.h) {
+                            on_hit.call(HitGesture::Split { at });
+                            e.prevent_default();
+                            return;
+                        }
+                    }
                     let mods = e.data().modifiers();
                     // Two presses inside the window and the pick radius
                     // are a double click.

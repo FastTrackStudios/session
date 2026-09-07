@@ -266,6 +266,27 @@ impl DrumHost {
             .collect()
     }
 
+    /// Cut every mic in the kit at `at` seconds.
+    ///
+    /// One undo step and one cut time across the whole group: mics cut
+    /// at different places stop being phase-coherent, and a kit that has
+    /// lost phase coherence cannot be repaired by hand.
+    // r[impl drums.manual.split]
+    pub fn split(&self, at: f64, cfg: SplitConfig) -> Result<Applied, GroupError> {
+        let items = self.group();
+        self.daw.begin_undo_block(self.ctx.clone(), "Split kit");
+        let out = expression_editor_audio::slip::split_group(
+            &self.daw,
+            self.ctx.clone(),
+            &items,
+            at,
+            self.take_secs,
+            cfg,
+        );
+        self.daw.end_undo_block(self.ctx.clone(), "Split kit", None);
+        out
+    }
+
     /// The bar boundaries the host's tempo map places across the take.
     pub fn bar_grid_secs(&self) -> Vec<f64> {
         crate::bar_grid(&self.daw, &self.ctx, self.take_secs)

@@ -251,6 +251,36 @@ pub(crate) fn host_callbacks(
                         Err(e) => tracing::warn!(error = ?e, "stretch refused"),
                     }
                 }
+                // r[impl drums.manual.split]
+
+                G::Split { at } => {
+
+                    let cfg = expression_editor_audio::quantize::SplitConfig {
+
+                        leading_pad_secs: 0.005,
+
+                        crossfade_secs: 0.005,
+
+                    };
+
+                    match h.split(at, cfg) {
+
+                        Ok(done) => {
+
+                            tracing::info!(items = done.items, "split kit");
+
+                            refresh_docs(&mut editor, &h);
+
+                            refresh_fills(&mut fills, &h);
+
+                        }
+
+                        Err(e) => tracing::warn!(error = ?e, "split refused"),
+
+                    }
+
+                }
+
                 G::Add { lane, at } => {
                     let landed = h.add_hit(at, 0.05);
                     tracing::info!(%lane, at, landed, "added hit");
