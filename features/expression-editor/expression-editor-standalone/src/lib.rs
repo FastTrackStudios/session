@@ -1241,6 +1241,57 @@ pub(crate) fn attach_timeline(
         .collect();
 }
 
+/// Bar start times across the take, from the host's tempo map.
+///
+/// Asks the map where each measure begins rather than multiplying a
+/// bar length, because a real take does not have one bar length.
+/// `set in stone` is 6/8, changes tempo at 77s, and has a 7/4 section
+/// from bar 148 — three different bar durations in one song. Anything
+/// derived from a single bpm and a `beats_per_bar` of 4 would drift out
+/// of phase within a few bars and put every fill in the wrong place.
+///
+/// Returns `n + 1` boundaries for `n` bars, the last being the end of
+/// the take, which is the shape [`fills::detect_fills`] expects.
+///
+/// Empty when the map cannot place bars — a caller that gets nothing
+/// back should do nothing rather than fall back to a guessed grid.
+// r[impl drums.fills.bars]
+pub(crate) fn bar_grid(daw: &Standalone, ctx: &ProjectContext, take_secs: f64) -> Vec<f64> {
+    use daw::service::TempoMap;
+    if take_secs <= 0.0 {
+        return Vec::new();
+    }
+    let (first_bar, _, _) = TempoMap::time_to_musical(daw, ctx.clone(), 0.0);
+    let mut out = Vec::new();
+    // A guard rather than a `while true`: a map that answers
+    // nonsensically would otherwise spin here forever.
+    let max_bars = 4096;
+    for i in 0..max_bars {
+        let t = TempoMap::musical_to_time(daw, ctx.clone(), first_bar + i, 0, 0.0);
+        // Bars must advance. A map that repeats or goes backwards is
+        // broken, and continuing would produce zero-length bars that
+        // every hit falls into at once.
+        if let Some(&last) = out.last()
+            && t <= last
+        {
+            break;
+        }
+        out.push(t);
+        if t >= take_secs {
+            break;
+        }
+    }
+    // The grid has to cover the take; the detector scores the span
+    // between consecutive boundaries and would drop a fill in the last,
+    // unterminated bar.
+    match out.last() {
+        Some(&last) if last < take_secs => out.push(take_secs),
+        None => return Vec::new(),
+        _ => {}
+    }
+    if out.len() < 2 { Vec::new() } else { out }
+}
+
 /// Blend weighted member signals into one detection signal.
 ///
 /// The weights come from [`expression_editor_core::kit::detection_units`]

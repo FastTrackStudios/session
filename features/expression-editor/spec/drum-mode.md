@@ -208,6 +208,42 @@ sessions declare `SONG`, `SECTIONS` and `MARKS` and then file every
 marker under `SONG`. Redistributing them would hide exactly the thing
 the ruler exists to show.
 
+## Fills
+
+r[drums.fills.detect]
+A **fill** is where the drummer stops keeping time and plays something,
+and it is the part of a take that must not be quantized like the rest.
+Groove wants the grid; a fill is often played across it deliberately — a
+triplet run, a drag into the downbeat — and flattening it onto
+sixteenths takes the performance out. The editor therefore finds the
+fills before quantizing anything, so they can be left alone or given
+settings of their own.
+
+Every bar is scored on two signals. **Tom activity** leads: a rock
+groove is kick, snare and hats, and the toms sit unused until the fill.
+**Density** corroborates, because not every fill reaches for the toms —
+a snare roll or a run of kick sixteenths is a fill too. Only bars busier
+than usual score; a bar with *fewer* hits than the median is a break,
+not a fill.
+
+Both are measured against the **median bar of that same take**, never a
+fixed count. "More than six toms in a bar" works on one song: it marks a
+tom-driven groove as one continuous fill and misses the single fill in a
+sparse ballad. The median and the median absolute deviation are used
+rather than the mean and standard deviation, because fills are precisely
+the outliers being looked for and an average is dragged toward whatever
+it is meant to detect — on a song with four fills in sixty bars the mean
+tom count is inflated by the very bars that should stand out.
+
+r[drums.fills.bars]
+Bar boundaries come from the host's tempo map, one query per measure —
+never a bar length multiplied out. A real take does not have one bar
+length: `set in stone` is 6/8, changes tempo partway, and has a 7/4
+section, which is three bar durations in one song. A grid derived from a
+single bpm drifts out of phase within a few bars and puts every fill in
+the wrong place. Where the map cannot place bars the detector returns
+nothing rather than guessing a grid.
+
 ## Detection and the kit group
 
 r[drums.group.kit]

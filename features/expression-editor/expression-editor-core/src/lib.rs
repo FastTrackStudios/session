@@ -37,6 +37,7 @@ pub mod edit;
 pub mod flam;
 pub mod handles;
 pub mod harmony;
+pub mod fills;
 pub mod kit;
 pub mod memagic;
 pub mod menu;

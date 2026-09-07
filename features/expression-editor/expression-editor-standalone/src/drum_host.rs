@@ -62,7 +62,7 @@ pub struct DrumHost {
     /// lock because [`DrumHost::refresh`] recomputes them after an edit
     /// lands — detection must run on the audio as it *is*, not as it
     /// loaded. `Arc` so a detect in flight keeps its snapshot.
-    sums: Mutex<Vec<Arc<Vec<f64>>>>,
+    sums: Mutex<Vec<(LaneRole, Arc<Vec<f64>>)>>,
     manual: Mutex<ManualHits>,
     pub sample_rate: f64,
     /// The group's shared take length, seconds — the longest edit item.
@@ -81,10 +81,17 @@ impl DrumHost {
         take_secs: f64,
         beat_secs: f64,
     ) -> Self {
-        let sums: Vec<Arc<Vec<f64>>> = lanes
+        // Tagged with the role they came from: detection merges every
+        // signal into one hit list, but a fill is recognised by *which*
+        // drum was played, so that has to survive the flattening.
+        let sums: Vec<(LaneRole, Arc<Vec<f64>>)> = lanes
             .iter_mut()
-            .flat_map(|l| std::mem::take(&mut l.signals))
-            .map(Arc::new)
+            .flat_map(|l| {
+                let role = l.role;
+                std::mem::take(&mut l.signals)
+                    .into_iter()
+                    .map(move |s| (role, Arc::new(s)))
+            })
             .collect();
         Self {
             daw,
@@ -132,10 +139,56 @@ impl DrumHost {
     /// Snapshot of every detection signal — `Arc`s, so a detect keeps
     /// reading the audio it started with even across a refresh.
     fn trigger_sums(&self) -> Vec<Arc<Vec<f64>>> {
-        self.sums
-            .lock()
-            .map(|s| s.clone())
-            .unwrap_or_default()
+        self.role_sums().into_iter().map(|(_, s)| s).collect()
+    }
+
+    /// The same snapshot, keeping which role each signal came from.
+    fn role_sums(&self) -> Vec<(LaneRole, Arc<Vec<f64>>)> {
+        self.sums.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    /// How many bars the host's tempo map places across the take.
+    /// Zero when it cannot place a grid at all.
+    pub fn bar_count(&self) -> usize {
+        crate::bar_grid(&self.daw, &self.ctx, self.take_secs)
+            .len()
+            .saturating_sub(1)
+    }
+
+    /// The bar boundaries the host's tempo map places across the take.
+    pub fn bar_grid_secs(&self) -> Vec<f64> {
+        crate::bar_grid(&self.daw, &self.ctx, self.take_secs)
+    }
+
+    /// The take's fills, as spans of bars that stop keeping time.
+    ///
+    /// Detection is run per role rather than on the merged list, since
+    /// a fill is recognised by *which* drum was played — a bar full of
+    /// toms — and the merged list has thrown that away.
+    ///
+    /// Empty when the host cannot place bars. A fill span is meaningless
+    /// without a bar grid, and guessing one from a single bpm would put
+    /// the spans in the wrong place on any song that changes meter.
+    // r[impl drums.fills.detect]
+    pub fn fills(
+        &self,
+        panel: &QuantizePanel,
+        cfg: &expression_editor_core::fills::FillConfig,
+    ) -> Vec<expression_editor_core::fills::Fill> {
+        let bars = crate::bar_grid(&self.daw, &self.ctx, self.take_secs);
+        if bars.len() < 2 {
+            return Vec::new();
+        }
+        let detect = Self::detect_of(panel);
+        let mut hits: Vec<(f64, LaneRole)> = Vec::new();
+        for (role, signal) in self.role_sums() {
+            let lanes = vec![vec![signal.as_slice()]];
+            for t in panel_bridge::detect_group(&lanes, self.sample_rate, &detect) {
+                hits.push((t.at, role));
+            }
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        expression_editor_core::fills::detect_fills(&bars, &hits, cfg)
     }
 
     /// Detect + plan for the panel's current settings: the histogram
@@ -320,7 +373,7 @@ impl DrumHost {
     pub fn refresh(&self) -> Vec<(String, expression_editor_core::ExpressionDoc)> {
         use daw::service::{Items, Tracks};
         let mut docs = Vec::new();
-        let mut new_sums: Vec<Arc<Vec<f64>>> = Vec::with_capacity(self.lanes.len());
+        let mut new_sums: Vec<(LaneRole, Arc<Vec<f64>>)> = Vec::with_capacity(self.lanes.len());
         for lane in &self.lanes {
             // Member tracks, from the lanes' anchor items (piece 0 of a
             // split keeps the original item guid, so this stays valid
@@ -364,7 +417,7 @@ impl DrumHost {
             for unit in expression_editor_core::kit::detection_units(lane.role, &refs) {
                 let sig = crate::blend(unit.iter().map(|&(u, w)| (takes[u].as_slice(), w)));
                 if !sig.is_empty() {
-                    new_sums.push(Arc::new(sig));
+                    new_sums.push((lane.role, Arc::new(sig)));
                 }
             }
         }
