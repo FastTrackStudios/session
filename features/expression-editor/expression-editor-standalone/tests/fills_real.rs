@@ -68,7 +68,6 @@ fn analyse(song: &str) -> Option<Found> {
     let host = runner.host.as_ref()?;
     let host = host.as_ref();
 
-    let panel = expression_editor_ui::quantize_panel::QuantizePanel::default();
     let fills = host.fills(&FillConfig::default());
     let bars = host.bar_count();
 

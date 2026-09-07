@@ -162,9 +162,9 @@ impl DrumHost {
     /// finds 1.6 a second, roughly a fifth of what was played. Counting
     /// bars against a fifth of the evidence is what made fill counts
     /// swing between three and twenty-four across the album.
-    fn fill_detect_panel() -> QuantizePanel {
+    fn fill_detect_panel(sensitivity: f64) -> QuantizePanel {
         let mut panel = QuantizePanel::default();
-        panel.detect.sensitivity = 0.9;
+        panel.detect.sensitivity = sensitivity;
         panel
     }
 
@@ -218,7 +218,7 @@ impl DrumHost {
         if bars.len() < 2 {
             return Vec::new();
         }
-        let hits = self.role_hits(&Self::fill_detect_panel());
+        let hits = self.role_hits(&Self::fill_detect_panel(cfg.detect_sensitivity));
         expression_editor_core::fills::detect_fills(&bars, &hits, cfg)
     }
 

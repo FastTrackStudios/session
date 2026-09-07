@@ -250,6 +250,44 @@ project's own drum MIDI. Scoring bars against a fifth of the evidence is
 what made fill counts swing between three and twenty-four across the
 album.
 
+r[drums.fills.calibration]
+Detector defaults are **computed, not chosen**:
+`cargo run -p expression-editor-standalone --example calibrate` sweeps
+them against the album and prints the score for each. Every number in
+the detect chain was previously somebody's guess, which is how a
+sensitivity that found a fifth of what the drummer played survived
+unnoticed — nothing measured it, so nothing contradicted it.
+
+Two references, because the two questions have different ground truth.
+Detection is scored against the projects' **drum MIDI**: not an exact
+transcription of the audio, so its absolute F1 is pessimistic and must
+not be read as an accuracy figure, but the same bias applies to every
+setting on the sweep, and a *ranking* survives a biased reference where
+an absolute score does not. The fill threshold, which has no ground
+truth at all, is scored on how much more often its fills land at a
+section boundary than a bar picked at random does — the "than random"
+half being the whole metric, since a third of each song is already near
+some marker and a detector firing blindly scores 30%.
+
+Neither metric may be taken at its argmax, and the reasons differ.
+**F1 cannot police over-detection here**: the reference is a different
+take, so precision is capped near 0.55 however good the detector is, and
+spurious hits cost almost nothing in F1 while recall keeps climbing —
+sensitivity 1.0 scores the best F1 on the sweep while firing thirty
+times a second against a drummer playing six. It is therefore
+constrained to settings whose hit rate stays near the drummer's.
+**Section lift has no recall term**, so it rewards reporting fewer and
+safer fills until barely any remain; it is read next to the per-song
+fill count, and the tie is broken on cost, which is asymmetric — a
+missed fill gets quantized and flattened, a bar wrongly called a fill is
+merely left alone.
+
+The two optima are not the same setting. Fill detection's sensitivity
+sits *below* the detector's F1 optimum, because it wants contrast
+between bars rather than maximum recall: pushing to the F1 optimum adds
+marginal hits evenly across groove and fill alike, lifting the median as
+much as the outliers and flattening the difference being measured.
+
 r[drums.fills.bars]
 Bar boundaries come from the host's tempo map, one query per measure —
 never a bar length multiplied out. A real take does not have one bar

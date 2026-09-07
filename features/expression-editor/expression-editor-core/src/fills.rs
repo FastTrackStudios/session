@@ -48,13 +48,23 @@ pub struct FillConfig {
     /// In units of the take's spread — see [`excess`] — so it means the
     /// same thing on a busy song and a sparse one.
     ///
-    /// The default was chosen by sweeping it against the six drum
-    /// projects and measuring how much more often a detected fill sits
-    /// at a section boundary than a bar picked at random does. That
-    /// ratio peaks here at 2.26x and falls off on both sides — 1.37x at
-    /// 2.0, 2.04x at 6.0 — so it is a real optimum rather than the
-    /// artefact of reporting fewer fills. It yields about ten fills per
-    /// song, which is what these songs have.
+    /// Chosen by `--example calibrate`, which sweeps it against the
+    /// album and scores each value on how much more often its fills sit
+    /// at a section boundary than a bar picked at random does.
+    ///
+    /// That score keeps rising as the threshold does — 2.26x here,
+    /// 2.54x at 7.0, 2.81x at 10.0 — but it is a precision proxy with
+    /// no recall term, so it rewards reporting fewer and safer fills
+    /// until barely any are left (four a song at 10.0). The argmax is
+    /// the wrong thing to take.
+    ///
+    /// The tie is broken on the cost of each mistake, which is not
+    /// symmetric. A fill that is missed gets quantized like groove and
+    /// the performance in it is flattened — the damage this whole
+    /// module exists to prevent. A bar wrongly called a fill is merely
+    /// left alone. So the threshold sits where the fill count is still
+    /// musically plausible, about ten a song, rather than where the
+    /// proxy peaks.
     pub threshold: f64,
     /// How much a bar's overall busyness counts next to its tom
     /// activity. Toms lead because a groove rarely uses them; density
@@ -63,6 +73,19 @@ pub struct FillConfig {
     /// Bars of groove that may sit inside one fill without splitting it
     /// in two. A fill that breathes for a beat is still one fill.
     pub join_gap_bars: usize,
+    /// Transient-detector sensitivity for counting bar activity.
+    ///
+    /// Not the quantize panel's. The panel *moves* every hit it
+    /// reports, so a false one damages the take and it is tuned for
+    /// precision; counting how busy a bar was wants recall, where a
+    /// missed hit is the costly error and a spurious one is noise the
+    /// median absorbs.
+    ///
+    /// Lives here beside [`FillConfig::threshold`] because the two are
+    /// coupled: more sensitive detection raises every bar's score, so a
+    /// threshold tuned at one sensitivity is wrong at another. They have
+    /// to be chosen together, which is what `--example calibrate` does.
+    pub detect_sensitivity: f64,
 }
 
 impl Default for FillConfig {
@@ -71,6 +94,16 @@ impl Default for FillConfig {
             threshold: 5.0,
             density_weight: 0.5,
             join_gap_bars: 0,
+            // Below the detector's own F1 optimum of 0.95, and
+            // deliberately so. Fill detection does not want maximum
+            // recall, it wants *contrast* between bars: a bar is a fill
+            // because it is busier than its neighbours. Pushing
+            // sensitivity to the F1 optimum adds marginal hits fairly
+            // evenly across groove and fill alike, which lifts the
+            // median as much as the outliers and flattens the very
+            // difference being measured — at 0.95 two of the six album
+            // projects drop to no section-aligned fills at all.
+            detect_sensitivity: 0.9,
         }
     }
 }
