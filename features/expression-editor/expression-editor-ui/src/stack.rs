@@ -130,6 +130,10 @@ pub struct LaneNote {
     /// how a role lane marks a hit on its waveform. Off everywhere
     /// else, where the note body is the content.
     pub hit_line: bool,
+    /// Which member track this hit was detected on. In a split lane it
+    /// is what puts the marker in that member's own sub-row, so a tom
+    /// hit says *which tom* rather than "a tom".
+    pub member: usize,
 }
 
 /// One hand edit leaving the stack, in seconds — the host decides what
@@ -314,6 +318,7 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
             }
         };
         let member_active = i == ed.tracks.active();
+        let from = notes.len();
         notes.extend(member_doc.notes.iter().map(|n| {
             lane_note(
                 ed,
@@ -326,6 +331,9 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
                 row_h,
             )
         }));
+        for n in &mut notes[from..] {
+            n.member = i;
+        }
     }
 
     // A role lane (kick / snare / toms / other) is labelled by its role
@@ -334,6 +342,34 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
     let lane_def = ed.tracks.layout().lane(row.lane);
     let role = lane_def.and_then(|l| l.role);
     let role_split = role.is_some() && lane_def.is_some_and(|l| l.split);
+
+    // The split lane's sub-rows, resolved once: the waveform draws them
+    // and the hit markers are placed into them, and the two must agree
+    // or a marker would sit over the wrong tom — worse than the
+    // full-height marker it replaces, because it would be confidently
+    // wrong rather than merely vague.
+    // r[impl drums.lanes.trigger-overlay]
+    let sub_rows: Vec<(usize, Vec<usize>)> = if role_split {
+        let all = ed.tracks.lane_tracks(row.lane);
+        let names: Vec<String> = all
+            .iter()
+            .map(|&i| ed.tracks.track(i).map(|t| t.name.clone()).unwrap_or_default())
+            .collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        kit::trigger_sub_rows(&refs)
+            .into_iter()
+            .map(|(h, o)| (all[h], o.into_iter().map(|i| all[i]).collect()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    /// Which sub-row a member draws in — its own, or the tom it
+    /// triggers. `None` when the lane is not split.
+    let sub_row_of = |member: usize| -> Option<usize> {
+        sub_rows
+            .iter()
+            .position(|(host, over)| *host == member || over.contains(&member))
+    };
 
     let mut waveform = None;
     let mut overlays: Vec<String> = Vec::new();
@@ -398,17 +434,7 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
             // Every member gets a sub-row, hidden and `Unused` ones
             // included — a tom that is parked still holds its place in
             // the kit, it just draws faded.
-            let all = ed.tracks.lane_tracks(row.lane);
-            let names: Vec<String> = all
-                .iter()
-                .map(|&i| ed.tracks.track(i).map(|t| t.name.clone()).unwrap_or_default())
-                .collect();
-            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-            // r[impl drums.lanes.trigger-overlay]
-            let rows: Vec<(usize, Vec<usize>)> = kit::trigger_sub_rows(&refs)
-                .into_iter()
-                .map(|(h, o)| (all[h], o.into_iter().map(|i| all[i]).collect()))
-                .collect();
+            let rows = &sub_rows;
             let k = rows.len().max(1);
             let sub_h = h / k as f64;
             for (j, (i, overlays)) in rows.iter().enumerate() {
@@ -477,10 +503,24 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
 
     if let Some(role) = role {
         let color = role.color();
+        // In a split lane a marker is confined to the sub-row of the
+        // drum it was detected on, so the picture answers *which tom*.
+        // Detection is already per tom; drawing every hit across the
+        // whole lane threw that answer away at the last step.
+        // r[impl drums.lanes.hits-per-sub-row]
+        let sub_h = h / sub_rows.len().max(1) as f64;
         for n in &mut notes {
             n.hit_line = true;
-            n.y = y0;
-            n.h = h;
+            match sub_row_of(n.member) {
+                Some(sub) => {
+                    n.y = y0 + sub_h * sub as f64;
+                    n.h = sub_h;
+                }
+                None => {
+                    n.y = y0;
+                    n.h = h;
+                }
+            }
             n.fill = if active {
                 color.to_string()
             } else {
@@ -642,6 +682,7 @@ fn lane_note(
 
     let ups = doc.time_base.units_per_second(ed.bpm);
     LaneNote {
+        member: 0,
         x: x0,
         w,
         y: y_of(n.row as f64 + 1.0),

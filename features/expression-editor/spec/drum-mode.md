@@ -162,6 +162,15 @@ pixels apart and the markers merge into a solid bar hiding the waveform
 they annotate. Markers stay thick when there is room for them, which is
 the case a thick marker is good at.
 
+r[drums.lanes.hits-per-sub-row]
+In a split lane a hit marker is confined to the sub-row of the drum it
+was detected on, so the picture answers *which* tom was hit rather than
+"a tom". Detection is already per tom (`drums.group.detection-source`);
+drawing every hit across the full lane height threw that answer away at
+the last step. A trigger's hits land in the row of the tom it triggers,
+the same row its waveform overlays. A member with no sub-row of its own
+still draws full height.
+
 ## Detection and the kit group
 
 r[drums.group.kit]
