@@ -105,6 +105,50 @@ pub struct SubLane {
     pub faded: bool,
 }
 
+/// The ruler's shelves. One per (ruler lane, kind) pair actually in
+/// use, ordered by lane, regions above markers within a lane.
+///
+/// Keyed by kind as well as lane because REAPER lets both live on one
+/// lane and these projects do exactly that: `The ballad` files 15
+/// regions *and* 2 markers on `SONG`. Grouping by lane alone drew
+/// them on the same shelf, where a marker tick lands inside a region
+/// band and the two fight for the same pixels. They are different
+/// things — a span and a point — and they get different rows.
+/// r[impl drums.chrome.markers]
+    pub fn chrome_shelves(ed: &Editor) -> Vec<(Option<u32>, bool, String)> {
+
+    let (t0, t1) = ed.camera.time_span(ed.viewport);
+    let mut seen: Vec<(Option<u32>, bool, String)> = Vec::new();
+    let mut note = |lane: &Option<(u32, String)>, is_region: bool| {
+        let key = lane.as_ref().map(|(i, _)| *i);
+        if !seen.iter().any(|(i, r, _)| *i == key && *r == is_region) {
+            let name = lane.as_ref().map_or(String::new(), |(_, n)| n.clone());
+            seen.push((key, is_region, name));
+        }
+    };
+    for r in ed.doc.regions.iter().filter(|r| r.end > t0 && r.start < t1) {
+        note(&r.lane, true);
+    }
+    for m in ed.doc.markers.iter().filter(|m| m.t >= t0 && m.t <= t1) {
+        note(&m.lane, false);
+    }
+    // Lane order first, then regions above markers within a lane.
+    seen.sort_by_key(|(i, is_region, _)| (i.unwrap_or(0), !*is_region));
+    seen
+}
+
+/// Height of the ruler for `ed` — its shelves plus the tick strip.
+///
+/// The lanes, the playhead and the pointer maths that turns a click into
+/// a lane all take their offset from this. They must take it from the
+/// *same* place: if the layout grows a shelf and the hit-testing does
+/// not, the lanes and the mouse end up in different coordinate systems,
+/// which shows up as clicks landing on the wrong lane rather than as
+/// anything visibly wrong.
+pub fn ruler_height(ed: &Editor) -> f64 {
+    CHROME_ROW_H * chrome_shelves(ed).len().max(1) as f64 + RULER_TICKS_H
+}
+
 /// Height of one ruler shelf — a region row or a marker row.
 ///
 /// Matches the fixed band the ruler used before shelves existed, so a
@@ -943,36 +987,7 @@ pub fn StackView(
     let vp = ed.viewport;
     let lanes = lanes(&ed, ACTIVE_BOOST, ed.lane_floor().max(MIN_LANE));
     let ticks = canvas::ruler(&ed);
-    // The ruler's shelves. One per (ruler lane, kind) pair actually in
-    // use, ordered by lane, regions above markers within a lane.
-    //
-    // Keyed by kind as well as lane because REAPER lets both live on one
-    // lane and these projects do exactly that: `The ballad` files 15
-    // regions *and* 2 markers on `SONG`. Grouping by lane alone drew
-    // them on the same shelf, where a marker tick lands inside a region
-    // band and the two fight for the same pixels. They are different
-    // things — a span and a point — and they get different rows.
-    // r[impl drums.chrome.markers]
-    let chrome_rows: Vec<(Option<u32>, bool, String)> = {
-        let (t0, t1) = ed.camera.time_span(ed.viewport);
-        let mut seen: Vec<(Option<u32>, bool, String)> = Vec::new();
-        let mut note = |lane: &Option<(u32, String)>, is_region: bool| {
-            let key = lane.as_ref().map(|(i, _)| *i);
-            if !seen.iter().any(|(i, r, _)| *i == key && *r == is_region) {
-                let name = lane.as_ref().map_or(String::new(), |(_, n)| n.clone());
-                seen.push((key, is_region, name));
-            }
-        };
-        for r in ed.doc.regions.iter().filter(|r| r.end > t0 && r.start < t1) {
-            note(&r.lane, true);
-        }
-        for m in ed.doc.markers.iter().filter(|m| m.t >= t0 && m.t <= t1) {
-            note(&m.lane, false);
-        }
-        // Lane order first, then regions above markers within a lane.
-        seen.sort_by_key(|(i, is_region, _)| (i.unwrap_or(0), !*is_region));
-        seen
-    };
+    let chrome_rows = chrome_shelves(&ed);
     let row_of = |lane: &Option<(u32, String)>, is_region: bool| -> usize {
         let key = lane.as_ref().map(|(i, _)| *i);
         chrome_rows
@@ -1057,9 +1072,9 @@ pub fn StackView(
     // would be 5px each, which cannot hold a 9px label. One shelf is
     // sized to match the old fixed band exactly, so the common
     // single-lane project looks precisely as it did.
-    let chrome_h = CHROME_ROW_H * chrome_rows.len().max(1) as f64;
     let mark_row_h = CHROME_ROW_H;
-    let ruler_h = chrome_h + RULER_TICKS_H;
+    // One source for the height, shared with the pointer maths below.
+    let ruler_h = CHROME_ROW_H * chrome_rows.len().max(1) as f64 + RULER_TICKS_H;
 
     let (view0, px_per_sec) = view_span_secs(&ed)
         .map(|(v0, v1)| {
