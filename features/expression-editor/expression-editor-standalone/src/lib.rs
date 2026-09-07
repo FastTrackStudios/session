@@ -1201,6 +1201,20 @@ pub(crate) fn attach_timeline(
     if ups <= 0.0 {
         return;
     }
+    // The lane's name, for whichever ruler lane an item is filed under.
+    let lane_of = |idx: Option<u32>| {
+        idx.map(|i| {
+            let name = Projects::get_ruler_lane_name(daw, ctx.clone(), i);
+            // An unnamed lane still groups; it just has to be labelled
+            // by its number rather than pretending to a name.
+            let name = if name.is_empty() {
+                format!("Lane {i}")
+            } else {
+                name
+            };
+            (i, name)
+        })
+    };
     doc.regions = Regions::all(daw, ctx.clone())
         .into_iter()
         .map(|r| expression_editor_core::doc::Region {
@@ -1208,6 +1222,7 @@ pub(crate) fn attach_timeline(
             end: r.time_range.end_seconds() * ups,
             label: r.name,
             color: r.color.map(|c| format!("#{c:06x}")),
+            lane: lane_of(r.lane),
         })
         .collect();
     doc.markers = Markers::all(daw, ctx.clone())
@@ -1216,23 +1231,11 @@ pub(crate) fn attach_timeline(
         // drawn on a time axis; dropping it beats drawing it at zero,
         // where it would claim the downbeat.
         .filter_map(|m| {
-            let lane = m.lane.map(|idx| {
-                let name = Projects::get_ruler_lane_name(daw, ctx.clone(), idx);
-                // An unnamed lane still groups; it just has to be
-                // labelled by its number rather than pretending to a
-                // name it does not have.
-                let name = if name.is_empty() {
-                    format!("Lane {idx}")
-                } else {
-                    name
-                };
-                (idx, name)
-            });
             Some(expression_editor_core::doc::Marker {
                 t: m.position.seconds()? * ups,
                 label: Some(m.name).filter(|n| !n.is_empty()),
                 color: m.color.map(|c| format!("#{c:06x}")),
-                lane,
+                lane: lane_of(m.lane),
             })
         })
         .collect();

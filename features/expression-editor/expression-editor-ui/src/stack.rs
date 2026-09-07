@@ -105,6 +105,16 @@ pub struct SubLane {
     pub faded: bool,
 }
 
+/// Height of one ruler shelf — a region row or a marker row.
+///
+/// Matches the fixed band the ruler used before shelves existed, so a
+/// project with a single lane of chrome renders identically to how it
+/// always did; extra shelves grow the ruler rather than shrinking each
+/// other into illegibility.
+const CHROME_ROW_H: f64 = 15.0;
+/// Height of the tick/timecode strip below the shelves.
+const RULER_TICKS_H: f64 = 13.0;
+
 /// A note as it appears in a lane.
 pub struct LaneNote {
     pub x: f64,
@@ -363,8 +373,8 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
     } else {
         Vec::new()
     };
-    /// Which sub-row a member draws in — its own, or the tom it
-    /// triggers. `None` when the lane is not split.
+    // Which sub-row a member draws in — its own, or the tom it
+    // triggers. `None` when the lane is not split.
     let sub_row_of = |member: usize| -> Option<usize> {
         sub_rows
             .iter()
@@ -933,9 +943,47 @@ pub fn StackView(
     let vp = ed.viewport;
     let lanes = lanes(&ed, ACTIVE_BOOST, ed.lane_floor().max(MIN_LANE));
     let ticks = canvas::ruler(&ed);
+    // The ruler's shelves. One per (ruler lane, kind) pair actually in
+    // use, ordered by lane, regions above markers within a lane.
+    //
+    // Keyed by kind as well as lane because REAPER lets both live on one
+    // lane and these projects do exactly that: `The ballad` files 15
+    // regions *and* 2 markers on `SONG`. Grouping by lane alone drew
+    // them on the same shelf, where a marker tick lands inside a region
+    // band and the two fight for the same pixels. They are different
+    // things — a span and a point — and they get different rows.
+    // r[impl drums.chrome.markers]
+    let chrome_rows: Vec<(Option<u32>, bool, String)> = {
+        let (t0, t1) = ed.camera.time_span(ed.viewport);
+        let mut seen: Vec<(Option<u32>, bool, String)> = Vec::new();
+        let mut note = |lane: &Option<(u32, String)>, is_region: bool| {
+            let key = lane.as_ref().map(|(i, _)| *i);
+            if !seen.iter().any(|(i, r, _)| *i == key && *r == is_region) {
+                let name = lane.as_ref().map_or(String::new(), |(_, n)| n.clone());
+                seen.push((key, is_region, name));
+            }
+        };
+        for r in ed.doc.regions.iter().filter(|r| r.end > t0 && r.start < t1) {
+            note(&r.lane, true);
+        }
+        for m in ed.doc.markers.iter().filter(|m| m.t >= t0 && m.t <= t1) {
+            note(&m.lane, false);
+        }
+        // Lane order first, then regions above markers within a lane.
+        seen.sort_by_key(|(i, is_region, _)| (i.unwrap_or(0), !*is_region));
+        seen
+    };
+    let row_of = |lane: &Option<(u32, String)>, is_region: bool| -> usize {
+        let key = lane.as_ref().map(|(i, _)| *i);
+        chrome_rows
+            .iter()
+            .position(|(i, r, _)| *i == key && *r == is_region)
+            .unwrap_or(0)
+    };
+
     // The song's sections across the ruler — clipped to the view, with
     // the label given only the room its span actually has.
-    let sections: Vec<(f64, f64, String, String)> = {
+    let sections: Vec<(f64, f64, String, String, usize)> = {
         let (t0, t1) = ed.camera.time_span(ed.viewport);
         ed.doc
             .regions
@@ -947,7 +995,7 @@ pub fn StackView(
                 let fit = (((x1 - x0) - 6.0) / 5.5).max(0.0) as usize;
                 let label: String = r.label.chars().take(fit).collect();
                 let color = r.color.clone().unwrap_or_else(|| theme::SURFACE_BAR.into());
-                (x0, x1, label, color)
+                (x0, x1, label, color, row_of(&r.lane, true))
             })
             .collect()
     };
@@ -958,23 +1006,6 @@ pub fn StackView(
     // ("tempo change", "back to 4/4"), so stretching each one to the
     // next would draw a structure nobody wrote.
     // r[impl drums.chrome.markers]
-    // The ruler lanes the markers occupy, in the host's own order —
-    // one row each, so `SONG`, `SECTIONS` and `MARKS` stay separate
-    // shelves rather than collapsing into one crowded strip.
-    let mark_lanes: Vec<(Option<u32>, String)> = {
-        let mut seen: Vec<(Option<u32>, String)> = Vec::new();
-        let (t0, t1) = ed.camera.time_span(ed.viewport);
-        for m in ed.doc.markers.iter().filter(|m| m.t >= t0 && m.t <= t1) {
-            let key = m.lane.as_ref().map(|(i, _)| *i);
-            if !seen.iter().any(|(i, _)| *i == key) {
-                let name = m.lane.as_ref().map_or(String::new(), |(_, n)| n.clone());
-                seen.push((key, name));
-            }
-        }
-        seen.sort_by_key(|(i, _)| i.unwrap_or(0));
-        seen
-    };
-
     let marks: Vec<(f64, String, String, usize)> = {
         let (t0, t1) = ed.camera.time_span(ed.viewport);
         let visible: Vec<&expression_editor_core::doc::Marker> = ed
@@ -1011,21 +1042,24 @@ pub fn StackView(
                     .chars()
                     .take(fit)
                     .collect();
-                let key = m.lane.as_ref().map(|(i, _)| *i);
-                let row = mark_lanes.iter().position(|(i, _)| *i == key).unwrap_or(0);
                 (
                     x,
                     label,
                     m.color.clone().unwrap_or_else(|| theme::TEXT_DIM.into()),
-                    row,
+                    row_of(&m.lane, false),
                 )
             })
             .collect()
     };
 
-    // The marker strip shares the ruler's upper band, split evenly
-    // between however many lanes actually carry markers.
-    let mark_row_h = (canvas::RULER_H - 13.0) / mark_lanes.len().max(1) as f64;
+    // The ruler grows a shelf at a time rather than dividing a fixed
+    // band: three shelves in the 15px band today's constant allows
+    // would be 5px each, which cannot hold a 9px label. One shelf is
+    // sized to match the old fixed band exactly, so the common
+    // single-lane project looks precisely as it did.
+    let chrome_h = CHROME_ROW_H * chrome_rows.len().max(1) as f64;
+    let mark_row_h = CHROME_ROW_H;
+    let ruler_h = chrome_h + RULER_TICKS_H;
 
     let (view0, px_per_sec) = view_span_secs(&ed)
         .map(|(v0, v1)| {
@@ -1127,7 +1161,7 @@ pub fn StackView(
         svg {
             style: "display: block; width: 100%; height: 100%; \
                     touch-action: none; user-select: none; cursor: pointer;",
-            view_box: "0 0 {vp.w + canvas::GUTTER_W:.0} {vp.h + canvas::RULER_H:.0}",
+            view_box: "0 0 {vp.w + canvas::GUTTER_W:.0} {vp.h + ruler_h:.0}",
             preserve_aspect_ratio: "none",
             // No `onmounted` measure here, deliberately.
             //
@@ -1262,7 +1296,7 @@ pub fn StackView(
                     let ed = editor.read();
                     let views = self::lanes(&ed, ACTIVE_BOOST, ed.lane_floor().max(MIN_LANE));
                     drop(ed);
-                    let ly = c.y - canvas::RULER_H;
+                    let ly = c.y - ruler_h;
                     if let Some(open) = mic_menu() {
                         enum Pick {
                             Mic(usize),
@@ -1317,7 +1351,7 @@ pub fn StackView(
                     let ed = editor.read();
                     let views = self::lanes(&ed, ACTIVE_BOOST, ed.lane_floor().max(MIN_LANE));
                     drop(ed);
-                    let ly = c.y - canvas::RULER_H;
+                    let ly = c.y - ruler_h;
                     let lx = c.x - canvas::GUTTER_W;
                     let mods = e.data().modifiers();
                     // Two presses inside the window and the pick radius
@@ -1408,7 +1442,7 @@ pub fn StackView(
                         }
                     }
                 }
-                let y = c.y - canvas::RULER_H + editor.read().stack_scroll;
+                let y = c.y - ruler_h + editor.read().stack_scroll;
                 // Resolve against a snapshot: the read guard has to be
                 // gone before the write below.
                 let hit = {
@@ -1443,7 +1477,7 @@ pub fn StackView(
             rect {
                 x: 0, y: 0,
                 width: "{vp.w + canvas::GUTTER_W}",
-                height: "{vp.h + canvas::RULER_H}",
+                height: "{vp.h + ruler_h}",
                 fill: theme::GUTTER_BG,
             }
 
@@ -1454,7 +1488,7 @@ pub fn StackView(
             rect {
                 x: 0, y: 0,
                 width: "{vp.w + canvas::GUTTER_W}",
-                height: "{canvas::RULER_H}",
+                height: "{ruler_h}",
                 fill: theme::SURFACE_BAR,
             }
             g {
@@ -1462,23 +1496,26 @@ pub fn StackView(
                 // The section strip: the top half of the ruler is the
                 // song's own map — INTRO, VS 1, CH 1 — in the colours
                 // the arrange view already taught the band.
-                for (x0, x1, label, color) in sections.iter() {
+                for (x0, x1, label, color, row) in sections.iter() {
                     rect {
-                        x: "{x0:.1}", y: 0,
+                        x: "{x0:.1}",
+                        y: "{*row as f64 * CHROME_ROW_H:.1}",
                         width: "{(x1 - x0).max(0.0):.1}",
-                        height: "{canvas::RULER_H - 13.0}",
+                        height: "{CHROME_ROW_H:.1}",
                         fill: "{color}",
                         opacity: "0.85",
                     }
                     line {
                         x1: "{x0:.1}", x2: "{x0:.1}",
-                        y1: 0, y2: "{canvas::RULER_H - 13.0}",
+                        y1: "{*row as f64 * CHROME_ROW_H:.1}",
+                        y2: "{(*row + 1) as f64 * CHROME_ROW_H:.1}",
                         stroke: theme::GUTTER_BG,
                         stroke_width: 1,
                     }
                     if !label.is_empty() {
                         text {
-                            x: "{x0 + 4.0:.1}", y: 11,
+                            x: "{x0 + 4.0:.1}",
+                            y: "{*row as f64 * CHROME_ROW_H + 11.0:.1}",
                             font_size: "8",
                             fill: "#0b0b10",
                             "{label}"
@@ -1511,11 +1548,12 @@ pub fn StackView(
                         "{label}"
                     }
                 }
-                // The lane names, once, down the left edge.
-                for (i, (_, name)) in mark_lanes.iter().enumerate() {
+                // The lane names, once, down the left edge — one per
+                // shelf, so a shelf says which ruler lane it is.
+                for (i, (_, _, name)) in chrome_rows.iter().enumerate() {
                     text {
                         x: 2,
-                        y: "{(i + 1) as f64 * mark_row_h - 2.0:.1}",
+                        y: "{(i + 1) as f64 * CHROME_ROW_H - 2.0:.1}",
                         font_size: 7,
                         fill: theme::TEXT_DIM,
                         opacity: "0.7",
@@ -1525,14 +1563,14 @@ pub fn StackView(
                 for t in ticks.iter() {
                     line {
                         x1: "{t.x:.1}", x2: "{t.x:.1}",
-                        y1: if t.bar { "{canvas::RULER_H - 10.0}" } else { "{canvas::RULER_H - 5.0}" },
-                        y2: "{canvas::RULER_H}",
+                        y1: if t.bar { "{ruler_h - 10.0:.1}" } else { "{ruler_h - 5.0:.1}" },
+                        y2: "{ruler_h}",
                         stroke: if t.bar { theme::TEXT_DIM } else { theme::TEXT_FAINT },
                         stroke_width: 1,
                     }
                     if let Some(label) = t.label.as_ref() {
                         text {
-                            x: "{t.x + 3.0:.1}", y: "{canvas::RULER_H - 4.0}",
+                            x: "{t.x + 3.0:.1}", y: "{ruler_h - 4.0:.1}",
                             font_size: "8",
                             fill: theme::TEXT_DIM,
                             "{label}"
@@ -1542,7 +1580,7 @@ pub fn StackView(
             }
 
             g {
-                transform: "translate(0, {canvas::RULER_H})",
+                transform: "translate(0, {ruler_h})",
                 for lane in lanes.iter() {
                     g {
                         // A lane's own background, so the active one
@@ -1589,7 +1627,7 @@ pub fn StackView(
                             // material, faintly, in the section's own
                             // colour — the ruler says where you are,
                             // these say it where you are looking.
-                            for (x0, _, _, color) in sections.iter() {
+                            for (x0, _, _, color, _) in sections.iter() {
                                 line {
                                     x1: "{x0:.1}", x2: "{x0:.1}",
                                     y1: "{lane.y:.1}", y2: "{lane.y + lane.h:.1}",
@@ -1835,7 +1873,7 @@ pub fn StackView(
             if let Some(open) = mic_menu() {
                 if let Some(lane) = lanes.iter().find(|l| l.lane == open) {
                     g {
-                        transform: "translate(0, {canvas::RULER_H})",
+                        transform: "translate(0, {ruler_h})",
                         rect {
                             x: 4, y: "{lane.y + MIC_MENU_TOP - 2.0:.1}",
                             width: "{MIC_MENU_W}",
@@ -1895,6 +1933,7 @@ pub fn StackView(
                         view0,
                         px_per_sec,
                         height: vp.h,
+                        ruler_h,
                     }
                 }
             }
@@ -1906,7 +1945,7 @@ pub fn StackView(
             if let Some(sel) = selected() {
                 if px_per_sec > 0.0 {
                     g {
-                        transform: "translate({canvas::GUTTER_W}, {canvas::RULER_H})",
+                        transform: "translate({canvas::GUTTER_W}, {ruler_h})",
                         {
                             let x = (sel.hit_secs - view0) * px_per_sec;
                             rsx! {
@@ -1934,7 +1973,7 @@ pub fn StackView(
             // r[impl drums.manual.stretch]
             if let Some(s) = slipping() {
                 g {
-                    transform: "translate({canvas::GUTTER_W}, {canvas::RULER_H})",
+                    transform: "translate({canvas::GUTTER_W}, {ruler_h})",
                     line {
                         x1: "{s.hit_x:.1}", x2: "{s.hit_x:.1}",
                         y1: "{s.lane_y:.1}", y2: "{s.lane_y + s.lane_h:.1}",
@@ -1956,7 +1995,15 @@ pub fn StackView(
 /// The playhead line, isolated so a transport tick re-renders one
 /// element. Rendered inside the stack's svg, in content coordinates.
 #[component]
-fn StackPlayhead(playhead: Signal<f64>, view0: f64, px_per_sec: f64, height: f64) -> Element {
+fn StackPlayhead(
+    playhead: Signal<f64>,
+    view0: f64,
+    px_per_sec: f64,
+    height: f64,
+    /// Where the lanes start — the ruler grows with the number of
+    /// chrome shelves, so this cannot be the old constant.
+    ruler_h: f64,
+) -> Element {
     let x = canvas::GUTTER_W + (playhead() - view0) * px_per_sec;
     if x < canvas::GUTTER_W {
         return rsx! {};
@@ -1964,8 +2011,8 @@ fn StackPlayhead(playhead: Signal<f64>, view0: f64, px_per_sec: f64, height: f64
     rsx! {
         line {
             x1: "{x:.1}", x2: "{x:.1}",
-            y1: "{canvas::RULER_H}",
-            y2: "{canvas::RULER_H + height:.1}",
+            y1: "{ruler_h:.1}",
+            y2: "{ruler_h + height:.1}",
             stroke: "#f8fafc",
             stroke_width: 1,
             opacity: "0.7",

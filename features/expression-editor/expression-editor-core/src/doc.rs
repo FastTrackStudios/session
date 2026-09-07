@@ -719,6 +719,9 @@ pub struct Region {
     pub label: String,
     /// `#rrggbb`, when the host assigned one.
     pub color: Option<String>,
+    /// Which ruler lane the host filed it under (REAPER 7.62+), with
+    /// the lane's name. `None` for a host with no lane concept.
+    pub lane: Option<(u32, String)>,
 }
 
 /// The whole editable surface.

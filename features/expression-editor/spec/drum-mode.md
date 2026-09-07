@@ -186,12 +186,27 @@ structure nobody wrote. Labels are clipped to the room before the next
 marker *in the same lane*, so a dense passage reads as ticks with the
 names that fit rather than overlapping words.
 
-Markers are grouped by their REAPER ruler lane (7.62+), one row per
-lane, labelled by the lane's name; a lane with no name is labelled by
-its index. The grouping shows the project as it is, not as it should be:
-these sessions declare `SONG`, `SECTIONS` and `MARKS` and then file
-every marker under `SONG`. Redistributing them would hide exactly the
-thing the ruler exists to show.
+The ruler is a stack of **shelves**, one per (REAPER ruler lane, kind)
+pair actually in use, ordered by lane with regions above markers within
+a lane, and labelled by the lane's name; a lane with no name is labelled
+by its index. Keyed by kind as well as lane because REAPER allows both
+on one lane and these projects do exactly that — `The ballad` files 15
+regions *and* 2 markers on `SONG` — where a marker tick lands inside a
+region band and the two fight for the same pixels. A span and a point
+are different things and get different rows.
+
+The ruler grows a shelf at a time rather than dividing a fixed band: one
+shelf is sized to match the band the ruler used before shelves existed,
+so a single-lane project renders exactly as it always did, and extra
+shelves make the ruler taller instead of shrinking each other into
+illegibility. Everything below the ruler — the lanes, the playhead, and
+the pointer maths that maps a click to a lane — takes its offset from
+this computed height, never from a constant.
+
+The grouping shows the project as it is, not as it should be: these
+sessions declare `SONG`, `SECTIONS` and `MARKS` and then file every
+marker under `SONG`. Redistributing them would hide exactly the thing
+the ruler exists to show.
 
 ## Detection and the kit group
 
