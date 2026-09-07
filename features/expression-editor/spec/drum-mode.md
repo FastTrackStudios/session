@@ -113,6 +113,23 @@ waveform with its track name. A tom track whose name contains `Unused`
 (case-insensitive) or is muted still gets a sub-lane but is drawn at
 half opacity and excluded from detection.
 
+r[drums.lanes.trigger-overlay]
+A **trigger** track — one whose name carries a `Trig` or `Trigger` token
+— is not a lane or a sub-lane of its own. It is the same drum sensed a
+second way, so it is drawn *over* the drum it triggers, in that lane's
+space, outlined rather than filled: a trigger is near-silent between
+hits, and a filled one would read as a hole punched in the mics'
+waveform instead of a second view of it. A trigger is excluded from
+`drums.lanes.summed`, since averaging its silence in would only pull the
+mean down.
+
+In a split lane a trigger pairs with a tom by number, `T3 Trig` over
+`T3`. It keeps a sub-lane of its own only when nothing claims it — no
+tom number (a bare `Trig`), or a number with no matching tom (`T4 Trig`
+where `T4` was never recorded) — because a track that is really there
+must not silently vanish. Given a sub-lane each, four toms with triggers
+would read as an eight-piece kit at half the row height.
+
 r[drums.lanes.other]
 The `Other` lane holds the remaining members (hi-hat, overheads, rooms,
 reverb returns) as one summed waveform at `Kick`'s height. It is not
@@ -134,6 +151,16 @@ vertical hit lines over its waveform (`NoteShape::Triangle` at the
 onset, length to the next hit), coloured by deviation from the grid the
 way the timing separators are (`audio-editor.md` Timing mode). A
 selected hit is the unit of manual editing.
+
+r[drums.lanes.hit-density]
+Hit markers thin as they crowd. Marker stroke width is a function of the
+mean spacing between visible markers, clamped to a hairline floor, and
+the onset flag is dropped once the flags would overlap into a band. A
+fixed weight cannot serve both ends: it is right for a handful of hits
+and useless for a song's worth, where sixteenth kicks land a couple of
+pixels apart and the markers merge into a solid bar hiding the waveform
+they annotate. Markers stay thick when there is room for them, which is
+the case a thick marker is good at.
 
 ## Detection and the kit group
 

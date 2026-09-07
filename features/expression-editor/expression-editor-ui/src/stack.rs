@@ -76,15 +76,27 @@ pub struct LaneView {
     /// [`canvas::take_waveform`] builds for the roll. `None` when the
     /// lane has no role, no members with peaks, or splits its members.
     pub waveform: Option<String>,
+    /// Trigger tracks drawn over `waveform` in the same space, rather
+    /// than averaged into it. Empty for a split lane, whose triggers
+    /// ride on their own tom's sub-row instead.
+    pub overlays: Vec<String>,
     /// One sub-row per member for a split role lane (toms). Empty
     /// otherwise.
     pub sub_lanes: Vec<SubLane>,
+    /// Stroke width for this lane's hit markers, thinned as they crowd.
+    pub hit_width: f64,
+    /// Whether hit markers still draw their onset flag — dropped once
+    /// the flags would overlap into a solid band.
+    pub hit_flag: bool,
 }
 
 /// One member's sub-row inside a split role lane (toms).
 pub struct SubLane {
     /// The member's own waveform polygon, if it carries peaks.
     pub points: Option<String>,
+    /// Triggers drawn over this member in the same space — a trigger is
+    /// the same drum sensed a second way, not another drum.
+    pub overlays: Vec<String>,
     /// The member track's name, drawn small in the gutter.
     pub label: String,
     /// Baseline y of that label, in viewport pixels.
@@ -324,6 +336,7 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
     let role_split = role.is_some() && lane_def.is_some_and(|l| l.split);
 
     let mut waveform = None;
+    let mut overlays: Vec<String> = Vec::new();
     let mut sub_lanes = Vec::new();
     let mut sub_dividers = Vec::new();
     if let Some((v0, v1)) = view_span_secs(ed) {
@@ -336,17 +349,49 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
             // choice only: detection and edits still take the lane
             // whole.
             let solo = lane_def.is_some_and(|l| l.solo_mic);
-            let mems: Vec<(&[f32], f64, f64)> = members
+            let shown: Vec<usize> = members
                 .iter()
-                .filter(|&&i| !solo || i == track_index)
-                .filter_map(|&i| {
-                    let d = doc_for(ed, i)?;
-                    let (s, e) = doc_span_secs(ed, d)?;
-                    Some((d.peaks.as_slice(), s, e))
-                })
+                .copied()
+                .filter(|&i| !solo || i == track_index)
                 .collect();
+            // r[impl drums.lanes.trigger-overlay]
+            //
+            // A kick or snare trigger is the same drum sensed a second
+            // way, so it is drawn over the mics' mean rather than
+            // averaged into it: a trigger is near-silent between hits
+            // and would only drag the mean down.
+            let is_trig = |i: usize| {
+                ed.tracks
+                    .track(i)
+                    .is_some_and(|t| kit::is_trigger_name(&t.name))
+            };
+            let peaks_of = |i: usize| {
+                let d = doc_for(ed, i)?;
+                let (s, e) = doc_span_secs(ed, d)?;
+                Some((d.peaks.as_slice(), s, e))
+            };
+            let (trigs, mics): (Vec<usize>, Vec<usize>) =
+                shown.iter().partition(|&&i| is_trig(i));
+            // A lane of nothing but triggers still has to draw something,
+            // and then the triggers are the waveform — not an overlay on
+            // top of an empty one.
+            let (summed, over): (&[usize], &[usize]) = if mics.is_empty() {
+                (&trigs, &[])
+            } else {
+                (&mics, &trigs)
+            };
+
+            let mems: Vec<(&[f32], f64, f64)> =
+                summed.iter().filter_map(|&i| peaks_of(i)).collect();
             let cols = summed_columns(&mems, v0, v1, count);
             waveform = columns_polygon(&cols, ed.viewport.w, y0, h);
+            overlays = over
+                .iter()
+                .filter_map(|&i| {
+                    let cols = summed_columns(&[peaks_of(i)?], v0, v1, count);
+                    columns_polygon(&cols, ed.viewport.w, y0, h)
+                })
+                .collect();
         } else if role_split {
             // r[impl drums.lanes.toms-split]
             //
@@ -354,23 +399,37 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
             // included — a tom that is parked still holds its place in
             // the kit, it just draws faded.
             let all = ed.tracks.lane_tracks(row.lane);
-            let k = all.len().max(1);
+            let names: Vec<String> = all
+                .iter()
+                .map(|&i| ed.tracks.track(i).map(|t| t.name.clone()).unwrap_or_default())
+                .collect();
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            // r[impl drums.lanes.trigger-overlay]
+            let rows: Vec<(usize, Vec<usize>)> = kit::trigger_sub_rows(&refs)
+                .into_iter()
+                .map(|(h, o)| (all[h], o.into_iter().map(|i| all[i]).collect()))
+                .collect();
+            let k = rows.len().max(1);
             let sub_h = h / k as f64;
-            for (j, &i) in all.iter().enumerate() {
-                let Some(member) = ed.tracks.track(i) else {
+            for (j, (i, overlays)) in rows.iter().enumerate() {
+                let Some(member) = ed.tracks.track(*i) else {
                     continue;
                 };
                 let sy = y0 + sub_h * j as f64;
                 if j > 0 {
                     sub_dividers.push(sy);
                 }
-                let points = doc_for(ed, i).and_then(|d| {
+                let polygon_for = |i: usize| {
+                    let d = doc_for(ed, i)?;
                     let (s, e) = doc_span_secs(ed, d)?;
                     let cols = summed_columns(&[(d.peaks.as_slice(), s, e)], v0, v1, count);
                     columns_polygon(&cols, ed.viewport.w, sy, sub_h)
-                });
+                };
                 sub_lanes.push(SubLane {
-                    points,
+                    points: polygon_for(*i),
+                    // Triggers share the tom's sub-row, drawn over it in
+                    // the same space rather than beside it.
+                    overlays: overlays.iter().filter_map(|&o| polygon_for(o)).collect(),
                     label: member.name.clone(),
                     label_y: sy + 9.0,
                     faded: kit::is_unused_name(&member.name) || member.hidden,
@@ -386,6 +445,33 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
     // role's hue, brighter on the armed lane, so "red line" *means*
     // kick from across the room.
     // r[impl drums.lanes.hits]
+    //
+    // Marker weight is a function of how crowded they are. A fixed
+    // 1.5px line with a 9px flag is right for a handful of hits and
+    // useless for a song's worth: zoomed out to a whole take, sixteenth
+    // kicks land a couple of pixels apart, and the markers merge into a
+    // solid bar that hides the very waveform they annotate. Thinning
+    // them with density keeps the same drawing legible at both ends —
+    // and thick markers stay thick when there is room for them, which
+    // is the case they are good at.
+    // r[impl drums.lanes.hit-density]
+    let visible = notes
+        .iter()
+        .filter(|n| n.x >= 0.0 && n.x <= ed.viewport.w)
+        .count();
+    // Average px between markers across the viewport.
+    let spacing = if visible > 1 {
+        ed.viewport.w / visible as f64
+    } else {
+        ed.viewport.w
+    };
+    // Never below hairline — a marker that thin stops being visible at
+    // all, which is the opposite of the problem being solved.
+    let hit_width = (spacing / 8.0).clamp(0.4, 2.0);
+    // The flag is 9px wide; below roughly that spacing the flags overlap
+    // into a band and read as fill rather than as onsets.
+    let hit_flag = spacing >= 14.0;
+
     if let Some(role) = role {
         let color = role.color();
         for n in &mut notes {
@@ -460,7 +546,10 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
             .collect(),
         solo_mic: lane_def.is_some_and(|l| l.solo_mic),
         waveform,
+        overlays,
         sub_lanes,
+        hit_width,
+        hit_flag,
     })
 }
 
@@ -1366,8 +1455,33 @@ pub fn StackView(
                                     opacity: if lane.active { "0.5" } else { "0.32" },
                                 }
                             }
+                            // r[impl drums.lanes.trigger-overlay]
+                            //
+                            // Drawn over the mics, not beside them, and
+                            // outlined rather than filled: a trigger is
+                            // near-silent between hits, so a filled one
+                            // would read as a hole punched in the mics'
+                            // waveform instead of a second view of it.
+                            for o in lane.overlays.iter() {
+                                polygon {
+                                    points: "{o}",
+                                    fill: "none",
+                                    stroke: lane.role_color.unwrap_or(theme::PEAKS),
+                                    stroke_width: "1",
+                                    opacity: if lane.active { "0.75" } else { "0.5" },
+                                }
+                            }
                             // r[impl drums.lanes.toms-split]
                             for s in lane.sub_lanes.iter() {
+                                for o in s.overlays.iter() {
+                                    polygon {
+                                        points: "{o}",
+                                        fill: "none",
+                                        stroke: lane.role_color.unwrap_or(theme::PEAKS),
+                                        stroke_width: "1",
+                                        opacity: if s.faded { "0.20" } else { "0.6" },
+                                    }
+                                }
                                 if let Some(p) = s.points.as_ref() {
                                     polygon {
                                         points: "{p}",
@@ -1401,12 +1515,15 @@ pub fn StackView(
                                                 x1: "{n.x:.1}", y1: "{gy:.1}",
                                                 x2: "{n.x:.1}", y2: "{gy + gh:.1}",
                                                 stroke: "{n.fill}",
-                                                stroke_width: "1.5",
+                                                stroke_width: "{lane.hit_width:.2}",
                                                 opacity: "0.9",
                                             }
-                                            polygon {
-                                                points: "{n.x:.1},{gy:.1} {n.x + n.w.min(9.0):.1},{gy + 5.0:.1} {n.x:.1},{gy + 10.0:.1}",
-                                                fill: "{n.fill}",
+                                            // r[impl drums.lanes.hit-density]
+                                            if lane.hit_flag {
+                                                polygon {
+                                                    points: "{n.x:.1},{gy:.1} {n.x + n.w.min(9.0):.1},{gy + 5.0:.1} {n.x:.1},{gy + 10.0:.1}",
+                                                    fill: "{n.fill}",
+                                                }
                                             }
                                         } else if n.triangle {
                                             polygon {

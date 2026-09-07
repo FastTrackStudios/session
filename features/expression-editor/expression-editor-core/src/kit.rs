@@ -204,6 +204,67 @@ pub fn is_unused_name(name: &str) -> bool {
     name.to_ascii_lowercase().contains("unused")
 }
 
+/// Whether a track is a trigger — a `Trig` / `Trigger` token in its name.
+///
+/// Matched as a whole token, not a substring: a mic called `Trigate` is
+/// not a trigger, and the token is what the FTS naming actually writes
+/// (`T3 Trig`, `Kick Trigger`).
+pub fn is_trigger_name(name: &str) -> bool {
+    name.to_ascii_lowercase()
+        .split([' ', '-', '_'])
+        .any(|t| t == "trig" || t == "trigger")
+}
+
+/// Which tom a track belongs to, `T1`–`T4` → `1`–`4`.
+///
+/// A trigger shares its tom's number (`T3 Trig` is tom 3), which is what
+/// lets a trigger be drawn over the tom it triggers rather than beside
+/// it. Any token may carry the number, because the mic name comes first
+/// in some sessions and last in others (`T2 Close`, `Close T2`).
+pub fn tom_number(name: &str) -> Option<u8> {
+    name.to_ascii_lowercase()
+        .split([' ', '-', '_'])
+        .find_map(|t| match t {
+            "t1" => Some(1),
+            "t2" => Some(2),
+            "t3" => Some(3),
+            "t4" => Some(4),
+            _ => None,
+        })
+}
+
+/// Group a split lane's members into the ones that own a sub-row and the
+/// triggers that ride on top of one, as indices into `names`.
+///
+/// A trigger is not another tom — it is the same drum, sensed a second
+/// way — so `T3 Trig` belongs in `T3`'s row, drawn over it. Given a row
+/// each, four toms with triggers read as an eight-piece kit and every
+/// row is half the height it should be.
+///
+/// A trigger keeps its own row when nothing claims it: no tom number
+/// (`Trig`, ambiguous), or a number with no matching tom (`T4 Trig`
+/// where `T4` was never recorded). Folding those away silently would
+/// hide a track that is really there.
+// r[impl drums.lanes.trigger-overlay]
+pub fn trigger_sub_rows(names: &[&str]) -> Vec<(usize, Vec<usize>)> {
+    let mut rows: Vec<(usize, Vec<usize>)> = (0..names.len())
+        .filter(|&i| !is_trigger_name(names[i]))
+        .map(|i| (i, Vec::new()))
+        .collect();
+
+    for t in (0..names.len()).filter(|&i| is_trigger_name(names[i])) {
+        let host = tom_number(names[t]).and_then(|n| {
+            rows.iter_mut()
+                .find(|(h, _)| tom_number(names[*h]) == Some(n))
+        });
+        match host {
+            Some((_, overlays)) => overlays.push(t),
+            None => rows.push((t, Vec::new())),
+        }
+    }
+    rows
+}
+
 impl Workspace {
     /// Rebuild the layout as role lanes over `members` (`(guid, role)`),
     /// top to bottom `Other`, `Toms`, `Snare`, `Kick`; roles with no
@@ -261,6 +322,70 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // r[verify drums.lanes.trigger-overlay]
+    #[test]
+    fn a_trigger_is_a_whole_token_not_a_substring() {
+        assert!(is_trigger_name("T3 Trig"));
+        assert!(is_trigger_name("Kick-Trigger"));
+        assert!(is_trigger_name("S_trig"));
+        assert!(is_trigger_name("Trig"));
+        // A mic whose name merely contains the letters is not a trigger.
+        assert!(!is_trigger_name("Trigate"));
+        assert!(!is_trigger_name("T1"));
+    }
+
+    // r[verify drums.lanes.trigger-overlay]
+    #[test]
+    fn a_trigger_carries_the_number_of_the_tom_it_triggers() {
+        // This pairing is the whole point: it is what puts `T3 Trig` in
+        // `T3`'s sub-row instead of a row of its own.
+        assert_eq!(tom_number("T3 Trig"), tom_number("T3"));
+        assert_eq!(tom_number("T1"), Some(1));
+        assert_eq!(tom_number("T4 Trig"), Some(4));
+        // The mic name comes first in some sessions and last in others.
+        assert_eq!(tom_number("Close T2"), Some(2));
+        assert_eq!(tom_number("T2_Close"), Some(2));
+        // Nothing to pair with.
+        assert_eq!(tom_number("Trig"), None);
+        assert_eq!(tom_number("Snare Top"), None);
+        assert_eq!(tom_number("T5"), None);
+    }
+
+    // r[verify drums.lanes.trigger-overlay]
+    #[test]
+    fn four_toms_with_triggers_are_four_rows_not_eight() {
+        let rows = trigger_sub_rows(&[
+            "T1", "T2", "T3", "T4", "T1 Trig", "T2 Trig", "T3 Trig", "T4 Trig",
+        ]);
+        assert_eq!(rows.len(), 4, "one row per tom, triggers riding along");
+        // Each tom carries exactly its own trigger.
+        assert_eq!(rows[0], (0, vec![4]));
+        assert_eq!(rows[2], (2, vec![6]));
+    }
+
+    // r[verify drums.lanes.trigger-overlay]
+    #[test]
+    fn an_unclaimed_trigger_keeps_its_own_row() {
+        // T4 was never recorded, and a bare `Trig` says which drum but
+        // not which tom. Neither may vanish.
+        let rows = trigger_sub_rows(&["T1", "T1 Trig", "T4 Trig", "Trig"]);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0], (0, vec![1]), "T1 keeps its trigger");
+        assert_eq!(rows[1], (2, vec![]), "T4 Trig has no tom to ride");
+        assert_eq!(rows[2], (3, vec![]), "a bare Trig is ambiguous");
+    }
+
+    // r[verify drums.lanes.trigger-overlay]
+    #[test]
+    fn a_tom_with_two_mics_keeps_both_rows() {
+        // Overlaying is only for triggers; two mics on one tom are two
+        // captures worth seeing side by side.
+        let rows = trigger_sub_rows(&["T1 Top", "T1 Bottom", "T1 Trig"]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], (0, vec![2]), "the trigger rides the first match");
+        assert_eq!(rows[1], (1, vec![]));
+    }
 
     // r[verify drums.lanes.roles]
     #[test]
