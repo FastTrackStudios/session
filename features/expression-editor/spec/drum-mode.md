@@ -171,6 +171,28 @@ the last step. A trigger's hits land in the row of the tom it triggers,
 the same row its waveform overlays. A member with no sub-row of its own
 still draws full height.
 
+r[drums.chrome.markers]
+The ruler shows the host's timeline chrome — the song's structure — and
+must read **both** kinds, because sessions use both. A region is a named
+*span* and draws as a coloured band; a marker is a named *point* and
+draws as a coloured tick with its label, over the bands rather than
+under them. Both carry a thin line down through every lane at low
+opacity, so a boundary is visible where the user is looking and not only
+in the ruler.
+
+Markers stay points. Not every marker is a section boundary — `tempo
+change`, `back to 4/4` — so stretching each one to the next would draw a
+structure nobody wrote. Labels are clipped to the room before the next
+marker *in the same lane*, so a dense passage reads as ticks with the
+names that fit rather than overlapping words.
+
+Markers are grouped by their REAPER ruler lane (7.62+), one row per
+lane, labelled by the lane's name; a lane with no name is labelled by
+its index. The grouping shows the project as it is, not as it should be:
+these sessions declare `SONG`, `SECTIONS` and `MARKS` and then file
+every marker under `SONG`. Redistributing them would hide exactly the
+thing the ruler exists to show.
+
 ## Detection and the kit group
 
 r[drums.group.kit]

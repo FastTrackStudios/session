@@ -951,6 +951,82 @@ pub fn StackView(
             })
             .collect()
     };
+    // The song's markers — named *points*, unlike regions' named spans.
+    // Sessions use both, and which one carries a song's structure comes
+    // down to how the project was set up, so the ruler has to show
+    // either. Kept as points: not every marker is a section boundary
+    // ("tempo change", "back to 4/4"), so stretching each one to the
+    // next would draw a structure nobody wrote.
+    // r[impl drums.chrome.markers]
+    // The ruler lanes the markers occupy, in the host's own order —
+    // one row each, so `SONG`, `SECTIONS` and `MARKS` stay separate
+    // shelves rather than collapsing into one crowded strip.
+    let mark_lanes: Vec<(Option<u32>, String)> = {
+        let mut seen: Vec<(Option<u32>, String)> = Vec::new();
+        let (t0, t1) = ed.camera.time_span(ed.viewport);
+        for m in ed.doc.markers.iter().filter(|m| m.t >= t0 && m.t <= t1) {
+            let key = m.lane.as_ref().map(|(i, _)| *i);
+            if !seen.iter().any(|(i, _)| *i == key) {
+                let name = m.lane.as_ref().map_or(String::new(), |(_, n)| n.clone());
+                seen.push((key, name));
+            }
+        }
+        seen.sort_by_key(|(i, _)| i.unwrap_or(0));
+        seen
+    };
+
+    let marks: Vec<(f64, String, String, usize)> = {
+        let (t0, t1) = ed.camera.time_span(ed.viewport);
+        let visible: Vec<&expression_editor_core::doc::Marker> = ed
+            .doc
+            .markers
+            .iter()
+            .filter(|m| m.t >= t0 && m.t <= t1)
+            .collect();
+        visible
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let x = ed.camera.x(m.t).clamp(0.0, vp.w);
+                // Clip the label to the room before the next marker, so
+                // a dense passage reads as a row of ticks with the names
+                // that fit rather than a pile of overlapping words. At a
+                // whole-song zoom `SOLO A`, `SOLO B` and `CH 3` land
+                // within a few pixels of each other and would otherwise
+                // print on top of one another.
+                // Room is measured against the next marker *in the
+                // same lane*: a marker on `SECTIONS` does not crowd one
+                // on `SONG`, because they are drawn on different rows.
+                let lane_key = m.lane.as_ref().map(|(i, _)| *i);
+                let next = visible
+                    .iter()
+                    .skip(i + 1)
+                    .find(|n| n.lane.as_ref().map(|(i, _)| *i) == lane_key)
+                    .map_or(vp.w, |n| ed.camera.x(n.t).clamp(0.0, vp.w));
+                let fit = (((next - x) - 5.0) / 5.0).max(0.0) as usize;
+                let label: String = m
+                    .label
+                    .clone()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(fit)
+                    .collect();
+                let key = m.lane.as_ref().map(|(i, _)| *i);
+                let row = mark_lanes.iter().position(|(i, _)| *i == key).unwrap_or(0);
+                (
+                    x,
+                    label,
+                    m.color.clone().unwrap_or_else(|| theme::TEXT_DIM.into()),
+                    row,
+                )
+            })
+            .collect()
+    };
+
+    // The marker strip shares the ruler's upper band, split evenly
+    // between however many lanes actually carry markers.
+    let mark_row_h = (canvas::RULER_H - 13.0) / mark_lanes.len().max(1) as f64;
+
     let (view0, px_per_sec) = view_span_secs(&ed)
         .map(|(v0, v1)| {
             if (v1 - v0).abs() < 1e-9 {
@@ -1409,6 +1485,43 @@ pub fn StackView(
                         }
                     }
                 }
+                // r[impl drums.chrome.markers]
+                //
+                // A marker is a point, so it gets a tick and a label
+                // rather than a band: the label sits to the right of
+                // its line, which is where the thing it names starts.
+                for (x, label, color, row) in marks.iter() {
+                    // One shelf per ruler lane. The tick spans only its
+                    // own row, so which lane a marker is filed under is
+                    // read off its height — that is the whole point of
+                    // lanes, and it is information these projects get
+                    // wrong in a way worth being able to see.
+                    line {
+                        x1: "{x:.1}", x2: "{x:.1}",
+                        y1: "{*row as f64 * mark_row_h:.1}",
+                        y2: "{(*row + 1) as f64 * mark_row_h:.1}",
+                        stroke: "{color}",
+                        stroke_width: 2,
+                    }
+                    text {
+                        x: "{x + 3.0:.1}",
+                        y: "{(*row + 1) as f64 * mark_row_h - 2.0:.1}",
+                        font_size: 9,
+                        fill: "{color}",
+                        "{label}"
+                    }
+                }
+                // The lane names, once, down the left edge.
+                for (i, (_, name)) in mark_lanes.iter().enumerate() {
+                    text {
+                        x: 2,
+                        y: "{(i + 1) as f64 * mark_row_h - 2.0:.1}",
+                        font_size: 7,
+                        fill: theme::TEXT_DIM,
+                        opacity: "0.7",
+                        "{name}"
+                    }
+                }
                 for t in ticks.iter() {
                     line {
                         x1: "{t.x:.1}", x2: "{t.x:.1}",
@@ -1479,6 +1592,19 @@ pub fn StackView(
                             for (x0, _, _, color) in sections.iter() {
                                 line {
                                     x1: "{x0:.1}", x2: "{x0:.1}",
+                                    y1: "{lane.y:.1}", y2: "{lane.y + lane.h:.1}",
+                                    stroke: "{color}",
+                                    stroke_width: 1,
+                                    opacity: "0.3",
+                                }
+                            }
+                            // Markers carry down the same way — the
+                            // ruler says where you are, these say it
+                            // where you are looking.
+                            // r[impl drums.chrome.markers]
+                            for (x, _, color, _) in marks.iter() {
+                                line {
+                                    x1: "{x:.1}", x2: "{x:.1}",
                                     y1: "{lane.y:.1}", y2: "{lane.y + lane.h:.1}",
                                     stroke: "{color}",
                                     stroke_width: 1,

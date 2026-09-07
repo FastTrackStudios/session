@@ -354,7 +354,7 @@ impl DrumHost {
                     self.sample_rate,
                 );
                 let mut doc = crate::percussion_doc(&samples, self.sample_rate);
-                crate::attach_regions(&self.daw, &self.ctx, &mut doc);
+                crate::attach_timeline(&self.daw, &self.ctx, &mut doc);
                 docs.push((guid.clone(), doc));
                 names.push(track.name.clone());
                 takes.push(samples);

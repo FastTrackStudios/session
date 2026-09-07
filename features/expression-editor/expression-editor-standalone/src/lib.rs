@@ -687,7 +687,7 @@ impl Runner {
                                 return None;
                             }
                             let mut doc = percussion_doc(&samples, rate);
-                            attach_regions(&daw, &ctx, &mut doc);
+                            attach_timeline(&daw, &ctx, &mut doc);
                             Some((job, samples, rate, doc))
                         })
                     })
@@ -1177,12 +1177,26 @@ pub(crate) fn read_take_mono(
 /// nothing, "CH 1" says everything — so every lane's ruler shows them.
 /// Host colours come through as `#rrggbb`; REAPER's section colours are
 /// the ones the band already knows from the arrange view.
-pub(crate) fn attach_regions(
+/// Attach the host's timeline chrome — the song's sections — to a doc.
+///
+/// Both kinds, because sessions use both. A region is a named *span*
+/// and a marker is a named *point*, and which one a song's sections
+/// live in comes down to how it was set up: the album's projects
+/// normally carry regions, but `set in stone` puts its whole structure
+/// — IN, VS 1, CH 1, 7/4 part, SOLO A, OUT — in sixteen markers and no
+/// regions at all. Reading only regions left the ruler blank on exactly
+/// the project with the most structure to show.
+///
+/// Markers are kept as points rather than being stretched into spans up
+/// to the next one. Not every marker is a section boundary — `tempo
+/// change` and `back to 4/4` are annotations — so inventing spans from
+/// them would draw a song structure that was never written.
+pub(crate) fn attach_timeline(
     daw: &Standalone,
     ctx: &ProjectContext,
     doc: &mut expression_editor_core::ExpressionDoc,
 ) {
-    use daw::service::Regions;
+    use daw::service::{Markers, Projects, Regions};
     let ups = doc.time_base.units_per_second(120.0);
     if ups <= 0.0 {
         return;
@@ -1194,6 +1208,32 @@ pub(crate) fn attach_regions(
             end: r.time_range.end_seconds() * ups,
             label: r.name,
             color: r.color.map(|c| format!("#{c:06x}")),
+        })
+        .collect();
+    doc.markers = Markers::all(daw, ctx.clone())
+        .into_iter()
+        // A marker whose position will not resolve to seconds cannot be
+        // drawn on a time axis; dropping it beats drawing it at zero,
+        // where it would claim the downbeat.
+        .filter_map(|m| {
+            let lane = m.lane.map(|idx| {
+                let name = Projects::get_ruler_lane_name(daw, ctx.clone(), idx);
+                // An unnamed lane still groups; it just has to be
+                // labelled by its number rather than pretending to a
+                // name it does not have.
+                let name = if name.is_empty() {
+                    format!("Lane {idx}")
+                } else {
+                    name
+                };
+                (idx, name)
+            });
+            Some(expression_editor_core::doc::Marker {
+                t: m.position.seconds()? * ups,
+                label: Some(m.name).filter(|n| !n.is_empty()),
+                color: m.color.map(|c| format!("#{c:06x}")),
+                lane,
+            })
         })
         .collect();
 }
