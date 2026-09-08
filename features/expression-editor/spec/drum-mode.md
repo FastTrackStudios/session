@@ -275,10 +275,19 @@ copy is the one thing the generic host does not offer: it writes a new
 `.rpp`, which is a window-with-no-host-application's answer to saving,
 and REAPER saves through REAPER.
 
-What remains is the workspace *loader*, which still opens an `.rpp` from
-disk before folding the kit. Everything after that file load is already
-daw-agnostic; the REAPER panel needs the second half of it against the
-project REAPER already has open.
+The workspace loader is split accordingly: opening an `.rpp` from disk
+was the only standalone-specific part, and `drum_workspace` — find the
+kit folder, score the candidates, read each mic, fold the role lanes —
+now takes any backend.
+
+It asks for `Send + Sync` as well, and that bound is a real limit rather
+than a formality. The mics are read in parallel because twenty tracks of
+a five-minute take is the slow part of opening a kit; REAPER's API is
+main-thread only, the same constraint that makes every service touching
+it dispatch through `main_thread::query`. A REAPER panel therefore wants
+this logic with a sequential read. Writing that is a smaller job than
+pretending a main-thread API is thread-safe, which would compile and
+then fail inside REAPER at a distance from the cause.
 
 r[drums.mouse.contexts]
 The stacked view resolves its gestures through the same `MouseMap` the
