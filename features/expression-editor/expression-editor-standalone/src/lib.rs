@@ -1037,8 +1037,8 @@ fn edit_item(
 /// at its position, out to `take_secs`. This is what a lane draws
 /// after an edit landed on the daw: the split pieces where they now
 /// sit, not where the take was when it loaded.
-pub(crate) fn track_timeline(
-    daw: &Standalone,
+pub fn track_timeline<D: expression_editor_audio::daw_bound::DrumDaw>(
+    daw: &D,
     ctx: &ProjectContext,
     track: &daw::service::Track,
     take_secs: f64,
@@ -1098,14 +1098,14 @@ pub(crate) fn track_timeline(
 /// source rate — the same read [`AudioSession::load`] does, capped at
 /// the item length. Returns `(samples, sample_rate)`.
 // r[impl drums.open.runner]
-pub(crate) fn read_take_mono(
-    daw: &Standalone,
+pub fn read_take_mono<D: expression_editor_audio::daw_bound::DrumDaw>(
+    daw: &D,
     ctx: &ProjectContext,
     item_guid: &str,
     length_secs: f64,
     volume: f64,
 ) -> Option<(Vec<f64>, f64)> {
-    use daw::service::audio_accessor::{AudioAccessors, GetSamplesRequest};
+    use daw::service::audio_accessor::GetSamplesRequest;
 
     let accessor = daw.create_take_accessor(
         ctx.clone(),
@@ -1191,8 +1191,8 @@ pub(crate) fn read_take_mono(
 /// to the next one. Not every marker is a section boundary — `tempo
 /// change` and `back to 4/4` are annotations — so inventing spans from
 /// them would draw a song structure that was never written.
-pub(crate) fn attach_timeline(
-    daw: &Standalone,
+pub fn attach_timeline<D: expression_editor_audio::daw_bound::DrumDaw>(
+    daw: &D,
     ctx: &ProjectContext,
     doc: &mut expression_editor_core::ExpressionDoc,
 ) {
@@ -1265,7 +1265,11 @@ pub(crate) fn attach_timeline(
 /// Empty when the map cannot place bars — a caller that gets nothing
 /// back should do nothing rather than fall back to a guessed grid.
 // r[impl drums.fills.bars]
-pub(crate) fn bar_grid(daw: &Standalone, ctx: &ProjectContext, take_secs: f64) -> Vec<f64> {
+pub fn bar_grid<D: expression_editor_audio::daw_bound::DrumDaw>(
+    daw: &D,
+    ctx: &ProjectContext,
+    take_secs: f64,
+) -> Vec<f64> {
     use daw::service::TempoMap;
     if take_secs <= 0.0 {
         return Vec::new();

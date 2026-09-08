@@ -267,9 +267,18 @@ is a duplicate with its position, length and start offset set. Detection
 reads samples through the audio-accessor service, which is REAPER's own
 API for exactly that, rather than going to the files on disk.
 
-`DrumHost` is still typed on `Standalone`, so none of the editing is
-reachable from the REAPER panel yet. That remaining work is a change of
-type parameter, not a compatibility problem.
+`DrumHost` is generic over that bound, and `DrumHost<Reaper>` is
+asserted to build at compile time — a stronger claim than the bound
+alone, since a backend can satisfy `DrumDaw` while the host still fails
+to instantiate over it if some method reaches past the bound. Saving a
+copy is the one thing the generic host does not offer: it writes a new
+`.rpp`, which is a window-with-no-host-application's answer to saving,
+and REAPER saves through REAPER.
+
+What remains is the workspace *loader*, which still opens an `.rpp` from
+disk before folding the kit. Everything after that file load is already
+daw-agnostic; the REAPER panel needs the second half of it against the
+project REAPER already has open.
 
 r[drums.mouse.contexts]
 The stacked view resolves its gestures through the same `MouseMap` the

@@ -14,6 +14,7 @@ expression-editor-daw = { workspace = true }
 # audio; `daw` because the session drives the facade.
 expression-editor-audio = { workspace = true, features = ["daw", "render"] }
 expression-editor-ui = { workspace = true }
+expression-editor-standalone = { workspace = true }
 dioxus = { workspace = true }
 tracing = { workspace = true }
 

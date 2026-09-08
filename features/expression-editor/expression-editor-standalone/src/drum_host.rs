@@ -9,8 +9,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use daw::service::{ItemRef, ProjectContext, Projects};
+use daw::service::{ItemRef, ProjectContext};
 use daw::standalone::Standalone;
+use expression_editor_audio::daw_bound::DrumDaw;
 use expression_editor_audio::apply_quantize::{Applied, GroupError, apply_split, apply_warp};
 use expression_editor_audio::detect::Transient;
 use expression_editor_audio::gate::Hit;
@@ -56,13 +57,33 @@ const MANUAL_TOL: f64 = 0.015;
 /// today, asserted at compile time so a service added to [`DrumDaw`]
 /// that it cannot serve is a build error rather than a surprise.
 const _: fn() = || {
-    fn assert_impl<T: expression_editor_audio::daw_bound::DrumDaw>() {}
+    fn assert_impl<T: DrumDaw>() {}
     let _ = assert_impl::<Standalone>;
 };
 
+/// And the host itself instantiates for any backend that satisfies it.
+///
+/// Stronger than asserting the bound alone: a type can satisfy
+/// `DrumDaw` while `DrumHost` still fails to build over it, if some
+/// method reaches past the bound for something only one backend has.
+/// `save` did exactly that — it writes a new `.rpp`, which is the
+/// standalone window's answer to having no host application — and now
+/// lives in its own impl for that reason.
+const _: fn() = || {
+    fn assert_host<D: DrumDaw>(h: &DrumHost<D>) -> usize {
+        // Touch the generic surface rather than merely naming the type,
+        // so this fails if any of it stops being generic.
+        h.bar_count() + h.group().len()
+    }
+    let _ = assert_host::<Standalone>;
+};
+
 /// Everything a drum-workspace gesture needs to reach the daw.
-pub struct DrumHost {
-    daw: Standalone,
+pub struct DrumHost<D = Standalone>
+where
+    D: DrumDaw,
+{
+    daw: D,
     ctx: ProjectContext,
     lanes: Vec<HostLane>,
     /// Every detection signal across all lanes, flattened — one per
@@ -82,9 +103,9 @@ pub struct DrumHost {
     pub beat_secs: f64,
 }
 
-impl DrumHost {
+impl<D: DrumDaw> DrumHost<D> {
     pub fn new(
-        daw: Standalone,
+        daw: D,
         ctx: ProjectContext,
         mut lanes: Vec<HostLane>,
         sample_rate: f64,
@@ -506,7 +527,7 @@ impl DrumHost {
     /// Returns `(track_guid, doc)` pairs; the caller pushes them into
     /// the editor with `Editor::reload_track_doc`.
     pub fn refresh(&self) -> Vec<(String, expression_editor_core::ExpressionDoc)> {
-        use daw::service::{Items, Tracks};
+        use daw::service::Tracks;
         let mut docs = Vec::new();
         let mut new_sums: Vec<(LaneRole, Arc<Vec<f64>>)> = Vec::with_capacity(self.lanes.len());
         for lane in &self.lanes {
@@ -566,6 +587,21 @@ impl DrumHost {
         docs
     }
 
+}
+
+/// The host as the window shares it: the callbacks each hold a clone.
+///
+/// Defaulted to `Standalone` because that is what the window runs on;
+/// the REAPER panel names `SharedDrumHost<Reaper>` instead. The default
+/// is what keeps every existing use of this alias unchanged.
+pub type SharedDrumHost<D = Standalone> = Arc<DrumHost<D>>;
+
+/// Saving a copy is the standalone window's feature, not the
+/// workspace's: it writes a new `.rpp` beside the original, which is
+/// what a window with no host application has to do. In REAPER the user
+/// saves through REAPER, so this is the one thing the generic host
+/// deliberately does not offer.
+impl DrumHost<Standalone> {
     /// Save the project as a **new** `.rpp` beside its original —
     /// `<stem>.fts-edit.rpp` — never over it. Returns the path written.
     // r[impl drums.save.new-file]
@@ -577,6 +613,3 @@ impl DrumHost {
         daw::standalone::save::save_project_as(&self.daw, &guid)
     }
 }
-
-/// The host as the window shares it: the callbacks each hold a clone.
-pub type SharedDrumHost = Arc<DrumHost>;

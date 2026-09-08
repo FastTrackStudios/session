@@ -732,3 +732,14 @@ const _: fn() = || {
     fn assert_impl<T: expression_editor_audio::daw_bound::DrumDaw>() {}
     let _ = assert_impl::<daw::reaper::Reaper>;
 };
+
+/// And the drum host itself builds over REAPER.
+///
+/// The claim that matters, and the one the bound alone does not make: a
+/// backend can satisfy `DrumDaw` while `DrumHost` still fails to
+/// instantiate over it. This names the concrete type, so the editing
+/// path is REAPER-ready as a fact the compiler checks rather than an
+/// intention in a commit message.
+// r[impl drums.host.daw-agnostic]
+const _: Option<expression_editor_standalone::drum_host::SharedDrumHost<daw::reaper::Reaper>> =
+    None;

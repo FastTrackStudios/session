@@ -4939,6 +4939,7 @@ dependencies = [
  "expression-editor-audio",
  "expression-editor-core",
  "expression-editor-daw",
+ "expression-editor-standalone",
  "expression-editor-ui",
  "eyre",
  "tokio",
