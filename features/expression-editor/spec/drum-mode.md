@@ -271,6 +271,29 @@ API for exactly that, rather than going to the files on disk.
 reachable from the REAPER panel yet. That remaining work is a change of
 type parameter, not a compatibility problem.
 
+r[drums.mouse.contexts]
+The stacked view resolves its gestures through the same `MouseMap` the
+piano roll does, in three contexts of its own — `Lane` (a role lane's
+waveform), `Hit` (a detected marker) and `LaneGutter` (the name and mic
+chip). Its own contexts rather than the roll's, because there are no
+notes here: a "note" is a transient in audio the user does not own, the
+canvas is a waveform rather than a pitch grid, and every gesture is
+about *when* a hit is, never what pitch it is.
+
+The bindings live in the base map every preset is built from, not in the
+Drums preset alone: the profile is the user's choice and bindings that
+existed only in one would leave the surface inert for anyone on another.
+
+Dragging a hit is one action, `MoveHit`, whether it slips or warps — the
+quantize panel's write mode decides which. Binding them separately would
+let a drag and the Apply button mean different edits. Adding a hit and
+cutting the kit are deliberate modifier gestures and must not be
+reachable by a plain click: one invents a hit and the other rewrites
+every item in the kit, and a plain binding puts both one slip of the
+hand away at all times. A click on the lane behind a hit selects the
+lane rather than falling through to nothing, so a click two pixels off a
+marker does not feel broken.
+
 r[drums.manual.split]
 The **razor** cuts the kit. Arming it and clicking in a role lane puts
 an item boundary at the click on *every* mic at once — one cut time and

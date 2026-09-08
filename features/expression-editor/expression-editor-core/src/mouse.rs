@@ -38,6 +38,21 @@ pub enum Context {
     RazorArea,
     /// The left/right edge of a razor area.
     RazorEdge,
+
+    // ── The stacked multitrack view ──────────────────────────────────
+    //
+    // A different surface, and it needs its own contexts rather than
+    // borrowing the roll's: there are no notes here. A "note" is a
+    // detected transient in audio the user does not own, the canvas is
+    // a waveform rather than a pitch grid, and the gestures that make
+    // sense are about *when* a hit is, never what pitch it is.
+    /// A role lane's waveform, away from any hit.
+    // r[impl drums.mouse.contexts]
+    Lane,
+    /// A detected hit marker in a role lane.
+    Hit,
+    /// The lane's name and mic chip, down the left edge.
+    LaneGutter,
 }
 
 /// How the press arrived.
@@ -160,6 +175,31 @@ pub enum Action {
     RazorMoveAreaOnly,
     RazorMoveVertically,
     RazorMoveHorizontally,
+    // ── The stacked multitrack view ──────────────────────────────────
+    /// Drag a hit to where it should have been.
+    ///
+    /// Whether that slips the audio or warps it is the quantize panel's
+    /// write mode, not a separate binding: the gesture means "this hit
+    /// belongs there" and SPLIT/WARP is how the take is made to agree.
+    /// Binding them separately would let a drag and the Apply button
+    /// mean different edits.
+    // r[impl drums.mouse.contexts]
+    MoveHit,
+    /// The same, pinning the take's ends rather than the neighbouring
+    /// hits — the BothStretch law.
+    MoveHitBothEnds,
+    /// Snap one hit to the grid where it stands.
+    SnapHitToGrid,
+    /// Put a hit here by hand, refined to the nearest attack.
+    AddHit,
+    /// Throw this hit out of the list.
+    RemoveHit,
+    /// Cut every mic of the kit here.
+    SplitTake,
+    /// Make this lane the one the keys and the panel act on.
+    SelectLane,
+    /// Open the lane's mic menu.
+    OpenMicMenu,
     /// Drag an edge; contents stretch with it.
     RazorStretchContents,
     /// Drag an edge without touching the contents.
@@ -567,6 +607,28 @@ impl MouseMap {
                 b(C::CcEvent, G::Drag, CT, A::ScaleCcEvents),
                 b(C::CcEvent, G::Click, N, A::SelectNote),
                 b(C::CcEvent, G::RightClick, N, A::EraseCcEvents),
+                // ── the stacked view ─────────────────────────────────
+                //
+                // These are the bindings the stack has always had,
+                // written down. Until now they were `if` statements
+                // inside the pointer handler, which meant the drum
+                // surface could not be rebound, could not be shown in
+                // the preferences with the rest, and could not be told
+                // apart from a bug.
+                //
+                // A hit is grabbed and moved; the lane behind it selects
+                // rather than doing nothing, because a click that lands
+                // two pixels off a marker should not feel broken.
+                // r[impl drums.mouse.contexts]
+                b(C::Hit, G::Drag, N, A::MoveHit),
+                b(C::Hit, G::Drag, S, A::MoveHitBothEnds),
+                b(C::Hit, G::DoubleClick, N, A::SnapHitToGrid),
+                b(C::Hit, G::Click, N, A::SelectLane),
+                b(C::Hit, G::RightClick, N, A::RemoveHit),
+                b(C::Lane, G::Click, N, A::SelectLane),
+                b(C::Lane, G::Click, AL, A::AddHit),
+                b(C::Lane, G::Click, CT, A::SplitTake),
+                b(C::LaneGutter, G::Click, N, A::OpenMicMenu),
                 // ── chrome ───────────────────────────────────────────
                 b(C::Keys, G::Click, N, A::SelectRow),
                 b(C::Keys, G::Click, AL, A::Audition),

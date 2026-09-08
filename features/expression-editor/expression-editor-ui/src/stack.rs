@@ -20,6 +20,7 @@
 //! content to its own height.
 
 use expression_editor_core::doc::{ExpressionDoc, Note};
+use expression_editor_core::mouse::{Context as MouseContext, Gesture as MouseGesture};
 use expression_editor_core::kit;
 use expression_editor_core::rows::RowSpace;
 use expression_editor_core::tracks::StackRow;
@@ -1427,26 +1428,54 @@ pub fn StackView(
                     drop(ed);
                     let ly = c.y - ruler_h;
                     let lx = c.x - canvas::GUTTER_W;
-                    // The razor cuts. It is in the toolbar already and
-                    // in drum mode it did nothing at all — the stacked
-                    // view never consulted the tool, so arming it armed
-                    // a no-op. A cut is the one edit that has no other
-                    // gesture, since every other one starts by grabbing
-                    // a hit and a cut is precisely for where there
-                    // isn't one.
+                    let mods = e.data().modifiers();
+                    // What a press means comes from the map, not from
+                    // this handler. These bindings used to be `if`
+                    // statements here, which made the drum surface the
+                    // one part of the editor that could not be rebound,
+                    // could not be listed beside the roll's in the
+                    // preferences, and could not be told apart from a
+                    // gesture nobody had written.
+                    // r[impl drums.mouse.contexts]
+                    let m = expression_editor_core::tools::Mods {
+                        shift: mods.contains(Modifiers::SHIFT),
+                        ctrl: mods.contains(Modifiers::CONTROL),
+                        alt: mods.contains(Modifiers::ALT),
+                    };
+                    let in_lane = |l: &LaneView| l.is_role && ly >= l.y && ly < l.y + l.h;
+                    let on_lane = views.iter().any(in_lane);
+                    let on_marker = views
+                        .iter()
+                        .filter(|l| in_lane(l))
+                        .any(|l| l.notes.iter().any(|n| (n.x - lx).abs() <= SLIP_PICK_PX));
+                    let context = if on_marker {
+                        MouseContext::Hit
+                    } else {
+                        MouseContext::Lane
+                    };
+                    let act = |g: MouseGesture| {
+                        let ed = editor.read();
+                        ed.mouse.resolve_for(context, g, m, ed.tool)
+                    };
+
+                    // The razor gets first refusal on a lane, the way an
+                    // armed tool does on the roll. A cut is the one edit
+                    // with no other gesture available, since every other
+                    // one starts by grabbing a hit and a cut is for
+                    // where there isn't one.
                     // r[impl drums.manual.split]
-                    if editor.read().tool == expression_editor_core::Tool::Razor
+                    let razor = editor.read().tool == expression_editor_core::Tool::Razor;
+                    if on_lane
+                        && (razor
+                            || act(MouseGesture::Click) == expression_editor_core::Action::SplitTake)
                         && let Some(on_hit) = on_hit.as_ref()
                         && let Some((v0, v1)) = view_span_secs(&editor.read())
                     {
                         let at = v0 + (lx / vp.w.max(1.0)) * (v1 - v0);
-                        if views.iter().any(|l| l.is_role && ly >= l.y && ly < l.y + l.h) {
-                            on_hit.call(HitGesture::Split { at });
-                            e.prevent_default();
-                            return;
-                        }
+                        on_hit.call(HitGesture::Split { at });
+                        e.prevent_default();
+                        return;
                     }
-                    let mods = e.data().modifiers();
                     // Two presses inside the window and the pick radius
                     // are a double click.
                     let now = std::time::Instant::now();
@@ -1484,7 +1513,11 @@ pub fn StackView(
                                 lane_name: l.name.clone(),
                                 x0: c.x,
                                 x: c.x,
-                                shift: mods.contains(Modifiers::SHIFT),
+                                // Which of the two move bindings the
+                                // modifiers resolved to, rather than a
+                                // hardcoded Shift.
+                                shift: act(MouseGesture::Drag)
+                                    == expression_editor_core::Action::MoveHitBothEnds,
                                 hit_x: n.x,
                                 lane_y: l.y,
                                 lane_h: l.h,
@@ -1503,7 +1536,11 @@ pub fn StackView(
                         // division — the fastest way to fix one hit
                         // without opening the panel.
                         // r[impl drums.manual.nudge]
-                        if double && grid_secs > 0.0 {
+                        if double
+                            && grid_secs > 0.0
+                            && act(MouseGesture::DoubleClick)
+                                == expression_editor_core::Action::SnapHitToGrid
+                        {
                             let target = (s.hit_secs / grid_secs).round() * grid_secs;
                             let delta = target - s.hit_secs;
                             if delta.abs() > 1e-9 {
@@ -1522,7 +1559,10 @@ pub fn StackView(
                     // the nearest attack. The hit list changes; the daw
                     // does not, until a drag or Apply.
                     // r[impl drums.manual.add-remove]
-                    if mods.contains(Modifiers::ALT) && px_per_sec > 0.0 {
+                    // r[impl drums.mouse.contexts]
+                    if act(MouseGesture::Click) == expression_editor_core::Action::AddHit
+                        && px_per_sec > 0.0
+                    {
                         let lane = views
                             .iter()
                             .find(|l| l.is_role && ly >= l.y && ly < l.y + l.h);

@@ -241,6 +241,25 @@ impl Cursor {
                 _ => Cursor::Arrow,
             },
 
+            // ── the stacked view ─────────────────────────────────────
+            //
+            // A hit moves only in time, so it takes the same left/right
+            // cursor a note edge does: the shape says which axis is
+            // live, and offering a four-way arrow would promise a
+            // vertical drag that does not exist.
+            // r[impl drums.mouse.contexts]
+            Action::MoveHit | Action::MoveHitBothEnds => {
+                if left {
+                    Cursor::EdgeLeft
+                } else {
+                    Cursor::EdgeRight
+                }
+            }
+            Action::SplitTake => Cursor::Crosshair,
+            Action::AddHit => Cursor::Brush,
+            Action::RemoveHit => Cursor::Eraser,
+            Action::SnapHitToGrid | Action::SelectLane | Action::OpenMicMenu => Cursor::Arrow,
+
             // ── selection ────────────────────────────────────────────
             Action::MarqueeSelect | Action::SelectTouched => Cursor::Crosshair,
             Action::MarqueeAdd
