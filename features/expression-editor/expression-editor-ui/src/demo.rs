@@ -633,10 +633,14 @@ pub fn editor(scene: Scene, viewport: Viewport) -> Editor {
             Marker {
                 t: 0.0,
                 label: Some("Verse".into()),
+                color: Some("#3d5a8a".into()),
+                lane: None,
             },
             Marker {
                 t: PPQ * 4.0,
                 label: Some("Chorus".into()),
+                color: Some("#8a5a3d".into()),
+                lane: None,
             },
         ];
     }

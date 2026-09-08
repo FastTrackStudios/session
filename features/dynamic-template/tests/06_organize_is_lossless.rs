@@ -132,10 +132,10 @@ fn the_project_body_is_never_re_serialized() {
         "<METRONOME 6 2",
         "PEAKGAIN 28.10243685",
         "AUTOXFADE 129",
-        "PANLAWFLAGS 3",   // per-track, unmodelled
-        "YPOS 0 1 2",      // per-item lane
-        "CHANMODE 0",      // per-take
-        "<EXT",            // item extension block
+        "PANLAWFLAGS 3", // per-track, unmodelled
+        "YPOS 0 1 2",    // per-item lane
+        "CHANMODE 0",    // per-take
+        "<EXT",          // item extension block
         r#"ORIGINAL_FILENAME "/Volumes/SSD/Songs/Kick In.wav""#,
         "<DRIVEN_BY_MOSS",
     ] {

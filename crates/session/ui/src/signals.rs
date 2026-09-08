@@ -438,8 +438,7 @@ thread_local! {
 /// often someone bounces REAPER, and the alternative (an owned return) makes
 /// every `Session::get().setlist()` a borrow of a temporary.
 #[cfg(not(target_arch = "wasm32"))]
-static GLOBAL_SESSION: std::sync::RwLock<Option<&'static Session>> =
-    std::sync::RwLock::new(None);
+static GLOBAL_SESSION: std::sync::RwLock<Option<&'static Session>> = std::sync::RwLock::new(None);
 
 /// Session provides access to session service clients
 ///

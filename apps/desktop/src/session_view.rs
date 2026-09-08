@@ -42,8 +42,7 @@ pub fn SessionEventBridge() -> Element {
     use_future(move || async move {
         let mut seen = usize::MAX;
         loop {
-            let epoch =
-                reaper_engine::CONNECTION_EPOCH.load(std::sync::atomic::Ordering::Relaxed);
+            let epoch = reaper_engine::CONNECTION_EPOCH.load(std::sync::atomic::Ordering::Relaxed);
             if epoch != seen {
                 seen = epoch;
                 *REAPER_CONNECTIONS.write() = epoch;
@@ -59,44 +58,46 @@ pub fn SessionEventBridge() -> Element {
     // connected, permanently silent player.
     use_future(move || async move {
         loop {
-        let engine = engine_when_ready().await;
+            let engine = engine_when_ready().await;
 
-        // Consume the `events` `#[subscribe]` stream through the stream
-        // client so the vox lane pumps it. (Attaching a raw Tx to the
-        // in-process hub is never drained — the lane is what moves data.)
-        let (tx, mut rx) = vox::channel::<session::SetlistEvent>();
-        spawn(async move {
-            if let Err(e) = engine.stream_client.events(tx).await {
-                tracing::warn!("events subscription ended: {e:?}");
-            }
-        });
+            // Consume the `events` `#[subscribe]` stream through the stream
+            // client so the vox lane pumps it. (Attaching a raw Tx to the
+            // in-process hub is never drained — the lane is what moves data.)
+            let (tx, mut rx) = vox::channel::<session::SetlistEvent>();
+            spawn(async move {
+                if let Err(e) = engine.stream_client.events(tx).await {
+                    tracing::warn!("events subscription ended: {e:?}");
+                }
+            });
 
-        // Fetch the already-built setlist as the initial snapshot
-        // (deterministic, no reliance on the stream's first republish).
-        match engine.client.setlist().await {
-            Ok(setlist) => {
-                session_ui::apply_setlist_event(&session::SetlistEvent::SetlistChanged(setlist));
+            // Fetch the already-built setlist as the initial snapshot
+            // (deterministic, no reliance on the stream's first republish).
+            match engine.client.setlist().await {
+                Ok(setlist) => {
+                    session_ui::apply_setlist_event(&session::SetlistEvent::SetlistChanged(
+                        setlist,
+                    ));
+                }
+                Err(e) => tracing::warn!("initial setlist snapshot failed: {e:?}"),
             }
-            Err(e) => tracing::warn!("initial setlist snapshot failed: {e:?}"),
-        }
 
-        while let Ok(Some(ev)) = rx.recv().await {
-            let ev = ev.get();
-            // Re-feed the guide when the *active* song hydrates (its sections /
-            // count-in arrive after the initial cursor set the schedule).
-            if let session::SetlistEvent::SongHydrated { index, song, .. }
-            | session::SetlistEvent::SongEntered { index, song, .. } = ev
-                && session_ui::ACTIVE_INDICES.peek().song_index == Some(*index)
-            {
-                crate::guide::set_current_song(song.clone());
+            while let Ok(Some(ev)) = rx.recv().await {
+                let ev = ev.get();
+                // Re-feed the guide when the *active* song hydrates (its sections /
+                // count-in arrive after the initial cursor set the schedule).
+                if let session::SetlistEvent::SongHydrated { index, song, .. }
+                | session::SetlistEvent::SongEntered { index, song, .. } = ev
+                    && session_ui::ACTIVE_INDICES.peek().song_index == Some(*index)
+                {
+                    crate::guide::set_current_song(song.clone());
+                }
+                session_ui::apply_setlist_event(ev);
             }
-            session_ui::apply_setlist_event(ev);
-        }
-        tracing::warn!("setlist event stream ended; waiting to re-subscribe");
-        // Backoff before retrying. In Recording Mode the engine is gone and
-        // `engine_when_ready` blocks anyway, but in Live Mode it returns
-        // instantly — so without this a stream that ends immediately spins.
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            tracing::warn!("setlist event stream ended; waiting to re-subscribe");
+            // Backoff before retrying. In Recording Mode the engine is gone and
+            // `engine_when_ready` blocks anyway, but in Live Mode it returns
+            // instantly — so without this a stream that ends immediately spins.
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     });
 
@@ -106,43 +107,43 @@ pub fn SessionEventBridge() -> Element {
     // `#[subscribe]` hub (architect PubSub), not the setlist-events stream.
     use_future(move || async move {
         loop {
-        let engine = engine_when_ready().await;
+            let engine = engine_when_ready().await;
 
-        // Consume the `active_indices` `#[subscribe]` stream through the
-        // stream client (pumps the vox lane).
-        let (tx, mut rx) = vox::channel::<session_proto::ActiveIndices>();
-        spawn(async move {
-            if let Err(e) = engine.stream_client.active_indices(tx).await {
-                tracing::warn!("active_indices subscription ended: {e:?}");
+            // Consume the `active_indices` `#[subscribe]` stream through the
+            // stream client (pumps the vox lane).
+            let (tx, mut rx) = vox::channel::<session_proto::ActiveIndices>();
+            spawn(async move {
+                if let Err(e) = engine.stream_client.active_indices(tx).await {
+                    tracing::warn!("active_indices subscription ended: {e:?}");
+                }
+            });
+
+            // Open on song 0 / section 0. Fire it CONCURRENTLY (not awaited here)
+            // so this future is already polling `rx` below when the seek's cursor
+            // publish — and the active pump's follow-up 60 Hz publish — arrive.
+            // (The demo's edit cursor starts at the timeline end → nothing active
+            // until we seek.)
+            spawn(async move {
+                match engine.client.seek_to_section(0, 0).await {
+                    Ok(_) => tracing::info!("opened setlist on song 0 / section 0"),
+                    Err(e) => tracing::warn!("initial seek to song 0 failed: {e:?}"),
+                }
+            });
+
+            let mut guide_song: Option<usize> = None;
+            while let Ok(Some(ai)) = rx.recv().await {
+                let ai = ai.get();
+                // Guide follows the active song, reading the current (possibly
+                // just-hydrated) song list from the shared setlist signal.
+                feed_guide(
+                    &session_ui::SETLIST_STRUCTURE.peek().songs,
+                    &mut guide_song,
+                    ai.song_index,
+                );
+                session_ui::apply_active_indices(ai);
             }
-        });
-
-        // Open on song 0 / section 0. Fire it CONCURRENTLY (not awaited here)
-        // so this future is already polling `rx` below when the seek's cursor
-        // publish — and the active pump's follow-up 60 Hz publish — arrive.
-        // (The demo's edit cursor starts at the timeline end → nothing active
-        // until we seek.)
-        spawn(async move {
-            match engine.client.seek_to_section(0, 0).await {
-                Ok(_) => tracing::info!("opened setlist on song 0 / section 0"),
-                Err(e) => tracing::warn!("initial seek to song 0 failed: {e:?}"),
-            }
-        });
-
-        let mut guide_song: Option<usize> = None;
-        while let Ok(Some(ai)) = rx.recv().await {
-            let ai = ai.get();
-            // Guide follows the active song, reading the current (possibly
-            // just-hydrated) song list from the shared setlist signal.
-            feed_guide(
-                &session_ui::SETLIST_STRUCTURE.peek().songs,
-                &mut guide_song,
-                ai.song_index,
-            );
-            session_ui::apply_active_indices(ai);
-        }
-        tracing::warn!("active-indices stream ended; waiting to re-subscribe");
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            tracing::warn!("active-indices stream ended; waiting to re-subscribe");
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     });
 
@@ -189,8 +190,10 @@ pub fn SessionEventBridge() -> Element {
                 continue;
             };
             while let Ok(Some(event)) = events.recv().await {
-                if let daw::service::TrackEvent::ArmChanged { guid, armed: is_armed } =
-                    event.get().event.clone()
+                if let daw::service::TrackEvent::ArmChanged {
+                    guid,
+                    armed: is_armed,
+                } = event.get().event.clone()
                 {
                     armed.insert(guid, is_armed);
                     session_ui::ARMED_TRACK_COUNT

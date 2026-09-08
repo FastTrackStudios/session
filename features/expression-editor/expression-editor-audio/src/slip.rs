@@ -77,6 +77,77 @@ pub fn slip_pieces(
     pieces
 }
 
+/// Cut the take in two at `at`, moving nothing.
+///
+/// The cut lands a `leading_pad_secs` *before* the click, for the same
+/// reason every other cut in this crate does: a cut exactly on a
+/// transient clips the attack off it, and the click will be near a hit
+/// because that is where anyone aims. The pad is the difference between
+/// a split you can hear and one you cannot.
+///
+/// Empty when the cut would fall outside the take, or would leave a
+/// piece too short to be one. Splitting past either end produces a
+/// single piece, which is not a split and would rebuild every item to
+/// achieve nothing; splitting a hair inside an end produces a sliver
+/// that cannot even hold its own crossfade, which is worse — it is a
+/// item in the timeline that the user has to find and delete.
+// r[impl drums.manual.split]
+pub fn split_pieces(at: f64, take_secs: f64, cfg: SplitConfig) -> Vec<Piece> {
+    // A click at or beyond either end is not a split at all, before any
+    // question of where the pad puts the cut.
+    if !(at > 0.0 && at < take_secs) {
+        return Vec::new();
+    }
+    let pad = cfg.leading_pad_secs.max(0.0);
+    let cut = (at - pad).clamp(0.0, take_secs);
+    // Both halves need room for a fade in *and* out plus something
+    // between them, and 20ms regardless — shorter than any drum's decay
+    // and longer than a click, so the floor never refuses a split
+    // anybody meant while still refusing the slivers nobody does.
+    let min_piece = (cfg.crossfade_secs * 2.0).max(0.020);
+    if cut < min_piece || take_secs - cut < min_piece {
+        return Vec::new();
+    }
+    vec![
+        Piece {
+            cut: 0.0,
+            end: cut,
+            shift: 0.0,
+            transient: None,
+        },
+        Piece {
+            cut,
+            end: take_secs,
+            shift: 0.0,
+            transient: Some(at),
+        },
+    ]
+}
+
+/// Split a whole group at one time.
+///
+/// Every member is cut at the same place, which is the group rule: mics
+/// cut at different times are no longer phase-coherent, and a kit that
+/// has lost phase coherence cannot be un-lost by hand.
+// r[impl drums.manual.split]
+pub fn split_group<D>(
+    daw: &D,
+    project: ProjectContext,
+    items: &[ItemRef],
+    at: f64,
+    take_secs: f64,
+    cfg: SplitConfig,
+) -> Result<Applied, GroupError>
+where
+    D: Items + Takes + Clone,
+{
+    let pieces = split_pieces(at, take_secs, cfg);
+    if pieces.is_empty() {
+        return Ok(Applied::default());
+    }
+    apply_split(daw, project, items, &pieces, cfg)
+}
+
 /// Slip one hit on a whole group.
 ///
 /// `items` are the group's members — one item per mic, sharing a start
@@ -99,6 +170,67 @@ where
 {
     let pieces = slip_pieces(hit, next, take_secs, delta, cfg);
     apply_split(daw, project, items, &pieces, cfg)
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    const CFG: SplitConfig = SplitConfig {
+        leading_pad_secs: 0.005,
+        crossfade_secs: 0.005,
+    };
+
+    // r[verify drums.manual.split]
+    #[test]
+    fn a_split_makes_two_pieces_that_cover_the_take() {
+        let p = split_pieces(2.0, 10.0, CFG);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].cut, 0.0);
+        assert_eq!(p[0].end, p[1].cut, "a gap or overlap between the halves");
+        assert_eq!(p[1].end, 10.0, "the second half must reach the end");
+    }
+
+    // r[verify drums.manual.split]
+    #[test]
+    fn a_split_moves_nothing() {
+        // The difference between a split and a slip. Everything stays
+        // where it was; only the item boundary is new.
+        for piece in split_pieces(4.0, 10.0, CFG) {
+            assert_eq!(piece.shift, 0.0);
+        }
+    }
+
+    // r[verify drums.manual.split]
+    #[test]
+    fn the_cut_lands_before_the_click_not_on_it() {
+        // Anyone splitting a drum take aims at a hit, and a cut on the
+        // attack clips it.
+        let p = split_pieces(2.0, 10.0, CFG);
+        assert!(
+            p[0].end < 2.0,
+            "the cut is at {} — on or after the click, so it clips the attack",
+            p[0].end
+        );
+        assert!((p[0].end - (2.0 - CFG.leading_pad_secs)).abs() < 1e-9);
+    }
+
+    // r[verify drums.manual.split]
+    #[test]
+    fn splitting_outside_the_take_is_not_a_split() {
+        // One piece is the take as it already was; writing it would
+        // rebuild every item to achieve nothing.
+        assert!(split_pieces(0.0, 10.0, CFG).is_empty());
+        assert!(split_pieces(10.0, 10.0, CFG).is_empty());
+        assert!(split_pieces(11.0, 10.0, CFG).is_empty());
+        // And a click inside the pad of the start resolves to the start.
+        assert!(split_pieces(0.004, 10.0, CFG).is_empty());
+        // A click a hair inside the end would leave a sliver, which is
+        // an item the user has to find and delete rather than a split.
+        assert!(split_pieces(9.999, 10.0, CFG).is_empty());
+        // But a real split near the end still works.
+        assert_eq!(split_pieces(9.5, 10.0, CFG).len(), 2);
+    }
 }
 
 #[cfg(test)]

@@ -76,8 +76,7 @@ fn the_tracked_kit_covers_all_three_targeted_roles() {
 #[test]
 fn roles_dominate_size() {
     // A big folder of overheads is not a kit, however many tracks it has.
-    let overheads: Vec<(&str, bool)> =
-        (0..50).map(|_| ("OHs", false)).collect();
+    let overheads: Vec<(&str, bool)> = (0..50).map(|_| ("OHs", false)).collect();
     let tiny_kit = vec![("Kick", false), ("Snare", false), ("T1", false)];
     assert!(
         score_kit(&tiny_kit) > score_kit(&overheads),

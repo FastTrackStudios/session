@@ -548,6 +548,23 @@ fn run_action(ed: &mut Editor, action: Action, x: f64, y: f64, mods: Mods) -> Op
     match action {
         Action::Pan => Some(Drag::Pan { last: (x, y) }),
 
+        // ── the stacked view ─────────────────────────────────────────
+        //
+        // Listed rather than swallowed by a wildcard. These resolve only
+        // in the `Lane`, `Hit` and `LaneGutter` contexts, which the roll
+        // never reports, so reaching one here means the context was
+        // misidentified — and a wildcard would turn that into silence
+        // instead of something a reader can find.
+        // r[impl drums.mouse.contexts]
+        Action::MoveHit
+        | Action::MoveHitBothEnds
+        | Action::SnapHitToGrid
+        | Action::AddHit
+        | Action::RemoveHit
+        | Action::SplitTake
+        | Action::SelectLane
+        | Action::OpenMicMenu => None,
+
         // ── razor ────────────────────────────────────────────────────
         Action::RazorCreate => Some(Drag::RazorCreate {
             origin: (x, y),

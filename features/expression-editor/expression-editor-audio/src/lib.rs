@@ -42,11 +42,14 @@ pub mod align_hits;
 pub mod analyze;
 #[cfg(feature = "daw")]
 pub mod apply_quantize;
+#[cfg(feature = "daw")]
+pub mod daw_bound;
 pub mod detect;
 pub mod dynamics;
 pub mod frames;
 pub mod gate;
 pub mod group_detect;
+pub mod hybrid;
 pub mod lanes;
 pub mod onsets;
 pub mod panel_bridge;

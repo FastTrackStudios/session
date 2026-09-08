@@ -113,6 +113,23 @@ waveform with its track name. A tom track whose name contains `Unused`
 (case-insensitive) or is muted still gets a sub-lane but is drawn at
 half opacity and excluded from detection.
 
+r[drums.lanes.trigger-overlay]
+A **trigger** track — one whose name carries a `Trig` or `Trigger` token
+— is not a lane or a sub-lane of its own. It is the same drum sensed a
+second way, so it is drawn *over* the drum it triggers, in that lane's
+space, outlined rather than filled: a trigger is near-silent between
+hits, and a filled one would read as a hole punched in the mics'
+waveform instead of a second view of it. A trigger is excluded from
+`drums.lanes.summed`, since averaging its silence in would only pull the
+mean down.
+
+In a split lane a trigger pairs with a tom by number, `T3 Trig` over
+`T3`. It keeps a sub-lane of its own only when nothing claims it — no
+tom number (a bare `Trig`), or a number with no matching tom (`T4 Trig`
+where `T4` was never recorded) — because a track that is really there
+must not silently vanish. Given a sub-lane each, four toms with triggers
+would read as an eight-piece kit at half the row height.
+
 r[drums.lanes.other]
 The `Other` lane holds the remaining members (hi-hat, overheads, rooms,
 reverb returns) as one summed waveform at `Kick`'s height. It is not
@@ -135,6 +152,313 @@ onset, length to the next hit), coloured by deviation from the grid the
 way the timing separators are (`audio-editor.md` Timing mode). A
 selected hit is the unit of manual editing.
 
+r[drums.lanes.hit-density]
+Hit markers thin as they crowd. Marker stroke width is a function of the
+mean spacing between visible markers, clamped to a hairline floor, and
+the onset flag is dropped once the flags would overlap into a band. A
+fixed weight cannot serve both ends: it is right for a handful of hits
+and useless for a song's worth, where sixteenth kicks land a couple of
+pixels apart and the markers merge into a solid bar hiding the waveform
+they annotate. Markers stay thick when there is room for them, which is
+the case a thick marker is good at.
+
+r[drums.lanes.hits-per-sub-row]
+In a split lane a hit marker is confined to the sub-row of the drum it
+was detected on, so the picture answers *which* tom was hit rather than
+"a tom". Detection is already per tom (`drums.group.detection-source`);
+drawing every hit across the full lane height threw that answer away at
+the last step. A trigger's hits land in the row of the tom it triggers,
+the same row its waveform overlays. A member with no sub-row of its own
+still draws full height.
+
+r[drums.chrome.markers]
+The ruler shows the host's timeline chrome — the song's structure — and
+must read **both** kinds, because sessions use both. A region is a named
+*span* and draws as a coloured band; a marker is a named *point* and
+draws as a coloured tick with its label, over the bands rather than
+under them. Both carry a thin line down through every lane at low
+opacity, so a boundary is visible where the user is looking and not only
+in the ruler.
+
+Markers stay points. Not every marker is a section boundary — `tempo
+change`, `back to 4/4` — so stretching each one to the next would draw a
+structure nobody wrote. Labels are clipped to the room before the next
+marker *in the same lane*, so a dense passage reads as ticks with the
+names that fit rather than overlapping words.
+
+The ruler is a stack of **shelves**, one per (REAPER ruler lane, kind)
+pair actually in use, ordered by lane with regions above markers within
+a lane, and labelled by the lane's name; a lane with no name is labelled
+by its index. Keyed by kind as well as lane because REAPER allows both
+on one lane and these projects do exactly that — `The ballad` files 15
+regions *and* 2 markers on `SONG` — where a marker tick lands inside a
+region band and the two fight for the same pixels. A span and a point
+are different things and get different rows.
+
+The ruler grows a shelf at a time rather than dividing a fixed band: one
+shelf is sized to match the band the ruler used before shelves existed,
+so a single-lane project renders exactly as it always did, and extra
+shelves make the ruler taller instead of shrinking each other into
+illegibility. Everything below the ruler — the lanes, the playhead, and
+the pointer maths that maps a click to a lane — takes its offset from
+this computed height, never from a constant.
+
+The grouping shows the project as it is, not as it should be: these
+sessions declare `SONG`, `SECTIONS` and `MARKS` and then file every
+marker under `SONG`. Redistributing them would hide exactly the thing
+the ruler exists to show.
+
+r[drums.detect.hybrid]
+A second detector is available that finds hits with **spectral flux
+against a moving median** and then places them with the **envelope**.
+Each stage covers the other's weakness: the envelope gate is
+sample-accurate but its thresholds are absolute, so no one setting suits
+a whole album; spectral flux scores every frame against its own
+neighbourhood and so needs no setting, but an STFT answers only to the
+nearest hop. Flux decides *that* a hit happened, the envelope decides
+*when*, hunting the steepest rise in a window deliberately narrower than
+the gap between two hits so refinement can sharpen a hit but never move
+it onto its neighbour.
+
+It is **not the default**, because measurement does not support making
+it one. Against the album's drum MIDI the two are a tie — F1 0.342 for
+the best hybrid settings against 0.345 for the best gate settings, at
+precision around 0.4 where the reference (a different take) cannot
+discriminate further. Its advantage is that it reaches that without a
+dial: the gate needed a calibration pass to get there. It is kept for
+the jobs where robustness matters more than milliseconds, and so that
+the choice can be re-measured whenever either detector changes.
+
+r[drums.view.page-bars]
+`]` and `[` move the view forward and back one **page of four bars**,
+keeping the zoom; `\` frames the page without moving off it. Four
+because that is the phrase drummers play in and the unit a take is
+edited in — fixing a bar of a fill wants the three around it for
+context, not a screen of the whole song.
+
+A page lands on a **bar line**, and the bar lines come from the host's
+tempo map (`ExpressionDoc::bars`), never from a bar length multiplied
+out. Paging by a fixed number of seconds would drift out of phase within
+a few pages and put the downbeat somewhere different each time, making
+the thing being navigated by the thing that moves. `set in stone` has
+198 bars in three different lengths — 1.33s, 1.68s and 2.95s — so this
+is the common case, not an edge one.
+
+The view snaps to the nearest bar line before counting, so a view nudged
+off the grid re-aligns instead of carrying its error into every
+subsequent page; and paging stops at the last full page rather than
+scrolling past the take, where an empty screen reads as the editor
+having lost the project.
+
+r[drums.host.daw-agnostic]
+Everything the workspace asks of a daw is named as one bound,
+`expression_editor_audio::daw_bound::DrumDaw`, so "will this work in
+REAPER" is a question the compiler answers rather than one someone
+argues about. Both `Standalone` and `daw::reaper::Reaper` are asserted
+against it at compile time; a service added to the bound that either
+cannot serve is a build error, not a discovery.
+
+The edit vocabulary is deliberately the one REAPER's item model already
+offers, and the same one its own audio quantizers use: **split** with a
+leading pad and a crossfade, or **warp** by writing stretch markers on
+transients, either way applied identically to every mic of a group so
+phase coherence survives. A split needs no facade call of its own — it
+is a duplicate with its position, length and start offset set. Detection
+reads samples through the audio-accessor service, which is REAPER's own
+API for exactly that, rather than going to the files on disk.
+
+`DrumHost` is generic over that bound, and `DrumHost<Reaper>` is
+asserted to build at compile time — a stronger claim than the bound
+alone, since a backend can satisfy `DrumDaw` while the host still fails
+to instantiate over it if some method reaches past the bound. Saving a
+copy is the one thing the generic host does not offer: it writes a new
+`.rpp`, which is a window-with-no-host-application's answer to saving,
+and REAPER saves through REAPER.
+
+The workspace loader is split accordingly: opening an `.rpp` from disk
+was the only standalone-specific part, and `drum_workspace` — find the
+kit folder, score the candidates, read each mic, fold the role lanes —
+now takes any backend.
+
+It asks for `Send + Sync` as well, and that bound is a real limit rather
+than a formality. The mics are read in parallel because twenty tracks of
+a five-minute take is the slow part of opening a kit; REAPER's API is
+main-thread only, the same constraint that makes every service touching
+it dispatch through `main_thread::query`. A REAPER panel therefore wants
+this logic with a sequential read. Writing that is a smaller job than
+pretending a main-thread API is thread-safe, which would compile and
+then fail inside REAPER at a distance from the cause.
+
+r[drums.mouse.contexts]
+The stacked view resolves its gestures through the same `MouseMap` the
+piano roll does, in three contexts of its own — `Lane` (a role lane's
+waveform), `Hit` (a detected marker) and `LaneGutter` (the name and mic
+chip). Its own contexts rather than the roll's, because there are no
+notes here: a "note" is a transient in audio the user does not own, the
+canvas is a waveform rather than a pitch grid, and every gesture is
+about *when* a hit is, never what pitch it is.
+
+The bindings live in the base map every preset is built from, not in the
+Drums preset alone: the profile is the user's choice and bindings that
+existed only in one would leave the surface inert for anyone on another.
+
+Dragging a hit is one action, `MoveHit`, whether it slips or warps — the
+quantize panel's write mode decides which. Binding them separately would
+let a drag and the Apply button mean different edits. Adding a hit and
+cutting the kit are deliberate modifier gestures and must not be
+reachable by a plain click: one invents a hit and the other rewrites
+every item in the kit, and a plain binding puts both one slip of the
+hand away at all times. A click on the lane behind a hit selects the
+lane rather than falling through to nothing, so a click two pixels off a
+marker does not feel broken.
+
+r[drums.manual.split]
+The **razor** cuts the kit. Arming it and clicking in a role lane puts
+an item boundary at the click on *every* mic at once — one cut time and
+one undo step, because mics cut at different places are no longer
+phase-coherent and cannot be repaired by hand afterwards.
+
+The cut lands a leading pad *before* the click, like every other cut
+here: anyone splitting a drum take aims at a hit, and a cut on the
+attack clips it. A split moves nothing; it only creates the boundary, so
+the piece either side can then be dragged, deleted or replaced. It is
+the one edit with no other gesture available, since every other one
+starts by grabbing a hit and a cut is precisely for where there is not
+one.
+
+A click at or beyond either end is refused, and so is one that would
+leave a piece shorter than 20 ms: the first is not a split, and the
+second is a sliver the user then has to find and delete.
+
+r[drums.manual.undo]
+Undo rewinds the **daw's** last write, not the document's, whenever a
+host is attached. Every gesture in drum mode — slip, stretch, quantize
+Apply — writes through the host inside its own undo block and none of
+them touch the document's history, so undoing there rewinds a document
+nobody edited while the edit stays on disk. That is the worst shape the
+bug can take: nothing appears to happen, and the user believes the take
+is back the way it was. Surfaces with no host (the piano roll, demo
+scenes) keep the document stack, where their edits really are.
+
+## Fills
+
+r[drums.fills.detect]
+A **fill** is where the drummer stops keeping time and plays something,
+and it is the part of a take that must not be quantized like the rest.
+Groove wants the grid; a fill is often played across it deliberately — a
+triplet run, a drag into the downbeat — and flattening it onto
+sixteenths takes the performance out. The editor therefore finds the
+fills before quantizing anything, so they can be left alone or given
+settings of their own.
+
+Every bar is scored on two signals. **Tom activity** leads: a rock
+groove is kick, snare and hats, and the toms sit unused until the fill.
+**Density** corroborates, because not every fill reaches for the toms —
+a snare roll or a run of kick sixteenths is a fill too. Only bars busier
+than usual score; a bar with *fewer* hits than the median is a break,
+not a fill.
+
+Both are measured against the **median bar of that same take**, never a
+fixed count. "More than six toms in a bar" works on one song: it marks a
+tom-driven groove as one continuous fill and misses the single fill in a
+sparse ballad. The median and the median absolute deviation are used
+rather than the mean and standard deviation, because fills are precisely
+the outliers being looked for and an average is dragged toward whatever
+it is meant to detect — on a song with four fills in sixty bars the mean
+tom count is inflated by the very bars that should stand out.
+
+r[drums.fills.sensitivity]
+Fill detection runs the transient detector at its own sensitivity, not
+the quantize panel's. The two jobs want opposite things: the panel
+*moves* every hit it reports, so a false one damages the take and it is
+tuned for precision, while fill detection only counts how busy a bar
+was, where a missed hit is the costly error and a spurious one is noise
+the median absorbs.
+
+The gap is large enough to matter. On `unbreakable` — 160bpm, the
+drummer playing around ten hits a second — the panel's default finds
+1.6 a second, about a fifth of what was played, confirmed against the
+project's own drum MIDI. Scoring bars against a fifth of the evidence is
+what made fill counts swing between three and twenty-four across the
+album.
+
+r[drums.fills.protect]
+A quantize **leaves detected fills alone** by default. The hits inside a
+fill are still detected and still drawn — the user can see what was not
+moved rather than wondering where it went — they are simply excluded
+from the plan the Apply builds. The default is on because the damage is
+asymmetric: a fill quantized like groove has its phrasing flattened and
+undoing that means finding the fills by hand afterwards, while a fill
+wrongly left alone is merely un-quantized, which is visible and one
+gesture to fix.
+
+r[drums.fills.draw]
+Fills draw as a wash behind the lanes, not an outline: a fill is a
+*region* of the take, and the hits inside it still have to read as hits.
+The bands are on screen from load, because what a quantize will leave
+alone is worth knowing before it runs rather than after. They are
+recomputed when an edit lands, after the host has dropped its cached
+fills — asking earlier returns the fills of the audio as it used to be.
+
+r[drums.fills.calibration]
+Detector defaults are **computed, not chosen**:
+`cargo run -p expression-editor-standalone --example calibrate` sweeps
+them against the album and prints the score for each. Every number in
+the detect chain was previously somebody's guess, which is how a
+sensitivity that found a fifth of what the drummer played survived
+unnoticed — nothing measured it, so nothing contradicted it.
+
+Two references, because the two questions have different ground truth.
+Detection is scored against the projects' **drum MIDI**: not an exact
+transcription of the audio, so its absolute F1 is pessimistic and must
+not be read as an accuracy figure, but the same bias applies to every
+setting on the sweep, and a *ranking* survives a biased reference where
+an absolute score does not. The fill threshold, which has no ground
+truth at all, is scored on how much more often its fills land at a
+section boundary than a bar picked at random does — the "than random"
+half being the whole metric, since a third of each song is already near
+some marker and a detector firing blindly scores 30%.
+
+Matching is **one-to-one** at a ±25 ms window, with reference onsets
+closer than 30 ms combined into one event — the standard onset-detection
+evaluation convention (Böck & Widmer, DAFx-13), so the numbers can be
+read against published results rather than only against each other. The
+one-to-one part is not a detail: counting every detection that merely
+sits near *some* reference onset lets one onset absolve a whole burst of
+false positives, which is what made a detector firing thirty times a
+second tie for the best F1 on the sweep. Under the correct rule F1 peaks
+at sensitivity 0.90 and falls either side, and the rate constraint
+becomes a cross-check rather than a crutch.
+
+Neither metric may be taken at its argmax, and the reasons differ.
+**F1 cannot police over-detection here**: the reference is a different
+take, so precision is capped near 0.55 however good the detector is, and
+spurious hits cost almost nothing in F1 while recall keeps climbing —
+sensitivity 1.0 scores the best F1 on the sweep while firing thirty
+times a second against a drummer playing six. It is therefore
+also constrained to settings whose hit rate stays near the drummer's,
+which under one-to-one matching agrees with the F1 optimum.
+**Section lift has no recall term**, so it rewards reporting fewer and
+safer fills until barely any remain; it is read next to the per-song
+fill count, and the tie is broken on cost, which is asymmetric — a
+missed fill gets quantized and flattened, a bar wrongly called a fill is
+merely left alone.
+
+The two optima are not the same setting. Fill detection's sensitivity
+sits *below* the detector's F1 optimum, because it wants contrast
+between bars rather than maximum recall: pushing to the F1 optimum adds
+marginal hits evenly across groove and fill alike, lifting the median as
+much as the outliers and flattening the difference being measured.
+
+r[drums.fills.bars]
+Bar boundaries come from the host's tempo map, one query per measure —
+never a bar length multiplied out. A real take does not have one bar
+length: `set in stone` is 6/8, changes tempo partway, and has a 7/4
+section, which is three bar durations in one song. A grid derived from a
+single bpm drifts out of phase within a few bars and puts every fill in
+the wrong place. Where the map cannot place bars the detector returns
+nothing rather than guessing a grid.
+
 ## Detection and the kit group
 
 r[drums.group.kit]
@@ -148,12 +472,26 @@ start are reported, and SPLIT is refused for the group until they do
 (WARP remains available).
 
 r[drums.group.detection-source]
-Transients are detected on the `Kick` and `Snare` lanes' **summed**
-signal (their member mean) — not per mic — and the two hit lists are
-merged (union, nearest-duplicate within the retrigger window collapses
-to the louder). Tom sub-lanes detect on their own signal and join the
-merged list only when the user arms them. The detector is the envelope
-gate of `grid-quantize.md`, with its `DetectConfig` exposed per lane.
+Transients are detected per **detection unit**, and the units' hit lists
+are merged (union, nearest-duplicate within the retrigger window
+collapses to the louder). A unit is one blended signal, not one mic:
+`Kick` and `Snare` are a unit each, and `Toms` is **one unit per tom**,
+so a hit can be attributed to the tom that made it rather than to "some
+tom". `Other` never detects. `Unused` members are excluded everywhere.
+The detector is the envelope gate of `grid-quantize.md`, with its
+`DetectConfig` exposed per lane.
+
+Within a unit, a **trigger is weighted over the acoustic mics it shares
+a drum with** — 4:1. A trigger is a contact mic: almost no bleed, almost
+no decay, a near-vertical attack, and so better evidence of *when* the
+drum was hit. It is not infallible — it can drop out, double-fire on a
+rim shot, or sit slightly out of alignment — so the mics keep a vote
+rather than sitting detection out; the trigger merely outweighs them.
+At 4:1 one trigger outweighs any realistic number of mics on one drum
+while still being pulled by them where they agree, and where the trigger
+misses a hit entirely the mics can still put one there. Weights within a
+unit sum to 1, so every unit's signal arrives at a comparable level and a
+threshold means the same thing across the kit.
 
 r[drums.group.tempo]
 Grid targets are the project tempo map (here 84 bpm 6/8), taken from the

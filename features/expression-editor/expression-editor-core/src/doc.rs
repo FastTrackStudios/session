@@ -693,6 +693,20 @@ impl Note {
 pub struct Marker {
     pub t: f64,
     pub label: Option<String>,
+    /// `#rrggbb`, when the host assigned one. Section colour carries
+    /// meaning the name repeats — `VS 1` and `VS 2` share a colour, and
+    /// so do the three choruses — so the shape of the song is legible
+    /// from the strip without reading a single label.
+    pub color: Option<String>,
+    /// Which ruler lane the host filed it under (REAPER 7.62+), with
+    /// the lane's name. `None` for a host with no lane concept.
+    ///
+    /// Shown as the project has it, not as it ought to be: these
+    /// sessions declare `SONG`, `SECTIONS` and `MARKS` but put every
+    /// marker on `SONG`. Quietly redistributing them would hide that,
+    /// and the point of drawing the ruler is to see what is actually
+    /// there.
+    pub lane: Option<(u32, String)>,
 }
 
 /// A read-only named span on the timeline — the song's sections
@@ -705,6 +719,9 @@ pub struct Region {
     pub label: String,
     /// `#rrggbb`, when the host assigned one.
     pub color: Option<String>,
+    /// Which ruler lane the host filed it under (REAPER 7.62+), with
+    /// the lane's name. `None` for a host with no lane concept.
+    pub lane: Option<(u32, String)>,
 }
 
 /// The whole editable surface.
@@ -719,6 +736,16 @@ pub struct ExpressionDoc {
     /// Must match, or pitch reads wrong on playback.
     pub bend_range: f64,
     pub markers: Vec<Marker>,
+    /// Bar lines, in document time, from the host's tempo map — `n + 1`
+    /// boundaries for `n` bars.
+    ///
+    /// Supplied rather than computed, because a take does not have one
+    /// bar length. `set in stone` is 6/8, changes tempo partway and has
+    /// a 7/4 section; multiplying out a single bpm and a beats-per-bar
+    /// of 4 drifts out of phase within a few bars. Empty when the host
+    /// has no tempo map, and anything reading this must cope with that
+    /// rather than falling back to a guessed grid.
+    pub bars: Vec<f64>,
     /// The song's sections, host-supplied and read-only — what the
     /// ruler shows so "where am I" has an answer better than a bar
     /// number.
@@ -773,6 +800,7 @@ impl ExpressionDoc {
             end,
             bend_range: 48.0,
             markers: Vec::new(),
+            bars: Vec::new(),
             regions: Vec::new(),
             cc: crate::cc::CcSet::default(),
             row_space: crate::rows::RowSpace::Pitch,

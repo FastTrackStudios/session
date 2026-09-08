@@ -219,7 +219,10 @@ impl session::SetlistService for ReaperLanProxy {
         &self,
         song_index: usize,
     ) -> Result<Option<SongChartHydration>, SessionServiceError> {
-        self.client.song_chart(song_index).await.map_err(map_vox_err)
+        self.client
+            .song_chart(song_index)
+            .await
+            .map_err(map_vox_err)
     }
 
     fn active_song(&self) -> Result<Song, SessionServiceError> {

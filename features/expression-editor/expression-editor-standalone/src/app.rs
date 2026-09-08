@@ -117,6 +117,17 @@ fn refresh_docs(editor: &mut Signal<Editor>, host: &crate::drum_host::SharedDrum
     }
 }
 
+/// Re-find the fills after an edit and update the bands.
+///
+/// Separate from [`refresh_docs`] because it must run *after* it: the
+/// host drops its cached fills during `refresh`, so asking any earlier
+/// returns the fills of the audio as it used to be.
+// r[impl drums.fills.draw]
+fn refresh_fills(fills: &mut Signal<Vec<(f64, f64)>>, host: &crate::drum_host::SharedDrumHost) {
+    let found = host.fills(&expression_editor_core::fills::FillConfig::default());
+    fills.set(found.iter().map(|f| (f.start, f.end)).collect());
+}
+
 /// An empty document, for the case where nothing was staged.
 ///
 /// Better than panicking: a window that opens empty is diagnosable, and
@@ -134,6 +145,7 @@ pub(crate) struct HostCallbacks {
     pub on_apply: Option<EventHandler<expression_editor_ui::QuantizePanel>>,
     pub on_save: Option<EventHandler<()>>,
     pub on_hit: Option<EventHandler<expression_editor_ui::stack::HitGesture>>,
+    pub on_undo: Option<EventHandler<()>>,
 }
 
 /// Build the callbacks against a host, or all-`None` without one (a
@@ -144,7 +156,30 @@ pub(crate) fn host_callbacks(
     host: Option<SharedDrumHost>,
     mut bins: Signal<Vec<expression_editor_ui::quantize_panel::Bin>>,
     mut previews: Signal<Vec<expression_editor_ui::quantize_panel::HitPreview>>,
+    mut fills: Signal<Vec<(f64, f64)>>,
 ) -> HostCallbacks {
+    // The fills as loaded, so the bands are on screen before the user
+    // touches the panel — they are what a quantize will leave alone, and
+    // seeing that afterwards is too late to be useful.
+    // r[impl drums.fills.draw]
+    if let Some(h) = host.clone() {
+        let found = h.fills(&expression_editor_core::fills::FillConfig::default());
+        fills.set(found.iter().map(|f| (f.start, f.end)).collect());
+    }
+    // Undo the daw's edit, not the document's. Every gesture here wrote
+    // through a `begin_undo_block`/`end_undo_block` pair and none of it
+    // touched the document's own history, so the document stack has
+    // nothing to rewind and rewinding it would leave the slip on disk
+    // while the picture claimed otherwise.
+    // r[impl drums.manual.undo]
+    let on_undo = host.clone().map(|h| {
+        EventHandler::new(move |()| {
+            if h.undo() {
+                refresh_docs(&mut editor, &h);
+                refresh_fills(&mut fills, &h);
+            }
+        })
+    });
     let on_change = host.clone().map(|h| {
         EventHandler::new(move |p: expression_editor_ui::QuantizePanel| {
             let (b, pv) = h.preview(&p);
@@ -159,6 +194,7 @@ pub(crate) fn host_callbacks(
                 Ok(done) => {
                     tracing::info!(pieces = done.pieces, items = done.items, "quantized kit");
                     refresh_docs(&mut editor, &h);
+                    refresh_fills(&mut fills, &h);
                 }
                 Err(e) => tracing::warn!(error = ?e, "quantize refused"),
             },
@@ -190,6 +226,8 @@ pub(crate) fn host_callbacks(
                         Ok(done) => {
                             tracing::info!(pieces = done.pieces, "slipped hit");
                             refresh_docs(&mut editor, &h);
+                            refresh_fills(&mut fills, &h);
+                            refresh_fills(&mut fills, &h);
                         }
                         Err(e) => tracing::warn!(error = ?e, "slip refused"),
                     }
@@ -207,10 +245,33 @@ pub(crate) fn host_callbacks(
                         Ok(done) => {
                             tracing::info!(items = done.items, "stretched hit");
                             refresh_docs(&mut editor, &h);
+                            refresh_fills(&mut fills, &h);
+                            refresh_fills(&mut fills, &h);
                         }
                         Err(e) => tracing::warn!(error = ?e, "stretch refused"),
                     }
                 }
+                // r[impl drums.manual.split]
+                G::Split { at } => {
+                    let cfg = expression_editor_audio::quantize::SplitConfig {
+                        leading_pad_secs: 0.005,
+
+                        crossfade_secs: 0.005,
+                    };
+
+                    match h.split(at, cfg) {
+                        Ok(done) => {
+                            tracing::info!(items = done.items, "split kit");
+
+                            refresh_docs(&mut editor, &h);
+
+                            refresh_fills(&mut fills, &h);
+                        }
+
+                        Err(e) => tracing::warn!(error = ?e, "split refused"),
+                    }
+                }
+
                 G::Add { lane, at } => {
                     let landed = h.add_hit(at, 0.05);
                     tracing::info!(%lane, at, landed, "added hit");
@@ -229,6 +290,7 @@ pub(crate) fn host_callbacks(
         on_apply,
         on_save,
         on_hit,
+        on_undo,
     }
 }
 
@@ -246,12 +308,15 @@ pub fn App() -> Element {
     // is then purely visual, which is what a demo scene wants.
     let bins = use_signal(Vec::new);
     let previews = use_signal(Vec::new);
+    // The fills, as (start, end) seconds, for the bands the stack draws.
+    let fills = use_signal(Vec::<(f64, f64)>::new);
     let HostCallbacks {
         on_change,
         on_apply,
         on_save,
         on_hit,
-    } = host_callbacks(editor, host.read().clone(), bins, previews);
+        on_undo,
+    } = host_callbacks(editor, host.read().clone(), bins, previews, fills);
     rsx! {
         style {
             // Blitz sizes the root from these; without them the editor
@@ -276,6 +341,8 @@ pub fn App() -> Element {
                 on_quantize_apply: on_apply,
                 on_hit,
                 on_save,
+                on_undo,
+                fills: fills(),
             }
         }
     }

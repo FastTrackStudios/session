@@ -18,14 +18,13 @@ use std::cell::RefCell;
 
 use daw::service::{DawError, DawResult, Marker, Position, ProjectContext, ProjectInfo, Region};
 use daw::service::{Markers, Projects, Regions};
+use dawfile_reaper::types::ReaperProject;
 use dawfile_reaper::types::marker_region::MarkerRegion;
 use dawfile_reaper::types::project::RulerLane;
-use dawfile_reaper::types::ReaperProject;
 use session_proto::ruler_lanes::CoreLane;
 
 use super::actions::{
-    convert_markers_to_session_format, ensure_core_lanes, hide_stray_lanes,
-    normalize_marker_lanes,
+    convert_markers_to_session_format, ensure_core_lanes, hide_stray_lanes, normalize_marker_lanes,
 };
 
 /// A REAPER-shaped GUID for a freshly-created marker/region.
@@ -38,10 +37,7 @@ use super::actions::{
 /// parse, which is exactly what let `ensure_song_region`'s "does one already
 /// exist" check miss its own region and add another one on every rerun.
 fn new_guid() -> String {
-    format!(
-        "{{{}}}",
-        uuid::Uuid::new_v4().to_string().to_uppercase()
-    )
+    format!("{{{}}}", uuid::Uuid::new_v4().to_string().to_uppercase())
 }
 
 /// One in-memory `.RPP` project, playing the `daw::service` backend role
@@ -85,11 +81,7 @@ impl OfflineDaw {
             .map_or(0, |max| max.saturating_add(1))
     }
 
-    fn with_entry_mut<T>(
-        &self,
-        id: u32,
-        f: impl FnOnce(&mut MarkerRegion) -> T,
-    ) -> DawResult<T> {
+    fn with_entry_mut<T>(&self, id: u32, f: impl FnOnce(&mut MarkerRegion) -> T) -> DawResult<T> {
         let id = id.cast_signed();
         let mut project = self.project.borrow_mut();
         let entry = project

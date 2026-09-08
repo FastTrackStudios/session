@@ -118,6 +118,12 @@ pub(crate) fn draw_hint_of(ed: &Editor) -> String {
 #[component]
 pub fn ExpressionEditor(
     editor: Signal<Editor>,
+    /// The take's fills, `(start, end)` in seconds, drawn as bands
+    /// behind the lanes. Empty for a host that has not found any, and
+    /// for every non-drum mode.
+    // r[impl drums.fills.draw]
+    #[props(default)]
+    fills: Vec<(f64, f64)>,
     /// Open the modulation drawer on mount. Hosts normally leave this
     /// alone — it exists so a caller can restore a session, and so the
     /// screenshot harness can shoot the drawer through the real path.
@@ -164,6 +170,10 @@ pub fn ExpressionEditor(
     /// toolbar button only when present.
     #[props(default)]
     on_save: Option<EventHandler<()>>,
+    /// Undo the host's last write — see [`toolbar::Toolbar`].
+    // r[impl drums.manual.undo]
+    #[props(default)]
+    on_undo: Option<EventHandler<()>>,
     /// The transport's position, seconds — drawn as a playhead in the
     /// stacked view when present.
     #[props(default)]
@@ -276,7 +286,7 @@ pub fn ExpressionEditor(
                     width: 100%; height: 100%; \
                     min-height: 0; overflow: hidden; background: {theme::BG}; \
                     color: {theme::TEXT}; font-family: system-ui, sans-serif;",
-            toolbar::Toolbar { editor, drag, drawer, quantize_open, on_save }
+            toolbar::Toolbar { editor, drag, drawer, quantize_open, on_save, on_undo }
             switcher::TrackSwitcher { editor }
             div {
                 style: "display: flex; flex: 1 1 auto; min-height: 0;",
@@ -291,6 +301,7 @@ pub fn ExpressionEditor(
                             editor,
                             on_hit,
                             warp: quantize.read().mode == quantize_panel::WriteMode::Warp,
+                            fills: fills.clone(),
                             grid_secs: quantize
                                 .read()
                                 .grid_in(60.0 / editor.read().bpm.max(1.0)),

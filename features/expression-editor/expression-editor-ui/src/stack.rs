@@ -21,6 +21,7 @@
 
 use expression_editor_core::doc::{ExpressionDoc, Note};
 use expression_editor_core::kit;
+use expression_editor_core::mouse::{Context as MouseContext, Gesture as MouseGesture};
 use expression_editor_core::rows::RowSpace;
 use expression_editor_core::tracks::StackRow;
 use expression_editor_core::{Editor, Mode};
@@ -76,15 +77,27 @@ pub struct LaneView {
     /// [`canvas::take_waveform`] builds for the roll. `None` when the
     /// lane has no role, no members with peaks, or splits its members.
     pub waveform: Option<String>,
+    /// Trigger tracks drawn over `waveform` in the same space, rather
+    /// than averaged into it. Empty for a split lane, whose triggers
+    /// ride on their own tom's sub-row instead.
+    pub overlays: Vec<String>,
     /// One sub-row per member for a split role lane (toms). Empty
     /// otherwise.
     pub sub_lanes: Vec<SubLane>,
+    /// Stroke width for this lane's hit markers, thinned as they crowd.
+    pub hit_width: f64,
+    /// Whether hit markers still draw their onset flag — dropped once
+    /// the flags would overlap into a solid band.
+    pub hit_flag: bool,
 }
 
 /// One member's sub-row inside a split role lane (toms).
 pub struct SubLane {
     /// The member's own waveform polygon, if it carries peaks.
     pub points: Option<String>,
+    /// Triggers drawn over this member in the same space — a trigger is
+    /// the same drum sensed a second way, not another drum.
+    pub overlays: Vec<String>,
     /// The member track's name, drawn small in the gutter.
     pub label: String,
     /// Baseline y of that label, in viewport pixels.
@@ -92,6 +105,59 @@ pub struct SubLane {
     /// Unused or hidden members draw at half opacity.
     pub faded: bool,
 }
+
+/// The ruler's shelves. One per (ruler lane, kind) pair actually in
+/// use, ordered by lane, regions above markers within a lane.
+///
+/// Keyed by kind as well as lane because REAPER lets both live on one
+/// lane and these projects do exactly that: `The ballad` files 15
+/// regions *and* 2 markers on `SONG`. Grouping by lane alone drew
+/// them on the same shelf, where a marker tick lands inside a region
+/// band and the two fight for the same pixels. They are different
+/// things — a span and a point — and they get different rows.
+/// r[impl drums.chrome.markers]
+pub fn chrome_shelves(ed: &Editor) -> Vec<(Option<u32>, bool, String)> {
+    let (t0, t1) = ed.camera.time_span(ed.viewport);
+    let mut seen: Vec<(Option<u32>, bool, String)> = Vec::new();
+    let mut note = |lane: &Option<(u32, String)>, is_region: bool| {
+        let key = lane.as_ref().map(|(i, _)| *i);
+        if !seen.iter().any(|(i, r, _)| *i == key && *r == is_region) {
+            let name = lane.as_ref().map_or(String::new(), |(_, n)| n.clone());
+            seen.push((key, is_region, name));
+        }
+    };
+    for r in ed.doc.regions.iter().filter(|r| r.end > t0 && r.start < t1) {
+        note(&r.lane, true);
+    }
+    for m in ed.doc.markers.iter().filter(|m| m.t >= t0 && m.t <= t1) {
+        note(&m.lane, false);
+    }
+    // Lane order first, then regions above markers within a lane.
+    seen.sort_by_key(|(i, is_region, _)| (i.unwrap_or(0), !*is_region));
+    seen
+}
+
+/// Height of the ruler for `ed` — its shelves plus the tick strip.
+///
+/// The lanes, the playhead and the pointer maths that turns a click into
+/// a lane all take their offset from this. They must take it from the
+/// *same* place: if the layout grows a shelf and the hit-testing does
+/// not, the lanes and the mouse end up in different coordinate systems,
+/// which shows up as clicks landing on the wrong lane rather than as
+/// anything visibly wrong.
+pub fn ruler_height(ed: &Editor) -> f64 {
+    CHROME_ROW_H * chrome_shelves(ed).len().max(1) as f64 + RULER_TICKS_H
+}
+
+/// Height of one ruler shelf — a region row or a marker row.
+///
+/// Matches the fixed band the ruler used before shelves existed, so a
+/// project with a single lane of chrome renders identically to how it
+/// always did; extra shelves grow the ruler rather than shrinking each
+/// other into illegibility.
+const CHROME_ROW_H: f64 = 15.0;
+/// Height of the tick/timecode strip below the shelves.
+const RULER_TICKS_H: f64 = 13.0;
 
 /// A note as it appears in a lane.
 pub struct LaneNote {
@@ -118,6 +184,10 @@ pub struct LaneNote {
     /// how a role lane marks a hit on its waveform. Off everywhere
     /// else, where the note body is the content.
     pub hit_line: bool,
+    /// Which member track this hit was detected on. In a split lane it
+    /// is what puts the marker in that member's own sub-row, so a tom
+    /// hit says *which tom* rather than "a tom".
+    pub member: usize,
 }
 
 /// One hand edit leaving the stack, in seconds — the host decides what
@@ -148,6 +218,13 @@ pub enum HitGesture {
         /// neighbours.
         both: bool,
     },
+    /// Cut every member of the kit at `at` seconds.
+    ///
+    /// Unlike the others this moves nothing: it only puts an item
+    /// boundary where the user asked for one, so the piece either side
+    /// can then be dragged, deleted or replaced.
+    // r[impl drums.manual.split]
+    Split { at: f64 },
     /// r[impl drums.manual.add-remove]
     Add { lane: String, at: f64 },
     /// r[impl drums.manual.add-remove]
@@ -302,6 +379,7 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
             }
         };
         let member_active = i == ed.tracks.active();
+        let from = notes.len();
         notes.extend(member_doc.notes.iter().map(|n| {
             lane_note(
                 ed,
@@ -314,6 +392,9 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
                 row_h,
             )
         }));
+        for n in &mut notes[from..] {
+            n.member = i;
+        }
     }
 
     // A role lane (kick / snare / toms / other) is labelled by its role
@@ -323,7 +404,41 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
     let role = lane_def.and_then(|l| l.role);
     let role_split = role.is_some() && lane_def.is_some_and(|l| l.split);
 
+    // The split lane's sub-rows, resolved once: the waveform draws them
+    // and the hit markers are placed into them, and the two must agree
+    // or a marker would sit over the wrong tom — worse than the
+    // full-height marker it replaces, because it would be confidently
+    // wrong rather than merely vague.
+    // r[impl drums.lanes.trigger-overlay]
+    let sub_rows: Vec<(usize, Vec<usize>)> = if role_split {
+        let all = ed.tracks.lane_tracks(row.lane);
+        let names: Vec<String> = all
+            .iter()
+            .map(|&i| {
+                ed.tracks
+                    .track(i)
+                    .map(|t| t.name.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        kit::trigger_sub_rows(&refs)
+            .into_iter()
+            .map(|(h, o)| (all[h], o.into_iter().map(|i| all[i]).collect()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    // Which sub-row a member draws in — its own, or the tom it
+    // triggers. `None` when the lane is not split.
+    let sub_row_of = |member: usize| -> Option<usize> {
+        sub_rows
+            .iter()
+            .position(|(host, over)| *host == member || over.contains(&member))
+    };
+
     let mut waveform = None;
+    let mut overlays: Vec<String> = Vec::new();
     let mut sub_lanes = Vec::new();
     let mut sub_dividers = Vec::new();
     if let Some((v0, v1)) = view_span_secs(ed) {
@@ -336,41 +451,76 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
             // choice only: detection and edits still take the lane
             // whole.
             let solo = lane_def.is_some_and(|l| l.solo_mic);
-            let mems: Vec<(&[f32], f64, f64)> = members
+            let shown: Vec<usize> = members
                 .iter()
-                .filter(|&&i| !solo || i == track_index)
-                .filter_map(|&i| {
-                    let d = doc_for(ed, i)?;
-                    let (s, e) = doc_span_secs(ed, d)?;
-                    Some((d.peaks.as_slice(), s, e))
-                })
+                .copied()
+                .filter(|&i| !solo || i == track_index)
                 .collect();
+            // r[impl drums.lanes.trigger-overlay]
+            //
+            // A kick or snare trigger is the same drum sensed a second
+            // way, so it is drawn over the mics' mean rather than
+            // averaged into it: a trigger is near-silent between hits
+            // and would only drag the mean down.
+            let is_trig = |i: usize| {
+                ed.tracks
+                    .track(i)
+                    .is_some_and(|t| kit::is_trigger_name(&t.name))
+            };
+            let peaks_of = |i: usize| {
+                let d = doc_for(ed, i)?;
+                let (s, e) = doc_span_secs(ed, d)?;
+                Some((d.peaks.as_slice(), s, e))
+            };
+            let (trigs, mics): (Vec<usize>, Vec<usize>) = shown.iter().partition(|&&i| is_trig(i));
+            // A lane of nothing but triggers still has to draw something,
+            // and then the triggers are the waveform — not an overlay on
+            // top of an empty one.
+            let (summed, over): (&[usize], &[usize]) = if mics.is_empty() {
+                (&trigs, &[])
+            } else {
+                (&mics, &trigs)
+            };
+
+            let mems: Vec<(&[f32], f64, f64)> =
+                summed.iter().filter_map(|&i| peaks_of(i)).collect();
             let cols = summed_columns(&mems, v0, v1, count);
             waveform = columns_polygon(&cols, ed.viewport.w, y0, h);
+            overlays = over
+                .iter()
+                .filter_map(|&i| {
+                    let cols = summed_columns(&[peaks_of(i)?], v0, v1, count);
+                    columns_polygon(&cols, ed.viewport.w, y0, h)
+                })
+                .collect();
         } else if role_split {
             // r[impl drums.lanes.toms-split]
             //
             // Every member gets a sub-row, hidden and `Unused` ones
             // included — a tom that is parked still holds its place in
             // the kit, it just draws faded.
-            let all = ed.tracks.lane_tracks(row.lane);
-            let k = all.len().max(1);
+            let rows = &sub_rows;
+            let k = rows.len().max(1);
             let sub_h = h / k as f64;
-            for (j, &i) in all.iter().enumerate() {
-                let Some(member) = ed.tracks.track(i) else {
+            for (j, (i, overlays)) in rows.iter().enumerate() {
+                let Some(member) = ed.tracks.track(*i) else {
                     continue;
                 };
                 let sy = y0 + sub_h * j as f64;
                 if j > 0 {
                     sub_dividers.push(sy);
                 }
-                let points = doc_for(ed, i).and_then(|d| {
+                let polygon_for = |i: usize| {
+                    let d = doc_for(ed, i)?;
                     let (s, e) = doc_span_secs(ed, d)?;
                     let cols = summed_columns(&[(d.peaks.as_slice(), s, e)], v0, v1, count);
                     columns_polygon(&cols, ed.viewport.w, sy, sub_h)
-                });
+                };
                 sub_lanes.push(SubLane {
-                    points,
+                    points: polygon_for(*i),
+                    // Triggers share the tom's sub-row, drawn over it in
+                    // the same space rather than beside it.
+                    overlays: overlays.iter().filter_map(|&o| polygon_for(o)).collect(),
                     label: member.name.clone(),
                     label_y: sy + 9.0,
                     faded: kit::is_unused_name(&member.name) || member.hidden,
@@ -386,12 +536,56 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
     // role's hue, brighter on the armed lane, so "red line" *means*
     // kick from across the room.
     // r[impl drums.lanes.hits]
+    //
+    // Marker weight is a function of how crowded they are. A fixed
+    // 1.5px line with a 9px flag is right for a handful of hits and
+    // useless for a song's worth: zoomed out to a whole take, sixteenth
+    // kicks land a couple of pixels apart, and the markers merge into a
+    // solid bar that hides the very waveform they annotate. Thinning
+    // them with density keeps the same drawing legible at both ends —
+    // and thick markers stay thick when there is room for them, which
+    // is the case they are good at.
+    // r[impl drums.lanes.hit-density]
+    let visible = notes
+        .iter()
+        .filter(|n| n.x >= 0.0 && n.x <= ed.viewport.w)
+        .count();
+    // Average px between markers across the viewport.
+    let spacing = if visible > 1 {
+        ed.viewport.w / visible as f64
+    } else {
+        ed.viewport.w
+    };
+    // Floored at one whole pixel. Below that the rasterizer cannot draw
+    // a line, only a fraction of one: a 0.4px marker comes out as ~40%
+    // alpha and washes into the waveform behind it, which is the
+    // problem being solved, not the fix. One crisp pixel is the thinnest
+    // *visible* marker, so that is the floor.
+    let hit_width = (spacing / 8.0).clamp(1.0, 2.5);
+    // The flag is 9px wide; below roughly that spacing the flags overlap
+    // into a band and read as fill rather than as onsets.
+    let hit_flag = spacing >= 14.0;
+
     if let Some(role) = role {
         let color = role.color();
+        // In a split lane a marker is confined to the sub-row of the
+        // drum it was detected on, so the picture answers *which tom*.
+        // Detection is already per tom; drawing every hit across the
+        // whole lane threw that answer away at the last step.
+        // r[impl drums.lanes.hits-per-sub-row]
+        let sub_h = h / sub_rows.len().max(1) as f64;
         for n in &mut notes {
             n.hit_line = true;
-            n.y = y0;
-            n.h = h;
+            match sub_row_of(n.member) {
+                Some(sub) => {
+                    n.y = y0 + sub_h * sub as f64;
+                    n.h = sub_h;
+                }
+                None => {
+                    n.y = y0;
+                    n.h = h;
+                }
+            }
             n.fill = if active {
                 color.to_string()
             } else {
@@ -460,7 +654,10 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
             .collect(),
         solo_mic: lane_def.is_some_and(|l| l.solo_mic),
         waveform,
+        overlays,
         sub_lanes,
+        hit_width,
+        hit_flag,
     })
 }
 
@@ -550,6 +747,7 @@ fn lane_note(
 
     let ups = doc.time_base.units_per_second(ed.bpm);
     LaneNote {
+        member: 0,
         x: x0,
         w,
         y: y_of(n.row as f64 + 1.0),
@@ -745,6 +943,13 @@ const ACTIVE_BOOST: f32 = CoreEditor::ACTIVE_BOOST;
 /// to.
 const MIN_LANE: f32 = 22.0;
 
+/// Bars the view pages by, and frames.
+///
+/// Four, because that is the phrase drummers play in and the unit a
+/// take gets edited in — fix a bar of a fill and you want the three
+/// around it for context, not a screen of the whole song.
+const BARS_PER_PAGE: usize = 4;
+
 /// Every track at once, on one timeline.
 ///
 /// Read-only by design. The stack answers "which track needs work" and
@@ -777,6 +982,12 @@ pub fn StackView(
     /// the arrangement. `None` (a demo scene, a test) draws nothing.
     #[props(default)]
     playhead_secs: Option<Signal<f64>>,
+    /// The take's fills, as `(start, end)` in seconds — drawn as bands
+    /// behind the lanes so the parts a quantize will leave alone are
+    /// visible before it runs, not discovered afterwards.
+    // r[impl drums.fills.draw]
+    #[props(default)]
+    fills: Vec<(f64, f64)>,
 ) -> Element {
     let mut editor = editor;
     // Where a middle-drag pan last was.
@@ -800,9 +1011,18 @@ pub fn StackView(
     let vp = ed.viewport;
     let lanes = lanes(&ed, ACTIVE_BOOST, ed.lane_floor().max(MIN_LANE));
     let ticks = canvas::ruler(&ed);
+    let chrome_rows = chrome_shelves(&ed);
+    let row_of = |lane: &Option<(u32, String)>, is_region: bool| -> usize {
+        let key = lane.as_ref().map(|(i, _)| *i);
+        chrome_rows
+            .iter()
+            .position(|(i, r, _)| *i == key && *r == is_region)
+            .unwrap_or(0)
+    };
+
     // The song's sections across the ruler — clipped to the view, with
     // the label given only the room its span actually has.
-    let sections: Vec<(f64, f64, String, String)> = {
+    let sections: Vec<(f64, f64, String, String, usize)> = {
         let (t0, t1) = ed.camera.time_span(ed.viewport);
         ed.doc
             .regions
@@ -814,10 +1034,87 @@ pub fn StackView(
                 let fit = (((x1 - x0) - 6.0) / 5.5).max(0.0) as usize;
                 let label: String = r.label.chars().take(fit).collect();
                 let color = r.color.clone().unwrap_or_else(|| theme::SURFACE_BAR.into());
-                (x0, x1, label, color)
+                (x0, x1, label, color, row_of(&r.lane, true))
             })
             .collect()
     };
+    // The song's markers — named *points*, unlike regions' named spans.
+    // Sessions use both, and which one carries a song's structure comes
+    // down to how the project was set up, so the ruler has to show
+    // either. Kept as points: not every marker is a section boundary
+    // ("tempo change", "back to 4/4"), so stretching each one to the
+    // next would draw a structure nobody wrote.
+    // r[impl drums.chrome.markers]
+    let marks: Vec<(f64, String, String, usize)> = {
+        let (t0, t1) = ed.camera.time_span(ed.viewport);
+        let visible: Vec<&expression_editor_core::doc::Marker> = ed
+            .doc
+            .markers
+            .iter()
+            .filter(|m| m.t >= t0 && m.t <= t1)
+            .collect();
+        visible
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let x = ed.camera.x(m.t).clamp(0.0, vp.w);
+                // Clip the label to the room before the next marker, so
+                // a dense passage reads as a row of ticks with the names
+                // that fit rather than a pile of overlapping words. At a
+                // whole-song zoom `SOLO A`, `SOLO B` and `CH 3` land
+                // within a few pixels of each other and would otherwise
+                // print on top of one another.
+                // Room is measured against the next marker *in the
+                // same lane*: a marker on `SECTIONS` does not crowd one
+                // on `SONG`, because they are drawn on different rows.
+                let lane_key = m.lane.as_ref().map(|(i, _)| *i);
+                let next = visible
+                    .iter()
+                    .skip(i + 1)
+                    .find(|n| n.lane.as_ref().map(|(i, _)| *i) == lane_key)
+                    .map_or(vp.w, |n| ed.camera.x(n.t).clamp(0.0, vp.w));
+                let fit = (((next - x) - 5.0) / 5.0).max(0.0) as usize;
+                let label: String = m
+                    .label
+                    .clone()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(fit)
+                    .collect();
+                (
+                    x,
+                    label,
+                    m.color.clone().unwrap_or_else(|| theme::TEXT_DIM.into()),
+                    row_of(&m.lane, false),
+                )
+            })
+            .collect()
+    };
+
+    // The ruler grows a shelf at a time rather than dividing a fixed
+    // band: three shelves in the 15px band today's constant allows
+    // would be 5px each, which cannot hold a 9px label. One shelf is
+    // sized to match the old fixed band exactly, so the common
+    // single-lane project looks precisely as it did.
+    let mark_row_h = CHROME_ROW_H;
+    // One source for the height, shared with the pointer maths below.
+    let ruler_h = CHROME_ROW_H * chrome_rows.len().max(1) as f64 + RULER_TICKS_H;
+
+    // Fill bands, clipped to the view.
+    // r[impl drums.fills.draw]
+    let fill_bands: Vec<(f64, f64)> = view_span_secs(&ed)
+        .map(|(v0, v1)| {
+            fills
+                .iter()
+                .filter(|(s, e)| *e > v0 && *s < v1)
+                .map(|(s, e)| {
+                    let px = |t: f64| (t - v0) / (v1 - v0).max(1e-9) * vp.w;
+                    (px(s.max(v0)).max(0.0), px(e.min(v1)).min(vp.w))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let (view0, px_per_sec) = view_span_secs(&ed)
         .map(|(v0, v1)| {
             if (v1 - v0).abs() < 1e-9 {
@@ -884,6 +1181,30 @@ pub fn StackView(
                         e.prevent_default();
                         return;
                     }
+                    // Page the view a phrase at a time — the way drums
+                    // actually get edited: frame four bars, fix them,
+                    // move on. Bracket keys because they sit under the
+                    // hand that is not on the mouse, and because
+                    // PageUp/PageDown are a scroll on every other
+                    // surface and would read as one here.
+                    // r[impl drums.view.page-bars]
+                    let step = match c.as_str() {
+                        "]" => Some(1),
+                        "[" => Some(-1),
+                        _ => None,
+                    };
+                    if let Some(step) = step {
+                        editor.write().page_bars(BARS_PER_PAGE, step);
+                        e.prevent_default();
+                        return;
+                    }
+                    // Frame the page without moving off it: the way back
+                    // from a zoom that got away.
+                    if c.as_str() == "\\" {
+                        editor.write().frame_bars(BARS_PER_PAGE);
+                        e.prevent_default();
+                        return;
+                    }
                 }
                 let Some(sel) = selected() else { return };
                 let shift = e.modifiers().contains(Modifiers::SHIFT);
@@ -918,7 +1239,7 @@ pub fn StackView(
         svg {
             style: "display: block; width: 100%; height: 100%; \
                     touch-action: none; user-select: none; cursor: pointer;",
-            view_box: "0 0 {vp.w + canvas::GUTTER_W:.0} {vp.h + canvas::RULER_H:.0}",
+            view_box: "0 0 {vp.w + canvas::GUTTER_W:.0} {vp.h + ruler_h:.0}",
             preserve_aspect_ratio: "none",
             // No `onmounted` measure here, deliberately.
             //
@@ -1053,7 +1374,7 @@ pub fn StackView(
                     let ed = editor.read();
                     let views = self::lanes(&ed, ACTIVE_BOOST, ed.lane_floor().max(MIN_LANE));
                     drop(ed);
-                    let ly = c.y - canvas::RULER_H;
+                    let ly = c.y - ruler_h;
                     if let Some(open) = mic_menu() {
                         enum Pick {
                             Mic(usize),
@@ -1108,9 +1429,56 @@ pub fn StackView(
                     let ed = editor.read();
                     let views = self::lanes(&ed, ACTIVE_BOOST, ed.lane_floor().max(MIN_LANE));
                     drop(ed);
-                    let ly = c.y - canvas::RULER_H;
+                    let ly = c.y - ruler_h;
                     let lx = c.x - canvas::GUTTER_W;
                     let mods = e.data().modifiers();
+                    // What a press means comes from the map, not from
+                    // this handler. These bindings used to be `if`
+                    // statements here, which made the drum surface the
+                    // one part of the editor that could not be rebound,
+                    // could not be listed beside the roll's in the
+                    // preferences, and could not be told apart from a
+                    // gesture nobody had written.
+                    // r[impl drums.mouse.contexts]
+                    let m = expression_editor_core::tools::Mods {
+                        shift: mods.contains(Modifiers::SHIFT),
+                        ctrl: mods.contains(Modifiers::CONTROL),
+                        alt: mods.contains(Modifiers::ALT),
+                    };
+                    let in_lane = |l: &LaneView| l.is_role && ly >= l.y && ly < l.y + l.h;
+                    let on_lane = views.iter().any(in_lane);
+                    let on_marker = views
+                        .iter()
+                        .filter(|l| in_lane(l))
+                        .any(|l| l.notes.iter().any(|n| (n.x - lx).abs() <= SLIP_PICK_PX));
+                    let context = if on_marker {
+                        MouseContext::Hit
+                    } else {
+                        MouseContext::Lane
+                    };
+                    let act = |g: MouseGesture| {
+                        let ed = editor.read();
+                        ed.mouse.resolve_for(context, g, m, ed.tool)
+                    };
+
+                    // The razor gets first refusal on a lane, the way an
+                    // armed tool does on the roll. A cut is the one edit
+                    // with no other gesture available, since every other
+                    // one starts by grabbing a hit and a cut is for
+                    // where there isn't one.
+                    // r[impl drums.manual.split]
+                    let razor = editor.read().tool == expression_editor_core::Tool::Razor;
+                    if on_lane
+                        && (razor
+                            || act(MouseGesture::Click) == expression_editor_core::Action::SplitTake)
+                        && let Some(on_hit) = on_hit.as_ref()
+                        && let Some((v0, v1)) = view_span_secs(&editor.read())
+                    {
+                        let at = v0 + (lx / vp.w.max(1.0)) * (v1 - v0);
+                        on_hit.call(HitGesture::Split { at });
+                        e.prevent_default();
+                        return;
+                    }
                     // Two presses inside the window and the pick radius
                     // are a double click.
                     let now = std::time::Instant::now();
@@ -1148,7 +1516,11 @@ pub fn StackView(
                                 lane_name: l.name.clone(),
                                 x0: c.x,
                                 x: c.x,
-                                shift: mods.contains(Modifiers::SHIFT),
+                                // Which of the two move bindings the
+                                // modifiers resolved to, rather than a
+                                // hardcoded Shift.
+                                shift: act(MouseGesture::Drag)
+                                    == expression_editor_core::Action::MoveHitBothEnds,
                                 hit_x: n.x,
                                 lane_y: l.y,
                                 lane_h: l.h,
@@ -1167,7 +1539,11 @@ pub fn StackView(
                         // division — the fastest way to fix one hit
                         // without opening the panel.
                         // r[impl drums.manual.nudge]
-                        if double && grid_secs > 0.0 {
+                        if double
+                            && grid_secs > 0.0
+                            && act(MouseGesture::DoubleClick)
+                                == expression_editor_core::Action::SnapHitToGrid
+                        {
                             let target = (s.hit_secs / grid_secs).round() * grid_secs;
                             let delta = target - s.hit_secs;
                             if delta.abs() > 1e-9 {
@@ -1186,7 +1562,10 @@ pub fn StackView(
                     // the nearest attack. The hit list changes; the daw
                     // does not, until a drag or Apply.
                     // r[impl drums.manual.add-remove]
-                    if mods.contains(Modifiers::ALT) && px_per_sec > 0.0 {
+                    // r[impl drums.mouse.contexts]
+                    if act(MouseGesture::Click) == expression_editor_core::Action::AddHit
+                        && px_per_sec > 0.0
+                    {
                         let lane = views
                             .iter()
                             .find(|l| l.is_role && ly >= l.y && ly < l.y + l.h);
@@ -1199,7 +1578,7 @@ pub fn StackView(
                         }
                     }
                 }
-                let y = c.y - canvas::RULER_H + editor.read().stack_scroll;
+                let y = c.y - ruler_h + editor.read().stack_scroll;
                 // Resolve against a snapshot: the read guard has to be
                 // gone before the write below.
                 let hit = {
@@ -1234,7 +1613,7 @@ pub fn StackView(
             rect {
                 x: 0, y: 0,
                 width: "{vp.w + canvas::GUTTER_W}",
-                height: "{vp.h + canvas::RULER_H}",
+                height: "{vp.h + ruler_h}",
                 fill: theme::GUTTER_BG,
             }
 
@@ -1245,7 +1624,7 @@ pub fn StackView(
             rect {
                 x: 0, y: 0,
                 width: "{vp.w + canvas::GUTTER_W}",
-                height: "{canvas::RULER_H}",
+                height: "{ruler_h}",
                 fill: theme::SURFACE_BAR,
             }
             g {
@@ -1253,40 +1632,81 @@ pub fn StackView(
                 // The section strip: the top half of the ruler is the
                 // song's own map — INTRO, VS 1, CH 1 — in the colours
                 // the arrange view already taught the band.
-                for (x0, x1, label, color) in sections.iter() {
+                for (x0, x1, label, color, row) in sections.iter() {
                     rect {
-                        x: "{x0:.1}", y: 0,
+                        x: "{x0:.1}",
+                        y: "{*row as f64 * CHROME_ROW_H:.1}",
                         width: "{(x1 - x0).max(0.0):.1}",
-                        height: "{canvas::RULER_H - 13.0}",
+                        height: "{CHROME_ROW_H:.1}",
                         fill: "{color}",
                         opacity: "0.85",
                     }
                     line {
                         x1: "{x0:.1}", x2: "{x0:.1}",
-                        y1: 0, y2: "{canvas::RULER_H - 13.0}",
+                        y1: "{*row as f64 * CHROME_ROW_H:.1}",
+                        y2: "{(*row + 1) as f64 * CHROME_ROW_H:.1}",
                         stroke: theme::GUTTER_BG,
                         stroke_width: 1,
                     }
                     if !label.is_empty() {
                         text {
-                            x: "{x0 + 4.0:.1}", y: 11,
+                            x: "{x0 + 4.0:.1}",
+                            y: "{*row as f64 * CHROME_ROW_H + 11.0:.1}",
                             font_size: "8",
                             fill: "#0b0b10",
                             "{label}"
                         }
                     }
                 }
+                // r[impl drums.chrome.markers]
+                //
+                // A marker is a point, so it gets a tick and a label
+                // rather than a band: the label sits to the right of
+                // its line, which is where the thing it names starts.
+                for (x, label, color, row) in marks.iter() {
+                    // One shelf per ruler lane. The tick spans only its
+                    // own row, so which lane a marker is filed under is
+                    // read off its height — that is the whole point of
+                    // lanes, and it is information these projects get
+                    // wrong in a way worth being able to see.
+                    line {
+                        x1: "{x:.1}", x2: "{x:.1}",
+                        y1: "{*row as f64 * mark_row_h:.1}",
+                        y2: "{(*row + 1) as f64 * mark_row_h:.1}",
+                        stroke: "{color}",
+                        stroke_width: 2,
+                    }
+                    text {
+                        x: "{x + 3.0:.1}",
+                        y: "{(*row + 1) as f64 * mark_row_h - 2.0:.1}",
+                        font_size: 9,
+                        fill: "{color}",
+                        "{label}"
+                    }
+                }
+                // The lane names, once, down the left edge — one per
+                // shelf, so a shelf says which ruler lane it is.
+                for (i, (_, _, name)) in chrome_rows.iter().enumerate() {
+                    text {
+                        x: 2,
+                        y: "{(i + 1) as f64 * CHROME_ROW_H - 2.0:.1}",
+                        font_size: 7,
+                        fill: theme::TEXT_DIM,
+                        opacity: "0.7",
+                        "{name}"
+                    }
+                }
                 for t in ticks.iter() {
                     line {
                         x1: "{t.x:.1}", x2: "{t.x:.1}",
-                        y1: if t.bar { "{canvas::RULER_H - 10.0}" } else { "{canvas::RULER_H - 5.0}" },
-                        y2: "{canvas::RULER_H}",
+                        y1: if t.bar { "{ruler_h - 10.0:.1}" } else { "{ruler_h - 5.0:.1}" },
+                        y2: "{ruler_h}",
                         stroke: if t.bar { theme::TEXT_DIM } else { theme::TEXT_FAINT },
                         stroke_width: 1,
                     }
                     if let Some(label) = t.label.as_ref() {
                         text {
-                            x: "{t.x + 3.0:.1}", y: "{canvas::RULER_H - 4.0}",
+                            x: "{t.x + 3.0:.1}", y: "{ruler_h - 4.0:.1}",
                             font_size: "8",
                             fill: theme::TEXT_DIM,
                             "{label}"
@@ -1296,7 +1716,7 @@ pub fn StackView(
             }
 
             g {
-                transform: "translate(0, {canvas::RULER_H})",
+                transform: "translate(0, {ruler_h})",
                 for lane in lanes.iter() {
                     g {
                         // A lane's own background, so the active one
@@ -1343,9 +1763,40 @@ pub fn StackView(
                             // material, faintly, in the section's own
                             // colour — the ruler says where you are,
                             // these say it where you are looking.
-                            for (x0, _, _, color) in sections.iter() {
+                            for (x0, _, _, color, _) in sections.iter() {
                                 line {
                                     x1: "{x0:.1}", x2: "{x0:.1}",
+                                    y1: "{lane.y:.1}", y2: "{lane.y + lane.h:.1}",
+                                    stroke: "{color}",
+                                    stroke_width: 1,
+                                    opacity: "0.3",
+                                }
+                            }
+                            // r[impl drums.fills.draw]
+                            //
+                            // Behind everything, and a wash rather than
+                            // an outline: a fill is a *region* of the
+                            // take, and the hits inside it still have to
+                            // read as hits. An edge strong enough to
+                            // notice would compete with the markers it
+                            // sits under.
+                            for (x0, x1) in fill_bands.iter() {
+                                rect {
+                                    x: "{x0:.1}",
+                                    y: "{lane.y:.1}",
+                                    width: "{(x1 - x0).max(0.0):.1}",
+                                    height: "{lane.h:.1}",
+                                    fill: theme::TEXT_DIM,
+                                    opacity: "0.10",
+                                }
+                            }
+                            // Markers carry down the same way — the
+                            // ruler says where you are, these say it
+                            // where you are looking.
+                            // r[impl drums.chrome.markers]
+                            for (x, _, color, _) in marks.iter() {
+                                line {
+                                    x1: "{x:.1}", x2: "{x:.1}",
                                     y1: "{lane.y:.1}", y2: "{lane.y + lane.h:.1}",
                                     stroke: "{color}",
                                     stroke_width: 1,
@@ -1366,8 +1817,33 @@ pub fn StackView(
                                     opacity: if lane.active { "0.5" } else { "0.32" },
                                 }
                             }
+                            // r[impl drums.lanes.trigger-overlay]
+                            //
+                            // Drawn over the mics, not beside them, and
+                            // outlined rather than filled: a trigger is
+                            // near-silent between hits, so a filled one
+                            // would read as a hole punched in the mics'
+                            // waveform instead of a second view of it.
+                            for o in lane.overlays.iter() {
+                                polygon {
+                                    points: "{o}",
+                                    fill: "none",
+                                    stroke: lane.role_color.unwrap_or(theme::PEAKS),
+                                    stroke_width: "1",
+                                    opacity: if lane.active { "0.75" } else { "0.5" },
+                                }
+                            }
                             // r[impl drums.lanes.toms-split]
                             for s in lane.sub_lanes.iter() {
+                                for o in s.overlays.iter() {
+                                    polygon {
+                                        points: "{o}",
+                                        fill: "none",
+                                        stroke: lane.role_color.unwrap_or(theme::PEAKS),
+                                        stroke_width: "1",
+                                        opacity: if s.faded { "0.20" } else { "0.6" },
+                                    }
+                                }
                                 if let Some(p) = s.points.as_ref() {
                                     polygon {
                                         points: "{p}",
@@ -1401,12 +1877,15 @@ pub fn StackView(
                                                 x1: "{n.x:.1}", y1: "{gy:.1}",
                                                 x2: "{n.x:.1}", y2: "{gy + gh:.1}",
                                                 stroke: "{n.fill}",
-                                                stroke_width: "1.5",
+                                                stroke_width: "{lane.hit_width:.2}",
                                                 opacity: "0.9",
                                             }
-                                            polygon {
-                                                points: "{n.x:.1},{gy:.1} {n.x + n.w.min(9.0):.1},{gy + 5.0:.1} {n.x:.1},{gy + 10.0:.1}",
-                                                fill: "{n.fill}",
+                                            // r[impl drums.lanes.hit-density]
+                                            if lane.hit_flag {
+                                                polygon {
+                                                    points: "{n.x:.1},{gy:.1} {n.x + n.w.min(9.0):.1},{gy + 5.0:.1} {n.x:.1},{gy + 10.0:.1}",
+                                                    fill: "{n.fill}",
+                                                }
                                             }
                                         } else if n.triangle {
                                             polygon {
@@ -1548,7 +2027,7 @@ pub fn StackView(
             if let Some(open) = mic_menu() {
                 if let Some(lane) = lanes.iter().find(|l| l.lane == open) {
                     g {
-                        transform: "translate(0, {canvas::RULER_H})",
+                        transform: "translate(0, {ruler_h})",
                         rect {
                             x: 4, y: "{lane.y + MIC_MENU_TOP - 2.0:.1}",
                             width: "{MIC_MENU_W}",
@@ -1608,6 +2087,7 @@ pub fn StackView(
                         view0,
                         px_per_sec,
                         height: vp.h,
+                        ruler_h,
                     }
                 }
             }
@@ -1619,7 +2099,7 @@ pub fn StackView(
             if let Some(sel) = selected() {
                 if px_per_sec > 0.0 {
                     g {
-                        transform: "translate({canvas::GUTTER_W}, {canvas::RULER_H})",
+                        transform: "translate({canvas::GUTTER_W}, {ruler_h})",
                         {
                             let x = (sel.hit_secs - view0) * px_per_sec;
                             rsx! {
@@ -1647,7 +2127,7 @@ pub fn StackView(
             // r[impl drums.manual.stretch]
             if let Some(s) = slipping() {
                 g {
-                    transform: "translate({canvas::GUTTER_W}, {canvas::RULER_H})",
+                    transform: "translate({canvas::GUTTER_W}, {ruler_h})",
                     line {
                         x1: "{s.hit_x:.1}", x2: "{s.hit_x:.1}",
                         y1: "{s.lane_y:.1}", y2: "{s.lane_y + s.lane_h:.1}",
@@ -1669,7 +2149,15 @@ pub fn StackView(
 /// The playhead line, isolated so a transport tick re-renders one
 /// element. Rendered inside the stack's svg, in content coordinates.
 #[component]
-fn StackPlayhead(playhead: Signal<f64>, view0: f64, px_per_sec: f64, height: f64) -> Element {
+fn StackPlayhead(
+    playhead: Signal<f64>,
+    view0: f64,
+    px_per_sec: f64,
+    height: f64,
+    /// Where the lanes start — the ruler grows with the number of
+    /// chrome shelves, so this cannot be the old constant.
+    ruler_h: f64,
+) -> Element {
     let x = canvas::GUTTER_W + (playhead() - view0) * px_per_sec;
     if x < canvas::GUTTER_W {
         return rsx! {};
@@ -1677,8 +2165,8 @@ fn StackPlayhead(playhead: Signal<f64>, view0: f64, px_per_sec: f64, height: f64
     rsx! {
         line {
             x1: "{x:.1}", x2: "{x:.1}",
-            y1: "{canvas::RULER_H}",
-            y2: "{canvas::RULER_H + height:.1}",
+            y1: "{ruler_h:.1}",
+            y2: "{ruler_h + height:.1}",
             stroke: "#f8fafc",
             stroke_width: 1,
             opacity: "0.7",

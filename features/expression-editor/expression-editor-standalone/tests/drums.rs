@@ -342,6 +342,63 @@ fn the_hosts_slip_slides_every_mic_and_one_undo_restores() {
     }
 }
 
+// r[verify drums.manual.split]
+#[test]
+fn the_hosts_split_cuts_every_mic_at_one_place_and_moves_nothing() {
+    use daw::service::ProjectContext;
+    use expression_editor_audio::quantize::SplitConfig;
+    let runner = open_kit("split");
+    let host = runner.host.as_ref().expect("host");
+    let daw = runner.daw.as_ref().expect("backend");
+    let ctx = ProjectContext::Current;
+    let items = host.group();
+    let before: Vec<_> = items.iter().map(|i| pieces_on(daw, &ctx, i)).collect();
+
+    let cfg = SplitConfig {
+        leading_pad_secs: 0.005,
+        crossfade_secs: 0.005,
+    };
+    let done = host.split(0.55, cfg).expect("split");
+    assert_eq!(done.items, 3, "every mic was cut");
+    assert_eq!(done.pieces, 6, "two pieces per mic");
+
+    // Identically on every mic — mics cut at different places are no
+    // longer phase-coherent, which cannot be repaired afterwards.
+    let first = pieces_on(daw, &ctx, &items[0]);
+    assert_eq!(first.len(), 2);
+    for item in &items[1..] {
+        assert_eq!(pieces_on(daw, &ctx, item), first, "mics cut identically");
+    }
+
+    // And nothing moved: a split is a boundary, not an edit. The first
+    // piece still starts where the take did.
+    assert!(
+        (first[0].0 - before[0][0].0).abs() < 1e-9,
+        "the split moved the take"
+    );
+
+    assert!(host.undo(), "one undo step");
+    for (i, item) in items.iter().enumerate() {
+        assert_eq!(pieces_on(daw, &ctx, item), before[i], "mic {i} restored");
+    }
+}
+
+// r[verify drums.manual.split]
+#[test]
+fn splitting_where_there_is_no_take_does_nothing() {
+    use expression_editor_audio::quantize::SplitConfig;
+    let runner = open_kit("split-edge");
+    let host = runner.host.as_ref().expect("host");
+    let cfg = SplitConfig {
+        leading_pad_secs: 0.005,
+        crossfade_secs: 0.005,
+    };
+    // Before the start and past the end. Writing either would rebuild
+    // every item in the kit to produce the take it already had.
+    assert_eq!(host.split(0.0, cfg).expect("no-op").items, 0);
+    assert_eq!(host.split(1e6, cfg).expect("no-op").items, 0);
+}
+
 // r[verify drums.manual.stretch]
 #[test]
 fn the_hosts_stretch_writes_one_marker_map_to_every_mic_and_one_undo_restores() {

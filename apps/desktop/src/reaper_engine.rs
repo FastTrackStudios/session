@@ -26,8 +26,8 @@
 
 use std::path::{Path, PathBuf};
 
-use session::services::setlist_service::SetlistServiceStreamClient;
 use session::SetlistServiceClient;
+use session::services::setlist_service::SetlistServiceStreamClient;
 use session_vault_sync::library::LibrarySong;
 
 const SOCKET_DIR: &str = "/tmp";
@@ -219,7 +219,9 @@ pub fn is_connected() -> bool {
 /// The error is a `String` rather than [`ConnectError`]: by the time it
 /// crosses this boundary it is a message to show someone, and the variants
 /// carry non-`Send`-friendly vox internals that the UI has no use for.
-pub fn spawn_connect(socket: Option<PathBuf>) -> tokio::sync::oneshot::Receiver<Result<(), String>> {
+pub fn spawn_connect(
+    socket: Option<PathBuf>,
+) -> tokio::sync::oneshot::Receiver<Result<(), String>> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     runtime().spawn(async move {
         let outcome = ensure_connected_to(socket)
@@ -275,7 +277,11 @@ pub fn spawn_supervisor() {
             tokio::time::sleep(SUPERVISE_INTERVAL).await;
 
             let attached = engine().and_then(|e| socket_pid(&e.socket));
-            match supervise(attached, |pid| process_alive(pid), || discover_socket().is_some()) {
+            match supervise(
+                attached,
+                |pid| process_alive(pid),
+                || discover_socket().is_some(),
+            ) {
                 Action::Idle => {}
                 Action::Drop => {
                     tracing::warn!(pid = attached, "REAPER exited; dropping the connection");

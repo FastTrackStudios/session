@@ -18,14 +18,14 @@
 //!   cargo run -p session-extension-xtask
 
 use daw::test::daw_test;
+use session::SetlistServiceClient;
 use session::ruler_lanes::CoreLane;
 use session::services::setlist_service::SetlistServiceStreamClient;
-use session::SetlistServiceClient;
 
 /// Open the SetlistService lanes over the rig's DAW socket, the same way
 /// `reaper_engine::connect_to` does for a real `session-desktop` process.
-async fn connect_setlist_service(
-) -> eyre::Result<(SetlistServiceClient, SetlistServiceStreamClient)> {
+async fn connect_setlist_service()
+-> eyre::Result<(SetlistServiceClient, SetlistServiceStreamClient)> {
     let socket = std::env::var("FTS_SOCKET").map_err(|_| {
         eyre::eyre!(
             "FTS_SOCKET not set — this test must run under session-extension-xtask, \

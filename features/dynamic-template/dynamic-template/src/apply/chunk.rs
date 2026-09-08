@@ -364,10 +364,7 @@ fn repoint_receives(chunk: &mut RChunk, remap: &[usize]) {
 /// the chunk's own GUID are the same value, as REAPER writes them.
 fn new_track_chunk(name: &str, isbus: &str) -> RChunk {
     let guid = derived_guid(name);
-    let mut chunk = RChunk::new(vec![
-        RToken::new("TRACK"),
-        RToken::new(guid.clone()),
-    ]);
+    let mut chunk = RChunk::new(vec![RToken::new("TRACK"), RToken::new(guid.clone())]);
     for line in [
         format!("NAME {}", quoted(name)),
         "PEAKCOL 16576".to_string(),

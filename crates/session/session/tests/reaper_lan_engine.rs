@@ -31,7 +31,9 @@ async fn connect_over_lan(
         .get("FTS_SESSION_EXT", "lan_port")
         .await
         .map_err(|e| eyre::eyre!("ext_state get lan_port: {e:?}"))?
-        .ok_or_else(|| eyre::eyre!("FTS_SESSION_EXT/lan_port not set — did the LAN test server start?"))?
+        .ok_or_else(|| {
+            eyre::eyre!("FTS_SESSION_EXT/lan_port not set — did the LAN test server start?")
+        })?
         .parse()
         .map_err(|e| eyre::eyre!("lan_port ExtState value not a valid port: {e}"))?;
 

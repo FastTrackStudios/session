@@ -9,9 +9,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use daw::service::{ItemRef, ProjectContext, Projects};
+use daw::service::{ItemRef, ProjectContext};
 use daw::standalone::Standalone;
 use expression_editor_audio::apply_quantize::{Applied, GroupError, apply_split, apply_warp};
+use expression_editor_audio::daw_bound::DrumDaw;
 use expression_editor_audio::detect::Transient;
 use expression_editor_audio::gate::Hit;
 use expression_editor_audio::group_detect::refine_onset;
@@ -27,10 +28,13 @@ use expression_editor_ui::quantize_panel::{Bin, HitPreview, QuantizePanel, Write
 pub struct HostLane {
     pub role: LaneRole,
     pub items: Vec<ItemRef>,
-    /// The members' mean, kept only for lanes that detect
-    /// (`LaneRole::is_detection_source`). `None` elsewhere — the sum of
-    /// the room mics would cost memory nothing reads.
-    pub summed: Option<Vec<f64>>,
+    /// The signals detection runs on: one per detection *unit*, not one
+    /// per lane. Toms are a unit each — so a hit can be attributed to
+    /// the tom that made it rather than to "some tom" — and within a
+    /// unit a trigger is weighted over the mics it shares a drum with.
+    /// Empty for lanes that do not detect (`LaneRole::is_detection_source`);
+    /// summing the room mics would cost memory nothing reads.
+    pub signals: Vec<Vec<f64>>,
 }
 
 /// Hand edits to the hit list, layered over detection.
@@ -49,17 +53,48 @@ struct ManualHits {
 /// the pick radius of the gesture, not a detection window.
 const MANUAL_TOL: f64 = 0.015;
 
+/// `Standalone` satisfies the bound — the backend the workspace runs on
+/// today, asserted at compile time so a service added to [`DrumDaw`]
+/// that it cannot serve is a build error rather than a surprise.
+const _: fn() = || {
+    fn assert_impl<T: DrumDaw>() {}
+    let _ = assert_impl::<Standalone>;
+};
+
+/// And the host itself instantiates for any backend that satisfies it.
+///
+/// Stronger than asserting the bound alone: a type can satisfy
+/// `DrumDaw` while `DrumHost` still fails to build over it, if some
+/// method reaches past the bound for something only one backend has.
+/// `save` did exactly that — it writes a new `.rpp`, which is the
+/// standalone window's answer to having no host application — and now
+/// lives in its own impl for that reason.
+const _: fn() = || {
+    fn assert_host<D: DrumDaw>(h: &DrumHost<D>) -> usize {
+        // Touch the generic surface rather than merely naming the type,
+        // so this fails if any of it stops being generic.
+        h.bar_count() + h.group().len()
+    }
+    let _ = assert_host::<Standalone>;
+};
+
 /// Everything a drum-workspace gesture needs to reach the daw.
-pub struct DrumHost {
-    daw: Standalone,
+pub struct DrumHost<D = Standalone>
+where
+    D: DrumDaw,
+{
+    daw: D,
     ctx: ProjectContext,
     lanes: Vec<HostLane>,
-    /// The trigger lanes' summed signal, parallel to `lanes`. Behind a
-    /// lock because [`DrumHost::refresh`] recomputes it after an edit
+    /// Every detection signal across all lanes, flattened — one per
+    /// detection unit, so four triggered toms contribute four. Behind a
+    /// lock because [`DrumHost::refresh`] recomputes them after an edit
     /// lands — detection must run on the audio as it *is*, not as it
     /// loaded. `Arc` so a detect in flight keeps its snapshot.
-    sums: Mutex<Vec<Option<Arc<Vec<f64>>>>>,
+    sums: Mutex<Vec<(LaneRole, Arc<Vec<f64>>)>>,
     manual: Mutex<ManualHits>,
+    /// The take's fills, computed on demand and dropped on refresh.
+    fills: Mutex<Option<Vec<expression_editor_core::fills::Fill>>>,
     pub sample_rate: f64,
     /// The group's shared take length, seconds — the longest edit item.
     pub take_secs: f64,
@@ -68,18 +103,26 @@ pub struct DrumHost {
     pub beat_secs: f64,
 }
 
-impl DrumHost {
+impl<D: DrumDaw> DrumHost<D> {
     pub fn new(
-        daw: Standalone,
+        daw: D,
         ctx: ProjectContext,
         mut lanes: Vec<HostLane>,
         sample_rate: f64,
         take_secs: f64,
         beat_secs: f64,
     ) -> Self {
-        let sums = lanes
+        // Tagged with the role they came from: detection merges every
+        // signal into one hit list, but a fill is recognised by *which*
+        // drum was played, so that has to survive the flattening.
+        let sums: Vec<(LaneRole, Arc<Vec<f64>>)> = lanes
             .iter_mut()
-            .map(|l| l.summed.take().map(Arc::new))
+            .flat_map(|l| {
+                let role = l.role;
+                std::mem::take(&mut l.signals)
+                    .into_iter()
+                    .map(move |s| (role, Arc::new(s)))
+            })
             .collect();
         Self {
             daw,
@@ -87,6 +130,7 @@ impl DrumHost {
             lanes,
             sums: Mutex::new(sums),
             manual: Mutex::new(ManualHits::default()),
+            fills: Mutex::new(None),
             sample_rate,
             take_secs,
             beat_secs,
@@ -124,20 +168,192 @@ impl DrumHost {
         }
     }
 
-    /// Snapshot of the trigger lanes' sums — `Arc`s, so a detect keeps
+    /// Snapshot of every detection signal — `Arc`s, so a detect keeps
     /// reading the audio it started with even across a refresh.
     fn trigger_sums(&self) -> Vec<Arc<Vec<f64>>> {
-        self.sums
-            .lock()
-            .map(|s| s.iter().flatten().cloned().collect())
-            .unwrap_or_default()
+        self.role_sums().into_iter().map(|(_, s)| s).collect()
+    }
+
+    /// The same snapshot, keeping which role each signal came from.
+    fn role_sums(&self) -> Vec<(LaneRole, Arc<Vec<f64>>)> {
+        self.sums.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    /// Detection settings for counting activity rather than for
+    /// choosing what to quantize.
+    ///
+    /// The two jobs want opposite things. The quantize panel wants
+    /// precision — every hit it reports gets *moved*, so a false one
+    /// damages the take, and its default sensitivity of 0.5 is set for
+    /// that. Fill detection only counts how busy a bar was, where a
+    /// missed hit is the costly error and a spurious one is noise the
+    /// median absorbs.
+    ///
+    /// It matters more than it sounds. On `unbreakable` — 160bpm, the
+    /// drummer playing about ten hits a second — the panel's default
+    /// finds 1.6 a second, roughly a fifth of what was played. Counting
+    /// bars against a fifth of the evidence is what made fill counts
+    /// swing between three and twenty-four across the album.
+    fn fill_detect_panel(sensitivity: f64) -> QuantizePanel {
+        let mut panel = QuantizePanel::default();
+        panel.detect.sensitivity = sensitivity;
+        panel
+    }
+
+    /// Every detected hit with the drum it was played on, in seconds.
+    ///
+    /// Detection runs per role rather than on the merged list the
+    /// quantize panel uses: which drum was struck is thrown away by the
+    /// merge, and it is the whole signal for anything that reasons
+    /// about *what* was played rather than *when*.
+    pub fn role_hits(&self, panel: &QuantizePanel) -> Vec<(f64, LaneRole)> {
+        let detect = Self::detect_of(panel);
+        let mut hits: Vec<(f64, LaneRole)> = Vec::new();
+        for (role, signal) in self.role_sums() {
+            let lanes = vec![vec![signal.as_slice()]];
+            for t in panel_bridge::detect_group(&lanes, self.sample_rate, &detect) {
+                hits.push((t.at, role));
+            }
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        hits
+    }
+
+    /// Every detected hit with its drum, using the hybrid detector —
+    /// spectral flux to find hits, the envelope to place them.
+    ///
+    /// No sensitivity to pass: the flux stage scores each frame against
+    /// its own neighbourhood, so it follows the material instead of
+    /// being told about it. That is the whole point of it.
+    // r[impl drums.detect.hybrid]
+    pub fn role_hits_hybrid(&self) -> Vec<(f64, LaneRole)> {
+        self.role_hits_hybrid_with(&expression_editor_audio::hybrid::HybridConfig::default())
+    }
+
+    /// The same, with the flux stage's own settings — for the sweep
+    /// that chooses them.
+    pub fn role_hits_hybrid_with(
+        &self,
+        cfg: &expression_editor_audio::hybrid::HybridConfig,
+    ) -> Vec<(f64, LaneRole)> {
+        let mut hits: Vec<(f64, LaneRole)> = Vec::new();
+        for (role, signal) in self.role_sums() {
+            for t in
+                expression_editor_audio::hybrid::detect(signal.as_slice(), self.sample_rate, cfg)
+            {
+                hits.push((t.at, role));
+            }
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        hits
+    }
+
+    /// How many bars the host's tempo map places across the take.
+    /// Zero when it cannot place a grid at all.
+    pub fn bar_count(&self) -> usize {
+        crate::bar_grid(&self.daw, &self.ctx, self.take_secs)
+            .len()
+            .saturating_sub(1)
+    }
+
+    /// The take's fills, computed once and kept until the audio changes.
+    ///
+    /// Cached because the panel previews on every change a slider makes
+    /// and fill detection runs the whole detector over every lane. The
+    /// cache is cleared by [`DrumHost::refresh`], which is the only
+    /// thing that alters the audio underneath it.
+    fn fills_cached(&self) -> Vec<expression_editor_core::fills::Fill> {
+        if let Ok(cache) = self.fills.lock()
+            && let Some(found) = cache.as_ref()
+        {
+            return found.clone();
+        }
+        let found = self.fills(&expression_editor_core::fills::FillConfig::default());
+        if let Ok(mut cache) = self.fills.lock() {
+            *cache = Some(found.clone());
+        }
+        found
+    }
+
+    /// The hits a quantize is allowed to move.
+    ///
+    /// Everything the detector found, less anything inside a fill when
+    /// the panel asks for fills to be protected. The hits are still
+    /// *shown* — the lane draws every one — they are simply not moved,
+    /// so the user can see what was left alone rather than wondering
+    /// where it went.
+    // r[impl drums.fills.protect]
+    fn quantizable(&self, panel: &QuantizePanel) -> Vec<Transient> {
+        let hits = self.hits(panel);
+        if !panel.protect_fills {
+            return hits;
+        }
+        let fills = self.fills_cached();
+        if fills.is_empty() {
+            return hits;
+        }
+        hits.into_iter()
+            .filter(|t| !fills.iter().any(|f| t.at >= f.start && t.at < f.end))
+            .collect()
+    }
+
+    /// Cut every mic in the kit at `at` seconds.
+    ///
+    /// One undo step and one cut time across the whole group: mics cut
+    /// at different places stop being phase-coherent, and a kit that has
+    /// lost phase coherence cannot be repaired by hand.
+    // r[impl drums.manual.split]
+    pub fn split(&self, at: f64, cfg: SplitConfig) -> Result<Applied, GroupError> {
+        let items = self.group();
+        self.daw.begin_undo_block(self.ctx.clone(), "Split kit");
+        let out = expression_editor_audio::slip::split_group(
+            &self.daw,
+            self.ctx.clone(),
+            &items,
+            at,
+            self.take_secs,
+            cfg,
+        );
+        self.daw.end_undo_block(self.ctx.clone(), "Split kit", None);
+        out
+    }
+
+    /// The bar boundaries the host's tempo map places across the take.
+    pub fn bar_grid_secs(&self) -> Vec<f64> {
+        crate::bar_grid(&self.daw, &self.ctx, self.take_secs)
+    }
+
+    /// The take's fills, as spans of bars that stop keeping time.
+    ///
+    /// Detection is run per role rather than on the merged list, since
+    /// a fill is recognised by *which* drum was played — a bar full of
+    /// toms — and the merged list has thrown that away.
+    ///
+    /// Empty when the host cannot place bars. A fill span is meaningless
+    /// without a bar grid, and guessing one from a single bpm would put
+    /// the spans in the wrong place on any song that changes meter.
+    // r[impl drums.fills.detect]
+    pub fn fills(
+        &self,
+        cfg: &expression_editor_core::fills::FillConfig,
+    ) -> Vec<expression_editor_core::fills::Fill> {
+        let bars = crate::bar_grid(&self.daw, &self.ctx, self.take_secs);
+        if bars.len() < 2 {
+            return Vec::new();
+        }
+        let hits = if cfg.hybrid_detect {
+            self.role_hits_hybrid()
+        } else {
+            self.role_hits(&Self::fill_detect_panel(cfg.detect_sensitivity))
+        };
+        expression_editor_core::fills::detect_fills(&bars, &hits, cfg)
     }
 
     /// Detect + plan for the panel's current settings: the histogram
     /// bins and the per-hit preview the drawer shows.
     // r[impl drums.quantize.preview]
     pub fn preview(&self, panel: &QuantizePanel) -> (Vec<Bin>, Vec<HitPreview>) {
-        let hits = self.hits(panel);
+        let hits = self.quantizable(panel);
         let (_plan, previews) = panel_bridge::preview_hits(&hits, &self.target_of(panel));
         (histogram(&hits, 24), previews)
     }
@@ -217,7 +433,7 @@ impl DrumHost {
     /// Write the panel's plan to the whole kit, one undo step.
     // r[impl drums.quantize.apply]
     pub fn apply(&self, panel: &QuantizePanel) -> Result<Applied, GroupError> {
-        let hits = self.hits(panel);
+        let hits = self.quantizable(panel);
         let (plan, _) = panel_bridge::preview_hits(&hits, &self.target_of(panel));
         let items = self.group();
         self.daw.begin_undo_block(self.ctx.clone(), "Quantize kit");
@@ -313,9 +529,9 @@ impl DrumHost {
     /// Returns `(track_guid, doc)` pairs; the caller pushes them into
     /// the editor with `Editor::reload_track_doc`.
     pub fn refresh(&self) -> Vec<(String, expression_editor_core::ExpressionDoc)> {
-        use daw::service::{Items, Tracks};
+        use daw::service::Tracks;
         let mut docs = Vec::new();
-        let mut new_sums: Vec<Option<Arc<Vec<f64>>>> = Vec::with_capacity(self.lanes.len());
+        let mut new_sums: Vec<(LaneRole, Arc<Vec<f64>>)> = Vec::with_capacity(self.lanes.len());
         for lane in &self.lanes {
             // Member tracks, from the lanes' anchor items (piece 0 of a
             // split keeps the original item guid, so this stays valid
@@ -328,8 +544,12 @@ impl DrumHost {
                     track_guids.push(info.track_guid);
                 }
             }
-            let mut lane_sum: Option<Vec<f64>> = None;
-            let mut members = 0usize;
+            // Re-read every member, then rebuild this lane's detection
+            // units from the *current* audio. The unit split and the
+            // trigger weighting must match the load path exactly, or a
+            // detect would silently change meaning after the first edit.
+            let mut names: Vec<String> = Vec::new();
+            let mut takes: Vec<Vec<f64>> = Vec::new();
             for guid in &track_guids {
                 let Some(track) = Tracks::all(&self.daw, self.ctx.clone())
                     .into_iter()
@@ -344,31 +564,45 @@ impl DrumHost {
                     self.take_secs,
                     self.sample_rate,
                 );
-                if lane.role.is_detection_source() {
-                    let sum = lane_sum.get_or_insert_with(|| vec![0.0; samples.len()]);
-                    for (o, v) in sum.iter_mut().zip(samples.iter()) {
-                        *o += v;
-                    }
-                    members += 1;
-                }
                 let mut doc = crate::percussion_doc(&samples, self.sample_rate);
-                crate::attach_regions(&self.daw, &self.ctx, &mut doc);
+                crate::attach_timeline(&self.daw, &self.ctx, &mut doc);
                 docs.push((guid.clone(), doc));
+                names.push(track.name.clone());
+                takes.push(samples);
             }
-            new_sums.push(lane_sum.map(|mut sum| {
-                let scale = 1.0 / members.max(1) as f64;
-                for v in &mut sum {
-                    *v *= scale;
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            // r[impl drums.group.detection-source]
+            for unit in expression_editor_core::kit::detection_units(lane.role, &refs) {
+                let sig = crate::blend(unit.iter().map(|&(u, w)| (takes[u].as_slice(), w)));
+                if !sig.is_empty() {
+                    new_sums.push((lane.role, Arc::new(sig)));
                 }
-                Arc::new(sum)
-            }));
+            }
         }
         if let Ok(mut sums) = self.sums.lock() {
             *sums = new_sums;
         }
+        // The audio moved, so the fills have to be found again.
+        if let Ok(mut fills) = self.fills.lock() {
+            *fills = None;
+        }
         docs
     }
+}
 
+/// The host as the window shares it: the callbacks each hold a clone.
+///
+/// Defaulted to `Standalone` because that is what the window runs on;
+/// the REAPER panel names `SharedDrumHost<Reaper>` instead. The default
+/// is what keeps every existing use of this alias unchanged.
+pub type SharedDrumHost<D = Standalone> = Arc<DrumHost<D>>;
+
+/// Saving a copy is the standalone window's feature, not the
+/// workspace's: it writes a new `.rpp` beside the original, which is
+/// what a window with no host application has to do. In REAPER the user
+/// saves through REAPER, so this is the one thing the generic host
+/// deliberately does not offer.
+impl DrumHost<Standalone> {
     /// Save the project as a **new** `.rpp` beside its original —
     /// `<stem>.fts-edit.rpp` — never over it. Returns the path written.
     // r[impl drums.save.new-file]
@@ -380,6 +614,3 @@ impl DrumHost {
         daw::standalone::save::save_project_as(&self.daw, &guid)
     }
 }
-
-/// The host as the window shares it: the callbacks each hold a clone.
-pub type SharedDrumHost = Arc<DrumHost>;

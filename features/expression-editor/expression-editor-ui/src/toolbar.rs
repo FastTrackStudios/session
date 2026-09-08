@@ -142,6 +142,16 @@ pub fn Toolbar(
     /// reads as a bug.
     #[props(default)]
     on_save: Option<EventHandler<()>>,
+    /// Undo the *host's* last edit rather than the document's.
+    ///
+    /// In drum mode the document is a projection of audio that lives on
+    /// the daw, so an edit is not in the document's history at all —
+    /// undoing there rewinds a document nobody edited and leaves the
+    /// slip on disk. Hosts that write pass this; everything else keeps
+    /// the document stack.
+    // r[impl drums.manual.undo]
+    #[props(default)]
+    on_undo: Option<EventHandler<()>>,
 ) -> Element {
     let mut editor = editor;
     let mut drawer = drawer;
@@ -156,7 +166,10 @@ pub fn Toolbar(
     let dimension = ed.dimension;
     let overlays = ed.overlays.clone();
     let shape = ed.shape;
-    let can_undo = ed.can_undo();
+    // A host that writes always has something to undo as far as this
+    // button knows: the daw owns that history and cannot be asked
+    // cheaply, and greying out a working button is the worse error.
+    let can_undo = ed.can_undo() || on_undo.is_some();
     let can_redo = ed.can_redo();
     let mod_open = drawer.read().open;
     let mode = ed.mode;
@@ -411,7 +424,13 @@ pub fn Toolbar(
                     Seg {
                         active: false,
                         title: "Undo".to_string(),
-                        onclick: move |_| { editor.write().undo(); },
+                        testid: "undo".to_string(),
+                        onclick: move |_| match on_undo {
+                            Some(undo) => undo.call(()),
+                            None => {
+                                editor.write().undo();
+                            }
+                        },
                         span { style: if can_undo { "" } else { "opacity: 0.3;" }, "↶" }
                     }
                     Seg {
