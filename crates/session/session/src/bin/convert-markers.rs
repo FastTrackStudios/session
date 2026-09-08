@@ -140,9 +140,9 @@ fn convert_one(input: &str, output: &str) -> Result<(), Box<dyn std::error::Erro
         .iter()
         .position(is_owned)
         .or_else(|| {
-            tree.children
-                .iter()
-                .position(|c| matches!(c, RNodeTree::Chunk(k) if k.name().as_deref() == Some("TRACK")))
+            tree.children.iter().position(
+                |c| matches!(c, RNodeTree::Chunk(k) if k.name().as_deref() == Some("TRACK")),
+            )
         })
         .unwrap_or(tree.children.len());
     tree.children.retain(|c| !is_owned(c));

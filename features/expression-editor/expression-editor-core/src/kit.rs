@@ -341,9 +341,7 @@ pub fn detection_units(role: LaneRole, names: &[&str]) -> Vec<Vec<(usize, f64)>>
                 }
             };
             let total: f64 = unit.iter().map(|&i| weight(i)).sum();
-            unit.into_iter()
-                .map(|i| (i, weight(i) / total))
-                .collect()
+            unit.into_iter().map(|i| (i, weight(i) / total)).collect()
         })
         .collect()
 }
@@ -509,7 +507,9 @@ mod tests {
         // summed lane could only say "a tom was hit", not which.
         let u = detection_units(
             LaneRole::Toms,
-            &["T1", "T2", "T3", "T4", "T1 Trig", "T2 Trig", "T3 Trig", "T4 Trig"],
+            &[
+                "T1", "T2", "T3", "T4", "T1 Trig", "T2 Trig", "T3 Trig", "T4 Trig",
+            ],
         );
         assert_eq!(
             members_of(&u),

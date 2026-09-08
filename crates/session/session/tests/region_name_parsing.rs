@@ -34,7 +34,10 @@ fn spaced_multi_word_sections_parse_as_the_right_section() {
 
 #[test]
 fn a_region_named_for_two_things_takes_the_first() {
-    assert_eq!(parsed("pre chorus/drum solo").as_deref(), Some("Pre(Chorus)"));
+    assert_eq!(
+        parsed("pre chorus/drum solo").as_deref(),
+        Some("Pre(Chorus)")
+    );
 }
 
 #[test]

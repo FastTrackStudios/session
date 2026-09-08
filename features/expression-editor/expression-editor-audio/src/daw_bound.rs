@@ -50,4 +50,3 @@ impl<T> DrumDaw for T where
         + Clone
 {
 }
-

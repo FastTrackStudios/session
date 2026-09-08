@@ -30,10 +30,7 @@ const ALBUM_ROOT: &str = "/run/media/AudioHaven/Project/Crescendum-Rockstars";
 /// (folder name, `.organized.RPP` file name) — matches the on-disk layout
 /// exactly (including "Kornesque "'s trailing space).
 const SONGS: &[(&str, &str)] = &[
-    (
-        "Chained expectations",
-        "Chained expectations.organized.RPP",
-    ),
+    ("Chained expectations", "Chained expectations.organized.RPP"),
     ("empty focus", "empty focus.organized.RPP"),
     ("heavify", "heavify.organized.RPP"),
     ("Intro", "Intro.organized.RPP"),
@@ -235,8 +232,7 @@ async fn rockstars_album_opens_all_ten_songs(ctx: &daw::test::DawTestContext) ->
                         song.name
                     )
                 })?;
-            let active =
-                wait_for_active_section(&mut active_rx, song_index, section_index).await?;
+            let active = wait_for_active_section(&mut active_rx, song_index, section_index).await?;
             assert_eq!(
                 active.section_index,
                 Some(section_index),

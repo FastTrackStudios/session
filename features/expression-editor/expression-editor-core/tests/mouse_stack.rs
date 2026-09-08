@@ -58,7 +58,10 @@ fn every_preset_can_drive_the_stack() {
 #[test]
 fn a_hit_is_moved_and_shift_pins_the_takes_ends() {
     let m = MouseMap::drums();
-    assert_eq!(m.resolve(Context::Hit, Gesture::Drag, NONE), Action::MoveHit);
+    assert_eq!(
+        m.resolve(Context::Hit, Gesture::Drag, NONE),
+        Action::MoveHit
+    );
     assert_eq!(
         m.resolve(Context::Hit, Gesture::Drag, SHIFT),
         Action::MoveHitBothEnds,
@@ -85,12 +88,18 @@ fn adding_and_cutting_are_deliberate_modifier_gestures() {
     // the other rewrites every item in the kit, and both would then be
     // one slip of the hand away at all times.
     let m = MouseMap::drums();
-    assert_eq!(m.resolve(Context::Lane, Gesture::Click, ALT), Action::AddHit);
+    assert_eq!(
+        m.resolve(Context::Lane, Gesture::Click, ALT),
+        Action::AddHit
+    );
     assert_eq!(
         m.resolve(Context::Lane, Gesture::Click, CTRL),
         Action::SplitTake
     );
-    assert_ne!(m.resolve(Context::Lane, Gesture::Click, NONE), Action::AddHit);
+    assert_ne!(
+        m.resolve(Context::Lane, Gesture::Click, NONE),
+        Action::AddHit
+    );
     assert_ne!(
         m.resolve(Context::Lane, Gesture::Click, NONE),
         Action::SplitTake
@@ -118,5 +127,8 @@ fn the_stack_bindings_are_rebindable_like_any_other() {
     // ctrl-drag to move a hit can have it, without a code change.
     let mut m = MouseMap::drums();
     m.set(Context::Hit, Gesture::Drag, ModKey::CTRL, Action::MoveHit);
-    assert_eq!(m.resolve(Context::Hit, Gesture::Drag, CTRL), Action::MoveHit);
+    assert_eq!(
+        m.resolve(Context::Hit, Gesture::Drag, CTRL),
+        Action::MoveHit
+    );
 }

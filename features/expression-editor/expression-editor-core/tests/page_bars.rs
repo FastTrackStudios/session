@@ -134,7 +134,10 @@ fn paging_stops_at_the_end_rather_than_leaving_the_take() {
     }
     let (t0, _) = view(&ed);
     let last = *ed.doc.bars.last().unwrap();
-    assert!(t0 < last, "the view starts at {t0}, past the last bar {last}");
+    assert!(
+        t0 < last,
+        "the view starts at {t0}, past the last bar {last}"
+    );
     assert!(!ed.page_bars(4, 1), "kept paging past the end");
 }
 
@@ -173,6 +176,10 @@ fn framing_shows_exactly_the_requested_bars() {
     ed.page_bars(4, 2);
     assert!(ed.frame_bars(4));
     let (t0, t1) = view(&ed);
-    assert!((t1 - t0 - 4.0 * 2.0 * RATE).abs() < 1e-6, "framed {}", t1 - t0);
+    assert!(
+        (t1 - t0 - 4.0 * 2.0 * RATE).abs() < 1e-6,
+        "framed {}",
+        t1 - t0
+    );
     assert!(ed.doc.bars.iter().any(|b| (b - t0).abs() < 1e-6));
 }

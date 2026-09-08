@@ -161,9 +161,7 @@ impl SessionServices {
     /// see the same in-memory state — it's `Clone` over `Arc`'d fields, so
     /// cloning gives a handle to the same setlist / `song_cache` / etc).
     #[allow(clippy::type_complexity)]
-    fn mounted_service_triple<D>(
-        daw: D,
-    ) -> (daw::Mounted, daw::Mounted, daw::Mounted, daw::Mounted)
+    fn mounted_service_triple<D>(daw: D) -> (daw::Mounted, daw::Mounted, daw::Mounted, daw::Mounted)
     where
         D: Clone
             + daw::service::AudioEngine

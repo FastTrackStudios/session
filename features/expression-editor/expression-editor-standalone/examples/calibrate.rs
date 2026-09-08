@@ -36,8 +36,8 @@
 
 use std::path::{Path, PathBuf};
 
-use expression_editor_core::fills::FillConfig;
 use expression_editor_core::Viewport;
+use expression_editor_core::fills::FillConfig;
 use expression_editor_standalone::{Loaded, Runner, Source, Target};
 use expression_editor_ui::quantize_panel::QuantizePanel;
 
@@ -256,7 +256,11 @@ fn midi_take(text: &str, take: usize, spq: f64) -> Vec<f64> {
             ticks = 0;
         }
         if let Some(rest) = t.strip_prefix("POSITION ") {
-            pos = rest.split_whitespace().next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            pos = rest
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0);
         }
         if let Some(rest) = t.strip_prefix("HASDATA ") {
             ppq = rest
@@ -335,8 +339,16 @@ fn score(detected: &[f64], reference: &[f64]) -> (f64, f64, f64) {
     // MIDI often runs past the end of the recorded performance.
     let lo = detected[0].max(reference[0]);
     let hi = detected[detected.len() - 1].min(reference[reference.len() - 1]);
-    let d: Vec<f64> = detected.iter().copied().filter(|t| *t >= lo && *t <= hi).collect();
-    let r: Vec<f64> = reference.iter().copied().filter(|t| *t >= lo && *t <= hi).collect();
+    let d: Vec<f64> = detected
+        .iter()
+        .copied()
+        .filter(|t| *t >= lo && *t <= hi)
+        .collect();
+    let r: Vec<f64> = reference
+        .iter()
+        .copied()
+        .filter(|t| *t >= lo && *t <= hi)
+        .collect();
     if d.is_empty() || r.is_empty() {
         return (0.0, 0.0, 0.0);
     }
@@ -354,7 +366,10 @@ fn score(detected: &[f64], reference: &[f64]) -> (f64, f64, f64) {
 // ── the sweeps ───────────────────────────────────────────────────────
 
 fn sweep_detect(projects: &[Project]) {
-    let with_midi: Vec<&Project> = projects.iter().filter(|p| !p.reference.is_empty()).collect();
+    let with_midi: Vec<&Project> = projects
+        .iter()
+        .filter(|p| !p.reference.is_empty())
+        .collect();
     println!("\n── detect settings, against drum MIDI ──────────────────");
     if with_midi.is_empty() {
         println!("no project has a usable MIDI reference; skipping");
@@ -362,7 +377,11 @@ fn sweep_detect(projects: &[Project]) {
     }
     println!(
         "reference projects: {}",
-        with_midi.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+        with_midi
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     println!("\n  sens crest retrig |  prec  recall     F1 | hits/s vs ref");
 
@@ -394,8 +413,12 @@ fn sweep_detect(projects: &[Project]) {
 
                 let (mut p, mut r, mut f, mut rate) = (0.0, 0.0, 0.0, 0.0);
                 for proj in &with_midi {
-                    let hits: Vec<f64> =
-                        proj.host.role_hits(&panel).into_iter().map(|(t, _)| t).collect();
+                    let hits: Vec<f64> = proj
+                        .host
+                        .role_hits(&panel)
+                        .into_iter()
+                        .map(|(t, _)| t)
+                        .collect();
                     let (pp, rr, ff) = score(&hits, &proj.reference);
                     p += pp;
                     r += rr;
@@ -456,7 +479,11 @@ fn sweep_detect(projects: &[Project]) {
                 let n = with_midi.len() as f64;
                 let line = format!(
                     "  {threshold:>11.2} {median_frames:>6} {hop:>4} | {:>5.2} {:>7.2} {:>6.3} | {:>6.1} {:>6.2}x",
-                    p / n, r / n, f / n, rate / n, (rate / n) / ref_rate.max(0.001)
+                    p / n,
+                    r / n,
+                    f / n,
+                    rate / n,
+                    (rate / n) / ref_rate.max(0.001)
                 );
                 println!("{line}");
                 hyb.push((f / n, line));
@@ -468,8 +495,12 @@ fn sweep_detect(projects: &[Project]) {
     {
         let (mut p, mut r, mut f, mut rate) = (0.0, 0.0, 0.0, 0.0);
         for proj in &with_midi {
-            let hits: Vec<f64> =
-                proj.host.role_hits_hybrid().into_iter().map(|(t, _)| t).collect();
+            let hits: Vec<f64> = proj
+                .host
+                .role_hits_hybrid()
+                .into_iter()
+                .map(|(t, _)| t)
+                .collect();
             let (pp, rr, ff) = score(&hits, &proj.reference);
             p += pp;
             r += rr;
@@ -493,9 +524,9 @@ fn sweep_detect(projects: &[Project]) {
     // The one to take: best F1 among settings that do not invent hits.
     const MAX_RATE: f64 = 1.5;
     match rows.iter().find(|(_, ratio, _)| *ratio <= MAX_RATE) {
-        Some((_, _, line)) => println!(
-            "\n  best with hit rate within {MAX_RATE}x of the drummer:\n{line}"
-        ),
+        Some((_, _, line)) => {
+            println!("\n  best with hit rate within {MAX_RATE}x of the drummer:\n{line}")
+        }
         None => println!("\n  every setting over-detects; widen the sweep downwards"),
     }
     let d = QuantizePanel::default().detect;

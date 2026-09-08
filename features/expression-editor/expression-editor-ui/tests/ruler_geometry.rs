@@ -201,8 +201,13 @@ async fn a_fill_draws_a_band_where_it_happened() -> dioxus_test::Result<()> {
     // built with is not the one it drew; and these coordinates are SVG
     // user units, not element pixels, so measuring the element's width
     // compares two different spaces and fails on correct code.
-    let secs = tester.query(by_testid("view-secs")).immediately()?.inner_html();
-    let mut it = secs.split_whitespace().filter_map(|v| v.parse::<f64>().ok());
+    let secs = tester
+        .query(by_testid("view-secs"))
+        .immediately()?
+        .inner_html();
+    let mut it = secs
+        .split_whitespace()
+        .filter_map(|v| v.parse::<f64>().ok());
     let (v0, v1) = (it.next().unwrap_or(0.0), it.next().unwrap_or(1.0));
     let lane_w = it.next().unwrap_or(1.0);
     let want_x = (10.0 - v0) / (v1 - v0) * lane_w;
@@ -248,7 +253,10 @@ async fn the_bracket_key_pages_the_view_by_four_bars() -> dioxus_test::Result<()
     tester.pointer_down_mods(ox + 400.0, oy + 200.0, Modifiers::empty());
     tester.pointer_up_mods(ox + 400.0, oy + 200.0, Modifiers::empty());
     tester.drain();
-    tester.key_down(dioxus_test::keyboard_types::Key::Character("]".into()), Modifiers::empty());
+    tester.key_down(
+        dioxus_test::keyboard_types::Key::Character("]".into()),
+        Modifiers::empty(),
+    );
     let _ = tester.pump().await;
 
     let after = tester
@@ -332,7 +340,11 @@ async fn clicking_a_lane_selects_that_lane_not_its_neighbour() -> dioxus_test::R
     let mut ed = three_tracks();
     with_two_shelves(&mut ed);
     let lanes = laid_out(&ed);
-    assert!(lanes.len() >= 3, "expected three lanes, got {}", lanes.len());
+    assert!(
+        lanes.len() >= 3,
+        "expected three lanes, got {}",
+        lanes.len()
+    );
 
     // Lanes 1 and 2 only: lane 0 is already active, and the handler
     // deliberately ignores a click on the lane you are in, so it would

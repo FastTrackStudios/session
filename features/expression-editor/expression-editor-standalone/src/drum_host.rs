@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use daw::service::{ItemRef, ProjectContext};
 use daw::standalone::Standalone;
-use expression_editor_audio::daw_bound::DrumDaw;
 use expression_editor_audio::apply_quantize::{Applied, GroupError, apply_split, apply_warp};
+use expression_editor_audio::daw_bound::DrumDaw;
 use expression_editor_audio::detect::Transient;
 use expression_editor_audio::gate::Hit;
 use expression_editor_audio::group_detect::refine_onset;
@@ -238,7 +238,9 @@ impl<D: DrumDaw> DrumHost<D> {
     ) -> Vec<(f64, LaneRole)> {
         let mut hits: Vec<(f64, LaneRole)> = Vec::new();
         for (role, signal) in self.role_sums() {
-            for t in expression_editor_audio::hybrid::detect(signal.as_slice(), self.sample_rate, cfg) {
+            for t in
+                expression_editor_audio::hybrid::detect(signal.as_slice(), self.sample_rate, cfg)
+            {
                 hits.push((t.at, role));
             }
         }
@@ -586,7 +588,6 @@ impl<D: DrumDaw> DrumHost<D> {
         }
         docs
     }
-
 }
 
 /// The host as the window shares it: the callbacks each hold a clone.

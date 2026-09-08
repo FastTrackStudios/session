@@ -259,9 +259,14 @@ mod tests {
 
     /// A plain rock bar: kick and snare, no toms.
     fn groove(at: f64, out: &mut Vec<(f64, LaneRole)>) {
-        for (i, role) in [LaneRole::Kick, LaneRole::Snare, LaneRole::Kick, LaneRole::Snare]
-            .into_iter()
-            .enumerate()
+        for (i, role) in [
+            LaneRole::Kick,
+            LaneRole::Snare,
+            LaneRole::Kick,
+            LaneRole::Snare,
+        ]
+        .into_iter()
+        .enumerate()
         {
             out.push((at + i as f64 * 0.5, role));
         }

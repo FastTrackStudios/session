@@ -13,8 +13,8 @@
 //! It is deliberately not an assertion about a fixed count: the point is
 //! that the fills are musically placed, not that there are eleven.
 
-use expression_editor_core::fills::FillConfig;
 use expression_editor_core::Viewport;
+use expression_editor_core::fills::FillConfig;
 use expression_editor_standalone::{Loaded, Runner, Source, Target};
 
 const BASE: &str =
@@ -221,12 +221,7 @@ fn fills_land_where_a_drummer_puts_them() {
         );
         // A song with no fills at all means the detector is dead; one
         // where most bars are a fill means it is not discriminating.
-        assert!(
-            f.fills > 0,
-            "{}: found no fills in {} bars",
-            f.song,
-            f.bars
-        );
+        assert!(f.fills > 0, "{}: found no fills in {} bars", f.song, f.bars);
         assert!(
             f.fills * 4 < f.bars,
             "{}: {} of {} bars called a fill — that is the groove, not a fill",
@@ -251,7 +246,10 @@ fn fills_land_where_a_drummer_puts_them() {
             f.chance * 100.0
         );
     }
-    let lift: f64 = found.iter().map(|f| f.observed / f.chance.max(1e-9)).sum::<f64>()
+    let lift: f64 = found
+        .iter()
+        .map(|f| f.observed / f.chance.max(1e-9))
+        .sum::<f64>()
         / found.len() as f64;
     assert!(
         lift >= 1.9,

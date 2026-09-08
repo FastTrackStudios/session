@@ -34,7 +34,10 @@ const SOCKET_PREFIX: &str = "fts-daw-";
 const SOCKET_SUFFIX: &str = ".sock";
 
 #[derive(Parser)]
-#[command(name = "session", about = "Drive a real REAPER's setlist from the command line")]
+#[command(
+    name = "session",
+    about = "Drive a real REAPER's setlist from the command line"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

@@ -939,8 +939,7 @@ pub fn drum_workspace<D: expression_editor_audio::daw_bound::DrumDaw + Send + Sy
             .filter(|t| t.is_folder && expression_editor_core::kit::is_kit_folder(&t.name))
             .collect(),
     };
-    let kit = pick_best_kit(&tracks, &candidates)
-    .ok_or_else(|| LoadError::NoKitFolder {
+    let kit = pick_best_kit(&tracks, &candidates).ok_or_else(|| LoadError::NoKitFolder {
         project: name.clone(),
         wanted: kit_folder.map(str::to_string),
     })?;
@@ -1072,8 +1071,7 @@ pub fn drum_workspace<D: expression_editor_audio::daw_bound::DrumDaw + Send + Sy
                         // and detected hits in it, while the rest of
                         // the performance was simply not loaded. It
                         // looked like the trigger tracks held no audio.
-                        let samples =
-                            track_timeline(&daw, &ctx, &job.track, timeline_secs, rate);
+                        let samples = track_timeline(&daw, &ctx, &job.track, timeline_secs, rate);
                         if samples.is_empty() {
                             return None;
                         }
@@ -1213,7 +1211,6 @@ pub fn drum_workspace<D: expression_editor_audio::daw_bound::DrumDaw + Send + Sy
         host,
     })
 }
-
 
 /// One drum mic as a percussive document: per-hop peaks behind one note
 /// per transient.
@@ -1518,4 +1515,3 @@ fn pick_best_kit<'a>(
         .copied()
         .max_by_key(|c| expression_editor_core::kit::score_kit(&descendants_of(tracks, &c.guid)))
 }
-

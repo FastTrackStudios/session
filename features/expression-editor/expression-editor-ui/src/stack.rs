@@ -20,8 +20,8 @@
 //! content to its own height.
 
 use expression_editor_core::doc::{ExpressionDoc, Note};
-use expression_editor_core::mouse::{Context as MouseContext, Gesture as MouseGesture};
 use expression_editor_core::kit;
+use expression_editor_core::mouse::{Context as MouseContext, Gesture as MouseGesture};
 use expression_editor_core::rows::RowSpace;
 use expression_editor_core::tracks::StackRow;
 use expression_editor_core::{Editor, Mode};
@@ -116,8 +116,7 @@ pub struct SubLane {
 /// band and the two fight for the same pixels. They are different
 /// things — a span and a point — and they get different rows.
 /// r[impl drums.chrome.markers]
-    pub fn chrome_shelves(ed: &Editor) -> Vec<(Option<u32>, bool, String)> {
-
+pub fn chrome_shelves(ed: &Editor) -> Vec<(Option<u32>, bool, String)> {
     let (t0, t1) = ed.camera.time_span(ed.viewport);
     let mut seen: Vec<(Option<u32>, bool, String)> = Vec::new();
     let mut note = |lane: &Option<(u32, String)>, is_region: bool| {
@@ -415,7 +414,12 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
         let all = ed.tracks.lane_tracks(row.lane);
         let names: Vec<String> = all
             .iter()
-            .map(|&i| ed.tracks.track(i).map(|t| t.name.clone()).unwrap_or_default())
+            .map(|&i| {
+                ed.tracks
+                    .track(i)
+                    .map(|t| t.name.clone())
+                    .unwrap_or_default()
+            })
             .collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         kit::trigger_sub_rows(&refs)
@@ -468,8 +472,7 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
                 let (s, e) = doc_span_secs(ed, d)?;
                 Some((d.peaks.as_slice(), s, e))
             };
-            let (trigs, mics): (Vec<usize>, Vec<usize>) =
-                shown.iter().partition(|&&i| is_trig(i));
+            let (trigs, mics): (Vec<usize>, Vec<usize>) = shown.iter().partition(|&&i| is_trig(i));
             // A lane of nothing but triggers still has to draw something,
             // and then the triggers are the waveform — not an overlay on
             // top of an empty one.

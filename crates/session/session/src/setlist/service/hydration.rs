@@ -85,12 +85,11 @@ where
         // `self.daw.*` call reachable from an RPC handler.
         let daw = self.daw.clone();
         let project_guid = current.project_guid.clone();
-        let project_name = daw_proto::main_thread::query(move || {
-            daw.get(&project_guid).map(|info| info.name)
-        })
-        .await
-        .flatten()
-        .unwrap_or_else(|| current.project_guid.clone());
+        let project_name =
+            daw_proto::main_thread::query(move || daw.get(&project_guid).map(|info| info.name))
+                .await
+                .flatten()
+                .unwrap_or_else(|| current.project_guid.clone());
         let load = ProjectLoad {
             index,
             guid: current.project_guid.clone(),

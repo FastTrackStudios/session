@@ -16,11 +16,11 @@
 //! from other devices on the network, not just this machine.
 
 use architect::axum_ws;
-use axum::extract::ws::WebSocketUpgrade;
+use axum::Router;
 use axum::extract::State;
+use axum::extract::ws::WebSocketUpgrade;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 
 const DEFAULT_PORT: u16 = 4040;
 

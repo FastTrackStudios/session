@@ -97,7 +97,10 @@ async fn record_drum_kit_through_session_interface(ctx: &DawTestContext) -> eyre
 
     for (name, track) in DRUM_TRACKS.iter().zip(&tracks) {
         let info = track.info().await?;
-        assert!(info.armed, "track '{name}' should be armed after set_song_record_arm(true)");
+        assert!(
+            info.armed,
+            "track '{name}' should be armed after set_song_record_arm(true)"
+        );
     }
 
     // Record a couple of seconds — the exact call the Record button makes.
@@ -140,7 +143,10 @@ async fn record_drum_kit_through_session_interface(ctx: &DawTestContext) -> eyre
         .map_err(|e| eyre::eyre!("set_song_record_arm(false): {e:?}"))?;
     for (name, track) in DRUM_TRACKS.iter().zip(&tracks) {
         let info = track.info().await?;
-        assert!(!info.armed, "track '{name}' should be disarmed after set_song_record_arm(false)");
+        assert!(
+            !info.armed,
+            "track '{name}' should be disarmed after set_song_record_arm(false)"
+        );
     }
 
     Ok(())
