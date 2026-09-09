@@ -22,6 +22,19 @@ made each start slow as well as expensive.
 Pass `true` as the second argument for a throwaway copy when you want the record
 exactly as recorded — a retained `fts-drum-practice-*` directory, as before.
 
+Both open through `dx serve`, so `rsx!` edits hot-reload into the running window.
+`dx` owns the command line — it has `--cargo-args` and `--rustc-args`, but nothing
+that reaches the app — so the project is passed in `EXPRESSION_EDITOR_ARGS`, which
+holds exactly what would have followed `--`:
+
+```sh
+EXPRESSION_EDITOR_ARGS="'/tmp/…/set in stone.practice.RPP' --drums --size 1600x900" \
+    dx serve -p expression-editor-standalone --example workstation \
+    --platform desktop --renderer native
+```
+
+Real arguments still win, so running an example directly is unchanged.
+
 Either way it is a COPY. Project files and every referenced media file are real
 copies, with project references rewritten to the local `Media` directory, and
 record/render output paths redirected there too. No hard links or symlinks point

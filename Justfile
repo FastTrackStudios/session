@@ -856,7 +856,8 @@ alias c := check
 alias t := test
 alias g := guitar
 
-# Fresh Crescendum drum practice copy + workstation (editor, transport and mixer). SONG: set-in-stone or unbreakable.
+# The workstation on a real song, served: `rsx!` edits hot-reload into the
+# running window. SONG: set-in-stone or unbreakable.
 # Override the source with EXPRESSION_EDITOR_PRACTICE_ALBUM; TMPDIR controls copies.
 ee-practice $SONG="set-in-stone" $FRESH="false":
     #!/usr/bin/env bash
@@ -875,7 +876,13 @@ ee-practice $SONG="set-in-stone" $FRESH="false":
     staging=(--cached)
     if [[ "$FRESH" == "true" ]]; then staging=(); fi
     project=$(cargo run -p expression-editor-standalone --example practice -- "${staging[@]}" "$SONG")
-    cargo run -p expression-editor-standalone --example workstation -- "$project" --drums --size 1600x900
+    # Served, so `rsx!` edits hot-reload into the running window. `dx`
+    # owns argv — it has --cargo-args and --rustc-args but nothing that
+    # reaches the app — so the project goes through the environment
+    # instead; see `Args::from_env`.
+    EXPRESSION_EDITOR_ARGS="'$project' --drums --size 1600x900" \
+        dx serve -p expression-editor-standalone --example workstation \
+        --platform desktop --renderer native
 
 # The same workstation in a WRY WebView (dioxus-desktop) instead of Blitz.
 #
@@ -898,8 +905,12 @@ ee-webview $SONG="set-in-stone" $FRESH="false":
     staging=(--cached)
     if [[ "$FRESH" == "true" ]]; then staging=(); fi
     project=$(cargo run -p expression-editor-standalone --example practice -- "${staging[@]}" "$SONG")
-    cargo run -p expression-editor-standalone --features webview --example webview -- \
-        "$project" --drums --size 1600x900
+    # Served too, and this is the one where it pays most: a WebView has
+    # devtools, so a hot-reloaded `rsx!` edit can be inspected as it
+    # lands.
+    EXPRESSION_EDITOR_ARGS="'$project' --drums --size 1600x900" \
+        dx serve -p expression-editor-standalone --example webview \
+        --platform desktop --features webview
 
 # Prepare self-contained projects without opening a window; prints their paths.
 # Reuses the shared staging; pass FRESH=true for a throwaway copy.
