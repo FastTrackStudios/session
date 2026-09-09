@@ -15,7 +15,7 @@ description = "Expression editor GUI — the Melodyne/MPE canvas, toolbar, and i
 # the widget attribute ("Any attributes are not supported by the current
 # renderer"), so this is not an optimisation — it is the difference
 # between rendering and not.
-webview = ["dep:anyrender_vello_cpu", "dep:png", "dep:base64"]
+webview = ["dep:anyrender_vello_cpu", "dep:png", "dep:base64", "dep:serde_json", "dioxus/desktop"]
 default = []
 host = ["dep:expression-editor-host", "dep:tracing"]
 
@@ -51,6 +51,7 @@ parley = { workspace = true }
 # image. `vello_cpu` is pure Rust with no platform I/O, so this same path
 # serves dioxus-desktop natively and dioxus-web in wasm.
 anyrender_vello_cpu = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 png = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 

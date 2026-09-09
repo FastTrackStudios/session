@@ -5022,6 +5022,7 @@ dependencies = [
  "parley 0.10.0",
  "peniko 0.6.1",
  "png 0.17.16",
+ "serde_json",
  "tokio",
  "tracing",
 ]

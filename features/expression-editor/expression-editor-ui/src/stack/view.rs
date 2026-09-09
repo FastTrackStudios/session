@@ -359,13 +359,115 @@ pub fn StackView(
         slot.put(scene);
         String::new()
     };
-    #[cfg(feature = "webview")]
+    // A WebView is handed the same picture as an image.
+    //
+    // Rasterizing is the expensive part, so it only happens when the
+    // picture actually changed: `Scene` is a plain command list that
+    // compares by value, which makes a re-render drawing the same thing
+    // free. `stack_scene` is deterministic, so this is exact rather than
+    // a heuristic.
+    #[cfg(all(feature = "webview", not(target_arch = "wasm32")))]
     let surface_paint = {
         let _ = &slot;
-        // Rasterizing is the expensive part, so only do it when the
-        // picture actually changed: `Scene` is a plain command list and
-        // compares by value, which makes a re-render that draws the same
-        // thing free.
+        // Desktop: served over an asset handler, so the pixels never
+        // enter the DOM — the attribute is a short URL and the WebView
+        // fetches the bytes binary and direct. See `scene_image::served`.
+        let surface = use_hook(crate::scene_image::served::Surface::new);
+        dioxus::desktop::use_asset_handler("fts-scene", {
+            let surface = surface.clone();
+            move |request, responder| {
+                let revision = request
+                    .uri()
+                    .path()
+                    .rsplit('/')
+                    .next()
+                    .and_then(|tail| tail.split('.').next())
+                    .and_then(|n| n.parse::<u64>().ok());
+                let bytes = revision.and_then(|r| surface.get(r));
+                responder.respond(match bytes {
+                    Some(bytes) => dioxus::desktop::wry::http::Response::builder()
+                        .header("Content-Type", "image/bmp")
+                        // The revision IS the identity, so this can be
+                        // cached hard; a changed picture is a new URL.
+                        .header("Cache-Control", "max-age=31536000, immutable")
+                        .body(std::borrow::Cow::from(bytes))
+                        .expect("bmp response"),
+                    None => dioxus::desktop::wry::http::Response::builder()
+                        .status(404)
+                        .body(std::borrow::Cow::from(Vec::new()))
+                        .expect("404 response"),
+                });
+            }
+        });
+        let mut last = use_signal(anyrender::Scene::new);
+        let mut revision = use_signal(|| 0u64);
+        if *last.peek() != scene {
+            let bytes = crate::scene_image::scene_bmp(
+                &scene,
+                stack_w,
+                stack_h,
+                1.0,
+                crate::paint::color(theme::GUTTER_BG),
+            );
+            revision.set(surface.put(bytes));
+            last.set(scene);
+        }
+        // Drawn into a canvas, not set as a background image.
+        //
+        // A background-image URL that changes every frame flashes: the
+        // engine drops the old image, fetches the new one asynchronously,
+        // and paints nothing in between — which is what a pan looked
+        // like. A canvas keeps the last frame it was given until the next
+        // one has actually arrived, so the swap is invisible. This is the
+        // reason dense web surfaces are canvases rather than images, and
+        // it costs about a dozen lines of JS to get right.
+        let mut painter = use_hook(|| {
+            document::eval(
+                r"
+                const canvas = document.getElementById('fts-stack-canvas');
+                const ctx = canvas && canvas.getContext('2d');
+                while (ctx) {
+                    const [url, w, h] = await dioxus.recv();
+                    try {
+                        // Fetch and decode BEFORE touching the canvas:
+                        // resizing or clearing it first is what would
+                        // show a blank frame.
+                        const bitmap = await createImageBitmap(
+                            await (await fetch(url)).blob(),
+                        );
+                        if (canvas.width !== w || canvas.height !== h) {
+                            canvas.width = w;
+                            canvas.height = h;
+                        }
+                        ctx.drawImage(bitmap, 0, 0);
+                        bitmap.close();
+                    } catch (e) {
+                        // A dropped frame is a stale picture for a
+                        // moment; the next one will land.
+                    }
+                }
+                ",
+            )
+        });
+        use_effect(move || {
+            let rev = revision();
+            if rev > 0 {
+                let _ = painter.send(serde_json::json!([
+                    format!("/fts-scene/stack/{rev}.bmp"),
+                    stack_w.round(),
+                    stack_h.round(),
+                ]));
+            }
+        });
+        String::new()
+    };
+    // Web: no asset handler there, and no bridge to cross either — the
+    // rasterizer is already running in the page. A `data:` URI is the
+    // portable way to hand the pixels over without any JavaScript; a
+    // canvas would be faster and is the next step if this is not enough.
+    #[cfg(all(feature = "webview", target_arch = "wasm32"))]
+    let surface_paint = {
+        let _ = &slot;
         let mut cached = use_signal(|| (anyrender::Scene::new(), String::new()));
         if cached.peek().0 != scene {
             let uri = crate::scene_image::scene_data_uri(
@@ -418,6 +520,24 @@ pub fn StackView(
         .as_ref()
         .map_or(0.0, |z| z.origin.min(z.current) + canvas::GUTTER_W);
     let marquee_w = marquee.as_ref().map_or(0.0, |z| (z.current - z.origin).abs());
+
+    // The surface's pixels, where the renderer needs an element to put
+    // them in. Built here rather than inline because `rsx!` takes no
+    // `cfg` on an element, and resolved per build so the tree still has
+    // exactly one shape at runtime.
+    #[cfg(all(feature = "webview", not(target_arch = "wasm32")))]
+    let surface_canvas = rsx! {
+        // Behind the gesture layer and inert, so every handler still
+        // lands where it did.
+        canvas {
+            id: "fts-stack-canvas",
+            style: "position: absolute; left: 0; top: 0; display: block; \
+                    width: {stack_w:.0}px; height: {stack_h:.0}px; \
+                    pointer-events: none;",
+        }
+    };
+    #[cfg(not(all(feature = "webview", not(target_arch = "wasm32"))))]
+    let surface_canvas = rsx! {};
 
     let zoom_cursor =
         if zoom_from().is_some() || editor.read().tool == expression_editor_core::Tool::Zoom {
@@ -556,6 +676,7 @@ pub fn StackView(
                 slipping.set(None);
                 panning.set(None);
             },
+        {surface_canvas}
         object {
             "data": widget,
             // Explicit and out of flow, the same box the scene was built
