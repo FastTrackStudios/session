@@ -413,7 +413,12 @@ dioxus-web = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a5
 # Both features can be on at once: the renderer is chosen by a `cfg_if`
 # chain that tests `vello` first, so this wins over the default without
 # having to turn defaults off and re-list them.
-dioxus-native = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", features = ["prelude", "system-fonts", "svg", "autofocus", "data-uri", "vello"] }
+# `default-features = false` and then every default re-listed EXCEPT
+# `incremental` — which is the point. Dropping a feature from this
+# list does nothing while defaults are on, and `incremental` is one
+# of dioxus-native's defaults; see the note on `blitz-dom` below for
+# why it must be off. Re-list anything upstream adds to its defaults.
+dioxus-native = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", default-features = false, features = ["prelude", "system-fonts", "svg", "autofocus", "data-uri", "vello", "accessibility", "hot-reload", "net", "html", "clipboard", "file-dialog", "vello-hybrid", "woff", "apple-font-embolden"] }
 # `incremental` is deliberately OFF, everywhere, including in
 # `dioxus-native`'s list above where it is one of the defaults.
 #
