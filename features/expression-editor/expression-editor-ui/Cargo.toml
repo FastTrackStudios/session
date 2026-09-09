@@ -7,6 +7,15 @@ edition.workspace = true
 description = "Expression editor GUI — the Melodyne/MPE canvas, toolbar, and inspector as a portable Dioxus surface"
 
 [features]
+# Render for a WebView instead of Blitz.
+#
+# Additive on purpose, so no consumer has to fight `default-features`:
+# turning it ON swaps the painted surfaces' Blitz custom-widget seam for
+# something a browser engine understands. A WebView panics outright on
+# the widget attribute ("Any attributes are not supported by the current
+# renderer"), so this is not an optimisation — it is the difference
+# between rendering and not.
+webview = []
 default = []
 host = ["dep:expression-editor-host", "dep:tracing"]
 

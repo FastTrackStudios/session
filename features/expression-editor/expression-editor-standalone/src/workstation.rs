@@ -326,7 +326,34 @@ pub fn WorkstationApp() -> Element {
                 }),
         )
     });
-    let (win_w, win_h) = staged.size;
+    // The window's size, from winit — never remembered.
+    //
+    // Every pane here is laid out from pixel numbers: the arrange pane's
+    // share of the height, the left column's width beside a fixed mixer,
+    // the editor's cell. They all used to come from the size handed to
+    // `stage_workstation` before the window existed, which never changed,
+    // so resizing left every panel at its opening size with bare ground
+    // around it.
+    //
+    // Asked of the window, not measured off the DOM. dioxus-native never
+    // delivers an element resize event (`convert_resize_data` is
+    // `unimplemented!()`), and awaiting a client rect from a task borrows
+    // the document out from under whatever already holds it — the
+    // "RefCell already borrowed" re-entrancy the sizing notes warn about.
+    // winit already knows, and `use_window_event` is how dioxus-native
+    // hands it over. That is the contract
+    // `expression_editor_ui::AVAILABLE` has always stated for the
+    // editor's own cell: "a desktop window from its winit resize event".
+    let window_size = use_signal(|| staged.size);
+    // Whether there IS a window. This same component is mounted headless
+    // by the DOM benchmark and by the workstation tests, where the winit
+    // context does not exist and `use_window` panics. Resolved once, so
+    // the subtree below keeps one shape for its lifetime.
+    let windowed = use_hook(|| {
+        try_consume_context::<std::sync::Arc<dyn dioxus_native::winit::window::Window>>().is_some()
+    });
+    let (win_w, win_h) = window_size();
+
     let arrange_h = (win_h * ARRANGE_FRACTION).round();
     let left_w = (win_w - MIXER_W).max(200.0);
     // The editor's cell is everything under the arrange pane. It
@@ -550,6 +577,9 @@ pub fn WorkstationApp() -> Element {
         // to the facade at 30 Hz, meter frames feed every strip.
         ControlSync {}
         MeterFeed {}
+        if windowed {
+            WindowSize { size: window_size }
+        }
         if previews_complete() && !tracks.is_empty() {
             span { "data-testid": "workstation-ready", style: "display:none", "{tracks.len()} tracks, {items.len()} items" }
         }
@@ -997,6 +1027,50 @@ fn TcpColumn(
             }
         }
     }
+}
+
+/// Keeps `size` in step with the winit window.
+///
+/// Its own component so the hooks can be called unconditionally:
+/// `use_window_event` consumes the window context and panics without
+/// one, and the workstation is also mounted headless. The parent decides
+/// whether there is a window; this only exists when there is.
+#[component]
+fn WindowSize(mut size: Signal<(f64, f64)>) -> Element {
+    let window = dioxus_native::use_window();
+    // CSS pixels, which is what every number in the layout is in. winit
+    // reports physical ones, and on a scaled display the two differ.
+    fn logical(window: &dyn dioxus_native::winit::window::Window) -> (f64, f64) {
+        let physical = window.surface_size();
+        let scale = window.scale_factor().max(f64::EPSILON);
+        (
+            (physical.width as f64 / scale).max(1.0),
+            (physical.height as f64 / scale).max(1.0),
+        )
+    }
+    // The size at mount: a window that is never resized still has one,
+    // and it is not necessarily the size the runner asked for.
+    use_hook({
+        let window = window.clone();
+        move || size.set(logical(window.as_ref()))
+    });
+    dioxus_native::use_window_event(move |event, _| {
+        use dioxus_native::winit::event::WindowEvent;
+        if !matches!(
+            event,
+            WindowEvent::SurfaceResized(_) | WindowEvent::ScaleFactorChanged { .. }
+        ) {
+            return;
+        }
+        let next = logical(window.as_ref());
+        // A resize drag fires this continuously; only a real change
+        // should re-lay the window out.
+        let (was_w, was_h) = *size.peek();
+        if (was_w - next.0).abs() >= 1.0 || (was_h - next.1).abs() >= 1.0 {
+            size.set(next);
+        }
+    });
+    rsx! {}
 }
 
 /// The playhead line, isolated for the same reason: a position tick

@@ -160,9 +160,21 @@ pub fn StackView(
     // is what makes a painted surface go blank. See `crate::roll`.
     let slot = use_hook(crate::roll_widget::SceneSlot::new);
     let labels = use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(crate::text::Labeller::new())));
+    // What the `data` attribute carries.
+    //
+    // Under Blitz this is the custom-widget seam: the renderer calls the
+    // widget's `paint` and replays the scene the render above left in the
+    // slot. A WebView has no such thing and panics on the attribute
+    // outright ("Any attributes are not supported by the current
+    // renderer"), so there it carries nothing and the surface is drawn by
+    // the webview path instead. One rsx tree either way — the gestures,
+    // the box and the layout are identical, and only the seam moves.
+    #[cfg(not(feature = "webview"))]
     let widget = use_hook(|| {
         dioxus_native_dom::CustomWidgetAttr::new(crate::roll_widget::SceneWidget::new(slot.clone()))
     });
+    #[cfg(feature = "webview")]
+    let widget = "";
 
     let ed = editor.read();
     let vp = ed.viewport;

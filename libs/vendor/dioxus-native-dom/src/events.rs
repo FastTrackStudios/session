@@ -178,12 +178,30 @@ impl NodeHandle {
         })
     }
 
+    /// The document is borrowed elsewhere right now — ask again later.
+    fn doc_busy_err<T>(&self) -> Pin<Box<dyn Future<Output = MountedResult<T>>>> {
+        let err = MountedError::OperationFailed(Box::new(DocBusyErr));
+        Box::pin(async move { Err(err) })
+    }
+
     fn node_not_exist_err<T>(&self) -> Pin<Box<dyn Future<Output = MountedResult<T>>>> {
         let node_id = self.node_id;
         let err = MountedError::OperationFailed(Box::new(NodeNotExistErr(node_id)));
         Box::pin(async move { Err(err) })
     }
 }
+
+/// The document was mutably borrowed when a measurement was asked for.
+#[derive(Debug)]
+struct DocBusyErr;
+
+impl std::fmt::Display for DocBusyErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("document busy; measurement skipped")
+    }
+}
+
+impl std::error::Error for DocBusyErr {}
 
 #[derive(Debug)]
 struct NodeNotExistErr(NodeId);
@@ -212,9 +230,23 @@ impl RenderedElementBacking for NodeHandle {
     }
 
     fn get_client_rect(&self) -> Pin<Box<dyn Future<Output = MountedResult<PixelsRect>>>> {
-        let Some(bounding_rect) = self.doc_mut().get_client_bounding_rect(self.node_id) else {
+        // `try_borrow_mut`, not `borrow_mut`.
+        //
+        // A caller measuring from a background task cannot know whether
+        // the document is already borrowed — it usually is, because event
+        // handling and rendering both hold it — and an unconditional
+        // borrow turns "ask me later" into "RefCell already borrowed" and
+        // takes the window with it. That is the same re-entrancy the
+        // sizing notes in expression-editor-ui warn about (#167). A
+        // measurement is always safe to skip and retry, so report it as
+        // failed and let the caller ask again.
+        let Ok(mut doc) = self.doc.try_borrow_mut() else {
+            return self.doc_busy_err();
+        };
+        let Some(bounding_rect) = doc.get_client_bounding_rect(self.node_id) else {
             return self.node_not_exist_err();
         };
+        drop(doc);
         let pixels_rect = PixelsRect::new(
             Point2D::new(bounding_rect.x, bounding_rect.y),
             Size2D::new(bounding_rect.width, bounding_rect.height),

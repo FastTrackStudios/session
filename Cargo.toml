@@ -413,31 +413,25 @@ dioxus-web = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a5
 # Both features can be on at once: the renderer is chosen by a `cfg_if`
 # chain that tests `vello` first, so this wins over the default without
 # having to turn defaults off and re-list them.
-# `default-features = false` and then every default re-listed EXCEPT
-# `incremental` — which is the point. Dropping a feature from this
-# list does nothing while defaults are on, and `incremental` is one
-# of dioxus-native's defaults; see the note on `blitz-dom` below for
-# why it must be off. Re-list anything upstream adds to its defaults.
-dioxus-native = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", default-features = false, features = ["prelude", "system-fonts", "svg", "autofocus", "data-uri", "vello", "accessibility", "hot-reload", "net", "html", "clipboard", "file-dialog", "vello-hybrid", "woff", "apple-font-embolden"] }
-# `incremental` is deliberately OFF, everywhere, including in
-# `dioxus-native`'s list above where it is one of the defaults.
+# `default-features = false` with every default re-listed, so that this
+# list is the whole truth: dropping a feature from a `features = [...]`
+# while defaults are on does NOTHING, which cost a day of chasing
+# `incremental` that was never actually off.
 #
-# It crashes the workstation. In incremental mode a node that is not
-# damaged keeps the `layout_children` it already had — and blitz-dom
-# knowingly leaves dead ids in that list (`resolve.rs`: "Anonymous blocks
-# and pseudo-elements can be removed from the slab between render passes;
-# skip stale IDs"). It skips them while walking, then puts them back.
-# `paint_children` is built from that list, `hit_inner` walks
-# `paint_children` and unwraps `nodes.get(id)`, and the next pointer move
-# over a pane that has removed anything panics. Scrolling the track panel
-# down did it every time. The non-incremental path rebuilds a node's
-# children from scratch on every resolve, so the list cannot go stale.
-#
-# It is also free. Measured on the workstation stress benchmark, the
-# combined workload is 5.70x over the frame budget without incremental
-# and 5.73x with it — inside the noise, because the panes now cull and
-# paint so little that few nodes are damaged either way. Turn it back on
-# only with a renderer that keeps that list live, and re-measure.
+# `incremental` is back ON. It is not what crashes the window — the
+# panic reproduces with it off — and it is worth roughly 2x: without it
+# every resolve rebuilds layout children for the whole document, the
+# combined workload goes 5.7x to 11.6x, and a frame that changes nothing
+# stops being free.
+dioxus-native = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", default-features = false, features = ["prelude", "system-fonts", "svg", "autofocus", "data-uri", "vello", "accessibility", "hot-reload", "net", "html", "clipboard", "file-dialog", "vello-hybrid", "woff", "apple-font-embolden", "incremental"] }
+# On `incremental`, which was suspected of the `hit_inner` panic and
+# exonerated: the crash reproduces with it off, so the stale ids that
+# `resolve.rs` knowingly keeps in `layout_children` are not the cause.
+# What is left is an ordering race — a pointer event hit-tests between
+# dioxus applying a mutation and the next resolve rebuilding
+# `paint_children` — which no feature flag reaches. The lever is to stop
+# REMOVING nodes; see `TcpColumn`'s recycler, which fixed the same panic
+# for the track panel.
 blitz-dom = "=0.3.0-beta.1"
 blitz-paint = "=0.3.0-beta.1"
 blitz-traits = "=0.3.0-beta.1"

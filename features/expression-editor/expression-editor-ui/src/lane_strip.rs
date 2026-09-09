@@ -77,9 +77,21 @@ pub fn LaneStrip(editor: Signal<Editor>) -> Element {
     // widget itself must be built exactly once.
     let slot = use_hook(roll_widget::SceneSlot::new);
     let labels = use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(text::Labeller::new())));
+    // What the `data` attribute carries.
+    //
+    // Under Blitz this is the custom-widget seam: the renderer calls the
+    // widget's `paint` and replays the scene the render above left in the
+    // slot. A WebView has no such thing and panics on the attribute
+    // outright ("Any attributes are not supported by the current
+    // renderer"), so there it carries nothing and the surface is drawn by
+    // the webview path instead. One rsx tree either way — the gestures,
+    // the box and the layout are identical, and only the seam moves.
+    #[cfg(not(feature = "webview"))]
     let widget = use_hook(|| {
         dioxus_native_dom::CustomWidgetAttr::new(roll_widget::SceneWidget::new(slot.clone()))
     });
+    #[cfg(feature = "webview")]
+    let widget = "";
 
     let ed = editor.read();
     let h = ed.lane_strip_h;
