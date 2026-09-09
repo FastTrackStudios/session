@@ -20,6 +20,10 @@
 //! content to its own height.
 
 mod geometry;
+/// The same picture as `paint`, as elements — for renderers that are
+/// fast with them (WebView, web). See its module docs for why both.
+#[cfg(feature = "webview")]
+mod markup;
 mod paint;
 mod view;
 mod waveform;
