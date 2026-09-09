@@ -340,6 +340,42 @@ pub fn StackView(
         &mut labels.borrow_mut(),
     ));
 
+    // ── The overlay's numbers, all resolved before the markup ──
+    //
+    // Every branch here used to be an `rsx!` conditional, and they toggle
+    // on exactly the events that also run hit testing: a selection
+    // appears on press, a ghost on drag, a marquee on a zoom sweep. A
+    // template whose node count depends on its state is what blitz-dom
+    // walks a stale path through — `paint_children` keeps the id of a
+    // node that has been removed, and the next pointer move unwraps a
+    // `None` out of the slab. `KeyPanel` in `crate::roll` carries the
+    // same note for the same reason.
+    //
+    // So the overlay has ONE shape: the nodes are always there and the
+    // state moves them and fades them. Invisible is `opacity: 0`, not
+    // absent.
+    let sel = selected().filter(|_| px_per_sec > 0.0);
+    let sel_on = sel.is_some();
+    let sel_x = sel
+        .as_ref()
+        .map_or(0.0, |s| (s.hit_secs - view0) * px_per_sec);
+    let sel_y = sel.as_ref().map_or(0.0, |s| s.lane_y);
+    let sel_h = sel.as_ref().map_or(0.0, |s| s.lane_h);
+
+    let slip = slipping();
+    let slip_on = slip.is_some();
+    let slip_x = slip.as_ref().map_or(0.0, |s| s.hit_x);
+    let slip_to = slip.as_ref().map_or(0.0, |s| s.hit_x + (s.x - s.x0));
+    let slip_y = slip.as_ref().map_or(0.0, |s| s.lane_y);
+    let slip_h = slip.as_ref().map_or(0.0, |s| s.lane_h);
+
+    let marquee = zooming().filter(|zoom| zoom.marquee);
+    let marquee_on = marquee.is_some();
+    let marquee_x = marquee
+        .as_ref()
+        .map_or(0.0, |z| z.origin.min(z.current) + canvas::GUTTER_W);
+    let marquee_w = marquee.as_ref().map_or(0.0, |z| (z.current - z.origin).abs());
+
     let zoom_cursor =
         if zoom_from().is_some() || editor.read().tool == expression_editor_core::Tool::Zoom {
             "zoom-in"
@@ -895,14 +931,14 @@ pub fn StackView(
             // while playing and must move one line, not re-render the
             // stack.
             if let Some(ph) = playhead_secs {
-                if px_per_sec > 0.0 {
-                    StackPlayhead {
-                        playhead: ph,
-                        view0,
-                        px_per_sec,
-                        height: vp.h,
-                        ruler_h,
-                    }
+                StackPlayhead {
+                    playhead: ph,
+                    view0,
+                    // A degenerate viewport must not change the shape of
+                    // this subtree either; the line just does not move.
+                    px_per_sec: px_per_sec.max(0.0),
+                    height: vp.h,
+                    ruler_h,
                 }
             }
 
@@ -910,27 +946,19 @@ pub fn StackView(
             // with a bracket at the lane's top edge so it reads against
             // the hit line without hiding it.
             // r[impl drums.manual.nudge]
-            if let Some(sel) = selected() {
-                if px_per_sec > 0.0 {
-                    g {
-                        transform: "translate({canvas::GUTTER_W}, {ruler_h})",
-                        {
-                            let x = (sel.hit_secs - view0) * px_per_sec;
-                            rsx! {
-                                line {
-                                    x1: "{x:.1}", x2: "{x:.1}",
-                                    y1: "{sel.lane_y:.1}", y2: "{sel.lane_y + sel.lane_h:.1}",
-                                    stroke: theme::ACCENT, stroke_width: 1,
-                                    opacity: "0.8",
-                                }
-                                rect {
-                                    x: "{x - 3.0:.1}", y: "{sel.lane_y:.1}",
-                                    width: 6, height: 4,
-                                    fill: theme::ACCENT,
-                                }
-                            }
-                        }
-                    }
+            g {
+                transform: "translate({canvas::GUTTER_W}, {ruler_h})",
+                line {
+                    x1: "{sel_x:.1}", x2: "{sel_x:.1}",
+                    y1: "{sel_y:.1}", y2: "{sel_y + sel_h:.1}",
+                    stroke: theme::ACCENT, stroke_width: 1,
+                    opacity: if sel_on { "0.8" } else { "0" },
+                }
+                rect {
+                    x: "{sel_x - 3.0:.1}", y: "{sel_y:.1}",
+                    width: 6, height: 4,
+                    fill: theme::ACCENT,
+                    opacity: if sel_on { "1" } else { "0" },
                 }
             }
 
@@ -939,30 +967,29 @@ pub fn StackView(
             // "this hit is moving there".
             // r[impl drums.manual.slip]
             // r[impl drums.manual.stretch]
-            if let Some(s) = slipping() {
-                g {
-                    transform: "translate({canvas::GUTTER_W}, {ruler_h})",
-                    line {
-                        x1: "{s.hit_x:.1}", x2: "{s.hit_x:.1}",
-                        y1: "{s.lane_y:.1}", y2: "{s.lane_y + s.lane_h:.1}",
-                        stroke: theme::TEXT_DIM, stroke_width: 1,
-                        opacity: "0.5",
-                    }
-                    line {
-                        x1: "{s.hit_x + (s.x - s.x0):.1}", x2: "{s.hit_x + (s.x - s.x0):.1}",
-                        y1: "{s.lane_y:.1}", y2: "{s.lane_y + s.lane_h:.1}",
-                        stroke: theme::ACCENT, stroke_width: 2,
-                    }
+            g {
+                transform: "translate({canvas::GUTTER_W}, {ruler_h})",
+                line {
+                    x1: "{slip_x:.1}", x2: "{slip_x:.1}",
+                    y1: "{slip_y:.1}", y2: "{slip_y + slip_h:.1}",
+                    stroke: theme::TEXT_DIM, stroke_width: 1,
+                    opacity: if slip_on { "0.5" } else { "0" },
+                }
+                line {
+                    x1: "{slip_to:.1}", x2: "{slip_to:.1}",
+                    y1: "{slip_y:.1}", y2: "{slip_y + slip_h:.1}",
+                    stroke: theme::ACCENT, stroke_width: 2,
+                    opacity: if slip_on { "1" } else { "0" },
                 }
             }
-            if let Some(zoom) = zooming().filter(|zoom| zoom.marquee) {
-                rect {
-                    x: zoom.origin.min(zoom.current) + canvas::GUTTER_W,
-                    y: ruler_h,
-                    width: (zoom.current - zoom.origin).abs(),
-                    height: vp.h,
-                    fill: "#60a5fa26", stroke: "#60a5fa", pointer_events: "none",
-                }
+            rect {
+                x: "{marquee_x:.1}",
+                y: "{ruler_h:.1}",
+                width: "{marquee_w:.1}",
+                height: "{vp.h:.1}",
+                fill: "#60a5fa26", stroke: "#60a5fa",
+                pointer_events: "none",
+                opacity: if marquee_on { "1" } else { "0" },
             }
         }
         }
@@ -982,9 +1009,16 @@ fn StackPlayhead(
     ruler_h: f64,
 ) -> Element {
     let x = canvas::GUTTER_W + (playhead() - view0) * px_per_sec;
-    if x < canvas::GUTTER_W {
-        return rsx! {};
-    }
+    // Off the left edge is invisible, not absent.
+    //
+    // This returned an empty element when the playhead scrolled out of
+    // view, so the node count flipped between zero and one on an
+    // ordinary pan — and a template whose shape depends on its state is
+    // what leaves a dead id in blitz-dom's `paint_children` for the next
+    // hit test to unwrap. Same note as `KeyPanel` in `crate::roll`, and
+    // the same fix: one shape, faded.
+    let visible = x >= canvas::GUTTER_W;
+    let x = x.max(canvas::GUTTER_W);
     rsx! {
         line {
             x1: "{x:.1}", x2: "{x:.1}",
@@ -992,7 +1026,7 @@ fn StackPlayhead(
             y2: "{ruler_h + height:.1}",
             stroke: "#f8fafc",
             stroke_width: 1,
-            opacity: "0.7",
+            opacity: if visible { "0.7" } else { "0" },
         }
     }
 }
