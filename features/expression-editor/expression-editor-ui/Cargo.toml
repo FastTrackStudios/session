@@ -6,7 +6,13 @@ license.workspace = true
 edition.workspace = true
 description = "Expression editor GUI — the Melodyne/MPE canvas, toolbar, and inspector as a portable Dioxus surface"
 
+[features]
+default = []
+host = ["dep:expression-editor-host", "dep:tracing"]
+
 [dependencies]
+tracing = { workspace = true, optional = true }
+expression-editor-host = { workspace = true, optional = true }
 expression-editor-tools.workspace = true
 # The shared scroll/wheel bindings. The editor resolves gestures from the
 # same keymap the arrange view and REAPER use rather than hardcoding a

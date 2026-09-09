@@ -855,3 +855,69 @@ web-check:
 alias c := check
 alias t := test
 alias g := guitar
+
+# Fresh Crescendum drum practice copy + workstation (editor, transport and mixer). SONG: set-in-stone or unbreakable.
+# Override the source with EXPRESSION_EDITOR_PRACTICE_ALBUM; TMPDIR controls copies.
+ee-practice $SONG="set-in-stone":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$SONG" == "both" ]]; then
+        echo 'Open one song per window: just ee-practice set-in-stone / just ee-practice unbreakable' >&2
+        exit 2
+    fi
+    project=$(cargo run -p expression-editor-standalone --example practice -- "$SONG")
+    cargo run -p expression-editor-standalone --example workstation -- "$project" --drums --size 1600x900
+
+# Prepare both self-contained projects without opening a window; prints their paths.
+ee-practice-prepare $SONG="both":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo run -p expression-editor-standalone --example practice -- "$SONG"
+
+# Real-song regression: copy, load, split, undo/redo, save/reopen, verify originals.
+ee-practice-test:
+    cargo test -p expression-editor-standalone --test practice_real -- --ignored --nocapture --test-threads=1
+
+# Fast iteration loop: the SAME cached song/audio staging every run, fewer
+# frames, optionally one phase. Prints the report directory for compare.py.
+#
+# `ee-stress` is the recipe of record — a fresh copy, all eight phases,
+# 120 frames. This one trades that isolation for a minute-long loop: it
+# reuses one staging (nothing here writes to it) so the `.reapeaks`
+# sidecars stay warm, and it defaults to 40 frames, which is a signal,
+# not a result. Confirm anything you intend to report with `ee-stress`.
+ee-bench $SONG="set-in-stone" $FRAMES="120" $PHASE="all_panels" $PROFILE="release":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$SONG" == "both" ]]; then echo 'Run one song per benchmark: set-in-stone or unbreakable' >&2; exit 2; fi
+    cargo build -p expression-editor-standalone --example stress --example practice --profile "$PROFILE"
+    artifact_root="${CARGO_TARGET_DIR:-target}"
+    artifact_profile="$PROFILE"
+    if [[ "$PROFILE" == "dev" ]]; then artifact_profile=debug; fi
+    project=$("$artifact_root/$artifact_profile/examples/practice" --cached "$SONG")
+    report_root=$(mktemp -d -t fts-ui-bench-XXXXXX)
+    printf 'Practice project: %s\nReport directory: %s\n' "$project" "$report_root"
+    RUST_BACKTRACE=1 FTS_STRESS_FRAMES="$FRAMES" FTS_STRESS_PROFILE="$PROFILE" FTS_STRESS_PHASE="$PHASE" \
+      "$artifact_root/$artifact_profile/examples/stress" "$project" --drums --size 1600x900 --out "$report_root" 2>&1 | tee "$report_root/run.log"
+    python3 scripts/ui-stress/run.py "$report_root"
+
+# Two benchmark runs side by side, with their load averages.
+ee-bench-compare BASELINE CANDIDATE:
+    python3 scripts/ui-stress/compare.py {{BASELINE}} {{CANDIDATE}}
+
+# Headless full-workstation DOM stress on fresh song/audio copies.
+ee-stress $SONG="set-in-stone" $FRAMES="120" $PROFILE="dev" $ENFORCE="false":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$SONG" == "both" ]]; then echo 'Run one song per benchmark: set-in-stone or unbreakable' >&2; exit 2; fi
+    cargo build -p expression-editor-standalone --example stress --example practice --profile "$PROFILE"
+    artifact_root="${CARGO_TARGET_DIR:-target}"
+    artifact_profile="$PROFILE"
+    if [[ "$PROFILE" == "dev" ]]; then artifact_profile=debug; fi
+    project=$("$artifact_root/$artifact_profile/examples/practice" "$SONG")
+    report_root=$(mktemp -d -t fts-ui-stress-XXXXXX)
+    options=()
+    if [[ "$ENFORCE" == "true" ]]; then options+=(--enforce); fi
+    printf 'Practice project: %s\nReport directory: %s\n' "$project" "$report_root"
+    RUST_BACKTRACE=1 FTS_STRESS_FRAMES="$FRAMES" FTS_STRESS_PROFILE="$PROFILE" "$artifact_root/$artifact_profile/examples/stress" "$project" --drums --size 1600x900 --out "$report_root" 2>&1 | tee "$report_root/run.log"
+    python3 scripts/ui-stress/run.py "$report_root" "${options[@]}"

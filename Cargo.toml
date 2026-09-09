@@ -8,12 +8,14 @@
 resolver = "3"
 
 members = [
+    "libs/vendor/dioxus-native-dom",
     "features/expression-editor/expression-editor-audio",
     "features/expression-editor/expression-editor-core",
     "features/expression-editor/expression-editor-corpus",
     "features/expression-editor/expression-editor-daw",
     "features/expression-editor/expression-editor-demo",
     "features/expression-editor/expression-editor-guitarpro",
+    "features/expression-editor/expression-editor-host",
     "features/expression-editor/expression-editor-reaper",
     "features/expression-editor/expression-editor-standalone",
     "features/expression-editor/expression-editor-tools",
@@ -244,6 +246,7 @@ expression-editor-corpus = { path = "features/expression-editor/expression-edito
 expression-editor-daw = { path = "features/expression-editor/expression-editor-daw" }
 expression-editor-demo = { path = "features/expression-editor/expression-editor-demo" }
 expression-editor-guitarpro = { path = "features/expression-editor/expression-editor-guitarpro" }
+expression-editor-host = { path = "features/expression-editor/expression-editor-host" }
 expression-editor-reaper = { path = "features/expression-editor/expression-editor-reaper" }
 expression-editor-standalone = { path = "features/expression-editor/expression-editor-standalone" }
 expression-editor-tools = { path = "features/expression-editor/expression-editor-tools" }
@@ -411,7 +414,16 @@ dioxus-web = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a5
 # chain that tests `vello` first, so this wins over the default without
 # having to turn defaults off and re-list them.
 dioxus-native = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", features = ["prelude", "system-fonts", "svg", "autofocus", "incremental", "data-uri", "vello"] }
-blitz-dom = "=0.3.0-beta.1"
+# `incremental` is NOT one of blitz-dom's default features, and whether
+# the workstation got it was previously an accident of feature
+# unification: `dioxus-native` asks for it, `dioxus-native-dom` (what
+# `dioxus-test` and the plugin editors build on) does not, and the two
+# resolve to separate units. Without it every `resolve()` re-runs damage
+# propagation, box construction and layout for the WHOLE document rather
+# than the damaged subtrees — so a window that changed one lane paid for
+# every node in it. Declared here so the window, the plugin editor and
+# the benchmark all measure the same renderer.
+blitz-dom = { version = "=0.3.0-beta.1", features = ["incremental"] }
 blitz-paint = "=0.3.0-beta.1"
 blitz-traits = "=0.3.0-beta.1"
 blitz-shell = "=0.3.0-beta.1"
@@ -947,3 +959,12 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.pitch-dsp]
 opt-level = 3
+
+# Preserve audio sources on newly split items until the upstream exporter is fixed.
+[patch."https://github.com/FastTrackStudios/daw"]
+dawfile-standalone = { path = "libs/vendor/dawfile-standalone" }
+daw-standalone = { path = "libs/vendor/daw-standalone" }
+
+# Clear native DOM mappings before Blitz recycles removed node slots.
+[patch."https://github.com/DioxusLabs/dioxus"]
+dioxus-native-dom = { path = "libs/vendor/dioxus-native-dom" }

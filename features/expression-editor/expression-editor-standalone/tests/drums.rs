@@ -480,3 +480,253 @@ fn hand_added_and_removed_hits_shape_the_list_but_not_the_daw() {
         assert_eq!(pieces_on(daw, &ctx, item), before[i], "mic {i} untouched");
     }
 }
+
+#[test]
+fn repeated_splits_edit_current_pieces_and_undo_only_the_last_cut() {
+    use daw::service::ProjectContext;
+    use expression_editor_audio::quantize::SplitConfig;
+    let runner = open_kit("repeated-split");
+    let host = runner.host.as_ref().unwrap();
+    let daw = runner.daw.as_ref().unwrap();
+    let cfg = SplitConfig {
+        leading_pad_secs: 0.0,
+        crossfade_secs: 0.0,
+    };
+    host.split(0.3, cfg).unwrap();
+    let first: Vec<_> = host
+        .group()
+        .iter()
+        .map(|item| pieces_on(daw, &ProjectContext::Current, item))
+        .collect();
+    host.split(0.7, cfg).unwrap();
+    for item in host.group() {
+        let pieces = pieces_on(daw, &ProjectContext::Current, &item);
+        assert_eq!(
+            pieces.len(),
+            3,
+            "second cut must split the current right-hand piece"
+        );
+        for (actual, expected) in
+            pieces
+                .iter()
+                .zip([(0.0, 0.3, 0.0), (0.3, 0.4, 0.3), (0.7, 0.3, 0.7)])
+        {
+            assert!((actual.0 - expected.0).abs() < 1e-9);
+            assert!((actual.1 - expected.1).abs() < 1e-9);
+            assert!(
+                (actual.2 - expected.2).abs() < 1e-9,
+                "source offset must compose across cuts"
+            );
+        }
+    }
+    assert!(host.undo());
+    let after: Vec<_> = host
+        .group()
+        .iter()
+        .map(|item| pieces_on(daw, &ProjectContext::Current, item))
+        .collect();
+    assert_eq!(after, first);
+}
+
+#[test]
+fn a_late_kit_uses_project_time_for_cuts_and_refresh() {
+    use daw::service::{Items, PositionInSeconds, ProjectContext};
+    use expression_editor_audio::quantize::SplitConfig;
+    let runner = open_kit("late-kit");
+    let daw = runner.daw.as_ref().unwrap();
+    for item in runner.host.as_ref().unwrap().group() {
+        daw.set_position(
+            ProjectContext::Current,
+            item,
+            PositionInSeconds::from_seconds(2.0),
+        )
+        .unwrap();
+    }
+    let workspace = expression_editor_host::drum_workspace(
+        daw,
+        ProjectContext::Current,
+        "Late kit",
+        None,
+        viewport(),
+    )
+    .unwrap();
+    assert_eq!(workspace.host.take_secs, 3.0);
+    workspace
+        .host
+        .split(
+            2.5,
+            SplitConfig {
+                leading_pad_secs: 0.0,
+                crossfade_secs: 0.0,
+            },
+        )
+        .unwrap();
+    for item in workspace.host.group() {
+        assert_eq!(
+            pieces_on(daw, &ProjectContext::Current, &item),
+            vec![(2.0, 0.5, 0.0), (2.5, 0.5, 0.5)]
+        );
+    }
+    for (_, doc) in workspace.host.refresh() {
+        assert!((doc.end / doc.time_base.units_per_second(120.0) - 3.0).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn locked_mic_refuses_the_whole_edit_before_any_other_mic_is_changed() {
+    use daw::service::{Items, ProjectContext};
+    use expression_editor_audio::{apply_quantize::GroupError, quantize::SplitConfig};
+    let runner = open_kit("locked-kit");
+    let host = runner.host.as_ref().unwrap();
+    let daw = runner.daw.as_ref().unwrap();
+    let items = host.group();
+    daw.set_locked(ProjectContext::Current, items.last().unwrap().clone(), true)
+        .unwrap();
+    let before: Vec<_> = items
+        .iter()
+        .map(|item| pieces_on(daw, &ProjectContext::Current, item))
+        .collect();
+    let result = host.split(
+        0.5,
+        SplitConfig {
+            leading_pad_secs: 0.0,
+            crossfade_secs: 0.0,
+        },
+    );
+    assert!(matches!(result, Err(GroupError::Unsupported { .. })));
+    let after: Vec<_> = items
+        .iter()
+        .map(|item| pieces_on(daw, &ProjectContext::Current, item))
+        .collect();
+    assert_eq!(before, after);
+}
+
+#[test]
+fn zero_item_gain_is_silent_in_detection() {
+    use daw::service::ProjectContext;
+    let runner = open_kit("zero-gain");
+    let daw = runner.daw.as_ref().unwrap();
+    let daw::service::ItemRef::Guid(guid) = runner.host.as_ref().unwrap().group().remove(0) else {
+        panic!("GUID anchor");
+    };
+    let (audio, _) =
+        expression_editor_host::read_take_mono(daw, &ProjectContext::Current, &guid, 1.0, 0.0)
+            .unwrap();
+    assert!(audio.iter().all(|sample| *sample == 0.0));
+}
+
+thread_local! {
+    static CALLBACK_STAGE: std::cell::RefCell<Option<(expression_editor_core::Editor, expression_editor_standalone::drum_host::SharedDrumHost)>> = const { std::cell::RefCell::new(None) };
+}
+
+#[dioxus::prelude::component]
+fn CallbackSurface() -> dioxus::prelude::Element {
+    use dioxus::prelude::*;
+    let staged = use_hook(|| CALLBACK_STAGE.with(|stage| stage.borrow_mut().take().unwrap()));
+    let editor = use_signal(|| staged.0.clone());
+    let bins = use_signal(Vec::new);
+    let previews = use_signal(Vec::new);
+    let fills = use_signal(Vec::new);
+    let callbacks = expression_editor_ui::host::use_drum_callbacks(
+        editor,
+        Some(staged.1),
+        bins,
+        previews,
+        fills,
+    );
+    let split = callbacks.on_hit.unwrap();
+    rsx! {
+        div { style: "width: 1400px; height: 700px;",
+            button {
+                "data-testid": "test-split",
+                onclick: move |_| split.call(expression_editor_core::drum::HitGesture::Split { at: 0.5 }),
+                "Split"
+            }
+            expression_editor_ui::ExpressionEditor {
+                editor,
+                on_undo: callbacks.on_undo,
+                on_redo: callbacks.on_redo,
+                host_error: callbacks.error.and_then(|error| error()),
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn shared_callbacks_commit_undo_and_display_refusals() -> dioxus_test::Result<()> {
+    use daw::service::{Items, ProjectContext};
+    use dioxus_test::{by_testid, render};
+    let runner = open_kit("shared-callbacks");
+    let host = runner.host.as_ref().unwrap().clone();
+    let daw = runner.daw.as_ref().unwrap();
+    CALLBACK_STAGE
+        .with(|stage| *stage.borrow_mut() = Some((runner.loaded.editor().clone(), host.clone())));
+    let tester = render(CallbackSurface).with_window_size(1400, 700).build();
+    let click = |id| -> dioxus_test::Result<()> {
+        let button = tester.query(by_testid(id)).immediately()?;
+        let (x, y) = button.document_origin();
+        let (w, h) = button.size();
+        let (x, y) = (x + w as f64 * 0.5, y + h as f64 * 0.5);
+        tester.pointer_down_mods(x, y, dioxus_test::keyboard_types::Modifiers::empty());
+        tester.pointer_up_mods(x, y, dioxus_test::keyboard_types::Modifiers::empty());
+        Ok(())
+    };
+    click("test-split")?;
+    let _ = tester.pump().await;
+    for item in host.group() {
+        assert_eq!(pieces_on(daw, &ProjectContext::Current, &item).len(), 2);
+    }
+    click("undo")?;
+    let _ = tester.pump().await;
+    for item in host.group() {
+        assert_eq!(
+            pieces_on(daw, &ProjectContext::Current, &item),
+            vec![(0.0, 1.0, 0.0)]
+        );
+    }
+    click("redo")?;
+    let _ = tester.pump().await;
+    for item in host.group() {
+        assert_eq!(pieces_on(daw, &ProjectContext::Current, &item).len(), 2);
+    }
+    click("undo")?;
+    let _ = tester.pump().await;
+    daw.set_locked(ProjectContext::Current, host.group().remove(0), true)
+        .unwrap();
+    click("test-split")?;
+    let _ = tester.pump().await;
+    let alert = tester.query(by_testid("host-error")).immediately()?;
+    assert!(alert.inner_html().contains("locked"));
+    for item in host.group() {
+        assert_eq!(pieces_on(daw, &ProjectContext::Current, &item).len(), 1);
+    }
+    Ok(())
+}
+
+#[test]
+fn an_existing_warp_is_refused_without_replacing_it_or_creating_an_undo_step() {
+    use daw::service::{ProjectContext, StretchMarkers, TakeRef};
+    use expression_editor_audio::apply_quantize::GroupError;
+    let runner = open_kit("existing-warp");
+    let host = runner.host.as_ref().unwrap();
+    let daw = runner.daw.as_ref().unwrap();
+    host.stretch(0.4, 0.1, 0.7, 0.03, false).unwrap();
+    let markers = || {
+        host.group()
+            .into_iter()
+            .map(|item| daw.get_stretch_markers(ProjectContext::Current, item, TakeRef::Active))
+            .collect::<Vec<_>>()
+    };
+    let before = markers();
+    assert!(before.iter().all(|map| !map.is_empty()));
+    assert!(matches!(
+        host.stretch(0.43, 0.1, 0.7, 0.02, false),
+        Err(GroupError::Unsupported { .. })
+    ));
+    assert_eq!(markers(), before);
+    assert!(host.undo());
+    assert!(
+        markers().iter().all(Vec::is_empty),
+        "refusal must not insert an undo step above the first warp"
+    );
+}

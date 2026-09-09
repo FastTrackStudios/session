@@ -30,6 +30,8 @@ pub mod drag;
 pub mod drawer;
 pub mod envelopes;
 pub mod guitar;
+#[cfg(feature = "host")]
+pub mod host;
 pub mod inspector;
 pub mod interaction;
 pub mod keys;
@@ -174,6 +176,12 @@ pub fn ExpressionEditor(
     // r[impl drums.manual.undo]
     #[props(default)]
     on_undo: Option<EventHandler<()>>,
+    /// Redo through the same host that owns undo, when provided.
+    #[props(default)]
+    on_redo: Option<EventHandler<()>>,
+    /// The latest host operation failure, displayed until the next successful edit.
+    #[props(default)]
+    host_error: Option<String>,
     /// The transport's position, seconds — drawn as a playhead in the
     /// stacked view when present.
     #[props(default)]
@@ -286,7 +294,14 @@ pub fn ExpressionEditor(
                     width: 100%; height: 100%; \
                     min-height: 0; overflow: hidden; background: {theme::BG}; \
                     color: {theme::TEXT}; font-family: system-ui, sans-serif;",
-            toolbar::Toolbar { editor, drag, drawer, quantize_open, on_save, on_undo }
+            toolbar::Toolbar { editor, drag, drawer, quantize_open, on_save, on_undo, on_redo }
+            if let Some(message) = host_error {
+                div {
+                    role: "alert", "data-testid": "host-error",
+                    style: "flex: 0 0 auto; padding: 6px 10px; color: {theme::TEXT}; background: {theme::BG}; font-size: 12px;",
+                    "{message}"
+                }
+            }
             switcher::TrackSwitcher { editor }
             div {
                 style: "display: flex; flex: 1 1 auto; min-height: 0;",

@@ -10,6 +10,7 @@
 //! deliberate one — see the note there.
 
 pub mod arrangement_view;
+pub mod folders;
 pub mod fx_chain_tree;
 pub mod fx_parameter_browser;
 #[cfg(feature = "web")]

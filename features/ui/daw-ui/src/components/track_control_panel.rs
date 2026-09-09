@@ -12,6 +12,7 @@ use daw_proto::Track;
 /// vertical list where each row represents one track with its key controls.
 #[component]
 pub fn TrackControlPanel() -> Element {
+    let mut folders = super::folders::use_folder_state();
     let mut tracks = use_signal(Vec::<Track>::new);
     let mut error_msg = use_signal(|| Option::<String>::None);
     let mut connected = use_signal(|| false);
@@ -73,7 +74,7 @@ pub fn TrackControlPanel() -> Element {
     // Compute folder depth for indentation.
     // Track.folder_depth encodes: positive = start N folder levels, negative = close N levels.
     // We accumulate depth as we iterate to get the actual nesting level for each track.
-    let depths = compute_depths(&track_list);
+    let (track_list, depths) = folders.read().visible(&track_list);
 
     rsx! {
         div { class: "h-full w-full flex flex-col bg-card overflow-hidden",
@@ -95,6 +96,8 @@ pub fn TrackControlPanel() -> Element {
                                 key: "{track.guid}",
                                 track: track.clone(),
                                 depth: depth,
+                                collapsed: folders.read().is_collapsed(&track.guid),
+                                onfoldertoggle: { let guid = track.guid.clone(); move |_| folders.write().toggle(&guid) },
                                 is_selected: is_selected,
                                 on_click: move |_| {
                                     selected_guid.set(Some(guid.clone()));
@@ -108,32 +111,6 @@ pub fn TrackControlPanel() -> Element {
     }
 }
 
-/// Compute nesting depth for each track based on folder_depth values.
-///
-/// REAPER encodes folder structure as:
-/// - folder_depth > 0 -> this track starts a folder (depth increases after it)
-/// - folder_depth < 0 -> this track closes |N| folder levels
-/// - folder_depth == 0 -> normal track at current depth
-fn compute_depths(tracks: &[Track]) -> Vec<u32> {
-    let mut depths = Vec::with_capacity(tracks.len());
-    let mut current_depth: i32 = 0;
-
-    for track in tracks {
-        // This track renders at current_depth
-        depths.push(current_depth.max(0) as u32);
-
-        // Then adjust depth for the next track
-        if track.is_folder {
-            current_depth += 1;
-        }
-        if track.folder_depth < 0 {
-            current_depth += track.folder_depth; // negative, so subtracts
-        }
-    }
-
-    depths
-}
-
 // ── TCP Row ─────────────────────────────────────────────────────
 
 #[derive(Props, Clone, PartialEq)]
@@ -142,6 +119,8 @@ struct TcpRowProps {
     depth: u32,
     is_selected: bool,
     on_click: EventHandler<MouseEvent>,
+    collapsed: bool,
+    onfoldertoggle: EventHandler<()>,
 }
 
 #[component]
@@ -202,6 +181,15 @@ fn TcpRow(props: TcpRowProps) -> Element {
             style: "padding-left: {indent_px + 4}px;",
             onclick: move |e| props.on_click.call(e),
 
+            if track.folder_depth > 0 {
+                super::folders::FolderButton {
+                    name: track.name.clone(),
+                    collapsed: props.collapsed,
+                    ontoggle: props.onfoldertoggle,
+                }
+            } else {
+                span { style: "width:20px;flex:0 0 auto;" }
+            }
             // Color swatch
             div {
                 class: "w-2 h-5 rounded-sm flex-shrink-0",

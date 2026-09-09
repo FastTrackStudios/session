@@ -50,6 +50,7 @@ fn Surface() -> Element {
         .expect("an editor was staged");
     let editor = use_signal(|| staged);
     rsx! {
+        CameraReadout { editor }
         div {
             style: "width: {VP_W + canvas::GUTTER_W}px; height: {VP_H + canvas::RULER_H}px;",
             "data-testid": "stack",
@@ -403,4 +404,83 @@ async fn the_gutter_chip_picks_the_lanes_mic() -> dioxus_test::Result<()> {
 
     assert!(got().is_empty(), "a menu press is not a hit gesture");
     Ok(())
+}
+
+#[component]
+fn CameraReadout(editor: Signal<Editor>) -> Element {
+    let ed = editor.read();
+    rsx! { span { "data-testid": "camera-state", "data-units": "{ed.camera.units_per_px}", "data-start": "{ed.camera.t0}" } }
+}
+
+fn units(s: &Stage) -> f64 {
+    s.tester
+        .query(by_testid("camera-state"))
+        .immediately()
+        .unwrap()
+        .attribute("data-units")
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn held_z_zooms_instead_of_slipping_a_hit_and_release_restores_editing() {
+    let s = stage(false);
+    // Focus the editor without moving a hit.
+    s.tester.pointer_down(s.hit_x + 1.0, s.y);
+    s.tester.pointer_up(s.hit_x + 1.0, s.y);
+    s.tester.drain();
+    let before = units(&s);
+    s.tester
+        .key_down(Key::Character("z".into()), Modifiers::empty());
+    s.tester.drain();
+    drag(&s, 120.0, Modifiers::empty());
+    assert!(units(&s) < before * 0.8);
+    assert!(got().is_empty(), "zoom must never edit hits");
+    s.tester
+        .key_up(Key::Character("z".into()), Modifiers::empty());
+    s.tester.drain();
+    let before = units(&s);
+    drag(&s, 25.0, Modifiers::empty());
+    assert!(
+        (units(&s) - before).abs() < 1e-9,
+        "release ends momentary zoom"
+    );
+}
+
+#[test]
+fn held_z_alt_drag_frames_a_time_range_without_adding_hits() {
+    let s = stage(false);
+    s.tester.pointer_down(s.hit_x + 1.0, s.y);
+    s.tester.pointer_up(s.hit_x + 1.0, s.y);
+    s.tester.drain();
+    let before = units(&s);
+    s.tester
+        .key_down(Key::Character("z".into()), Modifiers::empty());
+    s.tester.drain();
+    drag(&s, 200.0, Modifiers::ALT);
+    assert!(units(&s) < before * 0.3, "swept range fills the viewport");
+    assert!(got().is_empty());
+}
+
+#[test]
+fn held_z_drag_can_be_dispatched_as_one_dom_event_batch() {
+    let s = stage(false);
+    s.tester
+        .query(by_testid("stack-cell"))
+        .immediately()
+        .unwrap()
+        .focus();
+    let before = units(&s);
+    s.tester
+        .key_down(Key::Character("z".into()), Modifiers::empty());
+    s.tester.pointer_down(s.hit_x, s.y);
+    s.tester.pointer_move(s.hit_x + 120.0, s.y, true);
+    s.tester.pointer_up(s.hit_x + 120.0, s.y);
+    s.tester
+        .key_up(Key::Character("z".into()), Modifiers::empty());
+    s.tester.drain();
+    s.tester.relayout();
+    assert!(units(&s) < before * 0.8);
+    assert!(got().is_empty(), "a batched zoom must not edit hits");
 }

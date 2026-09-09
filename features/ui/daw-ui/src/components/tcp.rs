@@ -73,6 +73,8 @@ pub fn TrackRow(
     /// REAPER-style DAW-level selection). Draws an accent outline.
     #[props(default)]
     selected: bool,
+    #[props(default)] collapsed: bool,
+    #[props(default)] onfoldertoggle: Option<EventHandler<()>>,
 ) -> Element {
     // The store first, the prop as the seed — see `use_live_track`.
     let row_h = height;
@@ -130,6 +132,7 @@ pub fn TrackRow(
     rsx! {
         div {
             class: "relative shrink-0",
+            "data-testid": "tcp-{track.guid}",
             style: "position:relative; width:{ROW_W}px; height:{row_h + 1.0}px; \
                     border-bottom:1px solid {rule}; {selection_ring}",
 
@@ -167,9 +170,13 @@ pub fn TrackRow(
             }
             // Only an actual folder-start track gets the folder glyph —
             // it used to draw on every row regardless of `is_folder`.
-            if track.is_folder {
-                div { style: "position:absolute; left:{7.0 + indent}px; top:{row_h - 10.0}px;",
-                    art::TrackFolder { colour: combo.clone() }
+            if track.folder_depth > 0 {
+                div { style: "position:absolute; left:{7.0 + indent}px; top:{row_h - 22.0}px;",
+                    if let Some(ontoggle) = onfoldertoggle {
+                        super::folders::FolderButton { name: track.name.clone(), collapsed, ontoggle }
+                    } else {
+                        art::TrackFolder { colour: combo.clone() }
+                    }
                 }
             }
 

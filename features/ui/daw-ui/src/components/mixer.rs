@@ -36,6 +36,7 @@ pub fn MixerPanel(
     #[props(default = 371.0)]
     height: f32,
 ) -> Element {
+    let mut folders = super::folders::use_folder_state();
     let mut tracks = use_signal(Vec::<Track>::new);
     let mut error_msg = use_signal(|| Option::<String>::None);
     let mut connected = use_signal(|| false);
@@ -104,7 +105,7 @@ pub fn MixerPanel(
         }
     }
 
-    let track_list = tracks.read().clone();
+    let (track_list, depths) = folders.read().visible(&tracks.read());
     // Measured beats seeded: the strips draw at the row the dock actually
     // gave them, or the prop until the measurement lands.
     let strip_h = measured_h.read().unwrap_or(height);
@@ -152,11 +153,14 @@ pub fn MixerPanel(
                 },
                 div { class: "flex h-full",
                     for (i, track) in track_list.iter().enumerate() {
-                        ChannelStrip {
+                        ChannelStripPreview {
                             key: "{track.guid}",
                             track: track.clone(),
-                            index: i as u32,
+                            index: track.index,
                             height: strip_h,
+                            depth: depths[i],
+                            collapsed: folders.read().is_collapsed(&track.guid),
+                            onfoldertoggle: { let guid = track.guid.clone(); move |_| folders.write().toggle(&guid) },
                         }
                     }
                 }
@@ -179,9 +183,25 @@ pub fn ChannelStripPreview(
     /// [`Collapse`][crate::controls::Collapse].
     #[props(default = 371.0)]
     height: f32,
+    #[props(default)] depth: u32,
+    #[props(default)] collapsed: bool,
+    #[props(default)] onfoldertoggle: Option<EventHandler<()>>,
 ) -> Element {
+    let guid = track.guid.clone();
     rsx! {
-        ChannelStrip { track, index, height }
+        div { "data-testid": "mcp-{guid}", style: "display:flex;flex-direction:column;flex:0 0 auto;",
+            if onfoldertoggle.is_some() || depth > 0 {
+                div { style: "height:22px;box-sizing:border-box;border-left:{depth.min(8) * 3}px solid #64748b;background:#252a32;color:#d5dbe4;display:flex;align-items:center;font-size:10px;",
+                    if track.folder_depth > 0 {
+                        if let Some(ontoggle) = onfoldertoggle {
+                            super::folders::FolderButton { name: track.name.clone(), collapsed, ontoggle }
+                        }
+                    }
+                    span { {if track.folder_depth > 0 { "Folder" } else { "↳" }} }
+                }
+            }
+            ChannelStrip { track, index, height: (height - if onfoldertoggle.is_some() || depth > 0 { 22.0 } else { 0.0 }).max(1.0) }
+        }
     }
 }
 

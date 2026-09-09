@@ -47,3 +47,5 @@ pub use event::{Sustained, Timed, length_of};
 
 pub use sink::{ArpSink, DemoArpSink, DemoSink, VelocitySink};
 pub use velocity::{Note, Range, Session, VelocityEdit};
+
+pub mod quantize_panel;

@@ -7,13 +7,16 @@ edition.workspace = true
 description = "The expression editor as a standalone desktop runner over daw-standalone — a real window on a project or fixture, one `cargo run --example` away"
 
 [dependencies]
+regex.workspace = true
+tempfile.workspace = true
+expression-editor-host = { workspace = true, features = ["standalone"] }
 expression-editor-core = { workspace = true }
 expression-editor-daw = { workspace = true }
 # `daw` because the audio session drives the facade; `render` because a
 # pitch edit has to be able to produce audio for the write path the
 # REAPER module already has.
 expression-editor-audio = { workspace = true, features = ["daw", "render"] }
-expression-editor-ui = { workspace = true }
+expression-editor-ui = { workspace = true, features = ["host"] }
 expression-editor-guitarpro = { workspace = true }
 # `standalone-rpp` = the standalone backend + the `.rpp` loader + source
 # decoding, which is what makes an audio take analysable with no DAW.
@@ -42,6 +45,10 @@ eyre = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+blitz-traits.workspace = true
+serde_json.workspace = true
+dawfile-standalone.workspace = true
+sha2.workspace = true
 # The window. A dev-dependency rather than a dependency: the library
 # half is the *loading*, which is portable and testable, and pulling
 # Blitz/vello/wgpu into it would make every consumer pay for a window

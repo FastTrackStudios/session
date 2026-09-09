@@ -25,6 +25,8 @@
 //! mixer moves the faders the renderer reads, and the editor writes the
 //! edits — all visibly the same project.
 
+mod mixer;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -35,11 +37,10 @@ use daw::standalone::Standalone;
 use daw_theme_art::geometry::mcp::STRIP_W;
 use daw_theme_art::geometry::tcp::{ROW_H, ROW_W};
 use daw_ui::components::arrangement_view::{
-    ArrangePreview, ArrangeRowKind, ItemPreview, plan_rows, waveform_from_peaks,
+    ArrangePreview, ItemPreview, plan_rows, waveform_from_peaks,
 };
-use daw_ui::components::mixer::ChannelStripPreview;
 use daw_ui::components::tcp::TrackRow;
-use daw_ui::controls::{ControlSync, FxSlotStack, MeterFeed, use_daw_tracks, use_track_store};
+use daw_ui::controls::{ControlSync, MeterFeed, use_daw_tracks, use_track_store};
 use daw_ui::panels::native::NativeTransportBar;
 
 use expression_editor_core::Editor;
@@ -63,6 +64,18 @@ const MARKER_H: f64 = 14.0;
 const ARR_RULER_H: f32 = 26.0;
 /// The FX insert band over the mixer strips, when any track has a chain.
 const FX_BAND_H: f64 = 144.0;
+
+/// How far the shared viewport must travel before the panes re-cut what
+/// they mount. Each must stay comfortably under the overscan the panes
+/// keep mounted past their edges, or a scroll would reach unmounted
+/// ground before anyone had noticed it moved.
+const COMMIT_X: f32 = 160.0;
+/// Vertically, in the same units the pane scrolls: three track rows.
+const COMMIT_Y: f32 = 3.0 * (ROW_H + 1.0);
+/// The timeline's vertical step — a screenful, not a few rows. It
+/// re-renders far more per step than the track panel does, so it is told
+/// far less often; `ArrangeCanvas`'s vertical overscan covers the drift.
+const COMMIT_TIMELINE_Y: f32 = 360.0;
 
 /// The Blitz cursor/scheme fixes every native window embeds (the same
 /// three lines the REAPER test panels carry).
@@ -321,11 +334,13 @@ pub fn WorkstationApp() -> Element {
     let bins = use_signal(Vec::new);
     let previews_sig = use_signal(Vec::new);
     let HostCallbacks {
+        error,
         on_change,
         on_apply,
         on_save,
         on_hit,
         on_undo,
+        on_redo,
     } = host_callbacks(
         editor,
         host.read().clone(),
@@ -347,12 +362,15 @@ pub fn WorkstationApp() -> Element {
     let mut shape = use_signal(ProjectShape::default);
     let item_previews_sig = use_signal(HashMap::<String, ItemPreview>::new);
     let previews_pending = use_signal(|| 0usize);
+    let mut previews_complete = use_signal(|| false);
+    let mut arrange_zoom = use_signal(|| 1.0_f32);
     use_effect(move || {
         spawn(async move {
             if let Some(s) = fetch_project().await {
                 let items = s.items.clone();
                 shape.set(s);
                 stream_previews(items, item_previews_sig, previews_pending).await;
+                previews_complete.set(true);
             }
         });
     });
@@ -420,9 +438,57 @@ pub fn WorkstationApp() -> Element {
         });
     });
 
+    let folders = use_signal(daw_ui::components::folders::FolderState::default);
+    // Where the shared TCP/timeline viewport is looking, in the scroll
+    // container's own pixels: `(left, top)`.
+    //
+    // Deliberately NOT read in this body. The panes below take it as a
+    // `Signal` and read it inside their own components, so a scroll
+    // re-renders the rows and the items that came into view — not the
+    // transport, the editor and the mixer as well.
+    //
+    // It is also deliberately COARSE. Blitz scrolls natively: the pane
+    // moves whether or not dioxus hears about it, and the only reason to
+    // hear about it is to mount whatever just came into range. Writing
+    // every pixel of it made every frame of a wheel gesture a re-render
+    // plus a style/layout resolve — which cost more than the whole
+    // uncut document had, and made scrolling the one thing this work
+    // made slower. So the window is committed in steps, and the mounted
+    // overscan is what covers the drift in between: most frames of a
+    // scroll now change no state at all and cost only what Blitz's own
+    // scroll costs.
+    // One signal per AXIS, not one for the viewport.
+    //
+    // They were a single `(left, top)` tuple, and that quietly cost more
+    // than everything the culling saved: the timeline reads it, so a
+    // VERTICAL scroll re-rendered the timeline — every item, every grid
+    // line, every lane — to arrive at exactly the same horizontal
+    // layout it already had. Measured, that was 10-12 ms a frame against
+    // 0.5 ms for the native scroll itself. Split, a vertical scroll
+    // re-renders only the track panel and a horizontal one only the
+    // timeline, because a dioxus component subscribes to the signals it
+    // actually reads.
+    let arrange_scroll_x = use_signal(|| 0.0f32);
+    let arrange_scroll_y = use_signal(|| 0.0f32);
+    // The timeline's own vertical, committed far more coarsely than the
+    // track panel's.
+    //
+    // Both panes cull vertically and both are worth culling, but they
+    // pay different prices for being told. The panel mounts one row per
+    // step and has to keep up with the scroll; the timeline re-renders
+    // every lane, item and grid line it holds, so being told at the
+    // panel's rate cost 10-12 ms a frame to arrive at the same
+    // horizontal layout. It gets its own signal, a screenful's worth of
+    // step, and the overscan to match.
+    let timeline_scroll_y = use_signal(|| 0.0f32);
     let s = shape.read();
-    let tracks = s.tracks.clone();
-    let items = s.items.clone();
+    let (tracks, depths) = folders.read().visible(&s.tracks);
+    // Shared, not copied: these two go to the TCP column and the
+    // timeline, both of which re-render on every scroll frame, and a
+    // `Vec<Track>`/`Vec<Item>` prop is deep-copied on each one.
+    let tracks = Arc::new(tracks);
+    let depths = Arc::new(depths);
+    let items = Arc::new(s.items.clone());
     let fx = s.fx.clone();
     let sections = s.sections.clone();
     let marker_flags = s.markers.clone();
@@ -443,7 +509,7 @@ pub fn WorkstationApp() -> Element {
     // at a second scale over a zoomed timeline — a map stapled to a
     // window.)
     let arrange_w = (left_w - ROW_W as f64).max(100.0) as f32;
-    let pps = (40.0 * bpm as f32 / 240.0).max(4.0);
+    let pps = (40.0 * bpm as f32 / 240.0).max(4.0) * arrange_zoom();
     let content_w = (seconds as f32 * pps).max(arrange_w);
     // The lanes' full content height: region lane + marker lane +
     // ruler + one pitch per row, the pitch both columns share. The
@@ -473,6 +539,9 @@ pub fn WorkstationApp() -> Element {
         // to the facade at 30 Hz, meter frames feed every strip.
         ControlSync {}
         MeterFeed {}
+        if previews_complete() && !tracks.is_empty() {
+            span { "data-testid": "workstation-ready", style: "display:none", "{tracks.len()} tracks, {items.len()} items" }
+        }
         div {
             style: "display: flex; flex-direction: row; width: 100vw; height: 100vh; \
                     min-height: 0; min-width: 0;",
@@ -527,6 +596,19 @@ pub fn WorkstationApp() -> Element {
                     style: "height: {lanes_h}px; flex: 0 0 auto; overflow-y: scroll; \
                             overflow-x: hidden;",
                     "data-testid": "workstation-arrange",
+                    onscroll: {
+                        let mut arrange_scroll_y = arrange_scroll_y;
+                        let mut timeline_scroll_y = timeline_scroll_y;
+                        move |event: ScrollEvent| {
+                            let y = event.scroll_top() as f32;
+                            if (*arrange_scroll_y.peek() - y).abs() >= COMMIT_Y {
+                                arrange_scroll_y.set(y);
+                            }
+                            if (*timeline_scroll_y.peek() - y).abs() >= COMMIT_TIMELINE_Y {
+                                timeline_scroll_y.set(y);
+                            }
+                        }
+                    },
                     div {
                         style: "position: relative; display: flex; \
                                 width: {left_w}px; height: {content_h}px;",
@@ -537,14 +619,13 @@ pub fn WorkstationApp() -> Element {
                             // bar ruler — so row one starts where lane
                             // one does.
                             div { style: "height: {ruler_block_h + ARR_RULER_H as f64 + 1.0}px;" }
-                            for (kind, _, _) in rows.iter() {
-                                if let ArrangeRowKind::Track(i) = kind {
-                                    TrackRow {
-                                        key: "{tracks[*i].guid}",
-                                        track: tracks[*i].clone(),
-                                        index: *i as u32,
-                                    }
-                                }
+                            TcpColumn {
+                                tracks: tracks.clone(),
+                                depths: depths.clone(),
+                                folders,
+                                scroll: arrange_scroll_y,
+                                rows_top: ruler_block_h as f32 + ARR_RULER_H + 1.0,
+                                view_h: lanes_h as f32,
                             }
                         }
                         if tracks.is_empty() {
@@ -560,8 +641,27 @@ pub fn WorkstationApp() -> Element {
                             // The lanes' own horizontal scroll — the
                             // TCP column stays put, the timeline pans.
                             div {
+                                "data-testid": "workstation-timeline",
                                 style: "width: {arrange_w}px; flex: 0 0 auto; \
                                         overflow-x: scroll; overflow-y: hidden;",
+                                onscroll: {
+                                    let mut arrange_scroll_x = arrange_scroll_x;
+                                    move |event: ScrollEvent| {
+                                        let x = event.scroll_left() as f32;
+                                        if (*arrange_scroll_x.peek() - x).abs() >= COMMIT_X {
+                                            arrange_scroll_x.set(x);
+                                        }
+                                    }
+                                },
+                                onwheel: move |event: WheelEvent| {
+                                    if event.modifiers().contains(Modifiers::CONTROL) {
+                                        let (_, dy) = expression_editor_ui::scroll::notches(&event.delta());
+                                        let next = (arrange_zoom() * (-dy as f32 * 0.12).exp()).clamp(0.25, 16.0);
+                                        arrange_zoom.set(next);
+                                        event.prevent_default();
+                                        event.stop_propagation();
+                                    }
+                                },
                                 div {
                                     style: "position: relative; width: {content_w}px; \
                                             height: {content_h}px;",
@@ -654,6 +754,17 @@ pub fn WorkstationApp() -> Element {
                                         tracks: tracks.clone(),
                                         items,
                                         previews: item_previews_sig,
+                                        scroll: arrange_scroll_x,
+                                        scroll_y: timeline_scroll_y,
+                                        canvas_top: ruler_block_h as f32 + ARR_RULER_H,
+                                        // The canvas' origin sits below
+                                        // the region/marker lanes and
+                                        // the arrange ruler, so that is
+                                        // what the scroll offset has to
+                                        // lose to land in canvas
+                                        // coordinates.
+                                        view_w: arrange_w,
+                                        view_h: lanes_h as f32,
                                         width: content_w,
                                         height: arr_h,
                                         pixels_per_second: pps,
@@ -681,6 +792,8 @@ pub fn WorkstationApp() -> Element {
                         on_hit,
                         on_save,
                         on_undo,
+                        on_redo,
+                        host_error: error.and_then(|error| error()),
                         playhead_secs: playhead,
                     }
                 }
@@ -688,34 +801,9 @@ pub fn WorkstationApp() -> Element {
             // ── Right column: the mixer, full height. One horizontal
             // scroll carries each track's FX slots and strip together,
             // so a chain never drifts off its channel. ──
-            div {
-                style: "flex: 0 0 {MIXER_W}px; width: {MIXER_W}px; min-height: 0; \
-                        overflow-x: scroll; overflow-y: hidden; display: flex; \
-                        border-left: 1px solid {rule}; background: {bar_bg};",
-                "data-testid": "workstation-mixer",
-                for (i, track) in tracks.iter().enumerate() {
-                    div {
-                        key: "{track.guid}",
-                        style: "width: {STRIP_W}px; flex: 0 0 auto; display: flex; \
-                                flex-direction: column; overflow: hidden;",
-                        if fx_band > 0.0 {
-                            div {
-                                style: "height: {FX_BAND_H}px; flex: 0 0 auto; \
-                                        display: flex; align-items: flex-end; \
-                                        overflow: hidden;",
-                                FxSlotStack {
-                                    fx: fx.get(&track.guid).cloned().unwrap_or_default(),
-                                    width: STRIP_W,
-                                }
-                            }
-                        }
-                        ChannelStripPreview {
-                            track: track.clone(),
-                            index: i as u32,
-                            height: strip_h,
-                        }
-                    }
-                }
+            mixer::WorkstationMixer {
+                tracks: tracks.as_ref().clone(), depths: depths.as_ref().clone(), fx, folders,
+                height: strip_h, rule: rule.clone(), background: bar_bg.clone(),
             }
         }
     }
@@ -725,11 +813,39 @@ pub fn WorkstationApp() -> Element {
 /// subtree and nothing else. The whole app reading the previews signal
 /// was the freeze: every arriving waveform re-laid-out the editor and
 /// the mixer too.
+///
+/// It is also where the song is cut down to what the window can see.
+/// That has to happen HERE, above the props boundary, because the props
+/// boundary is the expensive part: dioxus hands a component its props by
+/// value on every render, so an `items: Vec<Item>` of 877 takes and a
+/// `previews` map holding a peak vector each were being deep-copied —
+/// twice, once into this component and once into `ArrangePreview` — for
+/// every frame of a scroll. Filtering first means a scroll copies the
+/// forty items on screen, not the whole record.
 #[component]
 fn TimelineItems(
-    tracks: Vec<Track>,
-    items: Vec<Item>,
+    /// Behind an `Arc` for the same reason: the track list is re-read on
+    /// every scroll frame and nothing here mutates it.
+    tracks: Arc<Vec<Track>>,
+    items: Arc<Vec<Item>>,
     previews: Signal<HashMap<String, ItemPreview>>,
+    /// How far the timeline has been panned, read HERE and nowhere
+    /// above: this is the component a horizontal scroll is allowed to
+    /// re-render.
+    ///
+    /// Horizontal ONLY, on purpose. The lanes are a few screens tall and
+    /// many screens wide, so culling across time is what pays; culling
+    /// down the tracks saved a handful of nodes and cost a re-render of
+    /// the whole timeline on every vertical scroll. Reading only the
+    /// axis that matters is what keeps the two panes independent.
+    scroll: Signal<f32>,
+    /// The timeline's own vertical, on its coarse step — see
+    /// `COMMIT_TIMELINE_Y`.
+    scroll_y: Signal<f32>,
+    /// How far the canvas' origin sits below the scroll container's.
+    canvas_top: f32,
+    view_w: f32,
+    view_h: f32,
     width: f32,
     height: f32,
     pixels_per_second: f32,
@@ -738,11 +854,40 @@ fn TimelineItems(
     // Static preview — no live transport, so the cursors never move.
     let play_position = use_signal(|| 0.0f32);
     let edit_position = use_signal(|| 0.0f32);
+    let left = scroll();
+    let window = (left, scroll_y() - canvas_top, view_w, view_h);
+    // The same margin the canvas culls lanes and grid lines by, so an
+    // item and its lane come into view together.
+    const OVERSCAN: f32 = 320.0;
+    let (x0, x1) = (window.0 - OVERSCAN, window.0 + view_w + OVERSCAN);
+    let on_screen: Vec<Item> = items
+        .iter()
+        .filter(|item| {
+            let l = item.position.as_seconds() as f32 * pixels_per_second;
+            let r = l + item.length.as_seconds() as f32 * pixels_per_second;
+            r >= x0 && l <= x1
+        })
+        .cloned()
+        .collect();
+    // Read the map, copy the handful of peak vectors that are on
+    // screen, and drop the borrow — never clone the whole cache.
+    let seen = previews.read();
+    let previews: HashMap<String, ItemPreview> = on_screen
+        .iter()
+        .filter_map(|item| {
+            seen.get(&item.guid)
+                .map(|preview| (item.guid.clone(), preview.clone()))
+        })
+        .collect();
+    drop(seen);
+    let tracks = tracks.as_ref().clone();
     rsx! {
         ArrangePreview {
+            scrollable: false,
+            viewport: Some(window),
             tracks,
-            items,
-            previews: previews(),
+            items: on_screen,
+            previews,
             width,
             height,
             pixels_per_second,
@@ -750,6 +895,69 @@ fn TimelineItems(
             play_position,
             edit_position,
         }
+    }
+}
+
+/// A track row plus the one-pixel divider under it — the pitch the
+/// arrangement's lanes use, which is what the column has to match.
+const ROW_PITCH: f32 = ROW_H + 1.0;
+
+/// Which rows a column `view_h` tall, scrolled to `top`, has to mount.
+///
+/// Six rows of overscan either side: twice [`COMMIT_Y`]'s step, so a
+/// scroll that has moved but not yet committed a new window is still
+/// looking at rows that are mounted.
+fn row_window(top: f32, view_h: f32, count: usize) -> std::ops::Range<usize> {
+    const OVERSCAN_ROWS: usize = 6;
+    let first = ((top.max(0.0) / ROW_PITCH).floor() as usize).saturating_sub(OVERSCAN_ROWS);
+    let last = (((top.max(0.0) + view_h.max(0.0)) / ROW_PITCH).ceil() as usize + OVERSCAN_ROWS)
+        .min(count);
+    first.min(last)..last
+}
+
+/// The TCP column, mounting only the rows the shared viewport can see.
+///
+/// A track panel row is not cheap — REAPER's is a tint, a gutter, a
+/// name field, two knobs, a meter, arm/mute/solo and an FX slot, and
+/// this one traces all of it — so sixty-five of them are thousands of
+/// nodes that a scroll pays style and layout for whether or not they
+/// are on screen. Rows above and below the window are replaced by two
+/// spacers of exactly their height, so the rows that ARE mounted keep
+/// their document position and stay level with their lanes: the
+/// column's alignment contract with the arrangement is what makes this
+/// safe to do at all, and what would break first if it were wrong.
+///
+/// Its own component because it reads `scroll`: a vertical scroll must
+/// re-render this column and the timeline, and nothing else.
+#[component]
+fn TcpColumn(
+    tracks: Arc<Vec<Track>>,
+    depths: Arc<Vec<u32>>,
+    mut folders: Signal<daw_ui::components::folders::FolderState>,
+    /// How far the shared viewport has scrolled down. Vertical only —
+    /// see `TimelineItems` for why each pane reads one axis.
+    scroll: Signal<f32>,
+    /// Where row zero starts, below the ruler block.
+    rows_top: f32,
+    view_h: f32,
+) -> Element {
+    let rows = row_window((scroll() - rows_top).max(0.0), view_h, tracks.len());
+    let (first, last) = (rows.start, rows.end);
+    let before = first as f32 * ROW_PITCH;
+    let after = (tracks.len() - last) as f32 * ROW_PITCH;
+    rsx! {
+        div { style: "height: {before}px;" }
+        for i in first..last {
+            TrackRow {
+                key: "{tracks[i].guid}",
+                track: tracks[i].clone(),
+                index: tracks[i].index,
+                depth: depths[i],
+                collapsed: folders.read().is_collapsed(&tracks[i].guid),
+                onfoldertoggle: { let guid = tracks[i].guid.clone(); move |_| folders.write().toggle(&guid) },
+            }
+        }
+        div { style: "height: {after}px;" }
     }
 }
 
@@ -779,5 +987,31 @@ fn StreamBadge(pending: Signal<usize>) -> Element {
             style: "margin-left: 12px; font-size: 10px; color: #7b7b7b;",
             "waveforms… {pending()} left"
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tcp_window_is_bounded_at_both_ends_and_covers_the_commit_step() {
+        // Nothing to show, and a column shorter than its overscan.
+        assert_eq!(row_window(0.0, 400.0, 0), 0..0);
+        assert_eq!(row_window(0.0, 400.0, 4), 0..4);
+        // At the top, the window starts at the first row rather than
+        // underflowing past it.
+        let top = row_window(0.0, 400.0, 65);
+        assert_eq!(top.start, 0);
+        assert!(top.end > (400.0 / ROW_PITCH) as usize);
+        // Scrolled to the end, the window stops at the last row.
+        assert_eq!(row_window(65.0 * ROW_PITCH, 400.0, 65).end, 65);
+        // A viewport that has drifted by a whole commit step without
+        // committing must still be inside the mounted rows: the window
+        // for the OLD offset has to cover the NEW one's visible span.
+        let committed = row_window(20.0 * ROW_PITCH, 400.0, 65);
+        let drifted = row_window(20.0 * ROW_PITCH + COMMIT_Y, 400.0, 65);
+        let visible_end = ((20.0 * ROW_PITCH + COMMIT_Y + 400.0) / ROW_PITCH).ceil() as usize;
+        assert!(committed.end >= visible_end.min(65), "{committed:?} vs {drifted:?}");
     }
 }
