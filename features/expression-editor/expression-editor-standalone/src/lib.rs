@@ -370,6 +370,9 @@ pub struct OpenProject {
     pub daw: Standalone,
     pub ctx: ProjectContext,
     pub name: String,
+    /// The `.rpp` it was parsed from — where detected hits are kept
+    /// between opens.
+    pub path: Option<std::path::PathBuf>,
 }
 
 impl Runner {
@@ -557,6 +560,7 @@ impl Runner {
             ctx: ProjectContext::Project(summary.project_guid.clone()),
             daw,
             name,
+            path: Some(path.to_path_buf()),
         })
     }
 
@@ -577,6 +581,7 @@ impl Runner {
             &opened.name,
             kit_folder,
             viewport,
+            opened.path.as_deref(),
         )?;
         Ok((
             built.label,
@@ -759,8 +764,9 @@ pub fn drum_workspace<D: expression_editor_audio::daw_bound::DrumDaw>(
     name: &str,
     kit_folder: Option<&str>,
     viewport: Viewport,
+    cache_in: Option<&std::path::Path>,
 ) -> Result<DrumWorkspace<D>, LoadError> {
-    expression_editor_host::drum_workspace(daw, ctx, name, kit_folder, viewport).map_err(
+    expression_editor_host::drum_workspace(daw, ctx, name, kit_folder, viewport, cache_in).map_err(
         |e| match e {
             expression_editor_host::WorkspaceError::NoKitFolder { project, wanted } => {
                 LoadError::NoKitFolder { project, wanted }

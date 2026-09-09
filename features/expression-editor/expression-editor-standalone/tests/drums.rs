@@ -548,6 +548,9 @@ fn a_late_kit_uses_project_time_for_cuts_and_refresh() {
         "Late kit",
         None,
         viewport(),
+        // Analyse every time: this fixture has no project on disk, and a
+        // test that reads a cache is testing the cache.
+        None,
     )
     .unwrap();
     assert_eq!(workspace.host.take_secs, 3.0);

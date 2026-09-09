@@ -194,6 +194,10 @@ pub fn load_drums() -> bool {
         &project.name,
         None,
         Viewport::new(1100.0, 520.0),
+        // No cache here yet: REAPER hands us a project it already has
+        // open, and the path it came from is not part of what the facade
+        // reports. Analysing every time is what this has always done.
+        None,
     ) {
         Ok(workspace) => {
             *label().lock().unwrap() = workspace.label;

@@ -23,6 +23,17 @@ pub struct DrumWorkspace<D: expression_editor_audio::daw_bound::DrumDaw> {
 /// the REAPER panel build this same workspace from the project REAPER
 /// already has open, rather than re-reading it from disk.
 /// All facade reads happen on the caller's thread. Only owned sample
+/// What a track's audio arrived as: decoded from the project, or read
+/// back from a previous open.
+///
+/// A cached track carries no samples — the decode is exactly what the
+/// cache exists to skip — so its detection signals are empty until they
+/// are filled in behind the window.
+enum CapturedAudio {
+    Decoded(Vec<f64>),
+    Cached(crate::analysis_cache::Analysis),
+}
+
 /// buffers enter the analysis workers, so thread-affine backends such as
 /// REAPER use exactly the same loader as standalone hosts.
 // r[impl drums.host.daw-agnostic]
@@ -32,6 +43,10 @@ pub fn drum_workspace<D: expression_editor_audio::daw_bound::DrumDaw>(
     name: &str,
     kit_folder: Option<&str>,
     viewport: Viewport,
+    // `cache_in`: where to keep detected hits between opens, if
+    // anywhere. `None` analyses every time, which is what a caller with
+    // no project file on disk has to do.
+    cache_in: Option<&std::path::Path>,
 ) -> Result<DrumWorkspace<D>, WorkspaceError> {
     let name = name.to_string();
 
@@ -186,23 +201,48 @@ pub fn drum_workspace<D: expression_editor_audio::daw_bound::DrumDaw>(
     // facade is not `Send`, detection is already spread across workers —
     // so the span carries them apart rather than as one total.
     let decode_ms = std::cell::Cell::new(0.0f64);
+    let cached_tracks = std::cell::Cell::new(0usize);
     let started = std::time::Instant::now();
     let mut rows = crate::analysis::capture_and_analyze(
         jobs,
         |job| {
+            // The cache answers with what detection produced, which is
+            // all the lanes need to be drawn. The samples behind it are
+            // only wanted for re-detection during an edit, and those are
+            // filled in afterwards — see `signals_pending`.
+            if let Some(project) = cache_in
+                && let Some(hit) = crate::analysis_cache::load(project, &job.guid)
+            {
+                cached_tracks.set(cached_tracks.get() + 1);
+                return Some((job, CapturedAudio::Cached(hit)));
+            }
             let at = std::time::Instant::now();
             let samples = track_timeline(daw, &ctx, &job.track, timeline_secs, rate);
             decode_ms.set(decode_ms.get() + at.elapsed().as_secs_f64() * 1000.0);
-            (!samples.is_empty()).then_some((job, samples))
+            (!samples.is_empty()).then_some((job, CapturedAudio::Decoded(samples)))
         },
-        |(job, samples)| {
-            let doc = percussion_doc(&samples, rate);
-            (job, samples, rate, doc)
+        |(job, captured)| match captured {
+            CapturedAudio::Cached(hit) => {
+                let doc = crate::analysis::percussion_doc_cached(&hit);
+                (job, Vec::new(), rate, doc)
+            }
+            CapturedAudio::Decoded(samples) => {
+                let (doc, cacheable) = crate::analysis::percussion_analysis(&samples, rate);
+                // Kept for the next open: detection is cheap next to the
+                // decode that fed it, but the peaks are the lanes'
+                // backdrop and the two together are what a cached open
+                // can show before touching any audio.
+                if let Some(project) = cache_in {
+                    crate::analysis_cache::store(project, &job.guid, &cacheable);
+                }
+                (job, samples, rate, doc)
+            }
         },
     );
     let total_ms = started.elapsed().as_secs_f64() * 1000.0;
     tracing::info!(
         drums.tracks = rows.len(),
+        drums.from_cache = cached_tracks.get(),
         drums.decode_ms = decode_ms.get(),
         drums.detect_ms = total_ms - decode_ms.get(),
         drums.timeline_secs = timeline_secs,

@@ -386,9 +386,21 @@ pub fn StackView(
     #[cfg(feature = "webview")]
     let surface_markup = rsx! {
         svg {
+            // `will-change: transform` puts the drawing on a compositing
+            // layer of its own.
+            //
+            // Without it the playhead — which moves many times a second
+            // from its own leaf component, in the overlay below — shares
+            // a layer with these ~1900 elements, and every tick makes the
+            // engine re-rasterize all of them. The measurement that
+            // pointed here: the runtime probe shows only three components
+            // rendering at all (the two playheads and the transport bar),
+            // so a slow frame was never diffing or rebuilding this
+            // subtree. It was painting it, again, for a line that moved
+            // somewhere else.
             style: "position: absolute; left: 0; top: 0; display: block; \
                     width: {stack_w:.0}px; height: {stack_h:.0}px; \
-                    pointer-events: none;",
+                    pointer-events: none; will-change: transform;",
             view_box: "0 0 {stack_w:.0} {stack_h:.0}",
             preserve_aspect_ratio: "none",
             {super::markup::stack_markup(&lanes, &chrome, editor, vp)}
@@ -987,9 +999,11 @@ pub fn StackView(
         // before any of this was painted. `pointer-events: none` so the
         // gestures still land on the surface underneath.
         svg {
+            // Its own layer too, for the same reason: what moves here
+            // must not cost what does not move below.
             style: "position: absolute; left: 0; top: 0; display: block; \
                     width: {stack_w:.0}px; height: {stack_h:.0}px; \
-                    pointer-events: none;",
+                    pointer-events: none; will-change: transform;",
             // The transport's playhead, over every lane. A leaf
             // component: position ticks arrive many times a second
             // while playing and must move one line, not re-render the
