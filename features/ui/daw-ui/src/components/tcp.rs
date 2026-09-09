@@ -123,6 +123,13 @@ pub fn TrackRow(
         SOLO_TOP + 20.0 + 2.0
     };
 
+    // Shown-or-hidden as a style, never as presence — see the folder
+    // glyph below for why the row must keep one shape.
+    let hide = "display:none;";
+    let folder_shown = if track.folder_depth > 0 { "" } else { hide };
+    let phase_shown = if row_h >= PHASE_HIDE_H { "" } else { hide };
+    let lanes_shown = if row_h >= LANES_HIDE_H { "" } else { hide };
+
     let selection_ring = if selected {
         format!("box-shadow: inset 0 0 0 2px {};", theme.chrome.accent.css())
     } else {
@@ -168,15 +175,24 @@ pub fn TrackRow(
             div { style: "position:absolute; left:{7.0 + indent}px; top:5px;",
                 art::TrackPin { colour: combo.clone() }
             }
-            // Only an actual folder-start track gets the folder glyph —
-            // it used to draw on every row regardless of `is_folder`.
-            if track.folder_depth > 0 {
-                div { style: "position:absolute; left:{7.0 + indent}px; top:{row_h - 22.0}px;",
-                    if let Some(ontoggle) = onfoldertoggle {
-                        super::folders::FolderButton { name: track.name.clone(), collapsed, ontoggle }
-                    } else {
-                        art::TrackFolder { colour: combo.clone() }
-                    }
+            // Only an actual folder-start track SHOWS the folder glyph —
+            // it used to draw on every row regardless of `is_folder` —
+            // but the node is always here.
+            //
+            // A row whose node count depends on its track cannot be
+            // recycled: the panel scrolls by handing a slot a different
+            // track, and a glyph that comes and went with `folder_depth`
+            // would add and remove a subtree on an ordinary scroll. That
+            // is what leaves a dead id in blitz-dom's paint order for the
+            // next pointer move to walk (see `KeyPanel` in the expression
+            // editor's roll for the same note). Hidden, not absent.
+            div {
+                style: "position:absolute; left:{7.0 + indent}px; top:{row_h - 22.0}px; \
+                        {folder_shown}",
+                if let Some(ontoggle) = onfoldertoggle {
+                    super::folders::FolderButton { name: track.name.clone(), collapsed, ontoggle }
+                } else {
+                    art::TrackFolder { colour: combo.clone() }
                 }
             }
 
@@ -299,20 +315,20 @@ pub fn TrackRow(
             // Phase in the corner, the lanes button above it — or, when
             // the row is too short for phase but not for lanes, the lanes
             // button tucked under solo instead.
-            if row_h >= PHASE_HIDE_H {
-                div {
-                    style: "position:absolute; \
-                            left:{TINT_W + GUTTER_BUTTON_X + 3.0}px; \
-                            top:{row_h - PHASE_FROM_FLOOR}px;",
-                    PhaseButton { track: track.guid.clone() }
-                }
+            // Both hidden rather than absent, for the reason above: the
+            // row's shape must not depend on its height either.
+            div {
+                style: "position:absolute; \
+                        left:{TINT_W + GUTTER_BUTTON_X + 3.0}px; \
+                        top:{row_h - PHASE_FROM_FLOOR}px; \
+                        {phase_shown}",
+                PhaseButton { track: track.guid.clone() }
             }
-            if row_h >= LANES_HIDE_H {
-                div {
-                    style: "position:absolute; \
-                            left:{TINT_W + GUTTER_BUTTON_X + 1.0}px; top:{lanes_top}px;",
-                    FixedLanes { on: false }
-                }
+            div {
+                style: "position:absolute; \
+                        left:{TINT_W + GUTTER_BUTTON_X + 1.0}px; top:{lanes_top}px; \
+                        {lanes_shown}",
+                FixedLanes { on: false }
             }
 
             // No scale: there is no column for numbers out here, and REAPER
