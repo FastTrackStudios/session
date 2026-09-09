@@ -10,11 +10,10 @@ homepage = "https://dioxuslabs.com/learn/0.7/getting_started"
 keywords = ["dom", "ui", "gui", "react"]
 
 [features]
-# `incremental` belongs in the default: without it blitz re-runs
-# construction and layout over the entire document on every resolve,
-# which is what `dioxus-native` has always defaulted to and what the
-# plugin editors and the DOM benchmark were quietly missing.
-default = ["accessibility", "svg", "system-fonts", "incremental"]
+# `incremental` is deliberately absent — it leaves dead node ids in
+# `layout_children`, which `hit_inner` later unwraps. See the root
+# Cargo.toml's note on `blitz-dom`.
+default = ["accessibility", "svg", "system-fonts"]
 
 # DOM features
 svg = ["blitz-dom/svg"]
