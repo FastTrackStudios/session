@@ -877,6 +877,30 @@ ee-practice $SONG="set-in-stone" $FRESH="false":
     project=$(cargo run -p expression-editor-standalone --example practice -- "${staging[@]}" "$SONG")
     cargo run -p expression-editor-standalone --example workstation -- "$project" --drums --size 1600x900
 
+# The same workstation in a WRY WebView (dioxus-desktop) instead of Blitz.
+#
+# The renderer the Session desktop app ships on, so this is where the
+# panels get designed: real CSS, devtools, and a DOM that does not mind a
+# pane adding and removing nodes. Same project staging as `ee-practice` —
+# reused, not re-copied — and everything below the UI is unchanged and
+# native: the project loads, the daw facade runs in-process, audio plays.
+#
+# The painted panes (roll, lane strip, drum stack) cannot hand a WebView a
+# Vello scene, so they are rasterized on a background thread and drawn
+# into a canvas. See `expression_editor_ui::scene_image`.
+ee-webview $SONG="set-in-stone" $FRESH="false":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$SONG" == "both" ]]; then
+        echo 'Open one song per window: just ee-webview set-in-stone / just ee-webview unbreakable' >&2
+        exit 2
+    fi
+    staging=(--cached)
+    if [[ "$FRESH" == "true" ]]; then staging=(); fi
+    project=$(cargo run -p expression-editor-standalone --example practice -- "${staging[@]}" "$SONG")
+    cargo run -p expression-editor-standalone --features webview --example webview -- \
+        "$project" --drums --size 1600x900
+
 # Prepare self-contained projects without opening a window; prints their paths.
 # Reuses the shared staging; pass FRESH=true for a throwaway copy.
 ee-practice-prepare $SONG="both" $FRESH="false":

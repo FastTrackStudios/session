@@ -3,7 +3,8 @@
 From the session repository:
 
 ```sh
-just ee-practice                  # Set in Stone: editor + transport + mixer
+just ee-practice                  # Set in Stone: editor + transport + mixer (Blitz)
+just ee-webview                   # ...the same, in a WRY WebView
 just ee-practice unbreakable      # Unbreakable
 just ee-practice set-in-stone true  # ...from a throwaway copy instead
 just ee-practice-prepare          # Stage both songs, print paths; no window
