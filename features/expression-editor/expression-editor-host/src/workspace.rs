@@ -1,7 +1,7 @@
 //! Kit discovery, capture, analysis, and workspace assembly.
 use crate::audio_read::edit_item;
 use crate::{
-    WorkspaceError, attach_timeline, blend, drum_host, percussion_doc, read_take_mono,
+    WorkspaceError, attach_timeline, blend, drum_host, read_take_mono,
     track_timeline,
 };
 use daw::service::{ItemRef, Items, ProjectContext, Tracks};
