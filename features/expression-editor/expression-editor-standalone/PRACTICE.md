@@ -3,18 +3,31 @@
 From the session repository:
 
 ```sh
-just ee-practice                  # Set in Stone: fresh copy, editor + transport + mixer
-just ee-practice unbreakable      # Unbreakable in a fresh workspace
-just ee-practice-prepare          # Copy both songs, print paths; no window
+just ee-practice                  # Set in Stone: editor + transport + mixer
+just ee-practice unbreakable      # Unbreakable
+just ee-practice set-in-stone true  # ...from a throwaway copy instead
+just ee-practice-prepare          # Stage both songs, print paths; no window
 just ee-practice-test             # Real-song load / split / undo / redo / save / reload test
 ```
 
-Each invocation creates a retained `fts-drum-practice-*` directory in the system
-temporary directory. Project files and every referenced media file are actual
-copies, with project references rewritten to the local `Media` directory.
-Record/render output paths are redirected there too. Shared recordings are copied
-once per workspace; both songs together use roughly 10 GB. No hard links or
-symlinks point back to the recordings. Preparation fails if a source is missing.
+Staging is **reused**. Each song is copied once into
+`fts-drum-practice-cache/<song>/` under the system temporary directory and every
+later invocation opens that same workspace, so your edits are still there when
+you come back — and the disk holds one copy rather than one per launch. A song
+is about 5.6 GB, so the old fresh-per-launch behaviour buried the disk in an
+afternoon; it also threw away the `.reapeaks` peak sidecars every time, which
+made each start slow as well as expensive.
+
+Pass `true` as the second argument for a throwaway copy when you want the record
+exactly as recorded — a retained `fts-drum-practice-*` directory, as before.
+
+Either way it is a COPY. Project files and every referenced media file are real
+copies, with project references rewritten to the local `Media` directory, and
+record/render output paths redirected there too. No hard links or symlinks point
+back to the recordings. Preparation fails if a source is missing.
+
+`EXPRESSION_EDITOR_PRACTICE_CACHE` moves the reused staging; deleting it just
+means the next launch stages again.
 
 The source defaults to:
 

@@ -858,21 +858,33 @@ alias g := guitar
 
 # Fresh Crescendum drum practice copy + workstation (editor, transport and mixer). SONG: set-in-stone or unbreakable.
 # Override the source with EXPRESSION_EDITOR_PRACTICE_ALBUM; TMPDIR controls copies.
-ee-practice $SONG="set-in-stone":
+ee-practice $SONG="set-in-stone" $FRESH="false":
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ "$SONG" == "both" ]]; then
         echo 'Open one song per window: just ee-practice set-in-stone / just ee-practice unbreakable' >&2
         exit 2
     fi
-    project=$(cargo run -p expression-editor-standalone --example practice -- "$SONG")
+    # Reuse the staging by default. It is still a copy — originals stay
+    # out of every write path — but it is ONE copy: this used to stage a
+    # fresh 5.6 GB per invocation, so an afternoon of opening the window
+    # buried the disk and threw away the `.reapeaks` sidecars each time,
+    # making every start slow as well. `just ee-practice set-in-stone
+    # true` stages a throwaway copy when you want to start from the
+    # record as recorded.
+    staging=(--cached)
+    if [[ "$FRESH" == "true" ]]; then staging=(); fi
+    project=$(cargo run -p expression-editor-standalone --example practice -- "${staging[@]}" "$SONG")
     cargo run -p expression-editor-standalone --example workstation -- "$project" --drums --size 1600x900
 
-# Prepare both self-contained projects without opening a window; prints their paths.
-ee-practice-prepare $SONG="both":
+# Prepare self-contained projects without opening a window; prints their paths.
+# Reuses the shared staging; pass FRESH=true for a throwaway copy.
+ee-practice-prepare $SONG="both" $FRESH="false":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo run -p expression-editor-standalone --example practice -- "$SONG"
+    staging=(--cached)
+    if [[ "$FRESH" == "true" ]]; then staging=(); fi
+    cargo run -p expression-editor-standalone --example practice -- "${staging[@]}" "$SONG"
 
 # Real-song regression: copy, load, split, undo/redo, save/reopen, verify originals.
 ee-practice-test:
