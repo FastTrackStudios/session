@@ -253,6 +253,23 @@ There is no dedicated Dioxus profiler. `dioxus-core` instruments
 the engine's own devtools timeline is better than anything available from
 Rust, and is a reason to do performance work there.
 
+## Getting the window's own words back
+
+Both `just ee-practice` and `just ee-webview` tee everything to
+`target/ee-<which>.log`, and `just ee-log [which] [lines]` reads it back
+with repeated messages collapsed to a count. A thousand copies of one
+warning then read as one fact rather than a wall of scrollback, and it
+gives an agent something to look at that is not a screenshot of a
+terminal.
+
+`WARN Changing the props of `Style {}` is not supported` is worth knowing
+by sight. `document::Style` cannot restyle the head in place, so it warns
+whenever its props differ from the ones it first saw — and because it
+warns *per render*, a flood of it is really a report that whatever holds
+it is re-rendering constantly. The fix is never to quiet the warning: put
+the sheets in a component with no props, which nothing can invalidate, so
+they mount once. `velocity_panel.rs`'s `PanelStyles` is the pattern.
+
 ## Profiling tools worth reaching for
 
 In rough order of value for this UI:

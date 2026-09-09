@@ -880,9 +880,13 @@ ee-practice $SONG="set-in-stone" $FRESH="false":
     # owns argv — it has --cargo-args and --rustc-args but nothing that
     # reaches the app — so the project goes through the environment
     # instead; see `Args::from_env`.
+    # Everything the window says also lands in a file, so a warning that
+    # scrolls past — or an agent that cannot see your terminal — still has
+    # it. `tee` keeps it on screen too.
+    mkdir -p target
     EXPRESSION_EDITOR_ARGS="'$project' --drums --size 1600x900" \
         dx serve -p expression-editor-standalone --example workstation \
-        --platform desktop --renderer native
+        --platform desktop --renderer native 2>&1 | tee target/ee-practice.log
 
 # The same workstation in a WRY WebView (dioxus-desktop) instead of Blitz.
 #
@@ -908,9 +912,10 @@ ee-webview $SONG="set-in-stone" $FRESH="false":
     # Served too, and this is the one where it pays most: a WebView has
     # devtools, so a hot-reloaded `rsx!` edit can be inspected as it
     # lands.
+    mkdir -p target
     EXPRESSION_EDITOR_ARGS="'$project' --drums --size 1600x900" \
         dx serve -p expression-editor-standalone --example webview \
-        --platform desktop --features webview
+        --platform desktop --features webview 2>&1 | tee target/ee-webview.log
 
 # Prepare self-contained projects without opening a window; prints their paths.
 # Reuses the shared staging; pass FRESH=true for a throwaway copy.
@@ -947,6 +952,27 @@ ee-bench $SONG="set-in-stone" $FRAMES="120" $PHASE="all_panels" $PROFILE="releas
     RUST_BACKTRACE=1 FTS_STRESS_FRAMES="$FRAMES" FTS_STRESS_PROFILE="$PROFILE" FTS_STRESS_PHASE="$PHASE" \
       "$artifact_root/$artifact_profile/examples/stress" "$project" --drums --size 1600x900 --out "$report_root" 2>&1 | tee "$report_root/run.log"
     python3 scripts/ui-stress/run.py "$report_root"
+
+# What the last `ee-practice` / `ee-webview` run said, worst first.
+#
+# The window's own log, summarised: repeated warnings collapsed to one
+# line and a count, so a thousand copies of the same message read as one
+# fact rather than a wall. Point an agent at this rather than pasting a
+# scrollback.
+ee-log $WHICH="webview" $LINES="40":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    log="target/ee-$WHICH.log"
+    if [[ ! -f "$log" ]]; then echo "no $log — run just ee-$WHICH first" >&2; exit 1; fi
+    echo "── $log ($(wc -l < "$log") lines) ──"
+    echo
+    echo "REPEATED (count, message):"
+    # Strip timestamps and ANSI so identical messages actually collapse.
+    sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/^[0-9]{2}:[0-9]{2}:[0-9]{2}//; s/^\s*\[[a-z]+\]\s*//' "$log" \
+        | grep -aE "WARN|ERROR|panic" | sort | uniq -c | sort -rn | head -15 || echo "  (none)"
+    echo
+    echo "LAST $LINES LINES:"
+    tail -n "$LINES" "$log"
 
 # Two benchmark runs side by side, with their load averages.
 ee-bench-compare BASELINE CANDIDATE:

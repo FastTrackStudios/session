@@ -590,8 +590,7 @@ pub fn WorkstationApp() -> Element {
             "html, body {{ width: 100%; height: 100%; margin: 0; padding: 0; \
               overflow: hidden; background: {ground}; }}"
         }
-        document::Style { {daw_ui::TAILWIND_CSS} }
-        document::Style { {BLITZ_FIXES} }
+        WorkstationStyles {}
         // The engine sync pair, once for the whole window: drafts flush
         // to the facade at 30 Hz, meter frames feed every strip.
         ControlSync {}
@@ -1067,6 +1066,23 @@ fn TcpColumn(
                 }
             }
         }
+    }
+}
+
+/// The sheets that go in the document head, mounted once.
+///
+/// `document::Style` warns — loudly, per render — when its props differ
+/// from the ones it first saw, because the head cannot be re-styled in
+/// place. Sitting directly in `WorkstationApp` it did exactly that: the
+/// app re-renders on every pan, and each render built a fresh child node
+/// for the same unchanging text. A props-less component has nothing to
+/// invalidate it, so this renders once for the life of the window and
+/// the sheets are set once, which is what they were always meant to be.
+#[component]
+fn WorkstationStyles() -> Element {
+    rsx! {
+        document::Style { {daw_ui::TAILWIND_CSS} }
+        document::Style { {BLITZ_FIXES} }
     }
 }
 
