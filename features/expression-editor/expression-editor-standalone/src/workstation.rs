@@ -354,10 +354,20 @@ pub fn WorkstationApp() -> Element {
     // there is none and the staged size stands. Resolved once, so the
     // subtree below keeps one shape for its lifetime.
     let windowed = use_hook(crate::window_size::available);
+    // Which panels are showing — `E` and `X`. The arrangement grows into
+    // whatever is put away rather than leaving a hole.
+    let mut editor_open = use_signal(|| true);
+    let mut mixer_open = use_signal(|| true);
+
     let (win_w, win_h) = window_size();
 
-    let arrange_h = (win_h * ARRANGE_FRACTION).round();
-    let left_w = (win_w - MIXER_W).max(200.0);
+    let arrange_h = if editor_open() {
+        (win_h * ARRANGE_FRACTION).round()
+    } else {
+        win_h
+    };
+    let mixer_w = if mixer_open() { MIXER_W } else { 0.0 };
+    let left_w = (win_w - mixer_w).max(200.0);
     // The editor's cell is everything under the arrange pane. It
     // subtracts its own chrome from what we report here.
     expression_editor_ui::available_space(left_w, win_h - arrange_h);
@@ -536,6 +546,13 @@ pub fn WorkstationApp() -> Element {
     let seconds = s.length_secs;
     drop(s);
 
+    // Put away, not taken down. Removing a subtree is what leaves a dead
+    // id in blitz-dom's paint order for the next pointer move to walk
+    // (see `TcpColumn`), and these are toggled by a keypress — exactly
+    // when a hand is also on the mouse.
+    let editor_shown = if editor_open() { "" } else { "display: none;" };
+    let mixer_shown = if mixer_open() { "" } else { "display: none;" };
+
     let t = daw_theme::Theme::default();
     let ground = t.chrome.surface.css();
     let bar_bg = t.chrome.surface_sunken.shade(-0.05).css();
@@ -608,6 +625,20 @@ pub fn WorkstationApp() -> Element {
                                 let _ = p.transport().play_pause().await;
                             }
                         });
+                    }
+                    // The panel toggles. Bare letters, the way a DAW
+                    // hides what you are not using; a field that wants
+                    // its own letters stops the event before here (see
+                    // the inspector's lyric input).
+                    Key::Character(c) if c.eq_ignore_ascii_case("e") => {
+                        e.prevent_default();
+                        let open = !editor_open();
+                        editor_open.set(open);
+                    }
+                    Key::Character(c) if c.eq_ignore_ascii_case("x") => {
+                        e.prevent_default();
+                        let open = !mixer_open();
+                        mixer_open.set(open);
                     }
                     Key::Home => {
                         playhead.set(0.0);
@@ -828,7 +859,8 @@ pub fn WorkstationApp() -> Element {
                     }
                 }
                 div {
-                    style: "flex: 1 1 auto; min-height: 0; border-top: 1px solid {rule};",
+                    style: "flex: 1 1 auto; min-height: 0; \
+                            border-top: 1px solid {rule}; {editor_shown}",
                     "data-testid": "workstation-editor",
                     ExpressionEditor {
                         editor,
@@ -848,9 +880,16 @@ pub fn WorkstationApp() -> Element {
             // ── Right column: the mixer, full height. One horizontal
             // scroll carries each track's FX slots and strip together,
             // so a chain never drifts off its channel. ──
-            mixer::WorkstationMixer {
-                tracks: tracks.as_ref().clone(), depths: depths.as_ref().clone(), fx, folders,
-                height: strip_h, rule: rule.clone(), background: bar_bg.clone(),
+            div {
+                // The mixer's slot. `WorkstationMixer` owns its own root
+                // (and the `workstation-mixer` testid on it), so showing
+                // and hiding happens here, one level out.
+                "data-testid": "workstation-mixer-slot",
+                style: "display: flex; min-height: 0; {mixer_shown}",
+                mixer::WorkstationMixer {
+                    tracks: tracks.as_ref().clone(), depths: depths.as_ref().clone(), fx, folders,
+                    height: strip_h, rule: rule.clone(), background: bar_bg.clone(),
+                }
             }
         }
     }

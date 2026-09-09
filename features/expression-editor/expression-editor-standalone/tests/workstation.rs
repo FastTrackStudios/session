@@ -112,6 +112,51 @@ fn the_three_panes_mount_and_the_project_arrives() {
                 .immediately()
                 .unwrap_or_else(|e| panic!("{pane} missing: {e:?}"));
         }
+
+        // `E` and `X` put the editor and the mixer away, and bring them
+        // back. Hidden, never unmounted: a removed subtree is what leaves
+        // a dead id in the renderer's paint order for the next pointer
+        // move to walk, and these toggle under the user's hand.
+        let hidden = |pane: &str| {
+            tester
+                .query(by_testid(pane))
+                .immediately()
+                .unwrap_or_else(|e| panic!("{pane} was unmounted, not hidden: {e:?}"))
+                .outer_html()
+                .contains("display: none")
+        };
+        let none = dioxus_test::Modifiers::empty();
+        let tap = |key: &str| {
+            tester.key_down(dioxus_test::Key::Character(key.into()), none);
+            tester.key_up(dioxus_test::Key::Character(key.into()), none);
+        };
+
+        assert!(!hidden("workstation-editor"), "editor starts showing");
+        assert!(!hidden("workstation-mixer-slot"), "mixer starts showing");
+
+        tap("e");
+        for _ in 0..8 {
+            let _ = tester.pump().await;
+            tester.relayout();
+        }
+        assert!(hidden("workstation-editor"), "E hides the editor");
+        assert!(!hidden("workstation-mixer-slot"), "E leaves the mixer alone");
+
+        tap("x");
+        for _ in 0..8 {
+            let _ = tester.pump().await;
+            tester.relayout();
+        }
+        assert!(hidden("workstation-mixer-slot"), "X hides the mixer");
+
+        tap("e");
+        tap("x");
+        for _ in 0..8 {
+            let _ = tester.pump().await;
+            tester.relayout();
+        }
+        assert!(!hidden("workstation-editor"), "E brings the editor back");
+        assert!(!hidden("workstation-mixer-slot"), "X brings the mixer back");
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
