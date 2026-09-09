@@ -257,3 +257,141 @@ mod tests {
         assert!(uri.starts_with("data:image/png;base64,"));
     }
 }
+
+/// Rasterizing on a thread of its own, so a frame never costs the UI.
+///
+/// Turning a scene into pixels is ~2.8 ms at stack size — a third of a
+/// 120 Hz frame — and it used to run during the component's render, which
+/// is main-thread time the UI could not spend on gestures. Moving it off
+/// decouples the two entirely: the render publishes a scene and returns,
+/// and the picture catches up when it can.
+///
+/// Latest-wins, not a queue. A pan produces scenes faster than they can
+/// be drawn, and a queue would render every intermediate camera position
+/// long after the user had left it — arriving progressively later, which
+/// is exactly how a view feels laggy. Dropping superseded frames means
+/// the picture is always the most recent one that could be finished.
+/// The canvas tolerates this: it holds the last frame it was given, so a
+/// late one is a stale picture for a moment rather than a blank pane.
+#[cfg(all(feature = "webview", not(target_arch = "wasm32")))]
+pub mod worker {
+    use std::sync::{Arc, Condvar, Mutex};
+
+    use anyrender::Scene;
+    use peniko::Color;
+
+    /// What the rasterizer needs to draw one frame.
+    struct Job {
+        scene: Scene,
+        w: f64,
+        h: f64,
+        scale: f64,
+        background: Color,
+    }
+
+    #[derive(Default)]
+    struct Slot {
+        /// The next frame to draw, if one is waiting. Overwritten rather
+        /// than queued.
+        pending: Option<Job>,
+        /// Set when the component goes away, so the thread can end.
+        closed: bool,
+    }
+
+    /// A handle to a rasterizer thread.
+    #[derive(Clone)]
+    pub struct Rasterizer {
+        slot: Arc<(Mutex<Slot>, Condvar)>,
+        out: Arc<Mutex<(u64, Vec<u8>)>>,
+    }
+
+    impl Rasterizer {
+        /// Start a thread that draws whatever is put in front of it.
+        pub fn spawn() -> Self {
+            let slot: Arc<(Mutex<Slot>, Condvar)> = Arc::default();
+            let out: Arc<Mutex<(u64, Vec<u8>)>> = Arc::default();
+            let handle = Self {
+                slot: slot.clone(),
+                out: out.clone(),
+            };
+            std::thread::Builder::new()
+                .name("fts-scene-raster".into())
+                .spawn(move || {
+                    loop {
+                        let job = {
+                            let (lock, waiting) = &*slot;
+                            let Ok(mut held) = lock.lock() else { return };
+                            // Wait for work rather than spinning: an idle
+                            // surface must cost nothing at all.
+                            while held.pending.is_none() && !held.closed {
+                                let Ok(next) = waiting.wait(held) else {
+                                    return;
+                                };
+                                held = next;
+                            }
+                            if held.closed {
+                                return;
+                            }
+                            held.pending.take()
+                        };
+                        let Some(job) = job else { continue };
+                        let bytes = super::scene_bmp(
+                            &job.scene,
+                            job.w,
+                            job.h,
+                            job.scale,
+                            job.background,
+                        );
+                        if let Ok(mut out) = out.lock() {
+                            out.0 += 1;
+                            out.1 = bytes;
+                        }
+                    }
+                })
+                .expect("spawn rasterizer thread");
+            handle
+        }
+
+        /// Hand over a scene to draw, replacing any frame not yet started.
+        pub fn draw(&self, scene: Scene, w: f64, h: f64, scale: f64, background: Color) {
+            let (lock, waiting) = &*self.slot;
+            if let Ok(mut held) = lock.lock() {
+                held.pending = Some(Job {
+                    scene,
+                    w,
+                    h,
+                    scale,
+                    background,
+                });
+                waiting.notify_one();
+            }
+        }
+
+        /// The revision of the most recently finished frame. `0` until
+        /// there is one.
+        pub fn revision(&self) -> u64 {
+            self.out.lock().map(|out| out.0).unwrap_or(0)
+        }
+
+        /// The bytes of `revision`, if it is still the current frame.
+        pub fn get(&self, revision: u64) -> Option<Vec<u8>> {
+            let out = self.out.lock().ok()?;
+            (out.0 == revision).then(|| out.1.clone())
+        }
+    }
+
+    impl Drop for Rasterizer {
+        fn drop(&mut self) {
+            // Only the last handle ends the thread; the asset handler and
+            // the component each hold one.
+            if Arc::strong_count(&self.slot) > 1 {
+                return;
+            }
+            let (lock, waiting) = &*self.slot;
+            if let Ok(mut held) = lock.lock() {
+                held.closed = true;
+                waiting.notify_all();
+            }
+        }
+    }
+}

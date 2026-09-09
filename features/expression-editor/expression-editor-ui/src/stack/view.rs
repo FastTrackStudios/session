@@ -372,7 +372,7 @@ pub fn StackView(
         // Desktop: served over an asset handler, so the pixels never
         // enter the DOM — the attribute is a short URL and the WebView
         // fetches the bytes binary and direct. See `scene_image::served`.
-        let surface = use_hook(crate::scene_image::served::Surface::new);
+        let surface = use_hook(crate::scene_image::worker::Rasterizer::spawn);
         dioxus::desktop::use_asset_handler("fts-scene", {
             let surface = surface.clone();
             move |request, responder| {
@@ -399,19 +399,42 @@ pub fn StackView(
                 });
             }
         });
+        // Hand the scene over and return. Rasterizing is ~2.8 ms at this
+        // size and used to happen right here, which is main-thread time
+        // the UI could not spend on the gesture that caused it.
         let mut last = use_signal(anyrender::Scene::new);
-        let mut revision = use_signal(|| 0u64);
         if *last.peek() != scene {
-            let bytes = crate::scene_image::scene_bmp(
-                &scene,
+            surface.draw(
+                scene.clone(),
                 stack_w,
                 stack_h,
                 1.0,
                 crate::paint::color(theme::GUTTER_BG),
             );
-            revision.set(surface.put(bytes));
             last.set(scene);
         }
+        // Finished frames are collected by polling, because the thread
+        // has no way into dioxus's reactive world. Once a frame lands,
+        // the revision changes and the effect below tells the canvas.
+        let mut revision = use_signal(|| 0u64);
+        use_future({
+            let surface = surface.clone();
+            move || {
+                let surface = surface.clone();
+                async move {
+                    loop {
+                        // Half a frame at 120 Hz: fast enough that a
+                        // finished picture is never held back long, cheap
+                        // enough to be nothing when the view is still.
+                        futures_timer::Delay::new(std::time::Duration::from_millis(4)).await;
+                        let latest = surface.revision();
+                        if latest != *revision.peek() {
+                            revision.set(latest);
+                        }
+                    }
+                }
+            }
+        });
         // Drawn into a canvas, not set as a background image.
         //
         // A background-image URL that changes every frame flashes: the

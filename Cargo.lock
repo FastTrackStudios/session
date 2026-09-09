@@ -5016,6 +5016,7 @@ dependencies = [
  "expression-editor-guitarpro",
  "expression-editor-host",
  "expression-editor-tools",
+ "futures-timer",
  "input",
  "kurbo 0.13.1",
  "level-dsp",

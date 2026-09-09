@@ -15,7 +15,7 @@ description = "Expression editor GUI — the Melodyne/MPE canvas, toolbar, and i
 # the widget attribute ("Any attributes are not supported by the current
 # renderer"), so this is not an optimisation — it is the difference
 # between rendering and not.
-webview = ["dep:anyrender_vello_cpu", "dep:png", "dep:base64", "dep:serde_json", "dioxus/desktop"]
+webview = ["dep:anyrender_vello_cpu", "dep:png", "dep:base64", "dep:serde_json", "dep:futures-timer", "dioxus/desktop"]
 default = []
 host = ["dep:expression-editor-host", "dep:tracing"]
 
@@ -52,12 +52,25 @@ parley = { workspace = true }
 # serves dioxus-desktop natively and dioxus-web in wasm.
 anyrender_vello_cpu = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+# The component-context timer that polls for finished frames. dioxus
+# schedules its own futures with no tokio runtime, where a tokio timer is
+# a panic — the same choice the workstation makes, for the same reason.
+futures-timer = { version = "3", optional = true }
 png = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 blitz-dom = { workspace = true, features = ["custom-widget"] }
 dioxus-native-dom = { workspace = true }
+
+# Both exercise the WebView seam, which does not exist without it.
+[[test]]
+name = "scene_image_cost"
+required-features = ["webview"]
+
+[[test]]
+name = "raster_offthread"
+required-features = ["webview"]
 
 [dev-dependencies]
 png = { workspace = true }
