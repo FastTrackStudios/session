@@ -447,11 +447,31 @@ pub fn StackView(
         let mut painter = use_hook(|| {
             document::eval(
                 r"
-                const canvas = document.getElementById('fts-stack-canvas');
-                const ctx = canvas && canvas.getContext('2d');
-                while (ctx) {
+                // The canvas is looked up per frame, not once.
+                //
+                // This script starts during the component's FIRST render,
+                // which is before its own markup has been mounted — so a
+                // single lookup here finds nothing, and a loop guarded on
+                // that result never runs at all. That is what left the
+                // pane permanently blank. Looking it up each time also
+                // survives the element being replaced.
+                while (true) {
                     const [url, w, h] = await dioxus.recv();
                     try {
+                        // Wait for the element on the first frame rather
+                        // than dropping it: the picture only changes when
+                        // the view does, so a frame skipped here could be
+                        // the only one a still project ever sends.
+                        let canvas = null;
+                        for (let i = 0; i < 120; i++) {
+                            canvas =
+                                document.getElementById('fts-stack-canvas');
+                            if (canvas) { break; }
+                            await new Promise(
+                                (done) => requestAnimationFrame(done),
+                            );
+                        }
+                        if (!canvas) { continue; }
                         // Fetch and decode BEFORE touching the canvas:
                         // resizing or clearing it first is what would
                         // show a blank frame.
@@ -462,7 +482,7 @@ pub fn StackView(
                             canvas.width = w;
                             canvas.height = h;
                         }
-                        ctx.drawImage(bitmap, 0, 0);
+                        canvas.getContext('2d').drawImage(bitmap, 0, 0);
                         bitmap.close();
                     } catch (e) {
                         // A dropped frame is a stale picture for a
@@ -472,6 +492,9 @@ pub fn StackView(
                 ",
             )
         });
+        // Re-sent whenever the revision OR the size changes, so the
+        // canvas is told again after a resize even if the picture has
+        // not moved.
         use_effect(move || {
             let rev = revision();
             if rev > 0 {

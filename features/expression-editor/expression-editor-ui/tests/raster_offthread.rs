@@ -89,3 +89,27 @@ fn a_pan_drops_superseded_frames_rather_than_queueing_them() {
     assert!(drawn >= 1, "nothing was drawn at all");
     println!("50 submissions during a pan produced {drawn} rendered frames");
 }
+
+/// The bytes must be decodable by a real image decoder, not just
+/// well-shaped. A browser that cannot read them shows nothing at all,
+/// which is indistinguishable from every other way this can fail.
+#[test]
+fn the_bmp_decodes_to_the_pixels_that_were_drawn() {
+    let mut scene = Scene::new();
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        Color::from_rgb8(0x22, 0xcc, 0x88),
+        None,
+        &Rect::new(0.0, 0.0, 6.0, 3.0),
+    );
+    let bytes = expression_editor_ui::scene_image::scene_bmp(&scene, 6.0, 3.0, 1.0, Color::BLACK);
+
+    let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Bmp)
+        .expect("a decoder must be able to read this");
+    assert_eq!((decoded.width(), decoded.height()), (6, 3));
+    let rgba = decoded.to_rgba8();
+    // Top-left, which is where the fill starts — proves the row order is
+    // right, not merely that something decoded.
+    assert_eq!(rgba.get_pixel(0, 0).0, [0x22, 0xcc, 0x88, 0xff]);
+}
