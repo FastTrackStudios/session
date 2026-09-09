@@ -350,6 +350,28 @@ impl Loaded {
     }
 }
 
+impl Source {
+    /// The `.rpp` this source names, if it names one.
+    ///
+    /// For the two-phase open: everything else goes through
+    /// [`Runner::open`], which is one phase because nothing else is slow
+    /// enough to need two.
+    pub fn rpp_path(&self) -> Option<&Path> {
+        match self {
+            Self::Rpp(path) => Some(path),
+            _ => None,
+        }
+    }
+}
+
+/// A project that has been parsed and has a backend, before its kit has
+/// been looked at. See [`Runner::open_rpp_project`].
+pub struct OpenProject {
+    pub daw: Standalone,
+    pub ctx: ProjectContext,
+    pub name: String,
+}
+
 impl Runner {
     /// Load a source into an editor.
     ///
@@ -512,15 +534,55 @@ impl Runner {
         kit_folder: Option<&str>,
         viewport: Viewport,
     ) -> Result<Self, LoadError> {
-        let (daw, name, summary) = open_project(path)?;
-        let ctx = ProjectContext::Project(summary.project_guid.clone());
-        let built = drum_workspace(&daw, ctx, &name, kit_folder, viewport)?;
+        let opened = Self::open_rpp_project(path)?;
+        let kit = Self::analyse_kit(&opened, kit_folder, viewport)?;
         Ok(Runner {
-            label: built.label,
-            daw: Some(daw),
-            loaded: Loaded::DrumWorkspace(Box::new(built.editor)),
-            host: Some(std::sync::Arc::new(built.host)),
+            label: kit.0,
+            daw: Some(opened.daw),
+            loaded: Loaded::DrumWorkspace(Box::new(kit.1)),
+            host: Some(kit.2),
         })
+    }
+
+    /// Phase one: parse the project and stand up its backend.
+    ///
+    /// Split from the kit analysis so a window can open on the
+    /// arrangement, mixer and transport while the drums are still
+    /// decoding — which is 28.8 s of the 44 s it takes to open a real
+    /// kit, and 28.8 s of staring at nothing if both are done before
+    /// `launch`.
+    pub fn open_rpp_project(path: &Path) -> Result<OpenProject, LoadError> {
+        let (daw, name, summary) = open_project(path)?;
+        Ok(OpenProject {
+            ctx: ProjectContext::Project(summary.project_guid.clone()),
+            daw,
+            name,
+        })
+    }
+
+    /// Phase two: decode the kit's audio and detect its hits.
+    ///
+    /// The slow half. Everything it touches is `Send`, so a caller that
+    /// has already opened its window can run this on a plain thread and
+    /// hand the result over with
+    /// [`crate::workstation::publish_kit`].
+    pub fn analyse_kit(
+        opened: &OpenProject,
+        kit_folder: Option<&str>,
+        viewport: Viewport,
+    ) -> Result<(String, Editor, std::sync::Arc<crate::drum_host::DrumHost>), LoadError> {
+        let built = drum_workspace(
+            &opened.daw,
+            opened.ctx.clone(),
+            &opened.name,
+            kit_folder,
+            viewport,
+        )?;
+        Ok((
+            built.label,
+            built.editor,
+            std::sync::Arc::new(built.host),
+        ))
     }
 
     /// Try one item, audio first.

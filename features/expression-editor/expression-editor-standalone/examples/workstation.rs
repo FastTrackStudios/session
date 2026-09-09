@@ -37,58 +37,97 @@ fn main() {
         }
     };
 
-    let runner = match Runner::open(&args.source, &args.target, args.viewport(), args.mode) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    };
-    let Some(standalone) = runner.daw.clone() else {
+    // Two phases, so the window is not held hostage by the kit.
+    //
+    // Parsing the project and standing up its backend is what the
+    // arrangement, mixer and transport need. Decoding eighteen mics'
+    // worth of the whole song — 28.8 s of the 44 s this used to take —
+    // is what only the drum editor needs, and it happens on a thread
+    // while the window is already up.
+    let Some(path) = args.source.rpp_path() else {
         eprintln!("the workstation needs a project — open a .rpp, not a demo scene");
         std::process::exit(1);
     };
+    let label = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "project".into());
+    let path = path.to_path_buf();
 
-    // The in-process daw facade the arrange + mixer panels read, and
-    // live meters for the strips.
-    if let Err(e) = bootstrap_daw_blocking(&standalone) {
-        eprintln!("daw bootstrap failed: {e}");
-        std::process::exit(1);
-    }
-    let track_count =
-        daw::service::Tracks::all(&standalone, daw::service::ProjectContext::Current).len();
-    standalone.set_meters(daw::standalone::metering::Meters::new(track_count));
-
-    // Real playback: the audio engine renders the project graph into
-    // the default output (PipeWire on Linux) and drives the transport
-    // clock sample-accurately. Kept alive for the window's life —
-    // dropping it stops the stream. Failure is not fatal: the soft
-    // clock still moves the playhead, just silently, and a machine
-    // with no output device should still open the editor.
-    let project_guid =
-        daw::service::Projects::info(&standalone, daw::service::ProjectContext::Current)
-            .map(|i| i.guid)
-            .unwrap_or_default();
-    // Inside the bootstrap's runtime: the engine spawns tasks on
-    // construction, and a plain `main` has no reactor of its own.
-    match expression_editor_standalone::workstation::in_daw_runtime(|| {
-        standalone.attach_audio_engine(&project_guid)
-    }) {
-        Ok(engine) => {
-            Box::leak(Box::new(engine));
-        }
-        Err(e) => eprintln!("no audio engine ({e}); transport will run silent"),
-    }
-
-    println!("{} — workstation", runner.label);
+    println!("{label} — workstation");
+    // The window opens on nothing and fills in behind itself.
+    //
+    // Everything below used to run first: parsing the project, standing
+    // up its backend, attaching audio, then decoding eighteen mics'
+    // worth of the whole song to find the drum hits. Together that is
+    // about forty-four seconds of blank screen. None of it needs to
+    // happen before a window exists — the panels already have a state
+    // for a project that has not arrived ("Opening the project…"),
+    // because waveforms have always streamed in behind the first paint.
     stage_workstation(
-        runner.loaded.into_editor(),
-        runner.host,
+        expression_editor_standalone::app::fallback(),
+        None,
         (args.width as f64, args.height as f64),
     );
+    let kit_folder = args.target.drums.clone().flatten();
+    let viewport = args.viewport();
+    std::thread::Builder::new()
+        .name("fts-project-load".into())
+        .spawn(move || {
+            let opened = match Runner::open_rpp_project(&path) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("the project did not open: {e}");
+                    return;
+                }
+            };
+            // The facade the arrangement, mixer and transport read. They
+            // wait for it rather than assuming it is there.
+            if let Err(e) = bootstrap_daw_blocking(&opened.daw) {
+                eprintln!("daw bootstrap failed: {e}");
+                return;
+            }
+            let track_count =
+                daw::service::Tracks::all(&opened.daw, daw::service::ProjectContext::Current).len();
+            opened
+                .daw
+                .set_meters(daw::standalone::metering::Meters::new(track_count));
+
+            // Real playback: the audio engine renders the project graph
+            // into the default output and drives the transport clock
+            // sample-accurately. Kept alive for the window's life —
+            // dropping it stops the stream. Failure is not fatal: the
+            // soft clock still moves the playhead, just silently.
+            let project_guid =
+                daw::service::Projects::info(&opened.daw, daw::service::ProjectContext::Current)
+                    .map(|i| i.guid)
+                    .unwrap_or_default();
+            // Inside the bootstrap's runtime: the engine spawns tasks on
+            // construction, and a plain thread has no reactor of its own.
+            match expression_editor_standalone::workstation::in_daw_runtime(|| {
+                opened.daw.attach_audio_engine(&project_guid)
+            }) {
+                Ok(engine) => {
+                    Box::leak(Box::new(engine));
+                }
+                Err(e) => eprintln!("no audio engine ({e}); transport will run silent"),
+            }
+
+            // The kit last: it is the slowest part and the only one the
+            // other panels do not need.
+            match Runner::analyse_kit(&opened, kit_folder.as_deref(), viewport) {
+                Ok((_, editor, host)) => {
+                    expression_editor_standalone::workstation::publish_kit(editor, Some(host));
+                }
+                // A kit that will not analyse is not a reason to take the
+                // window down: the arrangement and mixer are still real.
+                Err(e) => eprintln!("the kit did not open ({e}); the rest of the window works"),
+            }
+        })
+        .expect("spawn project load");
 
     let window = WindowAttributes::default()
-        .with_title(format!("FastTrackStudio — {}", runner.label))
+        .with_title(format!("FastTrackStudio — {label}"))
         .with_surface_size(LogicalSize::new(args.width as f64, args.height as f64));
     launch_cfg(
         WorkstationApp,

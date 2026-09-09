@@ -54,7 +54,9 @@ pub fn take_staged_host() -> Option<SharedDrumHost> {
 ///
 /// Better than panicking: a window that opens empty is diagnosable, and
 /// the runner has already printed what it loaded.
-pub(crate) fn fallback() -> Editor {
+/// An empty document, for a window that has opened before its material
+/// has finished loading.
+pub fn fallback() -> Editor {
     let doc = ExpressionDoc::new(TimeBase::Ppq { ppq: 960.0 }, 0.0, 960.0 * 8.0);
     Editor::new(doc, Viewport::new(1100.0, 520.0))
 }

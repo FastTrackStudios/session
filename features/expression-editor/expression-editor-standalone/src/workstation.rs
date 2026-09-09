@@ -106,6 +106,33 @@ struct StagedWorkstation {
 
 static STAGED: Mutex<Option<StagedWorkstation>> = Mutex::new(None);
 
+/// A kit that finished analysing after the window was already up.
+///
+/// Opening a drum project costs ~44 s before anything can be shown, and
+/// almost none of it is the UI: decoding eighteen mics' worth of the
+/// whole song takes 28.8 s on its own. Waiting for that before calling
+/// `launch` meant a blank screen for three quarters of a minute.
+///
+/// So the window opens on whatever is ready — the arrangement, the
+/// mixer, the transport, all of which read the daw facade — and the kit
+/// arrives here when it is done. The workstation already had the state
+/// for this: it shows "Opening the project…" until tracks land, because
+/// waveforms have always streamed in behind the first paint.
+static PENDING: Mutex<Option<(Editor, Option<SharedDrumHost>)>> = Mutex::new(None);
+
+/// Hand a finished kit to a window that is already open.
+///
+/// Called from whichever thread did the analysing; the window collects
+/// it on its own.
+pub fn publish_kit(editor: Editor, host: Option<SharedDrumHost>) {
+    *PENDING.lock().unwrap() = Some((editor, host));
+}
+
+/// Take a finished kit, if one has arrived.
+fn take_kit() -> Option<(Editor, Option<SharedDrumHost>)> {
+    PENDING.lock().ok()?.take()
+}
+
 /// Keeps the in-process daw link's acceptor alive for the window's
 /// lifetime. Dropping it would silently disconnect every panel.
 static DAW_BUNDLE: OnceLock<daw::standalone::bootstrap::InProcessDaw> = OnceLock::new();
@@ -372,12 +399,30 @@ pub fn WorkstationApp() -> Element {
     // subtracts its own chrome from what we report here.
     expression_editor_ui::available_space(left_w, win_h - arrange_h);
 
-    let editor = use_signal(|| {
+    let mut editor = use_signal(|| {
         let mut ed = staged.editor.clone();
         ed.viewport = expression_editor_ui::viewport_in(left_w, win_h - arrange_h);
         ed
     });
-    let host = use_signal(|| staged.host.clone());
+    let mut host = use_signal(|| staged.host.clone());
+    // The kit, if it is still being analysed. Polled rather than pushed:
+    // the analysis runs on a plain thread with no way into dioxus's
+    // reactive world, and this happens once per launch, so a slow tick
+    // costs nothing and a channel would be machinery for one event.
+    use_future(move || async move {
+        loop {
+            futures_timer::Delay::new(std::time::Duration::from_millis(120)).await;
+            if let Some((ready, ready_host)) = take_kit() {
+                let mut ready = ready;
+                // Whatever the window has become since it opened — it can
+                // be resized while the kit is still decoding.
+                ready.viewport = expression_editor_ui::current_viewport(ready.viewport);
+                editor.set(ready);
+                host.set(ready_host);
+                return;
+            }
+        }
+    });
     let bins = use_signal(Vec::new);
     let previews_sig = use_signal(Vec::new);
     let HostCallbacks {
@@ -413,6 +458,14 @@ pub fn WorkstationApp() -> Element {
     let mut arrange_zoom = use_signal(|| 1.0_f32);
     use_effect(move || {
         spawn(async move {
+            // Waits for the backend rather than assuming it. The project
+            // is parsed on a thread so the window does not have to wait
+            // for it, which means the facade may not exist yet when this
+            // first runs — and a single attempt would leave the panels
+            // empty for the life of the window.
+            while daw::get().is_none() {
+                futures_timer::Delay::new(std::time::Duration::from_millis(100)).await;
+            }
             if let Some(s) = fetch_project().await {
                 let items = s.items.clone();
                 shape.set(s);
