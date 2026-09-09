@@ -15,6 +15,13 @@ use std::{
 };
 
 fn main() -> eyre::Result<()> {
+    // `RUST_LOG` decides what is shown; without a subscriber the spans
+    // this crate emits — including what opening the kit cost — go
+    // nowhere. Off unless asked for, so a benchmark run stays quiet.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .try_init();
     let args = Args::from_env().map_err(|error| eyre::eyre!("{error}"))?;
     let frames: usize = std::env::var("FTS_STRESS_FRAMES")
         .unwrap_or_else(|_| "120".into())

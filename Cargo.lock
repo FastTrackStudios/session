@@ -4949,6 +4949,7 @@ dependencies = [
  "expression-editor-audio",
  "expression-editor-core",
  "expression-editor-tools",
+ "tracing",
 ]
 
 [[package]]
@@ -4998,6 +4999,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -181,16 +181,32 @@ pub fn drum_workspace<D: expression_editor_audio::daw_bound::DrumDaw>(
 
     // Keep the facade on its owner thread. Bounded workers process only
     // owned audio; no backend value, accessor, or Dioxus signal crosses.
+    // Opening a kit is the slowest thing this crate does, and the two
+    // halves have very different fixes — decoding is serial because the
+    // facade is not `Send`, detection is already spread across workers —
+    // so the span carries them apart rather than as one total.
+    let decode_ms = std::cell::Cell::new(0.0f64);
+    let started = std::time::Instant::now();
     let mut rows = crate::analysis::capture_and_analyze(
         jobs,
         |job| {
+            let at = std::time::Instant::now();
             let samples = track_timeline(daw, &ctx, &job.track, timeline_secs, rate);
+            decode_ms.set(decode_ms.get() + at.elapsed().as_secs_f64() * 1000.0);
             (!samples.is_empty()).then_some((job, samples))
         },
         |(job, samples)| {
             let doc = percussion_doc(&samples, rate);
             (job, samples, rate, doc)
         },
+    );
+    let total_ms = started.elapsed().as_secs_f64() * 1000.0;
+    tracing::info!(
+        drums.tracks = rows.len(),
+        drums.decode_ms = decode_ms.get(),
+        drums.detect_ms = total_ms - decode_ms.get(),
+        drums.timeline_secs = timeline_secs,
+        "analysed the kit"
     );
     for (_, _, _, doc) in &mut rows {
         attach_timeline(daw, &ctx, doc);

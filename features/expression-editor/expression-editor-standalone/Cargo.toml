@@ -69,6 +69,9 @@ name = "webview"
 required-features = ["webview"]
 
 [dev-dependencies]
+# So `RUST_LOG` works in the examples — the harness reports what opening a
+# kit cost, and nothing hears it without a subscriber.
+tracing-subscriber = { workspace = true }
 blitz-traits.workspace = true
 serde_json.workspace = true
 dawfile-standalone.workspace = true

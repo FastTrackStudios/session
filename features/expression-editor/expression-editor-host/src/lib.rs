@@ -1,6 +1,8 @@
 //! Shared expression-editor application services, independent of a window or renderer.
 //! Backends stay on their owner thread; only captured audio enters workers.
 mod analysis;
+/// Detected hits, kept on disk so a reopen is not a re-analysis.
+mod analysis_cache;
 mod audio_read;
 mod controller;
 pub mod drum_host;

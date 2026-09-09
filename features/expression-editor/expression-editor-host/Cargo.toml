@@ -11,6 +11,8 @@ default = []
 standalone = ["daw/standalone-save"]
 
 [dependencies]
+# Opening a kit is the slowest thing here; the span carries what it cost.
+tracing = { workspace = true }
 daw.workspace = true
 expression-editor-core.workspace = true
 expression-editor-tools.workspace = true
