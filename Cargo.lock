@@ -4043,6 +4043,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dioxus-mcp-probe"
+version = "0.2.0"
+source = "git+https://github.com/tonybierman/dioxus-mcp#b81634caff9c7bd6eeeed164f63d66f0f03b86bd"
+dependencies = [
+ "serde",
+ "serde_json",
+ "time",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "dioxus-native"
 version = "0.8.0-alpha.0"
 source = "git+https://github.com/DioxusLabs/dioxus?rev=f717a8e184a522d078b70bb4b4d62a5f9a99ddfc#f717a8e184a522d078b70bb4b4d62a5f9a99ddfc"
@@ -4969,6 +4981,7 @@ dependencies = [
  "dawfile-reaper",
  "dawfile-standalone",
  "dioxus",
+ "dioxus-mcp-probe",
  "dioxus-native",
  "dioxus-test",
  "expression-editor-audio",

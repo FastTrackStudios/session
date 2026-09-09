@@ -255,6 +255,24 @@ Rust, and is a reason to do performance work there.
 
 ## Getting the window's own words back
 
+The `dioxus-mcp-probe` crate is installed in both launchers, so renders,
+signal writes and **panics** land in `target/dioxus-mcp/events.jsonl` and
+`dioxus-mcp`'s `runtime_events` tool reads them back — no pasting
+scrollback, and an agent can look for itself. A no-op in release builds
+unless its `force` feature is on.
+
+That matters because `dx serve` captures the child process's console into
+its own TUI: piping the recipe catches `dx`'s output, not the app's, so a
+panic in the window otherwise reaches nobody.
+
+Its static lints are worth running before hunting a crash by hand.
+`check_rsx`'s `missing_key_in_for_loop` found fifteen unkeyed loops in
+`stack/markup.rs` in seconds — and an unkeyed loop is not a style nit
+here: zooming changes how many ticks, hits and bands exist, so without
+keys dioxus diffs them positionally and pairs a node with whichever one
+now sits at its index.
+
+
 Both `just ee-practice` and `just ee-webview` tee everything to
 `target/ee-<which>.log`, and `just ee-log [which] [lines]` reads it back
 with repeated messages collapsed to a count. A thousand copies of one

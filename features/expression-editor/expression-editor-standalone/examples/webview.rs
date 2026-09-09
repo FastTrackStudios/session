@@ -23,6 +23,13 @@ use expression_editor_standalone::workstation::{
 use expression_editor_standalone::{Args, Runner};
 
 fn main() {
+    // First, so a panic anywhere below is recorded. `dx serve` captures
+    // the child's console into its own TUI, so a crash in the window
+    // otherwise reaches nobody; this writes it to
+    // target/dioxus-mcp/events.jsonl, which `dioxus-mcp`'s
+    // `runtime_events` reads back. Leaked deliberately: dropping the
+    // handle stops the writer, and it should outlive every frame.
+    Box::leak(Box::new(dioxus_mcp_probe::install()));
     let args = match Args::from_env() {
         Ok(a) => a,
         Err(e @ (ArgsError::Help | ArgsError::List)) => {

@@ -76,6 +76,7 @@ pub fn stack_markup(
                 // the arrange view already taught the band.
                 for (x0, x1, label, color, row) in sections.iter() {
                     rect {
+                        key: "s{x0:.1}",
                         x: "{x0:.1}",
                         y: "{*row as f64 * CHROME_ROW_H:.1}",
                         width: "{(x1 - x0).max(0.0):.1}",
@@ -112,6 +113,7 @@ pub fn stack_markup(
                     // lanes, and it is information these projects get
                     // wrong in a way worth being able to see.
                     line {
+                        key: "mk{x:.1}",
                         x1: "{x:.1}", x2: "{x:.1}",
                         y1: "{*row as f64 * mark_row_h:.1}",
                         y2: "{(*row + 1) as f64 * mark_row_h:.1}",
@@ -130,6 +132,7 @@ pub fn stack_markup(
                 // shelf, so a shelf says which ruler lane it is.
                 for (i, (_, _, name)) in chrome_rows.iter().enumerate() {
                     text {
+                        key: "shelf{i}",
                         x: 2,
                         y: "{(i + 1) as f64 * CHROME_ROW_H - 2.0:.1}",
                         font_size: 7,
@@ -140,6 +143,7 @@ pub fn stack_markup(
                 }
                 for t in ticks.iter() {
                     line {
+                        key: "rt{t.x:.1}",
                         x1: "{t.x:.1}", x2: "{t.x:.1}",
                         y1: if t.bar { "{ruler_h - 10.0:.1}" } else { "{ruler_h - 5.0:.1}" },
                         y2: "{ruler_h}",
@@ -161,6 +165,7 @@ pub fn stack_markup(
                 transform: "translate(0, {ruler_h})",
                 for lane in lanes.iter() {
                     g {
+                        key: "lane{lane.lane}",
                         // A lane's own background, so the active one
                         // reads as the foreground even when a neighbour
                         // is busier.
@@ -195,6 +200,7 @@ pub fn stack_markup(
                             // hits are, not only in the ruler.
                             for t in ticks.iter() {
                                 line {
+                                    key: "g{t.x:.1}",
                                     x1: "{t.x:.1}", x2: "{t.x:.1}",
                                     y1: "{lane.y:.1}", y2: "{lane.y + lane.h:.1}",
                                     stroke: if t.bar { theme::GRID_BEAT } else { theme::GRID_SUB },
@@ -207,6 +213,7 @@ pub fn stack_markup(
                             // these say it where you are looking.
                             for (x0, _, _, color, _) in sections.iter() {
                                 line {
+                                    key: "sb{x0:.1}",
                                     x1: "{x0:.1}", x2: "{x0:.1}",
                                     y1: "{lane.y:.1}", y2: "{lane.y + lane.h:.1}",
                                     stroke: "{color}",
@@ -224,6 +231,7 @@ pub fn stack_markup(
                             // sits under.
                             for (x0, x1) in fill_bands.iter() {
                                 rect {
+                                    key: "fb{x0:.1}",
                                     x: "{x0:.1}",
                                     y: "{lane.y:.1}",
                                     width: "{(x1 - x0).max(0.0):.1}",
@@ -238,6 +246,7 @@ pub fn stack_markup(
                             // r[impl drums.chrome.markers]
                             for (x, _, color, _) in marks.iter() {
                                 line {
+                                    key: "mb{x:.1}",
                                     x1: "{x:.1}", x2: "{x:.1}",
                                     y1: "{lane.y:.1}", y2: "{lane.y + lane.h:.1}",
                                     stroke: "{color}",
@@ -266,8 +275,9 @@ pub fn stack_markup(
                             // near-silent between hits, so a filled one
                             // would read as a hole punched in the mics'
                             // waveform instead of a second view of it.
-                            for o in lane.overlays.iter() {
+                            for (i, o) in lane.overlays.iter().enumerate() {
                                 polygon {
+                                    key: "ov{i}",
                                     points: "{o}",
                                     fill: "none",
                                     stroke: lane.role_color.unwrap_or(theme::PEAKS),
@@ -277,8 +287,9 @@ pub fn stack_markup(
                             }
                             // r[impl drums.lanes.toms-split]
                             for s in lane.sub_lanes.iter() {
-                                for o in s.overlays.iter() {
+                                for (i, o) in s.overlays.iter().enumerate() {
                                     polygon {
+                                        key: "so{i}",
                                         points: "{o}",
                                         fill: "none",
                                         stroke: lane.role_color.unwrap_or(theme::PEAKS),
@@ -296,6 +307,7 @@ pub fn stack_markup(
                             }
                             for d in lane.dividers.iter() {
                                 line {
+                                    key: "dv{d:.1}",
                                     x1: 0, x2: "{vp.w}",
                                     y1: "{d:.1}", y2: "{d:.1}",
                                     stroke: theme::GRID_SUB, stroke_width: 1,
@@ -313,6 +325,16 @@ pub fn stack_markup(
                                     let gh = if n.grace { n.h * 0.62 } else { n.h };
                                     let gy = n.y + (n.h - gh) / 2.0;
                                     rsx! {
+                                        // One key for the whole hit,
+                                        // keyed by its onset — which is
+                                        // what a hit IS. Without it a
+                                        // zoom, which changes how many
+                                        // hits are in view, leaves dioxus
+                                        // diffing them positionally and
+                                        // pairing a hit with whichever
+                                        // one now sits at its index.
+                                        g {
+                                        key: "n{n.at_secs:.4}",
                                         if n.hit_line {
                                             // r[impl drums.lanes.hits]
                                             line {
@@ -364,6 +386,7 @@ pub fn stack_markup(
                                                 fill: theme::TEXT_DIM,
                                                 "fl"
                                             }
+                                        }
                                         }
                                     }
                                 }
@@ -434,6 +457,7 @@ pub fn stack_markup(
                         // r[impl drums.lanes.toms-split]
                         for s in lane.sub_lanes.iter() {
                             text {
+                                key: "sl{s.label}",
                                 // Clear of the role eyebrow, which owns
                                 // the first ~60px of the lane's top row.
                                 x: 64, y: "{s.label_y:.1}",
@@ -480,6 +504,10 @@ pub fn stack_markup(
                             stroke_width: 1,
                         }
                         for (i, (_, name, active)) in lane.members.iter().enumerate() {
+                            // The menu row: highlight and label together,
+                            // keyed by the mic it names.
+                            g {
+                            key: "mic{name}",
                             if *active {
                                 rect {
                                     x: 5, y: "{lane.y + MIC_MENU_TOP + i as f64 * MIC_ITEM_H:.1}",
@@ -493,6 +521,7 @@ pub fn stack_markup(
                                 font_size: "9",
                                 fill: if *active { theme::TEXT_BRIGHT } else { theme::TEXT },
                                 "{name}"
+                            }
                             }
                         }
                         // The footer: draw only this mic's waveform,

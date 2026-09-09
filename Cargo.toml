@@ -438,6 +438,12 @@ blitz-traits = "=0.3.0-beta.1"
 blitz-shell = "=0.3.0-beta.1"
 blitz-html = "=0.3.0-beta.1"
 dioxus-native-dom = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc" }
+# Runtime telemetry the `dioxus-mcp` server reads back: renders, signal
+# writes and PANICS, as JSONL under target/dioxus-mcp/. `dx serve` owns
+# the child's console, so a panic in the window otherwise reaches nobody
+# — this is how it becomes something an agent can be pointed at. A no-op
+# in release builds unless the `force` feature is on. Not on crates.io.
+dioxus-mcp-probe = { git = "https://github.com/tonybierman/dioxus-mcp" }
 # Vendored DioxusLabs/dioxus-test on the pins above — headless component
 # tests on blitz-dom (no browser). See libs/vendor/dioxus-test.
 dioxus-test = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }

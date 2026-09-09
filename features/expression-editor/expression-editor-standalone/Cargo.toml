@@ -51,6 +51,11 @@ dioxus-native = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 eyre = { workspace = true }
 tracing = { workspace = true }
+# Records renders, signal writes and panics where `dioxus-mcp` can read
+# them. See the workspace note; a no-op in release.
+dioxus-mcp-probe = { workspace = true }
+# The window writes its own log: `dx serve` captures the child's console
+# into its TUI, so a panic there reaches nobody. See `diagnostics`.
 
 [features]
 # The webview target: the same components rendered by dioxus-desktop's
