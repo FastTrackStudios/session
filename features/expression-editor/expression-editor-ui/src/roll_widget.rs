@@ -98,11 +98,33 @@ pub struct FrameLog {
     /// that stutters while an idle view is smooth.
     builds: Vec<f64>,
     last_build: Option<std::time::Instant>,
+    /// `(fps, ms a frame)` as measured by a renderer that paints for
+    /// us — see [`Frames::observe_rate`].
+    reported: Option<(f64, f64)>,
 }
 
 impl Frames {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Record a frame rate measured somewhere this crate cannot see.
+    ///
+    /// On a WebView nothing here paints: the engine does, and the only
+    /// honest source of "frames per second" is its own presentation
+    /// loop. That loop reports a rate a couple of times a second rather
+    /// than ticking per frame, because a bridge crossing per frame would
+    /// be a measurable share of the thing being measured.
+    ///
+    /// Kept apart from the painted intervals rather than faked into
+    /// them: a mean of real intervals and a reported average are not the
+    /// same quantity, and mixing them would make `fps()` lie in whichever
+    /// direction happened to have more samples.
+    pub fn observe_rate(&self, fps: f64, frame_ms: f64) {
+        let Ok(mut log) = self.0.try_borrow_mut() else {
+            return;
+        };
+        log.reported = Some((fps, frame_ms));
     }
 
     /// Record that a frame was just painted.
@@ -169,6 +191,9 @@ impl Frames {
     /// frames to divide by.
     pub fn fps(&self) -> Option<f64> {
         let log = self.0.try_borrow().ok()?;
+        if let Some((fps, _)) = log.reported {
+            return Some(fps);
+        }
         if log.intervals.is_empty() {
             return None;
         }
@@ -179,6 +204,9 @@ impl Frames {
     /// Milliseconds of the average frame spent in the roll.
     pub fn paint_ms(&self) -> Option<f64> {
         let log = self.0.try_borrow().ok()?;
+        if let Some((_, frame_ms)) = log.reported {
+            return Some(frame_ms);
+        }
         if log.paints.is_empty() {
             return None;
         }

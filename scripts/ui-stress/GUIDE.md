@@ -222,6 +222,37 @@ before comparing it to a full-workstation run.
 Keep an optimization only when it preserves behavior and has repeatable evidence.
 A faster blank/offscreen view or an ignored gesture is a test failure, not progress.
 
+## Reading the surface's own meter
+
+The toolbar's right-hand readout is three numbers, and a stutter is
+invisible in any one of them alone:
+
+    118 fps · roll 1.20ms · 240/s
+    ^^^^^^   ^^^^^^^^^^^^   ^^^^^
+    frames   how much of a  renders of the surface
+    actually frame this     per second
+    presented surface costs
+
+- **fps** is presented frames, never renders or DOM mutations. On native
+  it is counted in `RollWidget::paint`, which the renderer calls; on a
+  WebView it comes from `requestAnimationFrame` in the page
+  (`frame_meter.rs`), averaged over a window and reported a few times a
+  second — a bridge crossing per frame would be a measurable share of
+  what it is measuring. On the WebView the second number is the WORST
+  frame in that window rather than a mean, because a drag that stutters
+  averages well and feels terrible.
+- **renders/s far above fps is the diagnosis you want.** It means the
+  surface is rebuilding for events no frame ever showed, which is what a
+  high-polling-rate mouse does to a drag. The fix is upstream of the
+  renderer — coalesce the events or make the render cheaper — and no
+  amount of drawing faster will help.
+
+There is no dedicated Dioxus profiler. `dioxus-core` instruments
+`VirtualDom::run_scope` with `tracing` at `trace` level, so
+`RUST_LOG=dioxus_core=trace` gives per-scope render spans; on a WebView
+the engine's own devtools timeline is better than anything available from
+Rust, and is a reason to do performance work there.
+
 ## Ask the renderer where the time went
 
 The `layout_ms` stage is not layout. Blitz's `resolve()` is seven phases,

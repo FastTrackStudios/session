@@ -329,6 +329,13 @@ pub fn StackView(
     // `super::paint` for why this is paint rather than elements.
     let stack_w = vp.w + canvas::GUTTER_W;
     let stack_h = vp.h + ruler_h;
+    // One render of this surface. Read against the frame rate: more
+    // rebuilds than frames means work no frame ever showed, which is
+    // exactly what a high-polling-rate mouse does to a drag.
+    if let Some(frames) = try_consume_context::<crate::roll_widget::Frames>() {
+        frames.built();
+    }
+
     let chrome = super::paint::StackChrome {
             chrome_rows: &chrome_rows,
             sections: &sections,

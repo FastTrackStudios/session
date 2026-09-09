@@ -50,6 +50,10 @@ pub mod roll_widget;
 /// (dioxus-desktop's WebView, dioxus-web). Native replays it directly.
 #[cfg(feature = "webview")]
 pub mod scene_image;
+/// Real frames per second, from the engine that paints them. WebView
+/// only — native measures at the widget, which is a better vantage.
+#[cfg(feature = "webview")]
+pub mod frame_meter;
 pub mod scroll;
 pub mod sizing;
 pub mod stack;
@@ -284,7 +288,15 @@ pub fn ExpressionEditor(
         pending.set(None);
     }
 
+    // Where the frame rate comes from on a WebView. Native measures at
+    // the widget instead, which is closer to the paint.
+    #[cfg(feature = "webview")]
+    let frame_meter = rsx! { frame_meter::FrameMeter {} };
+    #[cfg(not(feature = "webview"))]
+    let frame_meter = rsx! {};
+
     rsx! {
+        {frame_meter}
         div {
             // The canvas is the only flexible child. Blitz sizes an
             // inline <svg> as a replaced element with an intrinsic
