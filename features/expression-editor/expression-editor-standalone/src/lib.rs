@@ -61,6 +61,8 @@ pub mod cli;
 pub mod drum_host;
 pub mod library;
 pub mod practice;
+/// Where the window's size comes from on each renderer.
+pub mod window_size;
 pub mod workstation;
 
 pub use app::{App, stage};

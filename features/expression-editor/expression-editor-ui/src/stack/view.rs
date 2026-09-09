@@ -329,7 +329,7 @@ pub fn StackView(
     // `super::paint` for why this is paint rather than elements.
     let stack_w = vp.w + canvas::GUTTER_W;
     let stack_h = vp.h + ruler_h;
-    slot.put(super::paint::stack_scene(
+    let scene = super::paint::stack_scene(
         &lanes,
         &super::paint::StackChrome {
             chrome_rows: &chrome_rows,
@@ -350,7 +350,38 @@ pub fn StackView(
         stack_w,
         stack_h,
         &mut labels.borrow_mut(),
-    ));
+    );
+    // Native replays the recording; a WebView cannot, so there the same
+    // scene is rasterized and carried as the surface's background image.
+    // One rsx tree, one drawing implementation — see `crate::scene_image`.
+    #[cfg(not(feature = "webview"))]
+    let surface_paint = {
+        slot.put(scene);
+        String::new()
+    };
+    #[cfg(feature = "webview")]
+    let surface_paint = {
+        let _ = &slot;
+        // Rasterizing is the expensive part, so only do it when the
+        // picture actually changed: `Scene` is a plain command list and
+        // compares by value, which makes a re-render that draws the same
+        // thing free.
+        let mut cached = use_signal(|| (anyrender::Scene::new(), String::new()));
+        if cached.peek().0 != scene {
+            let uri = crate::scene_image::scene_data_uri(
+                &scene,
+                stack_w,
+                stack_h,
+                1.0,
+                crate::paint::color(theme::GUTTER_BG),
+            );
+            cached.set((scene, uri));
+        }
+        format!(
+            "background-image:url({});background-size:100% 100%;",
+            cached.read().1
+        )
+    };
 
     // ── The overlay's numbers, all resolved before the markup ──
     //
@@ -538,7 +569,8 @@ pub fn StackView(
             // equal, and this is the thing that would reveal it failing.
             style: "position: absolute; left: 0; top: 0; display: block; \
                     width: {stack_w:.0}px; height: {stack_h:.0}px; \
-                    touch-action: none; user-select: none; cursor: {zoom_cursor};",
+                    touch-action: none; user-select: none; cursor: {zoom_cursor}; \
+                    {surface_paint}",
             // No `onmounted` measure here, deliberately.
             //
             // This used to `spawn` and `await get_client_rect()` from the

@@ -46,6 +46,10 @@ pub mod roll;
 /// The renderer seam. Native only — everything above it is portable.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod roll_widget;
+/// A painted scene as an image, for renderers that cannot replay one
+/// (dioxus-desktop's WebView, dioxus-web). Native replays it directly.
+#[cfg(feature = "webview")]
+pub mod scene_image;
 pub mod scroll;
 pub mod sizing;
 pub mod stack;

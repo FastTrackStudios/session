@@ -349,9 +349,11 @@ pub fn WorkstationApp() -> Element {
     // by the DOM benchmark and by the workstation tests, where the winit
     // context does not exist and `use_window` panics. Resolved once, so
     // the subtree below keeps one shape for its lifetime.
-    let windowed = use_hook(|| {
-        try_consume_context::<std::sync::Arc<dyn dioxus_native::winit::window::Window>>().is_some()
-    });
+    // Whether there is a window to ask. The same component is mounted
+    // headless by the DOM benchmark and the workstation tests, where
+    // there is none and the staged size stands. Resolved once, so the
+    // subtree below keeps one shape for its lifetime.
+    let windowed = use_hook(crate::window_size::available);
     let (win_w, win_h) = window_size();
 
     let arrange_h = (win_h * ARRANGE_FRACTION).round();
@@ -578,7 +580,7 @@ pub fn WorkstationApp() -> Element {
         ControlSync {}
         MeterFeed {}
         if windowed {
-            WindowSize { size: window_size }
+            crate::window_size::WindowSize { size: window_size }
         }
         if previews_complete() && !tracks.is_empty() {
             span { "data-testid": "workstation-ready", style: "display:none", "{tracks.len()} tracks, {items.len()} items" }
@@ -1027,50 +1029,6 @@ fn TcpColumn(
             }
         }
     }
-}
-
-/// Keeps `size` in step with the winit window.
-///
-/// Its own component so the hooks can be called unconditionally:
-/// `use_window_event` consumes the window context and panics without
-/// one, and the workstation is also mounted headless. The parent decides
-/// whether there is a window; this only exists when there is.
-#[component]
-fn WindowSize(mut size: Signal<(f64, f64)>) -> Element {
-    let window = dioxus_native::use_window();
-    // CSS pixels, which is what every number in the layout is in. winit
-    // reports physical ones, and on a scaled display the two differ.
-    fn logical(window: &dyn dioxus_native::winit::window::Window) -> (f64, f64) {
-        let physical = window.surface_size();
-        let scale = window.scale_factor().max(f64::EPSILON);
-        (
-            (physical.width as f64 / scale).max(1.0),
-            (physical.height as f64 / scale).max(1.0),
-        )
-    }
-    // The size at mount: a window that is never resized still has one,
-    // and it is not necessarily the size the runner asked for.
-    use_hook({
-        let window = window.clone();
-        move || size.set(logical(window.as_ref()))
-    });
-    dioxus_native::use_window_event(move |event, _| {
-        use dioxus_native::winit::event::WindowEvent;
-        if !matches!(
-            event,
-            WindowEvent::SurfaceResized(_) | WindowEvent::ScaleFactorChanged { .. }
-        ) {
-            return;
-        }
-        let next = logical(window.as_ref());
-        // A resize drag fires this continuously; only a real change
-        // should re-lay the window out.
-        let (was_w, was_h) = *size.peek();
-        if (was_w - next.0).abs() >= 1.0 || (was_h - next.1).abs() >= 1.0 {
-            size.set(next);
-        }
-    });
-    rsx! {}
 }
 
 /// The playhead line, isolated for the same reason: a position tick

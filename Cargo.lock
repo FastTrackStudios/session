@@ -5004,6 +5004,8 @@ version = "0.1.0"
 dependencies = [
  "adaptive-grid",
  "anyrender",
+ "anyrender_vello_cpu",
+ "base64 0.22.1",
  "blitz-dom",
  "daw-theme",
  "dioxus",
@@ -5019,6 +5021,7 @@ dependencies = [
  "level-dsp",
  "parley 0.10.0",
  "peniko 0.6.1",
+ "png 0.17.16",
  "tokio",
  "tracing",
 ]

@@ -15,7 +15,7 @@ description = "Expression editor GUI — the Melodyne/MPE canvas, toolbar, and i
 # the widget attribute ("Any attributes are not supported by the current
 # renderer"), so this is not an optimisation — it is the difference
 # between rendering and not.
-webview = []
+webview = ["dep:anyrender_vello_cpu", "dep:png", "dep:base64"]
 default = []
 host = ["dep:expression-editor-host", "dep:tracing"]
 
@@ -47,11 +47,21 @@ parley = { workspace = true }
 # The widget that hands the painter its box and puts the scene on screen.
 # Native only: this is the DOM/renderer seam, and everything above it is
 # deliberately free of it.
+# The webview seam: rasterize a painted scene and hand it over as an
+# image. `vello_cpu` is pure Rust with no platform I/O, so this same path
+# serves dioxus-desktop natively and dioxus-web in wasm.
+anyrender_vello_cpu = { workspace = true, optional = true }
+png = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 blitz-dom = { workspace = true, features = ["custom-widget"] }
 dioxus-native-dom = { workspace = true }
 
 [dev-dependencies]
+png = { workspace = true }
+base64 = { workspace = true }
+anyrender_vello_cpu = { workspace = true }
 expression-editor-guitarpro.workspace = true
 level-dsp.workspace = true
 dioxus-ssr = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", default-features = false }
