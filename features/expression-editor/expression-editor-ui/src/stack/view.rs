@@ -329,6 +329,9 @@ pub fn StackView(
     // `super::paint` for why this is paint rather than elements.
     let stack_w = vp.w + canvas::GUTTER_W;
     let stack_h = vp.h + ruler_h;
+    // The thread that turns this surface into pixels, on a WebView.
+    #[cfg(all(feature = "webview", not(target_arch = "wasm32")))]
+    let surface = use_hook(crate::scene_image::worker::Rasterizer::spawn);
     let scene = super::paint::stack_scene(
         &lanes,
         &super::paint::StackChrome {
@@ -369,142 +372,22 @@ pub fn StackView(
     #[cfg(all(feature = "webview", not(target_arch = "wasm32")))]
     let surface_paint = {
         let _ = &slot;
-        // Desktop: served over an asset handler, so the pixels never
-        // enter the DOM — the attribute is a short URL and the WebView
-        // fetches the bytes binary and direct. See `scene_image::served`.
-        let surface = use_hook(crate::scene_image::worker::Rasterizer::spawn);
-        dioxus::desktop::use_asset_handler("fts-scene", {
-            let surface = surface.clone();
-            move |request, responder| {
-                let revision = request
-                    .uri()
-                    .path()
-                    .rsplit('/')
-                    .next()
-                    .and_then(|tail| tail.split('.').next())
-                    .and_then(|n| n.parse::<u64>().ok());
-                let bytes = revision.and_then(|r| surface.get(r));
-                responder.respond(match bytes {
-                    Some(bytes) => dioxus::desktop::wry::http::Response::builder()
-                        .header("Content-Type", "image/bmp")
-                        // The revision IS the identity, so this can be
-                        // cached hard; a changed picture is a new URL.
-                        .header("Cache-Control", "max-age=31536000, immutable")
-                        .body(std::borrow::Cow::from(bytes))
-                        .expect("bmp response"),
-                    None => dioxus::desktop::wry::http::Response::builder()
-                        .status(404)
-                        .body(std::borrow::Cow::from(Vec::new()))
-                        .expect("404 response"),
-                });
-            }
-        });
-        // Hand the scene over and return. Rasterizing is ~2.8 ms at this
-        // size and used to happen right here, which is main-thread time
-        // the UI could not spend on the gesture that caused it.
-        let mut last = use_signal(anyrender::Scene::new);
-        if *last.peek() != scene {
-            surface.draw(
-                scene.clone(),
-                stack_w,
-                stack_h,
-                1.0,
-                crate::paint::color(theme::GUTTER_BG),
-            );
-            last.set(scene);
-        }
-        // Finished frames are collected by polling, because the thread
-        // has no way into dioxus's reactive world. Once a frame lands,
-        // the revision changes and the effect below tells the canvas.
-        let mut revision = use_signal(|| 0u64);
-        use_future({
-            let surface = surface.clone();
-            move || {
-                let surface = surface.clone();
-                async move {
-                    loop {
-                        // Half a frame at 120 Hz: fast enough that a
-                        // finished picture is never held back long, cheap
-                        // enough to be nothing when the view is still.
-                        futures_timer::Delay::new(std::time::Duration::from_millis(4)).await;
-                        let latest = surface.revision();
-                        if latest != *revision.peek() {
-                            revision.set(latest);
-                        }
-                    }
-                }
-            }
-        });
-        // Drawn into a canvas, not set as a background image.
+        // Handed over on every render, moved rather than cloned.
         //
-        // A background-image URL that changes every frame flashes: the
-        // engine drops the old image, fetches the new one asynchronously,
-        // and paints nothing in between — which is what a pan looked
-        // like. A canvas keeps the last frame it was given until the next
-        // one has actually arrived, so the swap is invisible. This is the
-        // reason dense web surfaces are canvases rather than images, and
-        // it costs about a dozen lines of JS to get right.
-        let mut painter = use_hook(|| {
-            document::eval(
-                r"
-                // The canvas is looked up per frame, not once.
-                //
-                // This script starts during the component's FIRST render,
-                // which is before its own markup has been mounted — so a
-                // single lookup here finds nothing, and a loop guarded on
-                // that result never runs at all. That is what left the
-                // pane permanently blank. Looking it up each time also
-                // survives the element being replaced.
-                while (true) {
-                    const [url, w, h] = await dioxus.recv();
-                    try {
-                        // Wait for the element on the first frame rather
-                        // than dropping it: the picture only changes when
-                        // the view does, so a frame skipped here could be
-                        // the only one a still project ever sends.
-                        let canvas = null;
-                        for (let i = 0; i < 120; i++) {
-                            canvas =
-                                document.getElementById('fts-stack-canvas');
-                            if (canvas) { break; }
-                            await new Promise(
-                                (done) => requestAnimationFrame(done),
-                            );
-                        }
-                        if (!canvas) { continue; }
-                        // Fetch and decode BEFORE touching the canvas:
-                        // resizing or clearing it first is what would
-                        // show a blank frame.
-                        const bitmap = await createImageBitmap(
-                            await (await fetch(url)).blob(),
-                        );
-                        if (canvas.width !== w || canvas.height !== h) {
-                            canvas.width = w;
-                            canvas.height = h;
-                        }
-                        canvas.getContext('2d').drawImage(bitmap, 0, 0);
-                        bitmap.close();
-                    } catch (e) {
-                        // A dropped frame is a stale picture for a
-                        // moment; the next one will land.
-                    }
-                }
-                ",
-            )
-        });
-        // Re-sent whenever the revision OR the size changes, so the
-        // canvas is told again after a resize even if the picture has
-        // not moved.
-        use_effect(move || {
-            let rev = revision();
-            if rev > 0 {
-                let _ = painter.send(serde_json::json!([
-                    format!("/fts-scene/stack/{rev}.bmp"),
-                    stack_w.round(),
-                    stack_h.round(),
-                ]));
-            }
-        });
+        // There is no "has it changed?" check any more, and dropping it
+        // was the point: comparing two scenes walks every command, and
+        // keeping the last one to compare against meant a second copy of
+        // the whole command list living in a signal. The worker already
+        // coalesces — a submission that is never started is simply
+        // replaced — so submitting unconditionally costs a move and lets
+        // the thread decide what is worth drawing.
+        surface.draw(
+            scene,
+            stack_w,
+            stack_h,
+            1.0,
+            crate::paint::color(theme::GUTTER_BG),
+        );
         String::new()
     };
     // Web: no asset handler there, and no bridge to cross either — the
@@ -573,14 +456,7 @@ pub fn StackView(
     // exactly one shape at runtime.
     #[cfg(all(feature = "webview", not(target_arch = "wasm32")))]
     let surface_canvas = rsx! {
-        // Behind the gesture layer and inert, so every handler still
-        // lands where it did.
-        canvas {
-            id: "fts-stack-canvas",
-            style: "position: absolute; left: 0; top: 0; display: block; \
-                    width: {stack_w:.0}px; height: {stack_h:.0}px; \
-                    pointer-events: none;",
-        }
+        SceneCanvas { surface: surface.clone(), w: stack_w, h: stack_h }
     };
     #[cfg(not(all(feature = "webview", not(target_arch = "wasm32"))))]
     let surface_canvas = rsx! {};
@@ -1203,6 +1079,124 @@ pub fn StackView(
                 opacity: if marquee_on { "1" } else { "0" },
             }
         }
+        }
+    }
+}
+
+/// The canvas the painted surface is drawn into, and everything that
+/// reacts to a finished frame.
+///
+/// Its own component for the same reason `StackPlayhead` is: a re-render
+/// here must not re-render the stack. Building the scene is ~5 ms and is
+/// effectively the whole of the stack view's render, while the
+/// frame-arrived signal fires once per drawn frame — so leaving that
+/// signal in the parent built the scene TWICE for every frame that
+/// reached the screen: once because the camera moved, and again to
+/// discover that what the worker had just finished was what we already
+/// had.
+#[cfg(all(feature = "webview", not(target_arch = "wasm32")))]
+#[component]
+fn SceneCanvas(surface: crate::scene_image::worker::Rasterizer, w: f64, h: f64) -> Element {
+    // Serves what the worker produces. The URL carries a revision because
+    // a stable one is a cached image: the engine would never ask again.
+    dioxus::desktop::use_asset_handler("fts-scene", {
+        let surface = surface.clone();
+        move |request, responder| {
+            let revision = request
+                .uri()
+                .path()
+                .rsplit('/')
+                .next()
+                .and_then(|tail| tail.split('.').next())
+                .and_then(|n| n.parse::<u64>().ok());
+            let bytes = revision.and_then(|r| surface.get(r));
+            responder.respond(match bytes {
+                Some(bytes) => dioxus::desktop::wry::http::Response::builder()
+                    .header("Content-Type", "image/bmp")
+                    .header("Cache-Control", "max-age=31536000, immutable")
+                    .body(std::borrow::Cow::from(bytes))
+                    .expect("bmp response"),
+                None => dioxus::desktop::wry::http::Response::builder()
+                    .status(404)
+                    .body(std::borrow::Cow::from(Vec::new()))
+                    .expect("404 response"),
+            });
+        }
+    });
+
+    let mut painter = use_hook(|| {
+        document::eval(
+            r"
+            // The canvas is looked up per frame, not once: this script
+            // starts during the first render, before its own markup is
+            // mounted, and it survives the element being replaced.
+            while (true) {
+                const [url, w, h] = await dioxus.recv();
+                try {
+                    let canvas = null;
+                    for (let i = 0; i < 120; i++) {
+                        canvas = document.getElementById('fts-stack-canvas');
+                        if (canvas) { break; }
+                        await new Promise((done) => requestAnimationFrame(done));
+                    }
+                    if (!canvas) { continue; }
+                    // Fetch and decode BEFORE touching the canvas:
+                    // resizing or clearing it first is a blank frame.
+                    const bitmap = await createImageBitmap(
+                        await (await fetch(url)).blob(),
+                    );
+                    if (canvas.width !== w || canvas.height !== h) {
+                        canvas.width = w;
+                        canvas.height = h;
+                    }
+                    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+                    bitmap.close();
+                } catch (e) {
+                    // A dropped frame is a stale picture for a moment.
+                }
+            }
+            ",
+        )
+    });
+
+    // Finished frames are collected by polling: a thread has no way into
+    // dioxus's reactive world. Half a frame at 120 Hz — fast enough that a
+    // finished picture is never held back, and nothing when the view is
+    // still, because the thread blocks rather than spins.
+    let mut revision = use_signal(|| 0u64);
+    use_future({
+        let surface = surface.clone();
+        move || {
+            let surface = surface.clone();
+            async move {
+                loop {
+                    futures_timer::Delay::new(std::time::Duration::from_millis(4)).await;
+                    let latest = surface.revision();
+                    if latest != *revision.peek() {
+                        revision.set(latest);
+                    }
+                }
+            }
+        }
+    });
+    use_effect(move || {
+        let rev = revision();
+        if rev > 0 {
+            let _ = painter.send(serde_json::json!([
+                format!("/fts-scene/stack/{rev}.bmp"),
+                w.round(),
+                h.round(),
+            ]));
+        }
+    });
+
+    rsx! {
+        // Behind the gesture layer and inert, so every handler still
+        // lands where it did.
+        canvas {
+            id: "fts-stack-canvas",
+            style: "position: absolute; left: 0; top: 0; display: block; \
+                    width: {w:.0}px; height: {h:.0}px; pointer-events: none;",
         }
     }
 }

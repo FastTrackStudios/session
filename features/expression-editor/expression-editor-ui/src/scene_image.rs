@@ -299,6 +299,10 @@ pub mod worker {
     }
 
     /// A handle to a rasterizer thread.
+    ///
+    /// `PartialEq` by identity, so it can be a component prop: two
+    /// handles are the same rasterizer or they are not, and comparing
+    /// what is on the thread would mean waiting for it.
     #[derive(Clone)]
     pub struct Rasterizer {
         slot: Arc<(Mutex<Slot>, Condvar)>,
@@ -377,6 +381,12 @@ pub mod worker {
         pub fn get(&self, revision: u64) -> Option<Vec<u8>> {
             let out = self.out.lock().ok()?;
             (out.0 == revision).then(|| out.1.clone())
+        }
+    }
+
+    impl PartialEq for Rasterizer {
+        fn eq(&self, other: &Self) -> bool {
+            Arc::ptr_eq(&self.slot, &other.slot)
         }
     }
 
