@@ -253,6 +253,54 @@ There is no dedicated Dioxus profiler. `dioxus-core` instruments
 the engine's own devtools timeline is better than anything available from
 Rust, and is a reason to do performance work there.
 
+## Profiling tools worth reaching for
+
+In rough order of value for this UI:
+
+**The WebView's own inspector — already on, and free.** dioxus-desktop
+sets `with_devtools(true)` whenever `disable_context_menu` is false,
+which defaults to `!debug_assertions` — so any debug build (everything
+`dx serve` produces) has it. Right-click → Inspect Element, or
+Ctrl+Shift+I. Its Timelines tab has a **Rendering Frames** mode that
+plots each frame's height as the time it took, broken into script,
+layout, paint and composite. Nothing reachable from Rust comes close for
+the WebView target, and it is sitting there unopened.
+
+**samply** for the native build. A sampling profiler that needs no
+instrumentation and opens the result in the Firefox Profiler UI:
+`samply record target/release/examples/workstation …`. The right first
+question for "where do the 5 ms go".
+
+**tracing-tracy** when frame-level detail is wanted. Tracy is a
+real-time, nanosecond-resolution frame profiler, and `tracing-tracy`
+feeds it from `tracing` spans — which matters here twice over: this repo
+already mandates tracing, and `dioxus-core` instruments
+`VirtualDom::run_scope`, so per-component render times arrive without
+adding a single macro. Note Tracy's model does not represent spans that
+enter and exit on different threads, so async work needs care.
+
+The `profiling` crate is already in the lockfile transitively; it is a
+thin abstraction over tracy/puffin/optick if a backend-agnostic
+instrumentation ever seems worth it.
+
+### Linux WebKitGTK environment variables
+
+There are three that circulate for WebKitGTK trouble, and they are
+crash workarounds rather than optimisations — reach for them only for
+the symptom each names:
+
+- `__NV_DISABLE_EXPLICIT_SYNC=1` — Wayland protocol errors, no
+  performance cost.
+- `WEBKIT_DISABLE_DMABUF_RENDERER=1` — the DMABUF framebuffer error and
+  the "Error 71" crash, at the cost of the faster rendering path.
+- `WEBKIT_DISABLE_COMPOSITING_MODE=1` — **disables accelerated
+  compositing entirely.** A last resort for silent crashes on resize,
+  and the opposite of an optimisation: it takes the GPU out of the
+  picture. Worth knowing because it is the one most often copied off a
+  forum, and because a headless X server needs it — which means any
+  screenshot taken under Xvfb was of a deliberately handicapped
+  renderer and says nothing about speed.
+
 ## Ask the renderer where the time went
 
 The `layout_ms` stage is not layout. Blitz's `resolve()` is seven phases,
