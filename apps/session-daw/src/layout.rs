@@ -21,37 +21,48 @@ pub struct Layout {
     /// essentially every row in a fresh session. It belongs to the user,
     /// not to the file and not to this crate.
     ///
-    /// The default is [`NAME_LEGIBLE`] rather than REAPER's 70: the
-    /// resting state of a session should be as much of it as can be read
-    /// at once, and a track gets opened up when it is being worked on.
+    /// The default is [`CONTROL_ROW`] — the smallest height that holds
+    /// the whole control row at its authored size. A resting session
+    /// should be dense, but a track nobody has touched should still have
+    /// its knobs where its knobs go; seeing the whole session is what
+    /// the vertical ZOOM is for, not what the default height is for.
     pub default: f64,
-    /// The smallest a row is ever drawn, before the vertical zoom.
+    /// The smallest a track may be SET to.
     ///
-    /// One pixel, which is REAPER's own most-collapsed state. The panel
-    /// sheds controls on the way down — see [`crate::tcp::Density`] —
-    /// until a row is a single coloured line, because at that point the
-    /// question being asked is "where is everything", and seeing the
-    /// whole session answers it better than any one track's knobs.
-    ///
-    /// The divider lives inside the row, so a one-pixel row IS its
-    /// divider: a line of the track's colour and nothing else.
+    /// Deliberately not the smallest a row can be DRAWN at: that is
+    /// [`crate::tcp::BAND_BELOW`] and it applies to the height a row
+    /// lands at on screen, after the zoom. A track sized down to nothing
+    /// is a track whose controls you can no longer reach at any zoom,
+    /// where a session zoomed out is one gesture away from being
+    /// readable again — so the floor on the stored height is generous
+    /// and the floor on the drawn height is a single pixel.
     pub min: f64,
 }
+
+/// The smallest row holding the whole control row at its authored size.
+///
+/// Row one is 24 tall and the band is the row less a pixel top and
+/// bottom, so this is that plus its margins. Below it the controls start
+/// scaling down; at it, a track nobody has resized looks like a track.
+pub const CONTROL_ROW: f64 = 32.0;
 
 /// The smallest row that still prints a legible track name.
 ///
 /// Not a taste: it is the name's own type size plus the space a line of
-/// it needs, and it is why the number is here rather than inlined. Below
-/// this the row stops carrying a name at all (see [`crate::tcp::Density`]),
-/// so this is the boundary between "a list of tracks" and "a picture of
-/// a session".
+/// it needs. Below this a row stops carrying a name at all (see
+/// [`crate::tcp::Density`]), so it is the boundary between "a list of
+/// tracks" and "a picture of a session" — which the vertical zoom
+/// crosses, and a stored height no longer does.
 pub const NAME_LEGIBLE: f64 = 14.0;
 
 impl Default for Layout {
     fn default() -> Self {
         Self {
-            default: NAME_LEGIBLE,
-            min: 1.0,
+            default: CONTROL_ROW,
+            // Enough for the name, the record arm and the level bars —
+            // the point below which a track is being hidden rather than
+            // made small.
+            min: 24.0,
         }
     }
 }
@@ -137,5 +148,13 @@ mod tests {
             min: 6.0,
         };
         assert!((layout.height_of(Some(1)) - 6.0).abs() < f64::EPSILON);
+    }
+
+    /// The stored floor is generous; the DRAWN floor is not. A track
+    /// cannot be sized into invisibility, but zooming out may draw it
+    /// as a band — those are different limits and must not be confused.
+    #[test]
+    fn the_stored_floor_is_not_the_drawn_floor() {
+        assert!(Layout::default().min > crate::tcp::BAND_BELOW);
     }
 }
