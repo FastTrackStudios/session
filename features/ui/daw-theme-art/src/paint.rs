@@ -485,11 +485,16 @@ pub mod tcp {
                 let (w, h) = (24.0_f64, 25.0_f64);
         let (cx, cy, r) = (12.0_f64, 12.08_f64, 9.37_f64);
         let (cap_cy, cap_r) = (12.05_f64, 4.06_f64);
+        // The ring the value fills, and the face inside it.
+        let ring = 2.4_f64;
+        let ring_r = r - ring / 2.0 - 0.35;
+        let face_r = r - ring - 0.7;
 
         let pos = position.clamp(-1.0, 1.0);
         let sweep = pos * 135.0;
         let point_w = w * 0.083;
-        let point_top = h.mul_add(0.045, cy - r);
+        // The pointer starts inside the face, not under the ring.
+        let point_top = cy - r + ring + 1.4;
         let point_bot = h.mul_add(-0.01, cy - cap_r);
 
         let point = ink;
@@ -499,7 +504,41 @@ pub mod tcp {
         // Rim first, face inset — a stroke would centre itself on the
         // boundary and eat half of each.
         drawing.fill(circle(cx, cy, r), rim);
-        drawing.fill(circle(cx, cy, r - 0.35), chrome.hardware);
+        // The track the value is read against, so an untouched knob
+        // shows an empty ring rather than nothing at all.
+        drawing.stroke(
+            Shape::Arc {
+                cx,
+                cy,
+                r: ring_r,
+                start: -135.0,
+                sweep: 270.0,
+            },
+            // Visible, not merely present: against the rim an unlit
+            // track in the surface colour vanished, and the value arc
+            // read as floating in a gap rather than filling a ring.
+            chrome.hardware_edge,
+            Stroke::new(ring),
+        );
+        // The value, filled from TWELVE O'CLOCK to the pointer rather
+        // than from one end of the travel. Pan's zero is the centre, so
+        // an arc growing out of the top says which way and how far at a
+        // glance; one growing from hard left would make centre look like
+        // half of something.
+        if sweep.abs() > 0.5 {
+            drawing.stroke(
+                Shape::Arc {
+                    cx,
+                    cy,
+                    r: ring_r,
+                    start: 0.0,
+                    sweep,
+                },
+                ink,
+                Stroke::new(ring),
+            );
+        }
+        drawing.fill(circle(cx, cy, face_r), chrome.hardware);
         // The pointer, as a rotated quad rather than a rotation applied
         // to the whole drawing: the canvas replays these under a
         // transform that may scale the axes differently, and a rotation

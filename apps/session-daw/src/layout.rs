@@ -59,10 +59,15 @@ impl Default for Layout {
     fn default() -> Self {
         Self {
             default: CONTROL_ROW,
-            // Enough for the name, the record arm and the level bars —
-            // the point below which a track is being hidden rather than
+            // Enough for the name, the level bars, routing, FX and
+            // mute/solo — everything except the record arm, which needs
+            // a circle. Below this a track is being hidden rather than
             // made small.
-            min: 24.0,
+            //
+            // Under `KNOB_LEGIBLE` on purpose: a track parked at the
+            // minimum shows its level as bars rather than rings, so it
+            // reads as collapsed at a glance instead of merely short.
+            min: 16.0,
         }
     }
 }

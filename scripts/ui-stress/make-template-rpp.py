@@ -14,6 +14,9 @@ The hierarchy is the one the templater's insert-group actions build:
       Cymbals       OH, Hi-Hat, Ride
       Rooms         Mono, Stereo L, Stereo R
 
+Triggers, subs and reverb returns open at the minimum height: they are
+tracks you want present and almost never want to read.
+
 Four levels before an audio track, and the sends sit BESIDE the Sum
 rather than inside it — a Verb is fed by the sum, it is not one of the
 things being summed. The toms have no Sum of their own: a folder holding
@@ -155,6 +158,28 @@ TREE = [
 ]
 
 
+# "As small as this host allows", not a number.
+#
+# Every DAW has its own floor and this fixture is opened by more than
+# one; writing the renderer's own minimum here would duplicate a
+# constant that is a user SETTING on the other side, and go stale the
+# first time anyone changed it. One pixel is below every floor there is,
+# so each host clamps it to its own.
+MIN_HEIGHT = 1
+
+
+def is_auxiliary(name: str) -> bool:
+    """Is this a track you look at, or one you only need present?
+
+    A trigger, a sub and a reverb return are all things you want IN the
+    session and almost never want to READ: the trigger is a spike track
+    for a sampler, the sub and the verb are sends whose level you set
+    once. Collapsed to the minimum they stay reachable and stop spending
+    the vertical space that the mics and the sums actually need.
+    """
+    return name in ("Sub", "Verb") or name.endswith("Trig")
+
+
 def flatten(nodes, depth=0, out=None):
     """Depth-first, carrying each track's nesting level."""
     if out is None:
@@ -192,7 +217,8 @@ def main() -> None:
         out(f"    ISBUS {1 if is_folder else 0} {delta}\n")
         out("    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0\n")
         out("    SEL 0\n    REC 0 5088 1 0 0 0 0 0\n")
-        out("    TRACKHEIGHT 0 0 0 0 0 0\n")
+        height = MIN_HEIGHT if is_auxiliary(name) else 0
+        out(f"    TRACKHEIGHT {height} 0 0 0 0 0 0\n")
 
         # Audio only on the leaves. A folder's items are its children's.
         if not is_folder:
