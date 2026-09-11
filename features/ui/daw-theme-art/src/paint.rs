@@ -253,7 +253,7 @@ pub mod tcp {
     /// bottom to a darker one at the top because this theme's hardware
     /// is lit from below. Drawn flat it reads as a printed circle.
     #[must_use]
-    pub fn volume_knob(chrome: &Chrome, value: f64, at: Interaction) -> Drawing {
+    pub fn volume_knob(chrome: &Chrome, value: f64, at: Interaction, drawn_px: f64) -> Drawing {
         // 24, the height of the field it straddles. A knob shorter than
         // its box reads as sunk into it rather than seated on its edge.
         let (w, h) = (24.0_f64, 24.0_f64);
@@ -266,24 +266,37 @@ pub mod tcp {
         let ink = ink_in(chrome, None, at, true, 0.35);
         let mut drawing = Drawing::new(w, h);
 
-        // The drop it casts, which is most of what makes it read as
-        // hardware rather than as a filled circle.
-        drawing.fill(
-            Shape::Ellipse {
-                cx,
-                cy: h.mul_add(0.055, cy),
-                rx: rim * 1.07,
-                ry: rim * 1.23,
-            },
-            Brush::Radial {
-                centre: (cx, h.mul_add(0.055, cy)),
-                radius: rim * 1.23,
-                stops: vec![
-                    (0.90_f32, Color { r: 0, g: 0, b: 0, a: 38 }),
-                    (1.0, Color { r: 0, g: 0, b: 0, a: 0 }),
-                ],
-            },
-        );
+        // Ornament the eye cannot resolve, dropped.
+        //
+        // The drop shadow and the two gradients are what make this read
+        // as hardware rather than as a filled circle — at full size. On
+        // a fourteen-pixel track they are a radial gradient and two
+        // linear ones per row, a hundred rows to a screen, for shading
+        // spread across four pixels. `drawn_px` is how tall the caller
+        // will actually draw this, so the control can decide rather than
+        // the caller reaching inside it.
+        let ornament = drawn_px >= 18.0;
+
+        if ornament {
+            // The drop it casts, which is most of what makes it read as
+            // hardware rather than as a filled circle.
+            drawing.fill(
+                Shape::Ellipse {
+                    cx,
+                    cy: h.mul_add(0.055, cy),
+                    rx: rim * 1.07,
+                    ry: rim * 1.23,
+                },
+                Brush::Radial {
+                    centre: (cx, h.mul_add(0.055, cy)),
+                    radius: rim * 1.23,
+                    stops: vec![
+                        (0.90_f32, Color { r: 0, g: 0, b: 0, a: 38 }),
+                        (1.0, Color { r: 0, g: 0, b: 0, a: 0 }),
+                    ],
+                },
+            );
+        }
         // The black outline the ring is inset into. Without it the ring
         // runs to the cell's edge and the knob reads a size larger than
         // the one beside it.
@@ -302,19 +315,36 @@ pub mod tcp {
         );
         // The body: #303030 at the top to #2d2d2d at the bottom. Three
         // units, which is the difference between a moulded cap and a
-        // filled circle.
-        drawing.fill(
-            circle(cx, cy, body),
-            Brush::Linear {
-                from: (cx, cy - body),
-                to: (cx, cy + body),
-                stops: vec![(0.0, hex("#303030")), (1.0, hex("#2d2d2d"))],
-            },
-        );
+        // filled circle — and nothing at all once the cap is six pixels
+        // across, so it flattens to the mean there.
+        if ornament {
+            drawing.fill(
+                circle(cx, cy, body),
+                Brush::Linear {
+                    from: (cx, cy - body),
+                    to: (cx, cy + body),
+                    stops: vec![(0.0, hex("#303030")), (1.0, hex("#2d2d2d"))],
+                },
+            );
+        } else {
+            drawing.fill(circle(cx, cy, body), hex("#2f2f2f"));
+        }
         drawing.stroke(circle(cx, cy, body), ink.border, Stroke::new(0.8));
         // The value, over the track. Last, so its end sits on top of the
         // unlit stroke rather than under it.
         if value > 0.0 {
+            let lit: Brush = if ornament {
+                Brush::Linear {
+                    from: (cx, cy + r),
+                    to: (cx, cy - r),
+                    stops: vec![
+                        (0.0, hex(daw_theme::defaults::VOLUME_RING_LIT)),
+                        (1.0, hex(daw_theme::defaults::VOLUME_RING_LIT_TOP)),
+                    ],
+                }
+            } else {
+                hex(daw_theme::defaults::VOLUME_RING_LIT).into()
+            };
             drawing.stroke(
                 Shape::Arc {
                     cx,
@@ -323,14 +353,7 @@ pub mod tcp {
                     start: f64::from(VOLUME_KNOB_START),
                     sweep: f64::from(VOLUME_KNOB_SWEEP) * value,
                 },
-                Brush::Linear {
-                    from: (cx, cy + r),
-                    to: (cx, cy - r),
-                    stops: vec![
-                        (0.0, hex(daw_theme::defaults::VOLUME_RING_LIT)),
-                        (1.0, hex(daw_theme::defaults::VOLUME_RING_LIT_TOP)),
-                    ],
-                },
+                lit,
                 Stroke::new(stroke),
             );
         }

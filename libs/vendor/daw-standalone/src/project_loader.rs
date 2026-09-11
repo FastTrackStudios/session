@@ -342,6 +342,16 @@ fn populate_tracks(
                     .unwrap_or(true),
                 fx_count: 0, // FX not loaded (synthetic standalone)
                 input_fx_count: 0,
+                // The project's own `TRACKHEIGHT`. Absent, or zero —
+                // REAPER's sentinel for automatic — means the panel
+                // picks its own, so it stays `None` rather than becoming
+                // a track nought pixels tall.
+                height: rt
+                    .track_height
+                    .as_ref()
+                    .map(|h| h.height)
+                    .filter(|h| *h > 0)
+                    .map(|h| h as u32),
                 // The project file's own answer, not a default: a track
                 // muted out of the master bus must not read as sending to
                 // it just because nobody asked the routing service.

@@ -27,10 +27,19 @@ use anyrender::{ImageRenderer, PaintScene};
 use anyrender_vello::VelloImageRenderer;
 use vello::kurbo::Affine;
 
-use session_daw::arrangement::{Arrangement, Palette, Viewport, ROW_PITCH, TCP_WIDTH};
+use session_daw::arrangement::{Arrangement, Palette, Viewport, TCP_WIDTH};
 use session_daw::headless::{Headless, BATCH};
 use session_daw::profile::{Counts, Stages, Summary};
 use session_daw::ruler::{self, Bars, RULER_H};
+
+/// One phase's motion over `0..1`, as (`scroll_x`, `scroll_y`,
+/// `zoom_x`, `zoom_y`) fractions.
+///
+/// Boxed rather than a plain `fn` because the fit-everything phase has
+/// to close over the scene's height — the zoom at which a session fits
+/// depends on how tall it is, and a fixture-independent phase cannot be
+/// a constant.
+type Gesture = Box<dyn Fn(f64) -> (f64, f64, f64, f64)>;
 
 /// The surface to draw into, `WIDTHxHEIGHT`.
 ///
@@ -74,9 +83,10 @@ fn main() {
     let theme = daw_ui::theming::Theme::dark();
     let palette = Palette::from_theme(&theme);
     let font = session_daw::text::Font::embedded().expect("the embedded font");
+    let layout = session_daw::layout::Layout::from_env();
 
     let opened = session_daw::open::open_and_serve(&path).expect("open project");
-    let scene = build_scene(&palette).expect("read project back");
+    let scene = build_scene(&palette, layout).expect("read project back");
     tracing::info!(
         project.tracks = opened.track_count,
         scene.rows = scene.rows,
@@ -91,7 +101,7 @@ fn main() {
     /// whole note. The zoom only ever coarsens away from it.
     const FINEST: f64 = 1.0 / 16.0;
 
-    let span_y = (scene.rows as f64 * ROW_PITCH - f64::from(height)).max(1.0);
+    let span_y = (scene.content_height() - f64::from(height)).max(1.0);
     let span_x = (scene.length_secs * PPS - f64::from(width)).max(1.0);
 
     // One phase per GESTURE, because they are different work and a
@@ -113,6 +123,11 @@ fn main() {
     /// visible content.
     const LAPS: f64 = 14.0;
 
+    // Vertical zoom at which every track fits on screen at once.
+    // Computed from the scene rather than guessed, so the phase means
+    // the same thing whatever fixture it is pointed at.
+    let fit = f64::from(height) / scene.content_height().max(1.0);
+
     /// A triangle wave: out to the far end of the session and all the way
     /// back, `LAPS` times over the phase.
     fn tri(t: f64) -> f64 {
@@ -125,17 +140,28 @@ fn main() {
         if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 }
     }
 
-    type Gesture = fn(f64) -> (f64, f64, f64, f64);
-    let phases: &[(&str, Gesture)] = &[
-        ("scroll down/up", |t| (0.0, tri(t), 1.0, 1.0)),
-        ("scroll right/left", |t| (tri(t), 0.0, 1.0, 1.0)),
-        ("scroll both", |t| (tri(t), tri((t * 1.7) % 1.0), 1.0, 1.0)),
+    let phases: Vec<(&str, Gesture)> = vec![
+        ("scroll down/up", Box::new(|t| (0.0, tri(t), 1.0, 1.0))),
+        ("scroll right/left", Box::new(|t| (tri(t), 0.0, 1.0, 1.0))),
+        ("scroll both", Box::new(|t| (tri(t), tri((t * 1.7) % 1.0), 1.0, 1.0))),
         // A zoom is a slower gesture than a yank — a wheel or a pinch,
         // not a thrown scrollbar — so these sweep their range a few times
         // rather than fourteen.
-        ("zoom vertical", |t| (0.0, 0.3, 1.0, 0.25 + slow(t) * 3.75)),
-        ("zoom horizontal", |t| (0.0, 0.3, 0.25 + slow(t) * 7.75, 1.0)),
-        ("zoom both", |t| (0.0, 0.3, 0.25 + slow(t) * 7.75, 0.25 + slow(t) * 3.75)),
+        ("zoom vertical", Box::new(|t| (0.0, 0.3, 1.0, 0.25 + slow(t) * 3.75))),
+        ("zoom horizontal", Box::new(|t| (0.0, 0.3, 0.25 + slow(t) * 7.75, 1.0))),
+        (
+            "zoom both",
+            Box::new(|t| (0.0, 0.3, 0.25 + slow(t) * 7.75, 0.25 + slow(t) * 3.75)),
+        ),
+        // The whole session at once, which is what per-track heights and
+        // a two-pixel floor are FOR. Culling cannot help here by
+        // definition — every row is on screen — so this is the genuine
+        // worst case and it belongs in the table rather than in a
+        // footnote about how fast the other phases are.
+        (
+            "fit whole session",
+            Box::new(move |t| (0.0, 0.0, 1.0, fit + slow(t) * (0.25 - fit))),
+        ),
     ];
 
     println!();
@@ -174,7 +200,7 @@ fn main() {
     }
 
     let mut all: Vec<(&str, Summary, Summary, Counts)> = Vec::new();
-    for (name, gesture) in phases {
+    for (name, gesture) in phases.iter() {
         let mut stages = Stages::with_capacity(FRAMES);
         let mut counts = Counts::default();
         // Frames go out in batches and the GPU is waited on once at the
@@ -297,7 +323,7 @@ fn main() {
 fn verify(
     renderer: &mut VelloImageRenderer,
     scene: &Arrangement,
-    phases: &[(&str, fn(f64) -> (f64, f64, f64, f64))],
+    phases: &[(&str, Gesture)],
     span_x: f64,
     span_y: f64,
     width: u32,
@@ -317,7 +343,7 @@ fn verify(
     let mut rounded = 0usize;
 
     println!("\n  verifying culled == complete over {SAMPLES} viewports per phase\n");
-    for (name, gesture) in phases {
+    for (name, gesture) in phases.iter() {
         let mut worst_kept = 100.0f64;
         let mut empty = 0usize;
         for sample in 0..SAMPLES {
@@ -351,7 +377,7 @@ fn verify(
                 |painter| {
                     painter.reset();
                     session_daw::arrangement::replay_all(painter, &scene.lanes, lanes);
-                    session_daw::arrangement::replay_all(painter, &scene.panel, panel);
+                    scene.replay_all_panel(painter, view, panel);
                 },
                 &mut complete,
             );
@@ -518,7 +544,7 @@ fn shot(
     );
 }
 
-fn build_scene(palette: &Palette) -> Option<Arrangement> {
+fn build_scene(palette: &Palette, layout: session_daw::layout::Layout) -> Option<Arrangement> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -535,5 +561,6 @@ fn build_scene(palette: &Palette) -> Option<Arrangement> {
         &session_daw::text::Font::embedded().ok()?,
         &project,
         &rows,
+        layout,
     ))
 }

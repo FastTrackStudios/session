@@ -55,7 +55,7 @@ impl HasDisplayHandle for Surface {
     }
 }
 
-use session_daw::arrangement::{Arrangement, Palette, Viewport, ROW_PITCH, TCP_WIDTH};
+use session_daw::arrangement::{Arrangement, Palette, Viewport, TCP_WIDTH};
 use session_daw::ruler::{self, Bars, RULER_H};
 use session_daw::{open, theme};
 
@@ -222,12 +222,11 @@ impl App {
             return (1.0, 1.0);
         };
         let (width, height) = self.surface_size;
-        let rows = f64::from(u32::try_from(scene.rows).unwrap_or(u32::MAX));
         (
             (scene.length_secs * self.pps - (width - TCP_WIDTH)).max(1.0),
             // The ruler takes a strip off the top, so there is that much
             // more to scroll before the last row reaches the bottom.
-            (rows * ROW_PITCH - (height - RULER_H)).max(1.0),
+            (scene.content_height() - (height - RULER_H)).max(1.0),
         )
     }
 
@@ -359,6 +358,7 @@ fn main() {
 
     let theme = theme::resolve().theme;
     let palette = Palette::from_theme(&theme);
+    let layout = session_daw::layout::Layout::from_env();
 
     // The window opens now; the project fills in behind it.
     let (tx, rx) = std::sync::mpsc::channel();
@@ -378,7 +378,7 @@ fn main() {
                 }
             }
             // The facade is up; read it and record the scene.
-            match build_scene(&theme) {
+            match build_scene(&theme, layout) {
                 Some(arrangement) => {
                     tracing::info!(rows = arrangement.rows, "arrangement recorded");
                     let _ = tx.send(arrangement);
@@ -425,7 +425,10 @@ fn main() {
 }
 
 /// Read the project through the facade and record it.
-fn build_scene(theme: &daw_ui::theming::Theme) -> Option<Arrangement> {
+fn build_scene(
+    theme: &daw_ui::theming::Theme,
+    layout: session_daw::layout::Layout,
+) -> Option<Arrangement> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -441,5 +444,6 @@ fn build_scene(theme: &daw_ui::theming::Theme) -> Option<Arrangement> {
         &session_daw::text::Font::embedded().ok()?,
         &project,
         &rows,
+        layout,
     ))
 }

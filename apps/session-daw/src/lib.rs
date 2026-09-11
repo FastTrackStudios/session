@@ -13,6 +13,7 @@ pub mod arrangement;
 #[cfg(target_os = "linux")]
 pub mod frame_rate;
 pub mod headless;
+pub mod layout;
 pub mod open;
 pub mod art;
 pub mod profile;

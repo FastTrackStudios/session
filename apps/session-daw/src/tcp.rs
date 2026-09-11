@@ -41,17 +41,64 @@ use daw_theme_art::vector_controls::Interaction;
 use crate::arrangement::Palette;
 use crate::text::Font;
 
-/// A row's full height, without the divider under it.
+/// How much of a track panel fits in the height it has.
 ///
-/// Stated rather than converted from `g::ROW_H`, because `f64::from` is
-/// not callable in a const and a cast is not allowed to hide in one. The
-/// assertion below is what keeps the two honest: change the measured
-/// height and this fails to compile rather than drifting.
-pub const ROW_H: f64 = 70.0;
-const _: () = assert!(
-    g::ROW_H.to_bits() == 70.0_f32.to_bits(),
-    "tcp::ROW_H must match the measured geometry"
-);
+/// REAPER stops shrinking tracks well before a session of two thousand
+/// fits on a screen, which is the wrong trade when the question is
+/// "where is everything". So rows here go as small as
+/// [`crate::heights::MIN`], and the panel sheds controls on the way down
+/// rather than drawing them on top of each other.
+///
+/// The thresholds are what each tier actually NEEDS, not taste: `Full`
+/// is row one at 6 plus its 24, row two at 34 plus its 20, and the
+/// phase button hanging off the bottom.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Density {
+    /// Everything REAPER's row has.
+    Full,
+    /// The whole control row — name field, record arm, volume, pan,
+    /// routing, FX, mute and solo — flattened into whatever height the
+    /// row has.
+    ///
+    /// Controls are SQUASHED here, not dropped. A track at fourteen
+    /// pixels still has everything a track at seventy has, just flatter,
+    /// and every one of them stays in the same column: a panel where
+    /// controls appear and vanish as tracks resize cannot be read down,
+    /// and hitting a control would depend on how tall its track happens
+    /// to be. What row two and the stacked gutter cost is HEIGHT, and
+    /// that is the one thing this tier does not have, so mute and solo
+    /// lie down beside the row instead of stacking above it.
+    Compact,
+    /// A coloured band. At this height a glyph would not be legible and
+    /// a control would not be hittable, so the row is its tint and its
+    /// divider — which is exactly what a session zoomed out to fit is
+    /// being read for.
+    Bar,
+}
+
+/// Below this many pixels ON SCREEN, a row is drawn as a band.
+///
+/// The same threshold [`Density::at`] uses, named separately because the
+/// replay applies it to the row's height AFTER the zoom while the
+/// recording applies it before — see `Arrangement::panel_bar`.
+pub const BAND_BELOW: f64 = 11.0;
+
+impl Density {
+    /// What fits in `height`.
+    #[must_use]
+    pub fn at(height: f64) -> Self {
+        if height >= 58.0 {
+            Self::Full
+        } else if height >= BAND_BELOW {
+            // Below this a squashed control is a smear and a name is
+            // not legible at any size, so there is nothing left to draw
+            // but the band.
+            Self::Compact
+        } else {
+            Self::Bar
+        }
+    }
+}
 
 /// How far a folder's children are indented per level.
 ///
@@ -76,33 +123,47 @@ pub fn draw_row(
     track: &Track,
     depth: i32,
     y: f64,
+    h: f64,
 ) {
     let indent = (f64::from(depth.max(0)) * INDENT).min(MAX_INDENT);
     let tint = row_tint(palette, track);
+    let density = Density::at(h);
 
     // ── The row's ground ──
     //
     // The tint runs the full width and the meter section is painted over
     // its right end, which is how REAPER's `meterRight` reads: one row,
     // with a gutter at the end of it, not two panels side by side.
-    rect(scene, tint, 0.0, y, f64::from(g::ROW_W), y + ROW_H);
+    rect(scene, tint, 0.0, y, f64::from(g::ROW_W), y + h);
     rect(
         scene,
         palette.tcp_gutter,
         f64::from(g::TINT_W),
         y,
         f64::from(g::ROW_W),
-        y + ROW_H,
+        y + h,
     );
+
+    if density == Density::Bar {
+        // Five rectangles a row is nothing at 70px and everything at
+        // two: a session zoomed to fit is two thousand rows at once, and
+        // culling cannot help when all of them are visible. The column
+        // strip, its rule and the panel's right edge are the three that
+        // stop carrying information at this height — a one-pixel rule on
+        // a two-pixel row is not a rule — so the band keeps the two that
+        // say which track this is and how it is coloured.
+        return;
+    }
+
     // The left column, and the one-pixel rule closing it.
-    rect(scene, palette.tcp_column, 0.0, y, f64::from(g::COLUMN_RULE_X), y + ROW_H);
+    rect(scene, palette.tcp_column, 0.0, y, f64::from(g::COLUMN_RULE_X), y + h);
     rect(
         scene,
         palette.tcp_rule,
         f64::from(g::COLUMN_RULE_X),
         y,
         f64::from(g::COLUMN_RULE_X) + 1.0,
-        y + ROW_H,
+        y + h,
     );
     // The panel's own right edge — the boundary with the arrange view,
     // and the last thing missing from the row's silhouette.
@@ -112,26 +173,89 @@ pub fn draw_row(
         f64::from(g::ROW_W) - 2.0,
         y,
         f64::from(g::ROW_W) - 1.0,
-        y + ROW_H,
+        y + h,
     );
 
-    // The track number, in the left column.
+    // The track number, in the left column. Centred on whatever height
+    // the row has rather than on the one it used to have.
     glyphs(
         scene,
         font,
         palette.text_faint,
         &track.index.saturating_add(1).to_string(),
         9.0,
-        y + ROW_H / 2.0 + 4.0,
+        y + h / 2.0 + 4.0,
         11.0,
     );
 
-    row_one(scene, palette, font, track, indent, y);
-    row_two(scene, palette, font, track, y);
-    gutter(scene, palette, font, track, y);
+    match density {
+        Density::Full => {
+            row_one(scene, palette, font, track, indent, y + f64::from(g::ROW_ONE), 24.0);
+            row_two(scene, palette, font, track, y);
+            gutter(scene, palette, font, track, y, h);
+        }
+        // The controls get the row, less a pixel top and bottom so they
+        // are not flush against the dividers.
+        Density::Compact => {
+            row_one(scene, palette, font, track, indent, y + 1.0, (h - 2.0).max(1.0));
+            side_by_side(scene, palette, font, track, y, h);
+        }
+        Density::Bar => {}
+    }
 }
 
-/// The name field and everything that sits on it.
+/// Mute and solo, turned a quarter turn.
+///
+/// Stacked they need 45 of height, which a compact row does not have;
+/// the gutter is 47 wide and two 21-wide buttons fit across it with room
+/// to spare, so the pair lies down rather than one of them disappearing.
+fn side_by_side(
+    scene: &mut anyrender::Scene,
+    palette: &Palette,
+    font: &Font,
+    track: &Track,
+    y: f64,
+    h: f64,
+) {
+    // Scaled with the row, like everything else on it — uniformly, so a
+    // short track's buttons are small rather than squat.
+    let scale = ((h - 2.0) / 20.0).clamp(0.05, 1.0);
+    let button_h = 20.0 * scale;
+    let top = y + (h - button_h) / 2.0;
+    let gutter_x = f64::from(g::TINT_W) + 2.0;
+    for (i, (label, on, lit)) in [
+        ("M", track.muted, mute_lit(palette)),
+        ("S", track.soloed, solo_lit(palette)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let x = gutter_x + if i == 0 { 0.0 } else { 22.0_f64.mul_add(scale, 1.0) };
+        crate::art::scaled(
+            scene,
+            &art::gutter_button(&palette.chrome, label, on, lit, Interaction::Normal),
+            font,
+            x,
+            top,
+            scale,
+        );
+    }
+}
+
+/// The control row: the name field and everything on it, flattened to
+/// whatever height the row has.
+///
+/// `band` is the vertical space the controls get. Controls scale
+/// UNIFORMLY into it — a knob at half height is a smaller knob, not a
+/// flattened one — and each stays anchored at its own measured x, so the
+/// columns the panel is read down survive every height. Squashing them
+/// vertically was the first attempt and it was wrong: a flattened knob
+/// reads as a rendering fault rather than as a small control, and its
+/// pointer no longer says what it used to.
+///
+/// The name field is the exception: it is a box, not a control, so it
+/// keeps the panel's full width and only loses height. A field that
+/// shrank with everything else would leave the name floating in a gap.
 fn row_one(
     scene: &mut anyrender::Scene,
     palette: &Palette,
@@ -139,21 +263,19 @@ fn row_one(
     track: &Track,
     indent: f64,
     y: f64,
+    band: f64,
 ) {
-    // ── Row one: the name field, and what sits on it ──
-    //
+    /// The height row one is authored at — the name field's.
+    const AUTHORED: f64 = 24.0;
+
     // One long box with the record arm and the volume knob ON its two
     // ends, not three boxes in a line: drawn separately they had grey
     // gutters either side that REAPER does not have.
+    let field_h = band.min(AUTHORED);
+    let squash = field_h / AUTHORED;
+    let field_top = y + (band - field_h) / 2.0;
     let field_x = f64::from(g::NAME_FIELD_X) + indent;
     let field_w = (f64::from(g::NAME_FIELD_W) - indent).max(0.0);
-    let field_top = y + f64::from(g::ROW_ONE);
-    // Where the row-one BUTTONS sit. One above `ROW_ONE` because the
-    // routing and FX drawings carry a one-pixel inset of their own, so
-    // this is what puts their plates on the measured line rather than
-    // one below it.
-    let button_top = field_top - 1.0;
-    let field_h = f64::from(g::NAME_FIELD_H);
     scene_fill(
         scene,
         palette.tcp_field,
@@ -169,40 +291,53 @@ fn row_one(
     // The record arm, on the field's left end. Lit when armed, which is
     // the one control on this row that has to be readable at a glance
     // from across a room.
-    crate::art::place(
+    let arm_h = 18.0 * squash;
+    crate::art::scaled(
         scene,
         &art::record_arm(&palette.chrome, track.armed, Interaction::Normal),
         font,
         field_x + 3.0,
-        field_top + 3.0,
+        field_top + (field_h - arm_h) / 2.0,
+        squash,
     );
 
     // The name, between the arm and the knob, cut short rather than
-    // wrapped or shrunk — REAPER truncates here too.
+    // wrapped or shrunk — REAPER truncates here too. The type shrinks
+    // with the row rather than being squashed with it: a flattened glyph
+    // is unreadable where a smaller one is merely small.
     let name_x = 58.0 + indent;
     let name_w = (f64::from(g::NAME_FIELD_X) + f64::from(g::NAME_FIELD_W) - 58.0 - indent).max(0.0);
     let ink = if track.selected { palette.text } else { palette.text_dim };
+    let size = name_size(field_h);
     glyphs(
         scene,
         font,
         ink,
-        &font.elide(&track.name, 11.5, name_w),
+        &font.elide(&track.name, size, name_w),
         name_x,
-        field_top + 16.0,
-        11.5,
+        f64::from(size).mul_add(0.35, field_top + field_h / 2.0),
+        size,
     );
 
     // Volume, on the field's right end, and pan outside it — both the
-    // measured drawings, not a circle with a dot on it.
-    // Scaled so the knob's 22 body CAPS the 24-tall field it straddles.
-    // At its authored size the field's square right-hand corners showed
-    // past the circle, which read as the name box poking out from under
-    // the knob rather than the knob closing it.
+    // measured drawings, not a circle with a dot on it. The knob's 22
+    // body CAPS the field: at its authored size the field's square
+    // right-hand corners showed past the circle, which read as the name
+    // box poking out from under the knob rather than the knob closing it.
+    // The knob's 22 body caps the field: at its authored size the
+    // field's square right-hand corners showed past the circle, which
+    // read as the name box poking out from under the knob rather than
+    // the knob closing it.
     let knob_scale = field_h / 22.0;
     let knob_box = 24.0 * knob_scale;
     crate::art::scaled(
         scene,
-        &art::volume_knob(&palette.chrome, gain_fraction(track.volume), Interaction::Normal),
+        &art::volume_knob(
+            &palette.chrome,
+            gain_fraction(track.volume),
+            Interaction::Normal,
+            field_h,
+        ),
         font,
         // Centred on the field's right edge, which is where REAPER seats
         // it: half on the field, half on the tint.
@@ -210,26 +345,35 @@ fn row_one(
         field_top + (field_h - knob_box) / 2.0,
         knob_scale,
     );
-    crate::art::place(
+    let pan_scale = (field_h / 25.0).min(1.0);
+    crate::art::scaled(
         scene,
         &art::pan_knob(&palette.chrome, pan_position(track.pan)),
         font,
         f64::from(g::PAN_KNOB_X),
-        y + 5.0,
+        field_top + 25.0_f64.mul_add(-pan_scale, field_h) / 2.0,
+        pan_scale,
     );
 
     // Routing, then the FX pill. Both get a FACE — lanes on the routing
-    // widget, a label on the pill. Drawn as bare plates they read as
-    // holes in the row rather than as controls, which is exactly what
-    // they looked like.
-    crate::art::place(
+    // widget, a label on the pill — and both carry a one-pixel inset of
+    // their own, which is why they share a top a pixel above the field's.
+    // These two flatten rather than shrink. A knob has to stay round —
+    // its pointer means nothing once the circle is an ellipse — but the
+    // routing widget is three bars and the FX pill is a label, and both
+    // stay legible squashed while shrinking would make them narrower
+    // than the column they head and leave the label unreadable.
+    let plate_scale = field_h / AUTHORED;
+    let plate_h = 22.0 * plate_scale;
+    let plate_top = field_top + (field_h - plate_h) / 2.0;
+    crate::art::squashed(
         scene,
         &art::routing(
             &palette.chrome,
             art::Routing {
                 parent_send: track.parent_send,
                 // Sends and receives are not on `Track` — they live in
-                // the routing model this window has not read yet, so
+                // the routing model this window has not read yet — so
                 // they draw as the unlit slots they are rather than as
                 // a guess.
                 sends: false,
@@ -246,13 +390,11 @@ fn row_one(
         ),
         font,
         f64::from(g::ROUTING_X),
-        // The same top as the FX pill beside it. Both drawings inset
-        // their plate by one from the top of their own box — traced that
-        // way, because REAPER's cells do — so placing them at different
-        // tops put their plates a pixel apart and their centres two.
-        button_top,
+        plate_top,
+        1.0,
+        plate_scale,
     );
-    crate::art::place(
+    crate::art::squashed(
         scene,
         // The chain's state is not on `Track` — it lives in the FX model
         // this window has not read yet — so the pill draws its empty
@@ -260,9 +402,24 @@ fn row_one(
         &art::fx_pill(&palette.chrome, art::Chain::Empty, Interaction::Normal),
         font,
         f64::from(g::FX_IN_X),
-        button_top,
+        plate_top,
+        1.0,
+        plate_scale,
     );
+}
 
+/// The name's type size for a field of `height`.
+///
+/// Shrinks with the row and stops: past the small end it is unreadable,
+/// past the large end it is bigger than REAPER sets it.
+fn name_size(height: f64) -> f32 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::as_conversions,
+        reason = "a type size in points, which every text API takes as f32"
+    )]
+    let size = (height * 0.48).clamp(6.5, 11.5) as f32;
+    size
 }
 
 /// Envelope, and — only while armed — the input FX slot and the record
@@ -310,6 +467,7 @@ fn gutter(
     font: &Font,
     track: &Track,
     y: f64,
+    h: f64,
 ) {
     // ── The meter section: the meter, then mute over solo ──
     //
@@ -322,7 +480,7 @@ fn gutter(
         f64::from(g::TINT_W) + f64::from(g::METER_X),
         y + 2.0,
         f64::from(g::TINT_W) + f64::from(g::METER_X) + f64::from(g::METER_W),
-        y + ROW_H - 2.0,
+        y + h - 2.0,
     );
 
     let button_x = f64::from(g::TINT_W) + f64::from(g::GUTTER_BUTTON_X);
@@ -344,13 +502,13 @@ fn gutter(
     // Phase, in the corner. Hidden on rows too short for it, exactly as
     // the theme's own formula hides it — the row's shape must not depend
     // on its height.
-    if ROW_H >= f64::from(g::PHASE_HIDE_H) {
+    if h >= f64::from(g::PHASE_HIDE_H) {
         crate::art::place(
             scene,
             &art::phase(&palette.chrome, track.phase_inverted, Interaction::Normal),
             font,
             button_x + 3.0,
-            y + ROW_H - f64::from(g::PHASE_FROM_FLOOR),
+            y + h - f64::from(g::PHASE_FROM_FLOOR),
         );
     }
 }
@@ -373,10 +531,14 @@ pub fn track_color(palette: &Palette, track: &Track) -> Color {
 
 /// The row's background, tinted toward the track's own colour.
 ///
+/// Shared with the band the replay substitutes at small zooms, so the
+/// two cannot disagree about what colour a track is.
+///
 /// REAPER tints the whole row rather than showing a colour chip, which
 /// is what makes a session readable by section at a glance. The strength
 /// is the theme's, not a number chosen here.
-fn row_tint(palette: &Palette, track: &Track) -> Color {
+#[must_use]
+pub fn row_tint(palette: &Palette, track: &Track) -> Color {
     if track.color.is_none() {
         return palette.tcp_tint;
     }

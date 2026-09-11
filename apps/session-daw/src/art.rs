@@ -26,14 +26,33 @@ pub fn place(scene: &mut Scene, drawing: &Drawing, font: &Font, x: f64, y: f64) 
 }
 
 /// The same, resized.
+pub fn scaled(scene: &mut Scene, drawing: &Drawing, font: &Font, x: f64, y: f64, scale: f64) {
+    squashed(scene, drawing, font, x, y, scale, scale);
+}
+
+/// The same, resized differently in each axis.
 ///
 /// A control is authored at the size REAPER's image is, and a row does
-/// not always want exactly that — the volume knob has to cap a 24-tall
-/// field with a 22 body, and at its authored size the field's corners
-/// showed past it. Scaling the drawing keeps one definition rather than
-/// adding a second knob at a second size.
-pub fn scaled(scene: &mut Scene, drawing: &Drawing, font: &Font, x: f64, y: f64, scale: f64) {
-    let at = Affine::scale(scale).then_translate(Vec2::new(x, y));
+/// not always have that much height — a track at fourteen pixels still
+/// has all of its controls, it just has them flatter. Squashing the
+/// drawing keeps ONE definition of each control rather than a second
+/// set drawn small, which is the same argument that put the shape layer
+/// in `daw_theme_art` to begin with.
+///
+/// Width is usually left alone: the panel is as wide as it ever was, so
+/// a control that shrinks in both axes would be small AND surrounded by
+/// gaps, where one that only flattens still reads as the same control.
+pub fn squashed(
+    scene: &mut Scene,
+    drawing: &Drawing,
+    font: &Font,
+    x: f64,
+    y: f64,
+    scale_x: f64,
+    scale_y: f64,
+) {
+    let scale = scale_y;
+    let at = Affine::scale_non_uniform(scale_x, scale_y).then_translate(Vec2::new(x, y));
     for op in &drawing.ops {
         match op {
             Op::Fill(shape, brush) => {
@@ -74,7 +93,7 @@ pub fn scaled(scene: &mut Scene, drawing: &Drawing, font: &Font, x: f64, y: f64,
                     font,
                     convert(*color),
                     body,
-                    left.mul_add(scale, x),
+                    left.mul_add(scale_x, x),
                     (*baseline).mul_add(scale, y),
                     size,
                 );

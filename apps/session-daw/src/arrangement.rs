@@ -11,9 +11,9 @@
 //! scroll, a zoom or a playhead tick. Those are a different `Affine`,
 //! not a different scene.
 //!
-//! # Why one scene for the panel AND the lanes
+//! # One scene for the panel as well as the lanes
 //!
-//! Because they must not be able to disagree. The WebView version drew
+//! Because they must not be able to disagree. The web-view version drew
 //! the lanes on a canvas while the track panel stayed in the DOM, and
 //! they visibly tore apart while scrolling: native scroll moves DOM
 //! content on the compositor, a canvas redraws on the main thread, and
@@ -29,9 +29,13 @@ use daw_ui::studio::{ProjectRef, RowsRef};
 
 use crate::profile::Counts;
 
-/// A row and its one-pixel divider — the pitch the panel and the lanes
-/// share, and the only thing keeping them level.
-pub const ROW_PITCH: f64 = 71.0;
+/// The divider under every row.
+///
+/// Part of the row's height rather than added to it, so a track set to
+/// 24 in REAPER occupies 24 here too. Adding it would make every row a
+/// pixel taller than the project says, and two thousand of those is a
+/// hundred and forty pixels of drift down the session.
+pub const DIVIDER: f64 = 1.0;
 /// The panel's width, from the measured REAPER geometry.
 pub const TCP_WIDTH: f64 = 343.0;
 
@@ -115,6 +119,7 @@ pub struct Palette {
 }
 
 impl Palette {
+    #[must_use]
     pub fn from_theme(theme: &daw_ui::theming::Theme) -> Self {
         let c = |col: daw_ui::theming::Color| {
             Color::from_rgba8(col.r, col.g, col.b, col.a)
@@ -162,6 +167,19 @@ pub struct Arrangement {
     /// horizontally — it is replayed under a transform that carries only
     /// the vertical scroll.
     pub panel: Scene,
+    /// The same panel as bands: two rectangles a row, no controls.
+    ///
+    /// The detail a row deserves depends on how tall it is ON SCREEN,
+    /// and that is the zoom — which the recorded scene cannot know,
+    /// because not depending on the zoom is the whole reason it can be
+    /// recorded once. So both are recorded and the replay picks per row.
+    ///
+    /// Without this, a session zoomed out to fit drew two thousand
+    /// complete track panels into a strip a fifth of a pixel tall each:
+    /// seventy-five thousand commands to produce a column of coloured
+    /// lines, and the one view that most needs to be fast was the
+    /// slowest thing the window did.
+    pub panel_bar: Scene,
     pub rows: usize,
     pub length_secs: f64,
     /// The project tempo, for the ruler's bar lines.
@@ -172,6 +190,14 @@ pub struct Arrangement {
     /// Where each row's commands live, so a replay can skip the rows
     /// that are not on screen. See [`Index`].
     pub index: Index,
+    /// The top of every row, plus the bottom of the last — so row `i`
+    /// occupies `offsets[i]..offsets[i + 1]` and there are `rows + 1`
+    /// entries.
+    ///
+    /// Cumulative rather than a list of heights, because what a scroll
+    /// actually asks is "which row is at this y", and a running sum
+    /// answers it with a binary search where heights would need a walk.
+    offsets: Vec<f64>,
 }
 
 /// Which commands belong to which row, and how wide each one is.
@@ -194,9 +220,53 @@ pub struct Index {
     lanes: Vec<std::ops::Range<u32>>,
     /// `panel` command range per row.
     panel: Vec<std::ops::Range<u32>>,
+    /// `panel_bar` command range per row.
+    panel_bar: Vec<std::ops::Range<u32>>,
     /// Content-space x extent of every `lanes` command, indexed the same
     /// way as `lanes.commands`. In seconds, like the recording.
-    x: Vec<(f32, f32)>,
+    x: Vec<(f64, f64)>,
+}
+
+impl Arrangement {
+    /// How tall the whole session is, in content pixels.
+    #[must_use]
+    pub fn content_height(&self) -> f64 {
+        self.offsets.last().copied().unwrap_or(0.0)
+    }
+
+    /// How tall row `i` is, in content pixels.
+    #[must_use]
+    fn row_height(&self, row: usize) -> f64 {
+        let top = self.offsets.get(row).copied().unwrap_or(0.0);
+        let bottom = self.offsets.get(row.saturating_add(1)).copied().unwrap_or(top);
+        bottom - top
+    }
+
+    /// The rows that intersect `view`, clamped to what exists.
+    ///
+    /// A binary search over [`Arrangement::offsets`] rather than a
+    /// division by a row pitch: there is no pitch any more. Rows are
+    /// whatever height the project says, so "which row is at this y" is
+    /// a lookup, not arithmetic.
+    ///
+    /// One row of bleed on each side: a row scrolled half off the top
+    /// still paints its visible half, and dropping it would tear the
+    /// edge of the screen during exactly the fast scroll this is for.
+    #[must_use]
+    pub fn visible_rows(&self, view: Viewport) -> std::ops::Range<usize> {
+        let rows = self.index.lanes.len();
+        if rows == 0 {
+            return 0..0;
+        }
+        let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+        let top = view.scroll_y / zoom;
+        let bottom = (view.scroll_y + view.height) / zoom;
+        // `partition_point` gives the first row whose TOP is past the
+        // edge; the row before it is the one the edge falls inside.
+        let first = self.offsets.partition_point(|&y| y <= top).saturating_sub(1);
+        let last = self.offsets.partition_point(|&y| y < bottom);
+        first.min(rows)..last.min(rows)
+    }
 }
 
 /// What part of the session a frame can actually see.
@@ -216,19 +286,6 @@ pub struct Viewport {
 }
 
 impl Viewport {
-    /// The rows that intersect the viewport, clamped to `rows`.
-    ///
-    /// One row of bleed on each side: a row scrolled half off the top
-    /// still paints its visible half, and dropping it would tear the
-    /// edge of the screen during exactly the fast scroll this is for.
-    #[must_use]
-    pub fn rows(self, rows: usize) -> std::ops::Range<usize> {
-        let pitch = (ROW_PITCH * self.zoom_y).max(0.001);
-        let first = ((self.scroll_y / pitch).floor() as isize - 1).max(0) as usize;
-        let last = (((self.scroll_y + self.height) / pitch).ceil() as isize + 1).max(0) as usize;
-        first.min(rows)..last.min(rows)
-    }
-
     /// The span of the session visible across, in seconds, with a screen
     /// of bleed either side for the same reason.
     #[must_use]
@@ -241,20 +298,35 @@ impl Viewport {
 }
 
 impl Arrangement {
+    /// Record the whole project, once.
+    #[must_use]
     pub fn build(
         palette: &Palette,
         font: &crate::text::Font,
         project: &ProjectRef,
         rows: &RowsRef,
+        layout: crate::layout::Layout,
     ) -> Self {
         let mut lanes = Scene::new();
         let mut panel = Scene::new();
+        let mut panel_bar = Scene::new();
         let mut index = Index::default();
-
+        let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
+        let mut y = 0.0_f64;
         for (row, (track, depth)) in rows.iter().enumerate() {
-            let lanes_from = lanes.commands.len() as u32;
-            let panel_from = panel.commands.len() as u32;
-            let y = row as f64 * ROW_PITCH;
+            // Command indices are `u32`: two per row plus one per item,
+            // so four billion of them is a project nothing could open.
+            // Saturating rather than wrapping, because a wrapped index
+            // would cull the wrong rows rather than fail.
+            let lanes_from = command_index(&lanes);
+            let panel_from = command_index(&panel);
+            let bar_from = command_index(&panel_bar);
+            offsets.push(y);
+            // The track's own height, or the user's default, floored at
+            // something far below REAPER's minimum — see `layout`. The
+            // divider lives INSIDE the row, so a 24 track is 24 tall.
+            let h = layout.height_of(track.height);
+            let body = (h - DIVIDER).max(0.5);
             let stripe = if row % 2 == 0 { palette.row_a } else { palette.row_b };
 
             // The lane's background and the divider under it. Recorded
@@ -265,28 +337,54 @@ impl Arrangement {
                 Affine::IDENTITY,
                 stripe,
                 None,
-                &Rect::new(0.0, y, project.length_secs.max(1.0), y + ROW_PITCH - 1.0),
+                &Rect::new(0.0, y, project.length_secs.max(1.0), y + body),
             );
-            index.x.push((f32::MIN, f32::MAX));
+            index.x.push((f64::MIN, f64::MAX));
             lanes.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
                 palette.divider,
                 None,
-                &Rect::new(0.0, y + ROW_PITCH - 1.0, project.length_secs.max(1.0), y + ROW_PITCH),
+                &Rect::new(0.0, y + body, project.length_secs.max(1.0), y + h),
             );
-            index.x.push((f32::MIN, f32::MAX));
+            index.x.push((f64::MIN, f64::MAX));
 
             // The panel row — the whole REAPER-matched control panel, at
             // the geometry the DOM row uses. See `crate::tcp`.
-            crate::tcp::draw_row(&mut panel, palette, font, track, i32::try_from(*depth).unwrap_or(0), y);
+            crate::tcp::draw_row(
+                &mut panel,
+                palette,
+                font,
+                track,
+                i32::try_from(*depth).unwrap_or(0),
+                y,
+                body,
+            );
+            // The same row as a band, for when it is too short on
+            // screen to be worth more. Its tint and its gutter and
+            // nothing else — see `Arrangement::panel_bar`.
+            panel_bar.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                crate::tcp::row_tint(palette, track),
+                None,
+                &Rect::new(0.0, y, TCP_WIDTH, y + body),
+            );
+            panel_bar.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                palette.divider,
+                None,
+                &Rect::new(0.0, y + body, TCP_WIDTH, y + h),
+            );
+
             // The divider under it, matching the lane's.
             panel.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
                 palette.divider,
                 None,
-                &Rect::new(0.0, y + ROW_PITCH - 1.0, TCP_WIDTH, y + ROW_PITCH),
+                &Rect::new(0.0, y + body, TCP_WIDTH, y + h),
             );
 
             // The items on this lane. An item with no colour of its own
@@ -294,37 +392,43 @@ impl Arrangement {
             // section when it is zoomed out far enough that names are
             // gone — the same rule the panel's row tint follows.
             let track_color = crate::tcp::track_color(palette, track);
+            // Items sit inside their lane, but a two-pixel inset on a
+            // three-pixel row leaves nothing to see. Scaled down as the
+            // row shrinks, so a collapsed session still shows its items
+            // as bands rather than as empty lanes.
+            let inset = (body * 0.05).clamp(0.0, 2.0);
             for item in project.lane(&track.guid) {
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
                 let color = item.color.map_or(track_color, |rgb| {
-                    Color::from_rgba8(
-                        ((rgb >> 16) & 0xff) as u8,
-                        ((rgb >> 8) & 0xff) as u8,
-                        (rgb & 0xff) as u8,
-                        if item.muted { 0x66 } else { 0xff },
-                    )
+                    rgb24(rgb, if item.muted { 0x66 } else { 0xff })
                 });
                 lanes.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
                     color,
                     None,
-                    &Rect::new(x0, y + 2.0, x1, y + ROW_PITCH - 3.0),
+                    &Rect::new(x0, y + inset, x1, y + body - inset),
                 );
-                index.x.push((x0 as f32, x1 as f32));
+                index.x.push((x0, x1));
             }
 
-            index.lanes.push(lanes_from..lanes.commands.len() as u32);
-            index.panel.push(panel_from..panel.commands.len() as u32);
+            index.lanes.push(lanes_from..command_index(&lanes));
+            index.panel.push(panel_from..command_index(&panel));
+            index.panel_bar.push(bar_from..command_index(&panel_bar));
+            y += h;
         }
+        // The bottom of the last row, so every row has a `..end`.
+        offsets.push(y);
 
         debug_assert_eq!(index.x.len(), lanes.commands.len(), "one x extent per lane command");
 
         Self {
             lanes,
             panel,
+            panel_bar,
             index,
+            offsets,
             rows: rows.len(),
             length_secs: project.length_secs,
             bpm: project.bpm,
@@ -335,7 +439,8 @@ impl Arrangement {
 
 impl Arrangement {
     /// How many items this scene draws.
-    pub fn items(&self) -> usize {
+    #[must_use]
+    pub const fn items(&self) -> usize {
         self.item_count
     }
 
@@ -353,18 +458,21 @@ impl Arrangement {
         transform: Affine,
     ) -> Counts {
         let (left, right) = view.secs();
-        let (left, right) = (left as f32, right as f32);
         let mut counts = Counts::default();
-        for row in view.rows(self.index.lanes.len()) {
-            let span = self.index.lanes[row].clone();
-            for i in span.start as usize..span.end as usize {
-                counts.replayed += 1;
-                let (x0, x1) = self.index.x[i];
-                if x1 < left || x0 > right {
-                    continue;
+        for row in self.visible_rows(view) {
+            let Some(span) = self.index.lanes.get(row) else {
+                continue;
+            };
+            for (i, cmd) in commands(&self.lanes, span) {
+                counts.replayed = counts.replayed.saturating_add(1);
+                // Off the sides of a row that IS on screen — the case
+                // that matters when zoomed in on bar 400 of 500.
+                match self.index.x.get(i) {
+                    Some(&(x0, x1)) if x1 < left || x0 > right => continue,
+                    _ => {}
                 }
-                if submit(painter, &self.lanes.commands[i], transform) {
-                    counts.submitted += 1;
+                if submit(painter, cmd, transform) {
+                    counts.submitted = counts.submitted.saturating_add(1);
                 }
             }
         }
@@ -380,17 +488,66 @@ impl Arrangement {
         transform: Affine,
     ) -> Counts {
         let mut counts = Counts::default();
-        for row in view.rows(self.index.panel.len()) {
-            let span = self.index.panel[row].clone();
-            for i in span.start as usize..span.end as usize {
-                counts.replayed += 1;
-                if submit(painter, &self.panel.commands[i], transform) {
-                    counts.submitted += 1;
+        let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+        for row in self.visible_rows(view) {
+            // How tall this row lands ON SCREEN, which is what decides
+            // whether its controls are worth drawing. A row at its full
+            // height under a zoom that shrinks it to a fifth of a pixel
+            // is a band, whatever the project says about it.
+            let on_screen = self.row_height(row) * zoom;
+            let (scene, index) = if on_screen >= crate::tcp::BAND_BELOW {
+                (&self.panel, &self.index.panel)
+            } else {
+                (&self.panel_bar, &self.index.panel_bar)
+            };
+            let Some(span) = index.get(row) else {
+                continue;
+            };
+            for (_, cmd) in commands(scene, span) {
+                counts.replayed = counts.replayed.saturating_add(1);
+                if submit(painter, cmd, transform) {
+                    counts.submitted = counts.submitted.saturating_add(1);
                 }
             }
         }
         counts
     }
+}
+
+/// One row's commands, with their indices.
+///
+/// The indices are what the x-extent table is keyed by, so they come out
+/// alongside rather than being recomputed. Bounds are the slice's, which
+/// is what makes an index recorded against a scene that has since been
+/// rebuilt yield nothing instead of panicking.
+fn commands<'a>(
+    scene: &'a Scene,
+    span: &std::ops::Range<u32>,
+) -> impl Iterator<Item = (usize, &'a RenderCommand)> {
+    let start = usize::try_from(span.start).unwrap_or(usize::MAX);
+    let end = usize::try_from(span.end).unwrap_or(usize::MAX);
+    scene
+        .commands
+        .get(start..end.min(scene.commands.len()))
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+        .map(move |(offset, cmd)| (start.saturating_add(offset), cmd))
+}
+
+/// How many commands a scene holds, as an index.
+///
+/// Saturating: a wrapped index would quietly cull the wrong rows, where
+/// a saturated one draws too much. Four billion commands is a project
+/// that could not be opened in the first place.
+fn command_index(scene: &Scene) -> u32 {
+    u32::try_from(scene.commands.len()).unwrap_or(u32::MAX)
+}
+
+/// A packed `0xRRGGBB` with an alpha.
+fn rgb24(rgb: u32, alpha: u8) -> Color {
+    let byte = |shift: u32| u8::try_from((rgb >> shift) & 0xff).unwrap_or(0);
+    Color::from_rgba8(byte(16), byte(8), byte(0), alpha)
 }
 
 /// Replay EVERYTHING, ignoring the viewport.
@@ -407,12 +564,66 @@ pub fn replay_all(
 ) -> Counts {
     let mut counts = Counts::default();
     for cmd in &scene.commands {
-        counts.replayed += 1;
+        counts.replayed = counts.replayed.saturating_add(1);
         if submit(painter, cmd, transform) {
-            counts.submitted += 1;
+            counts.submitted = counts.submitted.saturating_add(1);
         }
     }
     counts
+}
+
+impl Arrangement {
+    /// Every row of the panel, at the detail the viewport's ZOOM asks
+    /// for — but with no culling.
+    ///
+    /// The control for [`Arrangement::replay_panel`]. It has to make the
+    /// same level-of-detail choice, because that choice is not culling:
+    /// substituting a band for a row a fifth of a pixel tall changes the
+    /// picture on purpose, while skipping a row that is off screen must
+    /// not change it at all. Comparing against a control that drew full
+    /// panels everywhere would be testing the two together and failing
+    /// on the one that is behaving.
+    pub fn replay_all_panel(
+        &self,
+        painter: &mut impl PaintScene,
+        view: Viewport,
+        transform: Affine,
+    ) -> Counts {
+        let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+        let mut counts = Counts::default();
+        for row in 0..self.index.panel.len() {
+            let on_screen = self.row_height(row) * zoom;
+            let (scene, index) = if on_screen >= crate::tcp::BAND_BELOW {
+                (&self.panel, &self.index.panel)
+            } else {
+                (&self.panel_bar, &self.index.panel_bar)
+            };
+            let Some(span) = index.get(row) else {
+                continue;
+            };
+            for (_, cmd) in commands(scene, span) {
+                counts.replayed = counts.replayed.saturating_add(1);
+                if submit(painter, cmd, transform) {
+                    counts.submitted = counts.submitted.saturating_add(1);
+                }
+            }
+        }
+        counts
+    }
+}
+
+/// `outer` applied after `inner`.
+///
+/// Named rather than written as `*` because multiplying two affines is
+/// composition, not arithmetic: there is nothing here to overflow, and
+/// the lint that flags the operator is right to flag it everywhere else.
+fn compose(outer: Affine, inner: Affine) -> Affine {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "affine composition; the operator is matrix multiplication"
+    )]
+    let composed = outer * inner;
+    composed
 }
 
 /// Push one recorded command through `transform`.
@@ -428,7 +639,7 @@ fn submit(painter: &mut impl PaintScene, cmd: &RenderCommand, transform: Affine)
             };
             painter.fill(
                 fill.fill,
-                transform * fill.transform,
+                compose(transform, fill.transform),
                 Paint::Solid(color),
                 fill.brush_transform,
                 &fill.shape,
@@ -441,7 +652,7 @@ fn submit(painter: &mut impl PaintScene, cmd: &RenderCommand, transform: Affine)
             };
             painter.stroke(
                 &stroke.style,
-                transform * stroke.transform,
+                compose(transform, stroke.transform),
                 Paint::Solid(color),
                 stroke.brush_transform,
                 &stroke.shape,
@@ -464,7 +675,7 @@ fn submit(painter: &mut impl PaintScene, cmd: &RenderCommand, transform: Affine)
                 &run.style,
                 Paint::Solid(color),
                 run.brush_alpha,
-                transform * run.transform,
+                compose(transform, run.transform),
                 run.glyph_transform,
                 run.glyphs.iter().copied(),
             );

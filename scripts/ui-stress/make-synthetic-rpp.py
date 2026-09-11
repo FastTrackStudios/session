@@ -73,7 +73,24 @@ def main() -> None:
         out(f"    ISBUS {1 if depth > 0 else 0} {depth}\n")
         out("    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0\n")
         out("    SEL 0\n    REC 0 5088 1 0 0 0 0 0\n")
-        out("    TRACKHEIGHT 70 0 0 0 0 0 0\n")
+        # Track heights, as a real session has them: a bus opened up to
+        # see its automation, a handful of focused tracks, and the long
+        # tail collapsed. A fixture where every track is 70 tall would
+        # never exercise the panel's density tiers, and those are most of
+        # what makes a two-thousand-track session legible.
+        if depth > 0:
+            height = 100          # a bus, opened
+        elif t % 8 == 1:
+            height = 24           # collapsed to a band
+        elif t % 8 == 2:
+            height = 12           # collapsed further
+        elif t % 16 == 5:
+            height = 160          # one track being worked on
+        elif t % 8 == 6:
+            height = 40           # compact
+        else:
+            height = 0            # unset: the user's default height
+        out(f"    TRACKHEIGHT {height} 0 0 0 0 0 0\n")
 
         # Items are laid out as a real arrangement is, not scattered:
         # takes that START and STOP on bar lines, separated by rests, and
