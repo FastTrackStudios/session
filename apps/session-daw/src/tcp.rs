@@ -148,6 +148,11 @@ fn row_one(
     let field_x = f64::from(g::NAME_FIELD_X) + indent;
     let field_w = (f64::from(g::NAME_FIELD_W) - indent).max(0.0);
     let field_top = y + f64::from(g::ROW_ONE);
+    // Where the row-one BUTTONS sit. One above `ROW_ONE` because the
+    // routing and FX drawings carry a one-pixel inset of their own, so
+    // this is what puts their plates on the measured line rather than
+    // one below it.
+    let button_top = field_top - 1.0;
     let field_h = f64::from(g::NAME_FIELD_H);
     scene_fill(
         scene,
@@ -241,7 +246,11 @@ fn row_one(
         ),
         font,
         f64::from(g::ROUTING_X),
-        y + 6.0,
+        // The same top as the FX pill beside it. Both drawings inset
+        // their plate by one from the top of their own box — traced that
+        // way, because REAPER's cells do — so placing them at different
+        // tops put their plates a pixel apart and their centres two.
+        button_top,
     );
     crate::art::place(
         scene,
@@ -251,7 +260,7 @@ fn row_one(
         &art::fx_pill(&palette.chrome, art::Chain::Empty, Interaction::Normal),
         font,
         f64::from(g::FX_IN_X),
-        y + 5.0,
+        button_top,
     );
 
 }
@@ -267,7 +276,9 @@ fn row_two(
 ) {
     let two = y + f64::from(g::ROW_TWO);
     let fh = f64::from(g::FIELD_H);
-    crate::art::place(scene, &art::envelope(&palette.chrome, Interaction::Normal), font, 29.0, two);
+    // The automation button is hidden for now — it comes back with the
+    // envelope model behind it, and an automation control that cannot
+    // report or change a mode is a button that lies about what it does.
     // The input FX slot and the record-input combo belong to RECORDING,
     // so they appear when the track is armed and not before. On a
     // 2,000-track orchestral template almost nothing is armed, and
