@@ -12591,6 +12591,7 @@ dependencies = [
 name = "session-daw"
 version = "0.1.0"
 dependencies = [
+ "adaptive-grid",
  "anyrender",
  "anyrender_vello",
  "daw 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",

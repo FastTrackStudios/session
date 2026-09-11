@@ -75,6 +75,10 @@ pub struct Palette {
     pub row_b: Color,
     pub divider: Color,
     pub grid: Color,
+    /// The sub-bar lines, dimmer than the bar lines they sit between.
+    pub grid_beat: Color,
+    pub ruler_bg: Color,
+    pub ruler_fg: Color,
     pub item_edge: Color,
     pub text: Color,
     pub text_dim: Color,
@@ -121,6 +125,9 @@ impl Palette {
             row_b: c(theme.arrange.row_bg[1]),
             divider: c(theme.arrange.row_divider[0]),
             grid: c(theme.arrange.grid_measure),
+            grid_beat: c(theme.arrange.grid_beat),
+            ruler_bg: c(theme.arrange.ruler_bg),
+            ruler_fg: c(theme.arrange.ruler_fg),
             item_edge: c(theme.arrange.item_edge),
             text_dim: c(theme.tokens.text_dim),
             text_faint: c(theme.tokens.text_faint),
@@ -157,6 +164,8 @@ pub struct Arrangement {
     pub panel: Scene,
     pub rows: usize,
     pub length_secs: f64,
+    /// The project tempo, for the ruler's bar lines.
+    pub bpm: f64,
     /// How many items were recorded, for reports that want to say what
     /// was actually drawn.
     pub item_count: usize,
@@ -318,6 +327,7 @@ impl Arrangement {
             index,
             rows: rows.len(),
             length_secs: project.length_secs,
+            bpm: project.bpm,
             item_count: project.item_count,
         }
     }

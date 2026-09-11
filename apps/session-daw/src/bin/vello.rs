@@ -56,6 +56,7 @@ impl HasDisplayHandle for Surface {
 }
 
 use session_daw::arrangement::{Arrangement, Palette, Viewport, ROW_PITCH, TCP_WIDTH};
+use session_daw::ruler::{self, Bars, RULER_H};
 use session_daw::{open, theme};
 
 /// Pixels per second at rest.
@@ -83,6 +84,11 @@ struct App {
     /// it needs to know how much fits on screen, and the surface is the
     /// only thing that knows.
     surface_size: (f64, f64),
+    /// The font the panel and the ruler print with. Loaded once: every
+    /// label in the window is laid out against it.
+    font: session_daw::text::Font,
+    /// The grid that follows the zoom.
+    grid: adaptive_grid::Adaptive,
     /// The project loads on a worker thread so the window opens now.
     loading: Option<std::sync::mpsc::Receiver<Arrangement>>,
     /// Frames presented since the last report, and when that was.
@@ -219,7 +225,9 @@ impl App {
         let rows = f64::from(u32::try_from(scene.rows).unwrap_or(u32::MAX));
         (
             (scene.length_secs * self.pps - (width - TCP_WIDTH)).max(1.0),
-            (rows * ROW_PITCH - height).max(1.0),
+            // The ruler takes a strip off the top, so there is that much
+            // more to scroll before the last row reaches the bottom.
+            (rows * ROW_PITCH - (height - RULER_H)).max(1.0),
         )
     }
 
@@ -252,6 +260,13 @@ impl App {
             height,
         };
         let surface = self.palette.surface;
+        let palette = &self.palette;
+        let font = &self.font;
+        let bars = Bars::at(scene.bpm);
+        let grid = &self.grid;
+        /// The finest the grid ever gets — sixteenths, as a fraction of
+        /// a whole note. The zoom only ever coarsens away from it.
+        const FINEST: f64 = 1.0 / 16.0;
         let mut drawn = session_daw::profile::Counts::default();
         self.renderer.render(|painter| {
             painter.reset();
@@ -276,12 +291,17 @@ impl App {
             let a = scene.replay_lanes(
                 painter,
                 view,
-                Affine::translate((TCP_WIDTH - sx, -sy)) * Affine::scale_non_uniform(pps, 1.0),
+                Affine::translate((TCP_WIDTH - sx, RULER_H - sy))
+                    * Affine::scale_non_uniform(pps, 1.0),
             );
             // The panel: the SAME vertical offset, which is the entire
             // point. It cannot drift from the lanes because there is
             // nothing to drift — one number moves both.
-            let b = scene.replay_panel(painter, view, Affine::translate((0.0, -sy)));
+            let b = scene.replay_panel(painter, view, Affine::translate((0.0, RULER_H - sy)));
+            // After the lanes — their backgrounds are opaque — and the
+            // ruler last of all, over everything scrolled under it.
+            ruler::grid(painter, &palette, view, bars, &grid, FINEST);
+            ruler::ruler(painter, &palette, &font, view, bars);
             drawn.replayed = a.replayed + b.replayed;
             drawn.submitted = a.submitted + b.submitted;
         });
@@ -385,6 +405,14 @@ fn main() {
         // Replaced the moment the surface exists; until then it culls to
         // nothing, which is correct — there is no surface to draw on.
         surface_size: (0.0, 0.0),
+        font: match session_daw::text::Font::embedded() {
+            Ok(font) => font,
+            Err(e) => {
+                tracing::error!(error = %e, "the embedded font did not load");
+                std::process::exit(1);
+            }
+        },
+        grid: adaptive_grid::Adaptive::default(),
         loading: Some(rx),
         frames: 0,
         last_report: std::time::Instant::now(),

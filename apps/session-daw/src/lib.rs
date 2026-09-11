@@ -16,6 +16,7 @@ pub mod headless;
 pub mod open;
 pub mod art;
 pub mod profile;
+pub mod ruler;
 pub mod tcp;
 pub mod text;
 pub mod theme;

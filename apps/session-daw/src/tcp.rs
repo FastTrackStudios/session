@@ -29,6 +29,7 @@
 //! Those are the next pieces, and they are listed here rather than left
 //! to be discovered as absences.
 
+use anyrender::PaintScene;
 use daw_proto::Track;
 use daw_theme_art::geometry::tcp as g;
 use vello::kurbo::{Affine, Rect, RoundedRect, Vec2};
@@ -452,7 +453,7 @@ fn caret(scene: &mut anyrender::Scene, color: Color, x: f64, y: f64) {
 /// drawings, and those have to come out in the same font as the track
 /// names beside them.
 pub fn glyphs(
-    scene: &mut anyrender::Scene,
+    scene: &mut impl PaintScene,
     font: &Font,
     color: Color,
     body: &str,
@@ -460,7 +461,6 @@ pub fn glyphs(
     baseline: f64,
     size: f32,
 ) {
-    use anyrender::PaintScene as _;
     if body.is_empty() {
         return;
     }
@@ -485,7 +485,7 @@ pub fn glyphs(
 
 /// The same, centred between `left` and `right`.
 fn text_centered(
-    scene: &mut anyrender::Scene,
+    scene: &mut impl PaintScene,
     font: &Font,
     color: Color,
     body: &str,

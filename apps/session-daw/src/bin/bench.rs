@@ -30,6 +30,7 @@ use vello::kurbo::Affine;
 use session_daw::arrangement::{Arrangement, Palette, Viewport, ROW_PITCH, TCP_WIDTH};
 use session_daw::headless::{Headless, BATCH};
 use session_daw::profile::{Counts, Stages, Summary};
+use session_daw::ruler::{self, Bars, RULER_H};
 
 /// The surface to draw into, `WIDTHxHEIGHT`.
 ///
@@ -72,6 +73,7 @@ fn main() {
 
     let theme = daw_ui::theming::Theme::dark();
     let palette = Palette::from_theme(&theme);
+    let font = session_daw::text::Font::embedded().expect("the embedded font");
 
     let opened = session_daw::open::open_and_serve(&path).expect("open project");
     let scene = build_scene(&palette).expect("read project back");
@@ -82,6 +84,12 @@ fn main() {
     );
 
     let mut renderer = Headless::new(width, height).expect("open a gpu device");
+    // The bar grid, and the adaptive division that follows the zoom.
+    let bars = Bars::at(scene.bpm);
+    let grid = adaptive_grid::Adaptive::default();
+    /// The finest the grid ever gets: sixteenths, as a fraction of a
+    /// whole note. The zoom only ever coarsens away from it.
+    const FINEST: f64 = 1.0 / 16.0;
 
     let span_y = (scene.rows as f64 * ROW_PITCH - f64::from(height)).max(1.0);
     let span_x = (scene.length_secs * PPS - f64::from(width)).max(1.0);
@@ -152,7 +160,7 @@ fn main() {
         // window's opening view and writes it to a PNG, which is the
         // fastest way to tell a culling bug (geometry missing) from a
         // palette bug (geometry there, wrong colour).
-        shot(&scene, &std::path::PathBuf::from(out), width, height);
+        shot(&scene, &palette, &font, &std::path::PathBuf::from(out), width, height);
         return;
     }
 
@@ -195,6 +203,7 @@ fn main() {
                 let mut drawn = Counts::default();
                 painted += renderer
                     .frame(|painter| {
+
                     let a = scene.replay_lanes(
                         painter,
                         view,
@@ -206,6 +215,11 @@ fn main() {
                         view,
                         Affine::translate((0.0, -scroll_y)) * Affine::scale_non_uniform(1.0, zy),
                     );
+                        // After the lanes, not before: the lane
+                        // backgrounds are opaque and painted the grid
+                        // straight out of the frame.
+                        ruler::grid(painter, &palette, view, bars, &grid, FINEST);
+                        ruler::ruler(painter, &palette, &font, view, bars);
                         drawn.replayed = a.replayed + b.replayed;
                         drawn.submitted = a.submitted + b.submitted;
                     })
@@ -419,7 +433,14 @@ fn verify(
 /// `FTS_BENCH_SHOT=/tmp/frame.png`, with `FTS_BENCH_SCROLL=x,y` and
 /// `FTS_BENCH_ZOOM=x,y` to move it. The view defaults to the window's
 /// opening one so the image is directly comparable to what is on screen.
-fn shot(scene: &Arrangement, out: &std::path::Path, width: u32, height: u32) {
+fn shot(
+    scene: &Arrangement,
+    palette: &Palette,
+    font: &session_daw::text::Font,
+    out: &std::path::Path,
+    width: u32,
+    height: u32,
+) {
     let pair = |name: &str, default: (f64, f64)| {
         std::env::var(name)
             .ok()
@@ -463,14 +484,24 @@ fn shot(scene: &Arrangement, out: &std::path::Path, width: u32, height: u32) {
             let a = scene.replay_lanes(
                 painter,
                 view,
-                Affine::translate((TCP_WIDTH - scroll_x, -scroll_y))
+                Affine::translate((TCP_WIDTH - scroll_x, RULER_H - scroll_y))
                     * Affine::scale_non_uniform(PPS * zoom_x, zoom_y),
             );
             let b = scene.replay_panel(
                 painter,
                 view,
-                Affine::translate((0.0, -scroll_y)) * Affine::scale_non_uniform(1.0, zoom_y),
+                Affine::translate((0.0, RULER_H - scroll_y))
+                    * Affine::scale_non_uniform(1.0, zoom_y),
             );
+            ruler::grid(
+                painter,
+                palette,
+                view,
+                Bars::at(scene.bpm),
+                &adaptive_grid::Adaptive::default(),
+                1.0 / 16.0,
+            );
+            ruler::ruler(painter, palette, font, view, Bars::at(scene.bpm));
             counts.replayed = a.replayed + b.replayed;
             counts.submitted = a.submitted + b.submitted;
         },
