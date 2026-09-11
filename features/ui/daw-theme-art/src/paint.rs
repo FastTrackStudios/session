@@ -333,18 +333,16 @@ pub mod tcp {
         // The value, over the track. Last, so its end sits on top of the
         // unlit stroke rather than under it.
         if value > 0.0 {
-            let lit: Brush = if ornament {
-                Brush::Linear {
-                    from: (cx, cy + r),
-                    to: (cx, cy - r),
-                    stops: vec![
-                        (0.0, hex(daw_theme::defaults::VOLUME_RING_LIT)),
-                        (1.0, hex(daw_theme::defaults::VOLUME_RING_LIT_TOP)),
-                    ],
-                }
-            } else {
-                hex(daw_theme::defaults::VOLUME_RING_LIT).into()
-            };
+            // Flat, and the same blue the fader fills with.
+            //
+            // The ring used to run from the lit token at the bottom to a
+            // darker one at the top, which is how REAPER's is shaded —
+            // and at a 40 degree arc, which is what a quiet track shows,
+            // the whole arc sat in the dark half and the knob read as
+            // having no value at all. A track's level has to be legible
+            // from the same colour whether its row is tall enough for a
+            // knob or short enough for a bar.
+            let lit: Brush = hex(daw_theme::defaults::VOLUME_RING_LIT).into();
             drawing.stroke(
                 Shape::Arc {
                     cx,
@@ -360,12 +358,104 @@ pub mod tcp {
         drawing
     }
 
+    /// Volume as a horizontal fader, for rows too short for a knob.
+    ///
+    /// A knob says its value with the angle of a ring, and an angle
+    /// needs a circle big enough to have angles in it. Below about
+    /// twenty pixels the ring is three pixels of arc and the value stops
+    /// being readable at a glance — which is the height most tracks sit
+    /// at once a session is collapsed to fit, so it is the height where
+    /// seeing roughly how loud something is matters most.
+    ///
+    /// Horizontal, like [`pan_line`], because the axis being squashed is
+    /// the vertical one: a bar whose LENGTH is its value keeps saying it
+    /// at any height, where one whose height is its value has nothing
+    /// left to say at three pixels. The two also read as a pair this
+    /// way, which is what they are.
+    #[must_use]
+    pub fn volume_fader(chrome: &Chrome, value: f64) -> Drawing {
+        // The knob's slot, so the column holds whichever a row shows,
+        // and the FULL height of it: the fader is as tall as the name
+        // field it sits at the end of. A three-pixel bar in a fourteen
+        // pixel row was a hairline with a gap above and below it, which
+        // read as an empty slot rather than as a level.
+        let (w, h) = (24.0, 24.0);
+        let value = value.clamp(0.0, 1.0);
+        let radius = 2.0;
+
+        let mut drawing = Drawing::new(w, h);
+        drawing.fill(rect(0.0, 0.0, w, h, radius), chrome.surface_sunken);
+        let filled = w * value;
+        if filled > 0.5 {
+            drawing.fill(
+                rect(0.0, 0.0, filled, h, radius),
+                hex(daw_theme::defaults::VOLUME_RING_LIT),
+            );
+        }
+        // The cap, so the level reads as a position rather than as
+        // "about this much colour".
+        drawing.fill(
+            rect((filled - 1.0).clamp(0.0, w - 2.0), 0.0, 2.0, h, 0.0),
+            chrome.hardware_mark,
+        );
+        drawing
+    }
+
+    /// Pan as a line, for rows too short for a knob.
+    ///
+    /// Centre-marked, with the position as a tick along it. The same
+    /// argument as [`volume_fader`]: a pointer needs a circle, a tick
+    /// needs a line, and a line is still a line at two pixels.
+    ///
+    /// `ink` is pan's own colour and is not volume's — the two sit in
+    /// neighbouring columns on every row, and telling them apart at a
+    /// glance is worth more than either matching the accent.
+    #[must_use]
+    pub fn pan_line(chrome: &Chrome, position: f64, ink: Color) -> Drawing {
+        let (w, h) = (24.0, 24.0);
+        let position = position.clamp(-1.0, 1.0);
+        let inset = 2.0;
+        let span = w - inset * 2.0;
+
+        let mut drawing = Drawing::new(w, h);
+        // The travel.
+        drawing.fill(
+            rect(inset, h / 2.0 - 1.0, span, 2.0, 1.0),
+            chrome.surface_sunken,
+        );
+        // Centre, so "off centre" is visible without reading the tick's
+        // position against the ends.
+        drawing.fill(
+            rect(w / 2.0 - 0.5, h / 2.0 - 3.0, 1.0, 6.0, 0.0),
+            chrome.hardware_edge,
+        );
+        // The value. Drawn from the centre outward rather than as a
+        // lone tick: a bar says which way as well as how far, and at
+        // this size "which way" is most of what is being asked.
+        let to = (span / 2.0).mul_add(position, w / 2.0);
+        let (from, to) = if to < w / 2.0 { (to, w / 2.0) } else { (w / 2.0, to) };
+        if (to - from) > 0.5 {
+            drawing.fill(rect(from, h / 2.0 - 1.5, to - from, 3.0, 1.5), ink);
+        }
+        drawing.fill(
+            rect(
+                (span / 2.0).mul_add(position, w / 2.0 - 1.0).clamp(0.0, w - 2.0),
+                h / 2.0 - 4.0,
+                2.0,
+                8.0,
+                1.0,
+            ),
+            chrome.hardware_mark,
+        );
+        drawing
+    }
+
     /// The pan knob: a rim, a face, a pointer and a cap.
     ///
     /// `position` is -1..1, and the pointer sweeps 135° either side of
     /// twelve o'clock — REAPER's range, not a full rotation.
     #[must_use]
-    pub fn pan_knob(chrome: &Chrome, position: f64) -> Drawing {
+    pub fn pan_knob(chrome: &Chrome, position: f64, ink: Color) -> Drawing {
                 let (w, h) = (24.0_f64, 25.0_f64);
         let (cx, cy, r) = (12.0_f64, 12.08_f64, 9.37_f64);
         let (cap_cy, cap_r) = (12.05_f64, 4.06_f64);
@@ -376,7 +466,7 @@ pub mod tcp {
         let point_top = h.mul_add(0.045, cy - r);
         let point_bot = h.mul_add(-0.01, cy - cap_r);
 
-        let point = chrome.hardware_mark.shade(0.11);
+        let point = ink;
         let rim = chrome.hardware_edge.shade(-0.45);
 
         let mut drawing = Drawing::new(w, h);

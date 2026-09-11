@@ -76,6 +76,15 @@ pub enum Density {
     Bar,
 }
 
+/// Below this tall, volume and pan stop being knobs.
+///
+/// A knob says its value with the angle of a ring, and an angle needs a
+/// circle big enough to have angles in it — at fourteen pixels the ring
+/// is three pixels of arc. A fader and a line keep saying it at any
+/// height, which matters most exactly here: this is the height tracks
+/// sit at once a session is collapsed enough to see all of it.
+const KNOB_LEGIBLE: f64 = 20.0;
+
 /// Below this many pixels ON SCREEN, a row is drawn as a band.
 ///
 /// The same threshold [`Density::at`] uses, named separately because the
@@ -190,39 +199,61 @@ pub fn draw_row(
 
     match density {
         Density::Full => {
-            row_one(scene, palette, font, track, indent, y + f64::from(g::ROW_ONE), 24.0);
+            let band_top = y + f64::from(g::ROW_ONE);
+            row_one(scene, palette, font, track, indent, band_top, 24.0);
             row_two(scene, palette, font, track, y);
             gutter(scene, palette, font, track, y, h);
+            stacked(scene, palette, font, track, band_top, 24.0);
         }
         // The controls get the row, less a pixel top and bottom so they
         // are not flush against the dividers.
         Density::Compact => {
-            row_one(scene, palette, font, track, indent, y + 1.0, (h - 2.0).max(1.0));
-            side_by_side(scene, palette, font, track, y, h);
+            let band_h = (h - 2.0).max(1.0);
+            row_one(scene, palette, font, track, indent, y + 1.0, band_h);
+            stacked(scene, palette, font, track, y + 1.0, band_h);
         }
         Density::Bar => {}
     }
 }
 
-/// Mute and solo, turned a quarter turn.
+/// Mute and solo, side by side in the gutter.
 ///
-/// Stacked they need 45 of height, which a compact row does not have;
-/// the gutter is 47 wide and two 21-wide buttons fit across it with room
-/// to spare, so the pair lies down rather than one of them disappearing.
-fn side_by_side(
+/// One position at every height, and the same SIZE across: a control
+/// that moves or shrinks depending on how tall its track happens to be
+/// cannot be found by muscle memory or hit without looking.
+///
+/// Positioned against the CONTROL BAND rather than the row, so they sit
+/// beside the name field on a 160-pixel track instead of floating in the
+/// middle of its gutter.
+///
+/// REAPER stacks them, which needs 45 of height. A collapsed track has
+/// fourteen, so stacking there left two five-pixel squares whose letters
+/// were unreadable — the arrangement was preserved and the controls were
+/// not. Turned a quarter turn they keep their width at any height, and
+/// the gutter is 47 wide, which is exactly two of them.
+///
+/// That costs the meter its well: it sat at 297..316, which is where
+/// mute now is. Nothing is lost yet, because the meter has no level to
+/// show — when it does, this gutter needs re-measuring rather than
+/// re-stacking, since REAPER solves the same problem by widening the
+/// panel.
+fn stacked(
     scene: &mut anyrender::Scene,
     palette: &Palette,
     font: &Font,
     track: &Track,
-    y: f64,
-    h: f64,
+    band_top: f64,
+    band_h: f64,
 ) {
-    // Scaled with the row, like everything else on it — uniformly, so a
-    // short track's buttons are small rather than squat.
-    let scale = ((h - 2.0) / 20.0).clamp(0.05, 1.0);
-    let button_h = 20.0 * scale;
-    let top = y + (h - button_h) / 2.0;
-    let gutter_x = f64::from(g::TINT_W) + 2.0;
+    /// Between the two, so they read as two controls.
+    const GAP: f64 = 1.0;
+
+    // Flattened into the row, never narrowed: the letters go first when
+    // a button shrinks in both axes, and the letters are the control.
+    let button_h = band_h.clamp(1.0, 20.0);
+    let top = band_top + (band_h - button_h) / 2.0;
+    let x = f64::from(g::TINT_W) + 2.0;
+
     for (i, (label, on, lit)) in [
         ("M", track.muted, mute_lit(palette)),
         ("S", track.soloed, solo_lit(palette)),
@@ -230,14 +261,15 @@ fn side_by_side(
     .into_iter()
     .enumerate()
     {
-        let x = gutter_x + if i == 0 { 0.0 } else { 22.0_f64.mul_add(scale, 1.0) };
-        crate::art::scaled(
+        let offset = if i == 0 { 0.0 } else { 21.0 + GAP };
+        crate::art::squashed(
             scene,
             &art::gutter_button(&palette.chrome, label, on, lit, Interaction::Normal),
             font,
-            x,
+            x + offset,
             top,
-            scale,
+            1.0,
+            button_h / 20.0,
         );
     }
 }
@@ -290,16 +322,21 @@ fn row_one(
 
     // The record arm, on the field's left end. Lit when armed, which is
     // the one control on this row that has to be readable at a glance
-    // from across a room.
-    let arm_h = 18.0 * squash;
-    crate::art::scaled(
-        scene,
-        &art::record_arm(&palette.chrome, track.armed, Interaction::Normal),
-        font,
-        field_x + 3.0,
-        field_top + (field_h - arm_h) / 2.0,
-        squash,
-    );
+    // from across a room — and gone once the row is too short for that
+    // to be true, because a five-pixel ring is neither readable nor
+    // hittable and the volume and pan indicators are what a collapsed
+    // row is being read for.
+    if field_h >= KNOB_LEGIBLE {
+        let arm_h = 18.0 * squash;
+        crate::art::scaled(
+            scene,
+            &art::record_arm(&palette.chrome, track.armed, Interaction::Normal),
+            font,
+            field_x + 3.0,
+            field_top + (field_h - arm_h) / 2.0,
+            squash,
+        );
+    }
 
     // The name, between the arm and the knob, cut short rather than
     // wrapped or shrunk — REAPER truncates here too. The type shrinks
@@ -324,40 +361,8 @@ fn row_one(
     // body CAPS the field: at its authored size the field's square
     // right-hand corners showed past the circle, which read as the name
     // box poking out from under the knob rather than the knob closing it.
-    // The knob's 22 body caps the field: at its authored size the
-    // field's square right-hand corners showed past the circle, which
-    // read as the name box poking out from under the knob rather than
-    // the knob closing it.
-    let knob_scale = field_h / 22.0;
-    let knob_box = 24.0 * knob_scale;
-    crate::art::scaled(
-        scene,
-        &art::volume_knob(
-            &palette.chrome,
-            gain_fraction(track.volume),
-            Interaction::Normal,
-            field_h,
-        ),
-        font,
-        // Centred on the field's right edge, which is where REAPER seats
-        // it: half on the field, half on the tint.
-        f64::from(g::NAME_FIELD_X) + f64::from(g::NAME_FIELD_W) - knob_box / 2.0,
-        field_top + (field_h - knob_box) / 2.0,
-        knob_scale,
-    );
-    let pan_scale = (field_h / 25.0).min(1.0);
-    crate::art::scaled(
-        scene,
-        &art::pan_knob(&palette.chrome, pan_position(track.pan)),
-        font,
-        f64::from(g::PAN_KNOB_X),
-        field_top + 25.0_f64.mul_add(-pan_scale, field_h) / 2.0,
-        pan_scale,
-    );
+    level(scene, palette, font, track, field_top, field_h);
 
-    // Routing, then the FX pill. Both get a FACE — lanes on the routing
-    // widget, a label on the pill — and both carry a one-pixel inset of
-    // their own, which is why they share a top a pixel above the field's.
     // These two flatten rather than shrink. A knob has to stay round —
     // its pointer means nothing once the circle is an ellipse — but the
     // routing widget is three bars and the FX pill is a label, and both
@@ -406,6 +411,87 @@ fn row_one(
         1.0,
         plate_scale,
     );
+}
+
+/// Volume and pan, as knobs or as bars.
+///
+/// Knobs while there is a circle big enough to read an angle off, bars
+/// below that — see [`KNOB_LEGIBLE`]. Both forms sit in the same two
+/// columns, so a row can change which it shows without anything moving.
+fn level(
+    scene: &mut anyrender::Scene,
+    palette: &Palette,
+    font: &Font,
+    track: &Track,
+    field_top: f64,
+    field_h: f64,
+) {
+    let volume_x = f64::from(g::NAME_FIELD_X) + f64::from(g::NAME_FIELD_W);
+    if field_h >= KNOB_LEGIBLE {
+        // The knob's 22 body caps the field: at its authored size the
+        // field's square right-hand corners showed past the circle,
+        // which read as the name box poking out from under the knob
+        // rather than the knob closing it.
+        let knob_scale = field_h / 22.0;
+        let knob_box = 24.0 * knob_scale;
+        crate::art::scaled(
+            scene,
+            &art::volume_knob(
+                &palette.chrome,
+                gain_fraction(track.volume),
+                Interaction::Normal,
+                field_h,
+            ),
+            font,
+            // Centred on the field's right edge, which is where REAPER
+            // seats it: half on the field, half on the tint.
+            volume_x - knob_box / 2.0,
+            field_top + (field_h - knob_box) / 2.0,
+            knob_scale,
+        );
+        let pan_scale = (field_h / 25.0).min(1.0);
+        crate::art::scaled(
+            scene,
+            &art::pan_knob(
+                &palette.chrome,
+                pan_position(track.pan),
+                to_theme(palette.pan),
+            ),
+            font,
+            f64::from(g::PAN_KNOB_X),
+            field_top + 25.0_f64.mul_add(-pan_scale, field_h) / 2.0,
+            pan_scale,
+        );
+    } else {
+        // Flattened, not shrunk: both are bars whose LENGTH is the
+        // value, so the axis being squashed carries no meaning and they
+        // keep saying what they say all the way down.
+        crate::art::squashed(
+            scene,
+            &art::volume_fader(&palette.chrome, gain_fraction(track.volume)),
+            font,
+            // Straddling the field's right edge, where the knob it
+            // replaces is centred — the column has to hold whichever of
+            // the two a row is showing.
+            volume_x - 12.0,
+            field_top,
+            1.0,
+            field_h / 24.0,
+        );
+        crate::art::squashed(
+            scene,
+            &art::pan_line(
+                &palette.chrome,
+                pan_position(track.pan),
+                to_theme(palette.pan),
+            ),
+            font,
+            f64::from(g::PAN_KNOB_X),
+            field_top,
+            1.0,
+            field_h / 24.0,
+        );
+    }
 }
 
 /// The name's type size for a field of `height`.
@@ -474,31 +560,6 @@ fn gutter(
     // The meter comes FIRST, a vertical strip against the tint, with
     // mute and solo to its right. Drawn the other way round it lands in
     // the middle of the row.
-    rect(
-        scene,
-        palette.tcp_meter_well,
-        f64::from(g::TINT_W) + f64::from(g::METER_X),
-        y + 2.0,
-        f64::from(g::TINT_W) + f64::from(g::METER_X) + f64::from(g::METER_W),
-        y + h - 2.0,
-    );
-
-    let button_x = f64::from(g::TINT_W) + f64::from(g::GUTTER_BUTTON_X);
-    crate::art::place(
-        scene,
-        &art::gutter_button(&palette.chrome, "M", track.muted, mute_lit(palette), Interaction::Normal),
-        font,
-        button_x,
-        y + 3.0,
-    );
-    crate::art::place(
-        scene,
-        &art::gutter_button(&palette.chrome, "S", track.soloed, solo_lit(palette), Interaction::Normal),
-        font,
-        button_x,
-        y + f64::from(g::SOLO_TOP),
-    );
-
     // Phase, in the corner. Hidden on rows too short for it, exactly as
     // the theme's own formula hides it — the row's shape must not depend
     // on its height.
@@ -507,7 +568,7 @@ fn gutter(
             scene,
             &art::phase(&palette.chrome, track.phase_inverted, Interaction::Normal),
             font,
-            button_x + 3.0,
+            f64::from(g::TINT_W) + f64::from(g::GUTTER_BUTTON_X) + 3.0,
             y + h - f64::from(g::PHASE_FROM_FLOOR),
         );
     }

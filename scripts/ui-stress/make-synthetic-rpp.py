@@ -67,7 +67,15 @@ def main() -> None:
         out(f"  <TRACK {guid()}\n")
         out(f'    NAME "Track {t + 1}"\n')
         out(f"    PEAKCOL {16576 + t * 997}\n")
-        out("    BEAT -1\n    AUTOMODE 0\n    VOLPAN 1 0 -1 -1 1\n")
+        out("    BEAT -1\n    AUTOMODE 0\n")
+        # Volume and pan spread across the session rather than parked at
+        # unity and centre. A fixture where every fader reads the same
+        # cannot show whether a fader reads at all — which is the whole
+        # question for the collapsed rows, where the bar IS the value.
+        # Two different periods so the pair never lines up into a moire.
+        vol = 0.25 + 1.35 * (t % 17) / 16.0
+        pan = -1.0 + 2.0 * (t % 11) / 10.0
+        out(f"    VOLPAN {vol:.4f} {pan:.4f} -1 -1 1\n")
         out(f"    MUTESOLO {1 if t % 11 == 0 else 0} 0 0\n")
         out("    IPHASE 0\n")
         out(f"    ISBUS {1 if depth > 0 else 0} {depth}\n")

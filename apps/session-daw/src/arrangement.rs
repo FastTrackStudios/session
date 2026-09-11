@@ -92,6 +92,9 @@ pub struct Palette {
     pub solo: Color,
     pub rec: Color,
     pub meter_warn: Color,
+    /// Pan's own colour — yellow, so it is not mistaken for volume's
+    /// blue in the column beside it.
+    pub pan: Color,
     pub meter_danger: Color,
     /// The track panel's own surfaces. Named `tcp_*` because they come
     /// from the theme's TCP context, which a REAPER theme colours
@@ -141,6 +144,7 @@ impl Palette {
             solo: c(theme.tokens.solo),
             rec: c(theme.tokens.rec),
             meter_warn: c(theme.tokens.meter_warn),
+            pan: c(theme.tokens.route_send),
             meter_danger: c(theme.tokens.meter_danger),
             tcp_tint: c(theme.tokens.surface_raised),
             tcp_gutter: c(theme.tokens.surface),
