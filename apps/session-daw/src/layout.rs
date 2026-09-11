@@ -75,15 +75,19 @@ impl Default for Layout {
     fn default() -> Self {
         Self {
             default: CONTROL_ROW,
-            // Enough for the name, the level bars, routing, FX and
-            // mute/solo — everything except the record arm, which needs
-            // a circle. Below this a track is being hidden rather than
-            // made small.
+            // The control row at its authored size, plus a pixel top
+            // and bottom.
             //
-            // Under `KNOB_LEGIBLE` on purpose: a track parked at the
-            // minimum shows its level as bars rather than rings, so it
-            // reads as collapsed at a glance instead of merely short.
-            min: 16.0,
+            // Every control is ONE size on every track — see
+            // `tcp::row_one` — so this is not "the smallest row that can
+            // show something", it is the smallest row that can show the
+            // controls as they are drawn everywhere else. A floor below
+            // it would mean shrinking them per track, and a control that
+            // is a different shape on every track cannot be built on.
+            //
+            // Seeing a whole session is the vertical ZOOM's job, and the
+            // zoom still takes a row down to a single pixel.
+            min: CONTROL_ROW - 6.0,
             strip: STRIP_WIDE,
             strip_min: STRIP_NARROW,
         }
@@ -169,7 +173,9 @@ mod tests {
     #[test]
     fn a_stored_height_wins() {
         let layout = Layout::default();
-        assert!((layout.height_of(Some(24)) - 24.0).abs() < f64::EPSILON);
+        // Above the floor, so the stored value is what comes back
+        // rather than the clamp — `the_floor_holds` covers the other side.
+        assert!((layout.height_of(Some(96)) - 96.0).abs() < f64::EPSILON);
     }
 
     /// Zero is REAPER's sentinel for automatic, not a row with no height.

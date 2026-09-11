@@ -353,7 +353,6 @@ fn mixer_shot(
         .unwrap_or(0.0);
 
     let mixer = Mixer::build(palette, font, &project, &rows, f64::from(height), layout);
-    let bands = mixer.bands_height();
 
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();
@@ -372,11 +371,8 @@ fn mixer_shot(
                 painter,
                 scroll_x,
                 f64::from(width),
-                Affine::translate((-scroll_x, bands)),
+                Affine::translate((-scroll_x, 0.0)),
             );
-            let band = mixer.replay_bands(painter, Affine::translate((-scroll_x, 0.0)));
-            counts.replayed += band.replayed;
-            counts.submitted += band.submitted;
         },
         &mut buffer,
     );

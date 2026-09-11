@@ -56,8 +56,14 @@ const _: () = assert!(
 /// The gap between strips, so two adjacent ones read as two.
 pub const STRIP_GAP: f64 = 1.0;
 
-/// How tall one level of the folder bracket is.
-pub const BAND_H: f64 = 16.0;
+/// How much shorter each level of nesting makes a strip.
+///
+/// Folder depth reads off the BOTTOM of the mixer: strips share a top
+/// edge and their bottoms step up with depth, so a folder's children sit
+/// visibly inside it. Brackets across the top said the same thing and
+/// were removed — that band is wanted for something else, and a
+/// staircase costs no height that the strips were using.
+pub const INDENT_STEP: f64 = 12.0;
 
 /// REAPER's own default MCP height.
 pub const DEFAULT_HEIGHT: f64 = 371.0;
@@ -128,23 +134,10 @@ impl Squeeze {
     }
 }
 
-/// A folder, as a bracket over the strips it contains.
-struct Band {
-    /// Nesting level; row zero is the outermost.
-    depth: usize,
-    /// Strip indices `from..to`, inclusive of `from`.
-    from: usize,
-    to: usize,
-    name: String,
-    color: Color,
-}
-
 /// The mixer, recorded.
 pub struct Mixer {
     /// The strips, at x = index * [`PITCH`].
     strips: Scene,
-    /// The folder brackets above them.
-    bands: Scene,
     /// Command range per strip, so a frame draws only what it can see.
     index: Vec<std::ops::Range<u32>>,
     /// The left edge of every strip, plus the right edge of the last —
@@ -157,7 +150,7 @@ pub struct Mixer {
     offsets: Vec<f64>,
     /// How many strips there are.
     pub count: usize,
-    /// How deep the nesting goes — the height the bands occupy.
+    /// How deep the nesting goes.
     pub depth: usize,
     /// The height a strip was recorded at.
     pub height: f64,
@@ -185,69 +178,28 @@ impl Mixer {
             .map(|(_, depth)| usize::try_from(*depth).unwrap_or(0))
             .max()
             .map_or(0, |deepest| deepest.saturating_add(1));
-        let bands_h = crate::num::coord(depth_seen) * BAND_H;
-        let height = (height - bands_h).max(1.0);
 
         let mut strips = Scene::new();
         let mut index = Vec::with_capacity(rows.len());
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         let mut x = 0.0_f64;
-        let mut open: Vec<(usize, usize, String, Color)> = Vec::new();
-        let mut bands = Vec::new();
-
-        for (i, (track, depth)) in rows.iter().enumerate() {
+        for (track, depth) in rows.iter() {
             let depth = usize::try_from(*depth).unwrap_or(0);
-
-            // Close every bracket this strip has left.
-            while open.len() > depth {
-                if let Some((from, at_depth, name, color)) = open.pop() {
-                    bands.push(Band {
-                        depth: at_depth,
-                        from,
-                        to: i.saturating_sub(1),
-                        name,
-                        color,
-                    });
-                }
-            }
-            if track.is_folder {
-                open.push((
-                    i,
-                    depth,
-                    track.name.clone(),
-                    crate::tcp::track_color(palette, track),
-                ));
-            }
-
             let from = u32::try_from(strips.commands.len()).unwrap_or(u32::MAX);
             offsets.push(x);
             let w = layout.width_of(track.width);
-            strip(&mut strips, palette, font, track, x, w, height);
+            // Nesting shortens the strip from the BOTTOM, so the tops
+            // stay level and the bottoms staircase.
+            let strip_h = (height - crate::num::coord(depth) * INDENT_STEP).max(1.0);
+            strip(&mut strips, palette, font, track, x, w, strip_h);
             index.push(from..u32::try_from(strips.commands.len()).unwrap_or(u32::MAX));
             x += w + STRIP_GAP;
         }
-        // Anything still open runs to the end.
-        while let Some((from, at_depth, name, color)) = open.pop() {
-            bands.push(Band {
-                depth: at_depth,
-                from,
-                to: rows.len().saturating_sub(1),
-                name,
-                color,
-            });
-        }
-
         offsets.push(x);
-
-        let mut band_scene = Scene::new();
-        for band in &bands {
-            draw_band(&mut band_scene, palette, font, band, &offsets);
-        }
         let _ = project;
 
         Self {
             strips,
-            bands: band_scene,
             index,
             offsets,
             count: rows.len(),
@@ -260,12 +212,6 @@ impl Mixer {
     #[must_use]
     pub fn content_width(&self) -> f64 {
         self.offsets.last().copied().unwrap_or(0.0)
-    }
-
-    /// How tall the brackets are, above the strips.
-    #[must_use]
-    pub fn bands_height(&self) -> f64 {
-        crate::num::coord(self.depth) * BAND_H
     }
 
     /// The strips that intersect a viewport `width` wide, scrolled to
@@ -322,48 +268,6 @@ impl Mixer {
         counts
     }
 
-    /// Replay the folder brackets.
-    ///
-    /// Not culled: there are a few dozen at most, and a bracket spans
-    /// many strips so "which are visible" is a different question from
-    /// the one the strip index answers. Culling them would cost more to
-    /// decide than to draw.
-    pub fn replay_bands(&self, painter: &mut impl PaintScene, transform: Affine) -> Counts {
-        crate::arrangement::replay_all(painter, &self.bands, transform)
-    }
-}
-
-/// One folder's bracket: a bar over its strips, with its name on it.
-fn draw_band(scene: &mut Scene, palette: &Palette, font: &Font, band: &Band, offsets: &[f64]) {
-    let y = crate::num::coord(band.depth) * BAND_H;
-    // The bracket spans from its first strip's left edge to its last
-    // one's right, which is the next strip's left less the gap. Read off
-    // the offsets rather than multiplied out, because strips are not one
-    // width any more.
-    let x0 = offsets.get(band.from).copied().unwrap_or(0.0);
-    let x1 = offsets
-        .get(band.to.saturating_add(1))
-        .copied()
-        .unwrap_or_else(|| offsets.last().copied().unwrap_or(0.0))
-        - STRIP_GAP;
-    fill(
-        scene,
-        band.color,
-        Rect::new(x0, y + 1.0, x1, y + BAND_H - 2.0),
-    );
-    // The name, cut to the bracket rather than overflowing into the next
-    // one — a folder wider than its label reads fine, one narrower than
-    // its label reads as the wrong folder.
-    let inner = (x1 - x0 - 8.0).max(0.0);
-    crate::tcp::glyphs(
-        scene,
-        font,
-        palette.tcp_gutter,
-        &font.elide(&band.name, 10.0, inner),
-        x0 + 4.0,
-        y + BAND_H / 2.0 + 3.5,
-        10.0,
-    );
 }
 
 /// One channel strip, at `x`.

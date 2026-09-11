@@ -76,6 +76,18 @@ pub enum Density {
     Bar,
 }
 
+/// Mute and solo, at the one size they are drawn at everywhere.
+///
+/// The theme's measured 21 by 20 — and that size on every track, which
+/// is why `Layout::min` is what it is: the shortest settable row has to
+/// hold the controls, rather than the controls shrinking to fit each
+/// row. A control that is a different shape on every track cannot be
+/// built on — no shared hit target, no drag across a column, no "the
+/// mute column" for anything else to address.
+pub const BUTTON: (f64, f64) = (21.0, 20.0);
+/// Between the two, so they read as two controls.
+const BUTTON_GAP: f64 = 1.0;
+
 /// Below this tall, volume and pan stop being knobs.
 ///
 /// A knob says its value with the angle of a ring, and an angle needs a
@@ -248,16 +260,21 @@ pub fn draw_row(
 
 /// Mute and solo, side by side in the gutter.
 ///
-/// One position at every height, and the same SIZE across: a control
-/// that moves or shrinks depending on how tall its track happens to be
-/// cannot be found by muscle memory or hit without looking.
+/// One position AND one size at every height. They used to flatten with
+/// the row, which meant a track's mute was a different shape on every
+/// track — fine to look at, useless to build on: a hit target, a drag
+/// across several tracks' mutes, or anything that wants to say "the
+/// mute column" needs the control to be one thing everywhere.
+///
+/// So the size is [`BUTTON`], fixed, and it fits the shortest row a
+/// track can be set to rather than being scaled down to fit each one.
 ///
 /// Positioned against the CONTROL BAND rather than the row, so they sit
 /// beside the name field on a 160-pixel track instead of floating in the
 /// middle of its gutter.
 ///
 /// REAPER stacks them, which needs 45 of height. A collapsed track has
-/// fourteen, so stacking there left two five-pixel squares whose letters
+/// sixteen, so stacking there left two five-pixel squares whose letters
 /// were unreadable — the arrangement was preserved and the controls were
 /// not. Turned a quarter turn they keep their width at any height, and
 /// the gutter is 47 wide, which is exactly two of them.
@@ -275,13 +292,9 @@ fn stacked(
     band_top: f64,
     band_h: f64,
 ) {
-    /// Between the two, so they read as two controls.
-    const GAP: f64 = 1.0;
-
-    // Flattened into the row, never narrowed: the letters go first when
-    // a button shrinks in both axes, and the letters are the control.
-    let button_h = band_h.clamp(1.0, 20.0);
-    let top = band_top + (band_h - button_h) / 2.0;
+    // Centred in the band, at its own fixed size — which fits the
+    // shortest row a track can be set to, so it never has to shrink.
+    let top = band_top + (band_h - BUTTON.1) / 2.0;
     let x = f64::from(g::TINT_W) + 2.0;
 
     for (i, (label, on, lit)) in [
@@ -291,15 +304,13 @@ fn stacked(
     .into_iter()
     .enumerate()
     {
-        let offset = if i == 0 { 0.0 } else { 21.0 + GAP };
-        crate::art::squashed(
+        let offset = if i == 0 { 0.0 } else { BUTTON.0 + BUTTON_GAP };
+        crate::art::place(
             scene,
             &art::gutter_button(&palette.chrome, label, on, lit, Interaction::Normal),
             font,
             x + offset,
             top,
-            1.0,
-            button_h / 20.0,
         );
     }
 }
@@ -307,17 +318,25 @@ fn stacked(
 /// The control row: the name field and everything on it, flattened to
 /// whatever height the row has.
 ///
-/// `band` is the vertical space the controls get. Controls scale
-/// UNIFORMLY into it — a knob at half height is a smaller knob, not a
-/// flattened one — and each stays anchored at its own measured x, so the
-/// columns the panel is read down survive every height. Squashing them
-/// vertically was the first attempt and it was wrong: a flattened knob
-/// reads as a rendering fault rather than as a small control, and its
-/// pointer no longer says what it used to.
+/// `band` is the vertical space the controls get, and every control in
+/// it is drawn at ONE SIZE on every track — centred in the band rather
+/// than scaled to it.
+///
+/// Two earlier versions scaled: first squashed, then uniformly. Both
+/// looked reasonable and both were wrong for the same reason. A control
+/// that is a different size on every track cannot be built on — there is
+/// no shared hit target, no dragging a value across a column of tracks,
+/// and nothing else can address "the pan column" because the pan column
+/// is a different shape in every row. Consistency across tracks is worth
+/// more than filling a tall track's band.
+///
+/// That is why the shortest settable row is the one that has to hold the
+/// controls at their authored size, rather than the controls having to
+/// fit whatever a row happens to be — see `Layout::min`.
 ///
 /// The name field is the exception: it is a box, not a control, so it
-/// keeps the panel's full width and only loses height. A field that
-/// shrank with everything else would leave the name floating in a gap.
+/// takes the whole band. A field that stayed one height would leave the
+/// name floating in a gap on a tall track.
 fn row_one(
     scene: &mut anyrender::Scene,
     palette: &Palette,
@@ -333,9 +352,11 @@ fn row_one(
     // One long box with the record arm and the volume knob ON its two
     // ends, not three boxes in a line: drawn separately they had grey
     // gutters either side that REAPER does not have.
-    let field_h = band.min(AUTHORED);
-    let squash = field_h / AUTHORED;
-    let field_top = y + (band - field_h) / 2.0;
+    // The field takes the band; the controls take their own size,
+    // centred in it.
+    let field_h = band;
+    let control_top = y + (band - AUTHORED) / 2.0;
+    let field_top = y;
     let field_x = f64::from(g::NAME_FIELD_X) + indent;
     let field_w = (f64::from(g::NAME_FIELD_W) - indent).max(0.0);
     scene_fill(
@@ -356,15 +377,13 @@ fn row_one(
     // to be true, because a five-pixel ring is neither readable nor
     // hittable and the volume and pan indicators are what a collapsed
     // row is being read for.
-    if field_h >= KNOB_LEGIBLE {
-        let arm_h = 18.0 * squash;
-        crate::art::scaled(
+    if band >= KNOB_LEGIBLE {
+        crate::art::place(
             scene,
             &art::record_arm(&palette.chrome, track.armed, Interaction::Normal),
             font,
             field_x + 3.0,
-            field_top + (field_h - arm_h) / 2.0,
-            squash,
+            control_top + (AUTHORED - 18.0) / 2.0,
         );
     }
 
@@ -391,17 +410,15 @@ fn row_one(
     // body CAPS the field: at its authored size the field's square
     // right-hand corners showed past the circle, which read as the name
     // box poking out from under the knob rather than the knob closing it.
-    level(scene, palette, font, track, field_top, field_h);
+    level(scene, palette, font, track, control_top, AUTHORED, band);
 
     // These two flatten rather than shrink. A knob has to stay round —
     // its pointer means nothing once the circle is an ellipse — but the
     // routing widget is three bars and the FX pill is a label, and both
     // stay legible squashed while shrinking would make them narrower
     // than the column they head and leave the label unreadable.
-    let plate_scale = field_h / AUTHORED;
-    let plate_h = 22.0 * plate_scale;
-    let plate_top = field_top + (field_h - plate_h) / 2.0;
-    crate::art::squashed(
+    let plate_top = control_top + (AUTHORED - 22.0) / 2.0;
+    crate::art::place(
         scene,
         &art::routing(
             &palette.chrome,
@@ -427,10 +444,8 @@ fn row_one(
         font,
         f64::from(g::ROUTING_X),
         plate_top,
-        1.0,
-        plate_scale,
     );
-    crate::art::squashed(
+    crate::art::place(
         scene,
         // The chain's state is not on `Track` — it lives in the FX model
         // this window has not read yet — so the pill draws its empty
@@ -439,8 +454,6 @@ fn row_one(
         font,
         f64::from(g::FX_IN_X),
         plate_top,
-        1.0,
-        plate_scale,
     );
 }
 
@@ -456,9 +469,10 @@ fn level(
     track: &Track,
     field_top: f64,
     field_h: f64,
+    band: f64,
 ) {
     let volume_x = f64::from(g::NAME_FIELD_X) + f64::from(g::NAME_FIELD_W);
-    if field_h >= KNOB_LEGIBLE {
+    if band >= KNOB_LEGIBLE {
         // The knob's 22 body caps the field: at its authored size the
         // field's square right-hand corners showed past the circle,
         // which read as the name box poking out from under the knob
@@ -529,6 +543,7 @@ fn level(
 ///
 /// Shrinks with the row and stops: past the small end it is unreadable,
 /// past the large end it is bigger than REAPER sets it.
+#[must_use]
 fn name_size(height: f64) -> f32 {
     #[expect(
         clippy::cast_possible_truncation,
@@ -655,6 +670,7 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
 /// Unity is halfway up the sweep rather than at the end, because a fader
 /// at 0 dB is the resting position a mix is read against and REAPER's
 /// range runs past it.
+#[must_use]
 pub const fn volume_fraction(volume: f64) -> f64 {
     (volume / 2.0).clamp(0.0, 1.0)
 }
@@ -667,14 +683,17 @@ const fn pan_position(pan: f64) -> f64 {
 /// Mute and solo take their lit colour from the resolved theme, so a
 /// REAPER theme's own mute red reaches the canvas rather than the art
 /// crate's default.
+#[must_use]
 pub fn mute_lit(palette: &Palette) -> daw_theme::Color {
     to_theme(palette.mute)
 }
 
+#[must_use]
 pub fn solo_lit(palette: &Palette) -> daw_theme::Color {
     to_theme(palette.solo)
 }
 
+#[must_use]
 pub fn to_theme(color: Color) -> daw_theme::Color {
     let [red, green, blue, alpha] = color.to_rgba8().to_u8_array();
     daw_theme::Color {
