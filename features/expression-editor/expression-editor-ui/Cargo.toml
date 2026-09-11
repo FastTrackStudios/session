@@ -17,10 +17,13 @@ description = "Expression editor GUI — the Melodyne/MPE canvas, toolbar, and i
 # between rendering and not.
 webview = ["dep:anyrender_vello_cpu", "dep:png", "dep:base64", "dep:serde_json", "dep:futures-timer", "dioxus/desktop"]
 default = []
-host = ["dep:expression-editor-host", "dep:tracing"]
+host = ["dep:expression-editor-host"]
 
 [dependencies]
-tracing = { workspace = true, optional = true }
+# Not optional: the frame meter reports the WebView's real rate through
+# it, and a measurement that only exists in some feature combinations is
+# not one you can compare against.
+tracing = { workspace = true }
 expression-editor-host = { workspace = true, optional = true }
 expression-editor-tools.workspace = true
 # The shared scroll/wheel bindings. The editor resolves gestures from the

@@ -76,6 +76,35 @@ Ordinary staging tests use tiny synthetic files and do not require the album:
 cargo test -p expression-editor-standalone --lib practice::tests
 ```
 
+## Measuring the WebView window
+
+The window reports the rate its own compositor presented at — `rAF`
+intervals averaged in the page, not a count of renders or DOM mutations,
+which are different quantities and must never be labelled as this one.
+It goes to the log as well as the toolbar:
+
+```sh
+just ee-webview          # scroll the drum stack for a few seconds
+just ee-fps              # 20 most recent readings, worst frame included
+```
+
+Read the low end of the range and the worst frame. A window that idles
+between gestures averages beautifully and still feels terrible.
+
+**The dioxus-mcp probe is off by default, and measuring with it on is
+measuring the probe.** It records every `dioxus_core` trace event with
+its fields, and those fields are whole `VNode` trees: 18,000 events a
+second and 17 MB/s of JSON with the window merely playing back, out of
+ninety renders of three trivial components. The drum stack is ~1900
+nodes, so one scrolled frame emits tens of thousands. Turn it on to
+inspect what rendered, never to time it:
+
+```sh
+just ee-webview set-in-stone false 1     # PROBE=1
+```
+
+which is also the A/B: the same binary with and without it.
+
 ## Navigating a song
 
 The TCP and mixer show folder nesting. Click a folder's disclosure arrow to hide

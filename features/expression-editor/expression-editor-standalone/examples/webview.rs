@@ -29,7 +29,12 @@ fn main() {
     // target/dioxus-mcp/events.jsonl, which `dioxus-mcp`'s
     // `runtime_events` reads back. Leaked deliberately: dropping the
     // handle stops the writer, and it should outlive every frame.
-    Box::leak(Box::new(dioxus_mcp_probe::install()));
+    //
+    // Panics only unless `FTS_DIOXUS_PROBE=1`. The full probe records
+    // every `dioxus_core` trace event, whose fields are whole `VNode`
+    // trees — 18,000 events a second at idle, and a scrolled frame of
+    // the drum stack costs tens of thousands. See `probe`.
+    Box::leak(Box::new(expression_editor_standalone::probe::install()));
     let args = match Args::from_env() {
         Ok(a) => a,
         Err(e @ (ArgsError::Help | ArgsError::List)) => {

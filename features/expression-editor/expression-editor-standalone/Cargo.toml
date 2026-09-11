@@ -53,7 +53,17 @@ eyre = { workspace = true }
 tracing = { workspace = true }
 # Records renders, signal writes and panics where `dioxus-mcp` can read
 # them. See the workspace note; a no-op in release.
+#
+# Opt-in even in debug: it is uninhibited by any level filter, so a
+# render of the drum stack costs tens of thousands of `VNode` `Debug`
+# formats. `crate::probe` gates it on `FTS_DIOXUS_PROBE`.
 dioxus-mcp-probe = { workspace = true }
+# The panic record `crate::probe` writes when the full probe is off.
+serde_json = { workspace = true }
+# ...and the `RUST_LOG` subscriber it installs in the probe's place. The
+# probe's layer is a global default, so without it these windows have no
+# subscriber at all and every `tracing` line goes nowhere.
+tracing-subscriber = { workspace = true }
 # The window writes its own log: `dx serve` captures the child's console
 # into its TUI, so a panic there reaches nobody. See `diagnostics`.
 
@@ -69,11 +79,7 @@ name = "webview"
 required-features = ["webview"]
 
 [dev-dependencies]
-# So `RUST_LOG` works in the examples — the harness reports what opening a
-# kit cost, and nothing hears it without a subscriber.
-tracing-subscriber = { workspace = true }
 blitz-traits.workspace = true
-serde_json.workspace = true
 dawfile-standalone.workspace = true
 sha2.workspace = true
 # The window. A dev-dependency rather than a dependency: the library

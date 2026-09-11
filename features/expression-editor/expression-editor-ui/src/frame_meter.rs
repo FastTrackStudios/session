@@ -58,6 +58,16 @@ pub fn FrameMeter() -> Element {
         let frames = frames.clone();
         async move {
             while let Ok([fps, worst_ms]) = eval.recv::<[f64; 2]>().await {
+                // Also to the log, so a rate can be read off a terminal
+                // rather than a screenshot of the toolbar. This is the
+                // number an A/B on a scroll is decided by, and reading it
+                // out of a picture of a window is how a comparison gets
+                // lost. `RUST_LOG=expression_editor_ui::frame_meter=info`.
+                tracing::info!(
+                    ui.fps = fps,
+                    ui.worst_frame_ms = worst_ms,
+                    "webview frame rate"
+                );
                 if let Some(frames) = frames.as_ref() {
                     frames.observe_rate(fps, worst_ms);
                 }

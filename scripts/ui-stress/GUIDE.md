@@ -530,3 +530,63 @@ When extending the workload, add a pane/gesture assertion first, use DOM events,
 keep setup and output outside the measured interval, retain raw samples and record
 any changed workload semantics. A changed workload establishes a new baseline;
 its numbers are not directly comparable to the old workload.
+
+## Measuring the WebView window
+
+`ee-stress` and `ee-bench` above drive the **Blitz** DOM through
+`dioxus-test`. The WebView build has no such seam — the engine owns
+layout and paint — so it is measured by driving a real window on a
+display of its own:
+
+```sh
+scripts/ui-stress/webview-display.sh run off        # launch, scroll, report
+scripts/ui-stress/webview-display.sh measure off    # scroll an already-open window
+scripts/ui-stress/webview-display.sh shot           # one screenshot
+scripts/ui-stress/webview-display.sh stop           # tear the display down
+```
+
+It is the same shape as `daw::test::VirtualDisplay`, which is how the
+REAPER panels are already tested: a private Xvfb, a window manager on it,
+`xdotool` for input and `import` for capture. The developer's own window
+cannot be used — it is a native Wayland surface, so `grim` is refused by
+the compositor and `xdotool` cannot see it at all.
+
+### The numbers, and which to trust
+
+| | what it is |
+|---|---|
+| `stack ready in Ns` | launch to a drum stack with lanes in it. The kit decode is the slowest thing in the process, so a tax on every thread shows up here first. |
+| `travelled` | pixels the picture changed over the gesture. **Read this before anything else.** |
+| `backlog` | pixels that kept changing for two seconds after the last notch — input queued and the view still going where the hand no longer is. |
+| `fps` | the page's own `requestAnimationFrame` rate. Reported last and trusted least. |
+
+**A high frame rate next to a large backlog means the UI is
+unresponsive, not fast.** The rate is the *engine's* presentation loop,
+and it stays cheerful while the Rust side is too backed up to send it any
+mutations — the tell is the reading count (`n`), which is how many of the
+meter's twice-a-second reports the Rust side managed to drain. `n=8` over
+a twenty-second gesture is a starved event loop wearing a good number.
+
+### Traps that have each cost an hour
+
+- **`xdotool click --window <id>` does nothing.** It sends `XSendEvent`,
+  and GTK/WebKit drop synthetic events. The run completes, the picture
+  never moves. Drive the real pointer (`mousemove` then `click`, no
+  `--window`) so the events go through XTEST.
+- **The camera clamps at both ends.** A gesture from a limit moves
+  nothing and reports beautifully. Scroll both ways and take the larger
+  leg — which is what `measure` does.
+- **A symmetric gesture ends where it started.** Measure travel at the
+  midpoint, not from start to end.
+- **`tracing`'s fmt layer colours the field name**, so the bytes on disk
+  are `ui.fps<esc>[0m<esc>[2m=` and a pattern written against what the
+  terminal shows matches nothing — which reads as "the gesture did
+  nothing".
+- **The probe rotates its log every 10 MB and writes ~17 MB/s**, so a
+  mark taken as a line offset points into a file that has since been
+  truncated. Select by timestamp (`webview-fps.py` does).
+- **Xvfb is not a GPU.** Absolute numbers here are not the numbers on a
+  developer's screen. What this rig is for is an A/B under a fixed
+  environment; say which of the two any number is before quoting it.
+- **Check `uptime` first.** This box runs other people's work; an A/B
+  under a moving load is not one.
