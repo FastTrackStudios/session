@@ -190,12 +190,35 @@ def flatten(nodes, depth=0, out=None):
     return out
 
 
+# The narrowest a strip may be set to — `Layout::strip_min`. Unlike the
+# track height there is no "as small as the host allows" to lean on,
+# because no other host has this property at all: it is ours, so the
+# number has to be ours too.
+MIN_WIDTH = 30
+
+
 def main() -> None:
     tracks = flatten(TREE)
     out = sys.stdout.write
+    guids = [guid() for _ in tracks]
 
     out("<REAPER_PROJECT 0.1 '7.0' 0\n")
     out(f"  TEMPO {BPM:g} 4 4\n")
+
+    # Mixer strip widths, in the project's extension block — where
+    # REAPER keeps what it does not model, and REAPER does not model
+    # this. The same tracks that open at the minimum HEIGHT in the panel
+    # open at the minimum WIDTH in the mixer: a trigger needs the same
+    # amount of attention in both views, which is very little.
+    narrow = [
+        f"{g}={MIN_WIDTH}"
+        for g, (name, _, _, _) in zip(guids, tracks)
+        if is_auxiliary(name)
+    ]
+    if narrow:
+        out("  <EXTSTATE\n    <FTSMCP\n")
+        out(f"      WIDTHS {' '.join(narrow)}\n")
+        out("    >\n  >\n")
 
     for i, (name, colour, depth, is_folder) in enumerate(tracks):
         # REAPER stores the depth DELTA, not the depth: the running level
@@ -205,8 +228,12 @@ def main() -> None:
         nxt = tracks[i + 1][2] if i + 1 < len(tracks) else 0
         delta = nxt - depth
 
-        out(f"  <TRACK {guid()}\n")
+        out(f"  <TRACK {guids[i]}\n")
         out(f'    NAME "{name}"\n')
+        # The track's stable id. Without it the loader has nothing to key
+        # a track by and invents one per load, so anything stored against
+        # a GUID — the strip widths below — can never find its track.
+        out(f"    TRACKID {guids[i]}\n")
         if colour is not None:
             # REAPER's colour word is 0x01BBGGRR.
             red, green, blue = (colour >> 16) & 0xFF, (colour >> 8) & 0xFF, colour & 0xFF

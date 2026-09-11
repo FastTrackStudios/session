@@ -91,6 +91,7 @@ pub struct Palette {
     pub mute: Color,
     pub solo: Color,
     pub rec: Color,
+    pub meter_safe: Color,
     pub meter_warn: Color,
     /// Pan's own colour — yellow, so it is not mistaken for volume's
     /// blue in the column beside it.
@@ -143,6 +144,7 @@ impl Palette {
             mute: c(theme.tokens.mute),
             solo: c(theme.tokens.solo),
             rec: c(theme.tokens.rec),
+            meter_safe: c(theme.tokens.meter_safe),
             meter_warn: c(theme.tokens.meter_warn),
             pan: c(theme.tokens.route_send),
             meter_danger: c(theme.tokens.meter_danger),
@@ -475,7 +477,7 @@ impl Arrangement {
                     Some(&(x0, x1)) if x1 < left || x0 > right => continue,
                     _ => {}
                 }
-                if submit(painter, cmd, transform) {
+                if submit_command(painter, cmd, transform) {
                     counts.submitted = counts.submitted.saturating_add(1);
                 }
             }
@@ -509,7 +511,7 @@ impl Arrangement {
             };
             for (_, cmd) in commands(scene, span) {
                 counts.replayed = counts.replayed.saturating_add(1);
-                if submit(painter, cmd, transform) {
+                if submit_command(painter, cmd, transform) {
                     counts.submitted = counts.submitted.saturating_add(1);
                 }
             }
@@ -569,7 +571,7 @@ pub fn replay_all(
     let mut counts = Counts::default();
     for cmd in &scene.commands {
         counts.replayed = counts.replayed.saturating_add(1);
-        if submit(painter, cmd, transform) {
+        if submit_command(painter, cmd, transform) {
             counts.submitted = counts.submitted.saturating_add(1);
         }
     }
@@ -607,7 +609,7 @@ impl Arrangement {
             };
             for (_, cmd) in commands(scene, span) {
                 counts.replayed = counts.replayed.saturating_add(1);
-                if submit(painter, cmd, transform) {
+                if submit_command(painter, cmd, transform) {
                     counts.submitted = counts.submitted.saturating_add(1);
                 }
             }
@@ -635,7 +637,11 @@ fn compose(outer: Affine, inner: Affine) -> Affine {
 /// Only solid fills are recorded today, so anything else is skipped
 /// rather than silently mis-drawn; when strokes and glyphs arrive they
 /// get their own arms here.
-fn submit(painter: &mut impl PaintScene, cmd: &RenderCommand, transform: Affine) -> bool {
+pub fn submit_command(
+    painter: &mut impl PaintScene,
+    cmd: &RenderCommand,
+    transform: Affine,
+) -> bool {
     match cmd {
         RenderCommand::Fill(fill) => {
             let Paint::Solid(color) = fill.brush else {

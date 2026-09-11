@@ -152,7 +152,7 @@ pub fn load_rpp_text(
         ..Default::default()
     };
 
-    populate_tracks(daw, &project_guid, &project, &mut summary);
+    populate_tracks(daw, &project_guid, &project, rpp_text, &mut summary);
     populate_markers_regions(daw, &project_guid, &project, &mut summary);
     populate_tempo(daw, &project_guid, &project, &mut summary);
     populate_routing(daw, &project_guid, &project, &mut summary);
@@ -165,6 +165,7 @@ fn populate_tracks(
     daw: &Standalone,
     project_guid: &str,
     project: &ReaperProject,
+    rpp_text: &str,
     summary: &mut LoadedProject,
 ) {
     static ITEM_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -193,6 +194,9 @@ fn populate_tracks(
         if let Some(ms) = project.properties.master_mute_solo {
             p.master_muted = ms & 1 != 0;
         }
+
+        // Ours, not REAPER's — see `mcp_widths`.
+        let widths = mcp_widths(rpp_text);
 
         for (idx, rt) in project.tracks.iter().enumerate() {
             // Synthesize a GUID — REAPER's track GUIDs aren't always
@@ -296,6 +300,8 @@ fn populate_tracks(
 
             let track = Track {
                 guid: guid.clone(),
+                // Ours, not REAPER's — see `mcp_widths`.
+                width: widths.get(&guid).copied(),
                 automation_mode: {
                     use daw_proto::primitives::AutomationMode as P;
                     use dawfile_reaper::types::track::AutomationMode as R;
@@ -1337,4 +1343,55 @@ fn resolve_plugin_path(
         }
     }
     None
+}
+
+/// Per-track mixer widths, from the project's `<EXTSTATE>` block.
+///
+/// REAPER has no strip width, so there is no field to read: it goes
+/// where REAPER keeps everything it does not model, which is the
+/// project-level extension block. The shape follows the one FTS already
+/// writes there — a named sub-block, then `KEY guid=value` lines:
+///
+/// ```text
+///   <EXTSTATE
+///     <FTSMCP
+///       WIDTHS {GUID}=120 {GUID}=44
+///     >
+///   >
+/// ```
+///
+/// A line scan rather than a parse, because the typed project model does
+/// not carry `<EXTSTATE>` and growing it one for a single key would be
+/// a larger change than the feature. Anything unrecognised is ignored:
+/// an extension block is by definition full of other people's data.
+fn mcp_widths(rpp_text: &str) -> std::collections::HashMap<String, u32> {
+    let mut widths = std::collections::HashMap::new();
+    let mut in_ext = false;
+    let mut in_ours = false;
+    for line in rpp_text.lines() {
+        let line = line.trim();
+        if line.starts_with("<EXTSTATE") {
+            in_ext = true;
+        } else if in_ext && line.starts_with("<FTSMCP") {
+            in_ours = true;
+        } else if line == ">" {
+            // Closes whichever is innermost.
+            if in_ours {
+                in_ours = false;
+            } else {
+                in_ext = false;
+            }
+        } else if in_ours {
+            if let Some(rest) = line.strip_prefix("WIDTHS ") {
+                for pair in rest.split_whitespace() {
+                    if let Some((guid, px)) = pair.split_once('=')
+                        && let Ok(px) = px.parse()
+                    {
+                        widths.insert(guid.to_string(), px);
+                    }
+                }
+            }
+        }
+    }
+    widths
 }

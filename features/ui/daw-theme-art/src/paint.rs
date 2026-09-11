@@ -358,6 +358,188 @@ pub mod tcp {
         drawing
     }
 
+    /// The fader cap, traced off `mcp_volthumb` row by row.
+    ///
+    /// ```text
+    ///     y5      #0e0e0e   top border
+    ///     y6-7    #696969   bevel, catching the light
+    ///     y8-12   #414141   body above the grip
+    ///     y13-39  ribs, alternating light and dark every row and
+    ///             brightening downward
+    ///     y40-46  #2b2b2b   body below
+    ///     y47     #0b0b0b   bottom border
+    ///     y48-52  a soft drop shadow, fading to nothing
+    /// ```
+    ///
+    /// The grip is NOT a comb of full-width bands: it is a light panel
+    /// spanning x7..x17 with short centre notches at x10..x14, so three
+    /// columns of silver run unbroken down each side, and one full-width
+    /// dark row halfway down is the seam between the two halves. Drawn as
+    /// full-width grooves it flattens into a grille and loses both the
+    /// side rails and the seam — which, with the border and the bevel, is
+    /// most of what makes the cap read as an object at all.
+    #[must_use]
+    pub fn fader_cap(chrome: &Chrome, grip: Color) -> Drawing {
+        let (vw, vh) = (27.0, 53.0);
+        let body = chrome.hardware;
+        let edge = chrome.hardware_edge.shade(-0.35);
+
+        // Fractions of the cell, all measured. x2..x22 INCLUSIVE — the
+        // border pixel at x22 is part of the cap — so the right edge is
+        // at 23, not 21.
+        let (x0, x1) = (vw * 2.0 / 27.0, vw * 23.0 / 27.0);
+        let (top, bot) = (vh * 5.0 / 53.0, vh * 48.0 / 53.0);
+        let (gx0, gw) = (vw * 7.0 / 27.0, vw * 11.0 / 27.0);
+        let (gy0, gy1) = (vh * 13.0 / 53.0, vh * 40.0 / 53.0);
+
+        let mut drawing = Drawing::new(vw, vh);
+        // The shadow it casts.
+        drawing.fill(
+            rect(x0 + 1.0, bot - 1.0, x1 - x0 - 2.0, vh - bot - 1.0, vw * 0.1),
+            Color { r: 0, g: 0, b: 0, a: 51 },
+        );
+        // The border, drawn as a fill beneath the face so the face
+        // cannot bleed past the frame.
+        drawing.fill(rect(x0, top, x1 - x0, bot - top, vw * 0.16), edge);
+        drawing.fill(
+            rect(x0 + 1.0, top + 1.0, x1 - x0 - 2.0, bot - top - 2.0, vw * 0.13),
+            Brush::Linear {
+                from: (0.0, top),
+                to: (0.0, bot),
+                stops: vec![
+                    (0.0, body.shade(0.06)),
+                    (0.65, body.shade(-0.02)),
+                    (1.0, body.shade(-0.32)),
+                ],
+            },
+        );
+        // The lit bevel across the top — two rows, the brighter above.
+        drawing.fill(
+            rect(x0 + 2.0, top + 1.0, x1 - x0 - 4.0, 1.0, 0.0),
+            body.shade(0.28),
+        );
+        drawing.fill(
+            rect(x0 + 2.0, top + 2.0, x1 - x0 - 4.0, 1.0, 0.0),
+            body.shade(0.16),
+        );
+        // The grip sits in a recess, so a ring of shadow runs round it.
+        // Without it the panel looks stuck on the front rather than set
+        // into the moulding.
+        drawing.fill(
+            rect(gx0 - 1.0, gy0 - 1.0, gw + 2.0, gy1 - gy0 + 2.0, vw * 0.09),
+            body.shade(-0.43),
+        );
+        drawing.fill(
+            rect(gx0, gy0, gw, gy1 - gy0, vw * 0.055),
+            Brush::Linear {
+                from: (0.0, gy0),
+                to: (0.0, gy1),
+                stops: vec![(0.0, grip.shade(-0.03)), (1.0, grip.shade(0.34))],
+            },
+        );
+        // Five notches, the seam, five more.
+        for i in 0..11_u32 {
+            let step = f32::from(u16::try_from(i).unwrap_or(0));
+            let y = gy0 + vh * 2.0_f64.mul_add(f64::from(step), 3.0) / 53.0;
+            let seam = i == 5;
+            // The seam is a good deal darker than the notches — 51
+            // against their 85 and 96 — so it reads as the join between
+            // two halves rather than one more groove.
+            let ink_line = if seam {
+                grip.shade(-0.69)
+            } else {
+                grip.shade(0.12_f32.mul_add(step / 10.0, -0.52))
+            };
+            let (nx, nw) = if seam {
+                (gx0, gw)
+            } else {
+                (gw.mul_add(0.27, gx0), gw * 0.46)
+            };
+            drawing.fill(rect(nx, y, nw, vh / 53.0, 0.0), ink_line);
+        }
+        drawing
+    }
+
+    /// The mixer's fader: a groove and a ribbed cap.
+    ///
+    /// Authored at the size it is asked for rather than at a fixed one,
+    /// because a fader's whole job is travel and the travel is whatever
+    /// height the strip has left after its fixed bands. Everything else
+    /// in this module has a measured size; this one has a measured
+    /// SHAPE — the groove is 35% of the width, the cap is a third of it
+    /// again, and the ribs are what make a cap read as grippable.
+    #[must_use]
+    pub fn fader(chrome: &Chrome, value: f64, w: f64, h: f64) -> Drawing {
+        let value = value.clamp(0.0, 1.0);
+        let groove = (w * 0.35).max(3.0);
+        let groove_x = (w - groove) / 2.0;
+        let (cap_y, cap_h) = fader_cap_at(value, w, h);
+
+        let mut drawing = Drawing::new(w, h);
+        drawing.fill(
+            rect(groove_x, 0.5, groove, (h - 1.0).max(0.0), groove / 2.0),
+            chrome.surface_sunken,
+        );
+        // The travelled part, so the level is readable without finding
+        // the cap — the same thing the ring does on a knob.
+        let lit_top = cap_y + cap_h / 2.0;
+        if h - lit_top > 1.0 {
+            drawing.fill(
+                rect(groove_x, lit_top, groove, h - lit_top - 0.5, groove / 2.0),
+                hex(daw_theme::defaults::VOLUME_RING_LIT),
+            );
+        }
+
+        drawing
+    }
+
+    /// Where the cap sits on a fader of this size.
+    ///
+    /// Returns its top and its height. The cap is its own drawing at its
+    /// own cell size, so the caller places it the way the strip places
+    /// every other control, and the fader draws only the groove it runs
+    /// in — one definition of the cap, used at both ends.
+    ///
+    /// Measured from the TOP, because the cap's top edge is what moves:
+    /// computed from the bottom it sat half a cap out at both ends of
+    /// the travel.
+    #[must_use]
+    pub fn fader_cap_at(value: f64, w: f64, h: f64) -> (f64, f64) {
+        let cap_h = (w * 53.0 / 27.0).min(h * 0.5);
+        let travel = (h - cap_h).max(0.0);
+        (travel * (1.0 - value.clamp(0.0, 1.0)), cap_h.max(1.0))
+    }
+
+    /// A level meter: a well, and however much of it is lit.
+    ///
+    /// The lit part runs safe to warn to danger up its own height, which
+    /// is why it is a gradient rather than three thresholds — a meter
+    /// that changed colour in steps reads as three states instead of as
+    /// a level.
+    #[must_use]
+    pub fn meter(chrome: &Chrome, level: f64, zones: [Color; 3], w: f64, h: f64) -> Drawing {
+        let level = level.clamp(0.0, 1.0);
+        let mut drawing = Drawing::new(w, h);
+        drawing.fill(rect(0.0, 0.0, w, h, 1.0), chrome.surface_sunken);
+        let lit = h * level;
+        if lit > 0.5 {
+            drawing.fill(
+                rect(0.0, h - lit, w, lit, 1.0),
+                Brush::Linear {
+                    // Bottom to top: the safe end is the floor.
+                    from: (0.0, h),
+                    to: (0.0, 0.0),
+                    stops: vec![
+                        (0.0, zones[0]),
+                        (0.75, zones[1]),
+                        (1.0, zones[2]),
+                    ],
+                },
+            );
+        }
+        drawing
+    }
+
     /// The folder mark: a tab and a body.
     ///
     /// Traced off `track_folder_off.png`'s first mark — the tab is 4x2
@@ -608,84 +790,133 @@ pub mod tcp {
         pub recv: Color,
     }
 
-    /// The routing widget: three lanes in a row, on a scrim.
+    /// Which way the routing lanes lie.
     ///
-    /// Traced off the source cells rather than composed from fractions:
-    /// the track panel's button is three 4x10 bars across a 28x22 cell
-    /// at x = 5, 12 and 19, on a plate that is 28x20 inset from the top.
-    /// Guessing those as "56% of the width, centred" put every lane a
-    /// pixel and a bit left of the art.
+    /// The whole difference between the theme's two routing images, and
+    /// not a rotation of one: the cells are different sizes with
+    /// different insets, and the track panel's plate is a scrim where
+    /// the mixer's is opaque plastic.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    pub enum Axis {
+        /// The track panel: three bars across.
+        #[default]
+        Horizontal,
+        /// The mixer: three bars down.
+        Vertical,
+    }
+
+    /// The routing widget: three lanes, each lit by its own kind of
+    /// connection.
     ///
-    /// The top lane is the track's OUTPUT and is lit in every source
+    /// Traced off the source cells per family rather than composed from
+    /// fractions. The mixer runs three 11x4 bars DOWN a 23x32 cell at
+    /// y = 6, 13, 20; the track panel runs three 4x10 bars ACROSS a
+    /// 28x22 cell at x = 5, 12, 19. Same rhythm — pitch 7 — turned a
+    /// quarter turn, but not the same fractions: guessing them as "56%
+    /// of the width, centred" put every lane a pixel and a bit off.
+    ///
+    /// The first lane is the track's OUTPUT and is lit in every source
     /// cell — a track always has one — so it greys only when the parent
     /// send is cut. Colouring it by whether anything is routed made an
     /// unrouted track look broken rather than merely unrouted.
     #[must_use]
-    pub fn routing(chrome: &Chrome, state: Routing, ink: RouteInk, at: Interaction) -> Drawing {
-        // The source cell, which the caller scales by placing it.
-        let (vw, vh) = (28.0, 22.0);
+    pub fn routing(
+        chrome: &Chrome,
+        axis: Axis,
+        state: Routing,
+        ink: RouteInk,
+        at: Interaction,
+    ) -> Drawing {
+        let horizontal = axis == Axis::Horizontal;
+        let (vw, vh) = if horizontal { (28.0, 22.0) } else { (23.0, 32.0) };
         let plate = ink_in(chrome, None, at, true, 0.35);
 
-        // Traced: 28x20 in a 28x22 cell, inset by half the stroke, which
-        // straddles the edge it is drawn on. Filling the cell made the
-        // button visibly chunkier than the art beside it.
+        // The panel does not fill its cell, and the inset differs by
+        // family rather than being one margin: 28x20 in a 28x22 cell,
+        // against 21x28 in a 23x32.
         let edge = vh * 0.03;
-        let (box_y, box_h) = (vh / 22.0, vh * 20.0 / 22.0);
+        let (box_x, box_y, box_w, box_h) = if horizontal {
+            (0.0, vh / 22.0, vw, vh * 20.0 / 22.0)
+        } else {
+            (vw / 23.0, vh / 32.0, vw * 21.0 / 23.0, vh * 28.0 / 32.0)
+        };
 
         let mut drawing = Drawing::new(vw, vh);
-        // Black at 35%, not an opaque grey: a scrim that lets the track
-        // colour through, which is why the button looks near-black on a
-        // dark row and tinted on a coloured one.
-        drawing.fill(
-            rect(
-                edge / 2.0,
-                box_y + edge / 2.0,
-                vw - edge,
-                box_h - edge,
-                vw.min(vh) * 0.16,
-            ),
-            Color { r: 0, g: 0, b: 0, a: 89 },
+        // The two families are not one fill at two brightnesses. The
+        // track panel's plate is BLACK AT 35% — a scrim that lets the
+        // row's colour through, which is why it looks near-black on a
+        // dark row and tinted on a coloured one. The mixer's is an
+        // opaque grey a touch lighter than plain hardware. Painting both
+        // opaque made the track buttons sit on the strip instead of in
+        // it.
+        let face = if horizontal {
+            Color { r: 0, g: 0, b: 0, a: 89 }
+        } else {
+            plate.face.shade(0.04)
+        };
+        let plate_rect = rect(
+            box_x + edge / 2.0,
+            box_y + edge / 2.0,
+            box_w - edge,
+            box_h - edge,
+            vw.min(vh) * 0.16,
         );
-        drawing.stroke(
-            rect(
-                edge / 2.0,
-                box_y + edge / 2.0,
-                vw - edge,
-                box_h - edge,
-                vw.min(vh) * 0.16,
-            ),
-            plate.border,
-            Stroke::new(edge),
-        );
+        drawing.fill(plate_rect.clone(), face);
+        drawing.stroke(plate_rect, plate.border, Stroke::new(edge));
         // The lip along the top.
         drawing.fill(
-            rect(vw * 0.08, box_y + edge, vw.mul_add(-0.16, vw), vh * 0.04, 0.0),
+            rect(
+                vw.mul_add(0.08, box_x),
+                box_y + edge,
+                vw.mul_add(-0.16, box_w),
+                vh * 0.04,
+                0.0,
+            ),
             Color { r: 255, g: 255, b: 255, a: 18 },
         );
 
-        // An unlit lane is plain grey at half alpha over the strip. It
-        // was a blue-grey once, which made a track with nothing routed
-        // look faintly lit.
-        let dim = alpha(chrome.hardware_mark.shade(-0.29), 0.49);
+        // An unlit lane is grey in both families but only opaque in one:
+        // the mixer's is solid on plastic, the track panel's half alpha
+        // over the strip. Drawing both solid left the panel's unrouted
+        // lanes reading as lit.
+        let dim = if horizontal {
+            alpha(chrome.hardware_mark.shade(-0.29), 0.49)
+        } else {
+            chrome.hardware_mark.shade(-0.33)
+        };
         let lanes = [
             // Disabled greys the OUTPUT lane and nothing else: compared
-            // cell for cell, the `_dis` variant differs in exactly one
-            // place.
+            // cell for cell, the `_dis` variant differs in one place.
             if state.parent_send { ink.out } else { dim },
             if state.sends { ink.send } else { dim },
             if state.receives { ink.recv } else { dim },
         ];
-        let (bar_w, bar_h) = (vw * 4.0 / 28.0, vh * 10.0 / 22.0);
-        let cross = (vh - bar_h) / 2.0;
+        let (bar_w, bar_h) = if horizontal {
+            (vw * 4.0 / 28.0, vh * 10.0 / 22.0)
+        } else {
+            (vw * 11.0 / 23.0, vh * 4.0 / 32.0)
+        };
         // The traced lane positions, stated rather than stepped from an
-        // index: they came off the source cells as 5, 12 and 19, and a
-        // pitch computed from a loop counter is a number nobody measured.
-        for (at_x, lit) in [5.0, 12.0, 19.0].into_iter().zip(lanes) {
-            let x = vw * at_x / 28.0;
-            drawing.fill(rect(x, cross, bar_w, bar_h, bar_w.min(bar_h) / 2.0), lit);
+        // index: they came off the source cells, and a pitch computed
+        // from a loop counter is a number nobody measured.
+        let (starts, cell) = if horizontal {
+            ([5.0, 12.0, 19.0], vw / 28.0)
+        } else {
+            ([6.0, 13.0, 20.0], vh / 32.0)
+        };
+        let cross = if horizontal {
+            (vh - bar_h) / 2.0
+        } else {
+            (vw - bar_w) / 2.0
+        };
+        for (at_lane, lit) in starts.into_iter().zip(lanes) {
+            let along = at_lane * cell;
+            let (x, y) = if horizontal { (along, cross) } else { (cross, along) };
+            drawing.fill(rect(x, y, bar_w, bar_h, bar_w.min(bar_h) / 2.0), lit);
         }
         drawing
     }
+
 
     /// `c` at `a` of its opacity.
     fn alpha(color: Color, amount: f64) -> Color {

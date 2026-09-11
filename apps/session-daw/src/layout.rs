@@ -27,6 +27,10 @@ pub struct Layout {
     /// its knobs where its knobs go; seeing the whole session is what
     /// the vertical ZOOM is for, not what the default height is for.
     pub default: f64,
+    /// What a track with no stored strip width is drawn at.
+    pub strip: f64,
+    /// The narrowest a strip may be set to.
+    pub strip_min: f64,
     /// The smallest a track may be SET to.
     ///
     /// Deliberately not the smallest a row can be DRAWN at: that is
@@ -38,6 +42,18 @@ pub struct Layout {
     /// and the floor on the drawn height is a single pixel.
     pub min: f64,
 }
+
+/// The mixer's default strip width — REAPER's, which is the only one it
+/// has.
+pub const STRIP_WIDE: f64 = 86.0;
+
+/// The narrowest a strip may be set to.
+///
+/// Enough for the name, mute and solo, and the fader's own body. A strip
+/// below this is not a narrow strip, it is a strip with its controls cut
+/// off — and unlike a short row, there is no second form for them to
+/// take: a fader is a fader at any width.
+pub const STRIP_NARROW: f64 = 30.0;
 
 /// The smallest row holding the whole control row at its authored size.
 ///
@@ -68,6 +84,8 @@ impl Default for Layout {
             // minimum shows its level as bars rather than rings, so it
             // reads as collapsed at a glance instead of merely short.
             min: 16.0,
+            strip: STRIP_WIDE,
+            strip_min: STRIP_NARROW,
         }
     }
 }
@@ -87,7 +105,27 @@ impl Layout {
         if let Some(min) = number("FTS_TRACK_HEIGHT_MIN") {
             layout.min = min;
         }
+        if let Some(width) = number("FTS_STRIP_WIDTH") {
+            layout.strip = width;
+        }
+        if let Some(min) = number("FTS_STRIP_WIDTH_MIN") {
+            layout.strip_min = min;
+        }
         layout
+    }
+
+    /// How wide to draw a track's mixer strip.
+    ///
+    /// REAPER has no strip width — every strip is one width — so this is
+    /// entirely ours, and `None` means the user's default rather than
+    /// the host's.
+    #[must_use]
+    pub fn width_of(self, stored: Option<u32>) -> f64 {
+        stored
+            .map(f64::from)
+            .filter(|w| *w > 0.0)
+            .unwrap_or(self.strip)
+            .max(self.strip_min)
     }
 
     /// How tall to draw a track.
@@ -123,7 +161,7 @@ mod tests {
     fn an_unset_height_takes_the_default() {
         let layout = Layout {
             default: 48.0,
-            min: 1.0,
+            ..Layout::default()
         };
         assert!((layout.height_of(None) - 48.0).abs() < f64::EPSILON);
     }
@@ -139,7 +177,7 @@ mod tests {
     fn zero_is_unset_not_flat() {
         let layout = Layout {
             default: 70.0,
-            min: 1.0,
+            ..Layout::default()
         };
         assert!((layout.height_of(Some(0)) - 70.0).abs() < f64::EPSILON);
     }
@@ -151,8 +189,19 @@ mod tests {
         let layout = Layout {
             default: 70.0,
             min: 6.0,
+            ..Layout::default()
         };
         assert!((layout.height_of(Some(1)) - 6.0).abs() < f64::EPSILON);
+    }
+
+    /// A strip with no stored width takes the default, and one set
+    /// narrower than the floor is held at it.
+    #[test]
+    fn strip_widths_default_and_clamp() {
+        let layout = Layout::default();
+        assert!((layout.width_of(None) - STRIP_WIDE).abs() < f64::EPSILON);
+        assert!((layout.width_of(Some(120)) - 120.0).abs() < f64::EPSILON);
+        assert!((layout.width_of(Some(4)) - STRIP_NARROW).abs() < f64::EPSILON);
     }
 
     /// The stored floor is generous; the DRAWN floor is not. A track

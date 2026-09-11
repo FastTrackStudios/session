@@ -405,6 +405,7 @@ fn row_one(
         scene,
         &art::routing(
             &palette.chrome,
+            art::Axis::Horizontal,
             art::Routing {
                 parent_send: track.parent_send,
                 // Sends and receives are not on `Track` — they live in
@@ -468,7 +469,7 @@ fn level(
             scene,
             &art::volume_knob(
                 &palette.chrome,
-                gain_fraction(track.volume),
+                volume_fraction(track.volume),
                 Interaction::Normal,
                 field_h,
             ),
@@ -498,7 +499,7 @@ fn level(
         // keep saying what they say all the way down.
         crate::art::squashed(
             scene,
-            &art::volume_fader(&palette.chrome, gain_fraction(track.volume)),
+            &art::volume_fader(&palette.chrome, volume_fraction(track.volume)),
             font,
             // Straddling the field's right edge, where the knob it
             // replaces is centred — the column has to hold whichever of
@@ -654,7 +655,7 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
 /// Unity is halfway up the sweep rather than at the end, because a fader
 /// at 0 dB is the resting position a mix is read against and REAPER's
 /// range runs past it.
-const fn gain_fraction(volume: f64) -> f64 {
+pub const fn volume_fraction(volume: f64) -> f64 {
     (volume / 2.0).clamp(0.0, 1.0)
 }
 
@@ -666,15 +667,15 @@ const fn pan_position(pan: f64) -> f64 {
 /// Mute and solo take their lit colour from the resolved theme, so a
 /// REAPER theme's own mute red reaches the canvas rather than the art
 /// crate's default.
-fn mute_lit(palette: &Palette) -> daw_theme::Color {
+pub fn mute_lit(palette: &Palette) -> daw_theme::Color {
     to_theme(palette.mute)
 }
 
-fn solo_lit(palette: &Palette) -> daw_theme::Color {
+pub fn solo_lit(palette: &Palette) -> daw_theme::Color {
     to_theme(palette.solo)
 }
 
-fn to_theme(color: Color) -> daw_theme::Color {
+pub fn to_theme(color: Color) -> daw_theme::Color {
     let [red, green, blue, alpha] = color.to_rgba8().to_u8_array();
     daw_theme::Color {
         r: red,

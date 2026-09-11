@@ -14,6 +14,8 @@ pub mod arrangement;
 pub mod frame_rate;
 pub mod headless;
 pub mod layout;
+pub mod mcp;
+pub mod num;
 pub mod open;
 pub mod art;
 pub mod profile;

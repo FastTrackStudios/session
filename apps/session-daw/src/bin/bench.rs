@@ -29,6 +29,7 @@ use vello::kurbo::Affine;
 
 use session_daw::arrangement::{Arrangement, Palette, Viewport, TCP_WIDTH};
 use session_daw::headless::{Headless, BATCH};
+use session_daw::mcp::Mixer;
 use session_daw::profile::{Counts, Stages, Summary};
 use session_daw::ruler::{self, Bars, RULER_H};
 
@@ -185,6 +186,11 @@ fn main() {
     );
     println!("  {}", "-".repeat(78));
 
+    if let Ok(out) = std::env::var("FTS_BENCH_MIXER") {
+        mixer_shot(&palette, &font, layout, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
+
     if let Ok(out) = std::env::var("FTS_BENCH_SHOT") {
         // Look at a frame instead of arguing about one. Renders the
         // window's opening view and writes it to a PNG, which is the
@@ -311,6 +317,77 @@ fn main() {
         "  headroom there at 240Hz: {:.2}x   at 60Hz: {:.2}x\n",
         (1000.0 / 240.0) / frame.p99,
         (1000.0 / 60.0) / frame.p99,
+    );
+}
+
+/// Write one mixer frame to a PNG.
+///
+/// `FTS_BENCH_MIXER=/tmp/mixer.png`, with `FTS_BENCH_SCROLL=x,y` to move
+/// along the strips.
+fn mixer_shot(
+    palette: &Palette,
+    font: &session_daw::text::Font,
+    layout: session_daw::layout::Layout,
+    out: &std::path::Path,
+    width: u32,
+    height: u32,
+) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let Some(project) = rt.block_on(daw_ui::studio::project::fetch()) else {
+        eprintln!("could not read the project back");
+        return;
+    };
+    let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
+    let (visible, depths) =
+        daw_ui::components::folders::FolderState::default().visible(&project.tracks);
+    let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
+        visible.into_iter().zip(depths).collect(),
+    ));
+
+    let scroll_x = std::env::var("FTS_BENCH_SCROLL")
+        .ok()
+        .and_then(|v| v.split(',').next()?.trim().parse().ok())
+        .unwrap_or(0.0);
+
+    let mixer = Mixer::build(palette, font, &project, &rows, f64::from(height), layout);
+    let bands = mixer.bands_height();
+
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut buffer = Vec::new();
+    let mut counts = Counts::default();
+    image.render_to_vec(
+        |painter| {
+            painter.reset();
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                palette.surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+            );
+            counts = mixer.replay(
+                painter,
+                scroll_x,
+                f64::from(width),
+                Affine::translate((-scroll_x, bands)),
+            );
+            let band = mixer.replay_bands(painter, Affine::translate((-scroll_x, 0.0)));
+            counts.replayed += band.replayed;
+            counts.submitted += band.submitted;
+        },
+        &mut buffer,
+    );
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+    println!(
+        "  wrote {} — {} strips, {} deep, {} commands submitted",
+        out.display(),
+        mixer.count,
+        mixer.depth,
+        counts.submitted,
     );
 }
 
