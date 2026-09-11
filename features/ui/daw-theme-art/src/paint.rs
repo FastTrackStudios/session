@@ -358,6 +358,32 @@ pub mod tcp {
         drawing
     }
 
+    /// The folder mark: a tab and a body.
+    ///
+    /// Traced off `track_folder_off.png`'s first mark — the tab is 4x2
+    /// with a SQUARE right edge over a 9x5 body, one flat ink. The
+    /// slanted edge this was first drawn with is not in the art.
+    ///
+    /// All right angles, so it is a polygon rather than a path: six
+    /// points, and no curve for a backend to flatten.
+    #[must_use]
+    pub fn folder_mark(ink: Color) -> Drawing {
+        let (w, h) = (9.0, 7.0);
+        let mut drawing = Drawing::new(w, h);
+        drawing.fill(
+            Shape::Poly(vec![
+                (0.0, 0.0),
+                (4.0, 0.0),
+                (4.0, 2.0),
+                (9.0, 2.0),
+                (9.0, 7.0),
+                (0.0, 7.0),
+            ]),
+            ink,
+        );
+        drawing
+    }
+
     /// Volume as a horizontal fader, for rows too short for a knob.
     ///
     /// A knob says its value with the angle of a ring, and an angle

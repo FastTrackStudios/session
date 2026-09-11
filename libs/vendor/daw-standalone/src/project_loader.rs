@@ -222,13 +222,20 @@ fn populate_tracks(
                 .map(|f| {
                     use dawfile_reaper::types::track::FolderState as FS;
                     let depth = match f.folder_state {
-                        FS::Regular => 0,
                         FS::FolderParent => 1,
                         // ISBUS's second field is the depth DELTA: a
                         // last-in-folder track can close several
                         // nested folders at once (`ISBUS 2 -3`).
                         FS::LastInFolder => f.indentation.min(-1),
-                        FS::Unknown(_) => 0,
+                        // `ISBUS 0 -1`, which is what REAPER actually
+                        // writes for the last track in a folder: the
+                        // first field says "not a folder parent" and
+                        // the second still closes one. Reading only the
+                        // state flag left every folder open, so a
+                        // session's nesting grew by one at each bus and
+                        // never came back down.
+                        _ if f.indentation < 0 => f.indentation,
+                        FS::Regular | FS::Unknown(_) => 0,
                     };
                     (depth, depth > 0)
                 })

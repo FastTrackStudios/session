@@ -137,6 +137,7 @@ pub fn draw_row(
     let indent = (f64::from(depth.max(0)) * INDENT).min(MAX_INDENT);
     let tint = row_tint(palette, track);
     let density = Density::at(h);
+    let rail = f64::from(g::COLUMN_RULE_X);
 
     // ── The row's ground ──
     //
@@ -164,14 +165,18 @@ pub fn draw_row(
         return;
     }
 
-    // The left column, and the one-pixel rule closing it.
-    rect(scene, palette.tcp_column, 0.0, y, f64::from(g::COLUMN_RULE_X), y + h);
+    // The left column, and the one-pixel rule closing it. The whole
+    // rail moves with the indent rather than staying put while the
+    // content slides out from under it: the rail IS the row's left
+    // edge, and a nested track whose edge did not move read as a track
+    // with a wide gutter rather than as a child.
+    rect(scene, palette.tcp_column, 0.0, y, indent + rail, y + h);
     rect(
         scene,
         palette.tcp_rule,
-        f64::from(g::COLUMN_RULE_X),
+        indent + rail,
         y,
-        f64::from(g::COLUMN_RULE_X) + 1.0,
+        indent + rail + 1.0,
         y + h,
     );
     // The panel's own right edge — the boundary with the arrange view,
@@ -185,17 +190,42 @@ pub fn draw_row(
         y + h,
     );
 
-    // The track number, in the left column. Centred on whatever height
-    // the row has rather than on the one it used to have.
-    glyphs(
-        scene,
-        font,
-        palette.text_faint,
-        &track.index.saturating_add(1).to_string(),
-        9.0,
-        y + h / 2.0 + 4.0,
-        11.0,
-    );
+    // The left rail: the folder mark at its top, the track number under
+    // it. REAPER puts the mark at the BOTTOM of this column; at the top
+    // it lines up with the controls beside it, which is what makes a
+    // folder readable while scanning a collapsed session rather than
+    // something you find by looking down.
+    let mark_h = if track.is_folder {
+        // In the rail, which has already moved with the indent.
+        let mark_scale = (h / 18.0).clamp(0.4, 1.0);
+        crate::art::scaled(
+            scene,
+            &art::folder_mark(to_theme(palette.text_dim)),
+            font,
+            indent + 9.0_f64.mul_add(-mark_scale, rail) / 2.0,
+            2.0_f64.mul_add(mark_scale, y),
+            mark_scale,
+        );
+        (7.0 + 2.0) * mark_scale
+    } else {
+        0.0
+    };
+
+    // The track number, under whatever the rail already holds. It gets
+    // the space that is left, and gives way entirely when a folder's
+    // mark has taken the rail — the mark is the fact worth keeping when
+    // only one of the two fits.
+    if h - mark_h >= 11.0 {
+        glyphs(
+            scene,
+            font,
+            palette.text_faint,
+            &track.index.saturating_add(1).to_string(),
+            indent + 9.0,
+            y + mark_h + (h - mark_h) / 2.0 + 4.0,
+            11.0,
+        );
+    }
 
     match density {
         Density::Full => {

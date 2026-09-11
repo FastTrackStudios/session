@@ -87,6 +87,10 @@ fn main() {
 
     let opened = session_daw::open::open_and_serve(&path).expect("open project");
     let scene = build_scene(&palette, layout).expect("read project back");
+    if std::env::var_os("FTS_BENCH_DEPTHS").is_some() {
+        depths();
+        return;
+    }
     tracing::info!(
         project.tracks = opened.track_count,
         scene.rows = scene.rows,
@@ -542,6 +546,27 @@ fn shot(
         out.display(),
         counts.submitted,
     );
+}
+
+/// Print the first rows' folder depths, to check nesting against the
+/// project rather than against the picture.
+fn depths() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let Some(project) = rt.block_on(daw_ui::studio::project::fetch()) else {
+        return;
+    };
+    let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
+    let (visible, depths) =
+        daw_ui::components::folders::FolderState::default().visible(&project.tracks);
+    for (track, depth) in visible.iter().zip(&depths).take(12) {
+        println!(
+            "  {:<10} depth {depth}  folder_depth {:>2}  is_folder {}",
+            track.name, track.folder_depth, track.is_folder
+        );
+    }
 }
 
 fn build_scene(palette: &Palette, layout: session_daw::layout::Layout) -> Option<Arrangement> {
