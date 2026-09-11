@@ -22,7 +22,7 @@
 
 use anyrender::recording::RenderCommand;
 use anyrender::{Paint, PaintScene, Scene};
-use vello::kurbo::{Affine, Rect, RoundedRect};
+use vello::kurbo::{Affine, Rect};
 use vello::peniko::{Color, Fill};
 
 use daw_ui::studio::{ProjectRef, RowsRef};
@@ -35,6 +35,39 @@ pub const ROW_PITCH: f64 = 71.0;
 /// The panel's width, from the measured REAPER geometry.
 pub const TCP_WIDTH: f64 = 343.0;
 
+/// The resolved theme, as the art crate's control palette.
+///
+/// Started from the art's own defaults and overridden rather than built
+/// field by field: `Chrome` carries relationships that were measured
+/// together — the hardware face, its edge and its mark — and a palette
+/// assembled from scratch would silently lose the ones this theme has
+/// nothing to say about.
+fn chrome(theme: &daw_ui::theming::Theme) -> daw_theme::Chrome {
+    let c = |col: daw_ui::theming::Color| daw_theme::Color {
+        r: col.r,
+        g: col.g,
+        b: col.b,
+        a: col.a,
+    };
+    daw_theme::Chrome {
+        surface: c(theme.tokens.surface),
+        surface_raised: c(theme.tokens.surface_raised),
+        surface_sunken: c(theme.tokens.surface_sunken),
+        border: c(theme.tokens.border),
+        text: c(theme.tokens.text),
+        text_dim: c(theme.tokens.text_dim),
+        text_faint: c(theme.tokens.text_faint),
+        accent: c(theme.tokens.accent),
+        // A control's face, its edge and the ink on it. The buttons read
+        // as part of the panel when these come off the same ladder the
+        // panel does, and as borrowed art when they do not.
+        hardware: c(theme.tokens.surface_raised),
+        hardware_edge: c(theme.tokens.border),
+        hardware_mark: c(theme.tokens.text_dim),
+        ..daw_theme::Theme::default().chrome
+    }
+}
+
 /// Colours resolved once, so the draw loop never parses a hex string.
 pub struct Palette {
     pub surface: Color,
@@ -44,6 +77,37 @@ pub struct Palette {
     pub grid: Color,
     pub item_edge: Color,
     pub text: Color,
+    pub text_dim: Color,
+    pub text_faint: Color,
+    pub accent: Color,
+    pub mute: Color,
+    pub solo: Color,
+    pub rec: Color,
+    pub meter_warn: Color,
+    pub meter_danger: Color,
+    /// The track panel's own surfaces. Named `tcp_*` because they come
+    /// from the theme's TCP context, which a REAPER theme colours
+    /// separately from the arrange view — a panel drawn in arrange
+    /// colours is the giveaway that a theme was only half applied.
+    pub tcp_tint: Color,
+    pub tcp_gutter: Color,
+    pub tcp_column: Color,
+    pub tcp_rule: Color,
+    pub tcp_field: Color,
+    pub tcp_button: Color,
+    pub tcp_combo: Color,
+    pub tcp_meter_well: Color,
+    /// How strongly a track's colour tints its row, from the theme.
+    pub track_tint: f32,
+    /// The palette the ported control art is drawn against.
+    ///
+    /// `daw_theme_art`'s components reach for `Theme::default()`, which
+    /// is right for the one theme they were drawn for and wrong here:
+    /// this window opens whatever REAPER theme the user has, and taking
+    /// the default put the track panel's buttons in a grey the rest of
+    /// the window had moved away from. So the drawings take a palette,
+    /// and this is it.
+    pub chrome: daw_theme::Chrome,
 }
 
 impl Palette {
@@ -58,6 +122,24 @@ impl Palette {
             divider: c(theme.arrange.row_divider[0]),
             grid: c(theme.arrange.grid_measure),
             item_edge: c(theme.arrange.item_edge),
+            text_dim: c(theme.tokens.text_dim),
+            text_faint: c(theme.tokens.text_faint),
+            accent: c(theme.tokens.accent),
+            mute: c(theme.tokens.mute),
+            solo: c(theme.tokens.solo),
+            rec: c(theme.tokens.rec),
+            meter_warn: c(theme.tokens.meter_warn),
+            meter_danger: c(theme.tokens.meter_danger),
+            tcp_tint: c(theme.tokens.surface_raised),
+            tcp_gutter: c(theme.tokens.surface),
+            tcp_column: c(theme.tokens.surface_sunken),
+            tcp_rule: c(theme.tokens.border),
+            tcp_field: c(theme.tokens.surface_sunken),
+            tcp_button: c(theme.tokens.surface),
+            tcp_combo: c(theme.tokens.surface_sunken),
+            tcp_meter_well: c(theme.tokens.surface_sunken),
+            track_tint: theme.metrics.track_tint,
+            chrome: chrome(theme),
             text: c(theme.tokens.text),
         }
     }
@@ -150,7 +232,12 @@ impl Viewport {
 }
 
 impl Arrangement {
-    pub fn build(palette: &Palette, project: &ProjectRef, rows: &RowsRef) -> Self {
+    pub fn build(
+        palette: &Palette,
+        font: &crate::text::Font,
+        project: &ProjectRef,
+        rows: &RowsRef,
+    ) -> Self {
         let mut lanes = Scene::new();
         let mut panel = Scene::new();
         let mut index = Index::default();
@@ -181,16 +268,10 @@ impl Arrangement {
             );
             index.x.push((f32::MIN, f32::MAX));
 
-            // The panel row: its stripe, the track's colour chip, and an
-            // indent for folder depth. The REAPER-matched controls are
-            // the next piece of work — see the module docs.
-            panel.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                stripe,
-                None,
-                &Rect::new(0.0, y, TCP_WIDTH, y + ROW_PITCH - 1.0),
-            );
+            // The panel row — the whole REAPER-matched control panel, at
+            // the geometry the DOM row uses. See `crate::tcp`.
+            crate::tcp::draw_row(&mut panel, palette, font, track, i32::try_from(*depth).unwrap_or(0), y);
+            // The divider under it, matching the lane's.
             panel.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
@@ -198,30 +279,16 @@ impl Arrangement {
                 None,
                 &Rect::new(0.0, y + ROW_PITCH - 1.0, TCP_WIDTH, y + ROW_PITCH),
             );
-            let chip_x = 6.0 + f64::from(*depth) * 10.0;
-            let chip = track
-                .color
-                .map_or(palette.text, |rgb| {
-                    Color::from_rgba8(
-                        ((rgb >> 16) & 0xff) as u8,
-                        ((rgb >> 8) & 0xff) as u8,
-                        (rgb & 0xff) as u8,
-                        0xff,
-                    )
-                });
-            panel.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                chip,
-                None,
-                &RoundedRect::new(chip_x, y + 8.0, chip_x + 4.0, y + ROW_PITCH - 9.0, 2.0),
-            );
 
-            // The items on this lane.
+            // The items on this lane. An item with no colour of its own
+            // takes its TRACK's, which is what makes a session read by
+            // section when it is zoomed out far enough that names are
+            // gone — the same rule the panel's row tint follows.
+            let track_color = crate::tcp::track_color(palette, track);
             for item in project.lane(&track.guid) {
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
-                let color = item.color.map_or(chip, |rgb| {
+                let color = item.color.map_or(track_color, |rgb| {
                     Color::from_rgba8(
                         ((rgb >> 16) & 0xff) as u8,
                         ((rgb >> 8) & 0xff) as u8,
@@ -344,17 +411,55 @@ pub fn replay_all(
 /// rather than silently mis-drawn; when strokes and glyphs arrive they
 /// get their own arms here.
 fn submit(painter: &mut impl PaintScene, cmd: &RenderCommand, transform: Affine) -> bool {
-    if let RenderCommand::Fill(fill) = cmd
-        && let Paint::Solid(color) = fill.brush
-    {
-        painter.fill(
-            fill.fill,
-            transform * fill.transform,
-            Paint::Solid(color),
-            fill.brush_transform,
-            &fill.shape,
-        );
-        return true;
+    match cmd {
+        RenderCommand::Fill(fill) => {
+            let Paint::Solid(color) = fill.brush else {
+                return false;
+            };
+            painter.fill(
+                fill.fill,
+                transform * fill.transform,
+                Paint::Solid(color),
+                fill.brush_transform,
+                &fill.shape,
+            );
+            true
+        }
+        RenderCommand::Stroke(stroke) => {
+            let Paint::Solid(color) = stroke.brush else {
+                return false;
+            };
+            painter.stroke(
+                &stroke.style,
+                transform * stroke.transform,
+                Paint::Solid(color),
+                stroke.brush_transform,
+                &stroke.shape,
+            );
+            true
+        }
+        // Text. Dropping this arm is not a silent degradation of
+        // quality, it is a track panel with no names in it, so it is
+        // handled here rather than defaulted.
+        RenderCommand::GlyphRun(run) => {
+            let Paint::Solid(color) = run.brush else {
+                return false;
+            };
+            painter.draw_glyphs(
+                &run.font_data,
+                run.font_size,
+                run.hint,
+                &run.normalized_coords,
+                run.embolden,
+                &run.style,
+                Paint::Solid(color),
+                run.brush_alpha,
+                transform * run.transform,
+                run.glyph_transform,
+                run.glyphs.iter().copied(),
+            );
+            true
+        }
+        _ => false,
     }
-    false
 }

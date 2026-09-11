@@ -35,6 +35,8 @@ dioxus = { workspace = true, default-features = true, features = ["desktop", "la
 daw-ui = { workspace = true, features = ["studio", "reaper-theme"] }
 daw-control = { workspace = true }
 daw-proto = { workspace = true }
+daw-theme-art = { workspace = true }
+daw-theme = { workspace = true }
 
 # `standalone-rpp` = the standalone backend plus the `.rpp` loader and
 # source decoding — what makes a real project openable with no REAPER in
@@ -57,6 +59,7 @@ anyrender_vello = "0.12"
 vello = "0.9"
 pollster = "0.4"
 image = { workspace = true }
+skrifa = "0.42"
 winit = "0.31.0-beta.2"
 
 eyre = { workspace = true }

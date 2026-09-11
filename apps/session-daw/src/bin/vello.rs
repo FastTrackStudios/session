@@ -408,5 +408,10 @@ fn build_scene(theme: &daw_ui::theming::Theme) -> Option<Arrangement> {
     let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
         visible.into_iter().zip(depths).collect(),
     ));
-    Some(Arrangement::build(&Palette::from_theme(theme), &project, &rows))
+    Some(Arrangement::build(
+        &Palette::from_theme(theme),
+        &session_daw::text::Font::embedded().ok()?,
+        &project,
+        &rows,
+    ))
 }

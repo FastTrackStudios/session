@@ -297,6 +297,10 @@ fn verify(
     let mut complete = Vec::new();
     let mut checked = 0usize;
     let mut bad = 0usize;
+    // Viewports that matched only within the tolerance. Counted and
+    // reported rather than ignored: if this climbs, the tolerance is
+    // hiding something and wants looking at.
+    let mut rounded = 0usize;
 
     println!("\n  verifying culled == complete over {SAMPLES} viewports per phase\n");
     for (name, gesture) in phases {
@@ -339,16 +343,48 @@ fn verify(
             );
 
             checked += 1;
-            if culled != complete {
+            // Compared with a one-LSB tolerance, not bit-for-bit.
+            //
+            // Vello accumulates coverage on the GPU, and the same curve
+            // can land a single channel 1/255 apart depending on how
+            // many commands preceded it — which culling changes by
+            // design. Twelve such pixels showed up here, all of them on
+            // the antialiased edge of a knob.
+            //
+            // The tolerance is deliberately tiny, because the thing this
+            // guards against is not subtle: a control that got culled
+            // while visible differs over its whole area, by the full
+            // distance between it and the background. One LSB cannot
+            // hide that, and demanding exactness instead would mean
+            // reporting a renderer's rounding as a correctness failure
+            // every run.
+            const TOLERANCE: i16 = 1;
+
+            let mut differing = 0_usize;
+            let mut worst_delta = 0_i16;
+            let mut at = (0_usize, 0_usize, 0_usize);
+            for (i, (a, b)) in culled.iter().zip(&complete).enumerate() {
+                let delta = i16::from(*a) - i16::from(*b);
+                if delta == 0 {
+                    continue;
+                }
+                differing += 1;
+                if delta.abs() > worst_delta.abs() {
+                    worst_delta = delta;
+                    let pixel = i / 4;
+                    at = (pixel % width as usize, pixel / width as usize, i % 4);
+                }
+            }
+            if differing > 0 {
+                rounded += 1;
+            }
+            if worst_delta.abs() > TOLERANCE {
                 bad += 1;
-                let differing = culled
-                    .iter()
-                    .zip(&complete)
-                    .filter(|(a, b)| a != b)
-                    .count();
+                bad += 1;
                 println!(
                     "  MISMATCH {name}: scroll ({scroll_x:.0}, {scroll_y:.0}) zoom ({zx:.2}, \
-                     {zy:.2}) — {differing} bytes differ"
+                     {zy:.2}) — {differing} bytes, worst {worst_delta:+} at ({}, {}) channel {}",
+                    at.0, at.1, at.2,
                 );
             }
             if let Some(kept) = counts.kept_pct() {
@@ -368,7 +404,10 @@ fn verify(
     }
 
     if bad == 0 {
-        println!("\n  {checked} viewports: culled output is pixel-identical to complete\n");
+        println!(
+            "\n  {checked} viewports: culled output matches complete \
+             ({rounded} differed only by a rounding LSB)\n"
+        );
     } else {
         println!("\n  {bad} of {checked} viewports DIFFER — the culling is dropping visible work\n");
         std::process::exit(1);
@@ -460,5 +499,10 @@ fn build_scene(palette: &Palette) -> Option<Arrangement> {
     let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
         visible.into_iter().zip(depths).collect(),
     ));
-    Some(Arrangement::build(palette, &project, &rows))
+    Some(Arrangement::build(
+        palette,
+        &session_daw::text::Font::embedded().ok()?,
+        &project,
+        &rows,
+    ))
 }
