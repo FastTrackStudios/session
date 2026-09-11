@@ -1,0 +1,18 @@
+//! The Session DAW window, in two renderings.
+//!
+//! - `main.rs` — the dioxus/WebView studio. What runs today.
+//! - `bin/vello.rs` — the GPU arrangement, drawn through `anyrender`
+//!   onto a wgpu surface. Where this is going.
+//!
+//! They share everything below the UI: opening a project, standing up
+//! the `daw` facade, and resolving the theme. Only the drawing differs,
+//! which is the point of keeping both runnable while the second comes
+//! up.
+
+pub mod arrangement;
+#[cfg(target_os = "linux")]
+pub mod frame_rate;
+pub mod headless;
+pub mod open;
+pub mod profile;
+pub mod theme;

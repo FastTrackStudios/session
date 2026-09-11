@@ -30,6 +30,7 @@ members = [
     "features/ui/daw-reaper-dioxus-ext-test",
     "apps/cli",
     "apps/desktop",
+    "apps/session-daw",
     "apps/session-player",
     "apps/vault-sync",
     "apps/web",

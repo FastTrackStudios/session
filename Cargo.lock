@@ -12588,6 +12588,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "session-daw"
+version = "0.1.0"
+dependencies = [
+ "anyrender",
+ "anyrender_vello",
+ "daw 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
+ "daw-control 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
+ "daw-proto 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
+ "daw-ui",
+ "dioxus",
+ "eyre",
+ "image",
+ "pollster",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vello",
+ "webkit2gtk",
+ "winit",
+ "wry",
+]
+
+[[package]]
 name = "session-desktop"
 version = "0.0.2-alpha"
 dependencies = [

@@ -896,10 +896,20 @@ ee-practice $SONG="set-in-stone" $FRESH="false":
 # reused, not re-copied — and everything below the UI is unchanged and
 # native: the project loads, the daw facade runs in-process, audio plays.
 #
-# The painted panes (roll, lane strip, drum stack) cannot hand a WebView a
-# Vello scene, so they are rasterized on a background thread and drawn
-# into a canvas. See `expression_editor_ui::scene_image`.
-ee-webview $SONG="set-in-stone" $FRESH="false":
+# The drum stack draws as SVG markup here rather than a painted scene —
+# a browser engine is fast at exactly those elements and Blitz is not.
+# See `expression_editor_ui::stack::markup`.
+#
+# The window reports its own frame rate to the log a couple of times a
+# second (`ui.fps`, `ui.worst_frame_ms`), so a scroll can be measured
+# from a terminal instead of a screenshot: `just ee-fps`.
+#
+# `PROBE=1` turns the dioxus-mcp probe on for `runtime_events`. It is off
+# by default because it is not free: it records every `dioxus_core` trace
+# event, fields and all, and those fields are whole `VNode` trees —
+# 18,000 events a second with the window merely playing back. Turn it on
+# to inspect renders, not to measure them.
+ee-webview $SONG="set-in-stone" $FRESH="false" $PROBE="0":
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ "$SONG" == "both" ]]; then
@@ -913,9 +923,111 @@ ee-webview $SONG="set-in-stone" $FRESH="false":
     # devtools, so a hot-reloaded `rsx!` edit can be inspected as it
     # lands.
     mkdir -p target
+    FTS_DIOXUS_PROBE="$PROBE" \
+    RUST_LOG="${RUST_LOG:-warn,expression_editor_ui::frame_meter=info}" \
+    ${WEBKIT_DISABLE_COMPOSITING_MODE:+WEBKIT_DISABLE_COMPOSITING_MODE="$WEBKIT_DISABLE_COMPOSITING_MODE"} \
     EXPRESSION_EDITOR_ARGS="'$project' --drums --size 1600x900" \
         dx serve -p expression-editor-standalone --example webview \
         --platform desktop --features webview 2>&1 | tee target/ee-webview.log
+
+# Drive the WebView window on a private display and measure a scroll.
+#
+# The developer's own window is a native Wayland surface: `grim` is
+# refused by the compositor and `xdotool` cannot see it, so there is no
+# way to drive or capture it. This gives the window a display of its own
+# — Xvfb, a window manager, xdotool input, `import` capture — the same
+# shape as `daw::test::VirtualDisplay`, which is how the REAPER panels
+# are already tested.
+#
+# Xvfb is NOT a GPU. Numbers here are for an A/B under a fixed
+# environment, not for quoting as what the window does on a screen.
+# See scripts/ui-stress/GUIDE.md.
+ee-vdisplay $CMD="run" $NAME="run":
+    scripts/ui-stress/webview-display.sh "$CMD" "$NAME"
+
+# Stop the private display and anything left running on it.
+ee-vdisplay-stop:
+    #!/usr/bin/env bash
+    pkill -9 -x webview 2>/dev/null || true
+    scripts/ui-stress/webview-display.sh stop
+
+# The frame rate the WebView actually presented at, worst frame first.
+#
+# Reads the `ui.fps` lines the window logs. Scroll for a few seconds,
+# then run this: the interesting number is the low end of the range and
+# the worst frame, not the mean of a window that spent most of its time
+# idle.
+ee-fps $LINES="20":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    log=target/ee-webview.log
+    if [[ ! -f "$log" ]]; then echo "no $log — run just ee-webview first" >&2; exit 1; fi
+    sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$log" \
+      | grep -o 'ui\.fps=[0-9.]*  *ui\.worst_frame_ms=[0-9.]*' \
+      | sed -E 's/ui\.fps=([0-9.]*)  *ui\.worst_frame_ms=([0-9.]*)/\1 \2/' \
+      | awk '{ printf "%6.1f fps   worst %6.1f ms\n", $1, $2 }' \
+      | tail -n "$LINES"
+
+# ── The Session DAW window ──────────────────────────────────────────
+#
+# TCP + arrangement + transport over a real REAPER project, in a WRY
+# WebView. The panels live in `daw_ui::studio`; `apps/session-daw` is
+# launch and the loader thread.
+#
+# Not the expression editor. That arrives once this holds its frame rate
+# with a real session open, and it arrives as a panel this window mounts.
+#
+# Same practice staging as `ee-practice` — reused, not re-copied — so the
+# numbers here and there are from the same project. Served, so `rsx!`
+# edits hot-reload into the running window.
+#
+# The window reports the rate its own compositor presented at a couple of
+# times a second (`ui.fps`, `ui.worst_frame_ms`), so a scroll can be
+# measured from a terminal rather than a screenshot: `just daw-fps`.
+daw $SONG="set-in-stone" $FRESH="false":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$SONG" == "both" ]]; then
+        echo 'Open one song per window: just daw set-in-stone / just daw unbreakable' >&2
+        exit 2
+    fi
+    staging=(--cached)
+    if [[ "$FRESH" == "true" ]]; then staging=(); fi
+    project=$(cargo run -p expression-editor-standalone --example practice -- "${staging[@]}" "$SONG")
+    mkdir -p target
+    RUST_LOG="${RUST_LOG:-warn,daw_ui::studio::fps=info}" \
+    SESSION_DAW_PROJECT="$project" \
+        dx serve -p session-daw --platform desktop 2>&1 | tee target/session-daw.log
+
+# Does the studio drop frames while you use it?
+#
+# Drives a real scroll and a real ctrl-zoom over the arrangement on a
+# private display and reports the WORST frame in each half-second window.
+# WebKit caps rAF near 60, so a clean run is a flat 62.x with a 17ms
+# worst frame; a dropped frame shows as ~33ms and cannot hide.
+#
+# Xvfb is not a GPU — these are a FLOOR, not what the real window does.
+# A clean run here is strong evidence; a dirty one is worth chasing
+# before believing. Check `uptime` first: this box runs other people's
+# work, and a measurement under a moving load is not one.
+daw-stress:
+    scripts/ui-stress/daw-gesture.sh
+
+# The window's own frame rate, off the log rather than a screenshot.
+#
+# Read the LOW end of the range and the worst frame. A window that idles
+# between gestures averages beautifully and still feels terrible. The
+# budget is 120 fps — 8.33 ms a frame.
+daw-fps $LINES="20":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    log=target/session-daw.log
+    if [[ ! -f "$log" ]]; then echo "no $log — run just daw first" >&2; exit 1; fi
+    sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$log" \
+      | grep -o 'ui\.fps=[0-9.]*  *ui\.worst_frame_ms=[0-9.]*' \
+      | sed -E 's/ui\.fps=([0-9.]*)  *ui\.worst_frame_ms=([0-9.]*)/\1 \2/' \
+      | awk '{ printf "%6.1f fps   worst %6.1f ms\n", $1, $2 }' \
+      | tail -n "$LINES"
 
 # Prepare self-contained projects without opening a window; prints their paths.
 # Reuses the shared staging; pass FRESH=true for a throwaway copy.
@@ -994,3 +1106,106 @@ ee-stress $SONG="set-in-stone" $FRAMES="120" $PROFILE="dev" $ENFORCE="false":
     printf 'Practice project: %s\nReport directory: %s\n' "$project" "$report_root"
     RUST_BACKTRACE=1 FTS_STRESS_FRAMES="$FRAMES" FTS_STRESS_PROFILE="$PROFILE" "$artifact_root/$artifact_profile/examples/stress" "$project" --drums --size 1600x900 --out "$report_root" 2>&1 | tee "$report_root/run.log"
     python3 scripts/ui-stress/run.py "$report_root" "${options[@]}"
+
+# Measure the studio on the RIGHT-hand display, out of your way.
+#
+# Drives the window's own scroll (no input driver needed — see
+# `daw_ui::studio::autoscroll`) and reports the worst frame per
+# half-second window. `PROBE` takes `FTS_STUDIO_PROBE` switches, so a
+# bisect is one argument: `just daw-sweep v build:0`.
+#
+# Check `uptime` first and read the load this prints. This box's load has
+# swung between 25 and 308 in a single session, and a measurement taken
+# across that swing is not a measurement — compare only runs whose load
+# matches.
+daw-sweep AXIS="v" PROBE="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source scripts/ui-stress/daw-display.sh
+    project="${SESSION_DAW_PROJECT:-/tmp/fts-drum-practice-cache/set-in-stone/set in stone.practice.RPP}"
+    mkdir -p target
+    echo "load before: $(cut -d' ' -f1-3 /proc/loadavg)"
+    FTS_STUDIO_PROBE="{{PROBE}}" FTS_STUDIO_AUTOSCROLL="{{AXIS}}" \
+    RUST_LOG="${RUST_LOG:-warn,daw_ui::studio=info}" \
+    SESSION_DAW_PROJECT="$project" \
+        timeout 70 ./target/debug/session-daw > target/daw-sweep.log 2>&1 || true
+    echo "load after:  $(cut -d' ' -f1-3 /proc/loadavg)"
+    sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' target/daw-sweep.log \
+      | grep -oE 'ui\.fps=[0-9.]+ +ui\.worst_frame_ms=[0-9.]+' \
+      | sed -E 's/ui\.fps=([0-9.]+) +ui\.worst_frame_ms=([0-9.]+)/\1 \2/' \
+      | awk 'NR>10{n++; if(min==""||$1<min)min=$1; if($2>max)max=$2}
+             END{if(n)printf "%6.1f fps   worst %6.1f ms   (n=%d)\n",min,max,n;
+                 else print "no samples — did the project mount?"}'
+
+# The orchestral test fixture: 2,000 tracks, 20,000 items, no media.
+#
+# The standard load for anything performance-related. Empty MIDI takes,
+# so it opens instantly and needs no 5.6GB staging — what it reproduces
+# is the SHAPE of a big template, which is what the renderer pays for.
+# Confirm anything surprising against a real session before believing it.
+daw-fixture TRACKS="2000" ITEMS="20000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="${FTS_DAW_FIXTURE:-/tmp/fts-orchestral.rpp}"
+    scripts/ui-stress/make-synthetic-rpp.py {{TRACKS}} {{ITEMS}} > "$out"
+    printf 'wrote %s — %s tracks, %s items, %s\n' "$out" \
+        "$(grep -c '^  <TRACK' "$out")" "$(grep -c '^    <ITEM' "$out")" \
+        "$(du -h "$out" | cut -f1)"
+
+# Benchmark the arrangement HEADLESSLY: no window, no surface, no vsync.
+#
+# Sweeps both axes hard and reports percentiles. This is the number that
+# says how much ROOM is left — the windowed build is pinned to whatever
+# display it opens on (240fps on the 240Hz panel, 180 on the 180Hz one),
+# which answers "does it keep up" and nothing else.
+#
+# No compositor and no present here, so treat it as the upper bound on
+# drawing alone. Runs over ssh, on a headless box, or in CI.
+daw-bench PROJECT="" SIZE="5120x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="${FTS_DAW_FIXTURE:-/tmp/fts-orchestral.rpp}"
+        [[ -f "$project" ]] || just daw-fixture
+    fi
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    echo "load before: $(cut -d' ' -f1-3 /proc/loadavg)"
+    FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN'
+
+# Prove the culling draws the same frame as drawing everything.
+#
+# The bench's headline number comes from NOT drawing what is off screen,
+# which is only a speed-up if the skipped part was never visible. This
+# renders 720 viewports twice — culled, then complete — and compares the
+# buffers byte for byte. Run it after touching the scene index, the
+# viewport maths, or anything that records commands. Exits non-zero on a
+# mismatch, so it belongs in CI beside the bench.
+daw-verify PROJECT="" SIZE="5120x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="${FTS_DAW_FIXTURE:-/tmp/fts-orchestral.rpp}"
+        [[ -f "$project" ]] || just daw-fixture
+    fi
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    FTS_BENCH_VERIFY=1 FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 \
+        | grep -viE 'vulkan|objects:|WARN'
+
+# The same sweep, in a real window, so you can watch it.
+#
+# Opens the arrangement and scrolls it hard in both axes while reporting
+# the rate it actually presents at. This is the one to watch when asking
+# "does scrolling ever stutter" — the headless bench cannot show you that.
+daw-vello PROJECT="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="${FTS_DAW_FIXTURE:-/tmp/fts-orchestral.rpp}"
+        [[ -f "$project" ]] || just daw-fixture
+    fi
+    cargo build --release -p session-daw --bin vello 2>&1 | grep -E '^error' -A6 || true
+    FTS_VELLO_AUTOSCROLL=1 RUST_LOG="${RUST_LOG:-warn,vello=info}" \
+        ./target/release/vello "$project"
