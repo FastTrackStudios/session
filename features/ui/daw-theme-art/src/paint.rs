@@ -545,9 +545,12 @@ pub mod tcp {
     /// it is a scrim that lets the row's colour through.
     #[must_use]
     pub fn fx_pill(chrome: &Chrome, chain: Chain, at: Interaction) -> Drawing {
-        // Traced: 36x22, split at 20, body rows 1..21 of 22.
+        // Traced: 36x22, body rows 1..21 of 22, split at 20 — the
+        // labelled half first and the bypass toggle after it, which is
+        // the order REAPER blits `track_fx_norm` (20 wide) and
+        // `track_fxon_h` (16) in.
         let (w, h) = (36.0, 22.0);
-        let split = 16.0;
+        let split = 20.0;
         let plate = ink_in(chrome, None, at, true, 0.35);
         let (body_y, body_h) = (h / 22.0, h * 20.0 / 22.0);
         let radius = h * 0.12;
@@ -582,7 +585,13 @@ pub mod tcp {
             Chain::Empty => chrome.hardware_mark.shade(-0.45),
         };
         drawing.fill(
-            rect(split / 2.0 - 2.0, (h - 10.0) / 2.0, 4.0, 10.0, 2.0),
+            rect(
+                split + (w - split) / 2.0 - 2.0,
+                (h - 10.0) / 2.0,
+                4.0,
+                10.0,
+                2.0,
+            ),
             lamp,
         );
 
@@ -596,7 +605,7 @@ pub mod tcp {
         };
         drawing.text(
             "FX",
-            split + (w - split) / 2.0,
+            split / 2.0,
             h / 2.0 + 3.5,
             10.5,
             alpha(ink, ink_alpha),
