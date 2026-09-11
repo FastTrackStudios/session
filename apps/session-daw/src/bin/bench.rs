@@ -561,7 +561,7 @@ fn depths() {
     let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
     let (visible, depths) =
         daw_ui::components::folders::FolderState::default().visible(&project.tracks);
-    for (track, depth) in visible.iter().zip(&depths).take(12) {
+    for (track, depth) in visible.iter().zip(&depths).take(40) {
         println!(
             "  {:<10} depth {depth}  folder_depth {:>2}  is_folder {}",
             track.name, track.folder_depth, track.is_folder

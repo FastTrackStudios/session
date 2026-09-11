@@ -1152,6 +1152,23 @@ daw-fixture TRACKS="2000" ITEMS="20000":
         "$(grep -c '^  <TRACK' "$out")" "$(grep -c '^    <ITEM' "$out")" \
         "$(du -h "$out" | cut -f1)"
 
+# A session shaped like the dynamic template builds one.
+#
+# Small and DEEP, where the orchestral fixture is large and flat:
+# `Drums > Drum Kit > Kick > SUM > {In, Out, Trig}` is five levels before
+# a single audio track. The flat fixture never nests past one, so it
+# cannot show whether the panel draws a folder structure at all.
+#
+# The hierarchy and the names come from features/dynamic-template's own
+# group definitions rather than being invented here.
+daw-template:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
+    scripts/ui-stress/make-template-rpp.py > "$out"
+    printf 'wrote %s — %s tracks, %s items\n' "$out" \
+        "$(grep -c '^  <TRACK' "$out")" "$(grep -c '^    <ITEM' "$out")"
+
 # Benchmark the arrangement HEADLESSLY: no window, no surface, no vsync.
 #
 # Sweeps both axes hard and reports percentiles. This is the number that
