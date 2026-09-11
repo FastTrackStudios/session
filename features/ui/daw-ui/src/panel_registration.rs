@@ -9,7 +9,7 @@ use dock_proto::PanelId;
 use crate::components::arrangement_view::ArrangementView;
 use crate::components::fx_chain_tree::FxChainTree;
 use crate::components::mixer::MixerPanel;
-use crate::components::track_control_panel::TrackControlPanel;
+use crate::components::tcp::TrackPanel;
 
 use crate::prelude::*;
 
@@ -22,7 +22,7 @@ pub fn register_panels(registry: &mut PanelRendererRegistry) {
         rsx! { FxChainTree {} }
     });
     registry.register(PanelId::TrackControlPanel, || {
-        rsx! { TrackControlPanel {} }
+        rsx! { TrackPanel {} }
     });
     registry.register(PanelId::ArrangementView, || {
         rsx! { ArrangementView {} }

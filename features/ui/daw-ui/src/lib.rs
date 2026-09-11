@@ -6,7 +6,7 @@
 //!
 //! Provides panels for interacting with a connected DAW:
 //! - MixerPanel — horizontal track strips with volume/pan/mute/solo
-//! - TrackControlPanel (TCP) — vertical track list with folder hierarchy
+//! - TrackPanel (TCP) — the track control panel, rows matched to REAPER
 //! - ArrangementView — native arrange: ruler, lanes on the TCP's pitch, items
 //! - MainWindowPreview — the whole REAPER shape: transport, TCP | arrange, docked mixer
 //! - FxParameterBrowser — live FX parameter browser with bidirectional control
@@ -28,6 +28,11 @@ pub mod layouts;
 pub mod panel_registration;
 pub mod prelude;
 pub mod signals;
+/// The studio window — a full DAW UI over the `daw` facade, written for
+/// a WebView. A rebuild rather than a refactor of the `components`
+/// family above: see its docs for the four rules it is built on.
+#[cfg(feature = "studio")]
+pub mod studio;
 
 // ── Reusable, vector-themeable component library (merged from the former
 // `audio-controls` crate). Low-level widgets + the token-based theming model.
@@ -62,6 +67,7 @@ pub use components::toolbars::{KeybindProfile, ProfilePicker};
 pub use components::toolbars::{
     LeftToolbar, ModeDropdown, ModeIndicator, ModeOption, RightToolbar, ToolbarAction, TopToolbar,
 };
-pub use components::track_control_panel::TrackControlPanel;
+/// The TCP. One row implementation, one surface — see `components::tcp`.
+pub use components::tcp::{TrackPanel, TrackRow};
 pub use layouts::daw_panels::{DawApplication, FxBrowserDockPanel};
 pub use panel_registration::register_panels;

@@ -17,6 +17,11 @@ pub mod fx_parameter_browser;
 pub mod main_window;
 pub mod media_browser;
 pub mod mixer;
+/// The track control panel. [`tcp::TrackRow`] is the ONE TCP row in this
+/// tree and [`tcp::TrackPanel`] the one standalone surface built from it
+/// — deliberately, after a second implementation
+/// (`track_control_panel`) drifted into a different-looking panel with
+/// half the controls missing and dead mute/solo buttons. A new surface
+/// composes `TrackRow`; it does not draw its own row.
 pub mod tcp;
 pub mod toolbars;
-pub mod track_control_panel;

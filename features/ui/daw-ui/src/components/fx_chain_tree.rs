@@ -78,7 +78,7 @@ fn spawn_fx_mutation(
 
 /// FX Chain Tree panel that polls the DAW for FX tree state.
 ///
-/// Uses the same poll-wait pattern as MixerPanel and TrackControlPanel.
+/// Uses the same poll-wait pattern as MixerPanel.
 #[component]
 pub fn FxChainTree() -> Element {
     let mut tree = use_signal(FxTree::new);

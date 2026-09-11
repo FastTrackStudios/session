@@ -502,3 +502,75 @@ fn FixedLanes(on: bool) -> Element {
         }
     }
 }
+
+/// The track control panel as a **standalone surface** — the dock panel,
+/// a window pane, a test harness.
+///
+/// [`TrackRow`] above is the one TCP row in this tree, and this is how a
+/// surface that owns nothing else mounts a column of them: it brings the
+/// track store, the feed that keeps it current, and the flush loop the
+/// controls write through, because on its own nothing above it will
+/// have.
+///
+/// There used to be a second track panel beside this one
+/// (`components::track_control_panel`) — a Tailwind list that polled the
+/// facade every two seconds and drew mute, solo and arm as coloured
+/// `<span>`s that could not be clicked. It was not a lighter TCP, it was
+/// a different and worse one, and it had already drifted: no routing
+/// button, no FX slot, no input, no phase, no envelope, no meter, and a
+/// row that looked nothing like the panel the REAPER theme is exported
+/// from. It is gone; this is the only TCP.
+///
+/// # Why the store is mounted here and not left to the caller
+///
+/// [`use_track_store`] is provide-or-consume, so a window that already
+/// has one (see `studio::Studio`) shares it and this adds nothing. A
+/// panel dropped into a dock by itself gets its own. Either way the
+/// controls inside have somewhere to read and write, which is the
+/// difference between a live panel and a picture of one.
+#[component]
+pub fn TrackPanel() -> Element {
+    let store = use_track_store();
+    crate::controls::use_daw_tracks(store);
+    let mut folders = super::folders::use_folder_state();
+
+    // Project order from the store, resolved to tracks. `order` is the
+    // thing that already learns about adds, removes and moves, so it is
+    // the honest source for "what is in this project and in what order" —
+    // a map's iteration order is not.
+    let tracks: Vec<daw_proto::Track> = store
+        .order()
+        .iter()
+        .filter_map(|guid| store.track(guid))
+        .collect();
+    let (visible, depths) = folders.read().visible(&tracks);
+
+    rsx! {
+        // The flush loop, so a fader or knob in here reaches the engine.
+        // Harmless if a window above already mounts one: each drains the
+        // drafts it finds, and an empty pass does nothing.
+        crate::controls::ControlSync {}
+        div {
+            class: "daw-tcp",
+            "data-testid": "tcp-panel",
+            style: "height:100%; width:{ROW_W}px; overflow-y:auto; overflow-x:hidden;",
+            for (i, track) in visible.iter().enumerate() {
+                {
+                    let guid = track.guid.clone();
+                    let collapsed = folders.read().is_collapsed(&guid);
+                    rsx! {
+                        TrackRow {
+                            key: "{guid}",
+                            track: track.clone(),
+                            index: track.index,
+                            depth: depths.get(i).copied().unwrap_or(0),
+                            selected: track.selected,
+                            collapsed,
+                            onfoldertoggle: move |()| folders.write().toggle(&guid),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
