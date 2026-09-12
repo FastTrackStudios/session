@@ -77,6 +77,19 @@ impl Frame {
         )
     }
 
+    /// Where the `index`th item in the top rail sits.
+    ///
+    /// Laid out from the left, after the left rail, so the first mode
+    /// starts where the panel does rather than over the rail beside it.
+    #[must_use]
+    pub fn top_slot(self, index: usize) -> Option<Rect> {
+        let left = SIDE + 4.0 + crate::num::coord(index) * TOP_ITEM_W;
+        if left + TOP_ITEM_W > self.width - SIDE {
+            return None;
+        }
+        Some(Rect::new(left, 3.0, left + TOP_ITEM_W - 3.0, TOP - 3.0))
+    }
+
     /// The width the panel has.
     #[must_use]
     pub fn content_width(self) -> f64 {
@@ -110,6 +123,12 @@ impl Frame {
 /// The height of one rail button, including the gap under it.
 pub const ITEM_H: f64 = 40.0;
 
+/// The width of one button in the TOP rail.
+///
+/// Wider than a side rail's because it holds words rather than icons —
+/// the modes are named things and "Organize" abbreviates badly.
+pub const TOP_ITEM_W: f64 = 74.0;
+
 /// Draw the three rails and their contents.
 ///
 /// `left` and `right` are the buttons; the top rail is drawn empty for
@@ -124,6 +143,7 @@ pub fn draw(
     frame: Frame,
     left: &[Item<'_>],
     right: &[Item<'_>],
+    top: &[Item<'_>],
 ) {
     let Frame { width, height } = frame;
 
@@ -147,6 +167,11 @@ pub fn draw(
         palette.tcp_rule,
         Rect::new(width - SIDE - 1.0, TOP, width - SIDE, height),
     );
+
+    for (i, item) in top.iter().enumerate() {
+        let Some(slot) = frame.top_slot(i) else { break };
+        button(painter, palette, font, slot, *item);
+    }
 
     for (side, items) in [(false, left), (true, right)] {
         for (i, item) in items.iter().enumerate() {
@@ -201,6 +226,69 @@ fn button(
         slot.y0 + slot.height() / 2.0 + f64::from(size) / 3.0,
         size,
     );
+}
+
+/// What the mixer's rails hold.
+///
+/// The left rail answers "where am I": which visual preset is showing
+/// and which mix phase it belongs to. The right answers "how does this
+/// behave". Both are lists of one-word buttons until the toolbar icons
+/// `MixPhase::icon` names are ported.
+#[must_use]
+pub fn mixer_left(preset: &str) -> Vec<Item<'static>> {
+    let mut items: Vec<Item<'static>> = PRESETS
+        .iter()
+        .map(|name| Item {
+            label: name,
+            on: *name == preset,
+        })
+        .collect();
+    items.extend(
+        session::mix_phases::MixPhase::ALL
+            .iter()
+            .map(|phase| Item {
+                label: phase.display_name(),
+                // Tone is the phase this panel was built for; the rest
+                // light up when their rules exist.
+                on: matches!(phase, session::mix_phases::MixPhase::Tone),
+            }),
+    );
+    items
+}
+
+/// The visual presets, until they come from `dynamic_template`'s
+/// `ModeVisibility` — see the note in `mcp`.
+pub const PRESETS: [&str; 3] = ["Mix", "Rec", "Over"];
+
+/// The DAW modes, for the arrangement's top rail.
+///
+/// The mode is the biggest thing about the window — it decides what the
+/// toolbars hold and which tracks are worth showing — so it goes across
+/// the top, where a thing that governs everything below it belongs.
+#[must_use]
+pub fn modes(current: session::modes::Mode) -> Vec<Item<'static>> {
+    session::modes::Mode::ALL
+        .iter()
+        .map(|mode| Item {
+            label: mode.display_name(),
+            on: *mode == current,
+        })
+        .collect()
+}
+
+/// The right rail's switches, showing their state.
+#[must_use]
+pub fn mixer_right(settings: crate::settings::Settings) -> Vec<Item<'static>> {
+    vec![
+        Item {
+            label: "Focus",
+            on: settings.focus_selected,
+        },
+        Item {
+            label: "Steal",
+            on: settings.take_focus_width,
+        },
+    ]
 }
 
 fn fill(painter: &mut impl PaintScene, color: Color, rect: Rect) {

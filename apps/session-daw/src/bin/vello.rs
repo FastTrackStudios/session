@@ -422,8 +422,8 @@ impl App {
             let b = scene.replay_panel(painter, view, Affine::translate((0.0, RULER_H - sy)));
             // After the lanes — their backgrounds are opaque — and the
             // ruler last of all, over everything scrolled under it.
-            ruler::grid(painter, &palette, view, bars, &grid, FINEST);
-            ruler::ruler(painter, &palette, &font, view, bars);
+            ruler::grid(painter, &palette, view, bars, &grid, FINEST, (0.0, 0.0));
+            ruler::ruler(painter, &palette, &font, view, bars, (0.0, 0.0));
             drawn.replayed = a.replayed + b.replayed;
             drawn.submitted = a.submitted + b.submitted;
         });

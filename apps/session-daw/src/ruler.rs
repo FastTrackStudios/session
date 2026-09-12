@@ -73,7 +73,9 @@ pub fn grid(
     bars: Bars,
     adaptive: &Adaptive,
     finest: f64,
+    origin: (f64, f64),
 ) {
+    let (ox, oy) = origin;
     let measure_px = bars.secs_per_bar() * view.pps;
     if measure_px <= 0.0 {
         return;
@@ -85,7 +87,7 @@ pub fn grid(
     if let Some(division) = adaptive.fit(finest, measure_px) {
         let step = division * 4.0 * bars.secs_per_beat;
         if step > 0.0 {
-            line_every(painter, view, step, from, to, palette.grid_beat, 1.0);
+            line_every(painter, view, step, from, to, palette.grid_beat, 1.0, origin);
         }
     }
     // Bar lines always, and brighter: they are what the numbers above
@@ -98,6 +100,7 @@ pub fn grid(
         to,
         palette.grid,
         1.0,
+        origin,
     );
 }
 
@@ -112,12 +115,21 @@ pub fn ruler(
     font: &Font,
     view: Viewport,
     bars: Bars,
+    origin: (f64, f64),
 ) {
-    fill(painter, palette.ruler_bg, Rect::new(0.0, 0.0, view.width, RULER_H));
+    // The rails frame the view, so the ruler starts where they leave
+    // off. Drawn from the window's own corner it sat under the top
+    // rail, and the strip of it that showed below read as a seam.
+    let (ox, oy) = origin;
+    fill(
+        painter,
+        palette.ruler_bg,
+        Rect::new(ox, oy, ox + view.width, oy + RULER_H),
+    );
     fill(
         painter,
         palette.tcp_rule,
-        Rect::new(0.0, RULER_H - 1.0, view.width, RULER_H),
+        Rect::new(ox, oy + RULER_H - 1.0, ox + view.width, oy + RULER_H),
     );
 
     let secs_per_bar = bars.secs_per_bar();
@@ -149,7 +161,7 @@ pub fn ruler(
             fill(
                 painter,
                 palette.grid,
-                Rect::new(x, RULER_H - 9.0, x + 1.0, RULER_H),
+                Rect::new(ox + x, oy + RULER_H - 9.0, ox + x + 1.0, oy + RULER_H),
             );
             crate::tcp::glyphs(
                 painter,
@@ -197,7 +209,9 @@ fn line_every(
     to: f64,
     color: Color,
     width: f64,
+    origin: (f64, f64),
 ) {
+    let (ox, oy) = origin;
     // A screen of lines is the most that can ever be visible; anything
     // beyond that is a division that should have coarsened, and drawing
     // it would cost a frame to produce a grey band.
@@ -216,7 +230,7 @@ fn line_every(
                 Affine::IDENTITY,
                 color,
                 None,
-                &Rect::new(x, RULER_H, x + width, view.height),
+                &Rect::new(ox + x, oy + RULER_H, ox + x + width, oy + view.height),
             );
         }
     }

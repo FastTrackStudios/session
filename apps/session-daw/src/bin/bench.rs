@@ -254,8 +254,8 @@ fn main() {
                         // After the lanes, not before: the lane
                         // backgrounds are opaque and painted the grid
                         // straight out of the frame.
-                        ruler::grid(painter, &palette, view, bars, &grid, FINEST);
-                        ruler::ruler(painter, &palette, &font, view, bars);
+                        ruler::grid(painter, &palette, view, bars, &grid, FINEST, (0.0, 0.0));
+                        ruler::ruler(painter, &palette, &font, view, bars, (0.0, 0.0));
                         drawn.replayed = a.replayed + b.replayed;
                         drawn.submitted = a.submitted + b.submitted;
                     })
@@ -367,7 +367,16 @@ fn mixer_shot(
         .filter(|h| *h > 0.0)
         .unwrap_or_else(|| f64::from(height))
         .min(f64::from(height));
-    let mixer = Mixer::build(palette, font, &project, &rows, mcp_height, layout, tone);
+    let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
+    let mixer = Mixer::build(
+        palette,
+        font,
+        &project,
+        &rows,
+        mcp_height - session_daw::rails::TOP,
+        layout,
+        tone,
+    );
 
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();
@@ -384,17 +393,24 @@ fn mixer_shot(
             );
             // Pinned to the BOTTOM of the window.
             //
-            // The mixer is a docked panel and the arrangement is what
-            // sits above it, so the edge it is fixed to is the bottom
-            // one. Anchored to the top instead, the strips floated with
-            // a void underneath and the track names — which are at the
-            // FOOT of a strip — ended up in the middle of the screen.
-            let dock = (f64::from(height) - mixer.height).max(0.0);
+
             counts = mixer.replay(
                 painter,
                 scroll_x,
-                f64::from(width),
-                Affine::translate((-scroll_x, dock)),
+                frame.content_width(),
+                Affine::translate((
+                    session_daw::rails::SIDE - scroll_x,
+                    session_daw::rails::TOP,
+                )),
+            );
+            session_daw::rails::draw(
+                painter,
+                palette,
+                font,
+                frame,
+                &session_daw::rails::mixer_left("Mix"),
+                &session_daw::rails::mixer_right(session_daw::settings::Settings::default()),
+                &session_daw::rails::modes(session::modes::Mode::Mix),
             );
         },
         &mut buffer,
@@ -584,14 +600,20 @@ fn shot(
     let (scroll_x, scroll_y) = pair("FTS_BENCH_SCROLL", (0.0, 0.0));
     let (zoom_x, zoom_y) = pair("FTS_BENCH_ZOOM", (1.0, 1.0));
 
+    // The arrangement is laid out inside the rails, the same as the
+    // mixer — the panel has to know what it has or it draws rows under
+    // the right rail and pays for every one.
+    let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
     let view = Viewport {
         scroll_x,
         scroll_y,
         pps: PPS * zoom_x,
         zoom_y,
-        width: f64::from(width),
-        height: f64::from(height),
+        width: frame.content_width(),
+        height: frame.content_height(),
     };
+    let rail_x = session_daw::rails::SIDE;
+    let rail_y = session_daw::rails::TOP;
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();
     let mut counts = Counts::default();
@@ -603,6 +625,21 @@ fn shot(
     image.render_to_vec(
         |painter| {
             painter.reset();
+            // The theme's surface under everything.
+            //
+            // This buffer starts zeroed, so any pixel nothing covers
+            // reads as transparent — which is why laying the panel
+            // inside the rails put a white band across the top the
+            // moment the ruler stopped starting at y=0. The mixer shot
+            // has always painted one; this one relied on the lanes
+            // covering the frame, which was true only by accident.
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                palette.surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+            );
             if gaps {
                 painter.fill(
                     vello::peniko::Fill::NonZero,
@@ -615,13 +652,15 @@ fn shot(
             let a = scene.replay_lanes(
                 painter,
                 view,
-                Affine::translate((TCP_WIDTH - scroll_x, RULER_H - scroll_y))
-                    * Affine::scale_non_uniform(PPS * zoom_x, zoom_y),
+                Affine::translate((
+                    rail_x + TCP_WIDTH - scroll_x,
+                    rail_y + RULER_H - scroll_y,
+                )) * Affine::scale_non_uniform(PPS * zoom_x, zoom_y),
             );
             let b = scene.replay_panel(
                 painter,
                 view,
-                Affine::translate((0.0, RULER_H - scroll_y))
+                Affine::translate((rail_x, rail_y + RULER_H - scroll_y))
                     * Affine::scale_non_uniform(1.0, zoom_y),
             );
             ruler::grid(
@@ -631,8 +670,23 @@ fn shot(
                 Bars::at(scene.bpm),
                 &adaptive_grid::Adaptive::default(),
                 1.0 / 16.0,
+                (rail_x, rail_y),
             );
-            ruler::ruler(painter, palette, font, view, Bars::at(scene.bpm));
+            ruler::ruler(painter, palette, font, view, Bars::at(scene.bpm), (rail_x, rail_y));
+            // The arrangement's left rail carries the same visual
+            // presets the mixer's does — they are layouts of the
+            // SESSION, not of one panel, so switching one switches
+            // both. Its right rail is empty until the arrangement has
+            // settings of its own worth switching.
+            session_daw::rails::draw(
+                painter,
+                palette,
+                font,
+                frame,
+                &session_daw::rails::mixer_left("Mix"),
+                &[],
+                &session_daw::rails::modes(session::modes::Mode::Mix),
+            );
             counts.replayed = a.replayed + b.replayed;
             counts.submitted = a.submitted + b.submitted;
         },
