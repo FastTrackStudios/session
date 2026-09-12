@@ -117,7 +117,7 @@ impl Rack {
     /// shape to survive, which is far less.
     #[must_use]
     pub fn at(width: f64) -> Self {
-        if width >= 150.0 {
+        if width >= LEGIBLE {
             Self::Full
         } else if width >= 96.0 {
             Self::Curves
@@ -132,6 +132,22 @@ impl Rack {
         self != Self::Off
     }
 }
+
+/// The narrowest rack whose EQ panel still reads as a frequency axis.
+///
+/// Three gridlines — 100, 1k, 10k — and below this they crowd into each
+/// other, at which point the panel is a squiggle rather than a decision
+/// you can check.
+pub const LEGIBLE: f64 = 150.0;
+
+/// The width a strip opens to when you go to WORK on it.
+///
+/// Above [`LEGIBLE`] rather than at it: the threshold is where the rack
+/// stops being illegible, and a control you have deliberately opened
+/// should not land on the edge of that. This is what a selected strip
+/// expands to, and what the template stores for a track that carries
+/// its piece's processing.
+pub const WORKING: f64 = 195.0;
 
 /// Where the rack goes.
 #[derive(Clone, Copy, Debug)]

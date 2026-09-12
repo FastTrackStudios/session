@@ -180,13 +180,45 @@ def is_auxiliary(name: str) -> bool:
     return name in ("Sub", "Verb") or name.endswith("Trig")
 
 
-def flatten(nodes, depth=0, out=None):
-    """Depth-first, carrying each track's nesting level."""
+def is_piece(name, children, parent_is_piece):
+    """Is this the track the KIT PIECE is mixed on?
+
+    A piece is one sound source — a kick, a snare, one tom, the hi-hat.
+    It is where the tone processing goes, because compression and EQ act
+    on a source and a kick has two mics on it rather than two sources.
+
+    Structurally that is one of two things:
+
+    - a **Sum**: several mics of one drum, summed. The Kick's Sum is the
+      kick.
+    - a folder with exactly ONE real child: `Tom 1` is its mic and its
+      trigger, and the trigger is not a second source.
+
+    Anything else with children is a GROUP — `Cymbals` holds three
+    different instruments, `Drum Kit` holds five — and a group is a bus.
+    A leaf is a piece unless its parent already is one, which is what
+    makes `In` and `Out` mics of the kick rather than two kicks.
+    """
+    if is_auxiliary(name):
+        return False
+    if not children:
+        return not parent_is_piece
+    if name == "Sum":
+        return True
+    real = [c for c in children if not is_auxiliary(c[0]) and not c[2]]
+    return len(real) == 1 and len(real) == len(
+        [c for c in children if not is_auxiliary(c[0])]
+    )
+
+
+def flatten(nodes, depth=0, out=None, parent_is_piece=False):
+    """Depth-first, carrying each track's nesting level and its role."""
     if out is None:
         out = []
     for name, colour, children in nodes:
-        out.append((name, colour, depth, bool(children)))
-        flatten(children, depth + 1, out)
+        piece = is_piece(name, children, parent_is_piece)
+        out.append((name, colour, depth, bool(children), piece))
+        flatten(children, depth + 1, out, piece)
     return out
 
 
@@ -220,19 +252,37 @@ TONE_WIDTH = 195
 FOLDER_WIDTH = 60
 
 
-def strip_width(name: str, is_folder: bool) -> int:
+# A mic under a piece — `In`, `Out`, `Top`, `Bottom`. REAPER's own
+# strip width, which is `Squeeze::Full`: the name, the pan, the meter,
+# the fader, mute and solo. Everything you do to a mic that is not tone
+# processing, because the tone processing happens on the sum of them.
+#
+# These are emphatically not minimum width. Balancing the In against the
+# Out IS the mixing move at this level, and a strip you cannot grab the
+# fader of is not a strip you can do it on. They open usable and expand
+# to a full rack when selected — see `SELECTED_WIDTH` in `mcp.rs`.
+MIC_WIDTH = 86
+
+
+def strip_width(name: str, is_folder: bool, piece: bool) -> int:
     """How wide this track's mixer strip opens.
 
-    The same judgement `is_auxiliary` makes about height, applied to
-    width and with one more tier: a track you MIX gets room for its
-    processing, a track you route gets room for its level, and a track
-    you only need present gets neither.
+    Four tiers, by what the track is FOR:
+
+    - the **piece** — the kick, the snare, one tom — carries the tone
+      processing, so it opens wide enough to show it.
+    - a **mic** of a piece opens at REAPER's own width: usable, but not
+      spending screen on processing that is not on it.
+    - a **group** is a bus. You read its level and its mute.
+    - an **auxiliary** you only need present.
     """
     if is_auxiliary(name):
         return MIN_WIDTH
+    if piece:
+        return TONE_WIDTH
     if is_folder:
         return FOLDER_WIDTH
-    return TONE_WIDTH
+    return MIC_WIDTH
 
 
 def main() -> None:
@@ -249,15 +299,25 @@ def main() -> None:
     # open at the minimum WIDTH in the mixer: a trigger needs the same
     # amount of attention in both views, which is very little.
     narrow = [
-        f"{g}={strip_width(name, is_folder)}"
-        for g, (name, _, _, is_folder) in zip(guids, tracks)
+        f"{g}={strip_width(name, is_folder, piece)}"
+        for g, (name, _, _, is_folder, piece) in zip(guids, tracks)
     ]
     if narrow:
         out("  <EXTSTATE\n    <FTSMCP\n")
         out(f"      WIDTHS {' '.join(narrow)}\n")
         out("    >\n  >\n")
 
-    for i, (name, colour, depth, is_folder) in enumerate(tracks):
+    # The first mic of the first piece — the kick's In.
+    selected = next(
+        (
+            i
+            for i, (name, _, _, is_folder, piece) in enumerate(tracks)
+            if not is_folder and not piece and not is_auxiliary(name)
+        ),
+        -1,
+    )
+
+    for i, (name, colour, depth, is_folder, _piece) in enumerate(tracks):
         # REAPER stores the depth DELTA, not the depth: the running level
         # after this track is where the next one starts. A folder always
         # opens one; a leaf closes however many end on it, which is what
@@ -293,7 +353,11 @@ def main() -> None:
         # that says the fixture forgot rather than that the track has
         # none.
         source = 0 if is_folder or is_auxiliary(name) else (i % 16)
-        out(f"    SEL 0\n    REC {armed} {source} 1 0 0 0 0 0\n")
+        # One track selected, because a session is never opened with
+        # nothing in focus — and because selection is what opens a mic's
+        # strip to a working width in the Tone sub-mode. The kick's In is
+        # the track you are on when you start on a kit.
+        out(f"    SEL {1 if i == selected else 0}\n    REC {armed} {source} 1 0 0 0 0 0\n")
         height = MIN_HEIGHT if is_auxiliary(name) else 0
         out(f"    TRACKHEIGHT {height} 0 0 0 0 0 0\n")
 

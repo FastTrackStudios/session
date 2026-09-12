@@ -221,7 +221,7 @@ impl Mixer {
             let depth = usize::try_from(*depth).unwrap_or(0);
             let from = u32::try_from(strips.commands.len()).unwrap_or(u32::MAX);
             offsets.push(x);
-            let w = layout.width_of(track.width);
+            let w = opened(layout.width_of(track.width), track.selected, tone);
             // Nesting shortens the strip from the BOTTOM, so the tops
             // stay level and the bottoms staircase.
             let strip_h = (height - crate::num::coord(depth) * INDENT_STEP).max(1.0);
@@ -343,6 +343,30 @@ struct Slot {
 /// with the processing in it is that you can still MIX on it.
 const RACK_SHARE: f64 = 0.46;
 
+/// How wide a strip opens while it is SELECTED.
+///
+/// The mics of a piece — a kick's In and Out, a snare's Top and Bottom
+/// — are stored narrow, because the tone processing lives on the sum of
+/// them and spending a rack's width on each mic would push the kit off
+/// the screen. But they are not tracks you never touch: balancing the
+/// In against the Out is the mixing move at that level, and sometimes
+/// the move is to EQ one of them.
+///
+/// So selection is the zoom. A strip you are working on opens to a
+/// working width and closes again when you move on, which means the
+/// session can be laid out for the OVERVIEW and still let you go into
+/// any one track without re-laying it out.
+fn opened(width: f64, selected: bool, tone: bool) -> f64 {
+    if tone && selected {
+        width.max(crate::tone::WORKING)
+    } else {
+        width
+    }
+}
+
+/// How thick the selected strip's top rule is.
+const SELECTED_RULE: f64 = 2.0;
+
 /// And its ceiling, so a tall mixer does not turn into three plots.
 ///
 /// Generous, because the fader below it does not need the other half of
@@ -375,6 +399,22 @@ fn strip(
 
     // The strip's ground, and the track's colour as a band across it.
     fill(scene, palette.tcp_tint, Rect::new(x, 0.0, x + w, h));
+
+    // The selected strip says so.
+    //
+    // Without it, a mic that has opened to a working width is just a
+    // strip that is inexplicably wider than the one beside it — the
+    // layout would look broken rather than focused. A rule along the
+    // top edge rather than a tint over the whole strip: the strip's
+    // colour is the TRACK's, and overlaying selection on it would make
+    // two tracks of the same colour read as different ones.
+    if track.selected {
+        fill(
+            scene,
+            palette.accent,
+            Rect::new(x, 0.0, x + w, SELECTED_RULE),
+        );
+    }
 
     let fx_section = f64::from(daw_theme_art::collapse::FX_SECTION) + rack_h;
     let pan_band = f64::from(shape.pan_band);
@@ -815,4 +855,35 @@ const fn f64_to_f32(value: f64) -> f32 {
 
 fn fill(scene: &mut Scene, color: Color, rect: Rect) {
     scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::opened;
+
+    /// A mic is stored narrow and opens to a working width when you
+    /// select it — the whole point of laying the session out for the
+    /// overview and still being able to go into one track.
+    #[test]
+    fn selecting_a_mic_opens_it() {
+        let mic = 86.0;
+        assert!((opened(mic, false, true) - mic).abs() < f64::EPSILON);
+        assert!(opened(mic, true, true) >= crate::tone::LEGIBLE);
+    }
+
+    /// A piece is already wide enough, so selecting it must not make it
+    /// jump: a strip that resized when you clicked it would move every
+    /// strip to its right, which is the one thing a mixer must not do
+    /// when you are comparing tracks.
+    #[test]
+    fn selecting_a_piece_changes_nothing() {
+        let piece = 240.0;
+        assert!((opened(piece, true, true) - piece).abs() < f64::EPSILON);
+    }
+
+    /// And outside the Tone sub-mode selection is not a zoom at all.
+    #[test]
+    fn selection_only_opens_in_tone() {
+        assert!((opened(86.0, true, false) - 86.0).abs() < f64::EPSILON);
+    }
 }
