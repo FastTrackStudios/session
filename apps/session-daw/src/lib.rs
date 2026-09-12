@@ -13,6 +13,7 @@ pub mod arrangement;
 #[cfg(target_os = "linux")]
 pub mod cursor;
 pub mod frame_rate;
+pub mod gesture;
 pub mod headless;
 pub mod hit;
 pub mod layout;
