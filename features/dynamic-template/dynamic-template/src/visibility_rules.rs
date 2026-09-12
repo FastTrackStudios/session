@@ -86,12 +86,48 @@ pub struct Selector {
     pub rank: Rank,
 }
 
+/// How much room a track gets on a surface.
+///
+/// A CLASS rather than a pixel count, because the same plan is applied
+/// to two panels and three screen sizes. A rule says "this track is
+/// something you are working on" and the surface decides what that
+/// comes to — 133 pixels on a 2560 mixer, 618 when it is focused, a
+/// different number again in the track panel.
+///
+/// Pixels here would mean a mode's rules had to know the display, and
+/// the same session would need a different template per monitor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Size {
+    /// As small as the surface allows. Present, not read.
+    Minimum,
+    /// Enough for the controls that identify and route it: a bus.
+    Compact,
+    /// The surface's normal size — REAPER's own.
+    Normal,
+    /// Enough to work on: the processing is visible and legible.
+    Working,
+    /// Everything the surface can give one track. For editing a
+    /// plugin's parameters rather than for mixing.
+    Focus,
+}
+
 /// What a rule does to one surface.
+///
+/// Every field beyond `show` is an `Option` so a rule can say one thing
+/// and leave the rest to earlier rules and the mode's defaults — a rule
+/// that widens a track should not also have to restate whether it is
+/// folded.
 #[derive(Debug, Clone, Copy)]
 pub struct SurfaceEffect {
     pub show: bool,
     /// Folder-collapse to apply (only meaningful for folder/bus tracks).
     pub fold: Option<FoldState>,
+    /// How wide the track's mixer strip opens. Ignored by the arrange
+    /// surface, which has no width of its own.
+    pub width: Option<Size>,
+    /// How tall the track's row opens. Ignored by the mixer, whose
+    /// strips are all the panel's height.
+    pub height: Option<Size>,
 }
 
 impl SurfaceEffect {
@@ -100,6 +136,8 @@ impl SurfaceEffect {
         Self {
             show: true,
             fold: None,
+            width: None,
+            height: None,
         }
     }
     #[must_use]
@@ -107,6 +145,8 @@ impl SurfaceEffect {
         Self {
             show: false,
             fold: None,
+            width: None,
+            height: None,
         }
     }
     #[must_use]
@@ -114,6 +154,26 @@ impl SurfaceEffect {
         Self {
             show: true,
             fold: Some(FoldState::Collapsed),
+            width: None,
+            height: None,
+        }
+    }
+
+    /// The same effect, at a given width.
+    #[must_use]
+    pub const fn wide(self, width: Size) -> Self {
+        Self {
+            width: Some(width),
+            ..self
+        }
+    }
+
+    /// The same effect, at a given height.
+    #[must_use]
+    pub const fn tall(self, height: Size) -> Self {
+        Self {
+            height: Some(height),
+            ..self
         }
     }
 }
@@ -146,6 +206,11 @@ pub struct TrackPlan {
     pub arrange_fold: Option<i32>,
     /// Mixer folder-compact (`BUSCOMP` field 2), only set for folder tracks.
     pub mixer_fold: Option<i32>,
+    /// How wide the mixer strip should open; `None` leaves it to the
+    /// surface's own default.
+    pub mixer_width: Option<Size>,
+    /// How tall the arrange row should open.
+    pub arrange_height: Option<Size>,
 }
 
 /// Per-track parsed taxonomy, computed once.
@@ -238,6 +303,8 @@ pub fn resolve(
     let mut arrange_fold = vec![None; n];
     let mut mixer_show = vec![mode.default_mixer_show; n];
     let mut mixer_fold = vec![None; n];
+    let mut mixer_width: Vec<Option<Size>> = vec![None; n];
+    let mut arrange_height: Vec<Option<Size>> = vec![None; n];
 
     for rule in &mode.rules {
         let base: Vec<usize> = (0..n)
@@ -260,6 +327,13 @@ pub fn resolve(
                 if let Some(fold) = arrange_fold.get_mut(i) {
                     *fold = e.fold;
                 }
+                // Only when the rule says so. A rule that widens a
+                // track should not have to restate its height, and a
+                // later rule that folds it should not silently reset a
+                // size an earlier one set.
+                if let (Some(slot), Some(height)) = (arrange_height.get_mut(i), e.height) {
+                    *slot = Some(height);
+                }
             }
             if let Some(e) = rule.mixer {
                 if let Some(show) = mixer_show.get_mut(i) {
@@ -267,6 +341,9 @@ pub fn resolve(
                 }
                 if let Some(fold) = mixer_fold.get_mut(i) {
                     *fold = e.fold;
+                }
+                if let (Some(slot), Some(width)) = (mixer_width.get_mut(i), e.width) {
+                    *slot = Some(width);
                 }
             }
         }
@@ -277,6 +354,8 @@ pub fn resolve(
         .enumerate()
         .map(|(i, t)| TrackPlan {
             guid: t.guid.clone(),
+            mixer_width: mixer_width.get(i).copied().flatten(),
+            arrange_height: arrange_height.get(i).copied().flatten(),
             arrange_show: arrange_show
                 .get(i)
                 .copied()
@@ -404,5 +483,86 @@ mod tests {
 
         // Snare is its own instrument → its single leaf shows.
         assert!(by("snare").arrange_show, "snare leaf shows in arrange");
+    }
+
+    /// A mode that sizes as well as shows — the thing the surfaces need
+    /// in order to stop storing widths per track.
+    fn sized_mode() -> ModeVisibility {
+        ModeVisibility {
+            default_arrange_show: true,
+            default_mixer_show: true,
+            rules: vec![
+                // Buses stay compact: you read their level, not their
+                // processing.
+                VisibilityRule {
+                    selector: Selector {
+                        role: Role::Bus,
+                        ..Default::default()
+                    },
+                    arrange: Some(SurfaceEffect::show().tall(Size::Compact)),
+                    mixer: Some(SurfaceEffect::show().wide(Size::Compact)),
+                },
+                // The kick is what this pass is about.
+                VisibilityRule {
+                    selector: Selector {
+                        instrument: Some("Kick".into()),
+                        role: Role::Leaf,
+                        ..Default::default()
+                    },
+                    arrange: Some(SurfaceEffect::show().tall(Size::Working)),
+                    mixer: Some(SurfaceEffect::show().wide(Size::Working)),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn a_rule_can_set_a_size_and_it_reaches_the_plan() {
+        let config = crate::default_config();
+        let tracks = vec![
+            t("kick-bus", "Kick", 0, true),
+            t("kick-in", "Kick In", 1, false),
+            t("snare", "Snare", 4, false),
+        ];
+        let plans = resolve(&tracks, &config, &sized_mode());
+        let by = |g: &str| plans.iter().find(|p| p.guid == g).unwrap().clone();
+
+        assert_eq!(by("kick-bus").mixer_width, Some(Size::Compact));
+        assert_eq!(by("kick-bus").arrange_height, Some(Size::Compact));
+        assert_eq!(by("kick-in").mixer_width, Some(Size::Working));
+        assert_eq!(by("kick-in").arrange_height, Some(Size::Working));
+
+        // A track no sizing rule matched says nothing, so the surface
+        // keeps its own default rather than being forced to a size the
+        // mode never asked for.
+        assert_eq!(by("snare").mixer_width, None);
+        assert_eq!(by("snare").arrange_height, None);
+    }
+
+    /// A later rule that only folds must not wipe a size an earlier one
+    /// set — every field is independent, which is what makes rules
+    /// composable rather than an all-or-nothing overwrite.
+    #[test]
+    fn a_later_rule_only_changes_what_it_mentions() {
+        let config = crate::default_config();
+        let tracks = vec![t("kick-bus", "Kick", 0, true)];
+        let mut mode = sized_mode();
+        mode.rules.push(VisibilityRule {
+            selector: Selector {
+                role: Role::Bus,
+                ..Default::default()
+            },
+            arrange: None,
+            mixer: Some(SurfaceEffect::show_collapsed()),
+        });
+        let plans = resolve(&tracks, &config, &mode);
+        let bus = plans.first().expect("a plan");
+
+        assert_eq!(bus.mixer_fold, Some(2), "the later rule should fold it");
+        assert_eq!(
+            bus.mixer_width,
+            Some(Size::Compact),
+            "and should have left the width the earlier rule set"
+        );
     }
 }
