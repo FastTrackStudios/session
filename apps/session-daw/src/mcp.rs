@@ -339,7 +339,12 @@ fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot:
     if squeeze.head() {
         crate::art::place(
             scene,
-            &art::fx_pill(&palette.chrome, art::Chain::Empty, Interaction::Normal),
+            &art::fx_pill(
+                &palette.chrome,
+                crate::tcp::lit(palette),
+                art::Chain::Empty,
+                Interaction::Normal,
+            ),
             font,
             x + 7.0,
             f64::from(g::FX_PILL_TOP),
@@ -403,6 +408,7 @@ fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot:
             scene,
             &art::record_arm(
                 &palette.chrome,
+                crate::tcp::lit(palette).rec,
                 track.armed,
                 Interaction::Normal,
                 art::Arm::Mixer,
@@ -497,6 +503,7 @@ fn stretch(
                 scene,
                 &art::volume_knob(
                     &palette.chrome,
+                    crate::tcp::lit(palette).volume,
                     crate::tcp::volume_fraction(track.volume),
                     Interaction::Normal,
                     24.0,
@@ -510,7 +517,13 @@ fn stretch(
             let value = crate::tcp::volume_fraction(track.volume);
             crate::art::place(
                 scene,
-                &art::fader(&palette.chrome, value, fader_w, stretch),
+                &art::fader(
+                    &palette.chrome,
+                    crate::tcp::lit(palette).volume,
+                    value,
+                    fader_w,
+                    stretch,
+                ),
                 font,
                 fader_x,
                 stretch_top,

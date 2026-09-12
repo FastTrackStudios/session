@@ -21,7 +21,7 @@
 //! transform, being out of sync is not a bug that can happen.
 
 use anyrender::recording::RenderCommand;
-use anyrender::{Paint, PaintScene, Scene};
+use anyrender::{PaintScene, Scene};
 use vello::kurbo::{Affine, Rect};
 use vello::peniko::{Color, Fill};
 

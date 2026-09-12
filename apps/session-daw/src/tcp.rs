@@ -76,6 +76,21 @@ pub enum Density {
     Bar,
 }
 
+/// The colours the ported controls light up in, from the resolved theme.
+///
+/// One place, so a control cannot pick a different blue from the one
+/// beside it — and so that changing the theme changes the controls,
+/// which was the whole reason the art stopped carrying its own hex.
+#[must_use]
+pub fn lit(palette: &Palette) -> art::Lit {
+    art::Lit {
+        volume: to_theme(palette.accent),
+        pan: to_theme(palette.pan),
+        rec: to_theme(palette.rec),
+        bypass: to_theme(palette.mute),
+    }
+}
+
 /// Mute and solo, at the one size they are drawn at everywhere.
 ///
 /// The theme's measured 21 by 20 — and that size on every track, which
@@ -382,6 +397,7 @@ fn row_one(
             scene,
             &art::record_arm(
                 &palette.chrome,
+                lit(palette).rec,
                 track.armed,
                 Interaction::Normal,
                 art::Arm::Panel,
@@ -458,7 +474,7 @@ fn row_one(
         // The chain's state is not on `Track` — it lives in the FX model
         // this window has not read yet — so the pill draws its empty
         // slot rather than claiming the chain is running.
-        &art::fx_pill(&palette.chrome, art::Chain::Empty, Interaction::Normal),
+        &art::fx_pill(&palette.chrome, lit(palette), art::Chain::Empty, Interaction::Normal),
         font,
         f64::from(g::FX_IN_X),
         plate_top,
@@ -491,6 +507,7 @@ fn level(
             scene,
             &art::volume_knob(
                 &palette.chrome,
+                lit(palette).volume,
                 volume_fraction(track.volume),
                 Interaction::Normal,
                 field_h,
@@ -521,7 +538,7 @@ fn level(
         // keep saying what they say all the way down.
         crate::art::squashed(
             scene,
-            &art::volume_fader(&palette.chrome, volume_fraction(track.volume)),
+            &art::volume_fader(&palette.chrome, lit(palette).volume, volume_fraction(track.volume)),
             font,
             // Straddling the field's right edge, where the knob it
             // replaces is centred — the column has to hold whichever of

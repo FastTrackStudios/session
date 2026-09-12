@@ -239,7 +239,7 @@ pub fn hex(text: &str) -> Color {
 /// is 11 here because it is 11 there, and if REAPER is re-measured both
 /// change together.
 pub mod tcp {
-    use super::{hex, Align, Brush, Drawing, Shape, Stroke};
+    use super::{Align, Brush, Drawing, Shape, Stroke};
     use crate::vector_controls::{ink_in, Interaction, VOLUME_KNOB_START, VOLUME_KNOB_SWEEP};
     use daw_theme::{Chrome, Color};
 
@@ -253,7 +253,13 @@ pub mod tcp {
     /// bottom to a darker one at the top because this theme's hardware
     /// is lit from below. Drawn flat it reads as a printed circle.
     #[must_use]
-    pub fn volume_knob(chrome: &Chrome, value: f64, at: Interaction, drawn_px: f64) -> Drawing {
+    pub fn volume_knob(
+        chrome: &Chrome,
+        lit: Color,
+        value: f64,
+        at: Interaction,
+        drawn_px: f64,
+    ) -> Drawing {
         // 24, the height of the field it straddles. A knob shorter than
         // its box reads as sunk into it rather than seated on its edge.
         let (w, h) = (24.0_f64, 24.0_f64);
@@ -300,7 +306,10 @@ pub mod tcp {
         // The black outline the ring is inset into. Without it the ring
         // runs to the cell's edge and the knob reads a size larger than
         // the one beside it.
-        drawing.fill(circle(cx, cy, rim), hex("#0d0d0d"));
+        // The rim is near-black in the source. Taken off the theme's own
+        // edge rather than stated, so a light theme gets a rim and not a
+        // hole punched in it.
+        drawing.fill(circle(cx, cy, rim), chrome.hardware_edge.shade(-0.62));
         // The unlit track, all the way round.
         drawing.stroke(
             Shape::Arc {
@@ -310,7 +319,9 @@ pub mod tcp {
                 start: f64::from(VOLUME_KNOB_START),
                 sweep: f64::from(VOLUME_KNOB_SWEEP),
             },
-            hex(daw_theme::defaults::VOLUME_RING_UNLIT),
+            // The track the value is read against: the theme's sunken
+            // surface, which is what a groove is everywhere else.
+            chrome.surface_sunken.shade(0.10),
             Stroke::new(stroke),
         );
         // The body: #303030 at the top to #2d2d2d at the bottom. Three
@@ -323,11 +334,18 @@ pub mod tcp {
                 Brush::Linear {
                     from: (cx, cy - body),
                     to: (cx, cy + body),
-                    stops: vec![(0.0, hex("#303030")), (1.0, hex("#2d2d2d"))],
+                    // Three units of difference top to bottom, which is
+                    // the difference between a moulded cap and a filled
+                    // circle — as a RELATION on the theme's hardware,
+                    // not as the two greys the source happens to use.
+                    stops: vec![
+                        (0.0, chrome.hardware.shade(0.04)),
+                        (1.0, chrome.hardware.shade(-0.04)),
+                    ],
                 },
             );
         } else {
-            drawing.fill(circle(cx, cy, body), hex("#2f2f2f"));
+            drawing.fill(circle(cx, cy, body), chrome.hardware);
         }
         drawing.stroke(circle(cx, cy, body), ink.border, Stroke::new(0.8));
         // The value, over the track. Last, so its end sits on top of the
@@ -342,7 +360,7 @@ pub mod tcp {
             // having no value at all. A track's level has to be legible
             // from the same colour whether its row is tall enough for a
             // knob or short enough for a bar.
-            let lit: Brush = hex(daw_theme::defaults::VOLUME_RING_LIT).into();
+            let lit: Brush = lit.into();
             drawing.stroke(
                 Shape::Arc {
                     cx,
@@ -469,7 +487,7 @@ pub mod tcp {
     /// SHAPE — the groove is 35% of the width, the cap is a third of it
     /// again, and the ribs are what make a cap read as grippable.
     #[must_use]
-    pub fn fader(chrome: &Chrome, value: f64, w: f64, h: f64) -> Drawing {
+    pub fn fader(chrome: &Chrome, lit: Color, value: f64, w: f64, h: f64) -> Drawing {
         let value = value.clamp(0.0, 1.0);
         let groove = (w * 0.35).max(3.0);
         let groove_x = (w - groove) / 2.0;
@@ -486,7 +504,7 @@ pub mod tcp {
         if h - lit_top > 1.0 {
             drawing.fill(
                 rect(groove_x, lit_top, groove, h - lit_top - 0.5, groove / 2.0),
-                hex(daw_theme::defaults::VOLUME_RING_LIT),
+                lit,
             );
         }
 
@@ -581,7 +599,7 @@ pub mod tcp {
     /// left to say at three pixels. The two also read as a pair this
     /// way, which is what they are.
     #[must_use]
-    pub fn volume_fader(chrome: &Chrome, value: f64) -> Drawing {
+    pub fn volume_fader(chrome: &Chrome, lit: Color, value: f64) -> Drawing {
         // The knob's slot, so the column holds whichever a row shows,
         // and the FULL height of it: the fader is as tall as the name
         // field it sits at the end of. A three-pixel bar in a fourteen
@@ -595,10 +613,7 @@ pub mod tcp {
         drawing.fill(rect(0.0, 0.0, w, h, radius), chrome.surface_sunken);
         let filled = w * value;
         if filled > 0.5 {
-            drawing.fill(
-                rect(0.0, 0.0, filled, h, radius),
-                hex(daw_theme::defaults::VOLUME_RING_LIT),
-            );
+            drawing.fill(rect(0.0, 0.0, filled, h, radius), lit);
         }
         // The cap, so the level reads as a position rather than as
         // "about this much colour".
@@ -771,6 +786,25 @@ pub mod tcp {
         pub sends: bool,
         /// Other tracks send to it.
         pub receives: bool,
+    }
+
+    /// The colours a control lights up in, from the caller's theme.
+    ///
+    /// The ported art carried REAPER's own hex — `#5ec3ff` for a lit
+    /// volume ring, `#60c2fe` for an FX lamp, `#0d0d0d` for a knob's rim
+    /// — which is right for the theme it was traced from and wrong for
+    /// every other. The SHAPES are measured and belong to the art; the
+    /// colours belong to whoever is drawing.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct Lit {
+        /// Volume: the fader's fill and the knob's value arc.
+        pub volume: Color,
+        /// Pan.
+        pub pan: Color,
+        /// Record arm, and anything else that means "armed".
+        pub rec: Color,
+        /// A bypassed FX chain.
+        pub bypass: Color,
     }
 
     /// The three lit routing colours.
@@ -953,7 +987,7 @@ pub mod tcp {
     /// The plate is black at 35%, not an opaque grey: on the track panel
     /// it is a scrim that lets the row's colour through.
     #[must_use]
-    pub fn fx_pill(chrome: &Chrome, chain: Chain, at: Interaction) -> Drawing {
+    pub fn fx_pill(chrome: &Chrome, lit: Lit, chain: Chain, at: Interaction) -> Drawing {
         // Traced: 36x22, body rows 1..21 of 22, split at 20 — the
         // labelled half first and the bypass toggle after it, which is
         // the order REAPER blits `track_fx_norm` (20 wide) and
@@ -987,8 +1021,8 @@ pub mod tcp {
         // than a square because that is what the art is; drawn as a dot
         // it reads as an LED on a different control.
         let lamp = match chain {
-            Chain::Active => hex("#60c2fe"),
-            Chain::Bypassed => hex("#ff6975"),
+            Chain::Active => lit.volume,
+            Chain::Bypassed => lit.bypass,
             // Empty shows a dark slug: there is nothing to bypass, and
             // the slot still has to read as a slot.
             Chain::Empty => chrome.hardware_mark.shade(-0.45),
@@ -1010,7 +1044,7 @@ pub mod tcp {
         let (ink, ink_alpha) = match chain {
             Chain::Empty => (chrome.hardware_mark.shade(0.33), 0.61),
             Chain::Active => (chrome.hardware_mark.shade(0.78), 0.87),
-            Chain::Bypassed => (hex(daw_theme::defaults::MUTE), 1.0),
+            Chain::Bypassed => (lit.bypass, 1.0),
         };
         drawing.text(
             "FX",
@@ -1096,7 +1130,14 @@ pub mod tcp {
     /// … 255, 102, so the outer edge stands at 2.60 and the radius is
     /// 7.45 — not the 8 that reading the first lit column gives.
     #[must_use]
-    pub fn record_arm(chrome: &Chrome, armed: bool, at: Interaction, arm: Arm, hole: Color) -> Drawing {
+    pub fn record_arm(
+        chrome: &Chrome,
+        lit: Color,
+        armed: bool,
+        at: Interaction,
+        arm: Arm,
+        hole: Color,
+    ) -> Drawing {
         let housing = arm == Arm::Mixer;
         let (vw, vh) = if housing { (36.0, 24.0) } else { (20.0, 20.0) };
         // Traced in EDGE coordinates, not pixel indices: the mixer's ring
@@ -1108,7 +1149,7 @@ pub mod tcp {
         let (outer, inner) = if housing { (7.45, 3.67) } else { (7.40, 3.38) };
 
         let ring = if armed {
-            hex(daw_theme::defaults::REC)
+            lit
         } else {
             chrome.hardware_mark
         };
