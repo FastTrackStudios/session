@@ -46,7 +46,8 @@ use std::fmt;
 pub enum MixPhase {
     /// Make the signal usable: gain, polarity, tuning, surgical repair.
     Rescue,
-    /// Faders only, every track visible and detailed.
+    /// Levels: gain staging, then the faders. Every track visible and
+    /// detailed.
     Balance,
     /// The sound of each track on its own.
     Tone,
@@ -139,7 +140,7 @@ impl MixPhase {
     pub const fn description(self) -> &'static str {
         match self {
             Self::Rescue => "Make the signal usable: gain, polarity, tuning, surgical repair",
-            Self::Balance => "Faders only, every track visible and detailed",
+            Self::Balance => "Levels: gain staging, then the faders",
             Self::Tone => "The sound of each track on its own",
             Self::Polish => "Take off what the tone pass exposed",
             Self::Relational => "How tracks sit against each other",
@@ -157,18 +158,15 @@ impl MixPhase {
     pub const fn steps(self) -> &'static [Step] {
         match self {
             Self::Rescue => RESCUE_STEPS,
+            Self::Balance => BALANCE_STEPS,
             Self::Tone => TONE_STEPS,
             Self::Polish => POLISH_STEPS,
             Self::Relational => RELATIONAL_STEPS,
             Self::Depth => DEPTH_STEPS,
             Self::Creative => CREATIVE_STEPS,
-            // Two phases offer no processing, for two different
-            // reasons — `Balance` because it IS the absence of it (the
-            // fader is already on every strip, so a step called
-            // "volume" would be a lie about there being something to
-            // add), and `Overview` because it is a view rather than a
-            // pass. The arms share a body and not a meaning.
-            Self::Balance | Self::Overview => &[],
+            // A view, not a pass — the only phase that offers nothing,
+            // because looking at the mix is not a thing you apply.
+            Self::Overview => &[],
         }
     }
 
@@ -209,6 +207,13 @@ impl fmt::Display for MixPhase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Step {
     pub name: &'static str,
+    /// Normally done for you, by a script rather than by hand.
+    ///
+    /// Not the same as [`Step::offline`], which is about HOW a step is
+    /// applied. This is about who applies it: an automatic step usually
+    /// arrives already complete, so the strip's job is to show its state
+    /// and let it be overridden — not to present it as work waiting.
+    pub automatic: bool,
     /// A render, not a plugin.
     ///
     /// The processing is applied to the item and written back, so there
@@ -223,6 +228,7 @@ impl Step {
     pub const fn live(name: &'static str) -> Self {
         Self {
             name,
+            automatic: false,
             offline: false,
         }
     }
@@ -231,18 +237,41 @@ impl Step {
     pub const fn offline(name: &'static str) -> Self {
         Self {
             name,
+            automatic: false,
             offline: true,
+        }
+    }
+
+    /// The same step, marked as normally already done.
+    #[must_use]
+    pub const fn automatic(self) -> Self {
+        Self {
+            automatic: true,
+            ..self
         }
     }
 }
 
 const RESCUE_STEPS: &[Step] = &[
-    Step::offline("Gain Stage"),
     Step::offline("Phase Check"),
     Step::live("Live Tuning"),
     Step::live("Rescue EQ"),
     Step::offline("Consistency Compression"),
 ];
+
+/// Staging, then the faders.
+///
+/// Gain staging sits here rather than in `Rescue` because it is the same
+/// question the rest of this phase asks — how loud is this — where
+/// `Rescue` is about whether the signal is usable at all. It is also the
+/// one step that is normally already done: the scripts stage a session
+/// on import, so what the strip shows is a state to CHECK rather than
+/// work to do.
+///
+/// There is no step for the faders themselves. Every strip already has
+/// one, and a section called "volume" would claim there is something to
+/// add.
+const BALANCE_STEPS: &[Step] = &[Step::offline("Gain Stage").automatic()];
 
 const TONE_STEPS: &[Step] = &[
     Step::live("Compression"),
@@ -323,18 +352,33 @@ mod tests {
         assert!(MixPhase::ALL.iter().all(|p| p.automates()));
     }
 
-    /// `Balance` and `Overview` are a fader pass and a view; every other
-    /// phase offers processing.
+    /// `Overview` is a view rather than a pass, and the only phase with
+    /// nothing to apply.
     #[test]
-    fn only_balance_and_overview_have_no_steps() {
+    fn only_overview_has_no_steps() {
         for phase in MixPhase::ALL {
-            let empty = phase.steps().is_empty();
             assert_eq!(
-                empty,
-                matches!(phase, MixPhase::Balance | MixPhase::Overview),
+                phase.steps().is_empty(),
+                phase == MixPhase::Overview,
                 "{phase} steps"
             );
         }
+    }
+
+    /// Gain staging is in `Balance`, not `Rescue` — same question as the
+    /// faders beside it — and is the step that normally arrives done.
+    #[test]
+    fn staging_is_a_balance_step_and_automatic() {
+        let staging = MixPhase::Balance
+            .steps()
+            .iter()
+            .find(|step| step.name == "Gain Stage")
+            .expect("Balance stages gain");
+        assert!(staging.automatic);
+        assert!(MixPhase::Rescue
+            .steps()
+            .iter()
+            .all(|step| step.name != "Gain Stage"));
     }
 
     /// The edit chain is offline throughout — that is what makes it the
