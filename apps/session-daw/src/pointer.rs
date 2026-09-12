@@ -26,21 +26,44 @@ pub struct Spot {
     pub control: Control,
 }
 
-/// What the pointer is on and what it is doing.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Pointer {
-    hovered: Option<Spot>,
-    pressed: Option<Spot>,
+/// A control on a particular track panel row.
+///
+/// The arrangement's counterpart to [`Spot`]. The two surfaces have
+/// different control sets — a strip has a fader, a row has a folder
+/// mark — so they cannot share one enum, but everything ABOVE the spot
+/// is identical, which is why [`Pointer`] is generic over it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct RowSpot {
+    pub row: usize,
+    pub control: crate::row::Control,
 }
 
-impl Pointer {
+/// What the pointer is on and what it is doing.
+#[derive(Clone, Copy, Debug)]
+pub struct Pointer<S = Spot> {
+    hovered: Option<S>,
+    pressed: Option<S>,
+}
+
+/// Derived `Default` would demand `S: Default`, and a spot has no
+/// resting value — "on nothing" is `None`, not a zeroth control.
+impl<S> Default for Pointer<S> {
+    fn default() -> Self {
+        Self {
+            hovered: None,
+            pressed: None,
+        }
+    }
+}
+
+impl<S: Copy + PartialEq> Pointer<S> {
     /// The pointer moved onto `spot` (or off everything).
     ///
     /// Returns whether anything changed, so a window can skip a redraw
     /// on the mouse moves that do not alter the picture — which is most
     /// of them, since a pointer crossing a strip generates a move per
     /// pixel and changes control perhaps twice.
-    pub fn hover(&mut self, spot: Option<Spot>) -> bool {
+    pub fn hover(&mut self, spot: Option<S>) -> bool {
         let changed = self.hovered != spot;
         self.hovered = spot;
         changed
@@ -63,7 +86,7 @@ impl Pointer {
     /// what makes "drag away to cancel" legible: the button stays down
     /// to say it is still armed, and releasing elsewhere does nothing.
     #[must_use]
-    pub fn state(&self, spot: Spot) -> Interaction {
+    pub fn state(&self, spot: S) -> Interaction {
         if self.pressed == Some(spot) {
             Interaction::Pressed
         } else if self.hovered == Some(spot) && self.pressed.is_none() {
@@ -78,14 +101,14 @@ impl Pointer {
     /// The pressed one when there is one, because a pressed control is
     /// what the user is doing; otherwise the hovered one.
     #[must_use]
-    pub fn active(&self) -> Option<(Spot, Interaction)> {
+    pub fn active(&self) -> Option<(S, Interaction)> {
         self.pressed
             .map(|spot| (spot, Interaction::Pressed))
             .or_else(|| self.hovered.map(|spot| (spot, Interaction::Hover)))
     }
 
     #[must_use]
-    pub const fn hovered(&self) -> Option<Spot> {
+    pub fn hovered(&self) -> Option<S> {
         self.hovered
     }
 }
@@ -108,7 +131,7 @@ mod tests {
     /// pixel and changes control about twice.
     #[test]
     fn only_a_real_change_asks_for_a_redraw() {
-        let mut p = Pointer::default();
+        let mut p: Pointer = Pointer::default();
         assert!(p.hover(Some(A)), "entering a control is a change");
         assert!(!p.hover(Some(A)), "staying on it is not");
         assert!(p.hover(Some(B)), "moving to the next one is");
@@ -119,7 +142,7 @@ mod tests {
     /// Hover is a look; pressed is a look that beats it.
     #[test]
     fn pressed_beats_hovered() {
-        let mut p = Pointer::default();
+        let mut p: Pointer = Pointer::default();
         p.hover(Some(A));
         assert_eq!(p.state(A), Interaction::Hover);
         p.press();
@@ -133,7 +156,7 @@ mod tests {
     /// legible. The button stays down to say it is still armed.
     #[test]
     fn a_pressed_control_stays_pressed_when_you_drag_off_it() {
-        let mut p = Pointer::default();
+        let mut p: Pointer = Pointer::default();
         p.hover(Some(A));
         p.press();
         p.hover(None);
@@ -146,7 +169,7 @@ mod tests {
     /// if it were about to fire.
     #[test]
     fn nothing_else_hovers_during_a_press() {
-        let mut p = Pointer::default();
+        let mut p: Pointer = Pointer::default();
         p.hover(Some(A));
         p.press();
         p.hover(Some(B));
@@ -157,7 +180,7 @@ mod tests {
     /// Everything is at rest to begin with.
     #[test]
     fn nothing_is_lit_by_default() {
-        let p = Pointer::default();
+        let p: Pointer = Pointer::default();
         assert_eq!(p.state(A), Interaction::Normal);
         assert!(p.active().is_none());
         assert!(p.hovered().is_none());

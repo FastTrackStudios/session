@@ -96,6 +96,7 @@ pub fn control(
                     &palette.chrome,
                     track.pan.clamp(-1.0, 1.0),
                     crate::tcp::to_theme(palette.pan),
+                    state,
                 ),
                 font,
                 left + (width - f64::from(g::PAN_KNOB_W)) / 2.0,
@@ -336,6 +337,7 @@ fn draw_strip_controls(
                 &palette.chrome,
                 track.pan.clamp(-1.0, 1.0),
                 crate::tcp::to_theme(palette.pan),
+                state(Control::Pan),
             ),
             font,
             x,
@@ -421,8 +423,10 @@ pub fn panel_controls(
     rows: &[(Track, u32)],
     tracks: &[Track],
     view: crate::arrangement::Viewport,
+    pointer: &crate::pointer::Pointer<crate::pointer::RowSpot>,
     transform: Affine,
 ) -> crate::profile::Counts {
+    use crate::pointer::RowSpot;
     use crate::row::{Control as C, Indicator, Row};
     use daw_theme_art::geometry::tcp as gt;
 
@@ -439,6 +443,11 @@ pub fn panel_controls(
         if row.density == crate::tcp::Density::Bar {
             continue;
         }
+        // The pointer's verdict on this row's controls. The panel is a
+        // recorded scene like the mixer is, so a hover cannot repaint
+        // the row — it repaints the ONE control, here, in the same pass
+        // that already redraws every live value.
+        let look = |control| pointer.state(RowSpot { row: index, control });
 
         // Mute and solo.
         for (control, label, on, lit) in [
@@ -448,7 +457,7 @@ pub fn panel_controls(
             let Some(r) = row.rect(control) else { continue };
             crate::art::place(
                 &mut out,
-                &art::gutter_button(&palette.chrome, label, on, lit, Interaction::Normal),
+                &art::gutter_button(&palette.chrome, label, on, lit, look(control)),
                 font,
                 r.x0,
                 r.y0,
@@ -463,7 +472,7 @@ pub fn panel_controls(
                     &palette.chrome,
                     crate::tcp::lit(palette).rec,
                     live.armed,
-                    Interaction::Normal,
+                    look(C::RecArm),
                     art::Arm::Panel,
                     crate::tcp::to_theme(palette.tcp_field),
                 ),
@@ -487,7 +496,7 @@ pub fn panel_controls(
                         &palette.chrome,
                         crate::tcp::lit(palette).volume,
                         crate::tcp::volume_fraction(live.volume),
-                        Interaction::Normal,
+                        look(C::Volume),
                         field_h,
                     ),
                     font,
@@ -511,6 +520,23 @@ pub fn panel_controls(
                 );
             }
         }
+        // The name plate has no hover cell in the traced art — REAPER
+        // does not light one either — but in this window it is what you
+        // double-click to rename, and a control that opens an editor
+        // has to say so before you commit to the second click. One rule
+        // under the name, in the accent, is the least that reads.
+        if look(C::Name) != Interaction::Normal {
+            if let Some(r) = row.rect(C::Name) {
+                out.fill(
+                    vello::peniko::Fill::NonZero,
+                    Affine::IDENTITY,
+                    palette.accent,
+                    None,
+                    &vello::kurbo::Rect::new(r.x0, r.y1 - 1.0, r.x1, r.y1),
+                );
+            }
+        }
+
         if let Some(r) = row.rect(C::Pan) {
             let field_h = r.height();
             if knob {
@@ -521,6 +547,7 @@ pub fn panel_controls(
                         &palette.chrome,
                         live.pan.clamp(-1.0, 1.0),
                         crate::tcp::to_theme(palette.pan),
+                        look(C::Pan),
                     ),
                     font,
                     f64::from(gt::PAN_KNOB_X),
@@ -551,4 +578,128 @@ pub fn panel_controls(
         }
     }
     counts
+}
+
+#[cfg(test)]
+mod panel_tests {
+    use super::*;
+    use crate::pointer::{Pointer, RowSpot};
+    use crate::row::Control as C;
+    use daw_ui::studio::{ProjectRef, RowsRef};
+
+    /// Four rows tall enough that every control has somewhere to be —
+    /// the narrow tiers drop mute and solo on purpose, and a test that
+    /// used them would be asserting they are missing.
+    fn panel() -> (crate::arrangement::Arrangement, Palette, Font, Vec<Track>, RowsRef) {
+        let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let font = Font::embedded().expect("the embedded font");
+        let tracks: Vec<Track> = (0..4)
+            .map(|i| Track {
+                guid: format!("t{i}"),
+                name: format!("Track {i}"),
+                height: Some(90),
+                ..Track::default()
+            })
+            .collect();
+        let rows = RowsRef(std::sync::Arc::new(
+            tracks.iter().cloned().map(|t| (t, 0)).collect(),
+        ));
+        let project = ProjectRef(std::sync::Arc::new(daw_ui::studio::Project::default()));
+        let scene = crate::arrangement::Arrangement::build(
+            &palette,
+            &font,
+            &project,
+            &rows,
+            crate::layout::Layout::default(),
+        );
+        (scene, palette, font, tracks, rows)
+    }
+
+    fn drawn(
+        scene: &crate::arrangement::Arrangement,
+        palette: &Palette,
+        font: &Font,
+        rows: &RowsRef,
+        tracks: &[Track],
+        pointer: &Pointer<RowSpot>,
+    ) -> anyrender::Scene {
+        let view = crate::arrangement::Viewport {
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            pps: 1.0,
+            zoom_y: 1.0,
+            width: 1600.0,
+            height: 900.0,
+        };
+        let mut out = anyrender::Scene::new();
+        panel_controls(
+            &mut out,
+            palette,
+            font,
+            scene,
+            rows.as_slice(),
+            tracks,
+            view,
+            pointer,
+            Affine::IDENTITY,
+        );
+        out
+    }
+
+    /// The point of the whole pass: hovering a panel control has to
+    /// change what is drawn. The panel is a RECORDED scene, so if the
+    /// overlay does not redraw the control there is nothing else that
+    /// can, and the control is simply dead under the pointer.
+    #[test]
+    fn hovering_a_panel_control_changes_the_picture() {
+        let (scene, palette, font, tracks, rows) = panel();
+        let rest = Pointer::default();
+        let at_rest = drawn(&scene, &palette, &font, &rows, &tracks, &rest);
+        for control in [C::Mute, C::Solo, C::RecArm, C::Volume, C::Pan, C::Name] {
+            let mut pointer = Pointer::default();
+            pointer.hover(Some(RowSpot { row: 1, control }));
+            let hovered = drawn(&scene, &palette, &font, &rows, &tracks, &pointer);
+            assert_ne!(
+                at_rest, hovered,
+                "{control:?} drew the same thing hovered as at rest"
+            );
+        }
+    }
+
+    /// And pressing it changes it again — otherwise a button that is
+    /// held down looks exactly like one the pointer is merely near.
+    #[test]
+    fn pressing_differs_from_hovering() {
+        let (scene, palette, font, tracks, rows) = panel();
+        let mut pointer = Pointer::default();
+        pointer.hover(Some(RowSpot {
+            row: 1,
+            control: C::Mute,
+        }));
+        let hovered = drawn(&scene, &palette, &font, &rows, &tracks, &pointer);
+        pointer.press();
+        let pressed = drawn(&scene, &palette, &font, &rows, &tracks, &pointer);
+        assert_ne!(hovered, pressed, "a held mute looks like an idle one");
+    }
+
+    /// A hover on one row leaves the others alone, so the pass really
+    /// is redrawing ONE control rather than restyling the panel.
+    #[test]
+    fn only_the_hovered_row_changes() {
+        let (scene, palette, font, tracks, rows) = panel();
+        let mut a = Pointer::default();
+        a.hover(Some(RowSpot {
+            row: 1,
+            control: C::Mute,
+        }));
+        let mut b = Pointer::default();
+        b.hover(Some(RowSpot {
+            row: 2,
+            control: C::Mute,
+        }));
+        assert_ne!(
+            drawn(&scene, &palette, &font, &rows, &tracks, &a),
+            drawn(&scene, &palette, &font, &rows, &tracks, &b)
+        );
+    }
 }

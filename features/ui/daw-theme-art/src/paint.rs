@@ -338,14 +338,22 @@ pub mod tcp {
                     // the difference between a moulded cap and a filled
                     // circle — as a RELATION on the theme's hardware,
                     // not as the two greys the source happens to use.
+                    // `ink.face` rather than `chrome.hardware`: they
+                    // are the same colour at rest — `ink_in` takes the
+                    // hardware grey when nothing lights the control —
+                    // and differ only under the pointer, which is the
+                    // whole reason this function is handed an
+                    // `Interaction` at all. Reaching past it for the
+                    // raw grey made the knob the one control in the
+                    // panel that did not answer the hand.
                     stops: vec![
-                        (0.0, chrome.hardware.shade(0.04)),
-                        (1.0, chrome.hardware.shade(-0.04)),
+                        (0.0, ink.face.shade(0.04)),
+                        (1.0, ink.face.shade(-0.04)),
                     ],
                 },
             );
         } else {
-            drawing.fill(circle(cx, cy, body), chrome.hardware);
+            drawing.fill(circle(cx, cy, body), ink.face);
         }
         drawing.stroke(circle(cx, cy, body), ink.border, Stroke::new(0.8));
         // The value, over the track. Last, so its end sits on top of the
@@ -766,7 +774,7 @@ pub mod tcp {
     /// `position` is -1..1, and the pointer sweeps 135° either side of
     /// twelve o'clock — REAPER's range, not a full rotation.
     #[must_use]
-    pub fn pan_knob(chrome: &Chrome, position: f64, ink: Color) -> Drawing {
+    pub fn pan_knob(chrome: &Chrome, position: f64, ink: Color, at: Interaction) -> Drawing {
                 let (w, h) = (24.0_f64, 25.0_f64);
         let (cx, cy, r) = (12.0_f64, 12.08_f64, 9.37_f64);
         let (cap_cy, cap_r) = (12.05_f64, 4.06_f64);
@@ -823,7 +831,14 @@ pub mod tcp {
                 Stroke::new(ring),
             );
         }
-        drawing.fill(circle(cx, cy, face_r), chrome.hardware);
+        // The face lifts under the pointer and sinks when held, the
+        // same way the volume knob's does — at rest `ink_in` hands back
+        // the hardware grey this used to state outright, so nothing
+        // moves until a hand is on it.
+        drawing.fill(
+            circle(cx, cy, face_r),
+            ink_in(chrome, None, at, true, 0.35).face,
+        );
         // The pointer, as a rotated quad rather than a rotation applied
         // to the whole drawing: the canvas replays these under a
         // transform that may scale the axes differently, and a rotation
@@ -1247,12 +1262,16 @@ pub mod tcp {
         } else {
             chrome.hardware_mark
         };
-        // The mixer's housing lifts a little on hover and sinks when
-        // pressed; a bare ring has nothing to lift.
+        // The ring lifts a little on hover and sinks when pressed.
+        //
+        // The mixer's housing lifts with it; the panel's bare ring has
+        // no housing, but the ring is the control either way, and a
+        // record arm that does not answer the pointer is the one button
+        // you most want to be sure of before you click it.
         let ring = match at {
-            Interaction::Hover if housing => ring.shade(0.15),
-            Interaction::Pressed if housing => ring.shade(-0.12),
-            _ => ring,
+            Interaction::Hover => ring.shade(0.15),
+            Interaction::Pressed => ring.shade(-0.12),
+            Interaction::Normal => ring,
         };
 
         let mut drawing = Drawing::new(vw, vh);

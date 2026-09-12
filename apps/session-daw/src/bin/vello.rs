@@ -110,6 +110,10 @@ struct App {
     tracks: Vec<daw_proto::Track>,
     /// What the pointer is on, and what it is doing to it.
     pointer: session_daw::pointer::Pointer,
+    /// The same, for the arrangement's track panel. A separate state
+    /// because the two surfaces have different controls and only one
+    /// of them is on screen at a time.
+    panel: session_daw::pointer::Pointer<session_daw::pointer::RowSpot>,
     /// Presses, drags and double-clicks, out of the raw events.
     gestures: session_daw::gesture::Gestures,
     /// Where the pointer is, since winit reports moves and clicks
@@ -262,10 +266,13 @@ impl ApplicationHandler for App {
                         return;
                     }
                 }
+                let over_row = self
+                    .row_spot_at(position.x, position.y)
+                    .map(|(row, control)| session_daw::pointer::RowSpot { row, control });
                 if let Some(event) = self.gestures.moved(position.x, position.y, self.fine) {
                     self.act(event);
                     self.redraw();
-                } else if self.pointer.hover(spot) {
+                } else if self.panel.hover(over_row) | self.pointer.hover(spot) {
                     // Only when something actually changed — a pointer
                     // crossing a strip fires a move per pixel and
                     // changes control about twice.
@@ -273,7 +280,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::PointerLeft { .. } => {
-                if self.pointer.hover(None) {
+                if self.panel.hover(None) | self.pointer.hover(None) {
                     self.redraw();
                 }
             }
@@ -303,6 +310,11 @@ impl ApplicationHandler for App {
                     self.pointer.hover(self.spot_at(x, y));
                     self.pointer.press();
                     self.pressed_row = self.row_spot_at(x, y);
+                    self.panel.hover(
+                        self.pressed_row
+                            .map(|(row, control)| session_daw::pointer::RowSpot { row, control }),
+                    );
+                    self.panel.press();
                     if let Some(hit) = self.hit_at(x, y) {
                         self.gestures.press(hit, x, y);
                     }
@@ -328,6 +340,7 @@ impl ApplicationHandler for App {
                                         && now.saturating_duration_since(when)
                                             <= session_daw::gesture::DOUBLE
                                 });
+                            tracing::debug!(ui.row = row, ui.control = ?control, ui.double = double, "panel click");
                             if double {
                                 // A double-click on a name edits it;
                                 // the single click that preceded it
@@ -349,6 +362,7 @@ impl ApplicationHandler for App {
                     }
                     self.row_drag = None;
                     self.pointer.release();
+                    self.panel.release();
                     if let Some(event) = self.gestures.release(x, y, std::time::Instant::now()) {
                         self.act(event);
                     }
@@ -577,6 +591,9 @@ impl App {
                 };
                 let edit = session_daw::engine::Edit::Rename(rename.guid, name);
                 apply_locally(&mut self.tracks, rename.row, &edit);
+                // The name is recorded chrome, not a live value, so the
+                // prediction only shows once the panel is re-recorded.
+                self.re_record();
                 if let Some(applier) = &self.applier {
                     applier.send(edit);
                 }
@@ -821,10 +838,87 @@ impl App {
         self.after_frame(drawn);
     }
 
+    /// Take the engine's word for what the tracks are.
+    ///
+    /// The window predicts an edit so the hand does not wait for a
+    /// round trip; this is where the prediction is replaced by the
+    /// truth. A frame that finds no events does nothing, which is most
+    /// of them.
+    fn reconcile(&mut self) {
+        let Some(watch) = &self.watch else { return };
+        let events: Vec<_> = watch.drain().collect();
+        if events.is_empty() {
+            return;
+        }
+        // A control the hand is still on keeps the hand's value. The
+        // engine will agree in a moment; snapping to its last word
+        // mid-drag is a fader that fights back, and the hand is the
+        // more recent authority on a value it is still setting.
+        let dragging = self.row_drag.and_then(|(row, _)| {
+            self.tracks.get(row).map(|track| track.guid.clone())
+        });
+        let mut renamed = false;
+        for event in &events {
+            if let Some(held) = &dragging
+                && session_daw::engine::continuous_for(event).is_some_and(|guid| guid == held)
+            {
+                continue;
+            }
+            renamed |= matches!(event, daw_proto::track::TrackEvent::Renamed { .. });
+            session_daw::engine::apply_event(&mut self.tracks, event);
+        }
+        if renamed {
+            self.re_record();
+        }
+    }
+
+    /// Re-record the panels, because something the RECORDING holds has
+    /// changed.
+    ///
+    /// Almost every edit this window makes is a live value — a fader, a
+    /// mute, a meter — and the overlay pass redraws those over the
+    /// recorded chrome for the cost of one control. A NAME is not: it
+    /// is text baked into the recorded panel, and no overlay can change
+    /// it without redrawing the whole plate on every frame forever.
+    ///
+    /// So a rename is the one edit that pays for a re-record. It costs
+    /// about four milliseconds across sixty rows, once, when a name
+    /// actually changes — which is the side of the trade the recorded
+    /// scene exists to be on.
+    fn re_record(&mut self) {
+        let Some((project, rows)) = self.session.clone() else {
+            return;
+        };
+        // The recording reads names from the ROWS, so the rows have to
+        // carry what the tracks now say. The two are index-aligned:
+        // `self.tracks` was built from these rows, in order.
+        let mut next = rows.as_slice().to_vec();
+        for (row, track) in next.iter_mut().zip(self.tracks.iter()) {
+            row.0.name.clone_from(&track.name);
+        }
+        let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(next));
+        self.scene = Some(Arrangement::build(
+            &self.palette,
+            &self.font,
+            &project,
+            &rows,
+            self.layout,
+        ));
+        // The mixer is recorded lazily against the window's height, so
+        // dropping it rebuilds on the next mixer frame rather than
+        // paying now for a surface nobody is looking at.
+        self.mixer = None;
+        self.session = Some((project, rows));
+    }
+
     fn redraw(&mut self) {
         if !self.renderer.is_active() {
             return;
         }
+        // The engine's corrections, before anything is drawn from the
+        // window's copy — and before the scene is borrowed, because a
+        // rename makes this rebuild it.
+        self.reconcile();
         if self.view == View::Mixer {
             self.redraw_mixer();
             return;
@@ -848,27 +942,12 @@ impl App {
         let surface = self.palette.surface;
         let palette = &self.palette;
         let font = &self.font;
-        // The engine's corrections, before anything is drawn from the
-        // window's copy. A frame that finds nothing has nothing to do,
-        // which is most of them.
-        if let Some(watch) = &self.watch {
-            let events: Vec<_> = watch.drain().collect();
-            if !events.is_empty() {
-                let dragging = self.row_drag.map(|(row, _)| row);
-                for event in &events {
-                    session_daw::engine::apply_event(&mut self.tracks, event);
-                }
-                // A control the hand is still on keeps the hand's
-                // value. The engine will agree in a moment; snapping to
-                // its last word mid-drag is a fader that fights back.
-                let _ = dragging;
-            }
-        }
         let bars = Bars::at(scene.bpm);
         let rows: &[(daw_proto::Track, u32)] =
             self.session.as_ref().map_or(&[], |(_, rows)| rows.as_slice());
         let tracks = self.tracks.as_slice();
         let rename = self.rename.as_ref();
+        let panel = &self.panel;
         // The transport's last word, and where that puts the cursor
         // NOW — the reading is per-block, the drawing is per-frame, and
         // the difference between them is the glide.
@@ -963,6 +1042,7 @@ impl App {
                 rows,
                 tracks,
                 view,
+                panel,
                 Affine::translate((rail.0, rail.1 + RULER_H - sy)),
             );
             ruler::ruler(painter, &palette, &font, view, bars, rail);
@@ -1119,6 +1199,7 @@ fn main() {
         view: View::Arrangement,
         tracks: Vec::new(),
         pointer: session_daw::pointer::Pointer::default(),
+        panel: session_daw::pointer::Pointer::default(),
         gestures: session_daw::gesture::Gestures::default(),
         cursor: (0.0, 0.0),
         fine: false,

@@ -511,6 +511,23 @@ impl Watch {
 /// is still dragging is the one exception a caller may want to make,
 /// and it is the caller's to make because only it knows what is being
 /// dragged.
+/// The track a CONTINUOUS event is about — a volume or a pan.
+///
+/// These are the only edits a hand can still be making when the
+/// engine's answer to an earlier one arrives, so they are the only
+/// ones a caller may want to hold back while a drag is in flight.
+/// Everything else is a toggle or a name: by the time the engine
+/// answers, the gesture that caused it is over, and there is nothing
+/// for its answer to fight with.
+#[must_use]
+pub fn continuous_for(event: &daw_proto::track::TrackEvent) -> Option<&str> {
+    use daw_proto::track::TrackEvent as E;
+    match event {
+        E::VolumeChanged { guid, .. } | E::PanChanged { guid, .. } => Some(guid),
+        _ => None,
+    }
+}
+
 pub fn apply_event(tracks: &mut [daw_proto::Track], event: &daw_proto::track::TrackEvent) {
     use daw_proto::track::TrackEvent as E;
     let find = |tracks: &mut [daw_proto::Track], guid: &str| -> Option<usize> {
@@ -572,7 +589,7 @@ pub fn apply_event(tracks: &mut [daw_proto::Track], event: &daw_proto::track::Tr
 
 #[cfg(test)]
 mod watch_tests {
-    use super::apply_event;
+    use super::{apply_event, continuous_for};
     use daw_proto::Track;
     use daw_proto::track::TrackEvent as E;
 
@@ -632,5 +649,52 @@ mod watch_tests {
         let mut t = tracks();
         apply_event(&mut t, &E::MuteChanged { guid: "b".into(), muted: true });
         assert!(!t[0].muted && t[1].muted);
+    }
+}
+
+#[cfg(test)]
+mod continuous_tests {
+    use super::continuous_for;
+    use daw_proto::track::TrackEvent as E;
+
+    /// A fader and a pan are the two things a hand can still be holding
+    /// when the engine answers, so they are the two the window may hold
+    /// back.
+    #[test]
+    fn only_the_draggable_ones_name_a_track() {
+        assert_eq!(
+            continuous_for(&E::VolumeChanged {
+                guid: "a".to_owned(),
+                volume: 0.5,
+            }),
+            Some("a")
+        );
+        assert_eq!(
+            continuous_for(&E::PanChanged {
+                guid: "b".to_owned(),
+                pan: -0.25,
+            }),
+            Some("b")
+        );
+    }
+
+    /// A mute is over the moment it is clicked, so the engine's word on
+    /// it is never in competition with a hand.
+    #[test]
+    fn a_toggle_is_not_continuous() {
+        assert_eq!(
+            continuous_for(&E::MuteChanged {
+                guid: "a".to_owned(),
+                muted: true,
+            }),
+            None
+        );
+        assert_eq!(
+            continuous_for(&E::Renamed {
+                guid: "a".to_owned(),
+                name: "Kick".to_owned(),
+            }),
+            None
+        );
     }
 }

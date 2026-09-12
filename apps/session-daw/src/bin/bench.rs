@@ -708,6 +708,10 @@ fn shot(
                 &rows_for_panel,
                 &tracks_for_panel,
                 view,
+                // At rest: this is the reference shot every viewport in
+                // the sweep is compared against, and a hover in it
+                // would be a difference nobody asked for.
+                &session_daw::pointer::Pointer::default(),
                 Affine::translate((rail_x, rail_y + RULER_H - scroll_y)),
             );
             ruler::ruler(painter, palette, font, view, Bars::at(scene.bpm), (rail_x, rail_y));
