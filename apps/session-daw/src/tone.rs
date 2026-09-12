@@ -181,7 +181,7 @@ pub const SHAPE: f64 = 90.0;
 /// extra width from the others rather than adding to the total — see
 /// `mcp::widths` — so this is bounded by what the resting layout can
 /// afford, not by what the worst selection would cost on top of it.
-pub const WORKING: f64 = 96.0;
+pub const WORKING: f64 = 133.0;
 
 /// Where the rack goes.
 #[derive(Clone, Copy, Debug)]

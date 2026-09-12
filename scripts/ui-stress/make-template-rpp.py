@@ -240,10 +240,10 @@ MIN_WIDTH = 30
 # REAPER" is a cost rather than a feature — at 195 the kit read as a row
 # of plots with a mixer attached.
 #
-# 96 is not a taste, it is the budget. The target display is 2560x1440,
-# and everything that is not a piece — 8 mics at 86, 10 auxiliaries at
-# 30, 6 folders at 56, and the gaps — costs 1,360px. Twelve pieces at 96
-# put the kit at 2,512.
+# 133 is not a taste, it is the budget. The target display is 2560x1440,
+# and everything that is not a piece — 8 mics at 30, 10 auxiliaries at
+# 30, 6 folders at 56, and the gaps — costs 912px. Twelve pieces at 133
+# put the kit at 2,508.
 #
 # Deliberately not the 98 that would fill 2560 exactly: a layout with
 # nothing spare loses its last strip to the first scrollbar or border
@@ -257,7 +257,7 @@ MIN_WIDTH = 30
 # Only the RESTING layout has to fit. Opening a strip borrows its extra
 # width off the others rather than adding to the total (`mcp::widths`),
 # so a click cannot break it.
-TONE_WIDTH = 96
+TONE_WIDTH = 133
 
 # A folder is a bus: you read its level and its mute, and it has no
 # close-mic processing of its own to show. `Squeeze::Head` — the pan and
@@ -265,16 +265,22 @@ TONE_WIDTH = 96
 FOLDER_WIDTH = 56
 
 
-# A mic under a piece — `In`, `Out`, `Top`, `Bottom`. REAPER's own
-# strip width, which is `Squeeze::Full`: the name, the pan, the meter,
-# the fader, mute and solo. Everything you do to a mic that is not tone
-# processing, because the tone processing happens on the sum of them.
+# A mic under a piece — `In`, `Out`, `Top`, `Bottom`. The MINIMUM.
 #
-# These are emphatically not minimum width. Balancing the In against the
-# Out IS the mixing move at this level, and a strip you cannot grab the
-# fader of is not a strip you can do it on. They open usable and expand
-# to a full rack when selected — see `SELECTED_WIDTH` in `mcp.rs`.
-MIC_WIDTH = 86
+# This was 86, REAPER's own, on the argument that balancing the In
+# against the Out is the mixing move at that level and you need a fader
+# you can grab. Both halves of that are still true; what changed is what
+# it costs. The kit's eight mics at 86 spend 448 pixels, and split
+# twelve ways that is 37 off every piece's rack — the racks went from
+# 133 to 96 to pay for mic strips that mostly sit there.
+#
+# So the mics rest at the minimum and open when you click one. A 30-wide
+# strip keeps its fader, its mute, its solo and its name and loses the
+# pan, the meter, the scale and the arm; selecting it borrows the width
+# back from its neighbours and gives it a full rack. The overview is the
+# resting state and the detail is one click, which is the same trade the
+# whole layout is built on.
+MIC_WIDTH = 30
 
 
 def strip_width(name: str, is_folder: bool, piece: bool) -> int:

@@ -56,6 +56,34 @@ const _: () = assert!(
 /// The gap between strips, so two adjacent ones read as two.
 pub const STRIP_GAP: f64 = 1.0;
 
+/// The colour a folder writes along the bottom of its children.
+///
+/// The track's own colour, not `row_tint`'s. That one mixes a few per
+/// cent of the colour into the panel's grey — right for a strip body,
+/// where the colour is a hint behind controls you are reading — and
+/// hopeless for a twelve-pixel band whose ENTIRE job is to be
+/// identifiable at a glance across half a screen.
+///
+/// Still short of the raw colour: pulled toward the panel so a row of
+/// bands reads as part of the mixer rather than as a stripe of paint
+/// across the bottom of it.
+fn folder_band(palette: &Palette, track: &Track) -> Color {
+    /// How far toward the track's own colour the band goes.
+    const STRENGTH: f32 = 0.62;
+    if track.color.is_none() {
+        return palette.tcp_gutter;
+    }
+    let raw = crate::tcp::track_color(palette, track);
+    let [br, bg, bb, _] = raw.components;
+    let [ar, ag, ab, aa] = palette.tcp_tint.components;
+    Color::new([
+        (br - ar).mul_add(STRENGTH, ar),
+        (bg - ag).mul_add(STRENGTH, ag),
+        (bb - ab).mul_add(STRENGTH, ab),
+        aa,
+    ])
+}
+
 /// How much shorter each level of nesting makes a strip.
 ///
 /// Folder depth reads off the BOTTOM of the mixer: strips share a top
@@ -246,9 +274,19 @@ impl Mixer {
         // borrows from the others rather than adding to the total.
         let widths = widths(rows, layout, tone);
 
+        // The tint of the folder open at each depth, so a strip can
+        // draw the colours of everything it sits inside.
+        let mut lineage: Vec<Color> = Vec::new();
+
         let mut x = 0.0_f64;
         for (ordinal, (track, depth)) in rows.iter().enumerate() {
             let depth = usize::try_from(*depth).unwrap_or(0);
+            // Everything this track is inside, outermost first. A folder
+            // closing simply means the next track is shallower, so the
+            // truncate IS the close — no bookkeeping of ends needed.
+            lineage.truncate(depth);
+            let ancestors = lineage.clone();
+            lineage.push(folder_band(palette, track));
             let from = u32::try_from(strips.commands.len()).unwrap_or(u32::MAX);
             offsets.push(x);
             let w = widths.get(ordinal).copied().unwrap_or(layout.strip);
@@ -268,6 +306,7 @@ impl Mixer {
                     rack_h,
                 },
                 ordinal,
+                &ancestors,
             );
             index.push(from..u32::try_from(strips.commands.len()).unwrap_or(u32::MAX));
             x += w + STRIP_GAP;
@@ -517,6 +556,7 @@ fn strip(
     track: &Track,
     slot: Slot,
     index: usize,
+    ancestors: &[Color],
 ) {
     let Slot {
         x,
@@ -534,6 +574,40 @@ fn strip(
 
     // The strip's ground, and the track's colour as a band across it.
     fill(scene, palette.tcp_tint, Rect::new(x, 0.0, x + w, h));
+
+    // ── The folders this strip sits inside ──
+    //
+    // Nesting shortens a strip from the bottom, which leaves a
+    // staircase of empty space under it — one step per level. Those
+    // steps are exactly the shape of the tree, so they carry the
+    // colours of the tree: the step immediately under a strip is its
+    // parent, the step under that its grandparent, and the bottom step
+    // is the outermost folder.
+    //
+    // Every child of a folder puts that folder's colour at the same y,
+    // so the steps join up across the children into one unbroken band —
+    // the folder's strip CONTINUING along the bottom of everything it
+    // contains, which is how you see what a track is part of without
+    // counting indents back to the left.
+    //
+    // Bare, the staircase said only "this one is deeper than that one".
+    // The strip was shortened by one step per level, so the mixer's
+    // full height is this strip's plus the steps under it. `ancestors`
+    // has exactly one entry per level, which is what makes that true.
+    let full = h + crate::num::coord(ancestors.len()) * INDENT_STEP;
+    for (level, tint) in ancestors.iter().enumerate() {
+        // Level 0 is the OUTERMOST folder, so it sits on the floor; the
+        // last is the immediate parent and sits right under the strip.
+        //
+        // Which is not just an ordering preference — it is what makes
+        // the band continuous. A folder's own strip ends one step above
+        // its children's, so the band carrying its colour has to run
+        // from the child's bottom down to its own, and that is
+        // `level + 1` steps off the floor.
+        let from_floor = crate::num::coord(level + 1);
+        let top = full - from_floor * INDENT_STEP;
+        fill(scene, *tint, Rect::new(x, top, x + w, top + INDENT_STEP));
+    }
 
     // The selected strip says so.
     //
@@ -1077,14 +1151,39 @@ fn bottom(
         bottom + plate / 2.0 + 4.0,
         11.0,
     );
+    // The number sits on the track's own colour, in a band exactly one
+    // indent step tall.
+    //
+    // That height is the whole point and not a detail. A folder's strip
+    // ends one step above its children's, and its children each draw a
+    // step of its colour under themselves — so if the folder's own
+    // colour band is a different height, its line sits at a different
+    // level from the line continuing across everything it contains, and
+    // the two read as unrelated marks that happen to share a hue.
+    //
+    // At one step they are the same line. A red Drum Kit puts red under
+    // its number, and that red runs unbroken along the floor beneath
+    // every track inside it.
+    let number_h = INDENT_STEP;
+    let number_top = h - number_h;
+    if number_top > bottom + plate - number_h {
+        fill(
+            scene,
+            folder_band(palette, track),
+            Rect::new(x, number_top, x + w, h),
+        );
+    }
     crate::tcp::glyphs(
         scene,
         font,
-        palette.text_faint,
+        // Against a colour now rather than the panel, so the faintest
+        // ink in the palette no longer reads — a number you cannot make
+        // out is the same as no number.
+        palette.text_dim,
         &track.index.saturating_add(1).to_string(),
         x + 5.0,
-        bottom + plate + 14.0,
-        10.0,
+        h - 3.0,
+        9.0,
     );
 }
 
@@ -1413,6 +1512,65 @@ mod column_tests {
                 assert!(edge <= right + 0.01, "{name} runs past the strip at width {w}: {edge} > {right}");
             }
             assert!(c.scale_x >= 10.0 && c.fader_x >= 10.0 && c.column_x >= 10.0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod folder_band_tests {
+    use super::INDENT_STEP;
+
+    /// A folder's own colour band and the band its children draw for it
+    /// must occupy the same pixels, or the "line" is two lines.
+    ///
+    /// The folder's band is the last [`INDENT_STEP`] of ITS strip; the
+    /// child draws the folder's step `level + 1` off the floor. This is
+    /// the arithmetic that makes those the same range — get it wrong by
+    /// the difference between the band height and the indent step and
+    /// the stripes look almost right, which is worse than obviously
+    /// wrong because nobody reports it.
+    #[test]
+    fn a_folders_band_lines_up_with_its_childrens() {
+        const FULL: f64 = 460.0;
+        for folder_depth in 0..4_usize {
+            // The folder's own strip, and its number band at the foot.
+            let folder_h = FULL - folder_depth as f64 * INDENT_STEP;
+            let folder_band = (folder_h - INDENT_STEP, folder_h);
+
+            // A child one level deeper: the folder is the LAST of its
+            // ancestors, so `level` is the folder's own depth.
+            let child_depth = folder_depth + 1;
+            let child_h = FULL - child_depth as f64 * INDENT_STEP;
+            let ancestors = child_depth; // one entry per level above it
+            let full_from_child = child_h + ancestors as f64 * INDENT_STEP;
+            let from_floor = (folder_depth + 1) as f64;
+            let top = full_from_child - from_floor * INDENT_STEP;
+            let child_draws = (top, top + INDENT_STEP);
+
+            assert!(
+                (folder_band.0 - child_draws.0).abs() < 1e-9
+                    && (folder_band.1 - child_draws.1).abs() < 1e-9,
+                "depth {folder_depth}: folder's band {folder_band:?} but children draw it at {child_draws:?}"
+            );
+        }
+    }
+
+    /// And a grandchild puts it in the same place as a child does — the
+    /// line is continuous across every level below the folder, not just
+    /// the one immediately under it.
+    #[test]
+    fn the_line_survives_deeper_nesting() {
+        const FULL: f64 = 460.0;
+        let folder_depth = 1_usize;
+        let expected = FULL - (folder_depth + 1) as f64 * INDENT_STEP;
+        for descendant_depth in (folder_depth + 1)..5 {
+            let h = FULL - descendant_depth as f64 * INDENT_STEP;
+            let full = h + descendant_depth as f64 * INDENT_STEP;
+            let top = full - (folder_depth + 1) as f64 * INDENT_STEP;
+            assert!(
+                (top - expected).abs() < 1e-9,
+                "a descendant at depth {descendant_depth} drew the folder's line at {top}, not {expected}"
+            );
         }
     }
 }
