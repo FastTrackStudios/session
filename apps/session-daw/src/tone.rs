@@ -154,13 +154,11 @@ pub const LEGIBLE: f64 = 150.0;
 /// mixer moves under you at the moment you click a track, which is
 /// exactly when it must not.
 ///
-/// 185 rather than 195 because of what the expansion costs. The kit is
-/// laid out to fit a 16:9 screen at rest, and a selected strip is up to
-/// 155 pixels wider than the auxiliary it replaces — so the fit has to
-/// hold for the WORST selection, not the resting layout. At 195 the kit
-/// rested at 3,724 and a selected Trig took it to 3,889: over a 3840
-/// display by 49, with one strip sliced down the middle.
-pub const WORKING: f64 = 185.0;
+/// It does not have to be paid for twice. An opened strip BORROWS its
+/// extra width from the others rather than adding to the total — see
+/// `mcp::widths` — so this is bounded by what the resting layout can
+/// afford, not by what the worst selection would cost on top of it.
+pub const WORKING: f64 = 195.0;
 
 /// Where the rack goes.
 #[derive(Clone, Copy, Debug)]

@@ -235,24 +235,23 @@ MIN_WIDTH = 30
 # width a selected strip opens to, so that selecting a piece does not
 # resize it and shove every strip to its right.
 #
-# The number is chosen so the WHOLE KIT fits one 16:9 screen — and it is
-# chosen against the WORST case, not the resting one. A selected strip
-# expands, so the fit has to survive a selection: the widest thing that
-# can happen is selecting an auxiliary, which goes from 30 to 185.
+# The number is chosen so the WHOLE KIT fits one 16:9 screen: 36 strips
+# at 3,724px, inside 3840 with 116 to spare.
 #
-#     resting                 3,604
-#     worst-case selection    3,759   (an auxiliary opened)
+# Only the RESTING layout has to fit. Opening a strip borrows its extra
+# width off the other strips rather than adding to the total (see
+# `mcp::widths`), so the mixer is the same width selected or not and a
+# click cannot break the fit.
 #
-# both inside 3840, with 81 pixels spare. At 195 the resting layout fit
-# and a selected Trig took it to 3,889 — over by 49, one strip sliced
-# down the middle. A fit that only holds until you click something is
-# not a fit.
+# It was 185 for exactly one commit, while opening a strip still grew
+# the mixer and the layout had to reserve room for the worst selection.
+# Borrowing removed the reserve, which is 10px back on every piece.
 #
 # That is the test a channel strip with the processing in it has to
 # pass. A kit you can see all of at once is one you mix by comparison; a
 # kit you scroll is one you mix by memory, which is what opening plugin
 # windows one at a time already forces.
-TONE_WIDTH = 185
+TONE_WIDTH = 195
 
 # A folder is a bus: you read its level and its mute, and it has no
 # close-mic processing of its own to show. `Squeeze::Head` — the pan and
@@ -307,8 +306,9 @@ def check_the_kit_fits(tracks) -> None:
     fixture that silently stopped fitting would look like a renderer bug
     the next time someone took a screenshot.
 
-    Checked against the WORST selection rather than the resting layout,
-    because a selected strip expands — see `TONE_WIDTH`.
+    The resting layout is the whole check: opening a strip borrows its
+    width from the others rather than adding to the total, so the mixer
+    is the same width whatever is selected.
     """
     kit = []
     for track in tracks:
@@ -321,17 +321,15 @@ def check_the_kit_fits(tracks) -> None:
 
     widths = [strip_width(name, folder, piece) for name, _, _, folder, piece in kit]
     resting = sum(w + 1 for w in widths)
-    worst = max(resting - w + max(w, TONE_WIDTH) for w in widths)
-    if worst > FITS_WIDTH:
+    if resting > FITS_WIDTH:
         raise SystemExit(
-            f"the drum kit no longer fits {FITS_WIDTH}: {len(kit)} strips rest at "
-            f"{resting}px and reach {worst}px with the widest selection open "
-            f"({worst - FITS_WIDTH}px over). Lower TONE_WIDTH — and lower "
-            f"tone::WORKING with it, they must match."
+            f"the drum kit no longer fits {FITS_WIDTH}: {len(kit)} strips come to "
+            f"{resting}px, {resting - FITS_WIDTH}px over. Lower TONE_WIDTH — and "
+            f"lower tone::WORKING with it, they must match."
         )
     print(
-        f"drum kit: {len(kit)} strips, {resting}px resting, "
-        f"{worst}px worst-case selection, {FITS_WIDTH - worst}px spare",
+        f"drum kit: {len(kit)} strips, {resting}px, "
+        f"{FITS_WIDTH - resting}px spare (unchanged by selection)",
         file=sys.stderr,
     )
 

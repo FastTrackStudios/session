@@ -216,12 +216,16 @@ impl Mixer {
         let mut strips = Scene::new();
         let mut index = Vec::with_capacity(rows.len());
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
+        // Every strip's width, resolved together — an opened strip
+        // borrows from the others rather than adding to the total.
+        let widths = widths(rows, layout, tone);
+
         let mut x = 0.0_f64;
         for (ordinal, (track, depth)) in rows.iter().enumerate() {
             let depth = usize::try_from(*depth).unwrap_or(0);
             let from = u32::try_from(strips.commands.len()).unwrap_or(u32::MAX);
             offsets.push(x);
-            let w = opened(layout.width_of(track.width), track.selected, tone);
+            let w = widths.get(ordinal).copied().unwrap_or(layout.strip);
             // Nesting shortens the strip from the BOTTOM, so the tops
             // stay level and the bottoms staircase.
             let strip_h = (height - crate::num::coord(depth) * INDENT_STEP).max(1.0);
@@ -343,25 +347,107 @@ struct Slot {
 /// with the processing in it is that you can still MIX on it.
 const RACK_SHARE: f64 = 0.46;
 
-/// How wide a strip opens while it is SELECTED.
+/// Every strip's width, with the selected ones opened.
 ///
 /// The mics of a piece — a kick's In and Out, a snare's Top and Bottom
 /// — are stored narrow, because the tone processing lives on the sum of
 /// them and spending a rack's width on each mic would push the kit off
 /// the screen. But they are not tracks you never touch: balancing the
 /// In against the Out is the mixing move at that level, and sometimes
-/// the move is to EQ one of them.
+/// the move is to EQ one of them. So selection is the zoom.
 ///
-/// So selection is the zoom. A strip you are working on opens to a
-/// working width and closes again when you move on, which means the
-/// session can be laid out for the OVERVIEW and still let you go into
-/// any one track without re-laying it out.
-fn opened(width: f64, selected: bool, tone: bool) -> f64 {
-    if tone && selected {
-        width.max(crate::tone::WORKING)
-    } else {
-        width
+/// # An opened strip BORROWS its width
+///
+/// The extra width does not come from nowhere — it is taken off the
+/// other strips, in proportion to how much each has to spare. **The
+/// mixer's total width is unchanged by opening a strip.**
+///
+/// That is the property worth having. The alternative is to let the
+/// mixer grow and reserve enough screen for the worst case, which
+/// means laying the session out smaller than it needs to be all the
+/// time to pay for a zoom you use occasionally — and it still breaks
+/// the moment the session is one track bigger than the reserve
+/// assumed. Borrowing costs the other strips about four pixels each
+/// across a drum kit, which is invisible, and it cannot overflow
+/// because there is nothing to overflow WITH.
+///
+/// Each strip lends in proportion to its headroom above the floor, so a
+/// strip already at its minimum lends nothing and no strip is pushed
+/// below what its controls need. If the others cannot cover the whole
+/// ask, the opened strip gets what there was: the rack then opens to
+/// whatever tier that width supports, which is the same graceful path
+/// every other width takes.
+fn widths(
+    rows: &RowsRef,
+    layout: crate::layout::Layout,
+    tone: bool,
+) -> Vec<f64> {
+    let mut widths: Vec<f64> = rows
+        .iter()
+        .map(|(track, _)| layout.width_of(track.width))
+        .collect();
+    if !tone {
+        return widths;
     }
+
+    let open: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, (track, _))| track.selected)
+        .map(|(i, _)| i)
+        .collect();
+    if open.is_empty() {
+        return widths;
+    }
+
+    // What the opened strips want, and what the rest can lend.
+    let asked: f64 = open
+        .iter()
+        .filter_map(|i| widths.get(*i))
+        .map(|w| (crate::tone::WORKING - w).max(0.0))
+        .sum();
+    if asked <= 0.0 {
+        return widths;
+    }
+    let headroom: Vec<f64> = widths
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            if open.contains(&i) {
+                0.0
+            } else {
+                (w - layout.strip_min).max(0.0)
+            }
+        })
+        .collect();
+    let lent: f64 = headroom.iter().sum();
+    let taken = asked.min(lent);
+    if taken <= 0.0 {
+        return widths;
+    }
+
+    // Proportional to headroom, so nobody is pushed under their floor:
+    // a strip lends at most `taken/lent` of what it had spare, and
+    // `taken <= lent`.
+    for (i, width) in widths.iter_mut().enumerate() {
+        if let Some(spare) = headroom.get(i) {
+            *width -= taken * spare / lent;
+        }
+    }
+    // The openers split what was actually raised, in proportion to what
+    // each asked for — so two selected strips both open part way rather
+    // than the first taking everything and the second getting nothing.
+    //
+    // Their own widths are untouched by the loop above (their headroom
+    // is zero), so each ask is still the one `asked` was summed from.
+    for i in &open {
+        let Some(width) = widths.get_mut(*i) else {
+            continue;
+        };
+        let want = (crate::tone::WORKING - *width).max(0.0);
+        *width += taken * want / asked;
+    }
+    widths
 }
 
 /// How thick the selected strip's top rule is.
@@ -859,31 +945,167 @@ fn fill(scene: &mut Scene, color: Color, rect: Rect) {
 
 #[cfg(test)]
 mod selection_tests {
-    use super::opened;
+    use super::widths;
+    use crate::layout::Layout;
+    use daw_proto::Track;
+    use daw_ui::studio::RowsRef;
 
-    /// A mic is stored narrow and opens to a working width when you
-    /// select it — the whole point of laying the session out for the
-    /// overview and still being able to go into one track.
-    #[test]
-    fn selecting_a_mic_opens_it() {
-        let mic = 86.0;
-        assert!((opened(mic, false, true) - mic).abs() < f64::EPSILON);
-        assert!(opened(mic, true, true) >= crate::tone::LEGIBLE);
+    /// `stored` widths, with the strip at `select` selected.
+    fn rows(stored: &[u32], select: Option<usize>) -> RowsRef {
+        RowsRef(std::sync::Arc::new(
+            stored
+                .iter()
+                .enumerate()
+                .map(|(i, w)| {
+                    (
+                        Track {
+                            guid: format!("t{i}"),
+                            width: Some(*w),
+                            selected: select == Some(i),
+                            ..Track::default()
+                        },
+                        0,
+                    )
+                })
+                .collect(),
+        ))
     }
 
-    /// A piece is stored at exactly the width selection opens to, so
-    /// selecting it must not make it jump — in either direction. A
-    /// strip that resized when you clicked it would move every strip to
-    /// its right, which is the one thing a mixer must not do while you
-    /// are comparing tracks.
-    #[test]
-    fn selecting_a_piece_changes_nothing() {
-        let piece = crate::tone::WORKING;
-        assert!((opened(piece, true, true) - piece).abs() < f64::EPSILON);
+    fn total(widths: &[f64]) -> f64 {
+        widths.iter().sum()
     }
 
-    /// And what selection opens to is legible — the two constants are
-    /// set independently and nothing else would catch them crossing.
+    /// The claim the whole design rests on: opening a strip does not
+    /// make the mixer wider. If the kit fitted the screen before the
+    /// click, it fits after it.
+    #[test]
+    fn opening_a_strip_does_not_widen_the_mixer() {
+        let stored = [60, 195, 86, 86, 30, 30, 195, 195, 60, 86];
+        let layout = Layout::default();
+        let shut = widths(&rows(&stored, None), layout, true);
+        let open = widths(&rows(&stored, Some(2)), layout, true);
+
+        assert!(
+            (total(&shut) - total(&open)).abs() < 1e-9,
+            "the total moved: {} -> {}",
+            total(&shut),
+            total(&open)
+        );
+    }
+
+    /// And the strip you opened actually opened.
+    #[test]
+    fn the_opened_strip_reaches_the_working_width() {
+        let stored = [60, 195, 86, 86, 30, 30, 195, 195, 60, 86];
+        let open = widths(&rows(&stored, Some(2)), Layout::default(), true);
+        assert!(
+            (open[2] - crate::tone::WORKING).abs() < 1e-9,
+            "wanted {}, got {}",
+            crate::tone::WORKING,
+            open[2]
+        );
+    }
+
+    /// Everyone else gives up a little, and nobody is pushed under the
+    /// floor their controls need.
+    #[test]
+    fn the_others_lend_from_their_headroom() {
+        let stored = [60, 195, 86, 86, 30, 30, 195, 195, 60, 86];
+        let layout = Layout::default();
+        let open = widths(&rows(&stored, Some(2)), layout, true);
+
+        for (i, width) in open.iter().enumerate() {
+            assert!(
+                *width >= layout.strip_min - 1e-9,
+                "strip {i} fell to {width}, under the floor of {}",
+                layout.strip_min
+            );
+        }
+        // A strip already AT the floor has nothing to lend and keeps
+        // every pixel: lending is proportional to headroom.
+        assert!((open[4] - 30.0).abs() < 1e-9, "a floor strip lent: {}", open[4]);
+        assert!(open[1] < 195.0, "a wide strip should have lent");
+    }
+
+    /// A piece is stored at the width selection opens to, so selecting
+    /// one is a no-op — nothing moves under you when you click a track
+    /// that is already open.
+    #[test]
+    fn selecting_an_already_open_strip_changes_nothing() {
+        let stored = [60, 195, 86, 86, 30];
+        let layout = Layout::default();
+        let shut = widths(&rows(&stored, None), layout, true);
+        let open = widths(&rows(&stored, Some(1)), layout, true);
+        assert_eq!(shut, open);
+    }
+
+    /// When the others cannot cover the ask, the opened strip takes
+    /// what there was rather than overdrawing — the rack then opens to
+    /// whatever tier that width supports.
+    #[test]
+    fn an_ask_larger_than_the_headroom_is_capped() {
+        // Three strips at the floor have nothing to lend.
+        let stored = [30, 30, 30];
+        let layout = Layout::default();
+        let shut = widths(&rows(&stored, None), layout, true);
+        let open = widths(&rows(&stored, Some(0)), layout, true);
+        assert!((total(&shut) - total(&open)).abs() < 1e-9);
+        assert!(
+            (open[0] - 30.0).abs() < 1e-9,
+            "nothing could be lent, so nothing should have moved: {:?}",
+            open
+        );
+    }
+
+    /// Two selected strips both open part way rather than the first
+    /// taking everything.
+    #[test]
+    fn two_open_strips_share_what_is_raised() {
+        let stored = [30, 30, 86, 86];
+        let layout = Layout::default();
+        let open = widths(&rows(&stored, Some(0)), layout, true);
+        let both = {
+            let rows = RowsRef(std::sync::Arc::new(
+                stored
+                    .iter()
+                    .enumerate()
+                    .map(|(i, w)| {
+                        (
+                            Track {
+                                guid: format!("t{i}"),
+                                width: Some(*w),
+                                selected: i < 2,
+                                ..Track::default()
+                            },
+                            0,
+                        )
+                    })
+                    .collect(),
+            ));
+            widths(&rows, layout, true)
+        };
+        assert!((total(&open) - total(&both)).abs() < 1e-9);
+        assert!(
+            both[0] > 30.0 && both[1] > 30.0,
+            "both should have opened: {both:?}"
+        );
+        assert!(
+            both[0] < open[0],
+            "sharing means each gets less than one alone would"
+        );
+    }
+
+    /// Outside the Tone sub-mode selection is not a zoom at all.
+    #[test]
+    fn selection_only_opens_in_tone() {
+        let stored = [60, 86, 86];
+        let layout = Layout::default();
+        let plain = widths(&rows(&stored, Some(1)), layout, false);
+        assert_eq!(plain, vec![60.0, 86.0, 86.0]);
+    }
+
+    /// What selection opens to is legible — the two constants are set
+    /// independently and nothing else would catch them crossing.
     #[test]
     fn an_opened_strip_is_legible() {
         assert!(crate::tone::WORKING >= crate::tone::LEGIBLE);
@@ -891,11 +1113,5 @@ mod selection_tests {
             crate::tone::Rack::at(crate::tone::WORKING),
             crate::tone::Rack::Full
         );
-    }
-
-    /// And outside the Tone sub-mode selection is not a zoom at all.
-    #[test]
-    fn selection_only_opens_in_tone() {
-        assert!((opened(86.0, true, false) - 86.0).abs() < f64::EPSILON);
     }
 }

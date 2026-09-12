@@ -382,10 +382,15 @@ fn mixer_shot(
     image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
         .expect("write the frame");
     println!(
-        "  wrote {} — {} strips, {} deep, {} commands submitted",
+        // The content width is reported because opening a strip must
+        // not change it: an opened strip borrows from the others. Two
+        // shots of the same project, one with a selection and one
+        // without, must print the same number.
+        "  wrote {} — {} strips, {} deep, {:.0}px wide, {} commands submitted",
         out.display(),
         mixer.count,
         mixer.depth,
+        mixer.content_width(),
         counts.submitted,
     );
 }
