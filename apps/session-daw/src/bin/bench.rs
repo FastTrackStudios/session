@@ -352,7 +352,10 @@ fn mixer_shot(
         .and_then(|v| v.split(',').next()?.trim().parse().ok())
         .unwrap_or(0.0);
 
-    let mixer = Mixer::build(palette, font, &project, &rows, f64::from(height), layout);
+    // The Tone rack, which is a mix sub-mode rather than a permanent
+    // fixture — so the shot asks for it explicitly.
+    let tone = std::env::var("FTS_BENCH_TONE").is_ok();
+    let mixer = Mixer::build(palette, font, &project, &rows, f64::from(height), layout, tone);
 
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();

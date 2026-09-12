@@ -196,6 +196,44 @@ def flatten(nodes, depth=0, out=None):
 # number has to be ours too.
 MIN_WIDTH = 30
 
+# A strip wide enough to hold the Tone rack — `tone::Rack::Full`, which
+# wants 150 before a decade of frequency reads as a decade.
+#
+# 195 is chosen so the WHOLE KIT fits across one 16:9 screen. The drum
+# tree below is 36 strips — 13 tone, 12 folders, 11 auxiliaries — which
+# at these widths comes to 3,791 pixels: inside a 3840 display with room
+# to spare, and comfortable on the 5120-wide one.
+#
+# That is the test a channel strip with the processing in it has to
+# pass. A kit you can see all of at once is one you can mix by
+# comparison; a kit you scroll is one you mix by memory, which is what
+# opening plugin windows one at a time already forces.
+#
+# Worth keeping honest: 200 put the kit at 3,856 and missed a 4K display
+# by sixteen pixels, which is exactly the kind of near-miss that makes a
+# feature feel broken rather than tight.
+TONE_WIDTH = 195
+
+# A folder is a bus: you read its level and its mute, and it has no
+# close-mic processing of its own to show. `Squeeze::Head` — the pan and
+# the meter beside the fader, no button column.
+FOLDER_WIDTH = 60
+
+
+def strip_width(name: str, is_folder: bool) -> int:
+    """How wide this track's mixer strip opens.
+
+    The same judgement `is_auxiliary` makes about height, applied to
+    width and with one more tier: a track you MIX gets room for its
+    processing, a track you route gets room for its level, and a track
+    you only need present gets neither.
+    """
+    if is_auxiliary(name):
+        return MIN_WIDTH
+    if is_folder:
+        return FOLDER_WIDTH
+    return TONE_WIDTH
+
 
 def main() -> None:
     tracks = flatten(TREE)
@@ -211,9 +249,8 @@ def main() -> None:
     # open at the minimum WIDTH in the mixer: a trigger needs the same
     # amount of attention in both views, which is very little.
     narrow = [
-        f"{g}={MIN_WIDTH}"
-        for g, (name, _, _, _) in zip(guids, tracks)
-        if is_auxiliary(name)
+        f"{g}={strip_width(name, is_folder)}"
+        for g, (name, _, _, is_folder) in zip(guids, tracks)
     ]
     if narrow:
         out("  <EXTSTATE\n    <FTSMCP\n")

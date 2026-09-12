@@ -333,6 +333,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "anymap3"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb5dfbc6d8d2675589ccbe4d0fd61df2419075625f8c1a62325e718e2b0049f9"
+
+[[package]]
 name = "anyrender"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -608,9 +614,28 @@ dependencies = [
 [[package]]
 name = "architect-story-core"
 version = "0.1.0"
+source = "git+https://github.com/FastTrackStudios/architect?tag=v0.0.2#e2ae8f54bf9cb8a2a6ab7f5ba06260f90edbb12f"
+dependencies = [
+ "linkme",
+]
+
+[[package]]
+name = "architect-story-core"
+version = "0.1.0"
 source = "git+https://github.com/FastTrackStudios/architect?tag=v0.7.1#869621eb4a920f80ed6709b36324d1acde171470"
 dependencies = [
  "linkme",
+]
+
+[[package]]
+name = "architect-story-macros"
+version = "0.1.0"
+source = "git+https://github.com/FastTrackStudios/architect?tag=v0.0.2#e2ae8f54bf9cb8a2a6ab7f5ba06260f90edbb12f"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -627,10 +652,21 @@ dependencies = [
 [[package]]
 name = "architect-story-runtime"
 version = "0.1.0"
+source = "git+https://github.com/FastTrackStudios/architect?tag=v0.0.2#e2ae8f54bf9cb8a2a6ab7f5ba06260f90edbb12f"
+dependencies = [
+ "architect-story-core 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.0.2)",
+ "architect-story-macros 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.0.2)",
+ "dioxus",
+ "linkme",
+]
+
+[[package]]
+name = "architect-story-runtime"
+version = "0.1.0"
 source = "git+https://github.com/FastTrackStudios/architect?tag=v0.7.1#869621eb4a920f80ed6709b36324d1acde171470"
 dependencies = [
- "architect-story-core",
- "architect-story-macros",
+ "architect-story-core 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
+ "architect-story-macros 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
  "dioxus",
  "linkme",
 ]
@@ -654,9 +690,28 @@ dependencies = [
 [[package]]
 name = "architect-ui"
 version = "0.1.0"
+source = "git+https://github.com/FastTrackStudios/architect?tag=v0.0.2#e2ae8f54bf9cb8a2a6ab7f5ba06260f90edbb12f"
+dependencies = [
+ "architect-story-runtime 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.0.2)",
+ "chrono",
+ "clsx",
+ "dioxus",
+ "dioxus-primitives",
+ "linkme",
+ "lucide-dioxus",
+ "nucleo-matcher",
+ "palette",
+ "time",
+ "tracing",
+ "tw_merge",
+]
+
+[[package]]
+name = "architect-ui"
+version = "0.1.0"
 source = "git+https://github.com/FastTrackStudios/architect?tag=v0.7.1#869621eb4a920f80ed6709b36324d1acde171470"
 dependencies = [
- "architect-story-runtime",
+ "architect-story-runtime 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
  "chrono",
  "clsx",
  "dioxus",
@@ -977,6 +1032,12 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
+name = "atomic_float"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "628d228f918ac3b82fe590352cc719d30664a0c13ca3a60266fe02c7132d480a"
 
 [[package]]
 name = "atomic_refcell"
@@ -1794,7 +1855,7 @@ dependencies = [
 name = "chord-tool"
 version = "0.1.0"
 dependencies = [
- "architect-ui",
+ "architect-ui 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
  "dioxus",
  "keyflow",
  "tracing",
@@ -1893,6 +1954,12 @@ dependencies = [
  "clap_builder",
  "clap_derive",
 ]
+
+[[package]]
+name = "clap-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a76abbdb2907f6fd97fb6bc0b7be96b77d328f2dd9669d1075cc03369ed22154"
 
 [[package]]
 name = "clap_builder"
@@ -2096,6 +2163,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "com-scrape-types"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ce183b975b8fc736a20919c4002717255fbd867df575c792aeefa9a56a73ad0"
+
+[[package]]
 name = "combine"
 version = "4.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2103,6 +2176,33 @@ checksum = "cfc320937d09e6de266b31b9afb480f197d7a861be86be7cb2ea7e5d1bfffc5e"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "comp-dsp"
+version = "0.1.0"
+dependencies = [
+ "audiocore-dsp",
+ "dsp-core",
+]
+
+[[package]]
+name = "comp-profiles"
+version = "0.1.0"
+dependencies = [
+ "comp-dsp",
+ "eq-profiles",
+]
+
+[[package]]
+name = "comp-ui"
+version = "0.1.0"
+dependencies = [
+ "comp-profiles",
+ "dioxus",
+ "fts-audio-ui",
+ "musical-time",
+ "musical-time-ui",
 ]
 
 [[package]]
@@ -3234,7 +3334,7 @@ name = "daw-ui"
 version = "0.1.0"
 dependencies = [
  "architect 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
- "architect-ui",
+ "architect-ui 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
  "daw-control",
  "daw-module",
  "daw-proto",
@@ -4465,6 +4565,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
+name = "dsp-core"
+version = "0.1.0"
+
+[[package]]
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4739,6 +4843,32 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "eq-dsp"
+version = "0.1.0"
+dependencies = [
+ "audiocore-dsp",
+ "dsp-core",
+ "realfft",
+ "smallvec 1.16.0",
+]
+
+[[package]]
+name = "eq-profiles"
+version = "0.1.0"
+
+[[package]]
+name = "eq-ui"
+version = "0.1.0"
+dependencies = [
+ "blitz-dom",
+ "dioxus",
+ "eq-dsp",
+ "fts-audio-ui",
+ "parking_lot",
+ "spectrum-analyzer",
 ]
 
 [[package]]
@@ -5546,6 +5676,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8878864ba14bb86e818a412bfd6f18f9eabd4ec0f008a28e8f7eb61db532fcf9"
 dependencies = [
  "futures-core",
+]
+
+[[package]]
+name = "fts-audio-ui"
+version = "0.1.0"
+dependencies = [
+ "anyrender",
+ "architect-ui 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.0.2)",
+ "blitz-dom",
+ "dioxus",
+ "dioxus-native-dom",
+ "kurbo 0.13.1",
+ "peniko 0.6.1",
+ "tracing",
 ]
 
 [[package]]
@@ -7150,7 +7294,7 @@ dependencies = [
 name = "input-dioxus"
 version = "0.1.0"
 dependencies = [
- "architect-ui",
+ "architect-ui 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
  "dioxus",
  "gloo-timers",
  "input",
@@ -8533,6 +8677,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "midi-consts"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f2dd5c7f8aaf48a76e389068ab25ed80bdbc226b887f9013844c415698c9952"
+
+[[package]]
 name = "midicore"
 version = "0.1.0"
 dependencies = [
@@ -8735,6 +8885,22 @@ version = "0.1.0"
 source = "git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3#159958f933deac3619fa476fb047f8c32b761455"
 dependencies = [
  "color-palette 0.1.0 (git+https://github.com/FastTrackStudios/music-convention?tag=v0.1.3)",
+]
+
+[[package]]
+name = "musical-time"
+version = "0.1.0"
+dependencies = [
+ "nice-plug",
+]
+
+[[package]]
+name = "musical-time-ui"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "fts-audio-ui",
+ "musical-time",
 ]
 
 [[package]]
@@ -9057,6 +9223,75 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nice-log"
+version = "0.3.1"
+source = "git+https://github.com/FastTrackStudios/nice-plug.git?branch=fts-baseview-03#b84359f0d2a6ac2df580af41af81288901d1c017"
+dependencies = [
+ "tracing-appender",
+ "windows 0.61.3",
+]
+
+[[package]]
+name = "nice-plug"
+version = "0.3.0"
+source = "git+https://github.com/FastTrackStudios/nice-plug.git?branch=fts-baseview-03#b84359f0d2a6ac2df580af41af81288901d1c017"
+dependencies = [
+ "anyhow",
+ "anymap3",
+ "atomic_float",
+ "atomic_refcell",
+ "backtrace",
+ "clap-sys",
+ "core-foundation 0.10.1",
+ "crossbeam",
+ "fragile",
+ "libc",
+ "nice-log",
+ "nice-plug-core",
+ "nice-plug-derive",
+ "objc2 0.6.4",
+ "parking_lot",
+ "raw-window-handle 0.6.2",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tracing",
+ "tracing-subscriber",
+ "try-lock",
+ "vst3",
+ "widestring",
+ "windows 0.61.3",
+]
+
+[[package]]
+name = "nice-plug-core"
+version = "0.3.0"
+source = "git+https://github.com/FastTrackStudios/nice-plug.git?branch=fts-baseview-03#b84359f0d2a6ac2df580af41af81288901d1c017"
+dependencies = [
+ "atomic_float",
+ "atomic_refcell",
+ "bitflags 2.13.1",
+ "crossbeam-utils",
+ "dpi",
+ "midi-consts",
+ "nice-plug-derive",
+ "parking_lot",
+ "raw-window-handle 0.6.2",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nice-plug-derive"
+version = "0.1.2"
+source = "git+https://github.com/FastTrackStudios/nice-plug.git?branch=fts-baseview-03#b84359f0d2a6ac2df580af41af81288901d1c017"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
 
 [[package]]
 name = "nix"
@@ -12020,6 +12255,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "saturate-dsp"
+version = "0.1.0"
+dependencies = [
+ "dsp-core",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12481,6 +12723,7 @@ dependencies = [
  "adaptive-grid",
  "anyrender",
  "anyrender_vello",
+ "comp-ui",
  "daw",
  "daw-control",
  "daw-proto",
@@ -12488,9 +12731,12 @@ dependencies = [
  "daw-theme-art",
  "daw-ui",
  "dioxus",
+ "eq-ui",
  "eyre",
+ "fts-audio-ui",
  "image",
  "pollster",
+ "saturate-dsp",
  "skrifa 0.42.1",
  "tokio",
  "tracing",
@@ -12619,7 +12865,7 @@ name = "session-ui"
 version = "0.1.0"
 dependencies = [
  "architect 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
- "architect-ui",
+ "architect-ui 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
  "daw",
  "daw-proto",
  "daw-standalone 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
@@ -12658,7 +12904,7 @@ name = "session-web"
 version = "0.1.0"
 dependencies = [
  "architect 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
- "architect-ui",
+ "architect-ui 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
  "console_error_panic_hook",
  "daw",
  "daw-proto",
@@ -13081,6 +13327,23 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps 6.2.2",
+]
+
+[[package]]
+name = "spectrum-analyzer"
+version = "0.1.0"
+dependencies = [
+ "spectrum-analyzer-dsp",
+]
+
+[[package]]
+name = "spectrum-analyzer-dsp"
+version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "parking_lot",
+ "realfft",
+ "rtrb",
 ]
 
 [[package]]
@@ -13574,6 +13837,12 @@ dependencies = [
  "tracing",
  "winapi",
 ]
+
+[[package]]
+name = "symlink"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
 
 [[package]]
 name = "symphonia"
@@ -14510,6 +14779,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-appender"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
+dependencies = [
+ "crossbeam-channel",
+ "symlink",
+ "thiserror 2.0.20",
+ "time",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "tracing-attributes"
 version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15408,6 +15690,15 @@ dependencies = [
  "log",
  "num-traits",
  "num_enum 0.5.11",
+]
+
+[[package]]
+name = "vst3"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e31e3fe7a6f028ded8c5a9984cf283319e6dc63572c9b71da1d4ee9d71d3b6bf"
+dependencies = [
+ "com-scrape-types",
 ]
 
 [[package]]
@@ -17355,6 +17646,14 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "dsp-golden"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "fts-plug-ui"
+version = "0.1.0"
+
+[[patch.unused]]
 name = "baseview"
 version = "0.3.0"
 source = "git+https://github.com/FastTrackStudios/baseview.git?rev=fa0c2c870927ec27138f914c0841f305e9b4972f#fa0c2c870927ec27138f914c0841f305e9b4972f"
@@ -17413,10 +17712,6 @@ name = "fts-audio-proto"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "fts-audio-ui"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "fts-devtools"
 version = "0.1.0"
 
@@ -17430,10 +17725,6 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "fts-modulation"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "fts-plug-ui"
 version = "0.1.0"
 
 [[patch.unused]]

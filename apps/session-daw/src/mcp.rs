@@ -172,6 +172,7 @@ impl Mixer {
         rows: &RowsRef,
         height: f64,
         layout: crate::layout::Layout,
+        tone: bool,
     ) -> Self {
         let depth_seen = rows
             .iter()
@@ -179,8 +180,23 @@ impl Mixer {
             .max()
             .map_or(0, |deepest| deepest.saturating_add(1));
 
-        // One section layout for the whole mixer, resolved against its
-        // FULL height — not against each strip's own.
+        // The Tone rack's height, taken off the top of every strip —
+        // including the ones too narrow to draw one.
+        //
+        // Shared rather than per-strip for the same reason the button
+        // line is: a mixer is read by scanning ACROSS it, and a rack
+        // that started at a different y on each strip would make
+        // "which of these is compressed hardest" a question you answer
+        // one strip at a time. A narrow strip keeps the blank space,
+        // which is the cost of the row staying level.
+        let rack_h = if tone {
+            (height * RACK_SHARE).min(RACK_MAX)
+        } else {
+            0.0
+        };
+
+        // One section layout for the whole mixer, resolved against the
+        // height LEFT OVER — not against each strip's own.
         //
         // Strips are different heights (folder depth shortens them) and
         // different widths, and resolving sections per strip put the
@@ -190,8 +206,9 @@ impl Mixer {
         // needs the button column on one line. The fader gives way
         // instead — it is shorter on a shortened strip, which is the
         // cost of the indent rather than a second inconsistency.
-        let shared = Collapse::at(f64_to_f32(height));
-        let buttons_top = f64::from(daw_theme_art::collapse::FX_SECTION)
+        let shared = Collapse::at(f64_to_f32((height - rack_h).max(1.0)));
+        let buttons_top = rack_h
+            + f64::from(daw_theme_art::collapse::FX_SECTION)
             + f64::from(shared.pan_band)
             + f64::from(shared.input_band)
             + 4.0;
@@ -200,7 +217,7 @@ impl Mixer {
         let mut index = Vec::with_capacity(rows.len());
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         let mut x = 0.0_f64;
-        for (track, depth) in rows.iter() {
+        for (ordinal, (track, depth)) in rows.iter().enumerate() {
             let depth = usize::try_from(*depth).unwrap_or(0);
             let from = u32::try_from(strips.commands.len()).unwrap_or(u32::MAX);
             offsets.push(x);
@@ -218,7 +235,9 @@ impl Mixer {
                     width: w,
                     height: strip_h,
                     buttons_top,
+                    rack_h,
                 },
+                ordinal,
             );
             index.push(from..u32::try_from(strips.commands.len()).unwrap_or(u32::MAX));
             x += w + STRIP_GAP;
@@ -312,23 +331,52 @@ struct Slot {
     height: f64,
     /// The y every strip puts its button column at — see `Mixer::build`.
     buttons_top: f64,
+    /// How much of the top is the Tone rack's; zero when it is off.
+    rack_h: f64,
 }
 
-fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot: Slot) {
+/// How much of a strip the Tone rack takes when it is on.
+///
+/// Not a whole strip and not a corner: the rack has to be big enough
+/// that three stacked curves each read, and the fader and the buttons
+/// below it have to stay usable, because the point of a channel strip
+/// with the processing in it is that you can still MIX on it.
+const RACK_SHARE: f64 = 0.46;
+
+/// And its ceiling, so a tall mixer does not turn into three plots.
+///
+/// Generous, because the fader below it does not need the other half of
+/// a 1440-pixel display to be usable and the curves do need the room:
+/// the EQ panel is the one you make a decision on, and a decision you
+/// squint at is one you get wrong.
+const RACK_MAX: f64 = 600.0;
+
+fn strip(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    track: &Track,
+    slot: Slot,
+    index: usize,
+) {
     let Slot {
         x,
         width: w,
         height: h,
         buttons_top,
+        rack_h,
     } = slot;
     // `Collapse` is written in the f32 the theme's geometry is, and a
     // strip height is a few hundred pixels — exact either way.
-    let shape = Collapse::at(f64_to_f32(h));
+    // Against the height the strip has BELOW the rack, so a strip that
+    // gives half itself to the processing still collapses its remaining
+    // sections the way a half-height strip would.
+    let shape = Collapse::at(f64_to_f32((h - rack_h).max(1.0)));
 
     // The strip's ground, and the track's colour as a band across it.
     fill(scene, palette.tcp_tint, Rect::new(x, 0.0, x + w, h));
 
-    let fx_section = f64::from(daw_theme_art::collapse::FX_SECTION);
+    let fx_section = f64::from(daw_theme_art::collapse::FX_SECTION) + rack_h;
     let pan_band = f64::from(shape.pan_band);
     let input_band = f64::from(shape.input_band);
     let stretch_h = f64::from(shape.stretch);
@@ -351,6 +399,26 @@ fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot:
         );
     }
 
+    // ── The Tone rack ──
+    //
+    // Between the FX pill and the coloured band: the processing sits
+    // above the track's identity, which is the order you read a strip
+    // in when you are mixing rather than navigating.
+    if rack_h > 0.0 {
+        crate::tone::record(
+            scene,
+            palette,
+            font,
+            &crate::tone::placeholder(index),
+            crate::tone::Panel {
+                x: x + 2.0,
+                y: f64::from(daw_theme_art::collapse::FX_SECTION),
+                width: (w - 4.0).max(0.0),
+                height: rack_h - 2.0,
+            },
+        );
+    }
+
     let band_top = fx_section;
     tinted_band(
         scene,
@@ -362,6 +430,7 @@ fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot:
             width: w,
             height: h,
             buttons_top,
+            rack_h,
         },
         (band_top, pan_band, input_band),
         &shape,

@@ -23,3 +23,4 @@ pub mod ruler;
 pub mod tcp;
 pub mod text;
 pub mod theme;
+pub mod tone;
