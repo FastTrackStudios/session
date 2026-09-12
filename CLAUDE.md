@@ -7,6 +7,7 @@ elsewhere:
 | repo | holds | consumed as |
 |---|---|---|
 | **fasttrackstudio** (here) | signal, daw, session, keyflow, patchbay, fx, sampler, reaper, the app, the site | — |
+| [daw](https://github.com/FastTrackStudios/daw) | the daw domain, dawfile, the REAPER backend | **sibling checkout** at `../daw` |
 | [architect](https://github.com/FastTrackStudios/architect) | the framework (entity/RPC, atom, form, auth, permissions, crdt), `architect-ui`, `architect-story-*`, `architect-telemetry` | git dep, tag `v0.1.1` |
 | [task](https://github.com/FastTrackStudios/task) | the Task product + the Editor stack | git dep, `branch = "main"` (repin to a tag) |
 | [vendor](https://github.com/FastTrackStudios/vendor) | `phon`, `phon-jit`, `styx-format` forks (pinned rc.5) | `[patch.crates-io]`, tag `v0.1.0` |
