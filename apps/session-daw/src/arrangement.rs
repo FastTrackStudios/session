@@ -67,7 +67,12 @@ fn chrome(theme: &daw_ui::theming::Theme) -> daw_theme::Chrome {
         // panel does, and as borrowed art when they do not.
         hardware: c(theme.tokens.surface_raised),
         hardware_edge: c(theme.tokens.border),
-        hardware_mark: c(theme.tokens.text_dim),
+        // The art prints on this and rings with it — the record arm's
+        // unlit ring is #a6a6a6 in the source, and a control FACE, not a
+        // label. Mapped to `text_dim` alone it came out dark enough to
+        // vanish against its own housing, which is why the fader's grip
+        // needed hand-brightening at the call site.
+        hardware_mark: c(theme.tokens.text_dim).mix(c(theme.tokens.text), 0.5),
         ..daw_theme::Theme::default().chrome
     }
 }
@@ -634,9 +639,17 @@ fn compose(outer: Affine, inner: Affine) -> Affine {
 
 /// Push one recorded command through `transform`.
 ///
-/// Only solid fills are recorded today, so anything else is skipped
-/// rather than silently mis-drawn; when strokes and glyphs arrive they
-/// get their own arms here.
+/// The brush is forwarded WHOLE rather than unwrapped.
+///
+/// This used to match `Paint::Solid` and return false for anything else,
+/// which silently dropped every gradient that reached a recorded scene:
+/// the fader cap's moulding, the volume knob's drop shadow and body, the
+/// record arm's ring. They were not mis-drawn, they were not drawn at
+/// all — whatever had been painted underneath showed through instead,
+/// which is why the result looked merely flat rather than broken. A
+/// direct `painter.fill` with the same gradient worked, which is what
+/// finally separated "gradients do not work" from "this replay discards
+/// them".
 pub fn submit_command(
     painter: &mut impl PaintScene,
     cmd: &RenderCommand,
@@ -644,26 +657,20 @@ pub fn submit_command(
 ) -> bool {
     match cmd {
         RenderCommand::Fill(fill) => {
-            let Paint::Solid(color) = fill.brush else {
-                return false;
-            };
             painter.fill(
                 fill.fill,
                 compose(transform, fill.transform),
-                Paint::Solid(color),
+                &fill.brush,
                 fill.brush_transform,
                 &fill.shape,
             );
             true
         }
         RenderCommand::Stroke(stroke) => {
-            let Paint::Solid(color) = stroke.brush else {
-                return false;
-            };
             painter.stroke(
                 &stroke.style,
                 compose(transform, stroke.transform),
-                Paint::Solid(color),
+                &stroke.brush,
                 stroke.brush_transform,
                 &stroke.shape,
             );
@@ -673,9 +680,6 @@ pub fn submit_command(
         // quality, it is a track panel with no names in it, so it is
         // handled here rather than defaulted.
         RenderCommand::GlyphRun(run) => {
-            let Paint::Solid(color) = run.brush else {
-                return false;
-            };
             painter.draw_glyphs(
                 &run.font_data,
                 run.font_size,
@@ -683,7 +687,7 @@ pub fn submit_command(
                 &run.normalized_coords,
                 run.embolden,
                 &run.style,
-                Paint::Solid(color),
+                &run.brush,
                 run.brush_alpha,
                 compose(transform, run.transform),
                 run.glyph_transform,

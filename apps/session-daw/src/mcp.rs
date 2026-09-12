@@ -385,6 +385,36 @@ fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot:
         );
     }
 
+    // The record arm hangs off the BOTTOM of the coloured band.
+    //
+    // Its housing's straight base is meant to be invisible — REAPER
+    // sinks it into the dark below the band so only the 45 degree flare
+    // emerges into the colour — and `ARM_OVERHANG` is exactly how much
+    // of the cell that base is. So the cell's bottom sits that far below
+    // the band's edge, which puts the shoulder ON the edge and the
+    // flares above it.
+    //
+    // Positioned against the band rather than the button column: the
+    // column's top is the mixer's shared button line, four pixels lower,
+    // and placing the arm there put the flares in the dark.
+    if Squeeze::at(w).columns() {
+        let band_bottom = band_top + pan_band + input_band;
+        crate::art::place(
+            scene,
+            &art::record_arm(
+                &palette.chrome,
+                track.armed,
+                Interaction::Normal,
+                art::Arm::Mixer,
+                // The housing shows through its own ring.
+                palette.chrome.hardware.shade(-0.40),
+            ),
+            font,
+            x + f64::from(g::ARM_LEFT),
+            band_bottom + f64::from(g::ARM_OVERHANG) - f64::from(g::ARM_CELL_H),
+        );
+    }
+
     stretch(
         scene,
         palette,
@@ -490,11 +520,9 @@ fn stretch(
             let (cap_y, cap_h) = art::fader_cap_at(value, fader_w, stretch);
             crate::art::scaled(
                 scene,
-                // The grip is silver in the art — #9d to #d9 down its face.
-                // The panel's mark colour is a dim grey by comparison,
-                // which made the cap read as a dark block with lines
-                // scratched into it rather than as a metal grip.
-                &art::fader_cap(&palette.chrome, palette.chrome.hardware_mark.shade(0.45)),
+                // The grip is silver in the art — #9d to #d9 down its
+                // face — which is what `hardware_mark` now carries.
+                &art::fader_cap(&palette.chrome, palette.chrome.hardware_mark),
                 font,
                 fader_x,
                 stretch_top + cap_y,
@@ -551,25 +579,10 @@ fn column(
     // above every other mute, which is the same failure the shared line
     // was introduced to fix: a control that moves because of something
     // about ITS track cannot be scanned across tracks.
+    // The arm is placed against the coloured band by `strip`, not here:
+    // it belongs to that band, and this column's `top` is the mixer's
+    // shared button line rather than the band's edge.
     let mut at = stretch_top + f64::from(g::RECMON_FROM_ARM);
-    if squeeze.columns() {
-        // Centred on the column the buttons under it share.
-        //
-        // NOT at `ARM_LEFT`: that is the left edge of the theme's 36-wide
-        // arm CELL, positioned so the ring inside it lands on
-        // `COLUMN_AXIS`. This drawing is the ring itself, 18 across, so
-        // placing it at the cell's edge put it eight and a half pixels
-        // left of the column — a stray circle beside the mute stack
-        // rather than the top of it.
-        const ARM: f64 = 18.0;
-        crate::art::place(
-            scene,
-            &art::record_arm(&palette.chrome, track.armed, Interaction::Normal),
-            font,
-            x + f64::from(g::COLUMN_AXIS) - ARM / 2.0,
-            stretch_top,
-        );
-    }
     for (label, on, lit) in [
         ("M", track.muted, crate::tcp::mute_lit(palette)),
         ("S", track.soloed, crate::tcp::solo_lit(palette)),

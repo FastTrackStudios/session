@@ -1066,18 +1066,103 @@ pub mod tcp {
         drawing
     }
 
-    /// The record arm: a ring when idle, a lit disc when armed.
+    /// Which record arm — the mixer's, or the track panel's.
+    ///
+    /// Not one drawing at two sizes. The mixer's sits in a HOUSING: a
+    /// moulding that grows out of the background, with the ring set into
+    /// it. The track panel has no room for one, so its ring is bare on
+    /// the strip and, with nothing competing for the cell, proportionally
+    /// larger — radius 7.40 of a 20 cell against 7.45 of a 36 one.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Arm {
+        /// A bare ring, 20x20.
+        Panel,
+        /// A ring in its housing, 36x24. The housing's straight base is
+        /// meant to be invisible — see [`crate::vector_controls::HOUSING_SHOULDER`]
+        /// and `geometry::mcp::ARM_OVERHANG`, which say how far to sink
+        /// it under the coloured band so only the flare emerges.
+        Mixer,
+    }
+
+    /// The record arm.
+    ///
+    /// The ring is an annulus: an outer disc with the hole painted back
+    /// over it. `hole` is what shows through — the housing in the mixer,
+    /// and whatever the ring is sitting on in the panel, because without
+    /// a housing there is nothing behind it and the hole is a hole.
+    ///
+    /// Radii are traced by sub-pixel coverage rather than by
+    /// thresholding: down the mixer's widest row the alpha runs 103, 255
+    /// … 255, 102, so the outer edge stands at 2.60 and the radius is
+    /// 7.45 — not the 8 that reading the first lit column gives.
     #[must_use]
-    pub fn record_arm(chrome: &Chrome, armed: bool, at: Interaction) -> Drawing {
-        let (w, h) = (18.0_f64, 18.0_f64);
-        let ink = ink_in(chrome, armed.then_some(hex(daw_theme::defaults::REC)), at, true, 0.25);
-        let (cx, cy) = (w / 2.0, h / 2.0);
-        let mut drawing = Drawing::new(w, h);
-        drawing.fill(circle(cx, cy, 9.0), ink.border);
-        drawing.fill(circle(cx, cy, 7.5), ink.face);
-        if armed {
-            drawing.fill(circle(cx, cy, 3.2), hex(daw_theme::defaults::REC));
+    pub fn record_arm(chrome: &Chrome, armed: bool, at: Interaction, arm: Arm, hole: Color) -> Drawing {
+        let housing = arm == Arm::Mixer;
+        let (vw, vh) = if housing { (36.0, 24.0) } else { (20.0, 20.0) };
+        // Traced in EDGE coordinates, not pixel indices: the mixer's ring
+        // covers columns 10..24 — the span [10, 25) — so it is centred on
+        // 17.5, and rows 5..19 centre it on 12.5. Reading the indices
+        // directly gives 17 and 12 and puts the control half a pixel up
+        // and to the left.
+        let (cx, cy) = if housing { (17.5, 12.5) } else { (vw / 2.0, vh / 2.0) };
+        let (outer, inner) = if housing { (7.45, 3.67) } else { (7.40, 3.38) };
+
+        let ring = if armed {
+            hex(daw_theme::defaults::REC)
+        } else {
+            chrome.hardware_mark
+        };
+        // The mixer's housing lifts a little on hover and sinks when
+        // pressed; a bare ring has nothing to lift.
+        let ring = match at {
+            Interaction::Hover if housing => ring.shade(0.15),
+            Interaction::Pressed if housing => ring.shade(-0.12),
+            _ => ring,
+        };
+
+        let mut drawing = Drawing::new(vw, vh);
+        if housing {
+            // A circle of radius 11.5 concentric with the ring that goes
+            // flat near its widest point, on a base whose top corners are
+            // 45 degree flares. No vertical section until the shoulder —
+            // every earlier reading of this shape had a straight edge
+            // that a coverage trace shows is not there.
+            let moulding = chrome.hardware.shade(-0.40);
+            let shoulder = f64::from(crate::vector_controls::HOUSING_SHOULDER);
+            let flare = vw * 0.3194;
+            let base = vw * 0.4028;
+            drawing.fill(
+                Shape::Ellipse {
+                    cx,
+                    cy: vh * 0.5208,
+                    rx: flare,
+                    ry: flare,
+                },
+                moulding,
+            );
+            drawing.fill(
+                Shape::Poly(vec![
+                    (cx - flare, vh * 0.592),
+                    (cx - base, vh * shoulder),
+                    (cx - base, vh),
+                    (cx + base, vh),
+                    (cx + base, vh * shoulder),
+                    (cx + flare, vh * 0.592),
+                ]),
+                moulding,
+            );
         }
+
+        // The ring, lit from above.
+        drawing.fill(
+            circle(cx, cy, outer),
+            Brush::Linear {
+                from: (0.0, cy - outer),
+                to: (0.0, cy + outer),
+                stops: vec![(0.0, ring.shade(0.18)), (1.0, ring)],
+            },
+        );
+        drawing.fill(circle(cx, cy, inner), hole);
         drawing
     }
 

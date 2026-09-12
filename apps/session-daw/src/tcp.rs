@@ -380,10 +380,18 @@ fn row_one(
     if band >= KNOB_LEGIBLE {
         crate::art::place(
             scene,
-            &art::record_arm(&palette.chrome, track.armed, Interaction::Normal),
+            &art::record_arm(
+                &palette.chrome,
+                track.armed,
+                Interaction::Normal,
+                art::Arm::Panel,
+                // No housing on the strip, so the ring's hole shows the
+                // name field it is seated on.
+                to_theme(palette.tcp_field),
+            ),
             font,
             field_x + 3.0,
-            control_top + (AUTHORED - 18.0) / 2.0,
+            control_top + (AUTHORED - 20.0) / 2.0,
         );
     }
 
