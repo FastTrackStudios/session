@@ -23,6 +23,34 @@ use crate::mcp::{Control, Mixer};
 use crate::pointer::Spot;
 use crate::text::Font;
 
+/// The routing widget's state, from the track.
+///
+/// Sends and receives are not on `Track` — they live in the routing
+/// model this window has not read yet — so they draw as the unlit slots
+/// they are rather than as a guess. `parent_send` is real, is a live
+/// value, and has its own event on the track stream.
+#[must_use]
+pub const fn routes(track: &Track) -> art::Routing {
+    art::Routing {
+        parent_send: track.parent_send,
+        sends: false,
+        receives: false,
+    }
+}
+
+/// The colours the routing lanes light in.
+///
+/// The source art's own choices: the output lane is the accent, sends
+/// the warn amber, receives the danger red.
+#[must_use]
+pub fn route_ink(palette: &Palette) -> art::RouteInk {
+    art::RouteInk {
+        out: crate::tcp::to_theme(palette.accent),
+        send: crate::tcp::to_theme(palette.meter_warn),
+        recv: crate::tcp::to_theme(palette.meter_danger),
+    }
+}
+
 /// What a track's FX button should say.
 ///
 /// `fx_count` is the only thing the track model knows about a chain, so
@@ -298,6 +326,37 @@ mod tests {
         assert_eq!(chain(&loaded[0]), art::Chain::Active);
     }
 
+    /// The routing widget says whether the track feeds its parent, and
+    /// clicking it toggles that — so the two states have to look
+    /// different, or the control is a button with no readout.
+    #[test]
+    fn the_parent_send_lane_shows_its_state() {
+        let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let draw = |parent_send: bool| {
+            let track = Track {
+                parent_send,
+                ..Track::default()
+            };
+            let mut scene = anyrender::Scene::new();
+            let drawing = art::routing(
+                &palette.chrome,
+                art::Axis::Vertical,
+                routes(&track),
+                route_ink(&palette),
+                Interaction::Normal,
+            );
+            crate::art::place(
+                &mut scene,
+                &drawing,
+                &Font::embedded().expect("the embedded font"),
+                0.0,
+                0.0,
+            );
+            scene
+        };
+        assert_ne!(draw(true), draw(false), "the lane does not show its state");
+    }
+
     /// A row that is not there draws nothing rather than panicking —
     /// the pointer can outlive a project reload by a frame.
     #[test]
@@ -473,6 +532,28 @@ fn draw_strip_controls(
         );
     }
 
+    // Routing, which used to be recorded — and recorded four pixels
+    // above where the hit test looked for it, because the two resolved
+    // against different lines. One layout, one position.
+    if let Some((x, y)) = at(Control::Routing) {
+        crate::art::place(
+            scene,
+            &art::routing(
+                &palette.chrome,
+                // The mixer stacks the lanes; the track panel sets them
+                // in a row. That is the whole difference between the
+                // theme's two routing images.
+                art::Axis::Vertical,
+                routes(track),
+                route_ink(palette),
+                state(Control::Routing),
+            ),
+            font,
+            x,
+            y,
+        );
+    }
+
     if let Some((x, y)) = at(Control::RecArm) {
         crate::art::place(
             scene,
@@ -635,6 +716,34 @@ pub fn panel_controls(
                     chain(live),
                     look(C::Fx),
                 ),
+                font,
+                r.x0,
+                r.y0,
+            );
+        }
+
+        // Routing, and polarity in the corner below it. Both are live
+        // values with their own events — a strip that recorded them was
+        // right until the first time anything changed one.
+        if let Some(r) = row.rect(C::Routing) {
+            crate::art::place(
+                &mut out,
+                &art::routing(
+                    &palette.chrome,
+                    art::Axis::Horizontal,
+                    routes(live),
+                    route_ink(palette),
+                    look(C::Routing),
+                ),
+                font,
+                r.x0,
+                r.y0,
+            );
+        }
+        if let Some(r) = row.rect(C::Phase) {
+            crate::art::place(
+                &mut out,
+                &art::phase(&palette.chrome, live.phase_inverted, look(C::Phase)),
                 font,
                 r.x0,
                 r.y0,

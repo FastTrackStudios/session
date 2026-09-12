@@ -36,7 +36,6 @@ use vello::kurbo::{Affine, Rect, RoundedRect, Vec2};
 use vello::peniko::{Color, Fill};
 
 use daw_theme_art::paint::tcp as art;
-use daw_theme_art::vector_controls::Interaction;
 
 use crate::arrangement::Palette;
 use crate::text::Font;
@@ -308,63 +307,29 @@ pub fn draw_row(
             let band_top = y + f64::from(g::ROW_ONE);
             row_one(scene, palette, font, track, indent, band_top, 24.0);
             row_two(scene, palette, font, track, y);
-            gutter(scene, palette, font, track, y, h);
-            stacked(scene, palette, font, track, band_top, 24.0);
         }
         // The controls get the row, less a pixel top and bottom so they
         // are not flush against the dividers.
         Density::Compact => {
             let band_h = (h - 2.0).max(1.0);
             row_one(scene, palette, font, track, indent, y + 1.0, band_h);
-            stacked(scene, palette, font, track, y + 1.0, band_h);
         }
         Density::Bar => {}
     }
 }
 
-/// Mute and solo, side by side in the gutter.
-///
-/// One position AND one size at every height. They used to flatten with
-/// the row, which meant a track's mute was a different shape on every
-/// track — fine to look at, useless to build on: a hit target, a drag
-/// across several tracks' mutes, or anything that wants to say "the
-/// mute column" needs the control to be one thing everywhere.
-///
-/// So the size is [`BUTTON`], fixed, and it fits the shortest row a
-/// track can be set to rather than being scaled down to fit each one.
-///
-/// Positioned against the CONTROL BAND rather than the row, so they sit
-/// beside the name field on a 160-pixel track instead of floating in the
-/// middle of its gutter.
-///
-/// REAPER stacks them, which needs 45 of height. A collapsed track has
-/// sixteen, so stacking there left two five-pixel squares whose letters
-/// were unreadable — the arrangement was preserved and the controls were
-/// not. Turned a quarter turn they keep their width at any height, and
-/// the gutter is 47 wide, which is exactly two of them.
-///
-/// That costs the meter its well: it sat at 297..316, which is where
-/// mute now is. Nothing is lost yet, because the meter has no level to
-/// show — when it does, this gutter needs re-measuring rather than
-/// re-stacking, since REAPER solves the same problem by widening the
-/// panel.
-fn stacked(
-    scene: &mut anyrender::Scene,
-    palette: &Palette,
-    font: &Font,
-    track: &Track,
-    band_top: f64,
-    band_h: f64,
-) {
-    // Centred in the band, at its own fixed size — which fits the
-    // shortest row a track can be set to, so it never has to shrink.
-    let top = band_top + (band_h - BUTTON.1) / 2.0;
-    let x = f64::from(g::TINT_W) + 2.0;
-
-    // Mute and solo are drawn LIVE — they are lit or not, and that
-    // changes on a click. See `overlay::panel_controls`.
-    let _ = (top, x);
-}
+// Mute and solo are ONE SIZE on every track, drawn in the live pass —
+// see `overlay::panel_controls`. The size is fixed rather than scaled
+// to the row because a control that is a different size on every track
+// cannot be built on: there is no shared hit target, and nothing else
+// can address "the mute column" when the mute column is a different
+// shape in every row.
+//
+// REAPER stacks them, which needs 45 of height; a collapsed track has
+// sixteen. Turned a quarter turn they keep their width at any height,
+// and the gutter is 47 wide, which is exactly two of them. That costs
+// the meter its well in the TCP — the mixer's meter is the one with a
+// level behind it.
 
 /// The control row: the name field and everything on it, flattened to
 /// whatever height the row has.
@@ -449,71 +414,22 @@ fn row_one(
         size,
     );
 
-    // Volume, on the field's right end, and pan outside it — both the
-    // measured drawings, not a circle with a dot on it. The knob's 22
-    // body CAPS the field: at its authored size the field's square
-    // right-hand corners showed past the circle, which read as the name
-    // box poking out from under the knob rather than the knob closing it.
-    level(scene, palette, font, track, control_top, AUTHORED, band);
-
-    // These two flatten rather than shrink. A knob has to stay round —
-    // its pointer means nothing once the circle is an ellipse — but the
-    // routing widget is three bars and the FX pill is a label, and both
-    // stay legible squashed while shrinking would make them narrower
-    // than the column they head and leave the label unreadable.
-    let plate_top = control_top + (AUTHORED - 22.0) / 2.0;
-    crate::art::place(
-        scene,
-        &art::routing(
-            &palette.chrome,
-            art::Axis::Horizontal,
-            art::Routing {
-                parent_send: track.parent_send,
-                // Sends and receives are not on `Track` — they live in
-                // the routing model this window has not read yet — so
-                // they draw as the unlit slots they are rather than as
-                // a guess.
-                sends: false,
-                receives: false,
-            },
-            // The source art's own choices: the output lane is the
-            // accent, sends are the warn amber, receives the danger red.
-            art::RouteInk {
-                out: to_theme(palette.accent),
-                send: to_theme(palette.meter_warn),
-                recv: to_theme(palette.meter_danger),
-            },
-            Interaction::Normal,
-        ),
-        font,
-        f64::from(g::ROUTING_X),
-        plate_top,
-    );
-    // The FX pill is drawn live rather than recorded, for the same
-    // reason the mixer's is: a chain can be added while the window is
-    // open. See `overlay::panel_controls`.
+    // Everything to the right of the name — volume, pan, routing, the
+    // FX pill and polarity — is drawn in the live pass. Every one of
+    // them shows a value that changes while the window is open, so a
+    // recorded one is a control that was right when the project opened.
+    // What is recorded here is the row's ground, its rail, its colours
+    // and its name.
+    let _ = (control_top, AUTHORED, band);
 }
 
-/// Volume and pan, as knobs or as bars.
-///
-/// Knobs while there is a circle big enough to read an angle off, bars
-/// below that — see [`KNOB_LEGIBLE`]. Both forms sit in the same two
-/// columns, so a row can change which it shows without anything moving.
-fn level(
-    scene: &mut anyrender::Scene,
-    palette: &Palette,
-    font: &Font,
-    track: &Track,
-    field_top: f64,
-    field_h: f64,
-    band: f64,
-) {
-    // Volume and pan are live: their whole job is to show a value,
-    // and a recorded knob is a knob frozen at whatever the project
-    // opened with. Drawn per frame in `overlay::panel_controls`, in
-    // whichever form the row's height calls for.
-    let _ = (field_top, field_h, band);
-}
+// Volume and pan are live: their whole job is to show a value, and a
+// recorded knob is one frozen at whatever the project opened with. They
+// are drawn per frame in `overlay::panel_controls`, in whichever form
+// the row's height calls for — a knob while there is a circle big
+// enough to read an angle off, a bar below that. Both forms sit in the
+// same two columns, so a row can change which it shows without anything
+// moving.
 
 /// The name's type size for a field of `height`.
 ///
@@ -566,34 +482,6 @@ fn row_two(
         caret(scene, palette.text_faint, 91.0 + 181.0, two + 8.0);
     }
 
-}
-
-/// The meter section: the meter, then mute over solo, then phase.
-fn gutter(
-    scene: &mut anyrender::Scene,
-    palette: &Palette,
-    font: &Font,
-    track: &Track,
-    y: f64,
-    h: f64,
-) {
-    // ── The meter section: the meter, then mute over solo ──
-    //
-    // The meter comes FIRST, a vertical strip against the tint, with
-    // mute and solo to its right. Drawn the other way round it lands in
-    // the middle of the row.
-    // Phase, in the corner. Hidden on rows too short for it, exactly as
-    // the theme's own formula hides it — the row's shape must not depend
-    // on its height.
-    if h >= f64::from(g::PHASE_HIDE_H) {
-        crate::art::place(
-            scene,
-            &art::phase(&palette.chrome, track.phase_inverted, Interaction::Normal),
-            font,
-            f64::from(g::TINT_W) + f64::from(g::GUTTER_BUTTON_X) + 3.0,
-            y + h - f64::from(g::PHASE_FROM_FLOOR),
-        );
-    }
 }
 
 /// A track's own colour, or the palette's neutral when it has none.
@@ -731,11 +619,6 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
 #[must_use]
 pub fn volume_fraction(volume: f64) -> f64 {
     daw_theme_art::paint::tcp::gain_norm(volume)
-}
-
-/// The pan pointer's position, -1..1.
-const fn pan_position(pan: f64) -> f64 {
-    pan.clamp(-1.0, 1.0)
 }
 
 /// Mute and solo take their lit colour from the resolved theme, so a

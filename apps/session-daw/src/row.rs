@@ -29,6 +29,10 @@ pub enum Control {
     Name,
     /// The folder mark in the rail — clicked to fold.
     Folder,
+    /// Polarity, in the bottom corner of the gutter. The one control
+    /// that changes the signal rather than a level, which is why the
+    /// theme puts it on its own away from the button column.
+    Phase,
 }
 
 impl Control {
@@ -166,6 +170,21 @@ impl Row {
                 let x = f64::from(g::ROUTING_X);
                 Some(Rect::new(x, self.field_top, x + 26.0, self.field_top + self.field_h))
             })?,
+            // Hidden on rows too short for it, by the theme's own
+            // formula — the row's shape must not depend on its height.
+            Control::Phase => (self.height >= f64::from(g::PHASE_HIDE_H)).then(|| {
+                let x = f64::from(g::TINT_W) + f64::from(g::GUTTER_BUTTON_X) + 3.0;
+                let y = self.y + self.height - f64::from(g::PHASE_FROM_FLOOR);
+                Some(Rect::new(
+                    x,
+                    y,
+                    // The glyph's own width, which is one measurement
+                    // shared by both panels — the phase button is the
+                    // same art in the strip and in the row.
+                    x + f64::from(daw_theme_art::geometry::mcp::PHASE_W),
+                    y + f64::from(daw_theme_art::geometry::mcp::PHASE_W),
+                ))
+            })?,
             Control::Fx => (self.density == Density::Full).then(|| {
                 let x = f64::from(g::FX_IN_X);
                 Some(Rect::new(x, self.field_top, x + 36.0, self.field_top + self.field_h))
@@ -188,6 +207,7 @@ impl Row {
         // Small before large, so the arm inside the name field wins
         // over the field and the knobs win over the row.
         [
+            Control::Phase,
             Control::Mute,
             Control::Solo,
             Control::RecArm,

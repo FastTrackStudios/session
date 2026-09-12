@@ -17,7 +17,15 @@
 /// An open rename.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rename {
-    /// Which row is being renamed.
+    /// Which panel the edit is open in.
+    ///
+    /// The two have different geometry for a name plate — a row's is
+    /// beside its knobs, a strip's is across its bottom — and only one
+    /// is on screen at a time. Carried so the paint asks the right
+    /// layout rather than the window remembering which view it was in
+    /// when the rename opened.
+    pub surface: Surface,
+    /// Which row or strip is being renamed.
     pub row: usize,
     /// The track it belongs to, so the edit survives the rows being
     /// rebuilt underneath it.
@@ -32,6 +40,15 @@ pub struct Rename {
     caret: usize,
 }
 
+/// Which panel a rename is open in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Surface {
+    /// A row in the arrangement's track panel.
+    Arrange,
+    /// A strip in the mixer.
+    Mixer,
+}
+
 impl Rename {
     /// Begin, with the existing name selected in the sense that typing
     /// replaces it.
@@ -40,8 +57,9 @@ impl Rename {
     /// name to CHANGE it, so the common case is typing a new one, and
     /// the rarer case — fixing a typo — is one End key away.
     #[must_use]
-    pub fn new(row: usize, guid: String, from: &str) -> Self {
+    pub fn new(surface: Surface, row: usize, guid: String, from: &str) -> Self {
         Self {
+            surface,
             row,
             guid,
             text: from.to_owned(),
@@ -125,10 +143,10 @@ impl Rename {
 
 #[cfg(test)]
 mod tests {
-    use super::Rename;
+    use super::{Rename, Surface};
 
     fn open(name: &str) -> Rename {
-        Rename::new(3, "kick".into(), name)
+        Rename::new(Surface::Arrange, 3, "kick".into(), name)
     }
 
     #[test]

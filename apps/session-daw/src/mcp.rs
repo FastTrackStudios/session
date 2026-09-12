@@ -31,7 +31,6 @@ use anyrender::{PaintScene, Scene};
 use daw_proto::Track;
 use daw_theme_art::geometry::mcp as g;
 use daw_theme_art::paint::tcp as art;
-use daw_theme_art::vector_controls::Interaction;
 use daw_ui::controls::{Collapse, PanAnchor};
 use daw_ui::studio::{ProjectRef, RowsRef};
 use vello::kurbo::{Affine, Rect};
@@ -815,7 +814,6 @@ fn strip(
     let pan_band = f64::from(shape.pan_band);
     let input_band = f64::from(shape.input_band);
     let stretch_h = f64::from(own.stretch);
-    let squeeze = Squeeze::at(w);
 
     // ── The FX section ──
     //
@@ -875,15 +873,12 @@ fn strip(
         scene,
         palette,
         font,
-        track,
         Stretch {
             x,
             width: w,
             top: band_top + pan_band + input_band,
             height: stretch_h,
         },
-        &shape,
-        buttons_top,
     );
 
     bottom(scene, palette, font, track, x, w, h, ancestor_names);
@@ -1055,15 +1050,18 @@ struct Stretch {
     height: f64,
 }
 
-/// The meter, the volume control and the button column.
+/// The dB scale and the meter's well — what the stretch RECORDS.
+///
+/// The fader, the cap, the meter's level and the whole button column
+/// are live: every one of them is a value that changes while the window
+/// is open. What is left here is the two things that do not — the
+/// numbers beside the fader, and the sunken well the level is drawn
+/// into.
 fn stretch(
     scene: &mut Scene,
     palette: &Palette,
     font: &Font,
-    track: &Track,
     band: Stretch,
-    shape: &Collapse,
-    buttons_top: f64,
 ) {
     let Stretch {
         x,
@@ -1125,88 +1123,10 @@ fn stretch(
     // both move with the value, so recording it would record a fader
     // frozen at whatever the project opened with.
 
-    column(
-        scene,
-        palette,
-        font,
-        track,
-        Stretch {
-            x,
-            width: w,
-            top: buttons_top,
-            height: stretch,
-        },
-        shape,
-    );
-}
-
-/// The right-hand column: the record arm, then mute, solo and routing
-/// stacked under it.
-fn column(
-    scene: &mut Scene,
-    palette: &Palette,
-    font: &Font,
-    track: &Track,
-    band: Stretch,
-    shape: &Collapse,
-) {
-    let Stretch {
-        x,
-        width: w,
-        top: stretch_top,
-        ..
-    } = band;
-    let squeeze = Squeeze::at(w);
-    // Right-aligned rather than at a fixed offset — see `Columns`. On
-    // an 86-wide strip this IS REAPER's 55; on a wider one the buttons
-    // keep their distance from the edge instead of stranding the extra
-    // width to their right.
-    let column = Columns::at(x, w).column_x;
-    // `top` here is the mixer's shared button line, not this strip's
-    // stretch — see `Mixer::build`.
-    //
-    // The record arm's slot is reserved whether or not the arm is drawn.
-    // Skipping the advance on a narrow strip put its mute twenty pixels
-    // above every other mute, which is the same failure the shared line
-    // was introduced to fix: a control that moves because of something
-    // about ITS track cannot be scanned across tracks.
-    // The arm is placed against the coloured band by `strip`, not here:
-    // it belongs to that band, and this column's `top` is the mixer's
-    // shared button line rather than the band's edge.
-    // Mute and solo are live: they are lit or not, and that is the
-    // most common thing to change in a mixer.
-    let mut at = stretch_top
-        + f64::from(g::RECMON_FROM_ARM)
-        + (f64::from(g::BUTTON_H) + 1.0) * 2.0;
-
-    if shape.show_io && squeeze.columns() {
-        crate::art::place(
-            scene,
-            // The mixer stacks the lanes; the track panel sets them in
-            // a row. That is the whole difference between the theme's
-            // two routing images, and the reason the drawing takes an
-            // axis rather than being rotated at the call site.
-            &art::routing(
-                &palette.chrome,
-                art::Axis::Vertical,
-                art::Routing {
-                    parent_send: track.parent_send,
-                    sends: false,
-                    receives: false,
-                },
-                art::RouteInk {
-                    out: crate::tcp::to_theme(palette.accent),
-                    send: crate::tcp::to_theme(palette.meter_warn),
-                    recv: crate::tcp::to_theme(palette.meter_danger),
-                },
-                Interaction::Normal,
-            ),
-            font,
-            column,
-            at,
-        );
-    }
-
+    // The button column — record arm, mute, solo, routing — is drawn
+    // ENTIRELY in the live pass now. Every one of them is a value that
+    // changes while the window is open, so a recorded column is a
+    // column that was right once. See `overlay::draw_strip_controls`.
 }
 
 /// The name plate and the track number.

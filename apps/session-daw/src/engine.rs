@@ -36,6 +36,22 @@ pub enum Edit {
     SetVolume(String, f64),
     SetPan(String, f64),
     Rename(String, String),
+    /// Polarity. The one control on a strip that changes the signal
+    /// without changing a level, which is why it sits on its own in
+    /// the corner rather than in the button column.
+    ///
+    /// Carries the value rather than being a toggle, because the engine
+    /// has a setter and not a toggle for it — and because the value the
+    /// window is already SHOWING is the one the user meant. Re-reading
+    /// the state to invert it would let a click disagree with the
+    /// control it landed on.
+    SetPhase(String, bool),
+    /// Whether the track feeds its parent at all.
+    ///
+    /// A folder's children normally sum into it; a track with this off
+    /// is heard only through its own sends, which is how a parallel
+    /// path is built. The routing widget's first lane says which.
+    SetParentSend(String, bool),
 }
 
 impl Edit {
@@ -49,7 +65,9 @@ impl Edit {
             | Self::Select(g)
             | Self::SetVolume(g, _)
             | Self::SetPan(g, _)
-            | Self::Rename(g, _) => g,
+            | Self::Rename(g, _)
+            | Self::SetPhase(g, _)
+            | Self::SetParentSend(g, _) => g,
         }
     }
 
@@ -118,7 +136,7 @@ impl Queue {
 /// do not mean anything now, and inventing an edit for them would be
 /// worse than doing nothing.
 #[must_use]
-pub fn click(control: crate::mcp::Control, guid: &str) -> Option<Edit> {
+pub fn click(control: crate::mcp::Control, guid: &str, from: &daw_proto::Track) -> Option<Edit> {
     let guid = guid.to_owned();
     match control {
         crate::mcp::Control::Mute => Some(Edit::ToggleMute(guid)),
@@ -127,10 +145,12 @@ pub fn click(control: crate::mcp::Control, guid: &str) -> Option<Edit> {
         // Clicking the name selects the track; DOUBLE-clicking renames
         // it, which is a different gesture and a different edit.
         crate::mcp::Control::Name => Some(Edit::Select(guid)),
-        crate::mcp::Control::Volume
-        | crate::mcp::Control::Pan
-        | crate::mcp::Control::Fx
-        | crate::mcp::Control::Routing => None,
+        crate::mcp::Control::Routing => Some(Edit::SetParentSend(guid, !from.parent_send)),
+        // The FX button opens a chain window, and there is no chain and
+        // no window — see `tone::placeholder` and `bin/chain-probe`.
+        // Binding it to something else would be a button that does the
+        // wrong thing rather than one that waits.
+        crate::mcp::Control::Volume | crate::mcp::Control::Pan | crate::mcp::Control::Fx => None,
     }
 }
 
@@ -399,19 +419,40 @@ mod tests {
         assert!((left + 1.0).abs() < f64::EPSILON);
     }
 
-    /// Controls with nothing behind them yet produce no edit, rather
-    /// than an invented one.
+    /// The FX button opens a chain window, and there is neither a
+    /// chain nor a window — see `bin/chain-probe`. It produces no edit
+    /// rather than an invented one.
     #[test]
-    fn unbacked_controls_do_nothing() {
-        assert!(click(Control::Fx, "k").is_none());
-        assert!(click(Control::Routing, "k").is_none());
+    fn the_fx_button_waits_for_a_chain() {
+        assert!(click(Control::Fx, "k", &track(1.0, 0.0)).is_none());
         assert!(drag(Control::Mute, "k", &track(1.0, 0.0), 0.5).is_none());
+    }
+
+    /// Routing toggles the parent send, and carries the value it is
+    /// toggling TO rather than asking the engine to invert — so the
+    /// click and the control the click landed on cannot disagree.
+    #[test]
+    fn routing_toggles_the_parent_send() {
+        let mut sending = track(1.0, 0.0);
+        sending.parent_send = true;
+        assert_eq!(
+            click(Control::Routing, "k", &sending),
+            Some(Edit::SetParentSend("k".into(), false))
+        );
+        sending.parent_send = false;
+        assert_eq!(
+            click(Control::Routing, "k", &sending),
+            Some(Edit::SetParentSend("k".into(), true))
+        );
     }
 
     /// Clicking a name selects; renaming is a different gesture.
     #[test]
     fn clicking_a_name_selects_it() {
-        assert_eq!(click(Control::Name, "k"), Some(Edit::Select("k".into())));
+        assert_eq!(
+            click(Control::Name, "k", &track(1.0, 0.0)),
+            Some(Edit::Select("k".into()))
+        );
     }
 }
 
@@ -486,6 +527,8 @@ async fn apply(edit: &Edit) {
         Edit::SetVolume(_, v) => track.set_volume(*v).await,
         Edit::SetPan(_, p) => track.set_pan(*p).await,
         Edit::Rename(_, name) => track.rename(name).await,
+        Edit::SetPhase(_, inverted) => track.set_phase_inverted(*inverted).await,
+        Edit::SetParentSend(_, enabled) => track.set_parent_send(*enabled).await,
     };
     if let Err(error) = outcome {
         // One line, because a failed edit is a thing the user did that

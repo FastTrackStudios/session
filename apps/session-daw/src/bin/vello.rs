@@ -170,6 +170,9 @@ struct App {
     last_row_click: Option<(usize, std::time::Instant)>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
+    /// Which folders are collapsed. A view state, not a track state:
+    /// it changes which rows exist rather than what any track is.
+    folders: daw_ui::components::folders::FolderState,
     /// The REAPER toolbar icons the rails draw, decoded once.
     icons: session_daw::icons::Icons,
     /// The theme, kept for a RELOAD — a track added or removed changes
@@ -432,6 +435,7 @@ impl ApplicationHandler for App {
                                     .and_then(|i| self.tracks.get(i))
                                 {
                                     self.rename = Some(session_daw::rename::Rename::new(
+                                        session_daw::rename::Surface::Arrange,
                                         row,
                                         track.guid.clone(),
                                         &track.name,
@@ -500,11 +504,11 @@ impl ApplicationHandler for App {
             && let Ok(loaded) = rx.try_recv()
         {
             self.scene = Some(loaded.arrangement);
-            self.tracks = loaded
-                .rows
-                .iter()
-                .map(|(track, _)| track.clone())
-                .collect();
+            // EVERY track, not the visible ones: folding changes which
+            // rows exist, and live values kept only for what is on
+            // screen would be lost the moment a folder closed over
+            // them. The panels reach these through `plan::Rows`.
+            self.tracks = loaded.project.0.tracks.clone();
             self.arrange_map = session_daw::plan::Rows::of(loaded.planned.as_slice(), &self.tracks);
             self.arrange_rows = loaded.planned;
             self.session = Some((loaded.project, loaded.rows));
@@ -696,7 +700,11 @@ impl App {
                     return;
                 };
                 let edit = session_daw::engine::Edit::Rename(rename.guid, name);
-                if let Some(index) = self.arrange_map.index(rename.row) {
+                let map = match rename.surface {
+                    session_daw::rename::Surface::Arrange => &self.arrange_map,
+                    session_daw::rename::Surface::Mixer => &self.mixer_map,
+                };
+                if let Some(index) = map.index(rename.row) {
                     apply_locally(&mut self.tracks, index, &edit);
                 }
                 // The name is recorded chrome, not a live value, so the
@@ -728,6 +736,15 @@ impl App {
     /// A click on a panel control.
     fn act_on_row(&mut self, row: usize, control: session_daw::row::Control) {
         use session_daw::row::Control as C;
+        // Folding is an edit to the VIEW: it changes which rows exist,
+        // not what any track is, so it goes to the folder state and
+        // re-records rather than to the engine. Handled before the
+        // mapping because it is the one control whose answer is a row
+        // and not a track.
+        if control == C::Folder {
+            self.fold(row);
+            return;
+        }
         let Some(row) = self.arrange_map.index(row) else {
             return;
         };
@@ -740,10 +757,18 @@ impl App {
             C::Solo => Some(session_daw::engine::Edit::ToggleSolo(guid)),
             C::RecArm => Some(session_daw::engine::Edit::ToggleArm(guid)),
             C::Name => Some(session_daw::engine::Edit::Select(guid)),
-            // Folding, routing and the FX chain are not edits to a
-            // track — they are edits to the VIEW and to models this
-            // window has not read yet.
-            C::Folder | C::Routing | C::Fx | C::Volume | C::Pan => None,
+            C::Phase => Some(session_daw::engine::Edit::SetPhase(
+                guid,
+                !track.phase_inverted,
+            )),
+            C::Routing => Some(session_daw::engine::Edit::SetParentSend(
+                guid,
+                !track.parent_send,
+            )),
+            // Folding is an edit to the VIEW, not to the track, so it
+            // is handled before this — see `act_on_row`'s caller. The
+            // FX button waits for a chain; `bin/chain-probe` says why.
+            C::Folder | C::Fx | C::Volume | C::Pan => None,
         };
         let Some(edit) = edit else { return };
         apply_locally(&mut self.tracks, row, &edit);
@@ -804,9 +829,10 @@ impl App {
         use session_daw::gesture::Event;
         use session_daw::hit::Target;
 
-        let (hit, drag) = match event {
-            Event::Click(hit) | Event::DoubleClick(hit) => (hit, None),
-            Event::Drag { hit, delta } => (hit, Some(delta)),
+        let (hit, drag, double) = match event {
+            Event::Click(hit) => (hit, None, false),
+            Event::DoubleClick(hit) => (hit, None, true),
+            Event::Drag { hit, delta } => (hit, Some(delta), false),
             Event::DragEnd(_) => return,
         };
         let Target::Track { row } = hit.target else {
@@ -829,6 +855,18 @@ impl App {
         };
         let guid = track.guid.clone();
 
+        // A double-click on a strip's name plate edits it, the same
+        // gesture and the same editor the track panel uses.
+        if double && spot.control == session_daw::mcp::Control::Name {
+            self.rename = Some(session_daw::rename::Rename::new(
+                session_daw::rename::Surface::Mixer,
+                row,
+                guid,
+                &track.name,
+            ));
+            return;
+        }
+
         let edit = if let Some((_, dy)) = drag {
             let travel = self
                 .mixer
@@ -838,7 +876,7 @@ impl App {
             let fraction = session_daw::gesture::drag_fraction(dy, travel);
             session_daw::engine::drag(spot.control, &guid, track, fraction)
         } else {
-            session_daw::engine::click(spot.control, &guid)
+            session_daw::engine::click(spot.control, &guid, track)
         };
         let Some(edit) = edit else { return };
 
@@ -920,6 +958,10 @@ impl App {
         let levels = self.meters.as_ref().map(session_daw::engine::Meters::levels);
         let levels = levels.as_deref().unwrap_or(&[]);
         let rail_at = (self.hovered_rail, self.pressed_rail);
+        let rename = self
+            .rename
+            .as_ref()
+            .filter(|r| r.surface == session_daw::rename::Surface::Mixer);
 
         // Split the borrow: `render` takes the renderer mutably and
         // everything drawn inside it is read.
@@ -967,6 +1009,28 @@ impl App {
                 frame.content_width(),
                 at,
             );
+            // An open rename, over the plate it replaces.
+            if let Some(open) = rename {
+                if let Some((left, strip_w, strip_h)) = mixer.strip_box(open.row) {
+                    let strip = session_daw::strip::Strip::new(
+                        strip_w,
+                        strip_h,
+                        mixer.height,
+                        mixer.rack_h,
+                        mixer.buttons_top,
+                    );
+                    if let Some(field) = strip.rect(session_daw::mcp::Control::Name) {
+                        session_daw::rename::paint(
+                            painter,
+                            palette,
+                            font,
+                            open,
+                            field + vello::kurbo::Vec2::new(left, 0.0),
+                            at,
+                        );
+                    }
+                }
+            }
             drawn.replayed = a.replayed + b.replayed;
             drawn.submitted = a.submitted + b.submitted;
             // The rails last, over everything that scrolled under them.
@@ -1176,6 +1240,24 @@ impl App {
         }
     }
 
+    /// Fold or unfold the folder at a panel row.
+    ///
+    /// Only a folder can be folded, and clicking the rail of an
+    /// ordinary track must do nothing rather than quietly hiding the
+    /// track below it — the rail runs the full height of every row
+    /// because it carries the indent colour, so most clicks on it are
+    /// on a track that has no children.
+    fn fold(&mut self, row: usize) {
+        let Some((track, _)) = self.arrange_rows.get(row) else {
+            return;
+        };
+        if !track.is_folder {
+            return;
+        }
+        self.folders.toggle(&track.guid);
+        self.re_record();
+    }
+
     /// Re-record the panels, because something the RECORDING holds has
     /// changed.
     ///
@@ -1190,17 +1272,29 @@ impl App {
     /// actually changes — which is the side of the trade the recorded
     /// scene exists to be on.
     fn re_record(&mut self) {
-        let Some((project, rows)) = self.session.clone() else {
+        let Some((project, _)) = self.session.clone() else {
             return;
         };
-        // The recording reads names from the ROWS, so the rows have to
-        // carry what the tracks now say. The two are index-aligned:
-        // `self.tracks` was built from these rows, in order.
-        let mut next = rows.as_slice().to_vec();
-        for (row, track) in next.iter_mut().zip(self.tracks.iter()) {
-            row.0.name.clone_from(&track.name);
-        }
-        let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(next));
+        // The rows are derived, not kept: which ones exist follows from
+        // the folder state, and what they say follows from the live
+        // tracks. Deriving both here is what makes folding a re-record
+        // rather than a second list to keep in step.
+        let live: Vec<daw_proto::Track> = project
+            .0
+            .tracks
+            .iter()
+            .map(|track| {
+                self.tracks
+                    .iter()
+                    .find(|t| t.guid == track.guid)
+                    .cloned()
+                    .unwrap_or_else(|| track.clone())
+            })
+            .collect();
+        let (visible, depths) = self.folders.visible(&live);
+        let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
+            visible.into_iter().zip(depths).collect(),
+        ));
         // Then the preset, which decides which of those rows the
         // arrangement shows and how tall each one opens.
         let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(session_daw::plan::apply(
@@ -1328,7 +1422,8 @@ impl App {
             // ruler last of all, over everything scrolled under it.
             ruler::grid(painter, &palette, view, bars, &grid, FINEST, rail);
             // An open rename, over the name it replaces.
-            if let Some(open) = rename {
+            if let Some(open) = rename.filter(|r| r.surface == session_daw::rename::Surface::Arrange)
+            {
                 if let Some((top, height)) = scene.row_box(open.row) {
                     let depth = rows
                         .get(open.row)
@@ -1551,6 +1646,7 @@ fn main() {
         arrange_rows: daw_ui::studio::RowsRef(std::sync::Arc::new(Vec::new())),
         mixer_scroll: 0.0,
         layout,
+        folders: daw_ui::components::folders::FolderState::default(),
         icons: session_daw::icons::Icons::new(),
         theme,
         // On by default: the rack is what this panel is being built
@@ -1667,6 +1763,8 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         Edit::SetVolume(_, v) => track.volume = *v,
         Edit::SetPan(_, p) => track.pan = *p,
         Edit::Rename(_, name) => track.name.clone_from(name),
+        Edit::SetPhase(_, inverted) => track.phase_inverted = *inverted,
+        Edit::SetParentSend(_, enabled) => track.parent_send = *enabled,
         // Selection is the engine's to decide: it is exclusive, so
         // predicting it here would mean predicting which OTHER tracks
         // stop being selected. Getting that wrong looks worse than a
