@@ -75,7 +75,6 @@ pub fn grid(
     finest: f64,
     origin: (f64, f64),
 ) {
-    let (ox, oy) = origin;
     let measure_px = bars.secs_per_bar() * view.pps;
     if measure_px <= 0.0 {
         return;

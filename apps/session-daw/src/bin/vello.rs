@@ -102,6 +102,23 @@ struct App {
     session: Option<(daw_ui::studio::ProjectRef, daw_ui::studio::RowsRef)>,
     /// The mixer, recorded for the height it was last drawn at.
     mixer: Option<session_daw::mcp::Mixer>,
+    /// The tracks as they are NOW — what the live controls draw from.
+    ///
+    /// Kept beside the recorded mixer rather than inside it: the mixer
+    /// records the chrome once and these change on every click, which
+    /// is the whole reason the two are separate.
+    tracks: Vec<daw_proto::Track>,
+    /// What the pointer is on, and what it is doing to it.
+    pointer: session_daw::pointer::Pointer,
+    /// Presses, drags and double-clicks, out of the raw events.
+    gestures: session_daw::gesture::Gestures,
+    /// Where the pointer is, since winit reports moves and clicks
+    /// separately and a click carries no position.
+    cursor: (f64, f64),
+    /// Whether the fine-adjustment modifier is held.
+    fine: bool,
+    /// Edits on their way to the engine.
+    applier: Option<session_daw::engine::Applier>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
     /// Whether the Tone rack is on.
@@ -197,6 +214,54 @@ impl ApplicationHandler for App {
                     self.redraw();
                 }
             }
+            WindowEvent::PointerMoved { position, .. } => {
+                self.cursor = (position.x, position.y);
+                let spot = self.spot_at(position.x, position.y);
+                // A drag outranks a hover: while the pointer is down on
+                // a fader it is setting a level, not browsing.
+                if let Some(event) = self.gestures.moved(position.x, position.y, self.fine) {
+                    self.act(event);
+                    self.redraw();
+                } else if self.pointer.hover(spot) {
+                    // Only when something actually changed — a pointer
+                    // crossing a strip fires a move per pixel and
+                    // changes control about twice.
+                    self.redraw();
+                }
+            }
+            WindowEvent::PointerLeft { .. } => {
+                if self.pointer.hover(None) {
+                    self.redraw();
+                }
+            }
+            WindowEvent::PointerButton {
+                state,
+                position,
+                button,
+                ..
+            } => {
+                if button.mouse_button() != Some(winit::event::MouseButton::Left) {
+                    return;
+                }
+                // The event carries its own position, which is the one
+                // the click actually happened at — the last move may
+                // have been a pixel ago, or on another device.
+                self.cursor = (position.x, position.y);
+                let (x, y) = self.cursor;
+                if state.is_pressed() {
+                    self.pointer.hover(self.spot_at(x, y));
+                    self.pointer.press();
+                    if let Some(hit) = self.hit_at(x, y) {
+                        self.gestures.press(hit, x, y);
+                    }
+                } else {
+                    self.pointer.release();
+                    if let Some(event) = self.gestures.release(x, y, std::time::Instant::now()) {
+                        self.act(event);
+                    }
+                }
+                self.redraw();
+            }
             WindowEvent::RedrawRequested => self.redraw(),
             _ => {}
         }
@@ -245,7 +310,17 @@ impl ApplicationHandler for App {
             && let Ok(loaded) = rx.try_recv()
         {
             self.scene = Some(loaded.arrangement);
+            self.tracks = loaded
+                .rows
+                .iter()
+                .map(|(track, _)| track.clone())
+                .collect();
             self.session = Some((loaded.project, loaded.rows));
+            // The applier needs the facade, which only exists once the
+            // project has been opened.
+            if self.applier.is_none() {
+                self.applier = session_daw::engine::Applier::start();
+            }
             self.loading = None;
             self.redraw();
         }
@@ -291,6 +366,92 @@ impl App {
     /// replayed at another has its fader, its buttons and its rack in
     /// the wrong places; scaling it would make the controls the wrong
     /// size, which is the thing the whole panel is built not to do.
+    /// The control under a window point, if the mixer is showing.
+    fn spot_at(&self, x: f64, y: f64) -> Option<session_daw::pointer::Spot> {
+        if self.view != View::Mixer {
+            return None;
+        }
+        let mixer = self.mixer.as_ref()?;
+        let content_x = x - session_daw::rails::SIDE + self.mixer_scroll;
+        let row = mixer.strip_at(content_x)?;
+        let (left, width, height) = mixer.strip_box(row)?;
+        let control = session_daw::mcp::control_at(
+            width,
+            height,
+            self.rack_height(),
+            content_x - left,
+            y - session_daw::rails::TOP,
+        )?;
+        Some(session_daw::pointer::Spot { row, control })
+    }
+
+    /// The hit under a window point, for the gesture layer.
+    fn hit_at(&self, x: f64, y: f64) -> Option<session_daw::hit::Hit> {
+        let mixer = self.mixer.as_ref()?;
+        Some(session_daw::hit::mixer(mixer, self.mixer_scroll, x, y))
+    }
+
+    /// How much of a strip the rack takes, at the current panel height.
+    fn rack_height(&self) -> f64 {
+        self.mixer.as_ref().map_or(0.0, |m| {
+            if self.tone {
+                m.height - (m.height * 0.34).max(240.0).min(m.height)
+            } else {
+                0.0
+            }
+        })
+    }
+
+    /// Do what a gesture meant.
+    ///
+    /// The edit goes to the engine AND is applied here, because the
+    /// engine is in-process but not instant, and a fader that waited
+    /// for a round trip would lag the hand moving it. The local copy is
+    /// a prediction of what the engine will say; when the event stream
+    /// is wired it becomes a correction instead.
+    fn act(&mut self, event: session_daw::gesture::Event) {
+        use session_daw::gesture::Event;
+        use session_daw::hit::Target;
+
+        let (hit, drag) = match event {
+            Event::Click(hit) | Event::DoubleClick(hit) => (hit, None),
+            Event::Drag { hit, delta } => (hit, Some(delta)),
+            Event::DragEnd(_) => return,
+        };
+        let Target::Track { row } = hit.target else {
+            return;
+        };
+        let Some(spot) = self.pointer.hovered().filter(|s| s.row == row).or_else(|| {
+            // Mid-drag the pointer may have left the control; the
+            // gesture still belongs to what it started on.
+            self.pointer.active().map(|(spot, _)| spot)
+        }) else {
+            return;
+        };
+        let Some(track) = self.tracks.get(row) else {
+            return;
+        };
+        let guid = track.guid.clone();
+
+        let edit = if let Some((_, dy)) = drag {
+            let travel = self
+                .mixer
+                .as_ref()
+                .and_then(|m| m.strip_box(row))
+                .map_or(1.0, |(_, _, h)| h * 0.4);
+            let fraction = session_daw::gesture::drag_fraction(dy, travel);
+            session_daw::engine::drag(spot.control, &guid, track, fraction)
+        } else {
+            session_daw::engine::click(spot.control, &guid)
+        };
+        let Some(edit) = edit else { return };
+
+        apply_locally(&mut self.tracks, row, &edit);
+        if let Some(applier) = &self.applier {
+            applier.send(edit);
+        }
+    }
+
     /// Move along the strips, stopping at both ends.
     ///
     /// Clamped to the content rather than left free: a mixer scrolled
@@ -330,19 +491,30 @@ impl App {
         let (width, height) = self.surface_size;
         let surface = self.palette.surface;
         let scroll = self.mixer_scroll;
-        // The mixer IS the window in this view.
-        //
-        // It splits internally: the REAPER strip takes about a third off
-        // the bottom and the rack fills the rest. Docking it at its
-        // natural height instead left two thirds of the screen blank —
-        // which is what a DOCKED mixer should look like, under an
-        // arrangement, and is not this view.
-        if !self.mixer_for(height) {
+        let frame = session_daw::rails::Frame::new(width, height);
+        if !self.mixer_for(frame.content_height()) {
             return;
         }
-        // Split the borrow: the renderer is taken mutably by `render`
-        // and the mixer is only read inside it.
-        let Self { renderer, mixer, .. } = self;
+        let rack_h = self.rack_height();
+        let profile = session_daw::rails::profile(
+            session_daw::rails::Surface::Mixer,
+            session::modes::Mode::Mix,
+            session::mix_phases::MixPhase::Tone,
+            "Mix",
+            session_daw::settings::Settings::default(),
+        );
+
+        // Split the borrow: `render` takes the renderer mutably and
+        // everything drawn inside it is read.
+        let Self {
+            renderer,
+            mixer,
+            tracks,
+            pointer,
+            palette,
+            font,
+            ..
+        } = self;
         let Some(mixer) = mixer.as_ref() else { return };
         let mut drawn = session_daw::profile::Counts::default();
         renderer.render(|painter| {
@@ -354,7 +526,39 @@ impl App {
                 None,
                 &vello::kurbo::Rect::new(0.0, 0.0, width, height),
             );
-            drawn = mixer.replay(painter, scroll, width, Affine::translate((-scroll, 0.0)));
+            let at = Affine::translate((
+                session_daw::rails::SIDE - scroll,
+                session_daw::rails::TOP,
+            ));
+            // The recorded chrome.
+            let a = mixer.replay(painter, scroll, frame.content_width(), at);
+            // Then every control whose value can change, from the
+            // tracks as they are now — which is what makes a click show
+            // up without the mixer being re-recorded.
+            let b = session_daw::overlay::controls(
+                painter,
+                palette,
+                font,
+                mixer,
+                tracks,
+                pointer,
+                rack_h,
+                scroll,
+                frame.content_width(),
+                at,
+            );
+            drawn.replayed = a.replayed + b.replayed;
+            drawn.submitted = a.submitted + b.submitted;
+            // The rails last, over everything that scrolled under them.
+            session_daw::rails::draw(
+                painter,
+                palette,
+                font,
+                frame,
+                &profile.left,
+                &profile.right,
+                &profile.top,
+            );
         });
         self.after_frame(drawn);
     }
@@ -544,6 +748,12 @@ fn main() {
         grid: adaptive_grid::Adaptive::default(),
         loading: Some(rx),
         view: View::Arrangement,
+        tracks: Vec::new(),
+        pointer: session_daw::pointer::Pointer::default(),
+        gestures: session_daw::gesture::Gestures::default(),
+        cursor: (0.0, 0.0),
+        fine: false,
+        applier: session_daw::engine::Applier::start(),
         session: None,
         mixer: None,
         mixer_scroll: 0.0,
@@ -620,5 +830,32 @@ impl View {
             Self::Arrangement => "Session — arrangement (Vello)",
             Self::Mixer => "Session — mixer (Vello)",
         }
+    }
+}
+
+/// Show an edit here, now, rather than waiting for the engine.
+///
+/// The engine is in-process but not instant, and a fader that waited
+/// for a round trip would lag the hand moving it. This is a PREDICTION
+/// of what the engine will say; once its event stream is subscribed it
+/// becomes a correction instead, and the prediction being wrong stops
+/// mattering because the truth arrives a frame later.
+fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw::engine::Edit) {
+    use session_daw::engine::Edit;
+    let Some(track) = tracks.get_mut(row) else {
+        return;
+    };
+    match edit {
+        Edit::ToggleMute(_) => track.muted = !track.muted,
+        Edit::ToggleSolo(_) => track.soloed = !track.soloed,
+        Edit::ToggleArm(_) => track.armed = !track.armed,
+        Edit::SetVolume(_, v) => track.volume = *v,
+        Edit::SetPan(_, p) => track.pan = *p,
+        Edit::Rename(_, name) => track.name.clone_from(name),
+        // Selection is the engine's to decide: it is exclusive, so
+        // predicting it here would mean predicting which OTHER tracks
+        // stop being selected. Getting that wrong looks worse than a
+        // frame of lag looks slow.
+        Edit::Select(_) => {}
     }
 }

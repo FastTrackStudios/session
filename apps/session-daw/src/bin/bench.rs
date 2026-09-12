@@ -709,13 +709,7 @@ fn shot(
             // The mode selector sits in the corner the ruler leaves
             // above the track panel — the one piece of chrome the mode
             // does not re-populate.
-            session_daw::rails::main_toolbar(
-                painter,
-                palette,
-                font,
-                frame,
-                session::modes::Mode::Mix,
-            );
+            session_daw::rails::main_toolbar(painter, palette, font, session::modes::Mode::Mix);
             counts.replayed = a.replayed + b.replayed;
             counts.submitted = a.submitted + b.submitted;
         },

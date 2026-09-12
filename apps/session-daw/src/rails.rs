@@ -348,7 +348,6 @@ pub fn main_toolbar(
     painter: &mut impl PaintScene,
     palette: &Palette,
     font: &Font,
-    frame: Frame,
     current: session::modes::Mode,
 ) {
     let modes = session::modes::Mode::ALL;
