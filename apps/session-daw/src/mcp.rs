@@ -247,6 +247,16 @@ pub struct Mixer {
     pub buttons_top: f64,
     /// How much of a strip the rack took.
     pub rack_h: f64,
+    /// Each strip's own height.
+    ///
+    /// NOT the mixer's: nesting shortens a strip from the bottom, so a
+    /// track three levels deep is shorter than the panel by three
+    /// steps. `Collapse` resolves a strip's sections against the height
+    /// it is DRAWN at, so handing the overlay the panel height instead
+    /// of the strip's gave it different bands from the recorded chrome
+    /// — which moved the arm, the buttons and the fader down by
+    /// whatever the indent came to.
+    heights: Vec<f64>,
 }
 
 impl Mixer {
@@ -324,6 +334,8 @@ impl Mixer {
         let mut lineage: Vec<Color> = Vec::new();
         let mut lineage_names: Vec<&str> = Vec::new();
 
+        let mut heights = Vec::with_capacity(rows.len());
+
         let mut x = 0.0_f64;
         for (ordinal, (track, depth)) in rows.iter().enumerate() {
             let depth = usize::try_from(*depth).unwrap_or(0);
@@ -342,6 +354,7 @@ impl Mixer {
             // Nesting shortens the strip from the BOTTOM, so the tops
             // stay level and the bottoms staircase.
             let strip_h = (height - crate::num::coord(depth) * INDENT_STEP).max(1.0);
+            heights.push(strip_h);
             strip(
                 &mut strips,
                 palette,
@@ -353,6 +366,7 @@ impl Mixer {
                     height: strip_h,
                     buttons_top,
                     rack_h,
+                    mixer_h: height,
                 },
                 ordinal,
                 &ancestors,
@@ -373,6 +387,7 @@ impl Mixer {
             height,
             buttons_top,
             rack_h,
+            heights,
         }
     }
 
@@ -396,7 +411,7 @@ impl Mixer {
         let left = *self.offsets.get(row)?;
         let right = *self.offsets.get(row.checked_add(1)?)?;
         let width = (right - left - STRIP_GAP).max(0.0);
-        Some((left, width, self.height))
+        Some((left, width, *self.heights.get(row)?))
     }
 
     /// Which strip is at a content x, if any.
@@ -487,6 +502,8 @@ struct Slot {
     buttons_top: f64,
     /// How much of the top is the Tone rack's; zero when it is off.
     rack_h: f64,
+    /// The mixer's own height, which the top sections resolve against.
+    mixer_h: f64,
 }
 
 /// How much of the panel the REAPER strip keeps, with the rack on.
@@ -743,13 +760,24 @@ fn strip(
         height: h,
         buttons_top,
         rack_h,
+        ..
     } = slot;
     // `Collapse` is written in the f32 the theme's geometry is, and a
     // strip height is a few hundred pixels — exact either way.
-    // Against the height the strip has BELOW the rack, so a strip that
-    // gives half itself to the processing still collapses its remaining
-    // sections the way a half-height strip would.
-    let shape = Collapse::at(f64_to_f32((h - rack_h).max(1.0)));
+    // Two resolutions, and the difference matters.
+    //
+    // Nesting shortens a strip from the BOTTOM, so everything anchored
+    // to the top — the rack, the coloured band, the pan knob, the arm —
+    // is the same on every strip and resolves against the mixer's own
+    // height. Only what hangs below is shorter, which is the fader, and
+    // that is the cost of the indent rather than a second inconsistency.
+    //
+    // Resolving the bands per strip instead put the arm of a track
+    // three levels deep several pixels above the arm beside it, and a
+    // control that moves because of something about ITS track cannot be
+    // scanned across tracks.
+    let shape = Collapse::at(f64_to_f32((slot.mixer_h - rack_h).max(1.0)));
+    let own = Collapse::at(f64_to_f32((h - rack_h).max(1.0)));
 
     // The strip's ground, and the track's colour as a band across it.
     fill(scene, palette.tcp_tint, Rect::new(x, 0.0, x + w, h));
@@ -807,7 +835,7 @@ fn strip(
     let fx_section = f64::from(daw_theme_art::collapse::FX_SECTION) + rack_h;
     let pan_band = f64::from(shape.pan_band);
     let input_band = f64::from(shape.input_band);
-    let stretch_h = f64::from(shape.stretch);
+    let stretch_h = f64::from(own.stretch);
 
     let squeeze = Squeeze::at(w);
 
@@ -866,6 +894,7 @@ fn strip(
             height: h,
             buttons_top,
             rack_h,
+            mixer_h: slot.mixer_h,
         },
         (band_top, pan_band, input_band),
         &shape,

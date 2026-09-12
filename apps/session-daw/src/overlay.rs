@@ -44,8 +44,9 @@ pub fn control(
     };
     let columns = crate::mcp::Columns::at(left, width);
     let shape = daw_ui::controls::Collapse::at(crate::mcp::f64_to_f32(
-        (height - rack_h).max(1.0),
+        (mixer.height - rack_h).max(1.0),
     ));
+    let _ = height;
     let band_bottom = f64::from(daw_theme_art::collapse::FX_SECTION)
         + rack_h
         + f64::from(shape.pan_band)
@@ -291,6 +292,7 @@ pub fn controls(
             strip_h,
             mixer.rack_h,
             mixer.buttons_top,
+            mixer.height,
         );
     }
     for command in &scene.commands {
@@ -319,12 +321,17 @@ fn draw_strip_controls(
     height: f64,
     rack_h: f64,
     buttons_top: f64,
+    mixer_h: f64,
 ) {
     use daw_ui::controls::{Collapse, VolumeWidget};
 
     let squeeze = crate::mcp::Squeeze::at(width);
     let columns = crate::mcp::Columns::at(left, width);
-    let shape = Collapse::at(crate::mcp::f64_to_f32((height - rack_h).max(1.0)));
+    // The same two resolutions the recorded strip uses: the mixer's
+    // height for everything anchored to the top, the strip's own only
+    // for the fader, which is what the indent shortens.
+    let shape = Collapse::at(crate::mcp::f64_to_f32((mixer_h - rack_h).max(1.0)));
+    let own = Collapse::at(crate::mcp::f64_to_f32((height - rack_h).max(1.0)));
     let band_top = f64::from(daw_theme_art::collapse::FX_SECTION) + rack_h;
     // The band's own bottom is where the ARM hangs from; the mixer's
     // shared line is where the buttons and the fader start. They are
@@ -388,9 +395,9 @@ fn draw_strip_controls(
     // so the whole thing is live rather than a recorded groove with a
     // live cap — a groove lit to the old value under a cap at the new
     // one is worse than either.
-    let stretch = f64::from(shape.stretch);
+    let stretch = f64::from(own.stretch);
     let value = crate::tcp::volume_fraction(track.volume);
-    if matches!(shape.volume, VolumeWidget::Fader) {
+    if matches!(own.volume, VolumeWidget::Fader) {
         crate::art::place(
             scene,
             &art::fader(
