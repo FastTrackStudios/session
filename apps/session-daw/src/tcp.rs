@@ -223,16 +223,20 @@ pub fn draw_row(
         }
         rect(scene, *tint, left, y, (left + INDENT).min(MAX_INDENT), y + h);
     }
-    if track.is_folder && indent < MAX_INDENT {
-        rect(
-            scene,
-            tint,
-            indent,
-            y,
-            (indent + INDENT).min(MAX_INDENT),
-            y + h,
-        );
-    }
+    // The rail carries the row's OWN colour, at the same strength.
+    //
+    // It used to be flat `tcp_column`, which is nearly black — so the
+    // coloured indent ran up to the rail and then stopped dead, and the
+    // row read as "some colour, then a black gap, then the track". The
+    // gap is where the folder icon and the track number live, which is
+    // to say it is the part of the left edge you actually look at.
+    //
+    // Colouring it means the whole left edge is the track and its
+    // lineage, unbroken from the panel's edge to the row's content, and
+    // a folder's stripe starts on the folder's own row — its rail — and
+    // continues down every child as their ancestor band.
+    rect(scene, folder_band(palette, track), indent, y, indent + rail, y + h);
+
     rect(
         scene,
         palette.tcp_rule,
@@ -278,14 +282,24 @@ pub fn draw_row(
     // mark has taken the rail — the mark is the fact worth keeping when
     // only one of the two fits.
     if h - mark_h >= 11.0 {
+        // Sized and centred to sit INSIDE the rail.
+        //
+        // It was left-aligned at a fixed offset and a fixed 11 points,
+        // so a two-digit number ran past the rule closing the rail —
+        // the number of one track crossing the line into the body of
+        // its own row. The rail is the width it gets; if the digits do
+        // not fit, they get smaller.
+        let number = track.index.saturating_add(1).to_string();
+        let (number, size) = font.fit(&number, 11.0, 6.0, rail - 3.0);
+        let width = font.width(&number, size);
         glyphs(
             scene,
             font,
-            palette.text_faint,
-            &track.index.saturating_add(1).to_string(),
-            indent + 9.0,
-            y + mark_h + (h - mark_h) / 2.0 + 4.0,
-            11.0,
+            ink_on(folder_band(palette, track)),
+            &number,
+            indent + (rail - width) / 2.0,
+            y + mark_h + (h - mark_h) / 2.0 + f64::from(size) / 3.0,
+            size,
         );
     }
 
@@ -722,6 +736,48 @@ pub fn folder_band(palette: &Palette, track: &Track) -> Color {
         (bb - ab).mul_add(STRENGTH, ab),
         aa,
     ])
+}
+
+/// Ink for a number sitting on `background`.
+///
+/// Black on anything but a very dark band, which is what was asked for
+/// and what the drum template wants: the bands are saturated mid-tones
+/// and black on them reads as a number stamped on a colour, where a
+/// light ink reads as a second label floating over it.
+///
+/// Worth writing down, because it is a real trade and not an oversight:
+/// **strict WCAG contrast prefers the light ink on three of these four
+/// bands.** Linearising the channels properly puts the kick, the toms
+/// and the kit itself near 0.07 relative luminance, where black is
+/// about 2.4:1 and white about 8.6:1; only the snare's olive is a
+/// coin-flip at 4.4 against 4.7.
+///
+/// What is measured here is therefore sRGB-space brightness — the
+/// channels weighted but NOT linearised — which tracks how bright a
+/// colour looks better than it tracks how legible it is. That is the
+/// right measure for this particular decision and the wrong one for an
+/// accessibility claim, so no such claim is made. If these numbers ever
+/// need to meet a contrast standard, this function is where that starts
+/// and the answer will be the light ink.
+///
+/// The weights are still the luminance ones rather than a flat average:
+/// green carries most of what the eye reads as brightness and blue
+/// almost none, so a saturated blue and a saturated yellow average the
+/// same and look nothing alike.
+///
+/// The threshold only has to catch bands dark enough that black would
+/// vanish into them — a near-black track colour is the case it exists
+/// for, not the mid-tones.
+const INK_FLOOR: f32 = 0.179;
+
+fn ink_on(background: Color) -> Color {
+    let [r, g, b, _] = background.components;
+    let luminance = 0.2126_f32.mul_add(r, 0.7152_f32.mul_add(g, 0.0722 * b));
+    if luminance > INK_FLOOR {
+        Color::from_rgba8(0, 0, 0, 0xff)
+    } else {
+        Color::from_rgba8(0xe8, 0xe8, 0xea, 0xff)
+    }
 }
 
 /// The row's background, tinted toward the track's own colour.

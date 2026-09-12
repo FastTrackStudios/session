@@ -675,6 +675,12 @@ fn strip(
     let squeeze = Squeeze::at(w);
 
     // ── The FX section ──
+    //
+    // Below the rack, at the top of the REAPER strip — not at the top of
+    // the whole panel. It is the button that OPENS the chain, so it
+    // belongs with the controls rather than floating above the graphs
+    // it would open: sitting on top of the embedded FX it read as a
+    // label for them, which is the one thing it is not.
     if squeeze.head() {
         crate::art::place(
             scene,
@@ -686,15 +692,16 @@ fn strip(
             ),
             font,
             x + 7.0,
-            f64::from(g::FX_PILL_TOP),
+            rack_h + f64::from(g::FX_PILL_TOP),
         );
     }
 
     // ── The Tone rack ──
     //
-    // Between the FX pill and the coloured band: the processing sits
-    // above the track's identity, which is the order you read a strip
-    // in when you are mixing rather than navigating.
+    // The whole top of the panel, down to where the REAPER strip
+    // starts. It used to begin one FX-section below that, leaving a
+    // band of empty strip above it — room reserved for the FX pill back
+    // when the pill sat up here.
     if rack_h > 0.0 {
         crate::tone::record(
             scene,
@@ -703,9 +710,9 @@ fn strip(
             &crate::tone::placeholder(index),
             crate::tone::Panel {
                 x: x + 2.0,
-                y: f64::from(daw_theme_art::collapse::FX_SECTION),
+                y: 2.0,
                 width: (w - 4.0).max(0.0),
-                height: rack_h - 2.0,
+                height: (rack_h - 4.0).max(0.0),
             },
         );
     }
