@@ -154,14 +154,14 @@ impl Rack {
 /// Three gridlines — 100, 1k, 10k — and below this they crowd into each
 /// other, at which point the panel is a squiggle rather than a decision
 /// you can check.
-pub const LEGIBLE: f64 = 110.0;
+pub const LEGIBLE: f64 = 96.0;
 
 /// The narrowest rack that still says anything.
 ///
 /// Below this a curve is a few pixels of wiggle — it reads as ornament
 /// rather than as a setting, and ornament in a mixer is worse than
 /// space.
-pub const SHAPE: f64 = 96.0;
+pub const SHAPE: f64 = 90.0;
 
 /// The width a strip opens to when you go to WORK on it.
 ///
@@ -181,7 +181,7 @@ pub const SHAPE: f64 = 96.0;
 /// extra width from the others rather than adding to the total — see
 /// `mcp::widths` — so this is bounded by what the resting layout can
 /// afford, not by what the worst selection would cost on top of it.
-pub const WORKING: f64 = 130.0;
+pub const WORKING: f64 = 96.0;
 
 /// Where the rack goes.
 #[derive(Clone, Copy, Debug)]

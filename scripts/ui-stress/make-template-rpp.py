@@ -235,25 +235,34 @@ MIN_WIDTH = 30
 # width a selected strip opens to, so that selecting a piece does not
 # resize it and shove every strip to its right.
 #
-# Close to REAPER's own 86, because the strip UNDER the rack has to
-# stay the strip you already know how to use. The rack needs more width
-# than a mic does, but "more than REAPER" is a cost, not a feature: at
-# 195 the kit read as a row of plots rather than as a mixer.
+# REAPER's own 86, give or take twelve pixels. The strip under the rack
+# has to stay the strip you already know how to use, and "wider than
+# REAPER" is a cost rather than a feature — at 195 the kit read as a row
+# of plots with a mixer attached.
 #
-# 130 is the narrowest that still gives the EQ panel its three decades
-# without them crowding (`tone::LEGIBLE`), and it must equal
-# `tone::WORKING` so that selecting a piece does not resize it.
+# 96 is not a taste, it is the budget. The target display is 2560x1440,
+# and everything that is not a piece — 8 mics at 86, 10 auxiliaries at
+# 30, 6 folders at 56, and the gaps — costs 1,360px. Twelve pieces at 96
+# put the kit at 2,512.
 #
-# The kit comes to 2,944px — one 16:9 screen at 3840, with 896 spare.
-# Only the RESTING layout has to fit: opening a strip borrows its extra
+# Deliberately not the 98 that would fill 2560 exactly: a layout with
+# nothing spare loses its last strip to the first scrollbar or border
+# anyone puts beside it, and "fits, but only with no chrome" is not a
+# fit. 48px is one narrow strip of slack.
+#
+# It must equal `tone::WORKING` so selecting a piece does not resize it,
+# and `tone::LEGIBLE` is set to the same number: a piece is exactly as
+# wide as the narrowest rack that still reads.
+#
+# Only the RESTING layout has to fit. Opening a strip borrows its extra
 # width off the others rather than adding to the total (`mcp::widths`),
 # so a click cannot break it.
-TONE_WIDTH = 130
+TONE_WIDTH = 96
 
 # A folder is a bus: you read its level and its mute, and it has no
 # close-mic processing of its own to show. `Squeeze::Head` — the pan and
 # the meter beside the fader, no button column.
-FOLDER_WIDTH = 60
+FOLDER_WIDTH = 56
 
 
 # A mic under a piece — `In`, `Out`, `Top`, `Bottom`. REAPER's own
@@ -289,9 +298,9 @@ def strip_width(name: str, is_folder: bool, piece: bool) -> int:
     return MIC_WIDTH
 
 
-# The display the kit is laid out to fit. 4K 16:9 — the narrowest
-# screen this is meant to work on; the 5120-wide one has room to spare.
-FITS_WIDTH = 3840
+# The display the kit is laid out to fit: the 2560x1440 screen this is
+# actually used on. The 5120-wide one has room to spare.
+FITS_WIDTH = 2560
 
 
 def check_the_kit_fits(tracks) -> None:
