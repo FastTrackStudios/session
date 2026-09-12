@@ -351,8 +351,54 @@ fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot:
         );
     }
 
-    // ── The tinted band: pan, then the record input ──
     let band_top = fx_section;
+    tinted_band(
+        scene,
+        palette,
+        font,
+        track,
+        Slot {
+            x,
+            width: w,
+            height: h,
+            buttons_top,
+        },
+        (band_top, pan_band, input_band),
+        &shape,
+    );
+
+    stretch(
+        scene,
+        palette,
+        font,
+        track,
+        Stretch {
+            x,
+            width: w,
+            top: band_top + pan_band + input_band,
+            height: stretch_h,
+        },
+        &shape,
+        buttons_top,
+    );
+
+    bottom(scene, palette, font, track, x, w, h);
+}
+
+/// The coloured band: pan, the record input, and the arm hanging off its
+/// bottom edge.
+fn tinted_band(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    track: &Track,
+    slot: Slot,
+    bands: (f64, f64, f64),
+    shape: &Collapse,
+) {
+    let Slot { x, width: w, .. } = slot;
+    let (band_top, pan_band, input_band) = bands;
+    let squeeze = Squeeze::at(w);
     fill(
         scene,
         crate::tcp::row_tint(palette, track),
@@ -377,16 +423,40 @@ fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot:
             pan_top,
         );
     }
-    if squeeze.head() && shape.show_record_input {
+    // The record input, on armed tracks only.
+    //
+    // It is what a track RECORDS FROM, so a track that is not recording
+    // has nothing to say with it — the same rule the track panel
+    // follows. Drawn unconditionally it was an empty sunken rectangle on
+    // every strip in the session: a black box with no label, which reads
+    // as a hole rather than as a field nobody has filled in.
+    if squeeze.head() && shape.show_record_input && track.armed {
+        let field_x = x + f64::from(g::RECINPUT_X);
+        let field_w = f64::from(g::RECINPUT_X)
+            .mul_add(-2.0, w)
+            .min(f64::from(g::RECINPUT_W));
+        let top = band_top + pan_band + 2.0;
+        let height = f64::from(g::INPUT_FIELD_H);
         fill(
             scene,
             palette.tcp_combo,
-            Rect::new(
-                x + f64::from(g::RECINPUT_X),
-                band_top + pan_band + 2.0,
-                x + f64::from(g::RECINPUT_X) + f64::from(g::RECINPUT_W),
-                band_top + pan_band + 2.0 + f64::from(g::INPUT_FIELD_H),
-            ),
+            Rect::new(field_x, top, field_x + field_w, top + height),
+        );
+        crate::tcp::glyphs(
+            scene,
+            font,
+            palette.text_dim,
+            &font.elide(&crate::tcp::record_input(track), 10.0, field_w - 14.0),
+            field_x + 4.0,
+            top + height / 2.0 + 3.5,
+            10.0,
+        );
+        // The field's caret, so it reads as something you can open.
+        crate::tcp::caret(
+            scene,
+            palette.text_faint,
+            field_x + field_w - 9.0,
+            top + height / 2.0 - 2.0,
         );
     }
 
@@ -424,23 +494,6 @@ fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot:
         );
     }
 
-    stretch(
-        scene,
-        palette,
-        font,
-        track,
-        Stretch {
-            x,
-            width: w,
-            top: band_top + pan_band + input_band,
-            height: stretch_h,
-        },
-        &shape,
-        buttons_top,
-    );
-
-    // ── The bottom: the name plate, then the index ──
-    bottom(scene, palette, font, track, x, w, h);
 }
 
 /// Where the stretch section sits, and how tall it is.

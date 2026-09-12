@@ -729,8 +729,15 @@ pub fn to_theme(color: Color) -> daw_theme::Color {
     }
 }
 
-fn record_input(track: &Track) -> String {
-    format!("{:?}", track.record_input)
+/// What a track records from, as the panel prints it.
+///
+/// `daw_ui`'s own formatter rather than a `Debug` of the enum: this is a
+/// label a person reads off a strip, and "Audio { channel: 0 }" is a
+/// dump of a data structure. One formatter, so the mixer and the panel
+/// name an input the same way.
+#[must_use]
+pub fn record_input(track: &Track) -> String {
+    daw_ui::controls::record_input_name(track)
 }
 
 fn rect(scene: &mut anyrender::Scene, color: Color, x0: f64, y0: f64, x1: f64, y1: f64) {
@@ -746,7 +753,7 @@ fn scene_fill(scene: &mut anyrender::Scene, color: Color, shape: &impl vello::ku
 ///
 /// A dot rather than a rotated pointer line, because the recorded scene
 /// The combo's disclosure triangle.
-fn caret(scene: &mut anyrender::Scene, color: Color, x: f64, y: f64) {
+pub fn caret(scene: &mut anyrender::Scene, color: Color, x: f64, y: f64) {
     use vello::kurbo::BezPath;
     let mut path = BezPath::new();
     path.move_to((x, y));

@@ -249,7 +249,14 @@ def main() -> None:
         # record arm was a ring that never lit, which is a control you
         # cannot tell from an ornament.
         armed = 0 if is_folder or is_auxiliary(name) else 1
-        out(f"    SEL 0\n    REC {armed} 5088 1 0 0 0 0 0\n")
+        # REAPER's second REC field is the input: a small integer is a
+        # mono hardware input, counted from zero. 5088 was a value
+        # copied from a real project and it decodes to nothing useful,
+        # so every armed track's input field read "No input" — a label
+        # that says the fixture forgot rather than that the track has
+        # none.
+        source = 0 if is_folder or is_auxiliary(name) else (i % 16)
+        out(f"    SEL 0\n    REC {armed} {source} 1 0 0 0 0 0\n")
         height = MIN_HEIGHT if is_auxiliary(name) else 0
         out(f"    TRACKHEIGHT {height} 0 0 0 0 0 0\n")
 

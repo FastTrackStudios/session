@@ -369,7 +369,12 @@ fn populate_tracks(
                 // muted out of the master bus must not read as sending to
                 // it just because nobody asked the routing service.
                 parent_send: rt.master_send.as_ref().map(|m| m.enabled).unwrap_or(true),
-                record_input: daw_proto::track::RecordInput::None,
+                record_input: rt
+                    .record
+                    .as_ref()
+                    .map_or(daw_proto::track::RecordInput::None, |r| {
+                        record_input_from_rpp(r.input)
+                    }),
             };
             p.tracks.push(track);
 
@@ -379,7 +384,12 @@ fn populate_tracks(
                 guid.clone(),
                 TrackExt {
                     num_channels: rt.channel_count.max(1).min(128),
-                    record_input: daw_proto::track::RecordInput::None,
+                    record_input: rt
+                        .record
+                        .as_ref()
+                        .map_or(daw_proto::track::RecordInput::None, |r| {
+                            record_input_from_rpp(r.input)
+                        }),
                     parent_send_enabled,
                     tcp_height_pixels: 0,
                 },
@@ -1394,4 +1404,47 @@ fn mcp_widths(rpp_text: &str) -> std::collections::HashMap<String, u32> {
         }
     }
     widths
+}
+
+/// REAPER's `I_RECINPUT`, decoded.
+///
+/// One integer carrying three different things, which is why it is here
+/// rather than inline:
+///
+/// ```text
+///   < 0            nothing selected
+///   0..1024        a mono hardware input, by index
+///   1024 + n       the stereo pair starting at input n
+///   4096 + d*32+c  MIDI: device d, channel c, where c = 0 is "all
+///                  channels" and a device of 63 is "all devices"
+/// ```
+///
+/// The standalone loader used to report `None` for every track whatever
+/// the file said, so a strip's input field read "No input" on a track
+/// that was plainly recording something.
+fn record_input_from_rpp(raw: i32) -> daw_proto::track::RecordInput {
+    use daw_proto::track::RecordInput;
+
+    if raw < 0 {
+        return RecordInput::None;
+    }
+    if raw >= 4096 {
+        let bits = raw - 4096;
+        let device = bits >> 5;
+        let channel = bits & 0x1F;
+        return RecordInput::Midi {
+            // 63 is REAPER's "all devices"; a channel of zero is "all
+            // channels", and the rest are counted from one in the file
+            // and from zero in the model.
+            device_id: (device != 63).then(|| device.clamp(0, 255) as u8),
+            channel: (channel != 0).then(|| (channel - 1).clamp(0, 255) as u8),
+        };
+    }
+    // A stereo pair is named by the input it starts on, which is the
+    // same number a mono input would use — the 1024 only says how many
+    // channels follow it.
+    let channel = if raw >= 1024 { raw - 1024 } else { raw };
+    RecordInput::Audio {
+        channel: channel.max(0) as u32,
+    }
 }
