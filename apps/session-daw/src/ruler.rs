@@ -170,8 +170,8 @@ pub fn ruler(
                 // Bars are counted from one; only the arithmetic starts
                 // at zero.
                 &format!("{}", bar + 1.0),
-                x + 4.0,
-                14.0,
+                ox + x + 4.0,
+                oy + 14.0,
                 11.0,
             );
         }

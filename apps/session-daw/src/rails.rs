@@ -235,7 +235,10 @@ fn button(
 /// behave". Both are lists of one-word buttons until the toolbar icons
 /// `MixPhase::icon` names are ported.
 #[must_use]
-pub fn mixer_left(preset: &str) -> Vec<Item<'static>> {
+pub fn phases_and_presets(
+    preset: &str,
+    current: session::mix_phases::MixPhase,
+) -> Vec<Item<'static>> {
     let mut items: Vec<Item<'static>> = PRESETS
         .iter()
         .map(|name| Item {
@@ -248,9 +251,7 @@ pub fn mixer_left(preset: &str) -> Vec<Item<'static>> {
             .iter()
             .map(|phase| Item {
                 label: phase.display_name(),
-                // Tone is the phase this panel was built for; the rest
-                // light up when their rules exist.
-                on: matches!(phase, session::mix_phases::MixPhase::Tone),
+                on: *phase == current,
             }),
     );
     items
@@ -260,20 +261,55 @@ pub fn mixer_left(preset: &str) -> Vec<Item<'static>> {
 /// `ModeVisibility` — see the note in `mcp`.
 pub const PRESETS: [&str; 3] = ["Mix", "Rec", "Over"];
 
-/// The DAW modes, for the arrangement's top rail.
+/// Which panel a set of toolbars belongs to.
 ///
-/// The mode is the biggest thing about the window — it decides what the
-/// toolbars hold and which tracks are worth showing — so it goes across
-/// the top, where a thing that governs everything below it belongs.
+/// The TCP and the MCP do not share toolbars. They look at the same
+/// session but you do different things to it in each, so a rail that
+/// held one set for both would be half wrong in both places.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Surface {
+    Arrange,
+    Mixer,
+}
+
+/// The toolbars for one surface, in one mode, at one phase.
+///
+/// The three rails are a FUNCTION of those three things. That is the
+/// shape the real profiles need — REAPER keeps 27 of them in
+/// `reaper-menu.ini` and the modes and phases each want their own — so
+/// the signature takes all three even while the bodies are stubs. The
+/// alternative is wiring the call sites twice.
+#[derive(Clone, Debug)]
+pub struct Profile {
+    pub left: Vec<Item<'static>>,
+    pub right: Vec<Item<'static>>,
+    pub top: Vec<Item<'static>>,
+}
+
 #[must_use]
-pub fn modes(current: session::modes::Mode) -> Vec<Item<'static>> {
-    session::modes::Mode::ALL
-        .iter()
-        .map(|mode| Item {
-            label: mode.display_name(),
-            on: *mode == current,
-        })
-        .collect()
+pub fn profile(
+    surface: Surface,
+    _mode: session::modes::Mode,
+    phase: session::mix_phases::MixPhase,
+    preset: &str,
+    settings: crate::settings::Settings,
+) -> Profile {
+    // The left rail is the one thing both surfaces share: which layout
+    // is showing and which pass it belongs to is a fact about the
+    // SESSION, not about the panel you happen to be looking at.
+    let left = phases_and_presets(preset, phase);
+    match surface {
+        Surface::Mixer => Profile {
+            left,
+            right: mixer_right(settings),
+            top: Vec::new(),
+        },
+        Surface::Arrange => Profile {
+            left,
+            right: Vec::new(),
+            top: Vec::new(),
+        },
+    }
 }
 
 /// The right rail's switches, showing their state.
@@ -289,6 +325,66 @@ pub fn mixer_right(settings: crate::settings::Settings) -> Vec<Item<'static>> {
             on: settings.take_focus_width,
         },
     ]
+}
+
+/// The mode selector, in the corner above the track panel.
+///
+/// That corner exists because the ruler measures the TIMELINE, and the
+/// timeline starts where the lanes do — so the width of the track panel
+/// is left over at the top of every arrangement. REAPER leaves it
+/// empty. It is the one piece of chrome that does not move when
+/// anything else does, which makes it the right home for the mode:
+/// the top, left and right rails all change contents with the mode, and
+/// a selector that lived in something it re-populates would be
+/// selecting from inside its own result.
+///
+/// **Placeholder.** This is meant to be ONE button carrying the current
+/// mode, with a dropdown for the rest — ten of anything across 343
+/// pixels is 34 each, which is why the labels here are three letters
+/// and an abbreviation is never a good permanent answer. Laying all ten
+/// out is what makes the corner's size and position real to look at
+/// while the menu that replaces them does not exist yet.
+pub fn main_toolbar(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    frame: Frame,
+    current: session::modes::Mode,
+) {
+    let modes = session::modes::Mode::ALL;
+    let corner = Rect::new(
+        SIDE,
+        TOP,
+        SIDE + crate::arrangement::TCP_WIDTH,
+        TOP + crate::ruler::RULER_H,
+    );
+    fill(painter, palette.tcp_gutter, corner);
+    let each = corner.width() / crate::num::coord(modes.len());
+    for (i, mode) in modes.iter().enumerate() {
+        let x = corner.x0 + crate::num::coord(i) * each;
+        let slot = Rect::new(x + 1.0, corner.y0 + 2.0, x + each - 1.0, corner.y1 - 2.0);
+        button(
+            painter,
+            palette,
+            font,
+            slot,
+            Item {
+                label: abbreviate(mode.display_name()),
+                on: *mode == current,
+            },
+        );
+    }
+}
+
+/// A mode's name, short enough for a tenth of the corner.
+///
+/// Three letters is what fits. It is a placeholder for an icon, not a
+/// naming decision — which is why it is derived rather than written out
+/// as a table someone would have to keep in step with `Mode::ALL`.
+fn abbreviate(name: &'static str) -> &'static str {
+    name.char_indices()
+        .nth(3)
+        .map_or(name, |(byte, _)| &name[..byte])
 }
 
 fn fill(painter: &mut impl PaintScene, color: Color, rect: Rect) {

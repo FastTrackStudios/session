@@ -403,14 +403,21 @@ fn mixer_shot(
                     session_daw::rails::TOP,
                 )),
             );
+            let profile = session_daw::rails::profile(
+                session_daw::rails::Surface::Mixer,
+                session::modes::Mode::Mix,
+                session::mix_phases::MixPhase::Tone,
+                "Mix",
+                session_daw::settings::Settings::default(),
+            );
             session_daw::rails::draw(
                 painter,
                 palette,
                 font,
                 frame,
-                &session_daw::rails::mixer_left("Mix"),
-                &session_daw::rails::mixer_right(session_daw::settings::Settings::default()),
-                &session_daw::rails::modes(session::modes::Mode::Mix),
+                &profile.left,
+                &profile.right,
+                &profile.top,
             );
         },
         &mut buffer,
@@ -678,14 +685,31 @@ fn shot(
             // SESSION, not of one panel, so switching one switches
             // both. Its right rail is empty until the arrangement has
             // settings of its own worth switching.
+            let profile = session_daw::rails::profile(
+                session_daw::rails::Surface::Arrange,
+                session::modes::Mode::Mix,
+                session::mix_phases::MixPhase::Tone,
+                "Mix",
+                session_daw::settings::Settings::default(),
+            );
             session_daw::rails::draw(
                 painter,
                 palette,
                 font,
                 frame,
-                &session_daw::rails::mixer_left("Mix"),
-                &[],
-                &session_daw::rails::modes(session::modes::Mode::Mix),
+                &profile.left,
+                &profile.right,
+                &profile.top,
+            );
+            // The mode selector sits in the corner the ruler leaves
+            // above the track panel — the one piece of chrome the mode
+            // does not re-populate.
+            session_daw::rails::main_toolbar(
+                painter,
+                palette,
+                font,
+                frame,
+                session::modes::Mode::Mix,
             );
             counts.replayed = a.replayed + b.replayed;
             counts.submitted = a.submitted + b.submitted;
