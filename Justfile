@@ -1212,6 +1212,28 @@ daw-verify PROJECT="" SIZE="5120x1440":
 
 # The same sweep, in a real window, so you can watch it.
 #
+# Every parameter on every track, moving, measured.
+#
+# The mixer's controls are drawn live so a mute can change without the
+# mixer being re-recorded. This is the frame that says whether that is
+# actually cheap: mutes and solos toggling, arms flipping, faders
+# sweeping and pans crossing on every visible strip, every frame.
+#
+# Nothing scrolls — the question is what a STILL mixer costs when
+# everything in it is changing, and a scroll would hide that under the
+# cost of culling.
+daw-animate PROJECT="" SIZE="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="${FTS_DAW_FIXTURE:-/tmp/fts-orchestral.rpp}"
+        [[ -f "$project" ]] || just daw-fixture
+    fi
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    FTS_BENCH_ANIMATE=1 FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 \
+        | grep -viE 'vulkan|objects:|WARN'
+
 # Opens the arrangement and scrolls it hard in both axes while reporting
 # the rate it actually presents at. This is the one to watch when asking
 # "does scrolling ever stutter" — the headless bench cannot show you that.

@@ -186,6 +186,11 @@ fn main() {
     );
     println!("  {}", "-".repeat(78));
 
+    if std::env::var_os("FTS_BENCH_ANIMATE").is_some() {
+        animate(&palette, &font, layout, width, height);
+        return;
+    }
+
     if let Ok(out) = std::env::var("FTS_BENCH_MIXER") {
         mixer_shot(&palette, &font, layout, &std::path::PathBuf::from(out), width, height);
         return;
@@ -767,4 +772,126 @@ fn build_scene(palette: &Palette, layout: session_daw::layout::Layout) -> Option
         &rows,
         layout,
     ))
+}
+
+/// Every parameter on every track, moving, measured.
+///
+/// `FTS_BENCH_ANIMATE=1`. The mixer's controls are drawn live so a mute
+/// can change without the mixer being re-recorded; this is the frame
+/// that says whether that is actually cheap.
+///
+/// Nothing scrolls. The question is not "can it draw a moving mixer",
+/// it is "what does a still mixer cost when every control in it is
+/// changing" — and mixing a scroll into that would hide the answer
+/// under the cost of culling.
+fn animate(
+    palette: &Palette,
+    font: &session_daw::text::Font,
+    layout: session_daw::layout::Layout,
+    width: u32,
+    height: u32,
+) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let Some(project) = rt.block_on(daw_ui::studio::project::fetch()) else {
+        eprintln!("could not read the project back");
+        return;
+    };
+    let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
+    let (visible, depths) =
+        daw_ui::components::folders::FolderState::default().visible(&project.tracks);
+    let mut tracks: Vec<daw_proto::Track> = visible.clone();
+    let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
+        visible.into_iter().zip(depths).collect(),
+    ));
+
+    let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
+    let mixer = Mixer::build(
+        palette,
+        font,
+        &project,
+        &rows,
+        f64::from(height) - session_daw::rails::TOP,
+        layout,
+        true,
+    );
+    let rack_h = mixer.height * 0.66;
+    let pointer = session_daw::pointer::Pointer::default();
+
+    let mut renderer = Headless::new(width, height).expect("a headless renderer");
+    let mut stages = Stages::with_capacity(FRAMES);
+    let mut counts = Counts::default();
+    for batch in 0..FRAMES / BATCH {
+        let batch_start = Instant::now();
+        let mut painted = 0.0;
+        for step in 0..BATCH {
+            let frame_index = batch * BATCH + step;
+            let t = frame_index as f64 / FRAMES as f64;
+            // The session's state for this instant, the same on every
+            // run — see `animate::drive`.
+            session_daw::animate::drive(&mut tracks, t);
+            let mut drawn = Counts::default();
+            painted += renderer
+                .frame(|painter| {
+                    painter.reset();
+                    painter.fill(
+                        vello::peniko::Fill::NonZero,
+                        Affine::IDENTITY,
+                        palette.surface,
+                        None,
+                        &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+                    );
+                    let at = Affine::translate((
+                        session_daw::rails::SIDE,
+                        session_daw::rails::TOP,
+                    ));
+                    // The recorded chrome, then the live values over it.
+                    let a = mixer.replay(painter, 0.0, frame.content_width(), at);
+                    let b = session_daw::overlay::controls(
+                        painter,
+                        palette,
+                        font,
+                        &mixer,
+                        &tracks,
+                        &pointer,
+                        rack_h,
+                        0.0,
+                        frame.content_width(),
+                        at,
+                    );
+                    drawn.replayed = a.replayed + b.replayed;
+                    drawn.submitted = a.submitted + b.submitted;
+                })
+                .expect("render a frame");
+            counts = drawn;
+        }
+        renderer.wait().expect("the gpu to finish the batch");
+        let per_frame = batch_start.elapsed().as_secs_f64() * 1000.0 / BATCH as f64;
+        stages.frame.push_ms(per_frame);
+        stages.paint.push_ms(painted / BATCH as f64);
+    }
+    // The first batch warms geometry no earlier frame touched — the
+    // cost of starting, not of running.
+    stages.frame.drop_warmup(1);
+    stages.paint.drop_warmup(1);
+
+    let frame = stages.frame.summary().expect("batches");
+    let paint = stages.paint.summary().expect("batches");
+    println!(
+        "  {:<20} {:>7.2}ms {:>7.2}ms {:>7.2}ms {:>9.0}   {:>7.2} {:>7.2}",
+        "every parameter",
+        frame.mean,
+        frame.p99,
+        frame.worst,
+        frame.fps(),
+        paint.mean,
+        (frame.mean - paint.mean).max(0.0),
+    );
+    println!(
+        "\n  {} strips, {} commands submitted a frame — every mute, solo, arm,",
+        mixer.count, counts.submitted
+    );
+    println!("  fader and pan on every visible strip changing on every frame.");
 }

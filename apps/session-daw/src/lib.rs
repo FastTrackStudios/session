@@ -9,6 +9,7 @@
 //! which is the point of keeping both runnable while the second comes
 //! up.
 
+pub mod animate;
 pub mod arrangement;
 #[cfg(target_os = "linux")]
 pub mod cursor;

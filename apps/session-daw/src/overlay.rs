@@ -240,3 +240,172 @@ mod tests {
         );
     }
 }
+
+/// Every control whose VALUE can change, drawn live for the strips on
+/// screen.
+///
+/// The recorded strip holds what does not move: its ground, its colour
+/// bands, its name, its rack, the fader's groove. What moves — the
+/// fader's cap and lit travel, the pan knob's pointer, mute, solo, the
+/// record arm — is drawn here, from the tracks as they are NOW.
+///
+/// This is what makes a parameter a reflection of state rather than a
+/// picture taken at project open. Re-recording the mixer to show a
+/// changed mute would cost the whole mixer for one rectangle; drawing
+/// the controls live costs a handful of shapes per VISIBLE strip, which
+/// is a few dozen strips however large the session is.
+///
+/// The division is the same one the profiling found worth making
+/// everywhere in this app: record what is expensive and constant,
+/// re-emit what is cheap and varying.
+pub fn controls(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    mixer: &Mixer,
+    tracks: &[Track],
+    pointer: &crate::pointer::Pointer,
+    rack_h: f64,
+    scroll_x: f64,
+    width: f64,
+    transform: Affine,
+) -> crate::profile::Counts {
+    let mut counts = crate::profile::Counts::default();
+    let mut scene = anyrender::Scene::new();
+    for row in mixer.visible(scroll_x, width) {
+        let Some(track) = tracks.get(row) else {
+            continue;
+        };
+        let Some((left, strip_w, strip_h)) = mixer.strip_box(row) else {
+            continue;
+        };
+        draw_strip_controls(
+            &mut scene,
+            palette,
+            font,
+            track,
+            pointer,
+            row,
+            left,
+            strip_w,
+            strip_h,
+            rack_h,
+        );
+    }
+    for command in &scene.commands {
+        counts.replayed = counts.replayed.saturating_add(1);
+        if crate::arrangement::submit_command(painter, command, transform) {
+            counts.submitted = counts.submitted.saturating_add(1);
+        }
+    }
+    counts
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one strip's worth of geometry and state; grouping it into a \
+              struct would be a struct that exists for this call alone"
+)]
+fn draw_strip_controls(
+    scene: &mut anyrender::Scene,
+    palette: &Palette,
+    font: &Font,
+    track: &Track,
+    pointer: &crate::pointer::Pointer,
+    row: usize,
+    left: f64,
+    width: f64,
+    height: f64,
+    rack_h: f64,
+) {
+    use daw_ui::controls::{Collapse, VolumeWidget};
+
+    let squeeze = crate::mcp::Squeeze::at(width);
+    let columns = crate::mcp::Columns::at(left, width);
+    let shape = Collapse::at(crate::mcp::f64_to_f32((height - rack_h).max(1.0)));
+    let band_top = f64::from(daw_theme_art::collapse::FX_SECTION) + rack_h;
+    let band_bottom = band_top + f64::from(shape.pan_band) + f64::from(shape.input_band);
+    let state = |control| {
+        pointer.state(Spot { row, control })
+    };
+
+    // Pan: the pointer's angle is the value.
+    if squeeze.head() && f64::from(shape.pan_band) + f64::from(shape.input_band) > 26.0 {
+        crate::art::place(
+            scene,
+            &art::pan_knob(
+                &palette.chrome,
+                track.pan.clamp(-1.0, 1.0),
+                crate::tcp::to_theme(palette.pan),
+            ),
+            font,
+            left + (width - f64::from(g::PAN_KNOB_W)) / 2.0,
+            band_top + 2.0,
+        );
+    }
+
+    // The record arm: lit or not.
+    if squeeze.columns() {
+        crate::art::place(
+            scene,
+            &art::record_arm(
+                &palette.chrome,
+                crate::tcp::lit(palette).rec,
+                track.armed,
+                state(Control::RecArm),
+                art::Arm::Mixer,
+                crate::tcp::to_theme(palette.tcp_tint),
+            ),
+            font,
+            columns.column_axis - f64::from(g::ARM_CELL_W) * 0.486,
+            band_bottom + f64::from(g::ARM_OVERHANG) - f64::from(g::ARM_CELL_H),
+        );
+    }
+
+    // Mute and solo: lit or not.
+    let mut at = band_bottom + f64::from(g::RECMON_FROM_ARM);
+    for (control, label, on, lit) in [
+        (Control::Mute, "M", track.muted, crate::tcp::mute_lit(palette)),
+        (Control::Solo, "S", track.soloed, crate::tcp::solo_lit(palette)),
+    ] {
+        crate::art::place(
+            scene,
+            &art::gutter_button(&palette.chrome, label, on, lit, state(control)),
+            font,
+            columns.column_x,
+            at,
+        );
+        at += f64::from(g::BUTTON_H) + 1.0;
+    }
+
+    // The fader: its lit travel and its cap both move with the value,
+    // so the whole thing is live rather than a recorded groove with a
+    // live cap — a groove lit to the old value under a cap at the new
+    // one is worse than either.
+    let stretch = f64::from(shape.stretch);
+    let value = crate::tcp::volume_fraction(track.volume);
+    if matches!(shape.volume, VolumeWidget::Fader) {
+        crate::art::place(
+            scene,
+            &art::fader(
+                &palette.chrome,
+                crate::tcp::lit(palette).volume,
+                value,
+                columns.fader_w,
+                stretch,
+            ),
+            font,
+            columns.fader_x,
+            band_bottom,
+        );
+        let (cap_y, cap_h) = art::fader_cap_at(value, columns.fader_w, stretch);
+        crate::art::scaled(
+            scene,
+            &art::fader_cap(&palette.chrome, palette.chrome.hardware_mark),
+            font,
+            columns.fader_x,
+            band_bottom + cap_y,
+            cap_h / 53.0,
+        );
+    }
+}
