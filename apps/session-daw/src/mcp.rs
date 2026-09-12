@@ -65,22 +65,22 @@ pub const STRIP_GAP: f64 = 1.0;
 /// staircase costs no height that the strips were using.
 pub const INDENT_STEP: f64 = 12.0;
 
-/// REAPER's own MCP strip height.
+/// How tall the mixer panel opens by default.
 ///
-/// Measured off a running REAPER with the ReaperTips theme, the same
-/// way `STRIP_W` was: the mixer wraps its strips into rows, and the row
-/// pitch is the strip height. It came out at 310, not the 371 that was
-/// here before — and those 61 pixels are the whole of why this panel
-/// read as sparse next to REAPER's.
+/// REAPER's own default, and a *default* is all it is: the panel is
+/// draggable and a strip fills whatever height it is given. There is no
+/// fixed REAPER strip height to match.
 ///
-/// REAPER fits ten control rows into 310: the FX button, the colour
-/// band with pan and input and arm, the volume readout, mute and solo,
-/// the fader against its dB scale, the meter, the lower row of
-/// phase/envelope/routing, and the name and number. Density is the
-/// point — a strip with the same controls and sixty pixels of air
-/// between them is not calmer, it is harder to read, because the eye
-/// has further to travel for every comparison.
-pub const DEFAULT_HEIGHT: f64 = 310.0;
+/// This was briefly 310, measured off a running REAPER — wrongly. That
+/// REAPER had "show multiple rows of tracks" ON, so its mixer had
+/// wrapped the session into two rows, and what I measured was the ROW
+/// PITCH of a wrapped layout, not the height of a strip. With the
+/// option off there is one row and each strip is as tall as the panel.
+///
+/// The width measured the same way IS right — 86, confirmed twice — and
+/// that is the difference worth remembering: a strip's width is a real
+/// constant, its height is whatever the dock gives it.
+pub const DEFAULT_HEIGHT: f64 = 371.0;
 
 /// What fits in a strip of a given width.
 ///
