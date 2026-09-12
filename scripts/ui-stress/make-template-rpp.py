@@ -235,23 +235,20 @@ MIN_WIDTH = 30
 # width a selected strip opens to, so that selecting a piece does not
 # resize it and shove every strip to its right.
 #
-# The number is chosen so the WHOLE KIT fits one 16:9 screen: 36 strips
-# at 3,724px, inside 3840 with 116 to spare.
+# Close to REAPER's own 86, because the strip UNDER the rack has to
+# stay the strip you already know how to use. The rack needs more width
+# than a mic does, but "more than REAPER" is a cost, not a feature: at
+# 195 the kit read as a row of plots rather than as a mixer.
 #
-# Only the RESTING layout has to fit. Opening a strip borrows its extra
-# width off the other strips rather than adding to the total (see
-# `mcp::widths`), so the mixer is the same width selected or not and a
-# click cannot break the fit.
+# 130 is the narrowest that still gives the EQ panel its three decades
+# without them crowding (`tone::LEGIBLE`), and it must equal
+# `tone::WORKING` so that selecting a piece does not resize it.
 #
-# It was 185 for exactly one commit, while opening a strip still grew
-# the mixer and the layout had to reserve room for the worst selection.
-# Borrowing removed the reserve, which is 10px back on every piece.
-#
-# That is the test a channel strip with the processing in it has to
-# pass. A kit you can see all of at once is one you mix by comparison; a
-# kit you scroll is one you mix by memory, which is what opening plugin
-# windows one at a time already forces.
-TONE_WIDTH = 195
+# The kit comes to 2,944px — one 16:9 screen at 3840, with 896 spare.
+# Only the RESTING layout has to fit: opening a strip borrows its extra
+# width off the others rather than adding to the total (`mcp::widths`),
+# so a click cannot break it.
+TONE_WIDTH = 130
 
 # A folder is a bus: you read its level and its mute, and it has no
 # close-mic processing of its own to show. `Squeeze::Head` — the pan and

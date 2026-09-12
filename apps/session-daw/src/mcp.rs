@@ -157,7 +157,8 @@ pub struct Mixer {
 }
 
 impl Mixer {
-    /// Record the whole mixer, once, into a box `height` tall.
+    /// Record the whole mixer, `height` being the height of its REAPER
+    /// part.
     ///
     /// The brackets take their share off the top and the strips get the
     /// rest. Depth is measured before anything is recorded, because a
@@ -180,8 +181,16 @@ impl Mixer {
             .max()
             .map_or(0, |deepest| deepest.saturating_add(1));
 
-        // The Tone rack's height, taken off the top of every strip —
-        // including the ones too narrow to draw one.
+        // The Tone rack's height, ADDED above every strip — including
+        // the ones too narrow to draw one.
+        //
+        // Added rather than taken out. `height` is what the REAPER
+        // controls need — its own MCP is 371 and everything in it is
+        // sized against that — so spending half of it on the rack
+        // leaves a fader of sixty pixels and a mute you cannot hit. The
+        // embedded processing is an ADDITION to a channel strip, not a
+        // replacement for most of one, and the strip underneath it has
+        // to stay the strip you already know how to use.
         //
         // Shared rather than per-strip for the same reason the button
         // line is: a mixer is read by scanning ACROSS it, and a rack
@@ -194,6 +203,9 @@ impl Mixer {
         } else {
             0.0
         };
+        // What the strips actually stand in: the controls at their own
+        // height, with the rack on top.
+        let height = height + rack_h;
 
         // One section layout for the whole mixer, resolved against the
         // height LEFT OVER — not against each strip's own.
@@ -339,13 +351,40 @@ struct Slot {
     rack_h: f64,
 }
 
-/// How much of a strip the Tone rack takes when it is on.
+/// How tall the Tone rack is, as a share of the strip it sits above.
 ///
-/// Not a whole strip and not a corner: the rack has to be big enough
-/// that three stacked curves each read, and the fader and the buttons
-/// below it have to stay usable, because the point of a channel strip
-/// with the processing in it is that you can still MIX on it.
+/// Measured against the CONTROLS' height rather than the window's, so
+/// the rack is proportioned to the strip it belongs to instead of to
+/// however tall someone dragged the panel.
+///
+/// Not a whole strip and not a corner: big enough that three stacked
+/// curves each read, small enough that the strip underneath is still
+/// the strip you already know how to use.
 const RACK_SHARE: f64 = 0.46;
+
+/// How far a strip may be lent down.
+///
+/// Not to the absolute floor: to the bottom of the TIER it is already
+/// in, whichever tier that is. A strip drawing a full rack lends only
+/// down to the width that still draws one; a strip drawing curves lends
+/// only down to the width that still draws those.
+///
+/// Without this, opening a strip switched off every OTHER strip's rack.
+/// Each lender gave up a handful of pixels, which was enough to carry a
+/// strip across a threshold, so one click on a mic blanked the
+/// processing on the whole kit. Lending has to be invisible, and a
+/// control disappearing is the least invisible thing a layout can do.
+///
+/// Asking the tier for its own bound rather than naming the thresholds
+/// here is not tidiness: the first version of this guarded `LEGIBLE`
+/// only, and a strip one tier down walked straight through `SHAPE`
+/// instead.
+fn lending_floor(width: f64, layout: crate::layout::Layout) -> f64 {
+    crate::tone::Rack::at(width)
+        .floor()
+        .unwrap_or(layout.strip_min)
+        .max(layout.strip_min)
+}
 
 /// Every strip's width, with the selected ones opened.
 ///
@@ -416,7 +455,7 @@ fn widths(
             if open.contains(&i) {
                 0.0
             } else {
-                (w - layout.strip_min).max(0.0)
+                (w - lending_floor(*w, layout)).max(0.0)
             }
         })
         .collect();
@@ -453,13 +492,9 @@ fn widths(
 /// How thick the selected strip's top rule is.
 const SELECTED_RULE: f64 = 2.0;
 
-/// And its ceiling, so a tall mixer does not turn into three plots.
-///
-/// Generous, because the fader below it does not need the other half of
-/// a 1440-pixel display to be usable and the curves do need the room:
-/// the EQ panel is the one you make a decision on, and a decision you
-/// squint at is one you get wrong.
-const RACK_MAX: f64 = 600.0;
+/// And its ceiling, so a tall panel does not turn into three big plots
+/// with a channel strip hanging off the bottom.
+const RACK_MAX: f64 = 220.0;
 
 fn strip(
     scene: &mut Scene,
@@ -1093,6 +1128,43 @@ mod selection_tests {
             both[0] < open[0],
             "sharing means each gets less than one alone would"
         );
+    }
+
+    /// Opening one strip must not switch off anyone else's rack.
+    ///
+    /// The bug this guards: every lender gave up a few pixels, which
+    /// was enough to carry a strip across `LEGIBLE`, so one click on a
+    /// mic blanked the processing on the whole kit. Lending has to be
+    /// invisible, and a control vanishing is the least invisible thing
+    /// a layout can do.
+    #[test]
+    fn lending_never_costs_a_strip_its_rack() {
+        // A kit's worth of pieces sitting just above the threshold,
+        // which is where the bug bit.
+        let piece = crate::tone::LEGIBLE + 4.0;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::as_conversions,
+            reason = "a strip width in pixels, built for a fixture"
+        )]
+        let piece = piece as u32;
+        let stored = [piece, piece, piece, piece, piece, piece, 86, 86, 30, 30];
+        let layout = Layout::default();
+
+        let shut = widths(&rows(&stored, None), layout, true);
+        let open = widths(&rows(&stored, Some(6)), layout, true);
+
+        for (i, (before, after)) in shut.iter().zip(&open).enumerate() {
+            if i == 6 {
+                continue;
+            }
+            assert_eq!(
+                crate::tone::Rack::at(*before),
+                crate::tone::Rack::at(*after),
+                "strip {i} changed rack tier when another opened: {before} -> {after}"
+            );
+        }
     }
 
     /// Outside the Tone sub-mode selection is not a zoom at all.

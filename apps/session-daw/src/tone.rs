@@ -119,7 +119,7 @@ impl Rack {
     pub fn at(width: f64) -> Self {
         if width >= LEGIBLE {
             Self::Full
-        } else if width >= 96.0 {
+        } else if width >= SHAPE {
             Self::Curves
         } else {
             Self::Off
@@ -131,6 +131,22 @@ impl Rack {
     pub fn on(self) -> bool {
         self != Self::Off
     }
+
+    /// The narrowest width still in this tier.
+    ///
+    /// What a strip may be shrunk to without changing what it shows —
+    /// see `mcp::lending_floor`, which is the only caller and the
+    /// reason this exists. Returning the tier's own lower bound rather
+    /// than a fixed floor is what keeps a strip from being lent out of
+    /// the rack it was drawing.
+    #[must_use]
+    pub const fn floor(self) -> Option<f64> {
+        match self {
+            Self::Full => Some(LEGIBLE),
+            Self::Curves => Some(SHAPE),
+            Self::Off => None,
+        }
+    }
 }
 
 /// The narrowest rack whose EQ panel still reads as a frequency axis.
@@ -138,7 +154,14 @@ impl Rack {
 /// Three gridlines — 100, 1k, 10k — and below this they crowd into each
 /// other, at which point the panel is a squiggle rather than a decision
 /// you can check.
-pub const LEGIBLE: f64 = 150.0;
+pub const LEGIBLE: f64 = 110.0;
+
+/// The narrowest rack that still says anything.
+///
+/// Below this a curve is a few pixels of wiggle — it reads as ornament
+/// rather than as a setting, and ornament in a mixer is worse than
+/// space.
+pub const SHAPE: f64 = 96.0;
 
 /// The width a strip opens to when you go to WORK on it.
 ///
@@ -158,7 +181,7 @@ pub const LEGIBLE: f64 = 150.0;
 /// extra width from the others rather than adding to the total — see
 /// `mcp::widths` — so this is bounded by what the resting layout can
 /// afford, not by what the worst selection would cost on top of it.
-pub const WORKING: f64 = 195.0;
+pub const WORKING: f64 = 130.0;
 
 /// Where the rack goes.
 #[derive(Clone, Copy, Debug)]
@@ -477,14 +500,18 @@ fn band(index: usize, frequency: f64, gain: f64, q: f64, shape: EqBandShape) -> 
 mod tests {
     use super::*;
 
-    /// The tiers are ordered and the thresholds do not overlap.
+    /// The tiers are ordered, and each threshold is where its tier
+    /// starts — written against the constants, because pasted widths go
+    /// stale the moment a threshold moves and then test nothing.
     #[test]
     fn the_rack_sheds_in_order() {
-        assert_eq!(Rack::at(300.0), Rack::Full);
-        assert_eq!(Rack::at(120.0), Rack::Curves);
-        assert_eq!(Rack::at(86.0), Rack::Off);
+        assert!(SHAPE < LEGIBLE, "the tiers must not overlap");
+        assert_eq!(Rack::at(LEGIBLE), Rack::Full);
+        assert_eq!(Rack::at(LEGIBLE - 0.5), Rack::Curves);
+        assert_eq!(Rack::at(SHAPE), Rack::Curves);
+        assert_eq!(Rack::at(SHAPE - 0.5), Rack::Off);
         assert!(Rack::Full < Rack::Curves && Rack::Curves < Rack::Off);
-        assert!(Rack::at(300.0).on() && !Rack::at(86.0).on());
+        assert!(Rack::at(LEGIBLE).on() && !Rack::at(SHAPE - 0.5).on());
     }
 
     /// A rack with no room records nothing at all, rather than three
