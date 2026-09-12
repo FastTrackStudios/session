@@ -33,6 +33,13 @@ dioxus = { workspace = true, default-features = true, features = ["desktop", "la
 # is `theming::Theme`, and a REAPER theme is how that gets filled in with
 # something other than the FTS defaults. See `src/theme.rs`.
 daw-ui = { workspace = true, features = ["studio", "reaper-theme"] }
+# The Blitz measurement — see `src/bin/blitz.rs`. Laying the mixer out
+# with a real layout engine would remove a whole class of bug; whether
+# it costs the frame budget is a question only a frame can answer.
+blitz-dom = { workspace = true }
+blitz-paint = { workspace = true }
+blitz-traits = { workspace = true }
+dioxus-native-dom = { workspace = true }
 daw-control = { workspace = true }
 daw-proto = { workspace = true }
 daw-theme-art = { workspace = true }
