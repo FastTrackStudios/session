@@ -193,6 +193,22 @@ pub struct Panel {
 }
 
 impl Panel {
+    /// From a rect in strip coordinates, moved to where the strip is.
+    ///
+    /// The rack's box comes from [`crate::strip::Strip::rack_rect`], in
+    /// the strip's own space; the recording is in the mixer's. This is
+    /// the one conversion between them, so a grip and a curve cannot
+    /// disagree about where the rack starts.
+    #[must_use]
+    pub fn of(rect: Rect, left: f64) -> Self {
+        Self {
+            x: rect.x0 + left,
+            y: rect.y0,
+            width: rect.width(),
+            height: rect.height(),
+        }
+    }
+
     const fn rect(self) -> Rect {
         Rect::new(self.x, self.y, self.x + self.width, self.y + self.height)
     }
@@ -206,7 +222,32 @@ impl Panel {
             height: self.height - by * 2.0,
         }
     }
+
+    /// `by` off the top, and what is left.
+    ///
+    /// The header is a strip of the panel rather than an overlay on it:
+    /// a value printed over a curve is unreadable exactly when the
+    /// curve is interesting, which is the moment you want the number.
+    const fn split_top(self, by: f64) -> (Self, Self) {
+        let head = Self {
+            height: by,
+            ..self
+        };
+        let body = Self {
+            y: self.y + by,
+            height: self.height - by,
+            ..self
+        };
+        (head, body)
+    }
 }
+
+/// How tall a panel's header is.
+///
+/// The type is 7pt and this is the line it sits on plus a pixel of air
+/// under it. Small, because it is a readout and not a title — you look
+/// at the curve and read the number to confirm what you saw.
+const HEAD: f64 = 10.0;
 
 /// The gap between two panels of the rack.
 const GAP: f64 = 3.0;
@@ -262,39 +303,76 @@ pub fn record(
         return;
     }
 
-    // The shares are authored for the full three; a shorter rack
-    // renormalises them rather than leaving a gap at the bottom, so two
-    // panels fill the same height three did and keep their proportions
-    // to each other.
-    let shares: Vec<f64> = panels.iter().map(|which| which.share()).collect();
-    let total: f64 = shares.iter().sum();
-    if total <= 0.0 {
-        return;
+    for (which, at) in layout(panels, panel) {
+        ground(scene, palette, at);
+        let inner = at.inset(2.0);
+        // The header is only taken at `Full`. At `Curves` the panel is
+        // a shape and nothing else fits; giving up a tenth of its
+        // height for a number nobody can read would cost the shape too.
+        let body = body_of(at, rack);
+        let head = (body.y > inner.y).then(|| inner.split_top(HEAD).0);
+        if body.width > 0.0 && body.height > 0.0 {
+            match which {
+                Which::Eq => eq(scene, palette, font, tone, body, rack),
+                Which::Comp => comp(scene, palette, tone.comp, body, rack),
+                Which::Sat => sat(scene, palette, &tone.sat, body, rack),
+            }
+            if let Some(head) = head {
+                header(scene, palette, font, which.name(), &which.summary(tone), head);
+            }
+        }
+    }
+}
+
+/// Where each panel of the rack lands.
+///
+/// The one place the rack's vertical division is worked out. Drawing
+/// reads it and so does the hit test, which is the same rule
+/// [`crate::strip::Strip`] exists for: a grip that is not where its
+/// curve is drawn is a grip that moves the wrong thing.
+///
+/// The shares are authored for the full three; a shorter rack
+/// renormalises them rather than leaving a gap at the bottom, so two
+/// panels fill the height three did and keep their proportions to each
+/// other.
+#[must_use]
+pub fn layout(panels: &[Which], panel: Panel) -> Vec<(Which, Panel)> {
+    let total: f64 = panels.iter().map(|which| which.share()).sum();
+    if total <= 0.0 || panels.is_empty() {
+        return Vec::new();
     }
     let gaps = GAP * crate::num::coord(panels.len().saturating_sub(1));
     let usable = (panel.height - gaps).max(0.0);
     let mut y = panel.y;
-    for (share, which) in shares.iter().zip(panels.iter().copied()) {
-        let h = usable * share / total;
-        let at = Panel {
-            x: panel.x,
-            y,
-            width: panel.width,
-            height: h,
-        };
-        ground(scene, palette, at);
-        let inner = at.inset(2.0);
-        if inner.width > 0.0 && inner.height > 0.0 {
-            match which {
-                Which::Eq => eq(scene, palette, tone, inner, rack),
-                Which::Comp => comp(scene, palette, tone.comp, inner, rack),
-                Which::Sat => sat(scene, palette, &tone.sat, inner, rack),
-            }
-            if rack == Rack::Full {
-                label(scene, palette, font, which.name(), inner);
-            }
-        }
-        y += h + GAP;
+    panels
+        .iter()
+        .copied()
+        .map(|which| {
+            let height = usable * which.share() / total;
+            let at = Panel {
+                x: panel.x,
+                y,
+                width: panel.width,
+                height,
+            };
+            y += height + GAP;
+            (which, at)
+        })
+        .collect()
+}
+
+/// The body of a panel — what is left once its header is taken.
+///
+/// Shared by the drawing and the hit test for the same reason
+/// [`layout`] is: the curve is drawn in the body, so a grip has to be
+/// measured against the body.
+#[must_use]
+pub fn body_of(at: Panel, rack: Rack) -> Panel {
+    let inner = at.inset(2.0);
+    if rack == Rack::Full && inner.height > HEAD * 2.0 {
+        inner.split_top(HEAD).1
+    } else {
+        inner
     }
 }
 
@@ -312,6 +390,34 @@ impl Which {
             Self::Eq => "EQ",
             Self::Comp => "COMP",
             Self::Sat => "SAT",
+        }
+    }
+
+    /// What this panel's settings come to, in one short line.
+    ///
+    /// A curve says the SHAPE of a decision and a number says the
+    /// decision. Both, because they answer different questions: you
+    /// scan the curves across a mixer to find the track that is
+    /// different, and you read the number to know what to type into the
+    /// one you opened.
+    fn summary(self, tone: &Tone) -> String {
+        match self {
+            Self::Eq => {
+                let live = tone.eq.iter().filter(|band| band.enabled && band.used).count();
+                let range = tone
+                    .eq
+                    .iter()
+                    .filter(|band| band.enabled && band.used)
+                    .map(|band| band.gain.abs())
+                    .fold(0.0_f32, f32::max);
+                if live == 0 {
+                    "flat".to_owned()
+                } else {
+                    format!("{live} · {range:.1}dB")
+                }
+            }
+            Self::Comp => format!("{:.0}dB · {:.1}:1", tone.comp.threshold, tone.comp.ratio),
+            Self::Sat => format!("x{:.1}", tone.sat.drive),
         }
     }
 
@@ -342,18 +448,41 @@ fn ground(scene: &mut Scene, palette: &Palette, at: Panel) {
 }
 
 /// The EQ's response across the audible band.
-fn eq(scene: &mut Scene, palette: &Palette, tone: &Tone, at: Panel, rack: Rack) {
+fn eq(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Panel, rack: Rack) {
     let freq = FreqAxis::audible();
-    // ±18 rather than the editor's ±30: a strip panel is thirty pixels
-    // tall and a curve drawn to ±30 in it is a flat line with a wobble.
-    let db = DbAxis::symmetric(18.0);
+    let db = DbAxis::symmetric(EQ_RANGE);
     let right = at.x + at.width;
     let bottom = at.y + at.height;
 
     if rack == Rack::Full {
-        for hz in [100.0, 1_000.0, 10_000.0] {
+        for (hz, name) in DECADES {
             let x = freq.freq_to_x(hz, at.x, right);
             rule(scene, palette.grid_beat, Line::new((x, at.y), (x, bottom)));
+            // Labelled along the floor, so a bump can be described to
+            // someone else without opening the plugin.
+            const SIZE: f32 = 6.0;
+            let w = font.width(name, SIZE);
+            if x - w / 2.0 >= at.x && x + w / 2.0 <= right {
+                crate::tcp::glyphs(
+                    scene,
+                    font,
+                    palette.text_faint,
+                    name,
+                    x - w / 2.0,
+                    bottom - 2.0,
+                    SIZE,
+                );
+            }
+        }
+        // The dB ladder. A strip panel is tall and a gentle EQ uses
+        // little of it, so most of the box is empty — and empty space
+        // with no marks in it makes a 3 dB decision look the same as a
+        // 12 dB one. These are what turn the height into a scale.
+        for step in [6.0, 12.0] {
+            for gain in [step, -step] {
+                let y = db.db_to_y(gain, at.y, bottom);
+                rule(scene, palette.grid_beat, Line::new((at.x, y), (right, y)));
+            }
         }
     }
     // Unity, always: without it a boost and a cut look the same.
@@ -377,7 +506,44 @@ fn eq(scene: &mut Scene, palette: &Palette, tone: &Tone, at: Panel, rack: Rack) 
         )
     });
     curve(scene, palette.accent, points, 1.5);
+
+    // The bands themselves, as handles on the curve.
+    //
+    // Without them the panel is a line: you can see that something was
+    // done and not how many decisions it took or where they sit. A
+    // four-band cut and one wide shelf can draw the same curve, and
+    // they are not the same setting.
+    //
+    // Only at `Full`. At `Curves` a handle is three pixels of dot on a
+    // curve two pixels wide, which reads as a kink in the line.
+    if rack != Rack::Full {
+        return;
+    }
+    for band in tone.eq.iter().filter(|band| band.enabled && band.used) {
+        let x = freq.freq_to_x(f64::from(band.frequency), at.x, right);
+        let y = db.db_to_y(f64::from(band.gain), at.y, bottom);
+        if x < at.x || x > right || y < at.y || y > bottom {
+            continue;
+        }
+        dot(scene, palette.tcp_meter_well, (x, y), HANDLE + 1.0);
+        dot(scene, palette.accent, (x, y), HANDLE);
+    }
 }
+
+/// How big an EQ band's handle is.
+///
+/// Small enough that four of them on one curve do not merge, large
+/// enough to be a target: this is the radius a pointer will have to
+/// find once bands are draggable.
+const HANDLE: f64 = 2.6;
+
+/// The decades the frequency axis is labelled at.
+///
+/// Three, not five: at a strip's width the labels are 6pt and four of
+/// them collide. 100, 1k and 10k are the ones a tone decision is
+/// described in — "take out some 300", "lift the 3k" — and they bracket
+/// the two that are not.
+const DECADES: [(f64, &str); 3] = [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k")];
 
 /// The compressor's transfer curve, input dB across, output dB up.
 fn comp(scene: &mut Scene, palette: &Palette, comp: Comp, at: Panel, rack: Rack) {
@@ -414,6 +580,22 @@ fn comp(scene: &mut Scene, palette: &Palette, comp: Comp, at: Panel, rack: Rack)
         )
     });
     curve(scene, palette.meter_warn, points, 1.5);
+
+    // The threshold, where the curve leaves unity. The vertical rule
+    // says which input it is; the dot says which OUTPUT, which is the
+    // half a transfer curve is read for.
+    if rack == Rack::Full {
+        let db = f64::from(comp.threshold);
+        let out = f64::from(compress_transfer(
+            comp.threshold,
+            comp.threshold,
+            comp.ratio,
+            comp.knee,
+        ));
+        let at_point = (to_x(db).clamp(at.x, right), to_y(out).clamp(at.y, bottom));
+        dot(scene, palette.tcp_meter_well, at_point, HANDLE + 1.0);
+        dot(scene, palette.meter_warn, at_point, HANDLE);
+    }
 }
 
 /// The saturator's static transfer curve over x ∈ [−1, 1].
@@ -424,6 +606,15 @@ fn sat(scene: &mut Scene, palette: &Palette, pre: &ClassAPreamp, at: Panel, rack
 
     if rack == Rack::Full {
         rule(scene, palette.grid, Line::new((at.x, mid_y), (right, mid_y)));
+        // Unity, so the curve's departure from it IS the saturation.
+        // Without it a gentle drive and a hard one are both "an S", and
+        // the thing you are looking for is how far from straight it
+        // has gone.
+        rule(
+            scene,
+            palette.grid_beat,
+            Line::new((at.x, bottom), (right, at.y)),
+        );
     }
 
     let mut samples = [(0.0_f32, 0.0_f32); SAMPLES];
@@ -435,6 +626,17 @@ fn sat(scene: &mut Scene, palette: &Palette, pre: &ClassAPreamp, at: Panel, rack
         )
     });
     curve(scene, palette.pan, points, 1.5);
+}
+
+/// A filled circle — a handle, or a marker on a curve.
+fn dot(scene: &mut Scene, color: Color, at: (f64, f64), r: f64) {
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        color,
+        None,
+        &vello::kurbo::Circle::new(at, r),
+    );
 }
 
 /// One hairline.
@@ -476,15 +678,40 @@ fn curve(
 }
 
 /// The panel's name, small and in the corner.
-fn label(scene: &mut Scene, palette: &Palette, font: &Font, text: &str, at: Panel) {
+/// A panel's header: what it is on the left, what it is set to on the
+/// right.
+///
+/// The value is right-aligned so the three panels' numbers line up
+/// down the rack — which is what lets you compare two strips by
+/// running your eye down them rather than reading six numbers.
+///
+/// The value is dropped rather than elided when the panel is too narrow
+/// for both: a truncated "−14d…" is a number you have to open the
+/// plugin to check, which is worse than one you know is not shown.
+fn header(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    name: &str,
+    value: &str,
+    at: Panel,
+) {
     const SIZE: f32 = 7.0;
+    let baseline = at.y + f64::from(SIZE);
+    crate::tcp::glyphs(scene, font, palette.text_faint, name, at.x, baseline, SIZE);
+
+    let name_w = font.width(name, SIZE);
+    let value_w = font.width(value, SIZE);
+    if name_w + value_w + 6.0 > at.width {
+        return;
+    }
     crate::tcp::glyphs(
         scene,
         font,
-        palette.text_faint,
-        text,
-        at.x + 2.0,
-        at.y + f64::from(SIZE),
+        palette.text_dim,
+        value,
+        at.x + at.width - value_w,
+        baseline,
         SIZE,
     );
 }
@@ -540,6 +767,202 @@ pub fn placeholder(index: usize) -> Tone {
             pre.q_point = 0.25;
             pre
         },
+    }
+}
+
+/// Something in the rack you can take hold of.
+///
+/// Not a control in the strip's sense: these live inside a curve's own
+/// axes, so what a drag means depends on which curve it started in. A
+/// band moves in frequency AND gain at once, which is the gesture an
+/// EQ is actually used with.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Grip {
+    /// An EQ band, by its index in the chain's list.
+    Band(usize),
+    /// The compressor's threshold — dragged along the input axis.
+    Threshold,
+    /// The saturator's drive.
+    Drive,
+}
+
+/// How close a pointer has to be to take hold of something.
+///
+/// Generous next to [`HANDLE`], because a handle is drawn at the size
+/// it reads best and grabbed at the size a hand can hit. Six pixels is
+/// about a millimetre at these densities.
+const GRAB: f64 = 6.0;
+
+/// What is under a point in the rack, if anything.
+///
+/// `panel` is the rack's whole box in the same coordinates as `x` and
+/// `y` — the strip's, not the window's.
+#[must_use]
+pub fn grip_at(
+    panels: &[Which],
+    tone: &Tone,
+    panel: Panel,
+    x: f64,
+    y: f64,
+) -> Option<Grip> {
+    let rack = Rack::at(panel.width);
+    if !rack.on() {
+        return None;
+    }
+    for (which, at) in layout(panels, panel) {
+        let body = body_of(at, rack);
+        if body.width <= 0.0 || body.height <= 0.0 {
+            continue;
+        }
+        if y < body.y || y > body.y + body.height {
+            continue;
+        }
+        match which {
+            // Bands are only grabbable where they are DRAWN, which is
+            // only at `Full` — a handle you cannot see is a handle you
+            // cannot aim at, and grabbing one by accident moves a
+            // setting you did not know was there.
+            Which::Eq if rack == Rack::Full => {
+                // The nearest band within reach, not the first: four
+                // bands on one curve overlap at their skirts, and the
+                // one you meant is the one you are closest to.
+                let freq = FreqAxis::audible();
+                let db = DbAxis::symmetric(EQ_RANGE);
+                let right = body.x + body.width;
+                let bottom = body.y + body.height;
+                let mut best: Option<(f64, usize)> = None;
+                for (index, band) in tone.eq.iter().enumerate() {
+                    if !(band.enabled && band.used) {
+                        continue;
+                    }
+                    let bx = freq.freq_to_x(f64::from(band.frequency), body.x, right);
+                    let by = db.db_to_y(f64::from(band.gain), body.y, bottom);
+                    let away = (bx - x).hypot(by - y);
+                    if away <= GRAB && best.is_none_or(|(nearest, _)| away < nearest) {
+                        best = Some((away, index));
+                    }
+                }
+                if let Some((_, index)) = best {
+                    return Some(Grip::Band(index));
+                }
+            }
+            // The whole panel is the grip for these two: there is one
+            // number in each, and hunting for a three-pixel dot to
+            // change it would be worse than useless on a strip. They
+            // stay grabbable at `Curves`, where the curve still shows
+            // what the drag is doing.
+            Which::Comp => return Some(Grip::Threshold),
+            Which::Sat => return Some(Grip::Drive),
+            Which::Eq => {}
+        }
+    }
+    None
+}
+
+/// The EQ panel's dB range, top to bottom.
+///
+/// ±18 rather than the editor's ±30: a strip panel is a few hundred
+/// pixels tall at most and a curve drawn to ±30 in it is a flat line
+/// with a wobble. Stated once because the drawing and the hit test both
+/// have to read the same scale.
+pub const EQ_RANGE: f64 = 18.0;
+
+/// Move a grip by a pixel delta.
+///
+/// Pixels rather than fractions because these axes are not linear in
+/// the same way: a band's frequency is logarithmic and its gain is not,
+/// so the conversion has to happen against the panel the drag is in.
+pub fn drag(tone: &mut Tone, grip: Grip, panels: &[Which], panel: Panel, dx: f64, dy: f64) {
+    let rack = Rack::at(panel.width);
+    let Some((_, at)) = layout(panels, panel)
+        .into_iter()
+        .find(|(which, _)| match grip {
+            Grip::Band(_) => *which == Which::Eq,
+            Grip::Threshold => *which == Which::Comp,
+            Grip::Drive => *which == Which::Sat,
+        })
+    else {
+        return;
+    };
+    let body = body_of(at, rack);
+    if body.width <= 0.0 || body.height <= 0.0 {
+        return;
+    }
+    match grip {
+        Grip::Band(index) => {
+            let Some(band) = tone.eq.get_mut(index) else {
+                return;
+            };
+            let freq = FreqAxis::audible();
+            let db = DbAxis::symmetric(EQ_RANGE);
+            let right = body.x + body.width;
+            let bottom = body.y + body.height;
+            let x = freq.freq_to_x(f64::from(band.frequency), body.x, right) + dx;
+            let y = db.db_to_y(f64::from(band.gain), body.y, bottom) + dy;
+            let t = ((x - body.x) / body.width).clamp(0.0, 1.0);
+            band.frequency = f64_to_f32(freq.norm_to_freq(t));
+            let gain = db.y_to_db(y.clamp(body.y, bottom), body.y, bottom);
+            band.gain = f64_to_f32(gain.clamp(-EQ_RANGE, EQ_RANGE));
+        }
+        Grip::Threshold => {
+            // Up is a HIGHER threshold, which is less compression —
+            // the same direction a fader moves for more level, and the
+            // opposite of following the dot down its curve.
+            let per_db = body.height / 60.0;
+            let moved = f64::from(tone.comp.threshold) - dy / per_db.max(f64::EPSILON);
+            tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
+        }
+        Grip::Drive => {
+            // A quarter of the panel's height is the whole range, so a
+            // short drag is a real change — drive is the parameter you
+            // nudge, not the one you sweep.
+            let per_unit = body.height / 4.0;
+            let moved = f64::from(tone.sat.drive) - dy / per_unit.max(f64::EPSILON);
+            tone.sat.drive = f64_to_f32(moved.clamp(0.0, 10.0));
+        }
+    }
+}
+
+/// The Tone settings for every track the window has opened.
+///
+/// Keyed by GUID, not by row: a preset can hide a track and a fold can
+/// move one, and a rack that followed a row index would show the
+/// neighbour's EQ the moment either happened.
+///
+/// This is where a real chain's parameters will land. Until then it is
+/// seeded from [`placeholder`] — which means a rack is editable NOW,
+/// against state the window owns, in exactly the shape the plugin's
+/// parameters will take. The binding is the piece that is missing; the
+/// UI above it is not waiting on anything.
+#[derive(Clone, Debug, Default)]
+pub struct Store {
+    by_guid: std::collections::HashMap<String, Tone>,
+}
+
+impl Store {
+    /// Make sure every track has settings, without disturbing the ones
+    /// that already do.
+    ///
+    /// Called before a record rather than lazily inside one, so that
+    /// recording can take `&self` — a `&mut` threaded through the
+    /// drawing would put a lock between the mixer and its strips.
+    pub fn seed(&mut self, rows: &[(daw_proto::Track, u32)]) {
+        for (index, (track, _)) in rows.iter().enumerate() {
+            self.by_guid
+                .entry(track.guid.clone())
+                .or_insert_with(|| placeholder(index));
+        }
+    }
+
+    /// A track's settings, if it has any.
+    #[must_use]
+    pub fn get(&self, guid: &str) -> Option<&Tone> {
+        self.by_guid.get(guid)
+    }
+
+    /// The same, to change.
+    pub fn edit(&mut self, guid: &str) -> Option<&mut Tone> {
+        self.by_guid.get_mut(guid)
     }
 }
 
@@ -681,5 +1104,228 @@ mod phase_tests {
             let panels = panels_for(phase);
             assert!(panels.len() <= 3, "{phase:?} asked for {panels:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod grip_tests {
+    use super::{Grip, Panel, Store, Which, drag, grip_at, placeholder};
+
+    const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
+
+    fn rack() -> Panel {
+        Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 133.0,
+            height: 600.0,
+        }
+    }
+
+    /// A band is grabbed where it is DRAWN. The layout is shared by the
+    /// two, so this asserts they have not drifted apart — which is the
+    /// only way a grip can move the wrong band.
+    #[test]
+    fn a_band_is_grabbed_where_it_is_drawn() {
+        let tone = placeholder(0);
+        let (which, at) = super::layout(&ALL, rack())
+            .into_iter()
+            .find(|(which, _)| *which == Which::Eq)
+            .expect("an EQ panel");
+        assert_eq!(which, Which::Eq);
+        let body = super::body_of(at, super::Rack::at(rack().width));
+        let freq = fts_audio_ui::axis::FreqAxis::audible();
+        let db = fts_audio_ui::axis::DbAxis::symmetric(super::EQ_RANGE);
+        let band = &tone.eq[2];
+        let x = freq.freq_to_x(f64::from(band.frequency), body.x, body.x + body.width);
+        let y = db.db_to_y(f64::from(band.gain), body.y, body.y + body.height);
+        assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(Grip::Band(2)));
+    }
+
+    /// And a point well away from every band grabs none of them, rather
+    /// than the nearest one at any distance.
+    #[test]
+    fn empty_space_in_the_eq_grabs_nothing() {
+        let tone = placeholder(0);
+        // The EQ panel's top-left corner: inside the panel, far from
+        // any band, which all sit near the middle at these settings.
+        assert_eq!(grip_at(&ALL, &tone, rack(), 3.0, 14.0), None);
+    }
+
+    /// Dragging a band up raises its gain and dragging it right raises
+    /// its frequency — the two axes it is drawn against.
+    #[test]
+    fn a_band_follows_the_pointer() {
+        let mut tone = placeholder(0);
+        let (before_f, before_g) = (tone.eq[1].frequency, tone.eq[1].gain);
+        drag(&mut tone, Grip::Band(1), &ALL, rack(), 12.0, -20.0);
+        assert!(tone.eq[1].frequency > before_f, "right is higher");
+        assert!(tone.eq[1].gain > before_g, "up is more gain");
+    }
+
+    /// A band cannot be dragged out of its own axes.
+    #[test]
+    fn a_band_stays_inside_the_panel() {
+        let mut tone = placeholder(0);
+        for _ in 0..50 {
+            drag(&mut tone, Grip::Band(0), &ALL, rack(), 400.0, -400.0);
+        }
+        assert!(tone.eq[0].gain <= super::f64_to_f32(super::EQ_RANGE));
+        assert!(tone.eq[0].frequency <= 24_000.0);
+        for _ in 0..50 {
+            drag(&mut tone, Grip::Band(0), &ALL, rack(), -400.0, 400.0);
+        }
+        assert!(tone.eq[0].gain >= -super::f64_to_f32(super::EQ_RANGE));
+        assert!(tone.eq[0].frequency > 0.0);
+    }
+
+    /// Up is a higher threshold — less compression — which is the way
+    /// a fader moves for more level.
+    #[test]
+    fn dragging_the_threshold_up_compresses_less() {
+        let mut tone = placeholder(0);
+        let before = tone.comp.threshold;
+        drag(&mut tone, Grip::Threshold, &ALL, rack(), 0.0, -10.0);
+        assert!(tone.comp.threshold > before);
+        for _ in 0..200 {
+            drag(&mut tone, Grip::Threshold, &ALL, rack(), 0.0, 40.0);
+        }
+        assert!(tone.comp.threshold >= -60.0, "the threshold clamps");
+    }
+
+    /// Drive clamps at zero rather than going negative, which would
+    /// invert the curve.
+    #[test]
+    fn drive_stays_positive() {
+        let mut tone = placeholder(0);
+        for _ in 0..200 {
+            drag(&mut tone, Grip::Drive, &ALL, rack(), 0.0, 40.0);
+        }
+        assert!(tone.sat.drive >= 0.0);
+    }
+
+    /// The store hands a track its own settings and keeps them apart —
+    /// keyed by GUID, so a preset hiding a track cannot shuffle them.
+    #[test]
+    fn the_store_keeps_tracks_apart() {
+        let rows: Vec<(daw_proto::Track, u32)> = ["a", "b"]
+            .into_iter()
+            .map(|guid| {
+                (
+                    daw_proto::Track {
+                        guid: guid.to_owned(),
+                        ..daw_proto::Track::default()
+                    },
+                    0,
+                )
+            })
+            .collect();
+        let mut store = Store::default();
+        store.seed(&rows);
+        store.edit("a").expect("a's settings").comp.threshold = -3.0;
+        assert!((store.get("a").expect("a").comp.threshold + 3.0).abs() < f32::EPSILON);
+        assert!(store.get("b").expect("b").comp.threshold < -3.0);
+        assert!(store.get("nonesuch").is_none());
+    }
+
+    /// Seeding twice does not reset what was edited in between — the
+    /// rows are re-derived on every fold and every preset.
+    #[test]
+    fn seeding_again_keeps_edits() {
+        let rows: Vec<(daw_proto::Track, u32)> = vec![(
+            daw_proto::Track {
+                guid: "a".to_owned(),
+                ..daw_proto::Track::default()
+            },
+            0,
+        )];
+        let mut store = Store::default();
+        store.seed(&rows);
+        store.edit("a").expect("a").sat.drive = 9.0;
+        store.seed(&rows);
+        assert!((store.get("a").expect("a").sat.drive - 9.0).abs() < f32::EPSILON);
+    }
+}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::{Grip, Panel, Which, grip_at, placeholder};
+
+    const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
+
+    fn rack_of(width: f64) -> Panel {
+        Panel {
+            x: 0.0,
+            y: 0.0,
+            width,
+            height: 600.0,
+        }
+    }
+
+    /// A handle you cannot see is a handle you cannot aim at. Below the
+    /// tier that draws them, the EQ panel grabs nothing — grabbing a
+    /// band by accident moves a setting you did not know was there.
+    #[test]
+    fn bands_are_only_grabbable_where_they_are_drawn() {
+        let tone = placeholder(0);
+        let wide = rack_of(133.0);
+        let narrow = rack_of(super::SHAPE + 1.0);
+        assert_eq!(super::Rack::at(narrow.width), super::Rack::Curves);
+
+        // The same band, in both tiers.
+        let (_, at) = super::layout(&ALL, wide)
+            .into_iter()
+            .find(|(which, _)| *which == Which::Eq)
+            .expect("an EQ panel");
+        let body = super::body_of(at, super::Rack::Full);
+        let freq = fts_audio_ui::axis::FreqAxis::audible();
+        let db = fts_audio_ui::axis::DbAxis::symmetric(super::EQ_RANGE);
+        let band = &tone.eq[2];
+        let y = db.db_to_y(f64::from(band.gain), body.y, body.y + body.height);
+
+        let x_wide = freq.freq_to_x(f64::from(band.frequency), body.x, body.x + body.width);
+        assert_eq!(grip_at(&ALL, &tone, wide, x_wide, y), Some(Grip::Band(2)));
+
+        let narrow_body = super::body_of(
+            super::layout(&ALL, narrow)
+                .into_iter()
+                .find(|(which, _)| *which == Which::Eq)
+                .expect("an EQ panel")
+                .1,
+            super::Rack::Curves,
+        );
+        let x_narrow = freq.freq_to_x(
+            f64::from(band.frequency),
+            narrow_body.x,
+            narrow_body.x + narrow_body.width,
+        );
+        assert_eq!(grip_at(&ALL, &tone, narrow, x_narrow, y), None);
+    }
+
+    /// The compressor and the saturator stay grabbable when the rack
+    /// narrows: their curves still show what the drag is doing.
+    #[test]
+    fn the_single_value_panels_survive_the_narrow_tier() {
+        let tone = placeholder(0);
+        let narrow = rack_of(super::SHAPE + 1.0);
+        let comp = super::layout(&ALL, narrow)
+            .into_iter()
+            .find(|(which, _)| *which == Which::Comp)
+            .expect("a comp panel")
+            .1;
+        let inside = comp.y + comp.height / 2.0;
+        assert_eq!(
+            grip_at(&ALL, &tone, narrow, narrow.width / 2.0, inside),
+            Some(Grip::Threshold)
+        );
+    }
+
+    /// A rack too narrow to draw at all grabs nothing.
+    #[test]
+    fn an_absent_rack_grabs_nothing() {
+        let tone = placeholder(0);
+        let off = rack_of(30.0);
+        assert_eq!(super::Rack::at(off.width), super::Rack::Off);
+        assert_eq!(grip_at(&ALL, &tone, off, 15.0, 300.0), None);
     }
 }

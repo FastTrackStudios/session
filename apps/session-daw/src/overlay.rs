@@ -199,6 +199,7 @@ mod tests {
             600.0,
             crate::layout::Layout::default(),
             &[],
+            &crate::tone::Store::default(),
         );
         (mixer, palette, font, tracks)
     }
@@ -647,6 +648,54 @@ fn draw_strip_controls(
                 cap_h / 53.0,
             );
         }
+    }
+}
+
+/// One strip's rack, drawn live.
+///
+/// The rack is recorded with the strip, because a curve depends only on
+/// its parameters and those do not change per frame — except while one
+/// is being dragged, which is exactly when they change every frame.
+/// Re-recording the mixer per pointer move would cost four milliseconds
+/// a frame to move one dot.
+///
+/// So the dragged strip's rack is drawn again over its own recording.
+/// That works because a panel's ground is opaque: the new rack covers
+/// the stale one completely rather than compositing with it.
+pub fn rack(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    mixer: &Mixer,
+    panels: &[crate::tone::Which],
+    tone: &crate::tone::Tone,
+    row: usize,
+    transform: Affine,
+) {
+    let Some((left, width, height)) = mixer.strip_box(row) else {
+        return;
+    };
+    let strip = crate::strip::Strip::new(
+        width,
+        height,
+        mixer.height,
+        mixer.rack_h,
+        mixer.buttons_top,
+    );
+    let Some(box_) = strip.rack_rect() else {
+        return;
+    };
+    let mut scene = anyrender::Scene::new();
+    crate::tone::record(
+        &mut scene,
+        palette,
+        font,
+        tone,
+        panels,
+        crate::tone::Panel::of(box_, left),
+    );
+    for command in &scene.commands {
+        crate::arrangement::submit_command(painter, command, transform);
     }
 }
 

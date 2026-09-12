@@ -88,6 +88,16 @@ impl Strip {
         matches!(self.own.volume, VolumeWidget::Fader)
     }
 
+    /// The rack's box — everything above the REAPER strip.
+    ///
+    /// `None` when there is no rack, which is both "this phase asks for
+    /// no panels" and "this strip is too narrow to draw one": the
+    /// mixer collapses `rack_h` to zero in either case.
+    #[must_use]
+    pub fn rack_rect(&self) -> Option<Rect> {
+        (self.rack_h > 0.0).then(|| Rect::new(2.0, 2.0, self.width - 2.0, self.rack_h - 2.0))
+    }
+
     /// The meter well beside the fader.
     ///
     /// Not a [`Control`]: a meter is read, never clicked, and putting

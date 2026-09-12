@@ -377,6 +377,11 @@ fn mixer_shot(
         .filter(|h| *h > 0.0)
         .unwrap_or_else(|| f64::from(height))
         .min(f64::from(height));
+    // The rack's settings, seeded from the placeholder — see
+    // `tone::Store`. The shot and the stress test both want the same
+    // racks the window draws.
+    let mut settings = session_daw::tone::Store::default();
+    settings.seed(rows.as_slice());
     let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
     let mixer = Mixer::build(
         palette,
@@ -388,6 +393,7 @@ fn mixer_shot(
         // The shot is of the Tone phase, which is the phase the rack
         // was built for and the one the reference images were taken in.
         if tone { session_daw::tone::panels_for(TONE) } else { &[] },
+        &settings,
     );
     // The bench applies no preset, so the map is the identity — built
     // rather than skipped so the shot exercises the same lookup the
@@ -867,6 +873,11 @@ fn animate(
         visible.into_iter().zip(depths).collect(),
     ));
 
+    // The rack's settings, seeded from the placeholder — see
+    // `tone::Store`. The shot and the stress test both want the same
+    // racks the window draws.
+    let mut settings = session_daw::tone::Store::default();
+    settings.seed(rows.as_slice());
     let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
     let mixer = Mixer::build(
         palette,
@@ -876,6 +887,7 @@ fn animate(
         f64::from(height) - session_daw::rails::TOP,
         layout,
         session_daw::tone::panels_for(TONE),
+        &settings,
     );
     let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
     let pointer = session_daw::pointer::Pointer::default();

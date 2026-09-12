@@ -170,6 +170,16 @@ struct App {
     last_row_click: Option<(usize, std::time::Instant)>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
+    /// The rack grip the pointer is dragging, and the strip it is on.
+    ///
+    /// A rack is RECORDED, so an edited one has to be drawn live until
+    /// the drag ends — see `redraw_mixer`. Recording the mixer on every
+    /// pointer move would be four milliseconds a frame to change one
+    /// curve.
+    rack_drag: Option<(usize, session_daw::tone::Grip)>,
+    /// The Tone settings every rack is drawn from. Seeded from the
+    /// placeholder until a chain can be read — see `tone::Store`.
+    tone_settings: session_daw::tone::Store,
     /// Which folders are collapsed. A view state, not a track state:
     /// it changes which rows exist rather than what any track is.
     folders: daw_ui::components::folders::FolderState,
@@ -297,6 +307,14 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::PointerMoved { position, .. } => {
+                // Where the pointer WAS, before this event moved it.
+                //
+                // A drag is a delta, and the delta is against the last
+                // position — so it has to be read before `self.cursor`
+                // is overwritten. Setting the cursor first made every
+                // drag delta exactly zero, which is why the panel's
+                // knobs did not turn.
+                let last = self.cursor;
                 self.cursor = (position.x, position.y);
                 let spot = self.spot_at(position.x, position.y);
                 // A drag outranks a hover: while the pointer is down on
@@ -308,13 +326,26 @@ impl ApplicationHandler for App {
                         return;
                     }
                 }
+                if let Some((row, grip)) = self.rack_drag {
+                    let (dx, dy) = (position.x - last.0, position.y - last.1);
+                    let (dx, dy) = if self.fine {
+                        (
+                            dx * session_daw::gesture::FINE,
+                            dy * session_daw::gesture::FINE,
+                        )
+                    } else {
+                        (dx, dy)
+                    };
+                    self.drag_rack(row, grip, dx, dy);
+                    self.redraw();
+                    return;
+                }
                 if let Some((row, control)) = self.row_drag.or(self.pressed_row) {
                     if control.is_continuous() {
                         self.row_drag = Some((row, control));
                         let fine = self.fine;
-                        let dy = position.y - self.cursor.1;
+                        let dy = position.y - last.1;
                         self.drag_row(row, control, dy, fine);
-                        self.cursor = (position.x, position.y);
                         self.redraw();
                         return;
                     }
@@ -382,6 +413,14 @@ impl ApplicationHandler for App {
                             seconds,
                         );
                     }
+                    // The rack is above the strip's controls and is
+                    // drawn over them, so it is claimed first.
+                    self.rack_drag = self.rack_grip_at(x, y);
+                    tracing::debug!(ui.x = x, ui.y = y, ui.grip = ?self.rack_drag, "rack press");
+                    if self.rack_drag.is_some() {
+                        self.redraw();
+                        return;
+                    }
                     self.pointer.hover(self.spot_at(x, y));
                     self.pointer.press();
                     self.pressed_row = self.row_spot_at(x, y);
@@ -394,6 +433,14 @@ impl ApplicationHandler for App {
                         self.gestures.press(hit, x, y);
                     }
                 } else {
+                    if self.rack_drag.take().is_some() {
+                        // Back into the recording: a rack that is not
+                        // being dragged is constant again, and the
+                        // live pass exists for what is not.
+                        self.mixer = None;
+                        self.redraw();
+                        return;
+                    }
                     if let Some(pressed) = self.pressed_rail.take() {
                         if self.rail_action_at(x, y) == Some(pressed) {
                             self.act_on_rail(pressed);
@@ -629,6 +676,80 @@ impl App {
             y - session_daw::rails::TOP,
         )?;
         Some(session_daw::pointer::Spot { row, control })
+    }
+
+    /// The rack grip under a window point, if the pointer is in a rack.
+    ///
+    /// Asked before the strip's own controls, because the rack sits
+    /// above them and a click has to land on what it looks like it
+    /// landed on.
+    fn rack_grip_at(&self, x: f64, y: f64) -> Option<(usize, session_daw::tone::Grip)> {
+        if self.view != View::Mixer {
+            return None;
+        }
+        let mixer = self.mixer.as_ref()?;
+        let content_x = x - session_daw::rails::SIDE + self.mixer_scroll;
+        let row = mixer.strip_at(content_x)?;
+        let (left, width, height) = mixer.strip_box(row)?;
+        let strip = session_daw::strip::Strip::new(
+            width,
+            height,
+            mixer.height,
+            mixer.rack_h,
+            mixer.buttons_top,
+        );
+        let rack = session_daw::tone::Panel::of(strip.rack_rect()?, left);
+        let track = self.mixer_map.index(row).and_then(|i| self.tracks.get(i))?;
+        let tone = self.tone_settings.get(&track.guid)?;
+        session_daw::tone::grip_at(
+            self.rack_panels(),
+            tone,
+            rack,
+            content_x,
+            y - session_daw::rails::TOP,
+        )
+        .map(|grip| (row, grip))
+    }
+
+    /// Which panels the rack is showing, from the phase.
+    fn rack_panels(&self) -> &'static [session_daw::tone::Which] {
+        if self.tone {
+            session_daw::tone::panels_for(self.phase)
+        } else {
+            &[]
+        }
+    }
+
+    /// Move a rack grip by a pointer delta.
+    fn drag_rack(&mut self, row: usize, grip: session_daw::tone::Grip, dx: f64, dy: f64) {
+        let Some(mixer) = self.mixer.as_ref() else {
+            return;
+        };
+        let Some((left, width, height)) = mixer.strip_box(row) else {
+            return;
+        };
+        let strip = session_daw::strip::Strip::new(
+            width,
+            height,
+            mixer.height,
+            mixer.rack_h,
+            mixer.buttons_top,
+        );
+        let Some(rack) = strip.rack_rect().map(|r| session_daw::tone::Panel::of(r, left)) else {
+            return;
+        };
+        let panels = self.rack_panels();
+        let Some(guid) = self
+            .mixer_map
+            .index(row)
+            .and_then(|i| self.tracks.get(i))
+            .map(|track| track.guid.clone())
+        else {
+            return;
+        };
+        if let Some(tone) = self.tone_settings.edit(&guid) {
+            session_daw::tone::drag(tone, grip, panels, rack, dx, dy);
+        }
     }
 
     /// The hit under a window point, for the gesture layer.
@@ -919,6 +1040,7 @@ impl App {
                 self.settings,
                 height,
             )));
+            self.tone_settings.seed(planned.as_slice());
             self.mixer_map = session_daw::plan::Rows::of(planned.as_slice(), &self.tracks);
             self.mixer = Some(session_daw::mcp::Mixer::build(
                 &self.palette,
@@ -935,6 +1057,7 @@ impl App {
                 } else {
                     &[]
                 },
+                &self.tone_settings,
             ));
         }
         self.mixer.is_some()
@@ -962,6 +1085,14 @@ impl App {
             .rename
             .as_ref()
             .filter(|r| r.surface == session_daw::rename::Surface::Mixer);
+        let dragging_rack = self.rack_drag;
+        let panels = self.rack_panels();
+        let live_tone = dragging_rack.and_then(|(row, _)| {
+            self.mixer_map
+                .index(row)
+                .and_then(|i| self.tracks.get(i))
+                .and_then(|track| self.tone_settings.get(&track.guid))
+        });
 
         // Split the borrow: `render` takes the renderer mutably and
         // everything drawn inside it is read.
@@ -1009,6 +1140,15 @@ impl App {
                 frame.content_width(),
                 at,
             );
+            // The rack being dragged, over its own recording. Every
+            // other strip's is still the recorded one.
+            if let Some((row, _)) = dragging_rack {
+                if let Some(tone) = live_tone {
+                    session_daw::overlay::rack(
+                        painter, palette, font, mixer, panels, tone, row, at,
+                    );
+                }
+            }
             // An open rename, over the plate it replaces.
             if let Some(open) = rename {
                 if let Some((left, strip_w, strip_h)) = mixer.strip_box(open.row) {
@@ -1646,6 +1786,8 @@ fn main() {
         arrange_rows: daw_ui::studio::RowsRef(std::sync::Arc::new(Vec::new())),
         mixer_scroll: 0.0,
         layout,
+        rack_drag: None,
+        tone_settings: session_daw::tone::Store::default(),
         folders: daw_ui::components::folders::FolderState::default(),
         icons: session_daw::icons::Icons::new(),
         theme,

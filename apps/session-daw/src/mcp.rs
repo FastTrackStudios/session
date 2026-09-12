@@ -276,6 +276,7 @@ impl Mixer {
         height: f64,
         layout: crate::layout::Layout,
         rack: &[crate::tone::Which],
+        settings: &crate::tone::Store,
     ) -> Self {
         let depth_seen = rows
             .iter()
@@ -385,6 +386,10 @@ impl Mixer {
                 },
                 ordinal,
                 rack,
+                // A track with no settings yet gets none drawn rather
+                // than someone else's — `Store::seed` runs before this,
+                // so the miss is a track that arrived between the two.
+                settings.get(&track.guid),
                 &ancestors,
                 &ancestor_names,
             );
@@ -729,6 +734,7 @@ fn strip(
     slot: Slot,
     index: usize,
     rack: &[crate::tone::Which],
+    tone: Option<&crate::tone::Tone>,
     ancestors: &[Color],
     ancestor_names: &[&str],
 ) {
@@ -835,19 +841,18 @@ fn strip(
     // starts. It used to begin one FX-section below that, leaving a
     // band of empty strip above it — room reserved for the FX pill back
     // when the pill sat up here.
-    if rack_h > 0.0 {
+    let rack_box = crate::strip::Strip::new(w, h, slot.mixer_h, rack_h, buttons_top).rack_rect();
+    if let (Some(rack_box), Some(tone)) = (rack_box, tone) {
         crate::tone::record(
             scene,
             palette,
             font,
-            &crate::tone::placeholder(index),
+            tone,
             rack,
-            crate::tone::Panel {
-                x: x + 2.0,
-                y: 2.0,
-                width: (w - 4.0).max(0.0),
-                height: (rack_h - 4.0).max(0.0),
-            },
+            // From `Strip::rack_rect`, translated by the strip's left
+            // edge — so the box the rack is drawn in is the box a grip
+            // is measured against.
+            crate::tone::Panel::of(rack_box, x),
         );
     }
 
