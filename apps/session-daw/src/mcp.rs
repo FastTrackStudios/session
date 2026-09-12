@@ -733,11 +733,102 @@ fn tinted_band(
                 crate::tcp::to_theme(palette.tcp_tint),
             ),
             font,
-            x + f64::from(g::ARM_LEFT),
+            // Off the button column's axis rather than a fixed offset,
+            // so the arm travels right with the column it belongs to.
+            // `ARM_LEFT` is that axis less 0.486 of the arm's cell, and
+            // that is the part that was measured — the 48 it came out
+            // at is only what it equals on an 86-wide strip.
+            Columns::at(x, w).column_axis - f64::from(g::ARM_CELL_W) * 0.486,
             band_bottom + f64::from(g::ARM_OVERHANG) - f64::from(g::ARM_CELL_H),
         );
     }
 
+}
+
+/// Where a strip's columns fall, for a strip of this width.
+///
+/// REAPER has one strip width, so its geometry is a list of fixed
+/// offsets. Ours are not one width — a piece is wider than a mic, and a
+/// selected strip is wider again — and fixed offsets meant every extra
+/// pixel piled up as dead space on the right: the fader stayed a third
+/// of the way across, the arm sat where an 86-wide strip puts it, and
+/// the meter never grew.
+///
+/// So the offsets become rules, chosen so that **a strip of exactly
+/// [`STRIP_W`] reproduces REAPER's own layout**. That is the constraint
+/// that keeps this honest: the measured numbers are still the numbers,
+/// they are just expressed as where-they-come-from rather than as
+/// where-they-landed.
+///
+/// | | rule | at 86 | REAPER |
+/// |---|---|---|---|
+/// | button column | right-aligned, REAPER's margin | 55 | 55 |
+/// | fader | centred | 32 | 31 |
+/// | scale | left, fixed width | 2 | ~4 |
+/// | meter | fills what is left between them | ~0 | not drawn |
+#[derive(Clone, Copy, Debug)]
+struct Columns {
+    scale_x: f64,
+    scale_w: f64,
+    meter_x: f64,
+    meter_w: f64,
+    fader_x: f64,
+    fader_w: f64,
+    /// The left edge of the button column.
+    column_x: f64,
+    /// Its centre — what the record arm hangs off.
+    column_axis: f64,
+}
+
+/// The fader's own width. Fixed: a fader is a fader, and a wider strip
+/// wants a longer scale and a bigger meter, not a fatter handle.
+const FADER_W: f64 = 22.0;
+
+/// The widest the meter grows to — the track panel's own measured
+/// meter, so the two views agree once there is room for both.
+const METER_MAX: f64 = 26.0;
+const _: () = assert!(g::METER_W == 26, "METER_MAX must track the measured meter");
+
+/// How much room the scale's numbers need. Fixed, because `-54-` is
+/// `-54-` at any strip width.
+const SCALE_W: f64 = 24.0;
+
+impl Columns {
+    fn at(x: f64, w: f64) -> Self {
+        // Right-aligned by REAPER's own right margin, so the buttons
+        // keep their distance from the edge instead of their distance
+        // from the left.
+        let margin = f64::from(g::STRIP_W - g::COLUMN);
+        let column_x = if Squeeze::at(w).columns() {
+            (x + w - margin).max(x)
+        } else {
+            x + (w - f64::from(g::BUTTON_W)).max(0.0) / 2.0
+        };
+        let fader_x = x + (w - FADER_W) / 2.0;
+        let scale_x = x + 2.0;
+        // Whatever is left between the numbers and the fader. At 86 that
+        // is almost nothing, which is why REAPER draws no meter there;
+        // on a piece strip it is a real meter.
+        let meter_w = (fader_x - (scale_x + SCALE_W) - 4.0).clamp(0.0, METER_MAX);
+        Self {
+            scale_x,
+            scale_w: SCALE_W,
+            meter_x: fader_x - 3.0 - meter_w,
+            meter_w,
+            fader_x,
+            fader_w: FADER_W,
+            column_x,
+            column_axis: column_x + f64::from(g::BUTTON_W) / 2.0,
+        }
+    }
+
+    /// Whether there is enough width for a meter worth drawing.
+    ///
+    /// A two-pixel meter is not a small meter, it is a line — and a line
+    /// beside a fader reads as part of the fader.
+    const fn has_meter(self) -> bool {
+        self.meter_w >= 4.0
+    }
 }
 
 /// Where the stretch section sits, and how tall it is.
@@ -766,14 +857,10 @@ fn stretch(
         height: stretch,
     } = band;
     let squeeze = Squeeze::at(w);
-    // The fader keeps the measured column while there is a meter beside
-    // it, and takes the middle of the strip once there is not.
-    let fader_w = 22.0;
-    let fader_x = if squeeze.meter() {
-        x + 30.0
-    } else {
-        x + (w - fader_w) / 2.0
-    };
+    let columns = Columns::at(x, w);
+    let fader_x = columns.fader_x;
+    let fader_w = columns.fader_w;
+
     // ── The left column: the dB scale, with the meter beside it ──
     //
     // REAPER gives this column to the SCALE. Measured off its mixer,
@@ -785,25 +872,24 @@ fn stretch(
     // Without a scale a fader is a handle on an unmarked line: you can
     // see that one track is louder than another and not by how much,
     // which is most of what a mixer is for.
-    //
-    // The meter keeps a narrow bar hard against the fader's left edge.
-    // It is not REAPER's placement — REAPER's MCP meter is not visible
-    // at rest in this theme at all — but a console meter beside its
-    // fader is a shape everyone reads, and it costs the scale nothing.
-    const METER_BAR: f64 = 5.0;
     if squeeze.meter() {
         crate::art::place(
             scene,
             &art::fader_scale(
-                fader_x - x - METER_BAR - 4.0,
+                columns.scale_w,
                 stretch,
                 crate::tcp::to_theme(palette.meter_warn),
                 8.0,
             ),
             font,
-            x + 2.0,
+            columns.scale_x,
             stretch_top,
         );
+    }
+    // The meter takes whatever the scale and the fader leave, which on
+    // an 86-wide strip is nothing — REAPER draws none there either —
+    // and on a piece strip is a meter you can actually read.
+    if squeeze.meter() && columns.has_meter() {
         crate::art::place(
             scene,
             &art::meter(
@@ -814,11 +900,11 @@ fn stretch(
                     crate::tcp::to_theme(palette.meter_warn),
                     crate::tcp::to_theme(palette.meter_danger),
                 ],
-                METER_BAR,
+                columns.meter_w,
                 stretch,
             ),
             font,
-            fader_x - METER_BAR - 2.0,
+            columns.meter_x,
             stretch_top,
         );
     }
@@ -904,14 +990,11 @@ fn column(
         ..
     } = band;
     let squeeze = Squeeze::at(w);
-    // The measured column while the strip is wide enough to hold it;
-    // hard against the right edge once it is not, so the buttons stay
-    // in the strip rather than in its neighbour.
-    let column = if squeeze.columns() {
-        x + f64::from(g::COLUMN)
-    } else {
-        x + (w - f64::from(g::BUTTON_W)).max(0.0) / 2.0
-    };
+    // Right-aligned rather than at a fixed offset — see `Columns`. On
+    // an 86-wide strip this IS REAPER's 55; on a wider one the buttons
+    // keep their distance from the edge instead of stranding the extra
+    // width to their right.
+    let column = Columns::at(x, w).column_x;
     // `top` here is the mixer's shared button line, not this strip's
     // stretch — see `Mixer::build`.
     //
@@ -1227,5 +1310,109 @@ mod selection_tests {
             crate::tone::Rack::at(crate::tone::WORKING),
             crate::tone::Rack::Full
         );
+    }
+}
+
+#[cfg(test)]
+mod column_tests {
+    use super::{Columns, STRIP_W};
+    use daw_theme_art::geometry::mcp as g;
+
+    /// The constraint the whole model rests on: expressing the measured
+    /// offsets as RULES must not change what they evaluate to at the
+    /// width they were measured at. If this drifts, every number in
+    /// `geometry::mcp` has quietly stopped describing what is drawn.
+    #[test]
+    fn an_86_wide_strip_is_still_reapers_layout() {
+        let c = Columns::at(0.0, STRIP_W);
+        assert!(
+            (c.column_x - f64::from(g::COLUMN)).abs() < 0.01,
+            "button column drifted: {} vs REAPER's {}",
+            c.column_x,
+            g::COLUMN
+        );
+        assert!(
+            (c.column_axis - f64::from(g::COLUMN_AXIS)).abs() < 0.01,
+            "column axis drifted: {} vs {}",
+            c.column_axis,
+            g::COLUMN_AXIS
+        );
+        let arm = c.column_axis - f64::from(g::ARM_CELL_W) * 0.486;
+        assert!(
+            (arm - f64::from(g::ARM_LEFT)).abs() < 0.01,
+            "record arm drifted: {arm} vs REAPER's {}",
+            g::ARM_LEFT
+        );
+        // REAPER's groove sits at 31; centring puts the cell at 32.
+        assert!((c.fader_x - 32.0).abs() < 0.01, "fader at {}", c.fader_x);
+        // And REAPER draws no meter at this width, so neither do we.
+        assert!(!c.has_meter(), "a meter appeared at REAPER's own width");
+    }
+
+    /// The whole point of the change: width goes somewhere useful.
+    #[test]
+    fn a_wider_strip_spends_the_width() {
+        let narrow = Columns::at(0.0, STRIP_W);
+        let wide = Columns::at(0.0, 195.0);
+
+        assert!(
+            wide.fader_x > narrow.fader_x,
+            "the fader should move to the middle, not stay left"
+        );
+        assert!(
+            (wide.fader_x + wide.fader_w / 2.0 - 195.0 / 2.0).abs() < 0.01,
+            "the fader should be centred"
+        );
+        assert!(
+            wide.column_axis > narrow.column_axis,
+            "the buttons and the arm should travel right with the edge"
+        );
+        assert!(
+            wide.meter_w > narrow.meter_w && wide.has_meter(),
+            "the meter should grow: {} -> {}",
+            narrow.meter_w,
+            wide.meter_w
+        );
+    }
+
+    /// The right margin is REAPER's, at every width — that is what
+    /// "right-aligned" has to mean for the column to look placed rather
+    /// than pushed.
+    #[test]
+    fn the_right_margin_is_constant() {
+        let margin = f64::from(STRIP_W - f64::from(g::COLUMN));
+        for w in [STRIP_W, 96.0, 130.0, 195.0, 300.0] {
+            let c = Columns::at(0.0, w);
+            assert!(
+                (w - c.column_x - margin).abs() < 0.01,
+                "margin at width {w}: {}",
+                w - c.column_x
+            );
+        }
+    }
+
+    /// And the meter is capped, so a very wide strip does not turn its
+    /// meter into a second fader.
+    #[test]
+    fn the_meter_stops_growing() {
+        assert!(Columns::at(0.0, 600.0).meter_w <= super::METER_MAX);
+    }
+
+    /// Nothing escapes the strip it belongs to.
+    #[test]
+    fn every_column_stays_inside_the_strip() {
+        for w in [30.0, 56.0, STRIP_W, 96.0, 130.0, 195.0] {
+            let c = Columns::at(10.0, w);
+            let right = 10.0 + w;
+            for (name, edge) in [
+                ("scale", c.scale_x + c.scale_w),
+                ("meter", c.meter_x + c.meter_w),
+                ("fader", c.fader_x + c.fader_w),
+                ("column", c.column_x + f64::from(g::BUTTON_W)),
+            ] {
+                assert!(edge <= right + 0.01, "{name} runs past the strip at width {w}: {edge} > {right}");
+            }
+            assert!(c.scale_x >= 10.0 && c.fader_x >= 10.0 && c.column_x >= 10.0);
+        }
     }
 }
