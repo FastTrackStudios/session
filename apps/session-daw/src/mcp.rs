@@ -553,11 +553,20 @@ fn column(
     // about ITS track cannot be scanned across tracks.
     let mut at = stretch_top + f64::from(g::RECMON_FROM_ARM);
     if squeeze.columns() {
+        // Centred on the column the buttons under it share.
+        //
+        // NOT at `ARM_LEFT`: that is the left edge of the theme's 36-wide
+        // arm CELL, positioned so the ring inside it lands on
+        // `COLUMN_AXIS`. This drawing is the ring itself, 18 across, so
+        // placing it at the cell's edge put it eight and a half pixels
+        // left of the column — a stray circle beside the mute stack
+        // rather than the top of it.
+        const ARM: f64 = 18.0;
         crate::art::place(
             scene,
             &art::record_arm(&palette.chrome, track.armed, Interaction::Normal),
             font,
-            x + f64::from(g::ARM_LEFT),
+            x + f64::from(g::COLUMN_AXIS) - ARM / 2.0,
             stretch_top,
         );
     }
