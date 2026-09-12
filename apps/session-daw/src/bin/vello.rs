@@ -119,6 +119,14 @@ struct App {
     fine: bool,
     /// Edits on their way to the engine.
     applier: Option<session_daw::engine::Applier>,
+    /// Where the transport is, polled off the event loop.
+    transport: Option<session_daw::engine::Transport>,
+    /// The play cursor, which glides between the transport's reports.
+    playhead: session_daw::cursor::Playhead,
+    /// The edit cursor and the time selection.
+    edit: session_daw::cursor::Edit,
+    /// Where a ruler drag started, in seconds.
+    dragging_time: Option<f64>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
     /// Whether the Tone rack is on.
@@ -219,6 +227,13 @@ impl ApplicationHandler for App {
                 let spot = self.spot_at(position.x, position.y);
                 // A drag outranks a hover: while the pointer is down on
                 // a fader it is setting a level, not browsing.
+                if let Some(from) = self.dragging_time {
+                    if let Some(to) = self.ruler_time_unclamped(position.x) {
+                        self.edit.drag(from, to);
+                        self.redraw();
+                        return;
+                    }
+                }
                 if let Some(event) = self.gestures.moved(position.x, position.y, self.fine) {
                     self.act(event);
                     self.redraw();
@@ -249,12 +264,27 @@ impl ApplicationHandler for App {
                 self.cursor = (position.x, position.y);
                 let (x, y) = self.cursor;
                 if state.is_pressed() {
+                    if let Some(seconds) = self.ruler_time(x, y) {
+                        // A press on the ruler moves the cursor at once
+                        // — the click is what you meant, and waiting
+                        // for the release to show it feels like a lag
+                        // rather than like care.
+                        self.dragging_time = Some(seconds);
+                        self.edit.click(seconds);
+                    }
                     self.pointer.hover(self.spot_at(x, y));
                     self.pointer.press();
                     if let Some(hit) = self.hit_at(x, y) {
                         self.gestures.press(hit, x, y);
                     }
                 } else {
+                    if let (Some(from), Some(to)) = (self.dragging_time.take(), self.ruler_time(x, y)) {
+                        // A drag across the ruler is a time selection;
+                        // a click is just the cursor. `Edit::drag`
+                        // decides which, so a twitch does not leave a
+                        // four-millisecond selection behind.
+                        self.edit.drag(from, to);
+                    }
                     self.pointer.release();
                     if let Some(event) = self.gestures.release(x, y, std::time::Instant::now()) {
                         self.act(event);
@@ -321,6 +351,9 @@ impl ApplicationHandler for App {
             if self.applier.is_none() {
                 self.applier = session_daw::engine::Applier::start();
             }
+            if self.transport.is_none() {
+                self.transport = session_daw::engine::Transport::start();
+            }
             self.loading = None;
             self.redraw();
         }
@@ -338,7 +371,11 @@ impl App {
         let Some(scene) = &self.scene else {
             return (1.0, 1.0);
         };
-        let (width, height) = self.surface_size;
+        // The rails take their share before anything scrolls: the span
+        // is how far the CONTENT can move inside them, not how far it
+        // could move if it owned the window.
+        let frame = session_daw::rails::Frame::new(self.surface_size.0, self.surface_size.1);
+        let (width, height) = (frame.content_width(), frame.content_height());
         (
             (scene.length_secs * self.pps - (width - TCP_WIDTH)).max(1.0),
             // The ruler takes a strip off the top, so there is that much
@@ -392,6 +429,36 @@ impl App {
     fn hit_at(&self, x: f64, y: f64) -> Option<session_daw::hit::Hit> {
         let mixer = self.mixer.as_ref()?;
         Some(session_daw::hit::mixer(mixer, self.mixer_scroll, x, y))
+    }
+
+    /// The time under a point, if it is on the ruler.
+    fn ruler_time(&self, x: f64, y: f64) -> Option<f64> {
+        if self.view != View::Arrangement {
+            return None;
+        }
+        let top = session_daw::rails::TOP;
+        // The corner above the track panel is the mode selector, not
+        // the ruler — the ruler measures the timeline, and the timeline
+        // starts where the lanes do.
+        let left = session_daw::rails::SIDE + session_daw::arrangement::TCP_WIDTH;
+        (y >= top && y < top + session_daw::ruler::RULER_H && x >= left)
+            .then(|| self.time_at(x))
+            .flatten()
+    }
+
+    /// The time under an x, wherever the pointer is vertically — for
+    /// continuing a drag that began on the ruler.
+    fn ruler_time_unclamped(&self, x: f64) -> Option<f64> {
+        (self.view == View::Arrangement).then(|| self.time_at(x)).flatten()
+    }
+
+    fn time_at(&self, x: f64) -> Option<f64> {
+        if self.pps <= 0.0 {
+            return None;
+        }
+        let content =
+            x - session_daw::rails::SIDE - session_daw::arrangement::TCP_WIDTH + self.scroll_x;
+        Some((content / self.pps).max(0.0))
     }
 
     /// Do what a gesture meant.
@@ -563,21 +630,45 @@ impl App {
         }
         let Some(scene) = &self.scene else { return };
         let (sx, sy, pps) = (self.scroll_x, self.scroll_y, self.pps);
-        let (width, height) = self.surface_size;
+        let (width, surface_h) = self.surface_size;
+        let frame = session_daw::rails::Frame::new(width, surface_h);
         // What this frame can see. Everything outside it is skipped
         // before it reaches Vello's encoder — see `Arrangement::index`.
+        // The rails are excluded, or the panel draws rows behind them
+        // and pays for every one.
         let view = Viewport {
             scroll_x: sx,
             scroll_y: sy,
             pps,
             zoom_y: 1.0,
-            width,
-            height,
+            width: frame.content_width(),
+            height: frame.content_height(),
         };
         let surface = self.palette.surface;
         let palette = &self.palette;
         let font = &self.font;
         let bars = Bars::at(scene.bpm);
+        // The transport's last word, and where that puts the cursor
+        // NOW — the reading is per-block, the drawing is per-frame, and
+        // the difference between them is the glide.
+        if let Some(transport) = &self.transport {
+            let (at, playing) = transport.read();
+            let now = std::time::Instant::now();
+            if playing != self.playhead.playing() {
+                self.playhead.set_playing(playing, 1.0, now);
+            }
+            self.playhead.report(at, 1.0, now);
+        }
+        let play_at = self.playhead.at_time(std::time::Instant::now());
+        let edit = self.edit;
+        let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
+        let profile = session_daw::rails::profile(
+            session_daw::rails::Surface::Arrange,
+            session::modes::Mode::Mix,
+            session::mix_phases::MixPhase::Tone,
+            "Mix",
+            session_daw::settings::Settings::default(),
+        );
 
         let grid = &self.grid;
         /// The finest the grid ever gets — sixteenths, as a fraction of
@@ -599,7 +690,7 @@ impl App {
                 Affine::IDENTITY,
                 surface,
                 None,
-                &vello::kurbo::Rect::new(0.0, 0.0, width, height),
+                &vello::kurbo::Rect::new(0.0, 0.0, width, surface_h),
             );
             // The lanes: scrolled both ways, and scaled horizontally by
             // the zoom. Recorded at one pixel per second, so the scale IS
@@ -607,17 +698,52 @@ impl App {
             let a = scene.replay_lanes(
                 painter,
                 view,
-                Affine::translate((TCP_WIDTH - sx, RULER_H - sy))
+                Affine::translate((rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy))
                     * Affine::scale_non_uniform(pps, 1.0),
             );
             // The panel: the SAME vertical offset, which is the entire
             // point. It cannot drift from the lanes because there is
             // nothing to drift — one number moves both.
-            let b = scene.replay_panel(painter, view, Affine::translate((0.0, RULER_H - sy)));
+            let b = scene.replay_panel(
+                painter,
+                view,
+                Affine::translate((rail.0, rail.1 + RULER_H - sy)),
+            );
             // After the lanes — their backgrounds are opaque — and the
             // ruler last of all, over everything scrolled under it.
-            ruler::grid(painter, &palette, view, bars, &grid, FINEST, (0.0, 0.0));
-            ruler::ruler(painter, &palette, &font, view, bars, (0.0, 0.0));
+            ruler::grid(painter, &palette, view, bars, &grid, FINEST, rail);
+            ruler::ruler(painter, &palette, &font, view, bars, rail);
+            // The cursors last, over the lanes and under nothing: a
+            // playhead behind an item is a playhead you cannot follow.
+            let top = rail.1 + RULER_H;
+            let bottom = rail.1 + view.height;
+            session_daw::cursor::paint_edit(
+                painter, &palette, &edit, view, rail, top, bottom,
+            );
+            let x = play_at.mul_add(
+                view.pps,
+                rail.0 + TCP_WIDTH - view.scroll_x,
+            );
+            session_daw::cursor::paint(
+                painter,
+                session_daw::cursor::Look::default(),
+                x,
+                top,
+                bottom,
+                rail.0 + TCP_WIDTH,
+            );
+            // The rails over everything that scrolled under them, and
+            // the mode selector in the corner the ruler leaves.
+            session_daw::rails::draw(
+                painter,
+                &palette,
+                &font,
+                frame,
+                &profile.left,
+                &profile.right,
+                &profile.top,
+            );
+            session_daw::rails::main_toolbar(painter, &palette, &font, session::modes::Mode::Mix);
             drawn.replayed = a.replayed + b.replayed;
             drawn.submitted = a.submitted + b.submitted;
         });
@@ -744,6 +870,10 @@ fn main() {
         cursor: (0.0, 0.0),
         fine: false,
         applier: session_daw::engine::Applier::start(),
+        transport: session_daw::engine::Transport::start(),
+        playhead: session_daw::cursor::Playhead::stopped(0.0),
+        edit: session_daw::cursor::Edit::default(),
+        dragging_time: None,
         session: None,
         mixer: None,
         mixer_scroll: 0.0,

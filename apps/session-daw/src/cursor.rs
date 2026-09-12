@@ -326,6 +326,67 @@ mod tests {
     }
 }
 
+/// Draw the edit cursor and the time selection.
+///
+/// Under the play cursor, always. The play cursor is where the audio
+/// IS and the edit cursor is where you left off — when they coincide,
+/// which is every time you press play from the cursor, the one that
+/// moves has to be the one you can see.
+pub fn paint_edit(
+    painter: &mut impl anyrender::PaintScene,
+    palette: &crate::arrangement::Palette,
+    edit: &Edit,
+    view: crate::arrangement::Viewport,
+    origin: (f64, f64),
+    top: f64,
+    bottom: f64,
+) {
+    use vello::kurbo::{Affine, Rect};
+    use vello::peniko::Fill;
+
+    let (ox, _) = origin;
+    let at = |seconds: f64| {
+        seconds.mul_add(view.pps, ox + crate::arrangement::TCP_WIDTH - view.scroll_x)
+    };
+
+    // The selection first, as a wash — it is a region, and a region
+    // drawn over its own edges hides them.
+    if let Some(span) = edit.selection {
+        let (x0, x1) = (at(span.start), at(span.end));
+        if x1 > x0 {
+            painter.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                // Strong enough to see at a glance. 0.14 was
+                // invisible against the lane backgrounds — a selection
+                // you cannot see is one you forget you made, and the
+                // next command acts on it.
+                palette.accent.with_alpha(0.22),
+                None,
+                &Rect::new(x0, top, x1, bottom),
+            );
+            for edge in [x0, x1] {
+                painter.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    palette.accent.with_alpha(0.85),
+                    None,
+                    &Rect::new(edge, top, edge + 1.0, bottom),
+                );
+            }
+        }
+    }
+
+    let x = at(edit.at);
+    painter.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        palette.text,
+        None,
+        &Rect::new(x, top, x + 1.0, bottom),
+    );
+}
+
 /// How the play cursor looks.
 ///
 /// The feature set `ReaSmoothPlayhead` documents — line, trail, shadow,
@@ -404,6 +465,13 @@ pub fn paint(
     x: f64,
     top: f64,
     bottom: f64,
+    // `left_bound` is the left edge of the lanes; nothing draws past
+    // it. The trail reaches backwards, and at the start of a project
+    // that is straight over the track panel — a red wash across the
+    // names and faders, which reads as damage rather than as motion.
+    // The cursor belongs to the timeline, so it stops where the
+    // timeline does.
+    left_bound: f64,
 ) {
     use vello::kurbo::{Affine, Rect};
     use vello::peniko::{ColorStop, ColorStops, Fill, Gradient};
@@ -415,7 +483,8 @@ pub fn paint(
     // A horizontal ramp from the line's colour at the cursor to nothing
     // at the far end, sampled off the quadratic.
     let mut ramp = |from: f64, to: f64, peak: f32| {
-        if (to - from).abs() < 0.5 {
+        let (lo, hi) = (from.min(to).max(left_bound), from.max(to).max(left_bound));
+        if hi - lo < 0.5 {
             return;
         }
         let mut stops = ColorStops::new();
@@ -435,9 +504,14 @@ pub fn paint(
         painter.fill(
             Fill::NonZero,
             Affine::IDENTITY,
+            // The gradient keeps its ORIGINAL span so the falloff is
+            // the same shape when it is clipped — anchoring it to the
+            // clipped rect instead would compress the whole trail into
+            // whatever was left, and the cursor would look different
+            // at the start of a project than in the middle of one.
             &Gradient::new_linear((from, top), (to, top)).with_stops(stops),
             None,
-            &Rect::new(from.min(to), top, from.max(to), bottom),
+            &Rect::new(lo, top, hi, bottom),
         );
     };
 
@@ -454,13 +528,17 @@ pub fn paint(
         ramp(x, x + look.glow, 0.9);
     }
 
-    painter.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        look.line,
-        None,
-        &Rect::new(x - look.width / 2.0, top, x + look.width / 2.0, bottom),
-    );
+    let line_left = (x - look.width / 2.0).max(left_bound);
+    let line_right = (x + look.width / 2.0).max(left_bound);
+    if line_right > line_left {
+        painter.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            look.line,
+            None,
+            &Rect::new(line_left, top, line_right, bottom),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -501,7 +579,7 @@ mod look_tests {
     #[test]
     fn an_empty_span_draws_nothing() {
         let mut scene = anyrender::Scene::new();
-        paint(&mut scene, Look::default(), 100.0, 500.0, 500.0);
+        paint(&mut scene, Look::default(), 100.0, 500.0, 500.0, 0.0);
         assert!(scene.commands.is_empty());
     }
 
@@ -521,6 +599,7 @@ mod look_tests {
             100.0,
             0.0,
             900.0,
+            0.0,
         );
         assert_eq!(scene.commands.len(), 1, "expected just the line");
     }
@@ -538,9 +617,36 @@ mod look_tests {
             300.0,
             0.0,
             900.0,
+            0.0,
         );
         // shadow + trail + two glow halves + the line.
         assert_eq!(scene.commands.len(), 5);
         assert!(FALLOFF_STOPS >= 4, "a curve needs stops to be a curve");
+    }
+
+    /// The trail stops at the lanes. At the start of a project it
+    /// would otherwise wash backwards over the track panel, which
+    /// reads as damage rather than as motion.
+    #[test]
+    fn nothing_draws_left_of_the_lanes() {
+        let mut scene = anyrender::Scene::new();
+        // The cursor AT the boundary: every effect reaches backwards
+        // from here, and all of it is out of bounds.
+        paint(&mut scene, Look::default(), 400.0, 0.0, 900.0, 400.0);
+        // The line straddles the boundary, so half of it survives;
+        // the trail, shadow and left glow have nowhere to go.
+        assert!(
+            scene.commands.len() <= 2,
+            "something drew past the lane edge: {} commands",
+            scene.commands.len()
+        );
+    }
+
+    /// And well inside the lanes it draws everything.
+    #[test]
+    fn a_cursor_in_the_lanes_keeps_its_trail() {
+        let mut scene = anyrender::Scene::new();
+        paint(&mut scene, Look { shadow: 200.0, ..Look::default() }, 900.0, 0.0, 900.0, 400.0);
+        assert_eq!(scene.commands.len(), 5);
     }
 }

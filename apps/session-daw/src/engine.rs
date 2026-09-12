@@ -166,6 +166,61 @@ pub fn drag(
     }
 }
 
+/// Where the transport is, polled off the event loop.
+///
+/// The engine is asked once per frame rather than subscribed to,
+/// because a position is a LEVEL and not an event: missing one is
+/// harmless (the next is along in a few milliseconds) and the
+/// extrapolation covers the gap. A subscription would deliver a
+/// backlog after a stall, which is the one thing a playhead must not
+/// replay.
+pub struct Transport {
+    state: std::sync::Arc<std::sync::Mutex<(f64, bool)>>,
+}
+
+impl Transport {
+    /// Start polling. `None` if the facade is not up.
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        let runtime = crate::open::runtime()?;
+        let state = std::sync::Arc::new(std::sync::Mutex::new((0.0, false)));
+        let writer = std::sync::Arc::clone(&state);
+        std::thread::Builder::new()
+            .name("session-daw-transport".into())
+            .spawn(move || {
+                loop {
+                    let read = runtime.block_on(async {
+                        let daw = daw::rpc::Daw::try_get()?;
+                        let project = daw.current_project().await.ok()?;
+                        let transport = project.transport();
+                        let at = transport.get_position().await.ok()?;
+                        let playing = transport.is_playing().await.ok()?;
+                        Some((at, playing))
+                    });
+                    if let Some(read) = read {
+                        if let Ok(mut slot) = writer.lock() {
+                            *slot = read;
+                        }
+                    }
+                    // Faster than an audio block, slower than a frame:
+                    // polling per frame would ask the engine 240 times
+                    // a second for a number that changes 40 times, and
+                    // the extrapolation exists precisely so it does not
+                    // have to be asked more often than it moves.
+                    std::thread::sleep(std::time::Duration::from_millis(8));
+                }
+            })
+            .ok()?;
+        Some(Self { state })
+    }
+
+    /// The last position read, and whether it is moving.
+    #[must_use]
+    pub fn read(&self) -> (f64, bool) {
+        self.state.lock().map_or((0.0, false), |slot| *slot)
+    }
+}
+
 /// A dB value as a linear gain. `Track::volume`'s unit.
 #[must_use]
 pub fn db_to_gain(db: f64) -> f64 {
