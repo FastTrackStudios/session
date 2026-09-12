@@ -45,6 +45,10 @@ daw-proto = { workspace = true }
 daw-theme-art = { workspace = true }
 # The mix phases the mixer's left rail lists.
 session = { workspace = true }
+# The visual presets. Which tracks a preset shows, and how large, is a
+# rule resolved against the session's own taxonomy — not a list of GUIDs
+# this window keeps. See `src/plan.rs`.
+dynamic-template = { workspace = true }
 # The mouse-modifier contexts a hit reports, so bindings stay
 # configurable rather than being hard-coded per widget.
 input-config-proto = { workspace = true }

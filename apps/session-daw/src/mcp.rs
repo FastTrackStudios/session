@@ -297,6 +297,22 @@ impl Mixer {
         // thing being built is a channel you MIX on — where the
         // processing is most of what you are looking at and the fader
         // is the part you reach for after deciding.
+        //
+        // A rack nobody is wide enough to draw is height nobody should
+        // pay for. Two thirds of the panel reserved for graphs that
+        // every strip is too narrow to show is what the Overview preset
+        // looked like before this: a wall of nothing over a row of
+        // faders pushed to the floor.
+        //
+        // Asked of the widths the rows CARRY rather than of the widths
+        // that come back from `widths` below, because that one borrows
+        // between strips to open a selection — and a selection wide
+        // enough for a rack is a reason to have one, not a reason to
+        // have already decided.
+        let any_rack = rows
+            .iter()
+            .any(|(track, _)| layout.width_of(track.width) >= crate::tone::LEGIBLE);
+        let tone = tone && any_rack;
         let control = if tone {
             (height * CONTROL_SHARE).max(CONTROL_MIN).min(height)
         } else {
@@ -797,7 +813,6 @@ fn strip(
     let pan_band = f64::from(shape.pan_band);
     let input_band = f64::from(shape.input_band);
     let stretch_h = f64::from(own.stretch);
-
     let squeeze = Squeeze::at(w);
 
     // ── The FX section ──
@@ -807,20 +822,12 @@ fn strip(
     // belongs with the controls rather than floating above the graphs
     // it would open: sitting on top of the embedded FX it read as a
     // label for them, which is the one thing it is not.
-    if squeeze.head() {
-        crate::art::place(
-            scene,
-            &art::fx_pill(
-                &palette.chrome,
-                crate::tcp::lit(palette),
-                art::Chain::Empty,
-                Interaction::Normal,
-            ),
-            font,
-            x + 7.0,
-            rack_h + f64::from(g::FX_PILL_TOP),
-        );
-    }
+    //
+    // The pill itself is NOT recorded: whether a track has a chain
+    // changes while the window is open (`FxCountChanged`), and a pill
+    // baked in at Empty was a button that told the truth once. It is
+    // drawn in the live pass — see `overlay::controls` — which is also
+    // where it can answer the pointer.
 
     // ── The Tone rack ──
     //
@@ -1031,7 +1038,7 @@ impl Columns {
     ///
     /// A two-pixel meter is not a small meter, it is a line — and a line
     /// beside a fader reads as part of the fader.
-    const fn has_meter(self) -> bool {
+    pub const fn has_meter(self) -> bool {
         self.meter_w >= 4.0
     }
 }

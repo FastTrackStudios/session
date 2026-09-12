@@ -383,6 +383,10 @@ fn mixer_shot(
         layout,
         tone,
     );
+    // The bench applies no preset, so the map is the identity — built
+    // rather than skipped so the shot exercises the same lookup the
+    // window does.
+    let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
 
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();
@@ -415,7 +419,12 @@ fn mixer_shot(
                 font,
                 &mixer,
                 &tracks,
+                &map,
                 &session_daw::pointer::Pointer::default(),
+                // At rest: the shot is the reference every viewport in
+                // the sweep is compared against, and a lit meter in it
+                // would be a difference nobody asked for.
+                &[],
                 scroll_x,
                 frame.content_width(),
                 at,
@@ -650,6 +659,7 @@ fn shot(
     let gaps = std::env::var_os("FTS_BENCH_SHOT_GAPS").is_some();
     // The panel's live values need the rows they belong to.
     let (rows_for_panel, tracks_for_panel) = panel_rows();
+    let panel_map = session_daw::plan::Rows::of(&rows_for_panel, &tracks_for_panel);
     image.render_to_vec(
         |painter| {
             painter.reset();
@@ -707,6 +717,7 @@ fn shot(
                 scene,
                 &rows_for_panel,
                 &tracks_for_panel,
+                &panel_map,
                 view,
                 // At rest: this is the reference shot every viewport in
                 // the sweep is compared against, and a hover in it
@@ -841,6 +852,7 @@ fn animate(
         layout,
         true,
     );
+    let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
     let pointer = session_daw::pointer::Pointer::default();
 
     let mut renderer = Headless::new(width, height).expect("a headless renderer");
@@ -855,6 +867,10 @@ fn animate(
             // The session's state for this instant, the same on every
             // run — see `animate::drive`.
             session_daw::animate::drive(&mut tracks, t);
+            // Meters arrive on their own subscription, so they are
+            // driven separately — and per frame, which is faster than
+            // the engine's pump will ever publish them.
+            let levels = session_daw::animate::meters(tracks.len(), t);
             let mut drawn = Counts::default();
             painted += renderer
                 .frame(|painter| {
@@ -878,7 +894,9 @@ fn animate(
                         font,
                         &mixer,
                         &tracks,
+                        &map,
                         &pointer,
+                        &levels,
                         0.0,
                         frame.content_width(),
                         at,
@@ -915,7 +933,7 @@ fn animate(
         "\n  {} strips, {} commands submitted a frame — every mute, solo, arm,",
         mixer.count, counts.submitted
     );
-    println!("  fader and pan on every visible strip changing on every frame.");
+    println!("  fader, pan and meter on every visible strip changing on every frame.");
 }
 
 /// The visible rows and their tracks, for the panel's live controls.

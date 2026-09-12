@@ -37,6 +37,27 @@ pub const SIDE: f64 = 44.0;
 /// And how tall the top one is.
 pub const TOP: f64 = 30.0;
 
+/// What pressing a rail button does.
+///
+/// Carried BY the button rather than looked up from its index, because
+/// an index is a promise the two sides have to keep separately: a rail
+/// that grew a button at the front would silently shift what every
+/// other one did. Building the label, the lit state and the action in
+/// one place makes that class of bug unrepresentable.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
+    /// Recall a visual preset — which tracks are showing, and how wide.
+    Preset(&'static str),
+    /// Move to a mix phase.
+    Phase(session::mix_phases::MixPhase),
+    /// Switch DAW mode.
+    Mode(session::modes::Mode),
+    /// Whether selecting a track opens it wide enough to work on.
+    FocusSelected,
+    /// Whether a focused track's width comes OUT of its neighbours.
+    TakeFocusWidth,
+}
+
 /// One button in a rail.
 #[derive(Clone, Copy, Debug)]
 pub struct Item<'a> {
@@ -47,6 +68,8 @@ pub struct Item<'a> {
     /// you are" and "what is on" are the same question asked of
     /// different things.
     pub on: bool,
+    /// What it does when pressed.
+    pub act: Action,
 }
 
 /// Where a view's rails are, and what is left for its panel.
@@ -244,6 +267,7 @@ pub fn phases_and_presets(
         .map(|name| Item {
             label: name,
             on: *name == preset,
+            act: Action::Preset(name),
         })
         .collect();
     items.extend(
@@ -252,14 +276,23 @@ pub fn phases_and_presets(
             .map(|phase| Item {
                 label: phase.display_name(),
                 on: *phase == current,
+                act: Action::Phase(*phase),
             }),
     );
     items
 }
 
-/// The visual presets, until they come from `dynamic_template`'s
-/// `ModeVisibility` — see the note in `mcp`.
-pub const PRESETS: [&str; 3] = ["Mix", "Rec", "Over"];
+/// The visual presets, as the rail prints them.
+///
+/// Taken from [`crate::plan::PRESETS`] rather than written out again:
+/// each label is paired there with the `ModeVisibility` slug that says
+/// what it DOES, and a rail that named a preset the rules had never
+/// heard of would be a button that lit up and changed nothing.
+pub const PRESETS: [&str; 3] = [
+    crate::plan::PRESETS[0].0,
+    crate::plan::PRESETS[1].0,
+    crate::plan::PRESETS[2].0,
+];
 
 /// Which panel a set of toolbars belongs to.
 ///
@@ -319,10 +352,12 @@ pub fn mixer_right(settings: crate::settings::Settings) -> Vec<Item<'static>> {
         Item {
             label: "Focus",
             on: settings.focus_selected,
+            act: Action::FocusSelected,
         },
         Item {
             label: "Steal",
             on: settings.take_focus_width,
+            act: Action::TakeFocusWidth,
         },
     ]
 }
@@ -370,6 +405,7 @@ pub fn main_toolbar(
             Item {
                 label: abbreviate(mode.display_name()),
                 on: *mode == current,
+                act: Action::Mode(*mode),
             },
         );
     }

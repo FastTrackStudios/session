@@ -47,6 +47,37 @@ pub fn drive(tracks: &mut [Track], t: f64) {
     }
 }
 
+/// Meter levels for `n` tracks at `t`.
+///
+/// Separate from [`drive`] because meters are not track state: they
+/// arrive on their own subscription, indexed by project track, and the
+/// engine publishes them at about 30 Hz whatever the frame rate is.
+///
+/// Driven per FRAME here anyway, which is four times faster than the
+/// engine will ever move them. A stress test measures the case that
+/// cannot happen so that the case that can is covered by it.
+#[must_use]
+pub fn meters(n: usize, t: f64) -> Vec<daw_proto::TrackLevels> {
+    (0..n)
+        .map(|i| {
+            let phase = crate::num::coord(i) * 0.6180339887;
+            // Fast, and out of step with the fader on the same strip:
+            // a meter that tracked its own fader would let the GPU
+            // predict both from one gradient.
+            let wave = (std::f64::consts::TAU * (t * 7.0 + phase)).sin();
+            let peak = crate::mcp::f64_to_f32(((wave + 1.0) / 2.0).clamp(0.0, 1.0));
+            daw_proto::TrackLevels {
+                peak_left: peak,
+                // The right channel lags, so the two are never equal
+                // and `max` actually has to choose.
+                peak_right: peak * 0.8,
+                hold_left: peak,
+                hold_right: peak,
+            }
+        })
+        .collect()
+}
+
 /// A square wave: on for half of each cycle.
 fn toggles(t: f64, phase: f64, rate: f64) -> bool {
     (t * rate + phase).fract() < 0.5
@@ -135,5 +166,36 @@ mod tests {
                 assert!((-1.0..=1.0).contains(&track.pan), "{}", track.pan);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod meter_tests {
+    use super::meters;
+
+    /// Replayable like everything else here, and inside the range the
+    /// meter accepts — a level above one would measure clamping.
+    #[test]
+    fn levels_are_replayable_and_in_range() {
+        let a = meters(16, 0.375);
+        let b = meters(16, 0.375);
+        assert_eq!(a.len(), 16);
+        for (x, y) in a.iter().zip(&b) {
+            assert!((x.peak_left - y.peak_left).abs() < f32::EPSILON);
+            assert!((0.0..=1.0).contains(&x.peak_left));
+            assert!((0.0..=1.0).contains(&x.peak_right));
+        }
+    }
+
+    /// And they move — a stress test with still meters would be
+    /// measuring the cheap case.
+    #[test]
+    fn the_meters_move() {
+        let seen: Vec<f32> = (0..64)
+            .map(|s| meters(4, f64::from(s) / 64.0)[0].peak_left)
+            .collect();
+        let spread = seen.iter().copied().fold(f32::MIN, f32::max)
+            - seen.iter().copied().fold(f32::MAX, f32::min);
+        assert!(spread > 0.9, "the meter barely moved: {spread}");
     }
 }

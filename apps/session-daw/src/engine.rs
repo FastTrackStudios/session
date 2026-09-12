@@ -221,6 +221,56 @@ impl Transport {
     }
 }
 
+/// What the transport has been asked to do.
+///
+/// A command, not a state: the engine owns whether it is playing, and
+/// this window asks. Sending "play" while it is already playing has to
+/// be harmless, which is why these are the engine's own verbs rather
+/// than a boolean this side would have to keep in step.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Move {
+    /// Play if stopped, stop if playing.
+    PlayStop,
+    /// Back to the start, whether or not it is moving.
+    Home,
+    /// Move the play position to a time — what a click on the ruler
+    /// means once the transport is following it.
+    Seek,
+}
+
+/// Send a transport command, off the event loop.
+///
+/// Fire and forget, like [`Applier`]: the transport's own poll is what
+/// tells the window what happened, so waiting for the call to return
+/// would be waiting for news the window is already subscribed to.
+pub fn transport(command: Move, seconds: f64) {
+    let Some(runtime) = crate::open::runtime() else {
+        return;
+    };
+    std::thread::Builder::new()
+        .name("session-daw-transport-cmd".into())
+        .spawn(move || {
+            runtime.block_on(async move {
+                let Some(daw) = daw::rpc::Daw::try_get() else {
+                    return;
+                };
+                let Ok(project) = daw.current_project().await else {
+                    return;
+                };
+                let transport = project.transport();
+                let outcome = match command {
+                    Move::PlayStop => transport.play_stop().await,
+                    Move::Home => transport.goto_start().await,
+                    Move::Seek => transport.set_position(seconds.max(0.0)).await,
+                };
+                if let Err(error) = outcome {
+                    tracing::warn!(error = %error, command = ?command, "the transport refused");
+                }
+            });
+        })
+        .ok();
+}
+
 /// A dB value as a linear gain. `Track::volume`'s unit.
 #[must_use]
 pub fn db_to_gain(db: f64) -> f64 {
@@ -579,6 +629,16 @@ pub fn apply_event(tracks: &mut [daw_proto::Track], event: &daw_proto::track::Tr
                 tracks[i].phase_inverted = *inverted;
             }
         }
+        E::FxCountChanged {
+            guid,
+            fx_count,
+            input_fx_count,
+        } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].fx_count = *fx_count;
+                tracks[i].input_fx_count = *input_fx_count;
+            }
+        }
         // Added and Removed change the track LIST, not a track — the
         // rows, the offsets and the recorded scenes all follow from it,
         // so it is a rebuild rather than a field to poke. Ignored here
@@ -589,7 +649,7 @@ pub fn apply_event(tracks: &mut [daw_proto::Track], event: &daw_proto::track::Tr
 
 #[cfg(test)]
 mod watch_tests {
-    use super::{apply_event, continuous_for};
+    use super::apply_event;
     use daw_proto::Track;
     use daw_proto::track::TrackEvent as E;
 
@@ -696,5 +756,117 @@ mod continuous_tests {
             }),
             None
         );
+    }
+}
+
+/// The engine's live meter levels.
+///
+/// A separate subscription from [`Watch`] because it is a different
+/// KIND of fact. A track event is a change the window must not miss —
+/// a mute it never heard about leaves the strip wrong until something
+/// else happens. A meter frame is a measurement, and the next one is
+/// thirty milliseconds away: missing one costs nothing, and queueing
+/// them costs a backlog of readings that were true a second ago.
+///
+/// So this keeps the LATEST frame and drops the rest, where `Watch`
+/// keeps every event in order. Same transport, opposite policy, and the
+/// policy is the reason they are not one type.
+pub struct Meters {
+    latest: std::sync::Arc<std::sync::Mutex<Vec<daw_proto::TrackLevels>>>,
+}
+
+impl Meters {
+    /// Subscribe. `None` if the facade is not up, in which case the
+    /// meters stay at rest rather than the window failing to open.
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        let runtime = crate::open::runtime()?;
+        let latest = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into_thread = std::sync::Arc::clone(&latest);
+        std::thread::Builder::new()
+            .name("session-daw-meters".into())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    let Some(daw) = daw::rpc::Daw::try_get() else {
+                        return;
+                    };
+                    let Ok(project) = daw.current_project().await else {
+                        return;
+                    };
+                    let mut stream = project.meter_events();
+                    while let Ok(Some(frame)) = stream.recv().await {
+                        let frame = frame.get();
+                        // Overwrite rather than append: the only frame
+                        // worth drawing is the one that just arrived.
+                        let Ok(mut slot) = into_thread.lock() else {
+                            break;
+                        };
+                        slot.clear();
+                        slot.extend_from_slice(&frame.tracks);
+                    }
+                });
+            })
+            .ok()?;
+        Some(Self { latest })
+    }
+
+    /// The most recent frame, copied out for this redraw.
+    ///
+    /// Copied rather than borrowed because the lock must not be held
+    /// across a frame: the pump publishes at 30 Hz and a renderer
+    /// holding its mutex would stall the engine's thread, which is the
+    /// one thread in this program that has a deadline.
+    #[must_use]
+    pub fn levels(&self) -> Vec<daw_proto::TrackLevels> {
+        self.latest
+            .lock()
+            .map(|frame| frame.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// A meter's height, from a linear peak.
+///
+/// The meter is drawn from a fraction of its own height, so the level
+/// has to be mapped the way an ear reads it rather than the way the
+/// sample buffer holds it: linear `0..1` puts −20 dBFS — a perfectly
+/// ordinary track — at two per cent of the well, which reads as
+/// silence.
+///
+/// The same scale the fader uses, so a track sitting at unity with a
+/// hot signal lights the meter to about where its own cap sits. That
+/// correspondence is what makes a mixer readable at a glance.
+#[must_use]
+pub fn meter_fraction(peak: f32) -> f64 {
+    let db = 20.0 * f64::from(peak.max(1e-6)).log10();
+    daw_theme_art::paint::tcp::fader_norm(db)
+}
+
+#[cfg(test)]
+mod meter_tests {
+    use super::meter_fraction;
+
+    /// Full scale fills it, silence empties it, and the scale in
+    /// between is the fader's — so a meter and a fader at the same
+    /// height mean the same number of decibels.
+    #[test]
+    fn the_meter_reads_in_decibels() {
+        assert!((meter_fraction(1.0) - 1.0).abs() < 1e-6, "0 dBFS is full");
+        assert!(meter_fraction(0.0) < 1e-6, "silence is empty");
+        // −6 dB is about half the fader's travel from the top, not the
+        // 50% a linear reading would give.
+        let half_ish = meter_fraction(0.501);
+        assert!(
+            half_ish > 0.85 && half_ish < 0.95,
+            "−6 dBFS landed at {half_ish}"
+        );
+    }
+
+    /// A denormal or a zero must not produce a NaN height — the meter
+    /// would vanish rather than read empty.
+    #[test]
+    fn silence_is_a_number() {
+        assert!(meter_fraction(0.0).is_finite());
+        assert!(meter_fraction(f32::MIN_POSITIVE).is_finite());
     }
 }

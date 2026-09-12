@@ -23,6 +23,23 @@ use crate::mcp::{Control, Mixer};
 use crate::pointer::Spot;
 use crate::text::Font;
 
+/// What a track's FX button should say.
+///
+/// `fx_count` is the only thing the track model knows about a chain, so
+/// this answers the only question it can: is there one. Bypass is a
+/// property of the chain rather than of the track, and claiming
+/// `Active` for a chain that is entirely bypassed would be a lit button
+/// over a track doing nothing — which is the failure the empty pill was
+/// avoiding by never lighting at all.
+#[must_use]
+pub const fn chain(track: &Track) -> art::Chain {
+    if track.fx_count == 0 {
+        art::Chain::Empty
+    } else {
+        art::Chain::Active
+    }
+}
+
 /// Redraw one control in its hover or pressed state.
 ///
 /// `transform` is the mixer's own — the same one the strips are
@@ -106,12 +123,7 @@ pub fn control(
         Control::Fx => {
             crate::art::place(
                 &mut scene,
-                &art::fx_pill(
-                    &palette.chrome,
-                    crate::tcp::lit(palette),
-                    art::Chain::Empty,
-                    state,
-                ),
+                &art::fx_pill(&palette.chrome, crate::tcp::lit(palette), chain(track), state),
                 font,
                 left + 7.0,
                 rack_h + f64::from(g::FX_PILL_TOP),
@@ -196,6 +208,96 @@ mod tests {
         }
     }
 
+    /// The meter is the one control whose value does not come from the
+    /// track, so it gets its own check: a level has to change what is
+    /// drawn, or the subscription is feeding a picture nobody paints.
+    #[test]
+    fn a_level_lights_the_meter() {
+        let (mixer, palette, font, tracks) = mixer();
+        let strip = crate::strip::Strip::new(
+            mixer.strip_box(1).expect("a strip").1,
+            mixer.strip_box(1).expect("a strip").2,
+            mixer.height,
+            mixer.rack_h,
+            mixer.buttons_top,
+        );
+        assert!(
+            strip.meter_rect().is_some(),
+            "this fixture must be wide enough to have a meter at all"
+        );
+
+        let map = crate::plan::Rows::of(
+            &tracks.iter().cloned().map(|t| (t, 0)).collect::<Vec<_>>(),
+            &tracks,
+        );
+        let draw = |levels: &[daw_proto::TrackLevels]| {
+            let mut scene = anyrender::Scene::new();
+            controls(
+                &mut scene,
+                &palette,
+                &font,
+                &mixer,
+                &tracks,
+                &map,
+                &crate::pointer::Pointer::default(),
+                levels,
+                0.0,
+                4000.0,
+                Affine::IDENTITY,
+            );
+            scene
+        };
+        let quiet = draw(&[]);
+        let loud = draw(&vec![
+            daw_proto::TrackLevels {
+                peak_left: 0.9,
+                peak_right: 0.9,
+                hold_left: 0.9,
+                hold_right: 0.9,
+            };
+            tracks.len()
+        ]);
+        assert_ne!(quiet, loud, "a signal did not light the meter");
+    }
+
+    /// A chain lights the FX button. It used to be recorded as empty
+    /// and stay empty for the life of the window, which made it the one
+    /// control on the strip that could be wrong about the track it was
+    /// attached to.
+    #[test]
+    fn a_chain_lights_the_fx_button() {
+        let (mixer, palette, font, tracks) = mixer();
+        let map = crate::plan::Rows::of(
+            &tracks.iter().cloned().map(|t| (t, 0)).collect::<Vec<_>>(),
+            &tracks,
+        );
+        let draw = |tracks: &[Track]| {
+            let mut scene = anyrender::Scene::new();
+            controls(
+                &mut scene,
+                &palette,
+                &font,
+                &mixer,
+                tracks,
+                &map,
+                &crate::pointer::Pointer::default(),
+                &[],
+                0.0,
+                4000.0,
+                Affine::IDENTITY,
+            );
+            scene
+        };
+        let empty = draw(&tracks);
+        let mut loaded = tracks.clone();
+        for track in &mut loaded {
+            track.fx_count = 3;
+        }
+        assert_ne!(empty, draw(&loaded), "a chain did not light the button");
+        assert_eq!(chain(&tracks[0]), art::Chain::Empty);
+        assert_eq!(chain(&loaded[0]), art::Chain::Active);
+    }
+
     /// A row that is not there draws nothing rather than panicking —
     /// the pointer can outlive a project reload by a frame.
     #[test]
@@ -267,7 +369,9 @@ pub fn controls(
     font: &Font,
     mixer: &Mixer,
     tracks: &[Track],
+    live: &crate::plan::Rows,
     pointer: &crate::pointer::Pointer,
+    levels: &[daw_proto::TrackLevels],
     scroll_x: f64,
     width: f64,
     transform: Affine,
@@ -275,7 +379,7 @@ pub fn controls(
     let mut counts = crate::profile::Counts::default();
     let mut scene = anyrender::Scene::new();
     for row in mixer.visible(scroll_x, width) {
-        let Some(track) = tracks.get(row) else {
+        let Some(track) = live.live(tracks, row) else {
             continue;
         };
         let Some((left, strip_w, strip_h)) = mixer.strip_box(row) else {
@@ -287,6 +391,11 @@ pub fn controls(
             font,
             track,
             pointer,
+            // Levels are indexed by PROJECT track index, not by mixer
+            // row: the mixer shows a subset in its own order, and a
+            // meter reading another track's level is worse than one
+            // reading none.
+            usize::try_from(track.index).ok().and_then(|i| levels.get(i)).copied(),
             row,
             left,
             strip_w,
@@ -316,6 +425,7 @@ fn draw_strip_controls(
     font: &Font,
     track: &Track,
     pointer: &crate::pointer::Pointer,
+    level: Option<daw_proto::TrackLevels>,
     row: usize,
     left: f64,
     width: f64,
@@ -338,6 +448,24 @@ fn draw_strip_controls(
                 track.pan.clamp(-1.0, 1.0),
                 crate::tcp::to_theme(palette.pan),
                 state(Control::Pan),
+            ),
+            font,
+            x,
+            y,
+        );
+    }
+
+    // The FX button, whose state is the track's chain count — a live
+    // value like any other, and one that used to be recorded as Empty
+    // and stay Empty for the life of the window.
+    if let Some((x, y)) = at(Control::Fx) {
+        crate::art::place(
+            scene,
+            &art::fx_pill(
+                &palette.chrome,
+                crate::tcp::lit(palette),
+                chain(track),
+                state(Control::Fx),
             ),
             font,
             x,
@@ -373,6 +501,38 @@ fn draw_strip_controls(
             font,
             x,
             y,
+        );
+    }
+
+    // The meter, which is the most live thing on the strip: thirty
+    // frames a second of it, and the only control here whose value does
+    // not come from the track at all.
+    //
+    // Drawn whole rather than as a lit column over a recorded well —
+    // the well is one rounded rectangle, and keeping the two halves in
+    // separate passes is how a meter ends up lit past its own edge when
+    // the strip resizes.
+    if let (Some(rect), Some(level)) = (strip.meter_rect(), level) {
+        // The louder channel, not the sum: a mono source panned hard
+        // reads as half a signal on a summed meter, and the question a
+        // mixer meter answers is "is anything clipping".
+        let peak = level.peak_left.max(level.peak_right);
+        crate::art::place(
+            scene,
+            &art::meter(
+                &palette.chrome,
+                crate::engine::meter_fraction(peak),
+                [
+                    crate::tcp::to_theme(palette.meter_safe),
+                    crate::tcp::to_theme(palette.meter_warn),
+                    crate::tcp::to_theme(palette.meter_danger),
+                ],
+                rect.width(),
+                rect.height(),
+            ),
+            font,
+            left + rect.x0,
+            rect.y0,
         );
     }
 
@@ -422,6 +582,7 @@ pub fn panel_controls(
     scene: &crate::arrangement::Arrangement,
     rows: &[(Track, u32)],
     tracks: &[Track],
+    map: &crate::plan::Rows,
     view: crate::arrangement::Viewport,
     pointer: &crate::pointer::Pointer<crate::pointer::RowSpot>,
     transform: Affine,
@@ -433,7 +594,7 @@ pub fn panel_controls(
     let mut counts = crate::profile::Counts::default();
     let mut out = anyrender::Scene::new();
     for index in scene.visible_rows(view) {
-        let (Some((track, depth)), Some(live)) = (rows.get(index), tracks.get(index)) else {
+        let (Some((track, depth)), Some(live)) = (rows.get(index), map.live(tracks, index)) else {
             continue;
         };
         let Some((top, height)) = scene.row_box(index) else {
@@ -458,6 +619,22 @@ pub fn panel_controls(
             crate::art::place(
                 &mut out,
                 &art::gutter_button(&palette.chrome, label, on, lit, look(control)),
+                font,
+                r.x0,
+                r.y0,
+            );
+        }
+
+        // The FX button, from the chain the track actually has.
+        if let Some(r) = row.rect(C::Fx) {
+            crate::art::place(
+                &mut out,
+                &art::fx_pill(
+                    &palette.chrome,
+                    crate::tcp::lit(palette),
+                    chain(live),
+                    look(C::Fx),
+                ),
                 font,
                 r.x0,
                 r.y0,
@@ -639,6 +816,7 @@ mod panel_tests {
             scene,
             rows.as_slice(),
             tracks,
+            &crate::plan::Rows::of(rows.as_slice(), tracks),
             view,
             pointer,
             Affine::IDENTITY,

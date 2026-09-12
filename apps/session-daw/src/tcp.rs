@@ -489,16 +489,9 @@ fn row_one(
         f64::from(g::ROUTING_X),
         plate_top,
     );
-    crate::art::place(
-        scene,
-        // The chain's state is not on `Track` — it lives in the FX model
-        // this window has not read yet — so the pill draws its empty
-        // slot rather than claiming the chain is running.
-        &art::fx_pill(&palette.chrome, lit(palette), art::Chain::Empty, Interaction::Normal),
-        font,
-        f64::from(g::FX_IN_X),
-        plate_top,
-    );
+    // The FX pill is drawn live rather than recorded, for the same
+    // reason the mixer's is: a chain can be added while the window is
+    // open. See `overlay::panel_controls`.
 }
 
 /// Volume and pan, as knobs or as bars.

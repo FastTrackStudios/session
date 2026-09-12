@@ -102,6 +102,15 @@ struct App {
     session: Option<(daw_ui::studio::ProjectRef, daw_ui::studio::RowsRef)>,
     /// The mixer, recorded for the height it was last drawn at.
     mixer: Option<session_daw::mcp::Mixer>,
+    /// Which live track each mixer strip is showing. A preset can hide
+    /// a track, so a strip's index is not a track's — see
+    /// `plan::Rows`.
+    mixer_map: session_daw::plan::Rows,
+    /// The same, for the arrangement's rows.
+    arrange_map: session_daw::plan::Rows,
+    /// The arrangement's rows AFTER the preset — what the recorded
+    /// scene was built from, and what the panel overlay reads.
+    arrange_rows: daw_ui::studio::RowsRef,
     /// The tracks as they are NOW — what the live controls draw from.
     ///
     /// Kept beside the recorded mixer rather than inside it: the mixer
@@ -133,16 +142,36 @@ struct App {
     dragging_time: Option<f64>,
     /// The panel control the pointer went down on.
     pressed_row: Option<(usize, session_daw::row::Control)>,
+    /// The rail button the pointer went down on. A rail click acts on
+    /// RELEASE over the same button, like every other button here —
+    /// dragging off one is how you change your mind.
+    pressed_rail: Option<session_daw::rails::Action>,
     /// Where the last panel drag was measured from.
     row_drag: Option<(usize, session_daw::row::Control)>,
     /// The engine's own account of the tracks, as it changes.
     watch: Option<session_daw::engine::Watch>,
+    /// The engine's live meter levels, latest-wins.
+    meters: Option<session_daw::engine::Meters>,
+    /// Which DAW mode the window is in — what the corner selects.
+    mode: session::modes::Mode,
+    /// Which mix phase, which is what the left rail's lower half
+    /// selects and what decides how much processing a strip shows.
+    phase: session::mix_phases::MixPhase,
+    /// Which visual preset is recalled — which tracks show, and how
+    /// wide. The left rail's upper half.
+    preset: &'static str,
+    /// The right rail's switches.
+    settings: session_daw::settings::Settings,
     /// An open rename, if a name is being edited.
     rename: Option<session_daw::rename::Rename>,
     /// When the last panel click was, for spotting a double.
     last_row_click: Option<(usize, std::time::Instant)>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
+    /// The theme, kept for a RELOAD — a track added or removed changes
+    /// the folder tree, and the only honest way to recompute it is to
+    /// read the session back, which needs a theme to record against.
+    theme: daw_ui::theming::Theme,
     /// Whether the Tone rack is on.
     tone: bool,
     /// How far along the strips the mixer is scrolled. Its own axis:
@@ -234,6 +263,23 @@ impl ApplicationHandler for App {
                     self.redraw();
                     return;
                 }
+                // Space plays and stops, Home returns — REAPER's own
+                // keys, and the two that make the playhead this window
+                // already draws mean something.
+                use winit::keyboard::{Key, NamedKey};
+                // A space is a character key, not a named one — winit
+                // reports it as the text " ".
+                if event.logical_key.to_text() == Some(" ") {
+                    session_daw::engine::transport(session_daw::engine::Move::PlayStop, 0.0);
+                    self.redraw();
+                    return;
+                }
+                if event.logical_key == Key::Named(NamedKey::Home) {
+                    session_daw::engine::transport(session_daw::engine::Move::Home, 0.0);
+                    self.playhead.report(0.0, 1.0, std::time::Instant::now());
+                    self.redraw();
+                    return;
+                }
                 if event.logical_key.to_text() == Some("x") {
                     self.view = self.view.toggled();
                     if let Some(window) = &self.window {
@@ -299,6 +345,14 @@ impl ApplicationHandler for App {
                 self.cursor = (position.x, position.y);
                 let (x, y) = self.cursor;
                 if state.is_pressed() {
+                    // The rails are drawn over everything, so they are
+                    // asked first: a click on a phase button must not
+                    // also move the edit cursor behind it.
+                    self.pressed_rail = self.rail_action_at(x, y);
+                    if self.pressed_rail.is_some() {
+                        self.redraw();
+                        return;
+                    }
                     if let Some(seconds) = self.ruler_time(x, y) {
                         // A press on the ruler moves the cursor at once
                         // — the click is what you meant, and waiting
@@ -306,6 +360,14 @@ impl ApplicationHandler for App {
                         // rather than like care.
                         self.dragging_time = Some(seconds);
                         self.edit.click(seconds);
+                        // And the transport goes there, which is what
+                        // clicking a ruler means in every DAW: the edit
+                        // cursor and the play position are the same
+                        // thing until a time selection separates them.
+                        session_daw::engine::transport(
+                            session_daw::engine::Move::Seek,
+                            seconds,
+                        );
                     }
                     self.pointer.hover(self.spot_at(x, y));
                     self.pointer.press();
@@ -319,6 +381,13 @@ impl ApplicationHandler for App {
                         self.gestures.press(hit, x, y);
                     }
                 } else {
+                    if let Some(pressed) = self.pressed_rail.take() {
+                        if self.rail_action_at(x, y) == Some(pressed) {
+                            self.act_on_rail(pressed);
+                        }
+                        self.redraw();
+                        return;
+                    }
                     if let (Some(from), Some(to)) = (self.dragging_time.take(), self.ruler_time(x, y)) {
                         // A drag across the ruler is a time selection;
                         // a click is just the cursor. `Edit::drag`
@@ -347,7 +416,11 @@ impl ApplicationHandler for App {
                                 // selected the track, which is what you
                                 // wanted on the way here anyway.
                                 self.last_row_click = None;
-                                if let Some(track) = self.tracks.get(row) {
+                                if let Some(track) = self
+                                    .arrange_map
+                                    .index(row)
+                                    .and_then(|i| self.tracks.get(i))
+                                {
                                     self.rename = Some(session_daw::rename::Rename::new(
                                         row,
                                         track.guid.clone(),
@@ -422,6 +495,8 @@ impl ApplicationHandler for App {
                 .iter()
                 .map(|(track, _)| track.clone())
                 .collect();
+            self.arrange_map = session_daw::plan::Rows::of(loaded.planned.as_slice(), &self.tracks);
+            self.arrange_rows = loaded.planned;
             self.session = Some((loaded.project, loaded.rows));
             // The applier needs the facade, which only exists once the
             // project has been opened.
@@ -434,6 +509,12 @@ impl ApplicationHandler for App {
             if self.watch.is_none() {
                 self.watch = session_daw::engine::Watch::start();
             }
+            if self.meters.is_none() {
+                self.meters = session_daw::engine::Meters::start();
+            }
+            // The mixer was recorded against the old track list; the
+            // next mixer frame records it against this one.
+            self.mixer = None;
             self.loading = None;
             self.redraw();
         }
@@ -509,8 +590,8 @@ impl App {
 
     /// The track and depth of a visible row.
     fn rows_at(&self, index: usize) -> Option<(&daw_proto::Track, i32)> {
-        let (_, rows) = self.session.as_ref()?;
-        rows.get(index)
+        self.arrange_rows
+            .get(index)
             .map(|(track, depth)| (track, i32::try_from(*depth).unwrap_or(0)))
     }
 
@@ -572,6 +653,21 @@ impl App {
         Some((content / self.pps).max(0.0))
     }
 
+    /// The viewport this frame sees — the one number both the drawing
+    /// and the hit tests resolve against.
+    fn viewport(&self) -> Viewport {
+        let (width, height) = self.surface_size;
+        let frame = session_daw::rails::Frame::new(width, height);
+        Viewport {
+            scroll_x: self.scroll_x,
+            scroll_y: self.scroll_y,
+            pps: self.pps,
+            zoom_y: 1.0,
+            width: frame.content_width(),
+            height: frame.content_height(),
+        }
+    }
+
     /// One key, into an open rename.
     fn type_into_rename(&mut self, event: &winit::event::KeyEvent) {
         use winit::keyboard::{Key, NamedKey};
@@ -590,7 +686,9 @@ impl App {
                     return;
                 };
                 let edit = session_daw::engine::Edit::Rename(rename.guid, name);
-                apply_locally(&mut self.tracks, rename.row, &edit);
+                if let Some(index) = self.arrange_map.index(rename.row) {
+                    apply_locally(&mut self.tracks, index, &edit);
+                }
                 // The name is recorded chrome, not a live value, so the
                 // prediction only shows once the panel is re-recorded.
                 self.re_record();
@@ -620,6 +718,9 @@ impl App {
     /// A click on a panel control.
     fn act_on_row(&mut self, row: usize, control: session_daw::row::Control) {
         use session_daw::row::Control as C;
+        let Some(row) = self.arrange_map.index(row) else {
+            return;
+        };
         let Some(track) = self.tracks.get(row) else {
             return;
         };
@@ -644,6 +745,9 @@ impl App {
     /// A drag on a panel knob.
     fn drag_row(&mut self, row: usize, control: session_daw::row::Control, dy: f64, fine: bool) {
         use session_daw::row::Control as C;
+        let Some(row) = self.arrange_map.index(row) else {
+            return;
+        };
         let Some(track) = self.tracks.get(row) else {
             return;
         };
@@ -705,7 +809,12 @@ impl App {
         }) else {
             return;
         };
-        let Some(track) = self.tracks.get(row) else {
+        // The strip's own index, for the geometry; the track's, for the
+        // value. A preset can hide a track, so the two differ.
+        let Some(index) = self.mixer_map.index(row) else {
+            return;
+        };
+        let Some(track) = self.tracks.get(index) else {
             return;
         };
         let guid = track.guid.clone();
@@ -723,7 +832,7 @@ impl App {
         };
         let Some(edit) = edit else { return };
 
-        apply_locally(&mut self.tracks, row, &edit);
+        apply_locally(&mut self.tracks, index, &edit);
         if let Some(applier) = &self.applier {
             applier.send(edit);
         }
@@ -751,11 +860,23 @@ impl App {
             .as_ref()
             .is_none_or(|m| (m.height - height).abs() > 0.5);
         if stale {
+            // The visual preset decides which strips exist and how wide
+            // each one opens, so it is applied BEFORE the recording —
+            // the mixer records what it is given and has never heard of
+            // a preset.
+            let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(session_daw::plan::apply(
+                rows.as_slice(),
+                session_daw::plan::slug(self.preset).unwrap_or(self.preset),
+                session_daw::plan::Surface::Mixer,
+                self.settings,
+                height,
+            )));
+            self.mixer_map = session_daw::plan::Rows::of(planned.as_slice(), &self.tracks);
             self.mixer = Some(session_daw::mcp::Mixer::build(
                 &self.palette,
                 &self.font,
                 project,
-                rows,
+                &planned,
                 height,
                 self.layout,
                 self.tone,
@@ -774,11 +895,13 @@ impl App {
         }
         let profile = session_daw::rails::profile(
             session_daw::rails::Surface::Mixer,
-            session::modes::Mode::Mix,
-            session::mix_phases::MixPhase::Tone,
-            "Mix",
-            session_daw::settings::Settings::default(),
+            self.mode,
+            self.phase,
+            self.preset,
+            self.settings,
         );
+        let levels = self.meters.as_ref().map(session_daw::engine::Meters::levels);
+        let levels = levels.as_deref().unwrap_or(&[]);
 
         // Split the borrow: `render` takes the renderer mutably and
         // everything drawn inside it is read.
@@ -786,6 +909,7 @@ impl App {
             renderer,
             mixer,
             tracks,
+            mixer_map: map,
             pointer,
             palette,
             font,
@@ -817,7 +941,9 @@ impl App {
                 font,
                 mixer,
                 tracks,
+                map,
                 pointer,
+                levels,
                 scroll,
                 frame.content_width(),
                 at,
@@ -838,6 +964,112 @@ impl App {
         self.after_frame(drawn);
     }
 
+    /// The rails, as they are for the view now on screen.
+    ///
+    /// Built rather than stored: it is a handful of `Item`s and it has
+    /// to agree with what was drawn, so deriving it from the same four
+    /// values the drawing used is cheaper than keeping it in step.
+    fn profile(&self) -> session_daw::rails::Profile {
+        session_daw::rails::profile(
+            match self.view {
+                View::Arrangement => session_daw::rails::Surface::Arrange,
+                View::Mixer => session_daw::rails::Surface::Mixer,
+            },
+            self.mode,
+            self.phase,
+            self.preset,
+            self.settings,
+        )
+    }
+
+    /// What a click at this point would do in the rails, if anything.
+    ///
+    /// Answered from the same `Profile` the rails were drawn from, so a
+    /// button cannot act as the one beside it: the action is carried by
+    /// the item, not looked up by index in a second table.
+    fn rail_action_at(&self, x: f64, y: f64) -> Option<session_daw::rails::Action> {
+        use session_daw::hit::{Side, Target};
+        let (width, height) = self.surface_size;
+        let frame = session_daw::rails::Frame::new(width, height);
+        let profile = self.profile();
+        // The corner above the track panel is the mode selector, and it
+        // is drawn over the ruler, so it is asked first.
+        if self.view == View::Arrangement
+            && let Some(action) = self.mode_action_at(x, y)
+        {
+            return Some(action);
+        }
+        let hit = session_daw::hit::rails(frame, profile.left.len(), profile.right.len(), x, y)?;
+        let Target::Rail { side, index } = hit.target else {
+            return None;
+        };
+        match side {
+            Side::Left => profile.left.get(index),
+            Side::Right => profile.right.get(index),
+            Side::Top => profile.top.get(index),
+        }
+        .map(|item| item.act)
+    }
+
+    /// The mode under a point in the corner above the track panel.
+    fn mode_action_at(&self, x: f64, y: f64) -> Option<session_daw::rails::Action> {
+        let modes = session::modes::Mode::ALL;
+        let scene = self.scene.as_ref()?;
+        let view = self.viewport();
+        let hit = session_daw::hit::arrangement(scene, view, modes.len(), x, y);
+        match hit.target {
+            session_daw::hit::Target::Mode(index) => {
+                modes.get(index).copied().map(session_daw::rails::Action::Mode)
+            }
+            _ => None,
+        }
+    }
+
+    /// Do what a rail button says.
+    ///
+    /// Every arm ends in dropping something recorded, because that is
+    /// what these buttons change: a preset decides which strips exist
+    /// and how wide, a phase decides how much processing each one
+    /// shows, and the settings decide what a selection costs its
+    /// neighbours. None of them is a live value an overlay can redraw.
+    fn act_on_rail(&mut self, action: session_daw::rails::Action) {
+        use session_daw::rails::Action as A;
+        match action {
+            A::Preset(name) => {
+                if self.preset == name {
+                    return;
+                }
+                self.preset = name;
+                self.re_record();
+            }
+            A::Phase(phase) => {
+                if self.phase == phase {
+                    return;
+                }
+                self.phase = phase;
+                // The phase does not change the layout yet — it changes
+                // which processing a rack shows, and the rack is drawn
+                // from a placeholder. Dropping the mixer is still right:
+                // when it does, this is where it happens.
+                self.mixer = None;
+            }
+            A::Mode(mode) => {
+                if self.mode == mode {
+                    return;
+                }
+                self.mode = mode;
+            }
+            A::FocusSelected => {
+                self.settings.focus_selected = !self.settings.focus_selected;
+                self.mixer = None;
+            }
+            A::TakeFocusWidth => {
+                self.settings.take_focus_width = !self.settings.take_focus_width;
+                self.mixer = None;
+            }
+        }
+    }
+
     /// Take the engine's word for what the tracks are.
     ///
     /// The window predicts an edit so the hand does not wait for a
@@ -855,9 +1087,13 @@ impl App {
         // mid-drag is a fader that fights back, and the hand is the
         // more recent authority on a value it is still setting.
         let dragging = self.row_drag.and_then(|(row, _)| {
-            self.tracks.get(row).map(|track| track.guid.clone())
+            self.arrange_map
+                .index(row)
+                .and_then(|i| self.tracks.get(i))
+                .map(|track| track.guid.clone())
         });
         let mut renamed = false;
+        let mut listed = false;
         for event in &events {
             if let Some(held) = &dragging
                 && session_daw::engine::continuous_for(event).is_some_and(|guid| guid == held)
@@ -865,10 +1101,57 @@ impl App {
                 continue;
             }
             renamed |= matches!(event, daw_proto::track::TrackEvent::Renamed { .. });
+            listed |= matches!(
+                event,
+                daw_proto::track::TrackEvent::Added(_)
+                    | daw_proto::track::TrackEvent::Removed(_)
+                    | daw_proto::track::TrackEvent::Moved { .. }
+            );
             session_daw::engine::apply_event(&mut self.tracks, event);
         }
-        if renamed {
+        // A changed LIST outranks a changed name: the reload rebuilds
+        // the names too, and doing both would record the panel twice.
+        if listed {
+            self.reload();
+        } else if renamed {
             self.re_record();
+        }
+    }
+
+    /// Re-read the session, because the track LIST changed.
+    ///
+    /// Added, Removed and Moved are the three events a re-record cannot
+    /// absorb. Everything else is a field on a track this window
+    /// already has; these change which tracks there ARE, and the rows,
+    /// their depths, the scene's offsets and both recorded panels all
+    /// follow from that. Patching a track into a folder tree from an
+    /// event means recomputing the tree, and reading it back from the
+    /// authority is both shorter and correct — four milliseconds, on a
+    /// thread, while the window keeps drawing what it has.
+    ///
+    /// One reload at a time: a script adding forty tracks emits forty
+    /// events, and forty reloads of the same session would be
+    /// thirty-nine wasted. The last one wins because the read happens
+    /// after all of them.
+    fn reload(&mut self) {
+        if self.loading.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let theme = self.theme.clone();
+        let layout = self.layout;
+        let preset = session_daw::plan::slug(self.preset).unwrap_or(self.preset).to_owned();
+        let settings = self.settings;
+        if std::thread::Builder::new()
+            .name("session-daw-reload".into())
+            .spawn(move || {
+                if let Some(loaded) = build_scene(&theme, layout, &preset, settings) {
+                    let _ = tx.send(loaded);
+                }
+            })
+            .is_ok()
+        {
+            self.loading = Some(rx);
         }
     }
 
@@ -897,13 +1180,24 @@ impl App {
             row.0.name.clone_from(&track.name);
         }
         let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(next));
+        // Then the preset, which decides which of those rows the
+        // arrangement shows and how tall each one opens.
+        let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(session_daw::plan::apply(
+            rows.as_slice(),
+            session_daw::plan::slug(self.preset).unwrap_or(self.preset),
+            session_daw::plan::Surface::Arrange,
+            self.settings,
+            self.surface_size.1,
+        )));
+        self.arrange_map = session_daw::plan::Rows::of(planned.as_slice(), &self.tracks);
         self.scene = Some(Arrangement::build(
             &self.palette,
             &self.font,
             &project,
-            &rows,
+            &planned,
             self.layout,
         ));
+        self.arrange_rows = planned;
         // The mixer is recorded lazily against the window's height, so
         // dropping it rebuilds on the next mixer frame rather than
         // paying now for a surface nobody is looking at.
@@ -931,23 +1225,21 @@ impl App {
         // before it reaches Vello's encoder — see `Arrangement::index`.
         // The rails are excluded, or the panel draws rows behind them
         // and pays for every one.
-        let view = Viewport {
-            scroll_x: sx,
-            scroll_y: sy,
-            pps,
-            zoom_y: 1.0,
-            width: frame.content_width(),
-            height: frame.content_height(),
-        };
+        let view = self.viewport();
         let surface = self.palette.surface;
         let palette = &self.palette;
         let font = &self.font;
         let bars = Bars::at(scene.bpm);
-        let rows: &[(daw_proto::Track, u32)] =
-            self.session.as_ref().map_or(&[], |(_, rows)| rows.as_slice());
+        // The rows the SCENE was recorded from — after the preset, not
+        // the session's full list. The scene's row indices are indices
+        // into these, and reading the full list here is how a hidden
+        // track makes every row below it name the wrong track.
+        let rows: &[(daw_proto::Track, u32)] = self.arrange_rows.as_slice();
         let tracks = self.tracks.as_slice();
+        let arrange_map = &self.arrange_map;
         let rename = self.rename.as_ref();
         let panel = &self.panel;
+        let mode = self.mode;
         // The transport's last word, and where that puts the cursor
         // NOW — the reading is per-block, the drawing is per-frame, and
         // the difference between them is the glide.
@@ -964,10 +1256,10 @@ impl App {
         let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
         let profile = session_daw::rails::profile(
             session_daw::rails::Surface::Arrange,
-            session::modes::Mode::Mix,
-            session::mix_phases::MixPhase::Tone,
-            "Mix",
-            session_daw::settings::Settings::default(),
+            self.mode,
+            self.phase,
+            self.preset,
+            self.settings,
         );
 
         let grid = &self.grid;
@@ -1041,6 +1333,7 @@ impl App {
                 scene,
                 rows,
                 tracks,
+                arrange_map,
                 view,
                 panel,
                 Affine::translate((rail.0, rail.1 + RULER_H - sy)),
@@ -1076,7 +1369,7 @@ impl App {
                 &profile.right,
                 &profile.top,
             );
-            session_daw::rails::main_toolbar(painter, &palette, &font, session::modes::Mode::Mix);
+            session_daw::rails::main_toolbar(painter, &palette, &font, mode);
             drawn.replayed = a.replayed + b.replayed + c.replayed;
             drawn.submitted = a.submitted + b.submitted + c.submitted;
         });
@@ -1143,6 +1436,7 @@ fn main() {
     let layout = session_daw::layout::Layout::from_env();
 
     // The window opens now; the project fills in behind it.
+    let for_loader = theme.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("session-daw-load".into())
@@ -1160,7 +1454,12 @@ fn main() {
                 }
             }
             // The facade is up; read it and record the scene.
-            match build_scene(&theme, layout) {
+            match build_scene(
+                &for_loader,
+                layout,
+                session_daw::plan::PRESETS[0].1,
+                session_daw::settings::Settings::default(),
+            ) {
                 Some(loaded) => {
                     tracing::info!(rows = loaded.arrangement.rows, "session recorded");
                     let _ = tx.send(loaded);
@@ -1209,14 +1508,24 @@ fn main() {
         edit: session_daw::cursor::Edit::default(),
         dragging_time: None,
         pressed_row: None,
+        pressed_rail: None,
         row_drag: None,
         watch: session_daw::engine::Watch::start(),
+        meters: session_daw::engine::Meters::start(),
+        mode: session::modes::Mode::Mix,
+        phase: session::mix_phases::MixPhase::Tone,
+        preset: session_daw::rails::PRESETS[0],
+        settings: session_daw::settings::Settings::default(),
         rename: None,
         last_row_click: None,
         session: None,
         mixer: None,
+        mixer_map: session_daw::plan::Rows::default(),
+        arrange_map: session_daw::plan::Rows::default(),
+        arrange_rows: daw_ui::studio::RowsRef(std::sync::Arc::new(Vec::new())),
         mixer_scroll: 0.0,
         layout,
+        theme,
         // On by default: the rack is what this panel is being built
         // for, and a flag you have to remember is a feature nobody sees.
         tone: std::env::var_os("FTS_VELLO_NO_TONE").is_none(),
@@ -1234,6 +1543,8 @@ fn main() {
 fn build_scene(
     theme: &daw_ui::theming::Theme,
     layout: session_daw::layout::Layout,
+    preset: &str,
+    settings: session_daw::settings::Settings,
 ) -> Option<Loaded> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1247,13 +1558,26 @@ fn build_scene(
     ));
     let palette = Palette::from_theme(theme);
     let font = session_daw::text::Font::embedded().ok()?;
+    // The opening preset is applied HERE rather than by the window,
+    // so the first arrangement the window shows is already the one the
+    // preset asks for. Recording it twice — once plain, once planned —
+    // is four milliseconds nobody sees and a frame of the wrong layout
+    // that they do.
+    let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(session_daw::plan::apply(
+        rows.as_slice(),
+        preset,
+        session_daw::plan::Surface::Arrange,
+        settings,
+        0.0,
+    )));
     // The project and its rows come back with the arrangement, because
     // the mixer is recorded against the WINDOW's height and that is not
     // known here — see `App::mixer_for`.
     Some(Loaded {
-        arrangement: Arrangement::build(&palette, &font, &project, &rows, layout),
+        arrangement: Arrangement::build(&palette, &font, &project, &planned, layout),
         project,
         rows,
+        planned,
     })
 }
 
@@ -1261,7 +1585,12 @@ fn build_scene(
 struct Loaded {
     arrangement: Arrangement,
     project: daw_ui::studio::ProjectRef,
+    /// Every visible row, in the session's own order — the window's
+    /// live values are indexed by this.
     rows: daw_ui::studio::RowsRef,
+    /// And the subset the opening preset shows, at the sizes it gives
+    /// them, which is what the recorded arrangement was built from.
+    planned: daw_ui::studio::RowsRef,
 }
 
 /// Which of the two the window is showing.

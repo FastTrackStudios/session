@@ -88,6 +88,30 @@ impl Strip {
         matches!(self.own.volume, VolumeWidget::Fader)
     }
 
+    /// The meter well beside the fader.
+    ///
+    /// Not a [`Control`]: a meter is read, never clicked, and putting
+    /// it in that enum would make it hit-testable and let it swallow
+    /// presses meant for the fader it stands next to. It is here
+    /// because it is GEOMETRY, and this module exists so that geometry
+    /// is worked out once.
+    ///
+    /// `None` on a strip too narrow to hold one — REAPER draws no meter
+    /// on an 86-wide strip either, because the scale and the fader have
+    /// already taken the width.
+    #[must_use]
+    pub fn meter_rect(&self) -> Option<Rect> {
+        (self.squeeze.meter() && self.columns.has_meter()).then(|| {
+            let top = self.band_bottom();
+            Rect::new(
+                self.columns.meter_x,
+                top,
+                self.columns.meter_x + self.columns.meter_w,
+                top + self.stretch(),
+            )
+        })
+    }
+
     /// Where a control is, or `None` if this strip does not show it.
     ///
     /// The single source both the drawing and the hit test read. A

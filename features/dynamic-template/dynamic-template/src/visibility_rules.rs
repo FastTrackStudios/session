@@ -399,7 +399,101 @@ pub fn resolve(
 pub fn mode_visibility_for(slug: &str) -> Option<ModeVisibility> {
     match slug {
         "edit" => Some(edit_mode()),
+        "mix" => Some(mix_mode()),
+        "record" => Some(record_mode()),
+        "overview" => Some(overview_mode()),
         _ => None,
+    }
+}
+
+/// Mix: the buses are the instrument, the mics are a rail beside them.
+///
+/// Every bus opens wide enough to work on — the processing on a Kick
+/// Sum or a Snare Sum is what a mix pass is spent in — and every mic
+/// stays visible at the smallest size the surface has. Visible, because
+/// a mic you cannot see is a mic you forget is armed, printing, or
+/// pointing at the wrong drum; smallest, because eight buses at a
+/// working width is already most of an ultrawide.
+///
+/// Hiding the mics was the first version of this and it was wrong for
+/// exactly one reason: the rail of tiny strips is how you SELECT one,
+/// and selecting one is what opens it.
+fn mix_mode() -> ModeVisibility {
+    ModeVisibility {
+        default_arrange_show: true,
+        default_mixer_show: true,
+        rules: vec![
+            VisibilityRule {
+                selector: Selector {
+                    role: Role::Bus,
+                    ..Default::default()
+                },
+                arrange: Some(SurfaceEffect::show().tall(Size::Normal)),
+                mixer: Some(SurfaceEffect::show().wide(Size::Working)),
+            },
+            VisibilityRule {
+                selector: Selector {
+                    role: Role::Leaf,
+                    ..Default::default()
+                },
+                arrange: Some(SurfaceEffect::show().tall(Size::Minimum)),
+                mixer: Some(SurfaceEffect::show().wide(Size::Minimum)),
+            },
+        ],
+    }
+}
+
+/// Record: the mics are the session.
+///
+/// The inverse of [`mix_mode`]. Every audio leaf is a thing with a
+/// microphone in front of it, so it gets the room — you are watching
+/// input levels and arm states across a kit, not adjusting a bus. The
+/// buses stay visible and compact so the tree is still legible; a flat
+/// list of thirty mics is not a drum kit.
+fn record_mode() -> ModeVisibility {
+    ModeVisibility {
+        default_arrange_show: true,
+        default_mixer_show: true,
+        rules: vec![
+            VisibilityRule {
+                selector: Selector {
+                    role: Role::Bus,
+                    ..Default::default()
+                },
+                arrange: Some(SurfaceEffect::show().tall(Size::Compact)),
+                mixer: Some(SurfaceEffect::show().wide(Size::Compact)),
+            },
+            VisibilityRule {
+                selector: Selector {
+                    role: Role::Leaf,
+                    ..Default::default()
+                },
+                arrange: Some(SurfaceEffect::show().tall(Size::Working)),
+                mixer: Some(SurfaceEffect::show().wide(Size::Normal)),
+            },
+        ],
+    }
+}
+
+/// Overview: the bus skeleton, and nothing else.
+///
+/// The shape of the mix rather than the mix — which is the phase of the
+/// same name, and the view you want when the question is "what is this
+/// session" rather than "what does this track sound like". Leaves are
+/// hidden outright: at this zoom a mic is a line, and thirty lines
+/// under a bus is the picture this mode exists to remove.
+fn overview_mode() -> ModeVisibility {
+    ModeVisibility {
+        default_arrange_show: false,
+        default_mixer_show: false,
+        rules: vec![VisibilityRule {
+            selector: Selector {
+                role: Role::Bus,
+                ..Default::default()
+            },
+            arrange: Some(SurfaceEffect::show().tall(Size::Compact)),
+            mixer: Some(SurfaceEffect::show().wide(Size::Compact)),
+        }],
     }
 }
 
@@ -445,6 +539,73 @@ mod tests {
             index,
             is_folder,
         }
+    }
+
+    /// Mix opens the buses and keeps the mics as a rail — the whole
+    /// point being that a mic stays SELECTABLE at the smallest size the
+    /// surface has rather than disappearing.
+    #[test]
+    fn mix_mode_works_on_buses_and_keeps_the_mics_as_a_rail() {
+        let config = crate::default_config();
+        let tracks = vec![
+            t("kick-bus", "Kick", 0, true),
+            t("kick-in", "Kick In", 1, false),
+            t("kick-out", "Kick Out", 2, false),
+        ];
+        let plans = resolve(&tracks, &config, &mix_mode());
+        let by = |g: &str| plans.iter().find(|p| p.guid == g).unwrap().clone();
+
+        let bus = by("kick-bus");
+        assert!(bus.mixer_show && bus.arrange_show);
+        assert_eq!(bus.mixer_width, Some(Size::Working));
+
+        for mic in ["kick-in", "kick-out"] {
+            let leaf = by(mic);
+            assert!(leaf.mixer_show, "{mic} must stay selectable");
+            assert_eq!(leaf.mixer_width, Some(Size::Minimum));
+        }
+    }
+
+    /// Record is the inverse: the mics get the room.
+    #[test]
+    fn record_mode_gives_the_room_to_the_mics() {
+        let config = crate::default_config();
+        let tracks = vec![
+            t("kick-bus", "Kick", 0, true),
+            t("kick-in", "Kick In", 1, false),
+        ];
+        let plans = resolve(&tracks, &config, &record_mode());
+        let by = |g: &str| plans.iter().find(|p| p.guid == g).unwrap().clone();
+        assert_eq!(by("kick-in").mixer_width, Some(Size::Normal));
+        assert_eq!(by("kick-bus").mixer_width, Some(Size::Compact));
+        // And the leaf is the one that gets the HEIGHT in arrange,
+        // because a record pass is spent watching waveforms arrive.
+        assert_eq!(by("kick-in").arrange_height, Some(Size::Working));
+    }
+
+    /// Overview keeps the skeleton and drops everything hanging off it.
+    #[test]
+    fn overview_mode_is_buses_only() {
+        let config = crate::default_config();
+        let tracks = vec![
+            t("kick-bus", "Kick", 0, true),
+            t("kick-in", "Kick In", 1, false),
+        ];
+        let plans = resolve(&tracks, &config, &overview_mode());
+        let by = |g: &str| plans.iter().find(|p| p.guid == g).unwrap().clone();
+        assert!(by("kick-bus").mixer_show);
+        assert!(!by("kick-in").mixer_show, "a mic is a line at this zoom");
+        assert!(!by("kick-in").arrange_show);
+    }
+
+    /// The three the rails recall all resolve; a name nobody defined
+    /// still answers `None` rather than silently behaving like `edit`.
+    #[test]
+    fn the_visual_presets_are_all_reachable_by_slug() {
+        for slug in ["edit", "mix", "record", "overview"] {
+            assert!(mode_visibility_for(slug).is_some(), "{slug} is missing");
+        }
+        assert!(mode_visibility_for("nonesuch").is_none());
     }
 
     #[test]
