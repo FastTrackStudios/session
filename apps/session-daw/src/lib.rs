@@ -29,6 +29,7 @@ pub mod profile;
 pub mod rails;
 pub mod ruler;
 pub mod settings;
+pub mod strip;
 pub mod tcp;
 pub mod text;
 pub mod theme;

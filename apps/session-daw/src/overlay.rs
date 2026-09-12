@@ -323,27 +323,13 @@ fn draw_strip_controls(
     buttons_top: f64,
     mixer_h: f64,
 ) {
-    use daw_ui::controls::{Collapse, VolumeWidget};
+    let strip = crate::strip::Strip::new(width, height, mixer_h, rack_h, buttons_top);
+    // Every position comes from the layout, translated by the strip's
+    // left edge. Nothing here works out where a control goes.
+    let at = |control| strip.rect(control).map(|r| (left + r.x0, r.y0));
+    let state = |control| pointer.state(Spot { row, control });
 
-    let squeeze = crate::mcp::Squeeze::at(width);
-    let columns = crate::mcp::Columns::at(left, width);
-    // The same two resolutions the recorded strip uses: the mixer's
-    // height for everything anchored to the top, the strip's own only
-    // for the fader, which is what the indent shortens.
-    let shape = Collapse::at(crate::mcp::f64_to_f32((mixer_h - rack_h).max(1.0)));
-    let own = Collapse::at(crate::mcp::f64_to_f32((height - rack_h).max(1.0)));
-    let band_top = f64::from(daw_theme_art::collapse::FX_SECTION) + rack_h;
-    // The band's own bottom is where the ARM hangs from; the mixer's
-    // shared line is where the buttons and the fader start. They are
-    // four pixels apart and using one for the other is what put the
-    // live controls off the recorded chrome.
-    let band_bottom = band_top + f64::from(shape.pan_band) + f64::from(shape.input_band);
-    let state = |control| {
-        pointer.state(Spot { row, control })
-    };
-
-    // Pan: the pointer's angle is the value.
-    if squeeze.head() && f64::from(shape.pan_band) + f64::from(shape.input_band) > 26.0 {
+    if let Some((x, y)) = at(Control::Pan) {
         crate::art::place(
             scene,
             &art::pan_knob(
@@ -352,13 +338,12 @@ fn draw_strip_controls(
                 crate::tcp::to_theme(palette.pan),
             ),
             font,
-            left + (width - f64::from(g::PAN_KNOB_W)) / 2.0,
-            band_top + 2.0,
+            x,
+            y,
         );
     }
 
-    // The record arm: lit or not.
-    if squeeze.columns() {
+    if let Some((x, y)) = at(Control::RecArm) {
         crate::art::place(
             scene,
             &art::record_arm(
@@ -370,55 +355,54 @@ fn draw_strip_controls(
                 crate::tcp::to_theme(palette.tcp_tint),
             ),
             font,
-            columns.column_axis - f64::from(g::ARM_CELL_W) * 0.486,
-            band_bottom + f64::from(g::ARM_OVERHANG) - f64::from(g::ARM_CELL_H),
+            x,
+            y,
         );
     }
 
-    // Mute and solo: lit or not.
-    let mut at = buttons_top + f64::from(g::RECMON_FROM_ARM);
     for (control, label, on, lit) in [
         (Control::Mute, "M", track.muted, crate::tcp::mute_lit(palette)),
         (Control::Solo, "S", track.soloed, crate::tcp::solo_lit(palette)),
     ] {
+        let Some((x, y)) = at(control) else { continue };
         crate::art::place(
             scene,
             &art::gutter_button(&palette.chrome, label, on, lit, state(control)),
             font,
-            columns.column_x,
-            at,
+            x,
+            y,
         );
-        at += f64::from(g::BUTTON_H) + 1.0;
     }
 
-    // The fader: its lit travel and its cap both move with the value,
-    // so the whole thing is live rather than a recorded groove with a
-    // live cap — a groove lit to the old value under a cap at the new
-    // one is worse than either.
-    let stretch = f64::from(own.stretch);
-    let value = crate::tcp::volume_fraction(track.volume);
-    if matches!(own.volume, VolumeWidget::Fader) {
-        crate::art::place(
-            scene,
-            &art::fader(
-                &palette.chrome,
-                crate::tcp::lit(palette).volume,
-                value,
-                columns.fader_w,
-                stretch,
-            ),
-            font,
-            columns.fader_x,
-            buttons_top,
-        );
-        let (cap_y, cap_h) = art::fader_cap_at(value, columns.fader_w, stretch);
-        crate::art::scaled(
-            scene,
-            &art::fader_cap(&palette.chrome, palette.chrome.hardware_mark),
-            font,
-            columns.fader_x,
-            buttons_top + cap_y,
-            cap_h / 53.0,
-        );
+    // The fader is live in whole — its lit travel and its cap both move
+    // with the value, and a groove lit to the old value under a cap at
+    // the new one is worse than either.
+    if strip.has_fader() {
+        if let Some((x, y)) = at(Control::Volume) {
+            let value = crate::tcp::volume_fraction(track.volume);
+            let travel = strip.stretch();
+            crate::art::place(
+                scene,
+                &art::fader(
+                    &palette.chrome,
+                    crate::tcp::lit(palette).volume,
+                    value,
+                    strip.columns.fader_w,
+                    travel,
+                ),
+                font,
+                x,
+                y,
+            );
+            let (cap_y, cap_h) = art::fader_cap_at(value, strip.columns.fader_w, travel);
+            crate::art::scaled(
+                scene,
+                &art::fader_cap(&palette.chrome, palette.chrome.hardware_mark),
+                font,
+                x,
+                y + cap_y,
+                cap_h / 53.0,
+            );
+        }
     }
 }

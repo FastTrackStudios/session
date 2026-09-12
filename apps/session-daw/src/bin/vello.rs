@@ -375,10 +375,13 @@ impl App {
         let content_x = x - session_daw::rails::SIDE + self.mixer_scroll;
         let row = mixer.strip_at(content_x)?;
         let (left, width, height) = mixer.strip_box(row)?;
+        // The same layout the strip was drawn from — see `strip::Strip`.
         let control = session_daw::mcp::control_at(
             width,
             height,
-            self.rack_height(),
+            mixer.height,
+            mixer.rack_h,
+            mixer.buttons_top,
             content_x - left,
             y - session_daw::rails::TOP,
         )?;
@@ -389,17 +392,6 @@ impl App {
     fn hit_at(&self, x: f64, y: f64) -> Option<session_daw::hit::Hit> {
         let mixer = self.mixer.as_ref()?;
         Some(session_daw::hit::mixer(mixer, self.mixer_scroll, x, y))
-    }
-
-    /// How much of a strip the rack takes, at the current panel height.
-    fn rack_height(&self) -> f64 {
-        self.mixer.as_ref().map_or(0.0, |m| {
-            if self.tone {
-                m.height - (m.height * 0.34).max(240.0).min(m.height)
-            } else {
-                0.0
-            }
-        })
     }
 
     /// Do what a gesture meant.

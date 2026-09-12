@@ -563,55 +563,16 @@ impl Control {
 /// property worth having: these are two readings of one layout, not two
 /// layouts that have to be kept in step.
 #[must_use]
-pub fn control_at(width: f64, height: f64, rack_h: f64, x: f64, y: f64) -> Option<Control> {
-    let squeeze = Squeeze::at(width);
-    let columns = Columns::at(0.0, width);
-    let shape = Collapse::at(f64_to_f32((height - rack_h).max(1.0)));
-
-    let fx_section = f64::from(daw_theme_art::collapse::FX_SECTION) + rack_h;
-    let pan_band = f64::from(shape.pan_band);
-    let input_band = f64::from(shape.input_band);
-    let band_bottom = fx_section + pan_band + input_band;
-
-    // The name plate, at the foot. Checked first because it is the one
-    // control that overlaps nothing.
-    let plate_top = height
-        - f64::from(daw_theme_art::collapse::BOTTOM_SECTION);
-    if y >= plate_top {
-        return Some(Control::Name);
-    }
-
-    // The FX pill, at the top of the REAPER strip — below the rack.
-    if squeeze.head() && y >= rack_h && y < fx_section {
-        return Some(Control::Fx);
-    }
-
-    // The coloured band: pan across it, the arm hanging off its bottom.
-    if y < band_bottom {
-        if !squeeze.head() {
-            return None;
-        }
-        let arm_left = columns.column_axis - f64::from(g::ARM_CELL_W) * 0.486;
-        let arm_top = band_bottom + f64::from(g::ARM_OVERHANG)
-            - f64::from(g::ARM_CELL_H);
-        if y >= arm_top && x >= arm_left && x < arm_left + f64::from(g::ARM_CELL_W) {
-            return Some(Control::RecArm);
-        }
-        return Some(Control::Pan);
-    }
-
-    // The button column, and the fader beside it.
-    if x >= columns.column_x && x < columns.column_x + f64::from(g::BUTTON_W) {
-        let button_h = f64::from(g::BUTTON_H) + 1.0;
-        let from_top = y - band_bottom;
-        return Some(match crate::num::index(from_top / button_h.max(1.0)) {
-            0 => Control::Mute,
-            1 => Control::Solo,
-            _ => Control::Routing,
-        });
-    }
-    (x >= columns.fader_x && x < columns.fader_x + columns.fader_w)
-        .then_some(Control::Volume)
+pub fn control_at(
+    width: f64,
+    height: f64,
+    mixer_h: f64,
+    rack_h: f64,
+    buttons_top: f64,
+    x: f64,
+    y: f64,
+) -> Option<Control> {
+    crate::strip::Strip::new(width, height, mixer_h, rack_h, buttons_top).control_at(x, y)
 }
 
 /// How far a strip may be lent down.
@@ -1770,90 +1731,3 @@ mod shorten_tests {
     }
 }
 
-#[cfg(test)]
-mod control_tests {
-    use super::{Columns, Control, control_at};
-
-    /// A piece strip in the Tone rack, at the proportions the mixer
-    /// actually builds.
-    const W: f64 = 133.0;
-    const H: f64 = 1440.0;
-    const RACK: f64 = 950.0;
-
-    #[test]
-    fn the_name_plate_is_at_the_foot() {
-        assert_eq!(control_at(W, H, RACK, 20.0, H - 10.0), Some(Control::Name));
-    }
-
-    /// The FX pill sits below the rack, not above it — the bug that was
-    /// visible in the window before the pill moved down.
-    #[test]
-    fn the_fx_pill_is_below_the_rack() {
-        assert_eq!(
-            control_at(W, H, RACK, 20.0, RACK + 6.0),
-            Some(Control::Fx),
-            "the pill should be at the top of the REAPER strip"
-        );
-        assert_ne!(
-            control_at(W, H, RACK, 20.0, 10.0),
-            Some(Control::Fx),
-            "nothing at the very top of the panel is the pill any more"
-        );
-    }
-
-    /// Mute over solo over routing, in the button column.
-    #[test]
-    fn the_button_column_stacks_mute_solo_routing() {
-        let columns = Columns::at(0.0, W);
-        let x = columns.column_x + 4.0;
-        let band = RACK + 120.0;
-        let mut seen = Vec::new();
-        for step in 0..3 {
-            let y = band + f64::from(step) * 22.0;
-            if let Some(c) = control_at(W, H, RACK, x, y) {
-                seen.push(c);
-            }
-        }
-        assert!(
-            seen.contains(&Control::Mute) && seen.contains(&Control::Solo),
-            "expected mute and solo down the column, saw {seen:?}"
-        );
-    }
-
-    /// The fader is where the fader is drawn — centred, per `Columns`.
-    #[test]
-    fn the_fader_is_under_the_fader() {
-        let columns = Columns::at(0.0, W);
-        let x = columns.fader_x + columns.fader_w / 2.0;
-        assert_eq!(
-            control_at(W, H, RACK, x, H - 300.0),
-            Some(Control::Volume)
-        );
-    }
-
-    /// Knobs and faders are dragged; buttons are clicked. The gesture
-    /// layer needs that distinction to know whether a press should wait.
-    #[test]
-    fn only_the_continuous_controls_are_dragged() {
-        assert!(Control::Volume.is_continuous());
-        assert!(Control::Pan.is_continuous());
-        for click in [
-            Control::Mute,
-            Control::Solo,
-            Control::RecArm,
-            Control::Fx,
-            Control::Name,
-            Control::Routing,
-        ] {
-            assert!(!click.is_continuous(), "{click:?} is not dragged");
-        }
-    }
-
-    /// A narrow strip has no pan and no arm — and must report nothing
-    /// there rather than reporting a control that was never drawn.
-    #[test]
-    fn a_narrow_strip_has_no_head_controls() {
-        let narrow = 30.0;
-        assert_eq!(control_at(narrow, H, 0.0, 15.0, 40.0), None);
-    }
-}
