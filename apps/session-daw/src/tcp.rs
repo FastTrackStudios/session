@@ -101,7 +101,7 @@ pub fn lit(palette: &Palette) -> art::Lit {
 /// mute column" for anything else to address.
 pub const BUTTON: (f64, f64) = (21.0, 20.0);
 /// Between the two, so they read as two controls.
-const BUTTON_GAP: f64 = 1.0;
+pub const BUTTON_GAP: f64 = 1.0;
 
 /// Below this tall, volume and pan stop being knobs.
 ///
@@ -110,7 +110,7 @@ const BUTTON_GAP: f64 = 1.0;
 /// is three pixels of arc. A fader and a line keep saying it at any
 /// height, which matters most exactly here: this is the height tracks
 /// sit at once a session is collapsed enough to see all of it.
-const KNOB_LEGIBLE: f64 = 20.0;
+pub const KNOB_LEGIBLE: f64 = 20.0;
 
 /// Below this many pixels ON SCREEN, a row is drawn as a band.
 ///
@@ -140,12 +140,12 @@ impl Density {
 ///
 /// REAPER indents the row's CONTENT, not the row, so the tint still
 /// reaches the panel's edge and only the field and the number move.
-const INDENT: f64 = 10.0;
+pub const INDENT: f64 = 10.0;
 /// Past this, an indent would push the name field into the volume knob.
 /// Deep templates nest further than the panel is wide, and a clamp is
 /// what stops a section eight folders down from drawing on top of its
 /// own controls.
-const MAX_INDENT: f64 = 60.0;
+pub const MAX_INDENT: f64 = 60.0;
 
 /// Draw one row at `y`, in panel content space.
 ///
@@ -361,22 +361,9 @@ fn stacked(
     let top = band_top + (band_h - BUTTON.1) / 2.0;
     let x = f64::from(g::TINT_W) + 2.0;
 
-    for (i, (label, on, lit)) in [
-        ("M", track.muted, mute_lit(palette)),
-        ("S", track.soloed, solo_lit(palette)),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let offset = if i == 0 { 0.0 } else { BUTTON.0 + BUTTON_GAP };
-        crate::art::place(
-            scene,
-            &art::gutter_button(&palette.chrome, label, on, lit, Interaction::Normal),
-            font,
-            x + offset,
-            top,
-        );
-    }
+    // Mute and solo are drawn LIVE — they are lit or not, and that
+    // changes on a click. See `overlay::panel_controls`.
+    let _ = (top, x);
 }
 
 /// The control row: the name field and everything on it, flattened to
@@ -441,24 +428,8 @@ fn row_one(
     // to be true, because a five-pixel ring is neither readable nor
     // hittable and the volume and pan indicators are what a collapsed
     // row is being read for.
-    if band >= KNOB_LEGIBLE {
-        crate::art::place(
-            scene,
-            &art::record_arm(
-                &palette.chrome,
-                lit(palette).rec,
-                track.armed,
-                Interaction::Normal,
-                art::Arm::Panel,
-                // No housing on the strip, so the ring's hole shows the
-                // name field it is seated on.
-                to_theme(palette.tcp_field),
-            ),
-            font,
-            field_x + 3.0,
-            control_top + (AUTHORED - 20.0) / 2.0,
-        );
-    }
+    // The record arm is live — lit when armed, and that changes on a
+    // click. See `overlay::panel_controls`.
 
     // The name, between the arm and the knob, cut short rather than
     // wrapped or shrunk — REAPER truncates here too. The type shrinks
@@ -544,73 +515,11 @@ fn level(
     field_h: f64,
     band: f64,
 ) {
-    let volume_x = f64::from(g::NAME_FIELD_X) + f64::from(g::NAME_FIELD_W);
-    if band >= KNOB_LEGIBLE {
-        // The knob's 22 body caps the field: at its authored size the
-        // field's square right-hand corners showed past the circle,
-        // which read as the name box poking out from under the knob
-        // rather than the knob closing it.
-        let knob_scale = field_h / 22.0;
-        let knob_box = 24.0 * knob_scale;
-        crate::art::scaled(
-            scene,
-            &art::volume_knob(
-                &palette.chrome,
-                lit(palette).volume,
-                volume_fraction(track.volume),
-                Interaction::Normal,
-                field_h,
-            ),
-            font,
-            // Centred on the field's right edge, which is where REAPER
-            // seats it: half on the field, half on the tint.
-            volume_x - knob_box / 2.0,
-            field_top + (field_h - knob_box) / 2.0,
-            knob_scale,
-        );
-        let pan_scale = (field_h / 25.0).min(1.0);
-        crate::art::scaled(
-            scene,
-            &art::pan_knob(
-                &palette.chrome,
-                pan_position(track.pan),
-                to_theme(palette.pan),
-            ),
-            font,
-            f64::from(g::PAN_KNOB_X),
-            field_top + 25.0_f64.mul_add(-pan_scale, field_h) / 2.0,
-            pan_scale,
-        );
-    } else {
-        // Flattened, not shrunk: both are bars whose LENGTH is the
-        // value, so the axis being squashed carries no meaning and they
-        // keep saying what they say all the way down.
-        crate::art::squashed(
-            scene,
-            &art::volume_fader(&palette.chrome, lit(palette).volume, volume_fraction(track.volume)),
-            font,
-            // Straddling the field's right edge, where the knob it
-            // replaces is centred — the column has to hold whichever of
-            // the two a row is showing.
-            volume_x - 12.0,
-            field_top,
-            1.0,
-            field_h / 24.0,
-        );
-        crate::art::squashed(
-            scene,
-            &art::pan_line(
-                &palette.chrome,
-                pan_position(track.pan),
-                to_theme(palette.pan),
-            ),
-            font,
-            f64::from(g::PAN_KNOB_X),
-            field_top,
-            1.0,
-            field_h / 24.0,
-        );
-    }
+    // Volume and pan are live: their whole job is to show a value,
+    // and a recorded knob is a knob frozen at whatever the project
+    // opened with. Drawn per frame in `overlay::panel_controls`, in
+    // whichever form the row's height calls for.
+    let _ = (field_top, field_h, band);
 }
 
 /// The name's type size for a field of `height`.

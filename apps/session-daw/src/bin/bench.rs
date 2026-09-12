@@ -648,6 +648,8 @@ fn shot(
     // the gaps a colour the theme never uses makes them impossible to
     // miss, and makes this image show the same defect the window does.
     let gaps = std::env::var_os("FTS_BENCH_SHOT_GAPS").is_some();
+    // The panel's live values need the rows they belong to.
+    let (rows_for_panel, tracks_for_panel) = panel_rows();
     image.render_to_vec(
         |painter| {
             painter.reset();
@@ -698,6 +700,16 @@ fn shot(
                 1.0 / 16.0,
                 (rail_x, rail_y),
             );
+            let c = session_daw::overlay::panel_controls(
+                painter,
+                palette,
+                font,
+                scene,
+                &rows_for_panel,
+                &tracks_for_panel,
+                view,
+                Affine::translate((rail_x, rail_y + RULER_H - scroll_y)),
+            );
             ruler::ruler(painter, palette, font, view, Bars::at(scene.bpm), (rail_x, rail_y));
             // The arrangement's left rail carries the same visual
             // presets the mixer's does — they are layouts of the
@@ -724,8 +736,8 @@ fn shot(
             // above the track panel — the one piece of chrome the mode
             // does not re-populate.
             session_daw::rails::main_toolbar(painter, palette, font, session::modes::Mode::Mix);
-            counts.replayed = a.replayed + b.replayed;
-            counts.submitted = a.submitted + b.submitted;
+            counts.replayed = a.replayed + b.replayed + c.replayed;
+            counts.submitted = a.submitted + b.submitted + c.submitted;
         },
         &mut buffer,
     );
@@ -900,4 +912,19 @@ fn animate(
         mixer.count, counts.submitted
     );
     println!("  fader and pan on every visible strip changing on every frame.");
+}
+
+/// The visible rows and their tracks, for the panel's live controls.
+fn panel_rows() -> (Vec<(daw_proto::Track, u32)>, Vec<daw_proto::Track>) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let Some(project) = rt.block_on(daw_ui::studio::project::fetch()) else {
+        return (Vec::new(), Vec::new());
+    };
+    let (visible, depths) =
+        daw_ui::components::folders::FolderState::default().visible(&project.tracks);
+    let tracks = visible.clone();
+    (visible.into_iter().zip(depths).collect(), tracks)
 }

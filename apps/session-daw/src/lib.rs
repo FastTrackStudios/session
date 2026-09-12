@@ -27,6 +27,7 @@ pub mod overlay;
 pub mod pointer;
 pub mod profile;
 pub mod rails;
+pub mod row;
 pub mod ruler;
 pub mod settings;
 pub mod strip;

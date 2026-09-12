@@ -127,6 +127,10 @@ struct App {
     edit: session_daw::cursor::Edit,
     /// Where a ruler drag started, in seconds.
     dragging_time: Option<f64>,
+    /// The panel control the pointer went down on.
+    pressed_row: Option<(usize, session_daw::row::Control)>,
+    /// Where the last panel drag was measured from.
+    row_drag: Option<(usize, session_daw::row::Control)>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
     /// Whether the Tone rack is on.
@@ -234,6 +238,17 @@ impl ApplicationHandler for App {
                         return;
                     }
                 }
+                if let Some((row, control)) = self.row_drag.or(self.pressed_row) {
+                    if control.is_continuous() {
+                        self.row_drag = Some((row, control));
+                        let fine = self.fine;
+                        let dy = position.y - self.cursor.1;
+                        self.drag_row(row, control, dy, fine);
+                        self.cursor = (position.x, position.y);
+                        self.redraw();
+                        return;
+                    }
+                }
                 if let Some(event) = self.gestures.moved(position.x, position.y, self.fine) {
                     self.act(event);
                     self.redraw();
@@ -274,6 +289,7 @@ impl ApplicationHandler for App {
                     }
                     self.pointer.hover(self.spot_at(x, y));
                     self.pointer.press();
+                    self.pressed_row = self.row_spot_at(x, y);
                     if let Some(hit) = self.hit_at(x, y) {
                         self.gestures.press(hit, x, y);
                     }
@@ -285,6 +301,17 @@ impl ApplicationHandler for App {
                         // four-millisecond selection behind.
                         self.edit.drag(from, to);
                     }
+                    // A click on a panel control acts if the pointer is
+                    // still on the control it went down on — the same
+                    // rule the mixer follows, so dragging away cancels.
+                    if let (Some((row, control)), Some((now_row, now_control))) =
+                        (self.pressed_row.take(), self.row_spot_at(x, y))
+                    {
+                        if row == now_row && control == now_control && !control.is_continuous() {
+                            self.act_on_row(row, control);
+                        }
+                    }
+                    self.row_drag = None;
                     self.pointer.release();
                     if let Some(event) = self.gestures.release(x, y, std::time::Instant::now()) {
                         self.act(event);
@@ -403,6 +430,37 @@ impl App {
     /// replayed at another has its fader, its buttons and its rack in
     /// the wrong places; scaling it would make the controls the wrong
     /// size, which is the thing the whole panel is built not to do.
+    /// The panel row and control under a window point.
+    ///
+    /// The arrangement's counterpart to `spot_at`, and the same rule:
+    /// the layout that answers this is the layout the row was drawn
+    /// from.
+    fn row_spot_at(&self, x: f64, y: f64) -> Option<(usize, session_daw::row::Control)> {
+        if self.view != View::Arrangement {
+            return None;
+        }
+        let scene = self.scene.as_ref()?;
+        let panel_x = x - session_daw::rails::SIDE;
+        if panel_x < 0.0 || panel_x >= TCP_WIDTH {
+            return None;
+        }
+        let content_y =
+            y - session_daw::rails::TOP - RULER_H + self.scroll_y;
+        let index = scene.row_at(content_y)?;
+        let (top, height) = scene.row_box(index)?;
+        let (track, depth) = self.rows_at(index)?;
+        let row = session_daw::row::Row::new(top, height, depth, track.is_folder);
+        let control = row.control_at(panel_x, content_y)?;
+        Some((index, control))
+    }
+
+    /// The track and depth of a visible row.
+    fn rows_at(&self, index: usize) -> Option<(&daw_proto::Track, i32)> {
+        let (_, rows) = self.session.as_ref()?;
+        rows.get(index)
+            .map(|(track, depth)| (track, i32::try_from(*depth).unwrap_or(0)))
+    }
+
     /// The control under a window point, if the mixer is showing.
     fn spot_at(&self, x: f64, y: f64) -> Option<session_daw::pointer::Spot> {
         if self.view != View::Mixer {
@@ -459,6 +517,68 @@ impl App {
         let content =
             x - session_daw::rails::SIDE - session_daw::arrangement::TCP_WIDTH + self.scroll_x;
         Some((content / self.pps).max(0.0))
+    }
+
+    /// A click on a panel control.
+    fn act_on_row(&mut self, row: usize, control: session_daw::row::Control) {
+        use session_daw::row::Control as C;
+        let Some(track) = self.tracks.get(row) else {
+            return;
+        };
+        let guid = track.guid.clone();
+        let edit = match control {
+            C::Mute => Some(session_daw::engine::Edit::ToggleMute(guid)),
+            C::Solo => Some(session_daw::engine::Edit::ToggleSolo(guid)),
+            C::RecArm => Some(session_daw::engine::Edit::ToggleArm(guid)),
+            C::Name => Some(session_daw::engine::Edit::Select(guid)),
+            // Folding, routing and the FX chain are not edits to a
+            // track — they are edits to the VIEW and to models this
+            // window has not read yet.
+            C::Folder | C::Routing | C::Fx | C::Volume | C::Pan => None,
+        };
+        let Some(edit) = edit else { return };
+        apply_locally(&mut self.tracks, row, &edit);
+        if let Some(applier) = &self.applier {
+            applier.send(edit);
+        }
+    }
+
+    /// A drag on a panel knob.
+    fn drag_row(&mut self, row: usize, control: session_daw::row::Control, dy: f64, fine: bool) {
+        use session_daw::row::Control as C;
+        let Some(track) = self.tracks.get(row) else {
+            return;
+        };
+        let guid = track.guid.clone();
+        // A knob's notional travel: REAPER's own, so a full sweep takes
+        // about the same movement here as it does there.
+        const KNOB_TRAVEL: f64 = 150.0;
+        let scaled = if fine {
+            dy * session_daw::gesture::FINE
+        } else {
+            dy
+        };
+        let fraction = session_daw::gesture::drag_fraction(scaled, KNOB_TRAVEL);
+        let mapped = match control {
+            C::Volume => session_daw::engine::drag(
+                session_daw::mcp::Control::Volume,
+                &guid,
+                track,
+                fraction,
+            ),
+            C::Pan => session_daw::engine::drag(
+                session_daw::mcp::Control::Pan,
+                &guid,
+                track,
+                fraction,
+            ),
+            _ => None,
+        };
+        let Some(edit) = mapped else { return };
+        apply_locally(&mut self.tracks, row, &edit);
+        if let Some(applier) = &self.applier {
+            applier.send(edit);
+        }
     }
 
     /// Do what a gesture meant.
@@ -648,6 +768,9 @@ impl App {
         let palette = &self.palette;
         let font = &self.font;
         let bars = Bars::at(scene.bpm);
+        let rows: &[(daw_proto::Track, u32)] =
+            self.session.as_ref().map_or(&[], |(_, rows)| rows.as_slice());
+        let tracks = self.tracks.as_slice();
         // The transport's last word, and where that puts the cursor
         // NOW — the reading is per-block, the drawing is per-frame, and
         // the difference between them is the glide.
@@ -712,6 +835,17 @@ impl App {
             // After the lanes — their backgrounds are opaque — and the
             // ruler last of all, over everything scrolled under it.
             ruler::grid(painter, &palette, view, bars, &grid, FINEST, rail);
+            // The panel's live values, over its recorded chrome.
+            let c = session_daw::overlay::panel_controls(
+                painter,
+                &palette,
+                &font,
+                scene,
+                rows,
+                tracks,
+                view,
+                Affine::translate((rail.0, rail.1 + RULER_H - sy)),
+            );
             ruler::ruler(painter, &palette, &font, view, bars, rail);
             // The cursors last, over the lanes and under nothing: a
             // playhead behind an item is a playhead you cannot follow.
@@ -744,8 +878,8 @@ impl App {
                 &profile.top,
             );
             session_daw::rails::main_toolbar(painter, &palette, &font, session::modes::Mode::Mix);
-            drawn.replayed = a.replayed + b.replayed;
-            drawn.submitted = a.submitted + b.submitted;
+            drawn.replayed = a.replayed + b.replayed + c.replayed;
+            drawn.submitted = a.submitted + b.submitted + c.submitted;
         });
         self.after_frame(drawn);
     }
@@ -874,6 +1008,8 @@ fn main() {
         playhead: session_daw::cursor::Playhead::stopped(0.0),
         edit: session_daw::cursor::Edit::default(),
         dragging_time: None,
+        pressed_row: None,
+        row_drag: None,
         session: None,
         mixer: None,
         mixer_scroll: 0.0,

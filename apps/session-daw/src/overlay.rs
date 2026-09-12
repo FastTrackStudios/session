@@ -406,3 +406,149 @@ fn draw_strip_controls(
         }
     }
 }
+
+/// The track panel's live controls, for the rows on screen.
+///
+/// The mixer's counterpart is [`controls`]; this is the same division
+/// applied to the other panel. The recorded row holds its ground, its
+/// rail, its colours and its name; the values — mute, solo, arm, volume
+/// and pan — are drawn per frame from the tracks as they are now.
+pub fn panel_controls(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    scene: &crate::arrangement::Arrangement,
+    rows: &[(Track, u32)],
+    tracks: &[Track],
+    view: crate::arrangement::Viewport,
+    transform: Affine,
+) -> crate::profile::Counts {
+    use crate::row::{Control as C, Indicator, Row};
+    use daw_theme_art::geometry::tcp as gt;
+
+    let mut counts = crate::profile::Counts::default();
+    let mut out = anyrender::Scene::new();
+    for index in scene.visible_rows(view) {
+        let (Some((track, depth)), Some(live)) = (rows.get(index), tracks.get(index)) else {
+            continue;
+        };
+        let Some((top, height)) = scene.row_box(index) else {
+            continue;
+        };
+        let row = Row::new(top, height, i32::try_from(*depth).unwrap_or(0), track.is_folder);
+        if row.density == crate::tcp::Density::Bar {
+            continue;
+        }
+
+        // Mute and solo.
+        for (control, label, on, lit) in [
+            (C::Mute, "M", live.muted, crate::tcp::mute_lit(palette)),
+            (C::Solo, "S", live.soloed, crate::tcp::solo_lit(palette)),
+        ] {
+            let Some(r) = row.rect(control) else { continue };
+            crate::art::place(
+                &mut out,
+                &art::gutter_button(&palette.chrome, label, on, lit, Interaction::Normal),
+                font,
+                r.x0,
+                r.y0,
+            );
+        }
+
+        // The record arm, on rows tall enough to read one.
+        if let Some(r) = row.rect(C::RecArm) {
+            crate::art::place(
+                &mut out,
+                &art::record_arm(
+                    &palette.chrome,
+                    crate::tcp::lit(palette).rec,
+                    live.armed,
+                    Interaction::Normal,
+                    art::Arm::Panel,
+                    crate::tcp::to_theme(palette.tcp_field),
+                ),
+                font,
+                r.x0,
+                r.y0,
+            );
+        }
+
+        // Volume and pan, in whichever form the row is showing — a knob
+        // where there is room to turn one, a flattened bar where there
+        // is not. Both are the same VALUE; only the shape changes.
+        let knob = row.indicator() == Indicator::Knob;
+        if let Some(r) = row.rect(C::Volume) {
+            let field_h = r.height();
+            if knob {
+                let scale = field_h / 22.0;
+                crate::art::scaled(
+                    &mut out,
+                    &art::volume_knob(
+                        &palette.chrome,
+                        crate::tcp::lit(palette).volume,
+                        crate::tcp::volume_fraction(live.volume),
+                        Interaction::Normal,
+                        field_h,
+                    ),
+                    font,
+                    r.x0,
+                    r.y0,
+                    scale,
+                );
+            } else {
+                crate::art::squashed(
+                    &mut out,
+                    &art::volume_fader(
+                        &palette.chrome,
+                        crate::tcp::lit(palette).volume,
+                        crate::tcp::volume_fraction(live.volume),
+                    ),
+                    font,
+                    r.x0,
+                    r.y0,
+                    1.0,
+                    field_h / 24.0,
+                );
+            }
+        }
+        if let Some(r) = row.rect(C::Pan) {
+            let field_h = r.height();
+            if knob {
+                let scale = (field_h / 25.0).min(1.0);
+                crate::art::scaled(
+                    &mut out,
+                    &art::pan_knob(
+                        &palette.chrome,
+                        live.pan.clamp(-1.0, 1.0),
+                        crate::tcp::to_theme(palette.pan),
+                    ),
+                    font,
+                    f64::from(gt::PAN_KNOB_X),
+                    r.y0 + 25.0_f64.mul_add(-scale, field_h) / 2.0,
+                    scale,
+                );
+            } else {
+                crate::art::squashed(
+                    &mut out,
+                    &art::pan_line(
+                        &palette.chrome,
+                        live.pan.clamp(-1.0, 1.0),
+                        crate::tcp::to_theme(palette.pan),
+                    ),
+                    font,
+                    f64::from(gt::PAN_KNOB_X),
+                    r.y0,
+                    1.0,
+                    field_h / 24.0,
+                );
+            }
+        }
+    }
+    for command in &out.commands {
+        counts.replayed = counts.replayed.saturating_add(1);
+        if crate::arrangement::submit_command(painter, command, transform) {
+            counts.submitted = counts.submitted.saturating_add(1);
+        }
+    }
+    counts
+}

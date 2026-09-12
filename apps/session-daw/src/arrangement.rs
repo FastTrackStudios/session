@@ -253,6 +253,18 @@ impl Arrangement {
         bottom - top
     }
 
+    /// A row's top and height, for laying its controls out.
+    ///
+    /// The overlay and the hit test need this for the same reason the
+    /// mixer's `strip_box` exists: the panel is recorded, so anything
+    /// live has to be told where the recorded thing is.
+    #[must_use]
+    pub fn row_box(&self, row: usize) -> Option<(f64, f64)> {
+        let top = *self.offsets.get(row)?;
+        let bottom = *self.offsets.get(row.checked_add(1)?)?;
+        Some((top, (bottom - top - DIVIDER).max(0.5)))
+    }
+
     /// Which row is at a content y, if any.
     ///
     /// The same binary search `visible_rows` uses, over the same
