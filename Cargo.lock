@@ -17611,14 +17611,6 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "dsp-golden"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "fts-plug-ui"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "baseview"
 version = "0.3.0"
 source = "git+https://github.com/FastTrackStudios/baseview.git?rev=fa0c2c870927ec27138f914c0841f305e9b4972f#fa0c2c870927ec27138f914c0841f305e9b4972f"
@@ -17742,4 +17734,12 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "dsp-golden"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "fts-plug-ui"
 version = "0.1.0"
