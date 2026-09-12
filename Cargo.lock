@@ -3011,7 +3011,7 @@ dependencies = [
  "daw-proto",
  "daw-reaper",
  "daw-reaper-dioxus",
- "daw-standalone 0.1.0",
+ "daw-standalone",
  "daw-test-macro",
  "dawfile-reaper",
  "eyre",
@@ -3244,31 +3244,7 @@ dependencies = [
  "daw-control",
  "daw-proto",
  "dawfile-reaper",
- "dawfile-standalone 0.1.0",
- "eyre",
- "fts-sample",
- "gloo-timers",
- "rtrb",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "uuid",
- "vox",
- "web-time",
-]
-
-[[package]]
-name = "daw-standalone"
-version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/daw?tag=v0.0.14#b8a884f79e54b22a65dab2cab405efcaaf1aa9bf"
-dependencies = [
- "architect 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
- "base64 0.22.1",
- "cpal",
- "daw-audio-io",
- "daw-control",
- "daw-proto",
- "dawfile-reaper",
+ "dawfile-standalone",
  "eyre",
  "fts-sample",
  "gloo-timers",
@@ -3413,23 +3389,6 @@ dependencies = [
 [[package]]
 name = "dawfile-standalone"
 version = "0.1.0"
-dependencies = [
- "daw-proto",
- "dawfile-dawproject",
- "dawfile-reaper",
- "facet",
- "facet-styx",
- "loro",
- "sha2 0.10.9",
- "styx-format",
- "thiserror 2.0.20",
- "uuid",
-]
-
-[[package]]
-name = "dawfile-standalone"
-version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/daw?tag=v0.0.14#b8a884f79e54b22a65dab2cab405efcaaf1aa9bf"
 dependencies = [
  "daw-proto",
  "dawfile-dawproject",
@@ -5010,7 +4969,7 @@ dependencies = [
  "daw",
  "daw-proto",
  "dawfile-reaper",
- "dawfile-standalone 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
+ "dawfile-standalone",
  "expression-editor-audio",
  "expression-editor-core",
  "expression-editor-corpus",
@@ -5068,7 +5027,7 @@ dependencies = [
  "daw-theme-art",
  "daw-ui",
  "dawfile-reaper",
- "dawfile-standalone 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
+ "dawfile-standalone",
  "dioxus",
  "dioxus-mcp-probe",
  "dioxus-native",
@@ -12671,7 +12630,7 @@ dependencies = [
  "daw-actions",
  "daw-proto",
  "daw-reaper",
- "daw-standalone 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
+ "daw-standalone",
  "daw-synchronization",
  "dawfile-reaper",
  "dynamic-template",
@@ -12760,7 +12719,7 @@ dependencies = [
  "daw",
  "daw-control",
  "daw-proto",
- "daw-standalone 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
+ "daw-standalone",
  "daw-ui",
  "dawfile-reaper",
  "dioxus",
@@ -12837,7 +12796,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "daw-proto",
- "daw-standalone 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
+ "daw-standalone",
  "session-vault-sync",
  "tokio",
 ]
@@ -12869,7 +12828,7 @@ dependencies = [
  "architect-ui 0.1.0 (git+https://github.com/FastTrackStudios/architect?tag=v0.7.1)",
  "daw",
  "daw-proto",
- "daw-standalone 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
+ "daw-standalone",
  "dioxus",
  "dioxus-test",
  "dock-dioxus",
@@ -12909,7 +12868,7 @@ dependencies = [
  "console_error_panic_hook",
  "daw",
  "daw-proto",
- "daw-standalone 0.1.0 (git+https://github.com/FastTrackStudios/daw?tag=v0.0.14)",
+ "daw-standalone",
  "dioxus",
  "dioxus-web",
  "eyre",
