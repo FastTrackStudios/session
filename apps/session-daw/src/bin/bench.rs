@@ -348,6 +348,7 @@ fn mixer_shot(
     let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
     let (visible, depths) =
         daw_ui::components::folders::FolderState::default().visible(&project.tracks);
+    let tracks: Vec<daw_proto::Track> = visible.clone();
     let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
         visible.into_iter().zip(depths).collect(),
     ));
@@ -399,15 +400,28 @@ fn mixer_shot(
             // Pinned to the BOTTOM of the window.
             //
 
-            counts = mixer.replay(
+            let at = Affine::translate((
+                session_daw::rails::SIDE - scroll_x,
+                session_daw::rails::TOP,
+            ));
+            let recorded = mixer.replay(painter, scroll_x, frame.content_width(), at);
+            // The live controls, exactly as the window draws them — a
+            // shot that skipped them would be a shot of a mixer with no
+            // faders, and the whole point of the shot is to be the same
+            // frame the window shows.
+            let live = session_daw::overlay::controls(
                 painter,
+                palette,
+                font,
+                &mixer,
+                &tracks,
+                &session_daw::pointer::Pointer::default(),
                 scroll_x,
                 frame.content_width(),
-                Affine::translate((
-                    session_daw::rails::SIDE - scroll_x,
-                    session_daw::rails::TOP,
-                )),
+                at,
             );
+            counts.replayed = recorded.replayed + live.replayed;
+            counts.submitted = recorded.submitted + live.submitted;
             let profile = session_daw::rails::profile(
                 session_daw::rails::Surface::Mixer,
                 session::modes::Mode::Mix,
@@ -811,7 +825,6 @@ fn animate(
         layout,
         true,
     );
-    let rack_h = mixer.height * 0.66;
     let pointer = session_daw::pointer::Pointer::default();
 
     let mut renderer = Headless::new(width, height).expect("a headless renderer");
@@ -850,7 +863,6 @@ fn animate(
                         &mixer,
                         &tracks,
                         &pointer,
-                        rack_h,
                         0.0,
                         frame.content_width(),
                         at,

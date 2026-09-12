@@ -495,7 +495,6 @@ impl App {
         if !self.mixer_for(frame.content_height()) {
             return;
         }
-        let rack_h = self.rack_height();
         let profile = session_daw::rails::profile(
             session_daw::rails::Surface::Mixer,
             session::modes::Mode::Mix,
@@ -542,7 +541,6 @@ impl App {
                 mixer,
                 tracks,
                 pointer,
-                rack_h,
                 scroll,
                 frame.content_width(),
                 at,

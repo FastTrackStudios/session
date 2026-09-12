@@ -50,6 +50,7 @@ pub fn control(
         + rack_h
         + f64::from(shape.pan_band)
         + f64::from(shape.input_band);
+    let buttons_top = mixer.buttons_top;
 
     // Recorded in content space and replayed under the transform, so
     // the overlay records the same way and rides the same transform.
@@ -67,7 +68,7 @@ pub fn control(
                 &art::gutter_button(&palette.chrome, label, on, lit, state),
                 font,
                 columns.column_x,
-                band_bottom + f64::from(g::RECMON_FROM_ARM)
+                buttons_top + f64::from(g::RECMON_FROM_ARM)
                     + row * (f64::from(g::BUTTON_H) + 1.0),
             );
         }
@@ -265,7 +266,6 @@ pub fn controls(
     mixer: &Mixer,
     tracks: &[Track],
     pointer: &crate::pointer::Pointer,
-    rack_h: f64,
     scroll_x: f64,
     width: f64,
     transform: Affine,
@@ -289,7 +289,8 @@ pub fn controls(
             left,
             strip_w,
             strip_h,
-            rack_h,
+            mixer.rack_h,
+            mixer.buttons_top,
         );
     }
     for command in &scene.commands {
@@ -317,6 +318,7 @@ fn draw_strip_controls(
     width: f64,
     height: f64,
     rack_h: f64,
+    buttons_top: f64,
 ) {
     use daw_ui::controls::{Collapse, VolumeWidget};
 
@@ -324,6 +326,10 @@ fn draw_strip_controls(
     let columns = crate::mcp::Columns::at(left, width);
     let shape = Collapse::at(crate::mcp::f64_to_f32((height - rack_h).max(1.0)));
     let band_top = f64::from(daw_theme_art::collapse::FX_SECTION) + rack_h;
+    // The band's own bottom is where the ARM hangs from; the mixer's
+    // shared line is where the buttons and the fader start. They are
+    // four pixels apart and using one for the other is what put the
+    // live controls off the recorded chrome.
     let band_bottom = band_top + f64::from(shape.pan_band) + f64::from(shape.input_band);
     let state = |control| {
         pointer.state(Spot { row, control })
@@ -363,7 +369,7 @@ fn draw_strip_controls(
     }
 
     // Mute and solo: lit or not.
-    let mut at = band_bottom + f64::from(g::RECMON_FROM_ARM);
+    let mut at = buttons_top + f64::from(g::RECMON_FROM_ARM);
     for (control, label, on, lit) in [
         (Control::Mute, "M", track.muted, crate::tcp::mute_lit(palette)),
         (Control::Solo, "S", track.soloed, crate::tcp::solo_lit(palette)),
@@ -396,7 +402,7 @@ fn draw_strip_controls(
             ),
             font,
             columns.fader_x,
-            band_bottom,
+            buttons_top,
         );
         let (cap_y, cap_h) = art::fader_cap_at(value, columns.fader_w, stretch);
         crate::art::scaled(
@@ -404,7 +410,7 @@ fn draw_strip_controls(
             &art::fader_cap(&palette.chrome, palette.chrome.hardware_mark),
             font,
             columns.fader_x,
-            band_bottom + cap_y,
+            buttons_top + cap_y,
             cap_h / 53.0,
         );
     }

@@ -32,7 +32,7 @@ use daw_proto::Track;
 use daw_theme_art::geometry::mcp as g;
 use daw_theme_art::paint::tcp as art;
 use daw_theme_art::vector_controls::Interaction;
-use daw_ui::controls::{Collapse, PanAnchor, VolumeWidget};
+use daw_ui::controls::{Collapse, PanAnchor};
 use daw_ui::studio::{ProjectRef, RowsRef};
 use vello::kurbo::{Affine, Rect};
 use vello::peniko::{Color, Fill};
@@ -238,6 +238,15 @@ pub struct Mixer {
     pub depth: usize,
     /// The height a strip was recorded at.
     pub height: f64,
+    /// The y every strip puts its button column at.
+    ///
+    /// Exposed because the LIVE controls have to land on the same line
+    /// the recorded chrome was built around. Recomputing it in the
+    /// overlay is how the two ended up disagreeing: the recorded strips
+    /// share one line and a per-strip recomputation gives each its own.
+    pub buttons_top: f64,
+    /// How much of a strip the rack took.
+    pub rack_h: f64,
 }
 
 impl Mixer {
@@ -362,6 +371,8 @@ impl Mixer {
             count: rows.len(),
             depth: depth_seen,
             height,
+            buttons_top,
+            rack_h,
         }
     }
 
@@ -903,19 +914,9 @@ fn tinted_band(
         PanAnchor::PanSection => band_top + 2.0,
         PanAnchor::InputArea => band_top + pan_band + 2.0,
     };
-    if squeeze.head() && pan_band + input_band > 26.0 {
-        crate::art::place(
-            scene,
-            &art::pan_knob(
-                &palette.chrome,
-                track.pan.clamp(-1.0, 1.0),
-                crate::tcp::to_theme(palette.pan),
-            ),
-            font,
-            x + (w - f64::from(g::PAN_KNOB_W)) / 2.0,
-            pan_top,
-        );
-    }
+    // The pan knob is NOT recorded — it is drawn live, from the value
+    // the track has now. See `overlay::controls`.
+
     // The record input, on armed tracks only.
     //
     // It is what a track RECORDS FROM, so a track that is not recording
@@ -953,45 +954,10 @@ fn tinted_band(
         );
     }
 
-    // The record arm hangs off the BOTTOM of the coloured band.
-    //
-    // Its housing's straight base is meant to be invisible — REAPER
-    // sinks it into the dark below the band so only the 45 degree flare
-    // emerges into the colour — and `ARM_OVERHANG` is exactly how much
-    // of the cell that base is. So the cell's bottom sits that far below
-    // the band's edge, which puts the shoulder ON the edge and the
-    // flares above it.
-    //
-    // Positioned against the band rather than the button column: the
-    // column's top is the mixer's shared button line, four pixels lower,
-    // and placing the arm there put the flares in the dark.
-    if Squeeze::at(w).columns() {
-        let band_bottom = band_top + pan_band + input_band;
-        crate::art::place(
-            scene,
-            &art::record_arm(
-                &palette.chrome,
-                crate::tcp::lit(palette).rec,
-                track.armed,
-                Interaction::Normal,
-                art::Arm::Mixer,
-                // The strip's own body, so the housing reads as that
-                // body growing up into the coloured band rather than as
-                // something grey sitting on top of it — which is what
-                // makes it a moulding and not a lump.
-                crate::tcp::to_theme(palette.tcp_tint),
-            ),
-            font,
-            // Off the button column's axis rather than a fixed offset,
-            // so the arm travels right with the column it belongs to.
-            // `ARM_LEFT` is that axis less 0.486 of the arm's cell, and
-            // that is the part that was measured — the 48 it came out
-            // at is only what it equals on an 86-wide strip.
-            Columns::at(x, w).column_axis - f64::from(g::ARM_CELL_W) * 0.486,
-            band_bottom + f64::from(g::ARM_OVERHANG) - f64::from(g::ARM_CELL_H),
-        );
-    }
-
+    // The record arm is not recorded either: it is lit or not, and that
+    // changes on a click. `overlay::controls` draws it, against the
+    // same shared button line this strip was built around.
+    let _ = pan_top;
 }
 
 /// Where a strip's columns fall, for a strip of this width.
@@ -1107,8 +1073,6 @@ fn stretch(
     } = band;
     let squeeze = Squeeze::at(w);
     let columns = Columns::at(x, w);
-    let fader_x = columns.fader_x;
-    let fader_w = columns.fader_w;
 
     // ── The left column: the dB scale, with the meter beside it ──
     //
@@ -1157,55 +1121,9 @@ fn stretch(
             stretch_top,
         );
     }
-    match shape.volume {
-        // Below the swap threshold a fader has no travel worth having,
-        // so it stops being a fader — REAPER's own rule, and the reason
-        // `Collapse` answers this rather than a height comparison here.
-        VolumeWidget::Knob => {
-            crate::art::place(
-                scene,
-                &art::volume_knob(
-                    &palette.chrome,
-                    crate::tcp::lit(palette).volume,
-                    crate::tcp::volume_fraction(track.volume),
-                    Interaction::Normal,
-                    24.0,
-                ),
-                font,
-                fader_x,
-                stretch_top + 2.0,
-            );
-        }
-        VolumeWidget::Fader => {
-            let value = crate::tcp::volume_fraction(track.volume);
-            crate::art::place(
-                scene,
-                &art::fader(
-                    &palette.chrome,
-                    crate::tcp::lit(palette).volume,
-                    value,
-                    fader_w,
-                    stretch,
-                ),
-                font,
-                fader_x,
-                stretch_top,
-            );
-            // The cap is its own traced drawing rather than part of the
-            // groove — one definition, placed where the groove says.
-            let (cap_y, cap_h) = art::fader_cap_at(value, fader_w, stretch);
-            crate::art::scaled(
-                scene,
-                // The grip is silver in the art — #9d to #d9 down its
-                // face — which is what `hardware_mark` now carries.
-                &art::fader_cap(&palette.chrome, palette.chrome.hardware_mark),
-                font,
-                fader_x,
-                stretch_top + cap_y,
-                cap_h / 53.0,
-            );
-        }
-    }
+    // The volume control is drawn live — its cap and its lit travel
+    // both move with the value, so recording it would record a fader
+    // frozen at whatever the project opened with.
 
     column(
         scene,
@@ -1255,20 +1173,12 @@ fn column(
     // The arm is placed against the coloured band by `strip`, not here:
     // it belongs to that band, and this column's `top` is the mixer's
     // shared button line rather than the band's edge.
-    let mut at = stretch_top + f64::from(g::RECMON_FROM_ARM);
-    for (label, on, lit) in [
-        ("M", track.muted, crate::tcp::mute_lit(palette)),
-        ("S", track.soloed, crate::tcp::solo_lit(palette)),
-    ] {
-        crate::art::place(
-            scene,
-            &art::gutter_button(&palette.chrome, label, on, lit, Interaction::Normal),
-            font,
-            column,
-            at,
-        );
-        at += f64::from(g::BUTTON_H) + 1.0;
-    }
+    // Mute and solo are live: they are lit or not, and that is the
+    // most common thing to change in a mixer.
+    let mut at = stretch_top
+        + f64::from(g::RECMON_FROM_ARM)
+        + (f64::from(g::BUTTON_H) + 1.0) * 2.0;
+
     if shape.show_io && squeeze.columns() {
         crate::art::place(
             scene,
