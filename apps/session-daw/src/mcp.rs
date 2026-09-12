@@ -371,6 +371,22 @@ impl Mixer {
         self.offsets.last().copied().unwrap_or(0.0)
     }
 
+    /// Which strip is at a content x, if any.
+    ///
+    /// The binary search `visible` uses, over the same offsets, for the
+    /// same reason: the strip you click is the strip you see.
+    #[must_use]
+    pub fn strip_at(&self, content_x: f64) -> Option<usize> {
+        if content_x < 0.0 || self.count == 0 {
+            return None;
+        }
+        let strip = self
+            .offsets
+            .partition_point(|&x| x <= content_x)
+            .checked_sub(1)?;
+        (strip < self.count).then_some(strip)
+    }
+
     /// The strips that intersect a viewport `width` wide, scrolled to
     /// `scroll_x`.
     ///

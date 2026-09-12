@@ -253,6 +253,24 @@ impl Arrangement {
         bottom - top
     }
 
+    /// Which row is at a content y, if any.
+    ///
+    /// The same binary search `visible_rows` uses, over the same
+    /// cumulative offsets — so a hit and a draw cannot disagree about
+    /// which row a pixel belongs to unless the offsets themselves are
+    /// wrong.
+    #[must_use]
+    pub fn row_at(&self, content_y: f64) -> Option<usize> {
+        if content_y < 0.0 || self.rows == 0 {
+            return None;
+        }
+        let row = self
+            .offsets
+            .partition_point(|&y| y <= content_y)
+            .checked_sub(1)?;
+        (row < self.rows).then_some(row)
+    }
+
     /// The rows that intersect `view`, clamped to what exists.
     ///
     /// A binary search over [`Arrangement::offsets`] rather than a

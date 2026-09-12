@@ -11,8 +11,10 @@
 
 pub mod arrangement;
 #[cfg(target_os = "linux")]
+pub mod cursor;
 pub mod frame_rate;
 pub mod headless;
+pub mod hit;
 pub mod layout;
 pub mod mcp;
 pub mod num;
