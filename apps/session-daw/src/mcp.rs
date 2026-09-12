@@ -371,6 +371,23 @@ impl Mixer {
         self.offsets.last().copied().unwrap_or(0.0)
     }
 
+    /// Where a strip is, and how big — for drawing over it.
+    ///
+    /// The overlay needs this because the strips are RECORDED: a
+    /// hovered control cannot be re-recorded without re-recording the
+    /// mixer, so it is redrawn live on top, and drawing on top of
+    /// something means knowing where it is.
+    ///
+    /// Returns the strip's left edge in content space, its width, and
+    /// its height — the same three numbers `build` handed `strip`.
+    #[must_use]
+    pub fn strip_box(&self, row: usize) -> Option<(f64, f64, f64)> {
+        let left = *self.offsets.get(row)?;
+        let right = *self.offsets.get(row.checked_add(1)?)?;
+        let width = (right - left - STRIP_GAP).max(0.0);
+        Some((left, width, self.height))
+    }
+
     /// Which strip is at a content x, if any.
     ///
     /// The binary search `visible` uses, over the same offsets, for the
@@ -999,17 +1016,17 @@ fn tinted_band(
 /// | scale | left, fixed width | 2 | ~4 |
 /// | meter | fills what is left between them | ~0 | not drawn |
 #[derive(Clone, Copy, Debug)]
-struct Columns {
-    scale_x: f64,
-    scale_w: f64,
-    meter_x: f64,
-    meter_w: f64,
-    fader_x: f64,
-    fader_w: f64,
+pub struct Columns {
+    pub scale_x: f64,
+    pub scale_w: f64,
+    pub meter_x: f64,
+    pub meter_w: f64,
+    pub fader_x: f64,
+    pub fader_w: f64,
     /// The left edge of the button column.
-    column_x: f64,
+    pub column_x: f64,
     /// Its centre — what the record arm hangs off.
-    column_axis: f64,
+    pub column_axis: f64,
 }
 
 /// The fader's own width. Fixed: a fader is a fader, and a wider strip
@@ -1026,7 +1043,7 @@ const _: () = assert!(g::METER_W == 26, "METER_MAX must track the measured meter
 const SCALE_W: f64 = 24.0;
 
 impl Columns {
-    fn at(x: f64, w: f64) -> Self {
+    pub fn at(x: f64, w: f64) -> Self {
         // Right-aligned by REAPER's own right margin, so the buttons
         // keep their distance from the edge instead of their distance
         // from the left.
@@ -1365,7 +1382,7 @@ fn bottom(
 }
 
 /// A strip height, for the f32 the theme's geometry is written in.
-const fn f64_to_f32(value: f64) -> f32 {
+pub const fn f64_to_f32(value: f64) -> f32 {
     #[expect(
         clippy::cast_possible_truncation,
         clippy::as_conversions,
