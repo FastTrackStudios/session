@@ -132,6 +132,15 @@ fn bootstrap(standalone: &Standalone) -> eyre::Result<()> {
     Ok(())
 }
 
+/// The engine's runtime, for work that must not run on the event loop.
+///
+/// `None` until the project has been opened — a window that is still
+/// loading has nothing to edit.
+#[must_use]
+pub fn runtime() -> Option<&'static tokio::runtime::Runtime> {
+    RUNTIME.get().copied()
+}
+
 /// Step three: real playback.
 ///
 /// The engine renders the project graph into the default output and
