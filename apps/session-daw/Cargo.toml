@@ -36,6 +36,8 @@ daw-ui = { workspace = true, features = ["studio", "reaper-theme"] }
 daw-control = { workspace = true }
 daw-proto = { workspace = true }
 daw-theme-art = { workspace = true }
+# The mix phases the mixer's left rail lists.
+session = { workspace = true }
 daw-theme = { workspace = true }
 
 # The Tone rack's response math — the plugins' own, not a copy. See the

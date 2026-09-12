@@ -770,7 +770,7 @@ pub fn folder_band(palette: &Palette, track: &Track) -> Color {
 /// for, not the mid-tones.
 const INK_FLOOR: f32 = 0.179;
 
-fn ink_on(background: Color) -> Color {
+pub fn ink_on(background: Color) -> Color {
     let [r, g, b, _] = background.components;
     let luminance = 0.2126_f32.mul_add(r, 0.7152_f32.mul_add(g, 0.0722 * b));
     if luminance > INK_FLOOR {

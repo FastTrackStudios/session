@@ -19,6 +19,7 @@ pub mod num;
 pub mod open;
 pub mod art;
 pub mod profile;
+pub mod rails;
 pub mod ruler;
 pub mod tcp;
 pub mod text;

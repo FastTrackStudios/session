@@ -12737,6 +12737,7 @@ dependencies = [
  "image",
  "pollster",
  "saturate-dsp",
+ "session",
  "skrifa 0.42.1",
  "tokio",
  "tracing",
@@ -17646,6 +17647,16 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "baseview"
+version = "0.3.0"
+source = "git+https://github.com/FastTrackStudios/baseview.git?rev=fa0c2c870927ec27138f914c0841f305e9b4972f#fa0c2c870927ec27138f914c0841f305e9b4972f"
+
+[[patch.unused]]
+name = "phon"
+version = "0.2.0-rc.5"
+source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
+
+[[patch.unused]]
 name = "dsp-golden"
 version = "0.1.0"
 
@@ -17768,13 +17779,3 @@ version = "0.1.0"
 [[patch.unused]]
 name = "reaper-kbd"
 version = "0.1.0"
-
-[[patch.unused]]
-name = "baseview"
-version = "0.3.0"
-source = "git+https://github.com/FastTrackStudios/baseview.git?rev=fa0c2c870927ec27138f914c0841f305e9b4972f#fa0c2c870927ec27138f914c0841f305e9b4972f"
-
-[[patch.unused]]
-name = "phon"
-version = "0.2.0-rc.5"
-source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
