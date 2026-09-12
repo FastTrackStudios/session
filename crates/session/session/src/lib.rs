@@ -60,6 +60,7 @@ pub mod key_actions;
 // non-attribute line between this and any gated module added above.
 pub mod keyflow;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod mix_phases;
 pub mod modes;
 pub mod playback;
 // REAPER-side helper (routing-project mutation). Not needed by the browser
