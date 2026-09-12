@@ -179,6 +179,23 @@ impl Mixer {
             .max()
             .map_or(0, |deepest| deepest.saturating_add(1));
 
+        // One section layout for the whole mixer, resolved against its
+        // FULL height — not against each strip's own.
+        //
+        // Strips are different heights (folder depth shortens them) and
+        // different widths, and resolving sections per strip put the
+        // mute of one track at a different y from the mute of the next.
+        // A mixer is read by scanning ACROSS it: "which of these is
+        // muted" has to be answerable with one horizontal look, and that
+        // needs the button column on one line. The fader gives way
+        // instead — it is shorter on a shortened strip, which is the
+        // cost of the indent rather than a second inconsistency.
+        let shared = Collapse::at(f64_to_f32(height));
+        let buttons_top = f64::from(daw_theme_art::collapse::FX_SECTION)
+            + f64::from(shared.pan_band)
+            + f64::from(shared.input_band)
+            + 4.0;
+
         let mut strips = Scene::new();
         let mut index = Vec::with_capacity(rows.len());
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
@@ -191,7 +208,18 @@ impl Mixer {
             // Nesting shortens the strip from the BOTTOM, so the tops
             // stay level and the bottoms staircase.
             let strip_h = (height - crate::num::coord(depth) * INDENT_STEP).max(1.0);
-            strip(&mut strips, palette, font, track, x, w, strip_h);
+            strip(
+                &mut strips,
+                palette,
+                font,
+                track,
+                Slot {
+                    x,
+                    width: w,
+                    height: strip_h,
+                    buttons_top,
+                },
+            );
             index.push(from..u32::try_from(strips.commands.len()).unwrap_or(u32::MAX));
             x += w + STRIP_GAP;
         }
@@ -276,15 +304,23 @@ impl Mixer {
 /// REAPER's own thresholds — the same model the DOM mixer uses, so the
 /// two collapse at the same heights rather than at two sets of numbers
 /// that happen to agree today.
-fn strip(
-    scene: &mut Scene,
-    palette: &Palette,
-    font: &Font,
-    track: &Track,
+/// Where one strip sits, and the mixer's shared button line.
+#[derive(Clone, Copy)]
+struct Slot {
     x: f64,
-    w: f64,
-    h: f64,
-) {
+    width: f64,
+    height: f64,
+    /// The y every strip puts its button column at — see `Mixer::build`.
+    buttons_top: f64,
+}
+
+fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot: Slot) {
+    let Slot {
+        x,
+        width: w,
+        height: h,
+        buttons_top,
+    } = slot;
     // `Collapse` is written in the f32 the theme's geometry is, and a
     // strip height is a few hundred pixels — exact either way.
     let shape = Collapse::at(f64_to_f32(h));
@@ -361,6 +397,7 @@ fn strip(
             height: stretch_h,
         },
         &shape,
+        buttons_top,
     );
 
     // ── The bottom: the name plate, then the index ──
@@ -384,6 +421,7 @@ fn stretch(
     track: &Track,
     band: Stretch,
     shape: &Collapse,
+    buttons_top: f64,
 ) {
     let Stretch {
         x,
@@ -473,7 +511,7 @@ fn stretch(
         Stretch {
             x,
             width: w,
-            top: stretch_top,
+            top: buttons_top,
             height: stretch,
         },
         shape,
@@ -505,16 +543,23 @@ fn column(
     } else {
         x + (w - f64::from(g::BUTTON_W)).max(0.0) / 2.0
     };
-    let mut at = stretch_top + 4.0;
+    // `top` here is the mixer's shared button line, not this strip's
+    // stretch — see `Mixer::build`.
+    //
+    // The record arm's slot is reserved whether or not the arm is drawn.
+    // Skipping the advance on a narrow strip put its mute twenty pixels
+    // above every other mute, which is the same failure the shared line
+    // was introduced to fix: a control that moves because of something
+    // about ITS track cannot be scanned across tracks.
+    let mut at = stretch_top + f64::from(g::RECMON_FROM_ARM);
     if squeeze.columns() {
         crate::art::place(
             scene,
             &art::record_arm(&palette.chrome, track.armed, Interaction::Normal),
             font,
             x + f64::from(g::ARM_LEFT),
-            at,
+            stretch_top,
         );
-        at += f64::from(g::RECMON_FROM_ARM);
     }
     for (label, on, lit) in [
         ("M", track.muted, crate::tcp::mute_lit(palette)),
