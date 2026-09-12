@@ -383,11 +383,19 @@ fn mixer_shot(
                 None,
                 &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
             );
+            // Pinned to the BOTTOM of the window.
+            //
+            // The mixer is a docked panel and the arrangement is what
+            // sits above it, so the edge it is fixed to is the bottom
+            // one. Anchored to the top instead, the strips floated with
+            // a void underneath and the track names — which are at the
+            // FOOT of a strip — ended up in the middle of the screen.
+            let dock = (f64::from(height) - mixer.height).max(0.0);
             counts = mixer.replay(
                 painter,
                 scroll_x,
                 f64::from(width),
-                Affine::translate((-scroll_x, 0.0)),
+                Affine::translate((-scroll_x, dock)),
             );
         },
         &mut buffer,
