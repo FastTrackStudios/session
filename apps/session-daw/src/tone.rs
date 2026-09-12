@@ -501,10 +501,18 @@ const fn f64_to_f32(value: f64) -> f32 {
 
 /// A plausible Tone chain, until tracks carry their own.
 ///
-/// The rack has nowhere to read real settings from yet — the FX chain is
-/// not in `daw_proto::Track` — so this stands in, varied by track index
-/// so that a mixer full of racks looks like a mixer full of different
-/// decisions rather than one curve repeated twenty times.
+/// The rack has nowhere to read real settings from yet. Not because the
+/// chain is unreachable — `FxChain::parameters` is right there — but
+/// because what comes back is unusable: daw-standalone adds an FX entry
+/// by name without loading a binary, so its parameters fall through to
+/// the stored path and arrive as `Param 1..N` at 0.5. `bin/chain-probe`
+/// demonstrates it against a real session.
+///
+/// A rack fed `Param 3 = 0.5` would draw a curve that looks like
+/// information and is not, which is worse than one that is honestly
+/// made up. So this stands in, varied by track index so that a mixer
+/// full of racks looks like a mixer full of different decisions rather
+/// than one curve repeated twenty times.
 #[must_use]
 pub fn placeholder(index: usize) -> Tone {
     let nudge = crate::num::coord(index % 7);
