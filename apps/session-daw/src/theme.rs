@@ -44,6 +44,21 @@ const BUNDLED: &str = concat!(
 
 /// The theme context the window is mounted under.
 pub fn resolve() -> ThemeContext {
+    // The FTS theme unless a REAPER one is asked for.
+    //
+    // This was the other way round, and it is why the window looked
+    // grey next to every screenshot taken of it: the shots come from
+    // the headless bench, which uses `Theme::dark()`, while the window
+    // resolved whatever REAPER theme was installed. Two binaries
+    // drawing the same panel in two palettes is a comparison nobody can
+    // make — and the grey one is REAPER's, not ours.
+    //
+    // The REAPER path is not going away: it is what the ported art was
+    // traced against and what proves a real theme reaches the canvas.
+    // It is opt-in now rather than the default.
+    if std::env::var_os(REAPER_THEME_ENV).is_none() {
+        return ThemeContext::new().with_theme(Theme::dark());
+    }
     let theme = candidates()
         .into_iter()
         .find_map(|dir| load(&dir))
@@ -53,6 +68,9 @@ pub fn resolve() -> ThemeContext {
         });
     ThemeContext::new().with_theme(theme)
 }
+
+/// Set this to draw with the installed REAPER theme instead of ours.
+pub const REAPER_THEME_ENV: &str = "FTS_DAW_REAPER_THEME";
 
 fn candidates() -> Vec<PathBuf> {
     let mut dirs = Vec::new();

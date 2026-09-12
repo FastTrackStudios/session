@@ -4,6 +4,10 @@
 //! just daw-vello
 //! ```
 //!
+//! `x` toggles between the arrangement and the mixer. One window, one
+//! view: multi-window comes later, and a split would have to decide how
+//! to divide the height before either half has earned it.
+//!
 //! A winit window, a wgpu surface, and the arrangement drawn through
 //! `anyrender` by Vello. No DOM, no WebView, no canvas — one scene
 //! containing the track panel AND the lanes, replayed under a transform
@@ -90,7 +94,23 @@ struct App {
     /// The grid that follows the zoom.
     grid: adaptive_grid::Adaptive,
     /// The project loads on a worker thread so the window opens now.
-    loading: Option<std::sync::mpsc::Receiver<Arrangement>>,
+    loading: Option<std::sync::mpsc::Receiver<Loaded>>,
+    /// Which view `x` last left the window on.
+    view: View,
+    /// The session, kept so the mixer can be re-recorded at whatever
+    /// height the window is. `None` until the project lands.
+    session: Option<(daw_ui::studio::ProjectRef, daw_ui::studio::RowsRef)>,
+    /// The mixer, recorded for the height it was last drawn at.
+    mixer: Option<session_daw::mcp::Mixer>,
+    /// The row layout, kept for that re-record.
+    layout: session_daw::layout::Layout,
+    /// Whether the Tone rack is on.
+    tone: bool,
+    /// How far along the strips the mixer is scrolled. Its own axis:
+    /// the arrangement's horizontal scroll is in seconds of timeline and
+    /// the mixer's is in strips, and sharing one number would mean a
+    /// zoom moved the mixer.
+    mixer_scroll: f64,
     /// Frames presented since the last report, and when that was.
     ///
     /// Counted HERE, at the point a frame is actually handed to the
@@ -114,7 +134,7 @@ impl ApplicationHandler for App {
             return;
         }
         let attrs = WindowAttributes::default()
-            .with_title("Session — arrangement (Vello)")
+            .with_title(self.view.title())
             .with_surface_size(winit::dpi::LogicalSize::new(1600.0, 900.0));
         let window: Arc<dyn Window> = Arc::from(
             event_loop.create_window(attrs).expect("create window"),
@@ -153,8 +173,29 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(x, y) => (f64::from(x) * 53.0, f64::from(y) * 53.0),
                     MouseScrollDelta::PixelDelta(p) => (p.x, p.y),
                 };
-                self.scroll_to(self.scroll_x - dx, self.scroll_y - dy);
+                if self.view == View::Mixer {
+                    // The mixer has one axis. Either wheel direction
+                    // moves along the strips, because a mixer scrolled
+                    // vertically by a wheel that meant "sideways" is the
+                    // most common way to lose your place in one.
+                    self.scroll_mixer(dx + dy);
+                } else {
+                    self.scroll_to(self.scroll_x - dx, self.scroll_y - dy);
+                }
                 self.redraw();
+            }
+            // `x` between the arrangement and the mixer — REAPER's own
+            // key for it, and the whole of the window's navigation until
+            // there is more than one window to put them in.
+            WindowEvent::KeyboardInput { event, .. } if event.state.is_pressed() => {
+                if event.logical_key.to_text() == Some("x") {
+                    self.view = self.view.toggled();
+                    if let Some(window) = &self.window {
+                        window.set_title(self.view.title());
+                    }
+                    tracing::info!(view = ?self.view, "view");
+                    self.redraw();
+                }
             }
             WindowEvent::RedrawRequested => self.redraw(),
             _ => {}
@@ -201,9 +242,10 @@ impl ApplicationHandler for App {
         }
         // The project arriving is the one thing that rebuilds the scene.
         if let Some(rx) = &self.loading
-            && let Ok(arrangement) = rx.try_recv()
+            && let Ok(loaded) = rx.try_recv()
         {
-            self.scene = Some(arrangement);
+            self.scene = Some(loaded.arrangement);
+            self.session = Some((loaded.project, loaded.rows));
             self.loading = None;
             self.redraw();
         }
@@ -241,8 +283,91 @@ impl App {
         self.scroll_y = y.clamp(0.0, span_y);
     }
 
+    /// The mixer, recorded for a panel `height` tall.
+    ///
+    /// Re-recorded when the height changes, which is a toggle or a
+    /// resize — not a frame. A strip resolves its sections against the
+    /// height it is DRAWN at, so a mixer recorded for one height and
+    /// replayed at another has its fader, its buttons and its rack in
+    /// the wrong places; scaling it would make the controls the wrong
+    /// size, which is the thing the whole panel is built not to do.
+    /// Move along the strips, stopping at both ends.
+    ///
+    /// Clamped to the content rather than left free: a mixer scrolled
+    /// past its last strip is a blank screen with no cue about which
+    /// way to go back, and the arrangement has a ruler and a playhead
+    /// to orient by where this has nothing.
+    fn scroll_mixer(&mut self, by: f64) {
+        let width = self.surface_size.0;
+        let content = self.mixer.as_ref().map_or(0.0, session_daw::mcp::Mixer::content_width);
+        let most = (content - width).max(0.0);
+        self.mixer_scroll = (self.mixer_scroll - by).clamp(0.0, most);
+    }
+
+    fn mixer_for(&mut self, height: f64) -> bool {
+        let Some((project, rows)) = self.session.as_ref() else {
+            return false;
+        };
+        let stale = self
+            .mixer
+            .as_ref()
+            .is_none_or(|m| (m.height - height).abs() > 0.5);
+        if stale {
+            self.mixer = Some(session_daw::mcp::Mixer::build(
+                &self.palette,
+                &self.font,
+                project,
+                rows,
+                height,
+                self.layout,
+                self.tone,
+            ));
+        }
+        self.mixer.is_some()
+    }
+
+    fn redraw_mixer(&mut self) {
+        let (width, height) = self.surface_size;
+        let surface = self.palette.surface;
+        let scroll = self.mixer_scroll;
+        // The panel is REAPER's own height, not the window's, and it
+        // sits on the bottom edge.
+        //
+        // A strip stretches to whatever height it is given, and given a
+        // 1440-pixel window that is a nine-hundred-pixel fader — travel
+        // nobody wants and precision nobody asked for. REAPER's mixer
+        // fills its panel, but nobody docks that panel to a whole 1440p
+        // screen, so "fills the window" is the wrong reading of it.
+        let panel = session_daw::mcp::DEFAULT_HEIGHT.min(height);
+        if !self.mixer_for(panel) {
+            return;
+        }
+        let dock = (height - self.mixer.as_ref().map_or(0.0, |m| m.height)).max(0.0);
+        // Split the borrow: the renderer is taken mutably by `render`
+        // and the mixer is only read inside it.
+        let Self { renderer, mixer, .. } = self;
+        let Some(mixer) = mixer.as_ref() else { return };
+        let mut drawn = session_daw::profile::Counts::default();
+        renderer.render(|painter| {
+            painter.reset();
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, width, height),
+            );
+            drawn = mixer.replay(painter, scroll, width, Affine::translate((-scroll, dock)));
+        });
+        self.after_frame(drawn);
+    }
+
     fn redraw(&mut self) {
         if !self.renderer.is_active() {
+            return;
+        }
+        if self.view == View::Mixer {
+            self.redraw_mixer();
             return;
         }
         let Some(scene) = &self.scene else { return };
@@ -262,6 +387,7 @@ impl App {
         let palette = &self.palette;
         let font = &self.font;
         let bars = Bars::at(scene.bpm);
+
         let grid = &self.grid;
         /// The finest the grid ever gets — sixteenths, as a fraction of
         /// a whole note. The zoom only ever coarsens away from it.
@@ -304,14 +430,19 @@ impl App {
             drawn.replayed = a.replayed + b.replayed;
             drawn.submitted = a.submitted + b.submitted;
         });
+        self.after_frame(drawn);
+    }
+
+    /// The per-frame bookkeeping both views share.
+    ///
+    /// The rate, twice a second, the same shape the WebView studio
+    /// reports so the two are comparable: the worst frame in the window
+    /// beside the mean, because a scroll that stutters averages
+    /// beautifully and feels terrible.
+    fn after_frame(&mut self, drawn: session_daw::profile::Counts) {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
-
-        // The rate, twice a second, the same shape the WebView studio
-        // reports so the two are comparable: the worst frame in the
-        // window beside the mean, because a scroll that stutters
-        // averages beautifully and feels terrible.
         let now = std::time::Instant::now();
         self.worst_frame = self.worst_frame.max(now - self.last_frame);
         self.last_frame = now;
@@ -324,12 +455,13 @@ impl App {
             // and those look identical in a log and nothing alike on a
             // monitor.
             tracing::info!(
+                ui.view = ?self.view,
                 ui.fps = f64::from(self.frames) / elapsed.as_secs_f64(),
                 ui.worst_frame_ms = self.worst_frame.as_secs_f64() * 1000.0,
                 ui.surface = ?self.surface_size,
                 ui.scroll = ?(self.scroll_x, self.scroll_y),
                 ui.submitted = drawn.submitted,
-                "arrangement frame rate"
+                "frame rate"
             );
             self.frames = 0;
             self.worst_frame = std::time::Duration::ZERO;
@@ -379,9 +511,9 @@ fn main() {
             }
             // The facade is up; read it and record the scene.
             match build_scene(&theme, layout) {
-                Some(arrangement) => {
-                    tracing::info!(rows = arrangement.rows, "arrangement recorded");
-                    let _ = tx.send(arrangement);
+                Some(loaded) => {
+                    tracing::info!(rows = loaded.arrangement.rows, "session recorded");
+                    let _ = tx.send(loaded);
                 }
                 None => tracing::error!("could not read the project back"),
             }
@@ -414,6 +546,14 @@ fn main() {
         },
         grid: adaptive_grid::Adaptive::default(),
         loading: Some(rx),
+        view: View::Arrangement,
+        session: None,
+        mixer: None,
+        mixer_scroll: 0.0,
+        layout,
+        // On by default: the rack is what this panel is being built
+        // for, and a flag you have to remember is a feature nobody sees.
+        tone: std::env::var_os("FTS_VELLO_NO_TONE").is_none(),
         frames: 0,
         last_report: std::time::Instant::now(),
         worst_frame: std::time::Duration::ZERO,
@@ -428,7 +568,7 @@ fn main() {
 fn build_scene(
     theme: &daw_ui::theming::Theme,
     layout: session_daw::layout::Layout,
-) -> Option<Arrangement> {
+) -> Option<Loaded> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -439,11 +579,49 @@ fn build_scene(
     let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
         visible.into_iter().zip(depths).collect(),
     ));
-    Some(Arrangement::build(
-        &Palette::from_theme(theme),
-        &session_daw::text::Font::embedded().ok()?,
-        &project,
-        &rows,
-        layout,
-    ))
+    let palette = Palette::from_theme(theme);
+    let font = session_daw::text::Font::embedded().ok()?;
+    // The project and its rows come back with the arrangement, because
+    // the mixer is recorded against the WINDOW's height and that is not
+    // known here — see `App::mixer_for`.
+    Some(Loaded {
+        arrangement: Arrangement::build(&palette, &font, &project, &rows, layout),
+        project,
+        rows,
+    })
+}
+
+/// What the loader thread hands back.
+struct Loaded {
+    arrangement: Arrangement,
+    project: daw_ui::studio::ProjectRef,
+    rows: daw_ui::studio::RowsRef,
+}
+
+/// Which of the two the window is showing.
+///
+/// One window, one view, `x` between them — REAPER's own key for it.
+/// Multi-window comes later; a single window that can reach both is
+/// what makes the mixer usable at all today, and a split would have to
+/// decide how to divide the height before either half has earned it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum View {
+    Arrangement,
+    Mixer,
+}
+
+impl View {
+    const fn toggled(self) -> Self {
+        match self {
+            Self::Arrangement => Self::Mixer,
+            Self::Mixer => Self::Arrangement,
+        }
+    }
+
+    const fn title(self) -> &'static str {
+        match self {
+            Self::Arrangement => "Session — arrangement (Vello)",
+            Self::Mixer => "Session — mixer (Vello)",
+        }
+    }
 }
