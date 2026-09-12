@@ -690,14 +690,26 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
     ])
 }
 
-/// Where the volume ring fills to, from a gain.
+/// Where the volume control fills to, from a gain.
 ///
-/// Unity is halfway up the sweep rather than at the end, because a fader
-/// at 0 dB is the resting position a mix is read against and REAPER's
-/// range runs past it.
+/// This used to be `volume / 2.0` — linear in GAIN, which put unity at
+/// the middle and made the position mean nothing: half the travel was
+/// the top 6 dB and the bottom half covered everything from −6 dB to
+/// silence. A fader you cannot read a level off is a handle.
+///
+/// It now goes through the measured taper — see
+/// `daw_theme_art::paint::tcp::gain_norm` — which is linear in dB, so
+/// the dB scale beside it labels the positions it actually uses.
+///
+/// **Known limit**: that taper tops out at unity, because the labels it
+/// was fitted from run −6 to −54 and extrapolating the fit lands 0 dB
+/// exactly on the groove's top pixel. REAPER's boost region was not
+/// visible in the capture, so a track above unity currently pegs at the
+/// top rather than showing how far above. That wants a second
+/// measurement with a boosted track rather than a guess at `+12`.
 #[must_use]
-pub const fn volume_fraction(volume: f64) -> f64 {
-    (volume / 2.0).clamp(0.0, 1.0)
+pub fn volume_fraction(volume: f64) -> f64 {
+    daw_theme_art::paint::tcp::gain_norm(volume)
 }
 
 /// The pan pointer's position, -1..1.

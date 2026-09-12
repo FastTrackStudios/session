@@ -511,6 +511,94 @@ pub mod tcp {
         drawing
     }
 
+    /// The top of the fader's travel, in dB.
+    ///
+    /// Measured, not assumed. The dB labels down REAPER's mixer fader
+    /// were read off a screenshot at x 9..24 and fitted: the mapping is
+    /// LINEAR IN dB at 2.204 px/dB, and extrapolating it to 0 dB lands
+    /// at y 124.88 against a groove that starts at 125. Every residual
+    /// is under a pixel across the whole travel.
+    ///
+    /// So this theme's mixer fader tops out at unity — there is no
+    /// boost on it — which is worth knowing rather than guessing, and
+    /// is why the number is here instead of a plausible `+12`.
+    pub const FADER_TOP_DB: f64 = 0.0;
+
+    /// And the bottom of the travel.
+    ///
+    /// The same fit puts the groove's last pixel at −55.86 dB. Rounded
+    /// to −56 rather than to a tidier −60, because −60 would put every
+    /// label seven pixels off the ones REAPER draws — a tidy constant
+    /// that is visibly wrong is worse than an untidy one that is right.
+    pub const FADER_BOTTOM_DB: f64 = -56.0;
+
+    /// Where a level sits on the fader, 0 at the bottom and 1 at the top.
+    ///
+    /// The one definition of the fader's scale: the cap, the lit groove
+    /// and the dB labels beside it all come through here, so a label
+    /// cannot drift from the position it labels.
+    #[must_use]
+    pub fn fader_norm(db: f64) -> f64 {
+        let span = FADER_TOP_DB - FADER_BOTTOM_DB;
+        ((db - FADER_BOTTOM_DB) / span).clamp(0.0, 1.0)
+    }
+
+    /// The level at a position on the fader. The inverse of
+    /// [`fader_norm`], for hit testing and for dragging.
+    #[must_use]
+    pub fn fader_db(norm: f64) -> f64 {
+        FADER_BOTTOM_DB + norm.clamp(0.0, 1.0) * (FADER_TOP_DB - FADER_BOTTOM_DB)
+    }
+
+    /// A linear gain as a position on the fader.
+    ///
+    /// `Track::volume` is a gain, not a dB value — 1.0 is unity — so
+    /// this is the conversion the strip needs. Silence is a gain of
+    /// zero, whose logarithm is not a number, so it is answered before
+    /// the log rather than after it.
+    #[must_use]
+    pub fn gain_norm(gain: f64) -> f64 {
+        if gain <= 0.0 {
+            return 0.0;
+        }
+        fader_norm(20.0 * gain.log10())
+    }
+
+    /// The labels REAPER prints down its fader.
+    ///
+    /// Not a round series: REAPER steps by 12, starting at −6. Twelve dB
+    /// is a doubling and a halving twice over, which is the interval a
+    /// mixing decision is actually made in.
+    pub const FADER_MARKS: [f64; 5] = [-6.0, -18.0, -30.0, -42.0, -54.0];
+
+    /// The dB scale beside the fader.
+    ///
+    /// `h` is the travel the fader runs in, so the marks land on the
+    /// positions [`fader_norm`] puts the cap at — the scale and the
+    /// thing it measures cannot disagree.
+    ///
+    /// Without this the fader is a handle on an unmarked line: you can
+    /// see that one track is louder than another and not by how much,
+    /// which is most of what a mixer is for.
+    #[must_use]
+    pub fn fader_scale(w: f64, h: f64, ink: Color, size: f32) -> Drawing {
+        let mut drawing = Drawing::new(w, h);
+        for db in FADER_MARKS {
+            let y = h * (1.0 - fader_norm(db));
+            // Baseline rather than centre: text sits ON the mark, the
+            // way a ruler's numbers sit on its ticks.
+            drawing.text(
+                format!("-{:.0}-", db.abs()),
+                w / 2.0,
+                y + f64::from(size) / 3.0,
+                size,
+                ink,
+                Align::Centre,
+            );
+        }
+        drawing
+    }
+
     /// Where the cap sits on a fader of this size.
     ///
     /// Returns its top and its height. The cap is its own drawing at its
@@ -1235,5 +1323,70 @@ pub mod tcp {
             h: height,
             r: radius,
         }
+    }
+}
+
+#[cfg(test)]
+mod fader_scale_tests {
+    use super::tcp::{
+        FADER_BOTTOM_DB, FADER_MARKS, FADER_TOP_DB, fader_db, fader_norm, fader_scale, gain_norm,
+    };
+
+    /// The fit this scale was derived from, checked against the pixels
+    /// it was read off. REAPER's groove ran y 125..248 and its labels
+    /// sat at these measured centres; every one must land within a
+    /// pixel of where `fader_norm` puts it.
+    #[test]
+    fn the_marks_land_where_reaper_draws_them() {
+        const TOP: f64 = 125.0;
+        const BOTTOM: f64 = 248.0;
+        let measured = [(-6.0, 137.5), (-18.0, 165.5), (-30.0, 190.5), (-42.0, 218.0), (-54.0, 243.5)];
+        for (db, want) in measured {
+            let got = TOP + (BOTTOM - TOP) * (1.0 - fader_norm(db));
+            assert!(
+                (got - want).abs() < 1.0,
+                "{db} dB: drew at {got:.2}, REAPER has it at {want:.2}"
+            );
+        }
+    }
+
+    /// Unity is the top of this fader — the measurement's least obvious
+    /// finding, and the one most likely to be "corrected" to +12 by
+    /// someone who assumes rather than measures.
+    #[test]
+    fn unity_is_the_top_of_the_travel() {
+        assert!((fader_norm(FADER_TOP_DB) - 1.0).abs() < f64::EPSILON);
+        assert!((fader_norm(0.0) - 1.0).abs() < f64::EPSILON);
+        assert!(fader_norm(FADER_BOTTOM_DB).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn the_scale_round_trips() {
+        for db in [-56.0, -40.0, -12.0, -0.5, 0.0] {
+            assert!((fader_db(fader_norm(db)) - db).abs() < 1e-9, "{db} dB");
+        }
+    }
+
+    /// A gain, not a dB value, is what a track carries.
+    #[test]
+    fn a_gain_converts_before_it_is_placed() {
+        // Unity gain is unity dB is the top.
+        assert!((gain_norm(1.0) - 1.0).abs() < 1e-9);
+        // Half the gain is −6 dB, which is one mark down.
+        assert!((gain_norm(0.5) - fader_norm(-6.0206)).abs() < 1e-3);
+        // Silence has no logarithm, and must not produce one.
+        assert!(gain_norm(0.0).abs() < f64::EPSILON);
+        assert!(gain_norm(-1.0).abs() < f64::EPSILON);
+    }
+
+    /// Every mark is inside the travel, so none is drawn off the end of
+    /// the groove it belongs to.
+    #[test]
+    fn every_mark_is_on_the_fader() {
+        for db in FADER_MARKS {
+            let norm = fader_norm(db);
+            assert!(norm > 0.0 && norm < 1.0, "{db} dB sits at {norm}");
+        }
+        assert_eq!(fader_scale(20.0, 124.0, super::hex("#FF4000"), 8.0).ops.len(), FADER_MARKS.len());
     }
 }

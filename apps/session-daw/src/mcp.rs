@@ -774,24 +774,52 @@ fn stretch(
     } else {
         x + (w - fader_w) / 2.0
     };
-    let meter_w = f64::from(g::METER_W);
+    // ── The left column: the dB scale, with the meter beside it ──
+    //
+    // REAPER gives this column to the SCALE. Measured off its mixer,
+    // the labels sit at x 9..24 of an 86-wide strip and there is no
+    // meter well behind them — so a meter drawn here was occupying the
+    // one place the strip had for the numbers, and drawing an empty
+    // well while it did it, because nothing hands it a level yet.
+    //
+    // Without a scale a fader is a handle on an unmarked line: you can
+    // see that one track is louder than another and not by how much,
+    // which is most of what a mixer is for.
+    //
+    // The meter keeps a narrow bar hard against the fader's left edge.
+    // It is not REAPER's placement — REAPER's MCP meter is not visible
+    // at rest in this theme at all — but a console meter beside its
+    // fader is a shape everyone reads, and it costs the scale nothing.
+    const METER_BAR: f64 = 5.0;
     if squeeze.meter() {
         crate::art::place(
-        scene,
-        &art::meter(
-            &palette.chrome,
-            0.0,
-            [
-                crate::tcp::to_theme(palette.meter_safe),
+            scene,
+            &art::fader_scale(
+                fader_x - x - METER_BAR - 4.0,
+                stretch,
                 crate::tcp::to_theme(palette.meter_warn),
-                crate::tcp::to_theme(palette.meter_danger),
-            ],
-            meter_w,
-            stretch,
-        ),
-        font,
-        x + 4.0,
-        stretch_top,
+                8.0,
+            ),
+            font,
+            x + 2.0,
+            stretch_top,
+        );
+        crate::art::place(
+            scene,
+            &art::meter(
+                &palette.chrome,
+                0.0,
+                [
+                    crate::tcp::to_theme(palette.meter_safe),
+                    crate::tcp::to_theme(palette.meter_warn),
+                    crate::tcp::to_theme(palette.meter_danger),
+                ],
+                METER_BAR,
+                stretch,
+            ),
+            font,
+            fader_x - METER_BAR - 2.0,
+            stretch_top,
         );
     }
     match shape.volume {
