@@ -412,8 +412,11 @@ fn strip(scene: &mut Scene, palette: &Palette, font: &Font, track: &Track, slot:
                 track.armed,
                 Interaction::Normal,
                 art::Arm::Mixer,
-                // The housing shows through its own ring.
-                palette.chrome.hardware.shade(-0.40),
+                // The strip's own body, so the housing reads as that
+                // body growing up into the coloured band rather than as
+                // something grey sitting on top of it — which is what
+                // makes it a moulding and not a lump.
+                crate::tcp::to_theme(palette.tcp_tint),
             ),
             font,
             x + f64::from(g::ARM_LEFT),

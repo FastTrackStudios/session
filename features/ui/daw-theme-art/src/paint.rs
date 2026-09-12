@@ -1121,9 +1121,15 @@ pub mod tcp {
     /// The record arm.
     ///
     /// The ring is an annulus: an outer disc with the hole painted back
-    /// over it. `hole` is what shows through — the housing in the mixer,
-    /// and whatever the ring is sitting on in the panel, because without
-    /// a housing there is nothing behind it and the hole is a hole.
+    /// over it.
+    ///
+    /// `behind` is both the housing and what shows through the hole,
+    /// because with a housing they are the same thing — the hole is that
+    /// housing showing through. Pass the colour of whatever the control
+    /// sits ON: the strip's body in the mixer, so the bump reads as the
+    /// background growing up into the coloured band rather than as a
+    /// grey lump placed on it; the name field in the panel, where there
+    /// is no housing and the hole is a hole.
     ///
     /// Radii are traced by sub-pixel coverage rather than by
     /// thresholding: down the mixer's widest row the alpha runs 103, 255
@@ -1136,7 +1142,7 @@ pub mod tcp {
         armed: bool,
         at: Interaction,
         arm: Arm,
-        hole: Color,
+        behind: Color,
     ) -> Drawing {
         let housing = arm == Arm::Mixer;
         let (vw, vh) = if housing { (36.0, 24.0) } else { (20.0, 20.0) };
@@ -1168,7 +1174,7 @@ pub mod tcp {
             // 45 degree flares. No vertical section until the shoulder —
             // every earlier reading of this shape had a straight edge
             // that a coverage trace shows is not there.
-            let moulding = chrome.hardware.shade(-0.40);
+            let moulding = behind;
             let shoulder = f64::from(crate::vector_controls::HOUSING_SHOULDER);
             let flare = vw * 0.3194;
             let base = vw * 0.4028;
@@ -1203,7 +1209,7 @@ pub mod tcp {
                 stops: vec![(0.0, ring.shade(0.18)), (1.0, ring)],
             },
         );
-        drawing.fill(circle(cx, cy, inner), hole);
+        drawing.fill(circle(cx, cy, inner), behind);
         drawing
     }
 
