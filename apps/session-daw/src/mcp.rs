@@ -276,7 +276,7 @@ impl Mixer {
         rows: &RowsRef,
         height: f64,
         layout: crate::layout::Layout,
-        tone: bool,
+        rack: &[crate::tone::Which],
     ) -> Self {
         let depth_seen = rows
             .iter()
@@ -312,7 +312,7 @@ impl Mixer {
         let any_rack = rows
             .iter()
             .any(|(track, _)| layout.width_of(track.width) >= crate::tone::LEGIBLE);
-        let tone = tone && any_rack;
+        let tone = !rack.is_empty() && any_rack;
         let control = if tone {
             (height * CONTROL_SHARE).max(CONTROL_MIN).min(height)
         } else {
@@ -385,6 +385,7 @@ impl Mixer {
                     mixer_h: height,
                 },
                 ordinal,
+                rack,
                 &ancestors,
                 &ancestor_names,
             );
@@ -728,6 +729,7 @@ fn strip(
     track: &Track,
     slot: Slot,
     index: usize,
+    rack: &[crate::tone::Which],
     ancestors: &[Color],
     ancestor_names: &[&str],
 ) {
@@ -841,6 +843,7 @@ fn strip(
             palette,
             font,
             &crate::tone::placeholder(index),
+            rack,
             crate::tone::Panel {
                 x: x + 2.0,
                 y: 2.0,

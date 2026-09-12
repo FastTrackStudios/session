@@ -170,7 +170,7 @@ mod tests {
             &rows,
             600.0,
             crate::layout::Layout::default(),
-            false,
+            &[],
         );
         (mixer, palette, font, tracks)
     }

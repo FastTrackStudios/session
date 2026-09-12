@@ -24,6 +24,9 @@ use anyrender::PaintScene;
 use vello::kurbo::{Affine, Rect};
 use vello::peniko::{Color, Fill};
 
+use daw_theme_art::mixer_controls::Interaction;
+use vello::peniko::ImageBrush;
+
 use crate::arrangement::Palette;
 use crate::text::Font;
 
@@ -70,6 +73,10 @@ pub struct Item<'a> {
     pub on: bool,
     /// What it does when pressed.
     pub act: Action,
+    /// The REAPER toolbar icon this button would rather be, if one is
+    /// installed. `None` — or a name nothing has installed — leaves the
+    /// label, which is legible either way.
+    pub icon: Option<&'static str>,
 }
 
 /// Where a view's rails are, and what is left for its panel.
@@ -163,6 +170,11 @@ pub fn draw(
     painter: &mut impl PaintScene,
     palette: &Palette,
     font: &Font,
+    icons: &mut crate::icons::Icons,
+    // `at` is what the pointer is on and what it is doing to it. The
+    // rails are drawn live, so a hover here is a colour rather than a
+    // re-record — the one advantage they have over the panel.
+    at: (Option<Action>, Option<Action>),
     frame: Frame,
     left: &[Item<'_>],
     right: &[Item<'_>],
@@ -193,7 +205,7 @@ pub fn draw(
 
     for (i, item) in top.iter().enumerate() {
         let Some(slot) = frame.top_slot(i) else { break };
-        button(painter, palette, font, slot, *item);
+        button(painter, palette, font, icons, at, slot, *item);
     }
 
     for (side, items) in [(false, left), (true, right)] {
@@ -201,7 +213,7 @@ pub fn draw(
             let Some(slot) = frame.slot(i, side) else {
                 break;
             };
-            button(painter, palette, font, slot, *item);
+            button(painter, palette, font, icons, at, slot, *item);
         }
     }
 }
@@ -211,15 +223,51 @@ fn button(
     painter: &mut impl PaintScene,
     palette: &Palette,
     font: &Font,
+    icons: &mut crate::icons::Icons,
+    at: (Option<Action>, Option<Action>),
     slot: Rect,
     item: Item<'_>,
 ) {
+    // Pressed beats hovered beats on, the same order every control in
+    // this window uses. `on` is last because "this is the current
+    // phase" is a weaker claim than "your finger is on this one".
+    let (hovered, pressed) = at;
+    let state = if pressed == Some(item.act) {
+        Interaction::Pressed
+    } else if hovered == Some(item.act) && pressed.is_none() {
+        Interaction::Hover
+    } else {
+        Interaction::Normal
+    };
+    // An installed icon replaces both the plate and the label: the cell
+    // already IS a toolbar button, drawn in the three states this
+    // window uses, and painting our plate behind it would put a REAPER
+    // pill inside an FTS one.
+    if let Some(name) = item.icon
+        && let Some(cell) = icons.cell(
+            name,
+            // A lit phase takes the clicked cell, which in REAPER's own
+            // art is the one that carries the accent — so "current" and
+            // "being pressed" look the same, which they do on a toolbar
+            // too.
+            if item.on || state == Interaction::Pressed {
+                Interaction::Pressed
+            } else {
+                state
+            },
+        )
+    {
+        icon(painter, cell, slot);
+        return;
+    }
     fill(
         painter,
-        if item.on {
-            palette.accent
-        } else {
-            palette.tcp_button
+        match (item.on, state) {
+            (true, _) => palette.accent,
+            (false, Interaction::Normal) => palette.tcp_button,
+            // No second art for an unlit rail plate, so it lifts toward
+            // the accent rather than to a colour invented here.
+            (false, _) => palette.tcp_button.lerp(palette.accent, 0.25, vello::peniko::color::HueDirection::Shorter),
         },
         slot,
     );
@@ -268,6 +316,9 @@ pub fn phases_and_presets(
             label: name,
             on: *name == preset,
             act: Action::Preset(name),
+            // The presets have no icons of their own yet — they are
+            // this window's idea, not a REAPER toolbar's.
+            icon: None,
         })
         .collect();
     items.extend(
@@ -277,6 +328,7 @@ pub fn phases_and_presets(
                 label: phase.display_name(),
                 on: *phase == current,
                 act: Action::Phase(*phase),
+                icon: phase.icon(),
             }),
     );
     items
@@ -353,11 +405,13 @@ pub fn mixer_right(settings: crate::settings::Settings) -> Vec<Item<'static>> {
             label: "Focus",
             on: settings.focus_selected,
             act: Action::FocusSelected,
+            icon: None,
         },
         Item {
             label: "Steal",
             on: settings.take_focus_width,
             act: Action::TakeFocusWidth,
+            icon: None,
         },
     ]
 }
@@ -383,6 +437,8 @@ pub fn main_toolbar(
     painter: &mut impl PaintScene,
     palette: &Palette,
     font: &Font,
+    icons: &mut crate::icons::Icons,
+    at: (Option<Action>, Option<Action>),
     current: session::modes::Mode,
 ) {
     let modes = session::modes::Mode::ALL;
@@ -401,11 +457,14 @@ pub fn main_toolbar(
             painter,
             palette,
             font,
+            icons,
+            at,
             slot,
             Item {
                 label: abbreviate(mode.display_name()),
                 on: *mode == current,
                 act: Action::Mode(*mode),
+                icon: None,
             },
         );
     }
@@ -420,6 +479,32 @@ fn abbreviate(name: &'static str) -> &'static str {
     name.char_indices()
         .nth(3)
         .map_or(name, |(byte, _)| &name[..byte])
+}
+
+/// One icon cell, centred in its slot at the largest whole scale that
+/// fits.
+///
+/// Aspect preserved, because these cells are wider than they are tall —
+/// a 60x30 pill squeezed into a 38-wide rail would be a squashed word
+/// rather than a small one.
+fn icon(painter: &mut impl PaintScene, cell: &ImageBrush, slot: Rect) {
+    let (w, h) = (f64::from(cell.image.width), f64::from(cell.image.height));
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let scale = (slot.width() / w).min(slot.height() / h);
+    let (drawn_w, drawn_h) = (w * scale, h * scale);
+    let at = Affine::translate((
+        slot.x0 + (slot.width() - drawn_w) / 2.0,
+        slot.y0 + (slot.height() - drawn_h) / 2.0,
+    )) * Affine::scale(scale);
+    painter.fill(
+        Fill::NonZero,
+        at,
+        cell.as_ref(),
+        None,
+        &Rect::new(0.0, 0.0, w, h),
+    );
 }
 
 fn fill(painter: &mut impl PaintScene, color: Color, rect: Rect) {

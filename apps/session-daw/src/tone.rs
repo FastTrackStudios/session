@@ -218,21 +218,64 @@ const GAP: f64 = 3.0;
 /// bent line, while an EQ's is the shape of the decision.
 const SHARE: [f64; 3] = [0.44, 0.28, 0.28];
 
+/// Which panels a mix phase asks for.
+///
+/// A phase is a pass over the session with one question in it, and the
+/// rack should be showing the processing that answers it. Rescue is a
+/// surgical pass, so it wants the EQ and nothing else; Balance is the
+/// fader pass and wants no rack at all, which hands its height back to
+/// the strip — which is what "every track visible and detailed" means
+/// when the thing being compared is levels.
+///
+/// The three panels this rack can draw are the three the Tone phase is
+/// made of, so the phases past Polish come back empty rather than
+/// borrowing a curve that is not about them. An empty rack is honest;
+/// a saturation graph over a Depth pass is not.
+#[must_use]
+pub fn panels_for(phase: session::mix_phases::MixPhase) -> &'static [Which] {
+    use session::mix_phases::MixPhase as P;
+    match phase {
+        P::Rescue => &[Which::Eq],
+        P::Tone => &[Which::Eq, Which::Comp, Which::Sat],
+        P::Polish => &[Which::Comp, Which::Sat],
+        // Balance is the fader pass; Relational, Depth and Creative are
+        // phases whose processing this rack has no panel for yet; and
+        // Overview is the one view that is deliberately only a shape.
+        P::Balance | P::Relational | P::Depth | P::Creative | P::Overview => &[],
+    }
+}
+
 /// Record the rack into `scene`.
 ///
 /// Returns nothing: like every other control in the mixer this is
 /// recorded once into the strip's command range and replayed from there.
-pub fn record(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, panel: Panel) {
+pub fn record(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    tone: &Tone,
+    panels: &[Which],
+    panel: Panel,
+) {
     let rack = Rack::at(panel.width);
-    if !rack.on() || panel.height < 24.0 {
+    if !rack.on() || panel.height < 24.0 || panels.is_empty() {
         return;
     }
 
-    let gaps = GAP * 2.0;
+    // The shares are authored for the full three; a shorter rack
+    // renormalises them rather than leaving a gap at the bottom, so two
+    // panels fill the same height three did and keep their proportions
+    // to each other.
+    let shares: Vec<f64> = panels.iter().map(|which| which.share()).collect();
+    let total: f64 = shares.iter().sum();
+    if total <= 0.0 {
+        return;
+    }
+    let gaps = GAP * crate::num::coord(panels.len().saturating_sub(1));
     let usable = (panel.height - gaps).max(0.0);
     let mut y = panel.y;
-    for (share, which) in SHARE.iter().zip([Which::Eq, Which::Comp, Which::Sat]) {
-        let h = usable * share;
+    for (share, which) in shares.iter().zip(panels.iter().copied()) {
+        let h = usable * share / total;
         let at = Panel {
             x: panel.x,
             y,
@@ -255,8 +298,9 @@ pub fn record(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, pa
     }
 }
 
-#[derive(Clone, Copy)]
-enum Which {
+/// One panel of the rack.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Which {
     Eq,
     Comp,
     Sat,
@@ -268,6 +312,19 @@ impl Which {
             Self::Eq => "EQ",
             Self::Comp => "COMP",
             Self::Sat => "SAT",
+        }
+    }
+
+    /// How much of the rack this panel wants, relative to the others.
+    ///
+    /// The EQ gets most of it because a frequency response needs
+    /// horizontal AND vertical room to be read; a transfer curve is a
+    /// line through a square and survives being short.
+    const fn share(self) -> f64 {
+        match self {
+            Self::Eq => SHARE[0],
+            Self::Comp => SHARE[1],
+            Self::Sat => SHARE[2],
         }
     }
 }
@@ -526,6 +583,7 @@ mod tests {
             &palette,
             &font,
             &placeholder(0),
+            &[Which::Eq, Which::Comp, Which::Sat],
             Panel {
                 x: 0.0,
                 y: 0.0,
@@ -547,6 +605,7 @@ mod tests {
             &palette,
             &font,
             &placeholder(0),
+            &[Which::Eq, Which::Comp, Which::Sat],
             Panel {
                 x: 0.0,
                 y: 0.0,
@@ -571,5 +630,48 @@ mod tests {
         let at_300 = calculate_combined_response(&tone.eq, 300.0, DISPLAY_RATE);
         assert!(at_3k > 0.0, "the 3k bell boosts: {at_3k}");
         assert!(at_300 < 0.0, "the 300 bell cuts: {at_300}");
+    }
+}
+
+#[cfg(test)]
+mod phase_tests {
+    use super::{Which, panels_for};
+    use session::mix_phases::MixPhase as P;
+
+    /// The phase decides what the rack is showing, which is the whole
+    /// reason the left rail's lower half is a rail and not a label.
+    #[test]
+    fn each_phase_asks_for_its_own_processing() {
+        assert_eq!(panels_for(P::Tone), &[Which::Eq, Which::Comp, Which::Sat]);
+        assert_eq!(panels_for(P::Rescue), &[Which::Eq]);
+        assert_eq!(panels_for(P::Polish), &[Which::Comp, Which::Sat]);
+    }
+
+    /// Balance is the fader pass: no rack, so its height goes back to
+    /// the strip. That is what "every track visible and detailed"
+    /// means when the thing being compared is levels.
+    #[test]
+    fn balance_hands_the_height_back() {
+        assert!(panels_for(P::Balance).is_empty());
+        assert!(panels_for(P::Overview).is_empty());
+    }
+
+    /// A phase whose processing has no panel yet draws nothing rather
+    /// than borrowing a curve that is not about it.
+    #[test]
+    fn an_unmodelled_phase_is_empty_not_wrong() {
+        for phase in [P::Relational, P::Depth, P::Creative] {
+            assert!(panels_for(phase).is_empty(), "{phase:?} borrowed a panel");
+        }
+    }
+
+    /// Every phase answers — a `match` that grew a hole would be a
+    /// phase button that silently kept the previous rack.
+    #[test]
+    fn every_phase_answers() {
+        for phase in P::ALL {
+            let panels = panels_for(phase);
+            assert!(panels.len() <= 3, "{phase:?} asked for {panels:?}");
+        }
     }
 }

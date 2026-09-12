@@ -142,6 +142,8 @@ struct App {
     dragging_time: Option<f64>,
     /// The panel control the pointer went down on.
     pressed_row: Option<(usize, session_daw::row::Control)>,
+    /// The rail button the pointer is over.
+    hovered_rail: Option<session_daw::rails::Action>,
     /// The rail button the pointer went down on. A rail click acts on
     /// RELEASE over the same button, like every other button here —
     /// dragging off one is how you change your mind.
@@ -168,6 +170,8 @@ struct App {
     last_row_click: Option<(usize, std::time::Instant)>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
+    /// The REAPER toolbar icons the rails draw, decoded once.
+    icons: session_daw::icons::Icons,
     /// The theme, kept for a RELOAD — a track added or removed changes
     /// the folder tree, and the only honest way to recompute it is to
     /// read the session back, which needs a theme to record against.
@@ -312,6 +316,11 @@ impl ApplicationHandler for App {
                         return;
                     }
                 }
+                let over_rail = self.rail_action_at(position.x, position.y);
+                if over_rail != self.hovered_rail {
+                    self.hovered_rail = over_rail;
+                    self.redraw();
+                }
                 let over_row = self
                     .row_spot_at(position.x, position.y)
                     .map(|(row, control)| session_daw::pointer::RowSpot { row, control });
@@ -326,6 +335,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::PointerLeft { .. } => {
+                self.hovered_rail = None;
                 if self.panel.hover(None) | self.pointer.hover(None) {
                     self.redraw();
                 }
@@ -879,7 +889,14 @@ impl App {
                 &planned,
                 height,
                 self.layout,
-                self.tone,
+                // Which processing the rack shows is the PHASE's
+                // decision — the left rail's lower half — and the env
+                // switch turns the whole rack off whatever it says.
+                if self.tone {
+                    session_daw::tone::panels_for(self.phase)
+                } else {
+                    &[]
+                },
             ));
         }
         self.mixer.is_some()
@@ -902,6 +919,7 @@ impl App {
         );
         let levels = self.meters.as_ref().map(session_daw::engine::Meters::levels);
         let levels = levels.as_deref().unwrap_or(&[]);
+        let rail_at = (self.hovered_rail, self.pressed_rail);
 
         // Split the borrow: `render` takes the renderer mutably and
         // everything drawn inside it is read.
@@ -913,6 +931,7 @@ impl App {
             pointer,
             palette,
             font,
+            icons,
             ..
         } = self;
         let Some(mixer) = mixer.as_ref() else { return };
@@ -955,6 +974,8 @@ impl App {
                 painter,
                 palette,
                 font,
+                icons,
+                rail_at,
                 frame,
                 &profile.left,
                 &profile.right,
@@ -1240,6 +1261,8 @@ impl App {
         let rename = self.rename.as_ref();
         let panel = &self.panel;
         let mode = self.mode;
+        let rail_at = (self.hovered_rail, self.pressed_rail);
+        let icons = &mut self.icons;
         // The transport's last word, and where that puts the cursor
         // NOW — the reading is per-block, the drawing is per-frame, and
         // the difference between them is the glide.
@@ -1364,12 +1387,14 @@ impl App {
                 painter,
                 &palette,
                 &font,
+                icons,
+                rail_at,
                 frame,
                 &profile.left,
                 &profile.right,
                 &profile.top,
             );
-            session_daw::rails::main_toolbar(painter, &palette, &font, mode);
+            session_daw::rails::main_toolbar(painter, &palette, &font, icons, rail_at, mode);
             drawn.replayed = a.replayed + b.replayed + c.replayed;
             drawn.submitted = a.submitted + b.submitted + c.submitted;
         });
@@ -1508,6 +1533,7 @@ fn main() {
         edit: session_daw::cursor::Edit::default(),
         dragging_time: None,
         pressed_row: None,
+        hovered_rail: None,
         pressed_rail: None,
         row_drag: None,
         watch: session_daw::engine::Watch::start(),
@@ -1525,6 +1551,7 @@ fn main() {
         arrange_rows: daw_ui::studio::RowsRef(std::sync::Arc::new(Vec::new())),
         mixer_scroll: 0.0,
         layout,
+        icons: session_daw::icons::Icons::new(),
         theme,
         // On by default: the rack is what this panel is being built
         // for, and a flag you have to remember is a feature nobody sees.

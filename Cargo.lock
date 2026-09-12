@@ -12694,6 +12694,7 @@ dependencies = [
  "daw-ui",
  "dioxus",
  "dioxus-native-dom",
+ "dirs",
  "dynamic-template",
  "eq-ui",
  "eyre",

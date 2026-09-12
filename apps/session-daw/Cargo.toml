@@ -84,6 +84,8 @@ anyrender_vello = "0.12"
 vello = "0.9"
 pollster = "0.4"
 image = { workspace = true }
+# Finding REAPER's resource path, for the toolbar icons it installs.
+dirs = "6"
 skrifa = "0.42"
 adaptive-grid = { workspace = true }
 winit = "0.31.0-beta.2"

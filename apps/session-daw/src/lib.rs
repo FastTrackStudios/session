@@ -24,6 +24,7 @@ pub mod num;
 pub mod open;
 pub mod art;
 pub mod overlay;
+pub mod icons;
 pub mod plan;
 pub mod pointer;
 pub mod profile;

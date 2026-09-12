@@ -30,6 +30,10 @@ use vello::kurbo::Affine;
 use session_daw::arrangement::{Arrangement, Palette, Viewport, TCP_WIDTH};
 use session_daw::headless::{Headless, BATCH};
 use session_daw::mcp::Mixer;
+
+/// The phase these measurements are taken in — the one the rack was
+/// built for, and the one every reference image was shot in.
+const TONE: session::mix_phases::MixPhase = session::mix_phases::MixPhase::Tone;
 use session_daw::profile::{Counts, Stages, Summary};
 use session_daw::ruler::{self, Bars, RULER_H};
 
@@ -381,7 +385,9 @@ fn mixer_shot(
         &rows,
         mcp_height - session_daw::rails::TOP,
         layout,
-        tone,
+        // The shot is of the Tone phase, which is the phase the rack
+        // was built for and the one the reference images were taken in.
+        if tone { session_daw::tone::panels_for(TONE) } else { &[] },
     );
     // The bench applies no preset, so the map is the identity — built
     // rather than skipped so the shot exercises the same lookup the
@@ -442,6 +448,12 @@ fn mixer_shot(
                 painter,
                 palette,
                 font,
+                // Deliberately none: the shot is the reference the
+                // sweep compares against, and it must not depend on
+                // whether this machine has REAPER's resources on disk.
+                &mut session_daw::icons::Icons::none(),
+                // At rest, like every other control in the shot.
+                (None, None),
                 frame,
                 &profile.left,
                 &profile.right,
@@ -742,6 +754,12 @@ fn shot(
                 painter,
                 palette,
                 font,
+                // Deliberately none: the shot is the reference the
+                // sweep compares against, and it must not depend on
+                // whether this machine has REAPER's resources on disk.
+                &mut session_daw::icons::Icons::none(),
+                // At rest, like every other control in the shot.
+                (None, None),
                 frame,
                 &profile.left,
                 &profile.right,
@@ -750,7 +768,14 @@ fn shot(
             // The mode selector sits in the corner the ruler leaves
             // above the track panel — the one piece of chrome the mode
             // does not re-populate.
-            session_daw::rails::main_toolbar(painter, palette, font, session::modes::Mode::Mix);
+            session_daw::rails::main_toolbar(
+                painter,
+                palette,
+                font,
+                &mut session_daw::icons::Icons::none(),
+                (None, None),
+                session::modes::Mode::Mix,
+            );
             counts.replayed = a.replayed + b.replayed + c.replayed;
             counts.submitted = a.submitted + b.submitted + c.submitted;
         },
@@ -850,7 +875,7 @@ fn animate(
         &rows,
         f64::from(height) - session_daw::rails::TOP,
         layout,
-        true,
+        session_daw::tone::panels_for(TONE),
     );
     let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
     let pointer = session_daw::pointer::Pointer::default();
