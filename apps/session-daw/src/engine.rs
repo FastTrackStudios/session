@@ -443,3 +443,194 @@ async fn apply(edit: &Edit) {
         tracing::warn!(error = %error, edit = ?edit, "the engine refused an edit");
     }
 }
+
+/// The engine's own account of the tracks, as it changes.
+///
+/// The window predicts an edit so the control moves under the hand —
+/// see `apply_locally` — and this is what turns that prediction into a
+/// correction. It is also the only way a change made ANYWHERE ELSE
+/// reaches the window: another client, a control surface, a REAPER on
+/// the other end of daw-sync. A UI that only ever saw its own edits
+/// would be a UI that silently disagrees with everyone.
+///
+/// Events rather than polling, because a change IS an event: missing
+/// one leaves the window wrong until something else happens to it,
+/// where missing a transport position is covered by the next one a few
+/// milliseconds later. That asymmetry is why `Transport` polls and this
+/// does not.
+pub struct Watch {
+    changes: std::sync::mpsc::Receiver<daw_proto::track::TrackEvent>,
+}
+
+impl Watch {
+    /// Subscribe. `None` if the facade is not up.
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        let runtime = crate::open::runtime()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("session-daw-watch".into())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    let Some(daw) = daw::rpc::Daw::try_get() else {
+                        return;
+                    };
+                    let Ok(project) = daw.current_project().await else {
+                        return;
+                    };
+                    let Ok(mut stream) = project.tracks().subscribe().await else {
+                        return;
+                    };
+                    while let Ok(Some(event)) = stream.recv().await {
+                        // A closed channel means the window has gone;
+                        // there is nothing left to correct.
+                        if tx.send(event.get().event.clone()).is_err() {
+                            break;
+                        }
+                    }
+                });
+            })
+            .ok()?;
+        Some(Self { changes: rx })
+    }
+
+    /// Everything that has happened since the last frame.
+    ///
+    /// Drained rather than waited on: the window asks once per frame
+    /// and applies whatever arrived. A frame that finds nothing has
+    /// nothing to do, which is most of them.
+    pub fn drain(&self) -> impl Iterator<Item = daw_proto::track::TrackEvent> + '_ {
+        self.changes.try_iter()
+    }
+}
+
+/// Apply one engine event to the window's copy.
+///
+/// The engine is the authority, so this overwrites rather than merges —
+/// including over a prediction that turned out wrong. A fader the user
+/// is still dragging is the one exception a caller may want to make,
+/// and it is the caller's to make because only it knows what is being
+/// dragged.
+pub fn apply_event(tracks: &mut [daw_proto::Track], event: &daw_proto::track::TrackEvent) {
+    use daw_proto::track::TrackEvent as E;
+    let find = |tracks: &mut [daw_proto::Track], guid: &str| -> Option<usize> {
+        tracks.iter().position(|t| t.guid == guid)
+    };
+    match event {
+        E::Renamed { guid, name } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].name.clone_from(name);
+            }
+        }
+        E::MuteChanged { guid, muted } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].muted = *muted;
+            }
+        }
+        E::SoloChanged { guid, soloed } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].soloed = *soloed;
+            }
+        }
+        E::ArmChanged { guid, armed } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].armed = *armed;
+            }
+        }
+        E::SelectionChanged { guid, selected } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].selected = *selected;
+            }
+        }
+        E::VolumeChanged { guid, volume } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].volume = *volume;
+            }
+        }
+        E::PanChanged { guid, pan } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].pan = *pan;
+            }
+        }
+        E::ColorChanged { guid, color } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].color = *color;
+            }
+        }
+        E::PhaseInvertedChanged { guid, inverted } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].phase_inverted = *inverted;
+            }
+        }
+        // Added and Removed change the track LIST, not a track — the
+        // rows, the offsets and the recorded scenes all follow from it,
+        // so it is a rebuild rather than a field to poke. Ignored here
+        // and handled by whoever owns the scene.
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::apply_event;
+    use daw_proto::Track;
+    use daw_proto::track::TrackEvent as E;
+
+    fn tracks() -> Vec<Track> {
+        ["a", "b"]
+            .into_iter()
+            .map(|g| Track {
+                guid: g.to_owned(),
+                volume: 1.0,
+                ..Track::default()
+            })
+            .collect()
+    }
+
+    /// The engine's word overwrites the window's guess — including a
+    /// guess that was wrong, which is the entire point of subscribing.
+    #[test]
+    fn the_engine_corrects_a_bad_prediction() {
+        let mut t = tracks();
+        // The window predicted a mute.
+        t[0].muted = true;
+        // The engine says otherwise — a solo-exclusive elsewhere, say.
+        apply_event(&mut t, &E::MuteChanged { guid: "a".into(), muted: false });
+        assert!(!t[0].muted);
+    }
+
+    /// An event for a track this window does not have is ignored rather
+    /// than panicking. The engine's list and the window's can differ for
+    /// a frame after a change.
+    #[test]
+    fn an_unknown_track_is_ignored() {
+        let mut t = tracks();
+        apply_event(&mut t, &E::VolumeChanged { guid: "gone".into(), volume: 0.5 });
+        assert!((t[0].volume - 1.0).abs() < f64::EPSILON);
+    }
+
+    /// Every field the UI draws is reachable, or a change made
+    /// elsewhere would never show.
+    #[test]
+    fn every_drawn_field_can_be_corrected() {
+        let mut t = tracks();
+        apply_event(&mut t, &E::Renamed { guid: "a".into(), name: "Kick".into() });
+        apply_event(&mut t, &E::SoloChanged { guid: "a".into(), soloed: true });
+        apply_event(&mut t, &E::ArmChanged { guid: "a".into(), armed: true });
+        apply_event(&mut t, &E::VolumeChanged { guid: "a".into(), volume: 0.25 });
+        apply_event(&mut t, &E::PanChanged { guid: "a".into(), pan: -0.5 });
+        apply_event(&mut t, &E::SelectionChanged { guid: "a".into(), selected: true });
+        assert_eq!(t[0].name, "Kick");
+        assert!(t[0].soloed && t[0].armed && t[0].selected);
+        assert!((t[0].volume - 0.25).abs() < f64::EPSILON);
+        assert!((t[0].pan + 0.5).abs() < f64::EPSILON);
+    }
+
+    /// One track's event does not touch another's.
+    #[test]
+    fn events_do_not_leak_between_tracks() {
+        let mut t = tracks();
+        apply_event(&mut t, &E::MuteChanged { guid: "b".into(), muted: true });
+        assert!(!t[0].muted && t[1].muted);
+    }
+}

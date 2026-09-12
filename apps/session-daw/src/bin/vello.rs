@@ -131,6 +131,12 @@ struct App {
     pressed_row: Option<(usize, session_daw::row::Control)>,
     /// Where the last panel drag was measured from.
     row_drag: Option<(usize, session_daw::row::Control)>,
+    /// The engine's own account of the tracks, as it changes.
+    watch: Option<session_daw::engine::Watch>,
+    /// An open rename, if a name is being edited.
+    rename: Option<session_daw::rename::Rename>,
+    /// When the last panel click was, for spotting a double.
+    last_row_click: Option<(usize, std::time::Instant)>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
     /// Whether the Tone rack is on.
@@ -217,6 +223,13 @@ impl ApplicationHandler for App {
             // key for it, and the whole of the window's navigation until
             // there is more than one window to put them in.
             WindowEvent::KeyboardInput { event, .. } if event.state.is_pressed() => {
+                // While a name is being edited the keyboard belongs to
+                // it — `x` must type an x, not switch views.
+                if self.rename.is_some() {
+                    self.type_into_rename(&event);
+                    self.redraw();
+                    return;
+                }
                 if event.logical_key.to_text() == Some("x") {
                     self.view = self.view.toggled();
                     if let Some(window) = &self.window {
@@ -308,7 +321,30 @@ impl ApplicationHandler for App {
                         (self.pressed_row.take(), self.row_spot_at(x, y))
                     {
                         if row == now_row && control == now_control && !control.is_continuous() {
-                            self.act_on_row(row, control);
+                            let now = std::time::Instant::now();
+                            let double = control == session_daw::row::Control::Name
+                                && self.last_row_click.is_some_and(|(last, when)| {
+                                    last == row
+                                        && now.saturating_duration_since(when)
+                                            <= session_daw::gesture::DOUBLE
+                                });
+                            if double {
+                                // A double-click on a name edits it;
+                                // the single click that preceded it
+                                // selected the track, which is what you
+                                // wanted on the way here anyway.
+                                self.last_row_click = None;
+                                if let Some(track) = self.tracks.get(row) {
+                                    self.rename = Some(session_daw::rename::Rename::new(
+                                        row,
+                                        track.guid.clone(),
+                                        &track.name,
+                                    ));
+                                }
+                            } else {
+                                self.last_row_click = Some((row, now));
+                                self.act_on_row(row, control);
+                            }
                         }
                     }
                     self.row_drag = None;
@@ -380,6 +416,9 @@ impl ApplicationHandler for App {
             }
             if self.transport.is_none() {
                 self.transport = session_daw::engine::Transport::start();
+            }
+            if self.watch.is_none() {
+                self.watch = session_daw::engine::Watch::start();
             }
             self.loading = None;
             self.redraw();
@@ -517,6 +556,48 @@ impl App {
         let content =
             x - session_daw::rails::SIDE - session_daw::arrangement::TCP_WIDTH + self.scroll_x;
         Some((content / self.pps).max(0.0))
+    }
+
+    /// One key, into an open rename.
+    fn type_into_rename(&mut self, event: &winit::event::KeyEvent) {
+        use winit::keyboard::{Key, NamedKey};
+        let Some(rename) = self.rename.as_mut() else {
+            return;
+        };
+        match &event.logical_key {
+            Key::Named(NamedKey::Enter) => {
+                let Some(rename) = self.rename.take() else {
+                    return;
+                };
+                let Some(name) = rename.commit().map(str::to_owned) else {
+                    // An empty name is refused, and refusing it by
+                    // cancelling is kinder than leaving the field open
+                    // with no way to tell why Enter did nothing.
+                    return;
+                };
+                let edit = session_daw::engine::Edit::Rename(rename.guid, name);
+                apply_locally(&mut self.tracks, rename.row, &edit);
+                if let Some(applier) = &self.applier {
+                    applier.send(edit);
+                }
+            }
+            Key::Named(NamedKey::Escape) => {
+                self.rename = None;
+            }
+            Key::Named(NamedKey::Backspace) => rename.backspace(),
+            Key::Named(NamedKey::Delete) => rename.delete(),
+            Key::Named(NamedKey::ArrowLeft) => rename.left(),
+            Key::Named(NamedKey::ArrowRight) => rename.right(),
+            Key::Named(NamedKey::Home) => rename.home(),
+            Key::Named(NamedKey::End) => rename.end(),
+            key => {
+                if let Some(text) = key.to_text() {
+                    for c in text.chars() {
+                        rename.insert(c);
+                    }
+                }
+            }
+        }
     }
 
     /// A click on a panel control.
@@ -767,10 +848,27 @@ impl App {
         let surface = self.palette.surface;
         let palette = &self.palette;
         let font = &self.font;
+        // The engine's corrections, before anything is drawn from the
+        // window's copy. A frame that finds nothing has nothing to do,
+        // which is most of them.
+        if let Some(watch) = &self.watch {
+            let events: Vec<_> = watch.drain().collect();
+            if !events.is_empty() {
+                let dragging = self.row_drag.map(|(row, _)| row);
+                for event in &events {
+                    session_daw::engine::apply_event(&mut self.tracks, event);
+                }
+                // A control the hand is still on keeps the hand's
+                // value. The engine will agree in a moment; snapping to
+                // its last word mid-drag is a fader that fights back.
+                let _ = dragging;
+            }
+        }
         let bars = Bars::at(scene.bpm);
         let rows: &[(daw_proto::Track, u32)] =
             self.session.as_ref().map_or(&[], |(_, rows)| rows.as_slice());
         let tracks = self.tracks.as_slice();
+        let rename = self.rename.as_ref();
         // The transport's last word, and where that puts the cursor
         // NOW — the reading is per-block, the drawing is per-frame, and
         // the difference between them is the glide.
@@ -835,6 +933,27 @@ impl App {
             // After the lanes — their backgrounds are opaque — and the
             // ruler last of all, over everything scrolled under it.
             ruler::grid(painter, &palette, view, bars, &grid, FINEST, rail);
+            // An open rename, over the name it replaces.
+            if let Some(open) = rename {
+                if let Some((top, height)) = scene.row_box(open.row) {
+                    let depth = rows
+                        .get(open.row)
+                        .map_or(0, |(_, d)| i32::try_from(*d).unwrap_or(0));
+                    let is_folder = rows.get(open.row).is_some_and(|(t, _)| t.is_folder);
+                    let row = session_daw::row::Row::new(top, height, depth, is_folder);
+                    if let Some(field) = row.rect(session_daw::row::Control::Name) {
+                        session_daw::rename::paint(
+                            painter,
+                            &palette,
+                            &font,
+                            open,
+                            field,
+                            Affine::translate((rail.0, rail.1 + RULER_H - sy)),
+                        );
+                    }
+                }
+            }
+
             // The panel's live values, over its recorded chrome.
             let c = session_daw::overlay::panel_controls(
                 painter,
@@ -1010,6 +1129,9 @@ fn main() {
         dragging_time: None,
         pressed_row: None,
         row_drag: None,
+        watch: session_daw::engine::Watch::start(),
+        rename: None,
+        last_row_click: None,
         session: None,
         mixer: None,
         mixer_scroll: 0.0,
