@@ -330,19 +330,16 @@ impl App {
         let (width, height) = self.surface_size;
         let surface = self.palette.surface;
         let scroll = self.mixer_scroll;
-        // The panel is REAPER's own height, not the window's, and it
-        // sits on the bottom edge.
+        // The mixer IS the window in this view.
         //
-        // A strip stretches to whatever height it is given, and given a
-        // 1440-pixel window that is a nine-hundred-pixel fader — travel
-        // nobody wants and precision nobody asked for. REAPER's mixer
-        // fills its panel, but nobody docks that panel to a whole 1440p
-        // screen, so "fills the window" is the wrong reading of it.
-        let panel = session_daw::mcp::DEFAULT_HEIGHT.min(height);
-        if !self.mixer_for(panel) {
+        // It splits internally: the REAPER strip takes about a third off
+        // the bottom and the rack fills the rest. Docking it at its
+        // natural height instead left two thirds of the screen blank —
+        // which is what a DOCKED mixer should look like, under an
+        // arrangement, and is not this view.
+        if !self.mixer_for(height) {
             return;
         }
-        let dock = (height - self.mixer.as_ref().map_or(0.0, |m| m.height)).max(0.0);
         // Split the borrow: the renderer is taken mutably by `render`
         // and the mixer is only read inside it.
         let Self { renderer, mixer, .. } = self;
@@ -357,7 +354,7 @@ impl App {
                 None,
                 &vello::kurbo::Rect::new(0.0, 0.0, width, height),
             );
-            drawn = mixer.replay(painter, scroll, width, Affine::translate((-scroll, dock)));
+            drawn = mixer.replay(painter, scroll, width, Affine::translate((-scroll, 0.0)));
         });
         self.after_frame(drawn);
     }

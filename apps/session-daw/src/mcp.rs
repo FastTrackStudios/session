@@ -293,31 +293,25 @@ impl Mixer {
             .max()
             .map_or(0, |deepest| deepest.saturating_add(1));
 
-        // The Tone rack's height, ADDED above every strip — including
-        // the ones too narrow to draw one.
+        // The panel splits into the REAPER strip and the rack above it.
         //
-        // Added rather than taken out. `height` is what the REAPER
-        // controls need — its own MCP is 371 and everything in it is
-        // sized against that — so spending half of it on the rack
-        // leaves a fader of sixty pixels and a mute you cannot hit. The
-        // embedded processing is an ADDITION to a channel strip, not a
-        // replacement for most of one, and the strip underneath it has
-        // to stay the strip you already know how to use.
+        // `height` is the WHOLE panel, and the strip takes about a third
+        // of it off the bottom — which is what REAPER's own mixer looks
+        // like on a 1440p screen, and leaves the other two thirds for
+        // the processing.
         //
-        // Shared rather than per-strip for the same reason the button
-        // line is: a mixer is read by scanning ACROSS it, and a rack
-        // that started at a different y on each strip would make
-        // "which of these is compressed hardest" a question you answer
-        // one strip at a time. A narrow strip keeps the blank space,
-        // which is the cost of the row staying level.
-        let rack_h = if tone {
-            (height * RACK_SHARE).min(RACK_MAX)
+        // This used to be the other way round: the strip was the height
+        // and the rack was a 220-pixel band added on top. That reads as
+        // a channel strip with a stripe of graphs stuck to it, when the
+        // thing being built is a channel you MIX on — where the
+        // processing is most of what you are looking at and the fader
+        // is the part you reach for after deciding.
+        let control = if tone {
+            (height * CONTROL_SHARE).max(CONTROL_MIN).min(height)
         } else {
-            0.0
+            height
         };
-        // What the strips actually stand in: the controls at their own
-        // height, with the rack on top.
-        let height = height + rack_h;
+        let rack_h = height - control;
 
         // One section layout for the whole mixer, resolved against the
         // height LEFT OVER — not against each strip's own.
@@ -479,16 +473,20 @@ struct Slot {
     rack_h: f64,
 }
 
-/// How tall the Tone rack is, as a share of the strip it sits above.
+/// How much of the panel the REAPER strip keeps, with the rack on.
 ///
-/// Measured against the CONTROLS' height rather than the window's, so
-/// the rack is proportioned to the strip it belongs to instead of to
-/// however tall someone dragged the panel.
+/// About a third, off the bottom — which is what REAPER's own mixer
+/// looks like on a 1440p screen. The rack gets the other two thirds:
+/// it is the reason to open this view, and a processor whose shape you
+/// can see is the difference between mixing and guessing.
+const CONTROL_SHARE: f64 = 0.34;
+
+/// And the least the strip may be squeezed to.
 ///
-/// Not a whole strip and not a corner: big enough that three stacked
-/// curves each read, small enough that the strip underneath is still
-/// the strip you already know how to use.
-const RACK_SHARE: f64 = 0.46;
+/// Below this the fader has no travel and the buttons crowd, and a
+/// channel strip you cannot mix on is not improved by the graphs above
+/// it. A short panel gives the rack whatever is left over instead.
+const CONTROL_MIN: f64 = 240.0;
 
 /// How far a strip may be lent down.
 ///
@@ -619,10 +617,6 @@ fn widths(
 
 /// How thick the selected strip's top rule is.
 const SELECTED_RULE: f64 = 2.0;
-
-/// And its ceiling, so a tall panel does not turn into three big plots
-/// with a channel strip hanging off the bottom.
-const RACK_MAX: f64 = 220.0;
 
 fn strip(
     scene: &mut Scene,

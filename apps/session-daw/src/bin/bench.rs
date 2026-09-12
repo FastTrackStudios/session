@@ -355,18 +355,17 @@ fn mixer_shot(
     // The Tone rack, which is a mix sub-mode rather than a permanent
     // fixture — so the shot asks for it explicitly.
     let tone = std::env::var("FTS_BENCH_TONE").is_ok();
-    // REAPER's own MCP height, not the window's.
+    // The whole frame, so a shot matches the window.
     //
-    // The mixer is a PANEL, and stretching it to fill the window was
-    // making everything in it look tiny: the controls are REAPER's own
-    // pixel sizes, but floating in a 1440-tall strip with an 800-pixel
-    // fader they read as lost rather than as dense. A shot at REAPER's
-    // height is a shot you can hold up against REAPER.
+    // The mixer splits internally — the REAPER strip takes a third off
+    // the bottom, the rack fills the rest — so handing it the frame is
+    // handing it the same thing the window hands it. Passing a short
+    // height here is how to shoot the DOCKED look instead.
     let mcp_height = std::env::var("FTS_BENCH_MCP_HEIGHT")
         .ok()
         .and_then(|v| v.trim().parse::<f64>().ok())
         .filter(|h| *h > 0.0)
-        .unwrap_or(session_daw::mcp::DEFAULT_HEIGHT)
+        .unwrap_or_else(|| f64::from(height))
         .min(f64::from(height));
     let mixer = Mixer::build(palette, font, &project, &rows, mcp_height, layout, tone);
 
