@@ -144,10 +144,23 @@ pub const LEGIBLE: f64 = 150.0;
 ///
 /// Above [`LEGIBLE`] rather than at it: the threshold is where the rack
 /// stops being illegible, and a control you have deliberately opened
-/// should not land on the edge of that. This is what a selected strip
-/// expands to, and what the template stores for a track that carries
-/// its piece's processing.
-pub const WORKING: f64 = 195.0;
+/// should not land on the edge of that.
+///
+/// One number for two jobs, and they have to be the same number: it is
+/// what a selected strip expands to, AND what the template stores for a
+/// track that carries its piece's processing. If the stored width were
+/// larger, selecting a piece would SHRINK it; if smaller, selecting one
+/// would widen it and shove every strip to its right. Either way the
+/// mixer moves under you at the moment you click a track, which is
+/// exactly when it must not.
+///
+/// 185 rather than 195 because of what the expansion costs. The kit is
+/// laid out to fit a 16:9 screen at rest, and a selected strip is up to
+/// 155 pixels wider than the auxiliary it replaces — so the fit has to
+/// hold for the WORST selection, not the resting layout. At 195 the kit
+/// rested at 3,724 and a selected Trig took it to 3,889: over a 3840
+/// display by 49, with one strip sliced down the middle.
+pub const WORKING: f64 = 185.0;
 
 /// Where the rack goes.
 #[derive(Clone, Copy, Debug)]

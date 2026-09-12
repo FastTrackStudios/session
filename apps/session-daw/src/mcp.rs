@@ -871,14 +871,26 @@ mod selection_tests {
         assert!(opened(mic, true, true) >= crate::tone::LEGIBLE);
     }
 
-    /// A piece is already wide enough, so selecting it must not make it
-    /// jump: a strip that resized when you clicked it would move every
-    /// strip to its right, which is the one thing a mixer must not do
-    /// when you are comparing tracks.
+    /// A piece is stored at exactly the width selection opens to, so
+    /// selecting it must not make it jump — in either direction. A
+    /// strip that resized when you clicked it would move every strip to
+    /// its right, which is the one thing a mixer must not do while you
+    /// are comparing tracks.
     #[test]
     fn selecting_a_piece_changes_nothing() {
-        let piece = 240.0;
+        let piece = crate::tone::WORKING;
         assert!((opened(piece, true, true) - piece).abs() < f64::EPSILON);
+    }
+
+    /// And what selection opens to is legible — the two constants are
+    /// set independently and nothing else would catch them crossing.
+    #[test]
+    fn an_opened_strip_is_legible() {
+        assert!(crate::tone::WORKING >= crate::tone::LEGIBLE);
+        assert_eq!(
+            crate::tone::Rack::at(crate::tone::WORKING),
+            crate::tone::Rack::Full
+        );
     }
 
     /// And outside the Tone sub-mode selection is not a zoom at all.

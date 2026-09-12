@@ -231,20 +231,28 @@ MIN_WIDTH = 30
 # A strip wide enough to hold the Tone rack — `tone::Rack::Full`, which
 # wants 150 before a decade of frequency reads as a decade.
 #
-# 195 is chosen so the WHOLE KIT fits across one 16:9 screen. The drum
-# tree below is 36 strips — 13 tone, 12 folders, 11 auxiliaries — which
-# at these widths comes to 3,791 pixels: inside a 3840 display with room
-# to spare, and comfortable on the 5120-wide one.
+# Must equal `tone::WORKING` in the renderer. A piece is stored at the
+# width a selected strip opens to, so that selecting a piece does not
+# resize it and shove every strip to its right.
+#
+# The number is chosen so the WHOLE KIT fits one 16:9 screen — and it is
+# chosen against the WORST case, not the resting one. A selected strip
+# expands, so the fit has to survive a selection: the widest thing that
+# can happen is selecting an auxiliary, which goes from 30 to 185.
+#
+#     resting                 3,604
+#     worst-case selection    3,759   (an auxiliary opened)
+#
+# both inside 3840, with 81 pixels spare. At 195 the resting layout fit
+# and a selected Trig took it to 3,889 — over by 49, one strip sliced
+# down the middle. A fit that only holds until you click something is
+# not a fit.
 #
 # That is the test a channel strip with the processing in it has to
-# pass. A kit you can see all of at once is one you can mix by
-# comparison; a kit you scroll is one you mix by memory, which is what
-# opening plugin windows one at a time already forces.
-#
-# Worth keeping honest: 200 put the kit at 3,856 and missed a 4K display
-# by sixteen pixels, which is exactly the kind of near-miss that makes a
-# feature feel broken rather than tight.
-TONE_WIDTH = 195
+# pass. A kit you can see all of at once is one you mix by comparison; a
+# kit you scroll is one you mix by memory, which is what opening plugin
+# windows one at a time already forces.
+TONE_WIDTH = 185
 
 # A folder is a bus: you read its level and its mute, and it has no
 # close-mic processing of its own to show. `Squeeze::Head` — the pan and
@@ -285,8 +293,52 @@ def strip_width(name: str, is_folder: bool, piece: bool) -> int:
     return MIC_WIDTH
 
 
+# The display the kit is laid out to fit. 4K 16:9 — the narrowest
+# screen this is meant to work on; the 5120-wide one has room to spare.
+FITS_WIDTH = 3840
+
+
+def check_the_kit_fits(tracks) -> None:
+    """Fail loudly if the kit no longer fits one screen.
+
+    The layout numbers above are chosen against this, and they are easy
+    to invalidate from a distance: adding a tom, renaming a track so
+    `is_piece` reads it differently, or nudging a width all move it. A
+    fixture that silently stopped fitting would look like a renderer bug
+    the next time someone took a screenshot.
+
+    Checked against the WORST selection rather than the resting layout,
+    because a selected strip expands — see `TONE_WIDTH`.
+    """
+    kit = []
+    for track in tracks:
+        if track[0] == "Drum Kit":
+            kit.append(track)
+        elif kit and track[2] == 0:
+            break
+        elif kit:
+            kit.append(track)
+
+    widths = [strip_width(name, folder, piece) for name, _, _, folder, piece in kit]
+    resting = sum(w + 1 for w in widths)
+    worst = max(resting - w + max(w, TONE_WIDTH) for w in widths)
+    if worst > FITS_WIDTH:
+        raise SystemExit(
+            f"the drum kit no longer fits {FITS_WIDTH}: {len(kit)} strips rest at "
+            f"{resting}px and reach {worst}px with the widest selection open "
+            f"({worst - FITS_WIDTH}px over). Lower TONE_WIDTH — and lower "
+            f"tone::WORKING with it, they must match."
+        )
+    print(
+        f"drum kit: {len(kit)} strips, {resting}px resting, "
+        f"{worst}px worst-case selection, {FITS_WIDTH - worst}px spare",
+        file=sys.stderr,
+    )
+
+
 def main() -> None:
     tracks = flatten(TREE)
+    check_the_kit_fits(tracks)
     out = sys.stdout.write
     guids = [guid() for _ in tracks]
 
