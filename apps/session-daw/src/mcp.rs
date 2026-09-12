@@ -126,34 +126,6 @@ fn shorten(name: &str, ancestors: &[&str]) -> Option<String> {
     (short.len() < name.len()).then_some(short)
 }
 
-/// The colour a folder writes along the bottom of its children.
-///
-/// The track's own colour, not `row_tint`'s. That one mixes a few per
-/// cent of the colour into the panel's grey — right for a strip body,
-/// where the colour is a hint behind controls you are reading — and
-/// hopeless for a twelve-pixel band whose ENTIRE job is to be
-/// identifiable at a glance across half a screen.
-///
-/// Still short of the raw colour: pulled toward the panel so a row of
-/// bands reads as part of the mixer rather than as a stripe of paint
-/// across the bottom of it.
-fn folder_band(palette: &Palette, track: &Track) -> Color {
-    /// How far toward the track's own colour the band goes.
-    const STRENGTH: f32 = 0.62;
-    if track.color.is_none() {
-        return palette.tcp_gutter;
-    }
-    let raw = crate::tcp::track_color(palette, track);
-    let [br, bg, bb, _] = raw.components;
-    let [ar, ag, ab, aa] = palette.tcp_tint.components;
-    Color::new([
-        (br - ar).mul_add(STRENGTH, ar),
-        (bg - ag).mul_add(STRENGTH, ag),
-        (bb - ab).mul_add(STRENGTH, ab),
-        aa,
-    ])
-}
-
 /// How much shorter each level of nesting makes a strip.
 ///
 /// Folder depth reads off the BOTTOM of the mixer: strips share a top
@@ -353,7 +325,7 @@ impl Mixer {
             lineage_names.truncate(depth);
             let ancestors = lineage.clone();
             let ancestor_names = lineage_names.clone();
-            lineage.push(folder_band(palette, track));
+            lineage.push(crate::tcp::folder_band(palette, track));
             lineage_names.push(track.name.as_str());
             let from = u32::try_from(strips.commands.len()).unwrap_or(u32::MAX);
             offsets.push(x);
@@ -1258,7 +1230,7 @@ fn bottom(
     if number_top > bottom + plate - number_h {
         fill(
             scene,
-            folder_band(palette, track),
+            crate::tcp::folder_band(palette, track),
             Rect::new(x, number_top, x + w, h),
         );
     }

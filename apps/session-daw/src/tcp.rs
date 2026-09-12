@@ -160,6 +160,7 @@ pub fn draw_row(
     depth: i32,
     y: f64,
     h: f64,
+    ancestors: &[Color],
 ) {
     let indent = (f64::from(depth.max(0)) * INDENT).min(MAX_INDENT);
     let tint = row_tint(palette, track);
@@ -198,6 +199,40 @@ pub fn draw_row(
     // edge, and a nested track whose edge did not move read as a track
     // with a wide gutter rather than as a child.
     rect(scene, palette.tcp_column, 0.0, y, indent + rail, y + h);
+
+    // ── The folders this row sits inside ──
+    //
+    // The indent is one [`INDENT`] of empty column per level, which said
+    // only "this one is deeper". Each of those steps is a folder, so
+    // each carries that folder's colour, and because every child of a
+    // folder paints it at the same x the steps join top to bottom into
+    // one unbroken vertical line — the folder's own left edge running
+    // down past everything inside it.
+    //
+    // The same move the mixer makes along its bottom, turned ninety
+    // degrees, which is the whole relationship between the two views.
+    //
+    // A folder paints its OWN colour in the first step of its rail too,
+    // so the line starts on the folder's row rather than on its first
+    // child. That is what makes it read as the folder reaching down
+    // rather than as a mark its children happen to share.
+    for (level, tint) in ancestors.iter().enumerate() {
+        let left = crate::num::coord(level) * INDENT;
+        if left >= MAX_INDENT {
+            break;
+        }
+        rect(scene, *tint, left, y, (left + INDENT).min(MAX_INDENT), y + h);
+    }
+    if track.is_folder && indent < MAX_INDENT {
+        rect(
+            scene,
+            tint,
+            indent,
+            y,
+            (indent + INDENT).min(MAX_INDENT),
+            y + h,
+        );
+    }
     rect(
         scene,
         palette.tcp_rule,
@@ -659,6 +694,34 @@ pub fn track_color(palette: &Palette, track: &Track) -> Color {
             0xff,
         )
     })
+}
+
+/// The colour a folder writes along the bottom of its children.
+///
+/// The track's own colour, not `row_tint`'s. That one mixes a few per
+/// cent of the colour into the panel's grey — right for a strip body,
+/// where the colour is a hint behind controls you are reading — and
+/// hopeless for a twelve-pixel band whose ENTIRE job is to be
+/// identifiable at a glance across half a screen.
+///
+/// Still short of the raw colour: pulled toward the panel so a row of
+/// bands reads as part of the mixer rather than as a stripe of paint
+/// across the bottom of it.
+pub fn folder_band(palette: &Palette, track: &Track) -> Color {
+    /// How far toward the track's own colour the band goes.
+    const STRENGTH: f32 = 0.62;
+    if track.color.is_none() {
+        return palette.tcp_gutter;
+    }
+    let raw = track_color(palette, track);
+    let [br, bg, bb, _] = raw.components;
+    let [ar, ag, ab, aa] = palette.tcp_tint.components;
+    Color::new([
+        (br - ar).mul_add(STRENGTH, ar),
+        (bg - ag).mul_add(STRENGTH, ag),
+        (bb - ab).mul_add(STRENGTH, ab),
+        aa,
+    ])
 }
 
 /// The row's background, tinted toward the track's own colour.

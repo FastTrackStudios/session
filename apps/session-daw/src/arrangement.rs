@@ -323,8 +323,18 @@ impl Arrangement {
         let mut panel_bar = Scene::new();
         let mut index = Index::default();
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
+        // The colour of the folder open at each depth, so a row can
+        // paint the folders it sits inside down its own left edge.
+        let mut lineage: Vec<Color> = Vec::new();
+
         let mut y = 0.0_f64;
         for (row, (track, depth)) in rows.iter().enumerate() {
+            // A folder closes simply by the next row being shallower,
+            // so the truncate IS the close.
+            let level = usize::try_from(*depth).unwrap_or(0);
+            lineage.truncate(level);
+            let ancestors = lineage.clone();
+            lineage.push(crate::tcp::folder_band(palette, track));
             // Command indices are `u32`: two per row plus one per item,
             // so four billion of them is a project nothing could open.
             // Saturating rather than wrapping, because a wrapped index
@@ -370,6 +380,7 @@ impl Arrangement {
                 i32::try_from(*depth).unwrap_or(0),
                 y,
                 body,
+                &ancestors,
             );
             // The same row as a band, for when it is too short on
             // screen to be worth more. Its tint and its gutter and
