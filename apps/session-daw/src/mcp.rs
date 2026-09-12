@@ -56,6 +56,76 @@ const _: () = assert!(
 /// The gap between strips, so two adjacent ones read as two.
 pub const STRIP_GAP: f64 = 1.0;
 
+/// A name with what its folders already say taken off the front.
+///
+/// `T1 Trig` sits inside `Tom 1`. The `T1` is not information at that
+/// point — the strip is standing on a band of the folder's colour that
+/// runs under every one of its children — so on a narrow strip it is
+/// two of the four characters you have spent saying something the eye
+/// has already been told. Dropped, the strip says `Trig`, which is the
+/// whole of what distinguishes it from its neighbour.
+///
+/// Matching is deliberately loose about how a folder writes its name.
+/// `Tom 1` and `T1` are the same thing said long and short, so a name
+/// is reduced to its letters and digits, and a folder also answers to
+/// its initials with the digits kept: `Tom 1` gives `tom1` and `t1`,
+/// and `T1 Trig`'s first word matches the second.
+///
+/// Returns `None` when nothing can safely come off — including when
+/// every word would, because a strip labelled with nothing is worse
+/// than one labelled redundantly.
+fn shorten(name: &str, ancestors: &[&str]) -> Option<String> {
+    fn letters(text: &str) -> String {
+        text.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    }
+    /// A folder's short form: the first letter of each word, with any
+    /// digits kept — `Tom 1` -> `t1`, `Hi-Hat` -> `hh`.
+    ///
+    /// Split on anything that is not alphanumeric, not just spaces, so
+    /// `Hi-Hat` is two words rather than one. And a word that is only
+    /// digits contributes its digits and no initial — otherwise the `1`
+    /// of `Tom 1` counts twice and the key comes out `t11`, matching
+    /// nothing.
+    fn initials(text: &str) -> String {
+        let mut out = String::new();
+        for word in text.split(|c: char| !c.is_alphanumeric()) {
+            if let Some(first) = word.chars().next() {
+                if first.is_alphabetic() {
+                    out.extend(first.to_lowercase());
+                }
+            }
+            out.extend(word.chars().filter(char::is_ascii_digit));
+        }
+        out
+    }
+
+    let keys: Vec<String> = ancestors
+        .iter()
+        .flat_map(|a| [letters(a), initials(a)])
+        .filter(|k| !k.is_empty())
+        .collect();
+
+    // The longest leading run of words that matches a folder, not just
+    // the first word: `Tom 1 Trig` has to lose both `Tom` and `1`, and
+    // taking one word at a time stops at `Tom`, which matches nothing
+    // on its own.
+    let mut words: Vec<&str> = name.split_whitespace().collect();
+    loop {
+        let Some(take) = (1..words.len()).rev().find(|take| {
+            let head = letters(&words[..*take].concat());
+            !head.is_empty() && keys.iter().any(|k| *k == head)
+        }) else {
+            break;
+        };
+        words.drain(..take);
+    }
+    let short = words.join(" ");
+    (short.len() < name.len()).then_some(short)
+}
+
 /// The colour a folder writes along the bottom of its children.
 ///
 /// The track's own colour, not `row_tint`'s. That one mixes a few per
@@ -277,6 +347,7 @@ impl Mixer {
         // The tint of the folder open at each depth, so a strip can
         // draw the colours of everything it sits inside.
         let mut lineage: Vec<Color> = Vec::new();
+        let mut lineage_names: Vec<&str> = Vec::new();
 
         let mut x = 0.0_f64;
         for (ordinal, (track, depth)) in rows.iter().enumerate() {
@@ -285,8 +356,11 @@ impl Mixer {
             // closing simply means the next track is shallower, so the
             // truncate IS the close — no bookkeeping of ends needed.
             lineage.truncate(depth);
+            lineage_names.truncate(depth);
             let ancestors = lineage.clone();
+            let ancestor_names = lineage_names.clone();
             lineage.push(folder_band(palette, track));
+            lineage_names.push(track.name.as_str());
             let from = u32::try_from(strips.commands.len()).unwrap_or(u32::MAX);
             offsets.push(x);
             let w = widths.get(ordinal).copied().unwrap_or(layout.strip);
@@ -307,6 +381,7 @@ impl Mixer {
                 },
                 ordinal,
                 &ancestors,
+                &ancestor_names,
             );
             index.push(from..u32::try_from(strips.commands.len()).unwrap_or(u32::MAX));
             x += w + STRIP_GAP;
@@ -557,6 +632,7 @@ fn strip(
     slot: Slot,
     index: usize,
     ancestors: &[Color],
+    ancestor_names: &[&str],
 ) {
     let Slot {
         x,
@@ -700,7 +776,7 @@ fn strip(
         buttons_top,
     );
 
-    bottom(scene, palette, font, track, x, w, h);
+    bottom(scene, palette, font, track, x, w, h, ancestor_names);
 }
 
 /// The coloured band: pan, the record input, and the arm hanging off its
@@ -1133,6 +1209,7 @@ fn bottom(
     x: f64,
     w: f64,
     h: f64,
+    ancestor_names: &[&str],
 ) {
     let bottom = h - f64::from(daw_theme_art::collapse::BOTTOM_SECTION);
     let plate = f64::from(g::NAME_PLATE);
@@ -1142,14 +1219,32 @@ fn bottom(
         Rect::new(x + 2.0, bottom, x + w - 2.0, bottom + plate),
     );
     let ink = if track.selected { palette.text } else { palette.text_dim };
+    // Three ways to make a name fit, in order of what they cost.
+    //
+    // Print it, shrink it, then drop what the folders already said —
+    // and only cut as a last resort. Dropping comes AFTER shrinking
+    // because the full name at nine points tells you more than half of
+    // it at eleven; it comes before cutting because `Trig` is a word
+    // and `T1 …` is not.
+    let room = w - 8.0;
+    let (mut label, mut label_size) = font.fit(&track.name, 11.0, 7.0, room);
+    if label.contains('…') {
+        if let Some(short) = shorten(&track.name, ancestor_names) {
+            let (short_label, short_size) = font.fit(&short, 11.0, 7.0, room);
+            if !short_label.contains('…') {
+                label = short_label;
+                label_size = short_size;
+            }
+        }
+    }
     crate::tcp::glyphs(
         scene,
         font,
         ink,
-        &font.elide(&track.name, 11.0, w - 10.0),
-        x + 5.0,
-        bottom + plate / 2.0 + 4.0,
-        11.0,
+        &label,
+        x + 4.0,
+        bottom + plate / 2.0 + f64::from(label_size) / 3.0,
+        label_size,
     );
     // The number sits on the track's own colour, in a band exactly one
     // indent step tall.
@@ -1571,6 +1666,68 @@ mod folder_band_tests {
                 (top - expected).abs() < 1e-9,
                 "a descendant at depth {descendant_depth} drew the folder's line at {top}, not {expected}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod shorten_tests {
+    use super::shorten;
+
+    /// The case that prompted it: a trigger inside the tom it triggers.
+    #[test]
+    fn a_folder_does_not_need_saying_twice() {
+        assert_eq!(
+            shorten("T1 Trig", &["Drum Kit", "Toms", "Tom 1"]).as_deref(),
+            Some("Trig")
+        );
+        assert_eq!(
+            shorten("T4 Trig", &["Drum Kit", "Toms", "Tom 4"]).as_deref(),
+            Some("Trig")
+        );
+    }
+
+    /// Long and short forms of a folder's name are the same folder —
+    /// `Tom 1` has to answer to `T1` or the rule never fires, since the
+    /// template writes the folder long and the tracks short.
+    #[test]
+    fn a_folder_answers_to_its_initials() {
+        assert_eq!(shorten("HH Bleed", &["Hi-Hat"]).as_deref(), Some("Bleed"));
+        assert_eq!(shorten("Tom 1 Trig", &["Tom 1"]).as_deref(), Some("Trig"));
+    }
+
+    /// A name that says nothing its folders said keeps every word.
+    #[test]
+    fn an_unrelated_name_is_left_alone() {
+        assert_eq!(shorten("Stereo L", &["Drum Kit", "Rooms"]), None);
+        assert_eq!(shorten("Bottom", &["Snare", "Sum"]), None);
+        assert_eq!(shorten("Trig", &["Tom 1"]), None);
+    }
+
+    /// And a strip is never left with no label at all — the last word
+    /// stays even when the folder said it.
+    #[test]
+    fn it_never_strips_the_whole_name() {
+        assert_eq!(shorten("T1", &["Tom 1"]), None);
+        assert_eq!(shorten("Tom 1", &["Tom 1"]), None);
+        for short in [shorten("Sum", &["Kick"]), shorten("Kick", &["Kick"])] {
+            assert!(short.as_deref().is_none_or(|s| !s.is_empty()));
+        }
+    }
+
+    /// It only ever gets shorter — a caller that swaps in the result
+    /// must never end up with MORE to fit than it started with.
+    #[test]
+    fn the_result_is_always_shorter() {
+        for (name, ancestors) in [
+            ("T1 Trig", &["Tom 1"][..]),
+            ("Stereo L", &["Rooms"][..]),
+            ("Kick In", &["Kick"][..]),
+            ("", &["Kick"][..]),
+        ] {
+            if let Some(short) = shorten(name, ancestors) {
+                assert!(short.len() < name.len(), "{name:?} -> {short:?}");
+            }
         }
     }
 }

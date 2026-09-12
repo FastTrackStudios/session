@@ -133,4 +133,111 @@ impl Font {
         out.push('…');
         out
     }
+
+    /// The largest size at or below `size` that fits `text` in `max`,
+    /// and the text to draw at it.
+    ///
+    /// Shrink before you cut. A name only has to survive being read —
+    /// `Sub`, `Verb`, `T2` are three, four and two characters, and on a
+    /// thirty-pixel strip they were coming out as `S…`, `V…`, `T…`
+    /// while there was room for all of them a point or two smaller. An
+    /// ellipsis that hides more than it reveals is worse than small
+    /// type: two of those strips side by side both said `T…`, which is
+    /// no name at all.
+    ///
+    /// REAPER truncates rather than shrinking, and it can afford to —
+    /// every strip there is 86 wide. Ours go down to 30, which is the
+    /// width at which the choice starts to matter.
+    ///
+    /// Below `floor` it gives up and elides, because type too small to
+    /// read is not a name either.
+    #[must_use]
+    pub fn fit(&self, text: &str, size: f32, floor: f32, max: f64) -> (String, f32) {
+        if max <= 0.0 {
+            return (String::new(), size);
+        }
+        // Half a point at a time: finer than the eye resolves at these
+        // sizes, and coarse enough that this is a handful of passes.
+        let mut trial = size;
+        while trial >= floor {
+            if self.width(text, trial) <= max {
+                return (text.to_owned(), trial);
+            }
+            trial -= 0.5;
+        }
+        (self.elide(text, floor, max), floor)
+    }
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::Font;
+
+    fn font() -> Font {
+        Font::embedded().expect("the embedded font")
+    }
+
+    /// The names that were being thrown away. A 30-wide strip gives
+    /// about 22 pixels of label, and every one of these fits inside it
+    /// at some size at or above the floor.
+    #[test]
+    fn short_names_survive_a_narrow_strip() {
+        let font = font();
+        // The names actually on a narrow strip in the drum template.
+        // `T1 Trig` is deliberately NOT here: seven characters do not
+        // fit twenty-two pixels at any size worth reading, and claiming
+        // otherwise would only have made the floor a lie.
+        for name in ["Sub", "Verb", "T2", "OH", "T4"] {
+            let (label, size) = font.fit(name, 11.0, 7.0, 22.0);
+            assert!(
+                !label.contains('…'),
+                "{name:?} was cut to {label:?} at {size}pt with 22px available"
+            );
+            assert!(size >= 7.0 && size <= 11.0, "{name:?} drew at {size}pt");
+        }
+    }
+
+    /// It shrinks only as far as it has to: a name that fits at full
+    /// size must not be shrunk for no reason.
+    #[test]
+    fn a_name_that_fits_is_not_shrunk() {
+        let font = font();
+        let (label, size) = font.fit("Sub", 11.0, 7.0, 200.0);
+        assert_eq!(label, "Sub");
+        assert!((size - 11.0).abs() < f32::EPSILON);
+    }
+
+    /// And it still gives up rather than printing type nobody can read.
+    #[test]
+    fn a_long_name_is_still_cut() {
+        let font = font();
+        let (label, size) = font.fit("Rhythm Guitar Left Amp", 11.0, 7.0, 22.0);
+        assert!(label.contains('…'), "expected a cut, got {label:?}");
+        assert!((size - 7.0).abs() < f32::EPSILON, "should cut at the floor");
+    }
+
+    /// Whatever comes back fits the width it was given — the one
+    /// promise every caller relies on to avoid drawing into its
+    /// neighbour.
+    #[test]
+    fn the_result_always_fits() {
+        let font = font();
+        for name in ["Sub", "T2", "Stereo L", "Rhythm Guitar Left Amp", "In"] {
+            for max in [10.0, 22.0, 40.0, 90.0] {
+                let (label, size) = font.fit(name, 11.0, 7.0, max);
+                assert!(
+                    font.width(&label, size) <= max + 0.01,
+                    "{name:?} at {max}px came back as {label:?} ({}px)",
+                    font.width(&label, size)
+                );
+            }
+        }
+    }
+
+    /// No width, no label — rather than a stray ellipsis in a strip
+    /// that has no room for one.
+    #[test]
+    fn no_room_draws_nothing() {
+        assert_eq!(font().fit("Sub", 11.0, 7.0, 0.0).0, "");
+    }
 }
