@@ -1948,18 +1948,22 @@ fn gate(scene: &mut Scene, palette: &Palette, gate: Gate, at: Panel, rack: Rack,
     }
 }
 
-/// A spectral suppressor: the spectrum, its own average, and the cuts
-/// it is taking where the two differ.
+/// A spectral suppressor: what is there, and what it is taking out of
+/// it — in place, at the frequency it happens.
 ///
-/// This is what a de-esser and a resonance suppressor both are. A
-/// resonance is a place where the spectrum stands proud of its own
-/// smoothed self; the average is drawn so you can SEE that comparison
-/// rather than trust it, and the suppression hangs below the axis where
-/// the peaks that caused it are.
+/// Zoomed to the unit's own band. A de-esser acts between about four
+/// and twelve kilohertz, and drawing it across the whole audible range
+/// spent seventy per cent of the panel on frequencies it never touches
+/// — the sibilance it exists for was a few pixels wide at the right.
+/// The band is a SETTING, and showing it is showing the setting.
 ///
-/// Only inside its band: the de-esser's whole identity is that it looks
-/// at sibilance and nothing else, and a display that acted everywhere
-/// would be drawing the other processor.
+/// The cut is drawn as the distance between two curves: what arrived,
+/// and what leaves. It used to hang from the ceiling like a
+/// compressor's gain reduction, which put two different meanings on one
+/// axis — the vertical is the spectrum's own amplitude here, so a bar
+/// hanging from the top had no relationship to the curve underneath it.
+/// Between the curves, the gap IS the reduction and it sits over the
+/// peak that caused it.
 #[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
 fn suppress(
     scene: &mut Scene,
@@ -1971,145 +1975,232 @@ fn suppress(
     rack: Rack,
     lit: Option<Grip>,
 ) {
-    let freq = FreqAxis::audible();
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     let _ = tone;
-
-    if rack.detailed() {
-        rule(scene, palette.grid, Line::new((at.x, at.y), (right, at.y)));
-    }
-    // The band it listens in, as the only lit part of the axis. A
-    // de-esser's band is most of what it is.
-    let band_x = |hz: f64| freq.freq_to_x(hz, at.x, right);
-    let (low_x, high_x) = (band_x(f64::from(set.low)), band_x(f64::from(set.high)));
-    scene.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        palette.accent.multiply_alpha(0.045),
-        None,
-        &Rect::new(low_x.max(at.x), at.y, high_x.min(right), bottom),
-    );
-
     if spectrum.len() < 4 {
         return;
     }
-    let curve_of = |take: &dyn Fn(usize) -> f64| {
-        (0..spectrum.len())
-            .map(|i| {
-                let t = crate::num::coord(i) / crate::num::coord(spectrum.len().saturating_sub(1).max(1));
-                (at.x + t * at.width, take(i))
+
+    // The band, opened out a third of an octave each side so its
+    // shoulders are visible: a cut you can see starting is a cut you
+    // can tell is in the right place.
+    let (low, high) = (
+        f64::from(set.low) / SUPPRESS_SHOULDER,
+        f64::from(set.high) * SUPPRESS_SHOULDER,
+    );
+    let decade = (high / low).log10().max(f64::EPSILON);
+    let hz_at = |t: f64| low * 10.0_f64.powf(t * decade);
+
+    // The analyser's bins are log-spaced across the audible range, so
+    // a frequency is a position in them — read between two bins rather
+    // than snapping, or a zoomed view turns into a staircase.
+    let bins = crate::num::coord(spectrum.len().saturating_sub(1).max(1));
+    let full = (20_000.0_f64 / 20.0).log10();
+    let level_at = |hz: f64| {
+        let place = ((hz / 20.0).log10() / full).clamp(0.0, 1.0) * bins;
+        let low_bin = place.floor();
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a bin index, clamped into range above"
+        )]
+        let i = low_bin as usize;
+        let j = (i + 1).min(spectrum.len() - 1);
+        let t = place - low_bin;
+        f64::from(spectrum[i]).mul_add(1.0 - t, f64::from(spectrum[j]) * t)
+    };
+
+    // The baseline the peaks are judged against: the spectrum's own
+    // average over `sharpness` of an octave. Wide, because it has to
+    // IGNORE the peaks — narrow, it tracks them, and then everything
+    // stands the same tiny amount proud of its own neighbourhood.
+    let octaves = f64::from(set.sharpness).mul_add(-0.9, 1.2);
+    let average_at = |hz: f64| {
+        let span = 2.0_f64.powf(octaves / 2.0);
+        let steps = 9;
+        (0..=steps)
+            .map(|k| {
+                let t = crate::num::coord(k) / crate::num::coord(steps);
+                level_at(hz / span * (span * span).powf(t))
             })
-            .collect::<Vec<_>>()
+            .sum::<f64>()
+            / crate::num::coord(steps + 1)
     };
-    // The spectrum, and the moving average it is judged against. The
-    // average's width is `sharpness` in octaves, which is why a narrow
-    // setting finds narrow peaks: it is the only thing that decides
-    // what counts as "standing proud".
-    let span = crate::num::coord(spectrum.len());
-    // The average has to be a BASELINE, which means wide. Narrow, it
-    // tracks the peaks it is supposed to ignore — every peak then
-    // stands the same tiny amount above its own neighbourhood, the
-    // difference saturates, and the suppressor draws a wall.
-    //
-    // `sharpness` narrows it, but only within the range where it is
-    // still a baseline: a third of an octave at its widest.
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a bin count, clamped"
-    )]
-    let window = {
-        let wide = span / 6.0;
-        let narrow = span / 16.0;
-        let at = wide - (wide - narrow) * f64::from(set.sharpness).clamp(0.0, 1.0);
-        (at.round() as usize).clamp(2, 40)
-    };
-    let average = |i: usize| {
-        let from = i.saturating_sub(window);
-        let to = (i + window).min(spectrum.len() - 1);
-        let count = to - from + 1;
-        (from..=to).map(|j| f64::from(spectrum[j])).sum::<f64>() / crate::num::coord(count)
-    };
-    let level = |i: usize| f64::from(spectrum[i]);
-    let top = |v: f64| bottom - v.clamp(0.0, 1.0) * at.height;
 
-    curve(
-        scene,
-        palette.accent.multiply_alpha(0.5),
-        curve_of(&|i| top(level(i))).into_iter(),
-        1.0,
-    );
-    curve(
-        scene,
-        palette.text_faint,
-        curve_of(&|i| top(average(i))).into_iter(),
-        1.0,
-    );
+    // One sample per bin, no finer. The analyser has ninety-six of
+    // them across the audible range and a zoomed band holds a fraction
+    // of that, so sampling past the data invents detail that is not
+    // there and pays for it in path length — two filled areas per
+    // panel, per strip, per frame.
+    let across = spectrum.len().clamp(24, 96);
+    let sample = |i: usize| crate::num::coord(i) / crate::num::coord(across.saturating_sub(1).max(1));
+    // The analyser speaks DECIBELS, not a height — which is the whole
+    // of what was wrong here before. Read as 0..1 the bins pinned to
+    // the ceiling or sat on the floor, and every peak stood the same
+    // enormous amount proud of its neighbours.
+    let to_y = |db: f64| {
+        let t = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
+        bottom - t * (at.height - 2.0) - 1.0
+    };
 
-    // And the cut, as a filled band hanging from the ceiling — the
-    // same way gain reduction hangs everywhere else in this rack, so
-    // the two read as the same kind of fact.
-    //
-    // The spectrum arrives normalised over the display's own window, so
-    // a decibel is that window divided by its span. Overstate that and
-    // every peak saturates the cut, which is a suppressor that looks
-    // like it is working flat out on everything.
-    let red = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
-    let over = |i: usize| {
-        let x = at.x + crate::num::coord(i) / span.max(1.0) * at.width;
-        if x < low_x || x > high_x {
+    // How much comes off at a frequency — in decibels, because
+    // everything here already is.
+    let cut_at = |hz: f64| {
+        if hz < f64::from(set.low) || hz > f64::from(set.high) {
             return 0.0;
         }
-        let proud = (level(i) - average(i)) * SUPPRESS_WINDOW_DB - f64::from(set.threshold);
-        (proud.max(0.0) * f64::from(set.depth) / SUPPRESS_WINDOW_DB).min(0.35)
+        let proud = level_at(hz) - average_at(hz) - f64::from(set.threshold);
+        proud.max(0.0) * f64::from(set.depth)
     };
-    // Smoothed across bins before it is drawn, because a suppressor's
-    // filters have finite Q: it cannot cut one bin and not its
-    // neighbour, and a cut with square shoulders is drawing a filter
-    // nobody can build. It also keeps a spiky spectrum from reading as
-    // a row of on/off blocks.
-    let raw: Vec<f64> = (0..spectrum.len()).map(over).collect();
-    let smooth = |i: usize| {
+    // Smoothed, because a filter with finite Q cannot cut one
+    // frequency and not the one beside it — a square notch is drawing a
+    // filter nobody can build.
+    let smooth_cut = |i: usize| {
         let from = i.saturating_sub(SUPPRESS_SMOOTH);
-        let to = (i + SUPPRESS_SMOOTH).min(raw.len() - 1);
-        let count = to - from + 1;
-        raw[from..=to].iter().sum::<f64>() / crate::num::coord(count)
+        let to = (i + SUPPRESS_SMOOTH).min(across - 1);
+        (from..=to).map(|k| cut_at(hz_at(sample(k)))).sum::<f64>()
+            / crate::num::coord(to - from + 1)
     };
-    let held = matches!(lit, Some(Grip::Threshold(_)));
-    let mut band = curve_of(&|i| at.y + smooth(i) * at.height);
-    // Closed along the ceiling, so it is an area rather than a line:
-    // how MUCH is being taken is the reading, and an outline makes you
-    // measure it against an edge that is not drawn.
-    let mut fill_path = BezPath::new();
-    if let Some((x, y)) = band.first().copied() {
-        fill_path.move_to((x, at.y));
-        fill_path.line_to((x, y));
-        for (x, y) in band.iter().skip(1).copied() {
-            fill_path.line_to((x, y));
+
+    // The band it actually acts in, marked on the axis rather than as a
+    // wash over the panel: the shoulders are context, the band is the
+    // subject.
+    let x_of = |hz: f64| at.x + ((hz / low).log10() / decade).clamp(0.0, 1.0) * at.width;
+    if rack.detailed() {
+        for hz in [f64::from(set.low), f64::from(set.high)] {
+            let x = x_of(hz);
+            rule(scene, palette.grid_beat, Line::new((x, at.y), (x, bottom)));
         }
-        if let Some((x, _)) = band.last().copied() {
-            fill_path.line_to((x, at.y));
+    }
+
+    // What arrived, as an area — it is the material, and an outline
+    // reads as another curve competing with the two that matter.
+    let input: Vec<(f64, f64)> = (0..across)
+        .map(|i| {
+            let t = sample(i);
+            (at.x + t * at.width, to_y(level_at(hz_at(t))))
+        })
+        .collect();
+    let mut area = BezPath::new();
+    if let Some((x, y)) = input.first().copied() {
+        area.move_to((x, bottom));
+        area.line_to((x, y));
+        for point in input.iter().skip(1).copied() {
+            area.line_to(point);
         }
-        fill_path.close_path();
+        if let Some((x, _)) = input.last().copied() {
+            area.line_to((x, bottom));
+        }
+        area.close_path();
         scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
-            red.multiply_alpha(0.3),
+            palette.accent.multiply_alpha(0.16),
             None,
-            &fill_path,
+            &area,
         );
     }
-    curve(scene, red, band.drain(..), if held { 2.0 } else { 1.2 });
+
+    // And what leaves. The gap between the two is the reduction, at the
+    // frequency it is happening, over the peak that caused it.
+    let output: Vec<(f64, f64)> = (0..across)
+        .map(|i| {
+            let t = sample(i);
+            // NOT clamped at zero: these are decibels, and a level
+            // minus its reduction is normally negative. Clamping it
+            // pinned the output to 0 dB — a flat line well ABOVE the
+            // spectrum, so the reduction was drawn upward, as if the
+            // suppressor were adding what it takes away.
+            (
+                at.x + t * at.width,
+                to_y(level_at(hz_at(t)) - smooth_cut(i)),
+            )
+        })
+        .collect();
+    let red = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
+    // Only when there is something to show. With nothing being cut the
+    // two curves coincide, and the ribbon between them is a degenerate
+    // polygon — two hundred vertices tracing out and back along the
+    // same line, which the rasteriser pays for in full and which draws
+    // nothing. That cost half a millisecond a frame across a mixer.
+    let deepest = (0..across).map(smooth_cut).fold(0.0_f64, f64::max);
+    let mut taken = BezPath::new();
+    if deepest > 0.15
+        && let Some((x, y)) = input.first().copied()
+    {
+        taken.move_to((x, y));
+        for point in input.iter().skip(1).copied() {
+            taken.line_to(point);
+        }
+        for point in output.iter().rev().copied() {
+            taken.line_to(point);
+        }
+        taken.close_path();
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            red.multiply_alpha(0.55),
+            None,
+            &taken,
+        );
+    }
+    curve(scene, palette.accent.multiply_alpha(0.7), input.into_iter(), 1.0);
+    let held = matches!(lit, Some(Grip::Threshold(_)));
+    curve(scene, red, output.into_iter(), if held { 1.8 } else { 1.1 });
+
+    // Where you are, since the axis is no longer the familiar one.
+    if rack.detailed() {
+        for (hz, name) in SUPPRESS_MARKS {
+            if hz < low || hz > high {
+                continue;
+            }
+            let x = x_of(hz);
+            let width = font_width(name);
+            if x - width / 2.0 < at.x || x + width / 2.0 > right {
+                continue;
+            }
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                palette.grid,
+                None,
+                &Rect::new(x - 0.5, bottom - 3.0, x + 0.5, bottom),
+            );
+        }
+    }
 }
 
-/// How many decibels the spectrum's 0..1 covers.
+/// How far past its band a suppressor's display opens out.
 ///
-/// The analyser hands over a normalised height, and a suppressor works
-/// in decibels above an average — so this is the one number that turns
-/// one into the other. Too large and every peak saturates the cut,
-/// which reads as a suppressor working flat out on everything.
-const SUPPRESS_WINDOW_DB: f64 = 24.0;
+/// A third of an octave each side, so the band's shoulders are visible:
+/// a cut you can see starting is a cut you can tell is in the right
+/// place.
+const SUPPRESS_SHOULDER: f64 = 1.26;
+
+/// The frequencies a zoomed suppressor ticks, where they fall inside
+/// the band it is showing.
+const SUPPRESS_MARKS: [(f64, &str); 6] = [
+    (200.0, "200"),
+    (1_000.0, "1k"),
+    (2_000.0, "2k"),
+    (5_000.0, "5k"),
+    (10_000.0, "10k"),
+    (15_000.0, "15k"),
+];
+
+/// A tick's own width, for deciding whether it fits.
+const fn font_width(_name: &str) -> f64 {
+    6.0
+}
+
+/// The window a suppressor draws its spectrum in.
+///
+/// The analyser's own range — see `simulate::spectrum`, which clamps to
+/// these — so a bin lands where the number says rather than where a
+/// second opinion about the scale puts it.
+const SUPPRESS_FLOOR_DB: f64 = -40.0;
+const SUPPRESS_CEIL_DB: f64 = 16.0;
 
 /// How many bins either side the cut is smoothed over.
 ///
@@ -3529,6 +3620,46 @@ mod tests {
         let at_300 = calculate_combined_response(&tone.eq, 300.0, DISPLAY_RATE);
         assert!(at_3k > 0.0, "the 3k bell boosts: {at_3k}");
         assert!(at_300 < 0.0, "the 300 bell cuts: {at_300}");
+    }
+}
+
+#[cfg(test)]
+mod suppress_tests {
+    use super::{SUPPRESS_CEIL_DB, SUPPRESS_FLOOR_DB, Suppress, Which};
+
+    /// The analyser speaks DECIBELS, and the suppressor's window has to
+    /// be the analyser's own.
+    ///
+    /// This is the bug that made both suppressors unreadable: the bins
+    /// were read as a 0..1 height, so every one of them pinned to the
+    /// ceiling or sat on the floor, and the difference between a peak
+    /// and its neighbourhood — which is the entire detection — came out
+    /// as either nothing or everything.
+    #[test]
+    fn the_window_is_the_analysers_own() {
+        let simulated = crate::simulate::frame(2, 1.25).spectrum;
+        for db in &simulated {
+            assert!(
+                f64::from(*db) >= SUPPRESS_FLOOR_DB && f64::from(*db) <= SUPPRESS_CEIL_DB,
+                "the analyser produced {db} dB, outside the window the suppressor draws"
+            );
+        }
+        assert!(SUPPRESS_FLOOR_DB < SUPPRESS_CEIL_DB);
+    }
+
+    /// A suppressor acts only inside its band, which is the whole
+    /// difference between the de-esser and the broadband one.
+    #[test]
+    fn the_band_is_what_tells_the_two_apart() {
+        let ess = Suppress::sibilance();
+        let broad = Suppress::broadband();
+        assert!(ess.low > broad.low, "the de-esser should start higher up");
+        assert!(
+            f64::from(ess.high - ess.low) < f64::from(broad.high - broad.low),
+            "the de-esser should be the narrower of the two"
+        );
+        // Both draw the same picture, and both are spectral.
+        assert!(Which::DeEss.is_spectral() && Which::Resonance.is_spectral());
     }
 }
 
