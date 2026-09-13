@@ -1075,15 +1075,21 @@ impl Ramp {
 
 /// A time constant, as the curve it makes.
 ///
-/// Time runs UP the gutter and level across it, which is the way round
-/// a tall narrow strip wants: a fast attack turns toward the right edge
-/// near the floor, a slow one climbs most of the gutter before it
-/// turns. The shape IS the setting, so there is nothing to read.
+/// Level runs ACROSS the gutter and time along it, which is the way
+/// round a tall narrow strip wants. The two run in OPPOSITE directions,
+/// because they are the two halves of one envelope: the attack climbs
+/// the left side and the release falls down the right, so the pair
+/// traces the shape of a sound rather than two readings of it.
 ///
-/// The time axis is logarithmic, and deliberately the SAME log the
-/// parameter is stored on — so the curve passes 63% of the way across
-/// at exactly the height the value sits at, and the drag that moves the
-/// curve is the drag that moves the number.
+/// A release drawn upward was the same curve as an attack and read as
+/// one — a decay has to fall, or the panel is claiming a note that
+/// grows after it is struck.
+///
+/// The shape IS the setting, so there is nothing to read. The time axis
+/// is logarithmic, and deliberately the SAME log the parameter is
+/// stored on — so the curve turns at exactly the distance along the
+/// gutter the value sits at, and the drag that moves the curve is the
+/// drag that moves the number.
 fn ramp(
     scene: &mut Scene,
     palette: &Palette,
@@ -1102,13 +1108,19 @@ fn ramp(
         Ramp::Release => comp.release,
     });
     let bottom = at.y + at.height;
-    // Mirrored: the attack fills from the left edge and the release
-    // empties from the right, so the two lean away from the display
-    // between them and read as its edges rather than as two more
-    // curves in it.
+    // Level: full is always the edge against the DISPLAY, so the two
+    // lean away from it and read as its edges rather than as two more
+    // curves in it. The left gutter's inner edge is its right one and
+    // the right gutter's is its left.
     let to_x = |level: f64| match which {
         Ramp::Attack => at.x + level * at.width,
         Ramp::Release => at.x + at.width - level * at.width,
+    };
+    // Time: the attack climbs and the release falls. One envelope, not
+    // two curves.
+    let to_y = |along: f64| match which {
+        Ramp::Attack => bottom - along * at.height,
+        Ramp::Release => at.y + along * at.height,
     };
 
     const STEPS: usize = 40;
@@ -1119,7 +1131,7 @@ fn ramp(
             Ramp::Attack => 1.0 - (-t / tau.max(1e-3)).exp(),
             Ramp::Release => (-t / tau.max(1e-3)).exp(),
         };
-        (to_x(level), bottom - up * at.height)
+        (to_x(level), to_y(up))
     });
     let ink = if held {
         palette.accent
@@ -1131,21 +1143,26 @@ fn ramp(
     // The turn, marked — the height the value sits at, and the thing
     // the drag moves. Without it the curve says how fast but not where
     // to take hold.
-    let knee_y = bottom - log_norm(tau, low, high) * at.height;
+    let knee_y = to_y(log_norm(tau, low, high));
     dot(scene, ink, (to_x(0.63), knee_y), if held { HANDLE + 1.0 } else { HANDLE });
 
-    // One letter, at the floor. Two ramps that lean opposite ways are
-    // already told apart; this is for the first time you see them.
+    // One letter, at the end each curve STARTS from — the floor for an
+    // attack, the ceiling for a release. Two ramps that run opposite
+    // ways are already told apart; this says which way to read them.
     const SIZE: f32 = 6.0;
     let w = font.width(which.label(), SIZE);
     if w < at.width {
+        let baseline = match which {
+            Ramp::Attack => bottom - 1.0,
+            Ramp::Release => at.y + f64::from(SIZE),
+        };
         crate::tcp::glyphs(
             scene,
             font,
             palette.text_faint,
             which.label(),
             at.x + (at.width - w) / 2.0,
-            bottom - 1.0,
+            baseline,
             SIZE,
         );
     }
@@ -1950,13 +1967,22 @@ pub fn drag(
             tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
         }
         // The two ramps are drawn on their gutter's own height, and the
-        // height a curve turns at IS its value — so a drag moves the
-        // value by the fraction of the gutter it covered, and the curve
-        // stays under the finger.
+        // distance along a gutter that a curve turns at IS its value —
+        // so a drag moves the value by the fraction of the gutter it
+        // covered, and the curve stays under the finger.
+        //
+        // Each follows its OWN direction, because they run opposite
+        // ways: the attack climbs, so up is longer; the release falls,
+        // so down is. Tying both to "up is more" would put one of them
+        // under a finger going the wrong way.
         Grip::Attack | Grip::Release => {
             let display = comp_split(body, rack).1;
             let dy = dy * interaction::fine_scale(mods);
-            let moved = knob_norm(tone.comp, grip) - dy / display.height.max(1.0);
+            let along = dy / display.height.max(1.0);
+            let moved = match grip {
+                Grip::Release => knob_norm(tone.comp, grip) + along,
+                _ => knob_norm(tone.comp, grip) - along,
+            };
             set_knob(&mut tone.comp, grip, moved);
         }
         // The arrow is pulled DOWN for more, which is the direction it
@@ -2880,9 +2906,8 @@ mod comp_tests {
         let mut tone = placeholder(0);
         for _ in 0..80 {
             drag(&mut tone, Grip::Ratio, &ALL, rack(), Mods::default(), 0.0, 60.0);
-            for grip in [Grip::Attack, Grip::Release] {
-                drag(&mut tone, grip, &ALL, rack(), Mods::default(), 0.0, -60.0);
-            }
+            drag(&mut tone, Grip::Attack, &ALL, rack(), Mods::default(), 0.0, -60.0);
+            drag(&mut tone, Grip::Release, &ALL, rack(), Mods::default(), 0.0, 60.0);
         }
         assert!((tone.comp.ratio - 20.0).abs() < 0.01, "{}", tone.comp.ratio);
         assert!((tone.comp.attack - 200.0).abs() < 0.5, "{}", tone.comp.attack);
@@ -2891,9 +2916,8 @@ mod comp_tests {
         let mut back = placeholder(0);
         for _ in 0..80 {
             drag(&mut back, Grip::Ratio, &ALL, rack(), Mods::default(), 0.0, -60.0);
-            for grip in [Grip::Attack, Grip::Release] {
-                drag(&mut back, grip, &ALL, rack(), Mods::default(), 0.0, 60.0);
-            }
+            drag(&mut back, Grip::Attack, &ALL, rack(), Mods::default(), 0.0, 60.0);
+            drag(&mut back, Grip::Release, &ALL, rack(), Mods::default(), 0.0, -60.0);
         }
         assert!((back.comp.ratio - 1.0).abs() < 0.01, "{}", back.comp.ratio);
         assert!((back.comp.attack - 0.1).abs() < 0.01, "{}", back.comp.attack);
@@ -2915,11 +2939,14 @@ mod comp_tests {
         drag(&mut tone, Grip::Attack, &ALL, rack(), Mods::default(), 0.0, -20.0);
         assert!(tone.comp.attack > was.attack, "up did not lengthen the attack");
 
+        // The release falls, so DOWN is longer — the opposite of the
+        // attack, because the two ramps run opposite ways and each has
+        // to stay under the finger that is moving it.
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Release, &ALL, rack(), Mods::default(), 0.0, -20.0);
+        drag(&mut tone, Grip::Release, &ALL, rack(), Mods::default(), 0.0, 20.0);
         assert!(
             tone.comp.release > was.release,
-            "up did not lengthen the release"
+            "down did not lengthen the release"
         );
     }
 
