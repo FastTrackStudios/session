@@ -35,7 +35,6 @@
 //! whose processing was rendered offline still animates.
 
 use anyrender::{PaintScene, Scene};
-use comp_ui::comp_graph_svg::compress_transfer;
 use eq_ui::eq_graph_interaction::{self as interaction, GraphMapper, Mods};
 use eq_ui::eq_graph_model::{EqBand, EqBandShape, StereoMode};
 use eq_ui::eq_graph_response::calculate_combined_response;
@@ -2398,5 +2397,196 @@ mod comp_tests {
         assert!((tone.comp.attack - default.attack).abs() < f32::EPSILON);
         assert!((tone.comp.release - default.release).abs() < f32::EPSILON);
         assert!((tone.comp.threshold - default.threshold).abs() < f32::EPSILON);
+    }
+}
+
+/// What the compressor's display is showing, over time.
+///
+/// The threshold is a line across a level axis, which only means
+/// anything if there are levels on it. This is the history the line is
+/// read against: one input peak per meter frame, newest last.
+///
+/// A ring in the sense that it drops the oldest rather than growing —
+/// a mixer left open for an hour would otherwise hold a hundred
+/// thousand floats per track for a display two hundred pixels wide.
+#[derive(Clone, Debug, Default)]
+pub struct Levels {
+    peaks: std::collections::VecDeque<f32>,
+    /// The trace, built once per CHANGE rather than once per frame.
+    ///
+    /// The engine publishes levels at about 30 Hz and the window draws
+    /// at whatever the display does — 240 here. Rebuilding a
+    /// Catmull-Rom through seventy points, as a string, and parsing it
+    /// back, on every frame for every strip, was a third of a
+    /// millisecond across sixty racks to redraw a line that had not
+    /// moved seven frames out of eight.
+    ///
+    /// Keyed by the width it was built at, because the path is in the
+    /// panel's own pixels: a mixer that resizes has to rebuild, and a
+    /// mixer that does not never does.
+    path: Option<(f64, f64, std::sync::Arc<BezPath>)>,
+}
+
+/// How many frames of level the display holds.
+///
+/// Long enough to see a phrase arrive and short enough that the
+/// transient you just played is still on the screen.
+///
+/// Not more: the trace is the one thing in the rack that is rebuilt
+/// every frame, and the plugin's `smooth_path` is a Catmull-Rom through
+/// every sample — so this number is multiplied by the strip count on
+/// every frame the mixer draws. Doubling it cost half a millisecond
+/// across sixty racks and bought a smoother line nobody could see,
+/// because a strip is a hundred and thirty pixels wide and this is
+/// already more samples than it has columns at a glance width.
+pub const HISTORY: usize = 72;
+
+impl Levels {
+    /// Record one frame's peak.
+    ///
+    /// A reading equal to the last one is dropped: a silent track
+    /// publishes the same zero thirty times a second, and rebuilding
+    /// its trace for that is the cost this cache exists to remove.
+    pub fn push(&mut self, peak: f32) {
+        let peak = peak.clamp(0.0, 1.0);
+        if self.peaks.back().is_some_and(|last| {
+            (last - peak).abs() < 1e-4 && self.peaks.len() >= HISTORY
+        }) {
+            return;
+        }
+        if self.peaks.len() >= HISTORY {
+            self.peaks.pop_front();
+        }
+        self.peaks.push_back(peak);
+        self.path = None;
+    }
+
+    /// The trace, for a display of this size.
+    ///
+    /// Built through the plugin's own `smooth_path` — Catmull-Rom, the
+    /// shape its editor draws the input wave with — and kept until the
+    /// levels or the size change.
+    fn path(&mut self, width: f64, height: f64) -> Option<std::sync::Arc<BezPath>> {
+        if let Some((w, h, path)) = &self.path
+            && (w - width).abs() < 0.5
+            && (h - height).abs() < 0.5
+        {
+            return Some(std::sync::Arc::clone(path));
+        }
+        let d = comp_ui::comp_graph_svg::smooth_path(&self.scaled(), width, height, true, true);
+        let built = std::sync::Arc::new(BezPath::from_svg(&d).ok()?);
+        self.path = Some((width, height, std::sync::Arc::clone(&built)));
+        Some(built)
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.peaks.is_empty()
+    }
+
+    /// The history as the plugin's own display scale wants it.
+    ///
+    /// `scale_input_peak` maps a linear peak through dB, so the trace
+    /// is log-scaled the way the compressor's editor draws it — and the
+    /// way the threshold line above it is positioned.
+    #[must_use]
+    pub fn scaled(&self) -> Vec<f32> {
+        let raw: Vec<f32> = self.peaks.iter().copied().collect();
+        comp_ui::comp_graph_svg::scale_input_wave(&raw)
+    }
+}
+
+/// Draw the level history into a compressor panel.
+///
+/// Live, not recorded: this is the one part of the rack that changes
+/// thirty times a second, and re-recording a mixer for it would be the
+/// whole panel's cost to move one trace. The well, the ladder, the
+/// threshold line and the knobs stay in the recording underneath.
+///
+/// The path is the plugin's — `smooth_path` is what its own editor
+/// draws the input wave with, Catmull-Rom through the samples — so the
+/// trace has the same shape in a strip as in the plugin window.
+pub fn levels(
+    scene: &mut Scene,
+    palette: &Palette,
+    panels: &[Which],
+    levels: &mut Levels,
+    panel: Panel,
+) {
+    if levels.is_empty() {
+        return;
+    }
+    let rack = Rack::at(panel.width);
+    if !rack.on() {
+        return;
+    }
+    let Some((_, at)) = layout(panels, panel)
+        .into_iter()
+        .find(|(which, _)| *which == Which::Comp)
+    else {
+        return;
+    };
+    let body = body_of(at, rack);
+    // The display is the part above the knobs — the same split `comp`
+    // makes, so the trace lands on the axis the threshold is on.
+    let body = if rack.detailed() {
+        body.split_top((body.height - KNOB_BAND).max(body.height * 0.45)).0
+    } else {
+        body
+    };
+    if body.width < 2.0 || body.height < 2.0 {
+        return;
+    }
+    let Some(path) = levels.path(body.width, body.height) else {
+        return;
+    };
+    let at = Affine::translate((body.x, body.y));
+    // Filled, because what you are reading is how much of the display
+    // the signal is taking up against the line across it — an outline
+    // makes that a comparison of two lines instead.
+    scene.fill(
+        Fill::NonZero,
+        at,
+        palette.meter_safe.multiply_alpha(0.45),
+        None,
+        path.as_ref(),
+    );
+    scene.stroke(&Stroke::new(1.0), at, palette.meter_safe, None, path.as_ref());
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::{HISTORY, Levels};
+
+    /// The history is bounded: a mixer left open for an hour holds a
+    /// display's worth per track, not an hour's.
+    #[test]
+    fn the_history_is_bounded() {
+        let mut levels = Levels::default();
+        for i in 0..HISTORY * 4 {
+            levels.push((i % 100) as f32 / 100.0);
+        }
+        assert_eq!(levels.scaled().len(), HISTORY);
+    }
+
+    /// Empty is empty — a track that has never played draws nothing
+    /// rather than a flat line at the floor, which would read as
+    /// silence rather than as no data.
+    #[test]
+    fn nothing_recorded_is_nothing_drawn() {
+        assert!(Levels::default().is_empty());
+        assert!(Levels::default().scaled().is_empty());
+    }
+
+    /// And the scale is the plugin's, so the trace and the threshold
+    /// line above it are on one axis.
+    #[test]
+    fn the_trace_uses_the_plugins_scale() {
+        let mut levels = Levels::default();
+        levels.push(1.0);
+        levels.push(0.5);
+        let got = levels.scaled();
+        let want = comp_ui::comp_graph_svg::scale_input_wave(&[1.0, 0.5]);
+        assert_eq!(got, want);
     }
 }

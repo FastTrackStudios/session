@@ -435,8 +435,11 @@ fn mixer_shot(
                 &map,
                 &session_daw::pointer::Pointer::default(),
                 // At rest: the shot is the reference every viewport in
-                // the sweep is compared against, and a lit meter in it
-                // would be a difference nobody asked for.
+                // the sweep is compared against, and a lit meter — or a
+                // level trace — in it would be a difference nobody
+                // asked for.
+                &[],
+                &mut std::collections::HashMap::new(),
                 &[],
                 scroll_x,
                 frame.content_width(),
@@ -892,6 +895,8 @@ fn animate(
         &settings,
     );
     let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
+    let mut history: std::collections::HashMap<String, session_daw::tone::Levels> =
+        std::collections::HashMap::new();
     let pointer = session_daw::pointer::Pointer::default();
 
     let mut renderer = Headless::new(width, height).expect("a headless renderer");
@@ -910,6 +915,25 @@ fn animate(
             // driven separately — and per frame, which is faster than
             // the engine's pump will ever publish them.
             let levels = session_daw::animate::meters(tracks.len(), t);
+            // And the compressor's display, at the rate the ENGINE
+            // publishes meter frames — about 30 Hz — rather than at the
+            // frame rate.
+            //
+            // Everything else here is driven per frame on purpose,
+            // because a stress test should measure a case that cannot
+            // happen. This one would measure a case that cannot happen
+            // in the other direction: levels arriving faster than they
+            // are drawn, which would defeat the trace's cache and
+            // report a cost no session can produce. The draw still
+            // happens every frame either way.
+            if frame_index % 8 == 0 {
+                for (track, level) in tracks.iter().zip(&levels) {
+                    history
+                        .entry(track.guid.clone())
+                        .or_default()
+                        .push(level.peak_left);
+                }
+            }
             let mut drawn = Counts::default();
             painted += renderer
                 .frame(|painter| {
@@ -936,6 +960,8 @@ fn animate(
                         &map,
                         &pointer,
                         &levels,
+                        &mut history,
+                        session_daw::tone::panels_for(TONE),
                         0.0,
                         frame.content_width(),
                         at,

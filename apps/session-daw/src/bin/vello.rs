@@ -190,6 +190,10 @@ struct App {
     /// pointer move would be four milliseconds a frame to change one
     /// curve.
     rack_drag: Option<(usize, session_daw::tone::Grip)>,
+    /// Each track's recent input levels, keyed by GUID — what the
+    /// compressor's display draws and what its threshold line is read
+    /// against. Fed from the meter frames, which arrive at about 30 Hz.
+    tone_levels: std::collections::HashMap<String, session_daw::tone::Levels>,
     /// The Tone settings every rack is drawn from. Seeded from the
     /// placeholder until a chain can be read — see `tone::Store`.
     tone_settings: session_daw::tone::Store,
@@ -1241,6 +1245,7 @@ impl App {
             mixer,
             tracks,
             mixer_map: map,
+            tone_levels: history,
             pointer,
             palette,
             font,
@@ -1276,6 +1281,8 @@ impl App {
                 map,
                 pointer,
                 levels,
+                history,
+                panels,
                 scroll,
                 frame.content_width(),
                 at,
@@ -1497,6 +1504,40 @@ impl App {
         }
     }
 
+    /// Add this frame's meter reading to each track's history.
+    ///
+    /// Once per FRAME rather than once per published meter frame,
+    /// which means the history is sampled at the window's rate and not
+    /// the engine's. That is the right way round for a display: it is
+    /// drawn per frame, so a history at the frame rate has exactly one
+    /// sample per drawn column and never aliases. The engine publishing
+    /// slower just means some columns repeat.
+    ///
+    /// Only while the mixer is on screen. The arrangement draws no
+    /// rack, and four seconds of history per track accumulated behind a
+    /// panel nobody is looking at is memory spent on nothing.
+    fn record_levels(&mut self) {
+        if self.view != View::Mixer {
+            return;
+        }
+        let Some(meters) = self.meters.as_ref() else {
+            return;
+        };
+        let levels = meters.levels();
+        if levels.is_empty() {
+            return;
+        }
+        for track in &self.tracks {
+            let Some(level) = usize::try_from(track.index).ok().and_then(|i| levels.get(i)) else {
+                continue;
+            };
+            self.tone_levels
+                .entry(track.guid.clone())
+                .or_default()
+                .push(level.peak_left.max(level.peak_right));
+        }
+    }
+
     /// Re-read the session, because the track LIST changed.
     ///
     /// Added, Removed and Moved are the three events a re-record cannot
@@ -1622,6 +1663,7 @@ impl App {
         // window's copy — and before the scene is borrowed, because a
         // rename makes this rebuild it.
         self.reconcile();
+        self.record_levels();
         if self.view == View::Mixer {
             self.redraw_mixer();
             return;
@@ -1944,6 +1986,7 @@ fn main() {
         last_grip_click: None,
         hovered_grip: None,
         rack_drag: None,
+        tone_levels: std::collections::HashMap::new(),
         tone_settings: session_daw::tone::Store::default(),
         folders: daw_ui::components::folders::FolderState::default(),
         icons: session_daw::icons::Icons::new(),

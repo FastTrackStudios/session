@@ -205,6 +205,40 @@ mod tests {
         (mixer, palette, font, tracks)
     }
 
+    /// The same fixture, with the Tone rack on.
+    fn racked(panels: &[crate::tone::Which]) -> (Mixer, Palette, Font, Vec<Track>) {
+        let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let font = Font::embedded().expect("the embedded font");
+        let tracks: Vec<Track> = (0..4)
+            .map(|i| Track {
+                guid: format!("t{i}"),
+                name: format!("Track {i}"),
+                width: Some(133),
+                ..Track::default()
+            })
+            .collect();
+        let rows = RowsRef(std::sync::Arc::new(
+            tracks.iter().cloned().map(|t| (t, 0)).collect(),
+        ));
+        let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(
+            daw_ui::studio::Project::default(),
+        ));
+        let mut settings = crate::tone::Store::default();
+        settings.seed(rows.as_slice());
+        let mixer = Mixer::build(
+            &palette,
+            &font,
+            &project,
+            &rows,
+            900.0,
+            crate::layout::Layout::default(),
+            panels,
+            crate::settings::Settings::default(),
+            &settings,
+        );
+        (mixer, palette, font, tracks)
+    }
+
     /// The overlay draws SOMETHING for the controls that have a hover
     /// cell — otherwise hovering would do nothing at all and look like
     /// a dead control.
@@ -271,6 +305,8 @@ mod tests {
                 &map,
                 &crate::pointer::Pointer::default(),
                 levels,
+                &mut std::collections::HashMap::new(),
+                &[],
                 0.0,
                 4000.0,
                 Affine::IDENTITY,
@@ -311,6 +347,8 @@ mod tests {
                 tracks,
                 &map,
                 &crate::pointer::Pointer::default(),
+                &[],
+                &mut std::collections::HashMap::new(),
                 &[],
                 0.0,
                 4000.0,
@@ -357,6 +395,51 @@ mod tests {
             scene
         };
         assert_ne!(draw(true), draw(false), "the lane does not show its state");
+    }
+
+    /// Levels reach the compressor's display. Without this the
+    /// threshold line is a line across an empty box — the display is
+    /// the whole reason the threshold moved off a knob.
+    #[test]
+    fn a_level_history_reaches_the_compressor() {
+        // A mixer WITH a rack — the others deliberately have none, and
+        // a display cannot be drawn into a panel that is not there.
+        let panels = crate::tone::panels_for(session::mix_phases::MixPhase::Tone);
+        let (mixer, palette, font, tracks) = racked(panels);
+        let map = crate::plan::Rows::of(
+            &tracks.iter().cloned().map(|t| (t, 0)).collect::<Vec<_>>(),
+            &tracks,
+        );
+        let draw = |history: &mut std::collections::HashMap<String, crate::tone::Levels>| {
+            let mut scene = anyrender::Scene::new();
+            controls(
+                &mut scene,
+                &palette,
+                &font,
+                &mixer,
+                &tracks,
+                &map,
+                &crate::pointer::Pointer::default(),
+                &[],
+                history,
+                panels,
+                0.0,
+                4000.0,
+                Affine::IDENTITY,
+            );
+            scene
+        };
+        let mut quiet = std::collections::HashMap::new();
+        let silent = draw(&mut quiet);
+
+        let mut loud = std::collections::HashMap::new();
+        for track in &tracks {
+            let entry: &mut crate::tone::Levels = loud.entry(track.guid.clone()).or_default();
+            for i in 0..40 {
+                entry.push(0.2 + 0.6 * ((i % 7) as f32 / 7.0));
+            }
+        }
+        assert_ne!(silent, draw(&mut loud), "the display stayed empty");
     }
 
     /// A row that is not there draws nothing rather than panicking —
@@ -433,6 +516,12 @@ pub fn controls(
     live: &crate::plan::Rows,
     pointer: &crate::pointer::Pointer,
     levels: &[daw_proto::TrackLevels],
+    // `history` is each track's recent input levels, for the
+    // compressor's display, and `panels` is which rack panels the phase
+    // is showing — the history goes into the compressor's, wherever the
+    // layout put it.
+    history: &mut std::collections::HashMap<String, crate::tone::Levels>,
+    panels: &[crate::tone::Which],
     scroll_x: f64,
     width: f64,
     transform: Affine,
@@ -457,6 +546,8 @@ pub fn controls(
             // meter reading another track's level is worse than one
             // reading none.
             usize::try_from(track.index).ok().and_then(|i| levels.get(i)).copied(),
+            history.get_mut(&track.guid),
+            panels,
             row,
             left,
             strip_w,
@@ -487,6 +578,8 @@ fn draw_strip_controls(
     track: &Track,
     pointer: &crate::pointer::Pointer,
     level: Option<daw_proto::TrackLevels>,
+    history: Option<&mut crate::tone::Levels>,
+    panels: &[crate::tone::Which],
     row: usize,
     left: f64,
     width: f64,
@@ -584,6 +677,19 @@ fn draw_strip_controls(
             font,
             x,
             y,
+        );
+    }
+
+    // The compressor's level history, under the threshold line the
+    // recording drew across it. Live, because it is the one part of a
+    // rack that changes with the audio — see `tone::levels`.
+    if let (Some(box_), Some(history)) = (strip.rack_rect(), history) {
+        crate::tone::levels(
+            scene,
+            palette,
+            panels,
+            history,
+            crate::tone::Panel::of(box_, left),
         );
     }
 
