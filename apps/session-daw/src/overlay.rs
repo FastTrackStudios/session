@@ -873,9 +873,9 @@ fn draw_strip_controls(
         // offset, applied where the rack is placed, so the drawing and
         // the hit test cannot hold different opinions about it.
         let at = crate::tone::Panel::of(box_, left).up(scroll);
-        let build = |bins: &[f32]| {
+        let paint = |meters: &crate::live::Meters| {
             let mut rack = anyrender::Scene::new();
-            crate::tone::draw(&mut rack, palette, font, tone, bins, panels, at, folded, lit);
+            crate::tone::draw(&mut rack, palette, font, tone, meters, panels, at, folded, lit);
             rack
         };
         match spectrum {
@@ -883,15 +883,15 @@ fn draw_strip_controls(
             // under the pointer moves with the hand, and there is only
             // ever one of them.
             Some(analyser) if lit.is_none() => {
-                let bins = analyser.bins().to_vec();
-                let built = analyser.rack(at.width, at.height, || build(&bins));
-                scene.commands.extend_from_slice(&built.commands);
+                let meters = analyser.meters().clone();
+                let cached = analyser.rack(at.width, at.height, || paint(&meters));
+                scene.commands.extend_from_slice(&cached.commands);
             }
             Some(analyser) => {
-                let bins = analyser.bins().to_vec();
-                scene.commands.extend(build(&bins).commands);
+                let meters = analyser.meters().clone();
+                scene.commands.extend(paint(&meters).commands);
             }
-            None => scene.commands.extend(build(&[]).commands),
+            None => scene.commands.extend(paint(&crate::live::Meters::default()).commands),
         }
         scene.pop_layer();
     }

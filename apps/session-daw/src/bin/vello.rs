@@ -197,6 +197,9 @@ struct App {
     /// compressor's display draws and what its threshold line is read
     /// against. Fed from the meter frames, which arrive at about 30 Hz.
     tone_levels: std::collections::HashMap<String, session_daw::tone::Levels>,
+    /// The last reverb-tail generation the mixer was recorded against
+    /// — see `record_levels`.
+    tails_seen: u64,
     /// The Tone settings every rack is drawn from. Seeded from the
     /// placeholder until a chain can be read — see `tone::Store`.
     tone_settings: session_daw::tone::Store,
@@ -1042,6 +1045,10 @@ impl App {
                 // wheel walks it either way and a double-click puts it
                 // back. Wrapping, because a chip you click is a cycle.
                 Grip::Scale(_) => tone.cycle_eq_range(),
+                // The machine glyph cycles the machine: the delay's
+                // style, the reverb's algorithm.
+                Grip::Family(session_daw::tone::Which::Delay) => tone.delay.cycle_style(),
+                Grip::Family(session_daw::tone::Which::Reverb) => tone.reverb.cycle_algorithm(),
                 _ => {}
             }
         }
@@ -1762,6 +1769,17 @@ impl App {
     /// rack, and four seconds of history per track accumulated behind a
     /// panel nobody is looking at is memory spent on nothing.
     fn record_levels(&mut self) {
+        // A reverb tail that finished rendering after the mixer was
+        // recorded is a tail the recording does not have. One counter
+        // says whether any landed; the re-record is what puts them in.
+        let tails = session_daw::live::tails_generation();
+        if tails != self.tails_seen {
+            self.tails_seen = tails;
+            self.mixer = None;
+            for analyser in self.tone_spectra.values_mut() {
+                analyser.invalidate();
+            }
+        }
         if self.view != View::Mixer {
             return;
         }
@@ -1783,24 +1801,30 @@ impl App {
             }
             self.last_level = Some(std::time::Instant::now());
             for (index, track) in self.tracks.iter().enumerate() {
-                let signal = session_daw::simulate::frame(index, at);
+                // The whole payload, as the engine would publish it:
+                // the suppressors' reduction and the wet returns depend
+                // on the track's settings, so the simulation reads them.
+                let Some(tone) = self.tone_settings.get(&track.guid) else {
+                    continue;
+                };
+                let meters = session_daw::simulate::meters(index, at, tone);
+                let peak = meters.sat_peak;
                 self.clips.note(
                     &track.guid,
                     daw_proto::TrackLevels {
-                        peak_left: signal.peak,
-                        peak_right: signal.peak * 0.85,
-                        hold_left: signal.peak,
-                        hold_right: signal.peak,
+                        peak_left: peak,
+                        peak_right: peak * 0.85,
+                        hold_left: peak,
+                        hold_right: peak,
                     },
                 );
-                self.tone_levels
-                    .entry(track.guid.clone())
-                    .or_default()
-                    .push(signal.peak);
+                let history = self.tone_levels.entry(track.guid.clone()).or_default();
+                history.push(peak);
+                history.push_fire(meters.deess_deepest());
                 self.tone_spectra
                     .entry(track.guid.clone())
                     .or_default()
-                    .set(signal.spectrum);
+                    .set(meters);
             }
             return;
         }
@@ -2303,6 +2327,7 @@ fn main() {
         rack_drag: None,
         tone_levels: std::collections::HashMap::new(),
         tone_spectra: std::collections::HashMap::new(),
+        tails_seen: 0,
         tone_settings: session_daw::tone::Store::default(),
         clips: session_daw::overlay::Clips::default(),
         // A starting scroll, for shots and for looking at a processor

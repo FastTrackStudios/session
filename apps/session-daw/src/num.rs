@@ -46,6 +46,27 @@ pub fn index(coord: f64) -> usize {
     index
 }
 
+/// A value quantised to `steps` per unit, as a key.
+///
+/// For memoising on a setting: a drag produces hundreds of values a
+/// pixel apart, and a cache keyed on the exact float would miss every
+/// one. Rounded to nearest; saturates far out of range rather than
+/// wrapping, and NaN keys as zero.
+#[must_use]
+pub fn quantise(value: f64, steps: f64) -> i32 {
+    let scaled = (value * steps).round();
+    if !scaled.is_finite() {
+        return 0;
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::as_conversions,
+        reason = "no non-`as` f64->integer conversion exists; clamped into range on this line"
+    )]
+    let key = scaled.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32;
+    key
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,6 +77,14 @@ mod tests {
     }
 
     /// The cases the `as` cast would get wrong on its own.
+    #[test]
+    fn quantises_to_a_step() {
+        assert_eq!(quantise(1.804, 20.0), 36);
+        assert_eq!(quantise(1.81, 20.0), 36);
+        assert_eq!(quantise(-0.5, 100.0), -50);
+        assert_eq!(quantise(f64::NAN, 10.0), 0);
+    }
+
     #[test]
     fn clamps_rather_than_truncating() {
         assert_eq!(index(-5.0), 0);

@@ -35,15 +35,18 @@
 //! whose processing was rendered offline still animates.
 
 use anyrender::{PaintScene, Scene};
+use delay_dsp::engine::{DelayStyle, Family as DelayFamily};
 use eq_ui::eq_graph_interaction::{self as interaction, GraphMapper, Mods};
 use eq_ui::eq_graph_model::{EqBand, EqBandShape, StereoMode};
 use eq_ui::eq_graph_response::calculate_combined_response;
 use fts_audio_ui::axis::{DbAxis, FreqAxis};
-use saturate_dsp::preamp::{ClassAPreamp, SideShaper};
-use vello::kurbo::{Affine, BezPath, Line, Rect, Stroke};
+use reverb_dsp::algorithm::{AlgorithmType, Family as RoomFamily};
+use saturate_dsp::preamp::{Circuit, ClassAPreamp, SideShaper};
+use vello::kurbo::{Affine, BezPath, Line, Rect, Shape, Stroke};
 use vello::peniko::{Color, Fill};
 
 use crate::arrangement::Palette;
+use crate::live::Meters;
 use crate::text::Font;
 
 /// The sample rate the curves are drawn against.
@@ -147,6 +150,35 @@ impl Tone {
             Which::Comp => Some(&mut self.comp),
             _ => None,
         }
+    }
+
+    /// The wet/dry mix a given panel edits.
+    #[must_use]
+    pub const fn mix(&mut self, which: Which) -> Option<&mut f32> {
+        match which {
+            Which::Delay => Some(&mut self.delay.mix),
+            Which::Reverb => Some(&mut self.reverb.mix),
+            Which::Sat => Some(&mut self.sat.mix),
+            _ => None,
+        }
+    }
+
+    /// The suppressor a given panel edits.
+    #[must_use]
+    pub const fn suppressor(&mut self, which: Which) -> Option<&mut Suppress> {
+        match which {
+            Which::DeEss => Some(&mut self.de_ess),
+            Which::Resonance => Some(&mut self.resonance),
+            _ => None,
+        }
+    }
+
+    /// Render every reverb tail this rack needs, now, on this thread.
+    ///
+    /// For a bench or a test that must be deterministic — see
+    /// [`crate::live::render_tail_now`].
+    pub fn prerender_tails(&self) {
+        crate::live::render_tail_now(self.reverb.key());
     }
 
     /// Every panel with a threshold, as one number.
@@ -338,6 +370,12 @@ pub struct Echo {
     pub time: f32,
     pub feedback: f32,
     pub mix: f32,
+    /// Which machine makes the repeats. Not a picture of a knob: the
+    /// plugin's fourteen styles are fourteen different engines, and
+    /// the strip draws the family the style belongs to the way the
+    /// plugin's own faces do — a tape softens, a chip smears, a
+    /// shimmer climbs.
+    pub style: DelayStyle,
 }
 
 impl Default for Echo {
@@ -346,7 +384,26 @@ impl Default for Echo {
             time: 320.0,
             feedback: 0.38,
             mix: 0.22,
+            style: DelayStyle::Tape,
         }
+    }
+}
+
+impl Echo {
+    /// The family the style draws as.
+    #[must_use]
+    pub const fn family(self) -> DelayFamily {
+        self.style.family()
+    }
+
+    /// The next style, wrapping — what a click on the glyph does.
+    pub const fn cycle_style(&mut self) {
+        let next = self.style.to_index().saturating_add(1);
+        self.style = if next >= DelayStyle::COUNT {
+            DelayStyle::Tape
+        } else {
+            DelayStyle::from_index(next)
+        };
     }
 }
 
@@ -363,6 +420,14 @@ pub struct Room {
     /// Milliseconds before the tail begins.
     pub predelay: f32,
     pub mix: f32,
+    /// Which space. The tail the strip draws is this algorithm's own
+    /// impulse response, rendered — a plate and a spring with the same
+    /// decay are different pictures because they are different sounds.
+    pub algorithm: AlgorithmType,
+    /// The space's size, 0..1, as the algorithm takes it.
+    pub size: f32,
+    /// High-frequency damping, 0..1.
+    pub damping: f32,
 }
 
 impl Default for Room {
@@ -371,7 +436,34 @@ impl Default for Room {
             decay: 1.8,
             predelay: 24.0,
             mix: 0.18,
+            algorithm: AlgorithmType::Room,
+            size: 0.5,
+            damping: 0.3,
         }
+    }
+}
+
+impl Room {
+    /// The family the algorithm draws as.
+    #[must_use]
+    pub const fn family(self) -> RoomFamily {
+        self.algorithm.family()
+    }
+
+    /// What the tail is rendered from.
+    #[must_use]
+    pub fn key(self) -> crate::live::RoomKey {
+        crate::live::RoomKey::of(self.algorithm, self.decay, self.size, self.damping)
+    }
+
+    /// The next algorithm, wrapping — what a click on the glyph does.
+    pub fn cycle_algorithm(&mut self) {
+        let next = self.algorithm.index().saturating_add(1);
+        self.algorithm = if next >= AlgorithmType::ALL.len() {
+            AlgorithmType::Room
+        } else {
+            AlgorithmType::from_index(next)
+        };
     }
 }
 
@@ -656,6 +748,12 @@ impl Panel {
         Rect::new(self.x, self.y, self.x + self.width, self.y + self.height)
     }
 
+    /// Whether a point is inside.
+    #[must_use]
+    pub fn contains(self, x: f64, y: f64) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
+
     /// The panel inset by `by` on every side.
     const fn inset(self, by: f64) -> Self {
         Self {
@@ -869,7 +967,7 @@ pub fn record(
     panel: Panel,
     folded: Folded,
 ) {
-    draw(scene, palette, font, tone, &[], panels, panel, folded, None);
+    draw(scene, palette, font, tone, &Meters::default(), panels, panel, folded, None);
 }
 
 /// The same, with one grip lit.
@@ -884,11 +982,11 @@ pub fn draw(
     palette: &Palette,
     font: &Font,
     tone: &Tone,
-    // `spectrum` is the analyser's bins, in dB. Empty when nothing is
-    // playing — which is a rack that can stay in the recording,
-    // because a spectrum is the one thing in it that moves with the
-    // audio.
-    spectrum: &[f32],
+    // `meters` is everything in the rack that moves with the audio —
+    // the analyser's bins, the suppressors' reduction, the wet returns.
+    // Empty when nothing is playing, which is a rack that can stay in
+    // the recording.
+    meters: &Meters,
     panels: &[Which],
     panel: Panel,
     folded: Folded,
@@ -918,26 +1016,28 @@ pub fn draw(
                 // What differs is what the bands are FOR, which is the
                 // panel's name and not its picture.
                 Which::RescueEq => {
-                    eq(scene, palette, font, tone, which, &tone.rescue_eq, spectrum, body, rack, lit);
+                    eq(scene, palette, font, tone, which, &tone.rescue_eq, &meters.spectrum, body, rack, lit);
                 }
-                Which::Eq => eq(scene, palette, font, tone, which, &tone.eq, spectrum, body, rack, lit),
+                Which::Eq => {
+                    eq(scene, palette, font, tone, which, &tone.eq, &meters.spectrum, body, rack, lit);
+                }
                 Which::Space => {
-                    eq(scene, palette, font, tone, which, &tone.space, spectrum, body, rack, lit);
+                    eq(scene, palette, font, tone, which, &tone.space, &meters.spectrum, body, rack, lit);
                 }
                 Which::Gate => gate(scene, palette, tone.gate, body, rack, lit),
                 Which::RescueComp => {
                     comp(scene, palette, font, tone.rescue_comp, body, rack, lit);
                 }
                 Which::Comp => comp(scene, palette, font, tone.comp, body, rack, lit),
-                Which::Sat => sat(scene, palette, &tone.sat, body, rack),
+                Which::Sat => sat(scene, palette, &tone.sat, meters, body, rack, lit),
                 Which::DeEss => {
-                    suppress(scene, palette, tone, tone.de_ess, spectrum, body, rack, lit);
+                    suppress(scene, palette, which, tone.de_ess, meters, body, rack, lit);
                 }
                 Which::Resonance => {
-                    suppress(scene, palette, tone, tone.resonance, spectrum, body, rack, lit);
+                    suppress(scene, palette, which, tone.resonance, meters, body, rack, lit);
                 }
-                Which::Delay => echo(scene, palette, tone.delay, body, rack, lit),
-                Which::Reverb => room(scene, palette, tone.reverb, body, rack, lit),
+                Which::Delay => echo(scene, palette, tone.delay, meters, body, rack, lit),
+                Which::Reverb => room(scene, palette, tone.reverb, meters, body, rack, lit),
             }
             // The bypass, over everything the panel just drew.
             //
@@ -962,6 +1062,7 @@ pub fn draw(
                     palette,
                     font,
                     which.name(),
+                    which.glyph(tone),
                     &which.summary(tone, rack),
                     tone.bypass.is(which),
                     head,
@@ -1205,12 +1306,61 @@ impl Which {
             Self::Gate => format!("{:.0}dB · {:.0}", tone.gate.threshold, tone.gate.range),
             Self::RescueComp => squash(tone.rescue_comp),
             Self::Comp => squash(tone.comp),
-            Self::Sat => format!("x{:.1}", tone.sat.drive),
+            // The even share is the number an engineer reads a
+            // saturator by — it is what separates a valve from a rail
+            // — and it is measured, not read off the knob.
+            Self::Sat => {
+                let even = crate::live::ladder(&tone.sat).even_share() * 100.0;
+                format!("x{:.1} · 2nd {even:.0}%", tone.sat.drive)
+            }
             Self::DeEss => suppression(tone.de_ess),
             Self::Resonance => suppression(tone.resonance),
-            Self::Delay => format!("{} · {:.0}%", millis(tone.delay.time), tone.delay.feedback * 100.0),
-            Self::Reverb => format!("{:.1}s · {:.0}%", tone.reverb.decay, tone.reverb.mix * 100.0),
+            Self::Delay => {
+                let head = format!("{} · {:.0}%", millis(tone.delay.time), tone.delay.feedback * 100.0);
+                if rack.editing() {
+                    format!("{head} · {}", tone.delay.style.label().to_lowercase())
+                } else {
+                    head
+                }
+            }
+            Self::Reverb => {
+                let head = format!("{:.1}s · {:.0}%", tone.reverb.decay, tone.reverb.mix * 100.0);
+                if rack.editing() {
+                    format!("{head} · {}", tone.reverb.algorithm.name().to_lowercase())
+                } else {
+                    head
+                }
+            }
         }
+    }
+
+    /// The glyph that says which MACHINE this unit is, if it has one.
+    ///
+    /// Three units are a family of machines rather than one: the
+    /// saturator is a valve or a rail, the delay is tape or a chip, the
+    /// reverb is a hall or a spring. The plugin's own faces put that
+    /// first — "you should know which delay you are looking at before
+    /// you read a word" — and the strip says it in eight pixels beside
+    /// the name.
+    #[must_use]
+    pub fn glyph(self, tone: &Tone) -> Option<Glyph> {
+        match self {
+            Self::Sat => Some(Glyph::Circuit(tone.sat.circuit())),
+            Self::Delay => Some(Glyph::Delay(tone.delay.family())),
+            Self::Reverb => Some(Glyph::Room(tone.reverb.family())),
+            _ => None,
+        }
+    }
+
+    /// Whether this unit's glyph is a switch — clicked to cycle the
+    /// machine.
+    ///
+    /// The saturator's is not: its circuit follows the shapers, which
+    /// are the plugin's to set. The delay's and the reverb's are one
+    /// setting each.
+    #[must_use]
+    pub const fn glyph_switches(self) -> bool {
+        matches!(self, Self::Delay | Self::Reverb)
     }
 
     /// How tall this panel wants to be, in pixels.
@@ -1241,9 +1391,10 @@ impl Which {
             // The gate is the same display without the envelope: a line
             // and what falls under it.
             Self::Gate => 120.0,
-            // A bent line through a square. It says its whole story in
-            // the first hundred pixels.
-            Self::Sat => 110.0,
+            // A bent line through a square, and the ladder of what it
+            // adds beside it. The ladder wants the height the curve
+            // has, no more.
+            Self::Sat => 130.0,
             // Time pictures, both. A delay needs width for its taps and
             // no height beyond telling them apart; a reverb's tail is a
             // single falling line.
@@ -1900,14 +2051,19 @@ impl Envelope {
 // they are one shape on that display now, in its own axes. See
 // `envelope`.
 
-/// The gate: its threshold across the level display, and the range it
-/// takes off below it.
+/// The gate: its threshold across the level display, the range it
+/// takes off below it, and its times as a glyph between the two.
 ///
-/// The compressor's mirror, and drawn as one deliberately — same axes,
-/// same red line you drag — because the pair is read together and the
-/// difference between them is WHICH SIDE of the line is shaded. Above
-/// the line for a compressor, below it for a gate.
+/// The compressor's axis, deliberately — same red line you drag, same
+/// dB ladder — because the pair is read together down a chain and a
+/// level should sit at the same height on both. What is NOT shared is
+/// the story. A compressor's is how much; a gate's is open or shut, and
+/// its glyph says so: where the compressor's is a dip, the gate's is a
+/// TABLE — attack up, hold flat, release down — standing in the band
+/// it acts in. The door lane under the display (drawn in the live
+/// pass, see [`levels`]) is when it was open.
 fn gate(scene: &mut Scene, palette: &Palette, gate: Gate, at: Panel, rack: Rack, lit: Option<Grip>) {
+    let at = display_of(at, Which::Gate, rack);
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     let to_y = |db: f64| at.y + comp_ui::comp_graph_svg::db_to_y(db, at.height);
@@ -1920,14 +2076,16 @@ fn gate(scene: &mut Scene, palette: &Palette, gate: Gate, at: Panel, rack: Rack,
     }
 
     let line = to_y(f64::from(gate.threshold)).clamp(at.y, bottom);
-    // What the gate takes off is what lives BELOW the line, so that is
-    // what gets shaded. A compressor shades above.
+    let floor = to_y(f64::from(gate.threshold + gate.range)).clamp(at.y, bottom);
+    // What the gate takes off is what lives BELOW the line, down to the
+    // range — so that is the band that gets shaded. A compressor shades
+    // above.
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
         hex(comp_ui::comp_graph_svg::colors::REDUCTION_FILL).multiply_alpha(0.22),
         None,
-        &Rect::new(at.x, line, right, bottom),
+        &Rect::new(at.x, line, right, floor),
     );
     let held = matches!(lit, Some(Grip::Threshold(_)));
     let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
@@ -1943,179 +2101,286 @@ fn gate(scene: &mut Scene, palette: &Palette, gate: Gate, at: Panel, rack: Rack,
         // The range, as a second line: how far down what stays shut
         // goes. A gate that closed completely would put that line on
         // the floor, and the gap between the two IS the setting.
-        let floor = to_y(f64::from(gate.threshold + gate.range)).clamp(at.y, bottom);
-        rule(scene, red.multiply_alpha(0.55), Line::new((at.x, floor), (right, floor)));
+        let range_held = lit == Some(Grip::Range);
+        rule_wide(
+            scene,
+            red.multiply_alpha(0.55),
+            Line::new((at.x, floor), (right, floor)),
+            if range_held { 2.0 } else { 1.0 },
+        );
+        if let Some(shape) = GateGlyph::of(gate, at, line, floor) {
+            let width = |grip| if lit == Some(grip) { 2.4 } else { 1.4 };
+            curve(scene, red, shape.rise().into_iter(), width(Grip::Attack(Which::Gate)));
+            curve(scene, red, shape.run().into_iter(), width(Grip::Hold(Which::Gate)));
+            curve(scene, red, shape.fall().into_iter(), width(Grip::Release(Which::Gate)));
+            let r = |grip| if lit == Some(grip) { HANDLE + 1.4 } else { HANDLE * 0.8 };
+            dot(scene, red, shape.open, r(Grip::Attack(Which::Gate)));
+            dot(scene, red, shape.close, r(Grip::Release(Which::Gate)));
+        }
     }
+}
+
+/// The gate's times, as a table standing between its two lines.
+///
+/// The mirror of the compressor's [`Envelope`]: that one hangs from the
+/// ceiling down to the threshold, this one stands up from the range
+/// floor to the threshold — because a gate OPENS, and up is open. Three
+/// grips, each dragged sideways along the time axis they are widths on:
+/// the rising edge is the attack, the flat top is the hold, and the
+/// falling edge is the release.
+#[derive(Clone, Copy, Debug)]
+struct GateGlyph {
+    /// On the floor, where the signal arrives.
+    start: (f64, f64),
+    /// Where the attack reaches the threshold line — the door is open.
+    open: (f64, f64),
+    /// Where the hold ends and the release begins.
+    close: (f64, f64),
+    /// Back on the floor — shut.
+    end: (f64, f64),
+}
+
+impl GateGlyph {
+    fn of(gate: Gate, at: Panel, line: f64, floor: f64) -> Option<Self> {
+        if at.width < 30.0 || at.height < 30.0 {
+            return None;
+        }
+        // Three widths on their own log scales, each up to a quarter
+        // of the display, so the glyph stays inside the box at every
+        // setting and the run has room to be a run.
+        let span = at.width * 0.25;
+        let attack = log_norm(f64::from(gate.attack), 0.1, 200.0) * span;
+        let hold = log_norm(f64::from(gate.hold), 1.0, 2_000.0).mul_add(span, 6.0);
+        let release = log_norm(f64::from(gate.release), 5.0, 3_000.0) * span;
+        let left = at.x + RAIL;
+        // A table needs a leg: when the range is so small the two
+        // lines nearly touch, the glyph stands a little below the
+        // threshold anyway, or it would be a line on a line.
+        let floor = floor.max(line + 8.0).min(at.y + at.height - 1.0);
+        Some(Self {
+            start: (left, floor),
+            open: (left + attack, line),
+            close: (left + attack + hold, line),
+            end: ((left + attack + hold + release).min(at.x + at.width - 1.0), floor),
+        })
+    }
+
+    const fn rise(self) -> [(f64, f64); 2] {
+        [self.start, self.open]
+    }
+
+    const fn run(self) -> [(f64, f64); 2] {
+        [self.open, self.close]
+    }
+
+    const fn fall(self) -> [(f64, f64); 2] {
+        [self.close, self.end]
+    }
+
+    /// Which of its edges a point is nearest, if any.
+    fn grip_at(self, x: f64, y: f64) -> Option<Grip> {
+        [
+            (Grip::Attack(Which::Gate), near_segment((x, y), self.start, self.open)),
+            (Grip::Hold(Which::Gate), near_segment((x, y), self.open, self.close)),
+            (Grip::Release(Which::Gate), near_segment((x, y), self.close, self.end)),
+        ]
+        .into_iter()
+        .filter(|(_, away)| *away <= GRAB)
+        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(grip, _)| grip)
+    }
+}
+
+/// Distance from a point to a segment — so a ramp is grabbable along
+/// its whole length rather than only at its ends.
+fn near_segment(point: (f64, f64), from: (f64, f64), to: (f64, f64)) -> f64 {
+    let (px, py) = point;
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let len = dx.hypot(dy);
+    if len < f64::EPSILON {
+        return (px - from.0).hypot(py - from.1);
+    }
+    let along = ((px - from.0).mul_add(dx, (py - from.1) * dy) / (len * len)).clamp(0.0, 1.0);
+    (px - along.mul_add(dx, from.0)).hypot(py - along.mul_add(dy, from.1))
+}
+
+/// How tall the lane under a gate or a de-esser is.
+///
+/// The door lane and the fire lane: a strip of time along the bottom
+/// of the display, drawn in the live pass from the level history. Nine
+/// pixels is enough to see a segment and its ramp, and little enough
+/// that the display above keeps its ladder.
+pub const LANE: f64 = 9.0;
+
+/// How tall the comb under a resonance suppressor is.
+///
+/// The teeth hang below the spectrum's floor by their settled depth;
+/// this is the depth a twelve-decibel notch reaches.
+pub const TEETH: f64 = 20.0;
+
+/// The part of a body a unit's main display occupies.
+///
+/// Three units keep a strip along the bottom for a second picture —
+/// the gate's door lane, the de-esser's fire lane, the resonance
+/// suppressor's comb — and only at a detailed width, because at
+/// `Curves` the whole body is the shape and nothing else fits. Stated
+/// once because the drawing, the live pass and the hit test all have
+/// to agree where the display ends.
+#[must_use]
+pub const fn display_of(body: Panel, which: Which, rack: Rack) -> Panel {
+    if !rack.detailed() {
+        return body;
+    }
+    let keep = match which {
+        Which::Gate | Which::DeEss => LANE + 2.0,
+        Which::Resonance => TEETH + 2.0,
+        _ => 0.0,
+    };
+    Panel {
+        height: body.height - keep,
+        ..body
+    }
+}
+
+/// The lane under a unit's display, if it has one at this width.
+#[must_use]
+pub const fn lane_of(body: Panel, which: Which, rack: Rack) -> Option<Panel> {
+    let display = display_of(body, which, rack);
+    if display.height >= body.height {
+        return None;
+    }
+    Some(Panel {
+        y: display.y + display.height + 2.0,
+        height: body.height - display.height - 2.0,
+        ..body
+    })
 }
 
 /// A spectral suppressor: what is there, and what it is taking out of
 /// it — in place, at the frequency it happens.
 ///
-/// Zoomed to the unit's own band. A de-esser acts between about four
-/// and twelve kilohertz, and drawing it across the whole audible range
-/// spent seventy per cent of the panel on frequencies it never touches
-/// — the sibilance it exists for was a few pixels wide at the right.
-/// The band is a SETTING, and showing it is showing the setting.
+/// Two units, one engine, two questions. The de-esser is an event
+/// detector — it fires on an "s" and lets go — so its identity is the
+/// fire lane under the display, a strip of time (see [`levels`]). The
+/// resonance suppressor finds what is ALWAYS there, so its identity is
+/// the comb below the floor: the engine's settled reduction, one tooth
+/// per notch, at the frequency it lives. Same spectrum, same ribbon,
+/// and you cannot mistake one panel for the other.
 ///
-/// The cut is drawn as the distance between two curves: what arrived,
-/// and what leaves. It used to hang from the ceiling like a
-/// compressor's gain reduction, which put two different meanings on one
-/// axis — the vertical is the spectrum's own amplitude here, so a bar
-/// hanging from the top had no relationship to the curve underneath it.
-/// Between the curves, the gap IS the reduction and it sits over the
-/// peak that caused it.
+/// The reduction is the engine's own per-bin gain, arriving in
+/// `meters`, not something worked out here from the spectrum: the
+/// density, tilt and gate rules live in the plugin, and a second copy
+/// of them would drift. What IS worked out here is the reference line
+/// — the neighbourhood average the threshold stands above — because
+/// that is the picture of a SETTING, and dragging it is how the
+/// threshold is set.
 #[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
 fn suppress(
     scene: &mut Scene,
     palette: &Palette,
-    tone: &Tone,
+    which: Which,
     set: Suppress,
-    spectrum: &[f32],
+    meters: &Meters,
     at: Panel,
     rack: Rack,
     lit: Option<Grip>,
 ) {
-    let right = at.x + at.width;
+    let full_body = at;
+    let at = display_of(at, which, rack);
     let bottom = at.y + at.height;
-    let _ = tone;
-    if spectrum.len() < 4 {
-        return;
+    let zoom = SuppressZoom::of(set);
+
+    // The band it actually acts in, marked on the axis rather than as a
+    // wash over the panel: the shoulders are context, the band is the
+    // subject. Drawn before the spectrum so they can be seen through
+    // it, and drawn even with nothing playing, because they are the
+    // setting.
+    if rack.detailed() {
+        for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
+            let x = zoom.x_of(hz, at);
+            let held = lit == Some(Grip::Edge(which, side));
+            rule_wide(
+                scene,
+                if held { palette.text } else { palette.grid_beat },
+                Line::new((x, at.y), (x, bottom)),
+                if held { 1.8 } else { 1.0 },
+            );
+        }
     }
 
-    // The band, opened out a third of an octave each side so its
-    // shoulders are visible: a cut you can see starting is a cut you
-    // can tell is in the right place.
-    let (low, high) = (
-        f64::from(set.low) / SUPPRESS_SHOULDER,
-        f64::from(set.high) * SUPPRESS_SHOULDER,
-    );
-    let decade = (high / low).log10().max(f64::EPSILON);
-    let hz_at = |t: f64| low * 10.0_f64.powf(t * decade);
-
-    // The analyser's bins are log-spaced across the audible range, so
-    // a frequency is a position in them — read between two bins rather
-    // than snapping, or a zoomed view turns into a staircase.
-    let bins = crate::num::coord(spectrum.len().saturating_sub(1).max(1));
-    let full = (20_000.0_f64 / 20.0).log10();
-    let level_at = |hz: f64| {
-        let place = ((hz / 20.0).log10() / full).clamp(0.0, 1.0) * bins;
-        let low_bin = place.floor();
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a bin index, clamped into range above"
-        )]
-        let i = low_bin as usize;
-        let j = (i + 1).min(spectrum.len() - 1);
-        let t = place - low_bin;
-        f64::from(spectrum[i]).mul_add(1.0 - t, f64::from(spectrum[j]) * t)
+    let spectrum = &meters.spectrum;
+    let reduction = match which {
+        Which::DeEss => &meters.deess_db,
+        _ => &meters.resonance_db,
     };
+    if spectrum.len() < 4 || reduction.len() != spectrum.len() {
+        return;
+    }
+    let level_at = |hz: f64| bin_at(spectrum, hz);
+    let cut_at = |hz: f64| bin_at(reduction, hz);
 
     // The baseline the peaks are judged against: the spectrum's own
-    // average over `sharpness` of an octave. Wide, because it has to
-    // IGNORE the peaks — narrow, it tracks them, and then everything
-    // stands the same tiny amount proud of its own neighbourhood.
+    // average over a span set by the sharpness. What stands proud of it
+    // by more than the threshold is what gets cut, so the threshold IS
+    // the height of the dashed line above the average — and that is
+    // the line you drag.
     let octaves = f64::from(set.sharpness).mul_add(-0.9, 1.2);
+    let span = (octaves / 2.0).exp2();
     let average_at = |hz: f64| {
-        let span = 2.0_f64.powf(octaves / 2.0);
-        let steps = 9;
-        (0..=steps)
+        const STEPS: usize = 9;
+        (0..=STEPS)
             .map(|k| {
-                let t = crate::num::coord(k) / crate::num::coord(steps);
+                let t = crate::num::coord(k) / crate::num::coord(STEPS);
                 level_at(hz / span * (span * span).powf(t))
             })
             .sum::<f64>()
-            / crate::num::coord(steps + 1)
+            / crate::num::coord(STEPS.saturating_add(1))
     };
 
-    // One sample per bin, no finer. The analyser has ninety-six of
-    // them across the audible range and a zoomed band holds a fraction
-    // of that, so sampling past the data invents detail that is not
-    // there and pays for it in path length — two filled areas per
-    // panel, per strip, per frame.
+    // One sample per bin, no finer. The analyser has ninety-six of them
+    // across the audible range and a zoomed band holds a fraction of
+    // that, so sampling past the data invents detail that is not there
+    // and pays for it in path length.
     let across = spectrum.len().clamp(24, 96);
     let sample = |i: usize| crate::num::coord(i) / crate::num::coord(across.saturating_sub(1).max(1));
-    // The analyser speaks DECIBELS, not a height — which is the whole
-    // of what was wrong here before. Read as 0..1 the bins pinned to
-    // the ceiling or sat on the floor, and every peak stood the same
-    // enormous amount proud of its neighbours.
     let to_y = |db: f64| {
         let t = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
         bottom - t * (at.height - 2.0) - 1.0
     };
-
-    // How much comes off at a frequency — in decibels, because
-    // everything here already is.
-    let cut_at = |hz: f64| {
-        if hz < f64::from(set.low) || hz > f64::from(set.high) {
-            return 0.0;
-        }
-        let proud = level_at(hz) - average_at(hz) - f64::from(set.threshold);
-        proud.max(0.0) * f64::from(set.depth)
-    };
-    // Smoothed, because a filter with finite Q cannot cut one
-    // frequency and not the one beside it — a square notch is drawing a
-    // filter nobody can build.
-    let smooth_cut = |i: usize| {
-        let from = i.saturating_sub(SUPPRESS_SMOOTH);
-        let to = (i + SUPPRESS_SMOOTH).min(across - 1);
-        (from..=to).map(|k| cut_at(hz_at(sample(k)))).sum::<f64>()
-            / crate::num::coord(to - from + 1)
-    };
-
-    // The band it actually acts in, marked on the axis rather than as a
-    // wash over the panel: the shoulders are context, the band is the
-    // subject.
-    let x_of = |hz: f64| at.x + ((hz / low).log10() / decade).clamp(0.0, 1.0) * at.width;
-    if rack.detailed() {
-        for hz in [f64::from(set.low), f64::from(set.high)] {
-            let x = x_of(hz);
-            rule(scene, palette.grid_beat, Line::new((x, at.y), (x, bottom)));
-        }
-    }
+    let x_at = |i: usize| at.x + sample(i) * at.width;
 
     // What arrived, as an area — it is the material, and an outline
-    // reads as another curve competing with the two that matter.
+    // reads as another curve competing with the two that matter. The
+    // resonance panel draws it dimmer: there the spectrum is context
+    // and the teeth are the subject.
+    let dim = if which == Which::Resonance { 0.6 } else { 1.0 };
     let input: Vec<(f64, f64)> = (0..across)
-        .map(|i| {
-            let t = sample(i);
-            (at.x + t * at.width, to_y(level_at(hz_at(t))))
-        })
+        .map(|i| (x_at(i), to_y(level_at(zoom.hz_at(sample(i))))))
         .collect();
-    let mut area = BezPath::new();
-    if let Some((x, y)) = input.first().copied() {
-        area.move_to((x, bottom));
-        area.line_to((x, y));
-        for point in input.iter().skip(1).copied() {
-            area.line_to(point);
-        }
-        if let Some((x, _)) = input.last().copied() {
-            area.line_to((x, bottom));
-        }
-        area.close_path();
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            palette.accent.multiply_alpha(0.16),
-            None,
-            &area,
-        );
+    area_under(
+        scene,
+        palette.accent.multiply_alpha(crate::mcp::f64_to_f32(0.16 * dim)),
+        &input,
+        bottom,
+    );
+
+    // The reference, dashed: the average plus the threshold. Where the
+    // spectrum crosses above it is where the engine acts.
+    if rack.detailed() {
+        let held = matches!(lit, Some(Grip::Threshold(_) | Grip::Sharpness(_)));
+        let reference = (0..across).map(|i| {
+            (x_at(i), to_y(average_at(zoom.hz_at(sample(i))) + f64::from(set.threshold)))
+        });
+        dashed(scene, palette.text.multiply_alpha(0.75), reference, if held { 1.6 } else { 0.8 });
     }
 
     // And what leaves. The gap between the two is the reduction, at the
-    // frequency it is happening, over the peak that caused it.
+    // frequency it is happening, over the peak that caused it. NOT
+    // clamped at zero: these are decibels.
     let output: Vec<(f64, f64)> = (0..across)
         .map(|i| {
-            let t = sample(i);
-            // NOT clamped at zero: these are decibels, and a level
-            // minus its reduction is normally negative. Clamping it
-            // pinned the output to 0 dB — a flat line well ABOVE the
-            // spectrum, so the reduction was drawn upward, as if the
-            // suppressor were adding what it takes away.
-            (
-                at.x + t * at.width,
-                to_y(level_at(hz_at(t)) - smooth_cut(i)),
-            )
+            let hz = zoom.hz_at(sample(i));
+            (x_at(i), to_y(level_at(hz) - cut_at(hz)))
         })
         .collect();
     let red = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
@@ -2124,58 +2389,205 @@ fn suppress(
     // polygon — two hundred vertices tracing out and back along the
     // same line, which the rasteriser pays for in full and which draws
     // nothing. That cost half a millisecond a frame across a mixer.
-    let deepest = (0..across).map(smooth_cut).fold(0.0_f64, f64::max);
-    let mut taken = BezPath::new();
-    if deepest > 0.15
-        && let Some((x, y)) = input.first().copied()
+    let deepest = reduction.iter().copied().fold(0.0_f32, f32::max);
+    if deepest > 0.15 {
+        let held = matches!(lit, Some(Grip::Depth(_)));
+        ribbon(scene, red.multiply_alpha(if held { 0.8 } else { 0.55 }), &input, &output);
+    }
+    curve(
+        scene,
+        palette.accent.multiply_alpha(crate::mcp::f64_to_f32(0.7 * dim)),
+        input.into_iter(),
+        1.0,
+    );
+    let held = matches!(lit, Some(Grip::Depth(_)));
+    let ribbon = if which == Which::Resonance { 0.9 } else { 1.1 };
+    curve(scene, red, output.into_iter(), if held { 1.8 } else { ribbon });
+
+    if rack.detailed() {
+        marks(scene, palette, zoom, at);
+    }
+
+    if which == Which::Resonance
+        && let Some(comb_at) = lane_of(full_body, which, rack)
     {
-        taken.move_to((x, y));
-        for point in input.iter().skip(1).copied() {
-            taken.line_to(point);
+        comb(scene, palette, &meters.resonance_settled_db, zoom, comb_at);
+    }
+}
+
+/// Where you are on a zoomed axis, since it is no longer the familiar
+/// one: a tick at each of [`SUPPRESS_MARKS`] that falls in the window.
+fn marks(scene: &mut Scene, palette: &Palette, zoom: SuppressZoom, at: Panel) {
+    let bottom = at.y + at.height;
+    for (hz, _) in SUPPRESS_MARKS {
+        if hz < zoom.low || hz > zoom.high {
+            continue;
         }
-        for point in output.iter().rev().copied() {
-            taken.line_to(point);
+        let x = zoom.x_of(hz, at);
+        if x - 3.0 < at.x || x + 3.0 > at.x + at.width {
+            continue;
         }
-        taken.close_path();
         scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
-            red.multiply_alpha(0.55),
+            palette.grid,
             None,
-            &taken,
+            &Rect::new(x - 0.5, bottom - 3.0, x + 0.5, bottom),
         );
     }
-    curve(scene, palette.accent.multiply_alpha(0.7), input.into_iter(), 1.0);
-    let held = matches!(lit, Some(Grip::Threshold(_)));
-    curve(scene, red, output.into_iter(), if held { 1.8 } else { 1.1 });
+}
 
-    // Where you are, since the axis is no longer the familiar one.
-    if rack.detailed() {
-        for (hz, name) in SUPPRESS_MARKS {
-            if hz < low || hz > high {
-                continue;
-            }
-            let x = x_of(hz);
-            let width = font_width(name);
-            if x - width / 2.0 < at.x || x + width / 2.0 > right {
-                continue;
-            }
-            scene.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                palette.grid,
-                None,
-                &Rect::new(x - 0.5, bottom - 3.0, x + 0.5, bottom),
-            );
+/// The comb: the settled reduction, one tooth per notch, hanging below
+/// the floor at the frequency it lives.
+///
+/// Slow by construction — the engine averages it over seconds — so
+/// across a mixer a snare with three teeth is a snare you will go and
+/// look at.
+fn comb(scene: &mut Scene, palette: &Palette, settled: &[f32], zoom: SuppressZoom, at: Panel) {
+    rule(scene, palette.grid_beat, Line::new((at.x, at.y), (at.x + at.width, at.y)));
+    let tint = phase_tint(session::mix_phases::MixPhase::Polish);
+    for tooth in teeth(settled, &zoom) {
+        let x = tooth.place.mul_add(at.width, at.x);
+        let depth = (f64::from(tooth.depth_db) / 12.0).clamp(0.0, 1.0) * (at.height - 2.0);
+        let half = f64::from(tooth.depth_db).min(6.0).mul_add(0.4, 2.0);
+        let mut tri = BezPath::new();
+        tri.move_to((x - half, at.y));
+        tri.line_to((x + half, at.y));
+        tri.line_to((x, at.y + depth));
+        tri.close_path();
+        scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.8), None, &tri);
+    }
+}
+
+/// The ribbon between two polylines of the same length.
+fn ribbon(scene: &mut Scene, color: Color, upper: &[(f64, f64)], lower: &[(f64, f64)]) {
+    let Some((x, y)) = upper.first().copied() else {
+        return;
+    };
+    let mut taken = BezPath::new();
+    taken.move_to((x, y));
+    for point in upper.iter().skip(1).copied() {
+        taken.line_to(point);
+    }
+    for point in lower.iter().rev().copied() {
+        taken.line_to(point);
+    }
+    taken.close_path();
+    scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &taken);
+}
+
+/// The area under a polyline, down to `floor`.
+fn area_under(scene: &mut Scene, color: Color, points: &[(f64, f64)], floor: f64) {
+    let (Some((x0, y0)), Some((x1, _))) = (points.first().copied(), points.last().copied()) else {
+        return;
+    };
+    let mut area = BezPath::new();
+    area.move_to((x0, floor));
+    area.line_to((x0, y0));
+    for point in points.iter().skip(1).copied() {
+        area.line_to(point);
+    }
+    area.line_to((x1, floor));
+    area.close_path();
+    scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &area);
+}
+
+/// A notch the settled reduction has found.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tooth {
+    /// Where across the zoomed band, 0..1.
+    pub place: f64,
+    /// How deep, in dB.
+    pub depth_db: f32,
+}
+
+/// The local maxima of a settled reduction curve that are worth a
+/// tooth: deeper than half a decibel, and the deepest bin of their
+/// neighbourhood.
+#[must_use]
+pub fn teeth(settled: &[f32], zoom: &SuppressZoom) -> Vec<Tooth> {
+    let bins = crate::num::coord(settled.len().saturating_sub(1).max(1));
+    let full = (20_000.0_f64 / 20.0).log10();
+    settled
+        .iter()
+        .enumerate()
+        .filter(|(i, depth)| {
+            **depth > 0.5
+                && settled.get(i.wrapping_sub(1)).is_none_or(|left| left <= *depth)
+                && settled.get(i.saturating_add(1)).is_none_or(|right| right < *depth)
+        })
+        .filter_map(|(i, depth)| {
+            let hz = 20.0 * 10.0_f64.powf(crate::num::coord(i) / bins * full);
+            let place = zoom.place_of(hz);
+            (0.0..=1.0).contains(&place).then_some(Tooth {
+                place,
+                depth_db: *depth,
+            })
+        })
+        .collect()
+}
+
+/// A value read out of the analyser's log-spaced bins at a frequency.
+///
+/// Between two bins rather than snapped to one, or a zoomed view turns
+/// into a staircase.
+fn bin_at(bins: &[f32], hz: f64) -> f64 {
+    let last = crate::num::coord(bins.len().saturating_sub(1).max(1));
+    let full = (20_000.0_f64 / 20.0).log10();
+    let place = ((hz / 20.0).log10() / full).clamp(0.0, 1.0) * last;
+    let low = place.floor();
+    let i = crate::num::index(low);
+    let a = bins.get(i).copied().unwrap_or(0.0);
+    let b = bins.get(i.saturating_add(1)).copied().unwrap_or(a);
+    let t = place - low;
+    f64::from(a).mul_add(1.0 - t, f64::from(b) * t)
+}
+
+/// The window a suppressor's display shows: its band, opened out a
+/// third of an octave each side so the shoulders are visible.
+///
+/// A cut you can see starting is a cut you can tell is in the right
+/// place. Shared by the drawing and the hit test, because an edge you
+/// grab has to be where the edge is drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SuppressZoom {
+    pub low: f64,
+    pub high: f64,
+}
+
+impl SuppressZoom {
+    #[must_use]
+    pub fn of(set: Suppress) -> Self {
+        Self {
+            low: f64::from(set.low) / SUPPRESS_SHOULDER,
+            high: f64::from(set.high) * SUPPRESS_SHOULDER,
         }
+    }
+
+    fn decade(self) -> f64 {
+        (self.high / self.low).log10().max(f64::EPSILON)
+    }
+
+    /// The frequency at `t` across the window.
+    #[must_use]
+    pub fn hz_at(self, t: f64) -> f64 {
+        self.low * 10.0_f64.powf(t * self.decade())
+    }
+
+    /// Where a frequency falls across the window, 0..1 inside it.
+    #[must_use]
+    pub fn place_of(self, hz: f64) -> f64 {
+        (hz / self.low).log10() / self.decade()
+    }
+
+    /// The same, in a panel's pixels.
+    #[must_use]
+    pub fn x_of(self, hz: f64, at: Panel) -> f64 {
+        self.place_of(hz).clamp(0.0, 1.0).mul_add(at.width, at.x)
     }
 }
 
 /// How far past its band a suppressor's display opens out.
-///
-/// A third of an octave each side, so the band's shoulders are visible:
-/// a cut you can see starting is a cut you can tell is in the right
-/// place.
 const SUPPRESS_SHOULDER: f64 = 1.26;
 
 /// The frequencies a zoomed suppressor ticks, where they fall inside
@@ -2189,11 +2601,6 @@ const SUPPRESS_MARKS: [(f64, &str); 6] = [
     (15_000.0, "15k"),
 ];
 
-/// A tick's own width, for deciding whether it fits.
-const fn font_width(_name: &str) -> f64 {
-    6.0
-}
-
 /// The window a suppressor draws its spectrum in.
 ///
 /// The analyser's own range — see `simulate::spectrum`, which clamps to
@@ -2202,130 +2609,358 @@ const fn font_width(_name: &str) -> f64 {
 const SUPPRESS_FLOOR_DB: f64 = -40.0;
 const SUPPRESS_CEIL_DB: f64 = 16.0;
 
-/// How many bins either side the cut is smoothed over.
-///
-/// The filter's own skirt, in effect: wide enough that a one-bin peak
-/// produces a dip with shoulders rather than a square notch.
-const SUPPRESS_SMOOTH: usize = 4;
+/// Which edge of a band.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    Low,
+    High,
+}
 
-/// The delay: its repeats, on a line.
+/// The delay: its repeats, on a line — drawn the way its machine makes
+/// them.
 ///
-/// `delay-ui`'s own centrepiece idea — "the repeats it draws are the
-/// repeats you will hear" — at the one size a strip has. Time runs
-/// left to right over a window wide enough to hold several taps, each
-/// one shorter than the last by the feedback, and the dry hit stands at
-/// the origin so the first gap IS the delay time.
-fn echo(scene: &mut Scene, palette: &Palette, echo: Echo, at: Panel, rack: Rack, lit: Option<Grip>) {
+/// The substrate is `delay-ui`'s own centrepiece idea at strip size:
+/// time runs left to right over a window wide enough to hold several
+/// taps, each one shorter than the last by the feedback, and the dry
+/// hit stands at the origin so the first gap IS the delay time. What
+/// the FAMILY changes is the shape of one repeat, exactly as the
+/// plugin's faces do: a digital delay's are identical bars, a tape's
+/// round off and darken, a chip's smear wider each pass, a pitch
+/// delay's climb, a rhythmic one's land on a grid, a reversed one's
+/// swell into the tap. You should know which delay you are looking at
+/// before you read a word.
+///
+/// Live, the repeats are lit by the wet return: a phrase decaying
+/// through the taps brightens each in turn, so the panel plays the
+/// delay rather than describing it.
+fn echo(
+    scene: &mut Scene,
+    palette: &Palette,
+    echo: Echo,
+    meters: &Meters,
+    at: Panel,
+    rack: Rack,
+    lit: Option<Grip>,
+) {
     let bottom = at.y + at.height;
     let floor = bottom - 1.0;
-    let left = at.x + 3.0;
+    let family = echo.family();
     if rack.detailed() {
         rule(scene, palette.grid, Line::new((at.x, floor), (at.x + at.width, floor)));
-    }
-    // A window of four taps at the current time, so the picture keeps
-    // its shape as the time changes rather than the taps marching off
-    // the end. What moves with the time is the SPACING, which is the
-    // thing the number means.
-    let window = f64::from(echo.time).max(1.0) * 4.5;
-    let held = matches!(lit, Some(Grip::Threshold(_)));
-    let wet = hex_of(crate::tcp::to_theme(palette.pan));
-    let mut level = 1.0_f64;
-    let mut when = 0.0_f64;
-    for tap in 0..16 {
-        let x = left + when / window * (at.width - 6.0);
-        if x > at.x + at.width {
-            break;
+        // A rhythmic delay lands on a grid, so the grid is drawn: a
+        // beat every delay time, a bar every four.
+        if family == DelayFamily::Rhythmic {
+            let taps = echo_taps(echo, at);
+            for (k, (x, _)) in taps.iter().enumerate() {
+                let bar = k % 4 == 0;
+                rule(
+                    scene,
+                    if bar { palette.grid_beat } else { palette.grid },
+                    Line::new((*x, at.y), (*x, floor)),
+                );
+            }
         }
+    }
+    let wet = hex_of(crate::tcp::to_theme(palette.pan));
+    let time_held = lit == Some(Grip::Time);
+    let feedback_held = lit == Some(Grip::Feedback);
+    let mix = f64::from(echo.mix).clamp(0.0, 1.0);
+    let feedback = f64::from(echo.feedback).clamp(0.0, 0.99);
+    let mut previous_x = at.x + 3.0;
+    for (k, (x, level)) in echo_taps(echo, at).into_iter().enumerate() {
         // The dry hit, then the repeats at the level the feedback
         // leaves them. The mix decides how strongly they are INKED
         // rather than how tall they are: a quiet delay is still a delay
         // with those repeats at those times, and shrinking them would
         // confuse the two settings.
         let height = at.height * 0.9 * level;
-        let ink = if tap == 0 {
-            palette.text
+        let dry = k == 0;
+        // Lit by the signal: the dry hit by the input, each repeat by
+        // the wet return that has had k−1 more passes of feedback.
+        let glow = if meters.is_empty() {
+            0.0
+        } else if dry {
+            f64::from(meters.sat_peak).clamp(0.0, 1.0)
         } else {
-            wet.multiply_alpha(crate::mcp::f64_to_f32(
-                (0.35 + f64::from(echo.mix) * 0.65).clamp(0.0, 1.0),
-            ))
+            (f64::from(meters.delay_wet) * feedback.powi(i32::try_from(k).unwrap_or(1).saturating_sub(1))
+                * 3.0)
+                .clamp(0.0, 1.0)
         };
-        rule_wide(
-            scene,
-            ink,
-            Line::new((x, floor), (x, floor - height)),
-            if tap == 0 || held { 2.0 } else { 1.4 },
-        );
-        when += f64::from(echo.time);
-        level *= f64::from(echo.feedback).clamp(0.0, 0.99);
-        if level < 0.03 {
-            break;
+        let base = if dry { 1.0 } else { 0.35 + mix * 0.65 };
+        let alpha = crate::mcp::f64_to_f32((base * glow.mul_add(0.4, 0.6)).clamp(0.0, 1.0));
+        let ink = if dry { palette.text.multiply_alpha(alpha) } else { wet.multiply_alpha(alpha) };
+        let held = (dry && time_held) || (!dry && feedback_held) || (k == 1 && time_held);
+        let width = if dry || held { 2.0 } else { 1.4 };
+        match family {
+            _ if dry => rule_wide(scene, ink, Line::new((x, floor), (x, floor - height)), width),
+            DelayFamily::Digital | DelayFamily::Rhythmic => {
+                rule_wide(scene, ink, Line::new((x, floor), (x, floor - height)), width);
+            }
+            // Tape: the top rounds off and each pass is darker — the
+            // head loses treble every time round.
+            DelayFamily::Tape => {
+                let dull = crate::mcp::f64_to_f32(crate::num::coord(k).mul_add(-0.12, 1.0).clamp(0.3, 1.0));
+                let mut path = BezPath::new();
+                path.move_to((x, floor));
+                path.line_to((x, floor - height + 2.0));
+                path.quad_to((x, floor - height), (x + 2.0, floor - height));
+                scene.stroke(
+                    &Stroke::new(width).with_caps(vello::kurbo::Cap::Round),
+                    Affine::IDENTITY,
+                    ink.multiply_alpha(dull),
+                    None,
+                    &path,
+                );
+            }
+            // A chip: each repeat is wider than the last — the bucket
+            // line smears.
+            DelayFamily::Analog => {
+                let half = crate::num::coord(k).mul_add(0.55, 0.6);
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    ink,
+                    None,
+                    &Rect::new(x - half, floor - height, x + half, floor),
+                );
+            }
+            // Pitch: each repeat's foot rises by the interval.
+            DelayFamily::Pitch => {
+                let rise = 3.2 * crate::num::coord(k);
+                rule_wide(scene, ink, Line::new((x, floor - rise), (x, floor - rise - height)), width);
+                rule(scene, palette.grid_beat, Line::new((x - 2.0, floor - rise), (x + 2.0, floor - rise)));
+            }
+            // Special: a reversed repeat swells INTO the tap; the rest
+            // are a repeat that is no longer one — a soft blob whose
+            // height is its level.
+            DelayFamily::Special => {
+                if echo.style == DelayStyle::Reverse {
+                    let mut wedge = BezPath::new();
+                    wedge.move_to((previous_x + 2.0, floor));
+                    wedge.line_to((x, floor));
+                    wedge.line_to((x, floor - height));
+                    wedge.close_path();
+                    scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.8), None, &wedge);
+                } else {
+                    let rx = crate::num::coord(k).mul_add(0.5, 1.6);
+                    scene.fill(
+                        Fill::NonZero,
+                        Affine::IDENTITY,
+                        ink.multiply_alpha(0.7),
+                        None,
+                        &vello::kurbo::Ellipse::new((x, floor - height / 2.0), (rx, height / 2.0), 0.0),
+                    );
+                }
+            }
         }
+        previous_x = x;
     }
 }
 
-/// The reverb: an impulse, the gap before its tail, and the tail.
+/// Where the delay's taps land, and how tall each is (0..1).
+///
+/// The dry hit first, then the repeats at the level the feedback
+/// leaves them. Shared by the drawing and the hit test: a tap you grab
+/// has to be where the tap is drawn.
+#[must_use]
+pub fn echo_taps(echo: Echo, at: Panel) -> Vec<(f64, f64)> {
+    let left = at.x + 3.0;
+    // A window of four and a half taps at the current time, so the
+    // picture keeps its shape as the time changes rather than the taps
+    // marching off the end. What moves with the time is the SPACING,
+    // which is the thing the number means.
+    let time = f64::from(echo.time).max(1.0);
+    let window = time * 4.5;
+    let feedback = f64::from(echo.feedback).clamp(0.0, 0.99);
+    let rhythmic = echo.family() == DelayFamily::Rhythmic;
+    let mut out = Vec::with_capacity(16);
+    let mut level = 1.0_f64;
+    let mut when = 0.0_f64;
+    for tap in 0..16_usize {
+        let x = (when / window).mul_add(at.width - 6.0, left);
+        if x > at.x + at.width || level < 0.03 {
+            break;
+        }
+        out.push((x, level));
+        let step = if rhythmic {
+            PATTERN.get(tap.rem_euclid(PATTERN.len())).copied().unwrap_or(1.0)
+        } else {
+            1.0
+        };
+        when += time * step;
+        level *= feedback;
+    }
+    out
+}
+
+/// Where a rhythmic delay's taps land: on subdivisions rather than
+/// evenly, in delay times.
+const PATTERN: [f64; 5] = [1.0, 0.5, 0.75, 0.5, 1.25];
+
+/// The reverb: an impulse, the gap before its tail, and the tail — the
+/// algorithm's own.
 ///
 /// `reverb-ui`'s third centrepiece — "the recorded thing itself: an
 /// impulse and its decay envelope" — which is the only picture of a
-/// reverb that survives being a hundred and thirty pixels wide. Predelay
-/// is the gap you can see; decay is how far right the tail reaches.
-fn room(scene: &mut Scene, palette: &Palette, room: Room, at: Panel, rack: Rack, lit: Option<Grip>) {
+/// reverb that survives being a hundred and thirty pixels wide. But
+/// the envelope is not an exponential drawn from the decay knob: it is
+/// the algorithm's impulse response, rendered by the plugin's own
+/// probe (see [`crate::live::tail`]). That is what makes a plate and a
+/// spring with the same decay different pictures — a plate is dense
+/// from the first millisecond, a spring drips, a bloom rises before it
+/// falls — because they are different sounds.
+///
+/// While the render is on its way the exponential stands in, dashed:
+/// a guess that looked like a measurement would be believed.
+fn room(
+    scene: &mut Scene,
+    palette: &Palette,
+    room: Room,
+    meters: &Meters,
+    at: Panel,
+    rack: Rack,
+    lit: Option<Grip>,
+) {
     let bottom = at.y + at.height;
     let floor = bottom - 1.0;
     if rack.detailed() {
         rule(scene, palette.grid, Line::new((at.x, floor), (at.x + at.width, floor)));
     }
-    // The window is the decay, so a long reverb fills the panel and a
-    // short one does not reach the end — which is the comparison you
-    // want across a mixer.
-    let window = (f64::from(room.decay) * 1000.0).max(1.0);
-    let held = matches!(lit, Some(Grip::Threshold(_)));
-    let ink = crate::tcp::to_theme(palette.pan);
-    let wet = f64::from(room.mix).clamp(0.0, 1.0);
+    let ink = hex_of(crate::tcp::to_theme(palette.pan));
+    let mix = f64::from(room.mix).clamp(0.0, 1.0);
+    let geometry = RoomGeometry::of(room, at);
 
     // The dry impulse.
     rule_wide(
         scene,
         palette.text,
-        Line::new((at.x, floor), (at.x, floor - at.height * 0.92)),
+        Line::new((at.x, floor), (at.x, at.height.mul_add(-0.92, floor))),
         2.0,
     );
-    let start = at.x + f64::from(room.predelay) / window * at.width;
-    // The tail: an exponential to −60 dB across the decay.
-    let points = (0..SAMPLES).map(|i| {
-        let t = crate::num::coord(i) / crate::num::coord(SAMPLES.saturating_sub(1).max(1));
-        let ms = t * window;
-        let level = if ms < f64::from(room.predelay) {
-            0.0
-        } else {
-            let into = (ms - f64::from(room.predelay)) / window.max(f64::EPSILON);
-            10.0_f64.powf(-3.0 * into) * wet.max(0.05)
-        };
-        (at.x + t * at.width, floor - level * at.height * 0.92)
-    });
-    curve(scene, hex_of(ink), points, if held { 2.0 } else { 1.4 });
+
+    // The tail: the rendered envelope, dB below its peak, across the
+    // decay window. The mix scales its height — a quiet reverb is a
+    // low tail — but never below a quarter, or a reverb at 5% would
+    // be a floor line and nothing else.
+    let tail = crate::live::tail(room.key());
+    let scale = mix.mul_add(0.75, 0.25) * at.height * 0.92;
+    let points: Vec<(f64, f64)> = tail
+        .envelope
+        .iter()
+        .enumerate()
+        .map(|(i, db)| {
+            let t = crate::num::coord(i) / crate::num::coord(crate::live::TAIL_BINS.saturating_sub(1));
+            let level = (1.0 + f64::from(*db) / 60.0).clamp(0.0, 1.0);
+            (geometry.start + t * (geometry.end - geometry.start), floor - level * scale)
+        })
+        .collect();
+    // Lit by the wet return: a reverb doing nothing is an outline, one
+    // washing a chorus is a filled shape.
+    if !meters.is_empty()
+        && let (Some(first), Some(last)) = (points.first().copied(), points.last().copied())
+    {
+        let wet = f64::from(meters.reverb_wet).clamp(0.0, 1.0);
+        let mut area = BezPath::new();
+        area.move_to((first.0, floor));
+        for point in points.iter().copied() {
+            area.line_to(point);
+        }
+        area.line_to((last.0, floor));
+        area.close_path();
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            ink.multiply_alpha(crate::mcp::f64_to_f32(wet.mul_add(0.45, 0.08))),
+            None,
+            &area,
+        );
+    }
+    let held = matches!(lit, Some(Grip::Decay | Grip::Mix(Which::Reverb)));
+    let width = if held { 2.0 } else { 1.4 };
+    if tail.exact {
+        curve(scene, ink, points.into_iter(), width);
+    } else {
+        dashed(scene, ink, points.into_iter(), width);
+    }
     if rack.detailed() {
-        rule(
+        let held = lit == Some(Grip::Predelay);
+        rule_wide(
             scene,
-            palette.grid_beat,
-            Line::new((start, at.y), (start, floor)),
+            if held { palette.text } else { palette.grid_beat },
+            Line::new((geometry.start, at.y), (geometry.start, floor)),
+            if held { 1.8 } else { 1.0 },
         );
     }
 }
 
+/// Where the reverb's tail begins and ends in a panel.
+///
+/// The window is the decay, so a long reverb fills the panel and a
+/// short one does not reach the end — which is the comparison you want
+/// across a mixer. Shared by the drawing and the hit test.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoomGeometry {
+    /// Where the tail starts: the predelay, along the decay window.
+    pub start: f64,
+    /// The panel's right edge — the decay reaches it by definition.
+    pub end: f64,
+}
+
+impl RoomGeometry {
+    #[must_use]
+    pub fn of(room: Room, at: Panel) -> Self {
+        let window = (f64::from(room.decay) * 1000.0).max(1.0);
+        let start = (f64::from(room.predelay) / window).clamp(0.0, 0.5).mul_add(at.width, at.x);
+        Self {
+            start,
+            end: at.x + at.width,
+        }
+    }
+}
+
 /// A theme colour as a paint colour — the inverse of `crate::tcp::to_theme`.
-fn hex_of(color: daw_theme::Color) -> Color {
+const fn hex_of(color: daw_theme::Color) -> Color {
     Color::from_rgba8(color.r, color.g, color.b, color.a)
 }
 
-/// The saturator's static transfer curve over x ∈ [−1, 1].
-fn sat(scene: &mut Scene, palette: &Palette, pre: &ClassAPreamp, at: Panel, rack: Rack) {
+/// The saturator: its curve, where the signal is on it, and what it
+/// is adding.
+///
+/// A transfer curve alone says drive and nothing else, because every
+/// saturator is an S. The model underneath has the two things that
+/// separate a valve from a transistor — asymmetry, and the harmonics
+/// that produces — and the plugin measures the second with a probe. So
+/// the panel answers the three questions a mixer asks of a saturator:
+///
+/// - **Is it happening?** The curve is lit from the origin out to the
+///   signal's peak this frame. A track well under the knee lights the
+///   straight part; a slammed one lights the bend.
+/// - **What is it adding?** A ladder of seven bars, H2 through H8, from
+///   the probe — evens in the phase's yellow, odds in grey. A biased
+///   triode draws a yellow ladder, a symmetric rail a grey one, and you
+///   can tell them apart from across the room. It breathes with the
+///   signal: the probe runs at three levels and the live peak reads
+///   between them.
+/// - **Which circuit?** The glyph beside the name, from the plugin's
+///   own classification.
+fn sat(
+    scene: &mut Scene,
+    palette: &Palette,
+    pre: &ClassAPreamp,
+    meters: &Meters,
+    at: Panel,
+    rack: Rack,
+    lit: Option<Grip>,
+) {
+    let (at, ladder_box) = sat_split(at, rack);
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     let mid_y = at.y + at.height / 2.0;
+    let mid_x = at.x + at.width / 2.0;
 
     if rack.detailed() {
         rule(scene, palette.grid, Line::new((at.x, mid_y), (right, mid_y)));
+        rule(scene, palette.grid, Line::new((mid_x, at.y), (mid_x, bottom)));
         // Unity, so the curve's departure from it IS the saturation.
         // Without it a gentle drive and a hard one are both "an S", and
         // the thing you are looking for is how far from straight it
@@ -2339,13 +2974,423 @@ fn sat(scene: &mut Scene, palette: &Palette, pre: &ClassAPreamp, at: Panel, rack
 
     let mut samples = [(0.0_f32, 0.0_f32); SAMPLES];
     saturate_dsp::preamp::analysis::transfer_curve(pre, &mut samples);
-    let points = samples.iter().map(|(x, y)| {
+    let place = |(x, y): &(f32, f32)| {
         (
-            at.x + (f64::from(*x) + 1.0) / 2.0 * at.width,
+            f64::midpoint(f64::from(*x), 1.0).mul_add(at.width, at.x),
             (mid_y - f64::from(*y) * at.height / 2.0).clamp(at.y, bottom),
         )
-    });
-    curve(scene, palette.pan, points, 1.5);
+    };
+    let held = matches!(lit, Some(Grip::Drive | Grip::Bias));
+    curve(scene, palette.pan, samples.iter().map(place), if held { 2.2 } else { 1.5 });
+
+    // The lit reach: from the origin out to the signal's peak, both
+    // ways. One stroke, and the whole "is it doing anything" answer.
+    if !meters.is_empty() {
+        let peak = f64::from(meters.sat_peak).clamp(0.0, 1.0);
+        let tint = phase_tint(session::mix_phases::MixPhase::Tone);
+        let reach: Vec<(f64, f64)> = samples
+            .iter()
+            .filter(|(x, _)| f64::from(x.abs()) <= peak)
+            .map(place)
+            .collect();
+        if reach.len() >= 2 {
+            if let (Some(a), Some(b)) = (reach.first().copied(), reach.last().copied()) {
+                dot(scene, tint, a, 1.8);
+                dot(scene, tint, b, 1.8);
+            }
+            curve(scene, tint, reach.into_iter(), 2.4);
+        }
+    }
+
+    // The ladder.
+    if let Some(lb) = ladder_box {
+        let ladder = crate::live::ladder(pre);
+        let rungs = if meters.is_empty() {
+            ladder.full()
+        } else {
+            let db = 20.0 * f64::from(meters.sat_peak.max(1e-4)).log10();
+            ladder.at(crate::mcp::f64_to_f32(db))
+        };
+        let floor = lb.y + lb.height - 1.0;
+        rule(scene, palette.grid, Line::new((lb.x, floor), (lb.x + lb.width, floor)));
+        let tint = phase_tint(session::mix_phases::MixPhase::Tone);
+        let n = crate::num::coord(crate::live::RUNGS);
+        let gap = 1.2;
+        let bar = ((lb.width - 2.0 - gap * (n - 1.0)) / n).max(1.0);
+        let tall = lb.height - 4.0;
+        for (k, rung) in rungs.iter().enumerate() {
+            // Rung k is harmonic k+2, so the evens are the even k. Drawn
+            // on a square root so the fourth and sixth are visible
+            // beside a second that dwarfs them; the header prints the
+            // share as a number.
+            let even = k % 2 == 0;
+            let h = f64::from(rung.clamp(0.0, 1.0)).sqrt() * tall;
+            let x = crate::num::coord(k).mul_add(bar + gap, lb.x + 1.0);
+            let ink = if even { tint } else { palette.text_faint.multiply_alpha(0.75) };
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                ink,
+                None,
+                &Rect::new(x, floor - h, x + bar, floor),
+            );
+        }
+        // The tilt, as a wedge under the ladder: which end of the
+        // spectrum meets the knee first.
+        if rack.detailed() {
+            let lean = (f64::from(pre.tilt_db()) / 12.0).clamp(-1.0, 1.0);
+            let held = lit == Some(Grip::Tilt);
+            rule_wide(
+                scene,
+                if held { palette.text } else { palette.text_faint },
+                Line::new(
+                    (lb.x + 2.0, lean.mul_add(1.5, floor + 3.0)),
+                    (lb.x + lb.width - 2.0, lean.mul_add(-1.5, floor + 3.0)),
+                ),
+                if held { 1.6 } else { 0.9 },
+            );
+        }
+    }
+}
+
+/// The saturator's body: the curve's square on the left, the ladder's
+/// column on the right — or the whole body for the curve when there
+/// is no room for a ladder anyone could read.
+#[must_use]
+pub const fn sat_split(body: Panel, rack: Rack) -> (Panel, Option<Panel>) {
+    if !rack.detailed() || body.width < 80.0 {
+        return (body, None);
+    }
+    let ladder_w = body.width * 0.34;
+    let curve = Panel {
+        width: body.width - ladder_w - 4.0,
+        ..body
+    };
+    let ladder = Panel {
+        x: body.x + body.width - ladder_w,
+        width: ladder_w,
+        height: body.height - 6.0,
+        ..body
+    };
+    (curve, Some(ladder))
+}
+
+/// An open polyline, dashed — for a picture that is a guess rather
+/// than a measurement.
+fn dashed(
+    scene: &mut Scene,
+    color: Color,
+    points: impl Iterator<Item = (f64, f64)>,
+    width: f64,
+) {
+    let mut path = BezPath::new();
+    for (i, point) in points.enumerate() {
+        if i == 0 {
+            path.move_to(point);
+        } else {
+            path.line_to(point);
+        }
+    }
+    if path.is_empty() {
+        return;
+    }
+    scene.stroke(
+        &Stroke::new(width).with_dashes(0.0, [2.5, 2.0]),
+        Affine::IDENTITY,
+        color,
+        None,
+        &path,
+    );
+}
+
+/// The machine a unit is, in eight pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Glyph {
+    Circuit(Circuit),
+    Delay(DelayFamily),
+    Room(RoomFamily),
+}
+
+/// How wide a header glyph is, with its gap to the name.
+pub const GLYPH_W: f64 = 11.0;
+
+/// Draw a glyph with its left edge at `x`, sitting on `baseline`.
+///
+/// Paths, never text: a glyph is drawn into every header of every
+/// strip, and a glyph run is the most expensive thing the renderer
+/// draws. Each is the plugin's own face at the smallest size it still
+/// reads: a valve, reels, a chip, an arch, a coil.
+fn glyph(scene: &mut Scene, ink: Color, glyph: Glyph, x: f64, baseline: f64) {
+    match glyph {
+        Glyph::Circuit(circuit) => circuit_glyph(scene, ink, circuit, x, baseline),
+        Glyph::Delay(family) => delay_glyph(scene, ink, family, x, baseline),
+        Glyph::Room(family) => room_glyph(scene, ink, family, x, baseline),
+    }
+}
+
+/// A stroked glyph path, round-capped.
+fn stroke_glyph(scene: &mut Scene, ink: Color, path: &BezPath, width: f64) {
+    scene.stroke(
+        &Stroke::new(width).with_caps(vello::kurbo::Cap::Round),
+        Affine::IDENTITY,
+        ink,
+        None,
+        path,
+    );
+}
+
+/// The saturator's circuit, in eight pixels.
+fn circuit_glyph(scene: &mut Scene, ink: Color, circuit: Circuit, x: f64, baseline: f64) {
+    let top = baseline - 7.0;
+    let stroke = |scene: &mut Scene, path: &BezPath, w: f64| stroke_glyph(scene, ink, path, w);
+    let mut path = BezPath::new();
+    match circuit {
+        // A valve: a rounded envelope on a base.
+        Circuit::Valve => {
+            path.move_to((x + 1.0, baseline));
+            path.line_to((x + 1.0, top + 3.0));
+            path.quad_to((x + 1.0, top), (x + 4.0, top));
+            path.quad_to((x + 7.0, top), (x + 7.0, top + 3.0));
+            path.line_to((x + 7.0, baseline));
+            stroke(scene, &path, 0.9);
+        }
+        // Tape: two reels.
+        Circuit::Tape => reels(scene, ink, x, top),
+        // A core: windings.
+        Circuit::Core => {
+            for i in 0..4 {
+                let cx = crate::num::coord(i).mul_add(2.0, x + 1.0);
+                path.move_to((cx, baseline));
+                path.quad_to((cx, top), (cx + 2.0, top));
+            }
+            stroke(scene, &path, 0.8);
+        }
+        // Solid state: the corner.
+        Circuit::Solid => {
+            path.move_to((x, baseline));
+            path.line_to((x + 4.0, top + 1.0));
+            path.line_to((x + 8.0, top + 1.0));
+            stroke(scene, &path, 1.0);
+        }
+        // Steps.
+        Circuit::Steps => {
+            path.move_to((x, baseline));
+            for i in 0..3 {
+                let sx = crate::num::coord(i).mul_add(2.6, x);
+                let sy = crate::num::coord(i.saturating_add(1)).mul_add(-2.2, baseline);
+                path.line_to((sx, sy));
+                path.line_to((sx + 2.6, sy));
+            }
+            stroke(scene, &path, 0.9);
+        }
+    }
+}
+
+/// Two reels — tape, whether it is a saturator's or a delay's.
+fn reels(scene: &mut Scene, ink: Color, x: f64, top: f64) {
+    let mut path = BezPath::new();
+    for cx in [x + 2.0, x + 6.5] {
+        path.extend(vello::kurbo::Circle::new((cx, top + 3.5), 1.8).to_path(0.1).elements().iter().copied());
+    }
+    path.move_to((x + 2.0, top + 1.7));
+    path.line_to((x + 6.5, top + 1.7));
+    stroke_glyph(scene, ink, &path, 0.8);
+}
+
+/// The delay's family, in eight pixels.
+fn delay_glyph(scene: &mut Scene, ink: Color, family: DelayFamily, x: f64, baseline: f64) {
+    let top = baseline - 7.0;
+    let stroke = |scene: &mut Scene, path: &BezPath, w: f64| stroke_glyph(scene, ink, path, w);
+    let mut path = BezPath::new();
+    match family {
+        // Digital: three exact ticks.
+        DelayFamily::Digital => {
+            for i in 0..3 {
+                let tx = crate::num::coord(i).mul_add(3.0, x + 1.0);
+                path.move_to((tx, baseline));
+                path.line_to((tx, top + 1.0));
+            }
+            stroke(scene, &path, 1.0);
+        }
+        DelayFamily::Tape => reels(scene, ink, x, top),
+        // Analog: a chip with legs.
+        DelayFamily::Analog => {
+            path.extend(Rect::new(x + 1.0, top + 1.5, x + 7.0, baseline - 1.5).to_path(0.1).elements().iter().copied());
+            for i in 0..3 {
+                let lx = crate::num::coord(i).mul_add(2.0, x + 2.0);
+                path.move_to((lx, top + 1.5));
+                path.line_to((lx, top));
+                path.move_to((lx, baseline - 1.5));
+                path.line_to((lx, baseline));
+            }
+            stroke(scene, &path, 0.8);
+        }
+        // Pitch: a staircase of repeats.
+        DelayFamily::Pitch => {
+            for i in 0..3 {
+                let tx = crate::num::coord(i).mul_add(3.0, x + 1.0);
+                let rise = crate::num::coord(i) * 2.0;
+                path.move_to((tx, baseline - rise));
+                path.line_to((tx, rise.mul_add(-0.5, top + 2.0)));
+            }
+            stroke(scene, &path, 1.0);
+        }
+        // Rhythmic: the tap grid.
+        DelayFamily::Rhythmic => {
+            for (i, j) in [(0, 0), (1, 0), (0, 1), (1, 1), (2, 0)] {
+                let cx = crate::num::coord(i).mul_add(3.0, x + 1.5);
+                let cy = crate::num::coord(j).mul_add(3.5, top + 2.0);
+                path.extend(vello::kurbo::Circle::new((cx, cy), 0.9).to_path(0.1).elements().iter().copied());
+            }
+            scene.fill(Fill::NonZero, Affine::IDENTITY, ink, None, &path);
+        }
+        // Special: a smear.
+        DelayFamily::Special => {
+            path.extend(vello::kurbo::Ellipse::new((x + 4.0, top + 3.5), (3.5, 2.0), 0.4).to_path(0.1).elements().iter().copied());
+            stroke(scene, &path, 0.8);
+        }
+    }
+}
+
+/// The reverb's family, in eight pixels.
+fn room_glyph(scene: &mut Scene, ink: Color, family: RoomFamily, x: f64, baseline: f64) {
+    let top = baseline - 7.0;
+    let stroke = |scene: &mut Scene, path: &BezPath, w: f64| stroke_glyph(scene, ink, path, w);
+    let mut path = BezPath::new();
+    match family {
+        // A hall: the arch.
+        RoomFamily::Hall => {
+            path.move_to((x, baseline));
+            path.line_to((x, top + 3.0));
+            path.quad_to((x, top), (x + 4.0, top));
+            path.quad_to((x + 8.0, top), (x + 8.0, top + 3.0));
+            path.line_to((x + 8.0, baseline));
+            stroke(scene, &path, 0.9);
+        }
+        // A plate: the sheet, hung.
+        RoomFamily::Plate => {
+            path.extend(Rect::new(x + 0.5, top + 2.0, x + 7.5, baseline).to_path(0.1).elements().iter().copied());
+            path.move_to((x + 2.0, top + 2.0));
+            path.line_to((x + 2.0, top));
+            path.move_to((x + 6.0, top + 2.0));
+            path.line_to((x + 6.0, top));
+            stroke(scene, &path, 0.8);
+        }
+        // A room: a box in perspective.
+        RoomFamily::Room => {
+            path.move_to((x, baseline));
+            path.line_to((x + 2.0, top + 2.0));
+            path.line_to((x + 6.0, top + 2.0));
+            path.line_to((x + 8.0, baseline));
+            path.close_path();
+            stroke(scene, &path, 0.9);
+        }
+        // A spring: the coil.
+        RoomFamily::Spring => {
+            path.move_to((x, baseline - 1.0));
+            for i in 0..4 {
+                let sx = crate::num::coord(i).mul_add(2.0, x);
+                path.line_to((sx + 1.0, top + 1.0));
+                path.line_to((sx + 2.0, baseline - 1.0));
+            }
+            stroke(scene, &path, 0.8);
+        }
+        // Ambient: the halo.
+        RoomFamily::Ambient => {
+            path.extend(vello::kurbo::Circle::new((x + 4.0, top + 3.5), 3.0).to_path(0.1).elements().iter().copied());
+            path.extend(vello::kurbo::Circle::new((x + 4.0, top + 3.5), 1.0).to_path(0.1).elements().iter().copied());
+            stroke(scene, &path, 0.8);
+        }
+        // Random: scattered.
+        RoomFamily::Random => {
+            for (dx, dy) in [(1.0, 1.0), (5.5, 2.5), (3.0, 5.0), (7.0, 6.0), (2.0, 3.5)] {
+                path.extend(vello::kurbo::Circle::new((x + dx, top + dy), 0.8).to_path(0.1).elements().iter().copied());
+            }
+            scene.fill(Fill::NonZero, Affine::IDENTITY, ink, None, &path);
+        }
+        // Special: the ladder of lamps.
+        RoomFamily::Special => {
+            path.move_to((x + 1.5, baseline));
+            path.line_to((x + 1.5, top));
+            path.move_to((x + 6.5, baseline));
+            path.line_to((x + 6.5, top));
+            for i in 0..3 {
+                let ry = crate::num::coord(i).mul_add(2.5, top + 1.0);
+                path.move_to((x + 1.5, ry));
+                path.line_to((x + 6.5, ry));
+            }
+            stroke(scene, &path, 0.8);
+        }
+        // Convolution: the recorded thing.
+        RoomFamily::Convolution => {
+            path.move_to((x, baseline - 3.0));
+            for (i, h) in [7.0, 2.0, 5.0, 3.5, 4.5, 4.0, 3.0].into_iter().enumerate() {
+                let sx = x + 1.0 + crate::num::coord(i);
+                path.line_to((sx, baseline - h));
+                path.line_to((sx + 0.5, (h - 3.0).mul_add(0.5, baseline - 3.0)));
+            }
+            stroke(scene, &path, 0.7);
+        }
+    }
+}
+
+/// A panel's header: what it is on the left — with the glyph of which
+/// machine, where the unit is a family of them — and what it is set
+/// to on the right.
+///
+/// The value is right-aligned so the panels' numbers line up down the
+/// rack — which is what lets you compare two strips by running your
+/// eye down them rather than reading six numbers.
+///
+/// The value is dropped rather than elided when the panel is too narrow
+/// for both: a truncated "−14d…" is a number you have to open the
+/// plugin to check, which is worse than one you know is not shown.
+#[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
+fn header(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    name: &str,
+    mark: Option<Glyph>,
+    value: &str,
+    bypassed: bool,
+    at: Panel,
+) {
+    const SIZE: f32 = 7.0;
+    let baseline = at.y + f64::from(SIZE);
+    // The header stays ABOVE the scrim, because it is the one thing on
+    // a bypassed panel you still need: which processor this is, and
+    // that it is off. Its own ink dims instead.
+    let (name_ink, value_ink) = if bypassed {
+        (palette.text_faint.multiply_alpha(0.55), palette.text_faint)
+    } else {
+        (palette.text_faint, palette.text_dim)
+    };
+    let mut left = at.x;
+    if let Some(mark) = mark {
+        glyph(scene, name_ink, mark, left, baseline - 0.5);
+        left += GLYPH_W;
+    }
+    crate::tcp::glyphs(scene, font, name_ink, name, left, baseline, SIZE);
+
+    // "BYPASS" replaces the value, because the value is what the
+    // processor WOULD do and it is not doing it. Leaving the numbers up
+    // would be a panel reporting a setting that is having no effect.
+    let value = if bypassed { "BYPASS" } else { value };
+    let name_w = font.width(name, SIZE) + (left - at.x);
+    let value_w = font.width(value, SIZE);
+    if name_w + value_w + 6.0 > at.width {
+        return;
+    }
+    crate::tcp::glyphs(
+        scene,
+        font,
+        value_ink,
+        value,
+        at.x + at.width - value_w,
+        baseline,
+        SIZE,
+    );
 }
 
 /// A colour the plugin states, as a colour this window can paint.
@@ -2437,58 +3482,6 @@ fn curve(
     );
 }
 
-/// The panel's name, small and in the corner.
-/// A panel's header: what it is on the left, what it is set to on the
-/// right.
-///
-/// The value is right-aligned so the three panels' numbers line up
-/// down the rack — which is what lets you compare two strips by
-/// running your eye down them rather than reading six numbers.
-///
-/// The value is dropped rather than elided when the panel is too narrow
-/// for both: a truncated "−14d…" is a number you have to open the
-/// plugin to check, which is worse than one you know is not shown.
-fn header(
-    scene: &mut Scene,
-    palette: &Palette,
-    font: &Font,
-    name: &str,
-    value: &str,
-    bypassed: bool,
-    at: Panel,
-) {
-    const SIZE: f32 = 7.0;
-    let baseline = at.y + f64::from(SIZE);
-    // The header stays ABOVE the scrim, because it is the one thing on
-    // a bypassed panel you still need: which processor this is, and
-    // that it is off. Its own ink dims instead.
-    let (name_ink, value_ink) = if bypassed {
-        (palette.text_faint.multiply_alpha(0.55), palette.text_faint)
-    } else {
-        (palette.text_faint, palette.text_dim)
-    };
-    crate::tcp::glyphs(scene, font, name_ink, name, at.x, baseline, SIZE);
-
-    // "BYPASS" replaces the value, because the value is what the
-    // processor WOULD do and it is not doing it. Leaving the numbers up
-    // would be a panel reporting a setting that is having no effect.
-    let value = if bypassed { "BYPASS" } else { value };
-    let name_w = font.width(name, SIZE);
-    let value_w = font.width(value, SIZE);
-    if name_w + value_w + 6.0 > at.width {
-        return;
-    }
-    crate::tcp::glyphs(
-        scene,
-        font,
-        value_ink,
-        value,
-        at.x + at.width - value_w,
-        baseline,
-        SIZE,
-    );
-}
-
 const fn f64_to_f32(value: f64) -> f32 {
     #[expect(
         clippy::cast_possible_truncation,
@@ -2551,10 +3544,12 @@ pub fn placeholder(index: usize) -> Tone {
         )],
         delay: Echo {
             time: f64_to_f32(180.0 + 60.0 * (drift + 2.0)),
+            style: voice.delay_style(),
             ..Echo::default()
         },
         reverb: Room {
             decay: f64_to_f32(1.1 + 0.35 * (drift + 2.0)),
+            algorithm: voice.reverb(),
             ..Room::default()
         },
         // Not all one zoom: a vocal worked at ±3 and a room mic at ±18
@@ -2673,6 +3668,27 @@ impl Character {
         }
     }
 
+    /// Which delay machine this voice would be sent to. Varied so a
+    /// mixer of racks shows the family faces rather than one repeated.
+    const fn delay_style(self) -> DelayStyle {
+        match self {
+            Self::Low => DelayStyle::Clean,
+            Self::Mid => DelayStyle::Tape,
+            Self::High => DelayStyle::Bbd,
+            Self::Broad => DelayStyle::Shimmer,
+        }
+    }
+
+    /// And which space.
+    const fn reverb(self) -> AlgorithmType {
+        match self {
+            Self::Low => AlgorithmType::Room,
+            Self::Mid => AlgorithmType::Plate,
+            Self::High => AlgorithmType::Hall,
+            Self::Broad => AlgorithmType::Cloud,
+        }
+    }
+
     const fn drive(self) -> f64 {
         match self {
             Self::Low => 3.4,
@@ -2707,8 +3723,39 @@ pub enum Grip {
     Attack(Which),
     /// And its release.
     Release(Which),
+    /// The gate's hold — the flat top of its table.
+    Hold(Which),
+    /// The gate's range — the fainter line under its threshold, how far
+    /// down what stays shut goes.
+    Range,
     /// The saturator's drive.
     Drive,
+    /// Its bias — the operating point, dragged sideways so the curve
+    /// leans.
+    Bias,
+    /// Its tilt — which end of the spectrum meets the knee first, the
+    /// wedge under the ladder.
+    Tilt,
+    /// A suppressor's depth — the ribbon, pulled down for more.
+    Depth(Which),
+    /// A suppressor's sharpness — how wide the reference it compares
+    /// against is.
+    Sharpness(Which),
+    /// One edge of a suppressor's band.
+    Edge(Which, Side),
+    /// The delay's time — the first repeat, dragged sideways.
+    Time,
+    /// Its feedback — any later repeat, dragged up and down.
+    Feedback,
+    /// The reverb's decay — the tail's reach.
+    Decay,
+    /// Its predelay — the gap rule between the impulse and the tail.
+    Predelay,
+    /// A wet/dry mix: the delay's, the reverb's, the saturator's.
+    Mix(Which),
+    /// A unit's machine glyph — clicked to cycle to the next style or
+    /// algorithm. A switch, like a bypass: it acts on the click.
+    Family(Which),
     /// A panel's header — clicked to switch that processor out.
     ///
     /// The header, because it is the one strip of a panel that is not
@@ -2751,7 +3798,7 @@ impl Grip {
     /// whether a press is the start of a gesture.
     #[must_use]
     pub const fn is_switch(self) -> bool {
-        matches!(self, Self::Bypass(_) | Self::Scale(_) | Self::Phase(_))
+        matches!(self, Self::Bypass(_) | Self::Scale(_) | Self::Phase(_) | Self::Family(_))
     }
 
     /// Which panel this grip lives in.
@@ -2763,9 +3810,18 @@ impl Grip {
             | Self::Ratio(which)
             | Self::Attack(which)
             | Self::Release(which)
+            | Self::Hold(which)
+            | Self::Depth(which)
+            | Self::Sharpness(which)
+            | Self::Edge(which, _)
+            | Self::Mix(which)
+            | Self::Family(which)
             | Self::Scale(which)
             | Self::Bypass(which) => which,
-            Self::Drive => Which::Sat,
+            Self::Drive | Self::Bias | Self::Tilt => Which::Sat,
+            Self::Range => Which::Gate,
+            Self::Time | Self::Feedback => Which::Delay,
+            Self::Decay | Self::Predelay => Which::Reverb,
             // A header belongs to no unit: it caps a run of them.
             Self::Phase(_) => Which::Eq,
         }
@@ -2864,8 +3920,13 @@ pub fn grip_at(
             continue;
         }
         // The header first: it sits above the body, and a click there
-        // is a bypass rather than whatever the body would have done.
+        // is a bypass rather than whatever the body would have done —
+        // except on the machine glyph, which cycles the machine.
         if rack.detailed() && y >= at.y && y < body.y {
+            let inner = at.inset(2.0);
+            if which.glyph_switches() && x >= inner.x && x < inner.x + GLYPH_W {
+                return Some(Grip::Family(which));
+            }
             return Some(Grip::Bypass(which));
         }
         if y < body.y || y > body.y + body.height {
@@ -2918,25 +3979,128 @@ pub fn grip_at(
                 // an EQ. The chip is the zoom's target; the rest of the
                 // graph belongs to the gesture that moves the chain.
             }
-            // A suppressor's whole display is its threshold: there is
-            // one line to move and the curve under it is the readout.
-            Which::DeEss | Which::Resonance => return Some(Grip::Threshold(which)),
+            // A suppressor: the band's edges where they are drawn, then
+            // the display in three bands of its own — the reference up
+            // top is the threshold, the ribbon through the middle is
+            // the depth, the floor is the sharpness. Zones rather than
+            // curves, because the curves move with the audio and a
+            // grip that moved with the audio would be a grip you could
+            // not aim at.
+            Which::DeEss | Which::Resonance => {
+                return Some(suppress_grip(tone, which, body, rack, x, y));
+            }
             Which::Comp => return Some(comp_grip(tone.comp, which, body, rack, x, y)),
             Which::RescueComp => {
                 return Some(comp_grip(tone.rescue_comp, which, body, rack, x, y));
             }
-            // The gate has one line too — its range is read off the
-            // second, fainter one and set from the header.
-            Which::Gate => return Some(Grip::Threshold(which)),
-            Which::Sat => return Some(Grip::Drive),
-            // Time pictures, with nothing grabbable in them yet: the
-            // delay's taps and the reverb's tail are drawn from
-            // settings that have no home on a strip-width panel until
-            // there is a gesture worth giving them.
-            Which::Delay | Which::Reverb => {}
+            Which::Gate => return Some(gate_grip(tone.gate, body, rack, x, y)),
+            // The ladder is the tilt; the curve's centre is the bias;
+            // the rest of the curve is the drive.
+            Which::Sat => {
+                let (curve_box, ladder_box) = sat_split(body, rack);
+                if ladder_box.is_some_and(|lb| lb.contains(x, y)) {
+                    return Some(Grip::Tilt);
+                }
+                let mid_x = curve_box.x + curve_box.width / 2.0;
+                if rack.detailed() && (x - mid_x).abs() <= GRAB * 1.5 {
+                    return Some(Grip::Bias);
+                }
+                return Some(Grip::Drive);
+            }
+            // The first repeat is the time; any later one is the
+            // feedback. Elsewhere on the panel, the time — it is the
+            // parameter a delay IS.
+            Which::Delay => {
+                let taps = echo_taps(tone.delay, body);
+                let nearest = taps
+                    .iter()
+                    .enumerate()
+                    .map(|(k, (tx, _))| (k, (x - tx).abs()))
+                    .filter(|(_, away)| *away <= GRAB)
+                    .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                return Some(match nearest {
+                    Some((k, _)) if k >= 2 => Grip::Feedback,
+                    _ => Grip::Time,
+                });
+            }
+            // The gap rule is the predelay, the tail's end is the decay,
+            // and the tail's height is the mix.
+            Which::Reverb => {
+                let geometry = RoomGeometry::of(tone.reverb, body);
+                if rack.detailed() && (x - geometry.start).abs() <= GRAB {
+                    return Some(Grip::Predelay);
+                }
+                if x >= body.width.mul_add(0.6, body.x) {
+                    return Some(Grip::Decay);
+                }
+                return Some(Grip::Mix(which));
+            }
         }
     }
     None
+}
+
+/// What is under a point in the gate's panel.
+///
+/// The glyph's edges first, then the range line, then the threshold —
+/// which is everything else, the way a fader's groove is a fader's.
+fn gate_grip(gate: Gate, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
+    let display = display_of(body, Which::Gate, rack);
+    if !rack.detailed() {
+        return Grip::Threshold(Which::Gate);
+    }
+    let to_y = |db: f64| display.y + comp_ui::comp_graph_svg::db_to_y(db, display.height);
+    let bottom = display.y + display.height;
+    let line = to_y(f64::from(gate.threshold)).clamp(display.y, bottom);
+    let floor = to_y(f64::from(gate.threshold + gate.range)).clamp(display.y, bottom);
+    if let Some(shape) = GateGlyph::of(gate, display, line, floor)
+        && let Some(grip) = shape.grip_at(x, y)
+    {
+        return grip;
+    }
+    // The range line, only where it is clear of the threshold's — two
+    // lines a pixel apart are one line, and that one is the threshold.
+    if (y - floor).abs() <= GRAB && floor - line > GRAB * 2.0 {
+        return Grip::Range;
+    }
+    Grip::Threshold(Which::Gate)
+}
+
+/// What is under a point in a suppressor's panel.
+fn suppress_grip(tone: &Tone, which: Which, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
+    let set = match which {
+        Which::DeEss => tone.de_ess,
+        _ => tone.resonance,
+    };
+    let display = display_of(body, which, rack);
+    if rack.detailed() {
+        let zoom = SuppressZoom::of(set);
+        for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
+            if (x - zoom.x_of(hz, display)).abs() <= GRAB {
+                return Grip::Edge(which, side);
+            }
+        }
+        // The lane under the display: the resonance panel's comb is
+        // the sharpness (how narrow a peak has to be to earn a tooth),
+        // the de-esser's fire lane is the depth (how hard it fires).
+        if let Some(lane) = lane_of(body, which, rack)
+            && y >= lane.y
+        {
+            return if which == Which::Resonance {
+                Grip::Sharpness(which)
+            } else {
+                Grip::Depth(which)
+            };
+        }
+    }
+    let third = display.height / 3.0;
+    if y < display.y + third {
+        Grip::Threshold(which)
+    } else if y < display.y + third * 2.0 {
+        Grip::Depth(which)
+    } else {
+        Grip::Sharpness(which)
+    }
 }
 
 /// The compressor's display — the whole panel.
@@ -3072,7 +4236,7 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
             }
         }
         // A switch does not turn, and neither does a container.
-        Grip::Bypass(_) | Grip::Phase(_) => {}
+        Grip::Bypass(_) | Grip::Phase(_) | Grip::Family(_) => {}
         // A notch is a stop, not a fraction of one: the range is a list
         // the plugin publishes and the wheel walks it. Down is further
         // out, which is the direction a wheel zooms out everywhere
@@ -3095,6 +4259,96 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
             let moved = f64::from(tone.sat.drive) + step;
             tone.sat.drive = f64_to_f32(moved.clamp(0.0, 10.0));
         }
+        _ => wheel_more(tone, grip, mods, delta_y),
+    }
+}
+
+/// The wheel over the grips the newer faces added.
+///
+/// Split from [`wheel`] by size alone: the law is the same — a notch
+/// is about a fiftieth of a control's travel, or a twentieth of a
+/// time — and each arm says what its notch is.
+fn wheel_more(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
+    match grip {
+        // A notch of bias is a fiftieth of its travel; of tilt, half a
+        // decibel — the resolution a hand expects from each.
+        Grip::Bias => {
+            let step = interaction::gain_step(delta_y, mods) * 0.02;
+            tone.sat.q_point = f64_to_f32((f64::from(tone.sat.q_point) + step).clamp(-1.0, 1.0));
+        }
+        Grip::Tilt => {
+            let step = interaction::gain_step(delta_y, mods) * 0.5;
+            let to = (f64::from(tone.sat.tilt_db()) + step).clamp(-12.0, 12.0);
+            tone.sat.set_tilt_db(f64_to_f32(to));
+        }
+        // The gate's times share the compressor knobs' law: a notch is
+        // a fortieth of the travel.
+        Grip::Hold(_) => {
+            let step = interaction::gain_step(delta_y, mods) / 40.0;
+            let to = log_norm(f64::from(tone.gate.hold), 1.0, 2_000.0) + step;
+            tone.gate.hold = f64_to_f32(log_denorm(to.clamp(0.0, 1.0), 1.0, 2_000.0));
+        }
+        Grip::Range => {
+            let step = interaction::gain_step(delta_y, mods);
+            tone.gate.range = f64_to_f32((f64::from(tone.gate.range) + step).clamp(-80.0, 0.0));
+        }
+        // A suppressor's depth in fiftieths, its sharpness likewise,
+        // and its band edges by a twelfth of an octave a notch.
+        Grip::Depth(which) => {
+            let step = interaction::gain_step(delta_y, mods) * 0.02;
+            if let Some(set) = tone.suppressor(which) {
+                set.depth = f64_to_f32((f64::from(set.depth) + step).clamp(0.0, 1.0));
+            }
+        }
+        Grip::Sharpness(which) => {
+            let step = interaction::gain_step(delta_y, mods) * 0.02;
+            if let Some(set) = tone.suppressor(which) {
+                set.sharpness = f64_to_f32((f64::from(set.sharpness) + step).clamp(0.0, 1.0));
+            }
+        }
+        Grip::Edge(which, side) => {
+            let ratio = (interaction::gain_step(delta_y, mods) / 12.0).exp2();
+            move_edge(tone, which, side, ratio);
+        }
+        // Time by a twentieth of itself a notch — a delay is set by
+        // ear in proportion, not in milliseconds — and feedback in
+        // fiftieths.
+        Grip::Time => {
+            let ratio = interaction::gain_step(delta_y, mods).mul_add(0.05, 1.0);
+            tone.delay.time = f64_to_f32((f64::from(tone.delay.time) * ratio).clamp(1.0, 2_500.0));
+        }
+        Grip::Feedback => {
+            let step = interaction::gain_step(delta_y, mods) * 0.02;
+            tone.delay.feedback = f64_to_f32((f64::from(tone.delay.feedback) + step).clamp(0.0, 0.99));
+        }
+        Grip::Decay => {
+            let ratio = interaction::gain_step(delta_y, mods).mul_add(0.05, 1.0);
+            tone.reverb.decay = f64_to_f32((f64::from(tone.reverb.decay) * ratio).clamp(0.1, 12.0));
+        }
+        Grip::Predelay => {
+            let step = interaction::gain_step(delta_y, mods) * 2.0;
+            tone.reverb.predelay = f64_to_f32((f64::from(tone.reverb.predelay) + step).clamp(0.0, 250.0));
+        }
+        Grip::Mix(which) => {
+            let step = interaction::gain_step(delta_y, mods) * 0.02;
+            if let Some(mix) = tone.mix(which) {
+                *mix = f64_to_f32((f64::from(*mix) + step).clamp(0.0, 1.0));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Move one edge of a suppressor's band by a ratio, keeping the band
+/// at least a third of an octave wide and inside the audible range.
+fn move_edge(tone: &mut Tone, which: Which, side: Side, ratio: f64) {
+    let Some(set) = tone.suppressor(which) else {
+        return;
+    };
+    let (low, high) = (f64::from(set.low), f64::from(set.high));
+    match side {
+        Side::Low => set.low = f64_to_f32((low * ratio).clamp(20.0, high / SUPPRESS_SHOULDER)),
+        Side::High => set.high = f64_to_f32((high * ratio).clamp(low * SUPPRESS_SHOULDER, 20_000.0)),
     }
 }
 
@@ -3189,6 +4443,8 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
                 comp.ratio = Comp::default().ratio;
             }
         }
+        Grip::Attack(Which::Gate) => tone.gate.attack = Gate::default().attack,
+        Grip::Release(Which::Gate) => tone.gate.release = Gate::default().release,
         Grip::Attack(which) => {
             if let Some(comp) = tone.compressor(which) {
                 comp.attack = Comp::default().attack;
@@ -3201,6 +4457,43 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
         }
         // Unity: a preamp at drive one is the wire it is modelled on.
         Grip::Drive => tone.sat.drive = 1.0,
+        Grip::Bias => tone.sat.q_point = 0.0,
+        Grip::Tilt => tone.sat.set_tilt_db(0.0),
+        Grip::Hold(_) => tone.gate.hold = Gate::default().hold,
+        Grip::Range => tone.gate.range = Gate::default().range,
+        Grip::Depth(which) | Grip::Sharpness(which) | Grip::Edge(which, _) => {
+            let fresh = match which {
+                Which::DeEss => Suppress::sibilance(),
+                _ => Suppress::broadband(),
+            };
+            if let Some(set) = tone.suppressor(which) {
+                match grip {
+                    Grip::Depth(_) => set.depth = fresh.depth,
+                    Grip::Sharpness(_) => set.sharpness = fresh.sharpness,
+                    _ => {
+                        set.low = fresh.low;
+                        set.high = fresh.high;
+                    }
+                }
+            }
+        }
+        Grip::Time => tone.delay.time = Echo::default().time,
+        Grip::Feedback => tone.delay.feedback = Echo::default().feedback,
+        Grip::Decay => tone.reverb.decay = Room::default().decay,
+        Grip::Predelay => tone.reverb.predelay = Room::default().predelay,
+        Grip::Mix(which) => {
+            let fresh = match which {
+                Which::Delay => Echo::default().mix,
+                Which::Reverb => Room::default().mix,
+                _ => 1.0,
+            };
+            if let Some(mix) = tone.mix(which) {
+                *mix = fresh;
+            }
+        }
+        // A machine is a choice, not a value with a default to go back
+        // to.
+        Grip::Family(_) => {}
         Grip::Scale(_) => tone.eq_range = DEFAULT_EQ_RANGE,
         // Folding is not a setting on the track, so there is nothing
         // here to put back — see `Fold`.
@@ -3301,6 +4594,20 @@ pub fn drag(
         //
         // Against the span the glyph maps them onto, so the edge being
         // moved stays under the finger moving it.
+        // The gate's three times are widths on its table, a quarter of
+        // the display each — see `GateGlyph::of`.
+        Grip::Attack(Which::Gate) | Grip::Hold(Which::Gate) | Grip::Release(Which::Gate) => {
+            let display = display_of(body, Which::Gate, rack);
+            let dx = dx * interaction::fine_scale(mods);
+            let span = (display.width * 0.25).max(1.0);
+            let (value, low, high): (&mut f32, f64, f64) = match grip {
+                Grip::Attack(_) => (&mut tone.gate.attack, 0.1, 200.0),
+                Grip::Hold(_) => (&mut tone.gate.hold, 1.0, 2_000.0),
+                _ => (&mut tone.gate.release, 5.0, 3_000.0),
+            };
+            let moved = (log_norm(f64::from(*value), low, high) + dx / span).clamp(0.0, 1.0);
+            *value = f64_to_f32(log_denorm(moved, low, high));
+        }
         Grip::Attack(which) | Grip::Release(which) => {
             let display = comp_split(body, rack);
             let dx = dx * interaction::fine_scale(mods);
@@ -3310,6 +4617,7 @@ pub fn drag(
                 set_knob(comp, grip, moved);
             }
         }
+        Grip::Hold(_) => {}
         // The floor is pulled DOWN for more, which is the direction the
         // signal goes. Against the display's own dB height, so it stays
         // under the finger — and the ratio keeps moving past the point
@@ -3350,6 +4658,97 @@ pub fn drag(
             let moved = f64::from(tone.sat.drive) - dy / per_unit.max(f64::EPSILON);
             tone.sat.drive = f64_to_f32(moved.clamp(0.0, 10.0));
         }
+        // The bias leans the curve, so it is dragged the way the curve
+        // leans: sideways, half the curve's width for the whole range.
+        Grip::Bias => {
+            let (curve_box, _) = sat_split(body, rack);
+            let dx = dx * interaction::fine_scale(mods);
+            let per_unit = (curve_box.width / 2.0).max(1.0);
+            let moved = f64::from(tone.sat.q_point) + dx / per_unit;
+            tone.sat.q_point = f64_to_f32(moved.clamp(-1.0, 1.0));
+        }
+        // Up is the top: a drag up the ladder tips the emphasis
+        // toward the highs. The ladder's height is ±12 dB.
+        Grip::Tilt => {
+            let (_, ladder_box) = sat_split(body, rack);
+            let per_db = ladder_box.map_or(body.height, |lb| lb.height) / 24.0;
+            let dy = dy * interaction::fine_scale(mods);
+            let to = (f64::from(tone.sat.tilt_db()) - dy / per_db.max(f64::EPSILON)).clamp(-12.0, 12.0);
+            tone.sat.set_tilt_db(f64_to_f32(to));
+        }
+        // The range line is pulled DOWN for more, against the display's
+        // own dB axis, like the ratio's arrow.
+        Grip::Range => {
+            let display = display_of(body, Which::Gate, rack);
+            let per_db = display.height / 60.0;
+            let dy = dy * interaction::fine_scale(mods);
+            let moved = f64::from(tone.gate.range) - dy / per_db.max(f64::EPSILON);
+            tone.gate.range = f64_to_f32(moved.clamp(-80.0, 0.0));
+        }
+        // The ribbon is pulled down for more: the display's height is
+        // the whole range. Sharpness the same way — down is narrower,
+        // which is what a tooth is.
+        Grip::Depth(which) | Grip::Sharpness(which) => {
+            let display = display_of(body, which, rack);
+            let dy = dy * interaction::fine_scale(mods);
+            let per_unit = display.height.max(1.0);
+            if let Some(set) = tone.suppressor(which) {
+                let value = if matches!(grip, Grip::Depth(_)) { &mut set.depth } else { &mut set.sharpness };
+                *value = f64_to_f32((f64::from(*value) + dy / per_unit).clamp(0.0, 1.0));
+            }
+        }
+        // An edge moves along the zoomed axis it is drawn on: a panel
+        // width is the window's whole span in decades.
+        Grip::Edge(which, side) => {
+            let display = display_of(body, which, rack);
+            let set = match which {
+                Which::DeEss => tone.de_ess,
+                _ => tone.resonance,
+            };
+            let zoom = SuppressZoom::of(set);
+            let dx = dx * interaction::fine_scale(mods);
+            let decades = (zoom.high / zoom.low).log10();
+            let ratio = 10.0_f64.powf(dx / display.width.max(1.0) * decades);
+            move_edge(tone, which, side, ratio);
+        }
+        // The first repeat's x IS the time: the window is four and a
+        // half times, so a pixel is that many milliseconds.
+        Grip::Time => {
+            let dx = dx * interaction::fine_scale(mods);
+            let per_ms = (body.width - 6.0).max(1.0) / (f64::from(tone.delay.time).max(1.0) * 4.5);
+            let moved = f64::from(tone.delay.time) + dx / per_ms.max(f64::EPSILON);
+            tone.delay.time = f64_to_f32(moved.clamp(1.0, 2_500.0));
+        }
+        // The repeats' heights are the feedback: the panel's height is
+        // the range.
+        Grip::Feedback => {
+            let dy = dy * interaction::fine_scale(mods);
+            let moved = f64::from(tone.delay.feedback) - dy / body.height.max(1.0);
+            tone.delay.feedback = f64_to_f32(moved.clamp(0.0, 0.99));
+        }
+        // The tail reaches the right edge at its decay, so a drag right
+        // lengthens it in proportion: a panel width is the decay
+        // itself.
+        Grip::Decay => {
+            let dx = dx * interaction::fine_scale(mods);
+            let ratio = 1.0 + dx / body.width.max(1.0);
+            tone.reverb.decay = f64_to_f32((f64::from(tone.reverb.decay) * ratio.max(0.2)).clamp(0.1, 12.0));
+        }
+        // The gap rule moves along the decay window.
+        Grip::Predelay => {
+            let dx = dx * interaction::fine_scale(mods);
+            let window = f64::from(tone.reverb.decay).max(0.05) * 1000.0;
+            let moved = f64::from(tone.reverb.predelay) + dx / body.width.max(1.0) * window;
+            tone.reverb.predelay = f64_to_f32(moved.clamp(0.0, 250.0));
+        }
+        Grip::Mix(which) => {
+            let dy = dy * interaction::fine_scale(mods);
+            let per_unit = body.height.max(1.0);
+            if let Some(mix) = tone.mix(which) {
+                *mix = f64_to_f32((f64::from(*mix) - dy / per_unit).clamp(0.0, 1.0));
+            }
+        }
+        Grip::Family(_) => {}
     }
 }
 
@@ -3393,6 +4792,17 @@ impl Store {
     /// The same, to change.
     pub fn edit(&mut self, guid: &str) -> Option<&mut Tone> {
         self.by_guid.get_mut(guid)
+    }
+
+    /// Render every reverb tail in the store, now, on this thread.
+    ///
+    /// For a bench or a test that must be deterministic — a tail that
+    /// arrived between two renders of the same frame would make them
+    /// differ.
+    pub fn prerender_tails(&self) {
+        for tone in self.by_guid.values() {
+            tone.prerender_tails();
+        }
     }
 }
 
@@ -4682,15 +6092,15 @@ mod comp_tests {
 /// one level up.
 #[derive(Clone, Debug, Default)]
 pub struct Analyser {
-    bins: Vec<f32>,
+    meters: Meters,
     /// The rack as last built, and the box it was built for.
     built: Option<(f64, f64, std::sync::Arc<Scene>)>,
 }
 
 impl Analyser {
-    /// Replace the bins, which invalidates the picture.
-    pub fn set(&mut self, bins: Vec<f32>) {
-        self.bins = bins;
+    /// Replace the meters, which invalidates the picture.
+    pub fn set(&mut self, meters: Meters) {
+        self.meters = meters;
         self.built = None;
     }
 
@@ -4707,12 +6117,18 @@ impl Analyser {
 
     #[must_use]
     pub fn bins(&self) -> &[f32] {
-        &self.bins
+        &self.meters.spectrum
+    }
+
+    /// Everything the rack has to show that moves.
+    #[must_use]
+    pub const fn meters(&self) -> &Meters {
+        &self.meters
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.bins.is_empty()
+        self.meters.is_empty()
     }
 
     /// The rack for this box, built once per spectrum.
@@ -4749,6 +6165,8 @@ impl Analyser {
 #[derive(Clone, Debug, Default)]
 pub struct Levels {
     peaks: std::collections::VecDeque<f32>,
+    /// The de-esser's deepest cut per frame, in dB — the fire lane.
+    fired: std::collections::VecDeque<f32>,
     /// The input trace, built once per CHANGE rather than once per
     /// frame.
     ///
@@ -4811,6 +6229,22 @@ impl Levels {
         self.peaks.push_back(peak);
         self.path = None;
         self.reduction = None;
+    }
+
+    /// Record how hard the de-esser fired this frame, in dB.
+    ///
+    /// Kept in step with the peaks — one entry per frame — so the fire
+    /// lane and the level trace above it share a time axis.
+    pub fn push_fire(&mut self, db: f32) {
+        if self.fired.len() >= HISTORY {
+            self.fired.pop_front();
+        }
+        self.fired.push_back(db.max(0.0));
+    }
+
+    /// The peaks, oldest first.
+    pub fn peaks(&self) -> impl Iterator<Item = f32> + '_ {
+        self.peaks.iter().copied()
     }
 
     /// The input trace, for a display of this size.
@@ -4982,6 +6416,107 @@ pub fn levels(
         };
         one_level(scene, panels, levels, comp, which, panel, folded, rack);
     }
+    // The two lanes: when the gate was open, and when the de-esser
+    // fired. Both are strips of time under a display, built from the
+    // same history the trace above them is, so a segment in the lane
+    // is under the hit that opened it.
+    lanes(scene, panels, levels, tone, panel, folded, rack);
+}
+
+/// The door lane and the fire lane.
+fn lanes(
+    scene: &mut Scene,
+    panels: &[Which],
+    levels: &Levels,
+    tone: &Tone,
+    panel: Panel,
+    folded: Folded,
+    rack: Rack,
+) {
+    for (which, at) in units(panels, panel, folded) {
+        if !matches!(which, Which::Gate | Which::DeEss) || tone.bypass.is(which) {
+            continue;
+        }
+        let body = body_of(at, rack);
+        let Some(lane) = lane_of(body, which, rack) else {
+            continue;
+        };
+        if lane.width < 2.0 || lane.height < 2.0 {
+            continue;
+        }
+        let per = lane.width / crate::num::coord(HISTORY);
+        if which == Which::Gate {
+            {
+                // Open where the level is over the threshold, and for
+                // the hold after it drops back, and ramping shut over
+                // the release — the setting drawn where it acts.
+                let tint = palette_open();
+                let step_ms = 1000.0 / f64::from(PUBLISH_HZ);
+                let hold = f64::from(tone.gate.hold) / step_ms;
+                let release = f64::from(tone.gate.release) / step_ms;
+                let mut open_until = -1.0_f64;
+                let mut path = BezPath::new();
+                let mut run: Option<f64> = None;
+                let count = levels.peaks.len();
+                let offset = HISTORY.saturating_sub(count);
+                for (i, peak) in levels.peaks().enumerate() {
+                    let i_f = crate::num::coord(i);
+                    let db = if peak <= 0.0 { -120.0 } else { 20.0 * f64::from(peak).log10() };
+                    if db > f64::from(tone.gate.threshold) {
+                        open_until = i_f + hold;
+                    }
+                    let open = i_f <= open_until;
+                    let x = crate::num::coord(i.saturating_add(offset)).mul_add(per, lane.x);
+                    match (open, run) {
+                        (true, None) => run = Some(x),
+                        (false, Some(from)) => {
+                            let to = release.min(6.0).mul_add(per, x);
+                            path.move_to((from, lane.y + lane.height - 1.0));
+                            path.line_to((from + 1.0, lane.y + 1.0));
+                            path.line_to((x, lane.y + 1.0));
+                            path.line_to((to.min(lane.x + lane.width), lane.y + lane.height - 1.0));
+                            path.close_path();
+                            run = None;
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(from) = run {
+                    path.extend(Rect::new(from, lane.y + 1.0, lane.x + lane.width, lane.y + lane.height - 1.0)
+                        .to_path(0.1).elements().iter().copied());
+                }
+                if !path.is_empty() {
+                    scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.85), None, &path);
+                }
+            }
+        } else {
+            {
+                let red = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
+                let count = levels.fired.len();
+                let offset = HISTORY.saturating_sub(count);
+                let mut path = BezPath::new();
+                for (i, db) in levels.fired.iter().enumerate() {
+                    if *db <= 0.05 {
+                        continue;
+                    }
+                    let h = (f64::from(*db) / 9.0).clamp(0.0, 1.0) * (lane.height - 2.0);
+                    let x = crate::num::coord(i.saturating_add(offset)).mul_add(per, lane.x);
+                    path.extend(Rect::new(x, lane.y + lane.height - 1.0 - h, x + per - 0.3, lane.y + lane.height - 1.0)
+                        .to_path(0.1).elements().iter().copied());
+                }
+                if !path.is_empty() {
+                    scene.fill(Fill::NonZero, Affine::IDENTITY, red.multiply_alpha(0.85), None, &path);
+                }
+            }
+        }
+    }
+}
+
+/// The colour a gate's open segments are lit in.
+///
+/// The Balance phase's green: "on", in the same hue the rail says it.
+fn palette_open() -> Color {
+    phase_tint(session::mix_phases::MixPhase::Balance)
 }
 
 /// One processor's level trace.
@@ -5390,5 +6925,233 @@ mod character_tests {
     #[test]
     fn a_new_chain_is_running() {
         assert!(!placeholder(3).bypass.any());
+    }
+}
+
+#[cfg(test)]
+mod face_tests {
+    //! The faces the six units grew: each grip is where its picture is.
+    use super::{
+        ALL_PANELS, Folded, Grip, Mods, Panel, Rack, RoomGeometry, Side, Which, body_of, display_of,
+        drag, echo_taps, grip_at, lane_of, placeholder, reset, sat_split, units, wheel,
+    };
+    use crate::live::Meters;
+
+    fn rack() -> Panel {
+        Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 133.0,
+            height: 2_400.0,
+        }
+    }
+
+    fn body(which: Which) -> Panel {
+        let (_, at) = units(&ALL_PANELS, rack(), Folded::default())
+            .into_iter()
+            .find(|(w, _)| *w == which)
+            .expect("the unit is in the chain");
+        body_of(at, Rack::at(rack().width))
+    }
+
+    fn grip(x: f64, y: f64, tone: &super::Tone) -> Option<Grip> {
+        grip_at(&ALL_PANELS, tone, rack(), Folded::default(), x, y)
+    }
+
+    /// The gate's table: its three edges are its three times, and the
+    /// range line is its own grip where it is clear of the threshold.
+    #[test]
+    fn the_gates_table_is_grabbed_by_its_edges() {
+        let tone = placeholder(0);
+        let at = display_of(body(Which::Gate), Which::Gate, Rack::Full);
+        let to_y = |db: f64| at.y + comp_ui::comp_graph_svg::db_to_y(db, at.height);
+        let line = to_y(f64::from(tone.gate.threshold));
+        let floor = to_y(f64::from(tone.gate.threshold + tone.gate.range));
+        let shape = super::GateGlyph::of(tone.gate, at, line, floor).expect("room for a glyph");
+        assert_eq!(shape.grip_at(shape.open.0, shape.open.1 + 1.0), Some(Grip::Attack(Which::Gate)));
+        let mid_run = (f64::midpoint(shape.open.0, shape.close.0), shape.open.1);
+        assert_eq!(shape.grip_at(mid_run.0, mid_run.1), Some(Grip::Hold(Which::Gate)));
+        assert_eq!(shape.grip_at(shape.end.0, shape.end.1 - 1.0), Some(Grip::Release(Which::Gate)));
+        // The range line, well away from the glyph.
+        assert_eq!(grip(at.x + at.width - 4.0, floor, &tone), Some(Grip::Range));
+        // And the threshold everywhere else.
+        assert_eq!(grip(at.x + at.width - 4.0, at.y + 2.0, &tone), Some(Grip::Threshold(Which::Gate)));
+    }
+
+    /// Dragging the hold right lengthens it; resetting puts it back.
+    #[test]
+    fn the_hold_is_dragged_sideways() {
+        let mut tone = placeholder(0);
+        let was = tone.gate.hold;
+        drag(&mut tone, Grip::Hold(Which::Gate), &ALL_PANELS, rack(), Folded::default(), Mods::default(), 20.0, 0.0);
+        assert!(tone.gate.hold > was, "{} should exceed {was}", tone.gate.hold);
+        reset(&mut tone, Grip::Hold(Which::Gate));
+        assert!((tone.gate.hold - super::Gate::default().hold).abs() < f32::EPSILON);
+    }
+
+    /// The first repeat is the time; a later one is the feedback; the
+    /// glyph cycles the machine.
+    #[test]
+    fn the_delays_repeats_are_its_grips() {
+        let mut tone = placeholder(1);
+        let at = body(Which::Delay);
+        let taps = echo_taps(tone.delay, at);
+        assert!(taps.len() >= 3, "enough repeats to grab: {}", taps.len());
+        let y = at.y + at.height / 2.0;
+        assert_eq!(grip(taps[1].0, y, &tone), Some(Grip::Time));
+        assert_eq!(grip(taps[2].0, y, &tone), Some(Grip::Feedback));
+        let was = tone.delay.time;
+        drag(&mut tone, Grip::Time, &ALL_PANELS, rack(), Folded::default(), Mods::default(), 10.0, 0.0);
+        assert!(tone.delay.time > was);
+        let fb = tone.delay.feedback;
+        drag(&mut tone, Grip::Feedback, &ALL_PANELS, rack(), Folded::default(), Mods::default(), 0.0, -20.0);
+        assert!(tone.delay.feedback > fb, "up is more feedback");
+        // The spacing follows the time.
+        let after = echo_taps(tone.delay, at);
+        assert!((after[1].0 - after[0].0 - (taps[1].0 - taps[0].0)).abs() < 1e-6, "the window scales with the time, so the first gap holds its share");
+        // The header glyph is the family switch.
+        let (_, unit) = units(&ALL_PANELS, rack(), Folded::default())
+            .into_iter()
+            .find(|(w, _)| *w == Which::Delay)
+            .expect("a delay");
+        assert_eq!(grip(unit.x + 4.0, unit.y + 4.0, &tone), Some(Grip::Family(Which::Delay)));
+        let style = tone.delay.style;
+        tone.delay.cycle_style();
+        assert_ne!(tone.delay.style, style);
+        for _ in 0..20 {
+            tone.delay.cycle_style();
+        }
+    }
+
+    /// The reverb: the gap rule is the predelay, the far end the decay,
+    /// the rest the mix — and the decay drag lengthens the tail.
+    #[test]
+    fn the_reverbs_tail_is_its_grips() {
+        let mut tone = placeholder(2);
+        let at = body(Which::Reverb);
+        let geometry = RoomGeometry::of(tone.reverb, at);
+        let y = at.y + at.height / 2.0;
+        assert_eq!(grip(geometry.start, y, &tone), Some(Grip::Predelay));
+        assert_eq!(grip(at.x + at.width - 5.0, y, &tone), Some(Grip::Decay));
+        assert_eq!(grip(at.width.mul_add(0.4, at.x), y, &tone), Some(Grip::Mix(Which::Reverb)));
+        let was = tone.reverb.decay;
+        drag(&mut tone, Grip::Decay, &ALL_PANELS, rack(), Folded::default(), Mods::default(), 30.0, 0.0);
+        assert!(tone.reverb.decay > was);
+        wheel(&mut tone, Grip::Predelay, Mods::default(), -1.0);
+        assert!(tone.reverb.predelay > super::Room::default().predelay - 1.0);
+        let algorithm = tone.reverb.algorithm;
+        tone.reverb.cycle_algorithm();
+        assert_ne!(tone.reverb.algorithm, algorithm);
+        for _ in 0..20 {
+            tone.reverb.cycle_algorithm();
+        }
+    }
+
+    /// A suppressor: edges where they are drawn, then threshold, depth,
+    /// sharpness down the display.
+    #[test]
+    fn a_suppressor_is_three_bands_and_two_edges() {
+        let mut tone = placeholder(3);
+        let at = display_of(body(Which::DeEss), Which::DeEss, Rack::Full);
+        let zoom = super::SuppressZoom::of(tone.de_ess);
+        let low_x = zoom.x_of(f64::from(tone.de_ess.low), at);
+        assert_eq!(grip(low_x, at.y + 10.0, &tone), Some(Grip::Edge(Which::DeEss, Side::Low)));
+        let mid_x = at.x + at.width / 2.0;
+        assert_eq!(grip(mid_x, at.y + 2.0, &tone), Some(Grip::Threshold(Which::DeEss)));
+        assert_eq!(grip(mid_x, at.y + at.height / 2.0, &tone), Some(Grip::Depth(Which::DeEss)));
+        assert_eq!(grip(mid_x, at.y + at.height - 2.0, &tone), Some(Grip::Sharpness(Which::DeEss)));
+        // The lane under it is the depth for a de-esser and the
+        // sharpness for the resonance panel.
+        let lane = lane_of(body(Which::DeEss), Which::DeEss, Rack::Full).expect("a fire lane");
+        assert_eq!(grip(mid_x, lane.y + 2.0, &tone), Some(Grip::Depth(Which::DeEss)));
+        let was = tone.de_ess.low;
+        wheel(&mut tone, Grip::Edge(Which::DeEss, Side::Low), Mods::default(), -1.0);
+        assert!(tone.de_ess.low > was, "the wheel moves the edge up");
+        assert!(tone.de_ess.low < tone.de_ess.high);
+        let depth = tone.de_ess.depth;
+        drag(&mut tone, Grip::Depth(Which::DeEss), &ALL_PANELS, rack(), Folded::default(), Mods::default(), 0.0, 20.0);
+        assert!(tone.de_ess.depth > depth, "down is deeper");
+    }
+
+    /// The saturator: the ladder is the tilt, the centre the bias, the
+    /// curve the drive — and a signal lights the curve.
+    #[test]
+    fn the_saturators_ladder_and_centre_are_grips() {
+        let mut tone = placeholder(0);
+        let at = body(Which::Sat);
+        let (curve, ladder) = sat_split(at, Rack::Full);
+        let ladder = ladder.expect("a ladder at a working width");
+        assert_eq!(grip(ladder.x + 3.0, ladder.y + 3.0, &tone), Some(Grip::Tilt));
+        assert_eq!(grip(curve.x + curve.width / 2.0, curve.y + 5.0, &tone), Some(Grip::Bias));
+        assert_eq!(grip(curve.x + 3.0, curve.y + 5.0, &tone), Some(Grip::Drive));
+        drag(&mut tone, Grip::Bias, &ALL_PANELS, rack(), Folded::default(), Mods::default(), 15.0, 0.0);
+        assert!(tone.sat.q_point > 0.25);
+        wheel(&mut tone, Grip::Tilt, Mods::default(), -1.0);
+        assert!(tone.sat.tilt_db() > 0.0);
+        reset(&mut tone, Grip::Tilt);
+        assert!(tone.sat.tilt_db().abs() < f32::EPSILON);
+
+        // Drawn with a signal, the rack has more in it than without:
+        // the lit reach, the ribbon, the wet fill.
+        let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let font = crate::text::Font::embedded().expect("the embedded font");
+        let mut still = anyrender::Scene::new();
+        super::draw(&mut still, &palette, &font, &tone, &Meters::default(), &ALL_PANELS, rack(), Folded::default(), None);
+        let mut moving = anyrender::Scene::new();
+        let meters = crate::simulate::meters(0, 1.25, &tone);
+        super::draw(&mut moving, &palette, &font, &tone, &meters, &ALL_PANELS, rack(), Folded::default(), None);
+        assert!(moving.commands.len() > still.commands.len());
+    }
+
+    /// The machines say which they are: three units carry a glyph, and
+    /// two of them switch on it.
+    #[test]
+    fn three_units_carry_a_machine_glyph() {
+        let tone = placeholder(0);
+        let with: Vec<Which> = ALL_PANELS.iter().copied().filter(|w| w.glyph(&tone).is_some()).collect();
+        assert_eq!(with, vec![Which::Sat, Which::Delay, Which::Reverb]);
+        assert!(!Which::Sat.glyph_switches());
+        assert!(Which::Delay.glyph_switches() && Which::Reverb.glyph_switches());
+    }
+
+    /// The lanes draw from the history: a gate fed hits above its
+    /// threshold shows open segments, a de-esser fed fires shows them.
+    #[test]
+    fn the_lanes_draw_the_history() {
+        let tone = placeholder(0);
+        let mut levels = super::Levels::default();
+        let mut silent = anyrender::Scene::new();
+        super::lanes(&mut silent, &ALL_PANELS, &levels, &tone, rack(), Folded::default(), Rack::Full);
+        for i in 0..40 {
+            levels.push(if i % 8 < 3 { 0.5 } else { 0.001 });
+            levels.push_fire(if i % 8 == 1 { 6.0 } else { 0.0 });
+        }
+        let mut busy = anyrender::Scene::new();
+        super::lanes(&mut busy, &ALL_PANELS, &levels, &tone, rack(), Folded::default(), Rack::Full);
+        assert!(busy.commands.len() >= silent.commands.len() + 2, "a door lane and a fire lane");
+    }
+
+    /// Every grip names a panel that is in the chain.
+    #[test]
+    fn every_grip_belongs_to_a_unit() {
+        for grip in [
+            Grip::Hold(Which::Gate),
+            Grip::Range,
+            Grip::Bias,
+            Grip::Tilt,
+            Grip::Depth(Which::Resonance),
+            Grip::Sharpness(Which::DeEss),
+            Grip::Edge(Which::DeEss, Side::High),
+            Grip::Time,
+            Grip::Feedback,
+            Grip::Decay,
+            Grip::Predelay,
+            Grip::Mix(Which::Sat),
+            Grip::Family(Which::Reverb),
+        ] {
+            assert!(ALL_PANELS.contains(&grip.panel()), "{grip:?}");
+        }
+        assert!(Grip::Family(Which::Delay).is_switch());
+        assert!(!Grip::Time.is_switch());
     }
 }

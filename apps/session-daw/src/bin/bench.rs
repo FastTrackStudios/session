@@ -382,6 +382,10 @@ fn mixer_shot(
     // racks the window draws.
     let mut settings = session_daw::tone::Store::default();
     settings.seed(rows.as_slice());
+    // The reverb tails, rendered before a frame is measured: a render
+    // landing between two passes would make them differ, and the
+    // verify run compares them byte for byte.
+    settings.prerender_tails();
     let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
     let mixer = Mixer::build(
         palette,
@@ -890,6 +894,10 @@ fn animate(
     // racks the window draws.
     let mut settings = session_daw::tone::Store::default();
     settings.seed(rows.as_slice());
+    // The reverb tails, rendered before a frame is measured: a render
+    // landing between two passes would make them differ, and the
+    // verify run compares them byte for byte.
+    settings.prerender_tails();
     let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
     let mixer = Mixer::build(
         palette,
@@ -945,15 +953,19 @@ fn animate(
             // happens every frame either way.
             if frame_index % 8 == 0 {
                 for (i, track) in tracks.iter().enumerate() {
-                    let signal = session_daw::simulate::frame(i, t * 8.0);
-                    history
-                        .entry(track.guid.clone())
-                        .or_default()
-                        .push(signal.peak);
+                    let Some(tone) = settings.get(&track.guid) else {
+                        continue;
+                    };
+                    // One simulation per track: the peak the history
+                    // takes is the peak the meters carry.
+                    let meters = session_daw::simulate::meters(i, t * 8.0, tone);
+                    let entry = history.entry(track.guid.clone()).or_default();
+                    entry.push(meters.sat_peak);
+                    entry.push_fire(meters.deess_deepest());
                     spectra
                         .entry(track.guid.clone())
                         .or_default()
-                        .set(signal.spectrum);
+                        .set(meters);
                 }
             }
             let mut drawn = Counts::default();

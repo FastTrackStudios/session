@@ -19,6 +19,7 @@ pub mod gesture;
 pub mod headless;
 pub mod hit;
 pub mod layout;
+pub mod live;
 pub mod mcp;
 pub mod num;
 pub mod open;

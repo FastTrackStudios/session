@@ -24,6 +24,8 @@
 
 use std::f64::consts::TAU;
 
+use crate::live::Meters;
+
 /// How many bins the spectrum carries.
 ///
 /// Log-spaced across the audible range by the painter, so this is a
@@ -159,6 +161,16 @@ fn envelope(voice: Voice, track: usize, seconds: f64) -> f64 {
 /// material is: energy falls with frequency, and a flat spectrum reads
 /// as noise rather than as music.
 fn spectrum(voice: Voice, envelope: f64, seconds: f64) -> Vec<f32> {
+    spectrum_with(voice, envelope, Some(seconds))
+}
+
+/// The spectrum, with or without the moment's shimmer.
+///
+/// `None` is the spectrum's own long-term average: the shimmer is a
+/// sine in time and averages to nothing, so what is left is the tilt
+/// and the voice's resonance at the envelope given — which is what a
+/// suppressor that has learned for three seconds is comparing against.
+fn spectrum_with(voice: Voice, envelope: f64, shimmer_at: Option<f64>) -> Vec<f32> {
     let (low, high) = (20.0_f64, 20_000.0_f64);
     let (log_low, log_high) = (low.log10(), high.log10());
     let centre = voice.centre().log10();
@@ -178,7 +190,9 @@ fn spectrum(voice: Voice, envelope: f64, seconds: f64) -> Vec<f32> {
             let bump = 18.0 * (-away * away).exp();
             // And a shimmer that moves, different per bin, so the
             // spectrum is never two frames the same.
-            let shimmer = 3.5 * (TAU * (seconds * 1.7 + t * 9.0)).sin();
+            let shimmer = shimmer_at.map_or(0.0, |seconds| {
+                3.5 * (TAU * seconds.mul_add(1.7, t * 9.0)).sin()
+            });
             // Sat on the display's own window rather than on absolute
             // dBFS. A strip's EQ panel shows ±18 dB; a spectrum drawn
             // in real dBFS puts everything but the loudest peak on the
@@ -191,9 +205,193 @@ fn spectrum(voice: Voice, envelope: f64, seconds: f64) -> Vec<f32> {
         .collect()
 }
 
+/// Everything in `track`'s rack that moves, at `seconds`, as the engine
+/// would publish it.
+///
+/// The suppressors' reduction is the one place this is a STAND-IN
+/// rather than the engine's own number. The real curve is
+/// `eq_dsp::dynamics::spectral::SpectralEngine::gain_curve`, and it
+/// needs audio; a simulation has a spectrum and no samples, so it
+/// approximates the engine's rule — a bin stands proud of its
+/// neighbourhood by more than the threshold — on the spectrum it has.
+/// Once the rack is bound to a chain this function is replaced, not
+/// consulted: the drawing reads [`Meters`] and does not know which.
+#[must_use]
+pub fn meters(track: usize, seconds: f64, tone: &crate::tone::Tone) -> Meters {
+    const TAPS: usize = 8;
+    let voice = Voice::of(track);
+    let now = frame(track, seconds);
+    // The settled curve: the same rule over the spectrum's own long-term
+    // average, which is what a three-second learn comes to. The shimmer
+    // averages out and the resonances stay, which is the point of the
+    // settled curve — and it is one spectrum, not eight: this runs for
+    // every track every meter frame, and the bench counts it.
+    let settled_spectrum = settled(voice);
+    // The wet returns: what the delay and reverb are putting out is
+    // what went in earlier, scaled by how much of it survives. A
+    // repeat is the peak one delay time ago times the feedback, and so
+    // on down the series; a tail is the recent peaks weighted by an
+    // exponential to −60 dB over the decay. Envelopes only — the
+    // spectrum is not needed for a level, and building it would be.
+    let delay_wet = {
+        let time = f64::from(tone.delay.time.max(1.0)) / 1000.0;
+        let feedback = f64::from(tone.delay.feedback.clamp(0.0, 0.99));
+        let mut level = feedback;
+        let mut wet = 0.0_f64;
+        for k in 1..=6 {
+            wet = wet.max(envelope(voice, track, crate::num::coord(k).mul_add(-time, seconds)) * level);
+            level *= feedback;
+        }
+        crate::mcp::f64_to_f32(wet * f64::from(tone.delay.mix.clamp(0.0, 1.0)))
+    };
+    let reverb_wet = {
+        let decay = f64::from(tone.reverb.decay.max(0.05));
+        let mut wet = 0.0_f64;
+        for k in 1..=TAPS {
+            let into = crate::num::coord(k) / crate::num::coord(TAPS);
+            let level = 10.0_f64.powf(-3.0 * into);
+            wet = wet.max(envelope(voice, track, into.mul_add(-decay, seconds)) * level);
+        }
+        crate::mcp::f64_to_f32(wet * f64::from(tone.reverb.mix.clamp(0.0, 1.0)))
+    };
+    Meters {
+        sat_peak: now.peak,
+        deess_db: suppression(&now.spectrum, tone.de_ess),
+        resonance_db: suppression(&now.spectrum, tone.resonance),
+        resonance_settled_db: suppression(&settled_spectrum, tone.resonance),
+        delay_wet,
+        reverb_wet,
+        spectrum: now.spectrum,
+    }
+}
+
+/// The analyser's bin centres, in Hz, built once.
+fn bin_hz() -> &'static [f64; BINS] {
+    static HZ: std::sync::OnceLock<[f64; BINS]> = std::sync::OnceLock::new();
+    HZ.get_or_init(|| {
+        let full = (20_000.0_f64 / 20.0).log10();
+        let last = crate::num::coord(BINS.saturating_sub(1).max(1));
+        let mut out = [0.0_f64; BINS];
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = 20.0 * 10.0_f64.powf(crate::num::coord(i) / last * full);
+        }
+        out
+    })
+}
+
+/// A voice's long-term spectrum, built once.
+///
+/// It depends on the voice alone — the shimmer averages out and the
+/// envelope is taken at its mean — so there are four of them in the
+/// whole simulation, and building one per track per meter frame was
+/// most of what the bench charged the rack for.
+fn settled(voice: Voice) -> Vec<f32> {
+    thread_local! {
+        static SETTLED: std::cell::RefCell<[Option<Vec<f32>>; 4]> =
+            const { std::cell::RefCell::new([None, None, None, None]) };
+    }
+    let slot = match voice {
+        Voice::Low => 0,
+        Voice::Mid => 1,
+        Voice::High => 2,
+        Voice::Broad => 3,
+    };
+    SETTLED.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache
+            .get_mut(slot)
+            .map(|entry| entry.get_or_insert_with(|| spectrum_with(voice, 0.35, None)).clone())
+            .unwrap_or_default()
+    })
+}
+
+/// The suppressor's rule, applied to a spectrum: how much comes off
+/// each bin, in dB.
+///
+/// A bin is compared with the average of its neighbourhood over
+/// `sharpness` of an octave; what stands proud of that by more than the
+/// threshold is cut by `depth` of the excess, inside the band only, and
+/// the cut is smoothed over a few bins because a filter with finite Q
+/// cannot cut one frequency and not the one beside it.
+#[must_use]
+pub fn suppression(spectrum: &[f32], set: crate::tone::Suppress) -> Vec<f32> {
+    if spectrum.len() < 4 {
+        return Vec::new();
+    }
+    let bins = crate::num::coord(spectrum.len().saturating_sub(1).max(1));
+    let full = (20_000.0_f64 / 20.0).log10();
+    // The bins' centre frequencies, worked out once: three suppressions
+    // per track per meter frame, each over ninety-six bins, is a few
+    // hundred thousand `powf`s a second that never change.
+    let table = bin_hz();
+    let hz_at = |i: usize| {
+        if spectrum.len() == BINS {
+            table.get(i).copied().unwrap_or(20_000.0)
+        } else {
+            20.0 * 10.0_f64.powf(crate::num::coord(i) / bins * full)
+        }
+    };
+    // The baseline the peaks are judged against: the spectrum's own
+    // average over a span set by the sharpness. Wide, because it has
+    // to IGNORE the peaks — narrow, it tracks them, and then everything
+    // stands the same tiny amount proud of its own neighbourhood.
+    //
+    // The bins are log-spaced, so a span in octaves is a fixed number
+    // of bins either side, and the average is a running window rather
+    // than a resample per bin. This runs for every track on every
+    // meter frame; it has to be linear in the bins.
+    let octaves = f64::from(set.sharpness).mul_add(-0.9, 1.2);
+    let bins_per_octave = bins / (full / 2.0_f64.log10());
+    let half = crate::num::index((octaves / 2.0 * bins_per_octave).round()).max(1);
+    // Prefix sums, so a window is two reads whatever its width.
+    let mut prefix = Vec::with_capacity(spectrum.len().saturating_add(1));
+    prefix.push(0.0_f64);
+    for db in spectrum {
+        let last = prefix.last().copied().unwrap_or(0.0);
+        prefix.push(last + f64::from(*db));
+    }
+    let average_at = |i: usize| {
+        let from = i.saturating_sub(half);
+        let to = i.saturating_add(half).min(spectrum.len().saturating_sub(1));
+        let sum = prefix.get(to.saturating_add(1)).copied().unwrap_or(0.0)
+            - prefix.get(from).copied().unwrap_or(0.0);
+        sum / crate::num::coord(to.saturating_sub(from).saturating_add(1))
+    };
+    // The cut, as prefix sums too — so the skirt below is two reads per
+    // bin and the whole thing is three allocations. It runs for every
+    // track on every meter frame.
+    let (low, high) = (f64::from(set.low), f64::from(set.high));
+    let mut cut = Vec::with_capacity(spectrum.len().saturating_add(1));
+    cut.push(0.0_f64);
+    for (i, db) in spectrum.iter().enumerate() {
+        let hz = hz_at(i);
+        let proud = if hz < low || hz > high {
+            0.0
+        } else {
+            (f64::from(*db) - average_at(i) - f64::from(set.threshold)).max(0.0) * f64::from(set.depth)
+        };
+        let last = cut.last().copied().unwrap_or(0.0);
+        cut.push(last + proud);
+    }
+    // The filter's skirt: a one-bin peak produces a dip with shoulders
+    // rather than a square notch nobody can build.
+    (0..spectrum.len())
+        .map(|i| {
+            let from = i.saturating_sub(SMOOTH);
+            let to = i.saturating_add(SMOOTH).min(spectrum.len().saturating_sub(1));
+            let sum = cut.get(to.saturating_add(1)).copied().unwrap_or(0.0)
+                - cut.get(from).copied().unwrap_or(0.0);
+            crate::mcp::f64_to_f32(sum / crate::num::coord(to.saturating_sub(from).saturating_add(1)))
+        })
+        .collect()
+}
+
+/// How many bins either side a simulated cut is smoothed over.
+const SMOOTH: usize = 2;
+
 #[cfg(test)]
 mod tests {
-    use super::{BINS, frame};
+    use super::{BINS, frame, meters, suppression};
 
     /// Deterministic, which is what makes a screenshot of a moving
     /// panel worth comparing to another one.
@@ -244,6 +442,26 @@ mod tests {
                 assert!((-40.0..=16.0).contains(db), "{db}");
             }
         }
+    }
+
+    /// The de-esser's rule finds the high voice's sibilance and leaves
+    /// the kick alone; the settled curve is smoother than the instant
+    /// one.
+    #[test]
+    fn the_suppressors_act_where_the_energy_is() {
+        let tone = crate::tone::placeholder(2);
+        let m = meters(2, 1.25, &tone);
+        assert_eq!(m.spectrum.len(), BINS);
+        assert_eq!(m.deess_db.len(), BINS);
+        assert!(m.resonance_settled_db.len() == BINS);
+        let ess = crate::tone::Suppress::sibilance();
+        let high = suppression(&frame(2, 1.25).spectrum, ess);
+        let low = suppression(&frame(0, 1.25).spectrum, ess);
+        let deepest = |v: &[f32]| v.iter().copied().fold(0.0_f32, f32::max);
+        assert!(deepest(&high) >= deepest(&low), "the cymbal should be the sibilant one");
+        // Outside the band nothing comes off.
+        assert!(high[..20].iter().all(|v| *v <= f32::EPSILON));
+        assert!((0.0..=1.0).contains(&m.delay_wet) && (0.0..=1.0).contains(&m.reverb_wet));
     }
 
     /// A voice's energy lands where its name says. A kick whose
