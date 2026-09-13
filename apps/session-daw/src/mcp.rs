@@ -1182,7 +1182,11 @@ fn bottom(
         // track's identity — and on a wide strip the number ended up in
         // a corner with the name over the middle of it.
         x + (w - font.width(&number, NUMBER_SIZE)) / 2.0,
-        h - 3.0,
+        // Centred in the band rather than sat near its top: the band is
+        // one indent step tall and the number was riding high in it,
+        // which reads as the number belonging to the name above rather
+        // than to the colour it is printed on.
+        number_top + (number_h + f64::from(NUMBER_SIZE) * 0.72) / 2.0,
         NUMBER_SIZE,
     );
 }
