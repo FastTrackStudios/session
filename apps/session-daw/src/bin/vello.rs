@@ -1047,9 +1047,11 @@ impl App {
                 Grip::Scale(_) => tone.cycle_eq_range(),
                 // The machine glyph cycles the machine: the delay's
                 // style, the reverb's algorithm.
+                Grip::Family(session_daw::tone::Which::Sat) => tone.cycle_sat(),
                 Grip::Family(session_daw::tone::Which::Delay) => tone.delay.cycle_style(),
                 Grip::Family(session_daw::tone::Which::Reverb) => tone.reverb.cycle_algorithm(),
                 // A chip in the selector strip picks its family.
+                Grip::Choose(session_daw::tone::Which::Sat, i) => tone.choose_sat_family(i),
                 Grip::Choose(session_daw::tone::Which::Delay, i) => tone.delay.choose_family(i),
                 Grip::Choose(session_daw::tone::Which::Reverb, i) => tone.reverb.choose_family(i),
                 _ => {}

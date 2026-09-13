@@ -79,6 +79,13 @@ pub struct Tone {
     pub eq: Vec<EqBand>,
     pub comp: Comp,
     pub sat: ClassAPreamp,
+    /// Which of the plugin's profiles the stage is — an index into
+    /// `saturate_profiles::PROFILES`. The selector picks one; `sat` is
+    /// what `apply` made of it, plus whatever the grips moved since.
+    pub sat_profile: usize,
+    /// The quantiser after the stage, which only the digital profiles
+    /// switch on. Kept so the curve can draw its steps.
+    pub sat_digital: saturate_dsp::digital::DigitalStage,
     /// Polish.
     pub de_ess: Suppress,
     pub resonance: Suppress,
@@ -150,6 +157,60 @@ impl Tone {
             Which::Comp => Some(&mut self.comp),
             _ => None,
         }
+    }
+
+    /// Which machine the saturator reads as: the quantiser if a digital
+    /// profile is in, else what the shapers say.
+    #[must_use]
+    pub fn sat_circuit(&self) -> Circuit {
+        if saturate_profiles::PROFILES
+            .get(self.sat_profile)
+            .is_some_and(|p| p.voicing.digital)
+        {
+            Circuit::Steps
+        } else {
+            self.sat.circuit()
+        }
+    }
+
+    /// Point the stage at a profile, through the plugin's own `apply`,
+    /// keeping the drive knob where it was and the mix as it is.
+    ///
+    /// The drive is carried as a KNOB position rather than a gain: a
+    /// fuzz travels further than a tape machine, and carrying the gain
+    /// across would land a modest tape drive at the top of the fuzz.
+    pub fn set_sat_profile(&mut self, index: usize) {
+        let Some(profile) = saturate_profiles::PROFILES.get(index) else {
+            return;
+        };
+        let was_scale = saturate_profiles::PROFILES
+            .get(self.sat_profile)
+            .map_or(1.0, |p| p.voicing.drive_scale)
+            .max(f32::EPSILON);
+        let knob = ((self.sat.drive - 1.0) / (15.0 * was_scale)).clamp(0.0, 1.0);
+        let mix = self.sat.mix;
+        let controls = saturate_profiles::Controls {
+            drive: knob,
+            mix,
+            ..saturate_profiles::Controls::default()
+        };
+        saturate_profiles::apply(profile, &controls, &mut self.sat, &mut self.sat_digital);
+        self.sat.mix = mix;
+        self.sat_profile = index;
+    }
+
+    /// A click on a circuit chip: the plugin's own rail rule — the
+    /// family's first profile, or the next one if you are already in it.
+    pub fn choose_sat_family(&mut self, category: usize) {
+        let to = saturate_profiles::rail_click_target(self.sat_profile, category);
+        self.set_sat_profile(to);
+    }
+
+    /// The next profile, wrapping — what a click on the glyph does.
+    pub fn cycle_sat(&mut self) {
+        let next = self.sat_profile.saturating_add(1);
+        let to = if next >= saturate_profiles::PROFILES.len() { 0 } else { next };
+        self.set_sat_profile(to);
     }
 
     /// The wet/dry mix a given panel edits.
@@ -1063,7 +1124,9 @@ pub fn draw(
                     comp(scene, palette, font, tone.rescue_comp, body, rack, lit);
                 }
                 Which::Comp => comp(scene, palette, font, tone.comp, body, rack, lit),
-                Which::Sat => sat(scene, palette, &tone.sat, meters, body, rack, lit),
+                Which::Sat => {
+                    sat(scene, palette, tone, meters, display_of(body, which, rack), rack, lit);
+                }
                 Which::DeEss => {
                     suppress(scene, palette, which, tone.de_ess, meters, body, rack, lit);
                 }
@@ -1078,7 +1141,7 @@ pub fn draw(
                 }
             }
             if let Some(strip) = lane_of(body, which, rack)
-                && matches!(which, Which::Delay | Which::Reverb)
+                && matches!(which, Which::Sat | Which::Delay | Which::Reverb)
             {
                 selector(scene, palette, font, tone, which, strip, lit);
             }
@@ -1388,7 +1451,7 @@ impl Which {
     #[must_use]
     pub fn glyph(self, tone: &Tone) -> Option<Glyph> {
         match self {
-            Self::Sat => Some(Glyph::Circuit(tone.sat.circuit())),
+            Self::Sat => Some(Glyph::Circuit(tone.sat_circuit())),
             Self::Delay => Some(Glyph::Delay(tone.delay.family())),
             Self::Reverb => Some(Glyph::Room(tone.reverb.family())),
             _ => None,
@@ -1396,14 +1459,10 @@ impl Which {
     }
 
     /// Whether this unit's glyph is a switch — clicked to cycle the
-    /// machine.
-    ///
-    /// The saturator's is not: its circuit follows the shapers, which
-    /// are the plugin's to set. The delay's and the reverb's are one
-    /// setting each.
+    /// machine. The three that are a family of machines.
     #[must_use]
     pub const fn glyph_switches(self) -> bool {
-        matches!(self, Self::Delay | Self::Reverb)
+        matches!(self, Self::Sat | Self::Delay | Self::Reverb)
     }
 
     /// How tall this panel wants to be, in pixels.
@@ -1437,7 +1496,7 @@ impl Which {
             // A bent line through a square, and the ladder of what it
             // adds beside it. The ladder wants the height the curve
             // has, no more.
-            Self::Sat => 130.0,
+            Self::Sat => 130.0 + SELECTOR + 2.0,
             // Time pictures, both. A delay needs width for its taps and
             // no height beyond telling them apart; a reverb's tail is a
             // single falling line.
@@ -2288,7 +2347,7 @@ pub const fn display_of(body: Panel, which: Which, rack: Rack) -> Panel {
     }
     let keep = match which {
         Which::Gate | Which::DeEss => LANE + 2.0,
-        Which::Delay | Which::Reverb => SELECTOR + 2.0,
+        Which::Sat | Which::Delay | Which::Reverb => SELECTOR + 2.0,
         Which::Resonance => TEETH + 2.0,
         _ => 0.0,
     };
@@ -3011,12 +3070,13 @@ const fn hex_of(color: daw_theme::Color) -> Color {
 fn sat(
     scene: &mut Scene,
     palette: &Palette,
-    pre: &ClassAPreamp,
+    tone: &Tone,
     meters: &Meters,
     at: Panel,
     rack: Rack,
     lit: Option<Grip>,
 ) {
+    let pre = &tone.sat;
     let (at, ladder_box) = sat_split(at, rack);
     let right = at.x + at.width;
     let bottom = at.y + at.height;
@@ -3039,6 +3099,15 @@ fn sat(
 
     let mut samples = [(0.0_f32, 0.0_f32); SAMPLES];
     saturate_dsp::preamp::analysis::transfer_curve(pre, &mut samples);
+    // A quantiser has no transfer curve of its own — there is no curve
+    // that produces an alias — but it does one thing to this one: it
+    // turns it into a staircase, and that is the honest picture of it.
+    if !tone.sat_digital.is_transparent() {
+        let levels = (f64::from(tone.sat_digital.bits.clamp(1.0, 16.0)) - 1.0).exp2();
+        for (_, y) in &mut samples {
+            *y = crate::mcp::f64_to_f32((f64::from(*y) * levels).round() / levels);
+        }
+    }
     let place = |(x, y): &(f32, f32)| {
         (
             f64::midpoint(f64::from(*x), 1.0).mul_add(at.width, at.x),
@@ -3193,6 +3262,16 @@ fn glyph(scene: &mut Scene, ink: Color, glyph: Glyph, x: f64, baseline: f64) {
     }
 }
 
+/// The saturator's five circuits, in the plugin's own rail order —
+/// which is `saturate_profiles::CATEGORIES`' order, chip for chip.
+const CIRCUITS: [Circuit; 5] = [
+    Circuit::Valve,
+    Circuit::Tape,
+    Circuit::Core,
+    Circuit::Solid,
+    Circuit::Steps,
+];
+
 /// The machine selector: one chip per family, the current family lit,
 /// and the machine's name beside them.
 ///
@@ -3212,6 +3291,16 @@ fn selector(
 ) {
     const SIZE: f32 = 6.5;
     let (chips, current, name): (Vec<Glyph>, usize, &str) = match which {
+        Which::Sat => {
+            let profile = saturate_profiles::PROFILES.get(tone.sat_profile);
+            (
+                CIRCUITS.iter().map(|c| Glyph::Circuit(*c)).collect(),
+                profile
+                    .and_then(|p| saturate_profiles::category_of(p.id))
+                    .map_or(0, |(category, _)| category),
+                profile.map_or("", |p| p.name),
+            )
+        }
         Which::Delay => (
             DelayFamily::ALL.iter().map(|f| Glyph::Delay(*f)).collect(),
             DelayFamily::ALL.iter().position(|f| *f == tone.delay.family()).unwrap_or(0),
@@ -3648,7 +3737,7 @@ pub fn placeholder(index: usize) -> Tone {
     // A drift within the voice, so two kicks are not one kick. Small
     // enough that they still read as the same decision made twice.
     let drift = crate::num::coord(index % 5) - 2.0;
-    Tone {
+    let mut tone = Tone {
         // Rescue is the same surgery on every track, roughly: a
         // high-pass and one cut. It is the pass you make before you
         // know what the track is going to be.
@@ -3701,15 +3790,24 @@ pub fn placeholder(index: usize) -> Tone {
             // A single-ended stage: a triode grid above and iron below,
             // biased off centre. `Clean` is wire, and wire into the
             // output clamp draws a hard clipper's flat-ramp-flat — a
-            // picture of a limiter, not of saturation.
+            // picture of a limiter, not of saturation. Replaced by the
+            // voice's profile below, through the plugin's own `apply`.
             pre.positive = SideShaper::Tube;
             pre.negative = SideShaper::Transformer;
             pre.drive = f64_to_f32(voice.drive() + drift * 0.3);
             pre.q_point = 0.25;
             pre
         },
+        sat_profile: 0,
+        sat_digital: saturate_dsp::digital::DigitalStage::new(),
         bypass: Bypass::default(),
-    }
+    };
+    // Each voice on its own circuit, so a mixer of racks shows the five
+    // faces; the drive the voice wants survives the profile.
+    let drive = tone.sat.drive;
+    tone.set_sat_profile(saturate_profiles::profile_index(voice.sat_profile()).unwrap_or(0));
+    tone.sat.drive = drive;
+    tone
 }
 
 /// What a track sounds like, as far as a placeholder can know.
@@ -3801,6 +3899,16 @@ impl Character {
             knee: 6.0,
             attack: f64_to_f32((attack * 1.15_f64.powf(drift)).clamp(0.1, 200.0)),
             release: f64_to_f32((release * 1.12_f64.powf(drift)).clamp(5.0, 3_000.0)),
+        }
+    }
+
+    /// Which saturator this voice runs through, by profile id.
+    const fn sat_profile(self) -> &'static str {
+        match self {
+            Self::Low => "transformer",
+            Self::Mid => "triode",
+            Self::High => "tape",
+            Self::Broad => "transistor",
         }
     }
 
@@ -4140,7 +4248,10 @@ pub fn grip_at(
             // The ladder is the tilt; the curve's centre is the bias;
             // the rest of the curve is the drive.
             Which::Sat => {
-                let (curve_box, ladder_box) = sat_split(body, rack);
+                if lane_of(body, which, rack).is_some_and(|strip| strip.contains(x, y)) {
+                    return Some(selector_grip(which, body, rack, x));
+                }
+                let (curve_box, ladder_box) = sat_split(display_of(body, which, rack), rack);
                 if ladder_box.is_some_and(|lb| lb.contains(x, y)) {
                     return Some(Grip::Tilt);
                 }
@@ -4195,10 +4306,10 @@ pub fn grip_at(
 /// panel's empty space is the bypass everywhere else).
 fn selector_grip(which: Which, body: Panel, rack: Rack, x: f64) -> Grip {
     let strip = lane_of(body, which, rack).unwrap_or(body);
-    let chips = if which == Which::Delay {
-        DelayFamily::ALL.len()
-    } else {
-        RoomFamily::ALL.len()
+    let chips = match which {
+        Which::Sat => CIRCUITS.len(),
+        Which::Delay => DelayFamily::ALL.len(),
+        _ => RoomFamily::ALL.len(),
     };
     let index = crate::num::index(((x - strip.x - 2.0) / CHIP).floor());
     if index < chips && x >= strip.x + 2.0 {
@@ -4659,13 +4770,11 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
                 *mix = fresh;
             }
         }
-        // A machine is a choice, not a value with a default to go back
-        // to.
-        Grip::Family(_) | Grip::Choose(..) => {}
         Grip::Scale(_) => tone.eq_range = DEFAULT_EQ_RANGE,
-        // Folding is not a setting on the track, so there is nothing
-        // here to put back — see `Fold`.
-        Grip::Phase(_) => {}
+        // A machine is a choice, not a value with a default to go back
+        // to; and folding is not a setting on the track, so there is
+        // nothing to put back — see `Fold`.
+        Grip::Family(_) | Grip::Choose(..) | Grip::Phase(_) => {}
     }
 }
 
@@ -4826,10 +4935,20 @@ pub fn drag(
             let moved = f64::from(tone.sat.drive) - dy / per_unit.max(f64::EPSILON);
             tone.sat.drive = f64_to_f32(moved.clamp(0.0, 10.0));
         }
+        _ => drag_more(tone, grip, body, rack, mods, dx, dy),
+    }
+}
+
+/// The drags the newer faces added — split from [`drag`] by size alone.
+/// Each arm states the axis its grip moves on and what a panel width or
+/// height is worth on it.
+#[expect(clippy::too_many_arguments, reason = "a drag and everything it reads")]
+fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, dx: f64, dy: f64) {
+    match grip {
         // The bias leans the curve, so it is dragged the way the curve
         // leans: sideways, half the curve's width for the whole range.
         Grip::Bias => {
-            let (curve_box, _) = sat_split(body, rack);
+            let (curve_box, _) = sat_split(display_of(body, Which::Sat, rack), rack);
             let dx = dx * interaction::fine_scale(mods);
             let per_unit = (curve_box.width / 2.0).max(1.0);
             let moved = f64::from(tone.sat.q_point) + dx / per_unit;
@@ -4838,7 +4957,7 @@ pub fn drag(
         // Up is the top: a drag up the ladder tips the emphasis
         // toward the highs. The ladder's height is ±12 dB.
         Grip::Tilt => {
-            let (_, ladder_box) = sat_split(body, rack);
+            let (_, ladder_box) = sat_split(display_of(body, Which::Sat, rack), rack);
             let per_db = ladder_box.map_or(body.height, |lb| lb.height) / 24.0;
             let dy = dy * interaction::fine_scale(mods);
             let to = (f64::from(tone.sat.tilt_db()) - dy / per_db.max(f64::EPSILON)).clamp(-12.0, 12.0);
@@ -4921,7 +5040,7 @@ pub fn drag(
                 *mix = f64_to_f32((f64::from(*mix) - dy / per_unit).clamp(0.0, 1.0));
             }
         }
-        Grip::Family(_) | Grip::Choose(..) => {}
+        _ => {}
     }
 }
 
@@ -7228,7 +7347,7 @@ mod face_tests {
         let mut tone = placeholder(0);
         let strip = lane_of(body(Which::Delay), Which::Delay, Rack::Full).expect("a selector");
         // Chip 1 is tape.
-        let x = strip.x + 2.0 + super::CHIP * 1.5;
+        let x = super::CHIP.mul_add(1.5, strip.x + 2.0);
         assert_eq!(grip(x, strip.y + 4.0, &tone), Some(Grip::Choose(Which::Delay, 1)));
         assert!(Grip::Choose(Which::Delay, 1).is_switch());
         tone.delay.choose_family(1);
@@ -7243,11 +7362,35 @@ mod face_tests {
         assert_eq!(grip(strip.x + strip.width - 2.0, strip.y + 4.0, &tone), Some(Grip::Bypass(Which::Delay)));
         // And the reverb's picks an algorithm of the family.
         let strip = lane_of(body(Which::Reverb), Which::Reverb, Rack::Full).expect("a selector");
-        assert_eq!(grip(strip.x + 2.0 + super::CHIP * 2.5, strip.y + 4.0, &tone), Some(Grip::Choose(Which::Reverb, 2)));
+        assert_eq!(grip(super::CHIP.mul_add(2.5, strip.x + 2.0), strip.y + 4.0, &tone), Some(Grip::Choose(Which::Reverb, 2)));
         tone.reverb.choose_family(2);
         assert_eq!(tone.reverb.family(), reverb_dsp::algorithm::Family::Plate);
         tone.reverb.choose_family(99);
         assert_eq!(tone.reverb.family(), reverb_dsp::algorithm::Family::Plate);
+    }
+
+    /// The saturator's selector picks a circuit through the plugin's
+    /// own rail rule, and the digital circuit draws steps.
+    #[test]
+    fn the_saturators_selector_picks_a_circuit() {
+        let mut tone = placeholder(0);
+        let strip = lane_of(body(Which::Sat), Which::Sat, Rack::Full).expect("a selector");
+        assert_eq!(grip(super::CHIP.mul_add(4.5, strip.x + 2.0), strip.y + 4.0, &tone), Some(Grip::Choose(Which::Sat, 4)));
+        let drive = tone.sat.drive;
+        tone.choose_sat_family(4);
+        assert_eq!(tone.sat_circuit(), saturate_dsp::preamp::Circuit::Steps);
+        assert_eq!(saturate_profiles::PROFILES[tone.sat_profile].name, "Clip");
+        tone.choose_sat_family(4);
+        assert_eq!(saturate_profiles::PROFILES[tone.sat_profile].name, "Bitcrush");
+        assert!(!tone.sat_digital.is_transparent(), "a bitcrusher quantises");
+        tone.choose_sat_family(0);
+        assert_eq!(tone.sat_circuit(), saturate_dsp::preamp::Circuit::Valve);
+        assert!(tone.sat_digital.is_transparent());
+        // The drive knob rides across: a transformer at its drive is a
+        // triode at the same knob, not the same gain.
+        assert!(tone.sat.drive > 1.0 && (tone.sat.drive - drive).abs() < 8.0);
+        tone.cycle_sat();
+        assert_eq!(saturate_profiles::PROFILES[tone.sat_profile].name, "Pentode");
     }
 
     /// A suppressor: edges where they are drawn, then threshold, depth,
@@ -7281,7 +7424,7 @@ mod face_tests {
     #[test]
     fn the_saturators_ladder_and_centre_are_grips() {
         let mut tone = placeholder(0);
-        let at = body(Which::Sat);
+        let at = display_of(body(Which::Sat), Which::Sat, Rack::Full);
         let (curve, ladder) = sat_split(at, Rack::Full);
         let ladder = ladder.expect("a ladder at a working width");
         assert_eq!(grip(ladder.x + 3.0, ladder.y + 3.0, &tone), Some(Grip::Tilt));
@@ -7289,8 +7432,9 @@ mod face_tests {
         assert_eq!(grip(curve.x + 3.0, curve.y + 5.0, &tone), Some(Grip::Drive));
         drag(&mut tone, Grip::Bias, &ALL_PANELS, rack(), Folded::default(), Mods::default(), 15.0, 0.0);
         assert!(tone.sat.q_point > 0.25);
+        let tilt = tone.sat.tilt_db();
         wheel(&mut tone, Grip::Tilt, Mods::default(), -1.0);
-        assert!(tone.sat.tilt_db() > 0.0);
+        assert!(tone.sat.tilt_db() > tilt, "up is toward the highs");
         reset(&mut tone, Grip::Tilt);
         assert!(tone.sat.tilt_db().abs() < f32::EPSILON);
 
@@ -7313,8 +7457,8 @@ mod face_tests {
         let tone = placeholder(0);
         let with: Vec<Which> = ALL_PANELS.iter().copied().filter(|w| w.glyph(&tone).is_some()).collect();
         assert_eq!(with, vec![Which::Sat, Which::Delay, Which::Reverb]);
-        assert!(!Which::Sat.glyph_switches());
-        assert!(Which::Delay.glyph_switches() && Which::Reverb.glyph_switches());
+        assert!(Which::Sat.glyph_switches() && Which::Delay.glyph_switches() && Which::Reverb.glyph_switches());
+        assert!(!Which::Gate.glyph_switches());
     }
 
     /// The lanes draw from the history: a gate fed hits above its
