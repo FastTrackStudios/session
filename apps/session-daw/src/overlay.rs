@@ -155,6 +155,20 @@ pub fn control(
                     + row * (f64::from(g::BUTTON_H) + 1.0),
             );
         }
+        Control::Monitor => {
+            crate::art::place(
+                &mut scene,
+                &art::monitor(
+                    &palette.chrome,
+                    monitoring(track),
+                    crate::tcp::lit(palette).rec,
+                    state,
+                ),
+                font,
+                columns.column_x,
+                buttons_top + f64::from(g::RECMON_FROM_ARM) - f64::from(g::BUTTON_H) - 1.0,
+            );
+        }
         Control::RecArm => {
             crate::art::place(
                 &mut scene,
@@ -775,6 +789,24 @@ fn draw_strip_controls(
         );
     }
 
+    // Input monitoring, directly under the arm — REAPER stacks the two
+    // because they are one decision made twice: what the track records,
+    // and whether you hear it while it does.
+    if let Some((x, y)) = at(Control::Monitor) {
+        crate::art::place(
+            scene,
+            &art::monitor(
+                &palette.chrome,
+                monitoring(track),
+                crate::tcp::lit(palette).rec,
+                state(Control::Monitor),
+            ),
+            font,
+            x,
+            y,
+        );
+    }
+
     for (control, label, on, lit) in [
         (Control::Mute, "M", track.muted, crate::tcp::mute_lit(palette)),
         (Control::Solo, "S", track.soloed, crate::tcp::solo_lit(palette)),
@@ -1077,6 +1109,20 @@ mod clip_tests {
         assert!(clips.any());
         clips.clear_all();
         assert!(!clips.any());
+    }
+}
+
+/// A track's input-monitoring mode, as the art's own three states.
+///
+/// Mapped here so the drawing does not have to know what a `daw_proto`
+/// track is — the art speaks in what it draws, not in what the engine
+/// calls it.
+fn monitoring(track: &Track) -> art::Monitoring {
+    use daw_proto::track::InputMonitoringMode as M;
+    match track.input_monitor {
+        M::Off => art::Monitoring::Off,
+        M::Normal => art::Monitoring::Normal,
+        M::NotWhenPlaying => art::Monitoring::NotWhenPlaying,
     }
 }
 

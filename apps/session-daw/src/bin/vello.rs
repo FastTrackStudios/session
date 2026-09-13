@@ -2292,6 +2292,7 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         Edit::SetPan(_, p) => track.pan = *p,
         Edit::Rename(_, name) => track.name.clone_from(name),
         Edit::SetPhase(_, inverted) => track.phase_inverted = *inverted,
+        Edit::SetInputMonitor(_, mode) => track.input_monitor = *mode,
         Edit::SetParentSend(_, enabled) => track.parent_send = *enabled,
         // Selection is the engine's to decide: an exclusive select
         // changes every OTHER track too, and predicting which ones

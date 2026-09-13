@@ -564,11 +564,18 @@ pub mod tcp {
         let groove = groove_w(w);
         let groove_x = (w - groove) / 2.0;
         let mut drawing = Drawing::new(w, h);
-        drawing.fill(
-            rect(groove_x, 0.5, groove, (h - 1.0).max(0.0), groove / 2.0),
-            chrome.surface_sunken,
-        );
         let span = (h - 1.0).max(0.0);
+        // The groove, and nothing else behind the meter. It used to be
+        // a well the full width of both channels, which blacked out the
+        // column and made the cap hard to pick out against it — REAPER
+        // runs the fader on a thin line, and the level reads better
+        // growing out of the strip than filling a trough. The line also
+        // does the work the seam used to: it is what the two channels
+        // sit either side of.
+        drawing.fill(
+            rect(divider_x(groove_x, groove), 0.5, SEAM, span, 0.0),
+            chrome.surface_sunken.shade(-0.5),
+        );
         for (at, wide, value) in channels(groove_x, groove, level) {
             let lit = span * value.clamp(0.0, 1.0);
             if lit > 0.5 {
@@ -593,13 +600,11 @@ pub mod tcp {
                 zone_at(zones, value),
             );
         }
-        // The seam, drawn over both so it survives a full-scale signal.
-        // Subtle on purpose: it says "two channels", and a meter whose
-        // loudest feature is its own divider is a divider with a meter
-        // round it.
+        // The groove again, over the bars, so a full-scale signal does
+        // not swallow the line the cap rides on.
         drawing.fill(
             rect(divider_x(groove_x, groove), 0.5, SEAM, span, 0.0),
-            chrome.surface_sunken.with_alpha(190),
+            chrome.surface_sunken.shade(-0.5).with_alpha(210),
         );
         // The clip latch. A peak-hold decays, which is right for
         // reading a level and wrong for reporting a fault: the whole
@@ -1274,6 +1279,72 @@ pub mod tcp {
         drawing.stroke(rect(0.5, 0.5, w - 1.0, h - 1.0, 3.0), ink.border, Stroke::new(1.0));
         drawing.text(label, w / 2.0, h / 2.0 + 3.5, 10.0, ink.text, Align::Centre);
         drawing
+    }
+
+    /// Input monitoring: the dome and the two arcs under it.
+    ///
+    /// REAPER's `mcp_monitor_*` cell — a small dome with two widening
+    /// arcs spreading beneath it, which reads as sound coming toward
+    /// you. It sits directly under the record arm, because the two are
+    /// one decision made twice: what the track records, and whether you
+    /// hear it while it does.
+    ///
+    /// Three states rather than two, and they are not brightnesses of
+    /// each other: OFF is the outline unlit, NORMAL is lit through, and
+    /// NOT-WHEN-PLAYING lights the dome alone — the one that says
+    /// "sometimes" has to look like neither of the other two or it is
+    /// just a dimmer ON.
+    #[must_use]
+    pub fn monitor(chrome: &Chrome, mode: Monitoring, lit: Color, at: Interaction) -> Drawing {
+        let (w, h) = (21.0_f64, 20.0_f64);
+        // The PLATE stays a plate at every state, and the glyph on it
+        // lights. REAPER's does the same, and the reason is worth
+        // stating: a button whose whole face floods red reads as an
+        // alarm, and monitoring is a mode rather than a fault. Flooded,
+        // every armed track shouted at once.
+        let ink = ink_in(chrome, None, at, false, 0.25);
+        let mut drawing = Drawing::new(w, h);
+        drawing.fill(rect(0.0, 0.0, w, h, 3.0), ink.face);
+        drawing.stroke(rect(0.5, 0.5, w - 1.0, h - 1.0, 3.0), ink.border, Stroke::new(1.0));
+
+        let dim = chrome.hardware_mark.shade(-0.33);
+        let on = |part_lit: bool| if part_lit { lit } else { dim };
+        let cx = w / 2.0;
+        // The dome, then two arcs widening under it. Measured off the
+        // cell as proportions so the glyph survives a different size.
+        drawing.fill(
+            Shape::Ellipse { cx, cy: h * 0.34, rx: w * 0.14, ry: h * 0.15 },
+            on(mode != Monitoring::Off),
+        );
+        for (index, (radius, thickness)) in
+            [(w * 0.24, 2.0_f64), (w * 0.37, 2.2_f64)].into_iter().enumerate()
+        {
+            // The outer arc is the one that means "through": the dome
+            // alone is the tape-style mode.
+            let through = match mode {
+                Monitoring::Off => false,
+                Monitoring::Normal => true,
+                Monitoring::NotWhenPlaying => index == 0,
+            };
+            drawing.stroke(
+                Shape::Arc { cx, cy: h * 0.42, r: radius, start: 115.0, sweep: 130.0 },
+                on(through),
+                Stroke::new(thickness),
+            );
+        }
+        drawing
+    }
+
+    /// Which input-monitoring state a strip is in.
+    ///
+    /// The art's own three, so a caller maps its domain type once here
+    /// rather than the drawing knowing what a `daw_proto` track is.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    pub enum Monitoring {
+        #[default]
+        Off,
+        Normal,
+        NotWhenPlaying,
     }
 
     /// What a track's routing button has to say.

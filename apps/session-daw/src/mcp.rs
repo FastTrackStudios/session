@@ -606,6 +606,12 @@ pub enum Control {
     Volume,
     /// The name plate. Double-clicked to rename.
     Name,
+    /// Input monitoring, under the record arm.
+    ///
+    /// Its own control rather than part of the arm: what a track
+    /// records and whether you hear it while it does are two decisions,
+    /// and REAPER gives them two buttons for that reason.
+    Monitor,
     /// The clip latch at the top of the meter — clicked to clear it.
     ///
     /// Its rect is always here, because geometry is worked out without

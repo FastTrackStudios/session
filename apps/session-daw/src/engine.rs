@@ -54,6 +54,11 @@ pub enum Edit {
     /// the state to invert it would let a click disagree with the
     /// control it landed on.
     SetPhase(String, bool),
+    /// Whether the track's input is monitored, and when.
+    ///
+    /// Three states rather than a toggle, because REAPER's is three:
+    /// off, on, and on-except-while-playing. A click walks them.
+    SetInputMonitor(String, daw_proto::track::InputMonitoringMode),
     /// Whether the track feeds its parent at all.
     ///
     /// A folder's children normally sum into it; a track with this off
@@ -76,6 +81,7 @@ impl Edit {
             | Self::SetPan(g, _)
             | Self::Rename(g, _)
             | Self::SetPhase(g, _)
+            | Self::SetInputMonitor(g, _)
             | Self::SetParentSend(g, _) => g,
         }
     }
@@ -173,6 +179,25 @@ pub fn click(
         // window forgetting something, not the engine being told
         // something. Handled where the latch lives.
         crate::mcp::Control::Clip => None,
+        crate::mcp::Control::Monitor => {
+            Some(Edit::SetInputMonitor(guid, next_monitor(from.input_monitor)))
+        }
+    }
+}
+
+/// The monitoring mode a click moves to.
+///
+/// Off → on → on-except-while-playing → off. REAPER's own order, and
+/// the one that puts the mode you reach for most one click away.
+#[must_use]
+pub const fn next_monitor(
+    from: daw_proto::track::InputMonitoringMode,
+) -> daw_proto::track::InputMonitoringMode {
+    use daw_proto::track::InputMonitoringMode as M;
+    match from {
+        M::Off => M::Normal,
+        M::Normal => M::NotWhenPlaying,
+        M::NotWhenPlaying => M::Off,
     }
 }
 
@@ -562,6 +587,7 @@ async fn apply(edit: &Edit) {
         Edit::SetPan(_, p) => track.set_pan(*p).await,
         Edit::Rename(_, name) => track.rename(name).await,
         Edit::SetPhase(_, inverted) => track.set_phase_inverted(*inverted).await,
+        Edit::SetInputMonitor(_, mode) => track.set_input_monitor(*mode).await,
         Edit::SetParentSend(_, enabled) => track.set_parent_send(*enabled).await,
     };
     if let Err(error) = outcome {

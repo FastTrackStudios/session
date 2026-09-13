@@ -26,6 +26,14 @@ use daw_theme_art::paint::tcp as art;
 
 use crate::mcp::{Columns, Control, Squeeze};
 
+/// How far the pan knob sits in from the strip's left edge.
+///
+/// The coloured band holds two things and REAPER puts one at each end:
+/// the pan knob left, the record arm right. A small inset rather than
+/// flush, because the band's own edge is a colour boundary and a
+/// control touching it reads as bleeding out of the strip.
+const PAN_FROM_EDGE: f64 = 5.0;
+
 /// The air between the bottom of the fader column and the name plate.
 ///
 /// Small, but not nothing: a meter whose last pixel touches the plate
@@ -194,7 +202,12 @@ impl Strip {
             Control::Pan => (self.squeeze.head()
                 && f64::from(self.shared.pan_band) + f64::from(self.shared.input_band) > 26.0)
                 .then(|| {
-                    let x = (self.width - f64::from(g::PAN_KNOB_W)) / 2.0;
+                    // At the LEFT of the coloured band, which is where
+                    // REAPER puts it — see `reference/mcp-zoom.png`.
+                    // Centred, it collided with the record arm on the
+                    // right of the same band and left the left half of
+                    // the colour empty.
+                    let x = PAN_FROM_EDGE;
                     Rect::new(
                         x,
                         self.band_top() + 2.0,
@@ -213,6 +226,20 @@ impl Strip {
                     y + f64::from(g::ARM_CELL_H),
                 )
             }),
+            // Directly under the arm, on the same axis. REAPER stacks
+            // the two, because they are one decision made twice: what
+            // the track records, and whether you hear it while it does.
+            Control::Monitor => self.squeeze.columns().then(|| {
+                let arm = self.rect(Control::RecArm)?;
+                let x = self.columns.column_x;
+                let y = arm.y1 + 1.0;
+                Some(Rect::new(
+                    x,
+                    y,
+                    x + f64::from(g::BUTTON_W),
+                    y + f64::from(g::BUTTON_H),
+                ))
+            })?,
             Control::Mute | Control::Solo | Control::Routing => {
                 let row = match control {
                     Control::Mute => 0.0,
@@ -290,6 +317,7 @@ impl Strip {
         // buttons beside it.
         [
             Control::RecArm,
+            Control::Monitor,
             Control::Mute,
             Control::Solo,
             Control::Routing,
@@ -328,6 +356,7 @@ mod tests {
             Control::Fx,
             Control::Pan,
             Control::RecArm,
+            Control::Monitor,
             Control::Mute,
             Control::Solo,
             Control::Volume,
