@@ -22,6 +22,8 @@ use daw_theme_art::geometry::mcp as g;
 use daw_ui::controls::{Collapse, VolumeWidget};
 use vello::kurbo::Rect;
 
+use daw_theme_art::paint::tcp as art;
+
 use crate::mcp::{Columns, Control, Squeeze};
 
 /// The air between the bottom of the fader column and the name plate.
@@ -223,6 +225,18 @@ impl Strip {
                 let y = self.buttons_top
                     + f64::from(g::RECMON_FROM_ARM)
                     + row * (f64::from(g::BUTTON_H) + 1.0);
+                // The routing's traced cell is padded a pixel around a
+                // panel the width of a button, so its CELL goes a pixel
+                // left of the column for its PANEL to land on it. The
+                // rect is the cell, because that is what gets drawn and
+                // therefore what should be hit — a caller doing this
+                // arithmetic at the draw call is a caller that can
+                // disagree with the hit test. See `ROUTING_CELL_V`.
+                if control == Control::Routing {
+                    let (cell_w, cell_h) = art::ROUTING_CELL_V;
+                    let x = self.columns.column_x - art::ROUTING_INSET_V;
+                    return Some(Rect::new(x, y, x + cell_w, y + cell_h));
+                }
                 Some(Rect::new(
                     self.columns.column_x,
                     y,

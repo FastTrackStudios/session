@@ -1353,16 +1353,21 @@ pub mod tcp {
     /// send is cut. Colouring it by whether anything is routed made an
     /// unrouted track look broken rather than merely unrouted.
     #[must_use]
-    /// How far the VERTICAL routing panel sits inside its own cell.
+    /// The VERTICAL routing cell, and where its panel sits inside it.
     ///
-    /// The traced cell is 23 wide around a 21-wide panel, and 21 is
-    /// exactly `geometry::mcp::BUTTON_W` — so a caller that places the
-    /// CELL where it places a button gets a panel one pixel to the
-    /// right of that button's edge, every time. Placing the cell a
-    /// pixel left of the column puts the panel ON it.
+    /// The cell is REAPER's own `mcp_io` image size and is not ours to
+    /// change: `slice` declares it, `declared_slices_match_the_source_art`
+    /// checks it against the real PNGs, and this function is what
+    /// EXPORTS those PNGs — a 21-wide cell would emit a theme image of
+    /// the wrong size.
     ///
-    /// Stated here rather than worked out at the call site, because a
-    /// number derived from the art belongs with the art.
+    /// So the padding is a fact about the art, stated here. The panel
+    /// inside it is 21 wide, which is exactly
+    /// `geometry::mcp::BUTTON_W`: a layout that places the CELL where
+    /// it places a button therefore puts the PANEL one pixel right of
+    /// that button's edge. Place the cell a pixel left of the column
+    /// and the panel lands on it.
+    pub const ROUTING_CELL_V: (f64, f64) = (23.0, 32.0);
     pub const ROUTING_INSET_V: f64 = 1.0;
 
     pub fn routing(

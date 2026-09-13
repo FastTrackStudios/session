@@ -753,10 +753,7 @@ fn draw_strip_controls(
                 state(Control::Routing),
             ),
             font,
-            // The cell a pixel left of the column, so the PANEL inside
-            // it lands on the column — where the mute and solo above it
-            // already are. See `ROUTING_INSET_V`.
-            x - art::ROUTING_INSET_V,
+            x,
             y,
         );
     }
