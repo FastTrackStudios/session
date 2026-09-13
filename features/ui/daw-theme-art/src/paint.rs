@@ -435,8 +435,8 @@ pub mod tcp {
         // at 23, not 21.
         let (x0, x1) = (vw * 2.0 / 27.0, vw * 23.0 / 27.0);
         let (top, bot) = (vh * 5.0 / 53.0, vh * 48.0 / 53.0);
-        let (gx0, gw) = (vw * 7.0 / 27.0, vw * 11.0 / 27.0);
-        let (gy0, gy1) = (vh * 13.0 / 53.0, vh * 40.0 / 53.0);
+        let (gx0, gw) = (vw * CAP_PANE_X, vw * CAP_PANE_W);
+        let (gy0, gy1) = (vh * CAP_PANE_Y0, vh * CAP_PANE_Y1);
 
         let mut drawing = Drawing::new(vw, vh);
         // The shadow it casts.
@@ -615,6 +615,19 @@ pub mod tcp {
         drawing
     }
 
+    /// The pane cut in the cap, as fractions of the cap's own cell.
+    ///
+    /// Public because two drawings have to agree about it: the cap
+    /// leaves this rectangle unpainted, and the level drawn over the
+    /// cap has to land INSIDE it. They disagreed at first — the level
+    /// was drawn over a taller, wider box than the hole — so it painted
+    /// across the plastic ring as well, which made the whole cap look
+    /// transparent however solid the ring was.
+    pub const CAP_PANE_X: f64 = 7.0 / 27.0;
+    pub const CAP_PANE_W: f64 = 11.0 / 27.0;
+    pub const CAP_PANE_Y0: f64 = 13.0 / 53.0;
+    pub const CAP_PANE_Y1: f64 = 40.0 / 53.0;
+
     /// How tall the clip latch sits at the top of the column.
     ///
     /// Also its target: while it is lit it is what a click there
@@ -669,20 +682,30 @@ pub mod tcp {
         let groove = groove_w(w);
         let groove_x = (w - groove) / 2.0;
         let mut drawing = Drawing::new(w, h);
-        // The cap's own face, inset from its frame — the level shows
-        // through the window, not through the moulding.
-        let inset = cap_h * 6.0 / 53.0;
-        let (from, to) = (cap_y + inset, (cap_y + cap_h - inset).min(h - 0.5));
+        // The PANE, exactly — not the cap, and not a guess at it. The
+        // level shows through the hole in the moulding and nowhere
+        // else; painted over the ring as well it made a solid cap look
+        // like a transparent one.
+        let (from, to) = (
+            cap_y + cap_h * CAP_PANE_Y0,
+            (cap_y + cap_h * CAP_PANE_Y1).min(h - 0.5),
+        );
+        // And the pane is narrower than the groove, so a channel is
+        // clipped to it rather than running out past the ring.
+        let cap_left = (w - cap_w(w)) / 2.0;
+        let pane_x0 = cap_left + cap_w(w) * CAP_PANE_X;
+        let pane_x1 = pane_x0 + cap_w(w) * CAP_PANE_W;
         let span = (h - 1.0).max(0.0);
         let seen = |color: Color| color.with_alpha(THROUGH_CAP);
         for (at, wide, value) in channels(groove_x, groove, level) {
             let lit_top = span.mul_add(-value.clamp(0.0, 1.0), h - 0.5);
             let top = lit_top.max(from);
-            if to - top < 0.5 {
+            let (left, right) = (at.max(pane_x0), (at + wide).min(pane_x1));
+            if to - top < 0.5 || right - left < 0.5 {
                 continue;
             }
             drawing.fill(
-                rect(at, top, wide, to - top, 0.0),
+                rect(left, top, right - left, to - top, 0.0),
                 Brush::Linear {
                     from: (0.0, h),
                     to: (0.0, 0.0),
@@ -871,7 +894,6 @@ pub mod tcp {
     /// Without this the fader is a handle on an unmarked line: you can
     /// see that one track is louder than another and not by how much,
     /// which is most of what a mixer is for.
-    #[must_use]
      /// The dB scale beside the fader, as a connected inscription.
     ///
     /// Each number gets a tick running from it to the meter's edge, so

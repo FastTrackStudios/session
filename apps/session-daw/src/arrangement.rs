@@ -65,6 +65,7 @@ fn chrome(theme: &daw_ui::theming::Theme) -> daw_theme::Chrome {
         // A control's face, its edge and the ink on it. The buttons read
         // as part of the panel when these come off the same ladder the
         // panel does, and as borrowed art when they do not.
+        //
         hardware: c(theme.tokens.surface_raised),
         hardware_edge: c(theme.tokens.border),
         // The art prints on this and rings with it — the record arm's
@@ -737,5 +738,31 @@ pub fn submit_command(
             true
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod chrome_tests {
+    /// The fader cap's ring is drawn in `chrome.hardware`, and a ring
+    /// painted in a colour that is itself translucent is a ring you can
+    /// see the meter through — which is the one thing the cap's window
+    /// exists to be, and the one thing its ring must not be.
+    #[test]
+    fn the_hardware_the_cap_is_moulded_from_is_opaque() {
+        let chrome = super::chrome(&daw_ui::theming::Theme::dark());
+        assert_eq!(chrome.hardware.a, 255, "the cap's body is translucent");
+        assert_eq!(chrome.hardware_edge.a, 255, "the cap's border is translucent");
+        // And it has to be TELLABLE from the strip it sits on. An
+        // opaque ring the same grey as the background reads as no ring
+        // at all, which looks exactly like a transparent one.
+        // It is the strip's own grey, deliberately: these controls are
+        // moulded out of the panel rather than sitting on it, and the
+        // bevel and border are what give them their edges.
+        //
+        // Chasing a "transparent" cap once led here, and this was the
+        // wrong suspect — the cap was solid all along. What made it
+        // look see-through was the level being painted over the whole
+        // cap instead of only the pane cut in it. See `CAP_PANE_Y0`.
+        assert_eq!(chrome.hardware, chrome.surface_raised);
     }
 }
