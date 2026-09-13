@@ -198,7 +198,11 @@ pub fn control(
         // hover cell in the traced art — REAPER does not light them
         // either. They are still hit-testable and still draggable; they
         // just do not change appearance under the pointer.
-        Control::Volume | Control::Name | Control::Routing => {}
+        //
+        // Nor does the clip latch: it is drawn by the meter, which
+        // knows whether it is lit, and a hover cell for it here would
+        // be a second opinion about that.
+        Control::Volume | Control::Name | Control::Routing | Control::Clip => {}
     }
 
     for command in &scene.commands {
@@ -344,6 +348,7 @@ mod tests {
                 &map,
                 &crate::pointer::Pointer::default(),
                 levels,
+                &Clips::default(),
                 &mut Racks::none(),
                 0.0,
                 4000.0,
@@ -362,6 +367,58 @@ mod tests {
             tracks.len()
         ]);
         assert_ne!(quiet, loud, "a signal did not light the meter");
+    }
+
+    /// The fader says what it is set to WHILE it is being set.
+    ///
+    /// The numbers down the column are the meter's, so without this the
+    /// one value you are actually changing is the one you have to infer
+    /// from where the cap sits. Only while dragging: a permanent
+    /// readout on forty strips is forty numbers nobody reads.
+    #[test]
+    fn the_fader_reads_out_while_it_is_dragged() {
+        let (mixer, palette, font, tracks) = mixer();
+        let map = crate::plan::Rows::of(
+            &tracks.iter().cloned().map(|t| (t, 0)).collect::<Vec<_>>(),
+            &tracks,
+        );
+        let draw = |pointer: &crate::pointer::Pointer| {
+            let mut scene = anyrender::Scene::new();
+            controls(
+                &mut scene,
+                &palette,
+                &font,
+                &mixer,
+                &tracks,
+                &map,
+                pointer,
+                &[],
+                &Clips::default(),
+                &mut Racks::none(),
+                0.0,
+                4000.0,
+                Affine::IDENTITY,
+            );
+            scene
+        };
+
+        let idle = draw(&crate::pointer::Pointer::default());
+
+        let spot = crate::pointer::Spot {
+            row: 1,
+            control: Control::Volume,
+        };
+        let mut hovering = crate::pointer::Pointer::default();
+        hovering.hover(Some(spot));
+        assert_eq!(
+            draw(&hovering),
+            idle,
+            "hovering the fader drew a readout; only a drag should"
+        );
+
+        let mut dragging = hovering;
+        dragging.press();
+        assert_ne!(draw(&dragging), idle, "the drag drew no readout");
     }
 
     /// A chain lights the FX button. It used to be recorded as empty
@@ -386,6 +443,7 @@ mod tests {
                 &map,
                 &crate::pointer::Pointer::default(),
                 &[],
+                &Clips::default(),
                 &mut Racks::none(),
                 0.0,
                 4000.0,
@@ -460,6 +518,7 @@ mod tests {
                 &map,
                 &crate::pointer::Pointer::default(),
                 &[],
+                &Clips::default(),
                 &mut Racks {
                     settings: &settings,
                     history,
@@ -560,6 +619,7 @@ pub fn controls(
     live: &crate::plan::Rows,
     pointer: &crate::pointer::Pointer,
     levels: &[daw_proto::TrackLevels],
+    clipped: &Clips,
     racks: &mut Racks<'_>,
     scroll_x: f64,
     width: f64,
@@ -585,6 +645,7 @@ pub fn controls(
             // meter reading another track's level is worse than one
             // reading none.
             usize::try_from(track.index).ok().and_then(|i| levels.get(i)).copied(),
+            clipped.is(&track.guid),
             racks.history.get_mut(&track.guid),
             racks.spectra.get_mut(&track.guid),
             racks.lit.filter(|(at, _)| *at == row).map(|(_, grip)| grip),
@@ -620,6 +681,7 @@ fn draw_strip_controls(
     track: &Track,
     pointer: &crate::pointer::Pointer,
     level: Option<daw_proto::TrackLevels>,
+    clipped: bool,
     history: Option<&mut crate::tone::Levels>,
     spectrum: Option<&mut crate::tone::Analyser>,
     lit: Option<crate::tone::Grip>,
@@ -792,7 +854,7 @@ fn draw_strip_controls(
         && let Some((x, y)) = at(Control::Volume)
     {
         let value = crate::tcp::volume_fraction(track.volume);
-        let travel = strip.stretch();
+        let travel = strip.travel();
         // Each channel on its own half, not the louder of the two and
         // not their sum: a summed meter cannot tell you that a stereo
         // source has collapsed to one side or that one leg of a pair is
@@ -801,6 +863,15 @@ fn draw_strip_controls(
             (
                 crate::engine::meter_fraction(level.peak_left),
                 crate::engine::meter_fraction(level.peak_right),
+            )
+        });
+        // Where the signal HAS been. The bar is sampled thirty times a
+        // second and cannot show a transient; this is the reading that
+        // answers "did that hit".
+        let hold = level.map_or((0.0, 0.0), |level| {
+            (
+                crate::engine::meter_fraction(level.hold_left),
+                crate::engine::meter_fraction(level.hold_right),
             )
         });
         // The scale, against the meter and lighting with it.
@@ -829,6 +900,8 @@ fn draw_strip_controls(
             &art::fader_track(
                 &palette.chrome,
                 peak,
+                hold,
+                clipped,
                 [
                     crate::tcp::to_theme(palette.meter_safe),
                     crate::tcp::to_theme(palette.meter_warn),
@@ -853,6 +926,16 @@ fn draw_strip_controls(
             y + cap_y,
             cap_h / 53.0,
         );
+        // What the fader is SET to, while it is being set. The numbers
+        // beside the column are the meter's, so without this the one
+        // value you are actually changing is the one you have to infer
+        // from where the cap sits. Only while dragging: a permanent
+        // readout on forty strips is forty numbers nobody is reading.
+        if pointer.state(crate::pointer::Spot { row, control: Control::Volume })
+            == daw_theme_art::mixer_controls::Interaction::Pressed
+        {
+            readout(scene, palette, font, track.volume, x, y, strip.columns.fader_w, cap_y, cap_h);
+        }
         // And the level again where the cap crosses it, so the column
         // is continuous rather than interrupted at the one height you
         // are looking at.
@@ -877,13 +960,176 @@ fn draw_strip_controls(
     }
 }
 
-/// How much of the fader cap's face is glass.
+/// Which tracks have clipped since anyone last looked.
 ///
-/// Enough that a meter under it is legible — the whole reason the cap
-/// changed — and not so much that it stops reading as a handle. Its
-/// frame, bevel and grip stay nearly solid at any setting; this is the
-/// face only. See `paint::fader_cap_through`.
-const CAP_GLASS: f64 = 0.72;
+/// By GUID rather than by index, for the reason everything per-track
+/// here is: a preset can hide a track and a fold can move one, and a
+/// clip latch that followed a row would report the neighbour's fault.
+///
+/// A latch rather than a reading: a peak-hold decays, which is right
+/// for reading a level and wrong for reporting one. The whole value of
+/// "this clipped" is that it is still saying so when you look up.
+#[derive(Clone, Debug, Default)]
+pub struct Clips {
+    by_guid: std::collections::HashSet<String>,
+}
+
+impl Clips {
+    /// Note whatever this frame's levels did.
+    ///
+    /// Linear 1.0 is 0 dBFS, which is where the sample ran out of
+    /// numbers. Anything at or above it is an over.
+    pub fn note(&mut self, guid: &str, level: daw_proto::TrackLevels) {
+        let over = level.peak_left.max(level.peak_right) >= 1.0;
+        if over && !self.by_guid.contains(guid) {
+            self.by_guid.insert(guid.to_owned());
+        }
+    }
+
+    #[must_use]
+    pub fn is(&self, guid: &str) -> bool {
+        self.by_guid.contains(guid)
+    }
+
+    /// Clear one track's latch — what clicking it does.
+    ///
+    /// Returns whether there was anything to clear, so a click that
+    /// lands on an unlit latch can fall through to the fader under it
+    /// rather than being swallowed.
+    pub fn clear(&mut self, guid: &str) -> bool {
+        self.by_guid.remove(guid)
+    }
+
+    /// And all of them, which is what a desk's "reset peaks" does.
+    pub fn clear_all(&mut self) {
+        self.by_guid.clear();
+    }
+
+    #[must_use]
+    pub fn any(&self) -> bool {
+        !self.by_guid.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod clip_tests {
+    use super::Clips;
+
+    fn level(peak: f32) -> daw_proto::TrackLevels {
+        daw_proto::TrackLevels {
+            peak_left: peak,
+            peak_right: peak * 0.5,
+            hold_left: peak,
+            hold_right: peak,
+        }
+    }
+
+    /// A latch, not a reading: it is set by one frame reaching 0 dBFS
+    /// and stays set through every quiet frame after it. That is the
+    /// whole value of it — a peak-hold decays, and a fault you only see
+    /// if you were looking at the right moment is a fault you miss.
+    #[test]
+    fn a_clip_stays_until_it_is_cleared() {
+        let mut clips = Clips::default();
+        assert!(!clips.is("kick"));
+        clips.note("kick", level(0.9));
+        assert!(!clips.is("kick"), "a hot signal is not a clip");
+
+        clips.note("kick", level(1.0));
+        assert!(clips.is("kick"), "0 dBFS did not latch");
+        for _ in 0..100 {
+            clips.note("kick", level(0.01));
+        }
+        assert!(clips.is("kick"), "the latch decayed");
+
+        assert!(clips.clear("kick"), "clearing reported nothing to clear");
+        assert!(!clips.is("kick"));
+    }
+
+    /// Clearing an unlit latch reports that there was nothing there, so
+    /// the click can fall through to the fader the band sits on — which
+    /// is what makes the latch cost the fader no travel.
+    #[test]
+    fn an_unlit_latch_does_not_swallow_the_click() {
+        let mut clips = Clips::default();
+        assert!(!clips.clear("kick"));
+    }
+
+    /// One track's clip is not another's.
+    #[test]
+    fn a_latch_belongs_to_its_own_track() {
+        let mut clips = Clips::default();
+        clips.note("kick", level(1.2));
+        clips.note("snare", level(0.3));
+        assert!(clips.is("kick"));
+        assert!(!clips.is("snare"));
+        assert!(clips.any());
+        clips.clear_all();
+        assert!(!clips.any());
+    }
+}
+
+/// The fader's own value, in decibels, beside the cap that is setting
+/// it.
+///
+/// Placed against the cap rather than at a fixed height, because the
+/// thing it labels moves — and on the side away from the scale, so it
+/// cannot be read as one of the meter's marks.
+#[expect(clippy::too_many_arguments, reason = "a placement, and every part of it is one")]
+fn readout(
+    scene: &mut anyrender::Scene,
+    palette: &Palette,
+    font: &Font,
+    volume: f64,
+    x: f64,
+    y: f64,
+    fader_w: f64,
+    cap_y: f64,
+    cap_h: f64,
+) {
+    use vello::kurbo::Rect;
+    use vello::peniko::Fill;
+
+    let db = art::fader_db(crate::tcp::volume_fraction(volume));
+    // Silence has no logarithm and should not be given a number that
+    // implies one.
+    let label = if volume <= 0.0 {
+        "-inf".to_owned()
+    } else if db >= 0.0 {
+        format!("+{db:.1}")
+    } else {
+        format!("{db:.1}")
+    };
+    const SIZE: f32 = 9.0;
+    let width = font.width(&label, SIZE) + 6.0;
+    let height = f64::from(SIZE) + 4.0;
+    let left = x + fader_w + 3.0;
+    let top = (y + cap_y + cap_h / 2.0 - height / 2.0).max(y);
+    scene.fill(
+        Fill::NonZero,
+        vello::kurbo::Affine::IDENTITY,
+        palette.tcp_field,
+        None,
+        &Rect::new(left, top, left + width, top + height),
+    );
+    crate::tcp::glyphs(
+        scene,
+        font,
+        palette.text,
+        &label,
+        left + 3.0,
+        top + height - 4.0,
+        SIZE,
+    );
+}
+
+/// How clear the window in the fader cap is.
+///
+/// Nearly all the way: the ring around it is solid and does not fade at
+/// any setting, so the cap keeps its edges however bright the meter
+/// behind it — and the middle can therefore afford to be glass rather
+/// than a tint. See `paint::fader_cap_through`.
+const CAP_GLASS: f64 = 0.88;
 
 // A rack that moves is drawn by `controls`, over its own recording,
 // alongside the meters and the level traces — one pass over the visible

@@ -169,6 +169,10 @@ pub fn click(
         // Binding it to something else would be a button that does the
         // wrong thing rather than one that waits.
         crate::mcp::Control::Volume | crate::mcp::Control::Pan | crate::mcp::Control::Fx => None,
+        // Clearing a clip changes nothing about the track — it is the
+        // window forgetting something, not the engine being told
+        // something. Handled where the latch lives.
+        crate::mcp::Control::Clip => None,
     }
 }
 
@@ -400,15 +404,20 @@ mod tests {
         );
     }
 
-    /// The ends hold. A fader cannot be dragged past unity or below
-    /// silence however far the pointer goes.
+    /// The ends hold. A fader cannot be dragged past its ceiling or
+    /// below silence however far the pointer goes.
+    ///
+    /// The ceiling is +12 dB, not unity: a fader that cannot add gain
+    /// makes you reach for a plugin to do the most ordinary thing in a
+    /// mix. In linear gain that is about 3.98.
     #[test]
     fn a_fader_stops_at_both_ends() {
         let unity = track(1.0, 0.0);
         let Some(Edit::SetVolume(_, up)) = drag(Control::Volume, "k", &unity, 5.0) else {
             panic!("expected a volume edit");
         };
-        assert!((up - 1.0).abs() < 1e-6, "should have stopped at unity: {up}");
+        let ceiling = 10.0_f64.powf(daw_theme_art::paint::tcp::FADER_TOP_DB / 20.0);
+        assert!((up - ceiling).abs() < 1e-6, "should have stopped at +12 dB: {up}");
 
         let Some(Edit::SetVolume(_, down)) = drag(Control::Volume, "k", &unity, -5.0) else {
             panic!("expected a volume edit");
@@ -907,27 +916,36 @@ impl Meters {
 #[must_use]
 pub fn meter_fraction(peak: f32) -> f64 {
     let db = 20.0 * f64::from(peak.max(1e-6)).log10();
-    daw_theme_art::paint::tcp::fader_norm(db)
+    // The METER's scale, which runs past unity: a signal over 0 dBFS
+    // has to land above the 0 mark rather than pinning to the same full
+    // bar a clean −1 draws.
+    daw_theme_art::paint::tcp::meter_norm(db)
 }
 
 #[cfg(test)]
 mod meter_tests {
     use super::meter_fraction;
 
-    /// Full scale fills it, silence empties it, and the scale in
-    /// between is the fader's — so a meter and a fader at the same
-    /// height mean the same number of decibels.
+    /// Silence empties it, 0 dBFS lands on the 0 mark rather than at
+    /// the top, and there is room above for the overs — which is the
+    /// one distinction a meter exists to make and the one a scale
+    /// ending at unity cannot.
     #[test]
     fn the_meter_reads_in_decibels() {
-        assert!((meter_fraction(1.0) - 1.0).abs() < 1e-6, "0 dBFS is full");
+        use daw_theme_art::paint::tcp::{METER_TOP_DB, meter_norm};
         assert!(meter_fraction(0.0) < 1e-6, "silence is empty");
-        // −6 dB is about half the fader's travel from the top, not the
-        // 50% a linear reading would give.
-        let half_ish = meter_fraction(0.501);
+        let unity = meter_fraction(1.0);
         assert!(
-            half_ish > 0.85 && half_ish < 0.95,
-            "−6 dBFS landed at {half_ish}"
+            (unity - meter_norm(0.0)).abs() < 1e-6,
+            "0 dBFS landed at {unity}, not on the 0 mark"
         );
+        assert!(unity < 1.0, "0 dBFS filled the column, leaving no room for an over");
+        // And an over goes ABOVE it rather than pinning to the same bar.
+        assert!(meter_fraction(1.5) > unity, "an over did not rise past unity");
+        // Up to the ceiling, where it stops rather than running off.
+        let way_over = meter_fraction(10.0);
+        assert!(way_over <= 1.0, "a loud over ran off the column: {way_over}");
+        assert!((METER_TOP_DB - 12.0).abs() < f64::EPSILON);
     }
 
     /// A denormal or a zero must not produce a NaN height — the meter

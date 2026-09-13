@@ -200,6 +200,13 @@ struct App {
     /// The Tone settings every rack is drawn from. Seeded from the
     /// placeholder until a chain can be read — see `tone::Store`.
     tone_settings: session_daw::tone::Store,
+    /// Which tracks have clipped since anyone last cleared them.
+    ///
+    /// Here rather than in the levels, because it is the one piece of
+    /// metering that does NOT decay: a peak-hold is a reading and this
+    /// is a report, and the value of a report is that it is still there
+    /// when you look up.
+    clips: session_daw::overlay::Clips,
     /// Which folders are collapsed. A view state, not a track state:
     /// it changes which rows exist rather than what any track is.
     folders: daw_ui::components::folders::FolderState,
@@ -1197,7 +1204,7 @@ impl App {
         let Target::Track { row } = hit.target else {
             return;
         };
-        let Some(spot) = self.pointer.hovered().filter(|s| s.row == row).or_else(|| {
+        let Some(mut spot) = self.pointer.hovered().filter(|s| s.row == row).or_else(|| {
             // Mid-drag the pointer may have left the control; the
             // gesture still belongs to what it started on.
             self.pointer.active().map(|(spot, _)| spot)
@@ -1213,6 +1220,22 @@ impl App {
             return;
         };
         let guid = track.guid.clone();
+
+        // The clip latch, which is a band across the top of the meter
+        // and only a target while it is lit. Clearing it is the window
+        // forgetting something, not the engine being told something —
+        // so it returns here rather than becoming an edit.
+        //
+        // With nothing clipped there is nothing to clear and the click
+        // falls through to the fader the band sits on top of, which is
+        // what makes the latch cost the fader no travel at all.
+        if spot.control == session_daw::mcp::Control::Clip {
+            if self.clips.clear(&guid) {
+                self.redraw();
+                return;
+            }
+            spot.control = session_daw::mcp::Control::Volume;
+        }
 
         // A double-click on a strip's name plate edits it, the same
         // gesture and the same editor the track panel uses.
@@ -1385,6 +1408,7 @@ impl App {
                 map,
                 pointer,
                 levels,
+                &self.clips,
                 &mut racks,
                 scroll,
                 frame.content_width(),
@@ -1627,6 +1651,15 @@ impl App {
             self.last_level = Some(std::time::Instant::now());
             for (index, track) in self.tracks.iter().enumerate() {
                 let signal = session_daw::simulate::frame(index, at);
+                self.clips.note(
+                    &track.guid,
+                    daw_proto::TrackLevels {
+                        peak_left: signal.peak,
+                        peak_right: signal.peak * 0.85,
+                        hold_left: signal.peak,
+                        hold_right: signal.peak,
+                    },
+                );
                 self.tone_levels
                     .entry(track.guid.clone())
                     .or_default()
@@ -1649,6 +1682,7 @@ impl App {
             let Some(level) = usize::try_from(track.index).ok().and_then(|i| levels.get(i)) else {
                 continue;
             };
+            self.clips.note(&track.guid, *level);
             self.tone_levels
                 .entry(track.guid.clone())
                 .or_default()
@@ -2137,6 +2171,7 @@ fn main() {
         tone_levels: std::collections::HashMap::new(),
         tone_spectra: std::collections::HashMap::new(),
         tone_settings: session_daw::tone::Store::default(),
+        clips: session_daw::overlay::Clips::default(),
         folders: daw_ui::components::folders::FolderState::default(),
         icons: session_daw::icons::Icons::new(),
         theme,

@@ -440,6 +440,10 @@ fn mixer_shot(
                 // moving rack — in it would be a difference nobody
                 // asked for.
                 &[],
+                // Nothing has clipped in a still frame, and a latch in
+                // the reference image would be a difference nobody
+                // asked for.
+                &session_daw::overlay::Clips::default(),
                 &mut session_daw::overlay::Racks::none(),
                 scroll_x,
                 frame.content_width(),
@@ -974,6 +978,7 @@ fn animate(
                         &map,
                         &pointer,
                         &levels,
+                        &session_daw::overlay::Clips::default(),
                         &mut session_daw::overlay::Racks {
                             settings: &settings,
                             history: &mut history,

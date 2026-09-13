@@ -409,35 +409,26 @@ pub mod tcp {
         fader_cap_through(chrome, grip, 0.0)
     }
 
-    /// The same cap, made glass so what is behind it reads through.
+    /// The same cap with a WINDOW cut in it: solid ring, open middle.
     ///
-    /// `through` is how transparent the FACE is, 0 for the solid cap
-    /// above and 1 for a cap that is only its frame. It exists because
-    /// the fader's groove became the meter: a solid cap parked over a
-    /// meter is a hole in the level exactly where the signal is loudest,
-    /// which is the reading you most need.
+    /// `through` opens the middle, 0 for the solid cap above and 1 for
+    /// a pane with nothing behind it. It exists because the fader's
+    /// groove became the meter: a solid cap parked over a meter is a
+    /// hole in the level at exactly the height you are reading.
     ///
-    /// The frame, the bevel and the grip stay near enough opaque. They
-    /// are what make the cap an OBJECT rather than a tint — a cap that
-    /// faded out evenly stopped looking like something you could take
-    /// hold of, which is the one thing it has to look like.
+    /// CUT, not tinted. A translucent fill over the moulding is still
+    /// the moulding — the ring came out looking like glass too, which
+    /// is the opposite of the point. So the body is drawn as four
+    /// bands AROUND the window and the window is simply never painted:
+    /// what shows through it is whatever the caller drew underneath.
+    /// The ring stays solid plastic, which is what makes it read as
+    /// something you can take hold of.
     #[must_use]
     pub fn fader_cap_through(chrome: &Chrome, grip: Color, through: f64) -> Drawing {
         let (vw, vh) = (27.0, 53.0);
         let body = chrome.hardware;
         let edge = chrome.hardware_edge.shade(-0.35);
-        // How much of each layer survives. The face clears the most,
-        // the recess and grip rather less, the frame hardly at all.
-        let clear = through.clamp(0.0, 1.0);
-        let glass = |color: Color, share: f64| {
-            let kept = 1.0 - clear * share;
-            #[expect(
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "a fraction of 255, clamped to it"
-            )]
-            color.with_alpha((f64::from(color.a) * kept).clamp(0.0, 255.0) as u8)
-        };
+        let open = through.clamp(0.0, 1.0) > 0.01;
 
         // Fractions of the cell, all measured. x2..x22 INCLUSIVE — the
         // border pixel at x22 is part of the cap — so the right edge is
@@ -455,19 +446,43 @@ pub mod tcp {
         );
         // The border, drawn as a fill beneath the face so the face
         // cannot bleed past the frame.
-        drawing.fill(rect(x0, top, x1 - x0, bot - top, vw * 0.16), glass(edge, 0.25));
-        drawing.fill(
-            rect(x0 + 1.0, top + 1.0, x1 - x0 - 2.0, bot - top - 2.0, vw * 0.13),
-            Brush::Linear {
-                from: (0.0, top),
-                to: (0.0, bot),
-                stops: vec![
-                    (0.0, glass(body.shade(0.06), 0.86)),
-                    (0.65, glass(body.shade(-0.02), 0.86)),
-                    (1.0, glass(body.shade(-0.32), 0.86)),
-                ],
-            },
-        );
+        drawing.fill(rect(x0, top, x1 - x0, bot - top, vw * 0.16), edge);
+
+        let face = |from: f64, to: f64| Brush::Linear {
+            from: (0.0, from),
+            to: (0.0, to),
+            stops: vec![
+                (0.0, body.shade(0.06)),
+                (0.65, body.shade(-0.02)),
+                (1.0, body.shade(-0.32)),
+            ],
+        };
+        let (fx0, fy0) = (x0 + 1.0, top + 1.0);
+        let (fx1, fy1) = (x1 - 1.0, bot - 1.0);
+        if open {
+            // The four bands of plastic around the pane. The gradient
+            // is handed the WHOLE face's span in each of them, so the
+            // ring shades as one moulded piece rather than as four
+            // strips that each start over.
+            let brush = face(fy0, fy1);
+            drawing.fill(rect(fx0, fy0, fx1 - fx0, gy0 - fy0, vw * 0.13), brush.clone());
+            drawing.fill(rect(fx0, gy1, fx1 - fx0, fy1 - gy1, vw * 0.13), brush.clone());
+            drawing.fill(rect(fx0, gy0, gx0 - fx0, gy1 - gy0, 0.0), brush.clone());
+            drawing.fill(rect(gx0 + gw, gy0, fx1 - (gx0 + gw), gy1 - gy0, 0.0), brush);
+            // The pane's own rim, so it reads as set INTO the ring
+            // rather than as a gap where the plastic ran out.
+            for (rx, rw) in [(gx0 - 1.0, 1.0), (gx0 + gw, 1.0)] {
+                drawing.fill(rect(rx, gy0 - 1.0, rw, gy1 - gy0 + 2.0, 0.0), body.shade(-0.5));
+            }
+            for (ry, rh) in [(gy0 - 1.0, 1.0), (gy1, 1.0)] {
+                drawing.fill(rect(gx0 - 1.0, ry, gw + 2.0, rh, 0.0), body.shade(-0.5));
+            }
+        } else {
+            drawing.fill(
+                rect(fx0, fy0, fx1 - fx0, fy1 - fy0, vw * 0.13),
+                face(top, bot),
+            );
+        }
         // The lit bevel across the top — two rows, the brighter above.
         drawing.fill(
             rect(x0 + 2.0, top + 1.0, x1 - x0 - 4.0, 1.0, 0.0),
@@ -477,25 +492,26 @@ pub mod tcp {
             rect(x0 + 2.0, top + 2.0, x1 - x0 - 4.0, 1.0, 0.0),
             body.shade(0.16),
         );
-        // The grip sits in a recess, so a ring of shadow runs round it.
-        // Without it the panel looks stuck on the front rather than set
-        // into the moulding.
-        drawing.fill(
-            rect(gx0 - 1.0, gy0 - 1.0, gw + 2.0, gy1 - gy0 + 2.0, vw * 0.09),
-            glass(body.shade(-0.43), 0.7),
-        );
-        drawing.fill(
-            rect(gx0, gy0, gw, gy1 - gy0, vw * 0.055),
-            Brush::Linear {
-                from: (0.0, gy0),
-                to: (0.0, gy1),
-                stops: vec![
-                    (0.0, glass(grip.shade(-0.03), 0.45)),
-                    (1.0, glass(grip.shade(0.34), 0.45)),
-                ],
-            },
-        );
-        // Five notches, the seam, five more.
+        if !open {
+            // The grip sits in a recess, so a ring of shadow runs round
+            // it. Without it the panel looks stuck on the front rather
+            // than set into the moulding.
+            drawing.fill(
+                rect(gx0 - 1.0, gy0 - 1.0, gw + 2.0, gy1 - gy0 + 2.0, vw * 0.09),
+                body.shade(-0.43),
+            );
+            drawing.fill(
+                rect(gx0, gy0, gw, gy1 - gy0, vw * 0.055),
+                Brush::Linear {
+                    from: (0.0, gy0),
+                    to: (0.0, gy1),
+                    stops: vec![(0.0, grip.shade(-0.03)), (1.0, grip.shade(0.34))],
+                },
+            );
+        }
+        // Five notches, the seam, five more. Drawn across the pane too:
+        // they are what says "grip", and a bare window would have
+        // nothing left to take hold of.
         for i in 0..11_u32 {
             let step = f32::from(u16::try_from(i).unwrap_or(0));
             let y = gy0 + vh * 2.0_f64.mul_add(f64::from(step), 3.0) / 53.0;
@@ -539,6 +555,8 @@ pub mod tcp {
     pub fn fader_track(
         chrome: &Chrome,
         level: (f64, f64),
+        hold: (f64, f64),
+        clipped: bool,
         zones: [Color; 3],
         w: f64,
         h: f64,
@@ -560,6 +578,21 @@ pub mod tcp {
                 drawing.fill(rect(at, h - 0.5 - lit, wide, lit, 0.0), level_brush(zones, h));
             }
         }
+        // The peak hold, one line per channel. The bar is an
+        // instantaneous reading sampled thirty times a second, which
+        // simply cannot show a transient — and on drums the transient
+        // is the whole question. The line is where the signal HAS
+        // been, which is what "did that hit" actually asks.
+        for (at, wide, value) in channels(groove_x, groove, hold) {
+            if value <= 0.001 {
+                continue;
+            }
+            let y = span.mul_add(-value.clamp(0.0, 1.0), h - 0.5);
+            drawing.fill(
+                rect(at, (y - HOLD / 2.0).max(0.5), wide, HOLD, 0.0),
+                zone_at(zones, value),
+            );
+        }
         // The seam, drawn over both so it survives a full-scale signal.
         // Subtle on purpose: it says "two channels", and a meter whose
         // loudest feature is its own divider is a divider with a meter
@@ -568,8 +601,26 @@ pub mod tcp {
             rect(divider_x(groove_x, groove), 0.5, SEAM, span, 0.0),
             chrome.surface_sunken.with_alpha(190),
         );
+        // The clip latch. A peak-hold decays, which is right for
+        // reading a level and wrong for reporting a fault: the whole
+        // value of "this clipped" is that it is still saying so when
+        // you look up. So it stays until it is cleared, across the
+        // whole column so it cannot be mistaken for a channel's level.
+        if clipped {
+            drawing.fill(
+                rect(groove_x, 0.5, groove, CLIP_H, CLIP_H / 3.0),
+                over(zones[2]),
+            );
+        }
         drawing
     }
+
+    /// How tall the clip latch sits at the top of the column.
+    ///
+    /// Also its target: while it is lit it is what a click there
+    /// clears, and while it is not there is nothing to hit, so the
+    /// fader behaves exactly as it would without it.
+    pub const CLIP_H: f64 = 5.0;
 
     /// The two channel columns inside a groove: where each starts, how
     /// wide it is, and what it reads.
@@ -591,6 +642,10 @@ pub mod tcp {
 
     /// How wide the line between the two channels is.
     const SEAM: f64 = 1.0;
+
+    /// And how thick a peak-hold line is. Two pixels: one disappears
+    /// against the bar below it, three reads as a level of its own.
+    const HOLD: f64 = 2.0;
 
     /// The lit level where it passes BEHIND the cap, drawn over it.
     ///
@@ -674,20 +729,43 @@ pub mod tcp {
         (w * 0.72).max(8.0)
     }
 
-    /// The gradient a level is lit with: safe at the floor, danger at
-    /// the ceiling.
+    /// The gradient a level is lit with, pinned to DECIBELS.
     ///
-    /// A gradient rather than three thresholds, because a meter that
-    /// changed colour in steps reads as three states instead of as a
-    /// level. Shared so the fader's groove and any other meter cannot
-    /// disagree about where warn begins.
+    /// Its stops sit where [`METER_ZONES`] says rather than at tidy
+    /// fractions of the column, so the colour changes at the levels a
+    /// mix is actually judged against. Each zone holds its colour over
+    /// most of its span and turns over a short blend either side —
+    /// enough to be recognised as a zone, not so hard that the meter
+    /// reads as three lamps instead of a level.
+    ///
+    /// Shared, so nothing drawn into the column can disagree with it.
     fn level_brush(zones: [Color; 3], h: f64) -> Brush {
+        #[expect(clippy::cast_possible_truncation, reason = "a 0..1 fraction")]
+        let at = |db: f64| meter_norm(db) as f32;
+        // Gradients run bottom to top, and a stop's offset is measured
+        // from the `from` end — so the stops are 1 − the height.
+        let blend = 0.035_f32;
         Brush::Linear {
-            // Bottom to top: the safe end is the floor.
             from: (0.0, h),
             to: (0.0, 0.0),
-            stops: vec![(0.0, zones[0]), (0.75, zones[1]), (1.0, zones[2])],
+            stops: vec![
+                (0.0, zones[0]),
+                (at(METER_ZONES[0]) - blend, zones[0]),
+                (at(METER_ZONES[0]) + blend, zones[1]),
+                (at(METER_ZONES[1]) - blend, zones[1]),
+                (at(METER_ZONES[1]) + blend, zones[2]),
+                (at(METER_ZONES[2]) - blend, zones[2]),
+                // Over. The only part of the column that is pure red,
+                // and the cap cannot reach it.
+                (at(METER_ZONES[2]), over(zones[2])),
+                (1.0, over(zones[2])),
+            ],
         }
+    }
+
+    /// The colour of the over-range band: the danger zone, pushed.
+    fn over(danger: Color) -> Color {
+        danger.shade(0.35)
     }
 
     /// The top of the fader's travel, in dB.
@@ -698,10 +776,13 @@ pub mod tcp {
     /// at y 124.88 against a groove that starts at 125. Every residual
     /// is under a pixel across the whole travel.
     ///
-    /// So this theme's mixer fader tops out at unity — there is no
-    /// boost on it — which is worth knowing rather than guessing, and
-    /// is why the number is here instead of a plausible `+12`.
-    pub const FADER_TOP_DB: f64 = 0.0;
+    /// That fit describes REAPER's own fader, which tops out at unity:
+    /// there is no boost on it. Ours goes to +12, deliberately — a
+    /// fader that cannot add gain makes you reach for a plugin to do
+    /// the most ordinary thing in a mix, and the measurement is kept
+    /// above because it is what the SCALE's spacing is derived from,
+    /// not a limit we are bound by.
+    pub const FADER_TOP_DB: f64 = 12.0;
 
     /// And the bottom of the travel.
     ///
@@ -748,7 +829,38 @@ pub mod tcp {
     /// Not a round series: REAPER steps by 12, starting at −6. Twelve dB
     /// is a doubling and a halving twice over, which is the interval a
     /// mixing decision is actually made in.
-    pub const FADER_MARKS: [f64; 5] = [-6.0, -18.0, -30.0, -42.0, -54.0];
+    pub const FADER_MARKS: [f64; 8] = [12.0, 6.0, 0.0, -6.0, -18.0, -30.0, -42.0, -54.0];
+
+    /// The meter's ceiling and floor, which are the fader's.
+    ///
+    /// One scale for the whole column, which is what lets one set of
+    /// numbers label both the bar and the cap beside it. It also gives
+    /// the meter what it most needs: room above 0 dBFS. A meter whose
+    /// ceiling is unity pins there, so a clean −1 and a signal 5 dB
+    /// into the red draw the identical full bar — the one distinction a
+    /// meter exists to make.
+    pub const METER_TOP_DB: f64 = FADER_TOP_DB;
+    pub const METER_BOTTOM_DB: f64 = FADER_BOTTOM_DB;
+
+    /// Where a level sits in the column, 0 at the floor and 1 at the
+    /// top.
+    ///
+    /// The one scale the column is drawn to: the lit bars, the hold
+    /// lines, the numbers beside them and the cap's own travel all come
+    /// through here, so nothing in the column can disagree with the
+    /// numbers labelling it.
+    #[must_use]
+    pub fn meter_norm(db: f64) -> f64 {
+        fader_norm(db)
+    }
+
+    /// The decibels the meter's zones change colour at.
+    ///
+    /// Landmarks rather than a smooth ramp: −18 is where a track is
+    /// sitting where it should, −6 is getting hot, 0 is over. A
+    /// continuous green-to-red gradient makes every level a position to
+    /// measure; these make the common ones a colour to recognise.
+    pub const METER_ZONES: [f64; 3] = [-18.0, -6.0, 0.0];
 
     /// The dB scale beside the fader.
     ///
@@ -785,9 +897,17 @@ pub mod tcp {
         level: f64,
     ) -> Drawing {
         let mut drawing = Drawing::new(w, h);
+        // Top down, so a mark that will not fit is dropped rather than
+        // drawn over the one above it — the scale thins out on a short
+        // strip instead of turning into a smear.
+        let mut last = f64::NEG_INFINITY;
         for db in FADER_MARKS {
-            let at = fader_norm(db);
+            let at = meter_norm(db);
             let y = h * (1.0 - at);
+            if y - last < f64::from(size) + 2.0 {
+                continue;
+            }
+            last = y;
             let passed = level >= at;
             // Lit in the colour the METER is at that height, not one
             // flat highlight: a lit −6 and a lit −42 are very different
@@ -803,8 +923,16 @@ pub mod tcp {
             );
             // Baseline rather than centre: text sits ON the mark, the
             // way a ruler's numbers sit on its ticks.
+            // Positives carry their sign, negatives do not: below zero
+            // is what a meter's numbers mean unless they say otherwise,
+            // and now that the scale runs above unity an unsigned "6"
+            // would appear twice on the same column.
             drawing.text(
-                format!("{:.0}", db.abs()),
+                if db > 0.0 {
+                    format!("+{db:.0}")
+                } else {
+                    format!("{:.0}", db.abs())
+                },
                 (w - TICK - 2.0) / 2.0,
                 y + f64::from(size) / 3.0,
                 size,
@@ -844,8 +972,18 @@ pub mod tcp {
     #[must_use]
     pub fn fader_cap_at(value: f64, w: f64, h: f64) -> (f64, f64) {
         let cap_h = (cap_w(w) * 53.0 / 27.0).min(h * 0.5);
-        let travel = (h - cap_h).max(0.0);
-        (travel * (1.0 - value.clamp(0.0, 1.0)), cap_h.max(1.0))
+        // On the METER's scale, not the column's full height: the
+        // column now runs past unity so an over has somewhere to go,
+        // and a cap that used the whole height would put its 0 dB at
+        // the top of a scale whose top is +6. The cap simply never
+        // enters the over-range band, which is what a fader that stops
+        // at unity should look like.
+        // The cap is CENTRED on the level it is set to, so its middle
+        // and the meter beside it read against the same number.
+        let at = value.clamp(0.0, 1.0);
+        let centre = h * at;
+        let top = (h - centre - cap_h / 2.0).clamp(0.0, (h - cap_h).max(0.0));
+        (top, cap_h.max(1.0))
     }
 
     /// A level meter: a well, and however much of it is lit.
@@ -1564,16 +1702,24 @@ mod fader_scale_tests {
     };
 
     /// The fit this scale was derived from, checked against the pixels
-    /// it was read off. REAPER's groove ran y 125..248 and its labels
-    /// sat at these measured centres; every one must land within a
-    /// pixel of where `fader_norm` puts it.
+    /// it was read off. REAPER's groove ran y 125..248 for −56..0 dB and
+    /// its labels sat at these measured centres.
+    ///
+    /// Our travel now runs past unity to +12, so the marks do not sit
+    /// at those absolute pixels any more — but the FIT has to survive,
+    /// because it is the whole reason the spacing is what it is. So the
+    /// scale is rescaled onto REAPER's own −56..0 sub-range and checked
+    /// there: linear in dB at 2.204 px/dB, every residual under a pixel.
     #[test]
-    fn the_marks_land_where_reaper_draws_them() {
+    fn the_spacing_is_still_reapers_measured_fit() {
         const TOP: f64 = 125.0;
         const BOTTOM: f64 = 248.0;
+        let floor = fader_norm(FADER_BOTTOM_DB);
+        let unity = fader_norm(0.0);
         let measured = [(-6.0, 137.5), (-18.0, 165.5), (-30.0, 190.5), (-42.0, 218.0), (-54.0, 243.5)];
         for (db, want) in measured {
-            let got = TOP + (BOTTOM - TOP) * (1.0 - fader_norm(db));
+            let sub = (fader_norm(db) - floor) / (unity - floor);
+            let got = TOP + (BOTTOM - TOP) * (1.0 - sub);
             assert!(
                 (got - want).abs() < 1.0,
                 "{db} dB: drew at {got:.2}, REAPER has it at {want:.2}"
@@ -1581,13 +1727,18 @@ mod fader_scale_tests {
         }
     }
 
-    /// Unity is the top of this fader — the measurement's least obvious
-    /// finding, and the one most likely to be "corrected" to +12 by
-    /// someone who assumes rather than measures.
+    /// The travel runs to +12, not to unity.
+    ///
+    /// REAPER's own fader stops at 0 — that is the measurement, and it
+    /// is kept in `FADER_TOP_DB`'s docs — but a fader that cannot add
+    /// gain makes you reach for a plugin to do the most ordinary thing
+    /// in a mix. Unity is a mark near the top, not the top.
     #[test]
-    fn unity_is_the_top_of_the_travel() {
+    fn the_travel_runs_past_unity() {
         assert!((fader_norm(FADER_TOP_DB) - 1.0).abs() < f64::EPSILON);
-        assert!((fader_norm(0.0) - 1.0).abs() < f64::EPSILON);
+        assert!((FADER_TOP_DB - 12.0).abs() < f64::EPSILON);
+        let unity = fader_norm(0.0);
+        assert!(unity < 1.0 && unity > 0.8, "unity sits at {unity}");
         assert!(fader_norm(FADER_BOTTOM_DB).abs() < f64::EPSILON);
     }
 
@@ -1601,8 +1752,9 @@ mod fader_scale_tests {
     /// A gain, not a dB value, is what a track carries.
     #[test]
     fn a_gain_converts_before_it_is_placed() {
-        // Unity gain is unity dB is the top.
-        assert!((gain_norm(1.0) - 1.0).abs() < 1e-9);
+        // Unity gain is 0 dB, which is the mark near the top rather
+        // than the top itself.
+        assert!((gain_norm(1.0) - fader_norm(0.0)).abs() < 1e-9);
         // Half the gain is −6 dB, which is one mark down.
         assert!((gain_norm(0.5) - fader_norm(-6.0206)).abs() < 1e-3);
         // Silence has no logarithm, and must not produce one.
@@ -1616,13 +1768,19 @@ mod fader_scale_tests {
     fn every_mark_is_on_the_fader() {
         for db in FADER_MARKS {
             let norm = fader_norm(db);
-            assert!(norm > 0.0 && norm < 1.0, "{db} dB sits at {norm}");
+            assert!((0.0..=1.0).contains(&norm), "{db} dB sits at {norm}");
         }
-        // A tick and a number for each mark.
+        // A tick and a number for each mark, on a column with room for
+        // all of them.
         let ink = super::hex("#FF4000");
         let zones = [super::hex("#40FF80"), super::hex("#FFD040"), super::hex("#FF4040")];
-        let scale = fader_scale(20.0, 124.0, ink, zones, 8.0, 0.0);
-        assert_eq!(scale.ops.len(), FADER_MARKS.len() * 2);
+        let roomy = fader_scale(20.0, 400.0, ink, zones, 8.0, 0.0);
+        assert_eq!(roomy.ops.len(), FADER_MARKS.len() * 2);
+        // And on one with room for fewer, the scale THINS rather than
+        // drawing its numbers over each other.
+        let tight = fader_scale(20.0, 90.0, ink, zones, 8.0, 0.0);
+        assert!(tight.ops.len() < roomy.ops.len(), "{}", tight.ops.len());
+        assert!(tight.ops.len() >= 4, "the scale vanished: {}", tight.ops.len());
     }
 
     /// A mark the signal has passed is drawn in the meter's ink, so the

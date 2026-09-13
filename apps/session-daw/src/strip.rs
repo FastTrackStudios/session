@@ -24,6 +24,12 @@ use vello::kurbo::Rect;
 
 use crate::mcp::{Columns, Control, Squeeze};
 
+/// The air between the bottom of the fader column and the name plate.
+///
+/// Small, but not nothing: a meter whose last pixel touches the plate
+/// reads as part of it, and the floor of a meter is a value you look at.
+const NAME_GAP: f64 = 3.0;
+
 /// One strip's geometry, in the strip's own coordinates.
 ///
 /// X is from the strip's left edge, Y from the mixer's top — the space
@@ -76,10 +82,31 @@ impl Strip {
         self.band_top() + f64::from(self.shared.pan_band) + f64::from(self.shared.input_band)
     }
 
-    /// How much travel the fader has.
+    /// How much travel the fader has, as the layout allots it.
+    ///
+    /// Not what the fader is DRAWN at — see [`Strip::travel`]. This is
+    /// the section's own height, which the collapse layout hands out
+    /// before it knows what else the strip is carrying.
     #[must_use]
     pub fn stretch(&self) -> f64 {
         f64::from(self.own.stretch)
+    }
+
+    /// And how much of it the fader column may actually use.
+    ///
+    /// Clamped above the name plate. The allotted stretch runs past it
+    /// on some strips, and a meter drawn into the name is a meter
+    /// crossing out the one thing that says which track you are
+    /// looking at — a track you cannot name is a track you cannot act
+    /// on. Everything in the column reads this: the groove, the meter,
+    /// the cap's travel and the dB scale beside them, so they cannot
+    /// end at different heights.
+    #[must_use]
+    pub fn travel(&self) -> f64 {
+        let floor = self
+            .rect(Control::Name)
+            .map_or(self.height, |plate| plate.y0 - NAME_GAP);
+        (floor - self.band_bottom()).clamp(0.0, self.stretch())
     }
 
     /// Whether the volume control is a fader rather than a knob.
@@ -126,7 +153,7 @@ impl Strip {
                 self.columns.scale_x,
                 top,
                 self.columns.scale_x + self.columns.scale_w,
-                top + self.stretch(),
+                top + self.travel(),
             )
         })
     }
@@ -134,7 +161,7 @@ impl Strip {
     /// The fader's whole column — groove, meter and cap.
     fn fader_rect(&self) -> Option<Rect> {
         let top = self.band_bottom();
-        let stretch = self.stretch();
+        let stretch = self.travel();
         (stretch > 0.0).then(|| {
             Rect::new(
                 self.columns.fader_x,
@@ -209,6 +236,14 @@ impl Strip {
                 self.columns.fader_x + self.columns.fader_w,
                 self.buttons_top + self.stretch(),
             )),
+            Control::Clip => self.fader_rect().map(|fader| {
+                Rect::new(
+                    fader.x0,
+                    fader.y0,
+                    fader.x1,
+                    fader.y0 + daw_theme_art::paint::tcp::CLIP_H,
+                )
+            }),
             Control::Name => {
                 let plate = self.height - f64::from(daw_theme_art::collapse::BOTTOM_SECTION);
                 Some(top(plate, self.height - plate))
@@ -235,6 +270,9 @@ impl Strip {
             Control::Routing,
             Control::Fx,
             Control::Pan,
+            // Before the fader it sits on top of, and reduced to the
+            // fader by the window when nothing has clipped.
+            Control::Clip,
             Control::Volume,
             Control::Name,
         ]

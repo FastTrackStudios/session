@@ -587,6 +587,14 @@ pub enum Control {
     Volume,
     /// The name plate. Double-clicked to rename.
     Name,
+    /// The clip latch at the top of the meter — clicked to clear it.
+    ///
+    /// Its rect is always here, because geometry is worked out without
+    /// knowing what the signal did. Whether it is actually a target is
+    /// the window's call: with nothing clipped there is nothing to
+    /// clear, and the band falls through to the fader underneath it so
+    /// the strip behaves exactly as it would without a latch.
+    Clip,
 }
 
 impl Control {
