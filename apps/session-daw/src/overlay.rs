@@ -762,12 +762,12 @@ fn draw_strip_controls(
     if let (Some(box_), Some(history), Some(tone)) = (strip.rack_rect(), history, settings) {
         crate::tone::levels(
             scene,
-            palette,
             panels,
             history,
             // The reduction is what the compressor is DOING, so it has
             // to be computed from the settings it is doing it with.
             tone.comp,
+            tone.bypass,
             crate::tone::Panel::of(box_, left),
         );
     }

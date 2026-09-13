@@ -71,6 +71,47 @@ pub struct Tone {
     pub eq: Vec<EqBand>,
     pub comp: Comp,
     pub sat: ClassAPreamp,
+    /// Which of the three are switched out.
+    pub bypass: Bypass,
+}
+
+/// Which processors are bypassed.
+///
+/// Per PROCESSOR, not per rack: bypassing is how you check a decision,
+/// and the question is almost always "what does this track sound like
+/// without the compressor", not "without any of it". A whole-rack
+/// switch would make the common comparison the one you cannot make.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Bypass {
+    eq: bool,
+    comp: bool,
+    sat: bool,
+}
+
+impl Bypass {
+    #[must_use]
+    pub const fn is(self, which: Which) -> bool {
+        match which {
+            Which::Eq => self.eq,
+            Which::Comp => self.comp,
+            Which::Sat => self.sat,
+        }
+    }
+
+    pub const fn toggle(&mut self, which: Which) {
+        match which {
+            Which::Eq => self.eq = !self.eq,
+            Which::Comp => self.comp = !self.comp,
+            Which::Sat => self.sat = !self.sat,
+        }
+    }
+
+    /// Whether anything at all is switched out — for a caller that
+    /// wants to say so without asking three times.
+    #[must_use]
+    pub const fn any(self) -> bool {
+        self.eq || self.comp || self.sat
+    }
 }
 
 /// A compressor, as its display needs it.
@@ -478,8 +519,33 @@ pub fn draw(
                 Which::Comp => comp(scene, palette, font, tone.comp, body, rack, lit),
                 Which::Sat => sat(scene, palette, &tone.sat, body, rack),
             }
+            // The bypass, over everything the panel just drew.
+            //
+            // A scrim rather than a badge, and over the WHOLE panel
+            // rather than beside it: what you need to know at a glance
+            // across a mixer is that this processing is not happening,
+            // and a small mark in a corner is exactly the thing a
+            // glance misses. Greying the curve out says it once, in the
+            // place you are already looking.
+            if tone.bypass.is(which) {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    palette.tcp_meter_well.multiply_alpha(0.78),
+                    None,
+                    &at.rect(),
+                );
+            }
             if let Some(head) = head {
-                header(scene, palette, font, which.name(), &which.summary(tone), head);
+                header(
+                    scene,
+                    palette,
+                    font,
+                    which.name(),
+                    &which.summary(tone),
+                    tone.bypass.is(which),
+                    head,
+                );
             }
         }
     }
@@ -1137,12 +1203,25 @@ fn header(
     font: &Font,
     name: &str,
     value: &str,
+    bypassed: bool,
     at: Panel,
 ) {
     const SIZE: f32 = 7.0;
     let baseline = at.y + f64::from(SIZE);
-    crate::tcp::glyphs(scene, font, palette.text_faint, name, at.x, baseline, SIZE);
+    // The header stays ABOVE the scrim, because it is the one thing on
+    // a bypassed panel you still need: which processor this is, and
+    // that it is off. Its own ink dims instead.
+    let (name_ink, value_ink) = if bypassed {
+        (palette.text_faint.multiply_alpha(0.55), palette.text_faint)
+    } else {
+        (palette.text_faint, palette.text_dim)
+    };
+    crate::tcp::glyphs(scene, font, name_ink, name, at.x, baseline, SIZE);
 
+    // "BYPASS" replaces the value, because the value is what the
+    // processor WOULD do and it is not doing it. Leaving the numbers up
+    // would be a panel reporting a setting that is having no effect.
+    let value = if bypassed { "BYPASS" } else { value };
     let name_w = font.width(name, SIZE);
     let value_w = font.width(value, SIZE);
     if name_w + value_w + 6.0 > at.width {
@@ -1151,7 +1230,7 @@ fn header(
     crate::tcp::glyphs(
         scene,
         font,
-        palette.text_dim,
+        value_ink,
         value,
         at.x + at.width - value_w,
         baseline,
@@ -1185,24 +1264,13 @@ const fn f64_to_f32(value: f64) -> f32 {
 /// than one curve repeated twenty times.
 #[must_use]
 pub fn placeholder(index: usize) -> Tone {
-    let nudge = crate::num::coord(index % 7);
+    let voice = Character::of(index);
+    // A drift within the voice, so two kicks are not one kick. Small
+    // enough that they still read as the same decision made twice.
+    let drift = crate::num::coord(index % 5) - 2.0;
     Tone {
-        eq: vec![
-            band(0, 80.0 * 1.1_f64.powf(nudge), -3.0, 0.7, EqBandShape::LowShelf),
-            band(1, 300.0 + nudge * 60.0, -2.5 - nudge * 0.4, 1.4, EqBandShape::Bell),
-            band(2, 3_000.0 + nudge * 400.0, 2.0 + nudge * 0.5, 1.1, EqBandShape::Bell),
-            band(3, 10_000.0, 2.5, 0.7, EqBandShape::HighShelf),
-        ],
-        comp: Comp {
-            threshold: -14.0 - f64_to_f32(nudge),
-            ratio: 2.0 + f64_to_f32(nudge) * 0.5,
-            knee: 6.0,
-            // A fast-ish drum attack that lengthens down the kit, and a
-            // release that follows it — so a rack of racks looks like a
-            // set of decisions rather than one repeated.
-            attack: 3.0 + f64_to_f32(nudge) * 4.0,
-            release: 80.0 + f64_to_f32(nudge) * 40.0,
-        },
+        eq: voice.bands(drift),
+        comp: voice.comp(drift),
         sat: {
             let mut pre = ClassAPreamp::new(f64_to_f32(DISPLAY_RATE));
             // A single-ended stage: a triode grid above and iron below,
@@ -1211,10 +1279,105 @@ pub fn placeholder(index: usize) -> Tone {
             // picture of a limiter, not of saturation.
             pre.positive = SideShaper::Tube;
             pre.negative = SideShaper::Transformer;
-            pre.drive = 2.5 + f64_to_f32(nudge) * 0.8;
+            pre.drive = f64_to_f32(voice.drive() + drift * 0.3);
             pre.q_point = 0.25;
             pre
         },
+        bypass: Bypass::default(),
+    }
+}
+
+/// What a track sounds like, as far as a placeholder can know.
+///
+/// Taken from the track's INDEX rather than its name, for the same
+/// reason [`crate::simulate`] does: it is stable across a rename and
+/// works on a session whose tracks are called things this file has
+/// never heard of. The point is that a rack of racks reads as a set of
+/// decisions — a kick cut at 400 and lifted at 60, a cymbal rolled off
+/// at the bottom and opened at the top — rather than one curve
+/// repeated with a wobble in it.
+///
+/// It is still a placeholder. When a chain can be read, this is the
+/// shape the real settings arrive in; until then it is what makes the
+/// panel worth looking at.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Character {
+    /// Kicks, floor toms, bass — weight at the bottom and a box to cut.
+    Low,
+    /// Snares and racks — body, and a crack to find above it.
+    Mid,
+    /// Cymbals, hats, air — nothing useful below, everything above.
+    High,
+    /// Rooms and buses — gentle, wide, barely there.
+    Broad,
+}
+
+impl Character {
+    const fn of(track: usize) -> Self {
+        match track % 4 {
+            0 => Self::Low,
+            1 => Self::Mid,
+            2 => Self::High,
+            _ => Self::Broad,
+        }
+    }
+
+    /// The curve this voice usually wants.
+    fn bands(self, drift: f64) -> Vec<EqBand> {
+        let nudge = |hz: f64| hz * 1.06_f64.powf(drift);
+        match self {
+            Self::Low => vec![
+                band(0, nudge(55.0), 4.0, 0.8, EqBandShape::LowShelf),
+                band(1, nudge(380.0), -5.5, 1.6, EqBandShape::Bell),
+                band(2, nudge(3_200.0), 3.0, 1.0, EqBandShape::Bell),
+                band(3, nudge(9_000.0), -2.0, 0.7, EqBandShape::HighShelf),
+            ],
+            Self::Mid => vec![
+                band(0, nudge(90.0), -4.0, 0.7, EqBandShape::LowShelf),
+                band(1, nudge(220.0), 2.5, 1.2, EqBandShape::Bell),
+                band(2, nudge(1_100.0), -3.0, 2.0, EqBandShape::Bell),
+                band(3, nudge(6_500.0), 4.5, 0.8, EqBandShape::HighShelf),
+            ],
+            Self::High => vec![
+                band(0, nudge(300.0), -7.0, 0.6, EqBandShape::LowShelf),
+                band(1, nudge(900.0), -2.5, 1.4, EqBandShape::Bell),
+                band(2, nudge(5_000.0), 1.5, 1.1, EqBandShape::Bell),
+                band(3, nudge(12_000.0), 4.0, 0.7, EqBandShape::HighShelf),
+            ],
+            Self::Broad => vec![
+                band(0, nudge(70.0), -2.0, 0.7, EqBandShape::LowShelf),
+                band(1, nudge(500.0), -1.5, 0.9, EqBandShape::Bell),
+                band(2, nudge(2_500.0), 1.0, 0.8, EqBandShape::Bell),
+                band(3, nudge(11_000.0), 2.0, 0.7, EqBandShape::HighShelf),
+            ],
+        }
+    }
+
+    /// And the compression. The times are the decision: a kick wants
+    /// the transient through and a room wants none of it.
+    fn comp(self, drift: f64) -> Comp {
+        let (threshold, ratio, attack, release) = match self {
+            Self::Low => (-12.0, 4.0, 12.0, 140.0),
+            Self::Mid => (-16.0, 5.0, 4.0, 90.0),
+            Self::High => (-20.0, 2.5, 1.0, 200.0),
+            Self::Broad => (-24.0, 2.0, 25.0, 400.0),
+        };
+        Comp {
+            threshold: f64_to_f32(threshold + drift),
+            ratio: f64_to_f32((ratio + drift * 0.3).clamp(1.0, 20.0)),
+            knee: 6.0,
+            attack: f64_to_f32((attack * 1.15_f64.powf(drift)).clamp(0.1, 200.0)),
+            release: f64_to_f32((release * 1.12_f64.powf(drift)).clamp(5.0, 3_000.0)),
+        }
+    }
+
+    const fn drive(self) -> f64 {
+        match self {
+            Self::Low => 3.4,
+            Self::Mid => 2.6,
+            Self::High => 1.6,
+            Self::Broad => 2.0,
+        }
     }
 }
 
@@ -1239,6 +1402,13 @@ pub enum Grip {
     Release,
     /// The saturator's drive.
     Drive,
+    /// A panel's header — clicked to switch that processor out.
+    ///
+    /// The header, because it is the one strip of a panel that is not
+    /// a control: everything else in there sets a value, and a bypass
+    /// is not a value. It is also the part that stays legible under the
+    /// scrim, so the way out is where the way in was.
+    Bypass(Which),
 }
 
 impl Grip {
@@ -1250,6 +1420,16 @@ impl Grip {
     #[must_use]
     pub const fn is_knob(self) -> bool {
         matches!(self, Self::Ratio | Self::Attack | Self::Release)
+    }
+
+    /// Whether this grip is a switch rather than a value.
+    ///
+    /// A switch acts on the CLICK and has no drag; a value does the
+    /// opposite. The caller needs to know which before it decides
+    /// whether a press is the start of a gesture.
+    #[must_use]
+    pub const fn is_switch(self) -> bool {
+        matches!(self, Self::Bypass(_))
     }
 }
 
@@ -1294,8 +1474,19 @@ pub fn grip_at(
         if body.width <= 0.0 || body.height <= 0.0 {
             continue;
         }
+        // The header first: it sits above the body, and a click there
+        // is a bypass rather than whatever the body would have done.
+        if rack.detailed() && y >= at.y && y < body.y {
+            return Some(Grip::Bypass(which));
+        }
         if y < body.y || y > body.y + body.height {
             continue;
+        }
+        // A bypassed panel has one control left, and it is the one that
+        // brings it back. Grabbing a band you cannot see through the
+        // scrim would move a setting with no effect.
+        if tone.bypass.is(which) {
+            return Some(Grip::Bypass(which));
         }
         match which {
             // Bands are only grabbable where they are DRAWN, which is
@@ -1424,6 +1615,8 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
             let moved = f64::from(tone.comp.threshold) + step;
             tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
         }
+        // A switch does not turn.
+        Grip::Bypass(_) => {}
         // A notch of a knob is a fortieth of its travel, which is about
         // the resolution a hand expects from one — fine enough to place
         // a 3:1 exactly, coarse enough to cross the range.
@@ -1511,6 +1704,13 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
             }
         }
         Grip::Threshold => tone.comp.threshold = Comp::default().threshold,
+        // Resetting a bypass is switching it back in, which is what
+        // the double-click would have done anyway.
+        Grip::Bypass(which) => tone.bypass = {
+            let mut next = tone.bypass;
+            next.toggle(which);
+            next
+        },
         Grip::Ratio => tone.comp.ratio = Comp::default().ratio,
         Grip::Attack => tone.comp.attack = Comp::default().attack,
         Grip::Release => tone.comp.release = Comp::default().release,
@@ -1542,6 +1742,7 @@ pub fn drag(
                 *which == Which::Comp
             }
             Grip::Drive => *which == Which::Sat,
+            Grip::Bypass(at) => *which == at,
         })
     else {
         return;
@@ -1612,6 +1813,9 @@ pub fn drag(
             let moved = knob_norm(tone.comp, grip) - dy / KNOB_TRAVEL;
             set_knob(&mut tone.comp, grip, moved);
         }
+        // A switch has no drag. Dragging off one is how you change your
+        // mind about pressing it, which is the mixer's own rule.
+        Grip::Bypass(_) => {}
         Grip::Drive => {
             // A quarter of the panel's height is the whole range, so a
             // short drag is a real change — drive is the parameter you
@@ -2098,8 +2302,12 @@ mod reset_tests {
     #[test]
     fn reset_undoes_a_drag() {
         let mut tone = placeholder(0);
+        let before = tone.eq[1].gain;
         drag(&mut tone, Grip::Band(1), &ALL, rack(), Mods::default(), 0.0, -40.0);
-        assert!(tone.eq[1].gain.abs() > 0.5);
+        assert!(
+            (tone.eq[1].gain - before).abs() > 0.5,
+            "the drag moved nothing"
+        );
         reset(&mut tone, Grip::Band(1));
         assert!(tone.eq[1].gain.abs() < f32::EPSILON, "the band went flat");
 
@@ -2497,6 +2705,17 @@ impl Analyser {
         self.built = None;
     }
 
+    /// Throw the picture away without touching the bins.
+    ///
+    /// For the other reason a rack changes: a setting moved. The cache
+    /// is keyed on the spectrum because that is what usually changes,
+    /// but a knob turned or a processor switched out changes the same
+    /// picture — and a rack that waited for the next meter frame to
+    /// notice would lag a gesture by a thirtieth of a second.
+    pub fn invalidate(&mut self) {
+        self.built = None;
+    }
+
     #[must_use]
     pub fn bins(&self) -> &[f32] {
         &self.bins
@@ -2699,13 +2918,16 @@ impl Levels {
 /// trace has the same shape in a strip as in the plugin window.
 pub fn levels(
     scene: &mut Scene,
-    palette: &Palette,
     panels: &[Which],
     levels: &mut Levels,
     comp: Comp,
+    bypass: Bypass,
     panel: Panel,
 ) {
-    if levels.is_empty() {
+    // A bypassed compressor is not compressing, so it has no display:
+    // the scrim over it says the processing is not happening, and a
+    // waveform moving under it would say the opposite.
+    if levels.is_empty() || bypass.is(Which::Comp) {
         return;
     }
     let rack = Rack::at(panel.width);
@@ -2925,5 +3147,158 @@ mod hex_tests {
             let [r, g, b, a] = hex(bad).to_rgba8().to_u8_array();
             assert_eq!((r, g, b, a), (0x88, 0x88, 0x88, 0xff));
         }
+    }
+}
+
+#[cfg(test)]
+mod bypass_tests {
+    use super::{Bypass, Grip, Mods, Panel, Rack, Which, drag, grip_at, placeholder, reset};
+
+    const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
+
+    fn rack() -> Panel {
+        Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 133.0,
+            height: 600.0,
+        }
+    }
+
+    /// Per PROCESSOR, because the question is almost always "what does
+    /// this sound like without the compressor", not "without any of it".
+    #[test]
+    fn each_processor_switches_out_alone() {
+        let mut bypass = Bypass::default();
+        assert!(!bypass.any());
+        bypass.toggle(Which::Comp);
+        assert!(bypass.is(Which::Comp));
+        assert!(!bypass.is(Which::Eq) && !bypass.is(Which::Sat));
+        assert!(bypass.any());
+        bypass.toggle(Which::Comp);
+        assert!(!bypass.any());
+    }
+
+    /// The header is the switch, and it is above the body — so a click
+    /// there is a bypass rather than whatever the body would have done.
+    #[test]
+    fn the_header_is_the_switch() {
+        let tone = placeholder(0);
+        for which in ALL {
+            let at = super::layout(&ALL, rack())
+                .into_iter()
+                .find(|(w, _)| *w == which)
+                .expect("a panel")
+                .1;
+            // A pixel inside the panel but above its body.
+            let y = at.y + 3.0;
+            assert_eq!(
+                grip_at(&ALL, &tone, rack(), at.x + at.width / 2.0, y),
+                Some(Grip::Bypass(which)),
+                "{which:?}"
+            );
+        }
+    }
+
+    /// A bypassed panel has ONE control left, and it is the one that
+    /// brings it back: grabbing a band through the scrim would move a
+    /// setting that is having no effect.
+    #[test]
+    fn a_bypassed_panel_only_offers_its_way_back() {
+        let mut tone = placeholder(0);
+        let body = super::body_of(
+            super::layout(&ALL, rack())
+                .into_iter()
+                .find(|(w, _)| *w == Which::Eq)
+                .expect("an EQ panel")
+                .1,
+            Rack::at(rack().width),
+        );
+        let map = super::mapper(body);
+        let band = &tone.eq[2];
+        let x = body.x + map.freq_to_x(f64::from(band.frequency));
+        let y = body.y + map.db_to_y(f64::from(band.gain));
+        assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(Grip::Band(2)));
+
+        tone.bypass.toggle(Which::Eq);
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), x, y),
+            Some(Grip::Bypass(Which::Eq)),
+            "a band was still grabbable through the scrim"
+        );
+    }
+
+    /// A switch has no drag and no turn — dragging off one is how you
+    /// change your mind about pressing it.
+    #[test]
+    fn a_switch_does_not_drag() {
+        let mut tone = placeholder(0);
+        let was = tone.bypass;
+        let grip = Grip::Bypass(Which::Sat);
+        assert!(grip.is_switch());
+        drag(&mut tone, grip, &ALL, rack(), Mods::default(), 30.0, -30.0);
+        assert_eq!(tone.bypass, was, "a drag flipped a switch");
+        super::wheel(&mut tone, grip, Mods::default(), -1.0);
+        assert_eq!(tone.bypass, was, "a wheel flipped a switch");
+    }
+
+    /// And resetting one switches it back — which is what a
+    /// double-click would have done anyway.
+    #[test]
+    fn resetting_a_switch_flips_it() {
+        let mut tone = placeholder(0);
+        tone.bypass.toggle(Which::Eq);
+        reset(&mut tone, Grip::Bypass(Which::Eq));
+        assert!(!tone.bypass.is(Which::Eq));
+    }
+}
+
+#[cfg(test)]
+mod character_tests {
+    use super::placeholder;
+
+    /// Each track gets its OWN chain, not one curve with a wobble in
+    /// it: a rack of racks has to read as a set of decisions.
+    #[test]
+    fn neighbouring_tracks_get_different_chains() {
+        let chains: Vec<_> = (0..4).map(placeholder).collect();
+        for (i, a) in chains.iter().enumerate() {
+            for b in chains.iter().skip(i + 1) {
+                assert!(
+                    a.eq.iter().zip(&b.eq).any(|(x, y)| {
+                        (x.frequency - y.frequency).abs() > 1.0
+                            || (x.gain - y.gain).abs() > 0.5
+                    }),
+                    "two chains had the same EQ"
+                );
+                assert!(
+                    (a.comp.attack - b.comp.attack).abs() > 0.1
+                        || (a.comp.ratio - b.comp.ratio).abs() > 0.1,
+                    "two chains had the same compressor"
+                );
+            }
+        }
+    }
+
+    /// And the difference is a decision, not noise: the voice that
+    /// lives at the bottom lifts there, and the one that lives at the
+    /// top cuts there.
+    #[test]
+    fn a_low_voice_and_a_high_one_disagree_about_the_bottom() {
+        let low = placeholder(0);
+        let high = placeholder(2);
+        assert!(low.eq[0].gain > 0.0, "the low voice cut its own register");
+        assert!(high.eq[0].gain < 0.0, "the high voice kept the mud");
+        assert!(
+            high.eq[3].gain > low.eq[3].gain,
+            "the high voice was darker than the low one"
+        );
+    }
+
+    /// Nothing arrives bypassed — a rack you have to switch on before
+    /// it does anything is a rack that looks broken.
+    #[test]
+    fn a_new_chain_is_running() {
+        assert!(!placeholder(3).bypass.any());
     }
 }

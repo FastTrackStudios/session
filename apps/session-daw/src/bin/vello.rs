@@ -504,6 +504,16 @@ impl ApplicationHandler for App {
                     self.rack_drag = self.rack_grip_at(x, y);
                     tracing::debug!(ui.x = x, ui.y = y, ui.grip = ?self.rack_drag, "rack press");
                     if let Some((row, grip)) = self.rack_drag {
+                        // A switch acts on the press and starts no
+                        // drag. Everything else in a rack is a value,
+                        // and a value is taken hold of.
+                        if grip.is_switch() {
+                            self.toggle_rack(row, grip);
+                            self.rack_drag = None;
+                            self.mixer = None;
+                            self.redraw();
+                            return;
+                        }
                         // A modified click is an action on the band —
                         // bypass it, cycle its shape — not the start of
                         // a drag. `dot_click` says whether the chord
@@ -848,6 +858,7 @@ impl App {
         if let Some(tone) = self.tone_settings.edit(&guid) {
             session_daw::tone::wheel(tone, grip, mods, delta_y);
         }
+        self.invalidate_rack(row);
     }
 
     /// A modified click on a band — bypass, or cycle its shape.
@@ -867,9 +878,53 @@ impl App {
         else {
             return false;
         };
-        self.tone_settings
+        let changed = self
+            .tone_settings
             .edit(&guid)
-            .is_some_and(|tone| session_daw::tone::dot_click(tone, index, mods))
+            .is_some_and(|tone| session_daw::tone::dot_click(tone, index, mods));
+        if changed {
+            self.invalidate_rack(row);
+        }
+        changed
+    }
+
+    /// Flip a rack switch — the only grip that is not a value.
+    fn toggle_rack(&mut self, row: usize, grip: session_daw::tone::Grip) {
+        let session_daw::tone::Grip::Bypass(which) = grip else {
+            return;
+        };
+        let Some(guid) = self
+            .mixer_map
+            .index(row)
+            .and_then(|i| self.tracks.get(i))
+            .map(|track| track.guid.clone())
+        else {
+            return;
+        };
+        if let Some(tone) = self.tone_settings.edit(&guid) {
+            tone.bypass.toggle(which);
+        }
+        self.invalidate_rack(row);
+    }
+
+    /// Throw away a strip's cached rack, because its settings moved.
+    ///
+    /// The cache is keyed on the SPECTRUM — what usually changes — so
+    /// a knob or a switch has to say so, or the picture would wait for
+    /// the next meter frame to catch up and lag the gesture by a
+    /// thirtieth of a second.
+    fn invalidate_rack(&mut self, row: usize) {
+        let Some(guid) = self
+            .mixer_map
+            .index(row)
+            .and_then(|i| self.tracks.get(i))
+            .map(|track| track.guid.clone())
+        else {
+            return;
+        };
+        if let Some(analyser) = self.tone_spectra.get_mut(&guid) {
+            analyser.invalidate();
+        }
     }
 
     /// Put a rack grip back to its default.
@@ -885,6 +940,7 @@ impl App {
         if let Some(tone) = self.tone_settings.edit(&guid) {
             session_daw::tone::reset(tone, grip);
         }
+        self.invalidate_rack(row);
     }
 
     /// Move a rack grip by a pointer delta.
@@ -918,6 +974,7 @@ impl App {
         if let Some(tone) = self.tone_settings.edit(&guid) {
             session_daw::tone::drag(tone, grip, panels, rack, mods, dx, dy);
         }
+        self.invalidate_rack(row);
     }
 
     /// The hit under a window point, for the gesture layer.
