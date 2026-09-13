@@ -3077,11 +3077,27 @@ fn sat(
     lit: Option<Grip>,
 ) {
     let pre = &tone.sat;
+    let whole = at;
     let (at, ladder_box) = sat_split(at, rack);
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     let mid_y = at.y + at.height / 2.0;
     let mid_x = at.x + at.width / 2.0;
+
+    // How hard it is saturating: what the stage is adding at the level
+    // the signal is at, as the ladder measures it — the sum of the
+    // rungs, on a square root so the first decibel of colour shows.
+    // With nothing playing it is the full-scale ladder, so a recorded
+    // rack still says how hot the setting is.
+    let ladder = crate::live::ladder(pre);
+    let rungs = if meters.is_empty() {
+        ladder.full()
+    } else {
+        let db = 20.0 * f64::from(meters.sat_peak.max(1e-4)).log10();
+        ladder.at(crate::mcp::f64_to_f32(db))
+    };
+    let heat = (f64::from(rungs.iter().sum::<f32>()) / 0.9).clamp(0.0, 1.0).powf(0.7);
+    glow(scene, whole, (mid_x, mid_y), heat);
 
     if rack.detailed() {
         rule(scene, palette.grid, Line::new((at.x, mid_y), (right, mid_y)));
@@ -3115,13 +3131,13 @@ fn sat(
         )
     };
     let held = matches!(lit, Some(Grip::Drive | Grip::Bias));
-    curve(scene, palette.pan, samples.iter().map(place), if held { 2.2 } else { 1.5 });
+    curve(scene, SAT_INK, samples.iter().map(place), if held { 2.2 } else { 1.5 });
 
     // The lit reach: from the origin out to the signal's peak, both
     // ways. One stroke, and the whole "is it doing anything" answer.
     if !meters.is_empty() {
         let peak = f64::from(meters.sat_peak).clamp(0.0, 1.0);
-        let tint = phase_tint(session::mix_phases::MixPhase::Tone);
+        let tint = SAT_HOT;
         let reach: Vec<(f64, f64)> = samples
             .iter()
             .filter(|(x, _)| f64::from(x.abs()) <= peak)
@@ -3138,16 +3154,9 @@ fn sat(
 
     // The ladder.
     if let Some(lb) = ladder_box {
-        let ladder = crate::live::ladder(pre);
-        let rungs = if meters.is_empty() {
-            ladder.full()
-        } else {
-            let db = 20.0 * f64::from(meters.sat_peak.max(1e-4)).log10();
-            ladder.at(crate::mcp::f64_to_f32(db))
-        };
         let floor = lb.y + lb.height - 1.0;
         rule(scene, palette.grid, Line::new((lb.x, floor), (lb.x + lb.width, floor)));
-        let tint = phase_tint(session::mix_phases::MixPhase::Tone);
+        let tint = SAT_INK;
         let n = crate::num::coord(crate::live::RUNGS);
         let gap = 1.2;
         let bar = ((lb.width - 2.0 - gap * (n - 1.0)) / n).max(1.0);
@@ -3185,6 +3194,48 @@ fn sat(
             );
         }
     }
+}
+
+/// The saturator's ink: red. Every other unit takes the strip's own
+/// colours; this one is the one that makes heat, and it says so.
+const SAT_INK: Color = Color::from_rgba8(0xff, 0x4a, 0x3d, 0xff);
+
+/// The lit reach's ink — hotter than the curve, toward white.
+const SAT_HOT: Color = Color::from_rgba8(0xff, 0xb3, 0x47, 0xff);
+
+/// The glow's ink — the red of a stage that is working.
+const SAT_GLOW: Color = Color::from_rgba8(0xff, 0x2e, 0x0c, 0xff);
+
+/// The saturator's ground, lit from behind by how hard it is working.
+///
+/// A wash over the panel and a radial glow from the curve's centre,
+/// both scaled by `heat` (0..1): a stage adding nothing sits on the
+/// rack's own ground, and one at the top of its drive glows like the
+/// valve it is modelling. Heat is raised to 0.7 so unity stays cool
+/// and the top of the range is where the fire is. One gradient fill — cheap, and recorded with
+/// the rest of the panel since heat is a fact about the settings and
+/// the level, both of which the rack already rebuilds on.
+fn glow(scene: &mut Scene, at: Panel, centre: (f64, f64), heat: f64) {
+    if heat <= 0.02 {
+        return;
+    }
+    let alpha = |share: f64| crate::mcp::f64_to_f32((share * heat).clamp(0.0, 1.0));
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        SAT_GLOW.multiply_alpha(alpha(0.22)),
+        None,
+        &at.rect(),
+    );
+    let radius = crate::mcp::f64_to_f32(at.width.max(at.height) * 0.7);
+    let paint = anyrender::Paint::Gradient(
+        vello::peniko::Gradient::new_radial((centre.0, centre.1), radius).with_stops([
+            (0.0, SAT_HOT.multiply_alpha(alpha(0.7))),
+            (0.35, SAT_GLOW.multiply_alpha(alpha(0.55))),
+            (1.0, SAT_GLOW.multiply_alpha(0.0)),
+        ]),
+    );
+    scene.fill(Fill::NonZero, Affine::IDENTITY, &paint, None, &at.rect());
 }
 
 /// The saturator's body: the curve's square on the left, the ladder's
@@ -3313,7 +3364,7 @@ fn selector(
         ),
     };
     let baseline = at.y + at.height - 4.0;
-    let tint = phase_tint(which.phase());
+    let tint = if which == Which::Sat { SAT_INK } else { phase_tint(which.phase()) };
     for (i, chip) in chips.iter().enumerate() {
         let x = crate::num::coord(i).mul_add(CHIP, at.x + 2.0);
         let is_current = i == current;
