@@ -345,26 +345,25 @@ impl Mixer {
         // like on a 1440p screen, and what this panel was measured
         // against.
         //
-        // The rack takes what the CHAIN needs, up to that share, and
-        // the strip keeps the rest.
+        // The rack takes its whole share, whatever is currently in it.
         //
-        // It used to take the whole share whatever was in it, so that
-        // the fader would not move when a phase changed which
-        // processors were shown. Every phase shows the whole chain now
-        // — see `tone::panels_for` — so there is nothing left for that
-        // space to be reserved against, and reserving it anyway left a
-        // third of the window empty under three panels.
+        // Three processors do not fill it, and the empty space below
+        // them is deliberate: it is the room for the rest of the chain,
+        // which is coming. Sizing the box to today's contents would
+        // mean every processor added moved the fader down — and a strip
+        // whose controls sit at a different height because of what is
+        // plugged into it cannot be scanned across, which is the rule
+        // the whole panel is built on.
         //
-        // Past the share the chain scrolls instead of pushing the
-        // strip's controls off the bottom: a mixer is scanned across,
-        // and a fader that sat at a different height on every track
-        // because of what is plugged into it cannot be.
+        // Once the chain outgrows the share it scrolls inside it rather
+        // than pushing the strip's controls off the bottom. That is the
+        // same rule, arriving from the other side.
         let control = if tone {
             (height * CONTROL_SHARE).max(CONTROL_MIN).min(height)
         } else {
             height
         };
-        let rack_h = (height - control).min(crate::tone::wanted(rack));
+        let rack_h = height - control;
 
         // One section layout for the whole mixer, resolved against the
         // height LEFT OVER — not against each strip's own.
