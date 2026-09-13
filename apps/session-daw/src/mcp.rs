@@ -323,6 +323,18 @@ impl Mixer {
             .iter()
             .any(|(track, _)| layout.width_of(track.width) >= crate::tone::LEGIBLE);
         let tone = !rack.is_empty() && any_rack;
+        // The strip keeps about a third off the bottom and the rack
+        // gets the other two — which is what REAPER's own mixer looks
+        // like on a 1440p screen, and what this panel was measured
+        // against.
+        //
+        // The rack does not FILL what it is given: its panels are their
+        // own height, anchored at the top — see `tone::layout`. The
+        // space below them is the room the phases past Tone need, and
+        // reserving it here is what keeps the fader from moving when
+        // you change phase. A strip whose controls jump because of
+        // something that is not about that track cannot be scanned
+        // across tracks, which is the rule the whole panel is built on.
         let control = if tone {
             (height * CONTROL_SHARE).max(CONTROL_MIN).min(height)
         } else {
@@ -546,13 +558,13 @@ struct Slot {
 
 /// How much of the panel the REAPER strip keeps, with the rack on.
 ///
-/// About a third, off the bottom — which is what REAPER's own mixer
-/// looks like on a 1440p screen. The rack gets the other two thirds:
-/// it is the reason to open this view, and a processor whose shape you
-/// can see is the difference between mixing and guessing.
+/// About a third, off the bottom. The rack gets the other two thirds to
+/// lay its panels out in, and leaves whatever it does not need — that
+/// space belongs to the processors the other phases bring, and holding
+/// it open is what keeps the fader still when the phase changes.
 const CONTROL_SHARE: f64 = 0.34;
 
-/// And the least the strip may be squeezed to.
+/// The least the strip may be squeezed to.
 ///
 /// Below this the fader has no travel and the buttons crowd, and a
 /// channel strip you cannot mix on is not improved by the graphs above

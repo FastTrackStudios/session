@@ -430,12 +430,20 @@ const HEAD: f64 = 10.0;
 /// The gap between two panels of the rack.
 const GAP: f64 = 3.0;
 
-/// How the rack's height is split between the three panels.
+/// How tall a rack of these panels comes to, plus its gaps.
 ///
-/// The EQ gets the most because it is the one with two axes worth
-/// reading: a compressor's curve is a bent line and a saturator's is a
-/// bent line, while an EQ's is the shape of the decision.
-const SHARE: [f64; 3] = [0.44, 0.28, 0.28];
+/// What the panels ACTUALLY occupy, which is less than the rack they
+/// are laid out in — the space below them is held for the processors
+/// the other phases bring. A caller that wants to know where the rack's
+/// contents end asks this.
+#[must_use]
+pub fn wanted(panels: &[Which]) -> f64 {
+    if panels.is_empty() {
+        return 0.0;
+    }
+    let gaps = GAP * crate::num::coord(panels.len().saturating_sub(1));
+    panels.iter().map(|which| which.natural()).sum::<f64>() + gaps
+}
 
 /// Which panels a mix phase asks for.
 ///
@@ -564,18 +572,31 @@ pub fn draw(
 /// other.
 #[must_use]
 pub fn layout(panels: &[Which], panel: Panel) -> Vec<(Which, Panel)> {
-    let total: f64 = panels.iter().map(|which| which.share()).sum();
+    let total: f64 = panels.iter().map(|which| which.natural()).sum();
     if total <= 0.0 || panels.is_empty() {
         return Vec::new();
     }
     let gaps = GAP * crate::num::coord(panels.len().saturating_sub(1));
     let usable = (panel.height - gaps).max(0.0);
+    // Their natural heights, from the TOP, and no taller than that.
+    //
+    // A frequency response is readable at a hundred and seventy pixels
+    // and no more readable at four hundred — it is the same curve with
+    // more air around it. So the panels take what they need and leave
+    // the rest of the rack empty, which is also where the processors
+    // the other phases bring will go.
+    //
+    // Scaled DOWN together when there is not room, because a panel
+    // shorter than the rack wants is a real state — a short window, a
+    // docked mixer — and it has to degrade by shrinking rather than by
+    // pushing the last panel off the bottom.
+    let scale = (usable / total).min(1.0);
     let mut y = panel.y;
     panels
         .iter()
         .copied()
         .map(|which| {
-            let height = usable * which.share() / total;
+            let height = which.natural() * scale;
             let at = Panel {
                 x: panel.x,
                 y,
@@ -648,16 +669,27 @@ impl Which {
         }
     }
 
-    /// How much of the rack this panel wants, relative to the others.
+    /// How tall this panel wants to be, in pixels.
     ///
-    /// The EQ gets most of it because a frequency response needs
-    /// horizontal AND vertical room to be read; a transfer curve is a
-    /// line through a square and survives being short.
-    const fn share(self) -> f64 {
+    /// A HEIGHT, not a share. A share of the panel means a rack that
+    /// grows with the window, and these do not need to: a frequency
+    /// response is readable at a hundred and seventy pixels and no more
+    /// readable at four hundred — it is the same curve with more air
+    /// around it. What the extra height is worth something to is the
+    /// FADER, which is a ruler and gets more precise the longer it is.
+    ///
+    /// So the rack asks for what it needs and the strip keeps the rest.
+    const fn natural(self) -> f64 {
         match self {
-            Self::Eq => SHARE[0],
-            Self::Comp => SHARE[1],
-            Self::Sat => SHARE[2],
+            // Two axes to read, and the only panel where the extra
+            // height buys resolution rather than air: a 3 dB decision
+            // and a 12 dB one have to look different.
+            Self::Eq => 175.0,
+            // Its display plus the band its knobs sit in.
+            Self::Comp => 150.0 + KNOB_BAND,
+            // A bent line through a square. It says its whole story in
+            // the first hundred pixels.
+            Self::Sat => 110.0,
         }
     }
 }
@@ -1892,6 +1924,61 @@ fn band(index: usize, frequency: f64, gain: f64, q: f64, shape: EqBandShape) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The panels are their own height, from the top, and do not
+    /// stretch to whatever rack they are given — a frequency response
+    /// is readable at a hundred and seventy pixels and no more readable
+    /// at four hundred.
+    #[test]
+    fn the_panels_do_not_stretch_to_fill_the_rack() {
+        let tall = Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 133.0,
+            height: 900.0,
+        };
+        let laid = layout(&[Which::Eq, Which::Comp, Which::Sat], tall);
+        assert_eq!(laid.len(), 3);
+        for (which, at) in &laid {
+            assert!(
+                (at.height - which.natural()).abs() < 0.01,
+                "{which:?} took {} rather than {}",
+                at.height,
+                which.natural()
+            );
+        }
+        // From the top, and the space below is left alone.
+        assert!((laid[0].1.y - tall.y).abs() < f64::EPSILON);
+        let used = wanted(&[Which::Eq, Which::Comp, Which::Sat]);
+        assert!(used < tall.height, "the rack filled everything it was given");
+    }
+
+    /// And they shrink TOGETHER when there is not room, rather than the
+    /// last one falling off the bottom — a short window and a docked
+    /// mixer are both real.
+    #[test]
+    fn a_short_rack_shrinks_its_panels() {
+        let panels = [Which::Eq, Which::Comp, Which::Sat];
+        let short = Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 133.0,
+            height: 200.0,
+        };
+        let laid = layout(&panels, short);
+        assert_eq!(laid.len(), 3, "a panel was dropped");
+        let bottom = laid
+            .last()
+            .map_or(0.0, |(_, at)| at.y + at.height);
+        assert!(
+            bottom <= short.y + short.height + 0.01,
+            "the last panel hung off the bottom at {bottom}"
+        );
+        // Still in proportion to each other.
+        let ratio = laid[0].1.height / laid[2].1.height;
+        let natural = Which::Eq.natural() / Which::Sat.natural();
+        assert!((ratio - natural).abs() < 0.01, "the shrink was not even");
+    }
 
     /// The tiers are ordered, and each threshold is where its tier
     /// starts — written against the constants, because pasted widths go
