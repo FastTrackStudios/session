@@ -901,12 +901,24 @@ impl App {
         } else {
             &[][..]
         };
-        let folded = self
-            .mixer_map
-            .index(0)
-            .and_then(|i| self.tracks.get(i))
-            .map_or_else(Default::default, |t| self.rack_folds.of(&t.guid));
-        let span = session_daw::tone::scroll_span(panels, mixer.rack_h, folded);
+        // The LONGEST column, not the first track's. The scroll is
+        // shared, and with per-track folds the strips have different
+        // heights — clamping to one of them would put the bottom of
+        // every other chain out of reach.
+        //
+        // Synced, they are all the same and this costs one pass over
+        // the tracks to agree with itself.
+        let span = self
+            .tracks
+            .iter()
+            .map(|track| {
+                session_daw::tone::scroll_span(
+                    panels,
+                    mixer.rack_h,
+                    self.rack_folds.of(&track.guid),
+                )
+            })
+            .fold(0.0_f64, f64::max);
         self.rack_scroll = (self.rack_scroll - by).clamp(0.0, span);
     }
 
