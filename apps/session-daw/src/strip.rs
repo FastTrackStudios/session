@@ -102,6 +102,35 @@ impl Strip {
         f64::from(self.own.stretch)
     }
 
+    /// How far down the button column a control sits, from the arm.
+    ///
+    /// REAPER states this as a chain of offsets rather than a pitch,
+    /// and the steps are deliberately unequal — 19 against a 20-tall
+    /// button is a one-row overlap:
+    ///
+    /// ```text
+    /// recmon  = recarm + 20
+    /// mute    = recmon + 19
+    /// solo    = mute   + 21
+    /// io      = solo   + 23
+    /// ```
+    ///
+    /// Walked here rather than multiplied out, because a pitch computed
+    /// from a row index is a number nobody measured — and the one we
+    /// had put MUTE where the monitor belongs, which is why the monitor
+    /// had nowhere to go until now.
+    fn column_step(&self, control: Control) -> f64 {
+        let monitor = f64::from(g::RECMON_FROM_ARM);
+        let mute = monitor + f64::from(g::MUTE_FROM_RECMON);
+        let solo = mute + f64::from(g::SOLO_FROM_MUTE);
+        match control {
+            Control::Monitor => monitor,
+            Control::Mute => mute,
+            Control::Solo => solo,
+            _ => solo + f64::from(g::IO_FROM_SOLO),
+        }
+    }
+
     /// And how much of it the fader column may actually use.
     ///
     /// Clamped above the name plate. The allotted stretch runs past it
@@ -226,32 +255,11 @@ impl Strip {
                     y + f64::from(g::ARM_CELL_H),
                 )
             }),
-            // Directly under the arm, on the same axis. REAPER stacks
-            // the two, because they are one decision made twice: what
-            // the track records, and whether you hear it while it does.
-            Control::Monitor => self.squeeze.columns().then(|| {
-                let arm = self.rect(Control::RecArm)?;
-                let x = self.columns.column_x;
-                let y = arm.y1 + 1.0;
-                Some(Rect::new(
-                    x,
-                    y,
-                    x + f64::from(g::BUTTON_W),
-                    y + f64::from(g::BUTTON_H),
-                ))
-            })?,
-            Control::Mute | Control::Solo | Control::Routing => {
-                let row = match control {
-                    Control::Mute => 0.0,
-                    Control::Solo => 1.0,
-                    _ => 2.0,
-                };
-                if control == Control::Routing && !self.squeeze.columns() {
+            Control::Monitor | Control::Mute | Control::Solo | Control::Routing => {
+                if !self.squeeze.columns() && control == Control::Routing {
                     return None;
                 }
-                let y = self.buttons_top
-                    + f64::from(g::RECMON_FROM_ARM)
-                    + row * (f64::from(g::BUTTON_H) + 1.0);
+                let y = self.buttons_top + self.column_step(control);
                 // The routing's traced cell is padded a pixel around a
                 // panel the width of a button, so its CELL goes a pixel
                 // left of the column for its PANEL to land on it. The
@@ -343,8 +351,18 @@ mod tests {
 
     fn strip() -> Strip {
         // A piece strip in a Tone-racked mixer, at the numbers the
-        // mixer actually builds.
-        Strip::new(133.0, 1440.0, 1440.0, 950.0, 1000.0)
+        // mixer actually builds — `buttons_top` included.
+        //
+        // It used to hardcode 1000, which its own bands contradicted:
+        // the mixer puts the column four pixels under the coloured
+        // band, and 1000 was seventy pixels ABOVE that band's floor. So
+        // the fixture had the button column running up through the
+        // record arm, and every test about the column was asking about
+        // a strip the mixer never builds.
+        let (width, height, rack_h) = (133.0, 1440.0, 950.0);
+        let mut probe = Strip::new(width, height, height, rack_h, 0.0);
+        probe.buttons_top = probe.band_bottom() + 4.0;
+        Strip::new(width, height, height, rack_h, probe.buttons_top)
     }
 
     /// The invariant the whole module exists for: what is drawn is what

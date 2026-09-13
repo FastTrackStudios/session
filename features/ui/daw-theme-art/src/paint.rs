@@ -1297,18 +1297,19 @@ pub mod tcp {
     #[must_use]
     pub fn monitor(chrome: &Chrome, mode: Monitoring, lit: Color, at: Interaction) -> Drawing {
         let (w, h) = (21.0_f64, 20.0_f64);
-        // The PLATE stays a plate at every state, and the glyph on it
-        // lights. REAPER's does the same, and the reason is worth
-        // stating: a button whose whole face floods red reads as an
-        // alarm, and monitoring is a mode rather than a fault. Flooded,
-        // every armed track shouted at once.
-        let ink = ink_in(chrome, None, at, false, 0.25);
+        // No plate: REAPER's monitor is a bare glyph on the strip,
+        // unlike the mute and solo it sits above. That is not an
+        // oversight in the theme — the buttons are things you press and
+        // this is a lamp you read, and giving it a housing made a third
+        // button out of an indicator.
+        //
+        // Hover still has to land somewhere, so it lifts the glyph
+        // rather than lighting a face that is not there.
+        let hovered = at != Interaction::Normal;
         let mut drawing = Drawing::new(w, h);
-        drawing.fill(rect(0.0, 0.0, w, h, 3.0), ink.face);
-        drawing.stroke(rect(0.5, 0.5, w - 1.0, h - 1.0, 3.0), ink.border, Stroke::new(1.0));
-
-        let dim = chrome.hardware_mark.shade(-0.33);
+        let dim = chrome.hardware_mark.shade(if hovered { -0.1 } else { -0.33 });
         let on = |part_lit: bool| if part_lit { lit } else { dim };
+        let _ = chrome;
         let cx = w / 2.0;
         // The dome, then two arcs widening under it. Measured off the
         // cell as proportions so the glyph survives a different size.
