@@ -66,6 +66,22 @@ pub struct Racks<'a> {
     /// The one grip the pointer is on, and the strip it is on.
     pub lit: Option<(usize, crate::tone::Grip)>,
     pub panels: &'a [crate::tone::Which],
+    /// Which phases are folded shut, and whether that is one answer for
+    /// the whole mixer or one per track.
+    ///
+    /// Synced is the default because the chain is read ACROSS: you fold
+    /// Rescue away to compare everyone's Tone, and a mixer where each
+    /// strip folded on its own would put a different processor at the
+    /// same height on every track. Per-track is the setting for when
+    /// you are working one track rather than comparing them.
+    pub folded: &'a crate::tone::Fold,
+}
+
+impl Racks<'_> {
+    /// Which phases are shut on a given track.
+    fn folded(&self, guid: &str) -> crate::tone::Folded {
+        self.folded.of(guid)
+    }
 }
 
 impl Racks<'_> {
@@ -78,7 +94,9 @@ impl Racks<'_> {
         // only reached by the shot path, which runs once.
         static EMPTY_SETTINGS: std::sync::OnceLock<crate::tone::Store> =
             std::sync::OnceLock::new();
+        static EMPTY_FOLD: std::sync::OnceLock<crate::tone::Fold> = std::sync::OnceLock::new();
         Racks {
+            folded: EMPTY_FOLD.get_or_init(crate::tone::Fold::default),
             settings: EMPTY_SETTINGS.get_or_init(crate::tone::Store::default),
             history: Box::leak(Box::default()),
             spectra: Box::leak(Box::default()),
@@ -537,6 +555,7 @@ mod tests {
                 &Clips::default(),
                 0.0,
                 &mut Racks {
+                    folded: &crate::tone::Fold::default(),
                     settings: &settings,
                     history,
                     spectra: &mut std::collections::HashMap::new(),
@@ -659,6 +678,7 @@ pub fn controls(
             track,
             mixer.label(row),
             rack_scroll,
+            racks.folded(&track.guid),
             pointer,
             // Levels are indexed by PROJECT track index, not by mixer
             // row: the mixer shows a subset in its own order, and a
@@ -701,6 +721,7 @@ fn draw_strip_controls(
     track: &Track,
     label: Option<(&str, f32)>,
     scroll: f64,
+    folded: crate::tone::Folded,
     pointer: &crate::pointer::Pointer,
     level: Option<daw_proto::TrackLevels>,
     clipped: bool,
@@ -854,7 +875,7 @@ fn draw_strip_controls(
         let at = crate::tone::Panel::of(box_, left).up(scroll);
         let build = |bins: &[f32]| {
             let mut rack = anyrender::Scene::new();
-            crate::tone::draw(&mut rack, palette, font, tone, bins, panels, at, lit);
+            crate::tone::draw(&mut rack, palette, font, tone, bins, panels, at, folded, lit);
             rack
         };
         match spectrum {
@@ -897,6 +918,7 @@ fn draw_strip_controls(
             // why the whole `Tone` goes in rather than one `Comp`.
             tone,
             crate::tone::Panel::of(box_, left).up(scroll),
+            folded,
         );
         scene.pop_layer();
     }

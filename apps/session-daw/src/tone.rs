@@ -710,6 +710,117 @@ pub fn wanted(panels: &[Which]) -> f64 {
     panels.iter().map(|which| which.natural()).sum::<f64>() + gaps
 }
 
+/// Which phases are folded shut.
+///
+/// A phase is the container the chain is read in — you are working the
+/// Tone pass, so the four panels above and below it are context you
+/// want out of the way — and folding one is how the rack stays legible
+/// as it grows past what a strip can hold.
+///
+/// A bitset over the canonical phase order, for the same reason
+/// [`Bypass`] is one: the chain gains phases, and a field each would
+/// mean an edit in three places every time.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Folded {
+    shut: u16,
+}
+
+impl Folded {
+    fn bit(phase: session::mix_phases::MixPhase) -> u16 {
+        let at = session::mix_phases::MixPhase::ALL
+            .iter()
+            .position(|p| *p == phase)
+            .unwrap_or(0);
+        1_u16 << u16::try_from(at).unwrap_or(0)
+    }
+
+    #[must_use]
+    pub fn is(self, phase: session::mix_phases::MixPhase) -> bool {
+        self.shut & Self::bit(phase) != 0
+    }
+
+    pub fn toggle(&mut self, phase: session::mix_phases::MixPhase) {
+        self.shut ^= Self::bit(phase);
+    }
+
+    #[must_use]
+    pub const fn any(self) -> bool {
+        self.shut != 0
+    }
+}
+
+/// Where the folds live: one answer for the mixer, or one per track.
+///
+/// Both, because they answer different questions. Synced is the
+/// default — the chain is read ACROSS, and a mixer where each strip
+/// folded on its own would put a different processor at the same height
+/// on every track, which is the one thing a mixer must not do. Per
+/// track is for when you are working one track rather than comparing.
+#[derive(Clone, Debug, Default)]
+pub struct Fold {
+    /// The shared answer, used when `synced`.
+    every: Folded,
+    by_guid: std::collections::HashMap<String, Folded>,
+    pub synced: bool,
+}
+
+impl Fold {
+    /// Synced, which is the default a mixer wants.
+    #[must_use]
+    pub fn shared() -> Self {
+        Self {
+            synced: true,
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn of(&self, guid: &str) -> Folded {
+        if self.synced {
+            self.every
+        } else {
+            self.by_guid.get(guid).copied().unwrap_or_default()
+        }
+    }
+
+    /// Fold or unfold a phase on a track — or on all of them.
+    pub fn toggle(&mut self, guid: &str, phase: session::mix_phases::MixPhase) {
+        if self.synced {
+            self.every.toggle(phase);
+        } else {
+            self.by_guid.entry(guid.to_owned()).or_default().toggle(phase);
+        }
+    }
+
+    /// Switch between the two, carrying the state across.
+    ///
+    /// Going synced takes the track you were on as the answer for
+    /// everyone, rather than resetting: the fold you just made is
+    /// almost always the one you want everywhere.
+    pub fn sync(&mut self, synced: bool, from: &str) {
+        if synced && !self.synced {
+            self.every = self.by_guid.get(from).copied().unwrap_or_default();
+        }
+        self.synced = synced;
+    }
+}
+
+/// A row of the rack: a phase's header, or one processor under it.
+///
+/// The two are laid out TOGETHER because they are one column, and a
+/// header whose position was worked out separately from the panels it
+/// caps would drift from them the first time a phase folded. Drawing
+/// and hit testing both walk this.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Row {
+    /// The container's bar: its name and the chevron that folds it.
+    Head(session::mix_phases::MixPhase),
+    Unit(Which),
+}
+
+/// How tall a phase header is.
+pub const HEAD_H: f64 = 15.0;
+
 /// Every processor the rack can show, in signal order.
 ///
 /// ALL of them, whatever the phase. The rack used to show a phase's own
@@ -756,8 +867,9 @@ pub fn record(
     tone: &Tone,
     panels: &[Which],
     panel: Panel,
+    folded: Folded,
 ) {
-    draw(scene, palette, font, tone, &[], panels, panel, None);
+    draw(scene, palette, font, tone, &[], panels, panel, folded, None);
 }
 
 /// The same, with one grip lit.
@@ -779,6 +891,7 @@ pub fn draw(
     spectrum: &[f32],
     panels: &[Which],
     panel: Panel,
+    folded: Folded,
     lit: Option<Grip>,
 ) {
     let rack = Rack::at(panel.width);
@@ -786,7 +899,12 @@ pub fn draw(
         return;
     }
 
-    for (which, at) in layout(panels, panel) {
+    for (row, at) in chain(panels, panel, folded) {
+        let Row::Unit(which) = row else {
+            let Row::Head(phase) = row else { continue };
+            container(scene, palette, font, phase, at, folded.is(phase), lit);
+            continue;
+        };
         ground(scene, palette, at);
         let inner = at.inset(2.0);
         // The header is only taken at `Full`. At `Curves` the panel is
@@ -874,25 +992,54 @@ pub fn draw(
 /// measures against; the layout itself does not read it.
 #[must_use]
 pub fn layout(panels: &[Which], panel: Panel) -> Vec<(Which, Panel)> {
-    if panels.is_empty() {
-        return Vec::new();
-    }
-    let mut y = panel.y;
-    panels
-        .iter()
-        .copied()
-        .map(|which| {
-            let height = which.natural();
-            let at = Panel {
-                x: panel.x,
-                y,
-                width: panel.width,
-                height,
-            };
-            y += height + GAP;
-            (which, at)
+    units(panels, panel, Folded::default())
+}
+
+/// The same, with some phases folded shut.
+#[must_use]
+pub fn units(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Which, Panel)> {
+    chain(panels, panel, folded)
+        .into_iter()
+        .filter_map(|(row, at)| match row {
+            Row::Unit(which) => Some((which, at)),
+            Row::Head(_) => None,
         })
         .collect()
+}
+
+/// The whole column: every phase header and every unit under it.
+///
+/// One walk, so a header and the panels it caps cannot disagree about
+/// where they are — which is the same rule [`crate::strip::Strip`] is
+/// built on, applied down instead of across.
+#[must_use]
+pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)> {
+    let mut out = Vec::with_capacity(panels.len() + 5);
+    let mut y = panel.y;
+    let mut phase = None;
+    let row = |y: f64, height: f64| Panel {
+        x: panel.x,
+        y,
+        width: panel.width,
+        height,
+    };
+    for which in panels.iter().copied() {
+        // A header whenever the phase changes, which is what makes the
+        // chain's ORDER do the grouping: the units are already in phase
+        // order, so a container is a run of them.
+        if phase != Some(which.phase()) {
+            phase = Some(which.phase());
+            out.push((Row::Head(which.phase()), row(y, HEAD_H)));
+            y += HEAD_H;
+        }
+        if folded.is(which.phase()) {
+            continue;
+        }
+        let height = which.natural();
+        out.push((Row::Unit(which), row(y, height)));
+        y += height + GAP;
+    }
+    out
 }
 
 /// How far the rack can scroll before the last panel's floor arrives.
@@ -900,8 +1047,22 @@ pub fn layout(panels: &[Which], panel: Panel) -> Vec<(Which, Panel)> {
 /// Zero when the chain already fits its box, which is what keeps the
 /// gesture inert until there is something below to reach.
 #[must_use]
-pub fn scroll_span(panels: &[Which], box_height: f64) -> f64 {
-    (wanted(panels) - box_height).max(0.0)
+pub fn scroll_span(panels: &[Which], box_height: f64, folded: Folded) -> f64 {
+    (tall(panels, folded) - box_height).max(0.0)
+}
+
+/// How tall the whole column comes to, headers and folds included.
+#[must_use]
+pub fn tall(panels: &[Which], folded: Folded) -> f64 {
+    let probe = Panel {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    };
+    chain(panels, probe, folded)
+        .last()
+        .map_or(0.0, |(_, at)| at.y + at.height)
 }
 
 /// The body of a panel — what is left once its header is taken.
@@ -1089,6 +1250,84 @@ impl Which {
             Self::Delay | Self::Reverb => 100.0,
         }
     }
+}
+
+/// A phase's own colour.
+///
+/// The same hues the toolbar icons are built with — see
+/// `daw/features/reaper/fts-icons/examples/mix.toml`, where each phase
+/// states its own. Taken from there rather than chosen again so the
+/// container, the rail button and the REAPER toolbar all agree about
+/// what colour Tone is.
+fn phase_tint(phase: session::mix_phases::MixPhase) -> Color {
+    use session::mix_phases::MixPhase as P;
+    hex(match phase {
+        P::Rescue => "#EF4444",
+        P::Balance => "#22C55E",
+        P::Tone => "#FACC15",
+        P::Polish => "#06B6D4",
+        P::Relational => "#3B82F6",
+        P::Depth => "#8B5CF6",
+        P::Creative => "#EC4899",
+        P::Overview => "#6366F1",
+    })
+}
+
+/// A phase's container bar: its name, and the chevron that folds it.
+///
+/// The chain is eleven units long and a strip shows about half of it,
+/// so the thing that makes it legible is knowing WHICH PASS you are
+/// looking at without counting panels. The bar says it, and folding one
+/// puts the passes you are not working out of the way without taking
+/// them off the chain.
+fn container(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    phase: session::mix_phases::MixPhase,
+    at: Panel,
+    shut: bool,
+    lit: Option<Grip>,
+) {
+    let held = lit == Some(Grip::Phase(phase));
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        if held { palette.tcp_field } else { palette.tcp_meter_well },
+        None,
+        &at.rect(),
+    );
+    // The phase's own colour down the left edge — the same hue its
+    // button wears in the rail, so the container and the button that
+    // will focus it are obviously the same thing.
+    let tint = phase_tint(phase);
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        tint,
+        None,
+        &Rect::new(at.x, at.y, at.x + 2.0, at.y + at.height),
+    );
+    const SIZE: f32 = 8.0;
+    crate::tcp::glyphs(
+        scene,
+        font,
+        if held { palette.text } else { palette.text_dim },
+        phase.display_name(),
+        at.x + 6.0,
+        at.y + at.height - 4.0,
+        SIZE,
+    );
+    // The chevron: up when the container is open, down when it is shut,
+    // which is the direction a click will move its contents.
+    let right = at.x + at.width;
+    let (cx, cy) = (right - 9.0, at.y + at.height / 2.0);
+    let arm = 3.2;
+    let ink = if held { palette.text } else { palette.text_faint };
+    let tip = if shut { cy + arm * 0.6 } else { cy - arm * 0.6 };
+    let base = if shut { cy - arm * 0.6 } else { cy + arm * 0.6 };
+    rule_wide(scene, ink, Line::new((cx - arm, base), (cx, tip)), 1.4);
+    rule_wide(scene, ink, Line::new((cx, tip), (cx + arm, base)), 1.4);
 }
 
 /// A panel's well — darker than the strip, so the rack reads as inset
@@ -2386,6 +2625,13 @@ pub enum Grip {
     /// is not a value. It is also the part that stays legible under the
     /// scrim, so the way out is where the way in was.
     Bypass(Which),
+    /// A phase's container bar — clicked to fold it shut.
+    ///
+    /// Not a `Bypass`: folding changes what you can SEE and bypassing
+    /// changes what the track sounds like, and a rack where the two
+    /// gestures looked alike would be one click away from an unintended
+    /// mix decision.
+    Phase(session::mix_phases::MixPhase),
     /// An EQ graph's zoom — the chip at the top of the panel saying
     /// what range it is drawn to.
     ///
@@ -2414,7 +2660,7 @@ impl Grip {
     /// whether a press is the start of a gesture.
     #[must_use]
     pub const fn is_switch(self) -> bool {
-        matches!(self, Self::Bypass(_) | Self::Scale(_))
+        matches!(self, Self::Bypass(_) | Self::Scale(_) | Self::Phase(_))
     }
 
     /// Which panel this grip lives in.
@@ -2429,6 +2675,8 @@ impl Grip {
             | Self::Scale(which)
             | Self::Bypass(which) => which,
             Self::Drive => Which::Sat,
+            // A header belongs to no unit: it caps a run of them.
+            Self::Phase(_) => Which::Eq,
         }
     }
 }
@@ -2496,10 +2744,12 @@ fn mapper(body: Panel, db_range: f64) -> GraphMapper {
 /// `panel` is the rack's whole box in the same coordinates as `x` and
 /// `y` — the strip's, not the window's.
 #[must_use]
+#[expect(clippy::too_many_arguments, reason = "a hit test and everything it reads")]
 pub fn grip_at(
     panels: &[Which],
     tone: &Tone,
     panel: Panel,
+    folded: Folded,
     x: f64,
     y: f64,
 ) -> Option<Grip> {
@@ -2507,7 +2757,17 @@ pub fn grip_at(
     if !rack.on() {
         return None;
     }
-    for (which, at) in layout(panels, panel) {
+    for (row, at) in chain(panels, panel, folded) {
+        // A container bar answers for its whole width: it is fifteen
+        // pixels tall and the chevron in it is six, and a fold you have
+        // to hit exactly is a fold nobody uses.
+        let Row::Unit(which) = row else {
+            let Row::Head(phase) = row else { continue };
+            if y >= at.y && y < at.y + at.height {
+                return Some(Grip::Phase(phase));
+            }
+            continue;
+        };
         let body = body_of(at, rack);
         if body.width <= 0.0 || body.height <= 0.0 {
             continue;
@@ -2720,8 +2980,8 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
                 tone.set_threshold(which, f64_to_f32(f64::from(now) + step));
             }
         }
-        // A switch does not turn.
-        Grip::Bypass(_) => {}
+        // A switch does not turn, and neither does a container.
+        Grip::Bypass(_) | Grip::Phase(_) => {}
         // A notch is a stop, not a fraction of one: the range is a list
         // the plugin publishes and the wheel walks it. Down is further
         // out, which is the direction a wheel zooms out everywhere
@@ -2851,6 +3111,9 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
         // Unity: a preamp at drive one is the wire it is modelled on.
         Grip::Drive => tone.sat.drive = 1.0,
         Grip::Scale(_) => tone.eq_range = DEFAULT_EQ_RANGE,
+        // Folding is not a setting on the track, so there is nothing
+        // here to put back — see `Fold`.
+        Grip::Phase(_) => {}
     }
 }
 
@@ -2859,11 +3122,13 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
 /// Pixels rather than fractions because these axes are not linear in
 /// the same way: a band's frequency is logarithmic and its gain is not,
 /// so the conversion has to happen against the panel the drag is in.
+#[expect(clippy::too_many_arguments, reason = "a drag and everything it reads")]
 pub fn drag(
     tone: &mut Tone,
     grip: Grip,
     panels: &[Which],
     panel: Panel,
+    folded: Folded,
     mods: Mods,
     dx: f64,
     dy: f64,
@@ -2872,7 +3137,7 @@ pub fn drag(
     // The grip names its own panel now — see `Grip::panel`. It used to
     // be inferred from the grip's KIND, which stopped working the
     // moment the chain had three EQs and two compressors.
-    let Some((_, at)) = layout(panels, panel)
+    let Some((_, at)) = units(panels, panel, folded)
         .into_iter()
         .find(|(which, _)| *which == grip.panel())
     else {
@@ -2984,7 +3249,7 @@ pub fn drag(
         // A switch has no drag. Dragging off one is how you change your
         // mind about pressing it, which is the mixer's own rule — and a
         // zoom is a switch between stops.
-        Grip::Bypass(_) | Grip::Scale(_) => {}
+        Grip::Bypass(_) | Grip::Scale(_) | Grip::Phase(_) => {}
         Grip::Drive => {
             // A quarter of the panel's height is the whole range, so a
             // short drag is a real change — drive is the parameter you
@@ -3084,9 +3349,10 @@ mod tests {
                 which.natural()
             );
         }
-        // From the top, and the space below is left alone.
-        assert!((laid[0].1.y - tall.y).abs() < f64::EPSILON);
-        let used = wanted(&[Which::Eq, Which::Comp, Which::Sat]);
+        // From the top, under the phase's container bar, and the space
+        // below is left alone.
+        assert!((laid[0].1.y - tall.y - HEAD_H).abs() < f64::EPSILON);
+        let used = super::tall(&[Which::Eq, Which::Comp, Which::Sat], super::Folded::default());
         assert!(used < tall.height, "the rack filled everything it was given");
     }
 
@@ -3119,12 +3385,12 @@ mod tests {
         let bottom = laid.last().map_or(0.0, |(_, at)| at.y + at.height);
         assert!(bottom > short.height, "the chain fitted, so nothing was proved");
         assert!(
-            (super::scroll_span(&panels, short.height) - (bottom - short.height)).abs() < 0.01,
+            (super::scroll_span(&panels, short.height, super::Folded::default()) - (bottom - short.height)).abs() < 0.01,
             "the span does not reach the last panel's floor"
         );
 
         // And a box tall enough to hold the chain does not scroll.
-        assert!(super::scroll_span(&panels, 2000.0).abs() < f64::EPSILON);
+        assert!(super::scroll_span(&panels, 4000.0, super::Folded::default()).abs() < f64::EPSILON);
     }
 
     /// Scrolling is the panel's own `y`, so the drawing and the hit
@@ -3221,6 +3487,7 @@ mod tests {
                 width: 300.0,
                 height: 8.0,
             },
+            super::Folded::default(),
         );
         assert!(scene.commands.is_empty());
     }
@@ -3243,6 +3510,7 @@ mod tests {
                 width: 300.0,
                 height: 180.0,
             },
+            super::Folded::default(),
         );
         // Three grounds, three curves, the rules and the labels.
         assert!(
@@ -3261,6 +3529,145 @@ mod tests {
         let at_300 = calculate_combined_response(&tone.eq, 300.0, DISPLAY_RATE);
         assert!(at_3k > 0.0, "the 3k bell boosts: {at_3k}");
         assert!(at_300 < 0.0, "the 300 bell cuts: {at_300}");
+    }
+}
+
+#[cfg(test)]
+mod fold_tests {
+    use super::{Fold, Folded};
+    use session::mix_phases::MixPhase as P;
+
+    /// A fold is per phase and survives being asked about again.
+    #[test]
+    fn a_phase_folds_and_unfolds() {
+        let mut shut = Folded::default();
+        assert!(!shut.is(P::Tone));
+        shut.toggle(P::Tone);
+        assert!(shut.is(P::Tone));
+        assert!(!shut.is(P::Rescue), "folding one folded another");
+        assert!(shut.any());
+        shut.toggle(P::Tone);
+        assert!(!shut.any());
+    }
+
+    /// Synced, one fold answers for every track — which is what keeps
+    /// the chain in register across a mixer.
+    #[test]
+    fn synced_folds_reach_every_track() {
+        let mut fold = Fold::shared();
+        fold.toggle("kick", P::Rescue);
+        assert!(fold.of("kick").is(P::Rescue));
+        assert!(fold.of("snare").is(P::Rescue), "the fold stayed on one track");
+    }
+
+    /// And unsynced, it reaches only the one you folded.
+    #[test]
+    fn per_track_folds_stay_on_their_track() {
+        let mut fold = Fold::default();
+        fold.toggle("kick", P::Rescue);
+        assert!(fold.of("kick").is(P::Rescue));
+        assert!(!fold.of("snare").is(P::Rescue));
+    }
+
+    /// Going synced takes the track you were on as the answer for
+    /// everyone, rather than throwing the fold away — the fold you just
+    /// made is almost always the one you meant.
+    #[test]
+    fn syncing_adopts_the_track_you_were_on() {
+        let mut fold = Fold::default();
+        fold.toggle("kick", P::Polish);
+        fold.sync(true, "kick");
+        assert!(fold.of("snare").is(P::Polish));
+        assert!(fold.of("anything at all").is(P::Polish));
+    }
+}
+
+#[cfg(test)]
+mod container_tests {
+    use super::{ALL_PANELS, Folded, HEAD_H, Panel, Row, Which, chain, tall, units};
+    use session::mix_phases::MixPhase as P;
+
+    fn box_at() -> Panel {
+        Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 133.0,
+            height: 4000.0,
+        }
+    }
+
+    /// Every phase gets exactly one container, and it sits above the
+    /// units it caps.
+    #[test]
+    fn each_phase_gets_one_header_above_its_units() {
+        let rows = chain(&ALL_PANELS, box_at(), Folded::default());
+        let mut seen: Vec<P> = Vec::new();
+        let mut head: Option<(P, f64)> = None;
+        for (row, at) in &rows {
+            match row {
+                Row::Head(phase) => {
+                    assert!(!seen.contains(phase), "{phase:?} got two containers");
+                    seen.push(*phase);
+                    head = Some((*phase, at.y));
+                }
+                Row::Unit(which) => {
+                    let (phase, y) = head.expect("a unit before any container");
+                    assert_eq!(which.phase(), phase, "{which:?} under {phase:?}");
+                    assert!(at.y >= y, "{which:?} sat above its own container");
+                }
+            }
+        }
+        assert_eq!(seen.len(), 5, "expected one container per phase: {seen:?}");
+    }
+
+    /// Folding a phase takes its units out of the column and leaves its
+    /// container — you have to be able to unfold it.
+    #[test]
+    fn folding_hides_the_units_and_keeps_the_bar() {
+        let mut shut = Folded::default();
+        shut.toggle(P::Tone);
+        let rows = chain(&ALL_PANELS, box_at(), shut);
+        assert!(
+            rows.iter().any(|(row, _)| *row == Row::Head(P::Tone)),
+            "the container went with its units"
+        );
+        for which in [Which::Eq, Which::Comp, Which::Sat] {
+            assert!(
+                !rows.iter().any(|(row, _)| *row == Row::Unit(which)),
+                "{which:?} survived the fold"
+            );
+        }
+        // And the rest of the chain is still there.
+        assert!(rows.iter().any(|(row, _)| *row == Row::Unit(Which::Delay)));
+    }
+
+    /// A fold shortens the column by what it hid, which is what makes
+    /// the gesture worth making — the chain gets nearer to fitting.
+    #[test]
+    fn folding_shortens_the_column() {
+        let open = tall(&ALL_PANELS, Folded::default());
+        let mut shut = Folded::default();
+        shut.toggle(P::Tone);
+        let folded = tall(&ALL_PANELS, shut);
+        assert!(folded < open, "{folded} was not shorter than {open}");
+        // By the units it hid, and not by the container itself.
+        let hidden: f64 = [Which::Eq, Which::Comp, Which::Sat]
+            .iter()
+            .map(|w| w.natural() + super::GAP)
+            .sum();
+        assert!((open - folded - hidden).abs() < 0.01, "{open} - {folded}");
+        assert!(HEAD_H > 0.0);
+    }
+
+    /// Folding everything leaves five bars and nothing else.
+    #[test]
+    fn folding_everything_leaves_the_bars() {
+        let mut shut = Folded::default();
+        for phase in P::ALL {
+            shut.toggle(phase);
+        }
+        assert!(units(&ALL_PANELS, box_at(), shut).is_empty());
+        assert_eq!(chain(&ALL_PANELS, box_at(), shut).len(), 5);
     }
 }
 
@@ -3357,7 +3764,7 @@ mod grip_tests {
         let band = &tone.eq[2];
         let x = freq.freq_to_x(f64::from(band.frequency), body.x, body.x + body.width);
         let y = db.db_to_y(f64::from(band.gain), body.y, body.y + body.height);
-        assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(Grip::Band(Which::Eq, 2)));
+        assert_eq!(grip_at(&ALL, &tone, rack(), super::Folded::default(), x, y), Some(Grip::Band(Which::Eq, 2)));
     }
 
     /// And a point well away from every band grabs nothing, rather
@@ -3371,9 +3778,13 @@ mod grip_tests {
     #[test]
     fn empty_space_in_the_eq_grabs_nothing() {
         let tone = placeholder(0);
-        // The EQ panel's top-left corner: inside the panel, far from
-        // any band, which all sit near the middle at these settings.
-        assert_eq!(grip_at(&ALL, &tone, rack(), 3.0, 14.0), None);
+        // Inside the EQ's own body, far from any band — below the
+        // phase's container bar, which owns the first fifteen pixels.
+        let y = super::HEAD_H + 14.0;
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), 3.0, y),
+            None
+        );
     }
 
     /// The zoom chip is at the top middle and wins over whatever is
@@ -3389,7 +3800,7 @@ mod grip_tests {
         let body = super::body_of(at, super::Rack::at(rack().width));
         let chip = super::scale_chip(body);
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), chip.x + chip.width / 2.0, chip.y + 2.0),
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), chip.x + chip.width / 2.0, chip.y + 2.0),
             Some(Grip::Scale(Which::Eq))
         );
         // It is a switch, so a click acts and a drag does not.
@@ -3465,7 +3876,7 @@ mod grip_tests {
     fn a_band_follows_the_pointer() {
         let mut tone = placeholder(0);
         let (before_f, before_g) = (tone.eq[1].frequency, tone.eq[1].gain);
-        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), Mods::default(), 12.0, -20.0);
+        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), super::Folded::default(), Mods::default(), 12.0, -20.0);
         assert!(tone.eq[1].frequency > before_f, "right is higher");
         assert!(tone.eq[1].gain > before_g, "up is more gain");
     }
@@ -3475,12 +3886,12 @@ mod grip_tests {
     fn a_band_stays_inside_the_panel() {
         let mut tone = placeholder(0);
         for _ in 0..50 {
-            drag(&mut tone, Grip::Band(Which::Eq, 0), &ALL, rack(), Mods::default(), 400.0, -400.0);
+            drag(&mut tone, Grip::Band(Which::Eq, 0), &ALL, rack(), super::Folded::default(), Mods::default(), 400.0, -400.0);
         }
         assert!(tone.eq[0].gain <= super::f64_to_f32(super::EQ_GAIN_LIMIT));
         assert!(tone.eq[0].frequency <= 24_000.0);
         for _ in 0..50 {
-            drag(&mut tone, Grip::Band(Which::Eq, 0), &ALL, rack(), Mods::default(), -400.0, 400.0);
+            drag(&mut tone, Grip::Band(Which::Eq, 0), &ALL, rack(), super::Folded::default(), Mods::default(), -400.0, 400.0);
         }
         assert!(tone.eq[0].gain >= -super::f64_to_f32(super::EQ_GAIN_LIMIT));
         assert!(tone.eq[0].frequency > 0.0);
@@ -3492,10 +3903,10 @@ mod grip_tests {
     fn dragging_the_threshold_up_compresses_less() {
         let mut tone = placeholder(0);
         let before = tone.comp.threshold;
-        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, -10.0);
+        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -10.0);
         assert!(tone.comp.threshold > before);
         for _ in 0..200 {
-            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, 40.0);
+            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, 40.0);
         }
         assert!(tone.comp.threshold >= -60.0, "the threshold clamps");
     }
@@ -3506,7 +3917,7 @@ mod grip_tests {
     fn drive_stays_positive() {
         let mut tone = placeholder(0);
         for _ in 0..200 {
-            drag(&mut tone, Grip::Drive, &ALL, rack(), Mods::default(), 0.0, 40.0);
+            drag(&mut tone, Grip::Drive, &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, 40.0);
         }
         assert!(tone.sat.drive >= 0.0);
     }
@@ -3591,7 +4002,7 @@ mod tier_tests {
         let y = db.db_to_y(f64::from(band.gain), body.y, body.y + body.height);
 
         let x_wide = freq.freq_to_x(f64::from(band.frequency), body.x, body.x + body.width);
-        assert_eq!(grip_at(&ALL, &tone, wide, x_wide, y), Some(Grip::Band(Which::Eq, 2)));
+        assert_eq!(grip_at(&ALL, &tone, wide, super::Folded::default(), x_wide, y), Some(Grip::Band(Which::Eq, 2)));
 
         let narrow_body = super::body_of(
             super::layout(&ALL, narrow)
@@ -3606,7 +4017,7 @@ mod tier_tests {
             narrow_body.x,
             narrow_body.x + narrow_body.width,
         );
-        assert_eq!(grip_at(&ALL, &tone, narrow, x_narrow, y), None);
+        assert_eq!(grip_at(&ALL, &tone, narrow, super::Folded::default(), x_narrow, y), None);
     }
 
     /// The compressor and the saturator stay grabbable when the rack
@@ -3622,7 +4033,7 @@ mod tier_tests {
             .1;
         let inside = comp.y + comp.height / 2.0;
         assert_eq!(
-            grip_at(&ALL, &tone, narrow, narrow.width / 2.0, inside),
+            grip_at(&ALL, &tone, narrow, super::Folded::default(), narrow.width / 2.0, inside),
             Some(Grip::Threshold(Which::Comp))
         );
     }
@@ -3633,7 +4044,7 @@ mod tier_tests {
         let tone = placeholder(0);
         let off = rack_of(30.0);
         assert_eq!(super::Rack::at(off.width), super::Rack::Off);
-        assert_eq!(grip_at(&ALL, &tone, off, 15.0, 300.0), None);
+        assert_eq!(grip_at(&ALL, &tone, off, super::Folded::default(), 15.0, 300.0), None);
     }
 }
 
@@ -3658,7 +4069,7 @@ mod reset_tests {
     fn reset_undoes_a_drag() {
         let mut tone = placeholder(0);
         let before = tone.eq[1].gain;
-        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), Mods::default(), 0.0, -40.0);
+        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -40.0);
         assert!(
             (tone.eq[1].gain - before).abs() > 0.5,
             "the drag moved nothing"
@@ -3666,14 +4077,14 @@ mod reset_tests {
         reset(&mut tone, Grip::Band(Which::Eq, 1));
         assert!(tone.eq[1].gain.abs() < f32::EPSILON, "the band went flat");
 
-        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, -30.0);
+        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -30.0);
         reset(&mut tone, Grip::Threshold(Which::Comp));
         assert!(
             (tone.comp.threshold - Comp::default().threshold).abs() < f32::EPSILON,
             "the threshold went back to its default"
         );
 
-        drag(&mut tone, Grip::Drive, &ALL, rack(), Mods::default(), 0.0, -60.0);
+        drag(&mut tone, Grip::Drive, &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -60.0);
         reset(&mut tone, Grip::Drive);
         assert!((tone.sat.drive - 1.0).abs() < f32::EPSILON, "drive is unity");
     }
@@ -3683,7 +4094,7 @@ mod reset_tests {
     #[test]
     fn resetting_a_band_keeps_where_it_sits() {
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Band(Which::Eq, 2), &ALL, rack(), Mods::default(), 20.0, -20.0);
+        drag(&mut tone, Grip::Band(Which::Eq, 2), &ALL, rack(), super::Folded::default(), Mods::default(), 20.0, -20.0);
         let moved = tone.eq[2].frequency;
         reset(&mut tone, Grip::Band(Which::Eq, 2));
         assert!((tone.eq[2].frequency - moved).abs() < f32::EPSILON);
@@ -3730,7 +4141,7 @@ mod plugin_interaction_tests {
             let x = body.x + map.freq_to_x(f64::from(band.frequency));
             let y = body.y + map.db_to_y(f64::from(band.gain));
             assert_eq!(
-                grip_at(&ALL, &tone, rack(), x, y),
+                grip_at(&ALL, &tone, rack(), super::Folded::default(), x, y),
                 Some(Grip::Band(Which::Eq, index)),
                 "band {index} was not found where the plugin puts it"
             );
@@ -3745,7 +4156,7 @@ mod plugin_interaction_tests {
         let mut tone = placeholder(0);
         let (before_f, before_g) = (tone.eq[1].frequency, tone.eq[1].gain);
         let alt = Mods::new(true, false, false);
-        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), alt, 15.0, -30.0);
+        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), super::Folded::default(), alt, 15.0, -30.0);
         assert!(tone.eq[1].frequency > before_f, "frequency followed");
         assert!(
             (tone.eq[1].gain - before_g).abs() < f32::EPSILON,
@@ -3760,7 +4171,7 @@ mod plugin_interaction_tests {
         let mut tone = placeholder(0);
         let before = tone.eq[1].q;
         let cmd = Mods::new(false, false, true);
-        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), cmd, 0.0, -20.0);
+        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), super::Folded::default(), cmd, 0.0, -20.0);
         assert!((tone.eq[1].q - before).abs() > f32::EPSILON, "q moved");
         assert!(tone.eq[1].q > 0.0 && tone.eq[1].q <= 18.0, "and stayed sane");
     }
@@ -3771,13 +4182,13 @@ mod plugin_interaction_tests {
     fn shift_is_fine_everywhere() {
         let coarse = {
             let mut tone = placeholder(0);
-            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, -20.0);
+            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -20.0);
             tone.comp.threshold
         };
         let fine = {
             let mut tone = placeholder(0);
             let shift = Mods::new(false, true, false);
-            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), shift, 0.0, -20.0);
+            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), shift, 0.0, -20.0);
             tone.comp.threshold
         };
         let from = placeholder(0).comp.threshold;
@@ -3914,7 +4325,7 @@ mod comp_tests {
         // display is what is being claimed here.
         let inside = body.y + body.height * 0.9;
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), body.x + body.width * 0.1, inside),
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), body.x + body.width * 0.1, inside),
             Some(Grip::Threshold(Which::Comp))
         );
     }
@@ -3939,7 +4350,7 @@ mod comp_tests {
                 f64::midpoint(edge[0].1, edge[1].1),
             );
             assert_eq!(
-                grip_at(&ALL, &tone, rack(), mid.0, mid.1),
+                grip_at(&ALL, &tone, rack(), super::Folded::default(), mid.0, mid.1),
                 Some(grip),
                 "{grip:?} at {mid:?}"
             );
@@ -3951,6 +4362,7 @@ mod comp_tests {
                 &ALL,
                 &tone,
                 rack(),
+                super::Folded::default(),
                 shaft[0].0,
                 f64::midpoint(shaft[0].1, shaft[1].1)
             ),
@@ -3959,7 +4371,7 @@ mod comp_tests {
         // Well below the arrow's tip is nothing but the display, which
         // belongs to the threshold.
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), shaft[0].0, display.y + display.height - 2.0),
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), shaft[0].0, display.y + display.height - 2.0),
             Some(Grip::Threshold(Which::Comp))
         );
     }
@@ -3971,9 +4383,9 @@ mod comp_tests {
     fn the_threshold_follows_the_pointer_down() {
         let mut tone = placeholder(0);
         let before = tone.comp.threshold;
-        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, 20.0);
+        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, 20.0);
         assert!(tone.comp.threshold < before, "down is a lower threshold");
-        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, -40.0);
+        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -40.0);
         assert!(tone.comp.threshold > before, "and up is a higher one");
     }
 
@@ -3984,7 +4396,7 @@ mod comp_tests {
         for grip in [Grip::Ratio(Which::Comp), Grip::Attack(Which::Comp), Grip::Release(Which::Comp)] {
             let mut tone = placeholder(0);
             let was = tone.comp;
-            drag(&mut tone, grip, &ALL, rack(), Mods::default(), 30.0, 30.0);
+            drag(&mut tone, grip, &ALL, rack(), super::Folded::default(), Mods::default(), 30.0, 30.0);
             let now = tone.comp;
             let moved = [
                 (now.ratio - was.ratio).abs() > f32::EPSILON,
@@ -4007,7 +4419,7 @@ mod comp_tests {
         let step = |from: f32| {
             let mut tone = placeholder(0);
             tone.comp.attack = from;
-            drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), Mods::default(), 15.0, 0.0);
+            drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 15.0, 0.0);
             tone.comp.attack - from
         };
         assert!(step(1.0) < step(100.0), "the fast end moves in smaller steps");
@@ -4021,9 +4433,9 @@ mod comp_tests {
     fn the_controls_clamp() {
         let mut tone = placeholder(0);
         for _ in 0..80 {
-            drag(&mut tone, Grip::Ratio(Which::Comp), &ALL, rack(), Mods::default(), 0.0, 60.0);
-            drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), Mods::default(), 60.0, 0.0);
-            drag(&mut tone, Grip::Release(Which::Comp), &ALL, rack(), Mods::default(), 60.0, 0.0);
+            drag(&mut tone, Grip::Ratio(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, 60.0);
+            drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 60.0, 0.0);
+            drag(&mut tone, Grip::Release(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 60.0, 0.0);
         }
         assert!((tone.comp.ratio - 20.0).abs() < 0.01, "{}", tone.comp.ratio);
         assert!((tone.comp.attack - 200.0).abs() < 0.5, "{}", tone.comp.attack);
@@ -4031,9 +4443,9 @@ mod comp_tests {
 
         let mut back = placeholder(0);
         for _ in 0..80 {
-            drag(&mut back, Grip::Ratio(Which::Comp), &ALL, rack(), Mods::default(), 0.0, -60.0);
-            drag(&mut back, Grip::Attack(Which::Comp), &ALL, rack(), Mods::default(), -60.0, 0.0);
-            drag(&mut back, Grip::Release(Which::Comp), &ALL, rack(), Mods::default(), -60.0, 0.0);
+            drag(&mut back, Grip::Ratio(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -60.0);
+            drag(&mut back, Grip::Attack(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), -60.0, 0.0);
+            drag(&mut back, Grip::Release(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), -60.0, 0.0);
         }
         assert!((back.comp.ratio - 1.0).abs() < 0.01, "{}", back.comp.ratio);
         assert!((back.comp.attack - 0.1).abs() < 0.01, "{}", back.comp.attack);
@@ -4050,15 +4462,15 @@ mod comp_tests {
         let was = placeholder(0).comp;
 
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Ratio(Which::Comp), &ALL, rack(), Mods::default(), 0.0, 20.0);
+        drag(&mut tone, Grip::Ratio(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, 20.0);
         assert!(tone.comp.ratio > was.ratio, "down did not harden the ratio");
 
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), Mods::default(), 20.0, 0.0);
+        drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 20.0, 0.0);
         assert!(tone.comp.attack > was.attack, "right did not lengthen the attack");
 
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Release(Which::Comp), &ALL, rack(), Mods::default(), 20.0, 0.0);
+        drag(&mut tone, Grip::Release(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 20.0, 0.0);
         assert!(
             tone.comp.release > was.release,
             "right did not lengthen the release"
@@ -4100,7 +4512,7 @@ mod comp_tests {
         };
         let before = at_db(tone.comp);
         let moved = 24.0;
-        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, moved);
+        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, moved);
         let after = at_db(tone.comp);
         assert!(
             (after - before - moved).abs() < 0.5,
@@ -4114,7 +4526,7 @@ mod comp_tests {
     fn each_knob_resets_to_its_own_default() {
         let mut tone = placeholder(0);
         for grip in [Grip::Ratio(Which::Comp), Grip::Attack(Which::Comp), Grip::Release(Which::Comp), Grip::Threshold(Which::Comp)] {
-            drag(&mut tone, grip, &ALL, rack(), Mods::default(), 0.0, -25.0);
+            drag(&mut tone, grip, &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -25.0);
             reset(&mut tone, grip);
         }
         let default = Comp::default();
@@ -4407,6 +4819,7 @@ pub fn levels(
     levels: &mut Levels,
     tone: &Tone,
     panel: Panel,
+    folded: Folded,
 ) {
     if levels.is_empty() {
         return;
@@ -4436,7 +4849,7 @@ pub fn levels(
                 ..tone.comp
             },
         };
-        one_level(scene, panels, levels, comp, which, panel, rack);
+        one_level(scene, panels, levels, comp, which, panel, folded, rack);
     }
 }
 
@@ -4448,9 +4861,10 @@ fn one_level(
     comp: Comp,
     which: Which,
     panel: Panel,
+    folded: Folded,
     rack: Rack,
 ) {
-    let Some((_, at)) = layout(panels, panel)
+    let Some((_, at)) = units(panels, panel, folded)
         .into_iter()
         .find(|(at_which, _)| *at_which == which)
     else {
@@ -4738,7 +5152,7 @@ mod bypass_tests {
             // A pixel inside the panel but above its body.
             let y = at.y + 3.0;
             assert_eq!(
-                grip_at(&ALL, &tone, rack(), at.x + at.width / 2.0, y),
+                grip_at(&ALL, &tone, rack(), super::Folded::default(), at.x + at.width / 2.0, y),
                 Some(Grip::Bypass(which)),
                 "{which:?}"
             );
@@ -4763,11 +5177,11 @@ mod bypass_tests {
         let band = &tone.eq[2];
         let x = body.x + map.freq_to_x(f64::from(band.frequency));
         let y = body.y + map.db_to_y(f64::from(band.gain));
-        assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(Grip::Band(Which::Eq, 2)));
+        assert_eq!(grip_at(&ALL, &tone, rack(), super::Folded::default(), x, y), Some(Grip::Band(Which::Eq, 2)));
 
         tone.bypass.toggle(Which::Eq);
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), x, y),
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), x, y),
             Some(Grip::Bypass(Which::Eq)),
             "a band was still grabbable through the scrim"
         );
@@ -4781,7 +5195,7 @@ mod bypass_tests {
         let was = tone.bypass;
         let grip = Grip::Bypass(Which::Sat);
         assert!(grip.is_switch());
-        drag(&mut tone, grip, &ALL, rack(), Mods::default(), 30.0, -30.0);
+        drag(&mut tone, grip, &ALL, rack(), super::Folded::default(), Mods::default(), 30.0, -30.0);
         assert_eq!(tone.bypass, was, "a drag flipped a switch");
         super::wheel(&mut tone, grip, Mods::default(), -1.0);
         assert_eq!(tone.bypass, was, "a wheel flipped a switch");

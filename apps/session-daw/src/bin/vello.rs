@@ -215,6 +215,8 @@ struct App {
     /// that away the first time you moved one — you would be comparing
     /// a compressor against somebody else's saturator.
     rack_scroll: f64,
+    /// Which phase containers are folded shut.
+    rack_folds: session_daw::tone::Fold,
     /// Which folders are collapsed. A view state, not a track state:
     /// it changes which rows exist rather than what any track is.
     folders: daw_ui::components::folders::FolderState,
@@ -381,6 +383,29 @@ impl ApplicationHandler for App {
                         self.mixer = None;
                     }
                     tracing::info!(ui.simulate = self.simulate, "simulation");
+                    self.redraw();
+                    return;
+                }
+                // The fold setting: together, or per track. Carrying
+                // the current track's folds across when it goes
+                // together, because the fold you just made is almost
+                // always the one you want everywhere.
+                if event.logical_key.to_text() == Some("f") {
+                    self.settings.fold_phases_together = !self.settings.fold_phases_together;
+                    let from = self
+                        .pointer
+                        .hovered()
+                        .and_then(|spot| self.mixer_map.index(spot.row))
+                        .and_then(|i| self.tracks.get(i))
+                        .map(|track| track.guid.clone())
+                        .unwrap_or_default();
+                    self.rack_folds
+                        .sync(self.settings.fold_phases_together, &from);
+                    tracing::info!(
+                        ui.fold_together = self.settings.fold_phases_together,
+                        "phase folds"
+                    );
+                    self.mixer = None;
                     self.redraw();
                     return;
                 }
@@ -876,7 +901,12 @@ impl App {
         } else {
             &[][..]
         };
-        let span = session_daw::tone::scroll_span(panels, mixer.rack_h);
+        let folded = self
+            .mixer_map
+            .index(0)
+            .and_then(|i| self.tracks.get(i))
+            .map_or_else(Default::default, |t| self.rack_folds.of(&t.guid));
+        let span = session_daw::tone::scroll_span(panels, mixer.rack_h, folded);
         self.rack_scroll = (self.rack_scroll - by).clamp(0.0, span);
     }
 
@@ -910,6 +940,7 @@ impl App {
             self.rack_panels(),
             tone,
             rack,
+            self.rack_folds.of(&track.guid),
             content_x,
             y - session_daw::rails::TOP,
         )
@@ -983,6 +1014,15 @@ impl App {
         else {
             return;
         };
+        // Folding is not a setting on the track — it is what the window
+        // is showing — so it is handled before the per-track settings
+        // and never reaches them.
+        if let Grip::Phase(phase) = grip {
+            self.rack_folds.toggle(&guid, phase);
+            self.invalidate_rack(row);
+            self.redraw();
+            return;
+        }
         if let Some(tone) = self.tone_settings.edit(&guid) {
             match grip {
                 Grip::Bypass(which) => tone.bypass.toggle(which),
@@ -1063,8 +1103,9 @@ impl App {
         else {
             return;
         };
+        let folded = self.rack_folds.of(&guid);
         if let Some(tone) = self.tone_settings.edit(&guid) {
-            session_daw::tone::drag(tone, grip, panels, rack, mods, dx, dy);
+            session_daw::tone::drag(tone, grip, panels, rack, folded, mods, dx, dy);
         }
         self.invalidate_rack(row);
     }
@@ -1447,6 +1488,7 @@ impl App {
             font,
             icons,
             rack_scroll,
+            rack_folds,
             ..
         } = self;
         let Some(mixer) = mixer.as_ref() else { return };
@@ -1456,6 +1498,7 @@ impl App {
             spectra,
             lit,
             panels,
+            folded: rack_folds,
         };
         let mut drawn = session_daw::profile::Counts::default();
         renderer.render(|painter| {
@@ -2252,6 +2295,10 @@ fn main() {
         clips: session_daw::overlay::Clips::default(),
         // A starting scroll, for shots and for looking at a processor
         // that lives past the fold. `FTS_VELLO_RACK_SCROLL=600`.
+        // Synced by default: the chain is read across the mixer, and
+        // folds that differed per strip would put a different processor
+        // at the same height on every track.
+        rack_folds: session_daw::tone::Fold::shared(),
         rack_scroll: std::env::var("FTS_VELLO_RACK_SCROLL")
             .ok()
             .and_then(|v| v.trim().parse::<f64>().ok())

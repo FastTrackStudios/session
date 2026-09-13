@@ -17,6 +17,15 @@ pub struct Settings {
     pub take_focus_width: bool,
     /// How much of a 16:9 screen one focused track takes.
     pub focus_fraction: f64,
+    /// Whether folding a phase's container folds it on every track.
+    ///
+    /// On, the chain stays in register across the mixer: fold Rescue
+    /// away and every strip's Tone panels sit at the same height, which
+    /// is what makes a row of racks comparable at all. Off, each track
+    /// folds on its own — for when you are working one track rather
+    /// than comparing them, and the other strips' chains are just in
+    /// the way.
+    pub fold_phases_together: bool,
 }
 
 impl Default for Settings {
@@ -25,6 +34,7 @@ impl Default for Settings {
             focus_selected: true,
             take_focus_width: true,
             focus_fraction: 0.25,
+            fold_phases_together: true,
         }
     }
 }

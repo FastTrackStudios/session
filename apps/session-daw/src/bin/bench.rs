@@ -985,6 +985,7 @@ fn animate(
                         &session_daw::overlay::Clips::default(),
                         0.0,
                         &mut session_daw::overlay::Racks {
+                            folded: &session_daw::tone::Fold::default(),
                             settings: &settings,
                             history: &mut history,
                             spectra: &mut spectra,
