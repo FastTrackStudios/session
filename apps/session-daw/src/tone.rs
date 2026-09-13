@@ -884,7 +884,7 @@ fn comp(
     let held = lit == Some(Grip::Threshold);
     rule_wide(
         scene,
-        palette.meter_danger,
+        hex(comp_ui::comp_graph_svg::colors::THRESHOLD),
         Line::new((at.x, y), (right, y)),
         if held { 2.5 } else { 1.5 },
     );
@@ -892,7 +892,12 @@ fn comp(
     // line that is otherwise one pixel tall.
     if rack.detailed() {
         let r = if held { HANDLE + 1.6 } else { HANDLE };
-        dot(scene, palette.meter_danger, (right - r - 1.0, y), r);
+        dot(
+            scene,
+            hex(comp_ui::comp_graph_svg::colors::THRESHOLD),
+            (right - r - 1.0, y),
+            r,
+        );
     }
 
     if let Some(band) = knobs {
@@ -1026,6 +1031,29 @@ fn sat(scene: &mut Scene, palette: &Palette, pre: &ClassAPreamp, at: Panel, rack
     curve(scene, palette.pan, points, 1.5);
 }
 
+/// A colour the plugin states, as a colour this window can paint.
+///
+/// The plugin's UIs are DOMs, so they name colours as `#rrggbb` —
+/// `eq_graph_model::freq_to_color` returns one and
+/// `comp_graph_svg::colors` is a table of them. Parsing is how a vello
+/// host reads the same values rather than keeping a second table that
+/// drifts.
+fn hex(value: &str) -> Color {
+    let digits = value.trim_start_matches('#');
+    let channel = |from: usize| {
+        digits
+            .get(from..from.saturating_add(2))
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+    };
+    match (channel(0), channel(2), channel(4)) {
+        (Some(r), Some(g), Some(b)) => Color::from_rgba8(r, g, b, 0xff),
+        // A table that stopped producing hex is a bug in the plugin,
+        // not a reason for the rack to draw nothing: grey is visible
+        // and obviously not a decision.
+        _ => Color::from_rgba8(0x88, 0x88, 0x88, 0xff),
+    }
+}
+
 /// A band's colour, from the plugin's own frequency map.
 ///
 /// `eq_graph_model::freq_to_color` sweeps the hue red to violet across
@@ -1035,20 +1063,7 @@ fn sat(scene: &mut Scene, palette: &Palette, pre: &ClassAPreamp, at: Panel, rack
 /// what must not happen, since the point of the colour is that a band
 /// is the same colour in the strip as it is in the plugin window.
 fn band_color(hz: f64) -> Color {
-    let hex = eq_ui::eq_graph_model::freq_to_color(hz);
-    let digits = hex.trim_start_matches('#');
-    let channel = |from: usize| {
-        digits
-            .get(from..from.saturating_add(2))
-            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-    };
-    match (channel(0), channel(2), channel(4)) {
-        (Some(r), Some(g), Some(b)) => Color::from_rgba8(r, g, b, 0xff),
-        // A map that stopped producing hex is a bug in the plugin, not
-        // a reason for the rack to draw nothing: grey is visible and
-        // obviously not a frequency.
-        _ => Color::from_rgba8(0x88, 0x88, 0x88, 0xff),
-    }
+    hex(&eq_ui::eq_graph_model::freq_to_color(hz))
 }
 
 /// A filled circle — a handle, or a marker on a curve.
@@ -2711,43 +2726,31 @@ pub fn levels(
         return;
     }
     let at = Affine::translate((body.x, body.y));
-    // The signal, white, up from the floor. White because it is the
-    // thing being acted ON — it carries no state of its own, and every
-    // coloured thing on this panel means something.
+    // The signal, in the compressor's own readout grey, up from the
+    // floor. Grey because it is the thing being acted ON — it carries
+    // no state of its own, and every coloured thing on this panel means
+    // something. The plugin's grey rather than one chosen here, so a
+    // waveform in a strip and a waveform in the editor are the same
+    // shade of not-a-decision.
     if let Some(path) = levels.path(body.width, body.height) {
         // Filled, because what you are reading is how much of the
         // display the signal takes up against the line across it — an
         // outline makes that a comparison of two lines instead. Dim,
         // because the threshold is drawn over it and a solid fill makes
         // the line the thing you cannot see.
-        scene.fill(
-            Fill::NonZero,
-            at,
-            palette.text.multiply_alpha(0.22),
-            None,
-            path.as_ref(),
-        );
-        scene.stroke(
-            &Stroke::new(1.0),
-            at,
-            palette.text.multiply_alpha(0.85),
-            None,
-            path.as_ref(),
-        );
+        let grey = hex(comp_ui::comp_graph_svg::colors::GREY);
+        scene.fill(Fill::NonZero, at, grey.multiply_alpha(0.30), None, path.as_ref());
+        scene.stroke(&Stroke::new(1.0), at, grey.multiply_alpha(0.9), None, path.as_ref());
     }
     // And what the compressor took off, red, hanging down from the top.
     // Down is the direction it moves the signal; red because it is the
     // one thing on this panel that is a REDUCTION, and it shares its
     // colour with the threshold that caused it.
     if let Some(path) = levels.reduction_path(comp, body.width, body.height) {
-        scene.fill(
-            Fill::NonZero,
-            at,
-            palette.meter_danger.multiply_alpha(0.35),
-            None,
-            path.as_ref(),
-        );
-        scene.stroke(&Stroke::new(1.0), at, palette.meter_danger, None, path.as_ref());
+        let fill = hex(comp_ui::comp_graph_svg::colors::REDUCTION_FILL);
+        let edge = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
+        scene.fill(Fill::NonZero, at, fill.multiply_alpha(0.45), None, path.as_ref());
+        scene.stroke(&Stroke::new(1.0), at, edge, None, path.as_ref());
     }
 }
 
@@ -2889,5 +2892,38 @@ mod reduction_tests {
             mean_y(&input) > mean_y(&gr),
             "the input sat above the reduction"
         );
+    }
+}
+
+#[cfg(test)]
+mod hex_tests {
+    use super::hex;
+
+    /// The plugin states its colours as hex because its UIs are DOMs.
+    /// This is the one place they become paint, so it has to read them
+    /// exactly — a waveform a shade off is a second table that has
+    /// already started drifting.
+    #[test]
+    fn a_plugin_colour_survives_the_trip() {
+        for value in [
+            comp_ui::comp_graph_svg::colors::GREY,
+            comp_ui::comp_graph_svg::colors::REDUCTION_EDGE,
+            comp_ui::comp_graph_svg::colors::THRESHOLD,
+        ] {
+            let [r, g, b, a] = hex(value).to_rgba8().to_u8_array();
+            assert_eq!(format!("#{r:02x}{g:02x}{b:02x}"), value);
+            assert_eq!(a, 0xff, "a stated colour is opaque; alpha is the caller's");
+        }
+    }
+
+    /// Anything that is not a colour is visibly not one, rather than
+    /// nothing — a rack that drew nothing would look like a rack with
+    /// no signal.
+    #[test]
+    fn a_broken_value_is_still_visible() {
+        for bad in ["", "#", "nonesuch", "#12"] {
+            let [r, g, b, a] = hex(bad).to_rgba8().to_u8_array();
+            assert_eq!((r, g, b, a), (0x88, 0x88, 0x88, 0xff));
+        }
     }
 }
