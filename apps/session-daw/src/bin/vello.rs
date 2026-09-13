@@ -248,9 +248,10 @@ impl ApplicationHandler for App {
         if self.window.is_some() {
             return;
         }
+        let (want_w, want_h) = window_size();
         let attrs = WindowAttributes::default()
             .with_title(self.view.title())
-            .with_surface_size(winit::dpi::LogicalSize::new(1600.0, 900.0));
+            .with_surface_size(winit::dpi::LogicalSize::new(want_w, want_h));
         let window: Arc<dyn Window> = Arc::from(
             event_loop.create_window(attrs).expect("create window"),
         );
@@ -888,11 +889,12 @@ impl App {
         changed
     }
 
-    /// Flip a rack switch — the only grip that is not a value.
+    /// Flip a rack switch — the grips that are not values.
     fn toggle_rack(&mut self, row: usize, grip: session_daw::tone::Grip) {
-        let session_daw::tone::Grip::Bypass(which) = grip else {
+        use session_daw::tone::Grip;
+        if !grip.is_switch() {
             return;
-        };
+        }
         let Some(guid) = self
             .mixer_map
             .index(row)
@@ -902,7 +904,14 @@ impl App {
             return;
         };
         if let Some(tone) = self.tone_settings.edit(&guid) {
-            tone.bypass.toggle(which);
+            match grip {
+                Grip::Bypass(which) => tone.bypass.toggle(which),
+                // Clicking the zoom steps it to the next stop; the
+                // wheel walks it either way and a double-click puts it
+                // back. Wrapping, because a chip you click is a cycle.
+                Grip::Scale => tone.cycle_eq_range(),
+                _ => {}
+            }
         }
         self.invalidate_rack(row);
     }
@@ -2255,5 +2264,28 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         // answer. Getting that wrong looks worse than a frame of lag
         // looks slow — and the frame is one round trip in-process.
         Edit::Select(_) | Edit::AddToSelection(_) => {}
+    }
+}
+
+/// The size to open at, as `FTS_VELLO_SIZE=WxH`.
+///
+/// The window is what the mixer is actually judged in, and a shot of it
+/// is only worth reading at the resolution it will be used at — so the
+/// size is a knob rather than a number compiled in. Same spelling as
+/// the bench's `FTS_BENCH_SIZE`, because they are asked the same
+/// question.
+fn window_size() -> (f64, f64) {
+    const DEFAULT: (f64, f64) = (1600.0, 900.0);
+    let Ok(value) = std::env::var("FTS_VELLO_SIZE") else {
+        return DEFAULT;
+    };
+    let Some((w, h)) = value.split_once(['x', 'X']) else {
+        return DEFAULT;
+    };
+    match (w.trim().parse::<f64>(), h.trim().parse::<f64>()) {
+        (Ok(w), Ok(h)) if w >= 320.0 && h >= 240.0 => (w, h),
+        // A size the window could not show anything in is a typo, not
+        // an instruction.
+        _ => DEFAULT,
     }
 }

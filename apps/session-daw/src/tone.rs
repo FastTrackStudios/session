@@ -73,6 +73,54 @@ pub struct Tone {
     pub sat: ClassAPreamp,
     /// Which of the three are switched out.
     pub bypass: Bypass,
+    /// How far the EQ graph is zoomed, as an index into the plugin's
+    /// own [`eq_ui::eq_graph_model::DB_RANGE_STEPS`].
+    ///
+    /// An INDEX rather than a number of decibels, because the zoom is a
+    /// list of stops the plugin publishes and a rack that invented its
+    /// own would disagree with the editor about what "one step out"
+    /// means. Per track, like everything else here: a vocal worked at
+    /// ±3 and a room mic at ±18 is the normal case, not a special one.
+    pub eq_range: i32,
+}
+
+/// The EQ graph's default zoom.
+///
+/// The plugin's own default (±6 dB), not a second opinion — see
+/// `DEFAULT_DB_RANGE` there for why ±3 was too tight to work in.
+pub const DEFAULT_EQ_RANGE: i32 = 1;
+
+impl Tone {
+    /// The EQ graph's dB range, top to bottom.
+    #[must_use]
+    pub fn eq_db_range(&self) -> f64 {
+        eq_ui::eq_graph_model::db_range_for_index(self.eq_range)
+    }
+
+    /// Zoom the graph by `steps`, positive being further out.
+    ///
+    /// Returns whether it moved, so a caller knows whether to re-record
+    /// rather than guessing.
+    pub fn zoom_eq(&mut self, steps: i32) -> bool {
+        let last = i32::try_from(eq_ui::eq_graph_model::DB_RANGE_STEPS.len())
+            .unwrap_or(1)
+            .saturating_sub(1);
+        let to = self.eq_range.saturating_add(steps).clamp(0, last);
+        let moved = to != self.eq_range;
+        self.eq_range = to;
+        moved
+    }
+
+    /// The next stop, wrapping — what a click on the readout does.
+    ///
+    /// Wrapping rather than stopping because a chip you click is a
+    /// cycle: at the last stop the only useful thing left to do is go
+    /// back to the first, and a click that does nothing reads as a
+    /// broken control.
+    pub fn cycle_eq_range(&mut self) {
+        let last = i32::try_from(eq_ui::eq_graph_model::DB_RANGE_STEPS.len()).unwrap_or(1);
+        self.eq_range = self.eq_range.saturating_add(1).rem_euclid(last.max(1));
+    }
 }
 
 /// Which processors are bypassed.
@@ -749,7 +797,7 @@ fn eq_from_plugin(
     }
     {
         let mut config = state.config.write();
-        config.db_range = EQ_RANGE;
+        config.db_range = tone.eq_db_range();
         config.min_freq = 20.0;
         config.max_freq = 20_000.0;
         config.sample_rate = DISPLAY_RATE;
@@ -806,7 +854,7 @@ fn eq(
     lit: Option<Grip>,
 ) {
     let freq = FreqAxis::audible();
-    let db = DbAxis::symmetric(EQ_RANGE);
+    let db = DbAxis::symmetric(tone.eq_db_range());
     let right = at.x + at.width;
     let bottom = at.y + at.height;
 
@@ -836,11 +884,19 @@ fn eq(
         // little of it, so most of the box is empty — and empty space
         // with no marks in it makes a 3 dB decision look the same as a
         // 12 dB one. These are what turn the height into a scale.
-        for step in [6.0, 12.0] {
-            for gain in [step, -step] {
-                let y = db.db_to_y(gain, at.y, bottom);
+        //
+        // Stepped by the range the graph is drawn to, by the painter's
+        // own law — a ladder that stayed at 6 and 12 would be two lines
+        // off the top of a ±3 graph and a smear on a ±30 one.
+        let range = tone.eq_db_range();
+        let step = ladder_step(range);
+        let mut gain = step;
+        while gain <= range {
+            for at_db in [gain, -gain] {
+                let y = db.db_to_y(at_db, at.y, bottom);
                 rule(scene, palette.grid_beat, Line::new((at.x, y), (right, y)));
             }
+            gain += step;
         }
     }
     // Unity, always: without it a boost and a cut look the same.
@@ -916,6 +972,70 @@ fn eq(
         dot(scene, palette.tcp_meter_well, (x, y), r + 1.0);
         dot(scene, band_color(f64::from(band.frequency)), (x, y), r);
     }
+
+    // The zoom, last, so nothing draws over the one thing in the panel
+    // that says what the rest of it means.
+    scale(scene, palette, font, tone, at, lit);
+}
+
+/// The ladder's spacing for a given range.
+///
+/// The painter's own law (`eq_graph_painter`), so the rack's grid and
+/// the editor's land on the same decibels.
+fn ladder_step(range: f64) -> f64 {
+    if range <= 6.0 {
+        3.0
+    } else if range <= 12.0 {
+        6.0
+    } else {
+        12.0
+    }
+}
+
+/// The EQ graph's zoom, as a chip at the top of it.
+///
+/// A curve without its scale is a shape, not a measurement: the same
+/// wobble is a surgical half-decibel at ±3 and an inaudible nothing at
+/// ±30. This is the label that makes the panel readable at a glance,
+/// and the control that changes it — clicked to step out, wheeled
+/// either way, double-clicked back to the default.
+fn scale(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    tone: &Tone,
+    at: Panel,
+    lit: Option<Grip>,
+) {
+    let chip = scale_chip(at);
+    if chip.width < 20.0 || chip.height < 8.0 {
+        return;
+    }
+    let held = lit == Some(Grip::Scale);
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        if held { palette.tcp_field } else { palette.tcp_meter_well },
+        None,
+        &vello::kurbo::Rect::new(
+            chip.x,
+            chip.y,
+            chip.x + chip.width,
+            chip.y + chip.height,
+        ),
+    );
+    const SIZE: f32 = 8.0;
+    let label = format!("±{:.0}", tone.eq_db_range());
+    let width = font.width(&label, SIZE);
+    crate::tcp::glyphs(
+        scene,
+        font,
+        if held { palette.text } else { palette.text_faint },
+        &label,
+        chip.x + (chip.width - width) / 2.0,
+        chip.y + chip.height - 3.0,
+        SIZE,
+    );
 }
 
 /// How big an EQ band's handle is.
@@ -951,7 +1071,6 @@ fn comp(
 ) {
     let at = comp_split(at, rack);
     let right = at.x + at.width;
-    let bottom = at.y + at.height;
     // The comp editor's own axis: 0 dB at the top, −60 at the floor.
     // Taken from the plugin so the threshold line, the ladder and
     // whatever level is drawn over them land on the same numbers it
@@ -971,7 +1090,7 @@ fn comp(
     // is where a threshold belongs. It was a knob, and a knob makes you
     // read a number and compare it to a meter somewhere else; a line
     // over the levels is the comparison.
-    let y = to_y(f64::from(comp.threshold)).clamp(at.y, bottom);
+    let y = threshold_y(comp, at);
     let held = lit == Some(Grip::Threshold);
     let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
     rule_wide(
@@ -987,104 +1106,134 @@ fn comp(
         dot(scene, red, (right - r - 1.0, y), r);
         // And the settings themselves, as the reduction they produce —
         // outlined over the live one, in the same axes.
-        envelope(scene, comp, at, lit);
+        envelope(scene, comp, at, y, lit);
     }
     let _ = font;
 }
 
-/// The compressor's settings, as the reduction they would produce.
+/// Where the threshold line sits in a compressor display.
 ///
-/// One glyph, in the same axes as the live gain reduction above it and
-/// hanging from the same ceiling: this is what ONE hit looks like with
-/// these settings, outlined, over what is actually happening, filled.
-/// Model and measurement in one picture, which is the only arrangement
-/// where you can see whether the setting is the right one.
+/// One function because three things have to agree about it: the line
+/// itself, the envelope glyph that meets it, and the hit test that
+/// decides which of the two a click belongs to.
+fn threshold_y(comp: Comp, at: Panel) -> f64 {
+    let y = at.y + comp_ui::comp_graph_svg::db_to_y(f64::from(comp.threshold), at.height);
+    y.clamp(at.y, at.y + at.height)
+}
+
+/// The compressor's settings, drawn on the threshold they act at.
 ///
-/// Three grips on one shape, each dragged in the direction its own axis
-/// runs:
+/// One glyph, in the same axes as the live gain reduction above it:
+/// a ramp DOWN to the threshold line, a run along it, a ramp back UP —
+/// and an arrow hanging off that line for the ratio. This is what one
+/// hit looks like with these settings, outlined, over what is actually
+/// happening, filled. Model and measurement in one picture, which is
+/// the only arrangement where you can see whether the setting is the
+/// right one.
 ///
-/// - the lead-in slope is the ATTACK, dragged sideways, because time is
+/// Four parts, three of them grips, each dragged along its own axis:
+///
+/// - the lead-in ramp is the ATTACK, dragged sideways, because time is
 ///   the horizontal axis here and always has been;
-/// - the floor is the RATIO, dragged down, because down is more
-///   reduction;
-/// - the lead-out slope is the RELEASE, dragged sideways.
+/// - the flat middle IS the threshold line, which the ramps meet
+///   rather than duplicate;
+/// - the arrow is the RATIO, dragged down, because it points down and
+///   that is the direction the signal goes;
+/// - the lead-out ramp is the RELEASE, dragged sideways.
 ///
 /// The times are widths rather than positions, so a slow attack is a
 /// long lead-in — which is what a slow attack IS, and what the live
 /// trace beside it will show the moment something plays.
-fn envelope(scene: &mut Scene, comp: Comp, at: Panel, lit: Option<Grip>) {
-    let Some(shape) = Envelope::of(comp, at) else {
+fn envelope(scene: &mut Scene, comp: Comp, at: Panel, level: f64, lit: Option<Grip>) {
+    let Some(shape) = Envelope::of(comp, at, level) else {
         return;
     };
     // The threshold's own pink rather than the reduction's red: this
-    // glyph is a SETTING, like the line it hangs beside, and the filled
+    // glyph is a SETTING, like the line it hangs from, and the filled
     // red under it is the measurement. Drawn in the measurement's
     // colour it disappeared into it — which is exactly the distinction
     // the two-in-one-picture arrangement exists to make.
     let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
     let held = |grip| if lit == Some(grip) { 2.4 } else { 1.4 };
 
-    // Drawn as three strokes rather than one path, so the part under
+    // Drawn as separate strokes rather than one path, so the part under
     // the pointer can thicken on its own — a glyph that lit up whole
-    // would not say which of its three edges you are about to move.
+    // would not say which of its parts you are about to move.
     curve(scene, red, shape.fall().into_iter(), held(Grip::Attack));
-    curve(scene, red, shape.floor().into_iter(), held(Grip::Ratio));
     curve(scene, red, shape.rise().into_iter(), held(Grip::Release));
 
-    // A mark at each corner, because a slope is a line and a line is
-    // not something you aim at.
+    // The ratio, as an arrow off the threshold line. Its length is the
+    // reduction a full-scale signal takes — what the ratio DOES rather
+    // than a length chosen to look proportional — so it grows as the
+    // ratio hardens and vanishes at unity, where the compressor is
+    // taking nothing off.
+    if let Some((shaft, head)) = shape.arrow() {
+        curve(scene, red, shaft.into_iter(), held(Grip::Ratio));
+        for side in head {
+            curve(scene, red, side.into_iter(), held(Grip::Ratio));
+        }
+    }
+
+    // A mark where each ramp leaves the line, because a slope is a line
+    // and a line is not something you aim at.
     let r = |grip| if lit == Some(grip) { HANDLE + 1.4 } else { HANDLE * 0.8 };
     dot(scene, red, shape.knee, r(Grip::Attack));
-    dot(scene, red, shape.foot, r(Grip::Ratio));
-    dot(scene, red, shape.back, r(Grip::Release));
+    dot(scene, red, shape.foot, r(Grip::Release));
 }
 
 /// Where the envelope glyph's corners land.
 ///
 /// Shared by the drawing and the hit test, for the reason everything in
-/// this module is: a grip that is not on the edge it moves is a grip
+/// this module is: a grip that is not on the part it moves is a grip
 /// that moves the wrong thing.
 #[derive(Clone, Copy, Debug)]
 struct Envelope {
     /// Where the reduction begins, at the ceiling.
     start: (f64, f64),
-    /// Where the attack reaches full depth.
+    /// Where the lead-in ramp meets the threshold line.
     knee: (f64, f64),
-    /// And leaves it.
+    /// And where the lead-out ramp leaves it.
     foot: (f64, f64),
-    /// Where the release has recovered.
+    /// Where the release has recovered, back at the ceiling.
     back: (f64, f64),
+    /// How far the ratio's arrow hangs below the line, in pixels.
+    drop: f64,
 }
+
+/// How far the arrowhead's barbs reach back up the shaft.
+const BARB: f64 = 4.0;
 
 impl Envelope {
     /// The glyph for these settings in this box, or `None` when there
-    /// is nothing to draw — a ratio of one takes nothing off, and an
-    /// outline of no reduction would claim an effect it is not having.
-    fn of(comp: Comp, at: Panel) -> Option<Self> {
-        let depth = ratio_drop(comp, at.height);
-        if depth < 1.0 || at.width < 30.0 {
+    /// is no room to draw one that means anything.
+    fn of(comp: Comp, at: Panel, level: f64) -> Option<Self> {
+        if at.width < 30.0 || at.height < 30.0 {
             return None;
         }
         // The times as widths, on their own log scales — the same ones
-        // the parameters are stored on, so the drag that moves an edge
+        // the parameters are stored on, so the drag that moves a ramp
         // is the drag that moves the number.
         //
         // Two fifths of the panel each at their longest, which leaves
-        // the floor a fifth at the extreme and keeps the glyph inside
-        // its box whatever the settings.
+        // the run along the line a fifth at the extreme and keeps the
+        // glyph inside its box whatever the settings.
         let span = at.width * 0.4;
         let lead = log_norm(f64::from(comp.attack), 0.1, 200.0) * span;
         let tail = log_norm(f64::from(comp.release), 5.0, 3_000.0) * span;
         let left = at.x + 2.0;
         let top = at.y;
-        let floor = (top + depth).min(at.y + at.height - 1.0);
-        // A floor wide enough to grab even when both times are long.
-        let hold = (at.width - lead - tail - 4.0).max(6.0);
+        let line = level.clamp(at.y + 2.0, at.y + at.height - 2.0);
+        // A run long enough to hang an arrow from even when both times
+        // are at their longest.
+        let hold = (at.width - lead - tail - 4.0).max(8.0);
         Some(Self {
             start: (left, top),
-            knee: (left + lead, floor),
-            foot: (left + lead + hold, floor),
+            knee: (left + lead, line),
+            foot: (left + lead + hold, line),
             back: ((left + lead + hold + tail).min(at.x + at.width - 1.0), top),
+            // Clipped to the box: past the floor the arrow would be
+            // drawing reduction the display cannot show.
+            drop: ratio_drop(comp, at.height).min(at.y + at.height - line),
         })
     }
 
@@ -1092,19 +1241,45 @@ impl Envelope {
         [self.start, self.knee]
     }
 
-    fn floor(self) -> [(f64, f64); 2] {
-        [self.knee, self.foot]
-    }
-
     fn rise(self) -> [(f64, f64); 2] {
         [self.foot, self.back]
     }
 
-    /// Which of its three edges a point is nearest, if any.
+    /// Where the arrow hangs from.
+    ///
+    /// Just inside the left end of the run rather than the middle of
+    /// it: the middle is where the live reduction is busiest, and an
+    /// arrow there sat on top of the thing it is meant to be compared
+    /// against. At the left it is out of the way and still reads
+    /// against the same axis.
+    fn stem(self) -> (f64, f64) {
+        const INSET: f64 = 9.0;
+        let x = (self.knee.0 + INSET).min(self.foot.0 - 2.0).max(self.knee.0);
+        (x, self.knee.1)
+    }
+
+    /// The arrow's shaft and the two barbs of its head, or `None` when
+    /// the ratio is taking too little off to point at.
+    fn arrow(self) -> Option<([(f64, f64); 2], [[(f64, f64); 2]; 2])> {
+        if self.drop < BARB + 1.0 {
+            return None;
+        }
+        let (x, y) = self.stem();
+        let tip = (x, y + self.drop);
+        Some((
+            [(x, y), tip],
+            [
+                [tip, (x - BARB, tip.1 - BARB)],
+                [tip, (x + BARB, tip.1 - BARB)],
+            ],
+        ))
+    }
+
+    /// Which of its parts a point is nearest, if any.
     fn grip_at(self, x: f64, y: f64) -> Option<Grip> {
         let near = |(ax, ay): (f64, f64), (bx, by): (f64, f64)| {
-            // Distance to the segment, so a slope is grabbable along
-            // its whole length rather than only at its ends.
+            // Distance to the segment, so a ramp is grabbable along its
+            // whole length rather than only at its ends.
             let (dx, dy) = (bx - ax, by - ay);
             let len = dx.hypot(dy);
             if len < f64::EPSILON {
@@ -1113,10 +1288,15 @@ impl Envelope {
             let t = (((x - ax) * dx + (y - ay) * dy) / (len * len)).clamp(0.0, 1.0);
             (x - t.mul_add(dx, ax)).hypot(y - t.mul_add(dy, ay))
         };
+        let stem = self.stem();
         [
             (Grip::Attack, near(self.start, self.knee)),
-            (Grip::Ratio, near(self.knee, self.foot)),
             (Grip::Release, near(self.foot, self.back)),
+            // The arrow wins ties with the ramps, because it is the one
+            // that lies BETWEEN them — a point on the shaft is never
+            // also on a ramp, but a point near where it leaves the line
+            // is near everything.
+            (Grip::Ratio, near(stem, (stem.0, stem.1 + self.drop)) - 0.01),
         ]
         .into_iter()
         .filter(|(_, away)| *away <= GRAB)
@@ -1334,6 +1514,7 @@ pub fn placeholder(index: usize) -> Tone {
     Tone {
         eq: voice.bands(drift),
         comp: voice.comp(drift),
+        eq_range: DEFAULT_EQ_RANGE,
         sat: {
             let mut pre = ClassAPreamp::new(f64_to_f32(DISPLAY_RATE));
             // A single-ended stage: a triode grid above and iron below,
@@ -1472,6 +1653,14 @@ pub enum Grip {
     /// is not a value. It is also the part that stays legible under the
     /// scrim, so the way out is where the way in was.
     Bypass(Which),
+    /// The EQ graph's zoom — the chip at the top of the panel saying
+    /// what range it is drawn to.
+    ///
+    /// A zoom is not a parameter: it changes nothing about the sound,
+    /// only how much of it you can see. It is here because it is a
+    /// thing in the panel you point at, and everything in a panel you
+    /// point at has to be something the one hit test can name.
+    Scale,
 }
 
 impl Grip {
@@ -1492,7 +1681,7 @@ impl Grip {
     /// whether a press is the start of a gesture.
     #[must_use]
     pub const fn is_switch(self) -> bool {
-        matches!(self, Self::Bypass(_))
+        matches!(self, Self::Bypass(_) | Self::Scale)
     }
 }
 
@@ -1503,6 +1692,44 @@ impl Grip {
 /// about a millimetre at these densities.
 const GRAB: f64 = 6.0;
 
+/// A box in panel coordinates.
+///
+/// Small enough not to want `kurbo::Rect`'s arithmetic, and stated here
+/// so the chip's drawing and its hit test are the same four numbers.
+#[derive(Clone, Copy, Debug)]
+pub struct Chip {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Chip {
+    #[must_use]
+    pub fn contains(self, x: f64, y: f64) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
+}
+
+/// Where the EQ's zoom readout sits: centred at the top of the graph.
+///
+/// The top MIDDLE because the corners are taken — the header's name is
+/// at one end of the panel and its summary at the other — and because
+/// the middle of the top edge is the one part of a response curve that
+/// is reliably empty: bands live out along the frequency axis and the
+/// curve itself runs through the middle height.
+#[must_use]
+pub fn scale_chip(body: Panel) -> Chip {
+    const WIDTH: f64 = 30.0;
+    const HEIGHT: f64 = 12.0;
+    Chip {
+        x: body.x + (body.width - WIDTH) / 2.0,
+        y: body.y + 1.0,
+        width: WIDTH.min(body.width),
+        height: HEIGHT.min(body.height),
+    }
+}
+
 /// The EQ panel's axes, as the plugin's own interaction model wants
 /// them.
 ///
@@ -1512,8 +1739,8 @@ const GRAB: f64 = 6.0;
 /// origin and the panel's corner is added back — which keeps every
 /// conversion the plugin's, and leaves this the only place the two
 /// coordinate systems meet.
-fn mapper(body: Panel) -> GraphMapper {
-    GraphMapper::new(20.0, 20_000.0, EQ_RANGE, body.width, body.height, 0.0)
+fn mapper(body: Panel, db_range: f64) -> GraphMapper {
+    GraphMapper::new(20.0, 20_000.0, db_range, body.width, body.height, 0.0)
 }
 
 /// What is under a point in the rack, if anything.
@@ -1557,19 +1784,30 @@ pub fn grip_at(
             // cannot aim at, and grabbing one by accident moves a
             // setting you did not know was there.
             Which::Eq if rack.detailed() => {
+                // The zoom chip first: it is small, it sits over the
+                // graph, and a band that happened to be under it would
+                // otherwise take every click aimed at it.
+                if scale_chip(body).contains(x, y) {
+                    return Some(Grip::Scale);
+                }
                 // The plugin's own hit test, not a second one written
                 // here: `nearest_band` already decides which of four
                 // overlapping bands you meant, and a rack that decided
                 // differently from the editor would be two EQs.
                 if let Some((index, _)) = interaction::nearest_band(
                     &tone.eq,
-                    mapper(body),
+                    mapper(body, tone.eq_db_range()),
                     x - body.x,
                     y - body.y,
                     GRAB,
                 ) {
                     return Some(Grip::Band(index));
                 }
+                // Nothing else in the graph is grabbable, so the graph
+                // itself answers for the zoom — which is what makes a
+                // wheel anywhere over it zoom, the way it does in every
+                // other plot.
+                return Some(Grip::Scale);
             }
             Which::Comp => return Some(comp_grip(tone.comp, body, rack, x, y)),
             Which::Sat => return Some(Grip::Drive),
@@ -1626,17 +1864,17 @@ pub fn ratio_reduction(comp: Comp) -> f64 {
 
 /// What is under a point in the compressor's panel.
 ///
-/// Its knob band first, because the knobs are small and sit inside the
-/// panel the threshold otherwise owns. Everything else is the
-/// threshold: it is a line across a display, and a line one pixel tall
-/// is not something you aim at — the whole display is its target, the
-/// way a fader's groove is a fader's.
+/// The envelope's parts first, because they are lines inside the panel
+/// the threshold otherwise owns. Everything else is the threshold: it
+/// is a line across a display, and a line one pixel tall is not
+/// something you aim at — the whole display is its target, the way a
+/// fader's groove is a fader's.
 fn comp_grip(comp: Comp, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
     let display = comp_split(body, rack);
-    // The envelope's three edges first — they are lines inside the
-    // display, and the display would otherwise swallow them.
+    // The envelope's parts first — they are lines inside the display,
+    // and the display would otherwise swallow them.
     if rack.detailed()
-        && let Some(shape) = Envelope::of(comp, display)
+        && let Some(shape) = Envelope::of(comp, display, threshold_y(comp, display))
         && let Some(grip) = shape.grip_at(x, y)
     {
         return grip;
@@ -1648,13 +1886,13 @@ fn comp_grip(comp: Comp, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
     Grip::Threshold
 }
 
-/// The EQ panel's dB range, top to bottom.
+/// How far a band's gain can go, in decibels.
 ///
-/// ±18 rather than the editor's ±30: a strip panel is a few hundred
-/// pixels tall at most and a curve drawn to ±30 in it is a flat line
-/// with a wobble. Stated once because the drawing and the hit test both
-/// have to read the same scale.
-pub const EQ_RANGE: f64 = 18.0;
+/// The PARAMETER's limit, not the display's — those parted company when
+/// the graph learned to zoom. The plugin's gain runs −30..30, and a
+/// clamp tied to whatever the graph happened to be showing would mean
+/// zooming in silently narrowed what the EQ could do.
+pub const EQ_GAIN_LIMIT: f64 = 30.0;
 
 /// Turn the wheel over a grip.
 ///
@@ -1692,7 +1930,7 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
                     band.gain = interaction::drag_gain_for_shape(
                         band.shape,
                         band.gain,
-                        next.clamp(-EQ_RANGE, EQ_RANGE),
+                        next.clamp(-EQ_GAIN_LIMIT, EQ_GAIN_LIMIT),
                     );
                 }
             }
@@ -1706,6 +1944,13 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
         }
         // A switch does not turn.
         Grip::Bypass(_) => {}
+        // A notch is a stop, not a fraction of one: the range is a list
+        // the plugin publishes and the wheel walks it. Down is further
+        // out, which is the direction a wheel zooms out everywhere
+        // else.
+        Grip::Scale => {
+            tone.zoom_eq(if delta_y < 0.0 { 1 } else { -1 });
+        }
         // A notch of a knob is a fortieth of its travel, which is about
         // the resolution a hand expects from one — fine enough to place
         // a 3:1 exactly, coarse enough to cross the range.
@@ -1805,6 +2050,7 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
         Grip::Release => tone.comp.release = Comp::default().release,
         // Unity: a preamp at drive one is the wire it is modelled on.
         Grip::Drive => tone.sat.drive = 1.0,
+        Grip::Scale => tone.eq_range = DEFAULT_EQ_RANGE,
     }
 }
 
@@ -1826,7 +2072,7 @@ pub fn drag(
     let Some((_, at)) = layout(panels, panel)
         .into_iter()
         .find(|(which, _)| match grip {
-            Grip::Band(_) => *which == Which::Eq,
+            Grip::Band(_) | Grip::Scale => *which == Which::Eq,
             Grip::Threshold | Grip::Ratio | Grip::Attack | Grip::Release => {
                 *which == Which::Comp
             }
@@ -1842,7 +2088,7 @@ pub fn drag(
     }
     match grip {
         Grip::Band(index) => {
-            let map = mapper(body);
+            let map = mapper(body, tone.eq_db_range());
             let Some(band) = tone.eq.get_mut(index) else {
                 return;
             };
@@ -1860,7 +2106,7 @@ pub fn drag(
                     band.gain = interaction::drag_gain_for_shape(
                         band.shape,
                         band.gain,
-                        map.y_to_db(y).clamp(-EQ_RANGE, EQ_RANGE),
+                        map.y_to_db(y).clamp(-EQ_GAIN_LIMIT, EQ_GAIN_LIMIT),
                     );
                 }
                 interaction::DragMode::FreqOnly => {
@@ -1870,7 +2116,7 @@ pub fn drag(
                     band.gain = interaction::drag_gain_for_shape(
                         band.shape,
                         band.gain,
-                        map.y_to_db(y).clamp(-EQ_RANGE, EQ_RANGE),
+                        map.y_to_db(y).clamp(-EQ_GAIN_LIMIT, EQ_GAIN_LIMIT),
                     );
                 }
                 interaction::DragMode::Resonance => {
@@ -1930,8 +2176,9 @@ pub fn drag(
             tone.comp.ratio = f64_to_f32(ratio.clamp(1.0, 20.0));
         }
         // A switch has no drag. Dragging off one is how you change your
-        // mind about pressing it, which is the mixer's own rule.
-        Grip::Bypass(_) => {}
+        // mind about pressing it, which is the mixer's own rule — and a
+        // zoom is a switch between stops.
+        Grip::Bypass(_) | Grip::Scale => {}
         Grip::Drive => {
             // A quarter of the panel's height is the whole range, so a
             // short drag is a real change — drive is the parameter you
@@ -2258,21 +2505,106 @@ mod grip_tests {
         assert_eq!(which, Which::Eq);
         let body = super::body_of(at, super::Rack::at(rack().width));
         let freq = fts_audio_ui::axis::FreqAxis::audible();
-        let db = fts_audio_ui::axis::DbAxis::symmetric(super::EQ_RANGE);
+        let db = fts_audio_ui::axis::DbAxis::symmetric(tone.eq_db_range());
         let band = &tone.eq[2];
         let x = freq.freq_to_x(f64::from(band.frequency), body.x, body.x + body.width);
         let y = db.db_to_y(f64::from(band.gain), body.y, body.y + body.height);
         assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(Grip::Band(2)));
     }
 
-    /// And a point well away from every band grabs none of them, rather
-    /// than the nearest one at any distance.
+    /// And a point well away from every band grabs none of them,
+    /// rather than the nearest one at any distance — the graph itself
+    /// answers instead, which is what makes a wheel anywhere over it
+    /// zoom.
     #[test]
-    fn empty_space_in_the_eq_grabs_nothing() {
+    fn empty_space_in_the_eq_is_the_graph_not_a_band() {
         let tone = placeholder(0);
         // The EQ panel's top-left corner: inside the panel, far from
         // any band, which all sit near the middle at these settings.
-        assert_eq!(grip_at(&ALL, &tone, rack(), 3.0, 14.0), None);
+        assert_eq!(grip_at(&ALL, &tone, rack(), 3.0, 14.0), Some(Grip::Scale));
+    }
+
+    /// The zoom chip is at the top middle and wins over whatever is
+    /// under it — a band that happened to sit there would otherwise
+    /// take every click aimed at the chip.
+    #[test]
+    fn the_zoom_chip_takes_its_own_clicks() {
+        let mut tone = placeholder(0);
+        let (_, at) = super::layout(&ALL, rack())
+            .into_iter()
+            .find(|(which, _)| *which == Which::Eq)
+            .expect("an EQ panel");
+        let body = super::body_of(at, super::Rack::at(rack().width));
+        let chip = super::scale_chip(body);
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), chip.x + chip.width / 2.0, chip.y + 2.0),
+            Some(Grip::Scale)
+        );
+        // It is a switch, so a click acts and a drag does not.
+        assert!(Grip::Scale.is_switch());
+
+        // Clicking cycles the stops and comes back round.
+        let start = tone.eq_db_range();
+        let steps = eq_ui::eq_graph_model::DB_RANGE_STEPS.len();
+        for _ in 0..steps {
+            tone.cycle_eq_range();
+        }
+        assert!((tone.eq_db_range() - start).abs() < f64::EPSILON);
+    }
+
+    /// The default is the plugin's own (±6 dB), the wheel walks the
+    /// plugin's own stops, and neither end runs away.
+    #[test]
+    fn the_zoom_walks_the_plugins_stops() {
+        let mut tone = placeholder(0);
+        assert!((tone.eq_db_range() - eq_ui::eq_graph_model::DEFAULT_DB_RANGE).abs() < f64::EPSILON);
+
+        // Down is out, which is the way a wheel zooms out everywhere.
+        super::wheel(&mut tone, Grip::Scale, Mods::default(), -1.0);
+        let out = tone.eq_db_range();
+        assert!(out > eq_ui::eq_graph_model::DEFAULT_DB_RANGE, "{out}");
+        super::wheel(&mut tone, Grip::Scale, Mods::default(), 1.0);
+        assert!(
+            (tone.eq_db_range() - eq_ui::eq_graph_model::DEFAULT_DB_RANGE).abs() < f64::EPSILON
+        );
+
+        for _ in 0..20 {
+            super::wheel(&mut tone, Grip::Scale, Mods::default(), -1.0);
+        }
+        let widest = *eq_ui::eq_graph_model::DB_RANGE_STEPS
+            .last()
+            .expect("a widest stop");
+        assert!((tone.eq_db_range() - widest).abs() < f64::EPSILON);
+        for _ in 0..20 {
+            super::wheel(&mut tone, Grip::Scale, Mods::default(), 1.0);
+        }
+        let tightest = eq_ui::eq_graph_model::DB_RANGE_STEPS[0];
+        assert!((tone.eq_db_range() - tightest).abs() < f64::EPSILON);
+
+        // And a double-click puts it back where it started.
+        super::reset(&mut tone, Grip::Scale);
+        assert!(
+            (tone.eq_db_range() - eq_ui::eq_graph_model::DEFAULT_DB_RANGE).abs() < f64::EPSILON
+        );
+    }
+
+    /// Zooming the graph must not narrow what the EQ can DO. The
+    /// display range and the parameter's limit parted company when the
+    /// graph learned to zoom, and a clamp tied to the view would mean
+    /// zooming in silently capped the gain.
+    #[test]
+    fn zooming_in_does_not_clamp_the_gain() {
+        let mut tone = placeholder(0);
+        tone.eq_range = 0;
+        for _ in 0..200 {
+            super::wheel(&mut tone, Grip::Band(0), Mods::default(), 1.0);
+        }
+        assert!(
+            f64::from(tone.eq[0].gain) > eq_ui::eq_graph_model::DB_RANGE_STEPS[0],
+            "a ±3 view capped the gain at ±3: {}",
+            tone.eq[0].gain
+        );
+        assert!(f64::from(tone.eq[0].gain) <= super::EQ_GAIN_LIMIT);
     }
 
     /// Dragging a band up raises its gain and dragging it right raises
@@ -2293,12 +2625,12 @@ mod grip_tests {
         for _ in 0..50 {
             drag(&mut tone, Grip::Band(0), &ALL, rack(), Mods::default(), 400.0, -400.0);
         }
-        assert!(tone.eq[0].gain <= super::f64_to_f32(super::EQ_RANGE));
+        assert!(tone.eq[0].gain <= super::f64_to_f32(super::EQ_GAIN_LIMIT));
         assert!(tone.eq[0].frequency <= 24_000.0);
         for _ in 0..50 {
             drag(&mut tone, Grip::Band(0), &ALL, rack(), Mods::default(), -400.0, 400.0);
         }
-        assert!(tone.eq[0].gain >= -super::f64_to_f32(super::EQ_RANGE));
+        assert!(tone.eq[0].gain >= -super::f64_to_f32(super::EQ_GAIN_LIMIT));
         assert!(tone.eq[0].frequency > 0.0);
     }
 
@@ -2402,7 +2734,7 @@ mod tier_tests {
             .expect("an EQ panel");
         let body = super::body_of(at, super::Rack::Full);
         let freq = fts_audio_ui::axis::FreqAxis::audible();
-        let db = fts_audio_ui::axis::DbAxis::symmetric(super::EQ_RANGE);
+        let db = fts_audio_ui::axis::DbAxis::symmetric(tone.eq_db_range());
         let band = &tone.eq[2];
         let y = db.db_to_y(f64::from(band.gain), body.y, body.y + body.height);
 
@@ -2515,7 +2847,7 @@ mod reset_tests {
 
 #[cfg(test)]
 mod plugin_interaction_tests {
-    use super::{EQ_RANGE, Grip, Mods, Panel, Which, drag, dot_click, grip_at, placeholder, wheel};
+    use super::{EQ_GAIN_LIMIT, Grip, Mods, Panel, Which, drag, dot_click, grip_at, placeholder, wheel};
     use eq_ui::eq_graph_model::EqBandShape;
 
     const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
@@ -2540,7 +2872,7 @@ mod plugin_interaction_tests {
             .find(|(which, _)| *which == Which::Eq)
             .expect("an EQ panel");
         let body = super::body_of(at, super::Rack::at(rack().width));
-        let map = super::mapper(body);
+        let map = super::mapper(body, tone.eq_db_range());
         for index in [0_usize, 2, 3] {
             let band = &tone.eq[index];
             let x = body.x + map.freq_to_x(f64::from(band.frequency));
@@ -2623,7 +2955,7 @@ mod plugin_interaction_tests {
         let before = tone.eq[1].gain;
         wheel(&mut tone, Grip::Band(1), Mods::new(false, false, true), -1.0);
         assert!(tone.eq[1].gain > before);
-        assert!(tone.eq[1].gain <= super::f64_to_f32(EQ_RANGE));
+        assert!(tone.eq[1].gain <= super::f64_to_f32(EQ_GAIN_LIMIT));
     }
 
     /// Alt-clicking a band bypasses it, which is the chord the editor
@@ -2725,31 +3057,31 @@ mod comp_tests {
     fn the_display_grabs_the_threshold() {
         let tone = placeholder(0);
         let body = comp_panel();
-        let inside = body.y + body.height * 0.25;
+        // Low and left: the glyph lives along the threshold line and
+        // the arrow hangs from the middle of it, so the rest of the
+        // display is what is being claimed here.
+        let inside = body.y + body.height * 0.9;
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), body.x + body.width / 2.0, inside),
+            grip_at(&ALL, &tone, rack(), body.x + body.width * 0.1, inside),
             Some(Grip::Threshold)
         );
     }
 
-    /// The glyph's three edges are grabbed where they are drawn: the
-    /// lead-in is the attack, the floor is the ratio, the lead-out is
-    /// the release. Away from all three the display is still the
-    /// threshold's.
+    /// The glyph's parts are grabbed where they are drawn: the lead-in
+    /// ramp is the attack, the lead-out ramp is the release, the arrow
+    /// off the line is the ratio. Away from all three the display is
+    /// still the threshold's.
     #[test]
-    fn the_glyph_grabs_its_own_edges() {
+    fn the_glyph_grabs_its_own_parts() {
         let mut tone = placeholder(0);
         tone.comp.threshold = -18.0;
         tone.comp.ratio = 6.0;
         tone.comp.attack = 20.0;
         tone.comp.release = 200.0;
         let display = super::comp_split(comp_panel(), Rack::at(rack().width));
-        let shape = super::Envelope::of(tone.comp, display).expect("a glyph to grab");
-        for (grip, edge) in [
-            (Grip::Attack, shape.fall()),
-            (Grip::Ratio, shape.floor()),
-            (Grip::Release, shape.rise()),
-        ] {
+        let level = super::threshold_y(tone.comp, display);
+        let shape = super::Envelope::of(tone.comp, display, level).expect("a glyph to grab");
+        for (grip, edge) in [(Grip::Attack, shape.fall()), (Grip::Release, shape.rise())] {
             let mid = (
                 f64::midpoint(edge[0].0, edge[1].0),
                 f64::midpoint(edge[0].1, edge[1].1),
@@ -2760,16 +3092,22 @@ mod comp_tests {
                 "{grip:?} at {mid:?}"
             );
         }
-        // Well below the floor is nothing but the display, which
-        // belongs to the threshold.
+        // The arrow, halfway down its own shaft.
+        let (shaft, _) = shape.arrow().expect("an arrow to grab");
         assert_eq!(
             grip_at(
                 &ALL,
                 &tone,
                 rack(),
-                f64::midpoint(shape.knee.0, shape.foot.0),
-                display.y + display.height - 2.0
+                shaft[0].0,
+                f64::midpoint(shaft[0].1, shaft[1].1)
             ),
+            Some(Grip::Ratio)
+        );
+        // Well below the arrow's tip is nothing but the display, which
+        // belongs to the threshold.
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), shaft[0].0, display.y + display.height - 2.0),
             Some(Grip::Threshold)
         );
     }
@@ -3538,7 +3876,7 @@ mod bypass_tests {
                 .1,
             Rack::at(rack().width),
         );
-        let map = super::mapper(body);
+        let map = super::mapper(body, tone.eq_db_range());
         let band = &tone.eq[2];
         let x = body.x + map.freq_to_x(f64::from(band.frequency));
         let y = body.y + map.db_to_y(f64::from(band.gain));
