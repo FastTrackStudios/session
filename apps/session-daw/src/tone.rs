@@ -396,6 +396,17 @@ impl Echo {
         self.style.family()
     }
 
+    /// Pick a family from the selector strip: its first style, or the
+    /// next one along if the current style is already in it — so a
+    /// family with several machines is walked by clicking its chip
+    /// again.
+    pub fn choose_family(&mut self, index: usize) {
+        let Some(family) = DelayFamily::ALL.get(index).copied() else {
+            return;
+        };
+        self.style = next_in(family.styles(), self.style);
+    }
+
     /// The next style, wrapping — what a click on the glyph does.
     pub const fn cycle_style(&mut self) {
         let next = self.style.to_index().saturating_add(1);
@@ -456,6 +467,14 @@ impl Room {
         crate::live::RoomKey::of(self.algorithm, self.decay, self.size, self.damping)
     }
 
+    /// Pick a family from the selector strip — see [`Echo::choose_family`].
+    pub fn choose_family(&mut self, index: usize) {
+        let Some(family) = RoomFamily::ALL.get(index).copied() else {
+            return;
+        };
+        self.algorithm = next_in(family.algorithms(), self.algorithm);
+    }
+
     /// The next algorithm, wrapping — what a click on the glyph does.
     pub fn cycle_algorithm(&mut self) {
         let next = self.algorithm.index().saturating_add(1);
@@ -465,6 +484,21 @@ impl Room {
             AlgorithmType::from_index(next)
         };
     }
+}
+
+/// The member of a family a click on its chip lands on: the one after
+/// `current` if `current` is in the family, else the first. `current`
+/// itself if the family is empty.
+fn next_in<T: Copy + PartialEq>(members: impl Iterator<Item = T>, current: T) -> T {
+    let members: Vec<T> = members.collect();
+    let Some(first) = members.first().copied() else {
+        return current;
+    };
+    members
+        .iter()
+        .position(|m| *m == current)
+        .and_then(|at| members.get(at.saturating_add(1)).copied())
+        .unwrap_or(first)
 }
 
 /// A compressor, as its display needs it.
@@ -1036,8 +1070,17 @@ pub fn draw(
                 Which::Resonance => {
                     suppress(scene, palette, which, tone.resonance, meters, body, rack, lit);
                 }
-                Which::Delay => echo(scene, palette, tone.delay, meters, body, rack, lit),
-                Which::Reverb => room(scene, palette, tone.reverb, meters, body, rack, lit),
+                Which::Delay => {
+                    echo(scene, palette, tone.delay, meters, display_of(body, which, rack), rack, lit);
+                }
+                Which::Reverb => {
+                    room(scene, palette, tone.reverb, meters, display_of(body, which, rack), rack, lit);
+                }
+            }
+            if let Some(strip) = lane_of(body, which, rack)
+                && matches!(which, Which::Delay | Which::Reverb)
+            {
+                selector(scene, palette, font, tone, which, strip, lit);
             }
             // The bypass, over everything the panel just drew.
             //
@@ -1398,7 +1441,8 @@ impl Which {
             // Time pictures, both. A delay needs width for its taps and
             // no height beyond telling them apart; a reverb's tail is a
             // single falling line.
-            Self::Delay | Self::Reverb => 100.0,
+            // Time pictures, both, with the machine selector under them.
+            Self::Delay | Self::Reverb => 100.0 + SELECTOR + 2.0,
         }
     }
 }
@@ -2212,6 +2256,17 @@ fn near_segment(point: (f64, f64), from: (f64, f64), to: (f64, f64)) -> f64 {
 /// that the display above keeps its ladder.
 pub const LANE: f64 = 9.0;
 
+/// How tall the machine selector under a delay or a reverb is.
+///
+/// One chip per family, the current one lit, and the machine's name
+/// beside them. A row rather than a dropdown: across a mixer the
+/// question is "which of these is a plate", and a row answers it
+/// without a click.
+pub const SELECTOR: f64 = 16.0;
+
+/// How wide one chip of the selector is.
+pub const CHIP: f64 = 14.0;
+
 /// How tall the comb under a resonance suppressor is.
 ///
 /// The teeth hang below the spectrum's floor by their settled depth;
@@ -2233,6 +2288,7 @@ pub const fn display_of(body: Panel, which: Which, rack: Rack) -> Panel {
     }
     let keep = match which {
         Which::Gate | Which::DeEss => LANE + 2.0,
+        Which::Delay | Which::Reverb => SELECTOR + 2.0,
         Which::Resonance => TEETH + 2.0,
         _ => 0.0,
     };
@@ -3137,6 +3193,77 @@ fn glyph(scene: &mut Scene, ink: Color, glyph: Glyph, x: f64, baseline: f64) {
     }
 }
 
+/// The machine selector: one chip per family, the current family lit,
+/// and the machine's name beside them.
+///
+/// The chips are the family glyphs — the same drawings as the header's
+/// — so a row of them reads as the set of machines this unit can be,
+/// and the lit one as which it is. A family with several machines
+/// (three halls, two springs) is walked by clicking its chip again;
+/// the name says which member you are on.
+fn selector(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    tone: &Tone,
+    which: Which,
+    at: Panel,
+    lit: Option<Grip>,
+) {
+    const SIZE: f32 = 6.5;
+    let (chips, current, name): (Vec<Glyph>, usize, &str) = match which {
+        Which::Delay => (
+            DelayFamily::ALL.iter().map(|f| Glyph::Delay(*f)).collect(),
+            DelayFamily::ALL.iter().position(|f| *f == tone.delay.family()).unwrap_or(0),
+            tone.delay.style.label(),
+        ),
+        _ => (
+            RoomFamily::ALL.iter().map(|f| Glyph::Room(*f)).collect(),
+            RoomFamily::ALL.iter().position(|f| *f == tone.reverb.family()).unwrap_or(0),
+            tone.reverb.algorithm.name(),
+        ),
+    };
+    let baseline = at.y + at.height - 4.0;
+    let tint = phase_tint(which.phase());
+    for (i, chip) in chips.iter().enumerate() {
+        let x = crate::num::coord(i).mul_add(CHIP, at.x + 2.0);
+        let is_current = i == current;
+        let hovered = lit == Some(Grip::Choose(which, i));
+        let ink = if is_current {
+            palette.text
+        } else if hovered {
+            palette.text_dim
+        } else {
+            palette.text_faint.multiply_alpha(0.6)
+        };
+        glyph(scene, ink, *chip, x, baseline);
+        // The current family is underlined in the phase's colour: a
+        // lit glyph among dim ones says "this one", the bar says it in
+        // the colour the rail uses for this pass.
+        if is_current {
+            rule_wide(
+                scene,
+                tint,
+                Line::new((x - 1.0, at.y + at.height - 1.0), (x + 9.0, at.y + at.height - 1.0)),
+                1.5,
+            );
+        }
+    }
+    let chips_w = crate::num::coord(chips.len()).mul_add(CHIP, 2.0);
+    let name_w = font.width(name, SIZE);
+    if chips_w + name_w + 4.0 <= at.width {
+        crate::tcp::glyphs(
+            scene,
+            font,
+            palette.text_dim,
+            name,
+            at.x + at.width - name_w,
+            baseline,
+            SIZE,
+        );
+    }
+}
+
 /// A stroked glyph path, round-capped.
 fn stroke_glyph(scene: &mut Scene, ink: Color, path: &BezPath, width: f64) {
     scene.stroke(
@@ -3762,6 +3889,9 @@ pub enum Grip {
     Predelay,
     /// A wet/dry mix: the delay's, the reverb's, the saturator's.
     Mix(Which),
+    /// One chip of a unit's machine selector — clicked to choose that
+    /// family. A switch, like the glyph.
+    Choose(Which, usize),
     /// A unit's machine glyph — clicked to cycle to the next style or
     /// algorithm. A switch, like a bypass: it acts on the click.
     Family(Which),
@@ -3807,7 +3937,10 @@ impl Grip {
     /// whether a press is the start of a gesture.
     #[must_use]
     pub const fn is_switch(self) -> bool {
-        matches!(self, Self::Bypass(_) | Self::Scale(_) | Self::Phase(_) | Self::Family(_))
+        matches!(
+            self,
+            Self::Bypass(_) | Self::Scale(_) | Self::Phase(_) | Self::Family(_) | Self::Choose(..)
+        )
     }
 
     /// Which panel this grip lives in.
@@ -3825,6 +3958,7 @@ impl Grip {
             | Self::Edge(which, _)
             | Self::Mix(which)
             | Self::Family(which)
+            | Self::Choose(which, _)
             | Self::Scale(which)
             | Self::Bypass(which) => which,
             Self::Drive | Self::Bias | Self::Tilt => Which::Sat,
@@ -4019,7 +4153,13 @@ pub fn grip_at(
             // The first repeat is the time; any later one is the
             // feedback. Elsewhere on the panel, the time — it is the
             // parameter a delay IS.
+            Which::Delay | Which::Reverb
+                if lane_of(body, which, rack).is_some_and(|strip| strip.contains(x, y)) =>
+            {
+                return Some(selector_grip(which, body, rack, x));
+            }
             Which::Delay => {
+                let body = display_of(body, which, rack);
                 let taps = echo_taps(tone.delay, body);
                 let nearest = taps
                     .iter()
@@ -4035,6 +4175,7 @@ pub fn grip_at(
             // The gap rule is the predelay, the tail's end is the decay,
             // and the tail's height is the mix.
             Which::Reverb => {
+                let body = display_of(body, which, rack);
                 let geometry = RoomGeometry::of(tone.reverb, body);
                 if rack.detailed() && (x - geometry.start).abs() <= GRAB {
                     return Some(Grip::Predelay);
@@ -4047,6 +4188,24 @@ pub fn grip_at(
         }
     }
     None
+}
+
+/// What is under a point in a machine selector strip: the chip, or the
+/// bypass past the chips (the strip is part of the panel, and the
+/// panel's empty space is the bypass everywhere else).
+fn selector_grip(which: Which, body: Panel, rack: Rack, x: f64) -> Grip {
+    let strip = lane_of(body, which, rack).unwrap_or(body);
+    let chips = if which == Which::Delay {
+        DelayFamily::ALL.len()
+    } else {
+        RoomFamily::ALL.len()
+    };
+    let index = crate::num::index(((x - strip.x - 2.0) / CHIP).floor());
+    if index < chips && x >= strip.x + 2.0 {
+        Grip::Choose(which, index)
+    } else {
+        Grip::Bypass(which)
+    }
 }
 
 /// What is under a point in the gate's panel.
@@ -4245,7 +4404,7 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
             }
         }
         // A switch does not turn, and neither does a container.
-        Grip::Bypass(_) | Grip::Phase(_) | Grip::Family(_) => {}
+        Grip::Bypass(_) | Grip::Phase(_) | Grip::Family(_) | Grip::Choose(..) => {}
         // A notch is a stop, not a fraction of one: the range is a list
         // the plugin publishes and the wheel walks it. Down is further
         // out, which is the direction a wheel zooms out everywhere
@@ -4502,7 +4661,7 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
         }
         // A machine is a choice, not a value with a default to go back
         // to.
-        Grip::Family(_) => {}
+        Grip::Family(_) | Grip::Choose(..) => {}
         Grip::Scale(_) => tone.eq_range = DEFAULT_EQ_RANGE,
         // Folding is not a setting on the track, so there is nothing
         // here to put back — see `Fold`.
@@ -4723,6 +4882,7 @@ pub fn drag(
         // The first repeat's x IS the time: the window is four and a
         // half times, so a pixel is that many milliseconds.
         Grip::Time => {
+            let body = display_of(body, Which::Delay, rack);
             let dx = dx * interaction::fine_scale(mods);
             let per_ms = (body.width - 6.0).max(1.0) / (f64::from(tone.delay.time).max(1.0) * 4.5);
             let moved = f64::from(tone.delay.time) + dx / per_ms.max(f64::EPSILON);
@@ -4731,6 +4891,7 @@ pub fn drag(
         // The repeats' heights are the feedback: the panel's height is
         // the range.
         Grip::Feedback => {
+            let body = display_of(body, Which::Delay, rack);
             let dy = dy * interaction::fine_scale(mods);
             let moved = f64::from(tone.delay.feedback) - dy / body.height.max(1.0);
             tone.delay.feedback = f64_to_f32(moved.clamp(0.0, 0.99));
@@ -4739,25 +4900,28 @@ pub fn drag(
         // lengthens it in proportion: a panel width is the decay
         // itself.
         Grip::Decay => {
+            let body = display_of(body, Which::Reverb, rack);
             let dx = dx * interaction::fine_scale(mods);
             let ratio = 1.0 + dx / body.width.max(1.0);
             tone.reverb.decay = f64_to_f32((f64::from(tone.reverb.decay) * ratio.max(0.2)).clamp(0.1, 12.0));
         }
         // The gap rule moves along the decay window.
         Grip::Predelay => {
+            let body = display_of(body, Which::Reverb, rack);
             let dx = dx * interaction::fine_scale(mods);
             let window = f64::from(tone.reverb.decay).max(0.05) * 1000.0;
             let moved = f64::from(tone.reverb.predelay) + dx / body.width.max(1.0) * window;
             tone.reverb.predelay = f64_to_f32(moved.clamp(0.0, 250.0));
         }
         Grip::Mix(which) => {
+            let body = display_of(body, which, rack);
             let dy = dy * interaction::fine_scale(mods);
             let per_unit = body.height.max(1.0);
             if let Some(mix) = tone.mix(which) {
                 *mix = f64_to_f32((f64::from(*mix) - dy / per_unit).clamp(0.0, 1.0));
             }
         }
-        Grip::Family(_) => {}
+        Grip::Family(_) | Grip::Choose(..) => {}
     }
 }
 
@@ -7003,7 +7167,7 @@ mod face_tests {
     #[test]
     fn the_delays_repeats_are_its_grips() {
         let mut tone = placeholder(1);
-        let at = body(Which::Delay);
+        let at = display_of(body(Which::Delay), Which::Delay, Rack::Full);
         let taps = echo_taps(tone.delay, at);
         assert!(taps.len() >= 3, "enough repeats to grab: {}", taps.len());
         let y = at.y + at.height / 2.0;
@@ -7037,7 +7201,7 @@ mod face_tests {
     #[test]
     fn the_reverbs_tail_is_its_grips() {
         let mut tone = placeholder(2);
-        let at = body(Which::Reverb);
+        let at = display_of(body(Which::Reverb), Which::Reverb, Rack::Full);
         let geometry = RoomGeometry::of(tone.reverb, at);
         let y = at.y + at.height / 2.0;
         assert_eq!(grip(geometry.start, y, &tone), Some(Grip::Predelay));
@@ -7054,6 +7218,36 @@ mod face_tests {
         for _ in 0..20 {
             tone.reverb.cycle_algorithm();
         }
+    }
+
+    /// The selector strip under a delay or a reverb: one chip per
+    /// family, and a click on one picks a machine from it — the next
+    /// member if you are already there.
+    #[test]
+    fn the_selector_picks_a_family() {
+        let mut tone = placeholder(0);
+        let strip = lane_of(body(Which::Delay), Which::Delay, Rack::Full).expect("a selector");
+        // Chip 1 is tape.
+        let x = strip.x + 2.0 + super::CHIP * 1.5;
+        assert_eq!(grip(x, strip.y + 4.0, &tone), Some(Grip::Choose(Which::Delay, 1)));
+        assert!(Grip::Choose(Which::Delay, 1).is_switch());
+        tone.delay.choose_family(1);
+        assert_eq!(tone.delay.family(), delay_dsp::engine::Family::Tape);
+        // Rhythmic has three machines: clicking again walks them.
+        tone.delay.choose_family(4);
+        let first = tone.delay.style;
+        tone.delay.choose_family(4);
+        assert_ne!(tone.delay.style, first);
+        assert_eq!(tone.delay.family(), delay_dsp::engine::Family::Rhythmic);
+        // Past the chips is the bypass, not a chip.
+        assert_eq!(grip(strip.x + strip.width - 2.0, strip.y + 4.0, &tone), Some(Grip::Bypass(Which::Delay)));
+        // And the reverb's picks an algorithm of the family.
+        let strip = lane_of(body(Which::Reverb), Which::Reverb, Rack::Full).expect("a selector");
+        assert_eq!(grip(strip.x + 2.0 + super::CHIP * 2.5, strip.y + 4.0, &tone), Some(Grip::Choose(Which::Reverb, 2)));
+        tone.reverb.choose_family(2);
+        assert_eq!(tone.reverb.family(), reverb_dsp::algorithm::Family::Plate);
+        tone.reverb.choose_family(99);
+        assert_eq!(tone.reverb.family(), reverb_dsp::algorithm::Family::Plate);
     }
 
     /// A suppressor: edges where they are drawn, then threshold, depth,
