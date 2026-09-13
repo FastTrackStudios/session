@@ -170,6 +170,10 @@ struct App {
     last_row_click: Option<(usize, std::time::Instant)>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
+    /// When the last rack grip was clicked, for spotting a double.
+    last_grip_click: Option<((usize, session_daw::tone::Grip), std::time::Instant)>,
+    /// The rack grip the pointer is over, and the strip it is on.
+    hovered_grip: Option<(usize, session_daw::tone::Grip)>,
     /// The rack grip the pointer is dragging, and the strip it is on.
     ///
     /// A rack is RECORDED, so an edited one has to be drawn live until
@@ -306,6 +310,15 @@ impl ApplicationHandler for App {
                     self.redraw();
                 }
             }
+            // The fine-adjustment modifier. Held, a drag moves a
+            // quarter as far — REAPER's own Ctrl, and the difference
+            // between setting a fader and setting it exactly.
+            //
+            // This was a field nothing ever wrote: every drag in the
+            // window has been coarse because no event set it.
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.fine = modifiers.state().control_key();
+            }
             WindowEvent::PointerMoved { position, .. } => {
                 // Where the pointer WAS, before this event moved it.
                 //
@@ -350,6 +363,11 @@ impl ApplicationHandler for App {
                         return;
                     }
                 }
+                let over_grip = self.rack_grip_at(position.x, position.y);
+                if over_grip != self.hovered_grip {
+                    self.hovered_grip = over_grip;
+                    self.redraw();
+                }
                 let over_rail = self.rail_action_at(position.x, position.y);
                 if over_rail != self.hovered_rail {
                     self.hovered_rail = over_rail;
@@ -370,6 +388,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::PointerLeft { .. } => {
                 self.hovered_rail = None;
+                self.hovered_grip = None;
                 if self.panel.hover(None) | self.pointer.hover(None) {
                     self.redraw();
                 }
@@ -417,7 +436,25 @@ impl ApplicationHandler for App {
                     // drawn over them, so it is claimed first.
                     self.rack_drag = self.rack_grip_at(x, y);
                     tracing::debug!(ui.x = x, ui.y = y, ui.grip = ?self.rack_drag, "rack press");
-                    if self.rack_drag.is_some() {
+                    if let Some((row, grip)) = self.rack_drag {
+                        // A second click inside the double-click window
+                        // puts the grip back to its default, which is
+                        // what makes one safe to explore: the way back
+                        // is a gesture rather than a remembered number.
+                        let now = std::time::Instant::now();
+                        let again = self.last_grip_click.is_some_and(|(last, when)| {
+                            last == (row, grip)
+                                && now.saturating_duration_since(when)
+                                    <= session_daw::gesture::DOUBLE
+                        });
+                        if again {
+                            self.last_grip_click = None;
+                            self.reset_rack(row, grip);
+                            self.rack_drag = None;
+                            self.mixer = None;
+                        } else {
+                            self.last_grip_click = Some(((row, grip), now));
+                        }
                         self.redraw();
                         return;
                     }
@@ -720,6 +757,21 @@ impl App {
         }
     }
 
+    /// Put a rack grip back to its default.
+    fn reset_rack(&mut self, row: usize, grip: session_daw::tone::Grip) {
+        let Some(guid) = self
+            .mixer_map
+            .index(row)
+            .and_then(|i| self.tracks.get(i))
+            .map(|track| track.guid.clone())
+        else {
+            return;
+        };
+        if let Some(tone) = self.tone_settings.edit(&guid) {
+            session_daw::tone::reset(tone, grip);
+        }
+    }
+
     /// Move a rack grip by a pointer delta.
     fn drag_rack(&mut self, row: usize, grip: session_daw::tone::Grip, dx: f64, dy: f64) {
         let Some(mixer) = self.mixer.as_ref() else {
@@ -877,7 +929,11 @@ impl App {
             C::Mute => Some(session_daw::engine::Edit::ToggleMute(guid)),
             C::Solo => Some(session_daw::engine::Edit::ToggleSolo(guid)),
             C::RecArm => Some(session_daw::engine::Edit::ToggleArm(guid)),
-            C::Name => Some(session_daw::engine::Edit::Select(guid)),
+            C::Name => Some(if self.fine {
+                session_daw::engine::Edit::AddToSelection(guid)
+            } else {
+                session_daw::engine::Edit::Select(guid)
+            }),
             C::Phase => Some(session_daw::engine::Edit::SetPhase(
                 guid,
                 !track.phase_inverted,
@@ -997,7 +1053,7 @@ impl App {
             let fraction = session_daw::gesture::drag_fraction(dy, travel);
             session_daw::engine::drag(spot.control, &guid, track, fraction)
         } else {
-            session_daw::engine::click(spot.control, &guid, track)
+            session_daw::engine::click(spot.control, &guid, track, self.fine)
         };
         let Some(edit) = edit else { return };
 
@@ -1085,13 +1141,18 @@ impl App {
             .rename
             .as_ref()
             .filter(|r| r.surface == session_daw::rename::Surface::Mixer);
-        let dragging_rack = self.rack_drag;
         let panels = self.rack_panels();
-        let live_tone = dragging_rack.and_then(|(row, _)| {
-            self.mixer_map
+        // The rack to draw live: the one being dragged, or — when
+        // nothing is — the one under the pointer, so its grip can
+        // light up. Either way it is ONE strip's worth of curves over
+        // the recording it replaces.
+        let live_rack = self.rack_drag.or(self.hovered_grip).and_then(|(row, grip)| {
+            let tone = self
+                .mixer_map
                 .index(row)
                 .and_then(|i| self.tracks.get(i))
-                .and_then(|track| self.tone_settings.get(&track.guid))
+                .and_then(|track| self.tone_settings.get(&track.guid))?;
+            Some((row, grip, tone))
         });
 
         // Split the borrow: `render` takes the renderer mutably and
@@ -1142,12 +1203,18 @@ impl App {
             );
             // The rack being dragged, over its own recording. Every
             // other strip's is still the recorded one.
-            if let Some((row, _)) = dragging_rack {
-                if let Some(tone) = live_tone {
-                    session_daw::overlay::rack(
-                        painter, palette, font, mixer, panels, tone, row, at,
-                    );
-                }
+            if let Some((row, grip, tone)) = live_rack {
+                session_daw::overlay::rack(
+                    painter,
+                    palette,
+                    font,
+                    mixer,
+                    panels,
+                    tone,
+                    Some(grip),
+                    row,
+                    at,
+                );
             }
             // An open rename, over the plate it replaces.
             if let Some(open) = rename {
@@ -1325,7 +1392,15 @@ impl App {
             {
                 continue;
             }
-            renamed |= matches!(event, daw_proto::track::TrackEvent::Renamed { .. });
+            // A name and a SELECTION are both recorded: the name is
+            // text in the panel, and the selection decides how wide a
+            // strip opens — which is the whole of "focus the selected
+            // track". Neither is a live value an overlay can redraw.
+            renamed |= matches!(
+                event,
+                daw_proto::track::TrackEvent::Renamed { .. }
+                    | daw_proto::track::TrackEvent::SelectionChanged { .. }
+            );
             listed |= matches!(
                 event,
                 daw_proto::track::TrackEvent::Added(_)
@@ -1786,6 +1861,8 @@ fn main() {
         arrange_rows: daw_ui::studio::RowsRef(std::sync::Arc::new(Vec::new())),
         mixer_scroll: 0.0,
         layout,
+        last_grip_click: None,
+        hovered_grip: None,
         rack_drag: None,
         tone_settings: session_daw::tone::Store::default(),
         folders: daw_ui::components::folders::FolderState::default(),
@@ -1907,10 +1984,11 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         Edit::Rename(_, name) => track.name.clone_from(name),
         Edit::SetPhase(_, inverted) => track.phase_inverted = *inverted,
         Edit::SetParentSend(_, enabled) => track.parent_send = *enabled,
-        // Selection is the engine's to decide: it is exclusive, so
-        // predicting it here would mean predicting which OTHER tracks
-        // stop being selected. Getting that wrong looks worse than a
-        // frame of lag looks slow.
-        Edit::Select(_) => {}
+        // Selection is the engine's to decide: an exclusive select
+        // changes every OTHER track too, and predicting which ones
+        // stop being selected would be predicting the engine's whole
+        // answer. Getting that wrong looks worse than a frame of lag
+        // looks slow — and the frame is one round trip in-process.
+        Edit::Select(_) | Edit::AddToSelection(_) => {}
     }
 }

@@ -117,9 +117,13 @@ impl MixPhase {
 
     /// The toolbar icon's base name in `Data/toolbar_icons`.
     ///
-    /// The shipped set covers every phase but `Creative`, which is new
-    /// and has no art yet — `None` rather than a placeholder, so a
-    /// missing icon is a missing icon and not a wrong one.
+    /// Every phase names its own file. `Relational` used to borrow the
+    /// shipped `fts_mix_mix`, which meant a button labelled Relational
+    /// showed a pill reading MIX — a wrong icon, which is worse than a
+    /// missing one, because a missing one falls back to the word.
+    ///
+    /// `fts-icons` builds these from `examples/mix.toml`; a name with
+    /// nothing installed behind it simply does not draw.
     #[must_use]
     pub const fn icon(self) -> Option<&'static str> {
         match self {
@@ -127,10 +131,9 @@ impl MixPhase {
             Self::Balance => Some("fts_mix_balance"),
             Self::Tone => Some("fts_mix_tone"),
             Self::Polish => Some("fts_mix_polish"),
-            // The shipped `fts_mix_mix`, which is this phase renamed.
-            Self::Relational => Some("fts_mix_mix"),
+            Self::Relational => Some("fts_mix_relational"),
             Self::Depth => Some("fts_mix_depth"),
-            Self::Creative => None,
+            Self::Creative => Some("fts_mix_creative"),
             Self::Overview => Some("fts_mix_overview"),
         }
     }

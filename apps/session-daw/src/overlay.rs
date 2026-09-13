@@ -669,6 +669,7 @@ pub fn rack(
     mixer: &Mixer,
     panels: &[crate::tone::Which],
     tone: &crate::tone::Tone,
+    lit: Option<crate::tone::Grip>,
     row: usize,
     transform: Affine,
 ) {
@@ -686,13 +687,14 @@ pub fn rack(
         return;
     };
     let mut scene = anyrender::Scene::new();
-    crate::tone::record(
+    crate::tone::draw(
         &mut scene,
         palette,
         font,
         tone,
         panels,
         crate::tone::Panel::of(box_, left),
+        lit,
     );
     for command in &scene.commands {
         crate::arrangement::submit_command(painter, command, transform);

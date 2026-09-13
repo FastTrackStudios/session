@@ -298,6 +298,25 @@ pub fn record(
     panels: &[Which],
     panel: Panel,
 ) {
+    draw(scene, palette, font, tone, panels, panel, None);
+}
+
+/// The same, with one grip lit.
+///
+/// Only the live pass has a pointer to report, so the recording calls
+/// [`record`] and this is what the overlay reaches for. A lit grip is
+/// the difference between "there is a handle here" and "this is the
+/// handle you will move", which on a curve with four of them is the
+/// whole question.
+pub fn draw(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    tone: &Tone,
+    panels: &[Which],
+    panel: Panel,
+    lit: Option<Grip>,
+) {
     let rack = Rack::at(panel.width);
     if !rack.on() || panel.height < 24.0 || panels.is_empty() {
         return;
@@ -313,8 +332,8 @@ pub fn record(
         let head = (body.y > inner.y).then(|| inner.split_top(HEAD).0);
         if body.width > 0.0 && body.height > 0.0 {
             match which {
-                Which::Eq => eq(scene, palette, font, tone, body, rack),
-                Which::Comp => comp(scene, palette, tone.comp, body, rack),
+                Which::Eq => eq(scene, palette, font, tone, body, rack, lit),
+                Which::Comp => comp(scene, palette, tone.comp, body, rack, lit),
                 Which::Sat => sat(scene, palette, &tone.sat, body, rack),
             }
             if let Some(head) = head {
@@ -448,7 +467,15 @@ fn ground(scene: &mut Scene, palette: &Palette, at: Panel) {
 }
 
 /// The EQ's response across the audible band.
-fn eq(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Panel, rack: Rack) {
+fn eq(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    tone: &Tone,
+    at: Panel,
+    rack: Rack,
+    lit: Option<Grip>,
+) {
     let freq = FreqAxis::audible();
     let db = DbAxis::symmetric(EQ_RANGE);
     let right = at.x + at.width;
@@ -519,14 +546,22 @@ fn eq(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Panel,
     if rack != Rack::Full {
         return;
     }
-    for band in tone.eq.iter().filter(|band| band.enabled && band.used) {
+    for (index, band) in tone.eq.iter().enumerate() {
+        if !(band.enabled && band.used) {
+            continue;
+        }
         let x = freq.freq_to_x(f64::from(band.frequency), at.x, right);
         let y = db.db_to_y(f64::from(band.gain), at.y, bottom);
         if x < at.x || x > right || y < at.y || y > bottom {
             continue;
         }
-        dot(scene, palette.tcp_meter_well, (x, y), HANDLE + 1.0);
-        dot(scene, palette.accent, (x, y), HANDLE);
+        // The one under the pointer grows rather than changing colour:
+        // a handle is already the accent, and a second accent would be
+        // a colour nobody could name. Size is what a hand reads.
+        let grown = lit == Some(Grip::Band(index));
+        let r = if grown { HANDLE + 1.6 } else { HANDLE };
+        dot(scene, palette.tcp_meter_well, (x, y), r + 1.0);
+        dot(scene, palette.accent, (x, y), r);
     }
 }
 
@@ -546,7 +581,14 @@ const HANDLE: f64 = 2.6;
 const DECADES: [(f64, &str); 3] = [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k")];
 
 /// The compressor's transfer curve, input dB across, output dB up.
-fn comp(scene: &mut Scene, palette: &Palette, comp: Comp, at: Panel, rack: Rack) {
+fn comp(
+    scene: &mut Scene,
+    palette: &Palette,
+    comp: Comp,
+    at: Panel,
+    rack: Rack,
+    lit: Option<Grip>,
+) {
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     // The comp editor's own window: −60 to 0 on both axes.
@@ -593,8 +635,13 @@ fn comp(scene: &mut Scene, palette: &Palette, comp: Comp, at: Panel, rack: Rack)
             comp.knee,
         ));
         let at_point = (to_x(db).clamp(at.x, right), to_y(out).clamp(at.y, bottom));
-        dot(scene, palette.tcp_meter_well, at_point, HANDLE + 1.0);
-        dot(scene, palette.meter_warn, at_point, HANDLE);
+        let r = if lit == Some(Grip::Threshold) {
+            HANDLE + 1.6
+        } else {
+            HANDLE
+        };
+        dot(scene, palette.tcp_meter_well, at_point, r + 1.0);
+        dot(scene, palette.meter_warn, at_point, r);
     }
 }
 
@@ -866,6 +913,29 @@ pub fn grip_at(
 /// with a wobble. Stated once because the drawing and the hit test both
 /// have to read the same scale.
 pub const EQ_RANGE: f64 = 18.0;
+
+/// Put a grip back where it started.
+///
+/// Double-clicking a control to default it is the gesture every DAW
+/// has, and it is the one that makes a control safe to explore: you can
+/// drag something to see what it does knowing the way back is one
+/// gesture rather than a memory of the number.
+///
+/// A band goes FLAT rather than to some authored frequency — its
+/// frequency is where you put it and its gain is the decision, so
+/// undoing the decision is undoing the gain.
+pub fn reset(tone: &mut Tone, grip: Grip) {
+    match grip {
+        Grip::Band(index) => {
+            if let Some(band) = tone.eq.get_mut(index) {
+                band.gain = 0.0;
+            }
+        }
+        Grip::Threshold => tone.comp.threshold = Comp::default().threshold,
+        // Unity: a preamp at drive one is the wire it is modelled on.
+        Grip::Drive => tone.sat.drive = 1.0,
+    }
+}
 
 /// Move a grip by a pixel delta.
 ///
@@ -1327,5 +1397,61 @@ mod tier_tests {
         let off = rack_of(30.0);
         assert_eq!(super::Rack::at(off.width), super::Rack::Off);
         assert_eq!(grip_at(&ALL, &tone, off, 15.0, 300.0), None);
+    }
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::{Comp, Grip, Which, drag, placeholder, reset};
+
+    const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
+
+    fn rack() -> super::Panel {
+        super::Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 133.0,
+            height: 600.0,
+        }
+    }
+
+    /// Reset undoes a drag, whatever the drag was — which is the whole
+    /// promise: you can move something to find out what it does.
+    #[test]
+    fn reset_undoes_a_drag() {
+        let mut tone = placeholder(0);
+        drag(&mut tone, Grip::Band(1), &ALL, rack(), 0.0, -40.0);
+        assert!(tone.eq[1].gain.abs() > 0.5);
+        reset(&mut tone, Grip::Band(1));
+        assert!(tone.eq[1].gain.abs() < f32::EPSILON, "the band went flat");
+
+        drag(&mut tone, Grip::Threshold, &ALL, rack(), 0.0, -30.0);
+        reset(&mut tone, Grip::Threshold);
+        assert!(
+            (tone.comp.threshold - Comp::default().threshold).abs() < f32::EPSILON,
+            "the threshold went back to its default"
+        );
+
+        drag(&mut tone, Grip::Drive, &ALL, rack(), 0.0, -60.0);
+        reset(&mut tone, Grip::Drive);
+        assert!((tone.sat.drive - 1.0).abs() < f32::EPSILON, "drive is unity");
+    }
+
+    /// A band reset keeps its FREQUENCY: where you put it is not the
+    /// decision, how much you did there is.
+    #[test]
+    fn resetting_a_band_keeps_where_it_sits() {
+        let mut tone = placeholder(0);
+        drag(&mut tone, Grip::Band(2), &ALL, rack(), 20.0, -20.0);
+        let moved = tone.eq[2].frequency;
+        reset(&mut tone, Grip::Band(2));
+        assert!((tone.eq[2].frequency - moved).abs() < f32::EPSILON);
+    }
+
+    /// A band that is not there is not a panic.
+    #[test]
+    fn resetting_a_missing_band_is_harmless() {
+        let mut tone = placeholder(0);
+        reset(&mut tone, Grip::Band(99));
     }
 }

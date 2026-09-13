@@ -31,7 +31,15 @@ pub enum Edit {
     ToggleMute(String),
     ToggleSolo(String),
     ToggleArm(String),
+    /// Select this track and nothing else — what a plain click means
+    /// everywhere, and what makes "focus the selected track" a focus
+    /// rather than an accumulation.
     Select(String),
+    /// Add this track to the selection, leaving the rest alone. The
+    /// modified click: REAPER's Ctrl, and the same modifier that makes
+    /// a drag fine — they apply to different gestures, so one key does
+    /// both without ambiguity.
+    AddToSelection(String),
     /// A gain, not a dB value — `Track::volume`'s own unit.
     SetVolume(String, f64),
     SetPan(String, f64),
@@ -63,6 +71,7 @@ impl Edit {
             | Self::ToggleSolo(g)
             | Self::ToggleArm(g)
             | Self::Select(g)
+            | Self::AddToSelection(g)
             | Self::SetVolume(g, _)
             | Self::SetPan(g, _)
             | Self::Rename(g, _)
@@ -136,7 +145,12 @@ impl Queue {
 /// do not mean anything now, and inventing an edit for them would be
 /// worse than doing nothing.
 #[must_use]
-pub fn click(control: crate::mcp::Control, guid: &str, from: &daw_proto::Track) -> Option<Edit> {
+pub fn click(
+    control: crate::mcp::Control,
+    guid: &str,
+    from: &daw_proto::Track,
+    add: bool,
+) -> Option<Edit> {
     let guid = guid.to_owned();
     match control {
         crate::mcp::Control::Mute => Some(Edit::ToggleMute(guid)),
@@ -144,7 +158,11 @@ pub fn click(control: crate::mcp::Control, guid: &str, from: &daw_proto::Track) 
         crate::mcp::Control::RecArm => Some(Edit::ToggleArm(guid)),
         // Clicking the name selects the track; DOUBLE-clicking renames
         // it, which is a different gesture and a different edit.
-        crate::mcp::Control::Name => Some(Edit::Select(guid)),
+        crate::mcp::Control::Name => Some(if add {
+            Edit::AddToSelection(guid)
+        } else {
+            Edit::Select(guid)
+        }),
         crate::mcp::Control::Routing => Some(Edit::SetParentSend(guid, !from.parent_send)),
         // The FX button opens a chain window, and there is no chain and
         // no window — see `tone::placeholder` and `bin/chain-probe`.
@@ -424,7 +442,7 @@ mod tests {
     /// rather than an invented one.
     #[test]
     fn the_fx_button_waits_for_a_chain() {
-        assert!(click(Control::Fx, "k", &track(1.0, 0.0)).is_none());
+        assert!(click(Control::Fx, "k", &track(1.0, 0.0), false).is_none());
         assert!(drag(Control::Mute, "k", &track(1.0, 0.0), 0.5).is_none());
     }
 
@@ -436,12 +454,12 @@ mod tests {
         let mut sending = track(1.0, 0.0);
         sending.parent_send = true;
         assert_eq!(
-            click(Control::Routing, "k", &sending),
+            click(Control::Routing, "k", &sending, false),
             Some(Edit::SetParentSend("k".into(), false))
         );
         sending.parent_send = false;
         assert_eq!(
-            click(Control::Routing, "k", &sending),
+            click(Control::Routing, "k", &sending, false),
             Some(Edit::SetParentSend("k".into(), true))
         );
     }
@@ -450,8 +468,14 @@ mod tests {
     #[test]
     fn clicking_a_name_selects_it() {
         assert_eq!(
-            click(Control::Name, "k", &track(1.0, 0.0)),
-            Some(Edit::Select("k".into()))
+            click(Control::Name, "k", &track(1.0, 0.0), false),
+            Some(Edit::Select("k".into())),
+            "a plain click selects one track"
+        );
+        assert_eq!(
+            click(Control::Name, "k", &track(1.0, 0.0), true),
+            Some(Edit::AddToSelection("k".into())),
+            "the modifier adds to the selection instead"
         );
     }
 }
@@ -523,7 +547,8 @@ async fn apply(edit: &Edit) {
         Edit::ToggleMute(_) => track.toggle_mute().await,
         Edit::ToggleSolo(_) => track.toggle_solo().await,
         Edit::ToggleArm(_) => track.toggle_arm().await,
-        Edit::Select(_) => track.select().await,
+        Edit::Select(_) => track.select_exclusive().await,
+        Edit::AddToSelection(_) => track.select().await,
         Edit::SetVolume(_, v) => track.set_volume(*v).await,
         Edit::SetPan(_, p) => track.set_pan(*p).await,
         Edit::Rename(_, name) => track.rename(name).await,
