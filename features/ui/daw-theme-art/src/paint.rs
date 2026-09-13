@@ -628,6 +628,25 @@ pub mod tcp {
     pub const CAP_PANE_Y0: f64 = 13.0 / 53.0;
     pub const CAP_PANE_Y1: f64 = 40.0 / 53.0;
 
+    /// The rule that says a strip is the selected one.
+    ///
+    /// A line along the top of the name band, not a panel behind it.
+    /// The name has no plate — it is text on the strip, the way a name
+    /// written on tape is — and a box drawn permanently behind it was
+    /// only ever a box. The one time a field belongs there is while it
+    /// is being TYPED in, and the rename editor draws its own.
+    ///
+    /// Along the top edge because that is where the band borders
+    /// everything else on the strip: a line there marks the whole strip
+    /// above it rather than just the label, which is what selection
+    /// means.
+    #[must_use]
+    pub fn name_selected(accent: Color, w: f64, h: f64) -> Drawing {
+        let mut drawing = Drawing::new(w, h);
+        drawing.fill(rect(0.0, 0.0, w, 2.0, 0.0), accent);
+        drawing
+    }
+
     /// How tall the clip latch sits at the top of the column.
     ///
     /// Also its target: while it is lit it is what a click there
@@ -1334,6 +1353,18 @@ pub mod tcp {
     /// send is cut. Colouring it by whether anything is routed made an
     /// unrouted track look broken rather than merely unrouted.
     #[must_use]
+    /// How far the VERTICAL routing panel sits inside its own cell.
+    ///
+    /// The traced cell is 23 wide around a 21-wide panel, and 21 is
+    /// exactly `geometry::mcp::BUTTON_W` — so a caller that places the
+    /// CELL where it places a button gets a panel one pixel to the
+    /// right of that button's edge, every time. Placing the cell a
+    /// pixel left of the column puts the panel ON it.
+    ///
+    /// Stated here rather than worked out at the call site, because a
+    /// number derived from the art belongs with the art.
+    pub const ROUTING_INSET_V: f64 = 1.0;
+
     pub fn routing(
         chrome: &Chrome,
         axis: Axis,
@@ -1347,7 +1378,9 @@ pub mod tcp {
 
         // The panel does not fill its cell, and the inset differs by
         // family rather than being one margin: 28x20 in a 28x22 cell,
-        // against 21x28 in a 23x32.
+        // against 21x28 in a 23x32. See `ROUTING_INSET_V` — a caller
+        // lining this up with the buttons beside it has to know that
+        // the cell is not the panel.
         let edge = vh * 0.03;
         let (box_x, box_y, box_w, box_h) = if horizontal {
             (0.0, vh / 22.0, vw, vh * 20.0 / 22.0)

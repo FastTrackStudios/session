@@ -639,6 +639,7 @@ pub fn controls(
             palette,
             font,
             track,
+            mixer.label(row),
             pointer,
             // Levels are indexed by PROJECT track index, not by mixer
             // row: the mixer shows a subset in its own order, and a
@@ -679,6 +680,7 @@ fn draw_strip_controls(
     palette: &Palette,
     font: &Font,
     track: &Track,
+    label: Option<(&str, f32)>,
     pointer: &crate::pointer::Pointer,
     level: Option<daw_proto::TrackLevels>,
     clipped: bool,
@@ -751,7 +753,10 @@ fn draw_strip_controls(
                 state(Control::Routing),
             ),
             font,
-            x,
+            // The cell a pixel left of the column, so the PANEL inside
+            // it lands on the column — where the mute and solo above it
+            // already are. See `ROUTING_INSET_V`.
+            x - art::ROUTING_INSET_V,
             y,
         );
     }
@@ -844,6 +849,15 @@ fn draw_strip_controls(
     // the strip resizes.
     // The fader IS the meter: its groove carries the signal, and the
     // cap rides over it as glass so the level reads through the one
+    // The track's name, live, because its ink answers to three things
+    // that change while the window is open — selection, mute and solo —
+    // and re-recording a mixer to dim one name is the trade this
+    // architecture exists to refuse. The plate under it is recorded;
+    // only the text on it is not.
+    if let (Some((text, size)), Some(plate)) = (label, strip.rect(Control::Name)) {
+        name(scene, palette, font, track, text, size, left, plate);
+    }
+
     // place it was always hidden — right where the hand is, which on a
     // loud track is right where the peak is.
     //
@@ -1067,6 +1081,65 @@ mod clip_tests {
         clips.clear_all();
         assert!(!clips.any());
     }
+}
+
+/// The track's name on its plate.
+///
+/// Centred, because a plate is a nameplate and a name pinned to the
+/// left of a wide one sits in the corner of an empty box.
+///
+/// The ink carries three states the name is the biggest target for.
+/// Muted dims it towards the plate it sits on — a muted track is one
+/// you are not hearing, and it should look like it from across forty
+/// strips rather than requiring you to find a ten-pixel button. Soloed
+/// takes the solo colour, because a solo is the loudest thing about a
+/// session and the name should say so. Selected takes full text and an
+/// accent rule along the plate's top edge, which marks the whole strip
+/// below it rather than just the label.
+fn name(
+    scene: &mut anyrender::Scene,
+    palette: &Palette,
+    font: &Font,
+    track: &Track,
+    text: &str,
+    size: f32,
+    left: f64,
+    plate: vello::kurbo::Rect,
+) {
+    if track.selected {
+        crate::art::place(
+            scene,
+            &art::name_selected(
+                crate::tcp::to_theme(palette.accent),
+                plate.width() - 4.0,
+                plate.height(),
+            ),
+            font,
+            left + plate.x0 + 2.0,
+            plate.y0,
+        );
+    }
+    // Solo before mute: a track can be both, and what you are hearing
+    // is decided by the solo.
+    let ink = if track.soloed {
+        palette.solo
+    } else if track.muted {
+        palette.text_faint
+    } else if track.selected {
+        palette.text
+    } else {
+        palette.text_dim
+    };
+    let width = font.width(text, size);
+    crate::tcp::glyphs(
+        scene,
+        font,
+        ink,
+        text,
+        left + plate.x0 + (plate.width() - width) / 2.0,
+        plate.y0 + plate.height() / 2.0 + f64::from(size) / 3.0,
+        size,
+    );
 }
 
 /// The fader's own value, in decibels, beside the cap that is setting

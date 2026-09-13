@@ -30,7 +30,6 @@
 use anyrender::{PaintScene, Scene};
 use daw_proto::Track;
 use daw_theme_art::geometry::mcp as g;
-use daw_theme_art::paint::tcp as art;
 use daw_ui::controls::{Collapse, PanAnchor};
 use daw_ui::studio::{ProjectRef, RowsRef};
 use vello::kurbo::{Affine, Rect};
@@ -256,9 +255,27 @@ pub struct Mixer {
     /// — which moved the arm, the buttons and the fader down by
     /// whatever the indent came to.
     heights: Vec<f64>,
+    /// Each strip's track name, already fitted to its plate.
+    ///
+    /// Fitted HERE and drawn in the overlay, which is the split the
+    /// rest of this window uses: choosing a label costs a measured
+    /// shrink and an ancestor-name search, and that answer only changes
+    /// when the strips do — while the INK on it changes with mute, solo
+    /// and selection, which change constantly. So the expensive,
+    /// constant part is recorded and the cheap, varying part is not.
+    labels: Vec<(String, f32)>,
 }
 
 impl Mixer {
+    /// A strip's fitted track name, and the size it fits at.
+    ///
+    /// Chosen when the mixer was recorded, drawn every frame — see
+    /// `labels` for why the two are split.
+    #[must_use]
+    pub fn label(&self, row: usize) -> Option<(&str, f32)> {
+        self.labels.get(row).map(|(text, size)| (text.as_str(), *size))
+    }
+
     /// Record the whole mixer, `height` being the height of its REAPER
     /// part.
     ///
@@ -376,6 +393,7 @@ impl Mixer {
         let mut lineage_names: Vec<&str> = Vec::new();
 
         let mut heights = Vec::with_capacity(rows.len());
+        let mut labels = Vec::with_capacity(rows.len());
 
         let mut x = 0.0_f64;
         for (ordinal, (track, depth)) in rows.iter().enumerate() {
@@ -396,6 +414,7 @@ impl Mixer {
             // stay level and the bottoms staircase.
             let strip_h = (height - crate::num::coord(depth) * INDENT_STEP).max(1.0);
             heights.push(strip_h);
+            labels.push(fit_name(font, track, w, &ancestor_names));
             strip(
                 &mut strips,
                 palette,
@@ -420,7 +439,6 @@ impl Mixer {
                     tone_settings.get(&track.guid)
                 },
                 &ancestors,
-                &ancestor_names,
             );
             index.push(from..u32::try_from(strips.commands.len()).unwrap_or(u32::MAX));
             x += w + STRIP_GAP;
@@ -438,6 +456,7 @@ impl Mixer {
             buttons_top,
             rack_h,
             heights,
+            labels,
         }
     }
 
@@ -779,7 +798,6 @@ fn strip(
     rack: &[crate::tone::Which],
     tone: Option<&crate::tone::Tone>,
     ancestors: &[Color],
-    ancestor_names: &[&str],
 ) {
     let Slot {
         x,
@@ -917,19 +935,12 @@ fn strip(
         &shape,
     );
 
-    stretch(
-        scene,
-        palette,
-        font,
-        Stretch {
-            x,
-            width: w,
-            top: band_top + pan_band + input_band,
-            height: stretch_h,
-        },
-    );
+    // The stretch section records nothing — see the note above
+    // `bottom`. Its height is still resolved, because the bands below
+    // it are placed against it.
+    let _ = stretch_h;
 
-    bottom(scene, palette, font, track, x, w, h, ancestor_names);
+    bottom(scene, palette, font, track, x, w, h);
 }
 
 /// The coloured band: pan, the record input, and the arm hanging off its
@@ -1083,63 +1094,48 @@ impl Columns {
 
 }
 
-/// Where the stretch section sits, and how tall it is.
-#[derive(Clone, Copy)]
-struct Stretch {
-    x: f64,
-    width: f64,
-    top: f64,
-    height: f64,
-}
-
-/// The dB scale and the meter's well — what the stretch RECORDS.
+/// The label a strip shows for its track, and the size it fits at.
 ///
-/// The fader, the cap, the meter's level and the whole button column
-/// are live: every one of them is a value that changes while the window
-/// is open. What is left here is the two things that do not — the
-/// numbers beside the fader, and the sunken well the level is drawn
-/// into.
-fn stretch(
-    scene: &mut Scene,
-    palette: &Palette,
-    font: &Font,
-    band: Stretch,
-) {
-    let Stretch {
-        x,
-        width: w,
-        top: stretch_top,
-        height: stretch,
-    } = band;
-    let squeeze = Squeeze::at(w);
-    let columns = Columns::at(x, w);
-
-    // ── The left column: the dB scale, with the meter beside it ──
-    //
-    // REAPER gives this column to the SCALE. Measured off its mixer,
-    // the labels sit at x 9..24 of an 86-wide strip and there is no
-    // meter well behind them — so a meter drawn here was occupying the
-    // one place the strip had for the numbers, and drawing an empty
-    // well while it did it, because nothing hands it a level yet.
-    //
-    // Without a scale a fader is a handle on an unmarked line: you can
-    // see that one track is louder than another and not by how much,
-    // which is most of what a mixer is for.
-    // The dB scale is LIVE now, with the meter it belongs to: its
-    // numbers light as the signal passes them, which is the reading
-    // that works at a glance across forty strips. See `overlay`.
-
-    // The volume control is drawn live — its cap and its lit travel
-    // both move with the value, so recording it would record a fader
-    // frozen at whatever the project opened with.
-
-    // The button column — record arm, mute, solo, routing — is drawn
-    // ENTIRELY in the live pass now. Every one of them is a value that
-    // changes while the window is open, so a recorded column is a
-    // column that was right once. See `overlay::draw_strip_controls`.
+/// Three ways to make a name fit, in order of what they cost.
+///
+/// Print it, shrink it, then drop what the folders already said — and
+/// only cut as a last resort. Dropping comes AFTER shrinking because
+/// the full name at nine points tells you more than half of it at
+/// eleven; it comes before cutting because `Trig` is a word and `T1 …`
+/// is not.
+fn fit_name(font: &Font, track: &Track, w: f64, ancestor_names: &[&str]) -> (String, f32) {
+    let room = w - 8.0;
+    let (mut label, mut size) = font.fit(&track.name, 11.0, 7.0, room);
+    if label.contains('…')
+        && let Some(short) = shorten(&track.name, ancestor_names)
+    {
+        let (short_label, short_size) = font.fit(&short, 11.0, 7.0, room);
+        if !short_label.contains('…') {
+            label = short_label;
+            size = short_size;
+        }
+    }
+    (label, size)
 }
 
-/// The name plate and the track number.
+// Nothing in the stretch section is recorded any more.
+//
+// It held the dB scale and an empty meter well. The well went when the
+// fader's groove became the meter, and the scale went live with it —
+// its numbers light as the signal passes them, which a recording
+// cannot do. The fader, the cap, the button column and the routing
+// were already live for the same reason: every one of them is a value
+// that changes while the window is open, and a recorded value is one
+// that was right once. See `overlay::draw_strip_controls`.
+
+/// The track number under a strip, on the track's own colour.
+///
+/// The NAME is not here. It is drawn live — see `Mixer::label` —
+/// because its ink answers to mute, solo and selection, and it has no
+/// plate behind it: a name is text ON the strip, the way a name written
+/// on tape is, and a box drawn permanently behind it was only ever a
+/// box. A field belongs there while it is being TYPED in, and
+/// `rename::paint` draws its own.
 fn bottom(
     scene: &mut Scene,
     palette: &Palette,
@@ -1148,43 +1144,8 @@ fn bottom(
     x: f64,
     w: f64,
     h: f64,
-    ancestor_names: &[&str],
 ) {
-    let bottom = h - f64::from(daw_theme_art::collapse::BOTTOM_SECTION);
-    let plate = f64::from(g::NAME_PLATE);
-    fill(
-        scene,
-        palette.tcp_field,
-        Rect::new(x + 2.0, bottom, x + w - 2.0, bottom + plate),
-    );
-    let ink = if track.selected { palette.text } else { palette.text_dim };
-    // Three ways to make a name fit, in order of what they cost.
-    //
-    // Print it, shrink it, then drop what the folders already said —
-    // and only cut as a last resort. Dropping comes AFTER shrinking
-    // because the full name at nine points tells you more than half of
-    // it at eleven; it comes before cutting because `Trig` is a word
-    // and `T1 …` is not.
-    let room = w - 8.0;
-    let (mut label, mut label_size) = font.fit(&track.name, 11.0, 7.0, room);
-    if label.contains('…') {
-        if let Some(short) = shorten(&track.name, ancestor_names) {
-            let (short_label, short_size) = font.fit(&short, 11.0, 7.0, room);
-            if !short_label.contains('…') {
-                label = short_label;
-                label_size = short_size;
-            }
-        }
-    }
-    crate::tcp::glyphs(
-        scene,
-        font,
-        ink,
-        &label,
-        x + 4.0,
-        bottom + plate / 2.0 + f64::from(label_size) / 3.0,
-        label_size,
-    );
+
     // The number sits on the track's own colour, in a band exactly one
     // indent step tall.
     //
@@ -1198,9 +1159,10 @@ fn bottom(
     // At one step they are the same line. A red Drum Kit puts red under
     // its number, and that red runs unbroken along the floor beneath
     // every track inside it.
+    let number = track.index.saturating_add(1).to_string();
     let number_h = INDENT_STEP;
     let number_top = h - number_h;
-    if number_top > bottom + plate - number_h {
+    if number_h < h {
         fill(
             scene,
             crate::tcp::folder_band(palette, track),
@@ -1214,12 +1176,19 @@ fn bottom(
         // ink in the palette no longer reads — a number you cannot make
         // out is the same as no number.
         palette.text_dim,
-        &track.index.saturating_add(1).to_string(),
-        x + 5.0,
+        &number,
+        // Centred on the strip, under the name that is also centred on
+        // it. Pinned left they read as two different alignments for one
+        // track's identity — and on a wide strip the number ended up in
+        // a corner with the name over the middle of it.
+        x + (w - font.width(&number, NUMBER_SIZE)) / 2.0,
         h - 3.0,
-        9.0,
+        NUMBER_SIZE,
     );
 }
+
+/// How big the track number under a strip is drawn.
+const NUMBER_SIZE: f32 = 9.0;
 
 /// A strip height, for the f32 the theme's geometry is written in.
 pub const fn f64_to_f32(value: f64) -> f32 {

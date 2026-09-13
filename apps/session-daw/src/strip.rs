@@ -244,9 +244,20 @@ impl Strip {
                     fader.y0 + daw_theme_art::paint::tcp::CLIP_H,
                 )
             }),
+            // Sat directly on the colour band, not at the top of the
+            // bottom section. REAPER's section is 47 high and holds a
+            // 26-high name over a 12-high colour band, which leaves
+            // nine pixels of nothing between them — a gap that reads as
+            // the name floating rather than as anything separating two
+            // things. Pushed down, the gap lands ABOVE the name where
+            // `Strip::travel` hands it to the fader, which is the one
+            // control on the strip that gets better with length.
+            //
+            // The section's own height is REAPER's measurement and is
+            // shared with the Dioxus mixer, so it stays 47.
             Control::Name => {
-                let plate = self.height - f64::from(daw_theme_art::collapse::BOTTOM_SECTION);
-                Some(top(plate, self.height - plate))
+                let plate = f64::from(g::NAME_PLATE);
+                Some(top(self.height - crate::mcp::INDENT_STEP - plate, plate))
             }
         }
     }
