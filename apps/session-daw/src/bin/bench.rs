@@ -393,6 +393,7 @@ fn mixer_shot(
         // The shot is of the Tone phase, which is the phase the rack
         // was built for and the one the reference images were taken in.
         if tone { session_daw::tone::panels_for(TONE) } else { &[] },
+        false,
         session_daw::settings::Settings::default(),
         &settings,
     );
@@ -436,11 +437,10 @@ fn mixer_shot(
                 &session_daw::pointer::Pointer::default(),
                 // At rest: the shot is the reference every viewport in
                 // the sweep is compared against, and a lit meter — or a
-                // level trace — in it would be a difference nobody
+                // moving rack — in it would be a difference nobody
                 // asked for.
                 &[],
-                &mut std::collections::HashMap::new(),
-                &[],
+                &mut session_daw::overlay::Racks::none(),
                 scroll_x,
                 frame.content_width(),
                 at,
@@ -891,11 +891,20 @@ fn animate(
         f64::from(height) - session_daw::rails::TOP,
         layout,
         session_daw::tone::panels_for(TONE),
+        // The racks are driven here, so they are drawn live and the
+        // recording reserves their space without filling it — which is
+        // what the window does the moment anything feeds a spectrum.
+        true,
         session_daw::settings::Settings::default(),
         &settings,
     );
     let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
     let mut history: std::collections::HashMap<String, session_daw::tone::Levels> =
+        std::collections::HashMap::new();
+    // The analyser's bins per track — what makes a rack MOVE, and so
+    // what makes it live rather than replayed. Driven here, because a
+    // stress test of a mixer that shows audio has to show audio.
+    let mut spectra: std::collections::HashMap<String, session_daw::tone::Analyser> =
         std::collections::HashMap::new();
     let pointer = session_daw::pointer::Pointer::default();
 
@@ -927,11 +936,16 @@ fn animate(
             // report a cost no session can produce. The draw still
             // happens every frame either way.
             if frame_index % 8 == 0 {
-                for (track, level) in tracks.iter().zip(&levels) {
+                for (i, track) in tracks.iter().enumerate() {
+                    let signal = session_daw::simulate::frame(i, t * 8.0);
                     history
                         .entry(track.guid.clone())
                         .or_default()
-                        .push(level.peak_left);
+                        .push(signal.peak);
+                    spectra
+                        .entry(track.guid.clone())
+                        .or_default()
+                        .set(signal.spectrum);
                 }
             }
             let mut drawn = Counts::default();
@@ -960,8 +974,13 @@ fn animate(
                         &map,
                         &pointer,
                         &levels,
-                        &mut history,
-                        session_daw::tone::panels_for(TONE),
+                        &mut session_daw::overlay::Racks {
+                            settings: &settings,
+                            history: &mut history,
+                            spectra: &mut spectra,
+                            lit: None,
+                            panels: session_daw::tone::panels_for(TONE),
+                        },
                         0.0,
                         frame.content_width(),
                         at,

@@ -51,6 +51,43 @@ pub fn route_ink(palette: &Palette) -> art::RouteInk {
     }
 }
 
+/// Everything the live pass needs about the racks.
+///
+/// Five parameters that travel together and mean nothing apart — the
+/// settings a rack is drawn from, the levels and spectra that make one
+/// move, the grip the pointer is on, and which panels the phase is
+/// showing. Bundled because a function taking sixteen arguments is one
+/// nobody can call correctly, not because they are conceptually one
+/// thing.
+pub struct Racks<'a> {
+    pub settings: &'a crate::tone::Store,
+    pub history: &'a mut std::collections::HashMap<String, crate::tone::Levels>,
+    pub spectra: &'a mut std::collections::HashMap<String, crate::tone::Analyser>,
+    /// The one grip the pointer is on, and the strip it is on.
+    pub lit: Option<(usize, crate::tone::Grip)>,
+    pub panels: &'a [crate::tone::Which],
+}
+
+impl Racks<'_> {
+    /// No racks at all — for the measurement shots, which are of a
+    /// mixer at rest.
+    #[must_use]
+    pub fn none() -> Racks<'static> {
+        // Leaked once, for the life of the process, so a `&mut` can be
+        // handed out without a caller having to own the maps. This is
+        // only reached by the shot path, which runs once.
+        static EMPTY_SETTINGS: std::sync::OnceLock<crate::tone::Store> =
+            std::sync::OnceLock::new();
+        Racks {
+            settings: EMPTY_SETTINGS.get_or_init(crate::tone::Store::default),
+            history: Box::leak(Box::default()),
+            spectra: Box::leak(Box::default()),
+            lit: None,
+            panels: &[],
+        }
+    }
+}
+
 /// What a track's FX button should say.
 ///
 /// `fx_count` is the only thing the track model knows about a chain, so
@@ -199,6 +236,7 @@ mod tests {
             600.0,
             crate::layout::Layout::default(),
             &[],
+            false,
             crate::settings::Settings::default(),
             &crate::tone::Store::default(),
         );
@@ -233,6 +271,7 @@ mod tests {
             900.0,
             crate::layout::Layout::default(),
             panels,
+            false,
             crate::settings::Settings::default(),
             &settings,
         );
@@ -305,8 +344,7 @@ mod tests {
                 &map,
                 &crate::pointer::Pointer::default(),
                 levels,
-                &mut std::collections::HashMap::new(),
-                &[],
+                &mut Racks::none(),
                 0.0,
                 4000.0,
                 Affine::IDENTITY,
@@ -348,8 +386,7 @@ mod tests {
                 &map,
                 &crate::pointer::Pointer::default(),
                 &[],
-                &mut std::collections::HashMap::new(),
-                &[],
+                &mut Racks::none(),
                 0.0,
                 4000.0,
                 Affine::IDENTITY,
@@ -406,6 +443,8 @@ mod tests {
         // a display cannot be drawn into a panel that is not there.
         let panels = crate::tone::panels_for(session::mix_phases::MixPhase::Tone);
         let (mixer, palette, font, tracks) = racked(panels);
+        let mut settings = crate::tone::Store::default();
+        settings.seed(&tracks.iter().cloned().map(|t| (t, 0)).collect::<Vec<_>>());
         let map = crate::plan::Rows::of(
             &tracks.iter().cloned().map(|t| (t, 0)).collect::<Vec<_>>(),
             &tracks,
@@ -421,8 +460,13 @@ mod tests {
                 &map,
                 &crate::pointer::Pointer::default(),
                 &[],
-                history,
-                panels,
+                &mut Racks {
+                    settings: &settings,
+                    history,
+                    spectra: &mut std::collections::HashMap::new(),
+                    lit: None,
+                    panels,
+                },
                 0.0,
                 4000.0,
                 Affine::IDENTITY,
@@ -516,12 +560,7 @@ pub fn controls(
     live: &crate::plan::Rows,
     pointer: &crate::pointer::Pointer,
     levels: &[daw_proto::TrackLevels],
-    // `history` is each track's recent input levels, for the
-    // compressor's display, and `panels` is which rack panels the phase
-    // is showing — the history goes into the compressor's, wherever the
-    // layout put it.
-    history: &mut std::collections::HashMap<String, crate::tone::Levels>,
-    panels: &[crate::tone::Which],
+    racks: &mut Racks<'_>,
     scroll_x: f64,
     width: f64,
     transform: Affine,
@@ -546,8 +585,11 @@ pub fn controls(
             // meter reading another track's level is worse than one
             // reading none.
             usize::try_from(track.index).ok().and_then(|i| levels.get(i)).copied(),
-            history.get_mut(&track.guid),
-            panels,
+            racks.history.get_mut(&track.guid),
+            racks.spectra.get_mut(&track.guid),
+            racks.lit.filter(|(at, _)| *at == row).map(|(_, grip)| grip),
+            racks.settings.get(&track.guid),
+            racks.panels,
             row,
             left,
             strip_w,
@@ -579,6 +621,9 @@ fn draw_strip_controls(
     pointer: &crate::pointer::Pointer,
     level: Option<daw_proto::TrackLevels>,
     history: Option<&mut crate::tone::Levels>,
+    spectrum: Option<&mut crate::tone::Analyser>,
+    lit: Option<crate::tone::Grip>,
+    settings: Option<&crate::tone::Tone>,
     panels: &[crate::tone::Which],
     row: usize,
     left: f64,
@@ -680,6 +725,37 @@ fn draw_strip_controls(
         );
     }
 
+    // A rack that is MOVING is drawn whole, live, over its own
+    // recording — the panel grounds are opaque, so it covers rather
+    // than composites. A spectrum moves with the audio and a grip moves
+    // with the hand; either makes the recording stale, and both are
+    // rare enough that the rest of the mixer stays in the cheap path.
+    if let (Some(box_), Some(tone)) = (strip.rack_rect(), settings)
+        && (spectrum.is_some() || lit.is_some())
+    {
+        let at = crate::tone::Panel::of(box_, left);
+        let build = |bins: &[f32]| {
+            let mut rack = anyrender::Scene::new();
+            crate::tone::draw(&mut rack, palette, font, tone, bins, panels, at, lit);
+            rack
+        };
+        match spectrum {
+            // A lit strip is rebuilt every frame on purpose: the grip
+            // under the pointer moves with the hand, and there is only
+            // ever one of them.
+            Some(analyser) if lit.is_none() => {
+                let bins = analyser.bins().to_vec();
+                let built = analyser.rack(at.width, at.height, || build(&bins));
+                scene.commands.extend_from_slice(&built.commands);
+            }
+            Some(analyser) => {
+                let bins = analyser.bins().to_vec();
+                scene.commands.extend(build(&bins).commands);
+            }
+            None => scene.commands.extend(build(&[]).commands),
+        }
+    }
+
     // The compressor's level history, under the threshold line the
     // recording drew across it. Live, because it is the one part of a
     // rack that changes with the audio — see `tone::levels`.
@@ -758,55 +834,11 @@ fn draw_strip_controls(
     }
 }
 
-/// One strip's rack, drawn live.
-///
-/// The rack is recorded with the strip, because a curve depends only on
-/// its parameters and those do not change per frame — except while one
-/// is being dragged, which is exactly when they change every frame.
-/// Re-recording the mixer per pointer move would cost four milliseconds
-/// a frame to move one dot.
-///
-/// So the dragged strip's rack is drawn again over its own recording.
-/// That works because a panel's ground is opaque: the new rack covers
-/// the stale one completely rather than compositing with it.
-pub fn rack(
-    painter: &mut impl PaintScene,
-    palette: &Palette,
-    font: &Font,
-    mixer: &Mixer,
-    panels: &[crate::tone::Which],
-    tone: &crate::tone::Tone,
-    lit: Option<crate::tone::Grip>,
-    row: usize,
-    transform: Affine,
-) {
-    let Some((left, width, height)) = mixer.strip_box(row) else {
-        return;
-    };
-    let strip = crate::strip::Strip::new(
-        width,
-        height,
-        mixer.height,
-        mixer.rack_h,
-        mixer.buttons_top,
-    );
-    let Some(box_) = strip.rack_rect() else {
-        return;
-    };
-    let mut scene = anyrender::Scene::new();
-    crate::tone::draw(
-        &mut scene,
-        palette,
-        font,
-        tone,
-        panels,
-        crate::tone::Panel::of(box_, left),
-        lit,
-    );
-    for command in &scene.commands {
-        crate::arrangement::submit_command(painter, command, transform);
-    }
-}
+// A rack that moves is drawn by `controls`, over its own recording,
+// alongside the meters and the level traces — one pass over the visible
+// strips rather than a second one for the racks. It used to be its own
+// function for the dragged strip alone, which stopped being a special
+// case the moment a spectrum could move one too.
 
 /// The track panel's live controls, for the rows on screen.
 ///

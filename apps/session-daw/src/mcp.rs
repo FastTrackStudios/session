@@ -276,6 +276,15 @@ impl Mixer {
         height: f64,
         layout: crate::layout::Layout,
         rack: &[crate::tone::Which],
+        // Whether the racks will be drawn LIVE over this recording.
+        //
+        // A rack with a spectrum in it moves, and the live pass draws
+        // the whole panel — over an identical one from the recording,
+        // which is then pure overdraw. Told in advance, the recording
+        // reserves the rack's HEIGHT and draws nothing in it, so the
+        // strip's layout is unchanged and the commands are paid for
+        // once.
+        live_racks: bool,
         settings: crate::settings::Settings,
         tone_settings: &crate::tone::Store,
     ) -> Self {
@@ -388,12 +397,16 @@ impl Mixer {
                     rack_h,
                     mixer_h: height,
                 },
-                ordinal,
                 rack,
                 // A track with no settings yet gets none drawn rather
                 // than someone else's — `Store::seed` runs before this,
                 // so the miss is a track that arrived between the two.
-                tone_settings.get(&track.guid),
+                // Nor does one whose rack the live pass will draw.
+                if live_racks {
+                    None
+                } else {
+                    tone_settings.get(&track.guid)
+                },
                 &ancestors,
                 &ancestor_names,
             );
@@ -743,7 +756,6 @@ fn strip(
     font: &Font,
     track: &Track,
     slot: Slot,
-    index: usize,
     rack: &[crate::tone::Which],
     tone: Option<&crate::tone::Tone>,
     ancestors: &[Color],

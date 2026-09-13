@@ -33,6 +33,7 @@ pub mod rename;
 pub mod row;
 pub mod ruler;
 pub mod settings;
+pub mod simulate;
 pub mod strip;
 pub mod tcp;
 pub mod text;

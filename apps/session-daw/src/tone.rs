@@ -435,7 +435,7 @@ pub fn record(
     panels: &[Which],
     panel: Panel,
 ) {
-    draw(scene, palette, font, tone, panels, panel, None);
+    draw(scene, palette, font, tone, &[], panels, panel, None);
 }
 
 /// The same, with one grip lit.
@@ -450,6 +450,11 @@ pub fn draw(
     palette: &Palette,
     font: &Font,
     tone: &Tone,
+    // `spectrum` is the analyser's bins, in dB. Empty when nothing is
+    // playing — which is a rack that can stay in the recording,
+    // because a spectrum is the one thing in it that moves with the
+    // audio.
+    spectrum: &[f32],
     panels: &[Which],
     panel: Panel,
     lit: Option<Grip>,
@@ -469,7 +474,7 @@ pub fn draw(
         let head = (body.y > inner.y).then(|| inner.split_top(HEAD).0);
         if body.width > 0.0 && body.height > 0.0 {
             match which {
-                Which::Eq => eq(scene, palette, font, tone, body, rack, lit),
+                Which::Eq => eq(scene, palette, font, tone, spectrum, body, rack, lit),
                 Which::Comp => comp(scene, palette, font, tone.comp, body, rack, lit),
                 Which::Sat => sat(scene, palette, &tone.sat, body, rack),
             }
@@ -618,9 +623,21 @@ fn ground(scene: &mut Scene, palette: &Palette, at: Panel) {
 ///
 /// The labels come off, because a strip panel is a hundred and thirty
 /// pixels wide and the editor's are authored for eight hundred.
-fn eq_from_plugin(scene: &mut Scene, tone: &Tone, at: Panel, rack: Rack) -> bool {
+fn eq_from_plugin(
+    scene: &mut Scene,
+    tone: &Tone,
+    spectrum: &[f32],
+    at: Panel,
+    rack: Rack,
+) -> bool {
     let state = eq_ui::eq_graph_model::EqGraphRenderState::new();
     state.bands.write().clone_from(&tone.eq);
+    // The analyser, behind the curves. The painter draws it when the
+    // state carries it and skips it when it does not, so a track with
+    // no signal gets the same graph it had before this existed.
+    if spectrum.len() >= 2 {
+        state.spectrum_db.write().extend_from_slice(spectrum);
+    }
     {
         let mut config = state.config.write();
         config.db_range = EQ_RANGE;
@@ -674,6 +691,7 @@ fn eq(
     palette: &Palette,
     font: &Font,
     tone: &Tone,
+    spectrum: &[f32],
     at: Panel,
     rack: Rack,
     lit: Option<Grip>,
@@ -736,7 +754,7 @@ fn eq(
     // authored for a graph eight hundred pixels wide and this one is a
     // hundred and thirty: at that size a labelled node with a shape
     // glyph is a smudge, where a dot is a position.
-    let painted = rack.detailed() && eq_from_plugin(scene, tone, at, rack);
+    let painted = rack.detailed() && eq_from_plugin(scene, tone, spectrum, at, rack);
     if !painted {
         // The fallback: the same response function the plugin's painter
         // uses, as one polyline. What the narrow tier gets, and what a
@@ -2438,6 +2456,64 @@ mod comp_tests {
     }
 }
 
+/// A track's analyser, and the rack drawn from it.
+///
+/// The spectrum is the one part of a rack that moves with the audio,
+/// and the plugin paints the whole graph in one call — so a moving
+/// spectrum makes the WHOLE rack live, which at sixty strips is four
+/// milliseconds a frame to redraw four curves that did not change.
+///
+/// The engine publishes at about 30 Hz and the window draws at 240, so
+/// seven frames in eight are redrawing the same picture. This keeps the
+/// picture: the rack is rebuilt when the spectrum is REPLACED, and
+/// replayed otherwise, which is the same trade the recorded scene makes
+/// one level up.
+#[derive(Clone, Debug, Default)]
+pub struct Analyser {
+    bins: Vec<f32>,
+    /// The rack as last built, and the box it was built for.
+    built: Option<(f64, f64, std::sync::Arc<Scene>)>,
+}
+
+impl Analyser {
+    /// Replace the bins, which invalidates the picture.
+    pub fn set(&mut self, bins: Vec<f32>) {
+        self.bins = bins;
+        self.built = None;
+    }
+
+    #[must_use]
+    pub fn bins(&self) -> &[f32] {
+        &self.bins
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.bins.is_empty()
+    }
+
+    /// The rack for this box, built once per spectrum.
+    ///
+    /// `build` is only called on a miss, so the caller may do the full
+    /// plugin paint inside it without thinking about how often.
+    pub fn rack(
+        &mut self,
+        width: f64,
+        height: f64,
+        build: impl FnOnce() -> Scene,
+    ) -> std::sync::Arc<Scene> {
+        if let Some((w, h, scene)) = &self.built
+            && (w - width).abs() < 0.5
+            && (h - height).abs() < 0.5
+        {
+            return std::sync::Arc::clone(scene);
+        }
+        let built = std::sync::Arc::new(build());
+        self.built = Some((width, height, std::sync::Arc::clone(&built)));
+        built
+    }
+}
+
 /// What the compressor's display is showing, over time.
 ///
 /// The threshold is a line across a level axis, which only means
@@ -2581,7 +2657,10 @@ pub fn levels(
     scene.fill(
         Fill::NonZero,
         at,
-        palette.meter_safe.multiply_alpha(0.45),
+        // Dim, because the threshold line is drawn over it and a solid
+        // fill makes the line the thing you cannot see — which is the
+        // one thing on this panel you reach for.
+        palette.meter_safe.multiply_alpha(0.28),
         None,
         path.as_ref(),
     );

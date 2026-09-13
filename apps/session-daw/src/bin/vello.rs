@@ -190,6 +190,9 @@ struct App {
     /// pointer move would be four milliseconds a frame to change one
     /// curve.
     rack_drag: Option<(usize, session_daw::tone::Grip)>,
+    /// Each track's analyser bins, keyed by GUID — what the EQ's
+    /// spectrum shows. A track with one has a rack that moves.
+    tone_spectra: std::collections::HashMap<String, session_daw::tone::Analyser>,
     /// Each track's recent input levels, keyed by GUID — what the
     /// compressor's display draws and what its threshold line is read
     /// against. Fed from the meter frames, which arrive at about 30 Hz.
@@ -208,6 +211,16 @@ struct App {
     theme: daw_ui::theming::Theme,
     /// Whether the Tone rack is on.
     tone: bool,
+    /// When the last level was recorded, so a simulation publishes at
+    /// the engine's rate rather than the window's.
+    last_level: Option<std::time::Instant>,
+    /// Whether a simulated signal is running through every channel.
+    ///
+    /// The meters, the EQ's spectrum and the compressor's waveform only
+    /// move when audio does, and a template session has none. This
+    /// drives them from `simulate::frame` so the panels that exist to
+    /// show a signal can be looked at while they are built.
+    simulate: bool,
     /// How far along the strips the mixer is scrolled. Its own axis:
     /// the arrangement's horizontal scroll is in seconds of timeline and
     /// the mixer's is in strips, and sharing one number would mean a
@@ -322,6 +335,27 @@ impl ApplicationHandler for App {
                 if event.logical_key == Key::Named(NamedKey::Home) {
                     session_daw::engine::transport(session_daw::engine::Move::Home, 0.0);
                     self.playhead.report(0.0, 1.0, std::time::Instant::now());
+                    self.redraw();
+                    return;
+                }
+                // `s` runs a simulated signal through every channel, so
+                // the meters and the rack's displays can be seen
+                // without a session that plays.
+                if event.logical_key.to_text() == Some("s") {
+                    self.simulate = !self.simulate;
+                    // The recording holds racks when nothing is live
+                    // and reserves their space when something is, so
+                    // flipping this changes what was recorded.
+                    self.mixer = None;
+                    if !self.simulate {
+                        self.tone_spectra.clear();
+                        self.tone_levels.clear();
+                        // The racks stop moving, so they go back into
+                        // the recording — which is where a still rack
+                        // belongs.
+                        self.mixer = None;
+                    }
+                    tracing::info!(ui.simulate = self.simulate, "simulation");
                     self.redraw();
                     return;
                 }
@@ -1195,6 +1229,9 @@ impl App {
                 } else {
                     &[]
                 },
+                // Every rack is drawn live while anything is feeding
+                // them a spectrum — see `mcp::Mixer::build`.
+                !self.tone_spectra.is_empty(),
                 self.settings,
                 &self.tone_settings,
             ));
@@ -1217,26 +1254,18 @@ impl App {
             self.preset,
             self.settings,
         );
-        let levels = self.meters.as_ref().map(session_daw::engine::Meters::levels);
-        let levels = levels.as_deref().unwrap_or(&[]);
+        let levels = self.meter_levels();
+        let levels = levels.as_slice();
         let rail_at = (self.hovered_rail, self.pressed_rail);
         let rename = self
             .rename
             .as_ref()
             .filter(|r| r.surface == session_daw::rename::Surface::Mixer);
         let panels = self.rack_panels();
-        // The rack to draw live: the one being dragged, or — when
-        // nothing is — the one under the pointer, so its grip can
-        // light up. Either way it is ONE strip's worth of curves over
-        // the recording it replaces.
-        let live_rack = self.rack_drag.or(self.hovered_grip).and_then(|(row, grip)| {
-            let tone = self
-                .mixer_map
-                .index(row)
-                .and_then(|i| self.tracks.get(i))
-                .and_then(|track| self.tone_settings.get(&track.guid))?;
-            Some((row, grip, tone))
-        });
+        // A rack is drawn live when it MOVES — when the pointer is on
+        // one of its grips, or when the track has a spectrum. Both are
+        // rare enough that the rest of the mixer stays replayed.
+        let lit = self.rack_drag.or(self.hovered_grip);
 
         // Split the borrow: `render` takes the renderer mutably and
         // everything drawn inside it is read.
@@ -1246,6 +1275,8 @@ impl App {
             tracks,
             mixer_map: map,
             tone_levels: history,
+            tone_spectra: spectra,
+            tone_settings: settings,
             pointer,
             palette,
             font,
@@ -1253,6 +1284,13 @@ impl App {
             ..
         } = self;
         let Some(mixer) = mixer.as_ref() else { return };
+        let mut racks = session_daw::overlay::Racks {
+            settings,
+            history,
+            spectra,
+            lit,
+            panels,
+        };
         let mut drawn = session_daw::profile::Counts::default();
         renderer.render(|painter| {
             painter.reset();
@@ -1281,27 +1319,11 @@ impl App {
                 map,
                 pointer,
                 levels,
-                history,
-                panels,
+                &mut racks,
                 scroll,
                 frame.content_width(),
                 at,
             );
-            // The rack being dragged, over its own recording. Every
-            // other strip's is still the recorded one.
-            if let Some((row, grip, tone)) = live_rack {
-                session_daw::overlay::rack(
-                    painter,
-                    palette,
-                    font,
-                    mixer,
-                    panels,
-                    tone,
-                    Some(grip),
-                    row,
-                    at,
-                );
-            }
             // An open rename, over the plate it replaces.
             if let Some(open) = rename {
                 if let Some((left, strip_w, strip_h)) = mixer.strip_box(open.row) {
@@ -1520,6 +1542,36 @@ impl App {
         if self.view != View::Mixer {
             return;
         }
+        // A simulation stands in for the engine, not beside it: it
+        // feeds the same `TrackLevels` and the same spectrum bins, so
+        // every path below this is the one a real signal takes. A
+        // simulation that took a shortcut would prove the shortcut.
+        if self.simulate {
+            let at = self.started.elapsed().as_secs_f64();
+            // At the rate the ENGINE publishes meter frames, not at
+            // the frame rate. The history is a fixed number of samples,
+            // so pushing per frame at 240 fps would hold a third of a
+            // second of it — less than one hit of a kick, and a
+            // waveform that showed a single decay stretched across the
+            // whole display.
+            const PUBLISH: std::time::Duration = std::time::Duration::from_millis(33);
+            if self.last_level.is_some_and(|last| last.elapsed() < PUBLISH) {
+                return;
+            }
+            self.last_level = Some(std::time::Instant::now());
+            for (index, track) in self.tracks.iter().enumerate() {
+                let signal = session_daw::simulate::frame(index, at);
+                self.tone_levels
+                    .entry(track.guid.clone())
+                    .or_default()
+                    .push(signal.peak);
+                self.tone_spectra
+                    .entry(track.guid.clone())
+                    .or_default()
+                    .set(signal.spectrum);
+            }
+            return;
+        }
         let Some(meters) = self.meters.as_ref() else {
             return;
         };
@@ -1536,6 +1588,36 @@ impl App {
                 .or_default()
                 .push(level.peak_left.max(level.peak_right));
         }
+    }
+
+    /// The meter levels to draw, simulated or real.
+    ///
+    /// The mixer's meters read a frame rather than a history, so they
+    /// take the simulation at this instant rather than the last thing
+    /// pushed — which keeps them exactly as live as the traces beside
+    /// them.
+    fn meter_levels(&self) -> Vec<daw_proto::TrackLevels> {
+        if self.simulate {
+            let at = self.started.elapsed().as_secs_f64();
+            return self
+                .tracks
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    let peak = session_daw::simulate::frame(index, at).peak;
+                    daw_proto::TrackLevels {
+                        peak_left: peak,
+                        peak_right: peak * 0.85,
+                        hold_left: peak,
+                        hold_right: peak,
+                    }
+                })
+                .collect();
+        }
+        self.meters
+            .as_ref()
+            .map(session_daw::engine::Meters::levels)
+            .unwrap_or_default()
     }
 
     /// Re-read the session, because the track LIST changed.
@@ -1987,6 +2069,7 @@ fn main() {
         hovered_grip: None,
         rack_drag: None,
         tone_levels: std::collections::HashMap::new(),
+        tone_spectra: std::collections::HashMap::new(),
         tone_settings: session_daw::tone::Store::default(),
         folders: daw_ui::components::folders::FolderState::default(),
         icons: session_daw::icons::Icons::new(),
@@ -1994,6 +2077,8 @@ fn main() {
         // On by default: the rack is what this panel is being built
         // for, and a flag you have to remember is a feature nobody sees.
         tone: std::env::var_os("FTS_VELLO_NO_TONE").is_none(),
+        last_level: None,
+        simulate: std::env::var_os("FTS_VELLO_SIMULATE").is_some(),
         frames: 0,
         last_report: std::time::Instant::now(),
         worst_frame: std::time::Duration::ZERO,
