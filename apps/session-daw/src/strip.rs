@@ -102,6 +102,17 @@ impl Strip {
         f64::from(self.own.stretch)
     }
 
+    /// Where the record arm's box starts.
+    ///
+    /// The anchor the whole column hangs from, because that is what
+    /// `rtconfig` chains it to. It was hung off `buttons_top` — the
+    /// line the FADER starts on, four pixels under the coloured band —
+    /// which is about eighteen pixels lower than the arm, so every
+    /// button sat that much below where REAPER draws it.
+    fn arm_top(&self) -> f64 {
+        self.band_bottom() + f64::from(g::ARM_OVERHANG) - f64::from(g::ARM_CELL_H)
+    }
+
     /// How far down the button column a control sits, from the arm.
     ///
     /// REAPER states this as a chain of offsets rather than a pitch,
@@ -246,8 +257,7 @@ impl Strip {
                 }),
             Control::RecArm => self.squeeze.columns().then(|| {
                 let x = self.columns.column_axis - f64::from(g::ARM_CELL_W) * 0.486;
-                let y = self.band_bottom() + f64::from(g::ARM_OVERHANG)
-                    - f64::from(g::ARM_CELL_H);
+                let y = self.arm_top();
                 Rect::new(
                     x,
                     y,
@@ -259,7 +269,7 @@ impl Strip {
                 if !self.squeeze.columns() && control == Control::Routing {
                     return None;
                 }
-                let y = self.buttons_top + self.column_step(control);
+                let y = self.arm_top() + self.column_step(control);
                 // The routing's traced cell is padded a pixel around a
                 // panel the width of a button, so its CELL goes a pixel
                 // left of the column for its PANEL to land on it. The

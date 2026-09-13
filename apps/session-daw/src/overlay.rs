@@ -124,16 +124,13 @@ pub fn control(
     let Some((left, width, height)) = mixer.strip_box(spot.row) else {
         return;
     };
-    let columns = crate::mcp::Columns::at(left, width);
-    let shape = daw_ui::controls::Collapse::at(crate::mcp::f64_to_f32(
-        (mixer.height - rack_h).max(1.0),
-    ));
-    let _ = height;
-    let band_bottom = f64::from(daw_theme_art::collapse::FX_SECTION)
-        + rack_h
-        + f64::from(shape.pan_band)
-        + f64::from(shape.input_band);
-    let buttons_top = mixer.buttons_top;
+    // The SAME layout the strip was drawn from. This used to work its
+    // own positions out of `Columns`, a `Collapse` and `buttons_top` —
+    // three recomputations of what `Strip` already resolves once, and
+    // the hover cell drifted away from the resting one every time the
+    // column moved.
+    let strip = crate::strip::Strip::new(width, height, mixer.height, rack_h, mixer.buttons_top);
+    let at = |control: Control| strip.rect(control).map(|r| (left + r.x0, r.y0));
 
     // Recorded in content space and replayed under the transform, so
     // the overlay records the same way and rides the same transform.
@@ -145,29 +142,31 @@ pub fn control(
             } else {
                 ("S", track.soloed, crate::tcp::solo_lit(palette))
             };
-            let row = if spot.control == Control::Mute { 0.0 } else { 1.0 };
-            crate::art::place(
-                &mut scene,
-                &art::gutter_button(&palette.chrome, label, on, lit, state),
-                font,
-                columns.column_x,
-                buttons_top + f64::from(g::RECMON_FROM_ARM)
-                    + row * (f64::from(g::BUTTON_H) + 1.0),
-            );
+            if let Some((x, y)) = at(spot.control) {
+                crate::art::place(
+                    &mut scene,
+                    &art::gutter_button(&palette.chrome, label, on, lit, state),
+                    font,
+                    x,
+                    y,
+                );
+            }
         }
         Control::Monitor => {
-            crate::art::place(
-                &mut scene,
-                &art::monitor(
-                    &palette.chrome,
-                    monitoring(track),
-                    crate::tcp::lit(palette).rec,
-                    state,
-                ),
-                font,
-                columns.column_x,
-                buttons_top + f64::from(g::RECMON_FROM_ARM) - f64::from(g::BUTTON_H) - 1.0,
-            );
+            if let Some((x, y)) = at(Control::Monitor) {
+                crate::art::place(
+                    &mut scene,
+                    &art::monitor(
+                        &palette.chrome,
+                        monitoring(track),
+                        crate::tcp::lit(palette).rec,
+                        state,
+                    ),
+                    font,
+                    x,
+                    y,
+                );
+            }
         }
         Control::RecArm => {
             crate::art::place(
@@ -181,8 +180,8 @@ pub fn control(
                     crate::tcp::to_theme(palette.tcp_tint),
                 ),
                 font,
-                columns.column_axis - f64::from(g::ARM_CELL_W) * 0.486,
-                band_bottom + f64::from(g::ARM_OVERHANG) - f64::from(g::ARM_CELL_H),
+                at(Control::RecArm).map_or(left, |(x, _)| x),
+                at(Control::RecArm).map_or(0.0, |(_, y)| y),
             );
         }
         Control::Pan => {
@@ -195,8 +194,8 @@ pub fn control(
                     state,
                 ),
                 font,
-                left + (width - f64::from(g::PAN_KNOB_W)) / 2.0,
-                f64::from(daw_theme_art::collapse::FX_SECTION) + rack_h + 2.0,
+                at(Control::Pan).map_or(left, |(x, _)| x),
+                at(Control::Pan).map_or(0.0, |(_, y)| y),
             );
         }
         Control::Fx => {
