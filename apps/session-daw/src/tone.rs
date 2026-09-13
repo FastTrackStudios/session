@@ -840,13 +840,7 @@ fn comp(
     // There is more height here than a level display needs, and a
     // display over a row of controls is what a compressor looks like
     // everywhere.
-    let (at, knobs) = if rack.detailed() {
-        let plot = (at.height - KNOB_BAND).max(at.height * 0.45);
-        let (plot, knobs) = at.split_top(plot);
-        (plot, Some(knobs))
-    } else {
-        (at, None)
-    };
+    let (at, knobs) = comp_split(at, rack);
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     // The comp editor's own axis: 0 dB at the top, −60 at the floor.
@@ -1298,6 +1292,25 @@ pub fn grip_at(
     None
 }
 
+/// The compressor's display and its knob band.
+///
+/// Three places need this split and they have to agree: the drawing
+/// puts the threshold line on the display, the hit test decides whether
+/// a point is on the line or on a knob, and the drag converts pixels to
+/// decibels against the display's own height. Computed once, for the
+/// same reason `layout` and `body_of` are — a threshold that moved
+/// faster than the line under it is a line that is not under your
+/// finger.
+#[must_use]
+pub fn comp_split(body: Panel, rack: Rack) -> (Panel, Option<Panel>) {
+    if !rack.detailed() {
+        return (body, None);
+    }
+    let (display, knobs) =
+        body.split_top((body.height - KNOB_BAND).max(body.height * 0.45));
+    (display, Some(knobs))
+}
+
 /// What is under a point in the compressor's panel.
 ///
 /// Its knob band first, because the knobs are small and sit inside the
@@ -1306,10 +1319,9 @@ pub fn grip_at(
 /// is not something you aim at — the whole display is its target, the
 /// way a fader's groove is a fader's.
 fn comp_grip(body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
-    if !rack.detailed() {
+    let Some(knobs) = comp_split(body, rack).1 else {
         return Grip::Threshold;
-    }
-    let (_, knobs) = body.split_top((body.height - KNOB_BAND).max(body.height * 0.45));
+    };
     if y >= knobs.y {
         // Which third of the band, which is how they are laid out —
         // the cluster is centred but its order is left to right.
@@ -1547,10 +1559,12 @@ pub fn drag(
             }
         }
         Grip::Threshold => {
-            // Up is a HIGHER threshold, which is less compression —
-            // the same direction a fader moves for more level, and the
-            // opposite of following the dot down its curve.
-            let per_db = body.height / 60.0;
+            // Against the DISPLAY's height, not the panel's: the line
+            // is drawn on the display, and a threshold that moved
+            // against a taller box would run ahead of the line the
+            // pointer is holding.
+            let display = comp_split(body, rack).0;
+            let per_db = display.height / 60.0;
             let dy = dy * interaction::fine_scale(mods);
             let moved = f64::from(tone.comp.threshold) - dy / per_db.max(f64::EPSILON);
             tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
@@ -2311,9 +2325,9 @@ mod comp_tests {
     fn the_band_grabs_its_three_knobs() {
         let tone = placeholder(0);
         let body = comp_panel();
-        let knobs = body
-            .split_top((body.height - super::KNOB_BAND).max(body.height * 0.45))
-            .1;
+        let knobs = super::comp_split(body, Rack::at(rack().width))
+            .1
+            .expect("a knob band");
         let y = knobs.y + knobs.height / 2.0;
         let third = knobs.width / 3.0;
         for (i, want) in [Grip::Ratio, Grip::Attack, Grip::Release].into_iter().enumerate() {
@@ -2382,6 +2396,30 @@ mod comp_tests {
         assert!((tone.comp.ratio - 20.0).abs() < 0.01, "{}", tone.comp.ratio);
         assert!((tone.comp.attack - 200.0).abs() < 0.5, "{}", tone.comp.attack);
         assert!((tone.comp.release - 3_000.0).abs() < 5.0, "{}", tone.comp.release);
+    }
+
+    /// The line lands where the pointer put it. One split decides
+    /// where the display is, so the pixel the line is drawn at and the
+    /// decibel the drag produces cannot disagree — a threshold running
+    /// ahead of the line you are holding is the bug this rules out.
+    #[test]
+    fn the_threshold_tracks_the_pointer() {
+        let mut tone = placeholder(0);
+        let body = comp_panel();
+        let rack_tier = Rack::at(rack().width);
+        let display = super::comp_split(body, rack_tier).0;
+        let at_db = |comp: Comp| {
+            display.y + comp_ui::comp_graph_svg::db_to_y(f64::from(comp.threshold), display.height)
+        };
+        let before = at_db(tone.comp);
+        let moved = 24.0;
+        drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, moved);
+        let after = at_db(tone.comp);
+        assert!(
+            (after - before - moved).abs() < 0.5,
+            "the line moved {} for a drag of {moved}",
+            after - before
+        );
     }
 
     /// And each resets to its own default.
@@ -2529,11 +2567,7 @@ pub fn levels(
     let body = body_of(at, rack);
     // The display is the part above the knobs — the same split `comp`
     // makes, so the trace lands on the axis the threshold is on.
-    let body = if rack.detailed() {
-        body.split_top((body.height - KNOB_BAND).max(body.height * 0.45)).0
-    } else {
-        body
-    };
+    let body = comp_split(body, rack).0;
     if body.width < 2.0 || body.height < 2.0 {
         return;
     }
