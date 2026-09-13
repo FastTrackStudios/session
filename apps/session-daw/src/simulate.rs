@@ -102,6 +102,25 @@ impl Voice {
         }
     }
 
+    /// Where this voice RINGS: two narrow peaks that are always there —
+    /// a drum shell's mode, a body resonance, a room's — in Hz. What a
+    /// resonance suppressor exists to find, and what the simulation
+    /// had none of, so its panel could not show a thing.
+    const fn rings(self) -> [f64; 2] {
+        match self {
+            Self::Low => [240.0, 3_100.0],
+            Self::Mid => [900.0, 2_400.0],
+            Self::High => [1_200.0, 7_500.0],
+            Self::Broad => [420.0, 5_000.0],
+        }
+    }
+
+    /// Whether this voice has sibilance: a burst of energy at 5–9 kHz
+    /// on each hit, which is what a de-esser fires on.
+    const fn sibilant(self) -> bool {
+        matches!(self, Self::Mid | Self::High)
+    }
+
     /// And how fast it decays, as a share of its own period.
     const fn decay(self) -> f64 {
         match self {
@@ -164,6 +183,14 @@ fn spectrum(voice: Voice, envelope: f64, seconds: f64) -> Vec<f32> {
     spectrum_with(voice, envelope, Some(seconds))
 }
 
+/// How wide a ring is, in octaves — a quarter, which is two of the
+/// analyser's bins: narrow enough to stand proud of a third-octave
+/// average the way a real mode does, wide enough to land on a bin.
+const RING_OCTAVES: f64 = 0.25;
+
+/// How far above its neighbourhood a ring stands, in dB.
+const RING_DB: f64 = 14.0;
+
 /// The spectrum, with or without the moment's shimmer.
 ///
 /// `None` is the spectrum's own long-term average: the shimmer is a
@@ -188,6 +215,27 @@ fn spectrum_with(voice: Voice, envelope: f64, shimmer_at: Option<f64>) -> Vec<f3
             // The voice's resonance, as a bell in log-frequency.
             let away = (log_f - centre) / width;
             let bump = 18.0 * (-away * away).exp();
+            // Its rings: narrow, fixed, always there.
+            let rings: f64 = voice
+                .rings()
+                .iter()
+                .map(|hz| {
+                    let off = (log_f - hz.log10()) / (RING_OCTAVES * 0.301);
+                    RING_DB * (-off * off).exp()
+                })
+                .sum();
+            // Sibilance: a burst on the hit, in the de-esser's band,
+            // that fades over the first fifth of the envelope. An
+            // event, so it is part of the moment and not of the
+            // long-term spectrum.
+            let hiss = shimmer_at.map_or(0.0, |_| {
+                if !voice.sibilant() {
+                    return 0.0;
+                }
+                let off = (log_f - 7_000.0_f64.log10()) / (0.25 * 0.301);
+                let burst = ((envelope - 0.25) / 0.45).clamp(0.0, 1.0);
+                12.0 * burst * (-off * off).exp()
+            });
             // And a shimmer that moves, different per bin, so the
             // spectrum is never two frames the same.
             let shimmer = shimmer_at.map_or(0.0, |seconds| {
@@ -199,7 +247,7 @@ fn spectrum_with(voice: Voice, envelope: f64, shimmer_at: Option<f64>) -> Vec<f3
             // floor, which reads as one spike on a flat line rather
             // than as the shape of a sound.
             let loud = 24.0 * envelope.max(1e-3).log10() / 3.0;
-            let level = tilt + bump + shimmer + loud;
+            let level = tilt + bump + rings + hiss + shimmer + loud;
             crate::mcp::f64_to_f32(level.clamp(-40.0, 16.0))
         })
         .collect()
@@ -350,12 +398,31 @@ pub fn suppression(spectrum: &[f32], set: crate::tone::Suppress) -> Vec<f32> {
         let last = prefix.last().copied().unwrap_or(0.0);
         prefix.push(last + f64::from(*db));
     }
+    // The neighbourhood WITHOUT the bin and its two neighbours: a peak
+    // compared against an average that includes it is a peak compared
+    // against half of itself, and a fourteen-decibel ring came out two
+    // decibels proud. What surrounds a resonance is what it is judged
+    // against.
+    let window = |from: usize, to: usize| {
+        prefix.get(to.saturating_add(1)).copied().unwrap_or(0.0)
+            - prefix.get(from).copied().unwrap_or(0.0)
+    };
+    let last = spectrum.len().saturating_sub(1);
     let average_at = |i: usize| {
         let from = i.saturating_sub(half);
-        let to = i.saturating_add(half).min(spectrum.len().saturating_sub(1));
-        let sum = prefix.get(to.saturating_add(1)).copied().unwrap_or(0.0)
-            - prefix.get(from).copied().unwrap_or(0.0);
-        sum / crate::num::coord(to.saturating_sub(from).saturating_add(1))
+        let to = i.saturating_add(half).min(last);
+        let inner_from = i.saturating_sub(1);
+        let inner_to = i.saturating_add(1).min(last);
+        let sum = window(from, to) - window(inner_from, inner_to);
+        let count = to
+            .saturating_sub(from)
+            .saturating_add(1)
+            .saturating_sub(inner_to.saturating_sub(inner_from).saturating_add(1));
+        if count == 0 {
+            f64::from(spectrum.get(i).copied().unwrap_or(0.0))
+        } else {
+            sum / crate::num::coord(count)
+        }
     };
     // The cut, as prefix sums too — so the skirt below is two reads per
     // bin and the whole thing is three allocations. It runs for every
@@ -387,7 +454,11 @@ pub fn suppression(spectrum: &[f32], set: crate::tone::Suppress) -> Vec<f32> {
 }
 
 /// How many bins either side a simulated cut is smoothed over.
-const SMOOTH: usize = 2;
+///
+/// One: a filter's skirt, not a blur. Two averaged a one-bin notch
+/// down to a fifth of itself, and the teeth it should have grown never
+/// cleared the half-decibel that earns one.
+const SMOOTH: usize = 1;
 
 #[cfg(test)]
 mod tests {

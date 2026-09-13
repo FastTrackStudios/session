@@ -2215,7 +2215,7 @@ pub const LANE: f64 = 9.0;
 /// How tall the comb under a resonance suppressor is.
 ///
 /// The teeth hang below the spectrum's floor by their settled depth;
-/// this is the depth a twelve-decibel notch reaches.
+/// this is the depth a six-decibel notch reaches.
 pub const TEETH: f64 = 20.0;
 
 /// The part of a body a unit's main display occupies.
@@ -2326,15 +2326,20 @@ fn suppress(
     // the line you drag.
     let octaves = f64::from(set.sharpness).mul_add(-0.9, 1.2);
     let span = (octaves / 2.0).exp2();
+    // The neighbourhood without the bin itself — the shoulders either
+    // side of the centre third — so a peak is judged against what
+    // surrounds it and not against half of itself. The same rule the
+    // reduction is computed by.
     let average_at = |hz: f64| {
-        const STEPS: usize = 9;
-        (0..=STEPS)
+        const STEPS: usize = 11;
+        let (sum, count) = (0..=STEPS)
+            .filter(|k| !(4..=6).contains(k))
             .map(|k| {
                 let t = crate::num::coord(k) / crate::num::coord(STEPS);
                 level_at(hz / span * (span * span).powf(t))
             })
-            .sum::<f64>()
-            / crate::num::coord(STEPS.saturating_add(1))
+            .fold((0.0_f64, 0.0_f64), |(sum, n), v| (sum + v, n + 1.0));
+        sum / count.max(1.0)
     };
 
     // One sample per bin, no finer. The analyser has ninety-six of them
@@ -2448,7 +2453,11 @@ fn comb(scene: &mut Scene, palette: &Palette, settled: &[f32], zoom: SuppressZoo
     let tint = phase_tint(session::mix_phases::MixPhase::Polish);
     for tooth in teeth(settled, &zoom) {
         let x = tooth.place.mul_add(at.width, at.x);
-        let depth = (f64::from(tooth.depth_db) / 12.0).clamp(0.0, 1.0) * (at.height - 2.0);
+        // Six decibels is the whole comb: a suppressor that has found a
+        // six-decibel resonance has found what it exists for, and the
+        // decibel it usually takes off a room mode still has to read as
+        // a tooth rather than a smudge — hence the floor.
+        let depth = ((f64::from(tooth.depth_db) / 6.0).clamp(0.0, 1.0) * (at.height - 2.0)).max(3.0);
         let half = f64::from(tooth.depth_db).min(6.0).mul_add(0.4, 2.0);
         let mut tri = BezPath::new();
         tri.move_to((x - half, at.y));
@@ -2687,7 +2696,7 @@ fn echo(
                 .clamp(0.0, 1.0)
         };
         let base = if dry { 1.0 } else { 0.35 + mix * 0.65 };
-        let alpha = crate::mcp::f64_to_f32((base * glow.mul_add(0.4, 0.6)).clamp(0.0, 1.0));
+        let alpha = crate::mcp::f64_to_f32((base * glow.mul_add(0.3, 0.7)).clamp(0.0, 1.0));
         let ink = if dry { palette.text.multiply_alpha(alpha) } else { wet.multiply_alpha(alpha) };
         let held = (dry && time_held) || (!dry && feedback_held) || (k == 1 && time_held);
         let width = if dry || held { 2.0 } else { 1.4 };
