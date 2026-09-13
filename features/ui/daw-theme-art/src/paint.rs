@@ -406,9 +406,38 @@ pub mod tcp {
     /// most of what makes the cap read as an object at all.
     #[must_use]
     pub fn fader_cap(chrome: &Chrome, grip: Color) -> Drawing {
+        fader_cap_through(chrome, grip, 0.0)
+    }
+
+    /// The same cap, made glass so what is behind it reads through.
+    ///
+    /// `through` is how transparent the FACE is, 0 for the solid cap
+    /// above and 1 for a cap that is only its frame. It exists because
+    /// the fader's groove became the meter: a solid cap parked over a
+    /// meter is a hole in the level exactly where the signal is loudest,
+    /// which is the reading you most need.
+    ///
+    /// The frame, the bevel and the grip stay near enough opaque. They
+    /// are what make the cap an OBJECT rather than a tint — a cap that
+    /// faded out evenly stopped looking like something you could take
+    /// hold of, which is the one thing it has to look like.
+    #[must_use]
+    pub fn fader_cap_through(chrome: &Chrome, grip: Color, through: f64) -> Drawing {
         let (vw, vh) = (27.0, 53.0);
         let body = chrome.hardware;
         let edge = chrome.hardware_edge.shade(-0.35);
+        // How much of each layer survives. The face clears the most,
+        // the recess and grip rather less, the frame hardly at all.
+        let clear = through.clamp(0.0, 1.0);
+        let glass = |color: Color, share: f64| {
+            let kept = 1.0 - clear * share;
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a fraction of 255, clamped to it"
+            )]
+            color.with_alpha((f64::from(color.a) * kept).clamp(0.0, 255.0) as u8)
+        };
 
         // Fractions of the cell, all measured. x2..x22 INCLUSIVE — the
         // border pixel at x22 is part of the cap — so the right edge is
@@ -426,16 +455,16 @@ pub mod tcp {
         );
         // The border, drawn as a fill beneath the face so the face
         // cannot bleed past the frame.
-        drawing.fill(rect(x0, top, x1 - x0, bot - top, vw * 0.16), edge);
+        drawing.fill(rect(x0, top, x1 - x0, bot - top, vw * 0.16), glass(edge, 0.25));
         drawing.fill(
             rect(x0 + 1.0, top + 1.0, x1 - x0 - 2.0, bot - top - 2.0, vw * 0.13),
             Brush::Linear {
                 from: (0.0, top),
                 to: (0.0, bot),
                 stops: vec![
-                    (0.0, body.shade(0.06)),
-                    (0.65, body.shade(-0.02)),
-                    (1.0, body.shade(-0.32)),
+                    (0.0, glass(body.shade(0.06), 0.86)),
+                    (0.65, glass(body.shade(-0.02), 0.86)),
+                    (1.0, glass(body.shade(-0.32), 0.86)),
                 ],
             },
         );
@@ -453,14 +482,17 @@ pub mod tcp {
         // into the moulding.
         drawing.fill(
             rect(gx0 - 1.0, gy0 - 1.0, gw + 2.0, gy1 - gy0 + 2.0, vw * 0.09),
-            body.shade(-0.43),
+            glass(body.shade(-0.43), 0.7),
         );
         drawing.fill(
             rect(gx0, gy0, gw, gy1 - gy0, vw * 0.055),
             Brush::Linear {
                 from: (0.0, gy0),
                 to: (0.0, gy1),
-                stops: vec![(0.0, grip.shade(-0.03)), (1.0, grip.shade(0.34))],
+                stops: vec![
+                    (0.0, glass(grip.shade(-0.03), 0.45)),
+                    (1.0, glass(grip.shade(0.34), 0.45)),
+                ],
             },
         );
         // Five notches, the seam, five more.
@@ -486,37 +518,176 @@ pub mod tcp {
         drawing
     }
 
-    /// The mixer's fader: a groove and a ribbed cap.
+    /// The mixer's fader groove, as the METER.
     ///
-    /// Authored at the size it is asked for rather than at a fixed one,
-    /// because a fader's whole job is travel and the travel is whatever
-    /// height the strip has left after its fixed bands. Everything else
-    /// in this module has a measured size; this one has a measured
-    /// SHAPE — the groove is 35% of the width, the cap is a third of it
-    /// again, and the ribs are what make a cap read as grippable.
+    /// The groove used to be lit to the fader's own value, which was
+    /// the one thing on the strip you could already read from the cap
+    /// sitting on top of it. So it carries the signal instead: this is
+    /// the meter, and there is no separate one. A strip too narrow for
+    /// a fader beside a meter — which is most of them — gets both,
+    /// because they are the same column.
+    ///
+    /// Wider than the old 35% groove, because a meter is read at a
+    /// glance and a seven-pixel one is a line. Still narrower than the
+    /// cap, so the cap reads as riding ON it rather than as part of it.
+    ///
+    /// Two channels, split down the middle by a hairline. A summed
+    /// meter cannot tell you that a stereo source has collapsed to one
+    /// side, or that one leg of a pair is dead — which are two of the
+    /// things you look at a meter to catch.
     #[must_use]
-    pub fn fader(chrome: &Chrome, lit: Color, value: f64, w: f64, h: f64) -> Drawing {
-        let value = value.clamp(0.0, 1.0);
-        let groove = (w * 0.35).max(3.0);
+    pub fn fader_track(
+        chrome: &Chrome,
+        level: (f64, f64),
+        zones: [Color; 3],
+        w: f64,
+        h: f64,
+    ) -> Drawing {
+        let groove = groove_w(w);
         let groove_x = (w - groove) / 2.0;
-        let (cap_y, cap_h) = fader_cap_at(value, w, h);
-
         let mut drawing = Drawing::new(w, h);
         drawing.fill(
             rect(groove_x, 0.5, groove, (h - 1.0).max(0.0), groove / 2.0),
             chrome.surface_sunken,
         );
-        // The travelled part, so the level is readable without finding
-        // the cap — the same thing the ring does on a knob.
-        let lit_top = cap_y + cap_h / 2.0;
-        if h - lit_top > 1.0 {
+        let span = (h - 1.0).max(0.0);
+        for (at, wide, value) in channels(groove_x, groove, level) {
+            let lit = span * value.clamp(0.0, 1.0);
+            if lit > 0.5 {
+                // Square, not rounded: the top of the bar IS the
+                // reading, and a domed end puts its own apex a pixel or
+                // two above the level it is reporting.
+                drawing.fill(rect(at, h - 0.5 - lit, wide, lit, 0.0), level_brush(zones, h));
+            }
+        }
+        // The seam, drawn over both so it survives a full-scale signal.
+        // Subtle on purpose: it says "two channels", and a meter whose
+        // loudest feature is its own divider is a divider with a meter
+        // round it.
+        drawing.fill(
+            rect(divider_x(groove_x, groove), 0.5, SEAM, span, 0.0),
+            chrome.surface_sunken.with_alpha(190),
+        );
+        drawing
+    }
+
+    /// The two channel columns inside a groove: where each starts, how
+    /// wide it is, and what it reads.
+    ///
+    /// One function because the meter, the part of it seen through the
+    /// cap and anything else measuring against a channel have to agree
+    /// about where the seam falls.
+    fn channels(groove_x: f64, groove: f64, level: (f64, f64)) -> [(f64, f64, f64); 2] {
+        let each = ((groove - SEAM) / 2.0).max(1.0);
+        [
+            (groove_x, each, level.0),
+            (divider_x(groove_x, groove) + SEAM, each, level.1),
+        ]
+    }
+
+    fn divider_x(groove_x: f64, groove: f64) -> f64 {
+        groove_x + ((groove - SEAM) / 2.0).max(1.0)
+    }
+
+    /// How wide the line between the two channels is.
+    const SEAM: f64 = 1.0;
+
+    /// The lit level where it passes BEHIND the cap, drawn over it.
+    ///
+    /// The cap is glass, but glass over a dark moulding is still a
+    /// smudge: the level went in at the bottom of the cap and came out
+    /// at the top with a muddy gap between, which is a gap at exactly
+    /// the height you are reading. This is that segment, drawn again on
+    /// top at an alpha that reads as "through something" — so the level
+    /// is one continuous column and the cap is a frame over it.
+    ///
+    /// Only the overlap, so the rest of the meter is not lit twice.
+    #[must_use]
+    pub fn fader_through(
+        level: (f64, f64),
+        zones: [Color; 3],
+        w: f64,
+        h: f64,
+        cap_y: f64,
+        cap_h: f64,
+    ) -> Drawing {
+        let groove = groove_w(w);
+        let groove_x = (w - groove) / 2.0;
+        let mut drawing = Drawing::new(w, h);
+        // The cap's own face, inset from its frame — the level shows
+        // through the window, not through the moulding.
+        let inset = cap_h * 6.0 / 53.0;
+        let (from, to) = (cap_y + inset, (cap_y + cap_h - inset).min(h - 0.5));
+        let span = (h - 1.0).max(0.0);
+        let seen = |color: Color| color.with_alpha(THROUGH_CAP);
+        for (at, wide, value) in channels(groove_x, groove, level) {
+            let lit_top = span.mul_add(-value.clamp(0.0, 1.0), h - 0.5);
+            let top = lit_top.max(from);
+            if to - top < 0.5 {
+                continue;
+            }
             drawing.fill(
-                rect(groove_x, lit_top, groove, h - lit_top - 0.5, groove / 2.0),
-                lit,
+                rect(at, top, wide, to - top, 0.0),
+                Brush::Linear {
+                    from: (0.0, h),
+                    to: (0.0, 0.0),
+                    stops: vec![
+                        (0.0, seen(zones[0])),
+                        (0.75, seen(zones[1])),
+                        (1.0, seen(zones[2])),
+                    ],
+                },
             );
         }
-
         drawing
+    }
+
+    /// How much of the level survives the cap.
+    ///
+    /// Enough to be one column with the rest of the meter, little
+    /// enough that the cap still reads as in front of it.
+    const THROUGH_CAP: u8 = 130;
+
+    /// How wide the meter is in a fader column of width `w`.
+    ///
+    /// Thin, and well inside the cap. It was briefly wider than the cap
+    /// so each channel would show down one side of it; that read as two
+    /// fat bars with a handle lost in the middle, and the thing it was
+    /// protecting — the level under the cap — is better served by the
+    /// glass, which shows the whole column rather than its edges.
+    ///
+    /// Stated once, because the drawing, the part seen through the cap
+    /// and anything else measuring against a channel have to agree.
+    #[must_use]
+    pub fn groove_w(w: f64) -> f64 {
+        (w * 0.30).max(4.0)
+    }
+
+    /// And how wide the CAP is in the same column.
+    ///
+    /// Narrower than the meter by a few pixels each side. The cap keeps
+    /// its authored 27:53 proportions — it is a moulded object and a
+    /// stretched one stops looking like one — so this sets its height
+    /// too, through [`fader_cap_at`].
+    #[must_use]
+    pub fn cap_w(w: f64) -> f64 {
+        (w * 0.72).max(8.0)
+    }
+
+    /// The gradient a level is lit with: safe at the floor, danger at
+    /// the ceiling.
+    ///
+    /// A gradient rather than three thresholds, because a meter that
+    /// changed colour in steps reads as three states instead of as a
+    /// level. Shared so the fader's groove and any other meter cannot
+    /// disagree about where warn begins.
+    fn level_brush(zones: [Color; 3], h: f64) -> Brush {
+        Brush::Linear {
+            // Bottom to top: the safe end is the floor.
+            from: (0.0, h),
+            to: (0.0, 0.0),
+            stops: vec![(0.0, zones[0]), (0.75, zones[1]), (1.0, zones[2])],
+        }
     }
 
     /// The top of the fader's travel, in dB.
@@ -589,22 +760,75 @@ pub mod tcp {
     /// see that one track is louder than another and not by how much,
     /// which is most of what a mixer is for.
     #[must_use]
-    pub fn fader_scale(w: f64, h: f64, ink: Color, size: f32) -> Drawing {
+     /// The dB scale beside the fader, as a connected inscription.
+    ///
+    /// Each number gets a tick running from it to the meter's edge, so
+    /// the two read as one instrument rather than as a column of
+    /// figures that happens to sit near a column of light. A ruler's
+    /// numbers are attached to its ticks; these were floating.
+    ///
+    /// And they LIGHT: a mark the signal has passed is drawn in the
+    /// meter's own ink instead of the scale's. That turns reading a
+    /// level from "measure the top of the bar against the numbers" into
+    /// "read the last number that is lit", which is the thing the eye
+    /// can actually do at a glance across forty strips.
+    ///
+    /// `level` is the louder channel, because the question a lit number
+    /// answers is "has anything reached this", not "have both".
+    #[must_use]
+    pub fn fader_scale(
+        w: f64,
+        h: f64,
+        ink: Color,
+        zones: [Color; 3],
+        size: f32,
+        level: f64,
+    ) -> Drawing {
         let mut drawing = Drawing::new(w, h);
         for db in FADER_MARKS {
-            let y = h * (1.0 - fader_norm(db));
+            let at = fader_norm(db);
+            let y = h * (1.0 - at);
+            let passed = level >= at;
+            // Lit in the colour the METER is at that height, not one
+            // flat highlight: a lit −6 and a lit −42 are very different
+            // news, and a scale that reported them the same colour
+            // would be throwing away the thing the gradient exists to
+            // say.
+            let colour = if passed { zone_at(zones, at) } else { ink };
+            // The tick, from the number's edge to the meter. Short and
+            // dim: it is the join, not a mark to read against.
+            drawing.fill(
+                rect(w - TICK, y - 0.5, TICK, 1.0, 0.0),
+                colour.with_alpha(if passed { 200 } else { 90 }),
+            );
             // Baseline rather than centre: text sits ON the mark, the
             // way a ruler's numbers sit on its ticks.
             drawing.text(
-                format!("-{:.0}-", db.abs()),
-                w / 2.0,
+                format!("{:.0}", db.abs()),
+                (w - TICK - 2.0) / 2.0,
                 y + f64::from(size) / 3.0,
                 size,
-                ink,
+                colour,
                 Align::Centre,
             );
         }
         drawing
+    }
+
+    /// How far the tick reaches from the numbers towards the meter.
+    const TICK: f64 = 5.0;
+
+    /// The meter's colour at a height, on the same stops the gradient
+    /// uses — so a lit mark is the colour the bar is where it passes.
+    #[must_use]
+    fn zone_at(zones: [Color; 3], at: f64) -> Color {
+        let at = at.clamp(0.0, 1.0);
+        #[expect(clippy::cast_possible_truncation, reason = "a 0..1 fraction")]
+        if at <= 0.75 {
+            zones[0].mix(zones[1], (at / 0.75) as f32)
+        } else {
+            zones[1].mix(zones[2], ((at - 0.75) / 0.25) as f32)
+        }
     }
 
     /// Where the cap sits on a fader of this size.
@@ -619,7 +843,7 @@ pub mod tcp {
     /// the travel.
     #[must_use]
     pub fn fader_cap_at(value: f64, w: f64, h: f64) -> (f64, f64) {
-        let cap_h = (w * 53.0 / 27.0).min(h * 0.5);
+        let cap_h = (cap_w(w) * 53.0 / 27.0).min(h * 0.5);
         let travel = (h - cap_h).max(0.0);
         (travel * (1.0 - value.clamp(0.0, 1.0)), cap_h.max(1.0))
     }
@@ -637,19 +861,7 @@ pub mod tcp {
         drawing.fill(rect(0.0, 0.0, w, h, 1.0), chrome.surface_sunken);
         let lit = h * level;
         if lit > 0.5 {
-            drawing.fill(
-                rect(0.0, h - lit, w, lit, 1.0),
-                Brush::Linear {
-                    // Bottom to top: the safe end is the floor.
-                    from: (0.0, h),
-                    to: (0.0, 0.0),
-                    stops: vec![
-                        (0.0, zones[0]),
-                        (0.75, zones[1]),
-                        (1.0, zones[2]),
-                    ],
-                },
-            );
+            drawing.fill(rect(0.0, h - lit, w, lit, 1.0), level_brush(zones, h));
         }
         drawing
     }
@@ -1406,6 +1618,35 @@ mod fader_scale_tests {
             let norm = fader_norm(db);
             assert!(norm > 0.0 && norm < 1.0, "{db} dB sits at {norm}");
         }
-        assert_eq!(fader_scale(20.0, 124.0, super::hex("#FF4000"), 8.0).ops.len(), FADER_MARKS.len());
+        // A tick and a number for each mark.
+        let ink = super::hex("#FF4000");
+        let zones = [super::hex("#40FF80"), super::hex("#FFD040"), super::hex("#FF4040")];
+        let scale = fader_scale(20.0, 124.0, ink, zones, 8.0, 0.0);
+        assert_eq!(scale.ops.len(), FADER_MARKS.len() * 2);
+    }
+
+    /// A mark the signal has passed is drawn in the meter's ink, so the
+    /// level can be read as "the last number that is lit" rather than
+    /// by measuring the bar against the numbers.
+    #[test]
+    fn the_marks_light_as_the_level_passes_them() {
+        let ink = super::hex("#FF4000");
+        let zones = [super::hex("#40FF80"), super::hex("#FFD040"), super::hex("#FF4040")];
+        let count = |level: f64| {
+            fader_scale(20.0, 124.0, ink, zones, 8.0, level)
+                .ops
+                .iter()
+                .filter(|op| matches!(op, crate::paint::Op::Text { color, .. } if *color != ink))
+                .count()
+        };
+        assert_eq!(count(0.0), 0, "silence lit a mark");
+        assert_eq!(count(1.0), FADER_MARKS.len(), "full scale left one dark");
+        // And it climbs: more signal is never fewer lit marks.
+        let mut last = 0;
+        for step in 0..=10 {
+            let now = count(f64::from(step) / 10.0);
+            assert!(now >= last, "the scale unlit itself at {step}");
+            last = now;
+        }
     }
 }

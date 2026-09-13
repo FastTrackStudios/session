@@ -1020,8 +1020,6 @@ fn tinted_band(
 pub struct Columns {
     pub scale_x: f64,
     pub scale_w: f64,
-    pub meter_x: f64,
-    pub meter_w: f64,
     pub fader_x: f64,
     pub fader_w: f64,
     /// The left edge of the button column.
@@ -1031,13 +1029,18 @@ pub struct Columns {
 }
 
 /// The fader's own width. Fixed: a fader is a fader, and a wider strip
-/// wants a longer scale and a bigger meter, not a fatter handle.
-const FADER_W: f64 = 22.0;
-
-/// The widest the meter grows to — the track panel's own measured
-/// meter, so the two views agree once there is room for both.
-const METER_MAX: f64 = 26.0;
-const _: () = assert!(g::METER_W == 26, "METER_MAX must track the measured meter");
+/// wants a longer scale, not a fatter handle.
+///
+/// Wider than the 22 it was, because the column is the METER now — the
+/// groove is lit by the signal, the cap rides over it as glass, and the
+/// meter is wider than the cap so each channel shows down its own side
+/// of it. The cap itself is still 22 (`paint::cap_w`); what grew is the
+/// scale it is read against, not the handle.
+///
+/// There is no second column to size against. That is what lets a narrow strip have both: they were never
+/// two things that needed two columns, and REAPER drew no meter at all
+/// on an 86-wide strip because there was nowhere left to put one.
+const FADER_W: f64 = 30.0;
 
 /// How much room the scale's numbers need. Fixed, because `-54-` is
 /// `-54-` at any strip width.
@@ -1055,16 +1058,14 @@ impl Columns {
             x + (w - f64::from(g::BUTTON_W)).max(0.0) / 2.0
         };
         let fader_x = x + (w - FADER_W) / 2.0;
-        let scale_x = x + 2.0;
-        // Whatever is left between the numbers and the fader. At 86 that
-        // is almost nothing, which is why REAPER draws no meter there;
-        // on a piece strip it is a real meter.
-        let meter_w = (fader_x - (scale_x + SCALE_W) - 4.0).clamp(0.0, METER_MAX);
+        // Hard against the meter, because the numbers and the column
+        // are one instrument: a tick runs from each number to the
+        // meter's edge, and a gap the width of the strip's margin
+        // would make that tick a bridge over nothing.
+        let scale_x = (fader_x - SCALE_W).max(x + 1.0);
         Self {
             scale_x,
             scale_w: SCALE_W,
-            meter_x: fader_x - 3.0 - meter_w,
-            meter_w,
             fader_x,
             fader_w: FADER_W,
             column_x,
@@ -1072,13 +1073,6 @@ impl Columns {
         }
     }
 
-    /// Whether there is enough width for a meter worth drawing.
-    ///
-    /// A two-pixel meter is not a small meter, it is a line — and a line
-    /// beside a fader reads as part of the fader.
-    pub const fn has_meter(self) -> bool {
-        self.meter_w >= 4.0
-    }
 }
 
 /// Where the stretch section sits, and how tall it is.
@@ -1123,42 +1117,10 @@ fn stretch(
     // Without a scale a fader is a handle on an unmarked line: you can
     // see that one track is louder than another and not by how much,
     // which is most of what a mixer is for.
-    if squeeze.meter() {
-        crate::art::place(
-            scene,
-            &art::fader_scale(
-                columns.scale_w,
-                stretch,
-                crate::tcp::to_theme(palette.meter_warn),
-                8.0,
-            ),
-            font,
-            columns.scale_x,
-            stretch_top,
-        );
-    }
-    // The meter takes whatever the scale and the fader leave, which on
-    // an 86-wide strip is nothing — REAPER draws none there either —
-    // and on a piece strip is a meter you can actually read.
-    if squeeze.meter() && columns.has_meter() {
-        crate::art::place(
-            scene,
-            &art::meter(
-                &palette.chrome,
-                0.0,
-                [
-                    crate::tcp::to_theme(palette.meter_safe),
-                    crate::tcp::to_theme(palette.meter_warn),
-                    crate::tcp::to_theme(palette.meter_danger),
-                ],
-                columns.meter_w,
-                stretch,
-            ),
-            font,
-            columns.meter_x,
-            stretch_top,
-        );
-    }
+    // The dB scale is LIVE now, with the meter it belongs to: its
+    // numbers light as the signal passes them, which is the reading
+    // that works at a glance across forty strips. See `overlay`.
+
     // The volume control is drawn live — its cap and its lit travel
     // both move with the value, so recording it would record a fader
     // frozen at whatever the project opened with.
@@ -1535,10 +1497,18 @@ mod column_tests {
             "record arm drifted: {arm} vs REAPER's {}",
             g::ARM_LEFT
         );
-        // REAPER's groove sits at 31; centring puts the cell at 32.
-        assert!((c.fader_x - 32.0).abs() < 0.01, "fader at {}", c.fader_x);
-        // And REAPER draws no meter at this width, so neither do we.
-        assert!(!c.has_meter(), "a meter appeared at REAPER's own width");
+        // REAPER's groove sits at 31; centring puts the cap's cell at
+        // 32. Measured against the CAP rather than the column, because
+        // the column grew to carry the meter either side of it — the
+        // handle is what has to land where REAPER's handle lands.
+        let cap = c.fader_x
+            + (c.fader_w - daw_theme_art::paint::tcp::cap_w(c.fader_w)) / 2.0;
+        assert!((cap - 32.0).abs() < 0.5, "the cap sits at {cap}");
+        // REAPER draws no meter at this width because the scale and
+        // the fader have taken it all. We draw one anyway, because it
+        // is the fader's own groove and costs no width at all — which
+        // is the whole point of the change.
+        assert!(c.fader_w > 0.0);
     }
 
     /// The whole point of the change: width goes somewhere useful.
@@ -1559,12 +1529,6 @@ mod column_tests {
             wide.column_axis > narrow.column_axis,
             "the buttons and the arm should travel right with the edge"
         );
-        assert!(
-            wide.meter_w > narrow.meter_w && wide.has_meter(),
-            "the meter should grow: {} -> {}",
-            narrow.meter_w,
-            wide.meter_w
-        );
     }
 
     /// The right margin is REAPER's, at every width — that is what
@@ -1583,11 +1547,20 @@ mod column_tests {
         }
     }
 
-    /// And the meter is capped, so a very wide strip does not turn its
-    /// meter into a second fader.
+    /// The meter is the fader, at every width — so a very wide strip
+    /// gets a longer scale rather than a fatter handle, and a narrow
+    /// one still gets a meter where it used to get none.
     #[test]
-    fn the_meter_stops_growing() {
-        assert!(Columns::at(0.0, 600.0).meter_w <= super::METER_MAX);
+    fn the_meter_is_the_fader_at_every_width() {
+        for w in [56.0, STRIP_W, 96.0, 195.0, 600.0] {
+            let c = Columns::at(0.0, w);
+            assert!(
+                (c.fader_w - super::FADER_W).abs() < f64::EPSILON,
+                "the fader fattened at {w}"
+            );
+            let groove = daw_theme_art::paint::tcp::groove_w(c.fader_w);
+            assert!(groove >= 4.0 && groove < c.fader_w, "groove at {w}: {groove}");
+        }
     }
 
     /// Nothing escapes the strip it belongs to.
@@ -1598,7 +1571,6 @@ mod column_tests {
             let right = 10.0 + w;
             for (name, edge) in [
                 ("scale", c.scale_x + c.scale_w),
-                ("meter", c.meter_x + c.meter_w),
                 ("fader", c.fader_x + c.fader_w),
                 ("column", c.column_x + f64::from(g::BUTTON_W)),
             ] {

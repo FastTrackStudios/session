@@ -98,26 +98,49 @@ impl Strip {
         (self.rack_h > 0.0).then(|| Rect::new(2.0, 2.0, self.width - 2.0, self.rack_h - 2.0))
     }
 
-    /// The meter well beside the fader.
+    /// The meter, which is the fader's own groove.
     ///
-    /// Not a [`Control`]: a meter is read, never clicked, and putting
-    /// it in that enum would make it hit-testable and let it swallow
-    /// presses meant for the fader it stands next to. It is here
-    /// because it is GEOMETRY, and this module exists so that geometry
-    /// is worked out once.
-    ///
-    /// `None` on a strip too narrow to hold one — REAPER draws no meter
-    /// on an 86-wide strip either, because the scale and the fader have
-    /// already taken the width.
+    /// Not a [`Control`]: a meter is read, never clicked. It shares its
+    /// rect with the fader now — the groove is lit by the signal and
+    /// the cap rides over it as glass — so the strip no longer has to
+    /// find room for two columns and then draw neither when it cannot.
+    /// Kept as its own accessor because the two are read for different
+    /// reasons, and because a caller asking "is there a meter here"
+    /// should not have to know it is asking about the fader.
     #[must_use]
     pub fn meter_rect(&self) -> Option<Rect> {
-        (self.squeeze.meter() && self.columns.has_meter()).then(|| {
+        self.squeeze.meter().then(|| self.fader_rect())?
+    }
+
+    /// The dB numbers beside the meter.
+    ///
+    /// Live, like the meter: each mark lights as the signal passes it,
+    /// so the scale and the column it labels move together. That is
+    /// also why it is geometry here rather than something the recording
+    /// works out — the overlay needs to place it every frame.
+    #[must_use]
+    pub fn scale_rect(&self) -> Option<Rect> {
+        self.squeeze.meter().then(|| {
             let top = self.band_bottom();
             Rect::new(
-                self.columns.meter_x,
+                self.columns.scale_x,
                 top,
-                self.columns.meter_x + self.columns.meter_w,
+                self.columns.scale_x + self.columns.scale_w,
                 top + self.stretch(),
+            )
+        })
+    }
+
+    /// The fader's whole column — groove, meter and cap.
+    fn fader_rect(&self) -> Option<Rect> {
+        let top = self.band_bottom();
+        let stretch = self.stretch();
+        (stretch > 0.0).then(|| {
+            Rect::new(
+                self.columns.fader_x,
+                top,
+                self.columns.fader_x + self.columns.fader_w,
+                top + stretch,
             )
         })
     }

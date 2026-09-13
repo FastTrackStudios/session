@@ -780,62 +780,110 @@ fn draw_strip_controls(
     // the well is one rounded rectangle, and keeping the two halves in
     // separate passes is how a meter ends up lit past its own edge when
     // the strip resizes.
-    if let (Some(rect), Some(level)) = (strip.meter_rect(), level) {
-        // The louder channel, not the sum: a mono source panned hard
-        // reads as half a signal on a summed meter, and the question a
-        // mixer meter answers is "is anything clipping".
-        let peak = level.peak_left.max(level.peak_right);
+    // The fader IS the meter: its groove carries the signal, and the
+    // cap rides over it as glass so the level reads through the one
+    // place it was always hidden — right where the hand is, which on a
+    // loud track is right where the peak is.
+    //
+    // One column instead of two, which is what makes this fit a narrow
+    // strip. It used to be a meter beside a fader, and on an 86-wide
+    // strip there was no room for the meter, so there simply was none.
+    if strip.has_fader()
+        && let Some((x, y)) = at(Control::Volume)
+    {
+        let value = crate::tcp::volume_fraction(track.volume);
+        let travel = strip.stretch();
+        // Each channel on its own half, not the louder of the two and
+        // not their sum: a summed meter cannot tell you that a stereo
+        // source has collapsed to one side or that one leg of a pair is
+        // dead, and those are two of the things a meter is watched for.
+        let peak = level.map_or((0.0, 0.0), |level| {
+            (
+                crate::engine::meter_fraction(level.peak_left),
+                crate::engine::meter_fraction(level.peak_right),
+            )
+        });
+        // The scale, against the meter and lighting with it.
+        if let Some(scale) = strip.scale_rect() {
+            crate::art::place(
+                scene,
+                &art::fader_scale(
+                    scale.width(),
+                    scale.height(),
+                    crate::tcp::to_theme(palette.text_faint),
+                    [
+                        crate::tcp::to_theme(palette.meter_safe),
+                        crate::tcp::to_theme(palette.meter_warn),
+                        crate::tcp::to_theme(palette.meter_danger),
+                    ],
+                    8.0,
+                    peak.0.max(peak.1),
+                ),
+                font,
+                left + scale.x0,
+                scale.y0,
+            );
+        }
         crate::art::place(
             scene,
-            &art::meter(
+            &art::fader_track(
                 &palette.chrome,
-                crate::engine::meter_fraction(peak),
+                peak,
                 [
                     crate::tcp::to_theme(palette.meter_safe),
                     crate::tcp::to_theme(palette.meter_warn),
                     crate::tcp::to_theme(palette.meter_danger),
                 ],
-                rect.width(),
-                rect.height(),
+                strip.columns.fader_w,
+                travel,
             ),
             font,
-            left + rect.x0,
-            rect.y0,
+            x,
+            y,
+        );
+        // The cap, centred in the column and narrower than the meter,
+        // so a channel shows down each side of it whatever it covers.
+        let (cap_y, cap_h) = art::fader_cap_at(value, strip.columns.fader_w, travel);
+        let cap_w = art::cap_w(strip.columns.fader_w);
+        crate::art::scaled(
+            scene,
+            &art::fader_cap_through(&palette.chrome, palette.chrome.hardware_mark, CAP_GLASS),
+            font,
+            x + (strip.columns.fader_w - cap_w) / 2.0,
+            y + cap_y,
+            cap_h / 53.0,
+        );
+        // And the level again where the cap crosses it, so the column
+        // is continuous rather than interrupted at the one height you
+        // are looking at.
+        crate::art::place(
+            scene,
+            &art::fader_through(
+                peak,
+                [
+                    crate::tcp::to_theme(palette.meter_safe),
+                    crate::tcp::to_theme(palette.meter_warn),
+                    crate::tcp::to_theme(palette.meter_danger),
+                ],
+                strip.columns.fader_w,
+                travel,
+                cap_y,
+                cap_h,
+            ),
+            font,
+            x,
+            y,
         );
     }
-
-    // The fader is live in whole — its lit travel and its cap both move
-    // with the value, and a groove lit to the old value under a cap at
-    // the new one is worse than either.
-    if strip.has_fader() {
-        if let Some((x, y)) = at(Control::Volume) {
-            let value = crate::tcp::volume_fraction(track.volume);
-            let travel = strip.stretch();
-            crate::art::place(
-                scene,
-                &art::fader(
-                    &palette.chrome,
-                    crate::tcp::lit(palette).volume,
-                    value,
-                    strip.columns.fader_w,
-                    travel,
-                ),
-                font,
-                x,
-                y,
-            );
-            let (cap_y, cap_h) = art::fader_cap_at(value, strip.columns.fader_w, travel);
-            crate::art::scaled(
-                scene,
-                &art::fader_cap(&palette.chrome, palette.chrome.hardware_mark),
-                font,
-                x,
-                y + cap_y,
-                cap_h / 53.0,
-            );
-        }
-    }
 }
+
+/// How much of the fader cap's face is glass.
+///
+/// Enough that a meter under it is legible — the whole reason the cap
+/// changed — and not so much that it stops reading as a handle. Its
+/// frame, bevel and grip stay nearly solid at any setting; this is the
+/// face only. See `paint::fader_cap_through`.
+const CAP_GLASS: f64 = 0.72;
 
 // A rack that moves is drawn by `controls`, over its own recording,
 // alongside the meters and the level traces — one pass over the visible
