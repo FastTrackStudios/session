@@ -166,7 +166,7 @@ impl Comp {
     }
 }
 
-/// How far a knob turns for a drag of its full notional travel.
+/// How far a control turns for a drag of its full notional travel.
 ///
 /// The track panel's own number, so a knob in the rack and a knob on a
 /// row answer a hand identically — which is the whole reason they are
@@ -191,6 +191,19 @@ fn set_knob(comp: &mut Comp, grip: Grip, to: f64) {
         Grip::Attack => comp.attack = f64_to_f32(log_denorm(to, 0.1, 200.0)),
         Grip::Release => comp.release = f64_to_f32(log_denorm(to, 5.0, 3_000.0)),
         _ => {}
+    }
+}
+
+/// A time, short enough for a header.
+///
+/// Sub-millisecond attacks are real and a "0ms" would be a lie, so the
+/// fast end keeps a decimal and everything above ten drops it — which
+/// is also where a millisecond stops being a distinction anyone hears.
+fn millis(ms: f32) -> String {
+    if ms < 10.0 {
+        format!("{ms:.1}ms")
+    } else {
+        format!("{ms:.0}ms")
     }
 }
 
@@ -407,19 +420,6 @@ impl Panel {
     }
 }
 
-/// How much of the compressor's panel its knobs take.
-///
-/// Enough for one row of hardware at the size the track panel draws
-/// knobs — which is the size they are legible at, and the size the rest
-/// of this window already uses, so a knob in the rack and a knob on a
-/// row are the same object.
-///
-/// The compressor is the panel with height to spare: a transfer curve
-/// is a bent line through a square, and a rack panel is twice as tall
-/// as it is wide. What is left over goes to the controls rather than to
-/// more empty graph.
-const KNOB_BAND: f64 = 36.0;
-
 /// How tall a panel's header is.
 ///
 /// The type is 7pt and this is the line it sits on plus a pixel of air
@@ -550,7 +550,7 @@ pub fn draw(
                     palette,
                     font,
                     which.name(),
-                    &which.summary(tone),
+                    &which.summary(tone, rack),
                     tone.bypass.is(which),
                     head,
                 );
@@ -648,7 +648,7 @@ impl Which {
     /// scan the curves across a mixer to find the track that is
     /// different, and you read the number to know what to type into the
     /// one you opened.
-    fn summary(self, tone: &Tone) -> String {
+    fn summary(self, tone: &Tone, rack: Rack) -> String {
         match self {
             Self::Eq => {
                 let live = tone.eq.iter().filter(|band| band.enabled && band.used).count();
@@ -664,7 +664,22 @@ impl Which {
                     format!("{live} · {range:.1}dB")
                 }
             }
-            Self::Comp => format!("{:.0}dB · {:.1}:1", tone.comp.threshold, tone.comp.ratio),
+            Self::Comp => {
+                let head = format!("{:.0}dB · {:.1}:1", tone.comp.threshold, tone.comp.ratio);
+                // The times are the ramps' own shape, which is the
+                // point of drawing them — but a shape says "fast" and
+                // not "three milliseconds", and at a focus width there
+                // is room to say both.
+                if rack.editing() {
+                    format!(
+                        "{head} · {}/{}",
+                        millis(tone.comp.attack),
+                        millis(tone.comp.release)
+                    )
+                } else {
+                    head
+                }
+            }
             Self::Sat => format!("x{:.1}", tone.sat.drive),
         }
     }
@@ -685,8 +700,11 @@ impl Which {
             // height buys resolution rather than air: a 3 dB decision
             // and a 12 dB one have to look different.
             Self::Eq => 175.0,
-            // Its display plus the band its knobs sit in.
-            Self::Comp => 150.0 + KNOB_BAND,
+            // Its display, with a ramp down each side. Taller than the
+            // saturator because the levels in it are read against a
+            // threshold, and a threshold you cannot place precisely is
+            // a threshold you set by ear twice.
+            Self::Comp => 170.0,
             // A bent line through a square. It says its whole story in
             // the first hundred pixels.
             Self::Sat => 110.0,
@@ -922,27 +940,13 @@ const HANDLE: f64 = 2.6;
 /// the two that are not.
 const DECADES: [(f64, &str); 3] = [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k")];
 
-/// The plugin's own transfer curve, as a path.
-///
-/// `comp_graph_svg::transfer_curve_path` is what the compressor's
-/// editor draws with — it emits an SVG path because that editor is a
-/// DOM, and kurbo reads one. So the curve in the strip is the curve in
-/// the plugin, sampled by the plugin's own loop through its own
-/// `compress_transfer`, rather than a second traversal that agrees
-/// until someone changes a knee.
-fn comp_curve(comp: Comp, at: Panel) -> Option<BezPath> {
-    let d = comp_ui::comp_graph_svg::transfer_curve_path(
-        comp.threshold,
-        comp.ratio,
-        comp.knee,
-        at.width,
-        at.height,
-    );
-    let path = BezPath::from_svg(&d).ok()?;
-    Some(Affine::translate((at.x, at.y)) * path)
-}
+// The transfer curve is gone from the strip. It said the same thing
+// the threshold line and the ratio arrow now say between them — where
+// it starts and how hard — in a form you had to read rather than
+// reach for. `comp_graph_svg::transfer_curve_path` is still the
+// plugin's, and still what a focused editor would draw.
 
-/// The compressor's transfer curve, input dB across, output dB up.
+/// The compressor: its ramps, its levels and what it is doing to them.
 fn comp(
     scene: &mut Scene,
     palette: &Palette,
@@ -952,11 +956,7 @@ fn comp(
     rack: Rack,
     lit: Option<Grip>,
 ) {
-    // The visualiser gets the top of the panel and the knobs the rest.
-    // There is more height here than a level display needs, and a
-    // display over a row of controls is what a compressor looks like
-    // everywhere.
-    let (at, knobs) = comp_split(at, rack);
+    let (attack, at, release) = comp_split(at, rack);
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     // The comp editor's own axis: 0 dB at the top, −60 at the floor.
@@ -980,9 +980,10 @@ fn comp(
     // over the levels is the comparison.
     let y = to_y(f64::from(comp.threshold)).clamp(at.y, bottom);
     let held = lit == Some(Grip::Threshold);
+    let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
     rule_wide(
         scene,
-        hex(comp_ui::comp_graph_svg::colors::THRESHOLD),
+        red,
         Line::new((at.x, y), (right, y)),
         if held { 2.5 } else { 1.5 },
     );
@@ -990,114 +991,170 @@ fn comp(
     // line that is otherwise one pixel tall.
     if rack.detailed() {
         let r = if held { HANDLE + 1.6 } else { HANDLE };
-        dot(
-            scene,
-            hex(comp_ui::comp_graph_svg::colors::THRESHOLD),
-            (right - r - 1.0, y),
-            r,
-        );
+        dot(scene, red, (right - r - 1.0, y), r);
+        ratio_arrow(scene, palette, comp, at, y, lit == Some(Grip::Ratio));
     }
 
-    if let Some(band) = knobs {
-        comp_knobs(scene, palette, font, comp, band, lit);
+    if let Some(band) = attack {
+        ramp(scene, palette, font, Ramp::Attack, comp, band, lit == Some(Grip::Attack));
+    }
+    if let Some(band) = release {
+        ramp(scene, palette, font, Ramp::Release, comp, band, lit == Some(Grip::Release));
     }
 }
 
-/// Ratio, attack and release, as hardware.
+/// The ratio, as an arrow hanging from the threshold.
 ///
-/// Not threshold: that is a level, and it lives on the axis the levels
-/// are drawn against. These three are the ones with no natural place on
-/// a display — a ratio is not a height and a millisecond is not a
-/// height — which is exactly what a knob is for.
-///
-/// The same knob the track panel draws, at the same size, so a control
-/// in the rack and a control on a row are the same object rather than
-/// two things that look similar.
-fn comp_knobs(
+/// Everything above the line is pulled down, and this is how far — so
+/// the control for "how hard" is a thing you pull down, at the place
+/// the pulling happens. A knob would have made you read a number and
+/// imagine its effect on a display two inches away.
+fn ratio_arrow(
     scene: &mut Scene,
     palette: &Palette,
-    font: &Font,
     comp: Comp,
     at: Panel,
-    lit: Option<Grip>,
+    from: f64,
+    held: bool,
 ) {
-    /// The knob art's authored size.
-    const AUTHORED: f64 = 24.0;
-    /// The label's type size.
-    const SIZE: f32 = 6.0;
-    /// And the line it sits on, which is reserved BEFORE the knob is
-    /// sized — a knob scaled to the whole band puts its own label
-    /// outside the panel, which is where it went the first time.
-    const LABEL: f64 = SIZE as f64 + 2.0;
-
-    /// The air between two knobs, as a fraction of one.
-    const GAP: f64 = 0.45;
-
-    let room = at.height - LABEL;
-    let each = at.width / 3.0;
-    if each < AUTHORED * 0.8 || room < AUTHORED * 0.8 {
+    let drop = ratio_drop(comp, at.height);
+    if drop < 1.0 {
+        // A ratio of one takes nothing off, so there is nothing to
+        // point at. Drawing a stub would claim an effect it is not
+        // having; the panel still offers the grip.
         return;
     }
-    // Capped a little above the authored size: bigger than it was drawn
-    // for is a blurry knob, and the band is generous on a focused strip.
-    let scale = (each / (AUTHORED * (1.0 + GAP))).min(room / AUTHORED).min(1.6);
-    let size = AUTHORED * scale;
-    let top = at.y + (room - size) / 2.0;
-    // A GROUP, centred, rather than one knob per third of the panel.
-    //
-    // Thirds work at a strip width and fall apart at a focus width:
-    // three knobs strung a hundred and twenty pixels apart stop reading
-    // as one control set and start reading as three lost controls. The
-    // spacing is the knob's own, so the cluster grows with them.
-    let step = size * (1.0 + GAP);
-    let left = at.x + (at.width - (step * 2.0 + size)) / 2.0;
+    let x = at.x + at.width * 0.32;
+    let tip = (from + drop).min(at.y + at.height);
+    let red = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
+    let width = if held { 2.5 } else { 1.5 };
+    rule_wide(scene, red, Line::new((x, from), (x, tip)), width);
+    // A head, so it reads as a direction rather than as a tick. Wide
+    // enough to aim at, which is the other thing it has to be.
+    let wing = if held { 5.0 } else { 4.0 };
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        red,
+        None,
+        &vello::kurbo::BezPath::from_vec(vec![
+            vello::kurbo::PathEl::MoveTo((x, tip).into()),
+            vello::kurbo::PathEl::LineTo((x - wing, tip - wing * 1.4).into()),
+            vello::kurbo::PathEl::LineTo((x + wing, tip - wing * 1.4).into()),
+            vello::kurbo::PathEl::ClosePath,
+        ]),
+    );
+    let _ = palette;
+}
 
-    for (i, (name, value, grip)) in [
-        // Each as a fraction of its own range, which is what a knob
-        // shows — the numbers themselves are in the header.
-        ("RATIO", comp.ratio_norm(), Grip::Ratio),
-        ("ATK", comp.attack_norm(), Grip::Attack),
-        ("REL", comp.release_norm(), Grip::Release),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let x = left + crate::num::coord(i) * step;
-        crate::art::scaled(
-            scene,
-            &daw_theme_art::paint::tcp::volume_knob(
-                &palette.chrome,
-                crate::tcp::lit(palette).volume,
-                value.clamp(0.0, 1.0),
-                if lit == Some(grip) {
-                    daw_theme_art::mixer_controls::Interaction::Hover
-                } else {
-                    daw_theme_art::mixer_controls::Interaction::Normal
-                },
-                size,
-            ),
-            font,
-            x,
-            top,
-            scale,
-        );
-        // A two-letter label, because three knobs in a row at this size
-        // have about fourteen pixels each and a word is not one of the
-        // things that fits.
-        let w = font.width(name, SIZE);
-        if w <= step {
-            crate::tcp::glyphs(
-                scene,
-                font,
-                palette.text_faint,
-                name,
-                x + (size - w) / 2.0,
-                top + size + f64::from(SIZE),
-                SIZE,
-            );
+/// Which of the two time constants a ramp is showing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Ramp {
+    Attack,
+    Release,
+}
+
+impl Ramp {
+    /// The range the parameter travels, which is also the range the
+    /// ramp's height covers — so the height the curve turns at IS the
+    /// value, and dragging the turn is setting it.
+    const fn range(self) -> (f64, f64) {
+        match self {
+            Self::Attack => (0.1, 200.0),
+            Self::Release => (5.0, 3_000.0),
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Attack => "A",
+            Self::Release => "R",
         }
     }
 }
+
+/// A time constant, as the curve it makes.
+///
+/// Time runs UP the gutter and level across it, which is the way round
+/// a tall narrow strip wants: a fast attack turns toward the right edge
+/// near the floor, a slow one climbs most of the gutter before it
+/// turns. The shape IS the setting, so there is nothing to read.
+///
+/// The time axis is logarithmic, and deliberately the SAME log the
+/// parameter is stored on — so the curve passes 63% of the way across
+/// at exactly the height the value sits at, and the drag that moves the
+/// curve is the drag that moves the number.
+fn ramp(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    which: Ramp,
+    comp: Comp,
+    at: Panel,
+    held: bool,
+) {
+    if at.width < 6.0 || at.height < 20.0 {
+        return;
+    }
+    let (low, high) = which.range();
+    let tau = f64::from(match which {
+        Ramp::Attack => comp.attack,
+        Ramp::Release => comp.release,
+    });
+    let bottom = at.y + at.height;
+    // Mirrored: the attack fills from the left edge and the release
+    // empties from the right, so the two lean away from the display
+    // between them and read as its edges rather than as two more
+    // curves in it.
+    let to_x = |level: f64| match which {
+        Ramp::Attack => at.x + level * at.width,
+        Ramp::Release => at.x + at.width - level * at.width,
+    };
+
+    const STEPS: usize = 40;
+    let points = (0..=STEPS).map(|i| {
+        let up = crate::num::coord(i) / crate::num::coord(STEPS);
+        let t = log_denorm(up, low, high);
+        let level = match which {
+            Ramp::Attack => 1.0 - (-t / tau.max(1e-3)).exp(),
+            Ramp::Release => (-t / tau.max(1e-3)).exp(),
+        };
+        (to_x(level), bottom - up * at.height)
+    });
+    let ink = if held {
+        palette.accent
+    } else {
+        palette.accent.multiply_alpha(0.6)
+    };
+    curve(scene, ink, points, if held { 2.0 } else { 1.4 });
+
+    // The turn, marked — the height the value sits at, and the thing
+    // the drag moves. Without it the curve says how fast but not where
+    // to take hold.
+    let knee_y = bottom - log_norm(tau, low, high) * at.height;
+    dot(scene, ink, (to_x(0.63), knee_y), if held { HANDLE + 1.0 } else { HANDLE });
+
+    // One letter, at the floor. Two ramps that lean opposite ways are
+    // already told apart; this is for the first time you see them.
+    const SIZE: f32 = 6.0;
+    let w = font.width(which.label(), SIZE);
+    if w < at.width {
+        crate::tcp::glyphs(
+            scene,
+            font,
+            palette.text_faint,
+            which.label(),
+            at.x + (at.width - w) / 2.0,
+            bottom - 1.0,
+            SIZE,
+        );
+    }
+}
+
+// The knobs are gone. Ratio, attack and release were three numbers you
+// read and then imagined the effect of on a display two inches away;
+// they are the display's own shapes now — two ramps in the margins and
+// an arrow hanging from the threshold. See `ramp` and `ratio_arrow`.
 
 /// The saturator's static transfer curve over x ∈ [−1, 1].
 fn sat(scene: &mut Scene, palette: &Palette, pre: &ClassAPreamp, at: Panel, rack: Rack) {
@@ -1540,7 +1597,7 @@ pub fn grip_at(
                     return Some(Grip::Band(index));
                 }
             }
-            Which::Comp => return Some(comp_grip(body, rack, x, y)),
+            Which::Comp => return Some(comp_grip(tone.comp, body, rack, x, y)),
             Which::Sat => return Some(Grip::Drive),
             Which::Eq => {}
         }
@@ -1548,23 +1605,65 @@ pub fn grip_at(
     None
 }
 
-/// The compressor's display and its knob band.
+/// The compressor's three columns: the attack ramp, the display, the
+/// release ramp.
 ///
-/// Three places need this split and they have to agree: the drawing
-/// puts the threshold line on the display, the hit test decides whether
-/// a point is on the line or on a knob, and the drag converts pixels to
-/// decibels against the display's own height. Computed once, for the
-/// same reason `layout` and `body_of` are — a threshold that moved
+/// Every part of this panel that used to be a knob is now a shape you
+/// can see the meaning of. The times are ramps — a fast attack is a
+/// curve that turns at the bottom, a slow one climbs before it turns —
+/// and they live in the margins because they are about the EDGES of a
+/// sound, which is where the eye already is when it reads a waveform.
+///
+/// Computed once, because four things have to agree about it: the
+/// drawing, the hit test, the drag's pixels-to-decibels, and the trace
+/// that has to land on the display's own axis. A threshold that moved
 /// faster than the line under it is a line that is not under your
 /// finger.
 #[must_use]
-pub fn comp_split(body: Panel, rack: Rack) -> (Panel, Option<Panel>) {
+pub fn comp_split(body: Panel, rack: Rack) -> (Option<Panel>, Panel, Option<Panel>) {
     if !rack.detailed() {
-        return (body, None);
+        return (None, body, None);
     }
-    let (display, knobs) =
-        body.split_top((body.height - KNOB_BAND).max(body.height * 0.45));
-    (display, Some(knobs))
+    // Narrow, and a share of the width so a focused strip's ramps grow
+    // with it — but capped, because past about thirty pixels a ramp is
+    // not more readable, it is just wider, and the width it took came
+    // out of the waveform.
+    let gutter = (body.width * 0.16).clamp(11.0, 30.0);
+    if body.width - gutter * 2.0 < 40.0 {
+        return (None, body, None);
+    }
+    let attack = Panel {
+        width: gutter,
+        ..body
+    };
+    let display = Panel {
+        x: body.x + gutter,
+        width: body.width - gutter * 2.0,
+        ..body
+    };
+    let release = Panel {
+        x: body.x + body.width - gutter,
+        width: gutter,
+        ..body
+    };
+    (Some(attack), display, Some(release))
+}
+
+/// How far down the display the ratio's arrow hangs, in pixels.
+///
+/// The reduction a full-scale signal would take, on the display's own
+/// dB axis — which is what the ratio DOES, rather than a length chosen
+/// to look proportional. It saturates as the ratio climbs, because the
+/// effect does: past about eight to one a harder ratio takes very
+/// little more off, and an arrow that kept growing would be claiming
+/// otherwise. The number is in the header for the cases where that
+/// distinction matters.
+#[must_use]
+pub fn ratio_drop(comp: Comp, height: f64) -> f64 {
+    let threshold = f64::from(comp.threshold);
+    let ratio = f64::from(comp.ratio).max(1.0);
+    let reduced = -threshold * (1.0 - 1.0 / ratio);
+    reduced / 60.0 * height
 }
 
 /// What is under a point in the compressor's panel.
@@ -1574,20 +1673,35 @@ pub fn comp_split(body: Panel, rack: Rack) -> (Panel, Option<Panel>) {
 /// threshold: it is a line across a display, and a line one pixel tall
 /// is not something you aim at — the whole display is its target, the
 /// way a fader's groove is a fader's.
-fn comp_grip(body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
-    let Some(knobs) = comp_split(body, rack).1 else {
-        return Grip::Threshold;
-    };
-    if y >= knobs.y {
-        // Which third of the band, which is how they are laid out —
-        // the cluster is centred but its order is left to right.
-        let third = ((x - knobs.x) / (knobs.width / 3.0)).floor();
-        return match third as i64 {
-            ..=0 => Grip::Ratio,
-            1 => Grip::Attack,
-            _ => Grip::Release,
-        };
+fn comp_grip(comp: Comp, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
+    let (attack, display, release) = comp_split(body, rack);
+    // The ramps first: they are narrow, and the display would otherwise
+    // swallow anything near its edges.
+    if attack.is_some_and(|band| x < band.x + band.width) {
+        return Grip::Attack;
     }
+    if release.is_some_and(|band| x >= band.x) {
+        return Grip::Release;
+    }
+    // Then the ratio's arrow, which hangs inside the display and is the
+    // one thing in it that is not the threshold.
+    let from = display.y + comp_ui::comp_graph_svg::db_to_y(
+        f64::from(comp.threshold),
+        display.height,
+    );
+    let arrow_x = display.x + display.width * 0.32;
+    let tip = from + ratio_drop(comp, display.height);
+    if rack.detailed()
+        && (x - arrow_x).abs() <= GRAB
+        && y >= from - GRAB
+        && y <= tip + GRAB
+    {
+        return Grip::Ratio;
+    }
+    // And everything else is the threshold: it is a line across a
+    // display, and a line one pixel tall is not something you aim at —
+    // the whole display is its target, the way a fader's groove is a
+    // fader's.
     Grip::Threshold
 }
 
@@ -1829,20 +1943,30 @@ pub fn drag(
             // is drawn on the display, and a threshold that moved
             // against a taller box would run ahead of the line the
             // pointer is holding.
-            let display = comp_split(body, rack).0;
+            let display = comp_split(body, rack).1;
             let per_db = display.height / 60.0;
             let dy = dy * interaction::fine_scale(mods);
             let moved = f64::from(tone.comp.threshold) - dy / per_db.max(f64::EPSILON);
             tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
         }
-        Grip::Ratio | Grip::Attack | Grip::Release => {
-            // A knob's travel, not a panel's: the band a knob sits in
-            // is thirty pixels tall and a drag that mapped its whole
-            // range onto that would be unusable. `KNOB_TRAVEL` is the
-            // same notional sweep the track panel's knobs use, so a
-            // knob turns by the same amount wherever it is.
+        // The two ramps are drawn on their gutter's own height, and the
+        // height a curve turns at IS its value — so a drag moves the
+        // value by the fraction of the gutter it covered, and the curve
+        // stays under the finger.
+        Grip::Attack | Grip::Release => {
+            let display = comp_split(body, rack).1;
             let dy = dy * interaction::fine_scale(mods);
-            let moved = knob_norm(tone.comp, grip) - dy / KNOB_TRAVEL;
+            let moved = knob_norm(tone.comp, grip) - dy / display.height.max(1.0);
+            set_knob(&mut tone.comp, grip, moved);
+        }
+        // The arrow is pulled DOWN for more, which is the direction it
+        // points and the direction the signal goes. Its own travel is
+        // short and saturating, so this moves the ratio on its own
+        // range rather than on the arrow's length — a drag past the
+        // point where the arrow stops growing still hardens the ratio.
+        Grip::Ratio => {
+            let dy = dy * interaction::fine_scale(mods);
+            let moved = knob_norm(tone.comp, grip) + dy / KNOB_TRAVEL;
             set_knob(&mut tone.comp, grip, moved);
         }
         // A switch has no drag. Dragging off one is how you change your
@@ -2648,20 +2772,55 @@ mod comp_tests {
         );
     }
 
-    /// And the knob band under it grabs knobs, left to right.
+    /// The ramps live in the margins and the display between them, so
+    /// a point near an edge is a time constant and a point in the
+    /// middle is not.
     #[test]
-    fn the_band_grabs_its_three_knobs() {
+    fn the_margins_grab_the_ramps() {
         let tone = placeholder(0);
         let body = comp_panel();
-        let knobs = super::comp_split(body, Rack::at(rack().width))
-            .1
-            .expect("a knob band");
-        let y = knobs.y + knobs.height / 2.0;
-        let third = knobs.width / 3.0;
-        for (i, want) in [Grip::Ratio, Grip::Attack, Grip::Release].into_iter().enumerate() {
-            let x = knobs.x + third * (i as f64 + 0.5);
-            assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(want), "third {i}");
-        }
+        let (attack, display, release) =
+            super::comp_split(body, Rack::at(rack().width));
+        let attack = attack.expect("an attack ramp");
+        let release = release.expect("a release ramp");
+        let y = display.y + display.height * 0.8;
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), attack.x + 2.0, y),
+            Some(Grip::Attack)
+        );
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), release.x + release.width - 2.0, y),
+            Some(Grip::Release)
+        );
+        // And between them is not a ramp.
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), display.x + display.width * 0.8, y),
+            Some(Grip::Threshold)
+        );
+    }
+
+    /// The arrow hangs from the threshold, and it is what you grab to
+    /// set the ratio — the one thing in the display that is not the
+    /// line itself.
+    #[test]
+    fn the_arrow_grabs_the_ratio() {
+        let mut tone = placeholder(0);
+        tone.comp.threshold = -18.0;
+        tone.comp.ratio = 6.0;
+        let body = comp_panel();
+        let display = super::comp_split(body, Rack::at(rack().width)).1;
+        let from = display.y
+            + comp_ui::comp_graph_svg::db_to_y(
+                f64::from(tone.comp.threshold),
+                display.height,
+            );
+        let x = display.x + display.width * 0.32;
+        let drop = super::ratio_drop(tone.comp, display.height);
+        assert!(drop > 2.0, "this fixture must have an arrow to grab");
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), x, from + drop / 2.0),
+            Some(Grip::Ratio)
+        );
     }
 
     /// Dragging the threshold DOWN lowers it, because it is drawn on an
@@ -2712,18 +2871,76 @@ mod comp_tests {
         assert!(step(1.0) < step(100.0), "the fast end moves in smaller steps");
     }
 
-    /// Every knob clamps to its own range rather than running away.
+    /// Every control clamps to its own range rather than running away.
+    ///
+    /// Each is driven in the direction its own shape points: the ramps
+    /// climb, so up is longer; the arrow hangs, so down is harder.
     #[test]
-    fn the_knobs_clamp() {
+    fn the_controls_clamp() {
         let mut tone = placeholder(0);
         for _ in 0..80 {
-            for grip in [Grip::Ratio, Grip::Attack, Grip::Release] {
+            drag(&mut tone, Grip::Ratio, &ALL, rack(), Mods::default(), 0.0, 60.0);
+            for grip in [Grip::Attack, Grip::Release] {
                 drag(&mut tone, grip, &ALL, rack(), Mods::default(), 0.0, -60.0);
             }
         }
         assert!((tone.comp.ratio - 20.0).abs() < 0.01, "{}", tone.comp.ratio);
         assert!((tone.comp.attack - 200.0).abs() < 0.5, "{}", tone.comp.attack);
         assert!((tone.comp.release - 3_000.0).abs() < 5.0, "{}", tone.comp.release);
+
+        let mut back = placeholder(0);
+        for _ in 0..80 {
+            drag(&mut back, Grip::Ratio, &ALL, rack(), Mods::default(), 0.0, -60.0);
+            for grip in [Grip::Attack, Grip::Release] {
+                drag(&mut back, grip, &ALL, rack(), Mods::default(), 0.0, 60.0);
+            }
+        }
+        assert!((back.comp.ratio - 1.0).abs() < 0.01, "{}", back.comp.ratio);
+        assert!((back.comp.attack - 0.1).abs() < 0.01, "{}", back.comp.attack);
+        assert!((back.comp.release - 5.0).abs() < 0.01, "{}", back.comp.release);
+    }
+
+    /// Each control moves the way its own shape points: you pull the
+    /// arrow DOWN for a harder ratio, because that is the direction it
+    /// points and the direction the signal goes, and you drag a ramp UP
+    /// for a longer one, because that is where its curve turns.
+    #[test]
+    fn each_control_follows_its_own_shape() {
+        let mut tone = placeholder(0);
+        let was = tone.comp;
+        drag(&mut tone, Grip::Ratio, &ALL, rack(), Mods::default(), 0.0, 20.0);
+        assert!(tone.comp.ratio > was.ratio, "down did not harden the ratio");
+
+        let mut tone = placeholder(0);
+        drag(&mut tone, Grip::Attack, &ALL, rack(), Mods::default(), 0.0, -20.0);
+        assert!(tone.comp.attack > was.attack, "up did not lengthen the attack");
+
+        let mut tone = placeholder(0);
+        drag(&mut tone, Grip::Release, &ALL, rack(), Mods::default(), 0.0, -20.0);
+        assert!(
+            tone.comp.release > was.release,
+            "up did not lengthen the release"
+        );
+    }
+
+    /// The arrow is how much the ratio takes off a full-scale signal,
+    /// so it grows with the ratio and vanishes at unity — where the
+    /// compressor is taking nothing off and an arrow would be claiming
+    /// otherwise.
+    #[test]
+    fn the_arrow_measures_what_the_ratio_does() {
+        let at = |ratio: f32| {
+            let mut comp = Comp::default();
+            comp.threshold = -20.0;
+            comp.ratio = ratio;
+            super::ratio_drop(comp, 150.0)
+        };
+        assert!(at(1.0) < 0.01, "unity drew an arrow");
+        assert!(at(4.0) > at(2.0));
+        assert!(at(12.0) > at(4.0));
+        // And it saturates, which is what the effect does — the header
+        // carries the number for the cases where that matters.
+        assert!(at(20.0) - at(12.0) < at(4.0) - at(2.0));
     }
 
     /// The line lands where the pointer put it. One split decides
@@ -2735,7 +2952,7 @@ mod comp_tests {
         let mut tone = placeholder(0);
         let body = comp_panel();
         let rack_tier = Rack::at(rack().width);
-        let display = super::comp_split(body, rack_tier).0;
+        let display = super::comp_split(body, rack_tier).1;
         let at_db = |comp: Comp| {
             display.y + comp_ui::comp_graph_svg::db_to_y(f64::from(comp.threshold), display.height)
         };
@@ -3030,7 +3247,9 @@ pub fn levels(
     let body = body_of(at, rack);
     // The display is the part above the knobs — the same split `comp`
     // makes, so the trace lands on the axis the threshold is on.
-    let body = comp_split(body, rack).0;
+    // The display, between the two ramps — the trace has to land on the
+    // axis the threshold line is on.
+    let body = comp_split(body, rack).1;
     if body.width < 2.0 || body.height < 2.0 {
         return;
     }
