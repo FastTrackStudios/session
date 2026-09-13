@@ -74,12 +74,20 @@ pub struct Tone {
     pub sat: ClassAPreamp,
 }
 
-/// A compressor, as its transfer curve needs it.
+/// A compressor, as its display needs it.
 #[derive(Clone, Copy, Debug)]
 pub struct Comp {
+    /// Where it starts working, in dBFS. The red line across the
+    /// visualiser — it is a LEVEL, and a level belongs on the axis the
+    /// levels are drawn against rather than on a knob you have to read
+    /// a number off.
     pub threshold: f32,
     pub ratio: f32,
     pub knee: f32,
+    /// How fast it gets there, in milliseconds.
+    pub attack: f32,
+    /// And how fast it lets go.
+    pub release: f32,
 }
 
 impl Default for Comp {
@@ -88,8 +96,79 @@ impl Default for Comp {
             threshold: -18.0,
             ratio: 3.0,
             knee: 6.0,
+            attack: 10.0,
+            release: 120.0,
         }
     }
+}
+
+/// The range each of the compressor's knobs travels.
+///
+/// Stated once because three places need them and they have to agree:
+/// the knob's own fraction, the drag that moves it, and the reset that
+/// puts it back. Attack and release are logarithmic because a
+/// millisecond matters at the fast end and twenty do not at the slow.
+impl Comp {
+    /// Ratio as a knob fraction, and back.
+    #[must_use]
+    pub fn ratio_norm(self) -> f64 {
+        ((f64::from(self.ratio) - 1.0) / 19.0).clamp(0.0, 1.0)
+    }
+
+    #[must_use]
+    pub fn attack_norm(self) -> f64 {
+        log_norm(f64::from(self.attack), 0.1, 200.0)
+    }
+
+    #[must_use]
+    pub fn release_norm(self) -> f64 {
+        log_norm(f64::from(self.release), 5.0, 3_000.0)
+    }
+}
+
+/// How far a knob turns for a drag of its full notional travel.
+///
+/// The track panel's own number, so a knob in the rack and a knob on a
+/// row answer a hand identically — which is the whole reason they are
+/// the same drawing.
+const KNOB_TRAVEL: f64 = 150.0;
+
+/// A compressor knob's value as a fraction of its own range.
+fn knob_norm(comp: Comp, grip: Grip) -> f64 {
+    match grip {
+        Grip::Ratio => comp.ratio_norm(),
+        Grip::Attack => comp.attack_norm(),
+        Grip::Release => comp.release_norm(),
+        _ => 0.0,
+    }
+}
+
+/// And back, clamped to it.
+fn set_knob(comp: &mut Comp, grip: Grip, to: f64) {
+    let to = to.clamp(0.0, 1.0);
+    match grip {
+        Grip::Ratio => comp.ratio = f64_to_f32(to.mul_add(19.0, 1.0)),
+        Grip::Attack => comp.attack = f64_to_f32(log_denorm(to, 0.1, 200.0)),
+        Grip::Release => comp.release = f64_to_f32(log_denorm(to, 5.0, 3_000.0)),
+        _ => {}
+    }
+}
+
+/// A value's position on a logarithmic range, 0..1.
+fn log_norm(value: f64, low: f64, high: f64) -> f64 {
+    if low <= 0.0 || high <= low {
+        return 0.0;
+    }
+    ((value.max(low).log10() - low.log10()) / (high.log10() - low.log10())).clamp(0.0, 1.0)
+}
+
+/// And back.
+fn log_denorm(t: f64, low: f64, high: f64) -> f64 {
+    if low <= 0.0 || high <= low {
+        return low;
+    }
+    let span = high.log10() - low.log10();
+    10.0_f64.powf(t.clamp(0.0, 1.0).mul_add(span, low.log10()))
 }
 
 /// What fits in a rack of a given width.
@@ -698,13 +777,18 @@ fn eq(
         if x < at.x || x > right || y < at.y || y > bottom {
             continue;
         }
-        // The one under the pointer grows rather than changing colour:
-        // a handle is already the accent, and a second accent would be
-        // a colour nobody could name. Size is what a hand reads.
+        // The band's OWN colour, from the plugin's frequency map — the
+        // same hue its node takes in the editor and at the focus tier.
+        //
+        // One accent for every band said "here is a band" and nothing
+        // else; a hue that sweeps red to violet across the spectrum
+        // says WHICH band, which is how you tell the low shelf from the
+        // air band without reading a number. The two tiers now differ
+        // in the size of the marker, not in what it means.
         let grown = lit == Some(Grip::Band(index));
         let r = if grown { HANDLE + 1.6 } else { HANDLE };
         dot(scene, palette.tcp_meter_well, (x, y), r + 1.0);
-        dot(scene, palette.accent, (x, y), r);
+        dot(scene, band_color(f64::from(band.frequency)), (x, y), r);
     }
 }
 
@@ -753,12 +837,12 @@ fn comp(
     rack: Rack,
     lit: Option<Grip>,
 ) {
-    // The curve gets the top of the panel and the knobs the rest —
-    // there is more height here than a transfer curve needs, and a
-    // square graph over a row of controls is what a compressor looks
-    // like everywhere.
+    // The visualiser gets the top of the panel and the knobs the rest.
+    // There is more height here than a level display needs, and a
+    // display over a row of controls is what a compressor looks like
+    // everywhere.
     let (at, knobs) = if rack.detailed() {
-        let plot = (at.width).min(at.height - KNOB_BAND).max(at.height * 0.45);
+        let plot = (at.height - KNOB_BAND).max(at.height * 0.45);
         let (plot, knobs) = at.split_top(plot);
         (plot, Some(knobs))
     } else {
@@ -766,70 +850,63 @@ fn comp(
     };
     let right = at.x + at.width;
     let bottom = at.y + at.height;
-    // The comp editor's own axes: −60 to 0 across and up. Taken from
-    // the plugin so the threshold marker, the grid and the curve all
-    // land on the same numbers it does.
-    let to_x = |db: f64| at.x + comp_ui::comp_graph_svg::db_to_x(db, at.width);
+    // The comp editor's own axis: 0 dB at the top, −60 at the floor.
+    // Taken from the plugin so the threshold line, the ladder and
+    // whatever level is drawn over them land on the same numbers it
+    // uses.
     let to_y = |db: f64| at.y + comp_ui::comp_graph_svg::db_to_y(db, at.height);
 
-    // Unity, so the bend below threshold is visible as a departure from
-    // it rather than as a line at an angle.
-    rule(
+    // The ladder the levels are read against. Without it the threshold
+    // is a line at a height rather than a line at a level.
+    if rack.detailed() {
+        for db in [-12.0, -24.0, -36.0, -48.0] {
+            let y = to_y(db);
+            rule(scene, palette.grid_beat, Line::new((at.x, y), (right, y)));
+        }
+    }
+
+    // The threshold: a line ACROSS the display at its own level, which
+    // is where a threshold belongs. It was a knob, and a knob makes you
+    // read a number and compare it to a meter somewhere else; a line
+    // over the levels is the comparison.
+    let y = to_y(f64::from(comp.threshold)).clamp(at.y, bottom);
+    let held = lit == Some(Grip::Threshold);
+    rule_wide(
         scene,
-        palette.grid,
-        Line::new((to_x(-60.0), to_y(-60.0)), (to_x(0.0), to_y(0.0))),
+        palette.meter_danger,
+        Line::new((at.x, y), (right, y)),
+        if held { 2.5 } else { 1.5 },
     );
+    // A grab tab at the right end, so there is something to aim at on a
+    // line that is otherwise one pixel tall.
     if rack.detailed() {
-        let t = to_x(f64::from(comp.threshold));
-        rule(scene, palette.grid_beat, Line::new((t, at.y), (t, bottom)));
+        let r = if held { HANDLE + 1.6 } else { HANDLE };
+        dot(scene, palette.meter_danger, (right - r - 1.0, y), r);
     }
 
-    if let Some(path) = comp_curve(comp, at) {
-        scene.stroke(
-            &Stroke::new(1.5).with_caps(vello::kurbo::Cap::Round),
-            Affine::IDENTITY,
-            palette.meter_warn,
-            None,
-            &path,
-        );
-    }
-
-    // The knobs, under the curve. Three, because three are what the
-    // curve is drawn from — a knob that moved something the panel does
-    // not show would be a control you have to trust rather than read.
     if let Some(band) = knobs {
-        comp_knobs(scene, palette, font, comp, band);
-    }
-
-    // The threshold, where the curve leaves unity. The vertical rule
-    // says which input it is; the dot says which OUTPUT, which is the
-    // half a transfer curve is read for.
-    if rack.detailed() {
-        let db = f64::from(comp.threshold);
-        let out = f64::from(compress_transfer(
-            comp.threshold,
-            comp.threshold,
-            comp.ratio,
-            comp.knee,
-        ));
-        let at_point = (to_x(db).clamp(at.x, right), to_y(out).clamp(at.y, bottom));
-        let r = if lit == Some(Grip::Threshold) {
-            HANDLE + 1.6
-        } else {
-            HANDLE
-        };
-        dot(scene, palette.tcp_meter_well, at_point, r + 1.0);
-        dot(scene, palette.meter_warn, at_point, r);
+        comp_knobs(scene, palette, font, comp, band, lit);
     }
 }
 
-/// Threshold, ratio and knee, as hardware.
+/// Ratio, attack and release, as hardware.
+///
+/// Not threshold: that is a level, and it lives on the axis the levels
+/// are drawn against. These three are the ones with no natural place on
+/// a display — a ratio is not a height and a millisecond is not a
+/// height — which is exactly what a knob is for.
 ///
 /// The same knob the track panel draws, at the same size, so a control
 /// in the rack and a control on a row are the same object rather than
-/// two things that look similar. Laid out across the band and centred
-/// in it, which is what leaves room for the label under each.
-fn comp_knobs(scene: &mut Scene, palette: &Palette, font: &Font, comp: Comp, at: Panel) {
+/// two things that look similar.
+fn comp_knobs(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    comp: Comp,
+    at: Panel,
+    lit: Option<Grip>,
+) {
     /// The knob art's authored size.
     const AUTHORED: f64 = 24.0;
     /// The label's type size.
@@ -861,12 +938,12 @@ fn comp_knobs(scene: &mut Scene, palette: &Palette, font: &Font, comp: Comp, at:
     let step = size * (1.0 + GAP);
     let left = at.x + (at.width - (step * 2.0 + size)) / 2.0;
 
-    for (i, (name, value)) in [
+    for (i, (name, value, grip)) in [
         // Each as a fraction of its own range, which is what a knob
         // shows — the numbers themselves are in the header.
-        ("TH", f64::from(comp.threshold + 60.0) / 60.0),
-        ("RA", (f64::from(comp.ratio) - 1.0) / 19.0),
-        ("KN", f64::from(comp.knee) / 24.0),
+        ("RATIO", comp.ratio_norm(), Grip::Ratio),
+        ("ATK", comp.attack_norm(), Grip::Attack),
+        ("REL", comp.release_norm(), Grip::Release),
     ]
     .into_iter()
     .enumerate()
@@ -878,7 +955,11 @@ fn comp_knobs(scene: &mut Scene, palette: &Palette, font: &Font, comp: Comp, at:
                 &palette.chrome,
                 crate::tcp::lit(palette).volume,
                 value.clamp(0.0, 1.0),
-                daw_theme_art::mixer_controls::Interaction::Normal,
+                if lit == Some(grip) {
+                    daw_theme_art::mixer_controls::Interaction::Hover
+                } else {
+                    daw_theme_art::mixer_controls::Interaction::Normal
+                },
                 size,
             ),
             font,
@@ -934,6 +1015,31 @@ fn sat(scene: &mut Scene, palette: &Palette, pre: &ClassAPreamp, at: Panel, rack
     curve(scene, palette.pan, points, 1.5);
 }
 
+/// A band's colour, from the plugin's own frequency map.
+///
+/// `eq_graph_model::freq_to_color` sweeps the hue red to violet across
+/// the audible range and hands back a hex string, because its first
+/// consumer was a DOM. Parsing it here is cheaper than a second colour
+/// map that would drift from the editor's — and drifting is exactly
+/// what must not happen, since the point of the colour is that a band
+/// is the same colour in the strip as it is in the plugin window.
+fn band_color(hz: f64) -> Color {
+    let hex = eq_ui::eq_graph_model::freq_to_color(hz);
+    let digits = hex.trim_start_matches('#');
+    let channel = |from: usize| {
+        digits
+            .get(from..from.saturating_add(2))
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+    };
+    match (channel(0), channel(2), channel(4)) {
+        (Some(r), Some(g), Some(b)) => Color::from_rgba8(r, g, b, 0xff),
+        // A map that stopped producing hex is a bug in the plugin, not
+        // a reason for the rack to draw nothing: grey is visible and
+        // obviously not a frequency.
+        _ => Color::from_rgba8(0x88, 0x88, 0x88, 0xff),
+    }
+}
+
 /// A filled circle — a handle, or a marker on a curve.
 fn dot(scene: &mut Scene, color: Color, at: (f64, f64), r: f64) {
     scene.fill(
@@ -943,6 +1049,11 @@ fn dot(scene: &mut Scene, color: Color, at: (f64, f64), r: f64) {
         None,
         &vello::kurbo::Circle::new(at, r),
     );
+}
+
+/// A line of a given width — the threshold, which has to be findable.
+fn rule_wide(scene: &mut Scene, color: Color, line: Line, width: f64) {
+    scene.stroke(&Stroke::new(width), Affine::IDENTITY, color, None, &line);
 }
 
 /// One hairline.
@@ -1060,6 +1171,11 @@ pub fn placeholder(index: usize) -> Tone {
             threshold: -14.0 - f64_to_f32(nudge),
             ratio: 2.0 + f64_to_f32(nudge) * 0.5,
             knee: 6.0,
+            // A fast-ish drum attack that lengthens down the kit, and a
+            // release that follows it — so a rack of racks looks like a
+            // set of decisions rather than one repeated.
+            attack: 3.0 + f64_to_f32(nudge) * 4.0,
+            release: 80.0 + f64_to_f32(nudge) * 40.0,
         },
         sat: {
             let mut pre = ClassAPreamp::new(f64_to_f32(DISPLAY_RATE));
@@ -1086,10 +1202,29 @@ pub fn placeholder(index: usize) -> Tone {
 pub enum Grip {
     /// An EQ band, by its index in the chain's list.
     Band(usize),
-    /// The compressor's threshold — dragged along the input axis.
+    /// The compressor's threshold — the red line across its display,
+    /// dragged up and down the level axis it is drawn on.
     Threshold,
+    /// Its ratio knob.
+    Ratio,
+    /// Its attack knob.
+    Attack,
+    /// And its release.
+    Release,
     /// The saturator's drive.
     Drive,
+}
+
+impl Grip {
+    /// Whether this grip is one of the compressor's knobs.
+    ///
+    /// They share a drag law — a knob is a knob — and differ only in
+    /// the range they map onto, which is the one thing each has to say
+    /// for itself.
+    #[must_use]
+    pub const fn is_knob(self) -> bool {
+        matches!(self, Self::Ratio | Self::Attack | Self::Release)
+    }
 }
 
 /// How close a pointer has to be to take hold of something.
@@ -1156,17 +1291,37 @@ pub fn grip_at(
                     return Some(Grip::Band(index));
                 }
             }
-            // The whole panel is the grip for these two: there is one
-            // number in each, and hunting for a three-pixel dot to
-            // change it would be worse than useless on a strip. They
-            // stay grabbable at `Curves`, where the curve still shows
-            // what the drag is doing.
-            Which::Comp => return Some(Grip::Threshold),
+            Which::Comp => return Some(comp_grip(body, rack, x, y)),
             Which::Sat => return Some(Grip::Drive),
             Which::Eq => {}
         }
     }
     None
+}
+
+/// What is under a point in the compressor's panel.
+///
+/// Its knob band first, because the knobs are small and sit inside the
+/// panel the threshold otherwise owns. Everything else is the
+/// threshold: it is a line across a display, and a line one pixel tall
+/// is not something you aim at — the whole display is its target, the
+/// way a fader's groove is a fader's.
+fn comp_grip(body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
+    if !rack.detailed() {
+        return Grip::Threshold;
+    }
+    let (_, knobs) = body.split_top((body.height - KNOB_BAND).max(body.height * 0.45));
+    if y >= knobs.y {
+        // Which third of the band, which is how they are laid out —
+        // the cluster is centred but its order is left to right.
+        let third = ((x - knobs.x) / (knobs.width / 3.0)).floor();
+        return match third as i64 {
+            ..=0 => Grip::Ratio,
+            1 => Grip::Attack,
+            _ => Grip::Release,
+        };
+    }
+    Grip::Threshold
 }
 
 /// The EQ panel's dB range, top to bottom.
@@ -1224,6 +1379,14 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
             let step = interaction::gain_step(delta_y, mods);
             let moved = f64::from(tone.comp.threshold) + step;
             tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
+        }
+        // A notch of a knob is a fortieth of its travel, which is about
+        // the resolution a hand expects from one — fine enough to place
+        // a 3:1 exactly, coarse enough to cross the range.
+        Grip::Ratio | Grip::Attack | Grip::Release => {
+            let step = interaction::gain_step(delta_y, mods) / 40.0;
+            let to = knob_norm(tone.comp, grip) + step;
+            set_knob(&mut tone.comp, grip, to);
         }
         Grip::Drive => {
             let step = interaction::gain_step(delta_y, mods) * 0.1;
@@ -1304,6 +1467,9 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
             }
         }
         Grip::Threshold => tone.comp.threshold = Comp::default().threshold,
+        Grip::Ratio => tone.comp.ratio = Comp::default().ratio,
+        Grip::Attack => tone.comp.attack = Comp::default().attack,
+        Grip::Release => tone.comp.release = Comp::default().release,
         // Unity: a preamp at drive one is the wire it is modelled on.
         Grip::Drive => tone.sat.drive = 1.0,
     }
@@ -1328,7 +1494,9 @@ pub fn drag(
         .into_iter()
         .find(|(which, _)| match grip {
             Grip::Band(_) => *which == Which::Eq,
-            Grip::Threshold => *which == Which::Comp,
+            Grip::Threshold | Grip::Ratio | Grip::Attack | Grip::Release => {
+                *which == Which::Comp
+            }
             Grip::Drive => *which == Which::Sat,
         })
     else {
@@ -1387,6 +1555,16 @@ pub fn drag(
             let dy = dy * interaction::fine_scale(mods);
             let moved = f64::from(tone.comp.threshold) - dy / per_db.max(f64::EPSILON);
             tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
+        }
+        Grip::Ratio | Grip::Attack | Grip::Release => {
+            // A knob's travel, not a panel's: the band a knob sits in
+            // is thirty pixels tall and a drag that mapped its whole
+            // range onto that would be unusable. `KNOB_TRAVEL` is the
+            // same notional sweep the track panel's knobs use, so a
+            // knob turns by the same amount wherever it is.
+            let dy = dy * interaction::fine_scale(mods);
+            let moved = knob_norm(tone.comp, grip) - dy / KNOB_TRAVEL;
+            set_knob(&mut tone.comp, grip, moved);
         }
         Grip::Drive => {
             // A quarter of the panel's height is the whole range, so a
@@ -2057,5 +2235,168 @@ mod plugin_interaction_tests {
         }
         assert_eq!(seen.first(), seen.last(), "the cycle returned");
         assert!(seen.len() > 2, "and it passed through others");
+    }
+}
+
+#[cfg(test)]
+mod colour_tests {
+    use super::band_color;
+
+    /// The marker's colour is the plugin's, not one invented here — a
+    /// band has to be the same colour in the strip as it is in the
+    /// plugin window, or the colour is telling you two things.
+    #[test]
+    fn a_band_takes_the_plugins_own_hue() {
+        for hz in [40.0, 250.0, 1_000.0, 4_000.0, 16_000.0] {
+            let hex = eq_ui::eq_graph_model::freq_to_color(hz);
+            let expected = hex.trim_start_matches('#');
+            let got = band_color(hz);
+            let [r, g, b, _] = got.to_rgba8().to_u8_array();
+            assert_eq!(
+                format!("{r:02x}{g:02x}{b:02x}"),
+                expected,
+                "{hz} Hz did not match the plugin"
+            );
+        }
+    }
+
+    /// And it sweeps, so two bands an octave apart are told apart by it.
+    #[test]
+    fn the_hue_moves_across_the_spectrum() {
+        let low = band_color(60.0).to_rgba8().to_u8_array();
+        let high = band_color(12_000.0).to_rgba8().to_u8_array();
+        assert_ne!(low, high, "the low and the air band look the same");
+    }
+}
+
+#[cfg(test)]
+mod comp_tests {
+    use super::{Comp, Grip, Mods, Panel, Rack, Which, drag, grip_at, placeholder, reset};
+
+    const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
+
+    fn rack() -> Panel {
+        Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 133.0,
+            height: 600.0,
+        }
+    }
+
+    fn comp_panel() -> Panel {
+        let at = super::layout(&ALL, rack())
+            .into_iter()
+            .find(|(which, _)| *which == Which::Comp)
+            .expect("a comp panel")
+            .1;
+        super::body_of(at, Rack::at(rack().width))
+    }
+
+    /// The threshold is a line across the display, so the display is
+    /// what you grab — a line one pixel tall is not something you aim
+    /// at, the way a fader's groove is the fader.
+    #[test]
+    fn the_display_grabs_the_threshold() {
+        let tone = placeholder(0);
+        let body = comp_panel();
+        let inside = body.y + body.height * 0.25;
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), body.x + body.width / 2.0, inside),
+            Some(Grip::Threshold)
+        );
+    }
+
+    /// And the knob band under it grabs knobs, left to right.
+    #[test]
+    fn the_band_grabs_its_three_knobs() {
+        let tone = placeholder(0);
+        let body = comp_panel();
+        let knobs = body
+            .split_top((body.height - super::KNOB_BAND).max(body.height * 0.45))
+            .1;
+        let y = knobs.y + knobs.height / 2.0;
+        let third = knobs.width / 3.0;
+        for (i, want) in [Grip::Ratio, Grip::Attack, Grip::Release].into_iter().enumerate() {
+            let x = knobs.x + third * (i as f64 + 0.5);
+            assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(want), "third {i}");
+        }
+    }
+
+    /// Dragging the threshold DOWN lowers it, because it is drawn on an
+    /// axis where down is quieter — the one gesture where following the
+    /// pointer is the whole point.
+    #[test]
+    fn the_threshold_follows_the_pointer_down() {
+        let mut tone = placeholder(0);
+        let before = tone.comp.threshold;
+        drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, 20.0);
+        assert!(tone.comp.threshold < before, "down is a lower threshold");
+        drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, -40.0);
+        assert!(tone.comp.threshold > before, "and up is a higher one");
+    }
+
+    /// Each knob moves its own parameter and nothing else.
+    #[test]
+    fn each_knob_turns_one_thing() {
+        for grip in [Grip::Ratio, Grip::Attack, Grip::Release] {
+            let mut tone = placeholder(0);
+            let was = tone.comp;
+            drag(&mut tone, grip, &ALL, rack(), Mods::default(), 0.0, -30.0);
+            let now = tone.comp;
+            let moved = [
+                (now.ratio - was.ratio).abs() > f32::EPSILON,
+                (now.attack - was.attack).abs() > f32::EPSILON,
+                (now.release - was.release).abs() > f32::EPSILON,
+            ];
+            assert_eq!(moved.iter().filter(|m| **m).count(), 1, "{grip:?}");
+            assert!(
+                (now.threshold - was.threshold).abs() < f32::EPSILON,
+                "{grip:?} moved the threshold"
+            );
+        }
+    }
+
+    /// Attack and release are logarithmic — a millisecond matters at
+    /// the fast end and twenty do not at the slow — so the same drag
+    /// from the bottom moves far less than from the top.
+    #[test]
+    fn the_time_knobs_are_logarithmic() {
+        let step = |from: f32| {
+            let mut tone = placeholder(0);
+            tone.comp.attack = from;
+            drag(&mut tone, Grip::Attack, &ALL, rack(), Mods::default(), 0.0, -15.0);
+            tone.comp.attack - from
+        };
+        assert!(step(1.0) < step(100.0), "the fast end moves in smaller steps");
+    }
+
+    /// Every knob clamps to its own range rather than running away.
+    #[test]
+    fn the_knobs_clamp() {
+        let mut tone = placeholder(0);
+        for _ in 0..80 {
+            for grip in [Grip::Ratio, Grip::Attack, Grip::Release] {
+                drag(&mut tone, grip, &ALL, rack(), Mods::default(), 0.0, -60.0);
+            }
+        }
+        assert!((tone.comp.ratio - 20.0).abs() < 0.01, "{}", tone.comp.ratio);
+        assert!((tone.comp.attack - 200.0).abs() < 0.5, "{}", tone.comp.attack);
+        assert!((tone.comp.release - 3_000.0).abs() < 5.0, "{}", tone.comp.release);
+    }
+
+    /// And each resets to its own default.
+    #[test]
+    fn each_knob_resets_to_its_own_default() {
+        let mut tone = placeholder(0);
+        for grip in [Grip::Ratio, Grip::Attack, Grip::Release, Grip::Threshold] {
+            drag(&mut tone, grip, &ALL, rack(), Mods::default(), 0.0, -25.0);
+            reset(&mut tone, grip);
+        }
+        let default = Comp::default();
+        assert!((tone.comp.ratio - default.ratio).abs() < f32::EPSILON);
+        assert!((tone.comp.attack - default.attack).abs() < f32::EPSILON);
+        assert!((tone.comp.release - default.release).abs() < f32::EPSILON);
+        assert!((tone.comp.threshold - default.threshold).abs() < f32::EPSILON);
     }
 }
