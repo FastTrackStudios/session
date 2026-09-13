@@ -1,6 +1,19 @@
 # FastTrackStudio — root workspace recipes
 # Run commands: just <recipe-name>
 
+# The session the DAW window opens.
+#
+# The drum template, not the orchestral stress fixture: it has the
+# hierarchy a real desk has (Drums > Drum Kit > Kick > Sum > In/Out/Trig),
+# the template's own colours, and it opens with the kick selected — so
+# the focus-width rack is on screen before anything is clicked. The
+# orchestral fixture is 2000 flat tracks; it exists to be slow, not to
+# be looked at.
+#
+# `just daw-template` writes it. Override for a one-off with an argument
+# (`just daw-window some.rpp`) or for a session with FTS_DAW_TEMPLATE.
+DAW_PROJECT := env("FTS_DAW_TEMPLATE", "/tmp/fts-template.rpp")
+
 # List recipes by default
 default:
     @just --list
@@ -1273,7 +1286,7 @@ daw-window PROJECT="" SIZE="2560x1440":
     set -euo pipefail
     project="{{PROJECT}}"
     if [[ -z "$project" ]]; then
-        project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
+        project="{{DAW_PROJECT}}"
         [[ -f "$project" ]] || just daw-template
     fi
     cargo build --release -p session-daw --bin vello 2>&1 | grep -E '^error' -A6 || true
