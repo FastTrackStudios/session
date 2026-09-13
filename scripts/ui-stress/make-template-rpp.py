@@ -406,7 +406,19 @@ def main() -> None:
             red, green, blue = (colour >> 16) & 0xFF, (colour >> 8) & 0xFF, colour & 0xFF
             out(f"    PEAKCOL {0x1000000 | (blue << 16) | (green << 8) | red}\n")
         out("    BEAT -1\n    AUTOMODE 0\n")
-        out(f"    VOLPAN {0.6 + 0.5 * ((i % 7) / 6.0):.4f} {-0.8 + 1.6 * ((i % 5) / 4.0):.4f} -1 -1 1\n")
+        # Faders across the whole travel, not clustered at the top.
+        #
+        # They used to run 0.6..1.1 — every strip within 5 dB of unity,
+        # which is not what a desk looks like and hid the thing the
+        # meter column is built around: a fader pulled down sits BELOW
+        # the level passing it, and the level has to read through the
+        # pane in the cap. With every cap parked above every meter that
+        # never happened, so the feature was invisible in every shot.
+        #
+        # 0.10..1.20 linear is about -20 dB to +1.6 dB, which is the
+        # spread a kit actually ends up at once the room and the
+        # overheads are balanced against the close mics.
+        out(f"    VOLPAN {0.10 + 1.10 * ((i % 11) / 10.0):.4f} {-0.8 + 1.6 * ((i % 5) / 4.0):.4f} -1 -1 1\n")
         out("    MUTESOLO 0 0 0\n    IPHASE 0\n")
         out(f"    ISBUS {1 if is_folder else 0} {delta}\n")
         out("    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0\n")
