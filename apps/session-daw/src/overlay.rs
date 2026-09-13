@@ -199,6 +199,7 @@ mod tests {
             600.0,
             crate::layout::Layout::default(),
             &[],
+            crate::settings::Settings::default(),
             &crate::tone::Store::default(),
         );
         (mixer, palette, font, tracks)

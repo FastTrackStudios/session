@@ -99,6 +99,17 @@ impl Default for Comp {
 /// looks like information.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Rack {
+    /// The plugin's whole editing surface: its grid, its labels, its
+    /// own band nodes. What a FOCUSED strip gets — one track opened
+    /// wide enough that the rack stops being a readout you glance at
+    /// and becomes the thing you work in.
+    ///
+    /// The difference is not more of the same drawing. At a glance
+    /// width the rack shows what a track's processing IS; at a focus
+    /// width it shows you where to put your hands, which needs the
+    /// plugin's own calibration rather than the strip's abbreviation
+    /// of it.
+    Focus,
     /// All three panels, each with its grid and its label.
     Full,
     /// The curves alone, stacked. No grid, no labels — at this width a
@@ -118,7 +129,9 @@ impl Rack {
     /// shape to survive, which is far less.
     #[must_use]
     pub fn at(width: f64) -> Self {
-        if width >= LEGIBLE {
+        if width >= FOCUSED {
+            Self::Focus
+        } else if width >= LEGIBLE {
             Self::Full
         } else if width >= SHAPE {
             Self::Curves
@@ -143,10 +156,28 @@ impl Rack {
     #[must_use]
     pub const fn floor(self) -> Option<f64> {
         match self {
+            Self::Focus => Some(FOCUSED),
             Self::Full => Some(LEGIBLE),
             Self::Curves => Some(SHAPE),
             Self::Off => None,
         }
+    }
+
+    /// Whether this tier hands the panel over to the plugin's own
+    /// drawing — its grid, its labels, its nodes.
+    #[must_use]
+    pub const fn editing(self) -> bool {
+        matches!(self, Self::Focus)
+    }
+
+    /// Whether the panel is detailed: headers, markers, grips.
+    ///
+    /// Both of the two widest tiers. Written as a predicate rather than
+    /// a comparison because the enum is ordered most-capable-first, so
+    /// `>= Full` reads as "at least Full" and means the opposite.
+    #[must_use]
+    pub const fn detailed(self) -> bool {
+        matches!(self, Self::Focus | Self::Full)
     }
 }
 
@@ -163,6 +194,20 @@ pub const LEGIBLE: f64 = 96.0;
 /// rather than as a setting, and ornament in a mixer is worse than
 /// space.
 pub const SHAPE: f64 = 90.0;
+
+/// The narrowest rack that gives the panel over to the plugin's own
+/// editing surface.
+///
+/// Below this the plugin's grid crowds, its labels collide and its
+/// nodes — authored for a graph eight hundred pixels wide — overlap
+/// each other. Above it there is room for all three, and the rack stops
+/// abbreviating.
+///
+/// Well under a focus width (618 on a 1440p panel), because a focused
+/// strip is not the only way to get here: two of them side by side on
+/// an ultrawide, or a mixer of six tracks, land in the same place and
+/// should get the same panel.
+pub const FOCUSED: f64 = 260.0;
 
 /// The width a strip opens to when you go to WORK on it.
 ///
@@ -242,6 +287,19 @@ impl Panel {
         (head, body)
     }
 }
+
+/// How much of the compressor's panel its knobs take.
+///
+/// Enough for one row of hardware at the size the track panel draws
+/// knobs — which is the size they are legible at, and the size the rest
+/// of this window already uses, so a knob in the rack and a knob on a
+/// row are the same object.
+///
+/// The compressor is the panel with height to spare: a transfer curve
+/// is a bent line through a square, and a rack panel is twice as tall
+/// as it is wide. What is left over goes to the controls rather than to
+/// more empty graph.
+const KNOB_BAND: f64 = 36.0;
 
 /// How tall a panel's header is.
 ///
@@ -334,7 +392,7 @@ pub fn draw(
         if body.width > 0.0 && body.height > 0.0 {
             match which {
                 Which::Eq => eq(scene, palette, font, tone, body, rack, lit),
-                Which::Comp => comp(scene, palette, tone.comp, body, rack, lit),
+                Which::Comp => comp(scene, palette, font, tone.comp, body, rack, lit),
                 Which::Sat => sat(scene, palette, &tone.sat, body, rack),
             }
             if let Some(head) = head {
@@ -389,7 +447,7 @@ pub fn layout(panels: &[Which], panel: Panel) -> Vec<(Which, Panel)> {
 #[must_use]
 pub fn body_of(at: Panel, rack: Rack) -> Panel {
     let inner = at.inset(2.0);
-    if rack == Rack::Full && inner.height > HEAD * 2.0 {
+    if rack.detailed() && inner.height > HEAD * 2.0 {
         inner.split_top(HEAD).1
     } else {
         inner
@@ -482,7 +540,7 @@ fn ground(scene: &mut Scene, palette: &Palette, at: Panel) {
 ///
 /// The labels come off, because a strip panel is a hundred and thirty
 /// pixels wide and the editor's are authored for eight hundred.
-fn eq_from_plugin(scene: &mut Scene, tone: &Tone, at: Panel) -> bool {
+fn eq_from_plugin(scene: &mut Scene, tone: &Tone, at: Panel, rack: Rack) -> bool {
     let state = eq_ui::eq_graph_model::EqGraphRenderState::new();
     state.bands.write().clone_from(&tone.eq);
     {
@@ -491,21 +549,26 @@ fn eq_from_plugin(scene: &mut Scene, tone: &Tone, at: Panel) -> bool {
         config.min_freq = 20.0;
         config.max_freq = 20_000.0;
         config.sample_rate = DISPLAY_RATE;
-        // The embedded look, from the same painter. The rack has
-        // already drawn its own ground, its dB ladder and its decades
-        // at a size that fits a strip; the editor's are authored for a
-        // plugin window eight hundred pixels wide, and its opaque fill
-        // would cover the ones underneath.
+        // Two looks, from one painter.
+        //
+        // At a glance width the rack has already drawn its own ground,
+        // its dB ladder and its decades at a size that fits a strip,
+        // and the editor's own would cover or crowd them — so the
+        // plugin draws only what the rack cannot: the per-band curves,
+        // their colours, the filled response. Its nodes come off too,
+        // because four of them at their authored size overlap across a
+        // hundred and thirty pixels and hide the curve they sit on; the
+        // rack draws its own markers instead, sized for a strip.
+        //
+        // At a focus width there is room for the real thing, so the
+        // plugin draws all of it and the rack draws none.
+        let editing = rack.editing();
         config.fill_background = false;
-        config.show_freq_labels = false;
-        config.show_db_labels = false;
-        config.show_grid = false;
+        config.show_freq_labels = editing;
+        config.show_db_labels = editing;
+        config.show_grid = editing;
         config.fill_curve = true;
-        // And no nodes: four of the editor's at their authored size
-        // overlap each other across a hundred and thirty pixels and
-        // hide the curve they sit on. The rack draws its own markers
-        // after this, sized for a strip and lit by its own hover.
-        config.node_scale = 0.0;
+        config.node_scale = if editing { 1.0 } else { 0.0 };
         config.scale = 1.0;
     }
     let Ok(width) = u32::try_from(at.width.max(0.0).round() as i64) else {
@@ -542,6 +605,8 @@ fn eq(
     let right = at.x + at.width;
     let bottom = at.y + at.height;
 
+    // Only at Full: at Focus the plugin draws its own grid and labels,
+    // calibrated for a graph you are working in rather than glancing at.
     if rack == Rack::Full {
         for (hz, name) in DECADES {
             let x = freq.freq_to_x(hz, at.x, right);
@@ -593,7 +658,7 @@ fn eq(
     // authored for a graph eight hundred pixels wide and this one is a
     // hundred and thirty: at that size a labelled node with a shape
     // glyph is a smudge, where a dot is a position.
-    let painted = rack == Rack::Full && eq_from_plugin(scene, tone, at);
+    let painted = rack.detailed() && eq_from_plugin(scene, tone, at, rack);
     if !painted {
         // The fallback: the same response function the plugin's painter
         // uses, as one polyline. What the narrow tier gets, and what a
@@ -618,7 +683,9 @@ fn eq(
     // they are not the same setting.
     //
     // Only at `Full`. At `Curves` a handle is three pixels of dot on a
-    // curve two pixels wide, which reads as a kink in the line.
+    // curve two pixels wide, which reads as a kink in the line — and at
+    // `Focus` the plugin has already drawn its own nodes, which are the
+    // ones you came to the focus width for.
     if rack != Rack::Full {
         return;
     }
@@ -656,20 +723,54 @@ const HANDLE: f64 = 2.6;
 /// the two that are not.
 const DECADES: [(f64, &str); 3] = [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k")];
 
+/// The plugin's own transfer curve, as a path.
+///
+/// `comp_graph_svg::transfer_curve_path` is what the compressor's
+/// editor draws with — it emits an SVG path because that editor is a
+/// DOM, and kurbo reads one. So the curve in the strip is the curve in
+/// the plugin, sampled by the plugin's own loop through its own
+/// `compress_transfer`, rather than a second traversal that agrees
+/// until someone changes a knee.
+fn comp_curve(comp: Comp, at: Panel) -> Option<BezPath> {
+    let d = comp_ui::comp_graph_svg::transfer_curve_path(
+        comp.threshold,
+        comp.ratio,
+        comp.knee,
+        at.width,
+        at.height,
+    );
+    let path = BezPath::from_svg(&d).ok()?;
+    Some(Affine::translate((at.x, at.y)) * path)
+}
+
 /// The compressor's transfer curve, input dB across, output dB up.
 fn comp(
     scene: &mut Scene,
     palette: &Palette,
+    font: &Font,
     comp: Comp,
     at: Panel,
     rack: Rack,
     lit: Option<Grip>,
 ) {
+    // The curve gets the top of the panel and the knobs the rest —
+    // there is more height here than a transfer curve needs, and a
+    // square graph over a row of controls is what a compressor looks
+    // like everywhere.
+    let (at, knobs) = if rack.detailed() {
+        let plot = (at.width).min(at.height - KNOB_BAND).max(at.height * 0.45);
+        let (plot, knobs) = at.split_top(plot);
+        (plot, Some(knobs))
+    } else {
+        (at, None)
+    };
     let right = at.x + at.width;
     let bottom = at.y + at.height;
-    // The comp editor's own window: −60 to 0 on both axes.
-    let to_x = |db: f64| at.x + (db + 60.0) / 60.0 * at.width;
-    let to_y = |db: f64| bottom - (db + 60.0) / 60.0 * at.height;
+    // The comp editor's own axes: −60 to 0 across and up. Taken from
+    // the plugin so the threshold marker, the grid and the curve all
+    // land on the same numbers it does.
+    let to_x = |db: f64| at.x + comp_ui::comp_graph_svg::db_to_x(db, at.width);
+    let to_y = |db: f64| at.y + comp_ui::comp_graph_svg::db_to_y(db, at.height);
 
     // Unity, so the bend below threshold is visible as a departure from
     // it rather than as a line at an angle.
@@ -678,31 +779,32 @@ fn comp(
         palette.grid,
         Line::new((to_x(-60.0), to_y(-60.0)), (to_x(0.0), to_y(0.0))),
     );
-    if rack == Rack::Full {
+    if rack.detailed() {
         let t = to_x(f64::from(comp.threshold));
         rule(scene, palette.grid_beat, Line::new((t, at.y), (t, bottom)));
     }
 
-    let points = (0..SAMPLES).map(|i| {
-        let t = crate::num::coord(i) / crate::num::coord(SAMPLES.saturating_sub(1).max(1));
-        let input = t.mul_add(60.0, -60.0);
-        let output = f64::from(compress_transfer(
-            crate::tone::f64_to_f32(input),
-            comp.threshold,
-            comp.ratio,
-            comp.knee,
-        ));
-        (
-            to_x(input).clamp(at.x, right),
-            to_y(output).clamp(at.y, bottom),
-        )
-    });
-    curve(scene, palette.meter_warn, points, 1.5);
+    if let Some(path) = comp_curve(comp, at) {
+        scene.stroke(
+            &Stroke::new(1.5).with_caps(vello::kurbo::Cap::Round),
+            Affine::IDENTITY,
+            palette.meter_warn,
+            None,
+            &path,
+        );
+    }
+
+    // The knobs, under the curve. Three, because three are what the
+    // curve is drawn from — a knob that moved something the panel does
+    // not show would be a control you have to trust rather than read.
+    if let Some(band) = knobs {
+        comp_knobs(scene, palette, font, comp, band);
+    }
 
     // The threshold, where the curve leaves unity. The vertical rule
     // says which input it is; the dot says which OUTPUT, which is the
     // half a transfer curve is read for.
-    if rack == Rack::Full {
+    if rack.detailed() {
         let db = f64::from(comp.threshold);
         let out = f64::from(compress_transfer(
             comp.threshold,
@@ -721,13 +823,94 @@ fn comp(
     }
 }
 
+/// Threshold, ratio and knee, as hardware.
+///
+/// The same knob the track panel draws, at the same size, so a control
+/// in the rack and a control on a row are the same object rather than
+/// two things that look similar. Laid out across the band and centred
+/// in it, which is what leaves room for the label under each.
+fn comp_knobs(scene: &mut Scene, palette: &Palette, font: &Font, comp: Comp, at: Panel) {
+    /// The knob art's authored size.
+    const AUTHORED: f64 = 24.0;
+    /// The label's type size.
+    const SIZE: f32 = 6.0;
+    /// And the line it sits on, which is reserved BEFORE the knob is
+    /// sized — a knob scaled to the whole band puts its own label
+    /// outside the panel, which is where it went the first time.
+    const LABEL: f64 = SIZE as f64 + 2.0;
+
+    /// The air between two knobs, as a fraction of one.
+    const GAP: f64 = 0.45;
+
+    let room = at.height - LABEL;
+    let each = at.width / 3.0;
+    if each < AUTHORED * 0.8 || room < AUTHORED * 0.8 {
+        return;
+    }
+    // Capped a little above the authored size: bigger than it was drawn
+    // for is a blurry knob, and the band is generous on a focused strip.
+    let scale = (each / (AUTHORED * (1.0 + GAP))).min(room / AUTHORED).min(1.6);
+    let size = AUTHORED * scale;
+    let top = at.y + (room - size) / 2.0;
+    // A GROUP, centred, rather than one knob per third of the panel.
+    //
+    // Thirds work at a strip width and fall apart at a focus width:
+    // three knobs strung a hundred and twenty pixels apart stop reading
+    // as one control set and start reading as three lost controls. The
+    // spacing is the knob's own, so the cluster grows with them.
+    let step = size * (1.0 + GAP);
+    let left = at.x + (at.width - (step * 2.0 + size)) / 2.0;
+
+    for (i, (name, value)) in [
+        // Each as a fraction of its own range, which is what a knob
+        // shows — the numbers themselves are in the header.
+        ("TH", f64::from(comp.threshold + 60.0) / 60.0),
+        ("RA", (f64::from(comp.ratio) - 1.0) / 19.0),
+        ("KN", f64::from(comp.knee) / 24.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let x = left + crate::num::coord(i) * step;
+        crate::art::scaled(
+            scene,
+            &daw_theme_art::paint::tcp::volume_knob(
+                &palette.chrome,
+                crate::tcp::lit(palette).volume,
+                value.clamp(0.0, 1.0),
+                daw_theme_art::mixer_controls::Interaction::Normal,
+                size,
+            ),
+            font,
+            x,
+            top,
+            scale,
+        );
+        // A two-letter label, because three knobs in a row at this size
+        // have about fourteen pixels each and a word is not one of the
+        // things that fits.
+        let w = font.width(name, SIZE);
+        if w <= step {
+            crate::tcp::glyphs(
+                scene,
+                font,
+                palette.text_faint,
+                name,
+                x + (size - w) / 2.0,
+                top + size + f64::from(SIZE),
+                SIZE,
+            );
+        }
+    }
+}
+
 /// The saturator's static transfer curve over x ∈ [−1, 1].
 fn sat(scene: &mut Scene, palette: &Palette, pre: &ClassAPreamp, at: Panel, rack: Rack) {
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     let mid_y = at.y + at.height / 2.0;
 
-    if rack == Rack::Full {
+    if rack.detailed() {
         rule(scene, palette.grid, Line::new((at.x, mid_y), (right, mid_y)));
         // Unity, so the curve's departure from it IS the saturation.
         // Without it a gentle drive and a hard one are both "an S", and
@@ -958,7 +1141,7 @@ pub fn grip_at(
             // only at `Full` — a handle you cannot see is a handle you
             // cannot aim at, and grabbing one by accident moves a
             // setting you did not know was there.
-            Which::Eq if rack == Rack::Full => {
+            Which::Eq if rack.detailed() => {
                 // The plugin's own hit test, not a second one written
                 // here: `nearest_band` already decides which of four
                 // overlapping bands you meant, and a rack that decided
@@ -1285,6 +1468,53 @@ mod tests {
     /// The tiers are ordered, and each threshold is where its tier
     /// starts — written against the constants, because pasted widths go
     /// stale the moment a threshold moves and then test nothing.
+    /// The focus tier hands the panel to the plugin, and the tier
+    /// below it keeps the rack's own abbreviation. Two looks from one
+    /// painter, and the threshold between them is a width.
+    #[test]
+    fn the_focus_tier_is_the_editing_one() {
+        assert!(LEGIBLE < FOCUSED, "the tiers must not overlap");
+        assert_eq!(Rack::at(FOCUSED), Rack::Focus);
+        assert_eq!(Rack::at(FOCUSED - 0.5), Rack::Full);
+        assert!(Rack::at(FOCUSED).editing());
+        assert!(!Rack::at(FOCUSED - 0.5).editing());
+        // Both are detailed: headers, markers and grips belong to each.
+        assert!(Rack::at(FOCUSED).detailed());
+        assert!(Rack::at(LEGIBLE).detailed());
+        assert!(!Rack::at(SHAPE).detailed());
+    }
+
+    /// A focused panel still gives up its header line — the numbers are
+    /// what you check the curve against, and they do not stop mattering
+    /// because there is more room.
+    #[test]
+    fn every_detailed_tier_keeps_its_header() {
+        let panel = Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 300.0,
+            height: 200.0,
+        };
+        for rack in [Rack::Focus, Rack::Full] {
+            let body = body_of(panel, rack);
+            assert!(
+                body.y > panel.inset(2.0).y,
+                "{rack:?} did not reserve a header"
+            );
+        }
+        assert!(
+            (body_of(panel, Rack::Curves).y - panel.inset(2.0).y).abs() < f64::EPSILON,
+            "the narrow tier has no room for one"
+        );
+    }
+
+    /// A focused strip may not be lent below the width that made it
+    /// focused — the whole point of opening one is that it stays open.
+    #[test]
+    fn a_focused_rack_will_not_be_lent_away() {
+        assert_eq!(Rack::Focus.floor(), Some(FOCUSED));
+    }
+
     #[test]
     fn the_rack_sheds_in_order() {
         assert!(SHAPE < LEGIBLE, "the tiers must not overlap");

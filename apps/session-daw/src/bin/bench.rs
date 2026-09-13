@@ -393,6 +393,7 @@ fn mixer_shot(
         // The shot is of the Tone phase, which is the phase the rack
         // was built for and the one the reference images were taken in.
         if tone { session_daw::tone::panels_for(TONE) } else { &[] },
+        session_daw::settings::Settings::default(),
         &settings,
     );
     // The bench applies no preset, so the map is the identity — built
@@ -887,6 +888,7 @@ fn animate(
         f64::from(height) - session_daw::rails::TOP,
         layout,
         session_daw::tone::panels_for(TONE),
+        session_daw::settings::Settings::default(),
         &settings,
     );
     let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);

@@ -1191,6 +1191,7 @@ impl App {
                 } else {
                     &[]
                 },
+                self.settings,
                 &self.tone_settings,
             ));
         }

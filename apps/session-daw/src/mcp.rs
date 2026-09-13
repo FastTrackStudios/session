@@ -276,7 +276,8 @@ impl Mixer {
         height: f64,
         layout: crate::layout::Layout,
         rack: &[crate::tone::Which],
-        settings: &crate::tone::Store,
+        settings: crate::settings::Settings,
+        tone_settings: &crate::tone::Store,
     ) -> Self {
         let depth_seen = rows
             .iter()
@@ -343,7 +344,10 @@ impl Mixer {
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         // Every strip's width, resolved together — an opened strip
         // borrows from the others rather than adding to the total.
-        let widths = widths(rows, layout, tone);
+        // A selected strip opens to the focus width — see `widths`.
+        // Bounded by what the others can lend, so it reaches it on a
+        // wide mixer and falls short gracefully on a crowded one.
+        let widths = widths(rows, layout, tone, settings.focus_width(height));
 
         // The tint of the folder open at each depth, so a strip can
         // draw the colours of everything it sits inside.
@@ -389,7 +393,7 @@ impl Mixer {
                 // A track with no settings yet gets none drawn rather
                 // than someone else's — `Store::seed` runs before this,
                 // so the miss is a track that arrived between the two.
-                settings.get(&track.guid),
+                tone_settings.get(&track.guid),
                 &ancestors,
                 &ancestor_names,
             );
@@ -654,6 +658,13 @@ fn widths(
     rows: &RowsRef,
     layout: crate::layout::Layout,
     tone: bool,
+    // `want` is what an opened strip is trying to reach: the FOCUS
+    // width, not the working one. A strip you have selected is the one
+    // you are working IN, and the rack's editing tier — the plugin's
+    // own grid, labels and nodes — starts well above the width a glance
+    // needs. Opening to the working width made a selected strip a
+    // slightly larger glance.
+    want: f64,
 ) -> Vec<f64> {
     let mut widths: Vec<f64> = rows
         .iter()
@@ -677,7 +688,7 @@ fn widths(
     let asked: f64 = open
         .iter()
         .filter_map(|i| widths.get(*i))
-        .map(|w| (crate::tone::WORKING - w).max(0.0))
+        .map(|w| (want - w).max(0.0))
         .sum();
     if asked <= 0.0 {
         return widths;
@@ -717,8 +728,8 @@ fn widths(
         let Some(width) = widths.get_mut(*i) else {
             continue;
         };
-        let want = (crate::tone::WORKING - *width).max(0.0);
-        *width += taken * want / asked;
+        let ask = (want - *width).max(0.0);
+        *width += taken * ask / asked;
     }
     widths
 }
@@ -1270,8 +1281,8 @@ mod selection_tests {
     fn opening_a_strip_does_not_widen_the_mixer() {
         let stored = [60, 195, 86, 86, 30, 30, 195, 195, 60, 86];
         let layout = Layout::default();
-        let shut = widths(&rows(&stored, None), layout, true);
-        let open = widths(&rows(&stored, Some(2)), layout, true);
+        let shut = widths(&rows(&stored, None), layout, true, WANT);
+        let open = widths(&rows(&stored, Some(2)), layout, true, WANT);
 
         assert!(
             (total(&shut) - total(&open)).abs() < 1e-9,
@@ -1281,17 +1292,46 @@ mod selection_tests {
         );
     }
 
+    /// What an opened strip is asking for in these tests: the working
+    /// width, which the fixture's neighbours can actually cover. A real
+    /// selection asks for the FOCUS width and gets as much of it as the
+    /// others can lend — see `the_opened_strip_takes_what_it_can_get`.
+    const WANT: f64 = crate::tone::WORKING;
+
     /// And the strip you opened actually opened.
     #[test]
-    fn the_opened_strip_reaches_the_working_width() {
+    fn the_opened_strip_reaches_the_width_it_asked_for() {
         let stored = [60, 195, 86, 86, 30, 30, 195, 195, 60, 86];
-        let open = widths(&rows(&stored, Some(2)), Layout::default(), true);
+        let open = widths(&rows(&stored, Some(2)), Layout::default(), true, WANT);
         assert!(
-            (open[2] - crate::tone::WORKING).abs() < 1e-9,
-            "wanted {}, got {}",
-            crate::tone::WORKING,
+            (open[2] - WANT).abs() < 1e-9,
+            "wanted {WANT}, got {}",
             open[2]
         );
+    }
+
+    /// An ask the others cannot cover is not a failure: the strip takes
+    /// what was raised and the rack opens to whatever tier that width
+    /// supports. A focus width on a crowded mixer is exactly this case,
+    /// and the mixer must still not get wider.
+    #[test]
+    fn the_opened_strip_takes_what_it_can_get() {
+        let stored = [60, 60, 60, 60, 60, 60];
+        let layout = Layout::default();
+        let shut = widths(&rows(&stored, None), layout, true, 900.0);
+        let open = widths(&rows(&stored, Some(2)), layout, true, 900.0);
+        assert!(
+            (total(&shut) - total(&open)).abs() < 1e-9,
+            "the total moved"
+        );
+        assert!(open[2] > shut[2], "it opened as far as it could");
+        assert!(open[2] < 900.0, "and not further than there was");
+        for (i, width) in open.iter().enumerate() {
+            assert!(
+                *width >= layout.strip_min - 1e-9,
+                "strip {i} fell under the floor"
+            );
+        }
     }
 
     /// Everyone else gives up a little, and nobody is pushed under the
@@ -1300,7 +1340,7 @@ mod selection_tests {
     fn the_others_lend_from_their_headroom() {
         let stored = [60, 195, 86, 86, 30, 30, 195, 195, 60, 86];
         let layout = Layout::default();
-        let open = widths(&rows(&stored, Some(2)), layout, true);
+        let open = widths(&rows(&stored, Some(2)), layout, true, WANT);
 
         for (i, width) in open.iter().enumerate() {
             assert!(
@@ -1322,8 +1362,8 @@ mod selection_tests {
     fn selecting_an_already_open_strip_changes_nothing() {
         let stored = [60, 195, 86, 86, 30];
         let layout = Layout::default();
-        let shut = widths(&rows(&stored, None), layout, true);
-        let open = widths(&rows(&stored, Some(1)), layout, true);
+        let shut = widths(&rows(&stored, None), layout, true, WANT);
+        let open = widths(&rows(&stored, Some(1)), layout, true, WANT);
         assert_eq!(shut, open);
     }
 
@@ -1335,8 +1375,8 @@ mod selection_tests {
         // Three strips at the floor have nothing to lend.
         let stored = [30, 30, 30];
         let layout = Layout::default();
-        let shut = widths(&rows(&stored, None), layout, true);
-        let open = widths(&rows(&stored, Some(0)), layout, true);
+        let shut = widths(&rows(&stored, None), layout, true, WANT);
+        let open = widths(&rows(&stored, Some(0)), layout, true, WANT);
         assert!((total(&shut) - total(&open)).abs() < 1e-9);
         assert!(
             (open[0] - 30.0).abs() < 1e-9,
@@ -1351,7 +1391,7 @@ mod selection_tests {
     fn two_open_strips_share_what_is_raised() {
         let stored = [30, 30, 86, 86];
         let layout = Layout::default();
-        let open = widths(&rows(&stored, Some(0)), layout, true);
+        let open = widths(&rows(&stored, Some(0)), layout, true, WANT);
         let both = {
             let rows = RowsRef(std::sync::Arc::new(
                 stored
@@ -1370,7 +1410,7 @@ mod selection_tests {
                     })
                     .collect(),
             ));
-            widths(&rows, layout, true)
+            widths(&rows, layout, true, WANT)
         };
         assert!((total(&open) - total(&both)).abs() < 1e-9);
         assert!(
@@ -1405,8 +1445,8 @@ mod selection_tests {
         let stored = [piece, piece, piece, piece, piece, piece, 86, 86, 30, 30];
         let layout = Layout::default();
 
-        let shut = widths(&rows(&stored, None), layout, true);
-        let open = widths(&rows(&stored, Some(6)), layout, true);
+        let shut = widths(&rows(&stored, None), layout, true, WANT);
+        let open = widths(&rows(&stored, Some(6)), layout, true, WANT);
 
         for (i, (before, after)) in shut.iter().zip(&open).enumerate() {
             if i == 6 {
@@ -1425,7 +1465,7 @@ mod selection_tests {
     fn selection_only_opens_in_tone() {
         let stored = [60, 86, 86];
         let layout = Layout::default();
-        let plain = widths(&rows(&stored, Some(1)), layout, false);
+        let plain = widths(&rows(&stored, Some(1)), layout, false, WANT);
         assert_eq!(plain, vec![60.0, 86.0, 86.0]);
     }
 
