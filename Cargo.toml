@@ -744,7 +744,15 @@ vox-phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.3.0" 
 #
 # Pinned by rev: this is a plugin-editor dependency, and a moving branch would
 # let a window-system change land in a released plugin without a bump.
-baseview = { git = "https://github.com/FastTrackStudios/baseview.git", rev = "fa0c2c870927ec27138f914c0841f305e9b4972f" }
+#
+# Superseded: the processor repo vendored baseview 0.3.3 in-tree (its
+# `vendor/baseview`, with the same one-line fix) precisely so the pin is
+# a file rather than a rev in a third repo. nice-plug-dioxus at
+# `fts-baseview-03` is written against 0.3.3 — `host_main_thread_callback`
+# takes `&Self::Window` there — and against the 0.3.0 this rev resolves it
+# does not compile at all. The two workspaces were building the same
+# plugin stack against different window systems.
+baseview = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.0", package = "baseview" }
 # pipewire-rs one commit past its v0.10.0 release. PipeWire 1.6 rewrote
 # constants like SPA_ID_INVALID from a bare `0xffffffff` into a cast form,
 # `((uint32_t)0xffffffff)`, which bindgen's own macro evaluator cannot fold —
@@ -1096,6 +1104,10 @@ world-sys = { path = "../daw/libs/vendor/world" }
 # transitive, is patched — one unpatched copy of a crate that is also
 # patched is the lockfile collision that cost a day last time.
 [patch."https://github.com/FastTrackStudios/processor"]
+# baseview lives in the processor repo's own `vendor/`, which is why it
+# is patched from here rather than from a fork's URL — see the
+# `[workspace.dependencies]` entry.
+baseview = { path = "../processor/vendor/baseview" }
 comp-dsp = { path = "../processor/features/fx/comp/comp-dsp" }
 comp-profiles = { path = "../processor/features/fx/comp/comp-profiles" }
 comp-ui = { path = "../processor/features/fx/comp/comp-ui" }

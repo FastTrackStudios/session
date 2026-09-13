@@ -129,7 +129,16 @@ struct App {
     /// separately and a click carries no position.
     cursor: (f64, f64),
     /// Whether the fine-adjustment modifier is held.
+    ///
+    /// REAPER's Ctrl, for the panels' own controls. The EQ graph has
+    /// its own convention — Shift is fine there, and Alt and Cmd mean
+    /// other things — so the rack reads `mods` instead. Two surfaces,
+    /// two established sets of modifiers; collapsing them into one
+    /// would make one of them wrong.
     fine: bool,
+    /// Every modifier, for the rack — the EQ's interaction model wants
+    /// all three and resolves the chords itself.
+    mods: eq_ui::eq_graph_interaction::Mods,
     /// Edits on their way to the engine.
     applier: Option<session_daw::engine::Applier>,
     /// Where the transport is, polled off the event loop.
@@ -262,6 +271,17 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(x, y) => (f64::from(x) * 53.0, f64::from(y) * 53.0),
                     MouseScrollDelta::PixelDelta(p) => (p.x, p.y),
                 };
+                // A wheel over a rack grip adjusts it rather than
+                // scrolling the mixer past it. That is what the wheel
+                // does over a band in the editor, and a strip that
+                // scrolled away instead would be the one place the
+                // gesture did something else.
+                if let Some((row, grip)) = self.hovered_grip {
+                    self.wheel_rack(row, grip, dy);
+                    self.mixer = None;
+                    self.redraw();
+                    return;
+                }
                 if self.view == View::Mixer {
                     // The mixer has one axis. Either wheel direction
                     // moves along the strips, because a mixer scrolled
@@ -317,7 +337,16 @@ impl ApplicationHandler for App {
             // This was a field nothing ever wrote: every drag in the
             // window has been coarse because no event set it.
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.fine = modifiers.state().control_key();
+                let state = modifiers.state();
+                self.fine = state.control_key();
+                self.mods = eq_ui::eq_graph_interaction::Mods::new(
+                    state.alt_key(),
+                    state.shift_key(),
+                    // Ctrl on Linux, Command on macOS — the plugin's
+                    // own docs write it as one key and its model takes
+                    // it as one field. winit calls the Mac one `meta`.
+                    state.control_key() || state.meta_key(),
+                );
             }
             WindowEvent::PointerMoved { position, .. } => {
                 // Where the pointer WAS, before this event moved it.
@@ -437,6 +466,16 @@ impl ApplicationHandler for App {
                     self.rack_drag = self.rack_grip_at(x, y);
                     tracing::debug!(ui.x = x, ui.y = y, ui.grip = ?self.rack_drag, "rack press");
                     if let Some((row, grip)) = self.rack_drag {
+                        // A modified click is an action on the band —
+                        // bypass it, cycle its shape — not the start of
+                        // a drag. `dot_click` says whether the chord
+                        // meant one.
+                        if self.click_rack(row, grip) {
+                            self.rack_drag = None;
+                            self.mixer = None;
+                            self.redraw();
+                            return;
+                        }
                         // A second click inside the double-click window
                         // puts the grip back to its default, which is
                         // what makes one safe to explore: the way back
@@ -757,6 +796,44 @@ impl App {
         }
     }
 
+    /// Turn the wheel over a rack grip.
+    fn wheel_rack(&mut self, row: usize, grip: session_daw::tone::Grip, delta_y: f64) {
+        let mods = self.mods;
+        let Some(guid) = self
+            .mixer_map
+            .index(row)
+            .and_then(|i| self.tracks.get(i))
+            .map(|track| track.guid.clone())
+        else {
+            return;
+        };
+        if let Some(tone) = self.tone_settings.edit(&guid) {
+            session_daw::tone::wheel(tone, grip, mods, delta_y);
+        }
+    }
+
+    /// A modified click on a band — bypass, or cycle its shape.
+    ///
+    /// Returns whether it did anything, so a plain click falls through
+    /// to taking hold of the band instead.
+    fn click_rack(&mut self, row: usize, grip: session_daw::tone::Grip) -> bool {
+        let session_daw::tone::Grip::Band(index) = grip else {
+            return false;
+        };
+        let mods = self.mods;
+        let Some(guid) = self
+            .mixer_map
+            .index(row)
+            .and_then(|i| self.tracks.get(i))
+            .map(|track| track.guid.clone())
+        else {
+            return false;
+        };
+        self.tone_settings
+            .edit(&guid)
+            .is_some_and(|tone| session_daw::tone::dot_click(tone, index, mods))
+    }
+
     /// Put a rack grip back to its default.
     fn reset_rack(&mut self, row: usize, grip: session_daw::tone::Grip) {
         let Some(guid) = self
@@ -774,6 +851,7 @@ impl App {
 
     /// Move a rack grip by a pointer delta.
     fn drag_rack(&mut self, row: usize, grip: session_daw::tone::Grip, dx: f64, dy: f64) {
+        let mods = self.mods;
         let Some(mixer) = self.mixer.as_ref() else {
             return;
         };
@@ -800,7 +878,7 @@ impl App {
             return;
         };
         if let Some(tone) = self.tone_settings.edit(&guid) {
-            session_daw::tone::drag(tone, grip, panels, rack, dx, dy);
+            session_daw::tone::drag(tone, grip, panels, rack, mods, dx, dy);
         }
     }
 
@@ -1837,6 +1915,7 @@ fn main() {
         gestures: session_daw::gesture::Gestures::default(),
         cursor: (0.0, 0.0),
         fine: false,
+        mods: eq_ui::eq_graph_interaction::Mods::default(),
         applier: session_daw::engine::Applier::start(),
         transport: session_daw::engine::Transport::start(),
         playhead: session_daw::cursor::Playhead::stopped(0.0),

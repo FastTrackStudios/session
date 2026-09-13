@@ -36,6 +36,7 @@
 
 use anyrender::{PaintScene, Scene};
 use comp_ui::comp_graph_svg::compress_transfer;
+use eq_ui::eq_graph_interaction::{self as interaction, GraphMapper, Mods};
 use eq_ui::eq_graph_model::{EqBand, EqBandShape, StereoMode};
 use eq_ui::eq_graph_response::calculate_combined_response;
 use fts_audio_ui::axis::{DbAxis, FreqAxis};
@@ -466,6 +467,66 @@ fn ground(scene: &mut Scene, palette: &Palette, at: Panel) {
     );
 }
 
+/// The plugin's own EQ graph, painted into the rack.
+///
+/// Not a redraw of it — `eq_ui::eq_graph_painter` records into an
+/// `anyrender::Scene` under a transform, which is exactly what this
+/// rack does, so the strip can hand it a sub-rectangle and get the
+/// editor's own grid, curves, fills and per-shape nodes.
+///
+/// That is the whole point of the plugin's UI being renderer-agnostic:
+/// a curve in the strip that disagreed with the curve in the plugin
+/// window would be worse than no curve at all, because it would be
+/// believed — and the only way to guarantee they agree is for them to
+/// be the same code.
+///
+/// The labels come off, because a strip panel is a hundred and thirty
+/// pixels wide and the editor's are authored for eight hundred.
+fn eq_from_plugin(scene: &mut Scene, tone: &Tone, at: Panel) -> bool {
+    let state = eq_ui::eq_graph_model::EqGraphRenderState::new();
+    state.bands.write().clone_from(&tone.eq);
+    {
+        let mut config = state.config.write();
+        config.db_range = EQ_RANGE;
+        config.min_freq = 20.0;
+        config.max_freq = 20_000.0;
+        config.sample_rate = DISPLAY_RATE;
+        // The embedded look, from the same painter. The rack has
+        // already drawn its own ground, its dB ladder and its decades
+        // at a size that fits a strip; the editor's are authored for a
+        // plugin window eight hundred pixels wide, and its opaque fill
+        // would cover the ones underneath.
+        config.fill_background = false;
+        config.show_freq_labels = false;
+        config.show_db_labels = false;
+        config.show_grid = false;
+        config.fill_curve = true;
+        // And no nodes: four of the editor's at their authored size
+        // overlap each other across a hundred and thirty pixels and
+        // hide the curve they sit on. The rack draws its own markers
+        // after this, sized for a strip and lit by its own hover.
+        config.node_scale = 0.0;
+        config.scale = 1.0;
+    }
+    let Ok(width) = u32::try_from(at.width.max(0.0).round() as i64) else {
+        return false;
+    };
+    let Ok(height) = u32::try_from(at.height.max(0.0).round() as i64) else {
+        return false;
+    };
+    if width < 2 || height < 2 {
+        return false;
+    }
+    eq_ui::eq_graph_painter::paint_eq_graph_scene(
+        scene,
+        &state,
+        Affine::translate((at.x, at.y)),
+        width,
+        height,
+    );
+    true
+}
+
 /// The EQ's response across the audible band.
 fn eq(
     scene: &mut Scene,
@@ -523,16 +584,31 @@ fn eq(
     if tone.eq.is_empty() {
         return;
     }
-    let points = (0..SAMPLES).map(|i| {
-        let t = crate::num::coord(i) / crate::num::coord(SAMPLES.saturating_sub(1).max(1));
-        let hz = freq.norm_to_freq(t);
-        let gain = calculate_combined_response(&tone.eq, hz, DISPLAY_RATE);
-        (
-            freq.freq_to_x(hz, at.x, right),
-            db.db_to_y(gain, at.y, bottom).clamp(at.y, bottom),
-        )
-    });
-    curve(scene, palette.accent, points, 1.5);
+    // The plugin's own graph, where there is room for it. Its curve, its
+    // fill, its per-band colours — the same code the editor paints with,
+    // so the strip and the plugin window cannot disagree about what the
+    // EQ is doing.
+    //
+    // The handles are still drawn below, because the editor's nodes are
+    // authored for a graph eight hundred pixels wide and this one is a
+    // hundred and thirty: at that size a labelled node with a shape
+    // glyph is a smudge, where a dot is a position.
+    let painted = rack == Rack::Full && eq_from_plugin(scene, tone, at);
+    if !painted {
+        // The fallback: the same response function the plugin's painter
+        // uses, as one polyline. What the narrow tier gets, and what a
+        // graph too small for the plugin's own drawing falls back to.
+        let points = (0..SAMPLES).map(|i| {
+            let t = crate::num::coord(i) / crate::num::coord(SAMPLES.saturating_sub(1).max(1));
+            let hz = freq.norm_to_freq(t);
+            let gain = calculate_combined_response(&tone.eq, hz, DISPLAY_RATE);
+            (
+                freq.freq_to_x(hz, at.x, right),
+                db.db_to_y(gain, at.y, bottom).clamp(at.y, bottom),
+            )
+        });
+        curve(scene, palette.accent, points, 1.5);
+    }
 
     // The bands themselves, as handles on the curve.
     //
@@ -840,6 +916,19 @@ pub enum Grip {
 /// about a millimetre at these densities.
 const GRAB: f64 = 6.0;
 
+/// The EQ panel's axes, as the plugin's own interaction model wants
+/// them.
+///
+/// `GraphMapper` takes ONE padding for both axes because a plugin's
+/// graph is a box inside a window; a rack panel is a box at an
+/// arbitrary offset inside a strip. So the mapper is built at the
+/// origin and the panel's corner is added back — which keeps every
+/// conversion the plugin's, and leaves this the only place the two
+/// coordinate systems meet.
+fn mapper(body: Panel) -> GraphMapper {
+    GraphMapper::new(20.0, 20_000.0, EQ_RANGE, body.width, body.height, 0.0)
+}
+
 /// What is under a point in the rack, if anything.
 ///
 /// `panel` is the rack's whole box in the same coordinates as `x` and
@@ -870,26 +959,17 @@ pub fn grip_at(
             // cannot aim at, and grabbing one by accident moves a
             // setting you did not know was there.
             Which::Eq if rack == Rack::Full => {
-                // The nearest band within reach, not the first: four
-                // bands on one curve overlap at their skirts, and the
-                // one you meant is the one you are closest to.
-                let freq = FreqAxis::audible();
-                let db = DbAxis::symmetric(EQ_RANGE);
-                let right = body.x + body.width;
-                let bottom = body.y + body.height;
-                let mut best: Option<(f64, usize)> = None;
-                for (index, band) in tone.eq.iter().enumerate() {
-                    if !(band.enabled && band.used) {
-                        continue;
-                    }
-                    let bx = freq.freq_to_x(f64::from(band.frequency), body.x, right);
-                    let by = db.db_to_y(f64::from(band.gain), body.y, bottom);
-                    let away = (bx - x).hypot(by - y);
-                    if away <= GRAB && best.is_none_or(|(nearest, _)| away < nearest) {
-                        best = Some((away, index));
-                    }
-                }
-                if let Some((_, index)) = best {
+                // The plugin's own hit test, not a second one written
+                // here: `nearest_band` already decides which of four
+                // overlapping bands you meant, and a rack that decided
+                // differently from the editor would be two EQs.
+                if let Some((index, _)) = interaction::nearest_band(
+                    &tone.eq,
+                    mapper(body),
+                    x - body.x,
+                    y - body.y,
+                    GRAB,
+                ) {
                     return Some(Grip::Band(index));
                 }
             }
@@ -913,6 +993,115 @@ pub fn grip_at(
 /// with a wobble. Stated once because the drawing and the hit test both
 /// have to read the same scale.
 pub const EQ_RANGE: f64 = 18.0;
+
+/// Turn the wheel over a grip.
+///
+/// The EQ's is the plugin's own: unmodified scroll follows the band —
+/// a cut filter's meaningful width is its slope, everything else's is
+/// Q — and the modifier layers gain, dynamic range, or both on top.
+/// None of that is decided here; [`interaction::wheel_target`] decides
+/// it, and the rack calls it so that a wheel over a strip and a wheel
+/// over the editor do the same thing.
+pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
+    match grip {
+        Grip::Band(index) => {
+            let Some(band) = tone.eq.get_mut(index) else {
+                return;
+            };
+            let uses_slope = band.shape.uses_slope();
+            match interaction::wheel_target(mods, uses_slope) {
+                interaction::WheelTarget::Q | interaction::WheelTarget::Slope => {
+                    interaction::wheel_band(
+                        band,
+                        delta_y,
+                        uses_slope,
+                        interaction::fine_scale(mods),
+                    );
+                }
+                // Dynamic range is not in this rack's model yet — the
+                // band type carries it, the curve does not draw it —
+                // so a chord that asks for it moves the gain it shares
+                // an axis with rather than doing nothing.
+                interaction::WheelTarget::Gain
+                | interaction::WheelTarget::DynRange
+                | interaction::WheelTarget::GainAndRange => {
+                    let step = interaction::gain_step(delta_y, mods);
+                    let next = f64::from(band.gain) + step;
+                    band.gain = interaction::drag_gain_for_shape(
+                        band.shape,
+                        band.gain,
+                        next.clamp(-EQ_RANGE, EQ_RANGE),
+                    );
+                }
+            }
+        }
+        // A notch of threshold is a dB, and a notch of drive is a
+        // tenth — the same relation the two drags have.
+        Grip::Threshold => {
+            let step = interaction::gain_step(delta_y, mods);
+            let moved = f64::from(tone.comp.threshold) + step;
+            tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
+        }
+        Grip::Drive => {
+            let step = interaction::gain_step(delta_y, mods) * 0.1;
+            let moved = f64::from(tone.sat.drive) + step;
+            tone.sat.drive = f64_to_f32(moved.clamp(0.0, 10.0));
+        }
+    }
+}
+
+/// What a modified click on a band does, applied.
+///
+/// [`interaction::dot_action`] resolves the chord; this carries out the
+/// two that need no selection model — bypass and shape. Selection is a
+/// concept the editor has and a strip does not, so those arms fall
+/// through to the plain click the caller was already making.
+///
+/// Returns whether anything changed, so the caller knows whether to
+/// re-record rather than guessing.
+pub fn dot_click(tone: &mut Tone, index: usize, mods: Mods) -> bool {
+    let Some(band) = tone.eq.get_mut(index) else {
+        return false;
+    };
+    match interaction::dot_action(mods) {
+        interaction::DotAction::ToggleBypass => {
+            band.enabled = !band.enabled;
+            true
+        }
+        interaction::DotAction::CycleShape => {
+            band.shape = next_shape(band.shape);
+            true
+        }
+        interaction::DotAction::CycleSlope => {
+            if let Some(slope) = band.slope.as_mut() {
+                *slope = if *slope >= 10.0 { 1.0 } else { *slope + 1.0 };
+                return true;
+            }
+            false
+        }
+        // Select, AddToSelection and RangeSelect all need a selection
+        // model. A strip's rack has one band under the pointer and no
+        // way to show a set, so these are a plain grab.
+        interaction::DotAction::Select
+        | interaction::DotAction::AddToSelection
+        | interaction::DotAction::RangeSelect => false,
+    }
+}
+
+/// The next shape in the cycle.
+///
+/// The shapes a strip rack can draw, in the order the editor cycles
+/// them. Not every shape the model has — `filter_type_for_position`
+/// reaches for cuts and notches when a band is CREATED, and creating
+/// one is a gesture this rack does not have yet.
+const fn next_shape(shape: EqBandShape) -> EqBandShape {
+    match shape {
+        EqBandShape::Bell => EqBandShape::LowShelf,
+        EqBandShape::LowShelf => EqBandShape::HighShelf,
+        EqBandShape::HighShelf => EqBandShape::Notch,
+        _ => EqBandShape::Bell,
+    }
+}
 
 /// Put a grip back where it started.
 ///
@@ -942,7 +1131,15 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
 /// Pixels rather than fractions because these axes are not linear in
 /// the same way: a band's frequency is logarithmic and its gain is not,
 /// so the conversion has to happen against the panel the drag is in.
-pub fn drag(tone: &mut Tone, grip: Grip, panels: &[Which], panel: Panel, dx: f64, dy: f64) {
+pub fn drag(
+    tone: &mut Tone,
+    grip: Grip,
+    panels: &[Which],
+    panel: Panel,
+    mods: Mods,
+    dx: f64,
+    dy: f64,
+) {
     let rack = Rack::at(panel.width);
     let Some((_, at)) = layout(panels, panel)
         .into_iter()
@@ -960,25 +1157,51 @@ pub fn drag(tone: &mut Tone, grip: Grip, panels: &[Which], panel: Panel, dx: f64
     }
     match grip {
         Grip::Band(index) => {
+            let map = mapper(body);
             let Some(band) = tone.eq.get_mut(index) else {
                 return;
             };
-            let freq = FreqAxis::audible();
-            let db = DbAxis::symmetric(EQ_RANGE);
-            let right = body.x + body.width;
-            let bottom = body.y + body.height;
-            let x = freq.freq_to_x(f64::from(band.frequency), body.x, right) + dx;
-            let y = db.db_to_y(f64::from(band.gain), body.y, bottom) + dy;
-            let t = ((x - body.x) / body.width).clamp(0.0, 1.0);
-            band.frequency = f64_to_f32(freq.norm_to_freq(t));
-            let gain = db.y_to_db(y.clamp(body.y, bottom), body.y, bottom);
-            band.gain = f64_to_f32(gain.clamp(-EQ_RANGE, EQ_RANGE));
+            // Where the band is now, in the graph's own coordinates,
+            // moved by the pointer's delta.
+            let x = (map.freq_to_x(f64::from(band.frequency)) + dx).clamp(0.0, body.width);
+            let y = (map.db_to_y(f64::from(band.gain)) + dy).clamp(0.0, body.height);
+            // Which axes move is the plugin's decision: Alt pins the
+            // gain so you can hunt for where a cut belongs without
+            // losing how much of it you had, and Cmd turns the vertical
+            // into resonance.
+            match interaction::drag_mode(mods, dx, dy) {
+                interaction::DragMode::Free => {
+                    band.frequency = f64_to_f32(map.x_to_freq(x));
+                    band.gain = interaction::drag_gain_for_shape(
+                        band.shape,
+                        band.gain,
+                        map.y_to_db(y).clamp(-EQ_RANGE, EQ_RANGE),
+                    );
+                }
+                interaction::DragMode::FreqOnly => {
+                    band.frequency = f64_to_f32(map.x_to_freq(x));
+                }
+                interaction::DragMode::GainOnly => {
+                    band.gain = interaction::drag_gain_for_shape(
+                        band.shape,
+                        band.gain,
+                        map.y_to_db(y).clamp(-EQ_RANGE, EQ_RANGE),
+                    );
+                }
+                interaction::DragMode::Resonance => {
+                    // Vertical travel as a scroll: the plugin's own Q
+                    // step, so a drag and a wheel move it by the same
+                    // law rather than two that nearly agree.
+                    interaction::wheel_band(band, dy, false, interaction::fine_scale(mods));
+                }
+            }
         }
         Grip::Threshold => {
             // Up is a HIGHER threshold, which is less compression —
             // the same direction a fader moves for more level, and the
             // opposite of following the dot down its curve.
             let per_db = body.height / 60.0;
+            let dy = dy * interaction::fine_scale(mods);
             let moved = f64::from(tone.comp.threshold) - dy / per_db.max(f64::EPSILON);
             tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
         }
@@ -987,6 +1210,7 @@ pub fn drag(tone: &mut Tone, grip: Grip, panels: &[Which], panel: Panel, dx: f64
             // short drag is a real change — drive is the parameter you
             // nudge, not the one you sweep.
             let per_unit = body.height / 4.0;
+            let dy = dy * interaction::fine_scale(mods);
             let moved = f64::from(tone.sat.drive) - dy / per_unit.max(f64::EPSILON);
             tone.sat.drive = f64_to_f32(moved.clamp(0.0, 10.0));
         }
@@ -1179,7 +1403,7 @@ mod phase_tests {
 
 #[cfg(test)]
 mod grip_tests {
-    use super::{Grip, Panel, Store, Which, drag, grip_at, placeholder};
+    use super::{Grip, Mods, Panel, Store, Which, drag, grip_at, placeholder};
 
     const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
 
@@ -1228,7 +1452,7 @@ mod grip_tests {
     fn a_band_follows_the_pointer() {
         let mut tone = placeholder(0);
         let (before_f, before_g) = (tone.eq[1].frequency, tone.eq[1].gain);
-        drag(&mut tone, Grip::Band(1), &ALL, rack(), 12.0, -20.0);
+        drag(&mut tone, Grip::Band(1), &ALL, rack(), Mods::default(), 12.0, -20.0);
         assert!(tone.eq[1].frequency > before_f, "right is higher");
         assert!(tone.eq[1].gain > before_g, "up is more gain");
     }
@@ -1238,12 +1462,12 @@ mod grip_tests {
     fn a_band_stays_inside_the_panel() {
         let mut tone = placeholder(0);
         for _ in 0..50 {
-            drag(&mut tone, Grip::Band(0), &ALL, rack(), 400.0, -400.0);
+            drag(&mut tone, Grip::Band(0), &ALL, rack(), Mods::default(), 400.0, -400.0);
         }
         assert!(tone.eq[0].gain <= super::f64_to_f32(super::EQ_RANGE));
         assert!(tone.eq[0].frequency <= 24_000.0);
         for _ in 0..50 {
-            drag(&mut tone, Grip::Band(0), &ALL, rack(), -400.0, 400.0);
+            drag(&mut tone, Grip::Band(0), &ALL, rack(), Mods::default(), -400.0, 400.0);
         }
         assert!(tone.eq[0].gain >= -super::f64_to_f32(super::EQ_RANGE));
         assert!(tone.eq[0].frequency > 0.0);
@@ -1255,10 +1479,10 @@ mod grip_tests {
     fn dragging_the_threshold_up_compresses_less() {
         let mut tone = placeholder(0);
         let before = tone.comp.threshold;
-        drag(&mut tone, Grip::Threshold, &ALL, rack(), 0.0, -10.0);
+        drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, -10.0);
         assert!(tone.comp.threshold > before);
         for _ in 0..200 {
-            drag(&mut tone, Grip::Threshold, &ALL, rack(), 0.0, 40.0);
+            drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, 40.0);
         }
         assert!(tone.comp.threshold >= -60.0, "the threshold clamps");
     }
@@ -1269,7 +1493,7 @@ mod grip_tests {
     fn drive_stays_positive() {
         let mut tone = placeholder(0);
         for _ in 0..200 {
-            drag(&mut tone, Grip::Drive, &ALL, rack(), 0.0, 40.0);
+            drag(&mut tone, Grip::Drive, &ALL, rack(), Mods::default(), 0.0, 40.0);
         }
         assert!(tone.sat.drive >= 0.0);
     }
@@ -1402,7 +1626,7 @@ mod tier_tests {
 
 #[cfg(test)]
 mod reset_tests {
-    use super::{Comp, Grip, Which, drag, placeholder, reset};
+    use super::{Comp, Grip, Mods, Which, drag, placeholder, reset};
 
     const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
 
@@ -1420,19 +1644,19 @@ mod reset_tests {
     #[test]
     fn reset_undoes_a_drag() {
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Band(1), &ALL, rack(), 0.0, -40.0);
+        drag(&mut tone, Grip::Band(1), &ALL, rack(), Mods::default(), 0.0, -40.0);
         assert!(tone.eq[1].gain.abs() > 0.5);
         reset(&mut tone, Grip::Band(1));
         assert!(tone.eq[1].gain.abs() < f32::EPSILON, "the band went flat");
 
-        drag(&mut tone, Grip::Threshold, &ALL, rack(), 0.0, -30.0);
+        drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, -30.0);
         reset(&mut tone, Grip::Threshold);
         assert!(
             (tone.comp.threshold - Comp::default().threshold).abs() < f32::EPSILON,
             "the threshold went back to its default"
         );
 
-        drag(&mut tone, Grip::Drive, &ALL, rack(), 0.0, -60.0);
+        drag(&mut tone, Grip::Drive, &ALL, rack(), Mods::default(), 0.0, -60.0);
         reset(&mut tone, Grip::Drive);
         assert!((tone.sat.drive - 1.0).abs() < f32::EPSILON, "drive is unity");
     }
@@ -1442,7 +1666,7 @@ mod reset_tests {
     #[test]
     fn resetting_a_band_keeps_where_it_sits() {
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Band(2), &ALL, rack(), 20.0, -20.0);
+        drag(&mut tone, Grip::Band(2), &ALL, rack(), Mods::default(), 20.0, -20.0);
         let moved = tone.eq[2].frequency;
         reset(&mut tone, Grip::Band(2));
         assert!((tone.eq[2].frequency - moved).abs() < f32::EPSILON);
@@ -1453,5 +1677,155 @@ mod reset_tests {
     fn resetting_a_missing_band_is_harmless() {
         let mut tone = placeholder(0);
         reset(&mut tone, Grip::Band(99));
+    }
+}
+
+#[cfg(test)]
+mod plugin_interaction_tests {
+    use super::{EQ_RANGE, Grip, Mods, Panel, Which, drag, dot_click, grip_at, placeholder, wheel};
+    use eq_ui::eq_graph_model::EqBandShape;
+
+    const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
+
+    fn rack() -> Panel {
+        Panel {
+            x: 7.0,
+            y: 11.0,
+            width: 133.0,
+            height: 600.0,
+        }
+    }
+
+    /// The rack asks the PLUGIN which band you meant, so a rack and an
+    /// editor cannot disagree about it. This pins the delegation: the
+    /// answer here is `nearest_band`'s answer, offset by the panel.
+    #[test]
+    fn the_hit_test_is_the_plugins_own() {
+        let tone = placeholder(0);
+        let (_, at) = super::layout(&ALL, rack())
+            .into_iter()
+            .find(|(which, _)| *which == Which::Eq)
+            .expect("an EQ panel");
+        let body = super::body_of(at, super::Rack::at(rack().width));
+        let map = super::mapper(body);
+        for index in [0_usize, 2, 3] {
+            let band = &tone.eq[index];
+            let x = body.x + map.freq_to_x(f64::from(band.frequency));
+            let y = body.y + map.db_to_y(f64::from(band.gain));
+            assert_eq!(
+                grip_at(&ALL, &tone, rack(), x, y),
+                Some(Grip::Band(index)),
+                "band {index} was not found where the plugin puts it"
+            );
+        }
+    }
+
+    /// Alt pins the gain: you found the right amount of cut and now you
+    /// are hunting for where it belongs. This is the plugin's rule, and
+    /// it used to be "free in both axes, always".
+    #[test]
+    fn alt_moves_a_band_in_frequency_alone() {
+        let mut tone = placeholder(0);
+        let (before_f, before_g) = (tone.eq[1].frequency, tone.eq[1].gain);
+        let alt = Mods::new(true, false, false);
+        drag(&mut tone, Grip::Band(1), &ALL, rack(), alt, 15.0, -30.0);
+        assert!(tone.eq[1].frequency > before_f, "frequency followed");
+        assert!(
+            (tone.eq[1].gain - before_g).abs() < f32::EPSILON,
+            "gain was pinned"
+        );
+    }
+
+    /// Cmd turns a vertical drag into resonance, which is the one
+    /// gesture that changes a parameter the curve shows only indirectly.
+    #[test]
+    fn cmd_drags_resonance() {
+        let mut tone = placeholder(0);
+        let before = tone.eq[1].q;
+        let cmd = Mods::new(false, false, true);
+        drag(&mut tone, Grip::Band(1), &ALL, rack(), cmd, 0.0, -20.0);
+        assert!((tone.eq[1].q - before).abs() > f32::EPSILON, "q moved");
+        assert!(tone.eq[1].q > 0.0 && tone.eq[1].q <= 18.0, "and stayed sane");
+    }
+
+    /// Shift is the fine-tune modifier everywhere, including the two
+    /// panels that are not the EQ.
+    #[test]
+    fn shift_is_fine_everywhere() {
+        let coarse = {
+            let mut tone = placeholder(0);
+            drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, -20.0);
+            tone.comp.threshold
+        };
+        let fine = {
+            let mut tone = placeholder(0);
+            let shift = Mods::new(false, true, false);
+            drag(&mut tone, Grip::Threshold, &ALL, rack(), shift, 0.0, -20.0);
+            tone.comp.threshold
+        };
+        let from = placeholder(0).comp.threshold;
+        assert!(
+            (fine - from).abs() < (coarse - from).abs(),
+            "fine moved {} where coarse moved {}",
+            fine - from,
+            coarse - from
+        );
+    }
+
+    /// An unmodified wheel over a bell moves its Q — the plugin's
+    /// default, because a bell's meaningful width is its resonance.
+    #[test]
+    fn the_wheel_follows_the_band() {
+        let mut tone = placeholder(0);
+        tone.eq[1].shape = EqBandShape::Bell;
+        let before = tone.eq[1].q;
+        wheel(&mut tone, Grip::Band(1), Mods::default(), -1.0);
+        assert!(tone.eq[1].q > before, "scrolling up tightened it");
+    }
+
+    /// And Cmd+wheel moves the gain instead.
+    #[test]
+    fn cmd_wheel_moves_the_gain() {
+        let mut tone = placeholder(0);
+        let before = tone.eq[1].gain;
+        wheel(&mut tone, Grip::Band(1), Mods::new(false, false, true), -1.0);
+        assert!(tone.eq[1].gain > before);
+        assert!(tone.eq[1].gain <= super::f64_to_f32(EQ_RANGE));
+    }
+
+    /// Alt-clicking a band bypasses it, which is the chord the editor
+    /// uses and the one that makes A/B-ing a decision possible.
+    #[test]
+    fn alt_click_bypasses_a_band() {
+        let mut tone = placeholder(0);
+        assert!(tone.eq[0].enabled);
+        assert!(dot_click(&mut tone, 0, Mods::new(true, false, false)));
+        assert!(!tone.eq[0].enabled);
+        assert!(dot_click(&mut tone, 0, Mods::new(true, false, false)));
+        assert!(tone.eq[0].enabled);
+    }
+
+    /// A plain click is not an action — it is the start of a drag, and
+    /// has to fall through so the caller can take hold of the band.
+    #[test]
+    fn a_plain_click_is_not_an_action() {
+        let mut tone = placeholder(0);
+        assert!(!dot_click(&mut tone, 0, Mods::default()));
+        assert_eq!(tone.eq[0], placeholder(0).eq[0], "nothing changed");
+    }
+
+    /// Alt+Cmd cycles the shape, and the cycle comes back round.
+    #[test]
+    fn alt_cmd_cycles_the_shape() {
+        let mut tone = placeholder(0);
+        tone.eq[1].shape = EqBandShape::Bell;
+        let chord = Mods::new(true, false, true);
+        let mut seen = vec![tone.eq[1].shape];
+        for _ in 0..4 {
+            assert!(dot_click(&mut tone, 1, chord));
+            seen.push(tone.eq[1].shape);
+        }
+        assert_eq!(seen.first(), seen.last(), "the cycle returned");
+        assert!(seen.len() > 2, "and it passed through others");
     }
 }

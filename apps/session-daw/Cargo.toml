@@ -60,7 +60,12 @@ comp-ui = { workspace = true }
 # The shared frequency/dB axes the FX editors map their graphs with, so
 # the strip's curve lands on the same pixels as the plugin's.
 fts-audio-ui = { workspace = true }
-eq-ui = { workspace = true }
+# `native` brings in `eq_graph_painter` — the plugin's own vello painter,
+# which records into an `anyrender::Scene` and is therefore usable from
+# this window's rack. Without it only the portable core compiles (the
+# model, the response maths and the interaction helpers), which is what
+# the wasm remotes take.
+eq-ui = { workspace = true, features = ["native"] }
 saturate-dsp = { workspace = true, features = ["analysis"] }
 
 # `standalone-rpp` = the standalone backend plus the `.rpp` loader and
