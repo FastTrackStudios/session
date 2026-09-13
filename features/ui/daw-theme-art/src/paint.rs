@@ -852,7 +852,12 @@ pub mod tcp {
     /// Not a round series: REAPER steps by 12, starting at −6. Twelve dB
     /// is a doubling and a halving twice over, which is the interval a
     /// mixing decision is actually made in.
-    pub const FADER_MARKS: [f64; 8] = [12.0, 6.0, 0.0, -6.0, -18.0, -30.0, -42.0, -54.0];
+    /// The ceiling itself is NOT among them. A mark at the very top of
+    /// a column sits half a glyph off the end of it and labels the one
+    /// position you can find without a number — the fader will not go
+    /// further, which the fader already tells you by stopping. +6 is
+    /// the last mark; the travel still runs to [`FADER_TOP_DB`].
+    pub const FADER_MARKS: [f64; 7] = [6.0, 0.0, -6.0, -18.0, -30.0, -42.0, -54.0];
 
     /// The meter's ceiling and floor, which are the fader's.
     ///
@@ -1790,8 +1795,15 @@ mod fader_scale_tests {
     fn every_mark_is_on_the_fader() {
         for db in FADER_MARKS {
             let norm = fader_norm(db);
-            assert!((0.0..=1.0).contains(&norm), "{db} dB sits at {norm}");
+            assert!(norm > 0.0 && norm < 1.0, "{db} dB sits at {norm}");
         }
+        // And the ceiling is deliberately unlabelled: a mark there
+        // would hang off the end of the column to say what the fader
+        // stopping already says.
+        assert!(
+            !FADER_MARKS.contains(&FADER_TOP_DB),
+            "the ceiling grew a label"
+        );
         // A tick and a number for each mark, on a column with room for
         // all of them.
         let ink = super::hex("#FF4000");
