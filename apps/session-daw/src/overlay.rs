@@ -362,6 +362,7 @@ mod tests {
                 &crate::pointer::Pointer::default(),
                 levels,
                 &Clips::default(),
+                0.0,
                 &mut Racks::none(),
                 0.0,
                 4000.0,
@@ -407,6 +408,7 @@ mod tests {
                 pointer,
                 &[],
                 &Clips::default(),
+                0.0,
                 &mut Racks::none(),
                 0.0,
                 4000.0,
@@ -457,6 +459,7 @@ mod tests {
                 &crate::pointer::Pointer::default(),
                 &[],
                 &Clips::default(),
+                0.0,
                 &mut Racks::none(),
                 0.0,
                 4000.0,
@@ -532,6 +535,7 @@ mod tests {
                 &crate::pointer::Pointer::default(),
                 &[],
                 &Clips::default(),
+                0.0,
                 &mut Racks {
                     settings: &settings,
                     history,
@@ -633,6 +637,7 @@ pub fn controls(
     pointer: &crate::pointer::Pointer,
     levels: &[daw_proto::TrackLevels],
     clipped: &Clips,
+    rack_scroll: f64,
     racks: &mut Racks<'_>,
     scroll_x: f64,
     width: f64,
@@ -653,6 +658,7 @@ pub fn controls(
             font,
             track,
             mixer.label(row),
+            rack_scroll,
             pointer,
             // Levels are indexed by PROJECT track index, not by mixer
             // row: the mixer shows a subset in its own order, and a
@@ -694,6 +700,7 @@ fn draw_strip_controls(
     font: &Font,
     track: &Track,
     label: Option<(&str, f32)>,
+    scroll: f64,
     pointer: &crate::pointer::Pointer,
     level: Option<daw_proto::TrackLevels>,
     clipped: bool,
@@ -828,7 +835,23 @@ fn draw_strip_controls(
     if let (Some(box_), Some(tone)) = (strip.rack_rect(), settings)
         && (spectrum.is_some() || lit.is_some())
     {
-        let at = crate::tone::Panel::of(box_, left);
+        // Clipped to the box, because the chain is longer than the box
+        // and scrolls inside it: without this the panels above the
+        // scroll paint into the rails and the ones below paint over the
+        // strip's own controls.
+        scene.push_clip_layer(
+            Affine::IDENTITY,
+            &vello::kurbo::Rect::new(
+                left + box_.x0,
+                box_.y0,
+                left + box_.x1,
+                box_.y1,
+            ),
+        );
+        // The scroll is the panel's own `y` — see `tone::layout`. One
+        // offset, applied where the rack is placed, so the drawing and
+        // the hit test cannot hold different opinions about it.
+        let at = crate::tone::Panel::of(box_, left).up(scroll);
         let build = |bins: &[f32]| {
             let mut rack = anyrender::Scene::new();
             crate::tone::draw(&mut rack, palette, font, tone, bins, panels, at, lit);
@@ -849,12 +872,22 @@ fn draw_strip_controls(
             }
             None => scene.commands.extend(build(&[]).commands),
         }
+        scene.pop_layer();
     }
 
-    // The compressor's level history, under the threshold line the
-    // recording drew across it. Live, because it is the one part of a
-    // rack that changes with the audio — see `tone::levels`.
+    // The compressor's level history, under the threshold line drawn
+    // across it. Live, because it is the one part of a rack that
+    // changes with the audio — see `tone::levels`.
+    //
+    // Clipped to the same box and moved by the same scroll as the rack
+    // it belongs to. It is a second pass over the same panels, and a
+    // pass that skipped either would draw a compressor's levels where
+    // its compressor is not.
     if let (Some(box_), Some(history), Some(tone)) = (strip.rack_rect(), history, settings) {
+        scene.push_clip_layer(
+            Affine::IDENTITY,
+            &vello::kurbo::Rect::new(left + box_.x0, box_.y0, left + box_.x1, box_.y1),
+        );
         crate::tone::levels(
             scene,
             panels,
@@ -863,8 +896,9 @@ fn draw_strip_controls(
             // to be computed from the settings it is doing it with.
             tone.comp,
             tone.bypass,
-            crate::tone::Panel::of(box_, left),
+            crate::tone::Panel::of(box_, left).up(scroll),
         );
+        scene.pop_layer();
     }
 
     // The meter, which is the most live thing on the strip: thirty

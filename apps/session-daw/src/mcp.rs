@@ -345,19 +345,26 @@ impl Mixer {
         // like on a 1440p screen, and what this panel was measured
         // against.
         //
-        // The rack does not FILL what it is given: its panels are their
-        // own height, anchored at the top — see `tone::layout`. The
-        // space below them is the room the phases past Tone need, and
-        // reserving it here is what keeps the fader from moving when
-        // you change phase. A strip whose controls jump because of
-        // something that is not about that track cannot be scanned
-        // across tracks, which is the rule the whole panel is built on.
+        // The rack takes what the CHAIN needs, up to that share, and
+        // the strip keeps the rest.
+        //
+        // It used to take the whole share whatever was in it, so that
+        // the fader would not move when a phase changed which
+        // processors were shown. Every phase shows the whole chain now
+        // — see `tone::panels_for` — so there is nothing left for that
+        // space to be reserved against, and reserving it anyway left a
+        // third of the window empty under three panels.
+        //
+        // Past the share the chain scrolls instead of pushing the
+        // strip's controls off the bottom: a mixer is scanned across,
+        // and a fader that sat at a different height on every track
+        // because of what is plugged into it cannot be.
         let control = if tone {
             (height * CONTROL_SHARE).max(CONTROL_MIN).min(height)
         } else {
             height
         };
-        let rack_h = height - control;
+        let rack_h = (height - control).min(crate::tone::wanted(rack));
 
         // One section layout for the whole mixer, resolved against the
         // height LEFT OVER — not against each strip's own.

@@ -207,6 +207,14 @@ struct App {
     /// is a report, and the value of a report is that it is still there
     /// when you look up.
     clips: session_daw::overlay::Clips,
+    /// How far the racks are scrolled, shared by every strip.
+    ///
+    /// ONE scroll for the whole mixer, not one per track. The reason to
+    /// put the chains side by side is to compare the same processor
+    /// across tracks, and racks that scrolled independently would take
+    /// that away the first time you moved one — you would be comparing
+    /// a compressor against somebody else's saturator.
+    rack_scroll: f64,
     /// Which folders are collapsed. A view state, not a track state:
     /// it changes which rows exist rather than what any track is.
     folders: daw_ui::components::folders::FolderState,
@@ -304,6 +312,15 @@ impl ApplicationHandler for App {
                 if let Some((row, grip)) = self.hovered_grip {
                     self.wheel_rack(row, grip, dy);
                     self.mixer = None;
+                    self.redraw();
+                    return;
+                }
+                // Over the rack but not on a grip: scroll the CHAIN.
+                // Every strip shows every processor now, which makes
+                // the rack taller than its box as soon as there are
+                // more than a few — so the box travels over it.
+                if self.in_rack(self.cursor.0, self.cursor.1) {
+                    self.scroll_rack(dy);
                     self.redraw();
                     return;
                 }
@@ -810,6 +827,59 @@ impl App {
         Some(session_daw::pointer::Spot { row, control })
     }
 
+    /// Whether a window point is inside some strip's rack box.
+    ///
+    /// Asked after the grips, so a wheel over a band still moves the
+    /// band — the rack scrolls only where there is nothing else for the
+    /// gesture to mean.
+    fn in_rack(&self, x: f64, y: f64) -> bool {
+        if self.view != View::Mixer {
+            return false;
+        }
+        let Some(mixer) = self.mixer.as_ref() else {
+            return false;
+        };
+        let content_x = x - session_daw::rails::SIDE + self.mixer_scroll;
+        let Some(row) = mixer.strip_at(content_x) else {
+            return false;
+        };
+        let Some((left, width, height)) = mixer.strip_box(row) else {
+            return false;
+        };
+        let strip = session_daw::strip::Strip::new(
+            width,
+            height,
+            mixer.height,
+            mixer.rack_h,
+            mixer.buttons_top,
+        );
+        strip.rack_rect().is_some_and(|box_| {
+            let at = y - session_daw::rails::TOP;
+            content_x >= left + box_.x0
+                && content_x < left + box_.x1
+                && at >= box_.y0
+                && at < box_.y1
+        })
+    }
+
+    /// Move the chain under its box.
+    ///
+    /// Clamped at both ends: a rack scrolled past its last processor is
+    /// a screen of nothing with no cue about which way back, and the
+    /// mixer has no ruler to orient by.
+    fn scroll_rack(&mut self, by: f64) {
+        let Some(mixer) = self.mixer.as_ref() else {
+            return;
+        };
+        let panels = if self.tone {
+            session_daw::tone::panels_for(self.phase)
+        } else {
+            &[][..]
+        };
+        let span = session_daw::tone::scroll_span(panels, mixer.rack_h);
+        self.rack_scroll = (self.rack_scroll - by).clamp(0.0, span);
+    }
+
     /// The rack grip under a window point, if the pointer is in a rack.
     ///
     /// Asked before the strip's own controls, because the rack sits
@@ -830,7 +900,10 @@ impl App {
             mixer.rack_h,
             mixer.buttons_top,
         );
-        let rack = session_daw::tone::Panel::of(strip.rack_rect()?, left);
+        // Scrolled, like the drawing — see `tone::layout`. A hit test
+        // against the unscrolled box would grab whatever USED to be
+        // under the pointer before the chain moved.
+        let rack = session_daw::tone::Panel::of(strip.rack_rect()?, left).up(self.rack_scroll);
         let track = self.mixer_map.index(row).and_then(|i| self.tracks.get(i))?;
         let tone = self.tone_settings.get(&track.guid)?;
         session_daw::tone::grip_at(
@@ -975,7 +1048,10 @@ impl App {
             mixer.rack_h,
             mixer.buttons_top,
         );
-        let Some(rack) = strip.rack_rect().map(|r| session_daw::tone::Panel::of(r, left)) else {
+        let Some(rack) = strip
+            .rack_rect()
+            .map(|r| session_daw::tone::Panel::of(r, left).up(self.rack_scroll))
+        else {
             return;
         };
         let panels = self.rack_panels();
@@ -1370,6 +1446,7 @@ impl App {
             palette,
             font,
             icons,
+            rack_scroll,
             ..
         } = self;
         let Some(mixer) = mixer.as_ref() else { return };
@@ -1409,6 +1486,7 @@ impl App {
                 pointer,
                 levels,
                 &self.clips,
+                *rack_scroll,
                 &mut racks,
                 scroll,
                 frame.content_width(),
@@ -2172,6 +2250,7 @@ fn main() {
         tone_spectra: std::collections::HashMap::new(),
         tone_settings: session_daw::tone::Store::default(),
         clips: session_daw::overlay::Clips::default(),
+        rack_scroll: 0.0,
         folders: daw_ui::components::folders::FolderState::default(),
         icons: session_daw::icons::Icons::new(),
         theme,

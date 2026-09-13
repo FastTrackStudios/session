@@ -444,6 +444,10 @@ fn mixer_shot(
                 // the reference image would be a difference nobody
                 // asked for.
                 &session_daw::overlay::Clips::default(),
+                // At the top: a shot is the reference every viewport is
+                // compared against, and a scrolled rack in it would be
+                // a difference nobody asked for.
+                0.0,
                 &mut session_daw::overlay::Racks::none(),
                 scroll_x,
                 frame.content_width(),
@@ -979,6 +983,7 @@ fn animate(
                         &pointer,
                         &levels,
                         &session_daw::overlay::Clips::default(),
+                        0.0,
                         &mut session_daw::overlay::Racks {
                             settings: &settings,
                             history: &mut history,

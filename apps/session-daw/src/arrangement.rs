@@ -737,6 +737,25 @@ pub fn submit_command(
             );
             true
         }
+        // Clipping. The rack scrolls, which means it draws past its own
+        // box in both directions — above into the rails, below over the
+        // strip's own controls — and a clip is the only thing that
+        // stops it. Dropped, as these were, a scrolled rack silently
+        // painted over its neighbours.
+        //
+        // Balanced by construction: whoever pushes one pops it inside
+        // the same scene, and the overlay submits a scene whole. The
+        // RECORDED scenes are replayed in per-strip ranges and must
+        // therefore never carry a layer, since a range could cut
+        // between a push and its pop.
+        RenderCommand::PushClipLayer(clip) => {
+            painter.push_clip_layer(compose(transform, clip.transform), &clip.clip);
+            true
+        }
+        RenderCommand::PopLayer => {
+            painter.pop_layer();
+            true
+        }
         _ => false,
     }
 }

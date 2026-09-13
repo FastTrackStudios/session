@@ -428,6 +428,17 @@ impl Panel {
         }
     }
 
+    /// The same box, moved up by a scroll.
+    ///
+    /// The rack scrolls by moving where its panels START, not by
+    /// offsetting each one — see [`layout`]. One move, applied once,
+    /// which is what keeps the drawing and the hit test on the same
+    /// pixel.
+    #[must_use]
+    pub fn up(self, by: f64) -> Self {
+        Self { y: self.y - by, ..self }
+    }
+
     const fn rect(self) -> Rect {
         Rect::new(self.x, self.y, self.x + self.width, self.y + self.height)
     }
@@ -486,31 +497,27 @@ pub fn wanted(panels: &[Which]) -> f64 {
     panels.iter().map(|which| which.natural()).sum::<f64>() + gaps
 }
 
+/// Every processor the rack can show, in signal order.
+///
+/// ALL of them, whatever the phase. The rack used to show a phase's own
+/// subset — the EQ alone in Rescue, the compressor and saturator in
+/// Polish — which meant changing phase changed which processors
+/// existed, and a strip you were reading reorganised itself under you.
+///
+/// A chain is a chain. You scroll it, and a phase's job is to say which
+/// part of it to LOOK at rather than which parts to have. The rail's
+/// buttons become focus and collapse once there is a setting for it;
+/// until then the whole chain is on screen and the rack scrolls.
+pub const ALL_PANELS: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
+
 /// Which panels a mix phase asks for.
 ///
-/// A phase is a pass over the session with one question in it, and the
-/// rack should be showing the processing that answers it. Rescue is a
-/// surgical pass, so it wants the EQ and nothing else; Balance is the
-/// fader pass and wants no rack at all, which hands its height back to
-/// the strip — which is what "every track visible and detailed" means
-/// when the thing being compared is levels.
-///
-/// The three panels this rack can draw are the three the Tone phase is
-/// made of, so the phases past Polish come back empty rather than
-/// borrowing a curve that is not about them. An empty rack is honest;
-/// a saturation graph over a Depth pass is not.
+/// Kept as a function because the callers read like the rack is a
+/// question about the phase, and one day it will be again — as focus,
+/// not as membership.
 #[must_use]
-pub fn panels_for(phase: session::mix_phases::MixPhase) -> &'static [Which] {
-    use session::mix_phases::MixPhase as P;
-    match phase {
-        P::Rescue => &[Which::Eq],
-        P::Tone => &[Which::Eq, Which::Comp, Which::Sat],
-        P::Polish => &[Which::Comp, Which::Sat],
-        // Balance is the fader pass; Relational, Depth and Creative are
-        // phases whose processing this rack has no panel for yet; and
-        // Overview is the one view that is deliberately only a shape.
-        P::Balance | P::Relational | P::Depth | P::Creative | P::Overview => &[],
-    }
+pub const fn panels_for(_phase: session::mix_phases::MixPhase) -> &'static [Which] {
+    &ALL_PANELS
 }
 
 /// Record the rack into `scene`.
@@ -607,37 +614,29 @@ pub fn draw(
 /// [`crate::strip::Strip`] exists for: a grip that is not where its
 /// curve is drawn is a grip that moves the wrong thing.
 ///
-/// The shares are authored for the full three; a shorter rack
-/// renormalises them rather than leaving a gap at the bottom, so two
-/// panels fill the height three did and keep their proportions to each
-/// other.
+/// Every panel keeps its NATURAL height and they stack from `panel.y`,
+/// which means the chain is as long as the chain is and runs off the
+/// bottom of a box too short for it. It used to scale them down
+/// together to fit; that made every processor added shrink every
+/// processor already there, until the whole rack was unreadable. A
+/// chain is scrolled instead.
+///
+/// To scroll, hand it a panel whose `y` is already moved up — the
+/// scroll is a fact about where the rack is drawn, not a second
+/// parameter three callers would have to pass identically. `panel`'s
+/// own height is what a caller clips to and what [`scroll_span`]
+/// measures against; the layout itself does not read it.
 #[must_use]
 pub fn layout(panels: &[Which], panel: Panel) -> Vec<(Which, Panel)> {
-    let total: f64 = panels.iter().map(|which| which.natural()).sum();
-    if total <= 0.0 || panels.is_empty() {
+    if panels.is_empty() {
         return Vec::new();
     }
-    let gaps = GAP * crate::num::coord(panels.len().saturating_sub(1));
-    let usable = (panel.height - gaps).max(0.0);
-    // Their natural heights, from the TOP, and no taller than that.
-    //
-    // A frequency response is readable at a hundred and seventy pixels
-    // and no more readable at four hundred — it is the same curve with
-    // more air around it. So the panels take what they need and leave
-    // the rest of the rack empty, which is also where the processors
-    // the other phases bring will go.
-    //
-    // Scaled DOWN together when there is not room, because a panel
-    // shorter than the rack wants is a real state — a short window, a
-    // docked mixer — and it has to degrade by shrinking rather than by
-    // pushing the last panel off the bottom.
-    let scale = (usable / total).min(1.0);
     let mut y = panel.y;
     panels
         .iter()
         .copied()
         .map(|which| {
-            let height = which.natural() * scale;
+            let height = which.natural();
             let at = Panel {
                 x: panel.x,
                 y,
@@ -648,6 +647,15 @@ pub fn layout(panels: &[Which], panel: Panel) -> Vec<(Which, Panel)> {
             (which, at)
         })
         .collect()
+}
+
+/// How far the rack can scroll before the last panel's floor arrives.
+///
+/// Zero when the chain already fits its box, which is what keeps the
+/// gesture inert until there is something below to reach.
+#[must_use]
+pub fn scroll_span(panels: &[Which], box_height: f64) -> f64 {
+    (wanted(panels) - box_height).max(0.0)
 }
 
 /// The body of a panel — what is left once its header is taken.
@@ -1825,11 +1833,12 @@ pub fn grip_at(
                 ) {
                     return Some(Grip::Band(index));
                 }
-                // Nothing else in the graph is grabbable, so the graph
-                // itself answers for the zoom — which is what makes a
-                // wheel anywhere over it zoom, the way it does in every
-                // other plot.
-                return Some(Grip::Scale);
+                // And nothing else. The empty graph used to answer for
+                // the zoom so a wheel anywhere over it would zoom —
+                // but the rack scrolls now, and a panel that swallowed
+                // the wheel would be a hole in the scroll the size of
+                // an EQ. The chip is the zoom's target; the rest of the
+                // graph belongs to the gesture that moves the chain.
             }
             Which::Comp => return Some(comp_grip(tone.comp, body, rack, x, y)),
             Which::Sat => return Some(Grip::Drive),
@@ -2306,11 +2315,16 @@ mod tests {
         assert!(used < tall.height, "the rack filled everything it was given");
     }
 
-    /// And they shrink TOGETHER when there is not room, rather than the
-    /// last one falling off the bottom — a short window and a docked
-    /// mixer are both real.
+    /// A rack too short for its chain SCROLLS rather than shrinking.
+    ///
+    /// The panels used to scale down together to fit, which meant every
+    /// processor added shrank every processor already there — three
+    /// units at two hundred pixels is three unreadable units. Keeping
+    /// their natural heights and running off the bottom is what makes
+    /// the chain survive growing, and `scroll_span` is how far the box
+    /// has to travel to see the rest.
     #[test]
-    fn a_short_rack_shrinks_its_panels() {
+    fn a_short_rack_scrolls_rather_than_shrinking() {
         let panels = [Which::Eq, Which::Comp, Which::Sat];
         let short = Panel {
             x: 0.0,
@@ -2320,17 +2334,36 @@ mod tests {
         };
         let laid = layout(&panels, short);
         assert_eq!(laid.len(), 3, "a panel was dropped");
-        let bottom = laid
-            .last()
-            .map_or(0.0, |(_, at)| at.y + at.height);
+        for (which, at) in &laid {
+            assert!(
+                (at.height - which.natural()).abs() < f64::EPSILON,
+                "{which:?} was shrunk to {}",
+                at.height
+            );
+        }
+        let bottom = laid.last().map_or(0.0, |(_, at)| at.y + at.height);
+        assert!(bottom > short.height, "the chain fitted, so nothing was proved");
         assert!(
-            bottom <= short.y + short.height + 0.01,
-            "the last panel hung off the bottom at {bottom}"
+            (super::scroll_span(&panels, short.height) - (bottom - short.height)).abs() < 0.01,
+            "the span does not reach the last panel's floor"
         );
-        // Still in proportion to each other.
-        let ratio = laid[0].1.height / laid[2].1.height;
-        let natural = Which::Eq.natural() / Which::Sat.natural();
-        assert!((ratio - natural).abs() < 0.01, "the shrink was not even");
+
+        // And a box tall enough to hold the chain does not scroll.
+        assert!(super::scroll_span(&panels, 2000.0).abs() < f64::EPSILON);
+    }
+
+    /// Scrolling is the panel's own `y`, so the drawing and the hit
+    /// test cannot disagree about it — they are handed the same moved
+    /// panel rather than each applying an offset.
+    #[test]
+    fn a_scroll_moves_every_panel_by_the_same_amount() {
+        let panels = [Which::Eq, Which::Comp, Which::Sat];
+        let box_at = Panel { x: 0.0, y: 40.0, width: 133.0, height: 200.0 };
+        let moved = Panel { y: box_at.y - 75.0, ..box_at };
+        for ((_, rest), (_, down)) in layout(&panels, box_at).iter().zip(layout(&panels, moved)) {
+            assert!((rest.y - down.y - 75.0).abs() < f64::EPSILON);
+            assert!((rest.height - down.height).abs() < f64::EPSILON);
+        }
     }
 
     /// The tiers are ordered, and each threshold is where its tier
@@ -2461,30 +2494,21 @@ mod phase_tests {
     use super::{Which, panels_for};
     use session::mix_phases::MixPhase as P;
 
-    /// The phase decides what the rack is showing, which is the whole
-    /// reason the left rail's lower half is a rail and not a label.
+    /// Every phase shows the whole chain.
+    ///
+    /// It used to show a subset per phase — the EQ alone in Rescue, no
+    /// rack at all in Balance — so changing phase changed which
+    /// processors EXISTED and a strip reorganised itself under you. A
+    /// chain is a chain; a phase's job is to say which part of it to
+    /// look at, which is focus rather than membership.
     #[test]
-    fn each_phase_asks_for_its_own_processing() {
-        assert_eq!(panels_for(P::Tone), &[Which::Eq, Which::Comp, Which::Sat]);
-        assert_eq!(panels_for(P::Rescue), &[Which::Eq]);
-        assert_eq!(panels_for(P::Polish), &[Which::Comp, Which::Sat]);
-    }
-
-    /// Balance is the fader pass: no rack, so its height goes back to
-    /// the strip. That is what "every track visible and detailed"
-    /// means when the thing being compared is levels.
-    #[test]
-    fn balance_hands_the_height_back() {
-        assert!(panels_for(P::Balance).is_empty());
-        assert!(panels_for(P::Overview).is_empty());
-    }
-
-    /// A phase whose processing has no panel yet draws nothing rather
-    /// than borrowing a curve that is not about it.
-    #[test]
-    fn an_unmodelled_phase_is_empty_not_wrong() {
-        for phase in [P::Relational, P::Depth, P::Creative] {
-            assert!(panels_for(phase).is_empty(), "{phase:?} borrowed a panel");
+    fn every_phase_shows_the_whole_chain() {
+        for phase in P::ALL {
+            assert_eq!(
+                panels_for(phase),
+                &[Which::Eq, Which::Comp, Which::Sat],
+                "{phase:?} showed a subset"
+            );
         }
     }
 
@@ -2494,7 +2518,7 @@ mod phase_tests {
     fn every_phase_answers() {
         for phase in P::ALL {
             let panels = panels_for(phase);
-            assert!(panels.len() <= 3, "{phase:?} asked for {panels:?}");
+            assert!(!panels.is_empty(), "{phase:?} asked for {panels:?}");
         }
     }
 }
@@ -2534,16 +2558,20 @@ mod grip_tests {
         assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(Grip::Band(2)));
     }
 
-    /// And a point well away from every band grabs none of them,
-    /// rather than the nearest one at any distance — the graph itself
-    /// answers instead, which is what makes a wheel anywhere over it
-    /// zoom.
+    /// And a point well away from every band grabs nothing, rather
+    /// than the nearest band at any distance or the graph itself.
+    ///
+    /// It briefly answered `Scale`, so a wheel anywhere over the graph
+    /// would zoom. The rack scrolls now, and a panel that swallowed the
+    /// wheel would be a hole in the scroll the size of an EQ — so the
+    /// empty graph belongs to the gesture that moves the chain, and the
+    /// zoom keeps its chip.
     #[test]
-    fn empty_space_in_the_eq_is_the_graph_not_a_band() {
+    fn empty_space_in_the_eq_grabs_nothing() {
         let tone = placeholder(0);
         // The EQ panel's top-left corner: inside the panel, far from
         // any band, which all sit near the middle at these settings.
-        assert_eq!(grip_at(&ALL, &tone, rack(), 3.0, 14.0), Some(Grip::Scale));
+        assert_eq!(grip_at(&ALL, &tone, rack(), 3.0, 14.0), None);
     }
 
     /// The zoom chip is at the top middle and wins over whatever is
