@@ -1198,7 +1198,12 @@ struct Envelope {
     back: (f64, f64),
     /// How far the ratio's arrow hangs below the line, in pixels.
     drop: f64,
+    /// The x the arrow hangs on — its own rail at the left edge.
+    rail: f64,
 }
+
+/// The column the ratio's arrow lives in, at the display's left edge.
+const RAIL: f64 = 11.0;
 
 /// How far the arrowhead's barbs reach back up the shaft.
 const BARB: f64 = 4.0;
@@ -1220,7 +1225,10 @@ impl Envelope {
         let span = at.width * 0.4;
         let lead = log_norm(f64::from(comp.attack), 0.1, 200.0) * span;
         let tail = log_norm(f64::from(comp.release), 5.0, 3_000.0) * span;
-        let left = at.x + 2.0;
+        // The ramps start clear of the rail, so the arrow has a column
+        // of its own to hang in rather than crossing the lead-in on its
+        // way down.
+        let left = at.x + RAIL;
         let top = at.y;
         let line = level.clamp(at.y + 2.0, at.y + at.height - 2.0);
         // A run long enough to hang an arrow from even when both times
@@ -1234,6 +1242,7 @@ impl Envelope {
             // Clipped to the box: past the floor the arrow would be
             // drawing reduction the display cannot show.
             drop: ratio_drop(comp, at.height).min(at.y + at.height - line),
+            rail: at.x + RAIL / 2.0,
         })
     }
 
@@ -1245,17 +1254,15 @@ impl Envelope {
         [self.foot, self.back]
     }
 
-    /// Where the arrow hangs from.
+    /// Where the arrow hangs from: a rail down the display's left edge.
     ///
-    /// Just inside the left end of the run rather than the middle of
-    /// it: the middle is where the live reduction is busiest, and an
-    /// arrow there sat on top of the thing it is meant to be compared
-    /// against. At the left it is out of the way and still reads
-    /// against the same axis.
+    /// Out at the edge rather than anywhere in the middle, because the
+    /// middle is where the live reduction and the waveform are busiest
+    /// and an arrow there sat on top of the thing it is meant to be
+    /// read against. On its own rail it stays out of the way and still
+    /// measures down the same dB axis as everything else here.
     fn stem(self) -> (f64, f64) {
-        const INSET: f64 = 9.0;
-        let x = (self.knee.0 + INSET).min(self.foot.0 - 2.0).max(self.knee.0);
-        (x, self.knee.1)
+        (self.rail, self.knee.1)
     }
 
     /// The arrow's shaft and the two barbs of its head, or `None` when
@@ -1514,7 +1521,14 @@ pub fn placeholder(index: usize) -> Tone {
     Tone {
         eq: voice.bands(drift),
         comp: voice.comp(drift),
-        eq_range: DEFAULT_EQ_RANGE,
+        // Not all one zoom: a vocal worked at ±3 and a room mic at ±18
+        // is the normal case, and a desk where every graph is drawn to
+        // the same range hides the fact that the range is a choice.
+        eq_range: match index % 3 {
+            0 => DEFAULT_EQ_RANGE,
+            1 => DEFAULT_EQ_RANGE.saturating_sub(1),
+            _ => DEFAULT_EQ_RANGE.saturating_add(1),
+        },
         sat: {
             let mut pre = ClassAPreamp::new(f64_to_f32(DISPLAY_RATE));
             // A single-ended stage: a triode grid above and iron below,
@@ -1557,8 +1571,16 @@ enum Character {
 }
 
 impl Character {
+    /// Which voice a track gets.
+    ///
+    /// Hashed rather than `track % 4`, because a period of four lines
+    /// up with any regular stride — and the mixer has one: at a width
+    /// where the rack is drawn, every eighth strip is on screen, every
+    /// one of them ≡ 0 mod 4, and a whole desk of placeholder settings
+    /// came out identical.
     const fn of(track: usize) -> Self {
-        match track % 4 {
+        let mixed = (track ^ (track >> 2)).wrapping_mul(2_654_435_761);
+        match mixed % 4 {
             0 => Self::Low,
             1 => Self::Mid,
             2 => Self::High,
