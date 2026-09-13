@@ -892,10 +892,10 @@ fn draw_strip_controls(
             scene,
             panels,
             history,
-            // The reduction is what the compressor is DOING, so it has
-            // to be computed from the settings it is doing it with.
-            tone.comp,
-            tone.bypass,
+            // The reduction is what each compressor is DOING, so it is
+            // computed from the settings it is doing it with — which is
+            // why the whole `Tone` goes in rather than one `Comp`.
+            tone,
             crate::tone::Panel::of(box_, left).up(scroll),
         );
         scene.pop_layer();

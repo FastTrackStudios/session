@@ -68,9 +68,22 @@ const SAMPLES: usize = 96;
 /// something the plugin cannot produce.
 #[derive(Clone, Debug)]
 pub struct Tone {
+    /// Rescue.
+    pub rescue_eq: Vec<EqBand>,
+    pub gate: Gate,
+    pub rescue_comp: Comp,
+    /// Tone.
     pub eq: Vec<EqBand>,
     pub comp: Comp,
     pub sat: ClassAPreamp,
+    /// Polish.
+    pub de_ess: Suppress,
+    pub resonance: Suppress,
+    /// Relational.
+    pub space: Vec<EqBand>,
+    /// Depth.
+    pub delay: Echo,
+    pub reverb: Room,
     /// Which of the three are switched out.
     pub bypass: Bypass,
     /// How far the EQ graph is zoomed, as an index into the plugin's
@@ -111,6 +124,72 @@ impl Tone {
         moved
     }
 
+    /// The band set a given EQ panel edits.
+    ///
+    /// Three panels share one drawing and one interaction model and
+    /// differ only in which list they are about — so this is the one
+    /// place that mapping lives, and adding a fourth EQ is one arm.
+    #[must_use]
+    pub fn bands(&mut self, which: Which) -> Option<&mut Vec<EqBand>> {
+        match which {
+            Which::RescueEq => Some(&mut self.rescue_eq),
+            Which::Eq => Some(&mut self.eq),
+            Which::Space => Some(&mut self.space),
+            _ => None,
+        }
+    }
+
+    /// The compressor a given panel edits.
+    #[must_use]
+    pub const fn compressor(&mut self, which: Which) -> Option<&mut Comp> {
+        match which {
+            Which::RescueComp => Some(&mut self.rescue_comp),
+            Which::Comp => Some(&mut self.comp),
+            _ => None,
+        }
+    }
+
+    /// Every panel with a threshold, as one number.
+    ///
+    /// The compressors, the gate and the two suppressors all have a red
+    /// line you drag, and they all mean "where this starts acting" —
+    /// which is why one grip serves them and why the ranges differ.
+    #[must_use]
+    pub const fn threshold(&self, which: Which) -> Option<(f32, f32, f32)> {
+        match which {
+            Which::RescueComp => Some((self.rescue_comp.threshold, -60.0, 0.0)),
+            Which::Comp => Some((self.comp.threshold, -60.0, 0.0)),
+            Which::Gate => Some((self.gate.threshold, -80.0, 0.0)),
+            // A suppressor's threshold is how far ABOVE its own average
+            // a peak has to stand, so its range is small and positive.
+            Which::DeEss => Some((self.de_ess.threshold, 0.0, 24.0)),
+            Which::Resonance => Some((self.resonance.threshold, 0.0, 24.0)),
+            _ => None,
+        }
+    }
+
+    /// And setting it, clamped to that panel's own range.
+    pub const fn set_threshold(&mut self, which: Which, to: f32) {
+        let Some((_, low, high)) = self.threshold(which) else {
+            return;
+        };
+        let to = if to < low {
+            low
+        } else if to > high {
+            high
+        } else {
+            to
+        };
+        match which {
+            Which::RescueComp => self.rescue_comp.threshold = to,
+            Which::Comp => self.comp.threshold = to,
+            Which::Gate => self.gate.threshold = to,
+            Which::DeEss => self.de_ess.threshold = to,
+            Which::Resonance => self.resonance.threshold = to,
+            _ => {}
+        }
+    }
+
     /// The next stop, wrapping — what a click on the readout does.
     ///
     /// Wrapping rather than stopping because a chip you click is a
@@ -129,36 +208,170 @@ impl Tone {
 /// and the question is almost always "what does this track sound like
 /// without the compressor", not "without any of it". A whole-rack
 /// switch would make the common comparison the one you cannot make.
+///
+/// A bitset rather than a field each, because the chain grows: it was
+/// three bools, and every processor added meant three more edits in
+/// three functions that could disagree.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bypass {
-    eq: bool,
-    comp: bool,
-    sat: bool,
+    out: u16,
 }
 
 impl Bypass {
+    const fn bit(which: Which) -> u16 {
+        1_u16 << (which as u16)
+    }
+
     #[must_use]
     pub const fn is(self, which: Which) -> bool {
-        match which {
-            Which::Eq => self.eq,
-            Which::Comp => self.comp,
-            Which::Sat => self.sat,
-        }
+        self.out & Self::bit(which) != 0
     }
 
     pub const fn toggle(&mut self, which: Which) {
-        match which {
-            Which::Eq => self.eq = !self.eq,
-            Which::Comp => self.comp = !self.comp,
-            Which::Sat => self.sat = !self.sat,
-        }
+        self.out ^= Self::bit(which);
     }
 
     /// Whether anything at all is switched out — for a caller that
-    /// wants to say so without asking three times.
+    /// wants to say so without asking eleven times.
     #[must_use]
     pub const fn any(self) -> bool {
-        self.eq || self.comp || self.sat
+        self.out != 0
+    }
+}
+
+/// What a suppressor is set to, in one short line.
+fn suppression(set: Suppress) -> String {
+    format!("{:.0}dB · {:.0}%", set.threshold, set.depth * 100.0)
+}
+
+/// A gate, as its display needs it.
+///
+/// The compressor's mirror: it acts BELOW its threshold rather than
+/// above, which is the whole difference and the reason the two cannot
+/// share a display without saying which way they work.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gate {
+    /// Where it opens, in dBFS.
+    pub threshold: f32,
+    /// How far down it takes what stays shut. Not silence: a gate that
+    /// closes completely turns a room into a series of holes, and the
+    /// number you actually reach for is how much LESS of it you want.
+    pub range: f32,
+    /// How fast it opens.
+    pub attack: f32,
+    /// How long it stays open after the signal drops back.
+    pub hold: f32,
+    /// And how fast it closes then.
+    pub release: f32,
+}
+
+impl Default for Gate {
+    fn default() -> Self {
+        Self {
+            threshold: -40.0,
+            range: -18.0,
+            attack: 1.0,
+            hold: 60.0,
+            release: 180.0,
+        }
+    }
+}
+
+/// A spectral suppressor, as its display needs it.
+///
+/// The de-esser and the resonance suppressor are one processor with two
+/// jobs: find where the spectrum stands proud of its own average, and
+/// pull those places down. The de-esser looks only in the sibilance
+/// range and the suppressor looks everywhere, which is a BAND and not a
+/// different algorithm.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Suppress {
+    /// How far above its own average a peak has to stand before it is
+    /// treated as a resonance, in dB.
+    pub threshold: f32,
+    /// How much of what it finds it takes off, 0 to 1.
+    pub depth: f32,
+    /// How narrow a peak has to be to count — the width of the average
+    /// it is compared against, in octaves. Wide, and a whole region
+    /// reads as one resonance; narrow, and nothing does.
+    pub sharpness: f32,
+    /// The range it listens in.
+    pub low: f32,
+    pub high: f32,
+}
+
+impl Suppress {
+    /// The de-esser's defaults: sibilance only.
+    #[must_use]
+    pub const fn sibilance() -> Self {
+        Self {
+            threshold: 4.0,
+            depth: 0.6,
+            sharpness: 0.5,
+            low: 4_000.0,
+            high: 12_000.0,
+        }
+    }
+
+    /// And the resonance suppressor's: the whole spectrum, gentler.
+    #[must_use]
+    pub const fn broadband() -> Self {
+        Self {
+            threshold: 6.0,
+            depth: 0.45,
+            sharpness: 0.33,
+            low: 100.0,
+            high: 18_000.0,
+        }
+    }
+}
+
+/// A delay, as its display needs it.
+///
+/// Time, feedback and mix — the three that decide what the repeats
+/// LOOK like, which is what the panel draws. The rest of the plugin's
+/// parameters (wow, flutter, drive, duck) change how a repeat sounds
+/// rather than where it lands, and a strip-width picture cannot show
+/// them without lying about what it is showing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Echo {
+    pub time: f32,
+    pub feedback: f32,
+    pub mix: f32,
+}
+
+impl Default for Echo {
+    fn default() -> Self {
+        Self {
+            time: 320.0,
+            feedback: 0.38,
+            mix: 0.22,
+        }
+    }
+}
+
+/// A reverb, as its display needs it.
+///
+/// An impulse, the gap before its tail starts, and the tail — which is
+/// `reverb-ui`'s own third centrepiece, "the recorded thing itself: an
+/// impulse and its decay envelope". The one picture of a reverb that
+/// survives being drawn a hundred and thirty pixels wide.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Room {
+    /// Seconds to −60 dB.
+    pub decay: f32,
+    /// Milliseconds before the tail begins.
+    pub predelay: f32,
+    pub mix: f32,
+}
+
+impl Default for Room {
+    fn default() -> Self {
+        Self {
+            decay: 1.8,
+            predelay: 24.0,
+            mix: 0.18,
+        }
     }
 }
 
@@ -217,9 +430,9 @@ impl Comp {
 /// A compressor knob's value as a fraction of its own range.
 fn knob_norm(comp: Comp, grip: Grip) -> f64 {
     match grip {
-        Grip::Ratio => comp.ratio_norm(),
-        Grip::Attack => comp.attack_norm(),
-        Grip::Release => comp.release_norm(),
+        Grip::Ratio(_) => comp.ratio_norm(),
+        Grip::Attack(_) => comp.attack_norm(),
+        Grip::Release(_) => comp.release_norm(),
         _ => 0.0,
     }
 }
@@ -228,9 +441,9 @@ fn knob_norm(comp: Comp, grip: Grip) -> f64 {
 fn set_knob(comp: &mut Comp, grip: Grip, to: f64) {
     let to = to.clamp(0.0, 1.0);
     match grip {
-        Grip::Ratio => comp.ratio = f64_to_f32(to.mul_add(19.0, 1.0)),
-        Grip::Attack => comp.attack = f64_to_f32(log_denorm(to, 0.1, 200.0)),
-        Grip::Release => comp.release = f64_to_f32(log_denorm(to, 5.0, 3_000.0)),
+        Grip::Ratio(_) => comp.ratio = f64_to_f32(to.mul_add(19.0, 1.0)),
+        Grip::Attack(_) => comp.attack = f64_to_f32(log_denorm(to, 0.1, 200.0)),
+        Grip::Release(_) => comp.release = f64_to_f32(log_denorm(to, 5.0, 3_000.0)),
         _ => {}
     }
 }
@@ -508,7 +721,19 @@ pub fn wanted(panels: &[Which]) -> f64 {
 /// part of it to LOOK at rather than which parts to have. The rail's
 /// buttons become focus and collapse once there is a setting for it;
 /// until then the whole chain is on screen and the rack scrolls.
-pub const ALL_PANELS: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
+pub const ALL_PANELS: [Which; 11] = [
+    Which::RescueEq,
+    Which::Gate,
+    Which::RescueComp,
+    Which::Eq,
+    Which::Comp,
+    Which::Sat,
+    Which::DeEss,
+    Which::Resonance,
+    Which::Space,
+    Which::Delay,
+    Which::Reverb,
+];
 
 /// Which panels a mix phase asks for.
 ///
@@ -571,9 +796,30 @@ pub fn draw(
         let head = (body.y > inner.y).then(|| inner.split_top(HEAD).0);
         if body.width > 0.0 && body.height > 0.0 {
             match which {
-                Which::Eq => eq(scene, palette, font, tone, spectrum, body, rack, lit),
+                // The three EQs are one drawing over three band sets.
+                // What differs is what the bands are FOR, which is the
+                // panel's name and not its picture.
+                Which::RescueEq => {
+                    eq(scene, palette, font, tone, which, &tone.rescue_eq, spectrum, body, rack, lit);
+                }
+                Which::Eq => eq(scene, palette, font, tone, which, &tone.eq, spectrum, body, rack, lit),
+                Which::Space => {
+                    eq(scene, palette, font, tone, which, &tone.space, spectrum, body, rack, lit);
+                }
+                Which::Gate => gate(scene, palette, tone.gate, body, rack, lit),
+                Which::RescueComp => {
+                    comp(scene, palette, font, tone.rescue_comp, body, rack, lit);
+                }
                 Which::Comp => comp(scene, palette, font, tone.comp, body, rack, lit),
                 Which::Sat => sat(scene, palette, &tone.sat, body, rack),
+                Which::DeEss => {
+                    suppress(scene, palette, tone, tone.de_ess, spectrum, body, rack, lit);
+                }
+                Which::Resonance => {
+                    suppress(scene, palette, tone, tone.resonance, spectrum, body, rack, lit);
+                }
+                Which::Delay => echo(scene, palette, tone.delay, body, rack, lit),
+                Which::Reverb => room(scene, palette, tone.reverb, body, rack, lit),
             }
             // The bypass, over everything the panel just drew.
             //
@@ -676,18 +922,86 @@ pub fn body_of(at: Panel, rack: Rack) -> Panel {
 /// One panel of the rack.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Which {
+    // ── Rescue: make it usable ───────────────────────────────────────
+    /// Surgical cuts. The EQ you reach for before anything else,
+    /// because the rest of the chain has to work on what this leaves.
+    RescueEq,
+    /// What is between the notes — the gate decides how much of the
+    /// room, the bleed and the noise survives into everything after it.
+    Gate,
+    /// The first compressor: catching what is wrong rather than
+    /// shaping what is right.
+    RescueComp,
+
+    // ── Tone: make it sound like itself ──────────────────────────────
     Eq,
     Comp,
     Sat,
+
+    // ── Polish: take the ugly out ────────────────────────────────────
+    /// Sibilance, dynamically.
+    DeEss,
+    /// And every other resonance — the narrow peaks a room or a body
+    /// puts in, found by comparing the spectrum with its own average.
+    Resonance,
+
+    // ── Relational: make it sit with the others ──────────────────────
+    /// The EQ that is not about this track: it carves the room another
+    /// one needs, which is why it is its own unit and not more bands
+    /// on the tone EQ.
+    Space,
+
+    // ── Depth: put it somewhere ──────────────────────────────────────
+    /// Delay before reverb, which is the order they go in — a repeat
+    /// arriving after the tail has started is a repeat you cannot hear
+    /// as a repeat.
+    Delay,
+    Reverb,
 }
 
 impl Which {
     const fn name(self) -> &'static str {
         match self {
+            Self::RescueEq => "RESCUE EQ",
+            Self::Gate => "GATE",
+            Self::RescueComp => "RESCUE COMP",
             Self::Eq => "EQ",
             Self::Comp => "COMP",
             Self::Sat => "SAT",
+            Self::DeEss => "DE-ESS",
+            Self::Resonance => "RESONANCE",
+            Self::Space => "SPACE",
+            Self::Delay => "DELAY",
+            Self::Reverb => "REVERB",
         }
+    }
+
+    /// Which phase this unit belongs to.
+    ///
+    /// The chain is ordered BY phase, and the phase is what the rail's
+    /// buttons will focus once there is a setting for it. Stated per
+    /// unit rather than as a table of ranges, so adding a processor is
+    /// one line in one place.
+    #[must_use]
+    pub const fn phase(self) -> session::mix_phases::MixPhase {
+        use session::mix_phases::MixPhase as P;
+        match self {
+            Self::RescueEq | Self::Gate | Self::RescueComp => P::Rescue,
+            Self::Eq | Self::Comp | Self::Sat => P::Tone,
+            Self::DeEss | Self::Resonance => P::Polish,
+            Self::Space => P::Relational,
+            Self::Delay | Self::Reverb => P::Depth,
+        }
+    }
+
+    /// Whether this unit draws a frequency response.
+    ///
+    /// Four of them do, on the plugin's own graph — the two EQs, the
+    /// de-esser and the resonance suppressor — and they differ in what
+    /// the curve MEANS rather than in how it is drawn.
+    #[must_use]
+    pub const fn is_spectral(self) -> bool {
+        matches!(self, Self::RescueEq | Self::Eq | Self::Space | Self::DeEss | Self::Resonance)
     }
 
     /// What this panel's settings come to, in one short line.
@@ -698,38 +1012,43 @@ impl Which {
     /// different, and you read the number to know what to type into the
     /// one you opened.
     fn summary(self, tone: &Tone, rack: Rack) -> String {
+        let curve = |bands: &[EqBand]| {
+            let live = bands.iter().filter(|b| b.enabled && b.used).count();
+            let range = bands
+                .iter()
+                .filter(|b| b.enabled && b.used)
+                .map(|b| b.gain.abs())
+                .fold(0.0_f32, f32::max);
+            if live == 0 {
+                "flat".to_owned()
+            } else {
+                format!("{live} · {range:.1}dB")
+            }
+        };
+        let squash = |comp: Comp| {
+            let head = format!("{:.0}dB · {:.1}:1", comp.threshold, comp.ratio);
+            // The times are the envelope's own shape, which is the
+            // point of drawing it — but a shape says "fast" and not
+            // "three milliseconds", and at a focus width there is room
+            // to say both.
+            if rack.editing() {
+                format!("{head} · {}/{}", millis(comp.attack), millis(comp.release))
+            } else {
+                head
+            }
+        };
         match self {
-            Self::Eq => {
-                let live = tone.eq.iter().filter(|band| band.enabled && band.used).count();
-                let range = tone
-                    .eq
-                    .iter()
-                    .filter(|band| band.enabled && band.used)
-                    .map(|band| band.gain.abs())
-                    .fold(0.0_f32, f32::max);
-                if live == 0 {
-                    "flat".to_owned()
-                } else {
-                    format!("{live} · {range:.1}dB")
-                }
-            }
-            Self::Comp => {
-                let head = format!("{:.0}dB · {:.1}:1", tone.comp.threshold, tone.comp.ratio);
-                // The times are the envelope's own shape, which is the
-                // point of drawing it — but a shape says "fast" and
-                // not "three milliseconds", and at a focus width there
-                // is room to say both.
-                if rack.editing() {
-                    format!(
-                        "{head} · {}/{}",
-                        millis(tone.comp.attack),
-                        millis(tone.comp.release)
-                    )
-                } else {
-                    head
-                }
-            }
+            Self::RescueEq => curve(&tone.rescue_eq),
+            Self::Eq => curve(&tone.eq),
+            Self::Space => curve(&tone.space),
+            Self::Gate => format!("{:.0}dB · {:.0}", tone.gate.threshold, tone.gate.range),
+            Self::RescueComp => squash(tone.rescue_comp),
+            Self::Comp => squash(tone.comp),
             Self::Sat => format!("x{:.1}", tone.sat.drive),
+            Self::DeEss => suppression(tone.de_ess),
+            Self::Resonance => suppression(tone.resonance),
+            Self::Delay => format!("{} · {:.0}%", millis(tone.delay.time), tone.delay.feedback * 100.0),
+            Self::Reverb => format!("{:.1}s · {:.0}%", tone.reverb.decay, tone.reverb.mix * 100.0),
         }
     }
 
@@ -745,18 +1064,29 @@ impl Which {
     /// So the rack asks for what it needs and the strip keeps the rest.
     const fn natural(self) -> f64 {
         match self {
-            // Two axes to read, and the only panel where the extra
-            // height buys resolution rather than air: a 3 dB decision
-            // and a 12 dB one have to look different.
-            Self::Eq => 175.0,
+            // Two axes to read, and the panels where extra height buys
+            // resolution rather than air: a 3 dB decision and a 12 dB
+            // one have to look different.
+            Self::RescueEq | Self::Eq | Self::Space => 175.0,
+            // The suppressors are a spectrum and a cut hanging off it —
+            // shorter than an EQ, because there is one curve to read
+            // rather than a curve against a grid of decisions.
+            Self::DeEss | Self::Resonance => 130.0,
             // One display, with the envelope drawn into it. Taller than
             // the saturator because the levels in it are read against a
             // threshold, and a threshold you cannot place precisely is
             // a threshold you set by ear twice.
-            Self::Comp => 170.0,
+            Self::Comp | Self::RescueComp => 170.0,
+            // The gate is the same display without the envelope: a line
+            // and what falls under it.
+            Self::Gate => 120.0,
             // A bent line through a square. It says its whole story in
             // the first hundred pixels.
             Self::Sat => 110.0,
+            // Time pictures, both. A delay needs width for its taps and
+            // no height beyond telling them apart; a reverb's tail is a
+            // single falling line.
+            Self::Delay | Self::Reverb => 100.0,
         }
     }
 }
@@ -791,12 +1121,13 @@ fn ground(scene: &mut Scene, palette: &Palette, at: Panel) {
 fn eq_from_plugin(
     scene: &mut Scene,
     tone: &Tone,
+    bands: &[EqBand],
     spectrum: &[f32],
     at: Panel,
     rack: Rack,
 ) -> bool {
     let state = eq_ui::eq_graph_model::EqGraphRenderState::new();
-    state.bands.write().clone_from(&tone.eq);
+    state.bands.write().clone_from(&bands.to_vec());
     // The analyser, behind the curves. The painter draws it when the
     // state carries it and skips it when it does not, so a track with
     // no signal gets the same graph it had before this existed.
@@ -851,11 +1182,14 @@ fn eq_from_plugin(
 }
 
 /// The EQ's response across the audible band.
+#[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
 fn eq(
     scene: &mut Scene,
     palette: &Palette,
     font: &Font,
     tone: &Tone,
+    which: Which,
+    bands: &[EqBand],
     spectrum: &[f32],
     at: Panel,
     rack: Rack,
@@ -915,7 +1249,7 @@ fn eq(
         Line::new((at.x, zero), (right, zero)),
     );
 
-    if tone.eq.is_empty() {
+    if bands.is_empty() {
         return;
     }
     // The plugin's own graph, where there is room for it. Its curve, its
@@ -927,7 +1261,7 @@ fn eq(
     // authored for a graph eight hundred pixels wide and this one is a
     // hundred and thirty: at that size a labelled node with a shape
     // glyph is a smudge, where a dot is a position.
-    let painted = rack.detailed() && eq_from_plugin(scene, tone, spectrum, at, rack);
+    let painted = rack.detailed() && eq_from_plugin(scene, tone, bands, spectrum, at, rack);
     if !painted {
         // The fallback: the same response function the plugin's painter
         // uses, as one polyline. What the narrow tier gets, and what a
@@ -935,7 +1269,7 @@ fn eq(
         let points = (0..SAMPLES).map(|i| {
             let t = crate::num::coord(i) / crate::num::coord(SAMPLES.saturating_sub(1).max(1));
             let hz = freq.norm_to_freq(t);
-            let gain = calculate_combined_response(&tone.eq, hz, DISPLAY_RATE);
+            let gain = calculate_combined_response(bands, hz, DISPLAY_RATE);
             (
                 freq.freq_to_x(hz, at.x, right),
                 db.db_to_y(gain, at.y, bottom).clamp(at.y, bottom),
@@ -958,7 +1292,7 @@ fn eq(
     if rack != Rack::Full {
         return;
     }
-    for (index, band) in tone.eq.iter().enumerate() {
+    for (index, band) in bands.iter().enumerate() {
         if !(band.enabled && band.used) {
             continue;
         }
@@ -975,7 +1309,7 @@ fn eq(
         // says WHICH band, which is how you tell the low shelf from the
         // air band without reading a number. The two tiers now differ
         // in the size of the marker, not in what it means.
-        let grown = lit == Some(Grip::Band(index));
+        let grown = lit == Some(Grip::Band(which, index));
         let r = if grown { HANDLE + 1.6 } else { HANDLE };
         dot(scene, palette.tcp_meter_well, (x, y), r + 1.0);
         dot(scene, band_color(f64::from(band.frequency)), (x, y), r);
@@ -983,7 +1317,7 @@ fn eq(
 
     // The zoom, last, so nothing draws over the one thing in the panel
     // that says what the rest of it means.
-    scale(scene, palette, font, tone, at, lit);
+    scale(scene, palette, font, tone, which, at, lit);
 }
 
 /// The ladder's spacing for a given range.
@@ -1007,11 +1341,13 @@ fn ladder_step(range: f64) -> f64 {
 /// ±30. This is the label that makes the panel readable at a glance,
 /// and the control that changes it — clicked to step out, wheeled
 /// either way, double-clicked back to the default.
+#[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
 fn scale(
     scene: &mut Scene,
     palette: &Palette,
     font: &Font,
     tone: &Tone,
+    which: Which,
     at: Panel,
     lit: Option<Grip>,
 ) {
@@ -1019,7 +1355,7 @@ fn scale(
     if chip.width < 20.0 || chip.height < 8.0 {
         return;
     }
-    let held = lit == Some(Grip::Scale);
+    let held = lit == Some(Grip::Scale(which));
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
@@ -1099,7 +1435,7 @@ fn comp(
     // read a number and compare it to a meter somewhere else; a line
     // over the levels is the comparison.
     let y = threshold_y(comp, at);
-    let held = lit == Some(Grip::Threshold);
+    let held = matches!(lit, Some(Grip::Threshold(_)));
     let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
     rule_wide(
         scene,
@@ -1167,8 +1503,8 @@ fn envelope(scene: &mut Scene, comp: Comp, at: Panel, level: f64, lit: Option<Gr
     // Drawn as separate strokes rather than one path, so the part under
     // the pointer can thicken on its own — a glyph that lit up whole
     // would not say which of its parts you are about to move.
-    curve(scene, red, shape.fall().into_iter(), held(Grip::Attack));
-    curve(scene, red, shape.rise().into_iter(), held(Grip::Release));
+    curve(scene, red, shape.fall().into_iter(), held(Grip::Attack(Which::Comp)));
+    curve(scene, red, shape.rise().into_iter(), held(Grip::Release(Which::Comp)));
 
     // The ratio, as an arrow off the threshold line. Its length is the
     // reduction a full-scale signal takes — what the ratio DOES rather
@@ -1176,17 +1512,17 @@ fn envelope(scene: &mut Scene, comp: Comp, at: Panel, level: f64, lit: Option<Gr
     // ratio hardens and vanishes at unity, where the compressor is
     // taking nothing off.
     if let Some((shaft, head)) = shape.arrow() {
-        curve(scene, red, shaft.into_iter(), held(Grip::Ratio));
+        curve(scene, red, shaft.into_iter(), held(Grip::Ratio(Which::Comp)));
         for side in head {
-            curve(scene, red, side.into_iter(), held(Grip::Ratio));
+            curve(scene, red, side.into_iter(), held(Grip::Ratio(Which::Comp)));
         }
     }
 
     // A mark where each ramp leaves the line, because a slope is a line
     // and a line is not something you aim at.
     let r = |grip| if lit == Some(grip) { HANDLE + 1.4 } else { HANDLE * 0.8 };
-    dot(scene, red, shape.knee, r(Grip::Attack));
-    dot(scene, red, shape.foot, r(Grip::Release));
+    dot(scene, red, shape.knee, r(Grip::Attack(Which::Comp)));
+    dot(scene, red, shape.foot, r(Grip::Release(Which::Comp)));
 }
 
 /// Where the envelope glyph's corners land.
@@ -1305,13 +1641,13 @@ impl Envelope {
         };
         let stem = self.stem();
         [
-            (Grip::Attack, near(self.start, self.knee)),
-            (Grip::Release, near(self.foot, self.back)),
+            (Grip::Attack(Which::Comp), near(self.start, self.knee)),
+            (Grip::Release(Which::Comp), near(self.foot, self.back)),
             // The arrow wins ties with the ramps, because it is the one
             // that lies BETWEEN them — a point on the shaft is never
             // also on a ramp, but a point near where it leaves the line
             // is near everything.
-            (Grip::Ratio, near(stem, (stem.0, stem.1 + self.drop)) - 0.01),
+            (Grip::Ratio(Which::Comp), near(stem, (stem.0, stem.1 + self.drop)) - 0.01),
         ]
         .into_iter()
         .filter(|(_, away)| *away <= GRAB)
@@ -1324,6 +1660,333 @@ impl Envelope {
 // read and then imagined the effect of on a display two inches away;
 // they are one shape on that display now, in its own axes. See
 // `envelope`.
+
+/// The gate: its threshold across the level display, and the range it
+/// takes off below it.
+///
+/// The compressor's mirror, and drawn as one deliberately — same axes,
+/// same red line you drag — because the pair is read together and the
+/// difference between them is WHICH SIDE of the line is shaded. Above
+/// the line for a compressor, below it for a gate.
+fn gate(scene: &mut Scene, palette: &Palette, gate: Gate, at: Panel, rack: Rack, lit: Option<Grip>) {
+    let right = at.x + at.width;
+    let bottom = at.y + at.height;
+    let to_y = |db: f64| at.y + comp_ui::comp_graph_svg::db_to_y(db, at.height);
+
+    if rack.detailed() {
+        for db in [-12.0, -24.0, -36.0, -48.0] {
+            let y = to_y(db);
+            rule(scene, palette.grid_beat, Line::new((at.x, y), (right, y)));
+        }
+    }
+
+    let line = to_y(f64::from(gate.threshold)).clamp(at.y, bottom);
+    // What the gate takes off is what lives BELOW the line, so that is
+    // what gets shaded. A compressor shades above.
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        hex(comp_ui::comp_graph_svg::colors::REDUCTION_FILL).multiply_alpha(0.22),
+        None,
+        &Rect::new(at.x, line, right, bottom),
+    );
+    let held = matches!(lit, Some(Grip::Threshold(_)));
+    let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
+    rule_wide(
+        scene,
+        red,
+        Line::new((at.x, line), (right, line)),
+        if held { 2.5 } else { 1.5 },
+    );
+    if rack.detailed() {
+        let r = if held { HANDLE + 1.6 } else { HANDLE };
+        dot(scene, red, (right - r - 1.0, line), r);
+        // The range, as a second line: how far down what stays shut
+        // goes. A gate that closed completely would put that line on
+        // the floor, and the gap between the two IS the setting.
+        let floor = to_y(f64::from(gate.threshold + gate.range)).clamp(at.y, bottom);
+        rule(scene, red.multiply_alpha(0.55), Line::new((at.x, floor), (right, floor)));
+    }
+}
+
+/// A spectral suppressor: the spectrum, its own average, and the cuts
+/// it is taking where the two differ.
+///
+/// This is what a de-esser and a resonance suppressor both are. A
+/// resonance is a place where the spectrum stands proud of its own
+/// smoothed self; the average is drawn so you can SEE that comparison
+/// rather than trust it, and the suppression hangs below the axis where
+/// the peaks that caused it are.
+///
+/// Only inside its band: the de-esser's whole identity is that it looks
+/// at sibilance and nothing else, and a display that acted everywhere
+/// would be drawing the other processor.
+#[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
+fn suppress(
+    scene: &mut Scene,
+    palette: &Palette,
+    tone: &Tone,
+    set: Suppress,
+    spectrum: &[f32],
+    at: Panel,
+    rack: Rack,
+    lit: Option<Grip>,
+) {
+    let freq = FreqAxis::audible();
+    let right = at.x + at.width;
+    let bottom = at.y + at.height;
+    let _ = tone;
+
+    if rack.detailed() {
+        rule(scene, palette.grid, Line::new((at.x, at.y), (right, at.y)));
+    }
+    // The band it listens in, as the only lit part of the axis. A
+    // de-esser's band is most of what it is.
+    let band_x = |hz: f64| freq.freq_to_x(hz, at.x, right);
+    let (low_x, high_x) = (band_x(f64::from(set.low)), band_x(f64::from(set.high)));
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        palette.accent.multiply_alpha(0.045),
+        None,
+        &Rect::new(low_x.max(at.x), at.y, high_x.min(right), bottom),
+    );
+
+    if spectrum.len() < 4 {
+        return;
+    }
+    let curve_of = |take: &dyn Fn(usize) -> f64| {
+        (0..spectrum.len())
+            .map(|i| {
+                let t = crate::num::coord(i) / crate::num::coord(spectrum.len().saturating_sub(1).max(1));
+                (at.x + t * at.width, take(i))
+            })
+            .collect::<Vec<_>>()
+    };
+    // The spectrum, and the moving average it is judged against. The
+    // average's width is `sharpness` in octaves, which is why a narrow
+    // setting finds narrow peaks: it is the only thing that decides
+    // what counts as "standing proud".
+    let span = crate::num::coord(spectrum.len());
+    // The average has to be a BASELINE, which means wide. Narrow, it
+    // tracks the peaks it is supposed to ignore — every peak then
+    // stands the same tiny amount above its own neighbourhood, the
+    // difference saturates, and the suppressor draws a wall.
+    //
+    // `sharpness` narrows it, but only within the range where it is
+    // still a baseline: a third of an octave at its widest.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a bin count, clamped"
+    )]
+    let window = {
+        let wide = span / 6.0;
+        let narrow = span / 16.0;
+        let at = wide - (wide - narrow) * f64::from(set.sharpness).clamp(0.0, 1.0);
+        (at.round() as usize).clamp(2, 40)
+    };
+    let average = |i: usize| {
+        let from = i.saturating_sub(window);
+        let to = (i + window).min(spectrum.len() - 1);
+        let count = to - from + 1;
+        (from..=to).map(|j| f64::from(spectrum[j])).sum::<f64>() / crate::num::coord(count)
+    };
+    let level = |i: usize| f64::from(spectrum[i]);
+    let top = |v: f64| bottom - v.clamp(0.0, 1.0) * at.height;
+
+    curve(
+        scene,
+        palette.accent.multiply_alpha(0.5),
+        curve_of(&|i| top(level(i))).into_iter(),
+        1.0,
+    );
+    curve(
+        scene,
+        palette.text_faint,
+        curve_of(&|i| top(average(i))).into_iter(),
+        1.0,
+    );
+
+    // And the cut, as a filled band hanging from the ceiling — the
+    // same way gain reduction hangs everywhere else in this rack, so
+    // the two read as the same kind of fact.
+    //
+    // The spectrum arrives normalised over the display's own window, so
+    // a decibel is that window divided by its span. Overstate that and
+    // every peak saturates the cut, which is a suppressor that looks
+    // like it is working flat out on everything.
+    let red = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
+    let over = |i: usize| {
+        let x = at.x + crate::num::coord(i) / span.max(1.0) * at.width;
+        if x < low_x || x > high_x {
+            return 0.0;
+        }
+        let proud = (level(i) - average(i)) * SUPPRESS_WINDOW_DB - f64::from(set.threshold);
+        (proud.max(0.0) * f64::from(set.depth) / SUPPRESS_WINDOW_DB).min(0.35)
+    };
+    // Smoothed across bins before it is drawn, because a suppressor's
+    // filters have finite Q: it cannot cut one bin and not its
+    // neighbour, and a cut with square shoulders is drawing a filter
+    // nobody can build. It also keeps a spiky spectrum from reading as
+    // a row of on/off blocks.
+    let raw: Vec<f64> = (0..spectrum.len()).map(over).collect();
+    let smooth = |i: usize| {
+        let from = i.saturating_sub(SUPPRESS_SMOOTH);
+        let to = (i + SUPPRESS_SMOOTH).min(raw.len() - 1);
+        let count = to - from + 1;
+        raw[from..=to].iter().sum::<f64>() / crate::num::coord(count)
+    };
+    let held = matches!(lit, Some(Grip::Threshold(_)));
+    let mut band = curve_of(&|i| at.y + smooth(i) * at.height);
+    // Closed along the ceiling, so it is an area rather than a line:
+    // how MUCH is being taken is the reading, and an outline makes you
+    // measure it against an edge that is not drawn.
+    let mut fill_path = BezPath::new();
+    if let Some((x, y)) = band.first().copied() {
+        fill_path.move_to((x, at.y));
+        fill_path.line_to((x, y));
+        for (x, y) in band.iter().skip(1).copied() {
+            fill_path.line_to((x, y));
+        }
+        if let Some((x, _)) = band.last().copied() {
+            fill_path.line_to((x, at.y));
+        }
+        fill_path.close_path();
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            red.multiply_alpha(0.3),
+            None,
+            &fill_path,
+        );
+    }
+    curve(scene, red, band.drain(..), if held { 2.0 } else { 1.2 });
+}
+
+/// How many decibels the spectrum's 0..1 covers.
+///
+/// The analyser hands over a normalised height, and a suppressor works
+/// in decibels above an average — so this is the one number that turns
+/// one into the other. Too large and every peak saturates the cut,
+/// which reads as a suppressor working flat out on everything.
+const SUPPRESS_WINDOW_DB: f64 = 24.0;
+
+/// How many bins either side the cut is smoothed over.
+///
+/// The filter's own skirt, in effect: wide enough that a one-bin peak
+/// produces a dip with shoulders rather than a square notch.
+const SUPPRESS_SMOOTH: usize = 4;
+
+/// The delay: its repeats, on a line.
+///
+/// `delay-ui`'s own centrepiece idea — "the repeats it draws are the
+/// repeats you will hear" — at the one size a strip has. Time runs
+/// left to right over a window wide enough to hold several taps, each
+/// one shorter than the last by the feedback, and the dry hit stands at
+/// the origin so the first gap IS the delay time.
+fn echo(scene: &mut Scene, palette: &Palette, echo: Echo, at: Panel, rack: Rack, lit: Option<Grip>) {
+    let bottom = at.y + at.height;
+    let floor = bottom - 1.0;
+    let left = at.x + 3.0;
+    if rack.detailed() {
+        rule(scene, palette.grid, Line::new((at.x, floor), (at.x + at.width, floor)));
+    }
+    // A window of four taps at the current time, so the picture keeps
+    // its shape as the time changes rather than the taps marching off
+    // the end. What moves with the time is the SPACING, which is the
+    // thing the number means.
+    let window = f64::from(echo.time).max(1.0) * 4.5;
+    let held = matches!(lit, Some(Grip::Threshold(_)));
+    let wet = hex_of(crate::tcp::to_theme(palette.pan));
+    let mut level = 1.0_f64;
+    let mut when = 0.0_f64;
+    for tap in 0..16 {
+        let x = left + when / window * (at.width - 6.0);
+        if x > at.x + at.width {
+            break;
+        }
+        // The dry hit, then the repeats at the level the feedback
+        // leaves them. The mix decides how strongly they are INKED
+        // rather than how tall they are: a quiet delay is still a delay
+        // with those repeats at those times, and shrinking them would
+        // confuse the two settings.
+        let height = at.height * 0.9 * level;
+        let ink = if tap == 0 {
+            palette.text
+        } else {
+            wet.multiply_alpha(crate::mcp::f64_to_f32(
+                (0.35 + f64::from(echo.mix) * 0.65).clamp(0.0, 1.0),
+            ))
+        };
+        rule_wide(
+            scene,
+            ink,
+            Line::new((x, floor), (x, floor - height)),
+            if tap == 0 || held { 2.0 } else { 1.4 },
+        );
+        when += f64::from(echo.time);
+        level *= f64::from(echo.feedback).clamp(0.0, 0.99);
+        if level < 0.03 {
+            break;
+        }
+    }
+}
+
+/// The reverb: an impulse, the gap before its tail, and the tail.
+///
+/// `reverb-ui`'s third centrepiece — "the recorded thing itself: an
+/// impulse and its decay envelope" — which is the only picture of a
+/// reverb that survives being a hundred and thirty pixels wide. Predelay
+/// is the gap you can see; decay is how far right the tail reaches.
+fn room(scene: &mut Scene, palette: &Palette, room: Room, at: Panel, rack: Rack, lit: Option<Grip>) {
+    let bottom = at.y + at.height;
+    let floor = bottom - 1.0;
+    if rack.detailed() {
+        rule(scene, palette.grid, Line::new((at.x, floor), (at.x + at.width, floor)));
+    }
+    // The window is the decay, so a long reverb fills the panel and a
+    // short one does not reach the end — which is the comparison you
+    // want across a mixer.
+    let window = (f64::from(room.decay) * 1000.0).max(1.0);
+    let held = matches!(lit, Some(Grip::Threshold(_)));
+    let ink = crate::tcp::to_theme(palette.pan);
+    let wet = f64::from(room.mix).clamp(0.0, 1.0);
+
+    // The dry impulse.
+    rule_wide(
+        scene,
+        palette.text,
+        Line::new((at.x, floor), (at.x, floor - at.height * 0.92)),
+        2.0,
+    );
+    let start = at.x + f64::from(room.predelay) / window * at.width;
+    // The tail: an exponential to −60 dB across the decay.
+    let points = (0..SAMPLES).map(|i| {
+        let t = crate::num::coord(i) / crate::num::coord(SAMPLES.saturating_sub(1).max(1));
+        let ms = t * window;
+        let level = if ms < f64::from(room.predelay) {
+            0.0
+        } else {
+            let into = (ms - f64::from(room.predelay)) / window.max(f64::EPSILON);
+            10.0_f64.powf(-3.0 * into) * wet.max(0.05)
+        };
+        (at.x + t * at.width, floor - level * at.height * 0.92)
+    });
+    curve(scene, hex_of(ink), points, if held { 2.0 } else { 1.4 });
+    if rack.detailed() {
+        rule(
+            scene,
+            palette.grid_beat,
+            Line::new((start, at.y), (start, floor)),
+        );
+    }
+}
+
+/// A theme colour as a paint colour — the inverse of `crate::tcp::to_theme`.
+fn hex_of(color: daw_theme::Color) -> Color {
+    Color::from_rgba8(color.r, color.g, color.b, color.a)
+}
 
 /// The saturator's static transfer curve over x ∈ [−1, 1].
 fn sat(scene: &mut Scene, palette: &Palette, pre: &ClassAPreamp, at: Panel, rack: Rack) {
@@ -1527,8 +2190,43 @@ pub fn placeholder(index: usize) -> Tone {
     // enough that they still read as the same decision made twice.
     let drift = crate::num::coord(index % 5) - 2.0;
     Tone {
+        // Rescue is the same surgery on every track, roughly: a
+        // high-pass and one cut. It is the pass you make before you
+        // know what the track is going to be.
+        rescue_eq: vec![
+            band(0, 30.0 + drift * 4.0, -18.0, 0.7, EqBandShape::LowCut),
+            band(1, 240.0 * 1.1_f64.powf(drift), -3.5, 2.4, EqBandShape::Bell),
+        ],
+        gate: Gate {
+            threshold: f64_to_f32(-42.0 + drift * 3.0),
+            ..Gate::default()
+        },
+        rescue_comp: Comp {
+            threshold: f64_to_f32(-8.0 + drift),
+            ratio: 2.2,
+            ..voice.comp(drift)
+        },
         eq: voice.bands(drift),
         comp: voice.comp(drift),
+        de_ess: Suppress::sibilance(),
+        resonance: Suppress::broadband(),
+        // The relational pass carves rather than shapes: one wide dip
+        // where something else lives.
+        space: vec![band(
+            0,
+            900.0 * 1.35_f64.powf(drift),
+            -2.5,
+            0.9,
+            EqBandShape::Bell,
+        )],
+        delay: Echo {
+            time: f64_to_f32(180.0 + 60.0 * (drift + 2.0)),
+            ..Echo::default()
+        },
+        reverb: Room {
+            decay: f64_to_f32(1.1 + 0.35 * (drift + 2.0)),
+            ..Room::default()
+        },
         // Not all one zoom: a vocal worked at ±3 and a room mic at ±18
         // is the normal case, and a desk where every graph is drawn to
         // the same range hides the fact that the range is a choice.
@@ -1663,17 +2361,22 @@ impl Character {
 /// EQ is actually used with.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Grip {
-    /// An EQ band, by its index in the chain's list.
-    Band(usize),
-    /// The compressor's threshold — the red line across its display,
-    /// dragged up and down the level axis it is drawn on.
-    Threshold,
-    /// Its ratio knob.
-    Ratio,
-    /// Its attack knob.
-    Attack,
+    /// An EQ band: which EQ, and its index in that one's list.
+    ///
+    /// The chain has three EQs now — rescue, tone and relational — so a
+    /// grip that named only an index would move whichever one the
+    /// dispatch happened to find first.
+    Band(Which, usize),
+    /// A threshold — the red line across a display, dragged up and down
+    /// the level axis it is drawn on. Both compressors have one, so
+    /// does the gate, and so do the two suppressors.
+    Threshold(Which),
+    /// A compressor's ratio.
+    Ratio(Which),
+    /// Its attack.
+    Attack(Which),
     /// And its release.
-    Release,
+    Release(Which),
     /// The saturator's drive.
     Drive,
     /// A panel's header — clicked to switch that processor out.
@@ -1683,14 +2386,14 @@ pub enum Grip {
     /// is not a value. It is also the part that stays legible under the
     /// scrim, so the way out is where the way in was.
     Bypass(Which),
-    /// The EQ graph's zoom — the chip at the top of the panel saying
+    /// An EQ graph's zoom — the chip at the top of the panel saying
     /// what range it is drawn to.
     ///
     /// A zoom is not a parameter: it changes nothing about the sound,
     /// only how much of it you can see. It is here because it is a
     /// thing in the panel you point at, and everything in a panel you
     /// point at has to be something the one hit test can name.
-    Scale,
+    Scale(Which),
 }
 
 impl Grip {
@@ -1701,7 +2404,7 @@ impl Grip {
     /// for itself.
     #[must_use]
     pub const fn is_knob(self) -> bool {
-        matches!(self, Self::Ratio | Self::Attack | Self::Release)
+        matches!(self, Self::Ratio(_) | Self::Attack(_) | Self::Release(_))
     }
 
     /// Whether this grip is a switch rather than a value.
@@ -1711,7 +2414,22 @@ impl Grip {
     /// whether a press is the start of a gesture.
     #[must_use]
     pub const fn is_switch(self) -> bool {
-        matches!(self, Self::Bypass(_) | Self::Scale)
+        matches!(self, Self::Bypass(_) | Self::Scale(_))
+    }
+
+    /// Which panel this grip lives in.
+    #[must_use]
+    pub const fn panel(self) -> Which {
+        match self {
+            Self::Band(which, _)
+            | Self::Threshold(which)
+            | Self::Ratio(which)
+            | Self::Attack(which)
+            | Self::Release(which)
+            | Self::Scale(which)
+            | Self::Bypass(which) => which,
+            Self::Drive => Which::Sat,
+        }
     }
 }
 
@@ -1808,30 +2526,39 @@ pub fn grip_at(
         if tone.bypass.is(which) {
             return Some(Grip::Bypass(which));
         }
+        // Routed by what the panel IS, not by which one it is: three
+        // EQs share a hit test and two compressors share another, and
+        // the grip carries the panel so the drag knows which.
         match which {
             // Bands are only grabbable where they are DRAWN, which is
             // only at `Full` — a handle you cannot see is a handle you
             // cannot aim at, and grabbing one by accident moves a
             // setting you did not know was there.
-            Which::Eq if rack.detailed() => {
+            _ if which.is_spectral() && !rack.detailed() => {}
+            Which::RescueEq | Which::Eq | Which::Space => {
                 // The zoom chip first: it is small, it sits over the
                 // graph, and a band that happened to be under it would
                 // otherwise take every click aimed at it.
                 if scale_chip(body).contains(x, y) {
-                    return Some(Grip::Scale);
+                    return Some(Grip::Scale(which));
                 }
                 // The plugin's own hit test, not a second one written
                 // here: `nearest_band` already decides which of four
                 // overlapping bands you meant, and a rack that decided
                 // differently from the editor would be two EQs.
+                let bands = match which {
+                    Which::RescueEq => &tone.rescue_eq,
+                    Which::Space => &tone.space,
+                    _ => &tone.eq,
+                };
                 if let Some((index, _)) = interaction::nearest_band(
-                    &tone.eq,
+                    bands,
                     mapper(body, tone.eq_db_range()),
                     x - body.x,
                     y - body.y,
                     GRAB,
                 ) {
-                    return Some(Grip::Band(index));
+                    return Some(Grip::Band(which, index));
                 }
                 // And nothing else. The empty graph used to answer for
                 // the zoom so a wheel anywhere over it would zoom —
@@ -1840,9 +2567,22 @@ pub fn grip_at(
                 // an EQ. The chip is the zoom's target; the rest of the
                 // graph belongs to the gesture that moves the chain.
             }
-            Which::Comp => return Some(comp_grip(tone.comp, body, rack, x, y)),
+            // A suppressor's whole display is its threshold: there is
+            // one line to move and the curve under it is the readout.
+            Which::DeEss | Which::Resonance => return Some(Grip::Threshold(which)),
+            Which::Comp => return Some(comp_grip(tone.comp, which, body, rack, x, y)),
+            Which::RescueComp => {
+                return Some(comp_grip(tone.rescue_comp, which, body, rack, x, y));
+            }
+            // The gate has one line too — its range is read off the
+            // second, fainter one and set from the header.
+            Which::Gate => return Some(Grip::Threshold(which)),
             Which::Sat => return Some(Grip::Drive),
-            Which::Eq => {}
+            // Time pictures, with nothing grabbable in them yet: the
+            // delay's taps and the reverb's tail are drawn from
+            // settings that have no home on a strip-width panel until
+            // there is a gesture worth giving them.
+            Which::Delay | Which::Reverb => {}
         }
     }
     None
@@ -1900,7 +2640,7 @@ pub fn ratio_reduction(comp: Comp) -> f64 {
 /// is a line across a display, and a line one pixel tall is not
 /// something you aim at — the whole display is its target, the way a
 /// fader's groove is a fader's.
-fn comp_grip(comp: Comp, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
+fn comp_grip(comp: Comp, which: Which, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
     let display = comp_split(body, rack);
     // The envelope's parts first — they are lines inside the display,
     // and the display would otherwise swallow them.
@@ -1908,13 +2648,19 @@ fn comp_grip(comp: Comp, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
         && let Some(shape) = Envelope::of(comp, display, threshold_y(comp, display))
         && let Some(grip) = shape.grip_at(x, y)
     {
-        return grip;
+        // The envelope names the compressor it was measured on, not the
+        // one this panel is.
+        return match grip {
+            Grip::Attack(_) => Grip::Attack(which),
+            Grip::Release(_) => Grip::Release(which),
+            _ => Grip::Ratio(which),
+        };
     }
     // And everything else is the threshold: it is a line across a
     // display, and a line one pixel tall is not something you aim at —
     // the whole display is its target, the way a fader's groove is a
     // fader's.
-    Grip::Threshold
+    Grip::Threshold(which)
 }
 
 /// How far a band's gain can go, in decibels.
@@ -1935,8 +2681,8 @@ pub const EQ_GAIN_LIMIT: f64 = 30.0;
 /// over the editor do the same thing.
 pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
     match grip {
-        Grip::Band(index) => {
-            let Some(band) = tone.eq.get_mut(index) else {
+        Grip::Band(which, index) => {
+            let Some(band) = tone.bands(which).and_then(|set| set.get_mut(index)) else {
                 return;
             };
             let uses_slope = band.shape.uses_slope();
@@ -1968,10 +2714,11 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
         }
         // A notch of threshold is a dB, and a notch of drive is a
         // tenth — the same relation the two drags have.
-        Grip::Threshold => {
+        Grip::Threshold(which) => {
             let step = interaction::gain_step(delta_y, mods);
-            let moved = f64::from(tone.comp.threshold) + step;
-            tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
+            if let Some((now, _, _)) = tone.threshold(which) {
+                tone.set_threshold(which, f64_to_f32(f64::from(now) + step));
+            }
         }
         // A switch does not turn.
         Grip::Bypass(_) => {}
@@ -1979,16 +2726,18 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
         // the plugin publishes and the wheel walks it. Down is further
         // out, which is the direction a wheel zooms out everywhere
         // else.
-        Grip::Scale => {
+        Grip::Scale(_) => {
             tone.zoom_eq(if delta_y < 0.0 { 1 } else { -1 });
         }
         // A notch of a knob is a fortieth of its travel, which is about
         // the resolution a hand expects from one — fine enough to place
         // a 3:1 exactly, coarse enough to cross the range.
-        Grip::Ratio | Grip::Attack | Grip::Release => {
+        Grip::Ratio(which) | Grip::Attack(which) | Grip::Release(which) => {
             let step = interaction::gain_step(delta_y, mods) / 40.0;
-            let to = knob_norm(tone.comp, grip) + step;
-            set_knob(&mut tone.comp, grip, to);
+            if let Some(comp) = tone.compressor(which) {
+                let to = knob_norm(*comp, grip) + step;
+                set_knob(comp, grip, to);
+            }
         }
         Grip::Drive => {
             let step = interaction::gain_step(delta_y, mods) * 0.1;
@@ -2007,8 +2756,8 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
 ///
 /// Returns whether anything changed, so the caller knows whether to
 /// re-record rather than guessing.
-pub fn dot_click(tone: &mut Tone, index: usize, mods: Mods) -> bool {
-    let Some(band) = tone.eq.get_mut(index) else {
+pub fn dot_click(tone: &mut Tone, which: Which, index: usize, mods: Mods) -> bool {
+    let Some(band) = tone.bands(which).and_then(|set| set.get_mut(index)) else {
         return false;
     };
     match interaction::dot_action(mods) {
@@ -2063,12 +2812,20 @@ const fn next_shape(shape: EqBandShape) -> EqBandShape {
 /// undoing the decision is undoing the gain.
 pub fn reset(tone: &mut Tone, grip: Grip) {
     match grip {
-        Grip::Band(index) => {
-            if let Some(band) = tone.eq.get_mut(index) {
+        Grip::Band(which, index) => {
+            if let Some(band) = tone.bands(which).and_then(|set| set.get_mut(index)) {
                 band.gain = 0.0;
             }
         }
-        Grip::Threshold => tone.comp.threshold = Comp::default().threshold,
+        Grip::Threshold(which) => {
+            let to = match which {
+                Which::Gate => Gate::default().threshold,
+                Which::DeEss => Suppress::sibilance().threshold,
+                Which::Resonance => Suppress::broadband().threshold,
+                _ => Comp::default().threshold,
+            };
+            tone.set_threshold(which, to);
+        }
         // Resetting a bypass is switching it back in, which is what
         // the double-click would have done anyway.
         Grip::Bypass(which) => tone.bypass = {
@@ -2076,12 +2833,24 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
             next.toggle(which);
             next
         },
-        Grip::Ratio => tone.comp.ratio = Comp::default().ratio,
-        Grip::Attack => tone.comp.attack = Comp::default().attack,
-        Grip::Release => tone.comp.release = Comp::default().release,
+        Grip::Ratio(which) => {
+            if let Some(comp) = tone.compressor(which) {
+                comp.ratio = Comp::default().ratio;
+            }
+        }
+        Grip::Attack(which) => {
+            if let Some(comp) = tone.compressor(which) {
+                comp.attack = Comp::default().attack;
+            }
+        }
+        Grip::Release(which) => {
+            if let Some(comp) = tone.compressor(which) {
+                comp.release = Comp::default().release;
+            }
+        }
         // Unity: a preamp at drive one is the wire it is modelled on.
         Grip::Drive => tone.sat.drive = 1.0,
-        Grip::Scale => tone.eq_range = DEFAULT_EQ_RANGE,
+        Grip::Scale(_) => tone.eq_range = DEFAULT_EQ_RANGE,
     }
 }
 
@@ -2100,16 +2869,12 @@ pub fn drag(
     dy: f64,
 ) {
     let rack = Rack::at(panel.width);
+    // The grip names its own panel now — see `Grip::panel`. It used to
+    // be inferred from the grip's KIND, which stopped working the
+    // moment the chain had three EQs and two compressors.
     let Some((_, at)) = layout(panels, panel)
         .into_iter()
-        .find(|(which, _)| match grip {
-            Grip::Band(_) | Grip::Scale => *which == Which::Eq,
-            Grip::Threshold | Grip::Ratio | Grip::Attack | Grip::Release => {
-                *which == Which::Comp
-            }
-            Grip::Drive => *which == Which::Sat,
-            Grip::Bypass(at) => *which == at,
-        })
+        .find(|(which, _)| *which == grip.panel())
     else {
         return;
     };
@@ -2118,9 +2883,9 @@ pub fn drag(
         return;
     }
     match grip {
-        Grip::Band(index) => {
+        Grip::Band(which, index) => {
             let map = mapper(body, tone.eq_db_range());
-            let Some(band) = tone.eq.get_mut(index) else {
+            let Some(band) = tone.bands(which).and_then(|set| set.get_mut(index)) else {
                 return;
             };
             // Where the band is now, in the graph's own coordinates,
@@ -2158,16 +2923,19 @@ pub fn drag(
                 }
             }
         }
-        Grip::Threshold => {
+        Grip::Threshold(which) => {
             // Against the DISPLAY's height, not the panel's: the line
             // is drawn on the display, and a threshold that moved
             // against a taller box would run ahead of the line the
             // pointer is holding.
             let display = comp_split(body, rack);
-            let per_db = display.height / 60.0;
+            let Some((now, low, high)) = tone.threshold(which) else {
+                return;
+            };
+            let per_db = display.height / f64::from(high - low);
             let dy = dy * interaction::fine_scale(mods);
-            let moved = f64::from(tone.comp.threshold) - dy / per_db.max(f64::EPSILON);
-            tone.comp.threshold = f64_to_f32(moved.clamp(-60.0, 0.0));
+            let moved = f64::from(now) - dy / per_db.max(f64::EPSILON);
+            tone.set_threshold(which, f64_to_f32(moved));
         }
         // The two times are WIDTHS on the envelope, so they are
         // dragged sideways — time is the horizontal axis on this
@@ -2177,24 +2945,29 @@ pub fn drag(
         //
         // Against the span the glyph maps them onto, so the edge being
         // moved stays under the finger moving it.
-        Grip::Attack | Grip::Release => {
+        Grip::Attack(which) | Grip::Release(which) => {
             let display = comp_split(body, rack);
             let dx = dx * interaction::fine_scale(mods);
             let span = (display.width * 0.4).max(1.0);
-            let moved = knob_norm(tone.comp, grip) + dx / span;
-            set_knob(&mut tone.comp, grip, moved);
+            if let Some(comp) = tone.compressor(which) {
+                let moved = knob_norm(*comp, grip) + dx / span;
+                set_knob(comp, grip, moved);
+            }
         }
         // The floor is pulled DOWN for more, which is the direction the
         // signal goes. Against the display's own dB height, so it stays
         // under the finger — and the ratio keeps moving past the point
         // where the depth stops growing, because the depth saturates
         // and the setting does not.
-        Grip::Ratio => {
+        Grip::Ratio(which) => {
             let display = comp_split(body, rack);
             let dy = dy * interaction::fine_scale(mods);
             let per_db = display.height / 60.0;
-            let threshold = f64::from(tone.comp.threshold);
-            let reduced = (ratio_reduction(tone.comp) + dy / per_db.max(f64::EPSILON))
+            let Some(comp) = tone.compressor(which).copied() else {
+                return;
+            };
+            let threshold = f64::from(comp.threshold);
+            let reduced = (ratio_reduction(comp) + dy / per_db.max(f64::EPSILON))
                 .clamp(0.0, -threshold);
             // Back to a ratio: reduction = -T(1 - 1/R), so
             // R = 1 / (1 + reduction/T). Clamped at the top because the
@@ -2204,12 +2977,14 @@ pub fn drag(
             } else {
                 1.0 / (1.0 + reduced / threshold)
             };
-            tone.comp.ratio = f64_to_f32(ratio.clamp(1.0, 20.0));
+            if let Some(comp) = tone.compressor(which) {
+                comp.ratio = f64_to_f32(ratio.clamp(1.0, 20.0));
+            }
         }
         // A switch has no drag. Dragging off one is how you change your
         // mind about pressing it, which is the mixer's own rule — and a
         // zoom is a switch between stops.
-        Grip::Bypass(_) | Grip::Scale => {}
+        Grip::Bypass(_) | Grip::Scale(_) => {}
         Grip::Drive => {
             // A quarter of the panel's height is the whole range, so a
             // short drag is a real change — drive is the parameter you
@@ -2504,11 +3279,38 @@ mod phase_tests {
     #[test]
     fn every_phase_shows_the_whole_chain() {
         for phase in P::ALL {
-            assert_eq!(
-                panels_for(phase),
-                &[Which::Eq, Which::Comp, Which::Sat],
-                "{phase:?} showed a subset"
+            assert_eq!(panels_for(phase), super::ALL_PANELS, "{phase:?} showed a subset");
+        }
+    }
+
+    /// The chain is ordered BY phase, and every unit knows which one it
+    /// belongs to — which is what the rail's buttons will focus once
+    /// there is a setting for it. Out of order, "focus the Tone phase"
+    /// would mean scrolling to two places at once.
+    #[test]
+    fn the_chain_runs_in_phase_order() {
+        let order = |phase: P| P::ALL.iter().position(|p| *p == phase);
+        let mut last = None;
+        for which in super::ALL_PANELS {
+            let at = order(which.phase()).expect("a phase in the canonical order");
+            if let Some(before) = last {
+                assert!(at >= before, "{which:?} is out of phase order");
+            }
+            last = Some(at);
+        }
+    }
+
+    /// Every unit that draws a frequency response says so, because they
+    /// share one hit test and one graph — and the ones that do not must
+    /// not be routed into it.
+    #[test]
+    fn the_spectral_units_are_the_ones_with_curves() {
+        for which in super::ALL_PANELS {
+            let spectral = matches!(
+                which,
+                Which::RescueEq | Which::Eq | Which::Space | Which::DeEss | Which::Resonance
             );
+            assert_eq!(which.is_spectral(), spectral, "{which:?}");
         }
     }
 
@@ -2555,7 +3357,7 @@ mod grip_tests {
         let band = &tone.eq[2];
         let x = freq.freq_to_x(f64::from(band.frequency), body.x, body.x + body.width);
         let y = db.db_to_y(f64::from(band.gain), body.y, body.y + body.height);
-        assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(Grip::Band(2)));
+        assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(Grip::Band(Which::Eq, 2)));
     }
 
     /// And a point well away from every band grabs nothing, rather
@@ -2588,10 +3390,10 @@ mod grip_tests {
         let chip = super::scale_chip(body);
         assert_eq!(
             grip_at(&ALL, &tone, rack(), chip.x + chip.width / 2.0, chip.y + 2.0),
-            Some(Grip::Scale)
+            Some(Grip::Scale(Which::Eq))
         );
         // It is a switch, so a click acts and a drag does not.
-        assert!(Grip::Scale.is_switch());
+        assert!(Grip::Scale(Which::Eq).is_switch());
 
         // Clicking cycles the stops and comes back round.
         let start = tone.eq_db_range();
@@ -2610,29 +3412,29 @@ mod grip_tests {
         assert!((tone.eq_db_range() - eq_ui::eq_graph_model::DEFAULT_DB_RANGE).abs() < f64::EPSILON);
 
         // Down is out, which is the way a wheel zooms out everywhere.
-        super::wheel(&mut tone, Grip::Scale, Mods::default(), -1.0);
+        super::wheel(&mut tone, Grip::Scale(Which::Eq), Mods::default(), -1.0);
         let out = tone.eq_db_range();
         assert!(out > eq_ui::eq_graph_model::DEFAULT_DB_RANGE, "{out}");
-        super::wheel(&mut tone, Grip::Scale, Mods::default(), 1.0);
+        super::wheel(&mut tone, Grip::Scale(Which::Eq), Mods::default(), 1.0);
         assert!(
             (tone.eq_db_range() - eq_ui::eq_graph_model::DEFAULT_DB_RANGE).abs() < f64::EPSILON
         );
 
         for _ in 0..20 {
-            super::wheel(&mut tone, Grip::Scale, Mods::default(), -1.0);
+            super::wheel(&mut tone, Grip::Scale(Which::Eq), Mods::default(), -1.0);
         }
         let widest = *eq_ui::eq_graph_model::DB_RANGE_STEPS
             .last()
             .expect("a widest stop");
         assert!((tone.eq_db_range() - widest).abs() < f64::EPSILON);
         for _ in 0..20 {
-            super::wheel(&mut tone, Grip::Scale, Mods::default(), 1.0);
+            super::wheel(&mut tone, Grip::Scale(Which::Eq), Mods::default(), 1.0);
         }
         let tightest = eq_ui::eq_graph_model::DB_RANGE_STEPS[0];
         assert!((tone.eq_db_range() - tightest).abs() < f64::EPSILON);
 
         // And a double-click puts it back where it started.
-        super::reset(&mut tone, Grip::Scale);
+        super::reset(&mut tone, Grip::Scale(Which::Eq));
         assert!(
             (tone.eq_db_range() - eq_ui::eq_graph_model::DEFAULT_DB_RANGE).abs() < f64::EPSILON
         );
@@ -2647,7 +3449,7 @@ mod grip_tests {
         let mut tone = placeholder(0);
         tone.eq_range = 0;
         for _ in 0..200 {
-            super::wheel(&mut tone, Grip::Band(0), Mods::default(), 1.0);
+            super::wheel(&mut tone, Grip::Band(Which::Eq, 0), Mods::default(), 1.0);
         }
         assert!(
             f64::from(tone.eq[0].gain) > eq_ui::eq_graph_model::DB_RANGE_STEPS[0],
@@ -2663,7 +3465,7 @@ mod grip_tests {
     fn a_band_follows_the_pointer() {
         let mut tone = placeholder(0);
         let (before_f, before_g) = (tone.eq[1].frequency, tone.eq[1].gain);
-        drag(&mut tone, Grip::Band(1), &ALL, rack(), Mods::default(), 12.0, -20.0);
+        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), Mods::default(), 12.0, -20.0);
         assert!(tone.eq[1].frequency > before_f, "right is higher");
         assert!(tone.eq[1].gain > before_g, "up is more gain");
     }
@@ -2673,12 +3475,12 @@ mod grip_tests {
     fn a_band_stays_inside_the_panel() {
         let mut tone = placeholder(0);
         for _ in 0..50 {
-            drag(&mut tone, Grip::Band(0), &ALL, rack(), Mods::default(), 400.0, -400.0);
+            drag(&mut tone, Grip::Band(Which::Eq, 0), &ALL, rack(), Mods::default(), 400.0, -400.0);
         }
         assert!(tone.eq[0].gain <= super::f64_to_f32(super::EQ_GAIN_LIMIT));
         assert!(tone.eq[0].frequency <= 24_000.0);
         for _ in 0..50 {
-            drag(&mut tone, Grip::Band(0), &ALL, rack(), Mods::default(), -400.0, 400.0);
+            drag(&mut tone, Grip::Band(Which::Eq, 0), &ALL, rack(), Mods::default(), -400.0, 400.0);
         }
         assert!(tone.eq[0].gain >= -super::f64_to_f32(super::EQ_GAIN_LIMIT));
         assert!(tone.eq[0].frequency > 0.0);
@@ -2690,10 +3492,10 @@ mod grip_tests {
     fn dragging_the_threshold_up_compresses_less() {
         let mut tone = placeholder(0);
         let before = tone.comp.threshold;
-        drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, -10.0);
+        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, -10.0);
         assert!(tone.comp.threshold > before);
         for _ in 0..200 {
-            drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, 40.0);
+            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, 40.0);
         }
         assert!(tone.comp.threshold >= -60.0, "the threshold clamps");
     }
@@ -2789,7 +3591,7 @@ mod tier_tests {
         let y = db.db_to_y(f64::from(band.gain), body.y, body.y + body.height);
 
         let x_wide = freq.freq_to_x(f64::from(band.frequency), body.x, body.x + body.width);
-        assert_eq!(grip_at(&ALL, &tone, wide, x_wide, y), Some(Grip::Band(2)));
+        assert_eq!(grip_at(&ALL, &tone, wide, x_wide, y), Some(Grip::Band(Which::Eq, 2)));
 
         let narrow_body = super::body_of(
             super::layout(&ALL, narrow)
@@ -2821,7 +3623,7 @@ mod tier_tests {
         let inside = comp.y + comp.height / 2.0;
         assert_eq!(
             grip_at(&ALL, &tone, narrow, narrow.width / 2.0, inside),
-            Some(Grip::Threshold)
+            Some(Grip::Threshold(Which::Comp))
         );
     }
 
@@ -2856,16 +3658,16 @@ mod reset_tests {
     fn reset_undoes_a_drag() {
         let mut tone = placeholder(0);
         let before = tone.eq[1].gain;
-        drag(&mut tone, Grip::Band(1), &ALL, rack(), Mods::default(), 0.0, -40.0);
+        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), Mods::default(), 0.0, -40.0);
         assert!(
             (tone.eq[1].gain - before).abs() > 0.5,
             "the drag moved nothing"
         );
-        reset(&mut tone, Grip::Band(1));
+        reset(&mut tone, Grip::Band(Which::Eq, 1));
         assert!(tone.eq[1].gain.abs() < f32::EPSILON, "the band went flat");
 
-        drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, -30.0);
-        reset(&mut tone, Grip::Threshold);
+        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, -30.0);
+        reset(&mut tone, Grip::Threshold(Which::Comp));
         assert!(
             (tone.comp.threshold - Comp::default().threshold).abs() < f32::EPSILON,
             "the threshold went back to its default"
@@ -2881,9 +3683,9 @@ mod reset_tests {
     #[test]
     fn resetting_a_band_keeps_where_it_sits() {
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Band(2), &ALL, rack(), Mods::default(), 20.0, -20.0);
+        drag(&mut tone, Grip::Band(Which::Eq, 2), &ALL, rack(), Mods::default(), 20.0, -20.0);
         let moved = tone.eq[2].frequency;
-        reset(&mut tone, Grip::Band(2));
+        reset(&mut tone, Grip::Band(Which::Eq, 2));
         assert!((tone.eq[2].frequency - moved).abs() < f32::EPSILON);
     }
 
@@ -2891,7 +3693,7 @@ mod reset_tests {
     #[test]
     fn resetting_a_missing_band_is_harmless() {
         let mut tone = placeholder(0);
-        reset(&mut tone, Grip::Band(99));
+        reset(&mut tone, Grip::Band(Which::Eq, 99));
     }
 }
 
@@ -2929,7 +3731,7 @@ mod plugin_interaction_tests {
             let y = body.y + map.db_to_y(f64::from(band.gain));
             assert_eq!(
                 grip_at(&ALL, &tone, rack(), x, y),
-                Some(Grip::Band(index)),
+                Some(Grip::Band(Which::Eq, index)),
                 "band {index} was not found where the plugin puts it"
             );
         }
@@ -2943,7 +3745,7 @@ mod plugin_interaction_tests {
         let mut tone = placeholder(0);
         let (before_f, before_g) = (tone.eq[1].frequency, tone.eq[1].gain);
         let alt = Mods::new(true, false, false);
-        drag(&mut tone, Grip::Band(1), &ALL, rack(), alt, 15.0, -30.0);
+        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), alt, 15.0, -30.0);
         assert!(tone.eq[1].frequency > before_f, "frequency followed");
         assert!(
             (tone.eq[1].gain - before_g).abs() < f32::EPSILON,
@@ -2958,7 +3760,7 @@ mod plugin_interaction_tests {
         let mut tone = placeholder(0);
         let before = tone.eq[1].q;
         let cmd = Mods::new(false, false, true);
-        drag(&mut tone, Grip::Band(1), &ALL, rack(), cmd, 0.0, -20.0);
+        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), cmd, 0.0, -20.0);
         assert!((tone.eq[1].q - before).abs() > f32::EPSILON, "q moved");
         assert!(tone.eq[1].q > 0.0 && tone.eq[1].q <= 18.0, "and stayed sane");
     }
@@ -2969,13 +3771,13 @@ mod plugin_interaction_tests {
     fn shift_is_fine_everywhere() {
         let coarse = {
             let mut tone = placeholder(0);
-            drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, -20.0);
+            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, -20.0);
             tone.comp.threshold
         };
         let fine = {
             let mut tone = placeholder(0);
             let shift = Mods::new(false, true, false);
-            drag(&mut tone, Grip::Threshold, &ALL, rack(), shift, 0.0, -20.0);
+            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), shift, 0.0, -20.0);
             tone.comp.threshold
         };
         let from = placeholder(0).comp.threshold;
@@ -2994,7 +3796,7 @@ mod plugin_interaction_tests {
         let mut tone = placeholder(0);
         tone.eq[1].shape = EqBandShape::Bell;
         let before = tone.eq[1].q;
-        wheel(&mut tone, Grip::Band(1), Mods::default(), -1.0);
+        wheel(&mut tone, Grip::Band(Which::Eq, 1), Mods::default(), -1.0);
         assert!(tone.eq[1].q > before, "scrolling up tightened it");
     }
 
@@ -3003,7 +3805,7 @@ mod plugin_interaction_tests {
     fn cmd_wheel_moves_the_gain() {
         let mut tone = placeholder(0);
         let before = tone.eq[1].gain;
-        wheel(&mut tone, Grip::Band(1), Mods::new(false, false, true), -1.0);
+        wheel(&mut tone, Grip::Band(Which::Eq, 1), Mods::new(false, false, true), -1.0);
         assert!(tone.eq[1].gain > before);
         assert!(tone.eq[1].gain <= super::f64_to_f32(EQ_GAIN_LIMIT));
     }
@@ -3014,9 +3816,9 @@ mod plugin_interaction_tests {
     fn alt_click_bypasses_a_band() {
         let mut tone = placeholder(0);
         assert!(tone.eq[0].enabled);
-        assert!(dot_click(&mut tone, 0, Mods::new(true, false, false)));
+        assert!(dot_click(&mut tone, Which::Eq, 0, Mods::new(true, false, false)));
         assert!(!tone.eq[0].enabled);
-        assert!(dot_click(&mut tone, 0, Mods::new(true, false, false)));
+        assert!(dot_click(&mut tone, Which::Eq, 0, Mods::new(true, false, false)));
         assert!(tone.eq[0].enabled);
     }
 
@@ -3025,7 +3827,7 @@ mod plugin_interaction_tests {
     #[test]
     fn a_plain_click_is_not_an_action() {
         let mut tone = placeholder(0);
-        assert!(!dot_click(&mut tone, 0, Mods::default()));
+        assert!(!dot_click(&mut tone, Which::Eq, 0, Mods::default()));
         assert_eq!(tone.eq[0], placeholder(0).eq[0], "nothing changed");
     }
 
@@ -3037,7 +3839,7 @@ mod plugin_interaction_tests {
         let chord = Mods::new(true, false, true);
         let mut seen = vec![tone.eq[1].shape];
         for _ in 0..4 {
-            assert!(dot_click(&mut tone, 1, chord));
+            assert!(dot_click(&mut tone, Which::Eq, 1, chord));
             seen.push(tone.eq[1].shape);
         }
         assert_eq!(seen.first(), seen.last(), "the cycle returned");
@@ -3113,7 +3915,7 @@ mod comp_tests {
         let inside = body.y + body.height * 0.9;
         assert_eq!(
             grip_at(&ALL, &tone, rack(), body.x + body.width * 0.1, inside),
-            Some(Grip::Threshold)
+            Some(Grip::Threshold(Which::Comp))
         );
     }
 
@@ -3131,7 +3933,7 @@ mod comp_tests {
         let display = super::comp_split(comp_panel(), Rack::at(rack().width));
         let level = super::threshold_y(tone.comp, display);
         let shape = super::Envelope::of(tone.comp, display, level).expect("a glyph to grab");
-        for (grip, edge) in [(Grip::Attack, shape.fall()), (Grip::Release, shape.rise())] {
+        for (grip, edge) in [(Grip::Attack(Which::Comp), shape.fall()), (Grip::Release(Which::Comp), shape.rise())] {
             let mid = (
                 f64::midpoint(edge[0].0, edge[1].0),
                 f64::midpoint(edge[0].1, edge[1].1),
@@ -3152,13 +3954,13 @@ mod comp_tests {
                 shaft[0].0,
                 f64::midpoint(shaft[0].1, shaft[1].1)
             ),
-            Some(Grip::Ratio)
+            Some(Grip::Ratio(Which::Comp))
         );
         // Well below the arrow's tip is nothing but the display, which
         // belongs to the threshold.
         assert_eq!(
             grip_at(&ALL, &tone, rack(), shaft[0].0, display.y + display.height - 2.0),
-            Some(Grip::Threshold)
+            Some(Grip::Threshold(Which::Comp))
         );
     }
 
@@ -3169,9 +3971,9 @@ mod comp_tests {
     fn the_threshold_follows_the_pointer_down() {
         let mut tone = placeholder(0);
         let before = tone.comp.threshold;
-        drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, 20.0);
+        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, 20.0);
         assert!(tone.comp.threshold < before, "down is a lower threshold");
-        drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, -40.0);
+        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, -40.0);
         assert!(tone.comp.threshold > before, "and up is a higher one");
     }
 
@@ -3179,7 +3981,7 @@ mod comp_tests {
     /// the threshold, which shares the display with all three.
     #[test]
     fn each_edge_moves_one_thing() {
-        for grip in [Grip::Ratio, Grip::Attack, Grip::Release] {
+        for grip in [Grip::Ratio(Which::Comp), Grip::Attack(Which::Comp), Grip::Release(Which::Comp)] {
             let mut tone = placeholder(0);
             let was = tone.comp;
             drag(&mut tone, grip, &ALL, rack(), Mods::default(), 30.0, 30.0);
@@ -3205,7 +4007,7 @@ mod comp_tests {
         let step = |from: f32| {
             let mut tone = placeholder(0);
             tone.comp.attack = from;
-            drag(&mut tone, Grip::Attack, &ALL, rack(), Mods::default(), 15.0, 0.0);
+            drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), Mods::default(), 15.0, 0.0);
             tone.comp.attack - from
         };
         assert!(step(1.0) < step(100.0), "the fast end moves in smaller steps");
@@ -3219,9 +4021,9 @@ mod comp_tests {
     fn the_controls_clamp() {
         let mut tone = placeholder(0);
         for _ in 0..80 {
-            drag(&mut tone, Grip::Ratio, &ALL, rack(), Mods::default(), 0.0, 60.0);
-            drag(&mut tone, Grip::Attack, &ALL, rack(), Mods::default(), 60.0, 0.0);
-            drag(&mut tone, Grip::Release, &ALL, rack(), Mods::default(), 60.0, 0.0);
+            drag(&mut tone, Grip::Ratio(Which::Comp), &ALL, rack(), Mods::default(), 0.0, 60.0);
+            drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), Mods::default(), 60.0, 0.0);
+            drag(&mut tone, Grip::Release(Which::Comp), &ALL, rack(), Mods::default(), 60.0, 0.0);
         }
         assert!((tone.comp.ratio - 20.0).abs() < 0.01, "{}", tone.comp.ratio);
         assert!((tone.comp.attack - 200.0).abs() < 0.5, "{}", tone.comp.attack);
@@ -3229,9 +4031,9 @@ mod comp_tests {
 
         let mut back = placeholder(0);
         for _ in 0..80 {
-            drag(&mut back, Grip::Ratio, &ALL, rack(), Mods::default(), 0.0, -60.0);
-            drag(&mut back, Grip::Attack, &ALL, rack(), Mods::default(), -60.0, 0.0);
-            drag(&mut back, Grip::Release, &ALL, rack(), Mods::default(), -60.0, 0.0);
+            drag(&mut back, Grip::Ratio(Which::Comp), &ALL, rack(), Mods::default(), 0.0, -60.0);
+            drag(&mut back, Grip::Attack(Which::Comp), &ALL, rack(), Mods::default(), -60.0, 0.0);
+            drag(&mut back, Grip::Release(Which::Comp), &ALL, rack(), Mods::default(), -60.0, 0.0);
         }
         assert!((back.comp.ratio - 1.0).abs() < 0.01, "{}", back.comp.ratio);
         assert!((back.comp.attack - 0.1).abs() < 0.01, "{}", back.comp.attack);
@@ -3248,15 +4050,15 @@ mod comp_tests {
         let was = placeholder(0).comp;
 
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Ratio, &ALL, rack(), Mods::default(), 0.0, 20.0);
+        drag(&mut tone, Grip::Ratio(Which::Comp), &ALL, rack(), Mods::default(), 0.0, 20.0);
         assert!(tone.comp.ratio > was.ratio, "down did not harden the ratio");
 
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Attack, &ALL, rack(), Mods::default(), 20.0, 0.0);
+        drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), Mods::default(), 20.0, 0.0);
         assert!(tone.comp.attack > was.attack, "right did not lengthen the attack");
 
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Release, &ALL, rack(), Mods::default(), 20.0, 0.0);
+        drag(&mut tone, Grip::Release(Which::Comp), &ALL, rack(), Mods::default(), 20.0, 0.0);
         assert!(
             tone.comp.release > was.release,
             "right did not lengthen the release"
@@ -3298,7 +4100,7 @@ mod comp_tests {
         };
         let before = at_db(tone.comp);
         let moved = 24.0;
-        drag(&mut tone, Grip::Threshold, &ALL, rack(), Mods::default(), 0.0, moved);
+        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), Mods::default(), 0.0, moved);
         let after = at_db(tone.comp);
         assert!(
             (after - before - moved).abs() < 0.5,
@@ -3311,7 +4113,7 @@ mod comp_tests {
     #[test]
     fn each_knob_resets_to_its_own_default() {
         let mut tone = placeholder(0);
-        for grip in [Grip::Ratio, Grip::Attack, Grip::Release, Grip::Threshold] {
+        for grip in [Grip::Ratio(Which::Comp), Grip::Attack(Which::Comp), Grip::Release(Which::Comp), Grip::Threshold(Which::Comp)] {
             drag(&mut tone, grip, &ALL, rack(), Mods::default(), 0.0, -25.0);
             reset(&mut tone, grip);
         }
@@ -3603,23 +4405,54 @@ pub fn levels(
     scene: &mut Scene,
     panels: &[Which],
     levels: &mut Levels,
-    comp: Comp,
-    bypass: Bypass,
+    tone: &Tone,
     panel: Panel,
 ) {
-    // A bypassed compressor is not compressing, so it has no display:
-    // the scrim over it says the processing is not happening, and a
-    // waveform moving under it would say the opposite.
-    if levels.is_empty() || bypass.is(Which::Comp) {
+    if levels.is_empty() {
         return;
     }
     let rack = Rack::at(panel.width);
     if !rack.on() {
         return;
     }
+    // Both compressors and the gate: all three read a level against a
+    // threshold, and all three are unreadable without the level. It
+    // used to draw one panel because there used to be one.
+    for which in [Which::Gate, Which::RescueComp, Which::Comp] {
+        // A bypassed processor is not processing, so it has no display:
+        // the scrim over it says so, and a waveform moving under it
+        // would say the opposite.
+        if tone.bypass.is(which) {
+            continue;
+        }
+        let comp = match which {
+            Which::RescueComp => tone.rescue_comp,
+            Which::Comp => tone.comp,
+            // The gate's trace is the level alone — what it does to the
+            // signal is open or shut, not an amount, so there is no
+            // reduction curve to draw under it.
+            _ => Comp {
+                ratio: 1.0,
+                ..tone.comp
+            },
+        };
+        one_level(scene, panels, levels, comp, which, panel, rack);
+    }
+}
+
+/// One processor's level trace.
+fn one_level(
+    scene: &mut Scene,
+    panels: &[Which],
+    levels: &mut Levels,
+    comp: Comp,
+    which: Which,
+    panel: Panel,
+    rack: Rack,
+) {
     let Some((_, at)) = layout(panels, panel)
         .into_iter()
-        .find(|(which, _)| *which == Which::Comp)
+        .find(|(at_which, _)| *at_which == which)
     else {
         return;
     };
@@ -3930,7 +4763,7 @@ mod bypass_tests {
         let band = &tone.eq[2];
         let x = body.x + map.freq_to_x(f64::from(band.frequency));
         let y = body.y + map.db_to_y(f64::from(band.gain));
-        assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(Grip::Band(2)));
+        assert_eq!(grip_at(&ALL, &tone, rack(), x, y), Some(Grip::Band(Which::Eq, 2)));
 
         tone.bypass.toggle(Which::Eq);
         assert_eq!(

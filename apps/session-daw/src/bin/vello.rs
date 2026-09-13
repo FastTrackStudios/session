@@ -947,7 +947,7 @@ impl App {
     /// Returns whether it did anything, so a plain click falls through
     /// to taking hold of the band instead.
     fn click_rack(&mut self, row: usize, grip: session_daw::tone::Grip) -> bool {
-        let session_daw::tone::Grip::Band(index) = grip else {
+        let session_daw::tone::Grip::Band(which, index) = grip else {
             return false;
         };
         let mods = self.mods;
@@ -962,7 +962,7 @@ impl App {
         let changed = self
             .tone_settings
             .edit(&guid)
-            .is_some_and(|tone| session_daw::tone::dot_click(tone, index, mods));
+            .is_some_and(|tone| session_daw::tone::dot_click(tone, which, index, mods));
         if changed {
             self.invalidate_rack(row);
         }
@@ -989,7 +989,7 @@ impl App {
                 // Clicking the zoom steps it to the next stop; the
                 // wheel walks it either way and a double-click puts it
                 // back. Wrapping, because a chip you click is a cycle.
-                Grip::Scale => tone.cycle_eq_range(),
+                Grip::Scale(_) => tone.cycle_eq_range(),
                 _ => {}
             }
         }
@@ -2250,7 +2250,13 @@ fn main() {
         tone_spectra: std::collections::HashMap::new(),
         tone_settings: session_daw::tone::Store::default(),
         clips: session_daw::overlay::Clips::default(),
-        rack_scroll: 0.0,
+        // A starting scroll, for shots and for looking at a processor
+        // that lives past the fold. `FTS_VELLO_RACK_SCROLL=600`.
+        rack_scroll: std::env::var("FTS_VELLO_RACK_SCROLL")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .unwrap_or(0.0)
+            .max(0.0),
         folders: daw_ui::components::folders::FolderState::default(),
         icons: session_daw::icons::Icons::new(),
         theme,
