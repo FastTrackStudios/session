@@ -1237,7 +1237,7 @@ daw-animate PROJECT="" SIZE="2560x1440":
 # Opens the arrangement and scrolls it hard in both axes while reporting
 # the rate it actually presents at. This is the one to watch when asking
 # "does scrolling ever stutter" — the headless bench cannot show you that.
-daw-vello PROJECT="":
+daw-vello PROJECT="" SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail
     project="{{PROJECT}}"
@@ -1246,5 +1246,61 @@ daw-vello PROJECT="":
         [[ -f "$project" ]] || just daw-fixture
     fi
     cargo build --release -p session-daw --bin vello 2>&1 | grep -E '^error' -A6 || true
-    FTS_VELLO_AUTOSCROLL=1 RUST_LOG="${RUST_LOG:-warn,vello=info}" \
+    FTS_VELLO_AUTOSCROLL=1 FTS_VELLO_SIZE="{{SIZE}}" \
+        RUST_LOG="${RUST_LOG:-warn,vello=info}" \
         ./target/release/vello "$project"
+
+# The drum session, in a window you can screenshot.
+#
+# This is the one to open by hand: `just daw-template`'s session has the
+# hierarchy, the colours and the item density a real desk has, and it
+# opens with the KICK selected — so the focus-width rack is on screen
+# without clicking anything.
+#
+# Forced onto XWayland, and that is the point of this recipe. The window
+# is a Wayland surface by default, which no X screenshot tool and no
+# `xdotool` can see — every "the window did not open" in this repo's
+# history has been that. `WAYLAND_DISPLAY=` empties the variable winit
+# checks, so it falls back to X11 through XWayland, where the window has
+# a real X id.
+#
+# Note that `xdotool mousemove --window` does NOT work on it either:
+# winit ignores synthetic (send_event) motion. Move the REAL pointer to
+# absolute screen coordinates instead — window origin plus the offset
+# you want, read from `xdotool getwindowgeometry --shell`.
+daw-window PROJECT="" SIZE="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
+        [[ -f "$project" ]] || just daw-template
+    fi
+    cargo build --release -p session-daw --bin vello 2>&1 | grep -E '^error' -A6 || true
+    WAYLAND_DISPLAY= WINIT_UNIX_BACKEND=x11 \
+        FTS_VELLO_SIZE="{{SIZE}}" FTS_VELLO_SIMULATE=1 \
+        RUST_LOG="${RUST_LOG:-warn}" \
+        ./target/release/vello "$project"
+
+# The same window, captured to a PNG once it has settled.
+#
+# `just daw-shot` writes /tmp/fts-mixer.png at the window's own
+# resolution — no upscaling a small window, which is the other half of
+# why shots of this thing kept being unreadable.
+daw-shot OUT="/tmp/fts-mixer.png" PROJECT="" SIZE="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just daw-window "{{PROJECT}}" "{{SIZE}}" &
+    trap 'pkill -f "target/release/vello" || true' EXIT
+    for _ in $(seq 60); do
+        id="$(xdotool search --name 'Session' 2>/dev/null | head -1 || true)"
+        [[ -n "$id" ]] && break
+        sleep 2
+    done
+    [[ -n "${id:-}" ]] || { echo "the window never appeared" >&2; exit 1; }
+    xdotool windowactivate --sync "$id"
+    # Into the mixer, which is what these shots are of.
+    xdotool key --window "$id" x
+    sleep 3
+    magick import -window "$id" "{{OUT}}"
+    printf 'wrote %s — %s\n' "{{OUT}}" "$(magick identify -format '%wx%h' "{{OUT}}")"

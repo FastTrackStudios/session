@@ -369,14 +369,22 @@ def main() -> None:
         out(f"      WIDTHS {' '.join(narrow)}\n")
         out("    >\n  >\n")
 
-    # The first mic of the first piece — the kick's In.
+    # The kick, which is where a drum session is actually opened: it is
+    # the first thing anyone works on and the one strip whose rack you
+    # want open before you have clicked anything.
+    #
+    # The piece itself rather than one of its mics — "the kick" is the
+    # drum, and its In/Out/Trig are how it was captured.
     selected = next(
-        (
-            i
-            for i, (name, _, _, is_folder, piece) in enumerate(tracks)
-            if not is_folder and not piece and not is_auxiliary(name)
+        (i for i, (name, _, _, _, _) in enumerate(tracks) if name == "Kick"),
+        next(
+            (
+                i
+                for i, (name, _, _, is_folder, piece) in enumerate(tracks)
+                if not is_folder and not piece and not is_auxiliary(name)
+            ),
+            -1,
         ),
-        -1,
     )
 
     for i, (name, colour, depth, is_folder, _piece) in enumerate(tracks):
