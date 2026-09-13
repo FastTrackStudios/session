@@ -759,12 +759,15 @@ fn draw_strip_controls(
     // The compressor's level history, under the threshold line the
     // recording drew across it. Live, because it is the one part of a
     // rack that changes with the audio — see `tone::levels`.
-    if let (Some(box_), Some(history)) = (strip.rack_rect(), history) {
+    if let (Some(box_), Some(history), Some(tone)) = (strip.rack_rect(), history, settings) {
         crate::tone::levels(
             scene,
             palette,
             panels,
             history,
+            // The reduction is what the compressor is DOING, so it has
+            // to be computed from the settings it is doing it with.
+            tone.comp,
             crate::tone::Panel::of(box_, left),
         );
     }

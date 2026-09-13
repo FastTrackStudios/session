@@ -74,7 +74,7 @@ pub struct Tone {
 }
 
 /// A compressor, as its display needs it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Comp {
     /// Where it starts working, in dBFS. The red line across the
     /// visualiser — it is a LEVEL, and a level belongs on the axis the
@@ -2526,7 +2526,8 @@ impl Analyser {
 #[derive(Clone, Debug, Default)]
 pub struct Levels {
     peaks: std::collections::VecDeque<f32>,
-    /// The trace, built once per CHANGE rather than once per frame.
+    /// The input trace, built once per CHANGE rather than once per
+    /// frame.
     ///
     /// The engine publishes levels at about 30 Hz and the window draws
     /// at whatever the display does — 240 here. Rebuilding a
@@ -2535,10 +2536,14 @@ pub struct Levels {
     /// millisecond across sixty racks to redraw a line that had not
     /// moved seven frames out of eight.
     ///
-    /// Keyed by the width it was built at, because the path is in the
+    /// Keyed by the box it was built for, because the path is in the
     /// panel's own pixels: a mixer that resizes has to rebuild, and a
     /// mixer that does not never does.
     path: Option<(f64, f64, std::sync::Arc<BezPath>)>,
+    /// And the gain reduction, which depends on the COMPRESSOR as well
+    /// as on the levels — so it carries the settings it was built for
+    /// and rebuilds when a knob moves.
+    reduction: Option<(f64, f64, Comp, std::sync::Arc<BezPath>)>,
 }
 
 /// How many frames of level the display holds.
@@ -2573,13 +2578,15 @@ impl Levels {
         }
         self.peaks.push_back(peak);
         self.path = None;
+        self.reduction = None;
     }
 
-    /// The trace, for a display of this size.
+    /// The input trace, for a display of this size.
     ///
     /// Built through the plugin's own `smooth_path` — Catmull-Rom, the
     /// shape its editor draws the input wave with — and kept until the
-    /// levels or the size change.
+    /// levels or the size change. Up from the bottom, because that is
+    /// what a level is.
     fn path(&mut self, width: f64, height: f64) -> Option<std::sync::Arc<BezPath>> {
         if let Some((w, h, path)) = &self.path
             && (w - width).abs() < 0.5
@@ -2590,6 +2597,61 @@ impl Levels {
         let d = comp_ui::comp_graph_svg::smooth_path(&self.scaled(), width, height, true, true);
         let built = std::sync::Arc::new(BezPath::from_svg(&d).ok()?);
         self.path = Some((width, height, std::sync::Arc::clone(&built)));
+        Some(built)
+    }
+
+    /// How much the compressor took off each of those samples, in dB.
+    ///
+    /// Input minus output through the plugin's own `compress_transfer`,
+    /// which is the same function the transfer curve and the threshold
+    /// marker are drawn from — so the amount the display says is being
+    /// removed is the amount the maths says.
+    #[must_use]
+    pub fn reduction_db(&self, comp: Comp) -> Vec<f32> {
+        self.peaks
+            .iter()
+            .map(|&peak| {
+                if peak <= 0.0 {
+                    return 0.0;
+                }
+                let db = 20.0 * peak.log10();
+                let out = comp_ui::comp_graph_svg::compress_transfer(
+                    db,
+                    comp.threshold,
+                    comp.ratio,
+                    comp.knee,
+                );
+                (db - out).max(0.0)
+            })
+            .collect()
+    }
+
+    /// The gain-reduction trace, hanging DOWN from the top.
+    ///
+    /// Down because that is the direction the compressor moves the
+    /// signal, and because the input is already coming up from the
+    /// floor — two traces growing the same way would be two readings
+    /// of one thing rather than a cause and its effect.
+    fn reduction_path(
+        &mut self,
+        comp: Comp,
+        width: f64,
+        height: f64,
+    ) -> Option<std::sync::Arc<BezPath>> {
+        if let Some((w, h, was, path)) = &self.reduction
+            && (w - width).abs() < 0.5
+            && (h - height).abs() < 0.5
+            && *was == comp
+        {
+            return Some(std::sync::Arc::clone(path));
+        }
+        let gr = comp_ui::comp_graph_svg::scale_gr_wave(&self.reduction_db(comp));
+        if gr.iter().all(|v| *v <= f32::EPSILON) {
+            return None;
+        }
+        let d = comp_ui::comp_graph_svg::smooth_path(&gr, width, height, false, true);
+        let built = std::sync::Arc::new(BezPath::from_svg(&d).ok()?);
+        self.reduction = Some((width, height, comp, std::sync::Arc::clone(&built)));
         Some(built)
     }
 
@@ -2625,6 +2687,7 @@ pub fn levels(
     palette: &Palette,
     panels: &[Which],
     levels: &mut Levels,
+    comp: Comp,
     panel: Panel,
 ) {
     if levels.is_empty() {
@@ -2647,24 +2710,45 @@ pub fn levels(
     if body.width < 2.0 || body.height < 2.0 {
         return;
     }
-    let Some(path) = levels.path(body.width, body.height) else {
-        return;
-    };
     let at = Affine::translate((body.x, body.y));
-    // Filled, because what you are reading is how much of the display
-    // the signal is taking up against the line across it — an outline
-    // makes that a comparison of two lines instead.
-    scene.fill(
-        Fill::NonZero,
-        at,
-        // Dim, because the threshold line is drawn over it and a solid
-        // fill makes the line the thing you cannot see — which is the
-        // one thing on this panel you reach for.
-        palette.meter_safe.multiply_alpha(0.28),
-        None,
-        path.as_ref(),
-    );
-    scene.stroke(&Stroke::new(1.0), at, palette.meter_safe, None, path.as_ref());
+    // The signal, white, up from the floor. White because it is the
+    // thing being acted ON — it carries no state of its own, and every
+    // coloured thing on this panel means something.
+    if let Some(path) = levels.path(body.width, body.height) {
+        // Filled, because what you are reading is how much of the
+        // display the signal takes up against the line across it — an
+        // outline makes that a comparison of two lines instead. Dim,
+        // because the threshold is drawn over it and a solid fill makes
+        // the line the thing you cannot see.
+        scene.fill(
+            Fill::NonZero,
+            at,
+            palette.text.multiply_alpha(0.22),
+            None,
+            path.as_ref(),
+        );
+        scene.stroke(
+            &Stroke::new(1.0),
+            at,
+            palette.text.multiply_alpha(0.85),
+            None,
+            path.as_ref(),
+        );
+    }
+    // And what the compressor took off, red, hanging down from the top.
+    // Down is the direction it moves the signal; red because it is the
+    // one thing on this panel that is a REDUCTION, and it shares its
+    // colour with the threshold that caused it.
+    if let Some(path) = levels.reduction_path(comp, body.width, body.height) {
+        scene.fill(
+            Fill::NonZero,
+            at,
+            palette.meter_danger.multiply_alpha(0.35),
+            None,
+            path.as_ref(),
+        );
+        scene.stroke(&Stroke::new(1.0), at, palette.meter_danger, None, path.as_ref());
+    }
 }
 
 #[cfg(test)]
@@ -2701,5 +2785,109 @@ mod level_tests {
         let got = levels.scaled();
         let want = comp_ui::comp_graph_svg::scale_input_wave(&[1.0, 0.5]);
         assert_eq!(got, want);
+    }
+}
+
+#[cfg(test)]
+mod reduction_tests {
+    use super::{Comp, Levels};
+
+    fn hits() -> Levels {
+        let mut levels = Levels::default();
+        // A loud hit decaying into a quiet floor, twice.
+        for _ in 0..2 {
+            for i in 0..20_u8 {
+                levels.push(0.7 * (-f32::from(i) / 6.0).exp() + 0.004);
+            }
+        }
+        levels
+    }
+
+    /// The reduction is what the compressor is taking off, computed
+    /// through its own transfer — so a loud sample above the threshold
+    /// reduces and a quiet one below it does not.
+    #[test]
+    fn only_what_crosses_the_threshold_is_reduced() {
+        let comp = Comp {
+            threshold: -12.0,
+            ratio: 4.0,
+            knee: 0.0,
+            ..Comp::default()
+        };
+        let gr = hits().reduction_db(comp);
+        assert!(gr.iter().any(|g| *g > 1.0), "nothing was reduced: {gr:?}");
+        assert!(
+            gr.iter().any(|g| *g < 0.01),
+            "everything was reduced, including the floor"
+        );
+        assert!(gr.iter().all(|g| *g >= 0.0), "a reduction went negative");
+    }
+
+    /// A harder ratio takes more off the same signal. This is the claim
+    /// the display makes every time a knob moves, and the one that
+    /// would go unnoticed if the trace were computed from anything but
+    /// the plugin's own transfer.
+    #[test]
+    fn a_harder_ratio_reduces_more() {
+        let at = |ratio: f32| {
+            let comp = Comp {
+                threshold: -18.0,
+                ratio,
+                knee: 0.0,
+                ..Comp::default()
+            };
+            hits().reduction_db(comp).iter().copied().fold(0.0, f32::max)
+        };
+        assert!(at(8.0) > at(2.0), "{} was not more than {}", at(8.0), at(2.0));
+    }
+
+    /// A ratio of one is no compressor at all, so nothing hangs from
+    /// the top — and the path is `None` rather than a flat nothing,
+    /// which is what keeps a silent panel from paying for a trace.
+    #[test]
+    fn unity_reduces_nothing() {
+        let comp = Comp {
+            threshold: -30.0,
+            ratio: 1.0,
+            knee: 0.0,
+            ..Comp::default()
+        };
+        let gr = hits().reduction_db(comp);
+        assert!(gr.iter().all(|g| *g < 0.01), "1:1 reduced something");
+        assert!(hits().reduction_path(comp, 100.0, 50.0).is_none());
+    }
+
+    /// The two traces grow in opposite directions: the signal up from
+    /// the floor, the reduction down from the top. Two growing the same
+    /// way would be two readings of one thing rather than a cause and
+    /// its effect.
+    #[test]
+    fn the_traces_grow_apart() {
+        let comp = Comp {
+            threshold: -20.0,
+            ratio: 6.0,
+            knee: 0.0,
+            ..Comp::default()
+        };
+        let mut levels = hits();
+        let (w, h) = (120.0, 60.0);
+        let input = levels.path(w, h).expect("an input trace");
+        let gr = levels.reduction_path(comp, w, h).expect("a reduction trace");
+        let mean_y = |path: &vello::kurbo::BezPath| {
+            let points: Vec<f64> = path
+                .elements()
+                .iter()
+                .filter_map(|e| match e {
+                    vello::kurbo::PathEl::MoveTo(p) | vello::kurbo::PathEl::LineTo(p) => Some(p.y),
+                    vello::kurbo::PathEl::CurveTo(_, _, p) => Some(p.y),
+                    _ => None,
+                })
+                .collect();
+            points.iter().sum::<f64>() / points.len().max(1) as f64
+        };
+        assert!(
+            mean_y(&input) > mean_y(&gr),
+            "the input sat above the reduction"
+        );
     }
 }
