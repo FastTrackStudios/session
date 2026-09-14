@@ -137,6 +137,18 @@ one item with one waveform rather than a stack of items across twenty
 tracks. The folder item is a **view** of the take's items on the source
 tracks underneath; it owns no audio of its own.
 
+r[flow.drums.comping.folder-item-colours]
+The folder item's summed waveform is drawn **per piece in the piece's
+colour**, not as one grey sum: the kick's contribution in the kick's
+hue, the snare's in the snare's, the toms' in the toms' — the role
+colours the expression editor's lanes already use (`LaneRole::color`),
+so the two views agree. Layered in one item, the kick pattern reads on
+its own from across the room, the snare's backbeat sits between it,
+and a fill is visibly the toms. That is what makes a take readable as
+one item: the pattern, not just the loudness. The same colouring is
+used wherever a folder item carries the kit's summed waveform — the
+edit scene's rows and the tracking overview's collapsed pieces.
+
 r[flow.drums.comping.folder-lanes]
 With the kit in comping, the folder shows **one lane per take**, each
 lane the take's folder item, and a **comp lane** on top: the comp is
@@ -169,7 +181,8 @@ r[flow.drums.editing.scene]
 **Drum Editing** shows the kit the way the expression editor folds it:
 **one row per source piece** — one Kick, one Snare, one row per tom,
 one per source track — with the mics under each piece collapsed into
-it, the pieces' folder items carrying the piece's summed waveform, and
+it, the pieces' folder items carrying the piece's summed waveform in
+the piece's colour (`flow.drums.comping.folder-item-colours`), and
 the Process folder and the buses hidden. It is the scene Edit mode
 shows for the kit, and the arrangement's counterpart of the stack's
 lanes: the same fold, so what is selected in one is what is edited in
