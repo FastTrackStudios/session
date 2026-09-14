@@ -80,6 +80,7 @@ class Daemon:
     """
 
     def __init__(self, root: str) -> None:
+        self.root = root
         self.state = tempfile.mkdtemp(prefix="tracey-", dir="/tmp")
         self.env = {**os.environ, "XDG_STATE_HOME": self.state}
         self.log_path = os.path.join(self.state, "daemon.log")
@@ -87,6 +88,16 @@ class Daemon:
         self.proc = subprocess.Popen(
             ["tracey", "daemon", root], stdout=self.log, stderr=subprocess.STDOUT, env=self.env
         )
+        # Wait for the socket before the first query: a query that finds
+        # no socket auto-starts a second daemon of its own (seen: two
+        # strays left behind after a run). Bind takes a few seconds.
+        deadline = time.monotonic() + 60
+        while not glob.glob(os.path.join(self.state, "tracey", "*", "daemon.sock")):
+            if self.proc.poll() is not None:
+                fail(self, f"tracey daemon exited with {self.proc.returncode} before serving")
+            if time.monotonic() > deadline:
+                fail(self, "tracey daemon did not open its socket within 60s")
+            time.sleep(0.2)
 
     def dump_log(self) -> None:
         self.log.flush()
@@ -94,6 +105,10 @@ class Daemon:
             sys.stderr.write(f"--- tracey daemon log ({self.log_path}) ---\n{f.read()}")
 
     def close(self) -> None:
+        # `tracey kill` reaches whatever daemon registered under our
+        # state dir (ours, or one a query spawned anyway); terminate
+        # covers ours if that message never arrived.
+        subprocess.run(["tracey", "kill", self.root], capture_output=True, check=False, env=self.env)
         if self.proc.poll() is None:
             self.proc.terminate()
             try:
