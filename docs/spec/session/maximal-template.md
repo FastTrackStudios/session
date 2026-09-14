@@ -95,6 +95,14 @@ fixed tree.
 - [x] Lead (Close, Room, Verb), Doubles, Harmonies → **LEAD VOX BUS**.
 - [ ] BGVs folder → **BGV BUS**; the vocal FX template (`make-vocal-fx-rpp.py`)
       folded in.
+- [ ] **Three languages** — `Vocals / {EN, ES, PT, All}` — with a VCA per
+      language (`flow.vocals.language`, `flow.vocals.golden`).
+- [ ] Leads **Ron** (EN, ES, PT), **Belen** (EN, ES), **Aline** (PT), each
+      Main and DBL per language.
+- [ ] BGV parts: Octave Down, Octave Up, Higher Harmony, Lower Harmony,
+      Whisper, Bass, Tenor, Alto, Soprano — doubled — and a many-layer
+      "Hey!" in `All`.
+- [ ] A four-section **Choir** per language.
 
 ### Buses — `MIX BUS/`
 

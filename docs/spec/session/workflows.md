@@ -26,7 +26,7 @@ and quantize specs.
 | Drums (audio) | [x] full · [ ] overview | [ ] folder items | [ ] edit scene · [x] stack · [x] slip/stretch · [x] quantize · [ ] align hits | [x] scenes · [x] balance | [ ] triggering samples |
 | Bass | [ ] full · [ ] overview · [ ] folder preview | [ ] on the track | [ ] | [ ] later | |
 | Guitars (electric and acoustic) | [ ] full · [ ] overview · [ ] grow | [ ] folder items | [ ] edit scene · [ ] doubles aligned | [x] buses/VCA · [ ] layers collapsed · [ ] balance scene · [ ] source defaults | [ ] golden shapes · [ ] same at every depth · [ ] acoustics |
-| Vocals | [ ] | [ ] | [ ] doubles aligned | [x] lead vocal scenes | [ ] tuning · [ ] fx · [ ] automation |
+| Vocals | [ ] by performer | [ ] lanes · [ ] parts as folder items | [ ] doubles aligned | [x] lead vocal scenes | [ ] language dimension · [ ] active language · [ ] render per language · [ ] leads · [ ] bgv parts · [ ] choir · [ ] tuning · [ ] automation · [ ] golden |
 | Keys | [ ] record MIDI | [ ] | [x] MIDI in the editor | [ ] | |
 
 ## Views a flow is done in
@@ -538,29 +538,92 @@ the rules, not a special case for the session.
 
 ## Vocals
 
+Vocals are the most complicated instrument in the session, and the
+golden session carries the maximal case: a song in **three
+languages** — English, Spanish, Portuguese — with **two lead
+soloists**, background vocals in every part a vocal arrangement uses,
+and a choir. The template's dimensions hold (Performer → Arrangement
+→ Layers → Channels → MultiMic), with one more on top.
+
+r[flow.vocals.language]
+**Language** is a dimension of every vocal track: a track is sung in
+one language, or in **All** when it is language-free — a wordless
+"Hey!", a hummed pad. It is read from the track's name or inherited
+from a Language folder, and the project's vocal folders are split by
+it first: `Vocals / {EN, ES, PT, All}`, each holding the leads, the
+BGVs and the choir sung in that language. A performer who does not
+sing a language simply has no tracks in it — Aline sings only the
+Portuguese version, Belen does not sing on it.
+
+r[flow.vocals.language.active]
+The session has an **active language**, and every vocal scene follows
+it: tracking, comping, editing and mixing show that language's
+vocals, hide the others, and the other languages are **muted through
+their VCA** — one VCA per language, `VOX EN`, `VOX ES`, `VOX PT`, over
+the leads, the BGVs and the choir of that language together, with
+`All` always audible. Switching the language switches the scene and
+the VCAs in one step, so "look at the English version" is one action
+and it cannot leave a Spanish double audible.
+
+r[flow.vocals.language.render]
+Rendering the project renders **one version per language**: each
+render with that language's VCA up and the others muted, the
+language-free tracks in every one, named for the language. The
+active language does not have to be changed to render the others.
+
+r[flow.vocals.leads]
+A **lead** is a performer — the golden session has two soloists — and
+each lead has, per language, a **Main** and a **DBL**, each a layer
+with its own take lanes, sources (close, room) and tuning. The lead
+row of an overview is the soloist, collapsed, its folder item the
+Main with the DBL under it.
+
+r[flow.vocals.bgvs]
+**Background vocals** are arranged by **part** — Octave Down, Octave
+Up, Higher Harmony, Lower Harmony, Whisper, Bass, Tenor, Alto,
+Soprano — usually doubled, and a part may carry **as many layers as it
+needs**: a "Hey!" of fifty layers is fifty tracks under one part, and
+the part's row shows them as one folder item summed. Nothing in the
+scenes, the comp or the edit assumes a count.
+
+r[flow.vocals.choir]
+A **choir** is a folder beside the BGVs — its sections (Soprano, Alto,
+Tenor, Bass) as parts, each layered like a BGV part — sung per
+language like everything else, on the language's VCA, collapsed to
+one row per section in every overview.
+
 r[flow.vocals.tracking]
-**Vocal Tracking** shows the lead and every background vocal being
-recorded at working size, with the vocal FX returns present for the
-singer's headphone mix and everything else collapsed.
+**Vocal Tracking** shows the active language's leads and every BGV
+and choir part being recorded, sorted by performer
+(`flow.scenes.performer-order`) — Ron's tracks together, Belen's
+together — at working size with their rig on the performer row, the
+vocal FX returns present for the headphone mix, and every other
+language hidden and muted.
 
 r[flow.vocals.comping]
-The lead vocal comps on take lanes, one take chosen per phrase, with
-crossfades that snap to phrase boundaries.
+Every vocal track comps on its take lanes with a comp lane on top,
+one take chosen per phrase; a lead's Main and DBL comp on their own
+lanes; a part's layers comp on the part's folder as the kit does, one
+lane per take of the whole part, so a fifty-layer "Hey!" is comped
+once. Crossfades snap to phrase boundaries.
 
 r[flow.vocals.editing.doubles]
-Doubles and harmonies are **aligned** to the lead: reference the lead,
-dub the double, retime the double, previewed and applied as one undo
-step — the same engine as the guitars, on vocal features.
+Doubles, harmonies and layers are **aligned** to the lead: reference
+the lead's Main, dub the double or the part, retime the dub, previewed
+and applied as one undo step across every layer of the part — the
+same engine as the guitars, on vocal features.
 
 r[flow.vocals.tuning]
-The lead is **tuned** in the expression editor: the take analysed to
+A vocal is **tuned** in the expression editor: the take analysed to
 pitch, drawn as blobs with pitch curves, corrected by hand or snapped
 to the key, and written back as the retuned audio — docked under the
-arrangement like the kit's stack.
+arrangement like the kit's stack, on the active language's tracks.
 
 r[flow.vocals.mixing.main]
-**Lead Vocal** shows the lead's chain — the close mic, its room and
-verb returns — at working size with its rack, and the lead vocal bus.
+**Lead Vocal** shows the active language's leads — each soloist's
+Main and DBL, the close mic, its room and verb returns — at working
+size with its rack, and the lead vocal bus; the BGVs and the choir
+collapsed to their parts.
 
 r[flow.vocals.mixing.fx]
 **Lead Vocal FX Edit** opens the vocal's returns — delays, verbs,
@@ -571,6 +634,13 @@ r[flow.vocals.mixing.automation]
 The vocal's level, sends and effect parameters are automated in the
 arrangement: envelopes drawn on the track's lanes, points dragged,
 written from a fader move, and shown per parameter.
+
+r[flow.vocals.golden]
+The golden session's vocals: **EN, ES and PT**; leads **Ron** (all
+three), **Belen** (EN and ES) and **Aline** (PT only), each with Main
+and DBL per language; BGVs with every part above, doubled, and one
+"Hey!" of many layers in `All`; a four-section choir per language;
+`VOX EN`, `VOX ES`, `VOX PT` VCAs; and a render per language.
 
 ## Keys
 
