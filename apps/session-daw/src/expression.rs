@@ -218,9 +218,9 @@ impl Expression {
     /// Carry out what the stack asked of the host. This window has no
     /// audio to slip, so the hit list is what changes — see
     /// `stack::interact::apply_to_document`.
-    fn apply_hits(&mut self, gestures: Vec<HitGesture>) -> bool {
+    fn apply_hits(&mut self, gestures: &[HitGesture]) -> bool {
         let mut changed = false;
-        for g in &gestures {
+        for g in gestures {
             changed |= stack::interact::apply_to_document(&mut self.editor, g);
         }
         if changed {
@@ -428,7 +428,7 @@ impl Expression {
             let (sx, sy) = self.stack_point(x, y);
             let mut out = Vec::new();
             let took = self.stack.press(&mut self.editor, sx, sy, button, mods_of(mods), &mut out);
-            let edited = self.apply_hits(out);
+            let edited = self.apply_hits(&out);
             if took || edited {
                 self.relayout();
             }
@@ -537,7 +537,7 @@ impl Expression {
         if self.stacked() {
             let mut out = Vec::new();
             let ended = self.stack.release(&mut self.editor, &mut out);
-            let edited = self.apply_hits(out);
+            let edited = self.apply_hits(&out);
             return ended || edited;
         }
         if self.strip_pan.take().is_some() {
@@ -610,7 +610,7 @@ impl Expression {
         if self.stacked() {
             let mut out = Vec::new();
             let took = self.stack.key(&mut self.editor, key, m, &mut out);
-            let edited = self.apply_hits(out);
+            let edited = self.apply_hits(&out);
             if took || edited {
                 self.relayout();
                 return true;
@@ -669,10 +669,7 @@ impl Expression {
     /// goes back when its key does.
     pub fn key_up(&mut self, key: &str, mods: Mods) -> bool {
         keys::release(key, mods_of(mods));
-        let mut changed = false;
-        if self.stacked() && self.stack.key_up(&mut self.editor, key) {
-            changed = true;
-        }
+        let mut changed = self.stacked() && self.stack.key_up(&mut self.editor, key);
         match key {
             "r" => {
                 self.editor.refs_to_front = false;
