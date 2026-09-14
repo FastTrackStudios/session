@@ -1232,6 +1232,15 @@ daw-dock OUT="/tmp/fts-dock.png" PROJECT="" SIZE="2560x1440":
     FTS_BENCH_DOCK="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" \
         ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
 
+# The audio drum workflow: a tracked kit stacked as role lanes with a
+# song's worth of hits, as a PNG. BARS sets how much groove.
+daw-kit OUT="/tmp/fts-kit.png" SIZE="2560x900" BARS="200":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    FTS_BENCH_KIT="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" FTS_BENCH_BARS="{{BARS}}" \
+        ./target/release/bench /dev/null 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
 # The expression editor over the demo drum groove, as a PNG — the view
 # `e` opens in the window with nothing selected, painted headless.
 daw-expression OUT="/tmp/fts-expression.png" SIZE="1600x900":

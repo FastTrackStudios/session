@@ -108,6 +108,11 @@ pub struct Look {
     pub control: Color,
     pub control_active: Color,
     pub control_hover: Color,
+    pub control_selected: Color,
+    pub text_faint: Color,
+    pub octave_line: Color,
+    /// The waveform of a lane with no role of its own.
+    pub peaks: Color,
     /// How strongly a drum family's band tints its rows over `row_a`,
     /// 0 for none.
     pub band_tint: f32,
@@ -144,6 +149,10 @@ impl Default for Look {
             control: color(theme::CONTROL),
             control_active: color(theme::CONTROL_ACTIVE),
             control_hover: color(theme::CONTROL_HOVER),
+            control_selected: color(theme::CONTROL_SELECTED),
+            text_faint: color(theme::TEXT_FAINT),
+            octave_line: color(theme::OCTAVE_LINE),
+            peaks: color(theme::PEAKS),
             // The canonical bands are drawn as they are.
             band_tint: 1.0,
         }

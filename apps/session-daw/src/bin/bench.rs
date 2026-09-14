@@ -90,6 +90,12 @@ fn main() {
     let font = session_daw::text::Font::embedded().expect("the embedded font");
     let layout = session_daw::layout::Layout::from_env();
 
+    if let Ok(out) = std::env::var("FTS_BENCH_KIT") {
+        // The audio drum workflow: a tracked kit's mics stacked as role
+        // lanes, `FTS_BENCH_BARS` bars of hits (two hundred by default).
+        kit_shot(&palette, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
     if let Ok(out) = std::env::var("FTS_BENCH_EXPRESSION") {
         // The expression editor over the demo drum groove — no project
         // needed, which is the point: the view is exercisable before
@@ -345,6 +351,60 @@ fn main() {
         "  headroom there at 240Hz: {:.2}x   at 60Hz: {:.2}x\n",
         (1000.0 / 240.0) / frame.p99,
         (1000.0 / 60.0) / frame.p99,
+    );
+}
+
+/// How many bars of groove the synthetic kit carries.
+fn bench_bars() -> usize {
+    std::env::var("FTS_BENCH_BARS")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(200)
+}
+
+/// One frame of the stacked audio kit, to a PNG.
+///
+/// `FTS_BENCH_KIT=/tmp/kit.png`, zoomed to a four-bar page so the hits
+/// are markers on the waveforms rather than a solid bar.
+fn kit_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
+    let size = (f64::from(width), f64::from(height));
+    let mut view = session_daw::expression::Expression::audio_kit(bench_bars(), (0.0, 0.0), size);
+    view.set_look(session_daw::expression::look_of(palette));
+    view.editor.frame_bars(4);
+    view.editor.playhead = Some(view.editor.doc.time_base.units_per_second(view.editor.bpm) * 3.2);
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut buffer = Vec::new();
+    image.render_to_vec(
+        |painter| {
+            painter.reset();
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                palette.surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, size.0, size.1),
+            );
+            view.paint(painter);
+        },
+        &mut buffer,
+    );
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+    let hits: usize = (0..view.editor.tracks.len())
+        .map(|i| {
+            if i == view.editor.tracks.active() {
+                view.editor.doc.notes.len()
+            } else {
+                view.editor.tracks.doc_of(i).map_or(0, |d| d.notes.len())
+            }
+        })
+        .sum();
+    println!(
+        "  wrote {} — {} mics, {} hits over {} bars",
+        out.display(),
+        view.editor.tracks.len(),
+        hits,
+        bench_bars()
     );
 }
 
@@ -1409,11 +1469,17 @@ fn studio(
     let dock = (h * 0.4).max(160.0);
     let frame = session_daw::rails::Frame::docked(w, h, dock);
     let dock_box = frame.dock_box().expect("a dock");
-    let mut editor = session_daw::expression::Expression::demo(
+    // The audio drum workflow in the dock: the kit's mics as role
+    // lanes, a song's worth of hits, framed four bars at a time the way
+    // drums get edited — and paged through as the frames go by.
+    let bars = bench_bars();
+    let mut editor = session_daw::expression::Expression::audio_kit(
+        bars,
         (dock_box.x0, dock_box.y0),
         (dock_box.width(), dock_box.height()),
     );
     editor.set_look(session_daw::expression::look_of(palette));
+    editor.editor.frame_bars(4);
     let doc_end = editor.editor.doc.end;
     let mut at_rest = AtRest::new(frame, palette);
     let span_y = (scene.content_height() - frame.content_height()).max(1.0);
@@ -1443,7 +1509,12 @@ fn studio(
     println!();
     println!("  studio        arrangement {width}x{height} with the editor docked ({dock:.0}px),");
     println!("                mixer {mixer_w}x{mixer_h} on a second display, both every frame");
-    println!("  scene         {} rows, {} items; {} strips", scene.rows, scene.items(), mixer.mixer.count);
+    println!(
+        "  scene         {} rows, {} items; {} strips; a {bars}-bar kit in the dock",
+        scene.rows,
+        scene.items(),
+        mixer.mixer.count
+    );
     println!("  frames        {FRAMES} per phase, batches of {BATCH}, waited on once per batch");
     println!("  target        240 Hz — {BUDGET_MS:.2} ms for both windows together\n");
     println!(
@@ -1465,10 +1536,11 @@ fn studio(
                 let (fx, fy, zx, zy) = gesture(t);
                 let (scroll_x, scroll_y) = (span_x * fx, span_y * fy);
                 let view = session_daw::frame::viewport(frame, (scroll_x, scroll_y), PPS * zx, zy);
-                // The editor: the playhead across the groove, the
-                // camera panning against it.
+                // The editor: the playhead across the song, the camera
+                // following it a page at a time — the hits scroll past,
+                // and every frame is a fresh page of markers.
                 editor.editor.playhead = Some(t * doc_end);
-                editor.editor.pan_px((tri(t * 0.5) - 0.5) * 2.0, 0.0);
+                editor.editor.pan_px(-2.0, 0.0);
 
                 painted += arrange
                     .frame(|painter| {

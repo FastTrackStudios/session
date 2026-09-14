@@ -65,25 +65,24 @@ pub fn summed_columns(
 /// Column values as one mirrored polygon, the shape
 /// [`crate::canvas::take_waveform`] draws: zero on the row's midline, full
 /// scale just short of its edges. `None` when there is nothing to draw.
-pub(super) fn columns_polygon(cols: &[f32], w: f64, y0: f64, h: f64) -> Option<String> {
+pub(super) fn columns_polygon(cols: &[f32], w: f64, y0: f64, h: f64) -> Option<super::geometry::Polygon> {
     if cols.len() < 2 || cols.iter().all(|&v| v <= 0.0) {
         return None;
     }
     let mid = y0 + h * 0.5;
     let max_half = h * 0.46;
-    let mut top = String::new();
+    let last = cols.len() - 1;
+    let mut top = Vec::with_capacity(cols.len() * 2);
     let mut bottom = Vec::with_capacity(cols.len());
     for (i, &v) in cols.iter().enumerate() {
-        let x = w * (i as f64 / (cols.len() - 1) as f64);
-        let half = max_half * (v as f64).clamp(0.0, 1.0);
-        if i > 0 {
-            top.push(' ');
-        }
-        top.push_str(&format!("{x:.1},{:.1}", mid - half));
-        bottom.push(format!("{x:.1},{:.1}", mid + half));
+        let x = w * (i as f64 / last as f64);
+        let half = max_half * f64::from(v).clamp(0.0, 1.0);
+        top.push((x, mid - half));
+        bottom.push((x, mid + half));
     }
     bottom.reverse();
-    Some(format!("{top} {}", bottom.join(" ")))
+    top.extend(bottom);
+    Some(top)
 }
 
 #[cfg(test)]

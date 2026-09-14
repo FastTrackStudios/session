@@ -263,7 +263,7 @@ pub fn stack_markup(
                             // r[impl drums.lanes.summed]
                             if let Some(w) = lane.waveform.as_ref() {
                                 polygon {
-                                    points: "{w}",
+                                    points: "{super::geometry::points_attr(w)}",
                                     fill: lane.role_color.unwrap_or(theme::PEAKS),
                                     opacity: if lane.active { "0.5" } else { "0.32" },
                                 }
@@ -278,7 +278,7 @@ pub fn stack_markup(
                             for (i, o) in lane.overlays.iter().enumerate() {
                                 polygon {
                                     key: "ov{i}",
-                                    points: "{o}",
+                                    points: "{super::geometry::points_attr(o)}",
                                     fill: "none",
                                     stroke: lane.role_color.unwrap_or(theme::PEAKS),
                                     stroke_width: "1",
@@ -290,7 +290,7 @@ pub fn stack_markup(
                                 for (i, o) in s.overlays.iter().enumerate() {
                                     polygon {
                                         key: "so{i}",
-                                        points: "{o}",
+                                        points: "{super::geometry::points_attr(o)}",
                                         fill: "none",
                                         stroke: lane.role_color.unwrap_or(theme::PEAKS),
                                         stroke_width: "1",
@@ -299,7 +299,7 @@ pub fn stack_markup(
                                 }
                                 if let Some(p) = s.points.as_ref() {
                                     polygon {
-                                        points: "{p}",
+                                        points: "{super::geometry::points_attr(p)}",
                                         fill: lane.role_color.unwrap_or(theme::PEAKS),
                                         opacity: if s.faded { "0.10" } else { "0.32" },
                                     }

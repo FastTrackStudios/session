@@ -22,8 +22,10 @@ pub mod demo;
 pub mod guitar;
 pub mod interaction;
 pub mod keys;
+pub mod num;
 pub mod paint;
 pub mod scroll;
+pub mod stack;
 pub mod text;
 pub mod theme;
 

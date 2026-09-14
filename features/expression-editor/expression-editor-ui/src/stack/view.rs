@@ -370,6 +370,7 @@ pub fn StackView(
             stack_w,
             stack_h,
             &mut labels.borrow_mut(),
+            &crate::paint::Look::default(),
         ));
         String::new()
     };

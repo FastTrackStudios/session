@@ -719,3 +719,219 @@ pub fn editor(scene: Scene, viewport: Viewport) -> Editor {
 pub fn default_viewport() -> Viewport {
     Viewport::new(1100.0, 560.0)
 }
+
+/// A tracked kit as the audio drum workflow sees it: one track per mic,
+/// each with its peaks and its detected hits, folded into the kick,
+/// snare, toms and other lanes.
+///
+/// Synthesised rather than analysed, so the stack can be exercised and
+/// benchmarked with no session on disk: `bars` of a 120 bpm groove —
+/// kick on the ones and threes with pushes, snare on the twos and
+/// fours with ghosts, hats in sixteenths, a tom fill every fourth bar,
+/// a crash every eighth — each mic's peaks the sum of its own drum's
+/// decays and the bleed of the others, and every hit a slice note.
+/// Sixteenth hats alone are sixteen a bar; at two hundred bars that is
+/// the "ton of hits" the markers thin themselves for.
+#[must_use]
+pub fn audio_kit(bars: usize, viewport: Viewport) -> Editor {
+    use expression_editor_core::Mode;
+
+    let groove = Groove::play(bars);
+    let mut mics = groove.mics().into_iter();
+    let Some((name, role, doc)) = mics.next() else {
+        return Editor::new(
+            ExpressionDoc::new(TimeBase::Frames { frame_rate: Groove::RATE }, 0.0, 1.0),
+            viewport,
+        );
+    };
+    let mut editor = Editor::new(doc, viewport);
+    editor.bpm = Groove::BPM;
+    editor.set_mode(Mode::UnpitchedAudio);
+    let mut roles = vec![(String::from("kit-0"), role)];
+    if let Some(t) = editor.tracks.track_mut(0) {
+        t.guid = "kit-0".into();
+        t.name = name.into();
+        t.folder = Some("Drums".into());
+    }
+    for (k, (name, role, doc)) in mics.enumerate() {
+        let guid = format!("kit-{}", k.saturating_add(1));
+        let i = editor.add_track_with_guid(guid.clone(), name, doc);
+        if let Some(t) = editor.tracks.track_mut(i) {
+            t.set_mode(Mode::UnpitchedAudio);
+            t.folder = Some("Drums".into());
+        }
+        roles.push((guid, role));
+    }
+    editor.tracks.fold_roles(&roles);
+    editor.stacked = true;
+    editor.reset_view();
+    editor
+}
+
+/// Hits per drum, in seconds and velocity.
+type Hits = Vec<(f64, f64)>;
+
+/// The synthetic groove behind [`audio_kit`]: what each drum played.
+struct Groove {
+    bars: usize,
+    secs: f64,
+    kick: Hits,
+    snare: Hits,
+    hat: Hits,
+    toms: [Hits; 3],
+    crash: Hits,
+}
+
+impl Groove {
+    /// Analysis frames per second — the document's time unit.
+    const RATE: f64 = 100.0;
+    /// Peaks per second.
+    const PEAKS_PER_SEC: f64 = 200.0;
+    const BPM: f64 = 120.0;
+    const BEAT: f64 = 60.0 / Self::BPM;
+
+    fn play(bars: usize) -> Self {
+        let beat = Self::BEAT;
+        // A deterministic wobble, so the same bars come out the same.
+        let mut seed = 0x2545_F491u32;
+        let mut wobble = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            f64::from(seed % 1000) / 1000.0
+        };
+        let mut g = Self {
+            bars,
+            secs: crate::num::coord(bars).mul_add(4.0 * beat, 2.0),
+            kick: Vec::new(),
+            snare: Vec::new(),
+            hat: Vec::new(),
+            toms: [Vec::new(), Vec::new(), Vec::new()],
+            crash: Vec::new(),
+        };
+        for bar in 0..bars {
+            let b0 = crate::num::coord(bar) * 4.0 * beat;
+            g.kick.push((b0, wobble().mul_add(0.05, 0.95)));
+            g.kick.push((2.0f64.mul_add(beat, b0), wobble().mul_add(0.08, 0.9)));
+            if bar % 2 == 1 {
+                g.kick.push((3.5f64.mul_add(beat, b0), wobble().mul_add(0.1, 0.7)));
+            }
+            g.snare.push((b0 + beat, wobble().mul_add(0.06, 0.92)));
+            g.snare.push((3.0f64.mul_add(beat, b0), wobble().mul_add(0.08, 0.9)));
+            if bar % 4 == 2 {
+                g.snare.push((1.75f64.mul_add(beat, b0), wobble().mul_add(0.1, 0.25)));
+            }
+            for i in 0..16u8 {
+                let accent = if i % 4 == 0 { 0.8 } else { 0.45 };
+                g.hat.push((
+                    f64::from(i).mul_add(beat * 0.25, b0),
+                    wobble().mul_add(0.15, accent),
+                ));
+            }
+            if bar % 4 == 3 {
+                // A fill down the toms over the last beat.
+                for (i, tom) in g.toms.iter_mut().enumerate() {
+                    let at = crate::num::coord(i).mul_add(beat / 3.0, 3.0f64.mul_add(beat, b0));
+                    tom.push((at, wobble().mul_add(0.1, 0.85)));
+                    tom.push((at + beat / 6.0, wobble().mul_add(0.1, 0.6)));
+                }
+            }
+            if bar % 8 == 0 {
+                g.crash.push((b0, 1.0));
+            }
+        }
+        g
+    }
+
+    /// Peaks: each hit a decaying spike, summed into a mic's buffer.
+    /// `sources` is `(hits, gain, decay seconds)` per drum the mic hears.
+    fn render(&self, sources: &[(&Hits, f64, f64)]) -> Vec<f32> {
+        let n_peaks = crate::num::index(self.secs * Self::PEAKS_PER_SEC);
+        let mut out = vec![0.0f32; n_peaks];
+        for (hits, gain, decay) in sources {
+            for &(at, vel) in *hits {
+                let i0 = crate::num::index(at * Self::PEAKS_PER_SEC);
+                let len = crate::num::index(decay * 4.0 * Self::PEAKS_PER_SEC);
+                for k in 0..len {
+                    let Some(slot) = out.get_mut(i0.saturating_add(k)) else {
+                        break;
+                    };
+                    let t = crate::num::coord(k) / Self::PEAKS_PER_SEC;
+                    let env = (-t / decay).exp() * vel * gain;
+                    *slot = slot.max(crate::num::sample(env));
+                }
+            }
+        }
+        out
+    }
+
+    /// A mic's document: its peaks, its hits as slice notes, and the
+    /// host's tempo map — a bar line every four beats, and the song's
+    /// shape as regions and marks.
+    fn doc(&self, hits: &Hits, peaks: Vec<f32>) -> ExpressionDoc {
+        let rate = Self::RATE;
+        let bar_units = 4.0 * Self::BEAT * rate;
+        let mut doc = ExpressionDoc::new(TimeBase::Frames { frame_rate: rate }, 0.0, self.secs * rate);
+        doc.peaks = peaks;
+        doc.bars = (0..=self.bars).map(|b| crate::num::coord(b) * bar_units).collect();
+        for (i, start) in (0..self.bars).step_by(8).enumerate() {
+            let t0 = crate::num::coord(start) * bar_units;
+            let t1 = crate::num::coord(start.saturating_add(8).min(self.bars)) * bar_units;
+            let number = (i / 2).saturating_add(1);
+            let (label, color) = if i % 2 == 0 {
+                (format!("Verse {number}"), "#3f5f8f")
+            } else {
+                (format!("Chorus {number}"), "#8f3f4f")
+            };
+            doc.regions.push(expression_editor_core::doc::Region {
+                start: t0,
+                end: t1,
+                label,
+                color: Some(color.into()),
+                lane: Some((1, "SECTIONS".into())),
+            });
+        }
+        doc.markers.push(Marker {
+            t: 0.0,
+            label: Some("SONGSTART".into()),
+            color: None,
+            lane: Some((2, "MARKS".into())),
+        });
+        for (i, &(at, vel)) in hits.iter().enumerate() {
+            let end = hits
+                .get(i.saturating_add(1))
+                .map_or(self.secs, |&(next, _)| next)
+                .min(at + 2.0);
+            let id = NoteId(u64::try_from(i).unwrap_or(u64::MAX).saturating_add(1));
+            let mut n = Note::new(id, at * rate, end * rate, 1);
+            n.velocity = vel;
+            doc.push(n);
+        }
+        doc
+    }
+
+    /// Every mic of the kit, with what it hears.
+    fn mics(&self) -> Vec<(&'static str, expression_editor_core::kit::LaneRole, ExpressionDoc)> {
+        use expression_editor_core::kit::LaneRole as R;
+        let (k, s, h, c) = (&self.kick, &self.snare, &self.hat, &self.crash);
+        let [t1, t2, t3] = [&self.toms[0], &self.toms[1], &self.toms[2]];
+        let none: Hits = Vec::new();
+        let mic = |name, role, hits: &Hits, sources: &[(&Hits, f64, f64)]| {
+            (name, role, self.doc(hits, self.render(sources)))
+        };
+        vec![
+            mic("Kick In", R::Kick, k, &[(k, 1.0, 0.12), (s, 0.12, 0.1)]),
+            mic("Kick Out", R::Kick, k, &[(k, 0.8, 0.25), (t3, 0.2, 0.3)]),
+            mic("Kick Trig", R::Kick, k, &[(k, 1.0, 0.03)]),
+            mic("Snare Top", R::Snare, s, &[(s, 1.0, 0.15), (h, 0.18, 0.04), (k, 0.1, 0.1)]),
+            mic("Snare Bottom", R::Snare, s, &[(s, 0.9, 0.2), (k, 0.15, 0.1)]),
+            mic("Tom 1", R::Toms, t1, &[(t1, 1.0, 0.3), (s, 0.2, 0.1)]),
+            mic("Tom 2", R::Toms, t2, &[(t2, 1.0, 0.35), (s, 0.15, 0.1)]),
+            mic("Floor Tom", R::Toms, t3, &[(t3, 1.0, 0.45), (k, 0.2, 0.15)]),
+            mic("HH", R::Other, h, &[(h, 0.9, 0.05), (s, 0.3, 0.1)]),
+            mic("OH L", R::Other, &none, &[(h, 0.5, 0.08), (c, 1.0, 1.2), (s, 0.5, 0.15), (k, 0.3, 0.1)]),
+            mic("OH R", R::Other, &none, &[(h, 0.4, 0.08), (c, 0.9, 1.3), (s, 0.5, 0.15), (t1, 0.4, 0.3)]),
+            mic("Room", R::Other, &none, &[(k, 0.5, 0.3), (s, 0.6, 0.35), (c, 0.6, 1.5), (h, 0.2, 0.1)]),
+        ]
+    }
+}

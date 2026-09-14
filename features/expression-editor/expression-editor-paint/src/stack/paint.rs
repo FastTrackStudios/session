@@ -10,7 +10,7 @@
 //! cost 2.6 ms. The elements were the cost, never the drawing.
 //!
 //! So this is the same port [`crate::paint`] made for the roll and
-//! [`crate::lane_strip`] made for the strip, applied to the densest
+//! the strip painter made for the strip, applied to the densest
 //! surface of the three. The geometry is untouched: `super::geometry`
 //! still decides where everything goes, `super::view` still owns the
 //! gestures, and this only turns the resulting numbers into paint.
@@ -32,9 +32,8 @@ use peniko::{Color, Fill};
 
 use super::geometry::LaneView;
 use crate::canvas::{self, Tick};
-use crate::paint::{Batch, color, polygon, stroke_of, with_alpha};
+use crate::paint::{Batch, Look, color, stroke_of, with_alpha};
 use crate::text::{Align, Labeller};
-use crate::theme;
 
 /// The ruler's furniture and the lane-independent layers, as
 /// `super::view` already resolved them.
@@ -75,6 +74,7 @@ pub fn stack_scene(
     w: f64,
     h: f64,
     labels: &mut Labeller,
+    look: &Look,
 ) -> Scene {
     let mut scene = Scene::new();
     let ruler_h = chrome.ruler_h;
@@ -90,19 +90,19 @@ pub fn stack_scene(
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        color(theme::GUTTER_BG),
+        look.gutter_bg,
         None,
         &Rect::new(0.0, 0.0, w, h),
     );
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        color(theme::SURFACE_BAR),
+        look.surface_bar,
         None,
         &Rect::new(0.0, 0.0, w, ruler_h),
     );
 
-    ruler(&mut scene, chrome, across, labels);
+    ruler(&mut scene, look, chrome, across, labels);
     // Lane by lane, ground then content — the SVG's own order, restored.
     //
     // It was briefly three passes (every ground, then one shared
@@ -118,18 +118,34 @@ pub fn stack_scene(
     // everything drawn before it (the ruler's section band vanished).
     // Paint order is the clip, so paint in order.
     for lane in lanes {
-        lane_ground(&mut scene, lane, w, down);
-        timebase(&mut scene, lane, chrome, lane_space);
-        lane_material(&mut scene, lane, chrome, w, gutter, down, lane_space, labels);
+        lane_ground(&mut scene, look, lane, w, down);
+        timebase(&mut scene, look, lane, chrome, lane_space);
+        lane_material(&mut scene, look, lane, chrome, w, gutter, down, lane_space, labels);
     }
-    mic_menu(&mut scene, lanes, chrome, down, labels);
+    mic_menu(&mut scene, look, lanes, chrome, down, labels);
 
     scene
 }
 
+/// A lane polygon as a closed path.
+fn polygon(points: &[(f64, f64)]) -> kurbo::BezPath {
+    let mut path = kurbo::BezPath::new();
+    for (i, &(x, y)) in points.iter().enumerate() {
+        if i == 0 {
+            path.move_to((x, y));
+        } else {
+            path.line_to((x, y));
+        }
+    }
+    if !path.is_empty() {
+        path.close_path();
+    }
+    path
+}
+
 /// The section strip, the marker shelves, the shelf names and the bar
 /// ticks — the top of the stack, in gutter-relative space.
-fn ruler(scene: &mut Scene, chrome: &StackChrome<'_>, at: Affine, labels: &mut Labeller) {
+fn ruler(scene: &mut Scene, look: &Look, chrome: &StackChrome<'_>, at: Affine, labels: &mut Labeller) {
     let row_h = chrome.chrome_row_h;
 
     // The section strip: the song's own map — INTRO, VS 1, CH 1 — in the
@@ -146,7 +162,7 @@ fn ruler(scene: &mut Scene, chrome: &StackChrome<'_>, at: Affine, labels: &mut L
         scene.stroke(
             &stroke_of(1.0),
             at,
-            color(theme::GUTTER_BG),
+            look.gutter_bg,
             None,
             &kurbo::Line::new((*x0, top), (*x0, top + row_h)),
         );
@@ -185,7 +201,7 @@ fn ruler(scene: &mut Scene, chrome: &StackChrome<'_>, at: Affine, labels: &mut L
             2.0,
             (i + 1) as f64 * row_h - 2.0,
             7.0,
-            with_alpha(color(theme::TEXT_DIM), 0.7),
+            with_alpha(look.text_dim, 0.7),
             at,
         );
     }
@@ -194,9 +210,9 @@ fn ruler(scene: &mut Scene, chrome: &StackChrome<'_>, at: Affine, labels: &mut L
     // one. Gathered by paint: there are only two colours between them.
     let mut ticks = Batch::default();
     for t in chrome.ticks {
-        let ink = if t.bar { theme::TEXT_DIM } else { theme::TEXT_FAINT };
+        let ink = if t.bar { look.text_dim } else { look.text_faint };
         let top = chrome.ruler_h - if t.bar { 10.0 } else { 5.0 };
-        ticks.add(color(ink), &kurbo::Line::new((t.x, top), (t.x, chrome.ruler_h)));
+        ticks.add(ink, &kurbo::Line::new((t.x, top), (t.x, chrome.ruler_h)));
     }
     ticks.stroke(scene, at, 1.0);
     for t in chrome.ticks {
@@ -208,7 +224,7 @@ fn ruler(scene: &mut Scene, chrome: &StackChrome<'_>, at: Affine, labels: &mut L
                 t.x + 3.0,
                 chrome.ruler_h - 4.0,
                 8.0,
-                color(theme::TEXT_DIM),
+                look.text_dim,
                 at,
             );
         }
@@ -217,26 +233,22 @@ fn ruler(scene: &mut Scene, chrome: &StackChrome<'_>, at: Affine, labels: &mut L
 
 /// A lane's ground: its band, the rule along its top, and the armed
 /// rail down its gutter edge.
-fn lane_ground(scene: &mut Scene, lane: &LaneView, w: f64, at: Affine) {
+fn lane_ground(scene: &mut Scene, look: &Look, lane: &LaneView, w: f64, at: Affine) {
     // A lane's own background, so the active one reads as the foreground
     // even when a neighbour is busier. Opaque, which is also what clips
     // the previous lane's overflow — see `stack_scene`.
-    let ink = if lane.active {
-        theme::ROW_WHITE
-    } else {
-        theme::ROW_BLACK
-    };
+    let ink = if lane.active { look.row_a } else { look.row_b };
     scene.fill(
         Fill::NonZero,
         at,
-        color(ink),
+        ink,
         None,
         &Rect::new(0.0, lane.y, w, lane.y + lane.h),
     );
     scene.stroke(
         &stroke_of(1.0),
         at,
-        color(theme::OCTAVE_LINE),
+        look.octave_line,
         None,
         &kurbo::Line::new((0.0, lane.y), (w, lane.y)),
     );
@@ -244,11 +256,11 @@ fn lane_ground(scene: &mut Scene, lane: &LaneView, w: f64, at: Affine) {
     // of the lane you are editing — a console's channel-select, not a
     // second highlight fighting the hits.
     if lane.active {
-        let accent = lane.role_color.unwrap_or(theme::ACCENT);
+        let accent = lane.role_color.map_or(look.accent, color);
         scene.fill(
             Fill::NonZero,
             at,
-            color(accent),
+            accent,
             None,
             &Rect::new(0.0, lane.y, 3.0, lane.y + lane.h),
         );
@@ -258,13 +270,13 @@ fn lane_ground(scene: &mut Scene, lane: &LaneView, w: f64, at: Affine) {
 /// The beat grid, section boundaries, fill washes and markers across
 /// this lane — under its audio, because reading a hit's distance from
 /// the beat is the whole job.
-fn timebase(scene: &mut Scene, lane: &LaneView, chrome: &StackChrome<'_>, at: Affine) {
+fn timebase(scene: &mut Scene, look: &Look, lane: &LaneView, chrome: &StackChrome<'_>, at: Affine) {
     let (top, bottom) = (lane.y, lane.y + lane.h);
 
     let mut grid = Batch::default();
     for t in chrome.ticks {
-        let ink = if t.bar { theme::GRID_BEAT } else { theme::GRID_SUB };
-        grid.add(color(ink), &kurbo::Line::new((t.x, top), (t.x, bottom)));
+        let ink = if t.bar { look.grid_beat } else { look.grid_sub };
+        grid.add(ink, &kurbo::Line::new((t.x, top), (t.x, bottom)));
     }
     // Section boundaries and markers carry down through the material,
     // faintly, in their own colours — the ruler says where you are,
@@ -288,7 +300,7 @@ fn timebase(scene: &mut Scene, lane: &LaneView, chrome: &StackChrome<'_>, at: Af
     //
     // A wash rather than an outline: a fill is a *region* of the take,
     // and the hits inside it still have to read as hits.
-    let wash = with_alpha(color(theme::TEXT_DIM), 0.10);
+    let wash = with_alpha(look.text_dim, 0.10);
     let mut fills = Batch::default();
     for (x0, x1) in chrome.fill_bands {
         fills.add(wash, &Rect::new(*x0, top, x0 + (x1 - x0).max(0.0), bottom));
@@ -301,6 +313,7 @@ fn timebase(scene: &mut Scene, lane: &LaneView, chrome: &StackChrome<'_>, at: Af
 #[allow(clippy::too_many_arguments)]
 fn lane_material(
     scene: &mut Scene,
+    look: &Look,
     lane: &LaneView,
     chrome: &StackChrome<'_>,
     w: f64,
@@ -311,7 +324,7 @@ fn lane_material(
 ) {
     let lane_w = w - gutter;
     {
-        let hue = color(lane.role_color.unwrap_or(theme::PEAKS));
+        let hue = lane.role_color.map_or(look.peaks, color);
 
         // r[impl drums.lanes.summed]
         //
@@ -351,14 +364,14 @@ fn lane_material(
         let mut dividers = Batch::default();
         for d in &lane.dividers {
             dividers.add(
-                color(theme::GRID_SUB),
+                look.grid_sub,
                 &kurbo::Line::new((0.0, *d), (lane_w, *d)),
             );
         }
         dividers.stroke(scene, at, 1.0);
 
-        hits(scene, lane, chrome, lane_w, at, labels);
-        lane_labels(scene, lane, chrome, down, labels);
+        hits(scene, look, lane, chrome, lane_w, at, labels);
+        lane_labels(scene, look, lane, chrome, down, labels);
     }
 }
 
@@ -369,6 +382,7 @@ fn lane_material(
 /// r[impl drums.lanes.hits]
 fn hits(
     scene: &mut Scene,
+    look: &Look,
     lane: &LaneView,
     chrome: &StackChrome<'_>,
     lane_w: f64,
@@ -438,7 +452,7 @@ fn hits(
     flags.fill(scene, at);
     slashes.stroke(scene, at, 1.0);
     for (x, y) in flams {
-        text(scene, labels, "fl", x, y, 7.0, color(theme::TEXT_DIM), at);
+        text(scene, labels, "fl", x, y, 7.0, look.text_dim, at);
     }
 }
 
@@ -446,6 +460,7 @@ fn hits(
 /// than under it.
 fn lane_labels(
     scene: &mut Scene,
+    look: &Look,
     lane: &LaneView,
     chrome: &StackChrome<'_>,
     at: Affine,
@@ -454,11 +469,10 @@ fn lane_labels(
     if lane.is_role {
         // A role lane's name is an eyebrow — small caps, spaced, quiet —
         // because the label is furniture and the audio is the content.
-        let ink = color(lane.role_color.unwrap_or(if lane.active {
-            theme::TEXT_BRIGHT
-        } else {
-            theme::TEXT_DIM
-        }));
+        let ink = lane.role_color.map_or(
+            if lane.active { look.text_bright } else { look.text_dim },
+            color,
+        );
         let ink = if lane.active { ink } else { with_alpha(ink, 0.75) };
         text(
             scene,
@@ -481,8 +495,8 @@ fn lane_labels(
                 top + chrome.mic_item_h - 2.0,
                 2.0,
             );
-            scene.fill(Fill::NonZero, at, color(theme::SURFACE_BAR), None, &chip);
-            scene.stroke(&stroke_of(1.0), at, color(theme::PANEL_BORDER), None, &chip);
+            scene.fill(Fill::NonZero, at, look.surface_bar, None, &chip);
+            scene.stroke(&stroke_of(1.0), at, look.panel_border, None, &chip);
             let name = lane
                 .members
                 .iter()
@@ -502,24 +516,20 @@ fn lane_labels(
                 8.0,
                 top + 10.0,
                 8.0,
-                color(theme::TEXT),
+                look.text,
                 at,
             );
         }
     } else {
-        let ink = if lane.active {
-            theme::TEXT
-        } else {
-            theme::TEXT_DIM
-        };
-        text(scene, labels, &lane.name, 4.0, lane.y + 11.0, 9.0, color(ink), at);
+        let ink = if lane.active { look.text } else { look.text_dim };
+        text(scene, labels, &lane.name, 4.0, lane.y + 11.0, 9.0, ink, at);
     }
 
     // Each tom's name at its own sub-row, indented clear of the role
     // eyebrow, which owns the first ~60px of the lane's top row.
     // r[impl drums.lanes.toms-split]
     for s in &lane.sub_lanes {
-        let ink = color(theme::TEXT_DIM);
+        let ink = look.text_dim;
         let ink = if s.faded { with_alpha(ink, 0.5) } else { ink };
         text(scene, labels, &s.label, 64.0, s.label_y, 8.0, ink, at);
     }
@@ -536,7 +546,7 @@ fn lane_labels(
             canvas::GUTTER_W - 12.0,
             lane.y + 11.0,
             8.0,
-            color(theme::TEXT_DIM),
+            look.text_dim,
             at,
         );
     }
@@ -548,6 +558,7 @@ fn lane_labels(
 /// for the item above it.
 fn mic_menu(
     scene: &mut Scene,
+    look: &Look,
     lanes: &[LaneView],
     chrome: &StackChrome<'_>,
     at: Affine,
@@ -565,8 +576,8 @@ fn mic_menu(
         top - 2.0 + (lane.members.len() + 1) as f64 * chrome.mic_item_h + 4.0,
         3.0,
     );
-    scene.fill(Fill::NonZero, at, color(theme::PANEL), None, &panel);
-    scene.stroke(&stroke_of(1.0), at, color(theme::BORDER_STRONG), None, &panel);
+    scene.fill(Fill::NonZero, at, look.panel, None, &panel);
+    scene.stroke(&stroke_of(1.0), at, look.border_strong, None, &panel);
 
     for (i, (_, name, active)) in lane.members.iter().enumerate() {
         let y = top + i as f64 * chrome.mic_item_h;
@@ -574,13 +585,13 @@ fn mic_menu(
             scene.fill(
                 Fill::NonZero,
                 at,
-                color(theme::CONTROL_SELECTED),
+                look.control_selected,
                 None,
                 &Rect::new(5.0, y, 3.0 + chrome.mic_menu_w, y + chrome.mic_item_h),
             );
         }
-        let ink = if *active { theme::TEXT_BRIGHT } else { theme::TEXT };
-        text(scene, labels, name, 12.0, y + 11.0, 9.0, color(ink), at);
+        let ink = if *active { look.text_bright } else { look.text };
+        text(scene, labels, name, 12.0, y + 11.0, 9.0, ink, at);
     }
 
     // The footer: draw only this mic's waveform, instead of the members'
@@ -589,16 +600,16 @@ fn mic_menu(
     scene.stroke(
         &stroke_of(1.0),
         at,
-        color(theme::PANEL_BORDER),
+        look.panel_border,
         None,
         &kurbo::Line::new((5.0, sy), (2.0 + chrome.mic_menu_w, sy)),
     );
     let (mark, ink) = if lane.solo_mic {
-        ("✓ solo this mic", theme::TEXT_BRIGHT)
+        ("✓ solo this mic", look.text_bright)
     } else {
-        ("solo this mic", theme::TEXT_DIM)
+        ("solo this mic", look.text_dim)
     };
-    text(scene, labels, mark, 12.0, sy + 11.0, 9.0, color(ink), at);
+    text(scene, labels, mark, 12.0, sy + 11.0, 9.0, ink, at);
 }
 
 /// SVG's `letter-spacing: 2` on the role eyebrow, which the shaper has
