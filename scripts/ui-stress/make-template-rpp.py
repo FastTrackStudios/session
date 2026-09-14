@@ -276,6 +276,9 @@ TREE = [
         [
             node("Steel", ACOUSTIC, send="ACOUSTIC BUS"),
             node("Nylon", ACOUSTIC, send="ACOUSTIC BUS"),
+            # High-strung, doubling the steel an octave up: a layer,
+            # not a second guitar, so it sits with the steel it doubles.
+            node("Nashville", ACOUSTIC, send="ACOUSTIC BUS"),
         ],
         no_parent=True,
         group=vca_lead(2),

@@ -57,8 +57,9 @@ fixed tree.
       dead end that meters the electrics after their bus, and is the
       **VCA lead of ELECTRIC BUS** (group 1, with mute and solo): the
       folder's fader is the electrics' fader. No VCA track.
-- [x] **Acoustic/** Steel, Nylon → **ACOUSTIC BUS**, which returns to the
-      Acoustic folder the same way (group 2).
+- [x] **Acoustic/** Steel, Nylon, Nashville (the high-strung layer over
+      the steel) → **ACOUSTIC BUS**, which returns to the Acoustic folder
+      the same way (group 2).
 - [ ] Per-part amp/DI pairs when both were captured (a part folder of
       two mics is the one case a Sum is right).
 
