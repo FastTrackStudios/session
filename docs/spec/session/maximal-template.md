@@ -76,7 +76,11 @@ fixed tree.
 ### Keys — `Keys/`, Synths — `Synths/`
 
 - [x] Keys: Piano (a stereo track), Rhodes, Organ → **KEYS BUS**.
+- [ ] Keys: **Wurli** beside the Rhodes (`flow.keys.parts`).
 - [x] Synths: Pad, Lead Synth, Arp → **KEYS BUS**.
+- [ ] Synths sorted by family — **SY Arps, SY Pads, SY Leads, SY
+      Chords** — with two general synth tracks beside them
+      (`flow.synths.families`, `flow.synths.golden`).
 - [x] Colours, in session order and hue order: electrics blue,
       acoustics seafoam, keys green, synths lime.
 - [ ] Clav, strings and pads as the song has them.

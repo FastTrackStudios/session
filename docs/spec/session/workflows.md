@@ -27,7 +27,8 @@ and quantize specs.
 | Bass | [ ] full · [ ] overview · [ ] folder preview | [ ] on the track | [ ] | [ ] later | |
 | Guitars (electric and acoustic) | [ ] full · [ ] overview · [ ] grow | [ ] folder items | [ ] edit scene · [ ] doubles aligned | [x] buses/VCA · [ ] layers collapsed · [ ] balance scene · [ ] source defaults | [ ] golden shapes · [ ] same at every depth · [ ] acoustics |
 | Vocals | [ ] by performer | [ ] lanes · [ ] parts as folder items | [ ] doubles aligned | [x] lead vocal scenes | [ ] language dimension · [ ] active language · [ ] render per language · [ ] leads · [ ] bgv parts · [ ] choir · [ ] tuning · [ ] automation · [ ] golden |
-| Keys | [ ] record MIDI | [ ] | [x] MIDI in the editor | [ ] | |
+| Keys | [ ] record MIDI | [ ] | [x] MIDI in the editor | [ ] | [ ] parts |
+| Synths | [ ] | [ ] | [ ] | [ ] | [ ] families · [ ] golden |
 | Orchestra | [ ] | [ ] | [ ] | [ ] | [ ] sections · [ ] golden · later spec |
 
 ## Views a flow is done in
@@ -686,6 +687,13 @@ picture — are expanded in a later spec; nothing here forecloses them.
 
 ## Keys
 
+r[flow.keys.parts]
+`Keys/` holds the keyboards as parts — the golden session's are
+**Piano, Rhodes, Wurli, Organ** — each a track or, where it was
+captured in several ways (a Rhodes DI and its amp, a piano's close
+pair and room), a part folded by the same dimensions as a guitar part.
+Piano is a stereo track. Keys reach the mix by KEYS BUS.
+
 r[flow.keys.midi-editing]
 A MIDI part is edited in the expression editor: the roll and the
 velocity strip, notes drawn, moved, trimmed and deleted, velocity set,
@@ -700,6 +708,23 @@ arrangement as it is played.
 r[flow.keys.comping]
 MIDI takes comp on take lanes like audio takes, and a comp of a MIDI
 part is one MIDI item.
+
+## Synths
+
+r[flow.synths.families]
+`Synths/` is sorted by **family**, the template's own (`groups/synths`,
+prefix `SY`): **SY Arps, SY Pads, SY Leads, SY Chords**, each a folder
+over the synth tracks of that kind, with the **general synth tracks**
+that belong to no family beside them at the top of `Synths/`. A
+family is the mixing level; a synth is the tracking and editing
+level, MIDI or audio, and a synth that was printed keeps its MIDI
+under it as a layer.
+
+r[flow.synths.golden]
+The golden session's synths: `Synths / {SY Arps / Arp, SY Pads / Pad,
+SY Leads / Lead Synth, SY Chords / Chord}` and two general synth
+tracks beside them, all to KEYS BUS with the keys, in the lime the
+template gives synths.
 
 ## What proves it
 
