@@ -21,7 +21,7 @@ and quantize specs.
 
 | Instrument | Tracking | Comping | Editing | Mixing | More |
 |---|---|---|---|---|---|
-| Sources | [ ] source editor · [ ] project-level plan · [ ] studio profiles · [ ] session override · [ ] apply | | | | |
+| Patch List | [ ] the view · [ ] project-level list · [ ] studio profiles · [ ] session override · [ ] apply | | | | |
 | Scenes | [ ] by performer in Record · [ ] rig per performer · [ ] headphone mix · [ ] folder record preview | | [ ] by arrangement | [ ] by arrangement | [ ] follow the mode · [ ] every scene renders |
 | Drums (audio) | [x] full · [ ] overview | [ ] folder items | [ ] edit scene · [x] stack · [x] slip/stretch · [x] quantize · [ ] align hits | [x] scenes · [x] balance | [ ] triggering samples |
 | Bass | [ ] full · [ ] overview · [ ] folder preview | [ ] on the track | [ ] | [ ] later | |
@@ -125,55 +125,56 @@ full view, with every track the flow touches, and the player's overview
 number keys recall scenes in the window; the same scenes are recipes
 in the mixer.
 
-## Sources — the input plan
+## Patch List — the input plan
 
 Where every source track's input comes from is planned in one place,
-not set track by track: a **Source Editor** in the session window.
+not set track by track: the **Patch List**, a view of its own in the
+session window — the studio's patch list, kept by the software.
 The plan is not a property of one session — an album is ten sessions
 that have to be tracked the same way — so it lives above the session
 and is applied to each, and each session keeps the copy it was
 tracked with.
 
 r[flow.sources.plan]
-A **source plan** names every input the project records and what it
+The **patch list** names every input the project records and what it
 is for: per performer, their rig (`flow.scenes.performer-rig`) —
 "Cody's guitar rig is DI 3, pedalboard 4, amp A 57 on 5, amp A 121 on
 6 …", "John's guitar rig is …"; per kit, every channel — kick in,
 kick out, kick trigger, snare top … — and per bass, its channels. The
-plan is edited in the **Source Editor**, a view of its own in the
-session window, as a table of source kinds against inputs, grouped
-the way tracking sorts (`flow.scenes.performer-order`).
+plan is edited in the **Patch List** as a table of source kinds
+against inputs, grouped the way tracking sorts
+(`flow.scenes.performer-order`).
 
 r[flow.sources.project-level]
-The plan is saved **with the project — the album — not the session**:
+The patch list is saved **with the project — the album — not the session**:
 a file beside the sessions that every session of the project applies,
 so ten songs are tracked with one setup and a change to the plan
-reaches all of them. Each session also stores the plan it was last
+reaches all of them. Each session also stores the patch list it was last
 applied with, so a session opened on its own, or years later, still
 says where its tracks came from.
 
 r[flow.sources.studio-profiles]
 A **studio profile** is the room: the physical inputs a location has
 and what is patched to them — the patchbay's view of the studio
-(`crates/patchbay`). A plan names inputs by their role in the profile
-("kick in", "DI 3"), and the profile resolves them to the device's
-channels, so the same plan tracks the same album in two rooms with
-two profiles and nothing in the plan changes.
+(`crates/patchbay`). The patch list names inputs by their role in the
+profile ("kick in", "DI 3"), and the profile resolves them to the
+device's channels, so the same patch list tracks the same album in two
+rooms with two profiles and nothing in it changes.
 
 r[flow.sources.session-override]
-A session can **override** the plan for the day — a spare mic on a
+A session can **override** the patch list for the day — a spare mic on a
 different channel, a kit tracked in another room, a performer on a
-different rig — without editing the plan: the override is layered on
-top, marked as such in the Source Editor, and stays with that session
-alone. Removing it returns the session to the plan.
+different rig — without editing the list: the override is layered on
+top, marked as such in the Patch List, and stays with that session
+alone. Removing it returns the session to the list.
 
 r[flow.sources.apply]
-Applying the plan sets **every source track's input** from it: a
+Applying the patch list sets **every source track's input** from it: a
 performer's tracks from their rig by source kind, a kit's channels by
 piece, a bass's by channel — and arms and monitoring follow the same
-grouping. A track the plan has no entry for is listed in the Source
-Editor as unplanned rather than silently left; a plan entry with no
-track is listed as unused. The apply is one undo step.
+grouping. A track the list has no entry for is shown in the Patch
+List as unpatched rather than silently left; an entry with no track
+is shown as unused. The apply is one undo step.
 
 ## Drums — audio
 
