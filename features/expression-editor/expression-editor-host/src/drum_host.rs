@@ -71,6 +71,16 @@ where
     /// lands — detection must run on the audio as it *is*, not as it
     /// loaded. `Arc` so a detect in flight keeps its snapshot.
     sums: Mutex<Vec<(LaneRole, Arc<Vec<f64>>)>>,
+    /// Set when the host was built without its detection signals — a
+    /// cached open, which skips the decode that produces them — and
+    /// cleared by the first detection, which reads the audio then.
+    ///
+    /// Without this a reopened session detected over nothing: no fill
+    /// bands, a quantize panel that found no hits, "protect fills"
+    /// protecting nothing. The decode is paid at the first detection
+    /// instead of at load, so the window still opens from the cache;
+    /// what the cache can never stand in for is the audio itself.
+    signals_pending: std::sync::atomic::AtomicBool,
     manual: Mutex<ManualHits>,
     /// The take's fills, computed on demand and dropped on refresh.
     fills: Mutex<Option<Vec<expression_editor_core::fills::Fill>>>,
@@ -103,11 +113,16 @@ impl<D: DrumDaw> DrumHost<D> {
                     .map(move |s| (role, Arc::new(s)))
             })
             .collect();
+        // Signals are missing rather than absent only when a lane that
+        // detects has none: a kit with no detection source has nothing
+        // to hydrate, and must not decode on every detect looking for it.
+        let pending = sums.is_empty() && lanes.iter().any(|l| l.role.is_detection_source());
         Self {
             daw,
             ctx,
             lanes,
             sums: Mutex::new(sums),
+            signals_pending: std::sync::atomic::AtomicBool::new(pending),
             manual: Mutex::new(ManualHits::default()),
             fills: Mutex::new(None),
             sample_rate,

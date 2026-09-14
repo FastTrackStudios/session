@@ -36,7 +36,8 @@ const VCA_FOLLOW: usize = 22;
 
 /// The writer's output: the maximal session as project text.
 fn template_rpp() -> Result<String> {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../scripts/ui-stress/make-template-rpp.py");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../scripts/ui-stress/make-template-rpp.py");
     let output = Command::new("python3").arg(&script).output()?;
     if !output.status.success() {
         return Err(format!(
@@ -54,11 +55,20 @@ fn template_rpp() -> Result<String> {
 /// track's parsed `GROUP_FLAGS`. Trailing zero fields are omitted by
 /// REAPER and by the writer, so a missing field is an empty set.
 fn groups_in(flags: &[u32], field: usize) -> Vec<u32> {
-    let mask = field.checked_sub(1).and_then(|i| flags.get(i)).copied().unwrap_or(0);
-    (1..=32).filter(|group| mask & (1_u32 << (group - 1)) != 0).collect()
+    let mask = field
+        .checked_sub(1)
+        .and_then(|i| flags.get(i))
+        .copied()
+        .unwrap_or(0);
+    (1..=32)
+        .filter(|group| mask & (1_u32 << (group - 1)) != 0)
+        .collect()
 }
 
-fn group_flags<'a>(project: &'a dawfile_reaper::types::ReaperProject, name: &str) -> Result<&'a [u32]> {
+fn group_flags<'a>(
+    project: &'a dawfile_reaper::types::ReaperProject,
+    name: &str,
+) -> Result<&'a [u32]> {
     let track = project
         .tracks
         .iter()
@@ -74,24 +84,72 @@ fn group_flags<'a>(project: &'a dawfile_reaper::types::ReaperProject, name: &str
 fn the_instrument_folder_is_vca_mute_and_solo_lead_of_its_bus() -> Result<()> {
     let project = dawfile_reaper::io::parse_project_text(&template_rpp()?)?;
 
-    for (folder, bus, group) in [("Electric", "ELECTRIC BUS", 1), ("Acoustic", "ACOUSTIC BUS", 2)] {
+    for (folder, bus, group) in [
+        ("Electric", "ELECTRIC BUS", 1),
+        ("Acoustic", "ACOUSTIC BUS", 2),
+    ] {
         let lead = group_flags(&project, folder)?;
-        assert_eq!(groups_in(lead, VCA_LEAD), [group], "{folder} is the VCA lead of group {group}");
-        assert_eq!(groups_in(lead, MUTE_LEAD), [group], "{folder} is the mute lead of group {group}");
-        assert_eq!(groups_in(lead, SOLO_LEAD), [group], "{folder} is the solo lead of group {group}");
+        assert_eq!(
+            groups_in(lead, VCA_LEAD),
+            [group],
+            "{folder} is the VCA lead of group {group}"
+        );
+        assert_eq!(
+            groups_in(lead, MUTE_LEAD),
+            [group],
+            "{folder} is the mute lead of group {group}"
+        );
+        assert_eq!(
+            groups_in(lead, SOLO_LEAD),
+            [group],
+            "{folder} is the solo lead of group {group}"
+        );
         // What the width-at-5/6 order produced: the folder arming the bus.
-        assert!(groups_in(lead, RECARM_LEAD).is_empty(), "{folder} is not a rec-arm lead");
-        assert!(groups_in(lead, WIDTH_LEAD).is_empty(), "{folder} is not a width lead");
-        for follow in [MUTE_FOLLOW, SOLO_FOLLOW, RECARM_FOLLOW, WIDTH_FOLLOW, VCA_FOLLOW] {
-            assert!(groups_in(lead, follow).is_empty(), "{folder} follows nothing");
+        assert!(
+            groups_in(lead, RECARM_LEAD).is_empty(),
+            "{folder} is not a rec-arm lead"
+        );
+        assert!(
+            groups_in(lead, WIDTH_LEAD).is_empty(),
+            "{folder} is not a width lead"
+        );
+        for follow in [
+            MUTE_FOLLOW,
+            SOLO_FOLLOW,
+            RECARM_FOLLOW,
+            WIDTH_FOLLOW,
+            VCA_FOLLOW,
+        ] {
+            assert!(
+                groups_in(lead, follow).is_empty(),
+                "{folder} follows nothing"
+            );
         }
 
         let follow = group_flags(&project, bus)?;
-        assert_eq!(groups_in(follow, VCA_FOLLOW), [group], "{bus} is the VCA follow of group {group}");
-        assert_eq!(groups_in(follow, MUTE_FOLLOW), [group], "{bus} is the mute follow of group {group}");
-        assert_eq!(groups_in(follow, SOLO_FOLLOW), [group], "{bus} is the solo follow of group {group}");
-        assert!(groups_in(follow, RECARM_FOLLOW).is_empty(), "{bus} is not a rec-arm follow");
-        assert!(groups_in(follow, WIDTH_FOLLOW).is_empty(), "{bus} is not a width follow");
+        assert_eq!(
+            groups_in(follow, VCA_FOLLOW),
+            [group],
+            "{bus} is the VCA follow of group {group}"
+        );
+        assert_eq!(
+            groups_in(follow, MUTE_FOLLOW),
+            [group],
+            "{bus} is the mute follow of group {group}"
+        );
+        assert_eq!(
+            groups_in(follow, SOLO_FOLLOW),
+            [group],
+            "{bus} is the solo follow of group {group}"
+        );
+        assert!(
+            groups_in(follow, RECARM_FOLLOW).is_empty(),
+            "{bus} is not a rec-arm follow"
+        );
+        assert!(
+            groups_in(follow, WIDTH_FOLLOW).is_empty(),
+            "{bus} is not a width follow"
+        );
         for lead in [MUTE_LEAD, SOLO_LEAD, RECARM_LEAD, WIDTH_LEAD, VCA_LEAD] {
             assert!(groups_in(follow, lead).is_empty(), "{bus} leads nothing");
         }
@@ -127,13 +185,27 @@ fn reaper_saved_lines_land_on_the_named_fields() -> Result<()> {
     for field in [MUTE_LEAD, SOLO_LEAD, RECARM_LEAD, WIDTH_LEAD] {
         assert_eq!(groups_in(lead, field), [1], "field {field} is a lead field");
     }
-    for field in [MUTE_FOLLOW, SOLO_FOLLOW, RECARM_FOLLOW, WIDTH_FOLLOW, VCA_LEAD, VCA_FOLLOW] {
-        assert!(groups_in(lead, field).is_empty(), "field {field} is not led by a lead-of-everything");
+    for field in [
+        MUTE_FOLLOW,
+        SOLO_FOLLOW,
+        RECARM_FOLLOW,
+        WIDTH_FOLLOW,
+        VCA_LEAD,
+        VCA_FOLLOW,
+    ] {
+        assert!(
+            groups_in(lead, field).is_empty(),
+            "field {field} is not led by a lead-of-everything"
+        );
     }
 
     let follow = group_flags(&project, "Group 1 follow / 2 lead")?;
     for field in [MUTE_FOLLOW, SOLO_FOLLOW, RECARM_FOLLOW, WIDTH_FOLLOW] {
-        assert_eq!(groups_in(follow, field), [1], "field {field} follows group 1");
+        assert_eq!(
+            groups_in(follow, field),
+            [1],
+            "field {field} follows group 1"
+        );
     }
     for field in [MUTE_LEAD, SOLO_LEAD, RECARM_LEAD, WIDTH_LEAD] {
         assert_eq!(groups_in(follow, field), [2], "field {field} leads group 2");

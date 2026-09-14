@@ -733,3 +733,103 @@ fn an_existing_warp_is_refused_without_replacing_it_or_creating_an_undo_step() {
         "refusal must not insert an undo step above the first warp"
     );
 }
+
+/// A second open, served from the analysis cache, still knows the hits.
+///
+/// The cache exists to skip the decode, so a cached track carries no
+/// samples and its detection signals are empty. Anything derived by
+/// detecting over those signals — fills first among them — has to come
+/// from the hits the cache *does* carry, or every reopen of a drum
+/// session shows no fill bands and "protect fills" protects nothing.
+/// That is what `fills_real` saw across two runs: 55 s and a pass cold,
+/// 3 s and zero fills on every song warm.
+///
+/// Not `open_kit`: that rewrites the fixture, which moves the project's
+/// mtime and invalidates the very cache this is about. And not
+/// `fixture` either: its tracks carry no GUIDs, so the loader mints
+/// fresh ones per open and the cache — keyed by track GUID, as a real
+/// project's are stable — never hits. A kit with the GUIDs written in.
+// r[verify drums.fills.detect]
+#[test]
+fn a_cached_reopen_still_finds_the_kits_hits() {
+    let dir = std::env::temp_dir().join("fts-ee-standalone-drums-cached");
+    std::fs::create_dir_all(&dir).unwrap();
+    let wavs: Vec<PathBuf> = ["kick.wav", "snare.wav", "oh.wav"]
+        .iter()
+        .map(|n| {
+            let p = dir.join(n);
+            write_click_wav(&p, 44_100);
+            p
+        })
+        .collect();
+    let mic = |wav: &Path, guid: &'static str| {
+        let wav = wav.to_string_lossy().into_owned();
+        move |t: dawfile_reaper::builder::TrackBuilder| {
+            t.guid(guid)
+                .item(0.0, 1.0, |i| i.take(wav.clone(), SourceType::Wave))
+                .folder_end(1)
+        }
+    };
+    let rpp = ReaperProjectBuilder::new()
+        .tempo(120.0)
+        .track("Drums", |t| t.folder_start())
+        .track("Kick", |t| t.folder_start())
+        .track(
+            "Kick In",
+            mic(&wavs[0], "{0B4D6E1A-0000-4000-8000-00000000C1C1}"),
+        )
+        .track("Snare", |t| t.folder_start())
+        .track(
+            "Snare Top",
+            mic(&wavs[1], "{0B4D6E1A-0000-4000-8000-00000000C2C2}"),
+        )
+        .track(
+            "OH",
+            mic(&wavs[2], "{0B4D6E1A-0000-4000-8000-00000000C3C3}"),
+        )
+        .build()
+        .to_rpp_string();
+    let path = dir.join("kit.rpp");
+    std::fs::write(&path, rpp).unwrap();
+    let open = || {
+        Runner::open(
+            &Source::Rpp(path.clone()),
+            &Target {
+                drums: Some(None),
+                ..Target::default()
+            },
+            viewport(),
+            None,
+        )
+        .expect("the kit opens")
+    };
+    let hits_of = |runner: &Runner| -> Vec<(f64, LaneRole)> {
+        runner
+            .host
+            .as_ref()
+            .expect("a drum workspace has a host")
+            .role_hits_hybrid()
+    };
+
+    // Cold: decoded, detected, and written beside the project.
+    let cold = hits_of(&open());
+    assert!(!cold.is_empty(), "no hits on a cold open");
+    assert!(
+        path.with_file_name("kit.rpp.fts-analysis").is_dir(),
+        "the open wrote no analysis cache"
+    );
+
+    // Warm: the same project, untouched, so every track is served from
+    // the cache. The clicks are at 0.1, 0.4 and 0.7 s on every mic.
+    let warm = hits_of(&open());
+    assert!(
+        !warm.is_empty(),
+        "a cached open found no hits at all — detection ran over empty signals"
+    );
+    for (at, role) in &warm {
+        assert!(
+            [0.1, 0.4, 0.7].iter().any(|c| (at - c).abs() < 0.03),
+            "{role:?} hit at {at:.3}s is not one of the fixture's clicks"
+        );
+    }
+}
