@@ -212,6 +212,34 @@ TREE = [
         ],
     ),
     (
+        "Keys",
+        0x4F7A8A,
+        [
+            summed("Piano", 0x4F7A8A, ["L", "R"]),
+            ("Rhodes", 0x4F7A8A, []),
+            ("Pad", 0x4F7A8A, []),
+        ],
+    ),
+    # One set of effects for everything that is not drums or a voice —
+    # electric and acoustic guitars, piano, keys, synths, strings if
+    # there are any — the way a mixer's template keeps them: rooms to
+    # sit an instrument in without changing it, plates bright to dark,
+    # halls short to endless, springs for guitars, delays slap to
+    # long, and movement. Every return is a slot: its presets are
+    # takes on the one job.
+    (
+        "Inst FX",
+        0x5C6B7A,
+        [
+            ("Ambience", 0x5C6B7A, [("Short Room", 0x5C6B7A, []), ("Slap Room", 0x5C6B7A, []), ("Early", 0x5C6B7A, [])]),
+            ("Plate", 0x5C6B7A, [("Fat Plate", 0x5C6B7A, []), ("Dark Plate", 0x5C6B7A, []), ("Gold Plate", 0x5C6B7A, [])]),
+            ("Hall", 0x5C6B7A, [("Large Hall", 0x5C6B7A, []), ("Vienna", 0x5C6B7A, []), ("Atmosphere", 0x5C6B7A, [])]),
+            ("Spring", 0x5C6B7A, [("Big Sky", 0x5C6B7A, []), ("XL35", 0x5C6B7A, [])]),
+            ("Delay", 0x5C6B7A, [("Slap", 0x5C6B7A, []), ("Tape", 0x5C6B7A, []), ("Echo Boy", 0x5C6B7A, []), ("Space Echo", 0x5C6B7A, [])]),
+            ("Mod", 0x5C6B7A, [("Chorus", 0x5C6B7A, []), ("Flanger", 0x5C6B7A, [])]),
+        ],
+    ),
+    (
         "Vocals",
         0xB04A6A,
         [

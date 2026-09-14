@@ -212,8 +212,19 @@ impl Role {
             if folder.starts_with("delay") {
                 return Self::Delay;
             }
-            if folder.starts_with("verb") || folder.starts_with("reverb") {
+            if folder.starts_with("verb")
+                || folder.starts_with("reverb")
+                || folder.starts_with("ambience")
+                || folder.starts_with("plate")
+                || folder.starts_with("hall")
+                || folder.starts_with("spring")
+            {
                 return Self::Reverb;
+            }
+            // Movement — chorus, flanger — has no face of its own yet;
+            // the widener's is the nearest picture, and it stands in.
+            if folder.starts_with("mod") || folder.starts_with("chorus") {
+                return Self::Wide;
             }
             if folder.starts_with("pitch") {
                 return Self::Pitch;
@@ -4817,7 +4828,14 @@ pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String
     let presets = match role {
         Role::Reverb => reverb_presets(name),
         Role::Delay => delay_presets(name),
-        Role::Wide => wide_presets(),
+        Role::Wide => {
+            let lower = name.to_lowercase();
+            if lower.contains("chorus") || lower.contains("flang") || lower.contains("dimension") {
+                mod_presets(name)
+            } else {
+                wide_presets()
+            }
+        }
         Role::Pitch => pitch_presets(name),
         Role::Parallel => parallel_presets(name),
         Role::Channel | Role::Bus | Role::Fund | Role::Trig | Role::Dry => Vec::new(),
@@ -4936,9 +4954,38 @@ fn low_cut(hz: f64) -> EqBand {
 /// the rest are the same job done by a different machine.
 fn delay_presets(name: &str) -> Vec<Preset> {
     use DelayStyle as D;
+    let lower = name.to_lowercase();
+    // The instrument bus's delays, by name.
+    if lower.contains("tape") && !lower.contains("throw") {
+        return vec![
+            repeat("Tape 1/16", D::Tape, 187.0, 0.3, 0.25, 0.5, 0.6, vec![low_cut(200.0), shelf(-6.0)]),
+            repeat("Tape 1/8", D::Tape, 375.0, 0.38, 0.22, 0.55, 0.7, vec![low_cut(250.0), shelf(-6.0)]),
+            repeat("Dragged 1/8", D::Tape, 395.0, 0.38, 0.22, 0.55, 0.7, vec![low_cut(250.0), shelf(-6.0)]),
+            repeat("Dark Tape", D::Tape, 375.0, 0.45, 0.2, 0.8, 0.6, vec![low_cut(300.0), shelf(-10.0)]),
+        ];
+    }
+    if lower.contains("echo boy") || lower.contains("echoboy") {
+        return vec![
+            repeat("Memory Man", D::Bbd, 375.0, 0.4, 0.22, 0.55, 0.7, vec![low_cut(200.0), band(1, 1_200.0, 3.0, 1.0, EqBandShape::Bell), shelf(-6.0)]),
+            repeat("Telephone", D::LoFi, 375.0, 0.4, 0.22, 0.6, 0.3, vec![low_cut(600.0), shelf(-12.0)]),
+            repeat("Binson", D::OilCan, 400.0, 0.45, 0.2, 0.6, 0.7, vec![low_cut(250.0), shelf(-6.0)]),
+            repeat("Ping-Pong 1/4", D::MultiTap, 750.0, 0.4, 0.2, 0.4, 1.0, vec![low_cut(250.0)]),
+            repeat("Motion", D::Bbd, 375.0, 0.4, 0.22, 0.5, 1.0, vec![low_cut(200.0), shelf(-4.0)]),
+        ];
+    }
+    if lower.contains("space echo") {
+        return vec![
+            repeat("Space Echo", D::Reverb, 340.0, 0.4, 0.25, 0.55, 0.6, vec![low_cut(200.0), shelf(-6.0)]),
+            repeat("Space Slap", D::Reverb, 130.0, 0.2, 0.25, 0.5, 0.5, vec![low_cut(200.0), shelf(-4.0)]),
+            repeat("Space Spring", D::Reverb, 300.0, 0.55, 0.25, 0.6, 0.7, vec![low_cut(250.0), shelf(-8.0)]),
+        ];
+    }
     match slot_of(name, DELAY_SLOTS) {
         "Slap" => vec![
             repeat("Tape 95", D::Tape, 95.0, 0.08, 0.3, 0.3, 0.2, vec![shelf(-1.0)]),
+            repeat("Slap 15", D::Tape, 15.0, 0.05, 0.35, 0.4, 0.4, vec![shelf(-3.0)]),
+            repeat("Slap 30", D::Tape, 30.0, 0.05, 0.35, 0.4, 0.4, vec![shelf(-3.0)]),
+            repeat("Crowd", D::MultiTap, 45.0, 0.2, 0.3, 0.5, 1.0, vec![low_cut(300.0), shelf(-6.0)]),
             repeat("Rockabilly", D::Tape, 120.0, 0.15, 0.35, 0.4, 0.2, vec![shelf(-2.0)]),
             repeat("Tight", D::Clean, 70.0, 0.02, 0.25, 0.1, 0.1, vec![]),
             repeat("Drum Slap", D::Drum, 110.0, 0.1, 0.3, 0.35, 0.6, vec![low_cut(150.0)]),
@@ -4972,7 +5019,28 @@ fn delay_presets(name: &str) -> Vec<Preset> {
 /// the band's room out of, short and bright down to long and dark,
 /// then the odd ones. Each name is a return in the drum template's
 /// Parallel folder, and each carries a few takes on the same idea.
-const ROOM_NAMES: &[&str] = &["Room Sim", "Wood Room", "Music Club", "Stadium", "RMX 16", "Nonlin", "Brick Wall"];
+const ROOM_NAMES: &[&str] = &[
+    "Room Sim",
+    "Wood Room",
+    "Music Club",
+    "Stadium",
+    "RMX 16",
+    "Nonlin",
+    "Brick Wall",
+    // The instrument bus: rooms, plates, halls and springs for
+    // everything that is not drums or a voice.
+    "Short Room",
+    "Slap Room",
+    "Early",
+    "Fat Plate",
+    "Dark Plate",
+    "Gold Plate",
+    "Large Hall",
+    "Vienna",
+    "Atmosphere",
+    "Big Sky",
+    "XL35",
+];
 
 /// The curated presets for one reverb slot, plainest to most coloured.
 fn reverb_presets(name: &str) -> Vec<Preset> {
@@ -5025,14 +5093,97 @@ fn reverb_presets(name: &str) -> Vec<Preset> {
                 space("Gated", A::NonLinear, 0.6, 0.0, 0.5, 0.3, 0.9, 0.3, vec![low_cut(150.0), shelf(2.0)], vec![]),
                 space("Reverse", A::NonLinear, 1.2, 0.0, 0.7, 0.4, 0.9, 0.3, vec![low_cut(120.0)], vec![]),
             ],
+            // Sits an instrument back into an acoustic space without
+            // changing its sound: no pre-delay, under a second.
+            "Short Room" => vec![
+                space("Sonsig", A::Room, 0.8, 0.0, 0.4, 0.3, 0.8, 0.2, vec![], vec![]),
+                space("Small Studio", A::Room, 0.6, 0.0, 0.3, 0.25, 0.7, 0.2, vec![shelf(1.0)], vec![]),
+                space("D-Verb", A::Hall, 0.9, 0.0, 0.4, 0.4, 0.4, 0.2, vec![shelf(-2.0)], vec![]),
+                space("PCM 60", A::Room, 0.7, 4.0, 0.45, 0.35, 0.8, 0.2, vec![], vec![]),
+            ],
+            // A slap off the walls, a little different left to right —
+            // for live records, in combination with something longer.
+            "Slap Room" => vec![
+                space("Slap Room", A::Reflections, 0.4, 10.0, 0.5, 0.3, 0.4, 0.22, vec![], vec![]),
+                space("Wide Slap", A::Reflections, 0.5, 14.0, 0.6, 0.3, 0.3, 0.22, vec![shelf(1.0)], vec![]),
+                space("Tight Slap", A::Reflections, 0.3, 6.0, 0.35, 0.3, 0.5, 0.22, vec![], vec![]),
+            ],
+            // Early reflections and no tail: a real space that takes
+            // up no space, the source pushed back by the distance.
+            "Early" => vec![
+                space("Cinematic Near", A::Reflections, 0.25, 2.0, 0.5, 0.3, 0.6, 0.3, vec![], vec![]),
+                space("Cinematic Far", A::Reflections, 0.35, 12.0, 0.8, 0.5, 0.6, 0.3, vec![shelf(-6.0)], vec![]),
+                space("Reflective", A::Reflections, 0.3, 4.0, 0.6, 0.1, 0.7, 0.3, vec![shelf(2.0)], vec![]),
+            ],
+            // The 480's fat plate: under two seconds, bright and airy,
+            // the one every tool bag has.
+            "Fat Plate" => vec![
+                space("Fat Plate", A::Plate, 1.9, 10.0, 0.6, 0.15, 1.0, 0.2, vec![shelf(2.0)], vec![]),
+                space("Bright Plate", A::Plate, 1.6, 8.0, 0.5, 0.1, 1.0, 0.2, vec![shelf(3.0)], vec![]),
+                space("Thin Plate", A::Plate, 1.4, 10.0, 0.4, 0.15, 0.9, 0.2, vec![low_cut(300.0), shelf(2.0)], vec![]),
+            ],
+            // The same decay, decaying darker: for a steel-string
+            // acoustic that needs it.
+            "Dark Plate" => vec![
+                space("Lustrous", A::Plate, 1.9, 12.0, 0.6, 0.55, 1.0, 0.2, vec![shelf(-4.0)], dark(2.0, -6.0)),
+                space("Warm Plate", A::Plate, 2.2, 15.0, 0.65, 0.65, 1.0, 0.2, vec![shelf(-6.0)], dark(3.0, -9.0)),
+                space("Velvet Plate", A::Velvet, 1.8, 12.0, 0.6, 0.5, 1.0, 0.2, vec![shelf(-3.0)], vec![]),
+            ],
+            // A different kind of tail — and a decay that can be
+            // darkened band by band without getting shorter.
+            "Gold Plate" => vec![
+                space("Gold Plate", A::Plate, 2.0, 10.0, 0.7, 0.35, 1.0, 0.2, vec![], dark(0.0, -3.0)),
+                space("Tai Chi", A::Bloom, 2.2, 10.0, 0.7, 0.4, 1.0, 0.2, vec![], dark(0.0, -6.0)),
+                space("Tai Chi Air", A::Bloom, 2.2, 10.0, 0.7, 0.2, 1.0, 0.2, vec![shelf(2.0)], dark(0.0, 3.0)),
+            ],
+            // The 480's large hall: three seconds, no pre-delay, the
+            // whole thing set further away.
+            "Large Hall" => vec![
+                space("Large Hall", A::Hall, 3.0, 0.0, 0.8, 0.45, 0.85, 0.18, vec![shelf(-3.0)], dark(2.0, -4.0)),
+                space("Short Hall", A::Hall, 2.0, 0.0, 0.7, 0.45, 0.85, 0.18, vec![shelf(-2.0)], vec![]),
+                space("Distant Hall", A::Hall, 3.2, 0.0, 0.9, 0.6, 0.85, 0.18, vec![shelf(-8.0), band(1, 4_000.0, -6.0, 0.7, EqBandShape::HighShelf)], dark(3.0, -9.0)),
+            ],
+            // Brighter, and long: a sustaining wall of warmth under the
+            // instrument, ten seconds if it wants to be.
+            "Vienna" => vec![
+                space("Vienna Hall", A::Hall, 4.0, 20.0, 0.9, 0.35, 0.9, 0.16, vec![], dark(2.0, 0.0)),
+                space("Vienna Long", A::Hall, 10.0, 20.0, 1.0, 0.4, 0.9, 0.14, vec![shelf(-3.0)], dark(3.0, -3.0)),
+                space("Edgy Hall", A::Cloud, 3.5, 20.0, 0.9, 0.2, 0.9, 0.16, vec![shelf(3.0)], dark(-3.0, 3.0)),
+            ],
+            // Really long, and a low-pass on the way back: a synth bed
+            // under the instrument rather than a room around it.
+            "Atmosphere" => vec![
+                space("Atmosphere", A::Cloud, 14.0, 40.0, 1.0, 0.5, 1.0, 0.2, vec![band(1, 3_000.0, -9.0, 0.7, EqBandShape::HighShelf)], dark(0.0, -6.0)),
+                space("Swell Hall", A::Swell, 8.0, 80.0, 1.0, 0.5, 1.0, 0.22, vec![shelf(-4.0)], dark(0.0, -6.0)),
+                space("Long Choir", A::Chorale, 9.0, 60.0, 1.0, 0.55, 1.0, 0.2, vec![shelf(-6.0)], dark(2.0, -6.0)),
+            ],
+            // A spring that is not a model of one box: any decay, from
+            // clean through a gritty combo to driven.
+            "Big Sky" => vec![
+                space("Combo Spring", A::Spring, 2.0, 0.0, 0.5, 0.4, 0.5, 0.25, vec![band(0, 2_000.0, 2.0, 1.0, EqBandShape::Bell)], vec![]),
+                space("Clean Spring", A::Spring, 2.5, 0.0, 0.5, 0.3, 0.5, 0.25, vec![], vec![]),
+                space("Dirty Spring", A::Spring, 1.6, 0.0, 0.5, 0.5, 0.4, 0.25, vec![band(0, 1_500.0, 4.0, 1.2, EqBandShape::Bell), shelf(-4.0)], vec![]),
+                space("Long Spring", A::Spring, 4.0, 0.0, 0.6, 0.4, 0.5, 0.22, vec![], vec![]),
+            ],
+            // The classic tank: the newer model warm and lush, the
+            // vintage one shorter and brighter, and 2 kHz for anger.
+            _ => vec![
+                space("XL35", A::Spring, 2.2, 0.0, 0.5, 0.45, 0.5, 0.25, vec![], vec![]),
+                space("XL35 Vintage", A::Spring, 1.5, 0.0, 0.4, 0.3, 0.4, 0.25, vec![shelf(2.0)], vec![]),
+                space("XL35 Angry", A::Spring, 2.2, 0.0, 0.5, 0.45, 0.5, 0.25, vec![band(0, 2_000.0, 5.0, 1.5, EqBandShape::Bell)], vec![]),
+                space("Air Spring", A::Spring, 2.8, 0.0, 0.6, 0.6, 0.4, 0.25, vec![band(0, 800.0, 3.0, 0.8, EqBandShape::Bell), shelf(-6.0)], vec![]),
+            ],
+        };
+    }
+    if lower.contains("brick") {
+        return vec![
             // The 480's brick wall: two hundred and forty milliseconds
             // with the early reflections lopsided, for motion.
-            _ => vec![
+
                 space("Brick Wall", A::Reflections, 0.24, 0.0, 0.3, 0.2, 0.3, 0.3, vec![], vec![]),
                 space("Sidewall Slap", A::Reflections, 0.3, 8.0, 0.4, 0.2, 0.2, 0.3, vec![shelf(2.0)], vec![]),
                 space("Lopsided", A::Reflections, 0.35, 12.0, 0.5, 0.3, 0.4, 0.3, vec![], vec![]),
-            ],
-        };
+        ];
     }
     match slot_of(name, REVERB_SLOTS) {
         "Room" => vec![
@@ -5130,6 +5281,23 @@ fn wide_presets() -> Vec<Preset> {
         preset(name, t)
     };
     vec![widen("Subtle", 1.25), widen("Wide", 1.7), widen("Huge", 2.2)]
+}
+
+/// The movement returns — chorus, flanger — as the widener until they
+/// have a face: what they do to the width is the part the picture
+/// can show.
+fn mod_presets(name: &str) -> Vec<Preset> {
+    let widen = |name: &str, wide: f32| {
+        let mut t = placeholder(2);
+        t.role = Role::Wide;
+        t.wide = wide;
+        preset(name, t)
+    };
+    if name.to_lowercase().contains("flang") {
+        vec![widen("Flanger", 1.4), widen("MXR", 1.6), widen("Jet", 2.0)]
+    } else {
+        vec![widen("Dimension D", 1.5), widen("Chorus", 1.7), widen("Tri-Chorus", 2.0)]
+    }
 }
 
 /// One list per direction: an up track offers ways up, a down track

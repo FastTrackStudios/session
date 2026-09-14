@@ -458,7 +458,7 @@ fn show_all(_name: &str, _is_folder: bool, _ancestors: &[String]) -> Fold {
 }
 
 /// Every scene, in the order the number keys recall them.
-pub const SCENES: [Scene; 7] = [
+pub const SCENES: [Scene; 8] = [
     Scene {
         name: "Drum Tracking",
         slug: "drum-tracking",
@@ -488,6 +488,12 @@ pub const SCENES: [Scene; 7] = [
         slug: "drum-fx",
         size: drum_fx,
         fold: show_all,
+    },
+    Scene {
+        name: "Guitar FX",
+        slug: "guitar-fx",
+        size: guitar_fx,
+        fold: guitar_fx_fold,
     },
     Scene {
         name: "Lead Vocal",
@@ -639,6 +645,32 @@ fn drum_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
         Size::Minimum
     } else {
         Size::Compact
+    }
+}
+
+/// The instrument bus: the guitars and keys at working width with
+/// the Inst FX returns open beside them, the first plate in focus, and
+/// the drums, their process and the vocals out of the way.
+fn guitar_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+    let fx = under(ancestors, &["Inst FX"]);
+    if is_folder {
+        Size::Compact
+    } else if fx && is(name, &["Fat Plate"]) {
+        Size::Focus
+    } else if fx || under(ancestors, &["Guitars", "Keys"]) {
+        Size::Working
+    } else {
+        Size::Minimum
+    }
+}
+
+/// The instrument scene's folds: the kit, its process and the vocals
+/// hidden — they are not what this scene is about.
+fn guitar_fx_fold(name: &str, is_folder: bool, _ancestors: &[String]) -> Fold {
+    if is_folder && is(name, &["Drum Kit", "Process", "Vocals"]) {
+        Fold::Hide
+    } else {
+        Fold::Show
     }
 }
 
