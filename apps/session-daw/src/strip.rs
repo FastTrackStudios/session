@@ -162,11 +162,28 @@ impl Strip {
     /// sit over it, so the fader starts under the last of them rather
     /// than running up behind the mute and the solo.
     fn fader_top(&self) -> f64 {
-        if self.squeeze.columns() {
+        if !self.buttons_over_fader() {
             return self.band_bottom();
         }
-        let last = self.arm_top() + self.column_step(Control::Solo) + f64::from(g::BUTTON_H);
-        last.max(self.band_bottom()) + NAME_GAP
+        let last = if self.squeeze.columns() {
+            Control::Routing
+        } else {
+            Control::Solo
+        };
+        let under = self.arm_top() + self.column_step(last) + f64::from(g::BUTTON_H);
+        under.max(self.band_bottom()) + NAME_GAP
+    }
+
+    /// Whether the button column sits over the fader column.
+    ///
+    /// A geometric test, not a width class: at fifty-six pixels the
+    /// buttons are right-aligned and the fader centred, and the two
+    /// columns overlap by half a button — a mute drawn over a fader
+    /// groove is a mute you cannot tell from the level under it.
+    fn buttons_over_fader(&self) -> bool {
+        let buttons = (self.columns.column_x, self.columns.column_x + f64::from(g::BUTTON_W));
+        let fader = (self.columns.fader_x, self.columns.fader_x + self.columns.fader_w);
+        buttons.0 < fader.1 && fader.0 < buttons.1
     }
 
     /// The top of the coloured band.

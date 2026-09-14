@@ -374,8 +374,13 @@ fn mixer_shot(
 
     // The Tone rack, which is a mix sub-mode rather than a permanent
     // fixture — so the shot asks for it explicitly. A scene is a
-    // picture of the racks, so it asks for it too.
+    // picture of the racks, so it asks for it too — and a picture of
+    // racks with nothing moving through them is a picture of half of
+    // what they are, so a scene runs the simulation: the meters lit,
+    // the compressors reducing, the de-essers firing, the tails
+    // filled. `FTS_BENCH_LIVE=1` asks for the same without a scene.
     let tone = std::env::var("FTS_BENCH_TONE").is_ok() || scene.is_some();
+    let live = std::env::var("FTS_BENCH_LIVE").is_ok() || scene.is_some();
     // The whole frame, so a shot matches the window.
     //
     // The mixer splits internally — the REAPER strip takes a third off
@@ -408,10 +413,62 @@ fn mixer_shot(
         // The shot is of the Tone phase, which is the phase the rack
         // was built for and the one the reference images were taken in.
         if tone { session_daw::tone::panels_for(TONE) } else { &[] },
-        false,
+        live,
         session_daw::settings::Settings::default(),
         &settings,
     );
+    // The signal, when the shot is live: seventy-two meter frames of
+    // history per track ending at one instant, the way the window has
+    // them after two and a half seconds of playback.
+    let mut history: std::collections::HashMap<String, session_daw::tone::Levels> =
+        std::collections::HashMap::new();
+    let mut spectra: std::collections::HashMap<String, session_daw::tone::Analyser> =
+        std::collections::HashMap::new();
+    let mut levels: Vec<daw_proto::TrackLevels> = Vec::new();
+    if live {
+        const AT: f64 = 2.5;
+        for (i, track) in tracks.iter().enumerate() {
+            let Some(tone) = settings.get(&track.guid) else {
+                continue;
+            };
+            let entry = history.entry(track.guid.clone()).or_default();
+            let mut last = None;
+            for k in 0..session_daw::tone::HISTORY {
+                let t = AT - (session_daw::tone::HISTORY - 1 - k) as f64 / f64::from(session_daw::tone::PUBLISH_HZ);
+                let meters = session_daw::simulate::meters(i, t, tone);
+                entry.push(meters.sat_peak);
+                entry.push_fire(meters.deess_deepest());
+                last = Some(meters);
+            }
+            if let Some(meters) = last {
+                let peak = meters.sat_peak;
+                if let Ok(index) = usize::try_from(track.index) {
+                    if levels.len() <= index {
+                        levels.resize(index + 1, daw_proto::TrackLevels::default());
+                    }
+                    levels[index] = daw_proto::TrackLevels {
+                        peak_left: peak,
+                        peak_right: peak * 0.85,
+                        hold_left: peak,
+                        hold_right: peak,
+                    };
+                }
+                spectra.entry(track.guid.clone()).or_default().set(meters);
+            }
+        }
+    }
+    let mut racks = if live {
+        session_daw::overlay::Racks {
+            settings: &settings,
+            history: &mut history,
+            spectra: &mut spectra,
+            lit: None,
+            panels: session_daw::tone::panels_for(TONE),
+            folded: Box::leak(Box::default()),
+        }
+    } else {
+        session_daw::overlay::Racks::none()
+    };
     // The bench applies no preset, so the map is the identity — built
     // rather than skipped so the shot exercises the same lookup the
     // window does.
@@ -450,11 +507,11 @@ fn mixer_shot(
                 &tracks,
                 &map,
                 &session_daw::pointer::Pointer::default(),
-                // At rest: the shot is the reference every viewport in
-                // the sweep is compared against, and a lit meter — or a
-                // moving rack — in it would be a difference nobody
-                // asked for.
-                &[],
+                // At rest unless live: the still shot is the reference
+                // every viewport in the sweep is compared against, and
+                // a lit meter in it would be a difference nobody asked
+                // for. A scene is live.
+                &levels,
                 // Nothing has clipped in a still frame, and a latch in
                 // the reference image would be a difference nobody
                 // asked for.
@@ -463,7 +520,7 @@ fn mixer_shot(
                 // compared against, and a scrolled rack in it would be
                 // a difference nobody asked for.
                 0.0,
-                &mut session_daw::overlay::Racks::none(),
+                &mut racks,
                 scroll_x,
                 frame.content_width(),
                 at,
