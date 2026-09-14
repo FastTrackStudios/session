@@ -107,6 +107,12 @@ jobs:
           EOF
       - name: cargo fmt --check
         run: ${NIX_DEV} cargo fmt --all --check
+      # The workflow-spec verification standard (#48): every `flow.*`
+      # rule with an r[impl] has an r[verify], or the build is red.
+      # Same recipe as local (`just daw-flows`); tracey is a store
+      # binary in the ci shell. Cheap, so it runs before any cargo step.
+      - name: Flow verification gate
+        run: ${NIX_DEV} just daw-flows --kill-daemon
       # apps/web/assets/tailwind.css is gitignored build output that
       # `asset!()` demands at compile time (see apps/web/tailwind.css) —
       # the sheet has to exist before any cargo step touches session-web.

@@ -1204,12 +1204,15 @@ daw-bench PROJECT="" SIZE="5120x1440":
     FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN'
 
 # The master workflow checklist (docs/spec/session/workflows.md): which
-# flows have an implementation and a test, and which are still open.
-daw-flows:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "covered:";   tracey query status 2>/dev/null | grep -E "requirements are covered" || true
-    echo "open flows:"; tracey query uncovered 2>/dev/null | grep -E "flow\." || true
+# flows have an implementation and a test, and which are still open —
+# and the gate CI runs (checks.yml, "Flow verification gate"): a
+# `flow.*` rule with an r[impl] and no r[verify] fails; open rules
+# (neither) are counted, never failing. Same script here and in CI;
+# `-v` lists every rule by state. tracey comes from the dev shell
+# (nix/modules/tracey.nix). Exemptions, with a reason, go in
+# .config/tracey/flow-verify-grandfathered.txt.
+daw-flows *ARGS:
+    python3 scripts/tracey-flow-gate.py {{ARGS}}
 
 # The studio benchmark: a 5120x1440 arrangement with the expression
 # editor docked under it, and a 2560x1440 mixer on a second display,
