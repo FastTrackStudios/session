@@ -890,7 +890,18 @@ fn draw_strip_controls(
         let at = crate::tone::Panel::of(box_, left).up(scroll);
         let paint = |meters: &crate::live::Meters| {
             let mut rack = anyrender::Scene::new();
-            crate::tone::draw(&mut rack, palette, font, tone, meters, tone.panels(panels), at, folded, lit);
+            crate::tone::draw(
+                &mut rack,
+                palette,
+                font,
+                tone,
+                meters,
+                tone.panels(panels),
+                at,
+                folded,
+                lit,
+                crate::mcp::rack_ground(palette, track),
+            );
             rack
         };
         match spectrum {

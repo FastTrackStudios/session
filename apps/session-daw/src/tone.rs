@@ -1345,8 +1345,9 @@ pub fn record(
     panels: &[Which],
     panel: Panel,
     folded: Folded,
+    under: Option<Color>,
 ) {
-    draw(scene, palette, font, tone, &Meters::default(), panels, panel, folded, None);
+    draw(scene, palette, font, tone, &Meters::default(), panels, panel, folded, None, under);
 }
 
 /// The same, with one grip lit.
@@ -1370,10 +1371,30 @@ pub fn draw(
     panel: Panel,
     folded: Folded,
     lit: Option<Grip>,
+    // What to paint under the chain's end, when the rack's box is
+    // taller than the chain — the track's colour, if the mixer is set
+    // to (see `layout::rack_fill_is_track`); nothing, and the panel's
+    // ground shows, otherwise. Here rather than in either caller,
+    // because the recording and the live pass both draw the rack and
+    // whichever one is on top has to paint it.
+    under: Option<Color>,
 ) {
     let rack = Rack::at(panel.width);
     if !rack.on() || panel.height < 24.0 || panels.is_empty() {
         return;
+    }
+    if let Some(under) = under {
+        // From the chain's end down past the box: the caller clips to
+        // the box, and the panel may be scrolled up by an amount only
+        // the caller knows.
+        let top = panel.y + tall(panels, folded);
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            under,
+            None,
+            &Rect::new(panel.x, top, panel.x + panel.width, panel.y + panel.height * 2.0),
+        );
     }
     // A rail: the same chain, the same rows at the same heights as the
     // strip beside it — so every compressor sits on one line across
@@ -6807,6 +6828,7 @@ mod tests {
                 height: 8.0,
             },
             super::Folded::default(),
+            None,
         );
         assert!(scene.commands.is_empty());
     }
@@ -6830,6 +6852,7 @@ mod tests {
                 height: 180.0,
             },
             super::Folded::default(),
+            None,
         );
         // Three grounds, three curves, the rules and the labels.
         assert!(
@@ -7484,7 +7507,7 @@ mod tier_tests {
             assert!((at.y - full_at.y).abs() < f64::EPSILON, "{a:?} at {} vs {}", at.y, full_at.y);
         }
         let mut still = anyrender::Scene::new();
-        super::draw(&mut still, &palette, &font, &tone, &crate::live::Meters::default(), &super::ALL_PANELS, rail, super::Folded::default(), None);
+        super::draw(&mut still, &palette, &font, &tone, &crate::live::Meters::default(), &super::ALL_PANELS, rail, super::Folded::default(), None, None);
         // A track per unit, and an indicator for every unit whose
         // setting shows with no signal — the EQs, the gate's light, the
         // heat, the repeats, the tail. The bars (reduction, fire) wait
@@ -7492,7 +7515,7 @@ mod tier_tests {
         assert!(still.commands.len() > rows.len() + 6, "a track and the still indicators: {}", still.commands.len());
         let mut moving = anyrender::Scene::new();
         let meters = crate::simulate::meters(2, 1.25, &tone);
-        super::draw(&mut moving, &palette, &font, &tone, &meters, &super::ALL_PANELS, rail, super::Folded::default(), None);
+        super::draw(&mut moving, &palette, &font, &tone, &meters, &super::ALL_PANELS, rail, super::Folded::default(), None, None);
         assert!(moving.commands.len() >= still.commands.len());
     }
 }
@@ -9063,10 +9086,10 @@ mod face_tests {
         let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
         let font = crate::text::Font::embedded().expect("the embedded font");
         let mut still = anyrender::Scene::new();
-        super::draw(&mut still, &palette, &font, &tone, &Meters::default(), &ALL_PANELS, rack(), Folded::default(), None);
+        super::draw(&mut still, &palette, &font, &tone, &Meters::default(), &ALL_PANELS, rack(), Folded::default(), None, None);
         let mut moving = anyrender::Scene::new();
         let meters = crate::simulate::meters(0, 1.25, &tone);
-        super::draw(&mut moving, &palette, &font, &tone, &meters, &ALL_PANELS, rack(), Folded::default(), None);
+        super::draw(&mut moving, &palette, &font, &tone, &meters, &ALL_PANELS, rack(), Folded::default(), None, None);
         assert!(moving.commands.len() > still.commands.len());
     }
 

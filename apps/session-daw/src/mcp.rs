@@ -981,6 +981,7 @@ fn strip(
             // live: a strip whose rack the overlay draws is the one
             // that answers to it. See `overlay::Racks::folded`.
             crate::tone::Folded::rest(),
+            rack_ground(palette, track),
         );
         scene.pop_layer();
     }
@@ -1010,6 +1011,16 @@ fn strip(
     let _ = stretch_h;
 
     bottom(scene, palette, font, track, x, chrome_w, h);
+}
+
+/// What the rack paints under its chain's end: the track's colour when
+/// the mixer is set to fill the rack that way, else nothing.
+///
+/// One answer for the recording and the live pass, so a rack that
+/// starts moving does not change colour under its chain.
+#[must_use]
+pub fn rack_ground(palette: &Palette, track: &Track) -> Option<Color> {
+    crate::layout::rack_fill_is_track().then(|| crate::tcp::row_tint(palette, track))
 }
 
 /// The coloured band: pan, the record input, and the arm hanging off its

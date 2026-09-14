@@ -147,6 +147,22 @@ impl Layout {
     }
 }
 
+/// Whether the part of the rack a chain does not reach is painted in
+/// the track's colour rather than left as the panel's grey.
+///
+/// `FTS_RACK_FILL=track` (or `1`, `on`). Off by default: the grey says
+/// "room for more", the colour says "this is the track's" — which one
+/// a mixer wants is a matter of taste, so it is a setting.
+#[must_use]
+pub fn rack_fill_is_track() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("FTS_RACK_FILL")
+            .map(|v| matches!(v.trim().to_lowercase().as_str(), "track" | "1" | "on" | "true"))
+            .unwrap_or(false)
+    })
+}
+
 /// A positive number from the environment, if it is one.
 fn number(key: &str) -> Option<f64> {
     std::env::var(key)
