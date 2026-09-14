@@ -34,6 +34,11 @@ use crate::mcp::{Columns, Control, Squeeze};
 /// control touching it reads as bleeding out of the strip.
 const PAN_FROM_EDGE: f64 = 5.0;
 
+/// How much further apart the button column's steps are than REAPER's
+/// — added at each step, so the monitor comes down by one of these and
+/// the routing by four.
+const SPREAD: f64 = 4.0;
+
 /// The side of the panel's bare record-arm ring — what a rail draws in
 /// place of the housed arm (`art::Arm::Panel` is 20x20).
 const ARM_RING: f64 = 20.0;
@@ -250,15 +255,20 @@ impl Strip {
     /// from a row index is a number nobody measured — and the one we
     /// had put MUTE where the monitor belongs, which is why the monitor
     /// had nowhere to go until now.
+    ///
+    /// Plus [`SPREAD`] at every step: REAPER's chain packs the column
+    /// into the top of a strip whose fader wants the height, and ours
+    /// has the room — the column is beside the fader, not over it —
+    /// so the buttons sit a little lower and a little further apart.
     fn column_step(&self, control: Control) -> f64 {
-        let monitor = f64::from(g::RECMON_FROM_ARM);
-        let mute = monitor + f64::from(g::MUTE_FROM_RECMON);
-        let solo = mute + f64::from(g::SOLO_FROM_MUTE);
+        let monitor = f64::from(g::RECMON_FROM_ARM) + SPREAD;
+        let mute = monitor + f64::from(g::MUTE_FROM_RECMON) + SPREAD;
+        let solo = mute + f64::from(g::SOLO_FROM_MUTE) + SPREAD;
         match control {
             Control::Monitor => monitor,
             Control::Mute => mute,
             Control::Solo => solo,
-            _ => solo + f64::from(g::IO_FROM_SOLO),
+            _ => solo + f64::from(g::IO_FROM_SOLO) + SPREAD,
         }
     }
 
