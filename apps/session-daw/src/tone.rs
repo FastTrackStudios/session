@@ -3078,13 +3078,30 @@ fn suppress(
     // subject. Drawn before the spectrum so they can be seen through
     // it, and drawn even with nothing playing, because they are the
     // setting.
+    // The de-esser's colour is yellow — the colour of the top end it
+    // is there to take the edge off — and everything it draws is in
+    // it: the band, the reference, the bite. The compressor's red is
+    // the compressor's; a spectrum with a red ribbon hanging off it
+    // read as one. The resonance panel keeps the accent, and its
+    // teeth.
+    let ink = if which == Which::Resonance { palette.accent } else { DEESS_INK };
+    // The band it acts in, as a wash between its two edges: the
+    // subject, lit, and the shoulders either side of it context.
+    let (x_low, x_high) = (zoom.x_of(f64::from(set.low), at), zoom.x_of(f64::from(set.high), at));
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        ink.multiply_alpha(0.08),
+        None,
+        &Rect::new(x_low.min(x_high), at.y, x_low.max(x_high), bottom),
+    );
     if rack.detailed() {
         for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
             let x = zoom.x_of(hz, at);
             let held = lit == Some(Grip::Edge(which, side));
             rule_wide(
                 scene,
-                if held { palette.text } else { palette.grid_beat },
+                if held { palette.text } else { ink.multiply_alpha(0.55) },
                 Line::new((x, at.y), (x, bottom)),
                 if held { 1.8 } else { 1.0 },
             );
@@ -3142,15 +3159,15 @@ fn suppress(
     // resonance panel draws it dimmer: there the spectrum is context
     // and the teeth are the subject.
     let dim = if which == Which::Resonance { 0.6 } else { 1.0 };
-    // The de-esser's is yellow — the colour of the top end it is there
-    // to take the edge off.
-    let ink = if which == Which::Resonance { palette.accent } else { DEESS_INK };
+    // The material in grey: what arrived is context, and what is done
+    // to it is what the panel is for.
+    let material = palette.text_faint;
     let input: Vec<(f64, f64)> = (0..across)
         .map(|i| (x_at(i), to_y(level_at(zoom.hz_at(sample(i))))))
         .collect();
     area_under(
         scene,
-        ink.multiply_alpha(crate::mcp::f64_to_f32(0.16 * dim)),
+        material.multiply_alpha(crate::mcp::f64_to_f32(0.18 * dim)),
         &input,
         bottom,
     );
@@ -3162,7 +3179,7 @@ fn suppress(
         let reference = (0..across).map(|i| {
             (x_at(i), to_y(average_at(zoom.hz_at(sample(i))) + f64::from(set.threshold)))
         });
-        dashed(scene, palette.text.multiply_alpha(0.75), reference, if held { 1.6 } else { 0.8 });
+        dashed(scene, ink.multiply_alpha(0.8), reference, if held { 1.6 } else { 0.8 });
     }
 
     // And what leaves. The gap between the two is the reduction, at the
@@ -3174,26 +3191,27 @@ fn suppress(
             (x_at(i), to_y(level_at(hz) - cut_at(hz)))
         })
         .collect();
-    let red = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
     // Only when there is something to show. With nothing being cut the
     // two curves coincide, and the ribbon between them is a degenerate
     // polygon — two hundred vertices tracing out and back along the
     // same line, which the rasteriser pays for in full and which draws
     // nothing. That cost half a millisecond a frame across a mixer.
+    // The bite: what was taken off the top, lit in the panel's own
+    // colour between the material's edge and what leaves.
     let deepest = reduction.iter().copied().fold(0.0_f32, f32::max);
     if deepest > 0.15 {
         let held = matches!(lit, Some(Grip::Depth(_)));
-        ribbon(scene, red.multiply_alpha(if held { 0.8 } else { 0.55 }), &input, &output);
+        ribbon(scene, ink.multiply_alpha(if held { 0.7 } else { 0.45 }), &input, &output);
     }
     curve(
         scene,
-        ink.multiply_alpha(crate::mcp::f64_to_f32(0.7 * dim)),
+        material.multiply_alpha(crate::mcp::f64_to_f32(0.6 * dim)),
         input.into_iter(),
         1.0,
     );
     let held = matches!(lit, Some(Grip::Depth(_)));
-    let ribbon = if which == Which::Resonance { 0.9 } else { 1.1 };
-    curve(scene, red, output.into_iter(), if held { 1.8 } else { ribbon });
+    let width = if which == Which::Resonance { 0.9 } else { 1.3 };
+    curve(scene, ink, output.into_iter(), if held { 1.8 } else { width });
 
     if rack.detailed() {
         marks(scene, palette, zoom, at);
@@ -4088,10 +4106,10 @@ pub const DELAY_INK: Color = Color::from_rgba8(0x3b, 0x82, 0xf6, 0xff);
 /// The reverb's colour: purple, likewise.
 pub const REVERB_INK: Color = Color::from_rgba8(0x8b, 0x5c, 0xf6, 0xff);
 
-/// The decay-rate EQ's colour: a lighter violet — the reverb's family,
-/// and never the EQ's own look, so a graph of time is not read as a
-/// graph of gain.
-const DECAY_INK: Color = Color::from_rgba8(0xa7, 0x8b, 0xfa, 0xff);
+/// The decay-rate EQ's colour: a sky blue — never the EQ's own look, so a
+/// graph of time is not read as a graph of gain, and not the delay's
+/// blue either.
+const DECAY_INK: Color = Color::from_rgba8(0x38, 0xbd, 0xf8, 0xff);
 
 /// The colour a unit is drawn in where it has one of its own.
 const fn unit_ink(which: Which) -> Option<Color> {
@@ -8419,7 +8437,9 @@ fn lanes(
             }
         } else {
             {
-                let red = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
+                // The fire lane in the de-esser's own yellow: when it
+                // acted, in its colour, under the display it acted on.
+                let red = DEESS_INK;
                 let count = levels.fired.len();
                 let offset = HISTORY.saturating_sub(count);
                 let mut path = BezPath::new();

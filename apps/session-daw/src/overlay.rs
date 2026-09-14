@@ -700,6 +700,22 @@ pub fn controls(
             mixer.buttons_top,
             mixer.height,
         );
+        // The racks of the strips that are not selected, darkened —
+        // over the recording and everything live on it, so the
+        // selected one's is the bright one. The rack only: the strip's
+        // own controls are the mixer's grey already and stay readable
+        // across every track. A setting, and off when the mixer has no
+        // selection at all: then there is nothing to be brighter than.
+        let dim = crate::layout::dim_unselected();
+        if dim > 0.0 && mixer.rack_h > 0.0 && !track.selected && live.any_selected(tracks) {
+            scene.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                vello::peniko::Color::from_rgba8(0, 0, 0, 0xff).multiply_alpha(dim),
+                None,
+                &vello::kurbo::Rect::new(left, 0.0, left + strip_w, mixer.rack_h),
+            );
+        }
     }
     for command in &scene.commands {
         counts.replayed = counts.replayed.saturating_add(1);

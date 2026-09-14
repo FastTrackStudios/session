@@ -208,6 +208,33 @@ pub fn strip_edge() -> Wash {
     *ON.get_or_init(|| Wash::from_env("FTS_STRIP_EDGE", Wash::Off))
 }
 
+/// How much the racks of the strips that are NOT selected are
+/// darkened, 0..1. The rack only — the strip's own controls stay as
+/// they are.
+///
+/// `FTS_DIM_UNSELECTED`: `off` (or `0`) for none, a number for that
+/// much, unset for the default. On by default: the selected strip is
+/// the one you are working on, and a mixer where every strip is as
+/// bright as that one is a mixer you have to find it in. Not so much
+/// that the rest stops being readable — it is still the mixer.
+#[must_use]
+pub fn dim_unselected() -> f32 {
+    static ON: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let Ok(value) = std::env::var("FTS_DIM_UNSELECTED") else {
+            return DIM_DEFAULT;
+        };
+        let value = value.trim().to_lowercase();
+        if matches!(value.as_str(), "off" | "none" | "false") {
+            return 0.0;
+        }
+        value.parse::<f32>().map_or(DIM_DEFAULT, |n| n.clamp(0.0, 0.9))
+    })
+}
+
+/// The default darkening of an unselected strip.
+const DIM_DEFAULT: f32 = 0.3;
+
 /// A positive number from the environment, if it is one.
 fn number(key: &str) -> Option<f64> {
     std::env::var(key)

@@ -330,6 +330,13 @@ impl Rows {
         tracks.get(*self.rows.get(row)?)
     }
 
+    /// Whether any row's track is selected — what decides whether the
+    /// unselected ones are dimmed at all.
+    #[must_use]
+    pub fn any_selected(&self, tracks: &[Track]) -> bool {
+        self.rows.iter().filter_map(|i| tracks.get(*i)).any(|t| t.selected)
+    }
+
     /// The same, as an index — for the paths that need to write.
     #[must_use]
     pub fn index(&self, row: usize) -> Option<usize> {
