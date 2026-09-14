@@ -108,7 +108,7 @@ SNARE = 0xC94540  # scarlet: the hottest of the five
 TOMS = 0xB8613F  # terracotta: red warmed towards orange
 CYMBALS = 0xC76B7A  # rose: red lifted, for the top of the kit
 ROOMS = 0x93425C  # wine: red cooled, for the air around it
-PARALLEL = 0x7A2E3A  # garnet: the kit's family, darker — what is fed off it
+PROCESS = 0x7A2E3A  # garnet: the kit's family, darker — what is fed off it
 
 TREE = [
     (
@@ -156,34 +156,40 @@ TREE = [
             ),
         ],
     ),
-    # What the kit is sent to, in parallel: a fake room for when there
-    # are no room mics or bad ones, four parallel compressors from
-    # tight to crushed, and a bank of reverbs to pick the room the
-    # band is in — short and bright down to long and dark, plus the
-    # odd ones.
+    # What the kit is sent to: a Compress folder of parallel
+    # compressors from dry to crushed, and an FX folder with a fake
+    # room for when there are no room mics or bad ones and a bank of
+    # reverbs to pick the room the band is in — short and bright down
+    # to long and dark, plus the odd ones.
     (
-        "Parallel",
-        PARALLEL,
+        "Process",
+        PROCESS,
         [
-            ("Room Sim", PARALLEL, []),
             (
-                "Compression",
-                PARALLEL,
+                "Compress",
+                PROCESS,
                 # A balance group (see session-daw's `balance`): the
                 # Dry is the kit uncompressed, and the four are its
                 # colours; bring one up and the others come down.
-                [("Dry", PARALLEL, []), ("Tight", PARALLEL, []), ("Punch", PARALLEL, []), ("Smash", PARALLEL, []), ("Crunch", PARALLEL, [])],
+                [("Dry", PROCESS, []), ("Tight", PROCESS, []), ("Punch", PROCESS, []), ("Smash", PROCESS, []), ("Crunch", PROCESS, [])],
             ),
             (
-                "Verb",
-                PARALLEL,
+                "FX",
+                PROCESS,
                 [
-                    ("Wood Room", PARALLEL, []),
-                    ("Music Club", PARALLEL, []),
-                    ("Stadium", PARALLEL, []),
-                    ("RMX 16", PARALLEL, []),
-                    ("Nonlin", PARALLEL, []),
-                    ("Brick Wall", PARALLEL, []),
+                    ("Room Sim", PROCESS, []),
+                    (
+                        "Verb",
+                        PROCESS,
+                        [
+                            ("Wood Room", PROCESS, []),
+                            ("Music Club", PROCESS, []),
+                            ("Stadium", PROCESS, []),
+                            ("RMX 16", PROCESS, []),
+                            ("Nonlin", PROCESS, []),
+                            ("Brick Wall", PROCESS, []),
+                        ],
+                    ),
                 ],
             ),
         ],

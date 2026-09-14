@@ -221,7 +221,7 @@ impl Role {
             if folder.starts_with("wide") {
                 return Self::Wide;
             }
-            if folder.starts_with("compression") {
+            if folder.starts_with("compress") {
                 return Self::Parallel;
             }
         }

@@ -384,6 +384,19 @@ impl ApplicationHandler for App {
                         .and_then(|i| session_daw::plan::SCENES.get(i))
                         .map(|s| s.slug);
                     tracing::info!(ui.scene = self.view_scene.unwrap_or("none"), "scene");
+                    // The scene's folds become the window's folder
+                    // state, so the strips' fold icons agree with it
+                    // and a click on one carries on from there.
+                    if let Some(scene) = self.view_scene.and_then(session_daw::plan::scene) {
+                        let (all, depths) =
+                            daw_ui::components::folders::FolderState::default().visible(&self.tracks);
+                        let rows: Vec<(daw_proto::Track, u32)> = all.into_iter().zip(depths).collect();
+                        self.folders = daw_ui::components::folders::FolderState::default();
+                        for guid in session_daw::plan::collapsed_by(scene, &rows) {
+                            self.folders.toggle(&guid);
+                        }
+                        self.re_record();
+                    }
                     self.mixer = None;
                     self.redraw();
                     return;
@@ -1392,6 +1405,18 @@ impl App {
             return;
         };
         let guid = track.guid.clone();
+        let is_folder = track.is_folder;
+
+        // The fold at the foot of a folder's strip: a view edit, like
+        // the panel's — it changes which strips exist — so it goes to
+        // the folder state and re-records rather than to the engine.
+        if spot.control == session_daw::mcp::Control::Folder {
+            if is_folder && !double {
+                self.folders.toggle(&guid);
+                self.re_record();
+            }
+            return;
+        }
 
         // The clip latch, which is a band across the top of the meter
         // and only a target while it is lit. Clearing it is the window

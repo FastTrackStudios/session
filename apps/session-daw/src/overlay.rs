@@ -234,7 +234,7 @@ pub fn control(
         // Nor does the clip latch: it is drawn by the meter, which
         // knows whether it is lit, and a hover cell for it here would
         // be a second opinion about that.
-        Control::Volume | Control::Name | Control::Routing | Control::Clip => {}
+        Control::Volume | Control::Name | Control::Routing | Control::Clip | Control::Folder => {}
     }
 
     for command in &scene.commands {

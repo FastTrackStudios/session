@@ -179,6 +179,9 @@ pub fn click(
         // window forgetting something, not the engine being told
         // something. Handled where the latch lives.
         crate::mcp::Control::Clip => None,
+        // Folding is the window's: it changes which strips exist, not
+        // what any track is — see the window's fold.
+        crate::mcp::Control::Folder => None,
         // The lamp is only drawn on an armed track, and what is not
         // drawn is not clicked.
         crate::mcp::Control::Monitor => from

@@ -48,8 +48,8 @@ impl Groups {
     /// named for parallel compression.
     ///
     /// The template puts the drum kit's parallel compressors — Dry,
-    /// Tight, Punch, Smash, Crunch — in a folder called Compression,
-    /// and a folder by that name is a group. A session that names its
+    /// Tight, Punch, Smash, Crunch — in a folder called Compress, and
+    /// a folder by that name is a group. A session that names its
     /// groups some other way will register them; this is the rule the
     /// template relies on.
     #[must_use]
@@ -136,7 +136,7 @@ impl Groups {
 /// Whether a folder's name says its children are a balance group.
 fn is_group_folder(name: &str) -> bool {
     let lower = name.to_lowercase();
-    lower.starts_with("compression") || lower.starts_with("parallel comp") || lower.ends_with("(balance)")
+    lower.starts_with("compress") || lower.starts_with("parallel comp") || lower.ends_with("(balance)")
 }
 
 /// A gain in dB, with silence at the fader's floor rather than at minus
@@ -164,7 +164,7 @@ mod tests {
     }
 
     fn kit() -> Vec<Track> {
-        let mut folder = track("comp", "Compression", None, 1.0);
+        let mut folder = track("comp", "Compress", None, 1.0);
         folder.is_folder = true;
         vec![
             folder,

@@ -499,6 +499,13 @@ impl Strip {
                 let plate = f64::from(g::NAME_PLATE);
                 Some(top(self.height - crate::mcp::INDENT_STEP - plate, plate))
             }
+            // The fold, at the left of the number band under the name.
+            Control::Folder => Some(Rect::new(
+                0.0,
+                self.height - crate::mcp::INDENT_STEP,
+                f64::from(crate::mcp::FOLD_W),
+                self.height,
+            )),
         }
     }
 
@@ -526,6 +533,7 @@ impl Strip {
             // fader by the window when nothing has clipped.
             Control::Clip,
             Control::Volume,
+            Control::Folder,
             Control::Name,
         ]
         .into_iter()

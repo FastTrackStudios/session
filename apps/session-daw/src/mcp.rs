@@ -429,6 +429,11 @@ impl Mixer {
             let column = tone_settings.get(&track.guid).is_some_and(crate::tone::Tone::wants_column);
             columns.push(column);
             labels.push(fit_name(font, track, w, &ancestor_names));
+            // A folder with nothing under it in the rows is folded: the
+            // rows are what the folder state left, so the next row not
+            // being deeper is the fold.
+            let collapsed =
+                track.is_folder && rows.get(ordinal.saturating_add(1)).is_none_or(|(_, next)| usize::try_from(*next).unwrap_or(0) <= depth);
             strip(
                 &mut strips,
                 palette,
@@ -442,6 +447,7 @@ impl Mixer {
                     rack_h,
                     mixer_h: height,
                     column,
+                    collapsed,
                 },
                 rack,
                 // A track with no settings yet gets none drawn rather
@@ -605,6 +611,8 @@ struct Slot {
     mixer_h: f64,
     /// Whether the track wants the column layout when focused.
     column: bool,
+    /// Whether the track is a folder whose rows are folded away.
+    collapsed: bool,
 }
 
 /// How much of the panel the REAPER strip keeps, with the rack on.
@@ -654,6 +662,11 @@ pub enum Control {
     /// clear, and the band falls through to the fader underneath it so
     /// the strip behaves exactly as it would without a latch.
     Clip,
+    /// The fold at the foot of a folder's strip — clicked to collapse
+    /// the folder to one strip, or open it again. Only a target on a
+    /// folder; the rect is there on every strip because geometry is
+    /// worked out without knowing what the track is.
+    Folder,
 }
 
 impl Control {
@@ -999,6 +1012,7 @@ fn strip(
             rack_h,
             mixer_h: slot.mixer_h,
             column: slot.column,
+            collapsed: slot.collapsed,
         },
         (band_top, pan_band, input_band),
         &shape,
@@ -1009,7 +1023,7 @@ fn strip(
     // it are placed against it.
     let _ = stretch_h;
 
-    bottom(scene, palette, font, track, x, chrome_w, h);
+    bottom(scene, palette, font, track, x, chrome_w, h, slot.collapsed);
 }
 
 /// What the rack paints under its chain's end: the track's colour when
@@ -1242,8 +1256,8 @@ fn bottom(
     x: f64,
     w: f64,
     h: f64,
+    collapsed: bool,
 ) {
-
     // The number sits on the track's own colour, in a band exactly one
     // indent step tall.
     //
@@ -1287,7 +1301,30 @@ fn bottom(
         number_top + (number_h + f64::from(NUMBER_SIZE) * 0.72) / 2.0,
         NUMBER_SIZE,
     );
+    // A folder's fold, at the left of the band: a chevron pointing
+    // down into its open rows, or right at the rows it is holding
+    // shut. See `Control::Folder`.
+    if track.is_folder {
+        let cx = x + f64::from(FOLD_W) / 2.0;
+        let cy = number_top + number_h / 2.0;
+        let arm = 3.0;
+        let mut path = vello::kurbo::BezPath::new();
+        if collapsed {
+            path.move_to((cx - arm * 0.6, cy - arm));
+            path.line_to((cx + arm * 0.6, cy));
+            path.line_to((cx - arm * 0.6, cy + arm));
+        } else {
+            path.move_to((cx - arm, cy - arm * 0.6));
+            path.line_to((cx, cy + arm * 0.6));
+            path.line_to((cx + arm, cy - arm * 0.6));
+        }
+        path.close_path();
+        scene.fill(Fill::NonZero, vello::kurbo::Affine::IDENTITY, palette.text_dim, None, &path);
+    }
 }
+
+/// How wide the fold target at the foot of a folder's strip is.
+pub const FOLD_W: u32 = 14;
 
 /// How big the track number under a strip is drawn.
 const NUMBER_SIZE: f32 = 9.0;
