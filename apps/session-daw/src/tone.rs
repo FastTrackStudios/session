@@ -2535,22 +2535,21 @@ fn threshold_y(comp: Comp, at: Panel) -> f64 {
 
 /// The compressor's settings, drawn on the display they act in.
 ///
-/// Three strips, one instrument. The RATIO stands in the bottom-left
-/// corner, up the rail from the floor — 1:1 at its top, 20:1 at the
-/// floor, the default at the centre tick — pulled down for more,
-/// because down is the direction the signal goes. The two TIMES run along the floor — attack over
-/// release, fast at the left and slow at the right, the default dead
-/// centre. Each is a marker on a two-sided scale with the fill running
-/// from the tick to the marker, so a departure from the default is a
-/// bar in the direction it departed. They were an arrow and two ramps
-/// once; a ramp's slope is a poor readout of a millisecond, an arrow's
-/// length a poor readout of a ratio, and a marker on a scale is what
-/// both have always been read off.
+/// Two strips and an arrow. The RATIO is an arrow down from the
+/// threshold line near the left edge, as far as the ratio would take
+/// a full-scale signal, with the number at its tip — pulled down for
+/// more, because down is the direction the signal goes. The two TIMES
+/// run along the floor — attack over release, FAST at the left and
+/// SLOW at the right, the default dead centre. Each is a marker on a
+/// two-sided scale with the fill running from the tick to the marker,
+/// so a departure from the default is a bar in the direction it
+/// departed.
 fn envelope(scene: &mut Scene, font: &Font, comp: Comp, at: Panel, lit: Option<Grip>) {
     let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
     if let Some(strips) = Strips::of(at) {
         strips.draw(scene, font, comp, red, lit);
     }
+    Arrow::of(comp, at).draw(scene, font, comp, red, matches!(lit, Some(Grip::Ratio(_))));
 }
 
 /// The column the ratio's strip lives in, at the display's left edge.
@@ -2632,8 +2631,65 @@ impl Time {
 pub struct Strips {
     pub attack: Rect,
     pub release: Rect,
-    /// Up the left rail: 1:1 at the top, 20:1 at the floor.
-    pub ratio: Rect,
+}
+
+/// The ratio's arrow: down from the threshold line, near the left
+/// edge, as far as the ratio would take a full-scale signal.
+///
+/// Back from a strip up the rail: the arrow hangs off the line it
+/// acts on, so it is read against the threshold and not against a
+/// scale of its own. Near the LEFT edge so a hand aiming at the line
+/// — which is the whole display — does not land on it, and clear of
+/// where the line's right end used to carry it.
+#[derive(Clone, Copy, Debug)]
+pub struct Arrow {
+    pub x: f64,
+    pub top: f64,
+    pub tip: f64,
+}
+
+/// How far in from the display's left edge the arrow hangs.
+const ARROW_X: f64 = 14.0;
+
+/// The number at the arrow's tip, and the words at the strips' ends.
+const TINY: f32 = 6.0;
+
+impl Arrow {
+    #[must_use]
+    pub fn of(comp: Comp, at: Panel) -> Self {
+        let top = threshold_y(comp, at);
+        let floor = at.y + at.height - STRIPS_H;
+        Self {
+            x: at.x + ARROW_X,
+            top,
+            tip: (top + ratio_drop(comp, at.height)).min(floor.max(top)),
+        }
+    }
+
+    fn draw(self, scene: &mut Scene, font: &Font, comp: Comp, ink: Color, held: bool) {
+        let ink = if held { ink } else { ink.multiply_alpha(0.85) };
+        rule_wide(scene, ink, Line::new((self.x, self.top), (self.x, self.tip)), if held { 2.0 } else { 1.2 });
+        let head = 3.0;
+        let mut path = BezPath::new();
+        path.move_to((self.x - head, self.tip - head * 1.6));
+        path.line_to((self.x + head, self.tip - head * 1.6));
+        path.line_to((self.x, self.tip));
+        path.close_path();
+        scene.fill(Fill::NonZero, Affine::IDENTITY, ink, None, &path);
+        // The number, tiny, beside the tip: 4:1 is what the arrow says,
+        // and the arrow's length says it only roughly.
+        let ratio = f64::from(comp.ratio);
+        let label = if (ratio - ratio.round()).abs() < 0.05 {
+            format!("{ratio:.0}:1")
+        } else {
+            format!("{ratio:.1}:1")
+        };
+        crate::tcp::glyphs(scene, font, ink, &label, self.x + head + 2.0, self.tip + 1.0, TINY);
+    }
+
+    fn holds(self, x: f64, y: f64) -> bool {
+        near_segment((x, y), (self.x, self.top), (self.x, self.tip.max(self.top + 6.0))) <= GRAB
+    }
 }
 
 /// How tall one strip is.
@@ -2642,6 +2698,9 @@ const STRIP_H: f64 = 5.0;
 /// The letter at a time strip's right end, and the room kept for it.
 const STRIP_LABEL_SIZE: f32 = 7.0;
 const STRIP_LABEL_W: f64 = 8.0;
+
+/// The room kept for FAST at the strips' left and SLOW at their right.
+const STRIP_END_W: f64 = 20.0;
 
 /// The gap between the two, and under the lower one.
 const STRIP_GAP: f64 = 4.0;
@@ -2655,23 +2714,17 @@ impl Strips {
     /// for a marker to travel.
     #[must_use]
     pub fn of(at: Panel) -> Option<Self> {
-        if at.width < 40.0 || at.height < 40.0 {
+        if at.width < 70.0 || at.height < 40.0 {
             return None;
         }
-        // Clear of the ratio's rail at the left, and of the letter
-        // that names each strip at the right.
-        let left = at.x + RAIL + 3.0;
-        let right = at.x + at.width - 3.0 - STRIP_LABEL_W;
+        // Between FAST at the left and the letter and SLOW at the
+        // right, so the strip's ends say which way is which.
+        let left = at.x + 3.0 + STRIP_END_W;
+        let right = at.x + at.width - 3.0 - STRIP_END_W - STRIP_LABEL_W;
         let floor = at.y + at.height - STRIP_GAP;
         let release = Rect::new(left, floor - STRIP_H, right, floor);
         let attack = Rect::new(left, release.y0 - STRIP_GAP - STRIP_H, right, release.y0 - STRIP_GAP);
-        // The ratio's strip stands on the floor in the bottom-left
-        // corner, beside the time strips' left ends, and rises to just
-        // under half the display: the three controls share one corner,
-        // and the rest of the display is the threshold's.
-        let rail_x = at.x + (RAIL - STRIP_H) / 2.0;
-        let ratio = Rect::new(rail_x, floor - at.height * 0.45, rail_x + STRIP_H, floor);
-        Some(Self { attack, release, ratio })
+        Some(Self { attack, release })
     }
 
     /// Where a time's marker sits on its strip: fast at the left, slow
@@ -2681,6 +2734,12 @@ impl Strips {
     }
 
     fn draw(self, scene: &mut Scene, font: &Font, comp: Comp, ink: Color, lit: Option<Grip>) {
+        // FAST and SLOW once each, between the two strips' rows: the
+        // direction is the same for both, so it is said once.
+        let between = (self.attack.y0 + self.release.y1) / 2.0 + f64::from(TINY) / 2.0 - 0.5;
+        let words = ink.multiply_alpha(0.6);
+        crate::tcp::glyphs(scene, font, words, "FAST", self.attack.x0 - STRIP_END_W, between, TINY);
+        crate::tcp::glyphs(scene, font, words, "SLOW", self.attack.x1 + STRIP_LABEL_W + 3.0, between, TINY);
         for (strip, grip, time, label) in [
             (self.attack, Grip::Attack(Which::Comp), Time::attack(comp.attack), "A"),
             (self.release, Grip::Release(Which::Comp), Time::release(comp.release), "R"),
@@ -2713,22 +2772,7 @@ impl Strips {
             );
             dot(scene, ink, (x, y), if held { HANDLE + 1.4 } else { HANDLE });
         }
-        // The ratio, the same way, turned upright: the marker sits at
-        // the strip's place down from the top.
-        let strip = self.ratio;
-        let held = lit == Some(Grip::Ratio(Which::Comp));
-        scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.28), None, &strip.to_rounded_rect(2.0));
-        let centre = strip.center().y;
-        rule(scene, ink.multiply_alpha(0.6), Line::new((strip.x0 - 1.5, centre), (strip.x1 + 1.5, centre)));
-        let y = Time::ratio(comp.ratio).place().mul_add(strip.height(), strip.y0);
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            ink.multiply_alpha(if held { 0.8 } else { 0.55 }),
-            None,
-            &Rect::new(strip.x0, centre.min(y), strip.x1, centre.max(y)).to_rounded_rect(2.0),
-        );
-        dot(scene, ink, (strip.center().x, y), if held { HANDLE + 1.4 } else { HANDLE });
+        let _ = comp;
     }
 
     /// Which strip a point is on, if any — the whole strip, not just
@@ -2737,15 +2781,10 @@ impl Strips {
         let reach = |strip: Rect| {
             x >= strip.x0 - GRAB && x <= strip.x1 + GRAB && y >= strip.y0 - GRAB / 2.0 && y <= strip.y1 + GRAB / 2.0
         };
-        let upright = |strip: Rect| {
-            x >= strip.x0 - GRAB / 2.0 && x <= strip.x1 + GRAB / 2.0 && y >= strip.y0 - GRAB && y <= strip.y1 + GRAB
-        };
         if reach(self.attack) {
             Some(Grip::Attack(Which::Comp))
         } else if reach(self.release) {
             Some(Grip::Release(Which::Comp))
-        } else if upright(self.ratio) {
-            Some(Grip::Ratio(Which::Comp))
         } else {
             None
         }
@@ -4058,17 +4097,13 @@ fn presets(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: P
         return;
     }
     let count = crate::num::coord(tone.presets.len().max(2).saturating_sub(1));
-    let mut left = at.x + 2.0;
-    for (i, preset) in tone.presets.iter().enumerate() {
-        let w = preset_chip_width(&preset.name);
-        if left + w > at.x + at.width {
-            break;
-        }
+    for (i, chip) in preset_chips(tone, at) {
+        let Some(preset) = tone.presets.get(i) else { continue };
+        let (left, w) = (chip.x0, chip.width());
         let current = tone.preset == Some(i);
         let hovered = lit == Some(Grip::Preset(i));
         let t = crate::num::coord(i) / count;
         let swatch = swatch_at(t);
-        let chip = Rect::new(left, at.y + 2.0, left + w, at.y + at.height - 2.0);
         scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
@@ -4103,7 +4138,6 @@ fn presets(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: P
                 1.5,
             );
         }
-        left += w + 2.0;
     }
 }
 
@@ -4869,24 +4903,20 @@ pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String
     if role == Role::Fund {
         return fundamental(tone, name, ancestors);
     }
+    // The presets are the slot's — a Short delay offers short delays
+    // — and the track opens on the slot's default, which is first.
     let presets = match role {
-        Role::Reverb => reverb_presets(),
-        Role::Delay => delay_presets(),
+        Role::Reverb => reverb_presets(name),
+        Role::Delay => delay_presets(name),
         Role::Wide => wide_presets(),
-        Role::Pitch => pitch_presets(),
+        Role::Pitch => pitch_presets(name),
         Role::Channel | Role::Bus | Role::Fund | Role::Trig => Vec::new(),
     };
     if presets.is_empty() {
         return tone;
     }
-    // Open on the preset the track is named after, else the first.
-    let lower = name.to_lowercase();
-    let wanted = presets
-        .iter()
-        .position(|p| lower.contains(&p.name.to_lowercase()))
-        .unwrap_or(0);
     tone.presets = presets;
-    tone.load_preset(wanted);
+    tone.load_preset(0);
     tone
 }
 
@@ -4944,129 +4974,159 @@ fn shelf(gain: f64) -> EqBand {
     band(0, 6_000.0, gain, 0.7, EqBandShape::HighShelf)
 }
 
-/// The reverb presets: brighter and shorter to darker and longer, the
-/// way a template's rows run.
-fn reverb_presets() -> Vec<Preset> {
-    let base = || {
-        let mut t = placeholder(0);
-        t.role = Role::Reverb;
-        t.pre_eq = vec![band(0, 180.0, -18.0, 0.7, EqBandShape::LowCut)];
-        t
-    };
-    let mut room = base();
-    room.reverb = Room {
-        algorithm: AlgorithmType::Room,
-        decay: 0.6,
-        predelay: 8.0,
-        damping: 0.15,
-        size: 0.35,
-        diffusion: 0.6,
-        mix: 0.2,
-    };
-    room.post_eq = vec![shelf(1.5)];
-    let mut short = base();
-    short.reverb = Room {
-        algorithm: AlgorithmType::Plate,
-        decay: 1.4,
-        predelay: 20.0,
-        damping: 0.3,
-        size: 0.5,
-        diffusion: 0.8,
-        mix: 0.2,
-    };
-    short.post_eq = vec![shelf(-1.5)];
-    let mut long = base();
-    long.reverb = Room {
-        algorithm: AlgorithmType::Hall,
-        decay: 2.6,
-        predelay: 40.0,
-        damping: 0.5,
-        size: 0.7,
-        diffusion: 0.8,
-        mix: 0.18,
-    };
-    long.post_eq = vec![shelf(-4.0)];
-    long.decay_eq = vec![band(0, 300.0, -6.0, 0.7, EqBandShape::LowShelf), band(1, 5_000.0, -6.0, 0.7, EqBandShape::HighShelf)];
-    let mut moment = base();
-    moment.reverb = Room {
-        algorithm: AlgorithmType::Cloud,
-        decay: 5.5,
-        predelay: 60.0,
-        damping: 0.65,
-        size: 0.9,
-        diffusion: 0.9,
-        mix: 0.25,
-    };
-    moment.post_eq = vec![shelf(-7.0)];
-    moment.decay_eq = vec![band(0, 250.0, -9.0, 0.7, EqBandShape::LowShelf), band(1, 4_000.0, -9.0, 0.7, EqBandShape::HighShelf)];
-    let mut throw = base();
-    throw.reverb = Room {
-        algorithm: AlgorithmType::Shimmer,
-        decay: 8.0,
-        predelay: 90.0,
-        damping: 0.7,
-        size: 1.0,
-        diffusion: 1.0,
-        mix: 0.35,
-    };
-    throw.post_eq = vec![shelf(-9.0), band(1, 2_500.0, 3.0, 1.2, EqBandShape::Bell)];
-    throw.decay_eq = vec![band(0, 2_000.0, 6.0, 1.0, EqBandShape::Bell)];
-    vec![
-        preset("Room", room),
-        preset("Short", short),
-        preset("Long", long),
-        preset("Moment", moment),
-        preset("Throw", throw),
-    ]
+/// The slot a return fills, read off its name.
+///
+/// A return is not "a delay": it is THE slap, or THE throw, and the
+/// presets it offers are the ones that fill that slot — so cycling
+/// them swaps one slap for another slap, never for a throw. A name
+/// that says nothing lands on the middle slot.
+fn slot_of(name: &str, slots: &'static [&'static str]) -> &'static str {
+    let lower = name.to_lowercase();
+    slots
+        .iter()
+        .copied()
+        .find(|slot| lower.contains(&slot.to_lowercase()))
+        .unwrap_or_else(|| slots.get(slots.len() / 2).copied().unwrap_or(""))
 }
 
-/// The delay presets, brighter and tighter to darker and wider.
-fn delay_presets() -> Vec<Preset> {
-    let base = || {
-        let mut t = placeholder(1);
-        t.role = Role::Delay;
-        t
-    };
-    let mut slap = base();
-    slap.delay = Echo { time: 95.0, feedback: 0.08, mix: 0.3, tone: 0.3, width: 0.2, style: DelayStyle::Tape };
-    slap.post_eq = vec![shelf(-1.0)];
-    let mut short = base();
-    short.delay = Echo { time: 187.0, feedback: 0.25, mix: 0.25, tone: 0.15, width: 0.5, style: DelayStyle::Clean };
-    short.post_eq = vec![band(0, 200.0, -18.0, 0.7, EqBandShape::LowCut)];
-    let mut long = base();
-    long.delay = Echo { time: 375.0, feedback: 0.42, mix: 0.22, tone: 0.55, width: 0.85, style: DelayStyle::Tape };
-    long.post_eq = vec![band(0, 250.0, -18.0, 0.7, EqBandShape::LowCut), shelf(-5.0)];
-    let mut throw = base();
-    throw.delay = Echo { time: 750.0, feedback: 0.55, mix: 0.4, tone: 0.7, width: 1.0, style: DelayStyle::Bbd };
-    throw.post_eq = vec![band(0, 400.0, -18.0, 0.7, EqBandShape::LowCut), band(1, 1_000.0, 6.0, 2.0, EqBandShape::Bell), shelf(-9.0)];
-    vec![
-        preset("Slap", slap),
-        preset("Short", short),
-        preset("Long", long),
-        preset("Throw", throw),
-    ]
+/// The delay slots, tightest first.
+const DELAY_SLOTS: &[&str] = &["Slap", "Short", "Long", "Throw"];
+
+/// The reverb slots, shortest first.
+const REVERB_SLOTS: &[&str] = &["Room", "Short", "Long", "Moment", "Throw"];
+
+/// A delay preset from its numbers.
+fn repeat(name: &str, style: DelayStyle, time: f32, feedback: f32, mix: f32, tone: f32, width: f32, post_eq: Vec<EqBand>) -> Preset {
+    let mut t = placeholder(1);
+    t.role = Role::Delay;
+    t.delay = Echo { time, feedback, mix, tone, width, style };
+    t.post_eq = post_eq;
+    preset(name, t)
+}
+
+/// A reverb preset from its numbers. Every one cuts the lows on the
+/// way in; what differs is the space and how it is shaped after.
+fn space(name: &str, algorithm: AlgorithmType, decay: f32, predelay: f32, size: f32, damping: f32, diffusion: f32, mix: f32, post_eq: Vec<EqBand>, decay_eq: Vec<EqBand>) -> Preset {
+    let mut t = placeholder(0);
+    t.role = Role::Reverb;
+    t.pre_eq = vec![band(0, 180.0, -18.0, 0.7, EqBandShape::LowCut)];
+    t.reverb = Room { algorithm, decay, predelay, damping, size, diffusion, mix };
+    t.post_eq = post_eq;
+    t.decay_eq = decay_eq;
+    preset(name, t)
+}
+
+fn low_cut(hz: f64) -> EqBand {
+    band(0, hz, -18.0, 0.7, EqBandShape::LowCut)
+}
+
+/// The curated presets for one delay slot, cleanest to most coloured.
+///
+/// The first is the slot's default — what the track opens on — and
+/// the rest are the same job done by a different machine.
+fn delay_presets(name: &str) -> Vec<Preset> {
+    use DelayStyle as D;
+    match slot_of(name, DELAY_SLOTS) {
+        "Slap" => vec![
+            repeat("Tape 95", D::Tape, 95.0, 0.08, 0.3, 0.3, 0.2, vec![shelf(-1.0)]),
+            repeat("Rockabilly", D::Tape, 120.0, 0.15, 0.35, 0.4, 0.2, vec![shelf(-2.0)]),
+            repeat("Tight", D::Clean, 70.0, 0.02, 0.25, 0.1, 0.1, vec![]),
+            repeat("Drum Slap", D::Drum, 110.0, 0.1, 0.3, 0.35, 0.6, vec![low_cut(150.0)]),
+            repeat("Lo-Fi Slap", D::LoFi, 100.0, 0.12, 0.3, 0.6, 0.3, vec![shelf(-4.0)]),
+        ],
+        "Long" => vec![
+            repeat("Tape 1/8", D::Tape, 375.0, 0.42, 0.22, 0.55, 0.85, vec![low_cut(250.0), shelf(-5.0)]),
+            repeat("Dotted 8th", D::Clean, 560.0, 0.38, 0.2, 0.3, 0.9, vec![low_cut(250.0), shelf(-3.0)]),
+            repeat("Dark BBD", D::Bbd, 375.0, 0.5, 0.22, 0.7, 0.8, vec![low_cut(300.0), shelf(-7.0)]),
+            repeat("Oil Can", D::OilCan, 400.0, 0.45, 0.2, 0.6, 0.7, vec![low_cut(300.0), shelf(-6.0)]),
+            repeat("Shimmer 1/8", D::Shimmer, 375.0, 0.5, 0.18, 0.4, 1.0, vec![low_cut(400.0)]),
+        ],
+        "Throw" => vec![
+            repeat("BBD Throw", D::Bbd, 750.0, 0.55, 0.4, 0.7, 1.0, vec![low_cut(400.0), band(1, 1_000.0, 6.0, 2.0, EqBandShape::Bell), shelf(-9.0)]),
+            repeat("Tape 1/4", D::Tape, 750.0, 0.6, 0.4, 0.75, 0.9, vec![low_cut(400.0), shelf(-8.0)]),
+            repeat("Reverse", D::Reverse, 700.0, 0.4, 0.4, 0.5, 1.0, vec![low_cut(300.0), shelf(-4.0)]),
+            repeat("Pitch Throw", D::Pitch, 750.0, 0.5, 0.35, 0.45, 1.0, vec![low_cut(400.0), shelf(-5.0)]),
+            repeat("Spectral", D::Spectral, 750.0, 0.6, 0.35, 0.5, 1.0, vec![low_cut(500.0)]),
+        ],
+        _ => vec![
+            repeat("Clean 1/16", D::Clean, 187.0, 0.25, 0.25, 0.15, 0.5, vec![low_cut(200.0)]),
+            repeat("Tape 1/16", D::Tape, 187.0, 0.3, 0.25, 0.35, 0.5, vec![low_cut(200.0), shelf(-3.0)]),
+            repeat("BBD Bounce", D::Bbd, 210.0, 0.35, 0.25, 0.5, 0.6, vec![low_cut(200.0), shelf(-5.0)]),
+            repeat("Ping-Pong", D::MultiTap, 187.0, 0.3, 0.25, 0.2, 1.0, vec![low_cut(200.0)]),
+            repeat("Filtered", D::Filter, 187.0, 0.4, 0.25, 0.6, 0.5, vec![low_cut(300.0), shelf(-6.0)]),
+        ],
+    }
+}
+
+/// The curated presets for one reverb slot, plainest to most coloured.
+fn reverb_presets(name: &str) -> Vec<Preset> {
+    use AlgorithmType as A;
+    let dark = |low: f64, high: f64| vec![band(0, 300.0, low, 0.7, EqBandShape::LowShelf), band(1, 5_000.0, high, 0.7, EqBandShape::HighShelf)];
+    match slot_of(name, REVERB_SLOTS) {
+        "Room" => vec![
+            space("Small Room", A::Room, 0.6, 8.0, 0.35, 0.15, 0.6, 0.2, vec![shelf(1.5)], vec![]),
+            space("Wood Room", A::Room, 0.8, 10.0, 0.45, 0.4, 0.7, 0.2, vec![shelf(-2.0)], vec![]),
+            space("Reflections", A::Reflections, 0.5, 4.0, 0.3, 0.2, 0.4, 0.22, vec![], vec![]),
+            space("Tight Plate", A::Plate, 0.8, 5.0, 0.3, 0.25, 0.9, 0.18, vec![shelf(1.0)], vec![]),
+            space("Velvet", A::Velvet, 0.7, 6.0, 0.4, 0.3, 1.0, 0.2, vec![], vec![]),
+        ],
+        "Long" => vec![
+            space("Hall 2.6", A::Hall, 2.6, 40.0, 0.7, 0.5, 0.8, 0.18, vec![shelf(-4.0)], dark(-6.0, -6.0)),
+            space("Dark Hall", A::Hall, 3.0, 50.0, 0.8, 0.7, 0.8, 0.18, vec![shelf(-8.0)], dark(-6.0, -12.0)),
+            space("Magneto", A::Magneto, 2.4, 30.0, 0.6, 0.5, 0.9, 0.2, vec![shelf(-5.0)], dark(-4.0, -6.0)),
+            space("Chorale", A::Chorale, 3.2, 40.0, 0.75, 0.45, 0.9, 0.18, vec![shelf(-4.0)], dark(-6.0, -4.0)),
+            space("Random Space", A::Random, 2.8, 35.0, 0.7, 0.5, 0.85, 0.18, vec![shelf(-5.0)], dark(-6.0, -6.0)),
+        ],
+        "Moment" => vec![
+            space("Cloud", A::Cloud, 5.5, 60.0, 0.9, 0.65, 0.9, 0.25, vec![shelf(-7.0)], dark(-9.0, -9.0)),
+            space("Bloom", A::Bloom, 5.0, 80.0, 0.9, 0.6, 1.0, 0.25, vec![shelf(-6.0)], dark(-9.0, -6.0)),
+            space("Swell", A::Swell, 6.0, 100.0, 0.95, 0.6, 1.0, 0.25, vec![shelf(-6.0)], dark(-9.0, -8.0)),
+            space("Convolution", A::Convolution, 4.5, 40.0, 0.8, 0.5, 1.0, 0.22, vec![shelf(-5.0)], dark(-6.0, -6.0)),
+            space("Velvet Wash", A::Velvet, 5.0, 60.0, 0.9, 0.7, 1.0, 0.25, vec![shelf(-8.0)], dark(-9.0, -12.0)),
+        ],
+        "Throw" => vec![
+            space("Shimmer", A::Shimmer, 8.0, 90.0, 1.0, 0.7, 1.0, 0.35, vec![shelf(-9.0), band(1, 2_500.0, 3.0, 1.2, EqBandShape::Bell)], vec![band(0, 2_000.0, 6.0, 1.0, EqBandShape::Bell)]),
+            space("Dark Shimmer", A::Shimmer, 6.0, 90.0, 1.0, 0.85, 1.0, 0.3, vec![shelf(-12.0)], vec![band(0, 1_200.0, 4.0, 1.0, EqBandShape::Bell)]),
+            space("Bloom Throw", A::Bloom, 7.0, 120.0, 1.0, 0.6, 1.0, 0.35, vec![shelf(-7.0)], dark(-9.0, -6.0)),
+            space("Cloud Throw", A::Cloud, 9.0, 100.0, 1.0, 0.7, 1.0, 0.35, vec![shelf(-9.0)], dark(-12.0, -9.0)),
+            space("Chorale Throw", A::Chorale, 7.0, 80.0, 1.0, 0.5, 1.0, 0.3, vec![shelf(-6.0)], dark(-9.0, -4.0)),
+        ],
+        _ => vec![
+            space("Plate 1.4", A::Plate, 1.4, 20.0, 0.5, 0.3, 0.8, 0.2, vec![shelf(-1.5)], vec![]),
+            space("Bright Plate", A::Plate, 1.2, 15.0, 0.45, 0.15, 0.9, 0.2, vec![shelf(2.0)], vec![]),
+            space("Spring", A::Spring, 1.6, 10.0, 0.4, 0.4, 0.5, 0.2, vec![shelf(-3.0)], vec![]),
+            space("Non-Linear", A::NonLinear, 1.0, 10.0, 0.5, 0.3, 0.9, 0.22, vec![], vec![]),
+            space("FreeVerb", A::FreeVerb, 1.5, 20.0, 0.5, 0.35, 0.7, 0.2, vec![shelf(-2.0)], vec![]),
+        ],
+    }
 }
 
 fn wide_presets() -> Vec<Preset> {
-    let mut subtle = placeholder(2);
-    subtle.role = Role::Wide;
-    subtle.wide = 1.25;
-    let mut wide = placeholder(2);
-    wide.role = Role::Wide;
-    wide.wide = 1.7;
-    vec![preset("Subtle", subtle), preset("Wide", wide)]
+    let widen = |name: &str, wide: f32| {
+        let mut t = placeholder(2);
+        t.role = Role::Wide;
+        t.wide = wide;
+        preset(name, t)
+    };
+    vec![widen("Subtle", 1.25), widen("Wide", 1.7), widen("Huge", 2.2)]
 }
 
-fn pitch_presets() -> Vec<Preset> {
-    let mut up = placeholder(3);
-    up.role = Role::Pitch;
-    up.pitch = 12;
-    up.pitch_mix = 0.35;
-    let mut down = placeholder(3);
-    down.role = Role::Pitch;
-    down.pitch = -12;
-    down.pitch_mix = 0.4;
-    vec![preset("Oct+", up), preset("Oct-", down)]
+/// One list per direction: an up track offers ways up, a down track
+/// ways down.
+fn pitch_presets(name: &str) -> Vec<Preset> {
+    let shift = |name: &str, pitch: i32, mix: f32| {
+        let mut t = placeholder(3);
+        t.role = Role::Pitch;
+        t.pitch = pitch;
+        t.pitch_mix = mix;
+        preset(name, t)
+    };
+    let lower = name.to_lowercase();
+    if lower.contains('-') || lower.contains("down") || lower.contains("sub") {
+        vec![shift("Oct-", -12, 0.4), shift("Oct- Soft", -12, 0.2), shift("Sub", -24, 0.3)]
+    } else {
+        vec![shift("Oct+", 12, 0.35), shift("Oct+ Soft", 12, 0.18), shift("5th+", 7, 0.25)]
+    }
 }
 
 /// What a track sounds like, as far as a placeholder can know.
@@ -5729,11 +5789,12 @@ fn comp_grip(comp: Comp, which: Which, body: Panel, rack: Rack, x: f64, y: f64) 
         {
             return match grip {
                 Grip::Attack(_) => Grip::Attack(which),
-                Grip::Release(_) => Grip::Release(which),
-                _ => Grip::Ratio(which),
+                _ => Grip::Release(which),
             };
         }
-        let _ = comp;
+        if Arrow::of(comp, display).holds(x, y) {
+            return Grip::Ratio(which);
+        }
     }
     // And everything else is the threshold: it is a line across a
     // display, and a line one pixel tall is not something you aim at —
@@ -5760,6 +5821,20 @@ pub const EQ_GAIN_LIMIT: f64 = 30.0;
 /// over the editor do the same thing.
 pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
     match grip {
+        // The wheel over the row walks the list — the way you audition
+        // a slot's presets, one after another, without aiming at chips
+        // that may not all be on the row.
+        Grip::Preset(_) => {
+            let len = tone.presets.len();
+            if len == 0 {
+                return;
+            }
+            let at = tone.preset.unwrap_or(0);
+            let next = if delta_y > 0.0 { at.saturating_add(1).min(len.saturating_sub(1)) } else { at.saturating_sub(1) };
+            if next != at {
+                tone.load_preset(next);
+            }
+        }
         Grip::Band(which, index) => {
             let Some(band) = tone.bands(which).and_then(|set| set.get_mut(index)) else {
                 return;
@@ -6238,12 +6313,13 @@ pub fn drag(
 /// height is worth on it.
 fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, dx: f64, dy: f64) {
     match grip {
-        // Down the strip for more: the strip's whole height is the
-        // whole range, through the same two-sided scale as the times.
+        // Down for more: the arrow points the way the signal goes.
+        // Six tenths of the display is the whole range, through the
+        // same two-sided scale as the times.
         Grip::Ratio(which) => {
             let display = comp_split(body, rack);
             let dy = dy * interaction::fine_scale(mods);
-            let span = Strips::of(display).map_or(display.height * 0.6, |s| s.ratio.height()).max(1.0);
+            let span = (display.height * 0.6).max(1.0);
             if let Some(comp) = tone.compressor(which) {
                 let scale = Time::ratio(comp.ratio);
                 comp.ratio = f64_to_f32(scale.at(scale.place() + dy / span));
@@ -6430,15 +6506,40 @@ pub fn knob_at(body: Panel, x: f64) -> usize {
 /// Which preset chip a point is over, if any.
 #[must_use]
 pub fn preset_chip_at(tone: &Tone, at: Panel, x: f64) -> Option<usize> {
-    let mut left = at.x + 2.0;
-    for (i, preset) in tone.presets.iter().enumerate() {
-        let w = preset_chip_width(&preset.name);
-        if x >= left && x < left + w {
-            return Some(i);
+    preset_chips(tone, at).into_iter().find(|(_, chip)| x >= chip.x0 && x < chip.x1).map(|(i, _)| i)
+}
+
+/// The chips that fit the row, with the loaded one always among them.
+///
+/// A row narrower than its list shows a window onto it that starts
+/// far enough back for the loaded chip to be the last one in — so the
+/// wheel walks the list and the chip you are on never leaves the row.
+/// One place for the drawing and the hit test both, for the usual
+/// reason.
+fn preset_chips(tone: &Tone, at: Panel) -> Vec<(usize, Rect)> {
+    let right = at.x + at.width;
+    let fits = |first: usize| {
+        let mut left = at.x + 2.0;
+        let mut out = Vec::new();
+        for (i, preset) in tone.presets.iter().enumerate().skip(first) {
+            let w = preset_chip_width(&preset.name);
+            if left + w > right {
+                break;
+            }
+            out.push((i, Rect::new(left, at.y + 2.0, left + w, at.y + at.height - 2.0)));
+            left += w + 2.0;
         }
-        left += w + 2.0;
+        out
+    };
+    let current = tone.preset.unwrap_or(0);
+    let mut first = 0;
+    loop {
+        let chips = fits(first);
+        if chips.iter().any(|(i, _)| *i == current) || first >= current {
+            return chips;
+        }
+        first = first.saturating_add(1);
     }
-    None
 }
 
 /// A chip's width for a name: the swatch, the text, the air.
@@ -6837,7 +6938,7 @@ mod fold_tests {
 
 #[cfg(test)]
 mod container_tests {
-    use super::{ALL_PANELS, Folded, HEAD_H, Panel, Row, Which, chain, tall, units};
+    use super::{ALL_PANELS, Folded, Grip, HEAD_H, Mods, Panel, Row, Which, chain, tall, units};
     use session::mix_phases::MixPhase as P;
 
     fn box_at() -> Panel {
@@ -6872,6 +6973,39 @@ mod container_tests {
             }
         }
         assert_eq!(seen.len(), 5, "expected one container per phase: {seen:?}");
+    }
+
+    /// A return's presets are its slot's: a Short delay offers short
+    /// delays, a Throw verb throws, and no list has another slot's
+    /// default in it.
+    #[test]
+    fn a_return_offers_presets_for_its_own_slot() {
+        let short = super::placeholder_for(super::Role::Delay, 1, "Short", &[]);
+        let throw = super::placeholder_for(super::Role::Delay, 1, "Throw", &[]);
+        assert!(short.delay.time < 300.0 && throw.delay.time > 500.0);
+        assert!(short.presets.iter().all(|p| p.tone.delay.time < 300.0));
+        assert!(throw.presets.iter().all(|p| p.tone.delay.time > 500.0));
+        assert_eq!(short.preset, Some(0));
+        let room = super::placeholder_for(super::Role::Reverb, 0, "Room", &[]);
+        let moment = super::placeholder_for(super::Role::Reverb, 0, "Moment", &[]);
+        assert!(room.presets.iter().all(|p| p.tone.reverb.decay < 1.0));
+        assert!(moment.presets.iter().all(|p| p.tone.reverb.decay > 4.0));
+        // A name that says nothing lands on the middle slot.
+        let plain = super::placeholder_for(super::Role::Delay, 1, "Delay", &[]);
+        assert!(plain.presets.len() >= 4);
+        // The wheel walks the list and stops at its ends; a narrow row
+        // keeps the loaded chip on it.
+        let mut walk = short.clone();
+        for _ in 0..10 {
+            super::wheel(&mut walk, Grip::Preset(0), Mods::default(), 1.0);
+        }
+        assert_eq!(walk.preset, Some(walk.presets.len() - 1));
+        let narrow = Panel { x: 0.0, y: 0.0, width: 60.0, height: super::PRESETS_H };
+        let chips = super::preset_chips(&walk, narrow);
+        assert!(chips.iter().any(|(i, _)| Some(*i) == walk.preset));
+        assert!(chips.len() < walk.presets.len());
+        super::wheel(&mut walk, Grip::Preset(0), Mods::default(), -1.0);
+        assert_eq!(walk.preset, Some(walk.presets.len() - 2));
     }
 
     /// A chain without a phase keeps the phase's row as a blank bar, so
@@ -7669,18 +7803,20 @@ mod comp_tests {
         assert!(tone.comp.attack < was, "left is fast: {} vs {was}", tone.comp.attack);
         assert!((super::Time::attack(super::Comp::default().attack).place() - 0.5).abs() < 1e-9);
         assert!((super::Time::release(super::Comp::default().release).place() - 0.5).abs() < 1e-9);
-        // The ratio's strip up the rail, and its default in the middle.
-        let _ = level;
-        let ratio = strips.ratio.center();
+        // The ratio's arrow hangs off the threshold line near the left
+        // edge, and is grabbed along its length.
+        let arrow = super::Arrow::of(tone.comp, display);
+        assert!((arrow.top - level).abs() < f64::EPSILON);
+        assert!(arrow.tip > arrow.top);
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), super::Folded::default(), ratio.x, ratio.y),
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), arrow.x, (arrow.top + arrow.tip) / 2.0),
             Some(Grip::Ratio(Which::Comp))
         );
         assert!((super::Time::ratio(super::Comp::default().ratio).place() - 0.5).abs() < 1e-9);
-        // Right of the rail and above the time strips is nothing but the
-        // display, which belongs to the threshold.
+        // Right of the arrow and above the time strips is nothing but
+        // the display, which belongs to the threshold.
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), super::Folded::default(), strips.ratio.x1 + 12.0, strips.ratio.center().y),
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), arrow.x + 30.0, (arrow.top + arrow.tip) / 2.0),
             Some(Grip::Threshold(Which::Comp))
         );
     }
