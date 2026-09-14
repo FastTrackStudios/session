@@ -21,6 +21,7 @@ mod item_metadata;
 pub mod layouts;
 mod metadata_patterns;
 pub mod protools;
+pub mod scenes;
 pub mod song_name;
 mod tempo;
 pub mod track_schema;
