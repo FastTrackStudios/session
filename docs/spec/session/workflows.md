@@ -21,7 +21,7 @@ and quantize specs.
 
 | Instrument | Tracking | Comping | Editing | Mixing | More |
 |---|---|---|---|---|---|
-| Drums (audio) | [x] full · [x] overview | [ ] | [x] stack · [x] slip/stretch · [x] quantize · [ ] align hits | [x] scenes · [x] balance | [ ] triggering samples |
+| Drums (audio) | [x] full · [ ] overview | [ ] folder items | [ ] edit scene · [x] stack · [x] slip/stretch · [x] quantize · [ ] align hits | [x] scenes · [x] balance | [ ] triggering samples |
 | Bass | [ ] | [ ] | [ ] | [ ] | |
 | Guitars | [ ] | [ ] | [ ] doubles aligned | [x] buses/VCA | |
 | Vocals | [ ] | [ ] | [ ] doubles aligned | [x] lead vocal scenes | [ ] tuning · [ ] fx · [ ] automation |
@@ -54,6 +54,17 @@ r[flow.scenes.render]
 Every scene named in this spec renders headless from the reference
 session (`just daw-scene <slug>`) and the render is a test fixture: a
 change to what a scene shows is a change to a picture, not a surprise.
+
+r[flow.scenes.follow-mode]
+Scenes are the **visibility manager**, and the visibility manager
+follows the DAW mode: entering **Record** shows the instrument's
+tracking scene, **Edit** its editing scene, **Mix** its mixing scene,
+without a second choice being made. A mode has a default scene per
+instrument, the number keys still recall any scene inside a mode, and
+a scene chosen by hand stays until the mode changes. Comping is not a
+mode; its view lives inside Record and Edit (see
+`flow.drums.comping.folder-items`), because a kit is comped while it
+is still being tracked as often as afterwards.
 
 r[flow.scenes.two-audiences]
 A flow has views for two audiences where they differ: the engineer's
@@ -113,6 +124,27 @@ otherwise, at the engine's meter rate, in the TCP and the MCP alike.
 
 ### Comping
 
+Twenty takes of a kit are twenty items on the kick, twenty on the
+snare, twenty on each tom, and the arrangement becomes impossible to
+read. Comping is done on the folder instead.
+
+r[flow.drums.comping.folder-items]
+The **Drum Kit folder shows folder items**, the way
+[nvk folder items](https://nvk.tools/docs/workflow/folder_items/) do:
+one item per take on the folder's row, rendered from the kit's main
+sources — the kick, the snare and the toms summed — so a take reads as
+one item with one waveform rather than a stack of items across twenty
+tracks. The folder item is a **view** of the take's items on the source
+tracks underneath; it owns no audio of its own.
+
+r[flow.drums.comping.folder-lanes]
+With the kit in comping, the folder shows **one lane per take**, each
+lane the take's folder item, and a **comp lane** on top: the comp is
+built by choosing regions of the take lanes, and the comp lane shows
+the result as one item. The source tracks are collapsed under the
+folder while this is done; expanding a piece shows its own take lanes
+for the case a single mic needs a different choice.
+
 r[flow.drums.comping.lanes]
 Every take of a source track is a **take lane** under it, shown in the
 arrangement when the track is in comping; the kit's take lanes line up
@@ -120,9 +152,10 @@ across the pieces because the takes were recorded together.
 
 r[flow.drums.comping.group]
 A comp on the kit is made **as a group**: choosing a take's region on
-the kick chooses the same region on every source track of the kit, so
-the kit is never cut between mics. A piece can be taken out of the
-group deliberately (a fixed snare hit from another take) and put back.
+the folder's comp lane chooses the same region on every source track
+of the kit, so the kit is never cut between mics. A piece can be taken
+out of the group deliberately (a fixed snare hit from another take) on
+its own take lanes and put back.
 
 r[flow.drums.comping.crossfade]
 Comp boundaries get crossfades of a session-wide default length, drawn
@@ -131,6 +164,16 @@ on the items and draggable at the top corners the way any fade is
 the kit's hits are detected.
 
 ### Editing
+
+r[flow.drums.editing.scene]
+**Drum Editing** shows the kit the way the expression editor folds it:
+**one row per source piece** — one Kick, one Snare, one row per tom,
+one per source track — with the mics under each piece collapsed into
+it, the pieces' folder items carrying the piece's summed waveform, and
+the Process folder and the buses hidden. It is the scene Edit mode
+shows for the kit, and the arrangement's counterpart of the stack's
+lanes: the same fold, so what is selected in one is what is edited in
+the other.
 
 r[flow.drums.editing.stack]
 Editing the kit is done in the expression editor's stack: every mic
