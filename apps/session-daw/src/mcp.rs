@@ -835,6 +835,11 @@ fn strip(
     // scanned across tracks.
     let shape = Collapse::at(f64_to_f32((slot.mixer_h - rack_h).max(1.0)));
     let own = Collapse::at(f64_to_f32((h - rack_h).max(1.0)));
+    let geometry = crate::strip::Strip::new(w, h, slot.mixer_h, rack_h, buttons_top);
+    // The strip's own chrome — band, sections, plate — is the whole
+    // strip when the rack is stacked over it, and the left column when
+    // the rack stands beside it. See `strip::Layout`.
+    let chrome_w = geometry.chrome_width();
 
     // The strip's ground, and the track's colour as a band across it.
     fill(scene, palette.tcp_tint, Rect::new(x, 0.0, x + w, h));
@@ -914,7 +919,7 @@ fn strip(
     // starts. It used to begin one FX-section below that, leaving a
     // band of empty strip above it — room reserved for the FX pill back
     // when the pill sat up here.
-    let rack_box = crate::strip::Strip::new(w, h, slot.mixer_h, rack_h, buttons_top).rack_rect();
+    let rack_box = geometry.rack_rect();
     if let (Some(rack_box), Some(tone)) = (rack_box, tone) {
         // Clipped to the box, like the live rack is: the chain is
         // longer than the box and would otherwise run down over the
@@ -952,7 +957,7 @@ fn strip(
         track,
         Slot {
             x,
-            width: w,
+            width: chrome_w,
             height: h,
             buttons_top,
             rack_h,
@@ -967,7 +972,7 @@ fn strip(
     // it are placed against it.
     let _ = stretch_h;
 
-    bottom(scene, palette, font, track, x, w, h);
+    bottom(scene, palette, font, track, x, chrome_w, h);
 }
 
 /// The coloured band: pan, the record input, and the arm hanging off its

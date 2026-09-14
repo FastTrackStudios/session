@@ -40,6 +40,35 @@ const PAN_FROM_EDGE: f64 = 5.0;
 /// reads as part of it, and the floor of a meter is a value you look at.
 const NAME_GAP: f64 = 3.0;
 
+/// How a strip arranges itself: REAPER's stacked strip, or the focused
+/// column layout.
+///
+/// A focused strip is wide, and stacking a rack over a strip that wide
+/// wastes the one thing a focused track needs — height. The column
+/// layout is REAPER's "layout C" idea: the strip's own controls in a
+/// column at the left, the fader running from the top of the mixer to
+/// the name plate, the buttons on the same lines as every neighbour's,
+/// and the rack as a second column beside it that spans the whole
+/// height. What a docked mixer wants too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// The rack over the strip.
+    Stacked,
+    /// The strip beside the rack.
+    Column,
+}
+
+/// The width of the strip's own column in the column layout: REAPER's
+/// own strip width (`geometry::mcp::STRIP_W`), so the controls are
+/// exactly the ones you know. Stated as an `f64` because the geometry
+/// table is `f32` and a width is added to `f64` positions here.
+pub const COLUMN_W: f64 = 86.0;
+
+const _: () = assert!(g::STRIP_W == 86.0);
+
+/// The strip's inset from the mixer's top and its rack's edges.
+const EDGE: f64 = 2.0;
+
 /// One strip's geometry, in the strip's own coordinates.
 ///
 /// X is from the strip's left edge, Y from the mixer's top — the space
@@ -68,15 +97,61 @@ impl Strip {
     /// Resolve a strip.
     #[must_use]
     pub fn new(width: f64, height: f64, mixer_h: f64, rack_h: f64, buttons_top: f64) -> Self {
+        // The column layout resolves the strip's own controls against
+        // REAPER's strip width, whatever the strip is: the rest is the
+        // rack's.
+        let own_w = if Self::column_layout(width, rack_h) { COLUMN_W } else { width };
         Self {
             width,
             height,
-            squeeze: Squeeze::at(width),
+            squeeze: Squeeze::at(own_w),
             shared: Collapse::at(crate::mcp::f64_to_f32((mixer_h - rack_h).max(1.0))),
             own: Collapse::at(crate::mcp::f64_to_f32((height - rack_h).max(1.0))),
-            columns: Columns::at(0.0, width),
+            columns: Columns::at(0.0, own_w),
             rack_h,
             buttons_top,
+        }
+    }
+
+    /// Whether a strip this wide, with a rack, lays out as a column.
+    ///
+    /// At the width the rack's editing tier opens at — a strip that
+    /// wide is a focused one, and a focused one wants height.
+    fn column_layout(width: f64, rack_h: f64) -> bool {
+        rack_h > 0.0 && width >= crate::tone::FOCUSED + COLUMN_W
+    }
+
+    /// Which layout this strip is in.
+    #[must_use]
+    pub fn layout(&self) -> Layout {
+        if Self::column_layout(self.width, self.rack_h) {
+            Layout::Column
+        } else {
+            Layout::Stacked
+        }
+    }
+
+    /// How wide the strip's own chrome is — the band, the plate, the
+    /// sections. The whole strip when stacked; the left column beside a
+    /// rack.
+    #[must_use]
+    pub fn chrome_width(&self) -> f64 {
+        match self.layout() {
+            Layout::Stacked => self.width,
+            Layout::Column => COLUMN_W,
+        }
+    }
+
+    /// Where the fader column starts.
+    ///
+    /// Under the coloured band when stacked; at the mixer's top in the
+    /// column layout, where the fader is the whole height of the
+    /// strip — the one control that gets better with length, given
+    /// all of it.
+    fn fader_top(&self) -> f64 {
+        match self.layout() {
+            Layout::Stacked => self.band_bottom(),
+            Layout::Column => EDGE + 2.0,
         }
     }
 
@@ -156,7 +231,13 @@ impl Strip {
         let floor = self
             .rect(Control::Name)
             .map_or(self.height, |plate| plate.y0 - NAME_GAP);
-        (floor - self.band_bottom()).clamp(0.0, self.stretch())
+        match self.layout() {
+            Layout::Stacked => (floor - self.band_bottom()).clamp(0.0, self.stretch()),
+            // Not clamped to the section's allotment: the allotment is
+            // what was left under the rack, and there is no rack over
+            // this column.
+            Layout::Column => (floor - self.fader_top()).max(0.0),
+        }
     }
 
     /// Whether the volume control is a fader rather than a knob.
@@ -172,7 +253,17 @@ impl Strip {
     /// mixer collapses `rack_h` to zero in either case.
     #[must_use]
     pub fn rack_rect(&self) -> Option<Rect> {
-        (self.rack_h > 0.0).then(|| Rect::new(2.0, 2.0, self.width - 2.0, self.rack_h - 2.0))
+        (self.rack_h > 0.0).then(|| match self.layout() {
+            Layout::Stacked => Rect::new(EDGE, EDGE, self.width - EDGE, self.rack_h - EDGE),
+            // Beside the strip's column, the whole height: what the
+            // layout exists to give the chain.
+            Layout::Column => Rect::new(
+                COLUMN_W + EDGE,
+                EDGE,
+                self.width - EDGE,
+                self.height - crate::mcp::INDENT_STEP - EDGE,
+            ),
+        })
     }
 
     /// The meter, which is the fader's own groove.
@@ -198,7 +289,7 @@ impl Strip {
     #[must_use]
     pub fn scale_rect(&self) -> Option<Rect> {
         self.squeeze.meter().then(|| {
-            let top = self.band_bottom();
+            let top = self.fader_top();
             Rect::new(
                 self.columns.scale_x,
                 top,
@@ -210,7 +301,7 @@ impl Strip {
 
     /// The fader's whole column — groove, meter and cap.
     fn fader_rect(&self) -> Option<Rect> {
-        let top = self.band_bottom();
+        let top = self.fader_top();
         let stretch = self.travel();
         (stretch > 0.0).then(|| {
             Rect::new(
@@ -229,9 +320,12 @@ impl Strip {
     /// clicked, which is the invariant that makes them agree.
     #[must_use]
     pub fn rect(&self, control: Control) -> Option<Rect> {
-        let top = |y: f64, h: f64| Rect::new(0.0, y, self.width, y + h);
+        let top = |y: f64, h: f64| Rect::new(0.0, y, self.chrome_width(), y + h);
         match control {
-            Control::Fx => self.squeeze.head().then(|| {
+            // No FX pill in the column layout: the pill opens the
+            // chain, and the chain is open beside it — and the pill's
+            // line is where the fader now runs.
+            Control::Fx => (self.squeeze.head() && self.layout() == Layout::Stacked).then(|| {
                 Rect::new(
                     7.0,
                     self.rack_h + f64::from(g::FX_PILL_TOP),
@@ -289,12 +383,15 @@ impl Strip {
                     y + f64::from(g::BUTTON_H),
                 ))
             }
-            Control::Volume => Some(Rect::new(
-                self.columns.fader_x,
-                self.buttons_top,
-                self.columns.fader_x + self.columns.fader_w,
-                self.buttons_top + self.stretch(),
-            )),
+            Control::Volume => match self.layout() {
+                Layout::Stacked => Some(Rect::new(
+                    self.columns.fader_x,
+                    self.buttons_top,
+                    self.columns.fader_x + self.columns.fader_w,
+                    self.buttons_top + self.stretch(),
+                )),
+                Layout::Column => self.fader_rect(),
+            },
             Control::Clip => self.fader_rect().map(|fader| {
                 Rect::new(
                     fader.x0,

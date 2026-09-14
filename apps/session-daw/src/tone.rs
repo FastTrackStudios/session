@@ -1430,6 +1430,7 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
             y += which.natural() + GAP;
             continue;
         }
+        let tier = Rack::at(panel.width);
         // A header whenever the phase changes, which is what makes the
         // chain's ORDER do the grouping: the units are already in phase
         // order, so a container is a run of them.
@@ -1441,7 +1442,7 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
         if folded.is(which.phase()) {
             continue;
         }
-        let height = which.natural();
+        let height = which.natural_at(tier);
         out.push((Row::Unit(which), row(y, height)));
         y += height + GAP;
     }
@@ -1737,6 +1738,27 @@ impl Which {
         matches!(self, Self::Sat | Self::Delay | Self::Reverb)
     }
 
+    /// How tall this panel is at a given rack tier.
+    ///
+    /// The natural height at every tier but focus. A focused rack is a
+    /// column the height of the mixer, and the pictures that are time —
+    /// the delay's repeats, the reverb's tail — earn more of it: at a
+    /// hundred pixels tall and four hundred wide they read as a strip
+    /// under a selector rather than as the visualiser they are.
+    #[must_use]
+    pub const fn natural_at(self, rack: Rack) -> f64 {
+        let base = self.natural();
+        if !rack.editing() {
+            return base;
+        }
+        match self {
+            Self::Delay | Self::Reverb => base * 2.2,
+            Self::Sat => base * 1.4,
+            Self::Wide | Self::Pitch => base * 1.6,
+            _ => base,
+        }
+    }
+
     /// How tall this panel wants to be, in pixels.
     ///
     /// A HEIGHT, not a share. A share of the panel means a rack that
@@ -1770,7 +1792,11 @@ impl Which {
             // the saturator because the levels in it are read against a
             // threshold, and a threshold you cannot place precisely is
             // a threshold you set by ear twice.
-            Self::Comp | Self::RescueComp => 170.0,
+            Self::Comp => 170.0,
+            // The rescue compressor catches what is wrong rather than
+            // shaping what is right: a coarser decision, a shorter
+            // display.
+            Self::RescueComp => 120.0,
             // The gate is the same display without the envelope: a line
             // and what falls under it.
             Self::Gate => 120.0,
@@ -2486,15 +2512,18 @@ fn gate(scene: &mut Scene, palette: &Palette, gate: Gate, at: Panel, rack: Rack,
     // What the gate takes off is what lives BELOW the line, down to the
     // range — so that is the band that gets shaded. A compressor shades
     // above.
+    // In the gate's own green: the compressor's red is a reduction,
+    // and a gate is a door — its lane says "open" in this colour, and
+    // so does everything else on the panel.
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        hex(comp_ui::comp_graph_svg::colors::REDUCTION_FILL).multiply_alpha(0.22),
+        GATE_INK.multiply_alpha(0.18),
         None,
         &Rect::new(at.x, line, right, floor),
     );
     let held = matches!(lit, Some(Grip::Threshold(_)));
-    let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
+    let red = GATE_INK;
     rule_wide(
         scene,
         red,
@@ -2525,6 +2554,10 @@ fn gate(scene: &mut Scene, palette: &Palette, gate: Gate, at: Panel, rack: Rack,
         }
     }
 }
+
+/// The gate's ink: green, the door lane's "open" — so a gate is never
+/// mistaken for the compressor it sits beside.
+const GATE_INK: Color = Color::from_rgba8(0x34, 0xd3, 0x99, 0xff);
 
 /// The gate's times, as a table standing between its two lines.
 ///
