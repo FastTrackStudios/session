@@ -2439,10 +2439,10 @@ fn threshold_y(comp: Comp, at: Panel) -> f64 {
 
 /// The compressor's settings, drawn on the display they act in.
 ///
-/// Three strips, one instrument. The RATIO runs up the rail at the
-/// left edge — 1:1 at the top, 20:1 at the floor, the default at the
-/// centre tick — pulled down for more, because down is the direction
-/// the signal goes. The two TIMES run along the floor — attack over
+/// Three strips, one instrument. The RATIO stands in the bottom-left
+/// corner, up the rail from the floor — 1:1 at its top, 20:1 at the
+/// floor, the default at the centre tick — pulled down for more,
+/// because down is the direction the signal goes. The two TIMES run along the floor — attack over
 /// release, fast at the left and slow at the right, the default dead
 /// centre. Each is a marker on a two-sided scale with the fill running
 /// from the tick to the marker, so a departure from the default is a
@@ -2564,10 +2564,12 @@ impl Strips {
         let floor = at.y + at.height - STRIP_GAP;
         let release = Rect::new(left, floor - STRIP_H, right, floor);
         let attack = Rect::new(left, release.y0 - STRIP_GAP - STRIP_H, right, release.y0 - STRIP_GAP);
-        // The ratio's strip stops above the time strips, so the three
-        // never meet in the corner.
+        // The ratio's strip stands on the floor in the bottom-left
+        // corner, beside the time strips' left ends, and rises to just
+        // under half the display: the three controls share one corner,
+        // and the rest of the display is the threshold's.
         let rail_x = at.x + (RAIL - STRIP_H) / 2.0;
-        let ratio = Rect::new(rail_x, at.y + STRIP_GAP, rail_x + STRIP_H, attack.y0 - STRIP_GAP);
+        let ratio = Rect::new(rail_x, floor - at.height * 0.45, rail_x + STRIP_H, floor);
         Some(Self { attack, release, ratio })
     }
 
