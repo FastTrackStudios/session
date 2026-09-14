@@ -27,6 +27,8 @@ pub struct Section {
     /// Already resolved to CSS, so a render is a projection and not a
     /// colour conversion per band per frame.
     pub color: Option<String>,
+    /// The ruler lane it sits on (REAPER 7.62+); 0 is the default lane.
+    pub lane: u32,
 }
 
 /// A project marker — the numbered flags under the region lane.
@@ -38,6 +40,8 @@ pub struct Marker {
     /// REAPER's own marker number, which is what the flag is labelled
     /// with. Not the index in this list: markers can be renumbered.
     pub idx: u32,
+    /// The ruler lane it sits on (REAPER 7.62+); 0 is the default lane.
+    pub lane: u32,
 }
 
 /// Everything the window stands on, in one pass.
@@ -155,6 +159,7 @@ pub async fn fetch() -> Option<Project> {
             end: r.time_range.end_seconds(),
             name: r.name.clone(),
             color: r.color.map(|c| format!("#{c:06x}")),
+            lane: r.lane.unwrap_or(0),
         })
         .collect();
 
@@ -174,6 +179,7 @@ pub async fn fetch() -> Option<Project> {
             name: m.name.clone(),
             color: m.color.map(|c| format!("#{c:06x}")),
             idx: m.id.unwrap_or(i as u32 + 1),
+            lane: m.lane.unwrap_or(0),
         })
         .collect();
 

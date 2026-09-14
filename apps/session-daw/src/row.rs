@@ -125,10 +125,12 @@ impl Row {
                 self.indent + rail,
                 self.y + self.height,
             )),
+            // In the gutter at the right, in row one where there is a
+            // row one, and lying down in the control band where there
+            // is not: a compact row keeps its mute and its solo — they
+            // are what a row is scanned for — and the routing and FX
+            // that share the band at full height are the ones that go.
             Control::Mute | Control::Solo => {
-                if self.density != Density::Full {
-                    return None;
-                }
                 let x = f64::from(g::TINT_W)
                     + 2.0
                     + if control == Control::Mute {
@@ -136,8 +138,13 @@ impl Row {
                     } else {
                         BUTTON.0 + BUTTON_GAP
                     };
-                let top = self.y + f64::from(g::ROW_ONE) + (24.0 - BUTTON.1) / 2.0;
-                Some(Rect::new(x, top, x + BUTTON.0, top + BUTTON.1))
+                let (top, h) = if self.density == Density::Full {
+                    (self.y + f64::from(g::ROW_ONE) + (24.0 - BUTTON.1) / 2.0, BUTTON.1)
+                } else {
+                    let h = self.field_h.min(BUTTON.1);
+                    (self.field_top + (self.field_h - h) / 2.0, h)
+                };
+                Some(Rect::new(x, top, x + BUTTON.0, top + h))
             }
             Control::RecArm => (self.indicator() == Indicator::Knob).then(|| {
                 let x = field_x + 3.0;

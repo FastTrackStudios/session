@@ -2205,6 +2205,7 @@ impl App {
                 Affine::translate((rail.0, rail.1 + RULER_H - sy)),
             );
             ruler::ruler(painter, &palette, &font, view, bars, rail);
+            ruler::lanes(painter, &palette, &font, view, rail, scene.sections(), scene.markers());
             // The cursors last, over the lanes and under nothing: a
             // playhead behind an item is a playhead you cannot follow.
             let top = rail.1 + RULER_H;

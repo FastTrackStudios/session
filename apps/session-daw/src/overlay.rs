@@ -1419,12 +1419,16 @@ pub fn panel_controls(
             (C::Solo, "S", live.soloed, crate::tcp::solo_lit(palette)),
         ] {
             let Some(r) = row.rect(control) else { continue };
-            crate::art::place(
+            // Flattened to the rect on a row too short for the full
+            // button — the row's shape says how tall, not the art.
+            crate::art::squashed(
                 &mut out,
                 &art::gutter_button(&palette.chrome, label, on, lit, look(control)),
                 font,
                 r.x0,
                 r.y0,
+                1.0,
+                (r.height() / crate::tcp::BUTTON.1).min(1.0),
             );
         }
 

@@ -200,6 +200,9 @@ pub struct Arrangement {
     /// pixel space over the lanes, because recorded text would stretch
     /// with the zoom.
     titles: Vec<Title>,
+    /// The song's shape, for the ruler's lanes.
+    sections: Vec<daw_ui::studio::project::Section>,
+    markers: Vec<daw_ui::studio::project::Marker>,
     /// How many items were recorded, for reports that want to say what
     /// was actually drawn.
     pub item_count: usize,
@@ -511,7 +514,21 @@ impl Arrangement {
             bpm: project.bpm,
             item_count: project.item_count,
             titles,
+            sections: project.sections.clone(),
+            markers: project.markers.clone(),
         }
+    }
+
+    /// The regions, for the ruler's lanes.
+    #[must_use]
+    pub fn sections(&self) -> &[daw_ui::studio::project::Section] {
+        &self.sections
+    }
+
+    /// The markers, for the ruler's lanes.
+    #[must_use]
+    pub fn markers(&self) -> &[daw_ui::studio::project::Marker] {
+        &self.markers
     }
 
     /// The item titles on the rows a viewport shows, with where each

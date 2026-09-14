@@ -624,6 +624,44 @@ def main() -> None:
     out("<REAPER_PROJECT 0.1 '7.0' 0\n")
     out(f"  TEMPO {BPM:g} 4 4\n")
 
+    # The ruler's lanes — REAPER 7.62's — the way an FTS session keeps
+    # them: lane 1 is the SONG, one region over the whole song; lane 2
+    # the SECTIONS; lane 3 the MARKS. A region is a MARKER line with
+    # flag 1 and a closing line at its end; the lane is the last field.
+    out('  RULERLANE 1 8 "SONG" 0 -1\n  RULERLANE 2 8 "SECTIONS" 0 -1\n  RULERLANE 3 8 "MARKS" 0 -1\n')
+    marker_id = 1
+
+    def region(name, start_bar, end_bar, lane, colour=0):
+        nonlocal marker_id
+        out(f'  MARKER {marker_id} {start_bar * SECS_PER_BAR:.6f} "{name}" 1 {colour} 1 B {guid()} 0 {lane}\n')
+        out(f'  MARKER {marker_id} {end_bar * SECS_PER_BAR:.6f} "" 1\n')
+        marker_id += 1
+
+    def mark(name, bar, lane, colour=0):
+        nonlocal marker_id
+        out(f'  MARKER {marker_id} {bar * SECS_PER_BAR:.6f} "{name}" 0 {colour} 1 B {guid()} 0 {lane}\n')
+        marker_id += 1
+
+    def native(rgb):
+        red, green, blue = (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF
+        return 0x1000000 | (blue << 16) | (green << 8) | red
+
+    region("SONG", 0, BARS, 1)
+    for name, start, end, colour in [
+        ("Intro", 0, 4, 0x4A6FA5),
+        ("Verse 1", 4, 12, 0x3FA9A0),
+        ("Chorus 1", 12, 20, 0xC94540),
+        ("Verse 2", 20, 28, 0x3FA9A0),
+        ("Chorus 2", 28, 36, 0xC94540),
+        ("Bridge", 36, 44, 0x8CAA3A),
+        ("Chorus 3", 44, 56, 0xC94540),
+        ("Outro", 56, 64, 0x4A6FA5),
+    ]:
+        region(name, start, end, 2, native(colour))
+    mark("SONGSTART", 0, 3)
+    mark("SOLO", 40, 3)
+    mark("SONGEND", BARS, 3)
+
     # Mixer strip widths, in the project's extension block — where
     # REAPER keeps what it does not model, and REAPER does not model
     # this. The same tracks that open at the minimum HEIGHT in the panel
