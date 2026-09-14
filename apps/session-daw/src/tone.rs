@@ -2186,12 +2186,15 @@ fn eq(
     // was the thing you could not find. The wash is behind the graph
     // and a fraction of the strength; the focus tier, with room to
     // read both, gets the painter's own.
-    let washed = rack == Rack::Full && spectrum.len() >= 2 && tint.is_none();
+    let washed = matches!(rack, Rack::Full | Rack::Curves) && spectrum.len() >= 2 && tint.is_none();
     if washed {
         spectrum_wash(scene, spectrum, at);
     }
+    // The painter at every tier that has a curve — the curves tier
+    // too, which used to fall back to the one total-response line and
+    // lost the bands' colours and the composition they show.
     let painted = tint.is_none()
-        && rack.detailed()
+        && rack != Rack::Minimal
         && eq_from_plugin(scene, tone, bands, if washed { &[] } else { spectrum }, at, rack);
     if !painted {
         // The fallback: the same response function the plugin's painter
@@ -2434,85 +2437,46 @@ fn threshold_y(comp: Comp, at: Panel) -> f64 {
     y.clamp(at.y, at.y + at.height)
 }
 
-/// The compressor's settings, drawn on the threshold they act at.
+/// The compressor's settings, drawn on the display they act in.
 ///
-/// One glyph, in the same axes as the live gain reduction above it:
-/// a ramp DOWN to the threshold line, a run along it, a ramp back UP —
-/// and an arrow hanging off that line for the ratio. This is what one
-/// hit looks like with these settings, outlined, over what is actually
-/// happening, filled. Model and measurement in one picture, which is
-/// the only arrangement where you can see whether the setting is the
-/// right one.
-///
-/// Four parts, three of them grips, each dragged along its own axis:
-///
-/// - the lead-in ramp is the ATTACK, dragged sideways, because time is
-///   the horizontal axis here and always has been;
-/// - the flat middle IS the threshold line, which the ramps meet
-///   rather than duplicate;
-/// - the arrow is the RATIO, dragged down, because it points down and
-///   that is the direction the signal goes;
-/// - the lead-out ramp is the RELEASE, dragged sideways.
-///
-/// The times are widths rather than positions, so a slow attack is a
-/// long lead-in — which is what a slow attack IS, and what the live
-/// trace beside it will show the moment something plays.
+/// Two things, in the display's own axes. The RATIO is an arrow
+/// hanging off the threshold line on a rail at the left edge: its
+/// length is the reduction a full-scale signal takes, pulled down for
+/// more, because down is the direction the signal goes. The two TIMES
+/// are strips along the display's floor — attack over release, fast
+/// at the left and slow at the right, the default dead centre — each
+/// with a marker you drag sideways. They were ramps once, a lead-in and a lead-out drawn as
+/// an envelope; a ramp's slope is a poor readout of a millisecond, and
+/// a marker on a scale is what a time has always been read off.
 fn envelope(scene: &mut Scene, comp: Comp, at: Panel, level: f64, lit: Option<Grip>) {
-    let Some(shape) = Envelope::of(comp, at, level) else {
-        return;
-    };
-    // The threshold's own pink rather than the reduction's red: this
-    // glyph is a SETTING, like the line it hangs from, and the filled
-    // red under it is the measurement. Drawn in the measurement's
-    // colour it disappeared into it — which is exactly the distinction
-    // the two-in-one-picture arrangement exists to make.
     let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
     let held = |grip| if lit == Some(grip) { 2.4 } else { 1.4 };
 
-    // Drawn as separate strokes rather than one path, so the part under
-    // the pointer can thicken on its own — a glyph that lit up whole
-    // would not say which of its parts you are about to move.
-    curve(scene, red, shape.fall().into_iter(), held(Grip::Attack(Which::Comp)));
-    curve(scene, red, shape.rise().into_iter(), held(Grip::Release(Which::Comp)));
-
-    // The ratio, as an arrow off the threshold line. Its length is the
-    // reduction a full-scale signal takes — what the ratio DOES rather
-    // than a length chosen to look proportional — so it grows as the
-    // ratio hardens and vanishes at unity, where the compressor is
-    // taking nothing off.
-    if let Some((shaft, head)) = shape.arrow() {
+    // The ratio, as an arrow off the threshold line.
+    if let Some(arrow) = Arrow::of(comp, at, level)
+        && let Some((shaft, head)) = arrow.parts()
+    {
         curve(scene, red, shaft.into_iter(), held(Grip::Ratio(Which::Comp)));
         for side in head {
             curve(scene, red, side.into_iter(), held(Grip::Ratio(Which::Comp)));
         }
     }
 
-    // A mark where each ramp leaves the line, because a slope is a line
-    // and a line is not something you aim at.
-    let r = |grip| if lit == Some(grip) { HANDLE + 1.4 } else { HANDLE * 0.8 };
-    dot(scene, red, shape.knee, r(Grip::Attack(Which::Comp)));
-    dot(scene, red, shape.foot, r(Grip::Release(Which::Comp)));
+    // The times.
+    if let Some(strips) = Strips::of(at) {
+        strips.draw(scene, comp, red, lit);
+    }
 }
 
-/// Where the envelope glyph's corners land.
-///
-/// Shared by the drawing and the hit test, for the reason everything in
-/// this module is: a grip that is not on the part it moves is a grip
-/// that moves the wrong thing.
+/// The ratio's arrow: where it hangs and how far it reaches.
 #[derive(Clone, Copy, Debug)]
-struct Envelope {
-    /// Where the reduction begins, at the ceiling.
-    start: (f64, f64),
-    /// Where the lead-in ramp meets the threshold line.
-    knee: (f64, f64),
-    /// And where the lead-out ramp leaves it.
-    foot: (f64, f64),
-    /// Where the release has recovered, back at the ceiling.
-    back: (f64, f64),
-    /// How far the ratio's arrow hangs below the line, in pixels.
-    drop: f64,
+struct Arrow {
     /// The x the arrow hangs on — its own rail at the left edge.
     rail: f64,
+    /// The threshold line it hangs from.
+    line: f64,
+    /// How far it reaches below the line, in pixels.
+    drop: f64,
 }
 
 /// The column the ratio's arrow lives in, at the display's left edge.
@@ -2521,70 +2485,28 @@ const RAIL: f64 = 11.0;
 /// How far the arrowhead's barbs reach back up the shaft.
 const BARB: f64 = 4.0;
 
-impl Envelope {
-    /// The glyph for these settings in this box, or `None` when there
-    /// is no room to draw one that means anything.
+impl Arrow {
     fn of(comp: Comp, at: Panel, level: f64) -> Option<Self> {
         if at.width < 30.0 || at.height < 30.0 {
             return None;
         }
-        // The times as widths, on their own log scales — the same ones
-        // the parameters are stored on, so the drag that moves a ramp
-        // is the drag that moves the number.
-        //
-        // Two fifths of the panel each at their longest, which leaves
-        // the run along the line a fifth at the extreme and keeps the
-        // glyph inside its box whatever the settings.
-        let span = at.width * 0.4;
-        let lead = log_norm(f64::from(comp.attack), 0.1, 200.0) * span;
-        let tail = log_norm(f64::from(comp.release), 5.0, 3_000.0) * span;
-        // The ramps start clear of the rail, so the arrow has a column
-        // of its own to hang in rather than crossing the lead-in on its
-        // way down.
-        let left = at.x + RAIL;
-        let top = at.y;
         let line = level.clamp(at.y + 2.0, at.y + at.height - 2.0);
-        // A run long enough to hang an arrow from even when both times
-        // are at their longest.
-        let hold = (at.width - lead - tail - 4.0).max(8.0);
         Some(Self {
-            start: (left, top),
-            knee: (left + lead, line),
-            foot: (left + lead + hold, line),
-            back: ((left + lead + hold + tail).min(at.x + at.width - 1.0), top),
+            rail: at.x + RAIL / 2.0,
+            line,
             // Clipped to the box: past the floor the arrow would be
             // drawing reduction the display cannot show.
             drop: ratio_drop(comp, at.height).min(at.y + at.height - line),
-            rail: at.x + RAIL / 2.0,
         })
     }
 
-    fn fall(self) -> [(f64, f64); 2] {
-        [self.start, self.knee]
-    }
-
-    fn rise(self) -> [(f64, f64); 2] {
-        [self.foot, self.back]
-    }
-
-    /// Where the arrow hangs from: a rail down the display's left edge.
-    ///
-    /// Out at the edge rather than anywhere in the middle, because the
-    /// middle is where the live reduction and the waveform are busiest
-    /// and an arrow there sat on top of the thing it is meant to be
-    /// read against. On its own rail it stays out of the way and still
-    /// measures down the same dB axis as everything else here.
-    fn stem(self) -> (f64, f64) {
-        (self.rail, self.knee.1)
-    }
-
-    /// The arrow's shaft and the two barbs of its head, or `None` when
-    /// the ratio is taking too little off to point at.
-    fn arrow(self) -> Option<([(f64, f64); 2], [[(f64, f64); 2]; 2])> {
+    /// The shaft and the two barbs, or `None` when the ratio is taking
+    /// too little off to point at.
+    fn parts(self) -> Option<([(f64, f64); 2], [[(f64, f64); 2]; 2])> {
         if self.drop < BARB + 1.0 {
             return None;
         }
-        let (x, y) = self.stem();
+        let (x, y) = (self.rail, self.line);
         let tip = (x, y + self.drop);
         Some((
             [(x, y), tip],
@@ -2595,33 +2517,147 @@ impl Envelope {
         ))
     }
 
-    /// Which of its parts a point is nearest, if any.
+    fn grabbed(self, x: f64, y: f64) -> bool {
+        near_segment((x, y), (self.rail, self.line), (self.rail, self.line + self.drop)) <= GRAB
+    }
+}
+
+/// A compressor time on its strip: a range with a default in it.
+///
+/// The strip is two scales joined at the middle — the fast half from
+/// the range's floor up to the default, the slow half from the default
+/// up to the ceiling, each logarithmic — so the default sits dead
+/// centre whatever the range, and a drag left is faster and right is
+/// slower by the same feel on either side.
+#[derive(Clone, Copy, Debug)]
+struct Time {
+    ms: f64,
+    min: f64,
+    default: f64,
+    max: f64,
+}
+
+impl Time {
+    fn attack(ms: f32) -> Self {
+        Self {
+            ms: f64::from(ms),
+            min: 0.1,
+            default: f64::from(Comp::default().attack),
+            max: 200.0,
+        }
+    }
+
+    fn release(ms: f32) -> Self {
+        Self {
+            ms: f64::from(ms),
+            min: 5.0,
+            default: f64::from(Comp::default().release),
+            max: 3_000.0,
+        }
+    }
+
+    /// Where on the strip, 0 (fastest) to 1 (slowest), 0.5 the default.
+    fn place(self) -> f64 {
+        let ms = self.ms.clamp(self.min, self.max);
+        if ms <= self.default {
+            0.5 * log_norm(ms, self.min, self.default)
+        } else {
+            0.5 + 0.5 * log_norm(ms, self.default, self.max)
+        }
+    }
+
+    /// The time at a place on the strip.
+    fn at(self, place: f64) -> f64 {
+        let place = place.clamp(0.0, 1.0);
+        if place <= 0.5 {
+            log_denorm(place * 2.0, self.min, self.default)
+        } else {
+            log_denorm((place - 0.5) * 2.0, self.default, self.max)
+        }
+    }
+}
+
+/// The attack and release strips along the display's floor.
+///
+/// Shared by the drawing and the hit test, for the reason everything
+/// in this module is: a marker that is not where its strip is drawn is
+/// a marker that moves the wrong time.
+#[derive(Clone, Copy, Debug)]
+pub struct Strips {
+    pub attack: Rect,
+    pub release: Rect,
+}
+
+/// How tall one strip is.
+const STRIP_H: f64 = 5.0;
+
+/// The gap between the two, and under the lower one.
+const STRIP_GAP: f64 = 4.0;
+
+/// How tall the pair takes, with their gaps: what the live trace under
+/// them is clear of.
+pub const STRIPS_H: f64 = STRIP_H * 2.0 + STRIP_GAP * 3.0;
+
+impl Strips {
+    /// The two strips for a display, or `None` when there is no room
+    /// for a marker to travel.
+    #[must_use]
+    pub fn of(at: Panel) -> Option<Self> {
+        if at.width < 40.0 || at.height < 40.0 {
+            return None;
+        }
+        // Clear of the arrow's rail, so the two never cross it.
+        let left = at.x + RAIL + 3.0;
+        let right = at.x + at.width - 3.0;
+        let floor = at.y + at.height - STRIP_GAP;
+        let release = Rect::new(left, floor - STRIP_H, right, floor);
+        let attack = Rect::new(left, release.y0 - STRIP_GAP - STRIP_H, right, release.y0 - STRIP_GAP);
+        Some(Self { attack, release })
+    }
+
+    /// Where a time's marker sits on its strip: fast at the left, slow
+    /// at the right, the default in the middle.
+    fn marker(strip: Rect, time: Time) -> (f64, f64) {
+        (time.place().mul_add(strip.width(), strip.x0), strip.center().y)
+    }
+
+    fn draw(self, scene: &mut Scene, comp: Comp, ink: Color, lit: Option<Grip>) {
+        for (strip, grip, time) in [
+            (self.attack, Grip::Attack(Which::Comp), Time::attack(comp.attack)),
+            (self.release, Grip::Release(Which::Comp), Time::release(comp.release)),
+        ] {
+            let held = lit == Some(grip);
+            // The track, a tick at the default, and the travel filled
+            // from the default to the marker — so a departure from the
+            // default is a bar in the direction it departed.
+            scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.18), None, &strip.to_rounded_rect(2.0));
+            let centre = strip.center().x;
+            rule(scene, ink.multiply_alpha(0.6), Line::new((centre, strip.y0 - 1.5), (centre, strip.y1 + 1.5)));
+            let (x, y) = Self::marker(strip, time);
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                ink.multiply_alpha(if held { 0.7 } else { 0.45 }),
+                None,
+                &Rect::new(centre.min(x), strip.y0, centre.max(x), strip.y1).to_rounded_rect(2.0),
+            );
+            dot(scene, ink, (x, y), if held { HANDLE + 1.4 } else { HANDLE });
+        }
+    }
+
+    /// Which strip a point is on, if any — the whole strip, not just
+    /// the marker, so a time can be set by clicking where it should be.
     fn grip_at(self, x: f64, y: f64) -> Option<Grip> {
-        let near = |(ax, ay): (f64, f64), (bx, by): (f64, f64)| {
-            // Distance to the segment, so a ramp is grabbable along its
-            // whole length rather than only at its ends.
-            let (dx, dy) = (bx - ax, by - ay);
-            let len = dx.hypot(dy);
-            if len < f64::EPSILON {
-                return (x - ax).hypot(y - ay);
-            }
-            let t = (((x - ax) * dx + (y - ay) * dy) / (len * len)).clamp(0.0, 1.0);
-            (x - t.mul_add(dx, ax)).hypot(y - t.mul_add(dy, ay))
+        let reach = |strip: Rect| {
+            x >= strip.x0 - GRAB && x <= strip.x1 + GRAB && y >= strip.y0 - GRAB / 2.0 && y <= strip.y1 + GRAB / 2.0
         };
-        let stem = self.stem();
-        [
-            (Grip::Attack(Which::Comp), near(self.start, self.knee)),
-            (Grip::Release(Which::Comp), near(self.foot, self.back)),
-            // The arrow wins ties with the ramps, because it is the one
-            // that lies BETWEEN them — a point on the shaft is never
-            // also on a ramp, but a point near where it leaves the line
-            // is near everything.
-            (Grip::Ratio(Which::Comp), near(stem, (stem.0, stem.1 + self.drop)) - 0.01),
-        ]
-        .into_iter()
-        .filter(|(_, away)| *away <= GRAB)
-        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(grip, _)| grip)
+        if reach(self.attack) {
+            Some(Grip::Attack(Which::Comp))
+        } else if reach(self.release) {
+            Some(Grip::Release(Which::Comp))
+        } else {
+            None
+        }
     }
 }
 
@@ -5581,17 +5617,20 @@ fn comp_grip(comp: Comp, which: Which, body: Panel, rack: Rack, x: f64, y: f64) 
     let display = comp_split(body, rack);
     // The envelope's parts first — they are lines inside the display,
     // and the display would otherwise swallow them.
-    if rack.detailed()
-        && let Some(shape) = Envelope::of(comp, display, threshold_y(comp, display))
-        && let Some(grip) = shape.grip_at(x, y)
-    {
-        // The envelope names the compressor it was measured on, not the
+    if rack.detailed() {
+        // The strips name the compressor they were drawn for, not the
         // one this panel is.
-        return match grip {
-            Grip::Attack(_) => Grip::Attack(which),
-            Grip::Release(_) => Grip::Release(which),
-            _ => Grip::Ratio(which),
-        };
+        if let Some(strips) = Strips::of(display)
+            && let Some(grip) = strips.grip_at(x, y)
+        {
+            return match grip {
+                Grip::Attack(_) => Grip::Attack(which),
+                _ => Grip::Release(which),
+            };
+        }
+        if Arrow::of(comp, display, threshold_y(comp, display)).is_some_and(|arrow| arrow.grabbed(x, y)) {
+            return Grip::Ratio(which);
+        }
     }
     // And everything else is the threshold: it is a line across a
     // display, and a line one pixel tall is not something you aim at —
@@ -6048,13 +6087,25 @@ pub fn drag(
             let moved = (log_norm(f64::from(*value), low, high) + dx / span).clamp(0.0, 1.0);
             *value = f64_to_f32(log_denorm(moved, low, high));
         }
+        // Along the strip: left is faster, right is slower, through the
+        // strip's own two-sided scale so the marker stays under the
+        // finger across the default.
         Grip::Attack(which) | Grip::Release(which) => {
             let display = comp_split(body, rack);
             let dx = dx * interaction::fine_scale(mods);
-            let span = (display.width * 0.4).max(1.0);
+            let span = Strips::of(display).map_or(display.width * 0.4, |s| s.attack.width()).max(1.0);
             if let Some(comp) = tone.compressor(which) {
-                let moved = knob_norm(*comp, grip) + dx / span;
-                set_knob(comp, grip, moved);
+                let time = if matches!(grip, Grip::Attack(_)) {
+                    Time::attack(comp.attack)
+                } else {
+                    Time::release(comp.release)
+                };
+                let moved = f64_to_f32(time.at(time.place() + dx / span));
+                if matches!(grip, Grip::Attack(_)) {
+                    comp.attack = moved;
+                } else {
+                    comp.release = moved;
+                }
             }
         }
         // The floor is pulled DOWN for more, which is the direction the
@@ -7458,20 +7509,20 @@ mod comp_tests {
     fn the_display_grabs_the_threshold() {
         let tone = placeholder(0);
         let body = comp_panel();
-        // Low and left: the glyph lives along the threshold line and
-        // the arrow hangs from the middle of it, so the rest of the
+        // Mid-height and left of centre: the arrow hangs on the left
+        // rail and the strips run along the floor, so the middle of the
         // display is what is being claimed here.
-        let inside = body.y + body.height * 0.9;
+        let inside = body.y + body.height * 0.55;
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), super::Folded::default(), body.x + body.width * 0.1, inside),
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), body.x + body.width * 0.3, inside),
             Some(Grip::Threshold(Which::Comp))
         );
     }
 
-    /// The glyph's parts are grabbed where they are drawn: the lead-in
-    /// ramp is the attack, the lead-out ramp is the release, the arrow
-    /// off the line is the ratio. Away from all three the display is
-    /// still the threshold's.
+    /// The settings are grabbed where they are drawn: the attack strip
+    /// and the release strip along the floor, the arrow off the line
+    /// for the ratio. Away from all three the display is still the
+    /// threshold's.
     #[test]
     fn the_glyph_grabs_its_own_parts() {
         let mut tone = placeholder(0);
@@ -7481,20 +7532,25 @@ mod comp_tests {
         tone.comp.release = 200.0;
         let display = super::comp_split(comp_panel(), Rack::at(rack().width));
         let level = super::threshold_y(tone.comp, display);
-        let shape = super::Envelope::of(tone.comp, display, level).expect("a glyph to grab");
-        for (grip, edge) in [(Grip::Attack(Which::Comp), shape.fall()), (Grip::Release(Which::Comp), shape.rise())] {
-            let mid = (
-                f64::midpoint(edge[0].0, edge[1].0),
-                f64::midpoint(edge[0].1, edge[1].1),
-            );
+        let strips = super::Strips::of(display).expect("strips to grab");
+        for (grip, strip) in [(Grip::Attack(Which::Comp), strips.attack), (Grip::Release(Which::Comp), strips.release)] {
+            let mid = strip.center();
             assert_eq!(
-                grip_at(&ALL, &tone, rack(), super::Folded::default(), mid.0, mid.1),
+                grip_at(&ALL, &tone, rack(), super::Folded::default(), mid.x, mid.y),
                 Some(grip),
                 "{grip:?} at {mid:?}"
             );
         }
+        // Dragging left on the attack strip is faster, and the default
+        // sits in the middle of the strip.
+        let was = tone.comp.attack;
+        drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), -15.0, 0.0);
+        assert!(tone.comp.attack < was, "left is fast: {} vs {was}", tone.comp.attack);
+        assert!((super::Time::attack(super::Comp::default().attack).place() - 0.5).abs() < 1e-9);
+        assert!((super::Time::release(super::Comp::default().release).place() - 0.5).abs() < 1e-9);
         // The arrow, halfway down its own shaft.
-        let (shaft, _) = shape.arrow().expect("an arrow to grab");
+        let arrow = super::Arrow::of(tone.comp, display, level).expect("an arrow");
+        let (shaft, _) = arrow.parts().expect("an arrow to grab");
         assert_eq!(
             grip_at(
                 &ALL,
@@ -7565,8 +7621,9 @@ mod comp_tests {
 
     /// Every control clamps to its own range rather than running away.
     ///
-    /// Each is driven in the direction its own edge runs: the times are
-    /// widths, so right is longer; the floor hangs, so down is harder.
+    /// Each is driven in the direction its own control runs: the times
+    /// are strips with the slow end at the right, so right is longer;
+    /// the floor hangs, so down is harder.
     #[test]
     fn the_controls_clamp() {
         let mut tone = placeholder(0);
@@ -7590,11 +7647,11 @@ mod comp_tests {
         assert!((back.comp.release - 5.0).abs() < 0.01, "{}", back.comp.release);
     }
 
-    /// Each control moves the way its own edge runs: you pull the floor
-    /// DOWN for a harder ratio, because down is more reduction and that
-    /// is the direction the signal goes; and you drag either time to
-    /// the RIGHT for a longer one, because both are durations on one
-    /// horizontal axis and neither is the opposite of the other.
+    /// Each control moves the way its own control runs: you pull the
+    /// floor DOWN for a harder ratio, because down is more reduction
+    /// and that is the direction the signal goes; and you drag either
+    /// time to the RIGHT for a longer one, because the strips run fast
+    /// to slow with the default in the middle.
     #[test]
     fn each_control_follows_its_own_edge() {
         let was = placeholder(0).comp;
