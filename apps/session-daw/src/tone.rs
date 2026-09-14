@@ -2151,7 +2151,7 @@ fn eq(
             area.close_path();
             scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.22), None, &area);
         }
-        curve(scene, tint.unwrap_or(palette.accent), points.into_iter(), 1.5);
+        curve(scene, tint.unwrap_or(EQ_INK), points.into_iter(), 1.5);
     }
 
     // The bands themselves, as handles on the curve.
@@ -3791,6 +3791,12 @@ fn selector(
     }
 }
 
+/// The EQ's total response, in the plugin painter's own gold
+/// (`eq_graph_painter::paint_combined_curve`), so the curve on a rail
+/// and the fallback at the curves tier are the colour the full graph
+/// draws it in.
+const EQ_INK: Color = Color::from_rgb8(212, 169, 50);
+
 /// The de-esser's ink: yellow — the Tone phase's own, and the colour
 /// of the top end it is there to take the edge off.
 const DEESS_INK: Color = Color::from_rgba8(0xfa, 0xcc, 0x15, 0xff);
@@ -4045,7 +4051,7 @@ fn minimal(scene: &mut Scene, palette: &Palette, tone: &Tone, meters: &Meters, w
         // The response, as a sparkline across the row.
         Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq => {
             let bands = tone.bands_ref(which);
-            let ink = if which == Which::DecayEq { DECAY_INK } else { palette.accent };
+            let ink = if which == Which::DecayEq { DECAY_INK } else { EQ_INK };
             let range = tone.eq_db_range();
             let freq = FreqAxis::audible();
             let points = (0..24).map(|i| {
