@@ -2206,6 +2206,16 @@ impl App {
             );
             ruler::ruler(painter, &palette, &font, view, bars, rail);
             ruler::lanes(painter, &palette, &font, view, rail, scene.sections(), scene.markers());
+            ruler::lane_lines(
+                painter,
+                &palette,
+                view,
+                rail,
+                scene.sections(),
+                scene.markers(),
+                rail.1 + RULER_H,
+                rail.1 + view.height,
+            );
             // The cursors last, over the lanes and under nothing: a
             // playhead behind an item is a playhead you cannot follow.
             let top = rail.1 + RULER_H;

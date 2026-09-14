@@ -838,6 +838,16 @@ fn shot(
             );
             ruler::ruler(painter, palette, font, view, Bars::at(scene.bpm), (rail_x, rail_y));
             ruler::lanes(painter, palette, font, view, (rail_x, rail_y), scene.sections(), scene.markers());
+            ruler::lane_lines(
+                painter,
+                palette,
+                view,
+                (rail_x, rail_y),
+                scene.sections(),
+                scene.markers(),
+                rail_y + RULER_H,
+                rail_y + view.height,
+            );
             // The arrangement's left rail carries the same visual
             // presets the mixer's does — they are layouts of the
             // SESSION, not of one panel, so switching one switches
