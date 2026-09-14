@@ -798,6 +798,9 @@ fn widths(
     widths
 }
 
+/// How wide the track-coloured rule up a strip's left edge is.
+const STRIP_EDGE: f64 = 2.0;
+
 /// How thick the selected strip's top rule is.
 const SELECTED_RULE: f64 = 2.0;
 
@@ -843,6 +846,18 @@ fn strip(
 
     // The strip's ground, and the track's colour as a band across it.
     fill(scene, palette.tcp_tint, Rect::new(x, 0.0, x + w, h));
+    // And the track's colour as a rule up the strip's whole left edge,
+    // top to bottom. The rack is tall and the coloured band is a
+    // strip's height down; between two racks there was nothing to say
+    // where one track ends and the next begins. Two pixels, always
+    // there, in the colour the strip is read by.
+    fill(
+        scene,
+        // The track's colour itself, not the band's muted tint of it:
+        // two pixels have to carry the colour on their own.
+        crate::tcp::track_color(palette, track),
+        Rect::new(x, 0.0, x + STRIP_EDGE, h),
+    );
 
     // ── The folders this strip sits inside ──
     //
