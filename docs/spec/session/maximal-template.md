@@ -45,7 +45,8 @@ fixed tree.
 
 - [x] **No Sum folders**: each part is a track named for the part
       (Rhythm, Lead, Solo, …). A **stereo pair is a folder over L and R**
-      with the processing on the folder; the halves are rails.
+      with the processing on the folder; the halves are rails and carry
+      no processing of their own.
 - [x] Every electric part goes to exactly one of **GTR RHYTHM, GTR LEAD,
       GTR SOLO** by a send — the three live under **ELECTRIC BUS** in the
       bus list, not in the folder. A part moves between them mid-song by
@@ -61,10 +62,13 @@ fixed tree.
 - [ ] Per-part amp/DI pairs when both were captured (a part folder of
       two mics is the one case a Sum is right).
 
-### Keys — `Keys/`
+### Keys — `Keys/`, Synths — `Synths/`
 
-- [x] Piano (L/R summed), Rhodes, Pad → **KEYS BUS**.
-- [ ] Organ, clav, synth leads as the song has them.
+- [x] Keys: Piano (an L/R pair), Rhodes, Organ → **KEYS BUS**.
+- [x] Synths: Pad, Lead Synth, Arp → **KEYS BUS**.
+- [x] Colours, in session order and hue order: electrics blue,
+      acoustics seafoam, keys green, synths lime.
+- [ ] Clav, strings and pads as the song has them.
 
 ### Instrument FX — `Inst FX/` (one set for guitars, keys, synths, strings)
 

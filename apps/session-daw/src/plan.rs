@@ -673,7 +673,7 @@ fn guitar_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
         Size::Compact
     } else if fx && is(name, &["Fat Plate"]) {
         Size::Focus
-    } else if fx || under(ancestors, &["Guitars", "Keys"]) {
+    } else if fx || under(ancestors, &["Guitars", "Keys", "Synths"]) {
         Size::Working
     } else {
         Size::Minimum

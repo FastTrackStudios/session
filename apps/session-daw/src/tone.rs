@@ -164,6 +164,10 @@ pub enum Role {
     Fund,
     /// A trigger: a spike track for a sampler, with nothing on it yet.
     Trig,
+    /// One half of a stereo pair. The pair's folder is the instrument
+    /// and carries the processing; a half is almost never processed on
+    /// its own, so it gets nothing.
+    Half,
     /// A parallel compressor: fed the kit, crushed, blended back under
     /// it. Its compressor first, an EQ to shape what comes back, and
     /// a saturator for the ones that are meant to crunch.
@@ -212,6 +216,9 @@ impl Role {
         if lower.ends_with("trig") {
             return Self::Trig;
         }
+        if is_pair_half(name) {
+            return Self::Half;
+        }
         for folder in ancestors.iter().rev() {
             let folder = folder.to_lowercase();
             if folder.starts_with("delay") {
@@ -255,7 +262,7 @@ impl Role {
             Self::Wide => Some(&WIDE_CHAIN),
             Self::Pitch => Some(&PITCH_CHAIN),
             Self::Fund => Some(&FUND_CHAIN),
-            Self::Trig => Some(&[]),
+            Self::Trig | Self::Half => Some(&[]),
             Self::Parallel => Some(&PARALLEL_CHAIN),
             Self::Dry => Some(&DRY_CHAIN),
         }
@@ -4843,7 +4850,7 @@ pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String
         }
         Role::Pitch => pitch_presets(name),
         Role::Parallel => parallel_presets(name),
-        Role::Channel | Role::Bus | Role::Fund | Role::Trig | Role::Dry => Vec::new(),
+        Role::Channel | Role::Bus | Role::Fund | Role::Trig | Role::Dry | Role::Half => Vec::new(),
     };
     if presets.is_empty() {
         return tone;

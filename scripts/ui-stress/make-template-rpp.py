@@ -119,8 +119,14 @@ PROCESS = 0x7A2E3A  # garnet: the kit's family, darker — what is fed off it
 # plumbing rather than as another instrument.
 BUS = 0x3E4C5E
 BASS = 0x6B8E3F
-GTR = 0xA85A3B
-KEYS = 0x4F7A8A
+# The instruments that are not drums, a voice or a bass, in the order
+# they sit in the session and on the hue wheel: electrics blue,
+# acoustics the seafoam between, keys green, synths past them.
+ELECTRIC = 0x3A6FB5
+ACOUSTIC = 0x3FA9A0
+KEYS = 0x4E9A55
+SYNTHS = 0x8CAA3A
+GTR = 0x35608F  # the guitar folder and bus: the electrics' blue, deeper
 VOX = 0xB04A6A
 
 # The Guitars folder is the VCA lead of GUITAR BUS — group 1 — with
@@ -257,20 +263,20 @@ TREE = [
         [
             node(
                 "Electric",
-                GTR,
+                ELECTRIC,
                 [
-                    pair("Rhythm", GTR, send="GTR RHYTHM", keep_parent=True),
-                    node("Lead", GTR, send="GTR LEAD", keep_parent=True),
-                    node("Solo", GTR, send="GTR SOLO", keep_parent=True),
+                    pair("Rhythm", ELECTRIC, send="GTR RHYTHM", keep_parent=True),
+                    node("Lead", ELECTRIC, send="GTR LEAD", keep_parent=True),
+                    node("Solo", ELECTRIC, send="GTR SOLO", keep_parent=True),
                 ],
                 no_parent=True,
             ),
             node(
                 "Acoustic",
-                GTR,
+                ACOUSTIC,
                 [
-                    node("Steel", GTR, send="ACOUSTIC BUS", keep_parent=True),
-                    node("Nylon", GTR, send="ACOUSTIC BUS", keep_parent=True),
+                    node("Steel", ACOUSTIC, send="ACOUSTIC BUS", keep_parent=True),
+                    node("Nylon", ACOUSTIC, send="ACOUSTIC BUS", keep_parent=True),
                 ],
                 no_parent=True,
             ),
@@ -284,7 +290,17 @@ TREE = [
         [
             pair("Piano", KEYS),
             ("Rhodes", KEYS, []),
-            ("Pad", KEYS, []),
+            ("Organ", KEYS, []),
+        ],
+        "KEYS BUS",
+    ),
+    to_bus(
+        "Synths",
+        SYNTHS,
+        [
+            ("Pad", SYNTHS, []),
+            ("Lead Synth", SYNTHS, []),
+            ("Arp", SYNTHS, []),
         ],
         "KEYS BUS",
     ),
@@ -338,14 +354,14 @@ TREE = [
                         "GUITAR BUS",
                         GTR,
                         [
-                            node("ACOUSTIC BUS", GTR, bus=True),
+                            node("ACOUSTIC BUS", ACOUSTIC, bus=True),
                             node(
                                 "ELECTRIC BUS",
-                                GTR,
+                                ELECTRIC,
                                 [
-                                    node("GTR RHYTHM", GTR, bus=True),
-                                    node("GTR LEAD", GTR, bus=True),
-                                    node("GTR SOLO", GTR, bus=True),
+                                    node("GTR RHYTHM", ELECTRIC, bus=True),
+                                    node("GTR LEAD", ELECTRIC, bus=True),
+                                    node("GTR SOLO", ELECTRIC, bus=True),
                                 ],
                                 bus=True,
                             ),
