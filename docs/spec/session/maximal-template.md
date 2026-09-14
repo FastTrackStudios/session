@@ -35,6 +35,18 @@ fixed tree.
 - [x] Scenes: Tracking, Mixing, Overview (pieces collapsed), Advanced,
       FX.
 
+### Guide and Keyflow — `Guide/`, `Keyflow/`
+
+- [ ] **Guide/** Click, Guide, Shaker at the top of the session, to the
+      headphone mixes only (`flow.scenes.guide-folder`).
+- [ ] **Keyflow/** CHORDS, LINES, HITS as MIDI items
+      (`flow.scenes.keyflow-folder`).
+
+### Percussion — `Percussion/`
+
+- [ ] Shaker, Tambourine, Claps → **PERC BUS** under INST BUS
+      (`flow.percussion.folder`).
+
 ### Bass — `Bass/`
 
 - [x] **Guitar/** DI, Amp (summed).

@@ -22,8 +22,9 @@ and quantize specs.
 | Instrument | Tracking | Comping | Editing | Mixing | More |
 |---|---|---|---|---|---|
 | Patch List | [ ] the view · [ ] project-level list · [ ] studio profiles · [ ] session override · [ ] apply | | | | |
-| Scenes | [ ] by performer in Record · [ ] rig per performer · [ ] headphone mix · [ ] folder record preview | | [ ] by arrangement | [ ] by arrangement | [ ] follow the mode · [ ] every scene renders |
+| Scenes | [ ] by performer in Record · [ ] rig per performer · [ ] headphone mix · [ ] folder record preview · [ ] Guide folder · [ ] Keyflow folder | | [ ] by arrangement | [ ] by arrangement | [ ] follow the mode · [ ] every scene renders |
 | Drums (audio) | [x] full · [ ] overview | [ ] folder items | [ ] edit scene · [x] stack · [x] slip/stretch · [x] quantize · [ ] align hits | [x] scenes · [x] balance | [ ] triggering samples |
+| Percussion | [ ] | [ ] on the track | [ ] | [ ] | [ ] folder |
 | Bass | [ ] full · [ ] overview · [ ] folder preview | [ ] on the track | [ ] | [ ] later | |
 | Guitars (electric and acoustic) | [ ] full · [ ] overview · [ ] grow | [ ] folder items | [ ] edit scene · [ ] doubles aligned | [x] buses/VCA · [ ] layers collapsed · [ ] balance scene · [ ] source defaults | [ ] golden shapes · [ ] same at every depth · [ ] acoustics |
 | Vocals | [ ] by performer | [ ] lanes · [ ] parts as folder items | [ ] doubles aligned | [x] lead vocal scenes | [ ] language dimension · [ ] active language · [ ] render per language · [ ] leads · [ ] bgv parts · [ ] choir · [ ] tuning · [ ] automation · [ ] golden |
@@ -119,6 +120,21 @@ The performer row carries their **headphone mix**: the level of their
 own tracks in their cue, and the rest of the band in it, so "more of
 me" is one control on one row while tracking, in the same view the
 rig is set in.
+
+r[flow.scenes.guide-folder]
+The **Guide** folder sits at the top of every session and every scene
+shows it collapsed to one row unless a flow opens it: **Click**,
+**Guide** (the section cues) and **Shaker** — the count and the pulse
+the band tracks to. Its tracks go to the headphone mixes and never to
+the mix bus. Opening it is a flow of its own, not a side effect of an
+instrument's scene.
+
+r[flow.scenes.keyflow-folder]
+The **Keyflow** folder sits under the Guide folder: the song's
+knowledge as MIDI items — **CHORDS**, **LINES**, **HITS** — and
+whatever else keyflow keeps, read by the guide, the expression
+editor's key and chord tools, and the click's count. Every scene shows
+it collapsed; Write and Produce modes open it.
 
 r[flow.scenes.two-audiences]
 A flow has views for two audiences where they differ: the engineer's
@@ -351,6 +367,17 @@ r[flow.drums.trigger.blend]
 The sample and the mics are blended on the piece's Sum, with the
 sample's level and its polarity against the close mic controls of the
 piece, and the blend is what the Drum Mixing scene mixes.
+
+## Percussion
+
+r[flow.percussion.folder]
+`Percussion/` is its own folder beside the drums — shakers, tambourine,
+congas, claps, whatever the song adds — usually tracked one at a
+time, often layered, each instrument a part that comps on the track
+like a bass (`flow.bass.comping`) and edits in the stack with itself
+as the detection source. It reaches the mix by its own bus under
+INST BUS beside DRUM BUS. The golden session carries Shaker,
+Tambourine and Claps.
 
 ## Bass
 
@@ -618,11 +645,14 @@ vocal FX returns present for the headphone mix, and every other
 language hidden and muted.
 
 r[flow.vocals.comping]
-Every vocal track comps on its take lanes with a comp lane on top,
-one take chosen per phrase; a lead's Main and DBL comp on their own
-lanes; a part's layers comp on the part's folder as the kit does, one
-lane per take of the whole part, so a fifty-layer "Hey!" is comped
-once. Crossfades snap to phrase boundaries.
+Every vocal source track comps on its take lanes with a comp lane on
+top, one take chosen per phrase; a lead's Main and DBL comp on their
+own lanes; a part's layers comp on the part's folder as the kit does,
+one lane per take of the whole part, so a fifty-layer "Hey!" is comped
+once. Crossfades snap to phrase boundaries. A comp — and a tuning, and
+an alignment — is **per language source**: the English and the Spanish
+vocal are different recordings, and nothing done to one is applied
+to the other.
 
 r[flow.vocals.editing.doubles]
 Doubles, harmonies and layers are **aligned** to the lead: reference
