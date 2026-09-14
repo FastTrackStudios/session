@@ -2699,15 +2699,16 @@ const STRIP_H: f64 = 5.0;
 const STRIP_LABEL_SIZE: f32 = 7.0;
 const STRIP_LABEL_W: f64 = 8.0;
 
-/// The room kept for FAST at the strips' left and SLOW at their right.
-const STRIP_END_W: f64 = 20.0;
+/// The row over the strips where FAST and SLOW sit, so the strips
+/// keep the whole width for their travel.
+const STRIP_WORDS_H: f64 = 7.0;
 
 /// The gap between the two, and under the lower one.
 const STRIP_GAP: f64 = 4.0;
 
 /// How tall the pair takes, with their gaps: what the live trace under
 /// them is clear of.
-pub const STRIPS_H: f64 = STRIP_H * 2.0 + STRIP_GAP * 3.0;
+pub const STRIPS_H: f64 = STRIP_H * 2.0 + STRIP_GAP * 3.0 + STRIP_WORDS_H;
 
 impl Strips {
     /// The two strips for a display, or `None` when there is no room
@@ -2717,10 +2718,11 @@ impl Strips {
         if at.width < 70.0 || at.height < 40.0 {
             return None;
         }
-        // Between FAST at the left and the letter and SLOW at the
-        // right, so the strip's ends say which way is which.
-        let left = at.x + 3.0 + STRIP_END_W;
-        let right = at.x + at.width - 3.0 - STRIP_END_W - STRIP_LABEL_W;
+        // The whole width but the letter at the right: the direction
+        // words sit in their own row above, so the travel is as long
+        // as the display is wide.
+        let left = at.x + 3.0;
+        let right = at.x + at.width - 3.0 - STRIP_LABEL_W;
         let floor = at.y + at.height - STRIP_GAP;
         let release = Rect::new(left, floor - STRIP_H, right, floor);
         let attack = Rect::new(left, release.y0 - STRIP_GAP - STRIP_H, right, release.y0 - STRIP_GAP);
@@ -2734,12 +2736,15 @@ impl Strips {
     }
 
     fn draw(self, scene: &mut Scene, font: &Font, comp: Comp, ink: Color, lit: Option<Grip>) {
-        // FAST and SLOW once each, between the two strips' rows: the
-        // direction is the same for both, so it is said once.
-        let between = (self.attack.y0 + self.release.y1) / 2.0 + f64::from(TINY) / 2.0 - 0.5;
+        // FAST and SLOW once each, in the row over the strips at their
+        // two ends: the direction is the same for both, so it is said
+        // once, and above rather than beside so the strips keep the
+        // width.
+        let over = self.attack.y0 - STRIP_GAP + 1.0;
         let words = ink.multiply_alpha(0.6);
-        crate::tcp::glyphs(scene, font, words, "FAST", self.attack.x0 - STRIP_END_W, between, TINY);
-        crate::tcp::glyphs(scene, font, words, "SLOW", self.attack.x1 + STRIP_LABEL_W + 3.0, between, TINY);
+        crate::tcp::glyphs(scene, font, words, "FAST", self.attack.x0, over, TINY);
+        let slow_w = f64::from(font.width("SLOW", TINY));
+        crate::tcp::glyphs(scene, font, words, "SLOW", self.attack.x1 - slow_w, over, TINY);
         for (strip, grip, time, label) in [
             (self.attack, Grip::Attack(Which::Comp), Time::attack(comp.attack), "A"),
             (self.release, Grip::Release(Which::Comp), Time::release(comp.release), "R"),
