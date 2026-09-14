@@ -21,6 +21,7 @@ and quantize specs.
 
 | Instrument | Tracking | Comping | Editing | Mixing | More |
 |---|---|---|---|---|---|
+| Scenes | [ ] by performer in Record · [ ] rig per performer · [ ] headphone mix · [ ] folder record preview | | [ ] by arrangement | [ ] by arrangement | [ ] follow the mode · [ ] every scene renders |
 | Drums (audio) | [x] full · [ ] overview | [ ] folder items | [ ] edit scene · [x] stack · [x] slip/stretch · [x] quantize · [ ] align hits | [x] scenes · [x] balance | [ ] triggering samples |
 | Bass | [ ] full · [ ] overview · [ ] folder preview | [ ] on the track | [ ] | [ ] later | |
 | Guitars (electric and acoustic) | [ ] full · [ ] overview · [ ] grow | [ ] folder items | [ ] edit scene · [ ] doubles aligned | [x] buses/VCA · [ ] layers collapsed · [ ] balance scene · [ ] source defaults | [ ] golden shapes · [ ] same at every depth · [ ] acoustics |
@@ -73,6 +74,44 @@ it draws on the folder's row, live, as a folder item of the take in
 progress. That is what lets the bass folder — or a kit's piece, or a
 guitar part — stay collapsed in an overview while the take is still
 visibly going in. REAPER draws nothing on a closed folder; this does.
+
+r[flow.scenes.performer-order]
+Tracking sorts **by performer**; editing and mixing sort **by
+arrangement**. In Record mode the rows of an instrument group under
+the person playing them — `Guitars / Cody / {Rhythm, Lead, …}`, the
+template's Performer level above Arrangement — because while tracking
+the things that need doing are about the performer: their input,
+their arm, what they hear of themselves. In Edit and Mix the rows
+group by arrangement — every rhythm guitar together — and the
+performer is not a level. The **project's own folders stay
+arrangement-sorted**; the performer grouping is a **view**: a scene
+computes its rows from the tracks, so the Record scenes regroup the
+same tracks under a performer row without moving a track in the
+project, and switching mode switches the grouping.
+
+r[flow.scenes.performer-identity]
+Which performer a track belongs to is read from the track's
+**Performer** dimension in its name when it has one, and otherwise
+from its **headphone bus**: each performer has a headphone bus
+(`groups/headphones.rs`, the template's monitor buses), and a track
+routed to a performer's headphone mix is that performer's. Assigning a
+track to a performer assigns its cue send; the two never disagree
+because the send is the assignment.
+
+r[flow.scenes.performer-rig]
+A performer has a **rig**: the input for each kind of source they
+record — the DI, the pedalboard, each amp mic. Every source track of
+that performer and that kind **follows the rig**: change the DI input
+on Cody's row and every one of Cody's DI tracks takes it, on every
+channel of every part; the same for arming and input monitoring. The
+performer row is where the rig is set, and it is the one place a
+performer's inputs live.
+
+r[flow.scenes.performer-headphones]
+The performer row carries their **headphone mix**: the level of their
+own tracks in their cue, and the rest of the band in it, so "more of
+me" is one control on one row while tracking, in the same view the
+rig is set in.
 
 r[flow.scenes.two-audiences]
 A flow has views for two audiences where they differ: the engineer's
