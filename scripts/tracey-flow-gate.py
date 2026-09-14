@@ -23,8 +23,10 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 PREFIX = "flow."
@@ -63,39 +65,88 @@ def declared_rules(root: str, globs: list[str]) -> dict[str, str]:
     return rules
 
 
-def tracey_json(root: str, *args: str, retries: int = 60):
+class Daemon:
+    """A tracey daemon this run owns (`--own-daemon`, the CI mode).
+
+    `tracey query` normally auto-starts a daemon that outlives the
+    query, keeps its socket under `$HOME/.local/state/tracey/<hash>/`,
+    and answers `{"error": "Cancelled"}` while that daemon is still
+    coming up — or forever, if it died. On the runner it dies every
+    time: HOME there is long enough that the socket path passes the
+    108-byte Unix limit ("path must be shorter than SUN_LEN"), and the
+    query has no way to say so. So in CI the script starts the daemon
+    itself, under a short XDG_STATE_HOME, with its log in a file that
+    is printed if anything goes wrong, and stops it on the way out.
+    """
+
+    def __init__(self, root: str) -> None:
+        self.state = tempfile.mkdtemp(prefix="tracey-", dir="/tmp")
+        self.env = {**os.environ, "XDG_STATE_HOME": self.state}
+        self.log_path = os.path.join(self.state, "daemon.log")
+        self.log = open(self.log_path, "w", encoding="utf-8")
+        self.proc = subprocess.Popen(
+            ["tracey", "daemon", root], stdout=self.log, stderr=subprocess.STDOUT, env=self.env
+        )
+
+    def dump_log(self) -> None:
+        self.log.flush()
+        with open(self.log_path, encoding="utf-8") as f:
+            sys.stderr.write(f"--- tracey daemon log ({self.log_path}) ---\n{f.read()}")
+
+    def close(self) -> None:
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        self.log.close()
+        shutil.rmtree(self.state, ignore_errors=True)
+
+
+def tracey_json(root: str, *args: str, daemon: Daemon | None = None, budget: float = 120.0):
     """`tracey query --json <root> <args…>`, parsed.
 
-    The first query starts the daemon, and until its initial index is
-    built every query answers `{"error": "Cancelled"}` with exit 0 (a
-    cold CI runner sees this; a dev box with the daemon warm never
-    does). Retry that, once a second, for a minute. Any other error
-    object — an unknown rule id, a config problem — is final.
+    A `{"error": "Cancelled"}` answer (exit 0) means the daemon is not
+    serving yet — retried once a second within the budget, unless the
+    daemon is ours and has already exited, which is final. Any other
+    error object — an unknown rule id, a config problem — is final.
     """
+    env = daemon.env if daemon else None
     cmd = ["tracey", "query", "--json", root, *args]
-    for _ in range(retries):
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    deadline = time.monotonic() + budget
+    while True:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
         if proc.returncode != 0:
             sys.stderr.write(proc.stderr)
-            sys.exit(2)
+            fail(daemon, f"tracey query {args[0]}: exit {proc.returncode}")
         data = json.loads(proc.stdout)
         if isinstance(data, dict) and "error" in data:
-            if "Cancelled" in str(data["error"]):
-                time.sleep(1)
-                continue
-            sys.exit(f"tracey query {args[0]}: {data['error']}")
+            if "Cancelled" not in str(data["error"]):
+                fail(daemon, f"tracey query {args[0]}: {data['error']}")
+            if daemon and daemon.proc.poll() is not None:
+                fail(daemon, f"tracey daemon exited with {daemon.proc.returncode}")
+            if time.monotonic() > deadline:
+                fail(daemon, f"tracey query {args[0]}: still not served after {budget:.0f}s")
+            time.sleep(1)
+            continue
         return data
-    sys.exit(f"tracey query {args[0]}: still indexing after {retries}s")
 
 
-def tracey_rules(root: str, ids: list[str]) -> list[dict]:
+def fail(daemon: Daemon | None, message: str) -> None:
+    if daemon:
+        daemon.dump_log()
+    sys.exit(f"::error::{message}")
+
+
+def tracey_rules(root: str, ids: list[str], daemon: Daemon | None) -> list[dict]:
     """`tracey query --json rule <ids…>` — implRefs/verifyRefs per rule."""
     # Warm the daemon on the cheap query first, so the big one is not
     # what waits out the index.
-    status = tracey_json(root, "status")
+    status = tracey_json(root, "status", daemon=daemon)
     if not status.get("impls"):
-        sys.exit(f"tracey query status: no impls configured ({CONFIG})")
-    data = tracey_json(root, "rule", *ids)
+        fail(daemon, f"tracey query status: no impls configured ({CONFIG})")
+    data = tracey_json(root, "rule", *ids, daemon=daemon)
     return data if isinstance(data, list) else [data]
 
 
@@ -114,9 +165,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--root", default=os.getcwd(), help="project root (default: cwd)")
     parser.add_argument(
-        "--kill-daemon",
+        "--own-daemon",
         action="store_true",
-        help="stop the tracey daemon afterwards (CI: leave nothing running)",
+        help="start a private tracey daemon for this run and stop it afterwards (CI)",
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="list every rule by state")
     args = parser.parse_args()
@@ -128,11 +179,12 @@ def main() -> int:
         return 2
     grandfathered = read_grandfathered(os.path.join(root, GRANDFATHERED))
 
+    daemon = Daemon(root) if args.own_daemon else None
     try:
-        details = tracey_rules(root, sorted(declared))
+        details = tracey_rules(root, sorted(declared), daemon)
     finally:
-        if args.kill_daemon:
-            subprocess.run(["tracey", "kill", root], capture_output=True, check=False)
+        if daemon:
+            daemon.close()
 
     verified: list[str] = []
     impl_only: list[str] = []
