@@ -82,6 +82,7 @@ pub struct SelectedHit {
 
 /// The stack's interaction state.
 #[derive(Default)]
+// r[impl flow.drums.editing.stack]
 pub struct Stack {
     /// The tool before `z` sprang the zoom tool.
     zoom_from: Option<Tool>,
@@ -816,6 +817,7 @@ fn pick_hit(views: &[LaneView], lx: f64, ly: f64, x: f64, both: bool) -> Option<
 /// an added one appears, a split cuts nothing it can see. What a host
 /// does with the audio is its own business, and this is what it does
 /// with the list beforehand.
+// r[impl flow.drums.editing.hands]
 pub fn apply_to_document(ed: &mut Editor, gesture: &HitGesture) -> bool {
     use expression_editor_core::doc::NoteId;
     use expression_editor_core::kit::LaneRole;

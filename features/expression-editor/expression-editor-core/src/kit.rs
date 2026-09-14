@@ -56,6 +56,7 @@ impl LaneRole {
     /// other lane — hats, cymbals, rooms, returns — is drawn summed
     /// for context and carries no hit list. A gesture on it selects
     /// the lane and nothing more.
+    // r[impl flow.drums.editing.stack]
     pub fn detects(self) -> bool {
         !matches!(self, LaneRole::Other)
     }

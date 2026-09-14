@@ -564,6 +564,7 @@ const PIECES: [&str; 5] = ["Kick", "Snare", "Toms", "Cymbals", "Rooms"];
 
 /// Tracking: the core microphones you are getting a sound on, and
 /// nothing else that needs reading.
+// r[impl flow.drums.tracking.full]
 fn drum_tracking(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     if parallel(name, ancestors) {
         Size::Minimum
@@ -585,6 +586,7 @@ fn parallel(name: &str, ancestors: &[String]) -> bool {
 }
 
 /// Mixing: the buses are the instrument; every mic is a rail.
+// r[impl flow.drums.mixing.scenes]
 fn drum_mixing(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
     if is_folder && is(name, &PIECES) {
         Size::Working
@@ -598,6 +600,7 @@ fn drum_mixing(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
 /// Overview: the kit as its pieces — Kick, Snare, Toms, Cymbals,
 /// Rooms — each collapsed to one strip at working width, and the
 /// Process folder hidden. What the kit sounds like, five faders.
+// r[impl flow.drums.mixing.scenes]
 fn drum_overview(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
     if is_folder && is(name, &PIECES) {
         Size::Working
@@ -621,6 +624,7 @@ fn drum_overview_fold(name: &str, is_folder: bool, ancestors: &[String]) -> Fold
 /// Advanced: the tracks under the pieces that are not the core mics
 /// — each Sub, Fund and Trig, and every verb the kit carries — open,
 /// the mics and the buses present.
+// r[impl flow.drums.mixing.scenes]
 fn drum_advanced(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     let lower = name.to_lowercase();
     if parallel(name, ancestors) {
@@ -711,6 +715,7 @@ fn buses_fold(name: &str, is_folder: bool, ancestors: &[String]) -> Fold {
 }
 
 /// The lead vocal open, every return present as a short rail.
+// r[impl flow.vocals.mixing.main]
 fn lead_vocal(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     let fx = under(ancestors, &["Vox FX"]);
     if is_folder {
@@ -732,6 +737,7 @@ fn lead_vocal(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
 /// rail. The returns are all live — a slap is a slap whether or not it
 /// is the one being edited — so the scene shows them all working and
 /// opens the two under the hands.
+// r[impl flow.vocals.mixing.fx]
 fn lead_vocal_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     let fx = under(ancestors, &["Vox FX"]);
     if is_folder {

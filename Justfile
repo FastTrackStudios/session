@@ -1203,6 +1203,14 @@ daw-bench PROJECT="" SIZE="5120x1440":
     echo "load before: $(cut -d' ' -f1-3 /proc/loadavg)"
     FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN'
 
+# The master workflow checklist (docs/spec/session/workflows.md): which
+# flows have an implementation and a test, and which are still open.
+daw-flows:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "covered:";   tracey query status 2>/dev/null | grep -E "requirements are covered" || true
+    echo "open flows:"; tracey query uncovered 2>/dev/null | grep -E "flow\." || true
+
 # The studio benchmark: a 5120x1440 arrangement with the expression
 # editor docked under it, and a 2560x1440 mixer on a second display,
 # both drawn every frame. The verdict is against 240 Hz for the pair.

@@ -1440,6 +1440,7 @@ impl AtRest {
 /// the frame every drum edit is made on; the mixer has every control
 /// changing and every rack lit. Nothing is cached across frames that
 /// the window does not cache.
+// r[verify flow.verify.frame-rate]
 fn studio(
     scene: &Arrangement,
     palette: &Palette,

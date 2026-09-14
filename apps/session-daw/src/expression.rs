@@ -992,6 +992,7 @@ mod tests {
 
     /// Shift+drag moves a hit in time — snapped, so it lands a beat on.
     #[test]
+    // r[verify flow.keys.midi-editing]
     fn a_shift_drag_moves_a_hit_in_time() {
         let mut v = view();
         let before = v.editor.doc.notes[0].start;
@@ -1009,6 +1010,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify flow.keys.midi-editing]
     fn delete_removes_the_selection() {
         let mut v = view();
         let count = v.editor.doc.notes.len();
@@ -1183,6 +1185,7 @@ mod tests {
     }
 
     #[test]
+    // r[verify flow.drums.editing.hands]
     fn dragging_a_kick_hit_slips_it_in_the_hit_list() {
         let mut v = kit();
         // Find the kick lane and its first hit on screen.
@@ -1233,6 +1236,7 @@ mod tests {
     /// A press on the other lane's audio selects the lane and never
     /// picks up or adds a hit: hats are context, not a hit list.
     #[test]
+    // r[verify flow.drums.editing.stack]
     fn the_other_lane_takes_no_hit_gesture() {
         let mut v = kit();
         let lanes = stack::lanes(&v.editor, Editor::ACTIVE_BOOST, v.editor.lane_floor().max(22.0));

@@ -38,6 +38,7 @@ const OUT: f64 = 1e-5;
 const HAIR_DB: f64 = 0.5;
 
 /// Every balance group in the session, as track GUIDs.
+// r[impl flow.drums.mixing.balance]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Groups {
     groups: Vec<Vec<String>>,
