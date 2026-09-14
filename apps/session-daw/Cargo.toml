@@ -52,6 +52,8 @@ dynamic-template = { workspace = true }
 # The mouse-modifier contexts a hit reports, so bindings stay
 # configurable rather than being hard-coded per widget.
 input-config-proto = { workspace = true }
+input = { workspace = true }
+input-keybinds = { workspace = true }
 daw-theme = { workspace = true }
 
 # The Tone rack's response math — the plugins' own, not a copy. See the

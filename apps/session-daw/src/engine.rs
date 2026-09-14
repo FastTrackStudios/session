@@ -70,6 +70,20 @@ pub enum Edit {
     SetFadeIn(String, f64, daw_proto::item::FadeShape),
     /// And its fade-out.
     SetFadeOut(String, f64, daw_proto::item::FadeShape),
+    /// Select an item — alone, or added to the selection.
+    SelectItem(String, bool),
+    /// Nothing selected. Carries no guid; the string is empty.
+    DeselectAllItems(String),
+    /// Everything selected. The same.
+    SelectAllItems(String),
+    /// Move an item to a position, in seconds.
+    MoveItem(String, f64),
+    /// Trim an item to a position and a length, in seconds.
+    TrimItem(String, f64, f64),
+    /// Split an item at a time: the item keeps the left, and a new one
+    /// on the same track (its guid is the third field) takes the right.
+    SplitItem(String, f64, String),
+    DeleteItem(String),
 }
 
 impl Edit {
@@ -89,14 +103,32 @@ impl Edit {
             | Self::SetInputMonitor(g, _)
             | Self::SetParentSend(g, _)
             | Self::SetFadeIn(g, ..)
-            | Self::SetFadeOut(g, ..) => g,
+            | Self::SetFadeOut(g, ..)
+            | Self::SelectItem(g, _)
+            | Self::DeselectAllItems(g)
+            | Self::SelectAllItems(g)
+            | Self::MoveItem(g, _)
+            | Self::TrimItem(g, ..)
+            | Self::SplitItem(g, ..)
+            | Self::DeleteItem(g) => g,
         }
     }
 
     /// Whether this is about an item rather than a track.
     #[must_use]
     pub const fn is_item(&self) -> bool {
-        matches!(self, Self::SetFadeIn(..) | Self::SetFadeOut(..))
+        matches!(
+            self,
+            Self::SetFadeIn(..)
+                | Self::SetFadeOut(..)
+                | Self::SelectItem(..)
+                | Self::DeselectAllItems(_)
+                | Self::SelectAllItems(_)
+                | Self::MoveItem(..)
+                | Self::TrimItem(..)
+                | Self::SplitItem(..)
+                | Self::DeleteItem(_)
+        )
     }
 
     /// Whether a newer edit of this kind replaces this one.
@@ -107,7 +139,15 @@ impl Edit {
     /// double-click.
     #[must_use]
     pub const fn coalesces(&self) -> bool {
-        matches!(self, Self::SetVolume(..) | Self::SetPan(..) | Self::SetFadeIn(..) | Self::SetFadeOut(..))
+        matches!(
+            self,
+            Self::SetVolume(..)
+                | Self::SetPan(..)
+                | Self::SetFadeIn(..)
+                | Self::SetFadeOut(..)
+                | Self::MoveItem(..)
+                | Self::TrimItem(..)
+        )
     }
 
     /// Whether `other` is the same control on the same track.
@@ -590,16 +630,62 @@ async fn apply(edit: &Edit) {
         return;
     };
     if edit.is_item() {
+        if let Edit::DeselectAllItems(_) = edit {
+            if let Err(error) = project.items().deselect_all().await {
+                tracing::warn!(error = %error, "the engine refused to deselect");
+            }
+            return;
+        }
+        if let Edit::SelectAllItems(_) = edit {
+            if let Err(error) = project.items().select_all().await {
+                tracing::warn!(error = %error, "the engine refused to select all");
+            }
+            return;
+        }
         let Ok(Some(item)) = project.items().by_guid(edit.guid()).await else {
             return;
         };
+        let secs = daw_proto::primitives::Duration::from_seconds;
+        let at = daw_proto::primitives::PositionInSeconds::from_seconds;
         let outcome = match edit {
-            Edit::SetFadeIn(_, secs, shape) => {
-                item.set_fade_in(daw_proto::primitives::Duration::from_seconds(*secs), *shape).await
+            Edit::SetFadeIn(_, s, shape) => item.set_fade_in(secs(*s), *shape).await,
+            Edit::SetFadeOut(_, s, shape) => item.set_fade_out(secs(*s), *shape).await,
+            Edit::SelectItem(_, exclusive) => {
+                if *exclusive && let Err(error) = project.items().deselect_all().await {
+                    tracing::warn!(error = %error, "the engine refused to deselect");
+                }
+                item.select().await
             }
-            Edit::SetFadeOut(_, secs, shape) => {
-                item.set_fade_out(daw_proto::primitives::Duration::from_seconds(*secs), *shape).await
+            Edit::MoveItem(_, position) => item.set_position(at(*position)).await,
+            Edit::TrimItem(_, position, length) => match item.set_position(at(*position)).await {
+                Ok(()) => item.set_length(secs(*length)).await,
+                Err(error) => Err(error),
+            },
+            // The engine has no split of its own yet: the left half is
+            // the item shortened, the right a new item on the same
+            // track — the window's copy did the same and named the new
+            // half, so a later edit finds it. The new item has no
+            // source until the standalone grows a split that carries
+            // one; it says so here rather than pretending.
+            Edit::SplitItem(_, split_at, _new_guid) => {
+                let (Ok(position), Ok(length)) = (item.position().await, item.length().await) else {
+                    return;
+                };
+                let (start, end) = (position.as_seconds(), position.as_seconds() + length.as_seconds());
+                if *split_at <= start || *split_at >= end {
+                    return;
+                }
+                match item.set_length(secs(split_at - start)).await {
+                    Ok(()) => {
+                        let Ok(Some(track)) = project.tracks().by_guid(&item_track(&project, edit.guid()).await).await else {
+                            return;
+                        };
+                        track.items().add(at(*split_at), secs(end - split_at)).await.map(|_| ())
+                    }
+                    Err(error) => Err(error),
+                }
             }
+            Edit::DeleteItem(_) => item.delete().await,
             _ => Ok(()),
         };
         if let Err(error) = outcome {
@@ -625,13 +711,34 @@ async fn apply(edit: &Edit) {
         Edit::SetPhase(_, inverted) => track.set_phase_inverted(*inverted).await,
         Edit::SetInputMonitor(_, mode) => track.set_input_monitor(*mode).await,
         Edit::SetParentSend(_, enabled) => track.set_parent_send(*enabled).await,
-        Edit::SetFadeIn(..) | Edit::SetFadeOut(..) => Ok(()),
+        Edit::SetFadeIn(..)
+        | Edit::SetFadeOut(..)
+        | Edit::SelectItem(..)
+        | Edit::DeselectAllItems(_)
+        | Edit::SelectAllItems(_)
+        | Edit::MoveItem(..)
+        | Edit::TrimItem(..)
+        | Edit::SplitItem(..)
+        | Edit::DeleteItem(_) => Ok(()),
     };
     if let Err(error) = outcome {
         // One line, because a failed edit is a thing the user did that
         // did not happen — silence here is how a mixer starts lying.
         tracing::warn!(error = %error, edit = ?edit, "the engine refused an edit");
     }
+}
+
+/// The track an item is on, by guid — the facade's item list carries
+/// it, and a split needs the track to add the new half to.
+async fn item_track(project: &daw_control::Project, item_guid: &str) -> String {
+    project
+        .items()
+        .all()
+        .await
+        .ok()
+        .and_then(|items| items.into_iter().find(|i| i.guid == item_guid))
+        .map(|i| i.track_guid)
+        .unwrap_or_default()
 }
 
 /// The engine's own account of the tracks, as it changes.

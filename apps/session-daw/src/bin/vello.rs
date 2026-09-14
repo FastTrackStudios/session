@@ -164,6 +164,14 @@ struct App {
     /// Whether the view turns the page to follow the playhead. A
     /// setting: `FTS_FOLLOW=off` opens with it off; `f` toggles it.
     follow: bool,
+    /// The selected items, by guid — the window's own copy of what the
+    /// project's items say, kept so a frame does not walk them all.
+    selected_items: std::collections::HashSet<String>,
+    /// An item taken hold of by its body or an edge: a click until it
+    /// moves, then a move or a trim with a ghost at the new place.
+    item_press: Option<ItemPress>,
+    /// The keyboard, through the FTS profile's bindings.
+    bindings: session_daw::keys::Keys,
     /// The panel control the pointer went down on.
     pressed_row: Option<(usize, session_daw::row::Control)>,
     /// The rail button the pointer is over.
@@ -368,6 +376,35 @@ impl ApplicationHandler for App {
                     self.redraw();
                     return;
                 }
+                // The profile first: what a key does here is what it
+                // does in REAPER with the extension loaded. A binding
+                // the window cannot do yet is logged and falls through
+                // to the window's own keys, so `x` still switches views
+                // while it is bound to a cut nobody has built.
+                {
+                    let named = match &event.logical_key {
+                        winit::keyboard::Key::Named(n) => Some(format!("{n:?}")),
+                        _ => None,
+                    };
+                    let code = session_daw::keys::key_code(named.as_deref(), event.logical_key.to_text());
+                    if let Some(code) = code {
+                        let modifiers = input::Modifiers {
+                            ctrl: self.keys.ctrl,
+                            alt: self.keys.alt,
+                            shift: self.keys.shift,
+                            meta: false,
+                        };
+                        let actions = self.bindings.press(code, modifiers);
+                        let mut handled = false;
+                        for action in actions {
+                            handled |= self.act_on_key(action);
+                        }
+                        if handled {
+                            self.redraw();
+                            return;
+                        }
+                    }
+                }
                 // Space plays and stops, Home returns — REAPER's own
                 // keys, and the two that make the playhead this window
                 // already draws mean something.
@@ -531,6 +568,32 @@ impl ApplicationHandler for App {
                     return;
                 }
                 let at_time = self.ruler_time_unclamped(position.x);
+                if let Some(press) = self.item_press.as_mut()
+                    && let Some(at) = at_time
+                {
+                    let dx = at - press.from;
+                    let moved = press.ghost.is_some() || (dx * self.pps).abs() > session_daw::gesture::SLOP;
+                    if moved {
+                        let beat = 60.0 / self.scene.as_ref().map_or(120.0, |s| s.bpm).max(1.0);
+                        let snap = |t: f64| if self.keys.shift { t } else { (t / beat).round() * beat };
+                        press.ghost = Some(match press.zone {
+                            session_daw::arrangement::ItemZone::LeftEdge => {
+                                let x0 = snap(press.x0 + dx).clamp(0.0, press.x1 - 0.01);
+                                (x0, press.x1)
+                            }
+                            session_daw::arrangement::ItemZone::RightEdge => {
+                                let x1 = snap(press.x1 + dx).max(press.x0 + 0.01);
+                                (press.x0, x1)
+                            }
+                            _ => {
+                                let x0 = snap(press.x0 + dx).max(0.0);
+                                (x0, x0 + (press.x1 - press.x0))
+                            }
+                        });
+                        self.redraw();
+                    }
+                    return;
+                }
                 if let Some(drag) = self.fade_drag.as_mut()
                     && let Some(at) = at_time
                 {
@@ -675,6 +738,27 @@ impl ApplicationHandler for App {
                         self.redraw();
                         return;
                     }
+                    if let Some(hit) = lane_hit
+                        && let session_daw::hit::Target::Item { index, zone, seconds, .. } = hit.target
+                        && matches!(
+                            session_daw::mousemap::resolve(hit.context, session_daw::mousemap::Gesture::Drag, self.keys),
+                            session_daw::mousemap::Action::MoveItem
+                                | session_daw::mousemap::Action::TrimLeft
+                                | session_daw::mousemap::Action::TrimRight
+                        )
+                        && let Some(item) = self.scene.as_ref().and_then(|s| s.item(index))
+                    {
+                        self.item_press = Some(ItemPress {
+                            index,
+                            guid: item.guid.clone(),
+                            zone,
+                            x0: item.x0,
+                            x1: item.x1,
+                            from: seconds,
+                            ghost: None,
+                        });
+                        return;
+                    }
                     let lane_seconds = match lane_hit.map(|h| (h.context, h.target)) {
                         Some((context, session_daw::hit::Target::Lane { seconds, .. }))
                             if session_daw::mousemap::resolve(
@@ -763,6 +847,10 @@ impl ApplicationHandler for App {
                 } else {
                     if self.bar_drag.take().is_some() {
                         self.redraw();
+                        return;
+                    }
+                    if let Some(press) = self.item_press.take() {
+                        self.release_item(press);
                         return;
                     }
                     if let Some(drag) = self.fade_drag.take() {
@@ -1371,6 +1459,223 @@ impl App {
                 self.scroll_to(to, self.scroll_y);
             }
         }
+    }
+
+    /// An item let go: a click selects it, a move or a trim lands it
+    /// where its ghost was.
+    fn release_item(&mut self, press: ItemPress) {
+        use session_daw::arrangement::ItemZone;
+        use session_daw::engine::Edit;
+        let Some((x0, x1)) = press.ghost else {
+            self.select_item(&press.guid, !self.keys.ctrl);
+            return;
+        };
+        let edit = match press.zone {
+            ItemZone::LeftEdge | ItemZone::RightEdge => Edit::TrimItem(press.guid.clone(), x0, x1 - x0),
+            _ => Edit::MoveItem(press.guid.clone(), x0),
+        };
+        self.edit_item(&press.guid, |item| {
+            item.position = daw_proto::primitives::PositionInSeconds::from_seconds(x0);
+            item.length = daw_proto::primitives::Duration::from_seconds(x1 - x0);
+        });
+        self.send(edit);
+        self.re_record();
+        self.redraw();
+    }
+
+    /// Select an item — alone, or added — here and in the engine.
+    fn select_item(&mut self, guid: &str, exclusive: bool) {
+        use session_daw::engine::Edit;
+        if exclusive {
+            self.selected_items.clear();
+        }
+        self.selected_items.insert(guid.to_owned());
+        let selected = self.selected_items.clone();
+        self.edit_items(|item| item.selected = selected.contains(&item.guid));
+        self.send(Edit::SelectItem(guid.to_owned(), exclusive));
+        self.redraw();
+    }
+
+    /// Change one item in the window's copy of the project.
+    fn edit_item(&mut self, guid: &str, change: impl FnOnce(&mut daw_proto::Item)) {
+        if let Some((project, _)) = self.session.as_mut() {
+            let project = std::sync::Arc::make_mut(&mut project.0);
+            if let Some(item) = project.items.values_mut().flatten().find(|i| i.guid == guid) {
+                change(item);
+            }
+        }
+    }
+
+    /// Change every item in the window's copy of the project.
+    fn edit_items(&mut self, mut change: impl FnMut(&mut daw_proto::Item)) {
+        if let Some((project, _)) = self.session.as_mut() {
+            let project = std::sync::Arc::make_mut(&mut project.0);
+            for item in project.items.values_mut().flatten() {
+                change(item);
+            }
+        }
+    }
+
+    /// An edit to the engine, if one is listening.
+    fn send(&self, edit: session_daw::engine::Edit) {
+        if let Some(applier) = &self.applier {
+            applier.send(edit);
+        }
+    }
+
+    /// Do what a bound key asks. `false` when the window cannot, so the
+    /// key falls through to what the window binds itself.
+    fn act_on_key(&mut self, action: session_daw::keys::Action) -> bool {
+        use session_daw::engine::{Edit, Move};
+        use session_daw::keys::Action;
+        match action {
+            Action::PlayStop | Action::PlayPause => {
+                session_daw::engine::transport(Move::PlayStop, 0.0);
+            }
+            Action::GoToStart => {
+                session_daw::engine::transport(Move::Home, 0.0);
+                self.playhead.report(0.0, 1.0, std::time::Instant::now());
+                self.edit.click(0.0);
+            }
+            Action::SplitAtCursor => self.split_at(self.edit.at),
+            Action::DeleteSelectedItems => {
+                let doomed: Vec<String> = self.selected_items.drain().collect();
+                if doomed.is_empty() {
+                    return true;
+                }
+                if let Some((project, _)) = self.session.as_mut() {
+                    let project = std::sync::Arc::make_mut(&mut project.0);
+                    for lane in project.items.values_mut() {
+                        lane.retain(|i| !doomed.contains(&i.guid));
+                    }
+                    project.item_count = project.items.values().map(Vec::len).sum();
+                }
+                for guid in doomed {
+                    self.send(Edit::DeleteItem(guid));
+                }
+                self.re_record();
+            }
+            Action::SelectAllItems => {
+                let mut all = std::collections::HashSet::new();
+                self.edit_items(|item| {
+                    item.selected = true;
+                    all.insert(item.guid.clone());
+                });
+                self.selected_items = all;
+                self.send(Edit::SelectAllItems(String::new()));
+            }
+            Action::ClearSelection => {
+                self.edit.selection = None;
+                self.selected_items.clear();
+                self.edit_items(|item| item.selected = false);
+                self.send(Edit::DeselectAllItems(String::new()));
+            }
+            Action::CursorBar(by) | Action::CursorBeat(by) => {
+                let bpm = self.scene.as_ref().map_or(120.0, |s| s.bpm).max(1.0);
+                let step = if matches!(action, Action::CursorBar(_)) { 240.0 / bpm } else { 60.0 / bpm };
+                // To the grid line in that direction — from a cursor
+                // between lines, the next line, not a step past it.
+                let at = self.edit.at / step;
+                let to = if by > 0 { (at + 1e-6).floor() + 1.0 } else { (at - 1e-6).ceil() - 1.0 };
+                self.edit.at = (to * step).max(0.0);
+            }
+            Action::TrackStep { by, extend } => {
+                let rows = &self.arrange_rows;
+                let current = rows.iter().position(|(t, _)| t.selected);
+                let next = match current {
+                    Some(i) => i.saturating_add_signed(isize::try_from(by).unwrap_or(0)),
+                    None => 0,
+                };
+                let Some((track, _)) = rows.get(next.min(rows.len().saturating_sub(1))) else {
+                    return true;
+                };
+                let guid = track.guid.clone();
+                let edit = if extend { Edit::AddToSelection(guid) } else { Edit::Select(guid) };
+                if let Some(index) = self.arrange_map.index(next) {
+                    // The window's own prediction: the engine's answer
+                    // arrives a frame later and corrects it.
+                    if !extend {
+                        for t in &mut self.tracks {
+                            t.selected = false;
+                        }
+                    }
+                    if let Some(t) = self.tracks.get_mut(index) {
+                        t.selected = true;
+                    }
+                }
+                self.send(edit);
+                self.re_record();
+            }
+            Action::Marker(by) => {
+                let at = self.edit.at;
+                let to = self.scene.as_ref().and_then(|scene| {
+                    let mut times: Vec<f64> = scene.markers().iter().map(|m| m.at).collect();
+                    times.extend(scene.sections().iter().map(|s| s.start));
+                    times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    if by > 0 {
+                        times.into_iter().find(|t| *t > at + 1e-3)
+                    } else {
+                        times.into_iter().rev().find(|t| *t < at - 1e-3)
+                    }
+                });
+                if let Some(to) = to {
+                    self.edit.click(to);
+                    session_daw::engine::transport(Move::Seek, to);
+                }
+            }
+            Action::ToggleRecord => {
+                tracing::info!("record is not wired to the transport yet");
+            }
+            Action::Unbound(id) => {
+                tracing::info!(ui.action = %id, "bound in the profile, not built here yet");
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Split at a time: the selected items that contain it, or every
+    /// item that does when nothing is selected — REAPER's rule for the
+    /// split key. Each becomes two here, and the engine is told.
+    fn split_at(&mut self, at: f64) {
+        use session_daw::engine::Edit;
+        let mut splits: Vec<(String, String, String)> = Vec::new();
+        if let Some((project, _)) = self.session.as_mut() {
+            let project = std::sync::Arc::make_mut(&mut project.0);
+            let selected = &self.selected_items;
+            let mut counter = 0_usize;
+            for (track_guid, lane) in project.items.iter_mut() {
+                let mut halves = Vec::new();
+                for item in lane.iter_mut() {
+                    let start = item.position.as_seconds();
+                    let end = start + item.length.as_seconds();
+                    let mine = selected.is_empty() || selected.contains(&item.guid);
+                    if !mine || at <= start + 1e-3 || at >= end - 1e-3 {
+                        continue;
+                    }
+                    counter = counter.saturating_add(1);
+                    let mut right = item.clone();
+                    right.guid = format!("{}-split-{counter}", item.guid);
+                    right.position = daw_proto::primitives::PositionInSeconds::from_seconds(at);
+                    right.length = daw_proto::primitives::Duration::from_seconds(end - at);
+                    right.fade_in_length = daw_proto::primitives::Duration::from_seconds(0.0);
+                    item.length = daw_proto::primitives::Duration::from_seconds(at - start);
+                    item.fade_out_length = daw_proto::primitives::Duration::from_seconds(0.0);
+                    splits.push((item.guid.clone(), right.guid.clone(), track_guid.clone()));
+                    halves.push(right);
+                }
+                lane.extend(halves);
+                lane.sort_by(|a, b| a.position.as_seconds().partial_cmp(&b.position.as_seconds()).unwrap_or(std::cmp::Ordering::Equal));
+            }
+            project.item_count = project.items.values().map(Vec::len).sum();
+        }
+        if splits.is_empty() {
+            return;
+        }
+        for (guid, new_guid, _) in splits {
+            self.send(Edit::SplitItem(guid, at, new_guid));
+        }
+        self.re_record();
     }
 
     /// What the pointer is over in the arrangement, if that is the view.
@@ -2375,6 +2680,8 @@ impl App {
         let grid = &self.grid;
         let hovered_item = self.hovered_item;
         let in_flight = self.fade_drag.as_ref().map(|d| (d.index, d.fades));
+        let selected_items = &self.selected_items;
+        let ghost = self.item_press.as_ref().and_then(|p| p.ghost.map(|(x0, x1)| (p.index, x0, x1)));
         /// The finest the grid ever gets — sixteenths, as a fraction of
         /// a whole note. The zoom only ever coarsens away from it.
         const FINEST: f64 = 1.0 / 16.0;
@@ -2425,6 +2732,17 @@ impl App {
                 (rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy),
                 hovered_item,
                 in_flight,
+            );
+            // The selection's outlines, and the ghost of an item being
+            // moved or trimmed.
+            session_daw::arrangement::selection_overlay(
+                painter,
+                &palette,
+                scene,
+                view,
+                (rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy),
+                selected_items,
+                ghost,
             );
             // The panel: the SAME vertical offset, which is the entire
             // point. It cannot drift from the lanes because there is
@@ -2664,6 +2982,9 @@ fn main() {
         keys: session_daw::mousemap::Mods::default(),
         bar_drag: None,
         follow: !std::env::var("FTS_FOLLOW").is_ok_and(|v| matches!(v.trim(), "off" | "0" | "false")),
+        selected_items: std::collections::HashSet::new(),
+        item_press: None,
+        bindings: session_daw::keys::Keys::load(),
         pressed_row: None,
         hovered_rail: None,
         pressed_rail: None,
@@ -2827,7 +3148,15 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         Edit::SetParentSend(_, enabled) => track.parent_send = *enabled,
         // An item's, not the track's: applied to the project copy where
         // the drag ends — see `commit_fade`.
-        Edit::SetFadeIn(..) | Edit::SetFadeOut(..) => {}
+        Edit::SetFadeIn(..)
+        | Edit::SetFadeOut(..)
+        | Edit::SelectItem(..)
+        | Edit::DeselectAllItems(_)
+        | Edit::SelectAllItems(_)
+        | Edit::MoveItem(..)
+        | Edit::TrimItem(..)
+        | Edit::SplitItem(..)
+        | Edit::DeleteItem(_) => {}
         // Selection is the engine's to decide: an exclusive select
         // changes every OTHER track too, and predicting which ones
         // stop being selected would be predicting the engine's whole
@@ -2835,6 +3164,21 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         // looks slow — and the frame is one round trip in-process.
         Edit::Select(_) | Edit::AddToSelection(_) => {}
     }
+}
+
+/// An item taken hold of by its body or an edge.
+#[derive(Clone, Debug)]
+struct ItemPress {
+    index: usize,
+    guid: String,
+    zone: session_daw::arrangement::ItemZone,
+    /// The item's span when it was taken, in seconds.
+    x0: f64,
+    x1: f64,
+    /// The time under the pointer when it was taken.
+    from: f64,
+    /// Where it would land, once the press has become a drag.
+    ghost: Option<(f64, f64)>,
 }
 
 /// A fade taken hold of by its handle.

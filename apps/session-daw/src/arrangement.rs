@@ -794,6 +794,51 @@ pub fn fade_overlay(
     }
 }
 
+/// The selection and the ghosts, in pixel space over the lanes.
+///
+/// A selected item wears an outline; an item being moved or trimmed
+/// shows where it will land as an outline at the new place, over the
+/// recorded item where it still is — the recording catches up on the
+/// release.
+pub fn selection_overlay(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+    selected: &std::collections::HashSet<String>,
+    ghost: Option<(usize, f64, f64)>,
+) {
+    let (ox, oy) = origin;
+    let x_of = |t: f64| t.mul_add(view.pps, ox);
+    let rows = scene.visible_rows(view);
+    for item in scene.items.iter().filter(|i| rows.contains(&i.row) && selected.contains(&i.guid)) {
+        let Some((top, height)) = scene.row_box(item.row) else { continue };
+        let inset = (height * 0.05).clamp(0.0, 2.0);
+        let r = Rect::new(
+            x_of(item.x0),
+            top.mul_add(view.zoom_y, oy) + inset,
+            x_of(item.x1),
+            (top + height).mul_add(view.zoom_y, oy) - inset,
+        );
+        painter.stroke(&vello::kurbo::Stroke::new(1.5), Affine::IDENTITY, palette.text, None, &r.inset(-0.75));
+    }
+    if let Some((index, x0, x1)) = ghost
+        && let Some(item) = scene.item(index)
+        && let Some((top, height)) = scene.row_box(item.row)
+    {
+        let inset = (height * 0.05).clamp(0.0, 2.0);
+        let r = Rect::new(
+            x_of(x0),
+            top.mul_add(view.zoom_y, oy) + inset,
+            x_of(x1),
+            (top + height).mul_add(view.zoom_y, oy) - inset,
+        );
+        painter.fill(Fill::NonZero, Affine::IDENTITY, palette.text.multiply_alpha(0.12), None, &r);
+        painter.stroke(&vello::kurbo::Stroke::new(1.0), Affine::IDENTITY, palette.text, None, &r);
+    }
+}
+
 /// An item's name and where it sits: the row, and its span in seconds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Title {
