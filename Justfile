@@ -1215,7 +1215,7 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{SCENE}}" in
-        drum-*) project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
+        drum-*|guitar-*) project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
                 [[ -f "$project" ]] || scripts/ui-stress/make-template-rpp.py > "$project" ;;
         *)      project="${FTS_DAW_VOCAL:-/tmp/fts-vocal-fx.rpp}"
                 [[ -f "$project" ]] || scripts/ui-stress/make-vocal-fx-rpp.py > "$project" ;;
