@@ -35,10 +35,13 @@ use crate::mcp::{Columns, Control, Squeeze};
 const PAN_FROM_EDGE: f64 = 5.0;
 
 /// How much further apart the button column's steps are than REAPER's
-/// on a strip wide enough to have the column beside the fader — added
-/// at each step, so the monitor comes down by one of these and the
-/// routing by four. A rail gets none of it.
+/// — added at each step, so the monitor comes down by one of these and
+/// the routing by four.
 const SPREAD: f64 = 4.0;
+
+/// The coloured band on a rail: a rule of the track's colour where a
+/// wider strip has the pan and the record input.
+pub const RAIL_BAND: f64 = 8.0;
 
 /// The side of the panel's bare record-arm ring — what a rail draws in
 /// place of the housed arm (`art::Arm::Panel` is 20x20).
@@ -197,6 +200,13 @@ impl Strip {
     /// Its bottom — what the record arm hangs from.
     #[must_use]
     pub fn band_bottom(&self) -> f64 {
+        // A rail has no pan and no record input, so the band that
+        // holds them is a rule of the track's colour and no more —
+        // and the height it gives up is fader travel, which is what
+        // a rail is for.
+        if !self.squeeze.head() {
+            return self.band_top() + RAIL_BAND;
+        }
         self.band_top() + f64::from(self.shared.pan_band) + f64::from(self.shared.input_band)
     }
 
@@ -261,12 +271,13 @@ impl Strip {
     /// into the top of a strip whose fader wants the height, and ours
     /// has the room — the column is beside the fader, not over it —
     /// so the buttons sit a little lower and a little further apart.
-    ///
-    /// A rail keeps REAPER's pitch: its buttons sit OVER the fader,
-    /// and every pixel the column spreads is a pixel of travel the
-    /// fader loses.
     fn column_step(&self, control: Control) -> f64 {
-        let spread = if self.squeeze.columns() { SPREAD } else { 0.0 };
+        // Everywhere but the head tier: a wide strip has the column
+        // beside the fader, and a rail has the band's height back
+        // (see `band_bottom`) — more than the spread costs. The head
+        // tier keeps its band for the pan and its buttons over the
+        // fader, so it keeps REAPER's pitch.
+        let spread = if self.squeeze.columns() || !self.squeeze.head() { SPREAD } else { 0.0 };
         let monitor = f64::from(g::RECMON_FROM_ARM) + spread;
         let mute = monitor + f64::from(g::MUTE_FROM_RECMON) + spread;
         let solo = mute + f64::from(g::SOLO_FROM_MUTE) + spread;
@@ -591,10 +602,12 @@ mod tests {
         assert!(arm.x0 >= 0.0 && arm.x1 <= 30.0);
         assert!((arm.center().x - monitor.center().x).abs() < 1.0);
         assert!(rail.fader_top() >= rail.rect(Control::Solo).expect("solo").y1);
-        // The rail's pitch is REAPER's own: the spread is for the
-        // column beside a fader, not the stack over one.
-        let mute = rail.rect(Control::Mute).expect("mute");
-        assert!((mute.y0 - monitor.y0 - f64::from(g::MUTE_FROM_RECMON)).abs() < f64::EPSILON);
+        // The rail's band is a rule, and the fader has the rest: its
+        // top is higher than a wide strip's even with the column
+        // spread under the ring.
+        assert!((rail.band_bottom() - rail.band_top() - RAIL_BAND).abs() < f64::EPSILON);
+        let full = Strip::new(86.0, 1440.0, 1440.0, 0.0, 1000.0);
+        assert!(rail.fader_top() < full.fader_top() + f64::from(g::BUTTON_H) * 2.0);
 
         let full = Strip::new(86.0, 1440.0, 1440.0, 0.0, 1000.0);
         assert_eq!(full.arm(), art::Arm::Mixer);

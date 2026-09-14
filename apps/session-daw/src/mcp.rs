@@ -1024,10 +1024,17 @@ fn tinted_band(
     let Slot { x, width: w, .. } = slot;
     let (band_top, pan_band, input_band) = bands;
     let squeeze = Squeeze::at(w);
+    // The same band `Strip::band_bottom` measures: a rule on a rail,
+    // the pan and input sections where there is a pan.
+    let band_h = if squeeze.head() {
+        pan_band + input_band
+    } else {
+        crate::strip::RAIL_BAND
+    };
     fill(
         scene,
         crate::tcp::row_tint(palette, track),
-        Rect::new(x, band_top, x + w, band_top + pan_band + input_band),
+        Rect::new(x, band_top, x + w, band_top + band_h),
     );
     // Pan moves into the input area when its own section is gone, which
     // is `Collapse`'s call rather than a height comparison here.
