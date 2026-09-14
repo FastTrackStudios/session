@@ -881,6 +881,12 @@ pub enum Rack {
     /// The curves alone, stacked. No grid, no labels — at this width a
     /// gridline is a third of the panel and the label is most of it.
     Curves,
+    /// A rail's rack: one thin indicator per unit, live. A gain
+    /// reduction bar for a compressor, a light for a gate, heat for the
+    /// saturator, a sparkline for an EQ — nothing you can edit, and
+    /// nothing you can miss. A rail that showed nothing said the track
+    /// carried nothing, which is the one thing a rail must not say.
+    Minimal,
     /// Nothing. The strip is a fader and a name, and the rack's height
     /// goes back to the strip.
     Off,
@@ -901,6 +907,8 @@ impl Rack {
             Self::Full
         } else if width >= SHAPE {
             Self::Curves
+        } else if width >= MINIMAL {
+            Self::Minimal
         } else {
             Self::Off
         }
@@ -925,6 +933,7 @@ impl Rack {
             Self::Focus => Some(FOCUSED),
             Self::Full => Some(LEGIBLE),
             Self::Curves => Some(SHAPE),
+            Self::Minimal => Some(MINIMAL),
             Self::Off => None,
         }
     }
@@ -954,12 +963,19 @@ impl Rack {
 /// you can check.
 pub const LEGIBLE: f64 = 96.0;
 
-/// The narrowest rack that still says anything.
+/// The narrowest rack that still draws a curve.
 ///
 /// Below this a curve is a few pixels of wiggle — it reads as ornament
 /// rather than as a setting, and ornament in a mixer is worse than
-/// space.
+/// space. Below it the rack is indicators — see [`Rack::Minimal`].
 pub const SHAPE: f64 = 90.0;
+
+/// The narrowest rack that still draws indicators: a rail's own width
+/// less its edges.
+pub const MINIMAL: f64 = 16.0;
+
+/// How tall one unit's indicator is on a rail.
+pub const THIN: f64 = 14.0;
 
 /// The narrowest rack that gives the panel over to the plugin's own
 /// editing surface.
@@ -1284,6 +1300,22 @@ pub fn draw(
     if !rack.on() || panel.height < 24.0 || panels.is_empty() {
         return;
     }
+    if rack == Rack::Minimal {
+        for (row, at) in chain(panels, panel, folded) {
+            let Row::Unit(which) = row else { continue };
+            minimal(scene, palette, tone, meters, which, at);
+            if tone.bypass.is(which) {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    palette.tcp_meter_well.multiply_alpha(0.78),
+                    None,
+                    &at.rect(),
+                );
+            }
+        }
+        return;
+    }
 
     for (row, at) in chain(panels, panel, folded) {
         let Row::Unit(which) = row else {
@@ -1431,7 +1463,19 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
         width: panel.width,
         height,
     };
+    let tier = Rack::at(panel.width);
     for which in panels.iter().copied() {
+        // A rail's rack is indicators only: no containers, no folds, no
+        // preset row — a row of chips has nowhere to go at sixteen
+        // pixels.
+        if tier == Rack::Minimal {
+            let height = which.natural_at(tier);
+            if height > 0.0 {
+                out.push((Row::Unit(which), row(y, height)));
+                y += height + 1.0;
+            }
+            continue;
+        }
         // The preset row is in no phase: it caps the chain, and folds
         // with nothing.
         if which == Which::Presets {
@@ -1439,7 +1483,6 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
             y += which.natural() + GAP;
             continue;
         }
-        let tier = Rack::at(panel.width);
         // A header whenever the phase changes, which is what makes the
         // chain's ORDER do the grouping: the units are already in phase
         // order, so a container is a run of them.
@@ -1757,6 +1800,14 @@ impl Which {
     #[must_use]
     pub const fn natural_at(self, rack: Rack) -> f64 {
         let base = self.natural();
+        // On a rail every unit is one thin indicator, and the rows that
+        // are not units at all — the presets, the knobs — are nothing.
+        if matches!(rack, Rack::Minimal) {
+            return match self {
+                Self::Presets | Self::Knobs => 0.0,
+                _ => THIN,
+            };
+        }
         if !rack.editing() {
             return base;
         }
@@ -3963,6 +4014,141 @@ fn pitch(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Pan
     }
 }
 
+/// One unit as a thin indicator on a rail.
+///
+/// Fourteen pixels tall and a rail wide: enough for one number drawn
+/// as a length or a light, and nothing you would try to read a
+/// decision off. Live, because a rail is watched for what its track is
+/// DOING — a compressor's bar and a gate's light move with the signal;
+/// an EQ's sparkline is the one still thing, because it is the one
+/// still setting.
+fn minimal(scene: &mut Scene, palette: &Palette, tone: &Tone, meters: &Meters, which: Which, at: Panel) {
+    let right = at.x + at.width;
+    let bottom = at.y + at.height;
+    let mid = at.y + at.height / 2.0;
+    // The track the length is read against, faint.
+    rule(scene, palette.grid, Line::new((at.x, bottom - 0.5), (right, bottom - 0.5)));
+    // A length across the row, from the left, as a share of it.
+    let bar = |scene: &mut Scene, ink: Color, share: f64| {
+        let share = share.clamp(0.0, 1.0);
+        if share > 0.01 {
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                ink,
+                None,
+                &Rect::new(at.x, at.y + 2.0, share.mul_add(at.width, at.x), bottom - 2.0),
+            );
+        }
+    };
+    let peak_db = if meters.is_empty() {
+        None
+    } else {
+        Some(20.0 * f64::from(meters.sat_peak.max(1e-4)).log10())
+    };
+    match which {
+        // The response, as a sparkline across the row.
+        Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq => {
+            let bands = tone.bands_ref(which);
+            let ink = if which == Which::DecayEq { DECAY_INK } else { palette.accent };
+            let range = tone.eq_db_range();
+            let freq = FreqAxis::audible();
+            let points = (0..24).map(|i| {
+                let t = crate::num::coord(i) / 23.0;
+                let gain = calculate_combined_response(bands, freq.norm_to_freq(t), DISPLAY_RATE);
+                let y = mid - (gain / range).clamp(-1.0, 1.0) * (at.height / 2.0 - 1.5);
+                (t.mul_add(at.width, at.x), y)
+            });
+            curve(scene, ink, points, 1.0);
+        }
+        // Open or shut: a light.
+        Which::Gate => {
+            let open = peak_db.is_some_and(|db| db > f64::from(tone.gate.threshold));
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                GATE_INK.multiply_alpha(if open { 0.9 } else { 0.15 }),
+                None,
+                &Rect::new(at.x + 1.0, at.y + 2.0, right - 1.0, bottom - 2.0).to_rounded_rect(2.0),
+            );
+        }
+        // What the compressor is taking off right now, as a length.
+        Which::Comp | Which::RescueComp => {
+            let comp = if which == Which::Comp { tone.comp } else { tone.rescue_comp };
+            let reduction = peak_db.map_or(0.0, |db| {
+                let out = comp_ui::comp_graph_svg::compress_transfer(
+                    crate::mcp::f64_to_f32(db),
+                    comp.threshold,
+                    comp.ratio,
+                    comp.knee,
+                );
+                (db - f64::from(out)).max(0.0)
+            });
+            bar(scene, hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE), reduction / 24.0);
+        }
+        // Heat.
+        Which::Sat => {
+            let ladder = crate::live::ladder(&tone.sat);
+            let rungs = peak_db.map_or_else(|| ladder.full(), |db| ladder.at(crate::mcp::f64_to_f32(db)));
+            let heat = (f64::from(rungs.iter().sum::<f32>()) / 0.9).clamp(0.0, 1.0).powf(0.7);
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                SAT_GLOW.multiply_alpha(crate::mcp::f64_to_f32(0.1 + 0.8 * heat)),
+                None,
+                &Rect::new(at.x + 1.0, at.y + 2.0, right - 1.0, bottom - 2.0).to_rounded_rect(2.0),
+            );
+        }
+        Which::DeEss | Which::DeEssIn => bar(scene, DEESS_INK, f64::from(meters.deess_deepest()) / 9.0),
+        Which::Resonance => {
+            let deepest = meters.resonance_db.iter().copied().fold(0.0_f32, f32::max);
+            bar(scene, palette.accent, f64::from(deepest) / 6.0);
+        }
+        // The repeats, tiny.
+        Which::Delay => {
+            for (k, (x, level)) in echo_taps(tone.delay, at).into_iter().enumerate() {
+                let ink = if k == 0 { palette.text } else { DELAY_INK };
+                rule(scene, ink, Line::new((x, bottom - 1.0), (x, bottom - 1.0 - level * (at.height - 3.0))));
+            }
+        }
+        // The tail, tiny.
+        Which::Reverb => {
+            let tail = crate::live::tail(tone.reverb.key());
+            let geometry = RoomGeometry::of(tone.reverb, at);
+            let points = tail.envelope.iter().enumerate().map(|(i, db)| {
+                let t = crate::num::coord(i) / crate::num::coord(crate::live::TAIL_BINS.saturating_sub(1));
+                let level = (1.0 + f64::from(*db) / 60.0).clamp(0.0, 1.0);
+                (t.mul_add(geometry.end - geometry.start, geometry.start), bottom - 1.0 - level * (at.height - 3.0))
+            });
+            curve(scene, REVERB_INK, points, 1.0);
+        }
+        // How wide, as a bar out from the middle.
+        Which::Wide => {
+            let half = (f64::from(tone.wide) / 2.0).clamp(0.0, 1.0) * at.width / 2.0;
+            let centre = at.x + at.width / 2.0;
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                phase_tint(Which::Wide.phase()).multiply_alpha(0.8),
+                None,
+                &Rect::new(centre - half, at.y + 3.0, centre + half, bottom - 3.0),
+            );
+        }
+        // The interval: a mark above or below the line.
+        Which::Pitch => {
+            let shift = (f64::from(tone.pitch) / 24.0).clamp(-1.0, 1.0) * (at.height / 2.0 - 2.0);
+            rule(scene, palette.grid_beat, Line::new((at.x, mid), (right, mid)));
+            rule_wide(
+                scene,
+                phase_tint(Which::Pitch.phase()),
+                Line::new((at.x + 2.0, mid - shift), (right - 2.0, mid - shift)),
+                2.0,
+            );
+        }
+        Which::Knobs | Which::Presets => {}
+    }
+}
+
 /// A stroked glyph path, round-capped.
 fn stroke_glyph(scene: &mut Scene, ink: Color, path: &BezPath, width: f64) {
     scene.stroke(
@@ -4952,7 +5138,8 @@ pub fn grip_at(
     y: f64,
 ) -> Option<Grip> {
     let rack = Rack::at(panel.width);
-    if !rack.on() {
+    // A rail's indicators are read, not touched.
+    if !rack.on() || rack == Rack::Minimal {
         return None;
     }
     for (row, at) in chain(panels, panel, folded) {
@@ -6195,9 +6382,11 @@ mod tests {
         assert_eq!(Rack::at(LEGIBLE), Rack::Full);
         assert_eq!(Rack::at(LEGIBLE - 0.5), Rack::Curves);
         assert_eq!(Rack::at(SHAPE), Rack::Curves);
-        assert_eq!(Rack::at(SHAPE - 0.5), Rack::Off);
-        assert!(Rack::Full < Rack::Curves && Rack::Curves < Rack::Off);
-        assert!(Rack::at(LEGIBLE).on() && !Rack::at(SHAPE - 0.5).on());
+        assert_eq!(Rack::at(SHAPE - 0.5), Rack::Minimal);
+        assert_eq!(Rack::at(MINIMAL), Rack::Minimal);
+        assert_eq!(Rack::at(MINIMAL - 0.5), Rack::Off);
+        assert!(Rack::Full < Rack::Curves && Rack::Curves < Rack::Minimal && Rack::Minimal < Rack::Off);
+        assert!(Rack::at(LEGIBLE).on() && Rack::at(SHAPE - 0.5).on() && !Rack::at(MINIMAL - 0.5).on());
     }
 
     /// A rack with no room records nothing at all, rather than three
@@ -6810,13 +6999,37 @@ mod tier_tests {
         );
     }
 
-    /// A rack too narrow to draw at all grabs nothing.
+    /// A rail's rack is read, not touched: it grabs nothing.
     #[test]
-    fn an_absent_rack_grabs_nothing() {
+    fn a_rails_rack_grabs_nothing() {
         let tone = placeholder(0);
-        let off = rack_of(30.0);
-        assert_eq!(super::Rack::at(off.width), super::Rack::Off);
-        assert_eq!(grip_at(&ALL, &tone, off, super::Folded::default(), 15.0, 300.0), None);
+        let rail = rack_of(30.0);
+        assert_eq!(super::Rack::at(rail.width), super::Rack::Minimal);
+        assert_eq!(grip_at(&ALL, &tone, rail, super::Folded::default(), 15.0, 300.0), None);
+        assert_eq!(super::Rack::at(10.0), super::Rack::Off);
+    }
+
+    /// And it draws something for every unit, so a rail never says its
+    /// track carries nothing — more with a signal than without.
+    #[test]
+    fn a_rails_rack_draws_every_unit() {
+        let tone = placeholder(2);
+        let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let font = crate::text::Font::embedded().expect("the embedded font");
+        let rail = Panel { x: 0.0, y: 0.0, width: 26.0, height: 900.0 };
+        let rows = super::chain(&super::ALL_PANELS, rail, super::Folded::default());
+        assert_eq!(rows.len(), super::ALL_PANELS.len(), "one row per unit, no containers");
+        let mut still = anyrender::Scene::new();
+        super::draw(&mut still, &palette, &font, &tone, &crate::live::Meters::default(), &super::ALL_PANELS, rail, super::Folded::default(), None);
+        // A track per unit, and an indicator for every unit whose
+        // setting shows with no signal — the EQs, the gate's light, the
+        // heat, the repeats, the tail. The bars (reduction, fire) wait
+        // for a signal.
+        assert!(still.commands.len() > rows.len() + 6, "a track and the still indicators: {}", still.commands.len());
+        let mut moving = anyrender::Scene::new();
+        let meters = crate::simulate::meters(2, 1.25, &tone);
+        super::draw(&mut moving, &palette, &font, &tone, &meters, &super::ALL_PANELS, rail, super::Folded::default(), None);
+        assert!(moving.commands.len() >= still.commands.len());
     }
 }
 
@@ -7621,7 +7834,9 @@ pub fn levels(
         return;
     }
     let rack = Rack::at(panel.width);
-    if !rack.on() {
+    // A rail's compressor is a bar of what it is taking off now, drawn
+    // with the rest of its rack; the history has no room there.
+    if !rack.on() || rack == Rack::Minimal {
         return;
     }
     // Both compressors and the gate: all three read a level against a
