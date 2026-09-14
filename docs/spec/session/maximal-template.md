@@ -44,18 +44,19 @@ fixed tree.
 ### Guitars — `Guitars/` (a different shape every song)
 
 - [x] **No Sum folders**: each part is a track named for the part
-      (Rhythm L, Rhythm R, Lead, Solo, …).
+      (Rhythm, Lead, Solo, …). A **stereo pair is a folder over L and R**
+      with the processing on the folder; the halves are rails.
 - [x] Every electric part goes to exactly one of **GTR RHYTHM, GTR LEAD,
       GTR SOLO** by a send — the three live under **ELECTRIC BUS** in the
       bus list, not in the folder. A part moves between them mid-song by
       automating the sends. Stems are the three buses.
 - [x] The parts keep their parent send, so the **Electric** folder still
-      sums and meters everything — and it is a dead end (parent send off)
+      sums and meters its parts — and it is a dead end (parent send off)
       so nothing is heard twice.
-- [x] The Electric folder **leads** the three buses through group 1:
-      volume, mute and solo for RHYTHM and LEAD; mute and solo only for
-      SOLO, so the guitars can come down in a song without the solo.
-      No VCA track.
+- [x] **GUITAR BUS sends back into the Guitars folder**, which is a dead
+      end that meters the guitars after their buses, and is the **VCA
+      lead of GUITAR BUS** (group 1, with mute and solo): the folder's
+      fader is the guitars' fader. No VCA track.
 - [x] **Acoustic/** Steel, Nylon → **ACOUSTIC BUS** the same way.
 - [ ] Per-part amp/DI pairs when both were captured (a part folder of
       two mics is the one case a Sum is right).
@@ -94,9 +95,11 @@ fixed tree.
 
 1. An instrument folder reaches the mix by a **send to its bus**, parent
    send off (`to_bus`).
-2. Where the folder must still **meter** what it holds — the electric
-   guitars — the children keep their parent send and the folder is a
-   **dead end** that **leads** its buses' faders through a track group.
-3. Buses nest as folders inside the bus they feed; a bus reaches its
+2. Where a folder's fader must still be the instrument's fader — the
+   guitars — its bus sends back into it, the folder is a **dead end**
+   that meters that return, and it is the **VCA lead** of the bus.
+3. A **stereo pair** is a folder over `L` and `R`; the folder is the
+   channel (`tone::is_pair`), the halves are rails in every scene.
+4. Buses nest as folders inside the bus they feed; a bus reaches its
    parent by the ordinary folder send.
-4. A balance group is a folder named `Compress…`.
+5. A balance group is a folder named `Compress…`.

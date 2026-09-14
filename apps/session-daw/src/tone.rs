@@ -6760,7 +6760,13 @@ impl Store {
         for (index, (track, depth)) in rows.iter().enumerate() {
             folders.retain(|(at, _)| *at < *depth);
             let ancestors: Vec<String> = folders.iter().map(|(_, name)| name.clone()).collect();
-            let role = Role::of(&track.name, track.is_folder, &ancestors);
+            let mut role = Role::of(&track.name, track.is_folder, &ancestors);
+            // A stereo pair is one instrument: the folder over an L and
+            // an R carries the processing, and the two halves are rails
+            // under it. So the folder is a channel, not a bus.
+            if track.is_folder && is_pair(rows, index, *depth) {
+                role = Role::Channel;
+            }
             if track.is_folder {
                 folders.push((*depth, track.name.clone()));
             }
@@ -6791,6 +6797,25 @@ impl Store {
             tone.prerender_tails();
         }
     }
+}
+
+/// Whether the folder at `index` holds exactly a left and a right half.
+#[must_use]
+pub fn is_pair(rows: &[(daw_proto::Track, u32)], index: usize, depth: u32) -> bool {
+    let inside: Vec<&str> = rows
+        .iter()
+        .skip(index.saturating_add(1))
+        .take_while(|(_, d)| *d > depth)
+        .filter(|(_, d)| *d == depth.saturating_add(1))
+        .map(|(t, _)| t.name.as_str())
+        .collect();
+    inside.len() == 2 && is_pair_half(inside[0]) && is_pair_half(inside[1])
+}
+
+/// Whether a track is one half of a stereo pair, by name.
+#[must_use]
+pub fn is_pair_half(name: &str) -> bool {
+    matches!(name.trim().to_uppercase().as_str(), "L" | "R" | "LEFT" | "RIGHT")
 }
 
 fn band(index: usize, frequency: f64, gain: f64, q: f64, shape: EqBandShape) -> EqBand {

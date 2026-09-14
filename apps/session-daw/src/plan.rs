@@ -784,7 +784,13 @@ pub fn apply_scene(
                 }
             }
         }
-        let size = (scene.size)(&track.name, track.is_folder, &ancestors);
+        // One half of a stereo pair is a rail whatever the scene says:
+        // the pair's folder carries the processing and the width.
+        let size = if crate::tone::is_pair_half(&track.name) && !track.is_folder {
+            Size::Minimum
+        } else {
+            (scene.size)(&track.name, track.is_folder, &ancestors)
+        };
         let mut track = track.clone();
         track.width = Some(pixels(mixer_width(size, settings, panel)));
         // A focused strip is the selected one: that is what the mixer
