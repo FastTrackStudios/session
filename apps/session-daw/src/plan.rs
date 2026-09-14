@@ -439,11 +439,11 @@ pub struct Scene {
 }
 
 /// Every scene, in the order the number keys recall them.
-pub const SCENES: [Scene; 6] = [
+pub const SCENES: [Scene; 7] = [
     Scene {
-        name: "Drum Tracking",
-        slug: "drum-tracking",
-        size: drum_tracking,
+        name: "Drum Recording",
+        slug: "drum-recording",
+        size: drum_recording,
     },
     Scene {
         name: "Drum Mixing",
@@ -470,6 +470,11 @@ pub const SCENES: [Scene; 6] = [
         slug: "drum-fund",
         size: drum_fund,
     },
+    Scene {
+        name: "Drum FX",
+        slug: "drum-fx",
+        size: drum_fx,
+    },
 ];
 
 /// The scene for a slug.
@@ -489,10 +494,12 @@ fn under(ancestors: &[String], any: &[&str]) -> bool {
 /// The kit's pieces: the folders a drum mix is made on.
 const PIECES: [&str; 5] = ["Kick", "Snare", "Toms", "Cymbals", "Rooms"];
 
-/// Tracking: the microphones you are getting a sound on, and nothing
+/// Recording: the microphones you are getting a sound on, and nothing
 /// else that needs reading.
-fn drum_tracking(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
-    if is_folder {
+fn drum_recording(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+    if parallel(name, ancestors) {
+        Size::Minimum
+    } else if is_folder {
         Size::Compact
     } else if is(name, &["In", "Out", "Top", "Bottom"]) && under(ancestors, &["Kick", "Snare"]) {
         Size::Working
@@ -501,6 +508,12 @@ fn drum_tracking(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     } else {
         Size::Compact
     }
+}
+
+/// The Parallel folder and everything in it — what the kit is sent
+/// to, which the recording and overview scenes only need present.
+fn parallel(name: &str, ancestors: &[String]) -> bool {
+    is(name, &["Parallel"]) || under(ancestors, &["Parallel"])
 }
 
 /// Mixing: the buses are the instrument; every mic is a rail.
@@ -516,7 +529,9 @@ fn drum_mixing(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
 
 /// Overview: the pieces and the overheads, and the rest present.
 fn drum_overview(name: &str, _is_folder: bool, ancestors: &[String]) -> Size {
-    if is(name, &PIECES) || is(name, &["OH"]) {
+    if parallel(name, ancestors) {
+        Size::Minimum
+    } else if is(name, &PIECES) || is(name, &["OH"]) {
         Size::Working
     } else if under(ancestors, &PIECES) {
         Size::Minimum
@@ -532,6 +547,29 @@ fn drum_fund(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     if is_folder {
         Size::Compact
     } else if lower == "fund" || lower == "sub" || lower.ends_with("trig") {
+        Size::Working
+    } else if under(ancestors, &["Drum Kit"]) {
+        Size::Minimum
+    } else {
+        Size::Compact
+    }
+}
+
+/// The kit's effects: what it is sent to. The parallel folder's
+/// returns and the snare's three verbs open at working width, the
+/// room sim in focus, and the kit itself present as rails.
+fn drum_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+    let parallel = under(ancestors, &["Parallel"]);
+    let snare_verb = under(ancestors, &["Snare"]) && under(ancestors, &["Verb"]);
+    if is_folder {
+        if is(name, &["Parallel", "Compression", "Verb"]) && (parallel || is(name, &["Parallel"])) {
+            Size::Compact
+        } else {
+            Size::Minimum
+        }
+    } else if is(name, &["Room Sim"]) && parallel {
+        Size::Focus
+    } else if parallel || snare_verb {
         Size::Working
     } else if under(ancestors, &["Drum Kit"]) {
         Size::Minimum
@@ -626,9 +664,23 @@ mod scene_tests {
     #[test]
     fn the_drum_scenes_disagree_about_the_mics() {
         let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"].iter().map(|s| (*s).to_owned()).collect();
-        assert_eq!((scene("drum-tracking").unwrap().size)("In", false, &kick), Size::Working);
+        assert_eq!((scene("drum-recording").unwrap().size)("In", false, &kick), Size::Working);
         assert_eq!((scene("drum-mixing").unwrap().size)("In", false, &kick), Size::Minimum);
         assert_eq!((scene("drum-mixing").unwrap().size)("Kick", true, &kick[..1]), Size::Working);
         assert_eq!((scene("drum-overview").unwrap().size)("OH", false, &["Drum Kit".to_owned(), "Cymbals".to_owned()]), Size::Working);
+    }
+
+    #[test]
+    fn the_fx_scene_opens_what_the_kit_is_sent_to() {
+        let s = scene("drum-fx").expect("the scene");
+        let parallel: Vec<String> = ["Parallel"].iter().map(|s| (*s).to_owned()).collect();
+        let comp: Vec<String> = ["Parallel", "Compression"].iter().map(|s| (*s).to_owned()).collect();
+        let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"].iter().map(|s| (*s).to_owned()).collect();
+        let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"].iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!((s.size)("Room Sim", false, &parallel), Size::Focus);
+        assert_eq!((s.size)("Smash", false, &comp), Size::Working);
+        assert_eq!((s.size)("Nonlin", false, &snare_verb), Size::Working);
+        assert_eq!((s.size)("In", false, &kick), Size::Minimum);
+        assert_eq!((s.size)("Kick", true, &kick[..1]), Size::Minimum);
     }
 }

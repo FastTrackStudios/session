@@ -108,6 +108,7 @@ SNARE = 0xC94540  # scarlet: the hottest of the five
 TOMS = 0xB8613F  # terracotta: red warmed towards orange
 CYMBALS = 0xC76B7A  # rose: red lifted, for the top of the kit
 ROOMS = 0x93425C  # wine: red cooled, for the air around it
+PARALLEL = 0x7A2E3A  # garnet: the kit's family, darker — what is fed off it
 
 TREE = [
     (
@@ -115,7 +116,18 @@ TREE = [
         DRUMS,
         [
             summed("Kick", KICK, ["In", "Out", "Trig"], ["Sub", "Verb"]),
-            summed("Snare", SNARE, ["Top", "Bottom", "Trig"], ["Verb"], fund=True),
+            # The snare's verb is a folder of three: a short one, a long
+            # one and a nonlin — the three rooms a snare is put in, so
+            # the one the song wants is a mute away rather than a
+            # patch change.
+            (
+                "Snare",
+                SNARE,
+                [
+                    ("Sum", SNARE, mics(SNARE, "Top", "Bottom", "Trig") + [("Fund", SNARE, [])]),
+                    ("Verb", SNARE, [("Short", SNARE, []), ("Long", SNARE, []), ("Nonlin", SNARE, [])]),
+                ],
+            ),
             (
                 "Toms",
                 TOMS,
@@ -140,6 +152,35 @@ TREE = [
                     ("Mono", ROOMS, []),
                     ("Stereo L", ROOMS, []),
                     ("Stereo R", ROOMS, []),
+                ],
+            ),
+        ],
+    ),
+    # What the kit is sent to, in parallel: a fake room for when there
+    # are no room mics or bad ones, four parallel compressors from
+    # tight to crushed, and a bank of reverbs to pick the room the
+    # band is in — short and bright down to long and dark, plus the
+    # odd ones.
+    (
+        "Parallel",
+        PARALLEL,
+        [
+            ("Room Sim", PARALLEL, []),
+            (
+                "Compression",
+                PARALLEL,
+                [("Tight", PARALLEL, []), ("Punch", PARALLEL, []), ("Smash", PARALLEL, []), ("Crunch", PARALLEL, [])],
+            ),
+            (
+                "Verb",
+                PARALLEL,
+                [
+                    ("Wood Room", PARALLEL, []),
+                    ("Music Club", PARALLEL, []),
+                    ("Stadium", PARALLEL, []),
+                    ("RMX 16", PARALLEL, []),
+                    ("Nonlin", PARALLEL, []),
+                    ("Brick Wall", PARALLEL, []),
                 ],
             ),
         ],

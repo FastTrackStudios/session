@@ -164,6 +164,10 @@ pub enum Role {
     Fund,
     /// A trigger: a spike track for a sampler, with nothing on it yet.
     Trig,
+    /// A parallel compressor: fed the kit, crushed, blended back under
+    /// it. Its compressor first, an EQ to shape what comes back, and
+    /// a saturator for the ones that are meant to crunch.
+    Parallel,
 }
 
 impl Role {
@@ -184,7 +188,7 @@ impl Role {
         // A piece's own sends and helpers, wherever they sit: its verb
         // is a reverb return, and its fundamental, its sub and its
         // trigger are the one-note tracks.
-        if lower == "verb" || lower == "reverb" {
+        if lower == "verb" || lower == "reverb" || lower.starts_with("room sim") {
             return Self::Reverb;
         }
         if lower == "delay" {
@@ -210,6 +214,9 @@ impl Role {
             if folder.starts_with("wide") {
                 return Self::Wide;
             }
+            if folder.starts_with("compression") {
+                return Self::Parallel;
+            }
         }
         Self::Channel
     }
@@ -226,6 +233,7 @@ impl Role {
             Self::Pitch => Some(&PITCH_CHAIN),
             Self::Fund => Some(&FUND_CHAIN),
             Self::Trig => Some(&[]),
+            Self::Parallel => Some(&PARALLEL_CHAIN),
         }
     }
 }
@@ -254,6 +262,10 @@ pub const REVERB_CHAIN: [Which; 7] = [
 
 /// A bus: what it sums is processed elsewhere.
 pub const BUS_CHAIN: [Which; 2] = [Which::Eq, Which::Comp];
+
+/// A parallel compressor's chain: the compressor is the point, then
+/// what shapes the return, then what dirties it.
+pub const PARALLEL_CHAIN: [Which; 4] = [Which::Presets, Which::Comp, Which::Eq, Which::Sat];
 
 pub const WIDE_CHAIN: [Which; 2] = [Which::Presets, Which::Wide];
 pub const PITCH_CHAIN: [Which; 2] = [Which::Presets, Which::Pitch];
@@ -4796,6 +4808,7 @@ pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String
         Role::Delay => delay_presets(name),
         Role::Wide => wide_presets(),
         Role::Pitch => pitch_presets(name),
+        Role::Parallel => parallel_presets(name),
         Role::Channel | Role::Bus | Role::Fund | Role::Trig => Vec::new(),
     };
     if presets.is_empty() {
@@ -4944,10 +4957,72 @@ fn delay_presets(name: &str) -> Vec<Preset> {
     }
 }
 
+/// The named rooms a drum mix keeps ready — the bank a mixer picks
+/// the band's room out of, short and bright down to long and dark,
+/// then the odd ones. Each name is a return in the drum template's
+/// Parallel folder, and each carries a few takes on the same idea.
+const ROOM_NAMES: &[&str] = &["Room Sim", "Wood Room", "Music Club", "Stadium", "RMX 16", "Nonlin", "Brick Wall"];
+
 /// The curated presets for one reverb slot, plainest to most coloured.
 fn reverb_presets(name: &str) -> Vec<Preset> {
     use AlgorithmType as A;
     let dark = |low: f64, high: f64| vec![band(0, 300.0, low, 0.7, EqBandShape::LowShelf), band(1, 5_000.0, high, 0.7, EqBandShape::HighShelf)];
+    let lower = name.to_lowercase();
+    if let Some(room) = ROOM_NAMES.iter().copied().find(|r| lower.contains(&r.to_lowercase())) {
+        return match room {
+            // A captured room, not a digital one, and treated like a
+            // room mic: compressed fast on the way back. Fed off a
+            // send so the blend into it is not the drum blend.
+            "Room Sim" => vec![
+                space("Sunset Sound", A::Convolution, 0.9, 0.0, 0.5, 0.2, 1.0, 0.3, vec![shelf(1.0)], vec![]),
+                space("Ocean Way", A::Convolution, 1.2, 0.0, 0.7, 0.3, 1.0, 0.3, vec![], vec![]),
+                space("Small Booth", A::Convolution, 0.5, 0.0, 0.3, 0.3, 1.0, 0.3, vec![shelf(-2.0)], vec![]),
+                space("Live Room", A::Room, 1.0, 4.0, 0.6, 0.25, 0.8, 0.3, vec![], vec![]),
+            ],
+            // Short and bright: sizzle and snap and air around the kit
+            // on the uptempo song that has no room for a tail.
+            "Wood Room" => vec![
+                space("Wood Room", A::Room, 0.7, 6.0, 0.4, 0.2, 0.7, 0.22, vec![shelf(2.0)], vec![]),
+                space("Ruckus", A::Room, 0.8, 4.0, 0.45, 0.1, 0.5, 0.22, vec![shelf(3.0), band(1, 3_000.0, 2.0, 1.0, EqBandShape::Bell)], vec![]),
+                space("Studio A", A::Hall, 0.9, 8.0, 0.5, 0.3, 0.8, 0.22, vec![], vec![]),
+            ],
+            // Short and smooth: the 480's music club, low mids and the
+            // smoothest decay of the short ones.
+            "Music Club" => vec![
+                space("Music Club", A::Room, 0.9, 10.0, 0.5, 0.55, 0.9, 0.22, vec![shelf(-4.0)], vec![]),
+                space("Warm Room", A::Room, 1.1, 12.0, 0.55, 0.65, 0.9, 0.22, vec![shelf(-6.0)], dark(2.0, -6.0)),
+                space("Velvet Room", A::Velvet, 1.0, 10.0, 0.5, 0.5, 1.0, 0.22, vec![shelf(-3.0)], vec![]),
+            ],
+            // The big ballad: about two seconds, some top rolled off,
+            // a little low end — then high-passed on the way back.
+            "Stadium" => vec![
+                space("Stadium", A::Hall, 2.0, 30.0, 0.8, 0.5, 0.85, 0.2, vec![low_cut(150.0), shelf(-3.0)], dark(2.0, -4.0)),
+                space("Arena", A::Hall, 2.6, 40.0, 0.9, 0.55, 0.85, 0.2, vec![low_cut(180.0), shelf(-5.0)], dark(3.0, -6.0)),
+                space("Marble Room", A::Bloom, 1.8, 20.0, 0.7, 0.45, 1.0, 0.2, vec![low_cut(120.0)], vec![]),
+            ],
+            // The eighties snare: dense, a bit of tail, blends with the
+            // shorter rooms.
+            "RMX 16" => vec![
+                space("Ambience 1.7", A::Plate, 1.7, 20.0, 0.6, 0.5, 1.0, 0.22, vec![low_cut(100.0), shelf(-5.0)], dark(3.0, -6.0)),
+                space("Big Snare", A::Plate, 2.2, 30.0, 0.7, 0.45, 1.0, 0.25, vec![low_cut(120.0), shelf(-3.0)], dark(4.0, -4.0)),
+                space("Room Hall", A::Random, 1.5, 15.0, 0.6, 0.5, 0.9, 0.22, vec![low_cut(100.0)], vec![]),
+            ],
+            // Phil Collins. Not a lush tail and not supposed to be —
+            // which is why even a grainy one sounds right.
+            "Nonlin" => vec![
+                space("Nonlin", A::NonLinear, 0.9, 0.0, 0.6, 0.3, 0.9, 0.3, vec![low_cut(120.0)], vec![]),
+                space("Gated", A::NonLinear, 0.6, 0.0, 0.5, 0.3, 0.9, 0.3, vec![low_cut(150.0), shelf(2.0)], vec![]),
+                space("Reverse", A::NonLinear, 1.2, 0.0, 0.7, 0.4, 0.9, 0.3, vec![low_cut(120.0)], vec![]),
+            ],
+            // The 480's brick wall: two hundred and forty milliseconds
+            // with the early reflections lopsided, for motion.
+            _ => vec![
+                space("Brick Wall", A::Reflections, 0.24, 0.0, 0.3, 0.2, 0.3, 0.3, vec![], vec![]),
+                space("Sidewall Slap", A::Reflections, 0.3, 8.0, 0.4, 0.2, 0.2, 0.3, vec![shelf(2.0)], vec![]),
+                space("Lopsided", A::Reflections, 0.35, 12.0, 0.5, 0.3, 0.4, 0.3, vec![], vec![]),
+            ],
+        };
+    }
     match slot_of(name, REVERB_SLOTS) {
         "Room" => vec![
             space("Small Room", A::Room, 0.6, 8.0, 0.35, 0.15, 0.6, 0.2, vec![shelf(1.5)], vec![]),
@@ -4984,6 +5059,55 @@ fn reverb_presets(name: &str) -> Vec<Preset> {
             space("Non-Linear", A::NonLinear, 1.0, 10.0, 0.5, 0.3, 0.9, 0.22, vec![], vec![]),
             space("FreeVerb", A::FreeVerb, 1.5, 20.0, 0.5, 0.35, 0.7, 0.2, vec![shelf(-2.0)], vec![]),
         ],
+    }
+}
+
+/// A parallel compressor from its numbers, with what shapes its return.
+fn squash(name: &str, threshold: f32, ratio: f32, attack: f32, release: f32, drive: f32, eq: Vec<EqBand>) -> Preset {
+    let mut t = placeholder(0);
+    t.role = Role::Parallel;
+    t.comp = Comp {
+        threshold,
+        ratio,
+        attack,
+        release,
+        ..Comp::default()
+    };
+    t.eq = eq;
+    t.sat.drive = drive;
+    preset(name, t)
+}
+
+/// The curated presets for one parallel compressor, by what it is for:
+/// tight holds the kit together, punch lets the transient through and
+/// grabs what follows, smash is the crushed room under everything, and
+/// crunch is smash driven into a transformer.
+fn parallel_presets(name: &str) -> Vec<Preset> {
+    let lower = name.to_lowercase();
+    if lower.contains("punch") {
+        vec![
+            squash("Punch", -24.0, 4.0, 30.0, 80.0, 1.0, vec![band(0, 80.0, 2.0, 0.7, EqBandShape::LowShelf)]),
+            squash("Slow Grab", -20.0, 6.0, 50.0, 120.0, 1.0, vec![]),
+            squash("Snap", -26.0, 3.0, 20.0, 60.0, 1.2, vec![band(0, 3_000.0, 2.0, 1.0, EqBandShape::Bell)]),
+        ]
+    } else if lower.contains("smash") {
+        vec![
+            squash("Smash", -40.0, 20.0, 0.5, 60.0, 1.0, vec![band(0, 100.0, -3.0, 0.7, EqBandShape::LowShelf), band(1, 8_000.0, -3.0, 0.7, EqBandShape::HighShelf)]),
+            squash("All Buttons", -45.0, 20.0, 0.2, 40.0, 1.0, vec![band(0, 120.0, -4.0, 0.7, EqBandShape::LowShelf)]),
+            squash("Pumping", -36.0, 12.0, 1.0, 200.0, 1.0, vec![]),
+        ]
+    } else if lower.contains("crunch") {
+        vec![
+            squash("Crunch", -36.0, 10.0, 1.0, 80.0, 3.5, vec![band(0, 150.0, -6.0, 0.7, EqBandShape::LowShelf), band(1, 2_500.0, 3.0, 1.0, EqBandShape::Bell)]),
+            squash("Transformer", -30.0, 8.0, 3.0, 100.0, 2.5, vec![band(0, 120.0, -3.0, 0.7, EqBandShape::LowShelf)]),
+            squash("Fuzz", -40.0, 20.0, 0.3, 50.0, 6.0, vec![band(0, 200.0, -9.0, 0.7, EqBandShape::LowShelf), band(1, 6_000.0, -6.0, 0.7, EqBandShape::HighShelf)]),
+        ]
+    } else {
+        vec![
+            squash("Tight", -22.0, 4.0, 3.0, 100.0, 1.0, vec![]),
+            squash("Glue", -18.0, 2.5, 10.0, 200.0, 1.0, vec![]),
+            squash("Fast Four", -26.0, 4.0, 1.0, 60.0, 1.0, vec![band(0, 60.0, -2.0, 0.7, EqBandShape::LowShelf)]),
+        ]
     }
 }
 
