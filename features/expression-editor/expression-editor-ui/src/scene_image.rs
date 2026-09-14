@@ -339,13 +339,8 @@ pub mod worker {
                             held.pending.take()
                         };
                         let Some(job) = job else { continue };
-                        let bytes = super::scene_bmp(
-                            &job.scene,
-                            job.w,
-                            job.h,
-                            job.scale,
-                            job.background,
-                        );
+                        let bytes =
+                            super::scene_bmp(&job.scene, job.w, job.h, job.scale, job.background);
                         if let Ok(mut out) = out.lock() {
                             out.0 += 1;
                             out.1 = bytes;

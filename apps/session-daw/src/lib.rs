@@ -12,6 +12,7 @@
 pub mod animate;
 pub mod arrange_edit;
 pub mod arrangement;
+pub mod art;
 pub mod balance;
 #[cfg(target_os = "linux")]
 pub mod cursor;
@@ -22,16 +23,15 @@ pub mod frame_rate;
 pub mod gesture;
 pub mod headless;
 pub mod hit;
+pub mod icons;
+pub mod keys;
 pub mod layout;
 pub mod live;
 pub mod mcp;
 pub mod mousemap;
 pub mod num;
 pub mod open;
-pub mod art;
 pub mod overlay;
-pub mod icons;
-pub mod keys;
 pub mod plan;
 pub mod pointer;
 pub mod profile;

@@ -21,7 +21,10 @@ fn main() -> eyre::Result<()> {
     };
     let session = if cached {
         let cache = cache_directory();
-        eprintln!("Reusing the cached practice staging under {}…", cache.display());
+        eprintln!(
+            "Reusing the cached practice staging under {}…",
+            cache.display()
+        );
         PracticeSession::prepare_cached(&album_directory(), &songs, &cache)?
     } else {
         eprintln!(

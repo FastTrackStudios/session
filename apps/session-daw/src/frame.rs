@@ -18,7 +18,7 @@ use anyrender::PaintScene;
 use vello::kurbo::{Affine, Rect};
 use vello::peniko::Fill;
 
-use crate::arrangement::{Arrangement, Fades, Palette, Viewport, TCP_WIDTH};
+use crate::arrangement::{Arrangement, Fades, Palette, TCP_WIDTH, Viewport};
 use crate::expression::Expression;
 use crate::profile::Counts;
 use crate::rails::{self, Frame};
@@ -184,8 +184,14 @@ impl Arrange<'_> {
             &profile.top,
         );
         rails::main_toolbar(painter, palette, font, icons, rail_at, mode);
-        drawn.replayed = a.replayed.saturating_add(b.replayed).saturating_add(c.replayed);
-        drawn.submitted = a.submitted.saturating_add(b.submitted).saturating_add(c.submitted);
+        drawn.replayed = a
+            .replayed
+            .saturating_add(b.replayed)
+            .saturating_add(c.replayed);
+        drawn.submitted = a
+            .submitted
+            .saturating_add(b.submitted)
+            .saturating_add(c.submitted);
         drawn
     }
 }
@@ -200,7 +206,7 @@ fn items_over(
     (hovered_item, in_flight): (Option<usize>, Option<(usize, Fades)>),
     (selected, ghost): (&HashSet<String>, Option<(usize, f64, f64)>),
 ) {
-        // The items' titles, in pixel space over the lanes: text
+    // The items' titles, in pixel space over the lanes: text
     // recorded in seconds would stretch with the zoom.
     crate::arrangement::titles(painter, palette, font, scene, view, lanes_at);
     // The fade handles on the item under the pointer, and the fade
@@ -216,9 +222,7 @@ fn items_over(
     );
     // The selection's outlines, and the ghost of an item being
     // moved or trimmed.
-    crate::arrangement::selection_overlay(
-        painter, palette, scene, view, lanes_at, selected, ghost,
-    );
+    crate::arrangement::selection_overlay(painter, palette, scene, view, lanes_at, selected, ghost);
 }
 
 /// The viewport for a frame at a scroll and zoom.
@@ -272,7 +276,7 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
     } = parts;
     let rail = (rails::SIDE, rails::TOP);
     let surface = palette.surface;
-        // An open rename, over the name it replaces.
+    // An open rename, over the name it replaces.
     if let Some(open) = rename.filter(|r| r.surface == crate::rename::Surface::Arrange)
         && let Some((top, height)) = scene.row_box(open.row)
     {
@@ -286,7 +290,15 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
         }
     }
     ruler::ruler(painter, palette, font, view, bars, rail);
-    ruler::lanes(painter, palette, font, view, rail, scene.sections(), scene.markers());
+    ruler::lanes(
+        painter,
+        palette,
+        font,
+        view,
+        rail,
+        scene.sections(),
+        scene.markers(),
+    );
     let top = rail.1 + RULER_H;
     let bottom = rail.1 + view.height;
     ruler::lane_lines(
@@ -315,7 +327,13 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
     // release.
     if let Some((a, b)) = zoom_box {
         let r = Rect::new(a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1));
-        painter.fill(Fill::NonZero, Affine::IDENTITY, palette.accent.multiply_alpha(0.15), None, &r);
+        painter.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            palette.accent.multiply_alpha(0.15),
+            None,
+            &r,
+        );
         painter.stroke(
             &vello::kurbo::Stroke::new(1.0),
             Affine::IDENTITY,

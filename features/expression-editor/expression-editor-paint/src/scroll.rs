@@ -75,7 +75,6 @@ fn table() -> &'static ScrollBindingTable {
 /// merely wrong.
 pub const PIXELS_PER_NOTCH: f64 = 20.0;
 
-
 /// What the shared configuration says this gesture does here.
 ///
 /// `None` when nothing is bound, which the caller should treat as "leave
@@ -231,7 +230,6 @@ mod tests {
         // plain wheel zooms when the config says it scrolls.
         assert!(!h.contains("scroll zooms"), "stale hint: {h}");
     }
-
 
     #[test]
     fn an_unbound_gesture_resolves_to_nothing() {

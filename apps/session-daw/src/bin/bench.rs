@@ -27,8 +27,8 @@ use anyrender::{ImageRenderer, PaintScene};
 use anyrender_vello::VelloImageRenderer;
 use vello::kurbo::Affine;
 
-use session_daw::arrangement::{Arrangement, Palette, Viewport, TCP_WIDTH};
-use session_daw::headless::{Headless, BATCH};
+use session_daw::arrangement::{Arrangement, Palette, TCP_WIDTH, Viewport};
+use session_daw::headless::{BATCH, Headless};
 use session_daw::mcp::Mixer;
 
 /// The phase these measurements are taken in — the one the rack was
@@ -123,7 +123,14 @@ fn main() {
     if let Ok(out) = std::env::var("FTS_BENCH_DOCK") {
         // The arrangement with the editor docked under it, as the
         // studio benchmark draws its first frame.
-        dock_shot(&scene, &palette, &font, &std::path::PathBuf::from(out), width, height);
+        dock_shot(
+            &scene,
+            &palette,
+            &font,
+            &std::path::PathBuf::from(out),
+            width,
+            height,
+        );
         return;
     }
 
@@ -177,12 +184,21 @@ fn main() {
     let phases: Vec<(&str, Gesture)> = vec![
         ("scroll down/up", Box::new(|t| (0.0, tri(t), 1.0, 1.0))),
         ("scroll right/left", Box::new(|t| (tri(t), 0.0, 1.0, 1.0))),
-        ("scroll both", Box::new(|t| (tri(t), tri((t * 1.7) % 1.0), 1.0, 1.0))),
+        (
+            "scroll both",
+            Box::new(|t| (tri(t), tri((t * 1.7) % 1.0), 1.0, 1.0)),
+        ),
         // A zoom is a slower gesture than a yank — a wheel or a pinch,
         // not a thrown scrollbar — so these sweep their range a few times
         // rather than fourteen.
-        ("zoom vertical", Box::new(|t| (0.0, 0.3, 1.0, 0.25 + slow(t) * 3.75))),
-        ("zoom horizontal", Box::new(|t| (0.0, 0.3, 0.25 + slow(t) * 7.75, 1.0))),
+        (
+            "zoom vertical",
+            Box::new(|t| (0.0, 0.3, 1.0, 0.25 + slow(t) * 3.75)),
+        ),
+        (
+            "zoom horizontal",
+            Box::new(|t| (0.0, 0.3, 0.25 + slow(t) * 7.75, 1.0)),
+        ),
         (
             "zoom both",
             Box::new(|t| (0.0, 0.3, 0.25 + slow(t) * 7.75, 0.25 + slow(t) * 3.75)),
@@ -199,7 +215,11 @@ fn main() {
     ];
 
     println!();
-    println!("  scene         {} rows, {} items", scene.rows, scene.items());
+    println!(
+        "  scene         {} rows, {} items",
+        scene.rows,
+        scene.items()
+    );
     println!(
         "  surface       {width}x{height}, headless  ({:.1} megapixels)",
         f64::from(width) * f64::from(height) / 1_000_000.0
@@ -221,7 +241,14 @@ fn main() {
     }
 
     if let Ok(out) = std::env::var("FTS_BENCH_MIXER") {
-        mixer_shot(&palette, &font, layout, &std::path::PathBuf::from(out), width, height);
+        mixer_shot(
+            &palette,
+            &font,
+            layout,
+            &std::path::PathBuf::from(out),
+            width,
+            height,
+        );
         return;
     }
 
@@ -230,7 +257,14 @@ fn main() {
         // window's opening view and writes it to a PNG, which is the
         // fastest way to tell a culling bug (geometry missing) from a
         // palette bug (geometry there, wrong colour).
-        shot(&scene, &palette, &font, &std::path::PathBuf::from(out), width, height);
+        shot(
+            &scene,
+            &palette,
+            &font,
+            &std::path::PathBuf::from(out),
+            width,
+            height,
+        );
         return;
     }
 
@@ -273,18 +307,18 @@ fn main() {
                 let mut drawn = Counts::default();
                 painted += renderer
                     .frame(|painter| {
-
-                    let a = scene.replay_lanes(
-                        painter,
-                        view,
-                        Affine::translate((TCP_WIDTH - scroll_x, -scroll_y))
-                            * Affine::scale_non_uniform(PPS * zx, zy),
-                    );
-                    let b = scene.replay_panel(
-                        painter,
-                        view,
-                        Affine::translate((0.0, -scroll_y)) * Affine::scale_non_uniform(1.0, zy),
-                    );
+                        let a = scene.replay_lanes(
+                            painter,
+                            view,
+                            Affine::translate((TCP_WIDTH - scroll_x, -scroll_y))
+                                * Affine::scale_non_uniform(PPS * zx, zy),
+                        );
+                        let b = scene.replay_panel(
+                            painter,
+                            view,
+                            Affine::translate((0.0, -scroll_y))
+                                * Affine::scale_non_uniform(1.0, zy),
+                        );
                         // After the lanes, not before: the lane
                         // backgrounds are opaque and painted the grid
                         // straight out of the frame.
@@ -470,7 +504,9 @@ fn mixer_shot(
     let mut planned: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
     // A scene, if one is asked for: the visual track manager's answer
     // to which strips and how wide — `FTS_BENCH_SCENE=lead-vocal-fx`.
-    let scene = std::env::var("FTS_BENCH_SCENE").ok().and_then(|slug| session_daw::plan::scene(&slug));
+    let scene = std::env::var("FTS_BENCH_SCENE")
+        .ok()
+        .and_then(|slug| session_daw::plan::scene(&slug));
     if let Some(scene) = scene {
         planned = session_daw::plan::apply_scene(
             &planned,
@@ -527,7 +563,11 @@ fn mixer_shot(
         layout,
         // The shot is of the Tone phase, which is the phase the rack
         // was built for and the one the reference images were taken in.
-        if tone { session_daw::tone::panels_for(TONE) } else { &[] },
+        if tone {
+            session_daw::tone::panels_for(TONE)
+        } else {
+            &[]
+        },
         live,
         session_daw::settings::Settings::default(),
         &settings,
@@ -549,7 +589,9 @@ fn mixer_shot(
             let entry = history.entry(track.guid.clone()).or_default();
             let mut last = None;
             for k in 0..session_daw::tone::HISTORY {
-                let t = AT - (session_daw::tone::HISTORY - 1 - k) as f64 / f64::from(session_daw::tone::PUBLISH_HZ);
+                let t = AT
+                    - (session_daw::tone::HISTORY - 1 - k) as f64
+                        / f64::from(session_daw::tone::PUBLISH_HZ);
                 let meters = session_daw::simulate::meters(i, t, tone);
                 entry.push(meters.sat_peak);
                 entry.push_fire(meters.deess_deepest());
@@ -606,10 +648,8 @@ fn mixer_shot(
             // Pinned to the BOTTOM of the window.
             //
 
-            let at = Affine::translate((
-                session_daw::rails::SIDE - scroll_x,
-                session_daw::rails::TOP,
-            ));
+            let at =
+                Affine::translate((session_daw::rails::SIDE - scroll_x, session_daw::rails::TOP));
             let recorded = mixer.replay(painter, scroll_x, frame.content_width(), at);
             // The live controls, exactly as the window draws them — a
             // shot that skipped them would be a shot of a mixer with no
@@ -823,7 +863,9 @@ fn verify(
              ({rounded} differed only by a rounding LSB)\n"
         );
     } else {
-        println!("\n  {bad} of {checked} viewports DIFFER — the culling is dropping visible work\n");
+        println!(
+            "\n  {bad} of {checked} viewports DIFFER — the culling is dropping visible work\n"
+        );
         std::process::exit(1);
     }
 }
@@ -908,10 +950,8 @@ fn shot(
             let a = scene.replay_lanes(
                 painter,
                 view,
-                Affine::translate((
-                    rail_x + TCP_WIDTH - scroll_x,
-                    rail_y + RULER_H - scroll_y,
-                )) * Affine::scale_non_uniform(PPS * zoom_x, zoom_y),
+                Affine::translate((rail_x + TCP_WIDTH - scroll_x, rail_y + RULER_H - scroll_y))
+                    * Affine::scale_non_uniform(PPS * zoom_x, zoom_y),
             );
             session_daw::arrangement::titles(
                 painter,
@@ -951,8 +991,23 @@ fn shot(
                 &session_daw::pointer::Pointer::default(),
                 Affine::translate((rail_x, rail_y + RULER_H - scroll_y)),
             );
-            ruler::ruler(painter, palette, font, view, Bars::at(scene.bpm), (rail_x, rail_y));
-            ruler::lanes(painter, palette, font, view, (rail_x, rail_y), scene.sections(), scene.markers());
+            ruler::ruler(
+                painter,
+                palette,
+                font,
+                view,
+                Bars::at(scene.bpm),
+                (rail_x, rail_y),
+            );
+            ruler::lanes(
+                painter,
+                palette,
+                font,
+                view,
+                (rail_x, rail_y),
+                scene.sections(),
+                scene.markers(),
+            );
             ruler::lane_lines(
                 painter,
                 palette,
@@ -1212,7 +1267,9 @@ impl MixerRig {
         );
         let at = Affine::translate((session_daw::rails::SIDE, session_daw::rails::TOP));
         // The recorded chrome, then the live values over it.
-        let a = self.mixer.replay(painter, 0.0, self.frame.content_width(), at);
+        let a = self
+            .mixer
+            .replay(painter, 0.0, self.frame.content_width(), at);
         let b = session_daw::overlay::controls(
             painter,
             palette,
@@ -1339,7 +1396,14 @@ fn dock_shot(
     image.render_to_vec(
         |painter| {
             let mut at_rest = AtRest::new(frame, palette);
-            at_rest.arrange(scene, font, session_daw::frame::viewport(frame, (0.0, 0.0), PPS, 1.0), Some(&mut editor)).paint(painter);
+            at_rest
+                .arrange(
+                    scene,
+                    font,
+                    session_daw::frame::viewport(frame, (0.0, 0.0), PPS, 1.0),
+                    Some(&mut editor),
+                )
+                .paint(painter);
         },
         &mut buffer,
     );
@@ -1462,7 +1526,8 @@ fn studio(
         eprintln!("could not read the project back");
         return;
     };
-    let mut arrange = Headless::new(width, height).expect("a headless renderer for the arrangement");
+    let mut arrange =
+        Headless::new(width, height).expect("a headless renderer for the arrangement");
     let mut mixer_gpu = Headless::new(mixer_w, mixer_h).expect("a headless renderer for the mixer");
 
     // The dock: forty percent of the window, the editor over the demo
@@ -1497,7 +1562,10 @@ fn studio(
         if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 }
     }
     let phases: Vec<(&str, Gesture)> = vec![
-        ("scroll both", Box::new(|t| (tri(t), tri((t * 1.7) % 1.0), 1.0, 1.0))),
+        (
+            "scroll both",
+            Box::new(|t| (tri(t), tri((t * 1.7) % 1.0), 1.0, 1.0)),
+        ),
         (
             "zoom both",
             Box::new(|t| (0.0, 0.3, 0.25 + slow(t) * 7.75, 0.25 + slow(t) * 3.75)),
@@ -1513,7 +1581,10 @@ fn studio(
         // view; this closure only says where the pointer is.
         ("zoom tool drag", Box::new(|t| (0.0, 0.3, 1.0, 1.0))),
     ];
-    let lanes_origin = (session_daw::rails::SIDE + TCP_WIDTH, session_daw::rails::TOP + RULER_H);
+    let lanes_origin = (
+        session_daw::rails::SIDE + TCP_WIDTH,
+        session_daw::rails::TOP + RULER_H,
+    );
     let press_at = (lanes_origin.0 + 600.0, lanes_origin.1 + 300.0);
     let mut zoom_editor = session_daw::arrange_edit::Editor::default();
 
@@ -1546,7 +1617,8 @@ fn studio(
                 let t = frame_index as f64 / FRAMES as f64;
                 let (fx, fy, zx, zy) = gesture(t);
                 let (scroll_x, scroll_y) = (span_x * fx, span_y * fy);
-                let mut view = session_daw::frame::viewport(frame, (scroll_x, scroll_y), PPS * zx, zy);
+                let mut view =
+                    session_daw::frame::viewport(frame, (scroll_x, scroll_y), PPS * zx, zy);
                 editor.editor.playhead = Some(t * doc_end);
                 if *name == "zoom tool drag" {
                     // The pointer's path: out to the right and up over
@@ -1554,7 +1626,8 @@ fn studio(
                     // zoom sweeps its range rather than jumping.
                     let travel = (tri(t / 3.0) - 0.5) * 2.0;
                     let at = (press_at.0 + travel * 300.0, press_at.1 - travel * 150.0);
-                    let base = session_daw::frame::viewport(frame, (span_x * 0.2, span_y * 0.3), PPS, 1.0);
+                    let base =
+                        session_daw::frame::viewport(frame, (span_x * 0.2, span_y * 0.3), PPS, 1.0);
                     if frame_index == 0 {
                         zoom_editor.zoom_press(press_at, &base, lanes_origin, Default::default());
                         editor.key("z", Default::default());
@@ -1565,7 +1638,9 @@ fn studio(
                             0,
                         );
                     }
-                    if let Some(next) = zoom_editor.zoom_move(at, &base, lanes_origin, Default::default()) {
+                    if let Some(next) =
+                        zoom_editor.zoom_move(at, &base, lanes_origin, Default::default())
+                    {
                         view = next;
                         view.scroll_x = view.scroll_x.clamp(0.0, span_x);
                         view.scroll_y = view.scroll_y.clamp(0.0, span_y);
@@ -1598,7 +1673,9 @@ fn studio(
                     })
                     .expect("render the mixer");
             }
-            arrange.wait().expect("the gpu to finish the arrangement batch");
+            arrange
+                .wait()
+                .expect("the gpu to finish the arrangement batch");
             mixer_gpu.wait().expect("the gpu to finish the mixer batch");
             let per_frame = batch_start.elapsed().as_secs_f64() * 1000.0 / BATCH as f64;
             stages.frame.push_ms(per_frame);
@@ -1622,7 +1699,11 @@ fn studio(
             worst_name = name;
         }
     }
-    let verdict = if worst_p99 <= BUDGET_MS { "PASS" } else { "FAIL" };
+    let verdict = if worst_p99 <= BUDGET_MS {
+        "PASS"
+    } else {
+        "FAIL"
+    };
     println!(
         "\n  240 Hz {verdict}: worst gesture {worst_name} at {worst_p99:.2} ms p99 — headroom {:.2}x\n",
         BUDGET_MS / worst_p99.max(0.001)

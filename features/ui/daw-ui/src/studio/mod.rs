@@ -50,8 +50,8 @@
 //! must never be reported as this one.
 
 pub mod arrange;
-pub mod canvas;
 pub mod autoscroll;
+pub mod canvas;
 pub mod census;
 pub mod clock;
 pub mod css;
@@ -161,27 +161,27 @@ pub fn Studio() -> Element {
     use_future({
         let clock = clock.clone();
         move || {
-        let clock = clock.clone();
-        async move {
-            let loaded = project::fetch_when_ready().await;
-            // The one line that says the WINDOW has the project, as
-            // distinct from the loader having parsed it. They are
-            // different events and only this one means anything is
-            // drawable.
-            tracing::info!(
-                studio.tracks = loaded.tracks.len(),
-                studio.items = loaded.item_count,
-                studio.sections = loaded.sections.len(),
-                studio.markers = loaded.markers.len(),
-                studio.length_secs = loaded.length_secs,
-                studio.bpm = loaded.bpm,
-                "project mounted"
-            );
-            clock.set_bpm(loaded.bpm);
-            // The animation's duration — see `Clock::set_length`.
-            clock.set_length(loaded.length_secs);
-            project.set(Some(ProjectRef(loaded)));
-        }
+            let clock = clock.clone();
+            async move {
+                let loaded = project::fetch_when_ready().await;
+                // The one line that says the WINDOW has the project, as
+                // distinct from the loader having parsed it. They are
+                // different events and only this one means anything is
+                // drawable.
+                tracing::info!(
+                    studio.tracks = loaded.tracks.len(),
+                    studio.items = loaded.item_count,
+                    studio.sections = loaded.sections.len(),
+                    studio.markers = loaded.markers.len(),
+                    studio.length_secs = loaded.length_secs,
+                    studio.bpm = loaded.bpm,
+                    "project mounted"
+                );
+                clock.set_bpm(loaded.bpm);
+                // The animation's duration — see `Clock::set_length`.
+                clock.set_length(loaded.length_secs);
+                project.set(Some(ProjectRef(loaded)));
+            }
         }
     });
 
@@ -203,9 +203,9 @@ pub fn Studio() -> Element {
         })
     });
     let rows = rows();
-    let (tracks, items, bpm) = open.as_ref().map_or((0, 0, 120.0), |p| {
-        (p.tracks.len(), p.item_count, p.bpm)
-    });
+    let (tracks, items, bpm) = open
+        .as_ref()
+        .map_or((0, 0, 120.0), |p| (p.tracks.len(), p.item_count, p.bpm));
 
     // Bar lines are a repeating gradient whose period is one bar, so the
     // grid needs the tempo but no elements. `--len` is the song's length

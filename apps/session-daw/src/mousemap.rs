@@ -93,25 +93,43 @@ mod tests {
 
     #[test]
     fn a_fade_handle_drags_the_fade_and_shift_drags_its_shape() {
-        assert_eq!(resolve(Context::MediaItemFade, Gesture::Drag, Mods::default()), Action::FadeIn);
+        assert_eq!(
+            resolve(Context::MediaItemFade, Gesture::Drag, Mods::default()),
+            Action::FadeIn
+        );
         let shift = Mods {
             shift: true,
             ..Mods::default()
         };
-        assert_eq!(resolve(Context::MediaItemFade, Gesture::Drag, shift), Action::FadeShape);
-        assert_eq!(resolve(Context::MediaItemFade, Gesture::Click, Mods::default()), Action::Nothing);
+        assert_eq!(
+            resolve(Context::MediaItemFade, Gesture::Drag, shift),
+            Action::FadeShape
+        );
+        assert_eq!(
+            resolve(Context::MediaItemFade, Gesture::Click, Mods::default()),
+            Action::Nothing
+        );
     }
 
     #[test]
     fn the_ruler_and_the_empty_area_agree() {
         for context in [Context::Ruler, Context::ArrangeView] {
-            assert_eq!(resolve(context, Gesture::Click, Mods::default()), Action::SetEditCursor);
-            assert_eq!(resolve(context, Gesture::Drag, Mods::default()), Action::TimeSelection);
+            assert_eq!(
+                resolve(context, Gesture::Click, Mods::default()),
+                Action::SetEditCursor
+            );
+            assert_eq!(
+                resolve(context, Gesture::Drag, Mods::default()),
+                Action::TimeSelection
+            );
         }
     }
 
     #[test]
     fn a_mixer_strip_is_not_in_the_map() {
-        assert_eq!(resolve(Context::MixerStrip, Gesture::Drag, Mods::default()), Action::Nothing);
+        assert_eq!(
+            resolve(Context::MixerStrip, Gesture::Drag, Mods::default()),
+            Action::Nothing
+        );
     }
 }

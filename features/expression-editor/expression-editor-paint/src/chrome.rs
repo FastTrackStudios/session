@@ -19,8 +19,8 @@ use expression_editor_core::razor::RazorAxis;
 use expression_editor_core::zoom::ZoomModes;
 use expression_editor_core::{Edit, Editor, Mode, Shape, StripLane, Tool, tuning};
 use kurbo::{Affine, Line, Point, Rect};
-use std::fmt::Write as _;
 use peniko::Fill;
+use std::fmt::Write as _;
 
 use crate::interaction::{self, Drag};
 use crate::paint::{Look, stroke_of, with_alpha};
@@ -182,7 +182,12 @@ pub fn toolbar(ed: &Editor, width: f64, labels: &mut Labeller) -> Vec<Button> {
                 true,
             );
             let shown = ed.overlays.contains(&lane);
-            row.push(Control::Overlay(lane), if shown { "●" } else { "○" }, shown, true);
+            row.push(
+                Control::Overlay(lane),
+                if shown { "●" } else { "○" },
+                shown,
+                true,
+            );
         }
     }
     if ed.mode.has_mpe_channels() {
@@ -200,7 +205,12 @@ pub fn toolbar(ed: &Editor, width: f64, labels: &mut Labeller) -> Vec<Button> {
     }
     row.gap();
     for shape in Shape::ALL {
-        row.push(Control::Shape(shape), shape_short(shape), ed.shape == shape, true);
+        row.push(
+            Control::Shape(shape),
+            shape_short(shape),
+            ed.shape == shape,
+            true,
+        );
     }
     row.gap();
     if ed.tracks.len() > 1 {
@@ -251,7 +261,12 @@ pub fn status(ed: &Editor, width: f64, labels: &mut Labeller) -> Vec<Button> {
     row.gap();
     row.push(Control::Strip, "Strip", ed.lane_strip_h > 0.0, true);
     for lane in StripLane::ALL {
-        row.push(Control::StripLane(lane), lane.label(), ed.strip_lane == lane, true);
+        row.push(
+            Control::StripLane(lane),
+            lane.label(),
+            ed.strip_lane == lane,
+            true,
+        );
     }
     row.gap();
     row.push(Control::MousePreset, ed.mouse.name, false, true);

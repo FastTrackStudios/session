@@ -21,9 +21,9 @@
 
 use dioxus::prelude::*;
 
+use super::geometry::CHROME_ROW_H;
 use super::geometry::LaneView;
 use super::paint::StackChrome;
-use super::geometry::CHROME_ROW_H;
 use super::view::{MIC_CHIP_TOP, MIC_ITEM_H, MIC_MENU_TOP, MIC_MENU_W};
 use crate::canvas;
 use crate::theme;

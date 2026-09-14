@@ -228,7 +228,9 @@ pub fn dim_unselected() -> f32 {
         if matches!(value.as_str(), "off" | "none" | "false") {
             return 0.0;
         }
-        value.parse::<f32>().map_or(DIM_DEFAULT, |n| n.clamp(0.0, 0.9))
+        value
+            .parse::<f32>()
+            .map_or(DIM_DEFAULT, |n| n.clamp(0.0, 0.9))
     })
 }
 

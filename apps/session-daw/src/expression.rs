@@ -38,11 +38,13 @@ use expression_editor_core::mouse::{Action, Context, Gesture};
 use expression_editor_core::rows::DrumMap;
 use expression_editor_core::tools::{self, Hit};
 use expression_editor_core::{Edit, Editor, Mode, RowSpace, StripLane, Tool, Viewport, memagic};
-use expression_editor_paint::chrome::{self, Button, Choice, Control, Menu, Pending, STATUS_H, TOOLBAR_H};
+use expression_editor_paint::chrome::{
+    self, Button, Choice, Control, Menu, Pending, STATUS_H, TOOLBAR_H,
+};
 use expression_editor_paint::interaction::{self, Drag};
 use expression_editor_paint::paint::{self, Look, Overlay};
-use expression_editor_paint::text::Labeller;
 use expression_editor_paint::stack::{self, HitGesture, Stack, interact::ViewKey};
+use expression_editor_paint::text::Labeller;
 use expression_editor_paint::{canvas, demo, keys};
 use input::InputCommand;
 use vello::kurbo::Affine;
@@ -257,7 +259,9 @@ impl Expression {
         } else {
             viewport_for(self.size, self.editor.lane_strip_h)
         };
-        if (vp.w - self.editor.viewport.w).abs() > 0.5 || (vp.h - self.editor.viewport.h).abs() > 0.5 {
+        if (vp.w - self.editor.viewport.w).abs() > 0.5
+            || (vp.h - self.editor.viewport.h).abs() > 0.5
+        {
             self.editor.resize(vp);
         }
         self.toolbar = chrome::toolbar(&self.editor, self.size.0, &mut self.labels);
@@ -266,7 +270,11 @@ impl Expression {
 
     /// The roll's height — the box less the bars and the strip.
     fn roll_h(&self) -> f64 {
-        let strip = if self.stacked() { 0.0 } else { self.editor.lane_strip_h };
+        let strip = if self.stacked() {
+            0.0
+        } else {
+            self.editor.lane_strip_h
+        };
         (self.size.1 - TOOLBAR_H - STATUS_H - strip).max(canvas::RULER_H + 1.0)
     }
 
@@ -298,7 +306,9 @@ impl Expression {
         let roll_h = self.roll_h();
         let strip_h = (h - TOOLBAR_H - STATUS_H - roll_h).max(0.0);
         self.overlay.marquee = match &self.drag {
-            Drag::Marquee { origin, current, .. } => Some((
+            Drag::Marquee {
+                origin, current, ..
+            } => Some((
                 origin.0.min(current.0),
                 origin.1.min(current.1),
                 (current.0 - origin.0).abs(),
@@ -310,7 +320,14 @@ impl Expression {
             Drag::RazorCreate { pending, .. } => *pending,
             _ => None,
         };
-        let bar = chrome::paint(&self.toolbar, self.hover, w, TOOLBAR_H, &mut self.labels, &self.look);
+        let bar = chrome::paint(
+            &self.toolbar,
+            self.hover,
+            w,
+            TOOLBAR_H,
+            &mut self.labels,
+            &self.look,
+        );
         painter.append_scene(bar, Affine::translate((ox, oy)));
         if self.stacked() {
             let key = self.stack.view_key(&self.editor);
@@ -329,14 +346,29 @@ impl Expression {
             let over = self.stack.overlays(&self.editor, playhead, &self.look);
             painter.append_scene(over, at);
         } else {
-            let roll = paint::roll_scene(&self.editor, w, roll_h, &self.overlay, &mut self.labels, &self.look);
+            let roll = paint::roll_scene(
+                &self.editor,
+                w,
+                roll_h,
+                &self.overlay,
+                &mut self.labels,
+                &self.look,
+            );
             painter.append_scene(roll, Affine::translate((ox, oy + TOOLBAR_H)));
             if strip_h > 0.0 {
-                let strip = paint::strip_scene(&self.editor, w, strip_h, &mut self.labels, &self.look);
+                let strip =
+                    paint::strip_scene(&self.editor, w, strip_h, &mut self.labels, &self.look);
                 painter.append_scene(strip, Affine::translate((ox, oy + TOOLBAR_H + roll_h)));
             }
         }
-        let status = chrome::paint(&self.status, self.hover, w, STATUS_H, &mut self.labels, &self.look);
+        let status = chrome::paint(
+            &self.status,
+            self.hover,
+            w,
+            STATUS_H,
+            &mut self.labels,
+            &self.look,
+        );
         painter.append_scene(status, Affine::translate((ox, oy + h - STATUS_H)));
         if let Some(menu) = &self.menu {
             let scene = menu.paint(&mut self.labels, &self.look);
@@ -382,7 +414,10 @@ impl Expression {
     /// the ruler.
     fn roll_point(&self, x: f64, y: f64) -> (f64, f64) {
         let (lx, ly) = self.local(x, y);
-        (lx - canvas::GUTTER_W, ly - Self::roll_top() - canvas::RULER_H)
+        (
+            lx - canvas::GUTTER_W,
+            ly - Self::roll_top() - canvas::RULER_H,
+        )
     }
 
     /// A window point in strip space.
@@ -404,7 +439,10 @@ impl Expression {
     /// moves here even after the pointer leaves the box.
     #[must_use]
     pub fn dragging(&self) -> bool {
-        self.drag.is_active() || self.strip_drag || self.strip_pan.is_some() || self.stack.dragging()
+        self.drag.is_active()
+            || self.strip_drag
+            || self.strip_pan.is_some()
+            || self.stack.dragging()
     }
 
     /// A button press. `button` is 0 left, 1 middle, 2 right. `true`
@@ -427,7 +465,9 @@ impl Expression {
         if self.stacked() && matches!(zone, Zone::Roll | Zone::Strip) {
             let (sx, sy) = self.stack_point(x, y);
             let mut out = Vec::new();
-            let took = self.stack.press(&mut self.editor, sx, sy, button, mods_of(mods), &mut out);
+            let took = self
+                .stack
+                .press(&mut self.editor, sx, sy, button, mods_of(mods), &mut out);
             let edited = self.apply_hits(&out);
             if took || edited {
                 self.relayout();
@@ -439,7 +479,11 @@ impl Expression {
             Zone::Toolbar | Zone::Status => {
                 let zone = self.zone(x, y);
                 let (bx, by) = self.bar_point(x, y, zone);
-                let bar = if zone == Zone::Toolbar { &self.toolbar } else { &self.status };
+                let bar = if zone == Zone::Toolbar {
+                    &self.toolbar
+                } else {
+                    &self.status
+                };
                 if button == 0
                     && let Some(control) = chrome::hit(bar, bx, by)
                     && bar.iter().any(|b| b.control == control && b.enabled)
@@ -458,12 +502,19 @@ impl Expression {
                     _ => None,
                 };
                 self.pressed = (button == 0).then_some(((rx, ry), under));
-                let drag = interaction::pointer_down(&mut self.editor, rx, ry, mods_of(mods), button);
+                let drag =
+                    interaction::pointer_down(&mut self.editor, rx, ry, mods_of(mods), button);
                 // A right-click resolves to a menu request rather than
                 // a drag. Opened here, so the core pointer path stays
                 // free of UI state — the same split as the Dioxus roll.
                 self.drag = match drag {
-                    Drag::ContextMenu { x, y, under, t, row } => {
+                    Drag::ContextMenu {
+                        x,
+                        y,
+                        under,
+                        t,
+                        row,
+                    } => {
                         self.menu = Some(Menu::open(&self.editor, x, y, under, t, row));
                         Drag::None
                     }
@@ -654,7 +705,11 @@ impl Expression {
             return true;
         }
         // Drum-mode keys before the general ones: `f` is a flam here.
-        if key == "f" && !m.ctrl && self.editor.mode == Mode::Drums && self.editor.flam_selection() > 0 {
+        if key == "f"
+            && !m.ctrl
+            && self.editor.mode == Mode::Drums
+            && self.editor.flam_selection() > 0
+        {
             return true;
         }
         let took = interaction::key_down(&mut self.editor, &self.drag, key, m);
@@ -702,7 +757,9 @@ impl Expression {
             return (
                 memagic::Region::Elsewhere,
                 memagic::Anchor {
-                    t: ed.playhead.unwrap_or_else(|| ed.camera.t_at(ed.viewport.w * 0.5)),
+                    t: ed
+                        .playhead
+                        .unwrap_or_else(|| ed.camera.t_at(ed.viewport.w * 0.5)),
                     row: None,
                 },
             );
@@ -880,16 +937,39 @@ fn kit_for(doc: &expression_editor_core::ExpressionDoc) -> DrumMap {
             .filter(|n| map.row_of_pitch(n.row).is_some())
             .count()
     };
-    if covered(&gm) > covered(&fts) { gm } else { fts }
+    if covered(&gm) > covered(&fts) {
+        gm
+    } else {
+        fts
+    }
 }
 
 /// Whether a track's name says it carries drums.
 #[must_use]
 pub fn is_drum_track(name: &str) -> bool {
     const WORDS: [&str; 22] = [
-        "drum", "drums", "kit", "kick", "bd", "snare", "sd", "tom", "toms", "rack", "floor",
-        "hat", "hats", "hihat", "cymbal", "cymbals", "ride", "crash", "oh", "overhead",
-        "overheads", "room",
+        "drum",
+        "drums",
+        "kit",
+        "kick",
+        "bd",
+        "snare",
+        "sd",
+        "tom",
+        "toms",
+        "rack",
+        "floor",
+        "hat",
+        "hats",
+        "hihat",
+        "cymbal",
+        "cymbals",
+        "ride",
+        "crash",
+        "oh",
+        "overhead",
+        "overheads",
+        "room",
     ];
     name.to_ascii_lowercase()
         .split(|c: char| !c.is_ascii_alphanumeric())
@@ -970,7 +1050,11 @@ mod tests {
         let (x, y) = at_note(&v, 1);
         assert!(v.press(x, y, plain(), 0));
         assert!(v.release(x, y, plain()));
-        assert!(v.editor.selection.contains(expression_editor_core::doc::NoteId(1)));
+        assert!(
+            v.editor
+                .selection
+                .contains(expression_editor_core::doc::NoteId(1))
+        );
         assert!(!v.dragging());
     }
 
@@ -1049,7 +1133,10 @@ mod tests {
         v.moved(ORIGIN.0 + 300.0, y, plain());
         v.release(ORIGIN.0 + 300.0, y, plain());
         let t1 = v.editor.camera.time_span(v.editor.viewport).0;
-        assert!(t1 > t0, "dragging left should show later time: {t0} -> {t1}");
+        assert!(
+            t1 > t0,
+            "dragging left should show later time: {t0} -> {t1}"
+        );
     }
 
     #[test]
@@ -1068,7 +1155,11 @@ mod tests {
         // And the bar shows it lit — as the mode shows it, which for
         // drums is the note eraser.
         let shown = v.editor.shown_tool();
-        assert!(v.toolbar.iter().any(|b| b.control == Control::Tool(shown) && b.active));
+        assert!(
+            v.toolbar
+                .iter()
+                .any(|b| b.control == Control::Tool(shown) && b.active)
+        );
     }
 
     #[test]
@@ -1173,7 +1264,14 @@ mod tests {
         // The shared bindings put horizontal zoom on the wheel with a
         // modifier; whichever it is, the camera must move.
         let mut moved = false;
-        for m in [ctrl, Mods { alt: true, ..Mods::default() }, Mods::default()] {
+        for m in [
+            ctrl,
+            Mods {
+                alt: true,
+                ..Mods::default()
+            },
+            Mods::default(),
+        ] {
             v.wheel(x, y, 0.0, -3.0, m);
             if (v.editor.camera.units_per_px - before).abs() > 1e-12
                 || (v.editor.camera.t0).abs() > 1e-9
@@ -1190,7 +1288,11 @@ mod tests {
     fn dragging_a_kick_hit_slips_it_in_the_hit_list() {
         let mut v = kit();
         // Find the kick lane and its first hit on screen.
-        let lanes = stack::lanes(&v.editor, Editor::ACTIVE_BOOST, v.editor.lane_floor().max(22.0));
+        let lanes = stack::lanes(
+            &v.editor,
+            Editor::ACTIVE_BOOST,
+            v.editor.lane_floor().max(22.0),
+        );
         let kick = lanes
             .iter()
             .find(|l| l.name == "Kick")
@@ -1227,10 +1329,11 @@ mod tests {
             .iter()
             .any(|n| (n.start / ups - secs).abs() < 0.002);
         // Forty pixels at a whole-song zoom is a second or two.
-        let moved = kick_doc
-            .notes
-            .iter()
-            .any(|n| n.start / ups > secs + 0.02 && n.start / ups < secs + 4.0 && (n.start / ups - 1.0).abs() > 0.01);
+        let moved = kick_doc.notes.iter().any(|n| {
+            n.start / ups > secs + 0.02
+                && n.start / ups < secs + 4.0
+                && (n.start / ups - 1.0).abs() > 0.01
+        });
         assert!(!still_there && moved, "the hit at {secs}s did not slip");
     }
 
@@ -1240,20 +1343,52 @@ mod tests {
     // r[verify flow.drums.editing.stack]
     fn the_other_lane_takes_no_hit_gesture() {
         let mut v = kit();
-        let lanes = stack::lanes(&v.editor, Editor::ACTIVE_BOOST, v.editor.lane_floor().max(22.0));
-        let other = lanes.iter().find(|l| l.name == "Other").expect("an other lane");
+        let lanes = stack::lanes(
+            &v.editor,
+            Editor::ACTIVE_BOOST,
+            v.editor.lane_floor().max(22.0),
+        );
+        let other = lanes
+            .iter()
+            .find(|l| l.name == "Other")
+            .expect("an other lane");
         assert!(!other.detects && other.notes.is_empty());
         let ruler = Stack::ruler_h(&v.editor);
         let x = ORIGIN.0 + canvas::GUTTER_W + 200.0;
         let y = ORIGIN.1 + TOOLBAR_H + ruler + other.y + other.h * 0.5;
         let notes: usize = (0..v.editor.tracks.len())
-            .map(|i| v.editor.tracks.doc_of(i).map_or(v.editor.doc.notes.len(), |d| d.notes.len()))
+            .map(|i| {
+                v.editor
+                    .tracks
+                    .doc_of(i)
+                    .map_or(v.editor.doc.notes.len(), |d| d.notes.len())
+            })
             .sum();
         // Alt-click is "add a hit" on a lane that detects.
-        v.press(x, y, Mods { alt: true, ..Mods::default() }, 0);
-        v.release(x, y, Mods { alt: true, ..Mods::default() });
+        v.press(
+            x,
+            y,
+            Mods {
+                alt: true,
+                ..Mods::default()
+            },
+            0,
+        );
+        v.release(
+            x,
+            y,
+            Mods {
+                alt: true,
+                ..Mods::default()
+            },
+        );
         let after: usize = (0..v.editor.tracks.len())
-            .map(|i| v.editor.tracks.doc_of(i).map_or(v.editor.doc.notes.len(), |d| d.notes.len()))
+            .map(|i| {
+                v.editor
+                    .tracks
+                    .doc_of(i)
+                    .map_or(v.editor.doc.notes.len(), |d| d.notes.len())
+            })
             .sum();
         assert_eq!(notes, after);
         assert!(!v.dragging());
@@ -1264,7 +1399,10 @@ mod tests {
     #[test]
     fn holding_z_makes_a_drag_zoom_both_axes() {
         let mut v = view();
-        let (upp, ppr) = (v.editor.camera.units_per_px, v.editor.camera.vertical.px_per_row);
+        let (upp, ppr) = (
+            v.editor.camera.units_per_px,
+            v.editor.camera.vertical.px_per_row,
+        );
         let before = v.editor.tool;
         assert!(v.key("z", plain()));
         assert_eq!(v.editor.tool, Tool::Zoom);

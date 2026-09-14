@@ -158,8 +158,5 @@ pub fn css_variables(theme: &Theme) -> String {
 /// track nobody has coloured; `Tokens::neutral_track` is what the theme
 /// says those should look like.
 pub fn track_color(theme: &Theme, color: Option<u32>) -> String {
-    color.map_or_else(
-        || theme.tokens.neutral_track.css(),
-        |c| format!("#{c:06x}"),
-    )
+    color.map_or_else(|| theme.tokens.neutral_track.css(), |c| format!("#{c:06x}"))
 }

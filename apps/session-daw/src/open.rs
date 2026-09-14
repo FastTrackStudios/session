@@ -85,8 +85,7 @@ fn parse(path: &Path) -> eyre::Result<Opened> {
         );
     }
 
-    let track_count =
-        daw::service::Tracks::all(&daw, daw::service::ProjectContext::Current).len();
+    let track_count = daw::service::Tracks::all(&daw, daw::service::ProjectContext::Current).len();
     Ok(Opened {
         daw,
         name,

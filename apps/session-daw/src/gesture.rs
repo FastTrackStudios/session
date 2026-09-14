@@ -52,7 +52,10 @@ pub enum Event {
     DoubleClick(Hit),
     /// A drag in progress. `delta` is since the last report, already
     /// scaled for fine adjustment.
-    Drag { hit: Hit, delta: (f64, f64) },
+    Drag {
+        hit: Hit,
+        delta: (f64, f64),
+    },
     /// The drag ended. Sent so a control can commit, or push one undo
     /// step for the whole gesture rather than one per pixel.
     DragEnd(Hit),
@@ -98,10 +101,7 @@ impl Gestures {
         // slop distance the moment a drag begins.
         press.dragging = true;
         let scale = if fine { FINE } else { 1.0 };
-        let delta = (
-            (x - press.last.0) * scale,
-            (y - press.last.1) * scale,
-        );
+        let delta = ((x - press.last.0) * scale, (y - press.last.1) * scale);
         press.last = (x, y);
         Some(Event::Drag {
             hit: press.hit,
@@ -193,7 +193,10 @@ mod tests {
         let now = Instant::now();
         let mut g = Gestures::default();
         g.press(hit(3), 100.0, 100.0);
-        assert!(g.moved(101.0, 100.0, false).is_none(), "that was not a drag");
+        assert!(
+            g.moved(101.0, 100.0, false).is_none(),
+            "that was not a drag"
+        );
         assert_eq!(g.release(101.0, 100.0, now), Some(Event::Click(hit(3))));
     }
 

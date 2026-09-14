@@ -130,7 +130,14 @@ impl Strip {
     /// the middle of a wide strip is a fader you have to go and find,
     /// and the box to the right of it is room for something else.
     #[must_use]
-    pub fn laid_out(width: f64, height: f64, mixer_h: f64, rack_h: f64, buttons_top: f64, column: bool) -> Self {
+    pub fn laid_out(
+        width: f64,
+        height: f64,
+        mixer_h: f64,
+        rack_h: f64,
+        buttons_top: f64,
+        column: bool,
+    ) -> Self {
         let layout = if column && rack_h > 0.0 && width >= crate::tone::FOCUSED + COLUMN_W {
             Layout::Column
         } else {
@@ -274,7 +281,11 @@ impl Strip {
         // (see `mcp::CONTROL_SHARE`) to spend on it. The head tier
         // keeps its pan in the band and its buttons over the fader,
         // so it keeps REAPER's pitch.
-        let spread = if self.squeeze.columns() || !self.squeeze.head() { SPREAD } else { 0.0 };
+        let spread = if self.squeeze.columns() || !self.squeeze.head() {
+            SPREAD
+        } else {
+            0.0
+        };
         let mute = f64::from(g::RECMON_FROM_ARM) + spread;
         let solo = mute + f64::from(g::SOLO_FROM_MUTE) + spread;
         match control {
@@ -612,7 +623,9 @@ mod tests {
     fn rail_stacks_the_arm_over_the_mute() {
         let rail = Strip::new(30.0, 1440.0, 1440.0, 0.0, 1000.0);
         assert_eq!(rail.arm(), art::Arm::Panel);
-        let arm = rail.rect(Control::RecArm).expect("a 30-px rail has room for the ring");
+        let arm = rail
+            .rect(Control::RecArm)
+            .expect("a 30-px rail has room for the ring");
         assert!(rail.rect(Control::Monitor).is_none());
         let monitor = rail.rect(Control::Mute).expect("the mute");
         assert!(arm.y0 >= rail.band_bottom());

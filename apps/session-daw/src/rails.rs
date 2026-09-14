@@ -219,7 +219,11 @@ pub fn draw(
     // so the frame has to be painted last to cover what scrolled under
     // it.
     fill(painter, palette.tcp_gutter, Rect::new(0.0, 0.0, width, TOP));
-    fill(painter, palette.tcp_gutter, Rect::new(0.0, 0.0, SIDE, height));
+    fill(
+        painter,
+        palette.tcp_gutter,
+        Rect::new(0.0, 0.0, SIDE, height),
+    );
     fill(
         painter,
         palette.tcp_gutter,
@@ -227,8 +231,16 @@ pub fn draw(
     );
     // A rule on each inner edge, so a rail reads as a frame around the
     // panel rather than as more panel.
-    fill(painter, palette.tcp_rule, Rect::new(0.0, TOP, width, TOP + 1.0));
-    fill(painter, palette.tcp_rule, Rect::new(SIDE, TOP, SIDE + 1.0, height));
+    fill(
+        painter,
+        palette.tcp_rule,
+        Rect::new(0.0, TOP, width, TOP + 1.0),
+    );
+    fill(
+        painter,
+        palette.tcp_rule,
+        Rect::new(SIDE, TOP, SIDE + 1.0, height),
+    );
     fill(
         painter,
         palette.tcp_rule,
@@ -299,7 +311,11 @@ fn button(
             (false, Interaction::Normal) => palette.tcp_button,
             // No second art for an unlit rail plate, so it lifts toward
             // the accent rather than to a colour invented here.
-            (false, _) => palette.tcp_button.lerp(palette.accent, 0.25, vello::peniko::color::HueDirection::Shorter),
+            (false, _) => palette.tcp_button.lerp(
+                palette.accent,
+                0.25,
+                vello::peniko::color::HueDirection::Shorter,
+            ),
         },
         slot,
     );
@@ -353,16 +369,12 @@ pub fn phases_and_presets(
             icon: None,
         })
         .collect();
-    items.extend(
-        session::mix_phases::MixPhase::ALL
-            .iter()
-            .map(|phase| Item {
-                label: phase.display_name(),
-                on: *phase == current,
-                act: Action::Phase(*phase),
-                icon: phase.icon(),
-            }),
-    );
+    items.extend(session::mix_phases::MixPhase::ALL.iter().map(|phase| Item {
+        label: phase.display_name(),
+        on: *phase == current,
+        act: Action::Phase(*phase),
+        icon: phase.icon(),
+    }));
     items
 }
 

@@ -220,7 +220,14 @@ pub fn draw_row(
         if left >= MAX_INDENT {
             break;
         }
-        rect(scene, *tint, left, y, (left + INDENT).min(MAX_INDENT), y + h);
+        rect(
+            scene,
+            *tint,
+            left,
+            y,
+            (left + INDENT).min(MAX_INDENT),
+            y + h,
+        );
     }
     // The rail carries the row's OWN colour, at the same strength.
     //
@@ -234,7 +241,14 @@ pub fn draw_row(
     // lineage, unbroken from the panel's edge to the row's content, and
     // a folder's stripe starts on the folder's own row — its rail — and
     // continues down every child as their ancestor band.
-    rect(scene, folder_band(palette, track), indent, y, indent + rail, y + h);
+    rect(
+        scene,
+        folder_band(palette, track),
+        indent,
+        y,
+        indent + rail,
+        y + h,
+    );
 
     rect(
         scene,
@@ -402,7 +416,11 @@ fn row_one(
     // is unreadable where a smaller one is merely small.
     let name_x = 58.0 + indent;
     let name_w = (f64::from(g::NAME_FIELD_X) + f64::from(g::NAME_FIELD_W) - 58.0 - indent).max(0.0);
-    let ink = if track.selected { palette.text } else { palette.text_dim };
+    let ink = if track.selected {
+        palette.text
+    } else {
+        palette.text_dim
+    };
     let size = name_size(field_h);
     glyphs(
         scene,
@@ -448,13 +466,7 @@ fn name_size(height: f64) -> f32 {
 
 /// Envelope, and — only while armed — the input FX slot and the record
 /// input combo.
-fn row_two(
-    scene: &mut anyrender::Scene,
-    palette: &Palette,
-    font: &Font,
-    track: &Track,
-    y: f64,
-) {
+fn row_two(scene: &mut anyrender::Scene, palette: &Palette, font: &Font, track: &Track, y: f64) {
     let two = y + f64::from(g::ROW_TWO);
     let fh = f64::from(g::FIELD_H);
     // The automation button is hidden for now — it comes back with the
@@ -467,7 +479,15 @@ fn row_two(
     // panel with the one thing none of those tracks are doing.
     if track.armed {
         rect(scene, palette.tcp_field, 56.0, two, 90.0, two + fh);
-            text_centered(scene, font, palette.text_faint, "FX", (56.0, 90.0), two + 14.0, 10.0);
+        text_centered(
+            scene,
+            font,
+            palette.text_faint,
+            "FX",
+            (56.0, 90.0),
+            two + 14.0,
+            10.0,
+        );
         rect(scene, palette.tcp_combo, 91.0, two, 286.0, two + fh);
         text_centered(
             scene,
@@ -481,7 +501,6 @@ fn row_two(
         // The combo's caret — the shared triangle, not a glyph.
         caret(scene, palette.text_faint, 91.0 + 181.0, two + 8.0);
     }
-
 }
 
 /// A track's own colour, or the palette's neutral when it has none.
@@ -583,7 +602,11 @@ pub fn row_tint(palette: &Palette, track: &Track) -> Color {
     if track.color.is_none() {
         return palette.tcp_tint;
     }
-    mix(palette.tcp_tint, track_color(palette, track), palette.track_tint)
+    mix(
+        palette.tcp_tint,
+        track_color(palette, track),
+        palette.track_tint,
+    )
 }
 
 /// Blend `b` into `a` by `t`.
@@ -727,5 +750,13 @@ fn text_centered(
 ) {
     let (left, right) = span;
     let w = font.width(body, size);
-    glyphs(scene, font, color, body, left + (right - left - w) / 2.0, baseline, size);
+    glyphs(
+        scene,
+        font,
+        color,
+        body,
+        left + (right - left - w) / 2.0,
+        baseline,
+        size,
+    );
 }

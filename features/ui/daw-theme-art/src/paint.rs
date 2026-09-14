@@ -240,7 +240,7 @@ pub fn hex(text: &str) -> Color {
 /// change together.
 pub mod tcp {
     use super::{Align, Brush, Drawing, Shape, Stroke};
-    use crate::vector_controls::{ink_in, Interaction, VOLUME_KNOB_START, VOLUME_KNOB_SWEEP};
+    use crate::vector_controls::{Interaction, VOLUME_KNOB_START, VOLUME_KNOB_SWEEP, ink_in};
     use daw_theme::{Chrome, Color};
 
     /// The volume knob: a rim, a track, a value arc and a moulded cap.
@@ -297,8 +297,24 @@ pub mod tcp {
                     centre: (cx, h.mul_add(0.055, cy)),
                     radius: rim * 1.23,
                     stops: vec![
-                        (0.90_f32, Color { r: 0, g: 0, b: 0, a: 38 }),
-                        (1.0, Color { r: 0, g: 0, b: 0, a: 0 }),
+                        (
+                            0.90_f32,
+                            Color {
+                                r: 0,
+                                g: 0,
+                                b: 0,
+                                a: 38,
+                            },
+                        ),
+                        (
+                            1.0,
+                            Color {
+                                r: 0,
+                                g: 0,
+                                b: 0,
+                                a: 0,
+                            },
+                        ),
                     ],
                 },
             );
@@ -346,10 +362,7 @@ pub mod tcp {
                     // `Interaction` at all. Reaching past it for the
                     // raw grey made the knob the one control in the
                     // panel that did not answer the hand.
-                    stops: vec![
-                        (0.0, ink.face.shade(0.04)),
-                        (1.0, ink.face.shade(-0.04)),
-                    ],
+                    stops: vec![(0.0, ink.face.shade(0.04)), (1.0, ink.face.shade(-0.04))],
                 },
             );
         } else {
@@ -442,7 +455,12 @@ pub mod tcp {
         // The shadow it casts.
         drawing.fill(
             rect(x0 + 1.0, bot - 1.0, x1 - x0 - 2.0, vh - bot - 1.0, vw * 0.1),
-            Color { r: 0, g: 0, b: 0, a: 51 },
+            Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 51,
+            },
         );
         // The border, drawn as a fill beneath the face so the face
         // cannot bleed past the frame.
@@ -465,14 +483,23 @@ pub mod tcp {
             // ring shades as one moulded piece rather than as four
             // strips that each start over.
             let brush = face(fy0, fy1);
-            drawing.fill(rect(fx0, fy0, fx1 - fx0, gy0 - fy0, vw * 0.13), brush.clone());
-            drawing.fill(rect(fx0, gy1, fx1 - fx0, fy1 - gy1, vw * 0.13), brush.clone());
+            drawing.fill(
+                rect(fx0, fy0, fx1 - fx0, gy0 - fy0, vw * 0.13),
+                brush.clone(),
+            );
+            drawing.fill(
+                rect(fx0, gy1, fx1 - fx0, fy1 - gy1, vw * 0.13),
+                brush.clone(),
+            );
             drawing.fill(rect(fx0, gy0, gx0 - fx0, gy1 - gy0, 0.0), brush.clone());
             drawing.fill(rect(gx0 + gw, gy0, fx1 - (gx0 + gw), gy1 - gy0, 0.0), brush);
             // The pane's own rim, so it reads as set INTO the ring
             // rather than as a gap where the plastic ran out.
             for (rx, rw) in [(gx0 - 1.0, 1.0), (gx0 + gw, 1.0)] {
-                drawing.fill(rect(rx, gy0 - 1.0, rw, gy1 - gy0 + 2.0, 0.0), body.shade(-0.5));
+                drawing.fill(
+                    rect(rx, gy0 - 1.0, rw, gy1 - gy0 + 2.0, 0.0),
+                    body.shade(-0.5),
+                );
             }
             for (ry, rh) in [(gy0 - 1.0, 1.0), (gy1, 1.0)] {
                 drawing.fill(rect(gx0 - 1.0, ry, gw + 2.0, rh, 0.0), body.shade(-0.5));
@@ -582,7 +609,10 @@ pub mod tcp {
                 // Square, not rounded: the top of the bar IS the
                 // reading, and a domed end puts its own apex a pixel or
                 // two above the level it is reporting.
-                drawing.fill(rect(at, h - 0.5 - lit, wide, lit, 0.0), level_brush(zones, h));
+                drawing.fill(
+                    rect(at, h - 0.5 - lit, wide, lit, 0.0),
+                    level_brush(zones, h),
+                );
             }
         }
         // The peak hold, one line per channel. The bar is an
@@ -923,7 +953,7 @@ pub mod tcp {
     /// Without this the fader is a handle on an unmarked line: you can
     /// see that one track is louder than another and not by how much,
     /// which is most of what a mixer is for.
-     /// The dB scale beside the fader, as a connected inscription.
+    /// The dB scale beside the fader, as a connected inscription.
     ///
     /// Each number gets a tick running from it to the meter's edge, so
     /// the two read as one instrument rather than as a column of
@@ -1153,13 +1183,19 @@ pub mod tcp {
         // lone tick: a bar says which way as well as how far, and at
         // this size "which way" is most of what is being asked.
         let to = (span / 2.0).mul_add(position, w / 2.0);
-        let (from, to) = if to < w / 2.0 { (to, w / 2.0) } else { (w / 2.0, to) };
+        let (from, to) = if to < w / 2.0 {
+            (to, w / 2.0)
+        } else {
+            (w / 2.0, to)
+        };
         if (to - from) > 0.5 {
             drawing.fill(rect(from, h / 2.0 - 1.5, to - from, 3.0, 1.5), ink);
         }
         drawing.fill(
             rect(
-                (span / 2.0).mul_add(position, w / 2.0 - 1.0).clamp(0.0, w - 2.0),
+                (span / 2.0)
+                    .mul_add(position, w / 2.0 - 1.0)
+                    .clamp(0.0, w - 2.0),
                 h / 2.0 - 4.0,
                 2.0,
                 8.0,
@@ -1176,7 +1212,7 @@ pub mod tcp {
     /// twelve o'clock — REAPER's range, not a full rotation.
     #[must_use]
     pub fn pan_knob(chrome: &Chrome, position: f64, ink: Color, at: Interaction) -> Drawing {
-                let (w, h) = (24.0_f64, 25.0_f64);
+        let (w, h) = (24.0_f64, 25.0_f64);
         let (cx, cy, r) = (12.0_f64, 12.08_f64, 9.37_f64);
         let (cap_cy, cap_r) = (12.05_f64, 4.06_f64);
         // The ring the value fills, and the face inside it.
@@ -1276,7 +1312,11 @@ pub mod tcp {
         let ink = ink_in(chrome, on.then_some(lit), at, false, 0.25);
         let mut drawing = Drawing::new(w, h);
         drawing.fill(rect(0.0, 0.0, w, h, 3.0), ink.face);
-        drawing.stroke(rect(0.5, 0.5, w - 1.0, h - 1.0, 3.0), ink.border, Stroke::new(1.0));
+        drawing.stroke(
+            rect(0.5, 0.5, w - 1.0, h - 1.0, 3.0),
+            ink.border,
+            Stroke::new(1.0),
+        );
         drawing.text(label, w / 2.0, h / 2.0 + 3.5, 10.0, ink.text, Align::Centre);
         drawing
     }
@@ -1295,7 +1335,13 @@ pub mod tcp {
     /// "sometimes" has to look like neither of the other two or it is
     /// just a dimmer ON.
     #[must_use]
-    pub fn monitor(chrome: &Chrome, mode: Monitoring, lit: Color, at: Interaction, facing: Facing) -> Drawing {
+    pub fn monitor(
+        chrome: &Chrome,
+        mode: Monitoring,
+        lit: Color,
+        at: Interaction,
+        facing: Facing,
+    ) -> Drawing {
         let (w, h) = (21.0_f64, 20.0_f64);
         // Mirrored top to bottom when the glyph sits OVER the arm: the
         // arcs open towards the ring they belong to, so the two read
@@ -1314,18 +1360,26 @@ pub mod tcp {
         // rather than lighting a face that is not there.
         let hovered = at != Interaction::Normal;
         let mut drawing = Drawing::new(w, h);
-        let dim = chrome.hardware_mark.shade(if hovered { -0.1 } else { -0.33 });
+        let dim = chrome
+            .hardware_mark
+            .shade(if hovered { -0.1 } else { -0.33 });
         let on = |part_lit: bool| if part_lit { lit } else { dim };
         let _ = chrome;
         let cx = w / 2.0;
         // The dome, then two arcs widening under it. Measured off the
         // cell as proportions so the glyph survives a different size.
         drawing.fill(
-            Shape::Ellipse { cx, cy: flip(h * 0.34), rx: w * 0.14, ry: h * 0.15 },
+            Shape::Ellipse {
+                cx,
+                cy: flip(h * 0.34),
+                rx: w * 0.14,
+                ry: h * 0.15,
+            },
             on(mode != Monitoring::Off),
         );
-        for (index, (radius, thickness)) in
-            [(w * 0.24, 2.0_f64), (w * 0.37, 2.2_f64)].into_iter().enumerate()
+        for (index, (radius, thickness)) in [(w * 0.24, 2.0_f64), (w * 0.37, 2.2_f64)]
+            .into_iter()
+            .enumerate()
         {
             // The outer arc is the one that means "through": the dome
             // alone is the tape-style mode.
@@ -1342,7 +1396,13 @@ pub mod tcp {
                 Facing::Up => -65.0,
             };
             drawing.stroke(
-                Shape::Arc { cx, cy: flip(h * 0.42), r: radius, start, sweep: 130.0 },
+                Shape::Arc {
+                    cx,
+                    cy: flip(h * 0.42),
+                    r: radius,
+                    start,
+                    sweep: 130.0,
+                },
                 on(through),
                 Stroke::new(thickness),
             );
@@ -1475,7 +1535,11 @@ pub mod tcp {
         at: Interaction,
     ) -> Drawing {
         let horizontal = axis == Axis::Horizontal;
-        let (vw, vh) = if horizontal { (28.0, 22.0) } else { (23.0, 32.0) };
+        let (vw, vh) = if horizontal {
+            (28.0, 22.0)
+        } else {
+            (23.0, 32.0)
+        };
         let plate = ink_in(chrome, None, at, true, 0.35);
 
         // The panel does not fill its cell, and the inset differs by
@@ -1499,7 +1563,12 @@ pub mod tcp {
         // opaque made the track buttons sit on the strip instead of in
         // it.
         let face = if horizontal {
-            Color { r: 0, g: 0, b: 0, a: 89 }
+            Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 89,
+            }
         } else {
             plate.face.shade(0.04)
         };
@@ -1521,7 +1590,12 @@ pub mod tcp {
                 vh * 0.04,
                 0.0,
             ),
-            Color { r: 255, g: 255, b: 255, a: 18 },
+            Color {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 18,
+            },
         );
 
         // An unlit lane is grey in both families but only opaque in one:
@@ -1560,12 +1634,15 @@ pub mod tcp {
         };
         for (at_lane, lit) in starts.into_iter().zip(lanes) {
             let along = at_lane * cell;
-            let (x, y) = if horizontal { (along, cross) } else { (cross, along) };
+            let (x, y) = if horizontal {
+                (along, cross)
+            } else {
+                (cross, along)
+            };
             drawing.fill(rect(x, y, bar_w, bar_h, bar_w.min(bar_h) / 2.0), lit);
         }
         drawing
     }
-
 
     /// `c` at `a` of its opacity.
     fn alpha(color: Color, amount: f64) -> Color {
@@ -1616,7 +1693,12 @@ pub mod tcp {
         let mut drawing = Drawing::new(w, h);
         drawing.fill(
             rect(0.0, body_y, w, body_h, radius),
-            Color { r: 0, g: 0, b: 0, a: 89 },
+            Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 89,
+            },
         );
         drawing.stroke(
             rect(0.5, body_y + 0.5, w - 1.0, body_h - 1.0, radius),
@@ -1679,7 +1761,11 @@ pub mod tcp {
         let ink = ink_in(chrome, None, at, false, 0.25);
         let mut drawing = Drawing::new(w, h);
         drawing.fill(rect(0.0, 0.0, w, h, 2.0), ink.face);
-        drawing.stroke(rect(0.5, 0.5, w - 1.0, h - 1.0, 2.0), ink.border, Stroke::new(1.0));
+        drawing.stroke(
+            rect(0.5, 0.5, w - 1.0, h - 1.0, 2.0),
+            ink.border,
+            Stroke::new(1.0),
+        );
         // A rising ramp with a handle at each end, which is what an
         // automation lane looks like at this size.
         drawing.stroke(
@@ -1698,7 +1784,7 @@ pub mod tcp {
     /// Phase: the slashed circle, lit when inverted.
     #[must_use]
     pub fn phase(chrome: &Chrome, inverted: bool, at: Interaction) -> Drawing {
-                let (w, h) = (16.0_f64, 16.0_f64);
+        let (w, h) = (16.0_f64, 16.0_f64);
         let ink = ink_in(chrome, inverted.then_some(chrome.accent), at, false, 0.25);
         let (cx, cy) = (w / 2.0, h / 2.0);
         let mut drawing = Drawing::new(w, h);
@@ -1766,14 +1852,14 @@ pub mod tcp {
         // 17.5, and rows 5..19 centre it on 12.5. Reading the indices
         // directly gives 17 and 12 and puts the control half a pixel up
         // and to the left.
-        let (cx, cy) = if housing { (17.5, 12.5) } else { (vw / 2.0, vh / 2.0) };
+        let (cx, cy) = if housing {
+            (17.5, 12.5)
+        } else {
+            (vw / 2.0, vh / 2.0)
+        };
         let (outer, inner) = if housing { (7.45, 3.67) } else { (7.40, 3.38) };
 
-        let ring = if armed {
-            lit
-        } else {
-            chrome.hardware_mark
-        };
+        let ring = if armed { lit } else { chrome.hardware_mark };
         // The ring lifts a little on hover and sinks when pressed.
         //
         // The mixer's housing lifts with it; the panel's bare ring has
@@ -1843,7 +1929,12 @@ pub mod tcp {
     }
 
     const fn circle(cx: f64, cy: f64, r: f64) -> Shape {
-        Shape::Ellipse { cx, cy, rx: r, ry: r }
+        Shape::Ellipse {
+            cx,
+            cy,
+            rx: r,
+            ry: r,
+        }
     }
 
     const fn rect(x: f64, y: f64, width: f64, height: f64, radius: f64) -> Shape {
@@ -1878,7 +1969,13 @@ mod fader_scale_tests {
         const BOTTOM: f64 = 248.0;
         let floor = fader_norm(FADER_BOTTOM_DB);
         let unity = fader_norm(0.0);
-        let measured = [(-6.0, 137.5), (-18.0, 165.5), (-30.0, 190.5), (-42.0, 218.0), (-54.0, 243.5)];
+        let measured = [
+            (-6.0, 137.5),
+            (-18.0, 165.5),
+            (-30.0, 190.5),
+            (-42.0, 218.0),
+            (-54.0, 243.5),
+        ];
         for (db, want) in measured {
             let sub = (fader_norm(db) - floor) / (unity - floor);
             let got = TOP + (BOTTOM - TOP) * (1.0 - sub);
@@ -1942,14 +2039,22 @@ mod fader_scale_tests {
         // A tick and a number for each mark, on a column with room for
         // all of them.
         let ink = super::hex("#FF4000");
-        let zones = [super::hex("#40FF80"), super::hex("#FFD040"), super::hex("#FF4040")];
+        let zones = [
+            super::hex("#40FF80"),
+            super::hex("#FFD040"),
+            super::hex("#FF4040"),
+        ];
         let roomy = fader_scale(20.0, 400.0, ink, zones, 8.0, 0.0);
         assert_eq!(roomy.ops.len(), FADER_MARKS.len() * 2);
         // And on one with room for fewer, the scale THINS rather than
         // drawing its numbers over each other.
         let tight = fader_scale(20.0, 90.0, ink, zones, 8.0, 0.0);
         assert!(tight.ops.len() < roomy.ops.len(), "{}", tight.ops.len());
-        assert!(tight.ops.len() >= 4, "the scale vanished: {}", tight.ops.len());
+        assert!(
+            tight.ops.len() >= 4,
+            "the scale vanished: {}",
+            tight.ops.len()
+        );
     }
 
     /// A mark the signal has passed is drawn in the meter's ink, so the
@@ -1958,7 +2063,11 @@ mod fader_scale_tests {
     #[test]
     fn the_marks_light_as_the_level_passes_them() {
         let ink = super::hex("#FF4000");
-        let zones = [super::hex("#40FF80"), super::hex("#FFD040"), super::hex("#FF4040")];
+        let zones = [
+            super::hex("#40FF80"),
+            super::hex("#FFD040"),
+            super::hex("#FF4040"),
+        ];
         let count = |level: f64| {
             fader_scale(20.0, 124.0, ink, zones, 8.0, level)
                 .ops

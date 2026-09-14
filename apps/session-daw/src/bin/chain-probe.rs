@@ -68,7 +68,10 @@ fn main() {
             .expect("a lookup")
             .expect("the track");
         let chain = track.fx_chain();
-        println!("fx before: {}", chain.all().await.map(|f| f.len()).unwrap_or(0));
+        println!(
+            "fx before: {}",
+            chain.all().await.map(|f| f.len()).unwrap_or(0)
+        );
         match chain.add(&want).await {
             Ok(added) => println!("added {want}: {added:?}"),
             Err(error) => println!("add {want} failed: {error}"),
@@ -83,7 +86,10 @@ fn main() {
             let params = fx.parameters().await.unwrap_or_default();
             println!("  [{i}] {} — {} parameters", entry.name, params.len());
             for p in params.iter().take(24) {
-                println!("      {:>3} {:<28} {:.4}  {}", p.index, p.name, p.value, p.formatted);
+                println!(
+                    "      {:>3} {:<28} {:.4}  {}",
+                    p.index, p.name, p.value, p.formatted
+                );
             }
         }
     });

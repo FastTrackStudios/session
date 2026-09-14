@@ -284,10 +284,7 @@ const TONE_STEPS: &[Step] = &[
     Step::live("Parallel Compression"),
 ];
 
-const POLISH_STEPS: &[Step] = &[
-    Step::live("De-Essing"),
-    Step::live("Spectral Suppressors"),
-];
+const POLISH_STEPS: &[Step] = &[Step::live("De-Essing"), Step::live("Spectral Suppressors")];
 
 const RELATIONAL_STEPS: &[Step] = &[
     Step::live("Relational EQ"),
@@ -378,10 +375,12 @@ mod tests {
             .find(|step| step.name == "Gain Stage")
             .expect("Balance stages gain");
         assert!(staging.automatic);
-        assert!(MixPhase::Rescue
-            .steps()
-            .iter()
-            .all(|step| step.name != "Gain Stage"));
+        assert!(
+            MixPhase::Rescue
+                .steps()
+                .iter()
+                .all(|step| step.name != "Gain Stage")
+        );
     }
 
     /// The edit chain is offline throughout — that is what makes it the

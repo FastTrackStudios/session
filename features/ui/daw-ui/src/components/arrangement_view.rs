@@ -510,7 +510,8 @@ fn ArrangeCanvas(
     /// The visible window in canvas coordinates — see
     /// [`ArrangePreview`]'s prop of the same name. `None` mounts the
     /// whole canvas.
-    #[props(default)] viewport: Option<(f32, f32, f32, f32)>,
+    #[props(default)]
+    viewport: Option<(f32, f32, f32, f32)>,
     /// The content canvas size — NOT a viewport; the caller already
     /// worked out how much timeline/track space there is to draw.
     width: f32,
@@ -578,7 +579,8 @@ fn ArrangeCanvas(
             y + h.max(0.0) + OVERSCAN_Y,
         )
     });
-    let across = |left: f32, right: f32| cull.is_none_or(|(x0, _, x1, _)| right >= x0 && left <= x1);
+    let across =
+        |left: f32, right: f32| cull.is_none_or(|(x0, _, x1, _)| right >= x0 && left <= x1);
     let down = |top: f32, bottom: f32| cull.is_none_or(|(_, y0, _, y1)| bottom >= y0 && top <= y1);
     // The grid is a line per bar over the whole width, so it is culled
     // by index rather than by filtering: at 16x zoom the bars off screen

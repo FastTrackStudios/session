@@ -14,9 +14,9 @@
 //! The panels live in `daw_ui::studio`; this is launch, arguments and
 //! the loader thread, and nothing else.
 
-use session_daw::{open, theme};
 #[cfg(target_os = "linux")]
 use session_daw::frame_rate;
+use session_daw::{open, theme};
 
 use std::path::PathBuf;
 
@@ -50,9 +50,8 @@ fn main() {
     // the meter at all.
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                "warn,daw_ui::studio::fps=info".into()
-            }),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "warn,daw_ui::studio::fps=info".into()),
         )
         .init();
 

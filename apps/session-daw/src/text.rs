@@ -18,7 +18,7 @@
 //! Arabic, say — the answer is parley, not more code in this file. It is
 //! written so that swap is a change of one type.
 
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use skrifa::instance::Size;
 use skrifa::metrics::GlyphMetrics;
 use skrifa::{FontRef, MetadataProvider};
@@ -73,7 +73,11 @@ impl Font {
     #[must_use]
     pub fn layout(&self, text: &str, size: f32) -> Vec<Glyph> {
         let charmap = self.inner.charmap();
-        let metrics = GlyphMetrics::new(&self.inner, Size::new(size), skrifa::instance::LocationRef::default());
+        let metrics = GlyphMetrics::new(
+            &self.inner,
+            Size::new(size),
+            skrifa::instance::LocationRef::default(),
+        );
         let mut x = 0.0_f32;
         let mut glyphs = Vec::with_capacity(text.len());
         for ch in text.chars() {
@@ -99,7 +103,11 @@ impl Font {
     #[must_use]
     pub fn width(&self, text: &str, size: f32) -> f64 {
         let charmap = self.inner.charmap();
-        let metrics = GlyphMetrics::new(&self.inner, Size::new(size), skrifa::instance::LocationRef::default());
+        let metrics = GlyphMetrics::new(
+            &self.inner,
+            Size::new(size),
+            skrifa::instance::LocationRef::default(),
+        );
         f64::from(
             text.chars()
                 .filter_map(|ch| charmap.map(ch))

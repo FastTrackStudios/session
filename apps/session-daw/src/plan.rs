@@ -152,7 +152,9 @@ pub fn row_height(size: Size) -> f64 {
 
 /// A pixel count, for the `u32` the track model stores.
 fn pixels(value: f64) -> u32 {
-    crate::num::index(value.max(1.0)).try_into().unwrap_or(u32::MAX)
+    crate::num::index(value.max(1.0))
+        .try_into()
+        .unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]
@@ -315,7 +317,12 @@ impl Rows {
         Self {
             rows: panel
                 .iter()
-                .map(|(track, _)| index.get(track.guid.as_str()).copied().unwrap_or(usize::MAX))
+                .map(|(track, _)| {
+                    index
+                        .get(track.guid.as_str())
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                })
                 .collect(),
         }
     }
@@ -334,7 +341,10 @@ impl Rows {
     /// unselected ones are dimmed at all.
     #[must_use]
     pub fn any_selected(&self, tracks: &[Track]) -> bool {
-        self.rows.iter().filter_map(|i| tracks.get(*i)).any(|t| t.selected)
+        self.rows
+            .iter()
+            .filter_map(|i| tracks.get(*i))
+            .any(|t| t.selected)
     }
 
     /// The same, as an index — for the paths that need to write.
@@ -375,7 +385,12 @@ mod row_tests {
         let all = tracks();
         let panel: Vec<(Track, u32)> = ["a", "c"]
             .into_iter()
-            .map(|g| (all.iter().find(|t| t.guid == g).expect("a track").clone(), 0))
+            .map(|g| {
+                (
+                    all.iter().find(|t| t.guid == g).expect("a track").clone(),
+                    0,
+                )
+            })
             .collect();
         let map = Rows::of(&panel, &all);
         assert_eq!(map.index(0), Some(0));
@@ -414,7 +429,6 @@ mod row_tests {
         }
     }
 }
-
 
 // ── Scenes ────────────────────────────────────────────────────────────
 
@@ -631,7 +645,12 @@ fn drum_advanced(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
         Size::Minimum
     } else if is_folder {
         Size::Compact
-    } else if lower == "fund" || lower == "sub" || lower.ends_with("trig") || lower == "verb" || under(ancestors, &["Verb"]) {
+    } else if lower == "fund"
+        || lower == "sub"
+        || lower.ends_with("trig")
+        || lower == "verb"
+        || under(ancestors, &["Verb"])
+    {
         Size::Working
     } else if under(ancestors, &["Drum Kit"]) {
         Size::Minimum
@@ -742,7 +761,10 @@ fn lead_vocal_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     let fx = under(ancestors, &["Vox FX"]);
     if is_folder {
         Size::Minimum
-    } else if fx && ((is(name, &["Short"]) && under(ancestors, &["Delay"])) || (is(name, &["Long"]) && under(ancestors, &["Verb"]))) {
+    } else if fx
+        && ((is(name, &["Short"]) && under(ancestors, &["Delay"]))
+            || (is(name, &["Long"]) && under(ancestors, &["Verb"])))
+    {
         Size::Focus
     } else if fx {
         Size::Working
@@ -814,8 +836,14 @@ mod scene_tests {
     #[test]
     fn the_fx_edit_scene_focuses_one_delay_and_one_verb() {
         let s = scene("lead-vocal-fx").expect("the scene");
-        let delay: Vec<String> = ["Vox Lead", "Vox FX", "Delay"].iter().map(|s| (*s).to_owned()).collect();
-        let verb: Vec<String> = ["Vox Lead", "Vox FX", "Verb"].iter().map(|s| (*s).to_owned()).collect();
+        let delay: Vec<String> = ["Vox Lead", "Vox FX", "Delay"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        let verb: Vec<String> = ["Vox Lead", "Vox FX", "Verb"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
         assert_eq!((s.size)("Short", false, &delay), Size::Focus);
         assert_eq!((s.size)("Long", false, &verb), Size::Focus);
         assert_eq!((s.size)("Short", false, &verb), Size::Working);
@@ -826,23 +854,56 @@ mod scene_tests {
 
     #[test]
     fn the_drum_scenes_disagree_about_the_mics() {
-        let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"].iter().map(|s| (*s).to_owned()).collect();
-        assert_eq!((scene("drum-tracking").unwrap().size)("In", false, &kick), Size::Working);
-        assert_eq!((scene("drum-mixing").unwrap().size)("In", false, &kick), Size::Minimum);
-        assert_eq!((scene("drum-mixing").unwrap().size)("Kick", true, &kick[..1]), Size::Working);
-        let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"].iter().map(|s| (*s).to_owned()).collect();
-        assert_eq!((scene("drum-advanced").unwrap().size)("Nonlin", false, &snare_verb), Size::Working);
-        assert_eq!((scene("drum-advanced").unwrap().size)("Sub", false, &kick[..2]), Size::Working);
-        assert_eq!((scene("drum-advanced").unwrap().size)("In", false, &kick), Size::Minimum);
+        let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        assert_eq!(
+            (scene("drum-tracking").unwrap().size)("In", false, &kick),
+            Size::Working
+        );
+        assert_eq!(
+            (scene("drum-mixing").unwrap().size)("In", false, &kick),
+            Size::Minimum
+        );
+        assert_eq!(
+            (scene("drum-mixing").unwrap().size)("Kick", true, &kick[..1]),
+            Size::Working
+        );
+        let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        assert_eq!(
+            (scene("drum-advanced").unwrap().size)("Nonlin", false, &snare_verb),
+            Size::Working
+        );
+        assert_eq!(
+            (scene("drum-advanced").unwrap().size)("Sub", false, &kick[..2]),
+            Size::Working
+        );
+        assert_eq!(
+            (scene("drum-advanced").unwrap().size)("In", false, &kick),
+            Size::Minimum
+        );
     }
 
     #[test]
     fn the_fx_scene_opens_what_the_kit_is_sent_to() {
         let s = scene("drum-fx").expect("the scene");
         let parallel: Vec<String> = ["Process", "FX"].iter().map(|s| (*s).to_owned()).collect();
-        let comp: Vec<String> = ["Process", "Compress"].iter().map(|s| (*s).to_owned()).collect();
-        let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"].iter().map(|s| (*s).to_owned()).collect();
-        let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"].iter().map(|s| (*s).to_owned()).collect();
+        let comp: Vec<String> = ["Process", "Compress"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
         assert_eq!((s.size)("Room Sim", false, &parallel), Size::Focus);
         assert_eq!((s.size)("Smash", false, &comp), Size::Minimum);
         assert_eq!((s.size)("Nonlin", false, &snare_verb), Size::Working);

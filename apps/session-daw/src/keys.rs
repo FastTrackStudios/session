@@ -17,7 +17,9 @@
 
 use std::path::{Path, PathBuf};
 
-use input::{ActionContext, InputCommand, InputEvent, InputProcessor, KeyCode, KeymapConfig, Modifiers};
+use input::{
+    ActionContext, InputCommand, InputEvent, InputProcessor, KeyCode, KeymapConfig, Modifiers,
+};
 
 /// What a key asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,7 +38,10 @@ pub enum Action {
     CursorBar(i32),
     CursorBeat(i32),
     /// Track selection, up or down the panel; `extend` keeps the rest.
-    TrackStep { by: i32, extend: bool },
+    TrackStep {
+        by: i32,
+        extend: bool,
+    },
     /// The edit cursor to the previous or next marker.
     Marker(i32),
     ToggleRecord,
@@ -60,10 +65,22 @@ pub fn action_of(id: &str) -> Action {
         "40837" => Action::CursorBar(1),
         "40646" => Action::CursorBeat(-1),
         "40647" => Action::CursorBeat(1),
-        "40285" => Action::TrackStep { by: 1, extend: false },
-        "40286" => Action::TrackStep { by: -1, extend: false },
-        "40421" => Action::TrackStep { by: 1, extend: true },
-        "40420" => Action::TrackStep { by: -1, extend: true },
+        "40285" => Action::TrackStep {
+            by: 1,
+            extend: false,
+        },
+        "40286" => Action::TrackStep {
+            by: -1,
+            extend: false,
+        },
+        "40421" => Action::TrackStep {
+            by: 1,
+            extend: true,
+        },
+        "40420" => Action::TrackStep {
+            by: -1,
+            extend: true,
+        },
         "40172" => Action::Marker(-1),
         "40173" => Action::Marker(1),
         "1013" => Action::ToggleRecord,
@@ -83,10 +100,17 @@ impl Keys {
     #[must_use]
     pub fn load() -> Self {
         let (config, source) = profile_dir()
-            .and_then(|dir| input_keybinds::load_profile_keymap(&dir).map(|c| (c, dir.display().to_string())))
-            .or_else(|| KeymapConfig::from_json_str(BUILTIN).ok().map(|c| (c, "built-in".to_owned())))
+            .and_then(|dir| {
+                input_keybinds::load_profile_keymap(&dir).map(|c| (c, dir.display().to_string()))
+            })
+            .or_else(|| {
+                KeymapConfig::from_json_str(BUILTIN)
+                    .ok()
+                    .map(|c| (c, "built-in".to_owned()))
+            })
             .unwrap_or_else(|| (KeymapConfig::default(), "none".to_owned()));
-        let processor = InputProcessor::from_config(config).unwrap_or_else(|_| InputProcessor::new());
+        let processor =
+            InputProcessor::from_config(config).unwrap_or_else(|_| InputProcessor::new());
         Self {
             processor,
             context: ActionContext::new(),
@@ -152,7 +176,10 @@ pub fn key_code(named: Option<&str>, text: Option<&str>) -> Option<KeyCode> {
         Some("ArrowLeft") => return Some(KeyCode::ArrowLeft),
         Some("ArrowRight") => return Some(KeyCode::ArrowRight),
         Some(f) if f.len() <= 3 && f.starts_with('F') => {
-            return f.get(1..).and_then(|n| n.parse::<u8>().ok()).map(KeyCode::F);
+            return f
+                .get(1..)
+                .and_then(|n| n.parse::<u8>().ok())
+                .map(KeyCode::F);
         }
         _ => {}
     }
@@ -215,27 +242,48 @@ mod tests {
             context: ActionContext::new(),
             source: "test".into(),
         };
-        assert_eq!(keys.press(KeyCode::Character(" ".into()), Modifiers::NONE), vec![Action::PlayStop]);
-        assert_eq!(keys.press(KeyCode::Character("s".into()), Modifiers::NONE), vec![Action::SplitAtCursor]);
-        assert_eq!(keys.press(KeyCode::Delete, Modifiers::NONE), vec![Action::DeleteSelectedItems]);
+        assert_eq!(
+            keys.press(KeyCode::Character(" ".into()), Modifiers::NONE),
+            vec![Action::PlayStop]
+        );
+        assert_eq!(
+            keys.press(KeyCode::Character("s".into()), Modifiers::NONE),
+            vec![Action::SplitAtCursor]
+        );
+        assert_eq!(
+            keys.press(KeyCode::Delete, Modifiers::NONE),
+            vec![Action::DeleteSelectedItems]
+        );
         let ctrl = Modifiers {
             ctrl: true,
             ..Modifiers::NONE
         };
-        assert_eq!(keys.press(KeyCode::Character("a".into()), ctrl), vec![Action::SelectAllItems]);
-        assert!(keys.press(KeyCode::Character("q".into()), Modifiers::NONE).is_empty());
+        assert_eq!(
+            keys.press(KeyCode::Character("a".into()), ctrl),
+            vec![Action::SelectAllItems]
+        );
+        assert!(
+            keys.press(KeyCode::Character("q".into()), Modifiers::NONE)
+                .is_empty()
+        );
     }
 
     /// A capital is the letter with shift, not another key.
     #[test]
     fn a_capital_is_the_letter_and_shift() {
-        assert_eq!(key_code(None, Some("E")), Some(KeyCode::Character("e".into())));
+        assert_eq!(
+            key_code(None, Some("E")),
+            Some(KeyCode::Character("e".into()))
+        );
         assert_eq!(key_code(Some("Delete"), None), Some(KeyCode::Delete));
         assert_eq!(key_code(Some("F3"), None), Some(KeyCode::F(3)));
     }
 
     #[test]
     fn an_unknown_id_is_reported_not_dropped() {
-        assert_eq!(action_of("_FTS_SMART_DUPLICATE"), Action::Unbound("_FTS_SMART_DUPLICATE".into()));
+        assert_eq!(
+            action_of("_FTS_SMART_DUPLICATE"),
+            Action::Unbound("_FTS_SMART_DUPLICATE".into())
+        );
     }
 }

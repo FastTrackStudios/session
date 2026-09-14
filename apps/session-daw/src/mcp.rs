@@ -278,7 +278,9 @@ impl Mixer {
     /// `labels` for why the two are split.
     #[must_use]
     pub fn label(&self, row: usize) -> Option<(&str, f32)> {
-        self.labels.get(row).map(|(text, size)| (text.as_str(), *size))
+        self.labels
+            .get(row)
+            .map(|(text, size)| (text.as_str(), *size))
     }
 
     /// Record the whole mixer, `height` being the height of its REAPER
@@ -426,14 +428,18 @@ impl Mixer {
             // stay level and the bottoms staircase.
             let strip_h = (height - crate::num::coord(depth) * INDENT_STEP).max(1.0);
             heights.push(strip_h);
-            let column = tone_settings.get(&track.guid).is_some_and(crate::tone::Tone::wants_column);
+            let column = tone_settings
+                .get(&track.guid)
+                .is_some_and(crate::tone::Tone::wants_column);
             columns.push(column);
             labels.push(fit_name(font, track, w, &ancestor_names));
             // A folder with nothing under it in the rows is folded: the
             // rows are what the folder state left, so the next row not
             // being deeper is the fold.
-            let collapsed =
-                track.is_folder && rows.get(ordinal.saturating_add(1)).is_none_or(|(_, next)| usize::try_from(*next).unwrap_or(0) <= depth);
+            let collapsed = track.is_folder
+                && rows
+                    .get(ordinal.saturating_add(1))
+                    .is_none_or(|(_, next)| usize::try_from(*next).unwrap_or(0) <= depth);
             strip(
                 &mut strips,
                 palette,
@@ -588,7 +594,6 @@ impl Mixer {
         }
         counts
     }
-
 }
 
 /// One channel strip, at `x`.
@@ -871,14 +876,19 @@ fn strip(
     // scanned across tracks.
     let shape = Collapse::at(f64_to_f32((slot.mixer_h - rack_h).max(1.0)));
     let own = Collapse::at(f64_to_f32((h - rack_h).max(1.0)));
-    let geometry = crate::strip::Strip::laid_out(w, h, slot.mixer_h, rack_h, buttons_top, slot.column);
+    let geometry =
+        crate::strip::Strip::laid_out(w, h, slot.mixer_h, rack_h, buttons_top, slot.column);
     // The strip's own chrome — band, sections, plate — is the whole
     // strip when the rack is stacked over it, and the left column when
     // the rack stands beside it. See `strip::Layout`.
     let chrome_w = geometry.chrome_width();
 
     // The strip's ground, and the track's colour as a band across it.
-    fill(scene, strip_ground(palette, track), Rect::new(x, 0.0, x + w, h));
+    fill(
+        scene,
+        strip_ground(palette, track),
+        Rect::new(x, 0.0, x + w, h),
+    );
     // And the track's colour as a rule up the strip's whole left edge,
     // top to bottom. The rack is tall and the coloured band is a
     // strip's height down; between two racks there was nothing to say
@@ -1203,7 +1213,6 @@ impl Columns {
             column_axis: column_x + f64::from(g::BUTTON_W) / 2.0,
         }
     }
-
 }
 
 /// The label a strip shows for its track, and the size it fits at.
@@ -1319,7 +1328,13 @@ fn bottom(
             path.line_to((cx + arm, cy - arm * 0.6));
         }
         path.close_path();
-        scene.fill(Fill::NonZero, vello::kurbo::Affine::IDENTITY, palette.text_dim, None, &path);
+        scene.fill(
+            Fill::NonZero,
+            vello::kurbo::Affine::IDENTITY,
+            palette.text_dim,
+            None,
+            &path,
+        );
     }
 }
 
@@ -1453,7 +1468,11 @@ mod selection_tests {
         }
         // A strip already AT the floor has nothing to lend and keeps
         // every pixel: lending is proportional to headroom.
-        assert!((open[4] - 30.0).abs() < 1e-9, "a floor strip lent: {}", open[4]);
+        assert!(
+            (open[4] - 30.0).abs() < 1e-9,
+            "a floor strip lent: {}",
+            open[4]
+        );
         assert!(open[1] < 195.0, "a wide strip should have lent");
     }
 
@@ -1617,8 +1636,7 @@ mod column_tests {
         // 32. Measured against the CAP rather than the column, because
         // the column grew to carry the meter either side of it — the
         // handle is what has to land where REAPER's handle lands.
-        let cap = c.fader_x
-            + (c.fader_w - daw_theme_art::paint::tcp::cap_w(c.fader_w)) / 2.0;
+        let cap = c.fader_x + (c.fader_w - daw_theme_art::paint::tcp::cap_w(c.fader_w)) / 2.0;
         assert!((cap - 32.0).abs() < 0.5, "the cap sits at {cap}");
         // REAPER draws no meter at this width because the scale and
         // the fader have taken it all. We draw one anyway, because it
@@ -1675,7 +1693,10 @@ mod column_tests {
                 "the fader fattened at {w}"
             );
             let groove = daw_theme_art::paint::tcp::groove_w(c.fader_w);
-            assert!(groove >= 4.0 && groove < c.fader_w, "groove at {w}: {groove}");
+            assert!(
+                groove >= 4.0 && groove < c.fader_w,
+                "groove at {w}: {groove}"
+            );
         }
     }
 
@@ -1690,7 +1711,10 @@ mod column_tests {
                 ("fader", c.fader_x + c.fader_w),
                 ("column", c.column_x + f64::from(g::BUTTON_W)),
             ] {
-                assert!(edge <= right + 0.01, "{name} runs past the strip at width {w}: {edge} > {right}");
+                assert!(
+                    edge <= right + 0.01,
+                    "{name} runs past the strip at width {w}: {edge} > {right}"
+                );
             }
             assert!(c.scale_x >= 10.0 && c.fader_x >= 10.0 && c.column_x >= 10.0);
         }
@@ -1817,4 +1841,3 @@ mod shorten_tests {
         }
     }
 }
-

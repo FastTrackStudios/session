@@ -277,7 +277,13 @@ pub const FUND_CHAIN: [Which; 3] = [Which::Gate, Which::Eq, Which::Sat];
 
 /// A delay return: the de-esser on the way in, the delay itself with
 /// its machine selector and knobs, and an EQ on the way out.
-pub const DELAY_CHAIN: [Which; 5] = [Which::Presets, Which::DeEssIn, Which::Delay, Which::Knobs, Which::PostEq];
+pub const DELAY_CHAIN: [Which; 5] = [
+    Which::Presets,
+    Which::DeEssIn,
+    Which::Delay,
+    Which::Knobs,
+    Which::PostEq,
+];
 
 /// A reverb return: de-esser, an EQ into the space, the space with its
 /// selector and knobs, its decay-rate EQ, and an EQ out.
@@ -477,7 +483,11 @@ impl Tone {
     /// The next profile, wrapping — what a click on the glyph does.
     pub fn cycle_sat(&mut self) {
         let next = self.sat_profile.saturating_add(1);
-        let to = if next >= saturate_profiles::PROFILES.len() { 0 } else { next };
+        let to = if next >= saturate_profiles::PROFILES.len() {
+            0
+        } else {
+            next
+        };
         self.set_sat_profile(to);
     }
 
@@ -1128,7 +1138,10 @@ impl Panel {
     /// pixel.
     #[must_use]
     pub fn up(self, by: f64) -> Self {
-        Self { y: self.y - by, ..self }
+        Self {
+            y: self.y - by,
+            ..self
+        }
     }
 
     const fn rect(self) -> Rect {
@@ -1157,10 +1170,7 @@ impl Panel {
     /// a value printed over a curve is unreadable exactly when the
     /// curve is interesting, which is the moment you want the number.
     const fn split_top(self, by: f64) -> (Self, Self) {
-        let head = Self {
-            height: by,
-            ..self
-        };
+        let head = Self { height: by, ..self };
         let body = Self {
             y: self.y + by,
             height: self.height - by,
@@ -1297,7 +1307,10 @@ impl Fold {
         if self.synced {
             self.every.toggle(phase);
         } else {
-            self.by_guid.entry(guid.to_owned()).or_default().toggle(phase);
+            self.by_guid
+                .entry(guid.to_owned())
+                .or_default()
+                .toggle(phase);
         }
     }
 
@@ -1398,7 +1411,18 @@ pub fn record(
     folded: Folded,
     under: Option<Color>,
 ) {
-    draw(scene, palette, font, tone, &Meters::default(), panels, panel, folded, None, under);
+    draw(
+        scene,
+        palette,
+        font,
+        tone,
+        &Meters::default(),
+        panels,
+        panel,
+        folded,
+        None,
+        under,
+    );
 }
 
 /// The same, with one grip lit.
@@ -1444,7 +1468,12 @@ pub fn draw(
             Affine::IDENTITY,
             under,
             None,
-            &Rect::new(panel.x, top, panel.x + panel.width, panel.y + panel.height * 2.0),
+            &Rect::new(
+                panel.x,
+                top,
+                panel.x + panel.width,
+                panel.y + panel.height * 2.0,
+            ),
         );
     }
     // A rail: the same chain, the same rows at the same heights as the
@@ -1472,7 +1501,16 @@ pub fn draw(
                 );
                 continue;
             };
-            minimal(scene, palette, font, tone, meters, which, at.inset(1.0), rack);
+            minimal(
+                scene,
+                palette,
+                font,
+                tone,
+                meters,
+                which,
+                at.inset(1.0),
+                rack,
+            );
             if tone.bypass.is(which) {
                 scene.fill(
                     Fill::NonZero,
@@ -1489,7 +1527,9 @@ pub fn draw(
     for (row, at) in chain(panels, panel, folded) {
         let Row::Unit(which) = row else {
             match row {
-                Row::Head(phase) => container(scene, palette, font, phase, at, folded.is(phase), lit),
+                Row::Head(phase) => {
+                    container(scene, palette, font, phase, at, folded.is(phase), lit)
+                }
                 Row::Blank(phase) => blank(scene, palette, font, phase, at),
                 Row::Unit(_) => {}
             }
@@ -1513,14 +1553,43 @@ pub fn draw(
                 // The three EQs are one drawing over three band sets.
                 // What differs is what the bands are FOR, which is the
                 // panel's name and not its picture.
-                Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::PolishEq => {
-                    eq(scene, palette, font, tone, which, tone.bands_ref(which), &meters.spectrum, body, rack, lit, None);
+                Which::RescueEq
+                | Which::Eq
+                | Which::Space
+                | Which::PreEq
+                | Which::PostEq
+                | Which::PolishEq => {
+                    eq(
+                        scene,
+                        palette,
+                        font,
+                        tone,
+                        which,
+                        tone.bands_ref(which),
+                        &meters.spectrum,
+                        body,
+                        rack,
+                        lit,
+                        None,
+                    );
                 }
                 // Blue, because the vertical axis is not gain: it is
                 // how long each band rings, and a graph that looked
                 // like the EQ above it would be read as one.
                 Which::DecayEq => {
-                    eq(scene, palette, font, tone, which, &tone.decay_eq, &[], body, rack, lit, Some(DECAY_INK));
+                    eq(
+                        scene,
+                        palette,
+                        font,
+                        tone,
+                        which,
+                        &tone.decay_eq,
+                        &[],
+                        body,
+                        rack,
+                        lit,
+                        Some(DECAY_INK),
+                    );
                 }
                 Which::Knobs => knobs(scene, palette, font, tone, body, rack, lit),
                 Which::Wide => wide(scene, palette, tone, body, rack, lit),
@@ -1532,16 +1601,40 @@ pub fn draw(
                 }
                 Which::Comp => comp(scene, palette, font, tone.comp, body, rack, lit),
                 Which::Sat => {
-                    sat(scene, palette, tone, meters, display_of(body, which, rack), rack, lit);
+                    sat(
+                        scene,
+                        palette,
+                        tone,
+                        meters,
+                        display_of(body, which, rack),
+                        rack,
+                        lit,
+                    );
                 }
                 Which::DeEss | Which::DeEssIn => {
                     suppress(scene, palette, which, tone.de_ess, meters, body, rack, lit);
                 }
                 Which::Delay => {
-                    echo(scene, palette, tone.delay, meters, display_of(body, which, rack), rack, lit);
+                    echo(
+                        scene,
+                        palette,
+                        tone.delay,
+                        meters,
+                        display_of(body, which, rack),
+                        rack,
+                        lit,
+                    );
                 }
                 Which::Reverb => {
-                    room(scene, palette, tone.reverb, meters, display_of(body, which, rack), rack, lit);
+                    room(
+                        scene,
+                        palette,
+                        tone.reverb,
+                        meters,
+                        display_of(body, which, rack),
+                        rack,
+                        lit,
+                    );
                 }
             }
             if let Some(strip) = lane_of(body, which, rack)
@@ -1641,7 +1734,11 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
     let tier = Rack::at(panel.width);
     // The preset row is in no phase: it caps the chain, and folds with
     // nothing.
-    for which in panels.iter().copied().filter(|which| *which == Which::Presets) {
+    for which in panels
+        .iter()
+        .copied()
+        .filter(|which| *which == Which::Presets)
+    {
         out.push((Row::Unit(which), row(y, which.natural())));
         y += which.natural() + GAP;
     }
@@ -1654,9 +1751,12 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
     // which is nothing but Depth — has no channel to line up with,
     // and four bars of nothing over it would say it was missing
     // something it was never going to have.
-    let level = panels
-        .iter()
-        .any(|which| matches!(which.phase(), session::mix_phases::MixPhase::Rescue | session::mix_phases::MixPhase::Tone));
+    let level = panels.iter().any(|which| {
+        matches!(
+            which.phase(),
+            session::mix_phases::MixPhase::Rescue | session::mix_phases::MixPhase::Tone
+        )
+    });
     for phase in RACK_PHASES {
         let mut units = panels
             .iter()
@@ -1936,7 +2036,11 @@ impl Which {
             }
             Self::DeEss | Self::DeEssIn => suppression(tone.de_ess),
             Self::Delay => {
-                let head = format!("{} · {:.0}%", millis(tone.delay.time), tone.delay.feedback * 100.0);
+                let head = format!(
+                    "{} · {:.0}%",
+                    millis(tone.delay.time),
+                    tone.delay.feedback * 100.0
+                );
                 if rack.editing() {
                     format!("{head} · {}", tone.delay.style.label().to_lowercase())
                 } else {
@@ -1944,7 +2048,11 @@ impl Which {
                 }
             }
             Self::Reverb => {
-                let head = format!("{:.1}s · {:.0}%", tone.reverb.decay, tone.reverb.mix * 100.0);
+                let head = format!(
+                    "{:.1}s · {:.0}%",
+                    tone.reverb.decay,
+                    tone.reverb.mix * 100.0
+                );
                 if rack.editing() {
                     format!("{head} · {}", tone.reverb.algorithm.name().to_lowercase())
                 } else {
@@ -2008,7 +2116,12 @@ impl Which {
             // Two axes to read, and the panels where extra height buys
             // resolution rather than air: a 3 dB decision and a 12 dB
             // one have to look different.
-            Self::RescueEq | Self::Eq | Self::Space | Self::PreEq | Self::PostEq | Self::PolishEq => 175.0,
+            Self::RescueEq
+            | Self::Eq
+            | Self::Space
+            | Self::PreEq
+            | Self::PostEq
+            | Self::PolishEq => 175.0,
             // Time over frequency: the same graph, read as a rate.
             Self::DecayEq => 150.0,
             // A row of five knobs and their legends.
@@ -2088,7 +2201,11 @@ fn container(
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        if held { palette.tcp_field } else { palette.tcp_meter_well },
+        if held {
+            palette.tcp_field
+        } else {
+            palette.tcp_meter_well
+        },
         None,
         &at.rect(),
     );
@@ -2118,7 +2235,11 @@ fn container(
     let right = at.x + at.width;
     let (cx, cy) = (right - 9.0, at.y + at.height / 2.0);
     let arm = 3.2;
-    let ink = if held { palette.text } else { palette.text_faint };
+    let ink = if held {
+        palette.text
+    } else {
+        palette.text_faint
+    };
     let tip = if shut { cy + arm * 0.6 } else { cy - arm * 0.6 };
     let base = if shut { cy - arm * 0.6 } else { cy + arm * 0.6 };
     rule_wide(scene, ink, Line::new((cx - arm, base), (cx, tip)), 1.4);
@@ -2131,7 +2252,13 @@ const BLANK_ALPHA: f32 = 0.35;
 /// A phase this chain has nothing in: the container's bar, faint, with
 /// no chevron — there is nothing to fold. It holds the row so the
 /// phases under it line up with the strips beside it.
-fn blank(scene: &mut Scene, palette: &Palette, font: &Font, phase: session::mix_phases::MixPhase, at: Panel) {
+fn blank(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    phase: session::mix_phases::MixPhase,
+    at: Panel,
+) {
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
@@ -2249,7 +2376,10 @@ fn eq_from_plugin(
 }
 
 /// The EQ's response across the audible band.
-#[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a drawing and everything it needs"
+)]
 fn eq(
     scene: &mut Scene,
     palette: &Palette,
@@ -2271,7 +2401,13 @@ fn eq(
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     if let Some(tint) = tint {
-        scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.08), None, &at.rect());
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            tint.multiply_alpha(0.08),
+            None,
+            &at.rect(),
+        );
     }
 
     // Only at Full: at Focus the plugin draws its own grid and labels,
@@ -2317,11 +2453,7 @@ fn eq(
     }
     // Unity, always: without it a boost and a cut look the same.
     let zero = db.db_to_y(0.0, at.y, bottom);
-    rule(
-        scene,
-        palette.grid,
-        Line::new((at.x, zero), (right, zero)),
-    );
+    rule(scene, palette.grid, Line::new((at.x, zero), (right, zero)));
 
     if bands.is_empty() {
         return;
@@ -2350,7 +2482,14 @@ fn eq(
     // lost the bands' colours and the composition they show.
     let painted = tint.is_none()
         && rack != Rack::Minimal
-        && eq_from_plugin(scene, tone, bands, if washed { &[] } else { spectrum }, at, rack);
+        && eq_from_plugin(
+            scene,
+            tone,
+            bands,
+            if washed { &[] } else { spectrum },
+            at,
+            rack,
+        );
     if !painted {
         // The fallback: the same response function the plugin's painter
         // uses, as one polyline. What the narrow tier gets, what a
@@ -2378,7 +2517,13 @@ fn eq(
             }
             area.line_to((right, zero));
             area.close_path();
-            scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.22), None, &area);
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                tint.multiply_alpha(0.22),
+                None,
+                &area,
+            );
         }
         curve(scene, tint.unwrap_or(EQ_INK), points.into_iter(), 1.5);
     }
@@ -2417,7 +2562,12 @@ fn eq(
         let grown = lit == Some(Grip::Band(which, index));
         let r = if grown { HANDLE + 1.6 } else { HANDLE };
         dot(scene, palette.tcp_meter_well, (x, y), r + 1.0);
-        dot(scene, tint.unwrap_or_else(|| band_color(f64::from(band.frequency))), (x, y), r);
+        dot(
+            scene,
+            tint.unwrap_or_else(|| band_color(f64::from(band.frequency))),
+            (x, y),
+            r,
+        );
     }
 
     // The zoom, last, so nothing draws over the one thing in the panel
@@ -2439,7 +2589,8 @@ fn spectrum_wash(scene: &mut Scene, spectrum: &[f32], at: Panel) {
             let t = crate::num::coord(i) / crate::num::coord(ACROSS.saturating_sub(1));
             let hz = 20.0 * 10.0_f64.powf(t * full);
             let db = bin_at(spectrum, hz);
-            let level = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
+            let level =
+                ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
             (t.mul_add(at.width, at.x), bottom - level * at.height)
         })
         .collect();
@@ -2486,14 +2637,13 @@ fn scale(
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        if held { palette.tcp_field } else { palette.tcp_meter_well },
+        if held {
+            palette.tcp_field
+        } else {
+            palette.tcp_meter_well
+        },
         None,
-        &vello::kurbo::Rect::new(
-            chip.x,
-            chip.y,
-            chip.x + chip.width,
-            chip.y + chip.height,
-        ),
+        &vello::kurbo::Rect::new(chip.x, chip.y, chip.x + chip.width, chip.y + chip.height),
     );
     const SIZE: f32 = 8.0;
     let label = format!("±{:.0}", tone.eq_db_range());
@@ -2501,7 +2651,11 @@ fn scale(
     crate::tcp::glyphs(
         scene,
         font,
-        if held { palette.text } else { palette.text_faint },
+        if held {
+            palette.text
+        } else {
+            palette.text_faint
+        },
         &label,
         chip.x + (chip.width - width) / 2.0,
         chip.y + chip.height - 3.0,
@@ -2730,7 +2884,12 @@ impl Arrow {
 
     fn draw(self, scene: &mut Scene, font: &Font, comp: Comp, ink: Color, held: bool) {
         let ink = if held { ink } else { ink.multiply_alpha(0.85) };
-        rule_wide(scene, ink, Line::new((self.x, self.top), (self.x, self.tip)), if held { 2.0 } else { 1.2 });
+        rule_wide(
+            scene,
+            ink,
+            Line::new((self.x, self.top), (self.x, self.tip)),
+            if held { 2.0 } else { 1.2 },
+        );
         let head = 3.0;
         let mut path = BezPath::new();
         path.move_to((self.x - head, self.tip - head * 1.6));
@@ -2746,11 +2905,23 @@ impl Arrow {
         } else {
             format!("{ratio:.1}:1")
         };
-        crate::tcp::glyphs(scene, font, ink, &label, self.x + head + 2.0, self.tip + 1.0, TINY);
+        crate::tcp::glyphs(
+            scene,
+            font,
+            ink,
+            &label,
+            self.x + head + 2.0,
+            self.tip + 1.0,
+            TINY,
+        );
     }
 
     fn holds(self, x: f64, y: f64) -> bool {
-        near_segment((x, y), (self.x, self.top), (self.x, self.tip.max(self.top + 6.0))) <= GRAB
+        near_segment(
+            (x, y),
+            (self.x, self.top),
+            (self.x, self.tip.max(self.top + 6.0)),
+        ) <= GRAB
     }
 }
 
@@ -2787,14 +2958,22 @@ impl Strips {
         let right = at.x + at.width - 3.0 - STRIP_LABEL_W;
         let floor = at.y + at.height - STRIP_GAP;
         let release = Rect::new(left, floor - STRIP_H, right, floor);
-        let attack = Rect::new(left, release.y0 - STRIP_GAP - STRIP_H, right, release.y0 - STRIP_GAP);
+        let attack = Rect::new(
+            left,
+            release.y0 - STRIP_GAP - STRIP_H,
+            right,
+            release.y0 - STRIP_GAP,
+        );
         Some(Self { attack, release })
     }
 
     /// Where a time's marker sits on its strip: fast at the left, slow
     /// at the right, the default in the middle.
     fn marker(strip: Rect, time: Time) -> (f64, f64) {
-        (time.place().mul_add(strip.width(), strip.x0), strip.center().y)
+        (
+            time.place().mul_add(strip.width(), strip.x0),
+            strip.center().y,
+        )
     }
 
     fn draw(self, scene: &mut Scene, font: &Font, comp: Comp, ink: Color, lit: Option<Grip>) {
@@ -2806,10 +2985,28 @@ impl Strips {
         let words = ink.multiply_alpha(0.6);
         crate::tcp::glyphs(scene, font, words, "FAST", self.attack.x0, over, TINY);
         let slow_w = f64::from(font.width("SLOW", TINY));
-        crate::tcp::glyphs(scene, font, words, "SLOW", self.attack.x1 - slow_w, over, TINY);
+        crate::tcp::glyphs(
+            scene,
+            font,
+            words,
+            "SLOW",
+            self.attack.x1 - slow_w,
+            over,
+            TINY,
+        );
         for (strip, grip, time, label) in [
-            (self.attack, Grip::Attack(Which::Comp), Time::attack(comp.attack), "A"),
-            (self.release, Grip::Release(Which::Comp), Time::release(comp.release), "R"),
+            (
+                self.attack,
+                Grip::Attack(Which::Comp),
+                Time::attack(comp.attack),
+                "A",
+            ),
+            (
+                self.release,
+                Grip::Release(Which::Comp),
+                Time::release(comp.release),
+                "R",
+            ),
         ] {
             let held = lit == Some(grip);
             // Its letter at the right end, so the two are told apart
@@ -2826,9 +3023,19 @@ impl Strips {
             // The track, a tick at the default, and the travel filled
             // from the default to the marker — so a departure from the
             // default is a bar in the direction it departed.
-            scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.28), None, &strip.to_rounded_rect(2.0));
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                ink.multiply_alpha(0.28),
+                None,
+                &strip.to_rounded_rect(2.0),
+            );
             let centre = strip.center().x;
-            rule(scene, ink.multiply_alpha(0.6), Line::new((centre, strip.y0 - 1.5), (centre, strip.y1 + 1.5)));
+            rule(
+                scene,
+                ink.multiply_alpha(0.6),
+                Line::new((centre, strip.y0 - 1.5), (centre, strip.y1 + 1.5)),
+            );
             let (x, y) = Self::marker(strip, time);
             scene.fill(
                 Fill::NonZero,
@@ -2846,7 +3053,10 @@ impl Strips {
     /// the marker, so a time can be set by clicking where it should be.
     fn grip_at(self, x: f64, y: f64) -> Option<Grip> {
         let reach = |strip: Rect| {
-            x >= strip.x0 - GRAB && x <= strip.x1 + GRAB && y >= strip.y0 - GRAB / 2.0 && y <= strip.y1 + GRAB / 2.0
+            x >= strip.x0 - GRAB
+                && x <= strip.x1 + GRAB
+                && y >= strip.y0 - GRAB / 2.0
+                && y <= strip.y1 + GRAB / 2.0
         };
         if reach(self.attack) {
             Some(Grip::Attack(Which::Comp))
@@ -2874,7 +3084,14 @@ impl Strips {
 /// TABLE — attack up, hold flat, release down — standing in the band
 /// it acts in. The door lane under the display (drawn in the live
 /// pass, see [`levels`]) is when it was open.
-fn gate(scene: &mut Scene, palette: &Palette, gate: Gate, at: Panel, rack: Rack, lit: Option<Grip>) {
+fn gate(
+    scene: &mut Scene,
+    palette: &Palette,
+    gate: Gate,
+    at: Panel,
+    rack: Rack,
+    lit: Option<Grip>,
+) {
     let at = display_of(at, Which::Gate, rack);
     let right = at.x + at.width;
     let bottom = at.y + at.height;
@@ -2925,10 +3142,31 @@ fn gate(scene: &mut Scene, palette: &Palette, gate: Gate, at: Panel, rack: Rack,
         );
         if let Some(shape) = GateGlyph::of(gate, at, line, floor) {
             let width = |grip| if lit == Some(grip) { 2.4 } else { 1.4 };
-            curve(scene, red, shape.rise().into_iter(), width(Grip::Attack(Which::Gate)));
-            curve(scene, red, shape.run().into_iter(), width(Grip::Hold(Which::Gate)));
-            curve(scene, red, shape.fall().into_iter(), width(Grip::Release(Which::Gate)));
-            let r = |grip| if lit == Some(grip) { HANDLE + 1.4 } else { HANDLE * 0.8 };
+            curve(
+                scene,
+                red,
+                shape.rise().into_iter(),
+                width(Grip::Attack(Which::Gate)),
+            );
+            curve(
+                scene,
+                red,
+                shape.run().into_iter(),
+                width(Grip::Hold(Which::Gate)),
+            );
+            curve(
+                scene,
+                red,
+                shape.fall().into_iter(),
+                width(Grip::Release(Which::Gate)),
+            );
+            let r = |grip| {
+                if lit == Some(grip) {
+                    HANDLE + 1.4
+                } else {
+                    HANDLE * 0.8
+                }
+            };
             dot(scene, red, shape.open, r(Grip::Attack(Which::Gate)));
             dot(scene, red, shape.close, r(Grip::Release(Which::Gate)));
         }
@@ -2980,7 +3218,10 @@ impl GateGlyph {
             start: (left, floor),
             open: (left + attack, line),
             close: (left + attack + hold, line),
-            end: ((left + attack + hold + release).min(at.x + at.width - 1.0), floor),
+            end: (
+                (left + attack + hold + release).min(at.x + at.width - 1.0),
+                floor,
+            ),
         })
     }
 
@@ -2999,9 +3240,18 @@ impl GateGlyph {
     /// Which of its edges a point is nearest, if any.
     fn grip_at(self, x: f64, y: f64) -> Option<Grip> {
         [
-            (Grip::Attack(Which::Gate), near_segment((x, y), self.start, self.open)),
-            (Grip::Hold(Which::Gate), near_segment((x, y), self.open, self.close)),
-            (Grip::Release(Which::Gate), near_segment((x, y), self.close, self.end)),
+            (
+                Grip::Attack(Which::Gate),
+                near_segment((x, y), self.start, self.open),
+            ),
+            (
+                Grip::Hold(Which::Gate),
+                near_segment((x, y), self.open, self.close),
+            ),
+            (
+                Grip::Release(Which::Gate),
+                near_segment((x, y), self.close, self.end),
+            ),
         ]
         .into_iter()
         .filter(|(_, away)| *away <= GRAB)
@@ -3125,7 +3375,11 @@ fn suppress(
     if rack.detailed() {
         for db in [-12.0, -24.0] {
             let y = suppress_y(db, at);
-            rule(scene, palette.grid_beat, Line::new((at.x, y), (at.x + at.width, y)));
+            rule(
+                scene,
+                palette.grid_beat,
+                Line::new((at.x, y), (at.x + at.width, y)),
+            );
         }
     }
 
@@ -3142,15 +3396,27 @@ fn suppress(
             .map(|i| {
                 let t = crate::num::coord(i) / crate::num::coord(ACROSS - 1);
                 let db = bin_at(&meters.spectrum, zoom.hz_at(t));
-                let share = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
-                (t.mul_add(strip.width, strip.x), share.mul_add(-(strip.height - 1.0), strip_bottom))
+                let share = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB))
+                    .clamp(0.0, 1.0);
+                (
+                    t.mul_add(strip.width, strip.x),
+                    share.mul_add(-(strip.height - 1.0), strip_bottom),
+                )
             })
             .collect();
-        area_under(scene, palette.text_faint.multiply_alpha(0.25), &points, strip_bottom);
+        area_under(
+            scene,
+            palette.text_faint.multiply_alpha(0.25),
+            &points,
+            strip_bottom,
+        );
     }
 
     // The band: a wash between its edges, and the edges themselves.
-    let (x_low, x_high) = (zoom.x_of(f64::from(set.low), strip), zoom.x_of(f64::from(set.high), strip));
+    let (x_low, x_high) = (
+        zoom.x_of(f64::from(set.low), strip),
+        zoom.x_of(f64::from(set.high), strip),
+    );
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
@@ -3158,7 +3424,10 @@ fn suppress(
         None,
         &Rect::new(x_low.min(x_high), strip.y, x_low.max(x_high), strip_bottom),
     );
-    for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
+    for (hz, side) in [
+        (f64::from(set.low), Side::Low),
+        (f64::from(set.high), Side::High),
+    ] {
         let x = zoom.x_of(hz, strip);
         let held = lit == Some(Grip::Edge(which, side));
         rule_wide(
@@ -3355,7 +3624,11 @@ fn echo(
     let floor = bottom - 1.0;
     let family = echo.family();
     if rack.detailed() {
-        rule(scene, palette.grid, Line::new((at.x, floor), (at.x + at.width, floor)));
+        rule(
+            scene,
+            palette.grid,
+            Line::new((at.x, floor), (at.x + at.width, floor)),
+        );
         // A rhythmic delay lands on a grid, so the grid is drawn: a
         // beat every delay time, a bar every four.
         if family == DelayFamily::Rhythmic {
@@ -3391,24 +3664,41 @@ fn echo(
         } else if dry {
             f64::from(meters.sat_peak).clamp(0.0, 1.0)
         } else {
-            (f64::from(meters.delay_wet) * feedback.powi(i32::try_from(k).unwrap_or(1).saturating_sub(1))
+            (f64::from(meters.delay_wet)
+                * feedback.powi(i32::try_from(k).unwrap_or(1).saturating_sub(1))
                 * 3.0)
                 .clamp(0.0, 1.0)
         };
         let base = if dry { 1.0 } else { 0.35 + mix * 0.65 };
         let alpha = crate::mcp::f64_to_f32((base * glow.mul_add(0.3, 0.7)).clamp(0.0, 1.0));
-        let ink = if dry { palette.text.multiply_alpha(alpha) } else { wet.multiply_alpha(alpha) };
+        let ink = if dry {
+            palette.text.multiply_alpha(alpha)
+        } else {
+            wet.multiply_alpha(alpha)
+        };
         let held = (dry && time_held) || (!dry && feedback_held) || (k == 1 && time_held);
         let width = if dry || held { 2.0 } else { 1.4 };
         match family {
-            _ if dry => rule_wide(scene, ink, Line::new((x, floor), (x, floor - height)), width),
+            _ if dry => rule_wide(
+                scene,
+                ink,
+                Line::new((x, floor), (x, floor - height)),
+                width,
+            ),
             DelayFamily::Digital | DelayFamily::Rhythmic => {
-                rule_wide(scene, ink, Line::new((x, floor), (x, floor - height)), width);
+                rule_wide(
+                    scene,
+                    ink,
+                    Line::new((x, floor), (x, floor - height)),
+                    width,
+                );
             }
             // Tape: the top rounds off and each pass is darker — the
             // head loses treble every time round.
             DelayFamily::Tape => {
-                let dull = crate::mcp::f64_to_f32(crate::num::coord(k).mul_add(-0.12, 1.0).clamp(0.3, 1.0));
+                let dull = crate::mcp::f64_to_f32(
+                    crate::num::coord(k).mul_add(-0.12, 1.0).clamp(0.3, 1.0),
+                );
                 let mut path = BezPath::new();
                 path.move_to((x, floor));
                 path.line_to((x, floor - height + 2.0));
@@ -3436,8 +3726,17 @@ fn echo(
             // Pitch: each repeat's foot rises by the interval.
             DelayFamily::Pitch => {
                 let rise = 3.2 * crate::num::coord(k);
-                rule_wide(scene, ink, Line::new((x, floor - rise), (x, floor - rise - height)), width);
-                rule(scene, palette.grid_beat, Line::new((x - 2.0, floor - rise), (x + 2.0, floor - rise)));
+                rule_wide(
+                    scene,
+                    ink,
+                    Line::new((x, floor - rise), (x, floor - rise - height)),
+                    width,
+                );
+                rule(
+                    scene,
+                    palette.grid_beat,
+                    Line::new((x - 2.0, floor - rise), (x + 2.0, floor - rise)),
+                );
             }
             // Special: a reversed repeat swells INTO the tap; the rest
             // are a repeat that is no longer one — a soft blob whose
@@ -3449,7 +3748,13 @@ fn echo(
                     wedge.line_to((x, floor));
                     wedge.line_to((x, floor - height));
                     wedge.close_path();
-                    scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.8), None, &wedge);
+                    scene.fill(
+                        Fill::NonZero,
+                        Affine::IDENTITY,
+                        ink.multiply_alpha(0.8),
+                        None,
+                        &wedge,
+                    );
                 } else {
                     let rx = crate::num::coord(k).mul_add(0.5, 1.6);
                     scene.fill(
@@ -3457,7 +3762,11 @@ fn echo(
                         Affine::IDENTITY,
                         ink.multiply_alpha(0.7),
                         None,
-                        &vello::kurbo::Ellipse::new((x, floor - height / 2.0), (rx, height / 2.0), 0.0),
+                        &vello::kurbo::Ellipse::new(
+                            (x, floor - height / 2.0),
+                            (rx, height / 2.0),
+                            0.0,
+                        ),
                     );
                 }
             }
@@ -3492,7 +3801,10 @@ pub fn echo_taps(echo: Echo, at: Panel) -> Vec<(f64, f64)> {
         }
         out.push((x, level));
         let step = if rhythmic {
-            PATTERN.get(tap.rem_euclid(PATTERN.len())).copied().unwrap_or(1.0)
+            PATTERN
+                .get(tap.rem_euclid(PATTERN.len()))
+                .copied()
+                .unwrap_or(1.0)
         } else {
             1.0
         };
@@ -3533,7 +3845,11 @@ fn room(
     let bottom = at.y + at.height;
     let floor = bottom - 1.0;
     if rack.detailed() {
-        rule(scene, palette.grid, Line::new((at.x, floor), (at.x + at.width, floor)));
+        rule(
+            scene,
+            palette.grid,
+            Line::new((at.x, floor), (at.x + at.width, floor)),
+        );
     }
     let ink = REVERB_INK;
     let mix = f64::from(room.mix).clamp(0.0, 1.0);
@@ -3558,9 +3874,13 @@ fn room(
         .iter()
         .enumerate()
         .map(|(i, db)| {
-            let t = crate::num::coord(i) / crate::num::coord(crate::live::TAIL_BINS.saturating_sub(1));
+            let t =
+                crate::num::coord(i) / crate::num::coord(crate::live::TAIL_BINS.saturating_sub(1));
             let level = (1.0 + f64::from(*db) / 60.0).clamp(0.0, 1.0);
-            (geometry.start + t * (geometry.end - geometry.start), floor - level * scale)
+            (
+                geometry.start + t * (geometry.end - geometry.start),
+                floor - level * scale,
+            )
         })
         .collect();
     // Lit by the wet return: a reverb doing nothing is an outline, one
@@ -3595,7 +3915,11 @@ fn room(
         let held = lit == Some(Grip::Predelay);
         rule_wide(
             scene,
-            if held { palette.text } else { palette.grid_beat },
+            if held {
+                palette.text
+            } else {
+                palette.grid_beat
+            },
             Line::new((geometry.start, at.y), (geometry.start, floor)),
             if held { 1.8 } else { 1.0 },
         );
@@ -3619,7 +3943,9 @@ impl RoomGeometry {
     #[must_use]
     pub fn of(room: Room, at: Panel) -> Self {
         let window = (f64::from(room.decay) * 1000.0).max(1.0);
-        let start = (f64::from(room.predelay) / window).clamp(0.0, 0.5).mul_add(at.width, at.x);
+        let start = (f64::from(room.predelay) / window)
+            .clamp(0.0, 0.5)
+            .mul_add(at.width, at.x);
         Self {
             start,
             end: at.x + at.width,
@@ -3676,12 +4002,22 @@ fn sat(
         let db = 20.0 * f64::from(meters.sat_peak.max(1e-4)).log10();
         ladder.at(crate::mcp::f64_to_f32(db))
     };
-    let heat = (f64::from(rungs.iter().sum::<f32>()) / 0.9).clamp(0.0, 1.0).powf(0.7);
+    let heat = (f64::from(rungs.iter().sum::<f32>()) / 0.9)
+        .clamp(0.0, 1.0)
+        .powf(0.7);
     glow(scene, whole, (mid_x, mid_y), heat);
 
     if rack.detailed() {
-        rule(scene, palette.grid, Line::new((at.x, mid_y), (right, mid_y)));
-        rule(scene, palette.grid, Line::new((mid_x, at.y), (mid_x, bottom)));
+        rule(
+            scene,
+            palette.grid,
+            Line::new((at.x, mid_y), (right, mid_y)),
+        );
+        rule(
+            scene,
+            palette.grid,
+            Line::new((mid_x, at.y), (mid_x, bottom)),
+        );
         // Unity, so the curve's departure from it IS the saturation.
         // Without it a gentle drive and a hard one are both "an S", and
         // the thing you are looking for is how far from straight it
@@ -3711,7 +4047,12 @@ fn sat(
         )
     };
     let held = matches!(lit, Some(Grip::Drive | Grip::Bias));
-    curve(scene, SAT_INK, samples.iter().map(place), if held { 2.2 } else { 1.5 });
+    curve(
+        scene,
+        SAT_INK,
+        samples.iter().map(place),
+        if held { 2.2 } else { 1.5 },
+    );
 
     // The lit reach: from the origin out to the signal's peak, both
     // ways. One stroke, and the whole "is it doing anything" answer.
@@ -3735,7 +4076,11 @@ fn sat(
     // The ladder.
     if let Some(lb) = ladder_box {
         let floor = lb.y + lb.height - 1.0;
-        rule(scene, palette.grid, Line::new((lb.x, floor), (lb.x + lb.width, floor)));
+        rule(
+            scene,
+            palette.grid,
+            Line::new((lb.x, floor), (lb.x + lb.width, floor)),
+        );
         let tint = SAT_INK;
         let n = crate::num::coord(crate::live::RUNGS);
         let gap = 1.2;
@@ -3749,7 +4094,11 @@ fn sat(
             let even = k % 2 == 0;
             let h = f64::from(rung.clamp(0.0, 1.0)).sqrt() * tall;
             let x = crate::num::coord(k).mul_add(bar + gap, lb.x + 1.0);
-            let ink = if even { tint } else { palette.text_faint.multiply_alpha(0.75) };
+            let ink = if even {
+                tint
+            } else {
+                palette.text_faint.multiply_alpha(0.75)
+            };
             scene.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
@@ -3765,7 +4114,11 @@ fn sat(
             let held = lit == Some(Grip::Tilt);
             rule_wide(
                 scene,
-                if held { palette.text } else { palette.text_faint },
+                if held {
+                    palette.text
+                } else {
+                    palette.text_faint
+                },
                 Line::new(
                     (lb.x + 2.0, lean.mul_add(1.5, floor + 3.0)),
                     (lb.x + lb.width - 2.0, lean.mul_add(-1.5, floor + 3.0)),
@@ -3842,12 +4195,7 @@ pub const fn sat_split(body: Panel, rack: Rack) -> (Panel, Option<Panel>) {
 
 /// An open polyline, dashed — for a picture that is a guess rather
 /// than a measurement.
-fn dashed(
-    scene: &mut Scene,
-    color: Color,
-    points: impl Iterator<Item = (f64, f64)>,
-    width: f64,
-) {
+fn dashed(scene: &mut Scene, color: Color, points: impl Iterator<Item = (f64, f64)>, width: f64) {
     let mut path = BezPath::new();
     for (i, point) in points.enumerate() {
         if i == 0 {
@@ -3934,12 +4282,18 @@ fn selector(
         }
         Which::Delay => (
             DelayFamily::ALL.iter().map(|f| Glyph::Delay(*f)).collect(),
-            DelayFamily::ALL.iter().position(|f| *f == tone.delay.family()).unwrap_or(0),
+            DelayFamily::ALL
+                .iter()
+                .position(|f| *f == tone.delay.family())
+                .unwrap_or(0),
             tone.delay.style.label(),
         ),
         _ => (
             RoomFamily::ALL.iter().map(|f| Glyph::Room(*f)).collect(),
-            RoomFamily::ALL.iter().position(|f| *f == tone.reverb.family()).unwrap_or(0),
+            RoomFamily::ALL
+                .iter()
+                .position(|f| *f == tone.reverb.family())
+                .unwrap_or(0),
             tone.reverb.algorithm.name(),
         ),
     };
@@ -3964,7 +4318,10 @@ fn selector(
             rule_wide(
                 scene,
                 tint,
-                Line::new((x - 1.0, at.y + at.height - 1.0), (x + 9.0, at.y + at.height - 1.0)),
+                Line::new(
+                    (x - 1.0, at.y + at.height - 1.0),
+                    (x + 9.0, at.y + at.height - 1.0),
+                ),
                 1.5,
             );
         }
@@ -4027,14 +4384,23 @@ const fn unit_ink(which: Which) -> Option<Color> {
 /// down the row — a template's rows run bright and close to dark and
 /// far, and the swatch says where a chip sits on that run before you
 /// read its name.
-fn presets(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Panel, lit: Option<Grip>) {
+fn presets(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    tone: &Tone,
+    at: Panel,
+    lit: Option<Grip>,
+) {
     const SIZE: f32 = 6.5;
     if tone.presets.is_empty() {
         return;
     }
     let count = crate::num::coord(tone.presets.len().max(2).saturating_sub(1));
     for (i, chip) in preset_chips(tone, at) {
-        let Some(preset) = tone.presets.get(i) else { continue };
+        let Some(preset) = tone.presets.get(i) else {
+            continue;
+        };
         let (left, w) = (chip.x0, chip.width());
         let current = tone.preset == Some(i);
         let hovered = lit == Some(Grip::Preset(i));
@@ -4056,7 +4422,8 @@ fn presets(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: P
             Affine::IDENTITY,
             swatch,
             None,
-            &Rect::new(left + 2.0, at.y + 4.0, left + 8.0, at.y + at.height - 4.0).to_rounded_rect(1.0),
+            &Rect::new(left + 2.0, at.y + 4.0, left + 8.0, at.y + at.height - 4.0)
+                .to_rounded_rect(1.0),
         );
         let ink = if current {
             palette.text
@@ -4065,12 +4432,23 @@ fn presets(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: P
         } else {
             palette.text_faint
         };
-        crate::tcp::glyphs(scene, font, ink, &preset.name, left + 11.0, at.y + at.height - 5.0, SIZE);
+        crate::tcp::glyphs(
+            scene,
+            font,
+            ink,
+            &preset.name,
+            left + 11.0,
+            at.y + at.height - 5.0,
+            SIZE,
+        );
         if current {
             rule_wide(
                 scene,
                 swatch,
-                Line::new((left + 1.0, at.y + at.height - 1.0), (left + w - 1.0, at.y + at.height - 1.0)),
+                Line::new(
+                    (left + 1.0, at.y + at.height - 1.0),
+                    (left + w - 1.0, at.y + at.height - 1.0),
+                ),
                 1.5,
             );
         }
@@ -4099,7 +4477,15 @@ fn swatch_at(t: f64) -> Color {
 /// the travel filled in the phase's colour and a pointer on the value.
 /// Legends under them at a detailed width. What the plugin's face has
 /// under its centrepiece, at strip size.
-fn knobs(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Panel, rack: Rack, lit: Option<Grip>) {
+fn knobs(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    tone: &Tone,
+    at: Panel,
+    rack: Rack,
+    lit: Option<Grip>,
+) {
     const SIZE: f32 = 5.5;
     let labels = knob_labels(tone.role);
     let each = at.width / crate::num::coord(KNOBS);
@@ -4117,25 +4503,58 @@ fn knobs(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Pan
         knob_arc(scene, palette, (cx, cy), r, value, tint, held);
         if rack.detailed() {
             let w = font.width(label, SIZE);
-            crate::tcp::glyphs(scene, font, palette.text_faint, label, cx - w / 2.0, at.y + at.height - 2.0, SIZE);
+            crate::tcp::glyphs(
+                scene,
+                font,
+                palette.text_faint,
+                label,
+                cx - w / 2.0,
+                at.y + at.height - 2.0,
+                SIZE,
+            );
         }
     }
 }
 
 /// One knob: its track, its travel, its pointer.
-fn knob_arc(scene: &mut Scene, palette: &Palette, centre: (f64, f64), r: f64, value: f64, tint: Color, held: bool) {
+fn knob_arc(
+    scene: &mut Scene,
+    palette: &Palette,
+    centre: (f64, f64),
+    r: f64,
+    value: f64,
+    tint: Color,
+    held: bool,
+) {
     use std::f64::consts::PI;
     // Seven o'clock to five o'clock, clockwise: 270 degrees of travel.
     let start = PI * 0.75;
     let sweep = PI * 1.5;
     let arc = |from: f64, to: f64| vello::kurbo::Arc::new(centre, (r, r), from, to - from, 0.0);
-    scene.stroke(&Stroke::new(if held { 2.4 } else { 1.6 }), Affine::IDENTITY, palette.grid_beat, None, &arc(start, start + sweep));
+    scene.stroke(
+        &Stroke::new(if held { 2.4 } else { 1.6 }),
+        Affine::IDENTITY,
+        palette.grid_beat,
+        None,
+        &arc(start, start + sweep),
+    );
     let to = value.clamp(0.0, 1.0).mul_add(sweep, start);
     if value > 0.005 {
-        scene.stroke(&Stroke::new(if held { 2.4 } else { 1.6 }), Affine::IDENTITY, tint, None, &arc(start, to));
+        scene.stroke(
+            &Stroke::new(if held { 2.4 } else { 1.6 }),
+            Affine::IDENTITY,
+            tint,
+            None,
+            &arc(start, to),
+        );
     }
     let (px, py) = (to.cos().mul_add(r, centre.0), to.sin().mul_add(r, centre.1));
-    rule_wide(scene, if held { palette.text } else { palette.text_dim }, Line::new(centre, (px, py)), 1.2);
+    rule_wide(
+        scene,
+        if held { palette.text } else { palette.text_dim },
+        Line::new(centre, (px, py)),
+        1.2,
+    );
 }
 
 /// The widener: the stereo field as a fan, as wide as the setting.
@@ -4144,18 +4563,34 @@ fn knob_arc(scene: &mut Scene, palette: &Palette, centre: (f64, f64), r: f64, va
 /// the track occupies — a sliver for mono, the speakers at unity, and
 /// past them when pushed. The one picture of width that survives a
 /// strip.
-fn wide(scene: &mut Scene, palette: &Palette, tone: &Tone, at: Panel, rack: Rack, lit: Option<Grip>) {
+fn wide(
+    scene: &mut Scene,
+    palette: &Palette,
+    tone: &Tone,
+    at: Panel,
+    rack: Rack,
+    lit: Option<Grip>,
+) {
     use std::f64::consts::PI;
     let centre = (at.x + at.width / 2.0, at.y + at.height - 4.0);
     let r = (at.width / 2.0 - 4.0).min(at.height - 8.0).max(6.0);
     let tint = phase_tint(Which::Wide.phase());
     let field = vello::kurbo::Arc::new(centre, (r, r), PI, PI, 0.0);
-    scene.stroke(&Stroke::new(1.0), Affine::IDENTITY, palette.grid_beat, None, &field);
+    scene.stroke(
+        &Stroke::new(1.0),
+        Affine::IDENTITY,
+        palette.grid_beat,
+        None,
+        &field,
+    );
     if rack.detailed() {
         // The speakers, at unity.
         for side in [-1.0_f64, 1.0] {
             let angle = PI * side.mul_add(0.25, 0.5);
-            let (x, y) = ((-angle.cos()).mul_add(r, centre.0), (-angle.sin()).mul_add(r, centre.1));
+            let (x, y) = (
+                (-angle.cos()).mul_add(r, centre.0),
+                (-angle.sin()).mul_add(r, centre.1),
+            );
             rule(scene, palette.grid_beat, Line::new(centre, (x, y)));
         }
     }
@@ -4168,11 +4603,26 @@ fn wide(scene: &mut Scene, palette: &Palette, tone: &Tone, at: Panel, rack: Rack
     for k in 0..=steps {
         let t = crate::num::coord(k) / crate::num::coord(steps);
         let angle = (t * 2.0).mul_add(half, -PI / 2.0 - half);
-        wedge.line_to((angle.cos().mul_add(r, centre.0), angle.sin().mul_add(r, centre.1)));
+        wedge.line_to((
+            angle.cos().mul_add(r, centre.0),
+            angle.sin().mul_add(r, centre.1),
+        ));
     }
     wedge.close_path();
-    scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(if held { 0.55 } else { 0.35 }), None, &wedge);
-    scene.stroke(&Stroke::new(if held { 2.0 } else { 1.2 }), Affine::IDENTITY, tint, None, &wedge);
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        tint.multiply_alpha(if held { 0.55 } else { 0.35 }),
+        None,
+        &wedge,
+    );
+    scene.stroke(
+        &Stroke::new(if held { 2.0 } else { 1.2 }),
+        Affine::IDENTITY,
+        tint,
+        None,
+        &wedge,
+    );
 }
 
 /// The pitch shifter: the note, and where it goes.
@@ -4181,11 +4631,23 @@ fn wide(scene: &mut Scene, palette: &Palette, tone: &Tone, at: Panel, rack: Rack
 /// lowered by the interval — and the interval as a number, because an
 /// octave is an octave and a bar's height is not a thing anyone can
 /// read to the semitone.
-fn pitch(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Panel, rack: Rack, lit: Option<Grip>) {
+fn pitch(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    tone: &Tone,
+    at: Panel,
+    rack: Rack,
+    lit: Option<Grip>,
+) {
     let tint = phase_tint(Which::Pitch.phase());
     let floor = at.y + at.height - 2.0;
     let mid = at.y + at.height / 2.0;
-    rule(scene, palette.grid_beat, Line::new((at.x, mid), (at.x + at.width, mid)));
+    rule(
+        scene,
+        palette.grid_beat,
+        Line::new((at.x, mid), (at.x + at.width, mid)),
+    );
     let held = matches!(lit, Some(Grip::Knob(Which::Pitch, _)));
     // The input.
     let x0 = at.width.mul_add(0.3, at.x);
@@ -4196,11 +4658,28 @@ fn pitch(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Pan
     let x1 = at.width.mul_add(0.6, at.x);
     let top = (mid - shift).clamp(at.y + 2.0, floor);
     let alpha = crate::mcp::f64_to_f32(f64::from(tone.pitch_mix).mul_add(0.7, 0.3));
-    rule_wide(scene, tint.multiply_alpha(alpha), Line::new((x1, floor), (x1, top)), if held { 4.0 } else { 3.0 });
-    rule(scene, tint.multiply_alpha(0.6), Line::new((x0, mid), (x1, top)));
+    rule_wide(
+        scene,
+        tint.multiply_alpha(alpha),
+        Line::new((x1, floor), (x1, top)),
+        if held { 4.0 } else { 3.0 },
+    );
+    rule(
+        scene,
+        tint.multiply_alpha(0.6),
+        Line::new((x0, mid), (x1, top)),
+    );
     if rack.detailed() {
         let text = format!("{:+}", tone.pitch);
-        crate::tcp::glyphs(scene, font, palette.text, &text, x1 + 6.0, top.max(at.y + 8.0), 7.0);
+        crate::tcp::glyphs(
+            scene,
+            font,
+            palette.text,
+            &text,
+            x1 + 6.0,
+            top.max(at.y + 8.0),
+            7.0,
+        );
     }
 }
 
@@ -4214,15 +4693,39 @@ fn pitch(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Pan
 /// because it is the one still setting. Reductions hang from the top,
 /// the way they do in the full panel; levels and tails stand on the
 /// floor.
-fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meters: &Meters, which: Which, at: Panel, rack: Rack) {
+fn minimal(
+    scene: &mut Scene,
+    palette: &Palette,
+    font: &Font,
+    tone: &Tone,
+    meters: &Meters,
+    which: Which,
+    at: Panel,
+    rack: Rack,
+) {
     // The row's ground, so the rail's chain reads as a chain.
-    scene.fill(Fill::NonZero, Affine::IDENTITY, palette.tcp_meter_well.multiply_alpha(0.5), None, &at.rect());
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        palette.tcp_meter_well.multiply_alpha(0.5),
+        None,
+        &at.rect(),
+    );
     // The same header row the panel takes, so the indicator starts on
     // the line the display does — with the name where it fits.
     let row = at;
     let at = body_of(row, rack);
     if at.y > row.inset(2.0).y {
-        header(scene, palette, font, which.name(), None, "", tone.bypass.is(which), row.inset(2.0).split_top(HEAD).0);
+        header(
+            scene,
+            palette,
+            font,
+            which.name(),
+            None,
+            "",
+            tone.bypass.is(which),
+            row.inset(2.0).split_top(HEAD).0,
+        );
     }
     let right = at.x + at.width;
     let bottom = at.y + at.height;
@@ -4236,7 +4739,12 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
                 Affine::IDENTITY,
                 ink,
                 None,
-                &Rect::new(at.x + 2.0, at.y, right - 2.0, share.mul_add(at.height, at.y)),
+                &Rect::new(
+                    at.x + 2.0,
+                    at.y,
+                    right - 2.0,
+                    share.mul_add(at.height, at.y),
+                ),
             );
         }
     };
@@ -4252,15 +4760,37 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
         // still say how many decisions there were. Without the
         // analyser: at this width a spectrum behind the curve is a
         // curve you cannot find.
-        Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq | Which::PolishEq => {
+        Which::RescueEq
+        | Which::Eq
+        | Which::Space
+        | Which::PreEq
+        | Which::PostEq
+        | Which::DecayEq
+        | Which::PolishEq => {
             let tint = (which == Which::DecayEq).then_some(DECAY_INK);
-            eq(scene, palette, font, tone, which, tone.bands_ref(which), &[], at, Rack::Full, None, tint);
+            eq(
+                scene,
+                palette,
+                font,
+                tone,
+                which,
+                tone.bands_ref(which),
+                &[],
+                at,
+                Rack::Full,
+                None,
+                tint,
+            );
         }
         // The level against the threshold, and a light for the door.
         Which::Gate => {
             let to_y = |db: f64| at.y + comp_ui::comp_graph_svg::db_to_y(db, at.height);
             let line = to_y(f64::from(tone.gate.threshold)).clamp(at.y, bottom);
-            rule(scene, GATE_INK.multiply_alpha(0.7), Line::new((at.x, line), (right, line)));
+            rule(
+                scene,
+                GATE_INK.multiply_alpha(0.7),
+                Line::new((at.x, line), (right, line)),
+            );
             if let Some(db) = peak_db {
                 let top = to_y(db).clamp(at.y, bottom);
                 scene.fill(
@@ -4282,7 +4812,11 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
         }
         // What the compressor is taking off right now, as a length.
         Which::Comp | Which::RescueComp => {
-            let comp = if which == Which::Comp { tone.comp } else { tone.rescue_comp };
+            let comp = if which == Which::Comp {
+                tone.comp
+            } else {
+                tone.rescue_comp
+            };
             let reduction = peak_db.map_or(0.0, |db| {
                 let out = comp_ui::comp_graph_svg::compress_transfer(
                     crate::mcp::f64_to_f32(db),
@@ -4294,23 +4828,45 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
             });
             // The threshold where the panel would draw it, and the
             // reduction hanging from the ceiling in the panel's red.
-            let line = (at.y + comp_ui::comp_graph_svg::db_to_y(f64::from(comp.threshold), at.height)).clamp(at.y, bottom);
-            rule(scene, hex(comp_ui::comp_graph_svg::colors::THRESHOLD).multiply_alpha(0.7), Line::new((at.x, line), (right, line)));
-            bar(scene, hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE), reduction / 60.0);
+            let line = (at.y
+                + comp_ui::comp_graph_svg::db_to_y(f64::from(comp.threshold), at.height))
+            .clamp(at.y, bottom);
+            rule(
+                scene,
+                hex(comp_ui::comp_graph_svg::colors::THRESHOLD).multiply_alpha(0.7),
+                Line::new((at.x, line), (right, line)),
+            );
+            bar(
+                scene,
+                hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE),
+                reduction / 60.0,
+            );
         }
         // Heat.
         Which::Sat => {
             let ladder = crate::live::ladder(&tone.sat);
-            let rungs = peak_db.map_or_else(|| ladder.full(), |db| ladder.at(crate::mcp::f64_to_f32(db)));
-            let heat = (f64::from(rungs.iter().sum::<f32>()) / 0.9).clamp(0.0, 1.0).powf(0.7);
+            let rungs =
+                peak_db.map_or_else(|| ladder.full(), |db| ladder.at(crate::mcp::f64_to_f32(db)));
+            let heat = (f64::from(rungs.iter().sum::<f32>()) / 0.9)
+                .clamp(0.0, 1.0)
+                .powf(0.7);
             glow(scene, at, (at.x + at.width / 2.0, mid), heat);
         }
-        Which::DeEss | Which::DeEssIn => bar(scene, DEESS_INK, f64::from(meters.deess_deepest()) / 12.0),
+        Which::DeEss | Which::DeEssIn => {
+            bar(scene, DEESS_INK, f64::from(meters.deess_deepest()) / 12.0)
+        }
         // The repeats, tiny.
         Which::Delay => {
             for (k, (x, level)) in echo_taps(tone.delay, at).into_iter().enumerate() {
                 let ink = if k == 0 { palette.text } else { DELAY_INK };
-                rule(scene, ink, Line::new((x, bottom - 1.0), (x, bottom - 1.0 - level * (at.height * 0.9))));
+                rule(
+                    scene,
+                    ink,
+                    Line::new(
+                        (x, bottom - 1.0),
+                        (x, bottom - 1.0 - level * (at.height * 0.9)),
+                    ),
+                );
             }
         }
         // The tail, tiny.
@@ -4318,9 +4874,13 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
             let tail = crate::live::tail(tone.reverb.key());
             let geometry = RoomGeometry::of(tone.reverb, at);
             let points = tail.envelope.iter().enumerate().map(|(i, db)| {
-                let t = crate::num::coord(i) / crate::num::coord(crate::live::TAIL_BINS.saturating_sub(1));
+                let t = crate::num::coord(i)
+                    / crate::num::coord(crate::live::TAIL_BINS.saturating_sub(1));
                 let level = (1.0 + f64::from(*db) / 60.0).clamp(0.0, 1.0);
-                (t.mul_add(geometry.end - geometry.start, geometry.start), bottom - 1.0 - level * (at.height * 0.9))
+                (
+                    t.mul_add(geometry.end - geometry.start, geometry.start),
+                    bottom - 1.0 - level * (at.height * 0.9),
+                )
             });
             curve(scene, REVERB_INK, points, 1.0);
         }
@@ -4339,7 +4899,11 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
         // The interval: a mark above or below the line.
         Which::Pitch => {
             let shift = (f64::from(tone.pitch) / 24.0).clamp(-1.0, 1.0) * (at.height / 2.0 - 2.0);
-            rule(scene, palette.grid_beat, Line::new((at.x, mid), (right, mid)));
+            rule(
+                scene,
+                palette.grid_beat,
+                Line::new((at.x, mid), (right, mid)),
+            );
             rule_wide(
                 scene,
                 phase_tint(Which::Pitch.phase()),
@@ -4413,7 +4977,13 @@ fn circuit_glyph(scene: &mut Scene, ink: Color, circuit: Circuit, x: f64, baseli
 fn reels(scene: &mut Scene, ink: Color, x: f64, top: f64) {
     let mut path = BezPath::new();
     for cx in [x + 2.0, x + 6.5] {
-        path.extend(vello::kurbo::Circle::new((cx, top + 3.5), 1.8).to_path(0.1).elements().iter().copied());
+        path.extend(
+            vello::kurbo::Circle::new((cx, top + 3.5), 1.8)
+                .to_path(0.1)
+                .elements()
+                .iter()
+                .copied(),
+        );
     }
     path.move_to((x + 2.0, top + 1.7));
     path.line_to((x + 6.5, top + 1.7));
@@ -4438,7 +5008,13 @@ fn delay_glyph(scene: &mut Scene, ink: Color, family: DelayFamily, x: f64, basel
         DelayFamily::Tape => reels(scene, ink, x, top),
         // Analog: a chip with legs.
         DelayFamily::Analog => {
-            path.extend(Rect::new(x + 1.0, top + 1.5, x + 7.0, baseline - 1.5).to_path(0.1).elements().iter().copied());
+            path.extend(
+                Rect::new(x + 1.0, top + 1.5, x + 7.0, baseline - 1.5)
+                    .to_path(0.1)
+                    .elements()
+                    .iter()
+                    .copied(),
+            );
             for i in 0..3 {
                 let lx = crate::num::coord(i).mul_add(2.0, x + 2.0);
                 path.move_to((lx, top + 1.5));
@@ -4463,13 +5039,25 @@ fn delay_glyph(scene: &mut Scene, ink: Color, family: DelayFamily, x: f64, basel
             for (i, j) in [(0, 0), (1, 0), (0, 1), (1, 1), (2, 0)] {
                 let cx = crate::num::coord(i).mul_add(3.0, x + 1.5);
                 let cy = crate::num::coord(j).mul_add(3.5, top + 2.0);
-                path.extend(vello::kurbo::Circle::new((cx, cy), 0.9).to_path(0.1).elements().iter().copied());
+                path.extend(
+                    vello::kurbo::Circle::new((cx, cy), 0.9)
+                        .to_path(0.1)
+                        .elements()
+                        .iter()
+                        .copied(),
+                );
             }
             scene.fill(Fill::NonZero, Affine::IDENTITY, ink, None, &path);
         }
         // Special: a smear.
         DelayFamily::Special => {
-            path.extend(vello::kurbo::Ellipse::new((x + 4.0, top + 3.5), (3.5, 2.0), 0.4).to_path(0.1).elements().iter().copied());
+            path.extend(
+                vello::kurbo::Ellipse::new((x + 4.0, top + 3.5), (3.5, 2.0), 0.4)
+                    .to_path(0.1)
+                    .elements()
+                    .iter()
+                    .copied(),
+            );
             stroke(scene, &path, 0.8);
         }
     }
@@ -4492,7 +5080,13 @@ fn room_glyph(scene: &mut Scene, ink: Color, family: RoomFamily, x: f64, baselin
         }
         // A plate: the sheet, hung.
         RoomFamily::Plate => {
-            path.extend(Rect::new(x + 0.5, top + 2.0, x + 7.5, baseline).to_path(0.1).elements().iter().copied());
+            path.extend(
+                Rect::new(x + 0.5, top + 2.0, x + 7.5, baseline)
+                    .to_path(0.1)
+                    .elements()
+                    .iter()
+                    .copied(),
+            );
             path.move_to((x + 2.0, top + 2.0));
             path.line_to((x + 2.0, top));
             path.move_to((x + 6.0, top + 2.0));
@@ -4520,14 +5114,32 @@ fn room_glyph(scene: &mut Scene, ink: Color, family: RoomFamily, x: f64, baselin
         }
         // Ambient: the halo.
         RoomFamily::Ambient => {
-            path.extend(vello::kurbo::Circle::new((x + 4.0, top + 3.5), 3.0).to_path(0.1).elements().iter().copied());
-            path.extend(vello::kurbo::Circle::new((x + 4.0, top + 3.5), 1.0).to_path(0.1).elements().iter().copied());
+            path.extend(
+                vello::kurbo::Circle::new((x + 4.0, top + 3.5), 3.0)
+                    .to_path(0.1)
+                    .elements()
+                    .iter()
+                    .copied(),
+            );
+            path.extend(
+                vello::kurbo::Circle::new((x + 4.0, top + 3.5), 1.0)
+                    .to_path(0.1)
+                    .elements()
+                    .iter()
+                    .copied(),
+            );
             stroke(scene, &path, 0.8);
         }
         // Random: scattered.
         RoomFamily::Random => {
             for (dx, dy) in [(1.0, 1.0), (5.5, 2.5), (3.0, 5.0), (7.0, 6.0), (2.0, 3.5)] {
-                path.extend(vello::kurbo::Circle::new((x + dx, top + dy), 0.8).to_path(0.1).elements().iter().copied());
+                path.extend(
+                    vello::kurbo::Circle::new((x + dx, top + dy), 0.8)
+                        .to_path(0.1)
+                        .elements()
+                        .iter()
+                        .copied(),
+                );
             }
             scene.fill(Fill::NonZero, Affine::IDENTITY, ink, None, &path);
         }
@@ -4568,7 +5180,10 @@ fn room_glyph(scene: &mut Scene, ink: Color, family: RoomFamily, x: f64, baselin
 /// The value is dropped rather than elided when the panel is too narrow
 /// for both: a truncated "−14d…" is a number you have to open the
 /// plugin to check, which is worse than one you know is not shown.
-#[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a drawing and everything it needs"
+)]
 fn header(
     scene: &mut Scene,
     palette: &Palette,
@@ -4675,22 +5290,11 @@ fn rule_wide(scene: &mut Scene, color: Color, line: Line, width: f64) {
 
 /// One hairline.
 fn rule(scene: &mut Scene, color: Color, line: Line) {
-    scene.stroke(
-        &Stroke::new(1.0),
-        Affine::IDENTITY,
-        color,
-        None,
-        &line,
-    );
+    scene.stroke(&Stroke::new(1.0), Affine::IDENTITY, color, None, &line);
 }
 
 /// An open polyline through `points`.
-fn curve(
-    scene: &mut Scene,
-    color: Color,
-    points: impl Iterator<Item = (f64, f64)>,
-    width: f64,
-) {
+fn curve(scene: &mut Scene, color: Color, points: impl Iterator<Item = (f64, f64)>, width: f64) {
     let mut path = BezPath::new();
     for (i, point) in points.enumerate() {
         if i == 0 {
@@ -4868,9 +5472,11 @@ pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String
 /// the toms step down — which is read off the folders above the track.
 fn fundamental(mut tone: Tone, name: &str, ancestors: &[String]) -> Tone {
     let lower = name.to_lowercase();
-    let piece = ancestors.iter().rev().map(|a| a.to_lowercase()).find(|a| {
-        a.starts_with("kick") || a.starts_with("snare") || a.starts_with("tom")
-    });
+    let piece = ancestors
+        .iter()
+        .rev()
+        .map(|a| a.to_lowercase())
+        .find(|a| a.starts_with("kick") || a.starts_with("snare") || a.starts_with("tom"));
     let hz = match piece.as_deref() {
         Some(p) if p.starts_with("kick") => 55.0,
         Some(p) if p.starts_with("snare") => 200.0,
@@ -4878,7 +5484,10 @@ fn fundamental(mut tone: Tone, name: &str, ancestors: &[String]) -> Tone {
             // "Tom 1" is the highest; each one down is a whole step or
             // so lower.
             let number = p.chars().filter_map(|c| c.to_digit(10)).next().unwrap_or(1);
-            [130.0, 110.0, 92.0, 78.0].get(usize::try_from(number.saturating_sub(1)).unwrap_or(0)).copied().unwrap_or(78.0)
+            [130.0, 110.0, 92.0, 78.0]
+                .get(usize::try_from(number.saturating_sub(1)).unwrap_or(0))
+                .copied()
+                .unwrap_or(78.0)
         }
         _ => 100.0,
     };
@@ -4936,21 +5545,56 @@ const DELAY_SLOTS: &[&str] = &["Slap", "Short", "Long", "Throw"];
 const REVERB_SLOTS: &[&str] = &["Room", "Short", "Long", "Moment", "Throw"];
 
 /// A delay preset from its numbers.
-fn repeat(name: &str, style: DelayStyle, time: f32, feedback: f32, mix: f32, tone: f32, width: f32, post_eq: Vec<EqBand>) -> Preset {
+fn repeat(
+    name: &str,
+    style: DelayStyle,
+    time: f32,
+    feedback: f32,
+    mix: f32,
+    tone: f32,
+    width: f32,
+    post_eq: Vec<EqBand>,
+) -> Preset {
     let mut t = placeholder(1);
     t.role = Role::Delay;
-    t.delay = Echo { time, feedback, mix, tone, width, style };
+    t.delay = Echo {
+        time,
+        feedback,
+        mix,
+        tone,
+        width,
+        style,
+    };
     t.post_eq = post_eq;
     preset(name, t)
 }
 
 /// A reverb preset from its numbers. Every one cuts the lows on the
 /// way in; what differs is the space and how it is shaped after.
-fn space(name: &str, algorithm: AlgorithmType, decay: f32, predelay: f32, size: f32, damping: f32, diffusion: f32, mix: f32, post_eq: Vec<EqBand>, decay_eq: Vec<EqBand>) -> Preset {
+fn space(
+    name: &str,
+    algorithm: AlgorithmType,
+    decay: f32,
+    predelay: f32,
+    size: f32,
+    damping: f32,
+    diffusion: f32,
+    mix: f32,
+    post_eq: Vec<EqBand>,
+    decay_eq: Vec<EqBand>,
+) -> Preset {
     let mut t = placeholder(0);
     t.role = Role::Reverb;
     t.pre_eq = vec![band(0, 180.0, -18.0, 0.7, EqBandShape::LowCut)];
-    t.reverb = Room { algorithm, decay, predelay, damping, size, diffusion, mix };
+    t.reverb = Room {
+        algorithm,
+        decay,
+        predelay,
+        damping,
+        size,
+        diffusion,
+        mix,
+    };
     t.post_eq = post_eq;
     t.decay_eq = decay_eq;
     preset(name, t)
@@ -4970,59 +5614,373 @@ fn delay_presets(name: &str) -> Vec<Preset> {
     // The instrument bus's delays, by name.
     if lower.contains("tape") && !lower.contains("throw") {
         return vec![
-            repeat("Tape 1/16", D::Tape, 187.0, 0.3, 0.25, 0.5, 0.6, vec![low_cut(200.0), shelf(-6.0)]),
-            repeat("Tape 1/8", D::Tape, 375.0, 0.38, 0.22, 0.55, 0.7, vec![low_cut(250.0), shelf(-6.0)]),
-            repeat("Dragged 1/8", D::Tape, 395.0, 0.38, 0.22, 0.55, 0.7, vec![low_cut(250.0), shelf(-6.0)]),
-            repeat("Dark Tape", D::Tape, 375.0, 0.45, 0.2, 0.8, 0.6, vec![low_cut(300.0), shelf(-10.0)]),
+            repeat(
+                "Tape 1/16",
+                D::Tape,
+                187.0,
+                0.3,
+                0.25,
+                0.5,
+                0.6,
+                vec![low_cut(200.0), shelf(-6.0)],
+            ),
+            repeat(
+                "Tape 1/8",
+                D::Tape,
+                375.0,
+                0.38,
+                0.22,
+                0.55,
+                0.7,
+                vec![low_cut(250.0), shelf(-6.0)],
+            ),
+            repeat(
+                "Dragged 1/8",
+                D::Tape,
+                395.0,
+                0.38,
+                0.22,
+                0.55,
+                0.7,
+                vec![low_cut(250.0), shelf(-6.0)],
+            ),
+            repeat(
+                "Dark Tape",
+                D::Tape,
+                375.0,
+                0.45,
+                0.2,
+                0.8,
+                0.6,
+                vec![low_cut(300.0), shelf(-10.0)],
+            ),
         ];
     }
     if lower.contains("echo boy") || lower.contains("echoboy") {
         return vec![
-            repeat("Memory Man", D::Bbd, 375.0, 0.4, 0.22, 0.55, 0.7, vec![low_cut(200.0), band(1, 1_200.0, 3.0, 1.0, EqBandShape::Bell), shelf(-6.0)]),
-            repeat("Telephone", D::LoFi, 375.0, 0.4, 0.22, 0.6, 0.3, vec![low_cut(600.0), shelf(-12.0)]),
-            repeat("Binson", D::OilCan, 400.0, 0.45, 0.2, 0.6, 0.7, vec![low_cut(250.0), shelf(-6.0)]),
-            repeat("Ping-Pong 1/4", D::MultiTap, 750.0, 0.4, 0.2, 0.4, 1.0, vec![low_cut(250.0)]),
-            repeat("Motion", D::Bbd, 375.0, 0.4, 0.22, 0.5, 1.0, vec![low_cut(200.0), shelf(-4.0)]),
+            repeat(
+                "Memory Man",
+                D::Bbd,
+                375.0,
+                0.4,
+                0.22,
+                0.55,
+                0.7,
+                vec![
+                    low_cut(200.0),
+                    band(1, 1_200.0, 3.0, 1.0, EqBandShape::Bell),
+                    shelf(-6.0),
+                ],
+            ),
+            repeat(
+                "Telephone",
+                D::LoFi,
+                375.0,
+                0.4,
+                0.22,
+                0.6,
+                0.3,
+                vec![low_cut(600.0), shelf(-12.0)],
+            ),
+            repeat(
+                "Binson",
+                D::OilCan,
+                400.0,
+                0.45,
+                0.2,
+                0.6,
+                0.7,
+                vec![low_cut(250.0), shelf(-6.0)],
+            ),
+            repeat(
+                "Ping-Pong 1/4",
+                D::MultiTap,
+                750.0,
+                0.4,
+                0.2,
+                0.4,
+                1.0,
+                vec![low_cut(250.0)],
+            ),
+            repeat(
+                "Motion",
+                D::Bbd,
+                375.0,
+                0.4,
+                0.22,
+                0.5,
+                1.0,
+                vec![low_cut(200.0), shelf(-4.0)],
+            ),
         ];
     }
     if lower.contains("space echo") {
         return vec![
-            repeat("Space Echo", D::Reverb, 340.0, 0.4, 0.25, 0.55, 0.6, vec![low_cut(200.0), shelf(-6.0)]),
-            repeat("Space Slap", D::Reverb, 130.0, 0.2, 0.25, 0.5, 0.5, vec![low_cut(200.0), shelf(-4.0)]),
-            repeat("Space Spring", D::Reverb, 300.0, 0.55, 0.25, 0.6, 0.7, vec![low_cut(250.0), shelf(-8.0)]),
+            repeat(
+                "Space Echo",
+                D::Reverb,
+                340.0,
+                0.4,
+                0.25,
+                0.55,
+                0.6,
+                vec![low_cut(200.0), shelf(-6.0)],
+            ),
+            repeat(
+                "Space Slap",
+                D::Reverb,
+                130.0,
+                0.2,
+                0.25,
+                0.5,
+                0.5,
+                vec![low_cut(200.0), shelf(-4.0)],
+            ),
+            repeat(
+                "Space Spring",
+                D::Reverb,
+                300.0,
+                0.55,
+                0.25,
+                0.6,
+                0.7,
+                vec![low_cut(250.0), shelf(-8.0)],
+            ),
         ];
     }
     match slot_of(name, DELAY_SLOTS) {
         "Slap" => vec![
-            repeat("Tape 95", D::Tape, 95.0, 0.08, 0.3, 0.3, 0.2, vec![shelf(-1.0)]),
-            repeat("Slap 15", D::Tape, 15.0, 0.05, 0.35, 0.4, 0.4, vec![shelf(-3.0)]),
-            repeat("Slap 30", D::Tape, 30.0, 0.05, 0.35, 0.4, 0.4, vec![shelf(-3.0)]),
-            repeat("Crowd", D::MultiTap, 45.0, 0.2, 0.3, 0.5, 1.0, vec![low_cut(300.0), shelf(-6.0)]),
-            repeat("Rockabilly", D::Tape, 120.0, 0.15, 0.35, 0.4, 0.2, vec![shelf(-2.0)]),
+            repeat(
+                "Tape 95",
+                D::Tape,
+                95.0,
+                0.08,
+                0.3,
+                0.3,
+                0.2,
+                vec![shelf(-1.0)],
+            ),
+            repeat(
+                "Slap 15",
+                D::Tape,
+                15.0,
+                0.05,
+                0.35,
+                0.4,
+                0.4,
+                vec![shelf(-3.0)],
+            ),
+            repeat(
+                "Slap 30",
+                D::Tape,
+                30.0,
+                0.05,
+                0.35,
+                0.4,
+                0.4,
+                vec![shelf(-3.0)],
+            ),
+            repeat(
+                "Crowd",
+                D::MultiTap,
+                45.0,
+                0.2,
+                0.3,
+                0.5,
+                1.0,
+                vec![low_cut(300.0), shelf(-6.0)],
+            ),
+            repeat(
+                "Rockabilly",
+                D::Tape,
+                120.0,
+                0.15,
+                0.35,
+                0.4,
+                0.2,
+                vec![shelf(-2.0)],
+            ),
             repeat("Tight", D::Clean, 70.0, 0.02, 0.25, 0.1, 0.1, vec![]),
-            repeat("Drum Slap", D::Drum, 110.0, 0.1, 0.3, 0.35, 0.6, vec![low_cut(150.0)]),
-            repeat("Lo-Fi Slap", D::LoFi, 100.0, 0.12, 0.3, 0.6, 0.3, vec![shelf(-4.0)]),
+            repeat(
+                "Drum Slap",
+                D::Drum,
+                110.0,
+                0.1,
+                0.3,
+                0.35,
+                0.6,
+                vec![low_cut(150.0)],
+            ),
+            repeat(
+                "Lo-Fi Slap",
+                D::LoFi,
+                100.0,
+                0.12,
+                0.3,
+                0.6,
+                0.3,
+                vec![shelf(-4.0)],
+            ),
         ],
         "Long" => vec![
-            repeat("Tape 1/8", D::Tape, 375.0, 0.42, 0.22, 0.55, 0.85, vec![low_cut(250.0), shelf(-5.0)]),
-            repeat("Dotted 8th", D::Clean, 560.0, 0.38, 0.2, 0.3, 0.9, vec![low_cut(250.0), shelf(-3.0)]),
-            repeat("Dark BBD", D::Bbd, 375.0, 0.5, 0.22, 0.7, 0.8, vec![low_cut(300.0), shelf(-7.0)]),
-            repeat("Oil Can", D::OilCan, 400.0, 0.45, 0.2, 0.6, 0.7, vec![low_cut(300.0), shelf(-6.0)]),
-            repeat("Shimmer 1/8", D::Shimmer, 375.0, 0.5, 0.18, 0.4, 1.0, vec![low_cut(400.0)]),
+            repeat(
+                "Tape 1/8",
+                D::Tape,
+                375.0,
+                0.42,
+                0.22,
+                0.55,
+                0.85,
+                vec![low_cut(250.0), shelf(-5.0)],
+            ),
+            repeat(
+                "Dotted 8th",
+                D::Clean,
+                560.0,
+                0.38,
+                0.2,
+                0.3,
+                0.9,
+                vec![low_cut(250.0), shelf(-3.0)],
+            ),
+            repeat(
+                "Dark BBD",
+                D::Bbd,
+                375.0,
+                0.5,
+                0.22,
+                0.7,
+                0.8,
+                vec![low_cut(300.0), shelf(-7.0)],
+            ),
+            repeat(
+                "Oil Can",
+                D::OilCan,
+                400.0,
+                0.45,
+                0.2,
+                0.6,
+                0.7,
+                vec![low_cut(300.0), shelf(-6.0)],
+            ),
+            repeat(
+                "Shimmer 1/8",
+                D::Shimmer,
+                375.0,
+                0.5,
+                0.18,
+                0.4,
+                1.0,
+                vec![low_cut(400.0)],
+            ),
         ],
         "Throw" => vec![
-            repeat("BBD Throw", D::Bbd, 750.0, 0.55, 0.4, 0.7, 1.0, vec![low_cut(400.0), band(1, 1_000.0, 6.0, 2.0, EqBandShape::Bell), shelf(-9.0)]),
-            repeat("Tape 1/4", D::Tape, 750.0, 0.6, 0.4, 0.75, 0.9, vec![low_cut(400.0), shelf(-8.0)]),
-            repeat("Reverse", D::Reverse, 700.0, 0.4, 0.4, 0.5, 1.0, vec![low_cut(300.0), shelf(-4.0)]),
-            repeat("Pitch Throw", D::Pitch, 750.0, 0.5, 0.35, 0.45, 1.0, vec![low_cut(400.0), shelf(-5.0)]),
-            repeat("Spectral", D::Spectral, 750.0, 0.6, 0.35, 0.5, 1.0, vec![low_cut(500.0)]),
+            repeat(
+                "BBD Throw",
+                D::Bbd,
+                750.0,
+                0.55,
+                0.4,
+                0.7,
+                1.0,
+                vec![
+                    low_cut(400.0),
+                    band(1, 1_000.0, 6.0, 2.0, EqBandShape::Bell),
+                    shelf(-9.0),
+                ],
+            ),
+            repeat(
+                "Tape 1/4",
+                D::Tape,
+                750.0,
+                0.6,
+                0.4,
+                0.75,
+                0.9,
+                vec![low_cut(400.0), shelf(-8.0)],
+            ),
+            repeat(
+                "Reverse",
+                D::Reverse,
+                700.0,
+                0.4,
+                0.4,
+                0.5,
+                1.0,
+                vec![low_cut(300.0), shelf(-4.0)],
+            ),
+            repeat(
+                "Pitch Throw",
+                D::Pitch,
+                750.0,
+                0.5,
+                0.35,
+                0.45,
+                1.0,
+                vec![low_cut(400.0), shelf(-5.0)],
+            ),
+            repeat(
+                "Spectral",
+                D::Spectral,
+                750.0,
+                0.6,
+                0.35,
+                0.5,
+                1.0,
+                vec![low_cut(500.0)],
+            ),
         ],
         _ => vec![
-            repeat("Clean 1/16", D::Clean, 187.0, 0.25, 0.25, 0.15, 0.5, vec![low_cut(200.0)]),
-            repeat("Tape 1/16", D::Tape, 187.0, 0.3, 0.25, 0.35, 0.5, vec![low_cut(200.0), shelf(-3.0)]),
-            repeat("BBD Bounce", D::Bbd, 210.0, 0.35, 0.25, 0.5, 0.6, vec![low_cut(200.0), shelf(-5.0)]),
-            repeat("Ping-Pong", D::MultiTap, 187.0, 0.3, 0.25, 0.2, 1.0, vec![low_cut(200.0)]),
-            repeat("Filtered", D::Filter, 187.0, 0.4, 0.25, 0.6, 0.5, vec![low_cut(300.0), shelf(-6.0)]),
+            repeat(
+                "Clean 1/16",
+                D::Clean,
+                187.0,
+                0.25,
+                0.25,
+                0.15,
+                0.5,
+                vec![low_cut(200.0)],
+            ),
+            repeat(
+                "Tape 1/16",
+                D::Tape,
+                187.0,
+                0.3,
+                0.25,
+                0.35,
+                0.5,
+                vec![low_cut(200.0), shelf(-3.0)],
+            ),
+            repeat(
+                "BBD Bounce",
+                D::Bbd,
+                210.0,
+                0.35,
+                0.25,
+                0.5,
+                0.6,
+                vec![low_cut(200.0), shelf(-5.0)],
+            ),
+            repeat(
+                "Ping-Pong",
+                D::MultiTap,
+                187.0,
+                0.3,
+                0.25,
+                0.2,
+                1.0,
+                vec![low_cut(200.0)],
+            ),
+            repeat(
+                "Filtered",
+                D::Filter,
+                187.0,
+                0.4,
+                0.25,
+                0.6,
+                0.5,
+                vec![low_cut(300.0), shelf(-6.0)],
+            ),
         ],
     }
 }
@@ -5057,133 +6015,750 @@ const ROOM_NAMES: &[&str] = &[
 /// The curated presets for one reverb slot, plainest to most coloured.
 fn reverb_presets(name: &str) -> Vec<Preset> {
     use AlgorithmType as A;
-    let dark = |low: f64, high: f64| vec![band(0, 300.0, low, 0.7, EqBandShape::LowShelf), band(1, 5_000.0, high, 0.7, EqBandShape::HighShelf)];
+    let dark = |low: f64, high: f64| {
+        vec![
+            band(0, 300.0, low, 0.7, EqBandShape::LowShelf),
+            band(1, 5_000.0, high, 0.7, EqBandShape::HighShelf),
+        ]
+    };
     let lower = name.to_lowercase();
-    if let Some(room) = ROOM_NAMES.iter().copied().find(|r| lower.contains(&r.to_lowercase())) {
+    if let Some(room) = ROOM_NAMES
+        .iter()
+        .copied()
+        .find(|r| lower.contains(&r.to_lowercase()))
+    {
         return match room {
             // A captured room, not a digital one, and treated like a
             // room mic: compressed fast on the way back. Fed off a
             // send so the blend into it is not the drum blend.
             "Room Sim" => vec![
-                space("Sunset Sound", A::Convolution, 0.9, 0.0, 0.5, 0.2, 1.0, 0.3, vec![shelf(1.0)], vec![]),
-                space("Ocean Way", A::Convolution, 1.2, 0.0, 0.7, 0.3, 1.0, 0.3, vec![], vec![]),
-                space("Small Booth", A::Convolution, 0.5, 0.0, 0.3, 0.3, 1.0, 0.3, vec![shelf(-2.0)], vec![]),
-                space("Live Room", A::Room, 1.0, 4.0, 0.6, 0.25, 0.8, 0.3, vec![], vec![]),
+                space(
+                    "Sunset Sound",
+                    A::Convolution,
+                    0.9,
+                    0.0,
+                    0.5,
+                    0.2,
+                    1.0,
+                    0.3,
+                    vec![shelf(1.0)],
+                    vec![],
+                ),
+                space(
+                    "Ocean Way",
+                    A::Convolution,
+                    1.2,
+                    0.0,
+                    0.7,
+                    0.3,
+                    1.0,
+                    0.3,
+                    vec![],
+                    vec![],
+                ),
+                space(
+                    "Small Booth",
+                    A::Convolution,
+                    0.5,
+                    0.0,
+                    0.3,
+                    0.3,
+                    1.0,
+                    0.3,
+                    vec![shelf(-2.0)],
+                    vec![],
+                ),
+                space(
+                    "Live Room",
+                    A::Room,
+                    1.0,
+                    4.0,
+                    0.6,
+                    0.25,
+                    0.8,
+                    0.3,
+                    vec![],
+                    vec![],
+                ),
             ],
             // Short and bright: sizzle and snap and air around the kit
             // on the uptempo song that has no room for a tail.
             "Wood Room" => vec![
-                space("Wood Room", A::Room, 0.7, 6.0, 0.4, 0.2, 0.7, 0.22, vec![shelf(2.0)], vec![]),
-                space("Ruckus", A::Room, 0.8, 4.0, 0.45, 0.1, 0.5, 0.22, vec![shelf(3.0), band(1, 3_000.0, 2.0, 1.0, EqBandShape::Bell)], vec![]),
-                space("Studio A", A::Hall, 0.9, 8.0, 0.5, 0.3, 0.8, 0.22, vec![], vec![]),
+                space(
+                    "Wood Room",
+                    A::Room,
+                    0.7,
+                    6.0,
+                    0.4,
+                    0.2,
+                    0.7,
+                    0.22,
+                    vec![shelf(2.0)],
+                    vec![],
+                ),
+                space(
+                    "Ruckus",
+                    A::Room,
+                    0.8,
+                    4.0,
+                    0.45,
+                    0.1,
+                    0.5,
+                    0.22,
+                    vec![shelf(3.0), band(1, 3_000.0, 2.0, 1.0, EqBandShape::Bell)],
+                    vec![],
+                ),
+                space(
+                    "Studio A",
+                    A::Hall,
+                    0.9,
+                    8.0,
+                    0.5,
+                    0.3,
+                    0.8,
+                    0.22,
+                    vec![],
+                    vec![],
+                ),
             ],
             // Short and smooth: the 480's music club, low mids and the
             // smoothest decay of the short ones.
             "Music Club" => vec![
-                space("Music Club", A::Room, 0.9, 10.0, 0.5, 0.55, 0.9, 0.22, vec![shelf(-4.0)], vec![]),
-                space("Warm Room", A::Room, 1.1, 12.0, 0.55, 0.65, 0.9, 0.22, vec![shelf(-6.0)], dark(2.0, -6.0)),
-                space("Velvet Room", A::Velvet, 1.0, 10.0, 0.5, 0.5, 1.0, 0.22, vec![shelf(-3.0)], vec![]),
+                space(
+                    "Music Club",
+                    A::Room,
+                    0.9,
+                    10.0,
+                    0.5,
+                    0.55,
+                    0.9,
+                    0.22,
+                    vec![shelf(-4.0)],
+                    vec![],
+                ),
+                space(
+                    "Warm Room",
+                    A::Room,
+                    1.1,
+                    12.0,
+                    0.55,
+                    0.65,
+                    0.9,
+                    0.22,
+                    vec![shelf(-6.0)],
+                    dark(2.0, -6.0),
+                ),
+                space(
+                    "Velvet Room",
+                    A::Velvet,
+                    1.0,
+                    10.0,
+                    0.5,
+                    0.5,
+                    1.0,
+                    0.22,
+                    vec![shelf(-3.0)],
+                    vec![],
+                ),
             ],
             // The big ballad: about two seconds, some top rolled off,
             // a little low end — then high-passed on the way back.
             "Stadium" => vec![
-                space("Stadium", A::Hall, 2.0, 30.0, 0.8, 0.5, 0.85, 0.2, vec![low_cut(150.0), shelf(-3.0)], dark(2.0, -4.0)),
-                space("Arena", A::Hall, 2.6, 40.0, 0.9, 0.55, 0.85, 0.2, vec![low_cut(180.0), shelf(-5.0)], dark(3.0, -6.0)),
-                space("Marble Room", A::Bloom, 1.8, 20.0, 0.7, 0.45, 1.0, 0.2, vec![low_cut(120.0)], vec![]),
+                space(
+                    "Stadium",
+                    A::Hall,
+                    2.0,
+                    30.0,
+                    0.8,
+                    0.5,
+                    0.85,
+                    0.2,
+                    vec![low_cut(150.0), shelf(-3.0)],
+                    dark(2.0, -4.0),
+                ),
+                space(
+                    "Arena",
+                    A::Hall,
+                    2.6,
+                    40.0,
+                    0.9,
+                    0.55,
+                    0.85,
+                    0.2,
+                    vec![low_cut(180.0), shelf(-5.0)],
+                    dark(3.0, -6.0),
+                ),
+                space(
+                    "Marble Room",
+                    A::Bloom,
+                    1.8,
+                    20.0,
+                    0.7,
+                    0.45,
+                    1.0,
+                    0.2,
+                    vec![low_cut(120.0)],
+                    vec![],
+                ),
             ],
             // The eighties snare: dense, a bit of tail, blends with the
             // shorter rooms.
             "RMX 16" => vec![
-                space("Ambience 1.7", A::Plate, 1.7, 20.0, 0.6, 0.5, 1.0, 0.22, vec![low_cut(100.0), shelf(-5.0)], dark(3.0, -6.0)),
-                space("Big Snare", A::Plate, 2.2, 30.0, 0.7, 0.45, 1.0, 0.25, vec![low_cut(120.0), shelf(-3.0)], dark(4.0, -4.0)),
-                space("Room Hall", A::Random, 1.5, 15.0, 0.6, 0.5, 0.9, 0.22, vec![low_cut(100.0)], vec![]),
+                space(
+                    "Ambience 1.7",
+                    A::Plate,
+                    1.7,
+                    20.0,
+                    0.6,
+                    0.5,
+                    1.0,
+                    0.22,
+                    vec![low_cut(100.0), shelf(-5.0)],
+                    dark(3.0, -6.0),
+                ),
+                space(
+                    "Big Snare",
+                    A::Plate,
+                    2.2,
+                    30.0,
+                    0.7,
+                    0.45,
+                    1.0,
+                    0.25,
+                    vec![low_cut(120.0), shelf(-3.0)],
+                    dark(4.0, -4.0),
+                ),
+                space(
+                    "Room Hall",
+                    A::Random,
+                    1.5,
+                    15.0,
+                    0.6,
+                    0.5,
+                    0.9,
+                    0.22,
+                    vec![low_cut(100.0)],
+                    vec![],
+                ),
             ],
             // Phil Collins. Not a lush tail and not supposed to be —
             // which is why even a grainy one sounds right.
             "Nonlin" => vec![
-                space("Nonlin", A::NonLinear, 0.9, 0.0, 0.6, 0.3, 0.9, 0.3, vec![low_cut(120.0)], vec![]),
-                space("Gated", A::NonLinear, 0.6, 0.0, 0.5, 0.3, 0.9, 0.3, vec![low_cut(150.0), shelf(2.0)], vec![]),
-                space("Reverse", A::NonLinear, 1.2, 0.0, 0.7, 0.4, 0.9, 0.3, vec![low_cut(120.0)], vec![]),
+                space(
+                    "Nonlin",
+                    A::NonLinear,
+                    0.9,
+                    0.0,
+                    0.6,
+                    0.3,
+                    0.9,
+                    0.3,
+                    vec![low_cut(120.0)],
+                    vec![],
+                ),
+                space(
+                    "Gated",
+                    A::NonLinear,
+                    0.6,
+                    0.0,
+                    0.5,
+                    0.3,
+                    0.9,
+                    0.3,
+                    vec![low_cut(150.0), shelf(2.0)],
+                    vec![],
+                ),
+                space(
+                    "Reverse",
+                    A::NonLinear,
+                    1.2,
+                    0.0,
+                    0.7,
+                    0.4,
+                    0.9,
+                    0.3,
+                    vec![low_cut(120.0)],
+                    vec![],
+                ),
             ],
             // Sits an instrument back into an acoustic space without
             // changing its sound: no pre-delay, under a second.
             "Short Room" => vec![
-                space("Sonsig", A::Room, 0.8, 0.0, 0.4, 0.3, 0.8, 0.2, vec![], vec![]),
-                space("Small Studio", A::Room, 0.6, 0.0, 0.3, 0.25, 0.7, 0.2, vec![shelf(1.0)], vec![]),
-                space("D-Verb", A::Hall, 0.9, 0.0, 0.4, 0.4, 0.4, 0.2, vec![shelf(-2.0)], vec![]),
-                space("PCM 60", A::Room, 0.7, 4.0, 0.45, 0.35, 0.8, 0.2, vec![], vec![]),
+                space(
+                    "Sonsig",
+                    A::Room,
+                    0.8,
+                    0.0,
+                    0.4,
+                    0.3,
+                    0.8,
+                    0.2,
+                    vec![],
+                    vec![],
+                ),
+                space(
+                    "Small Studio",
+                    A::Room,
+                    0.6,
+                    0.0,
+                    0.3,
+                    0.25,
+                    0.7,
+                    0.2,
+                    vec![shelf(1.0)],
+                    vec![],
+                ),
+                space(
+                    "D-Verb",
+                    A::Hall,
+                    0.9,
+                    0.0,
+                    0.4,
+                    0.4,
+                    0.4,
+                    0.2,
+                    vec![shelf(-2.0)],
+                    vec![],
+                ),
+                space(
+                    "PCM 60",
+                    A::Room,
+                    0.7,
+                    4.0,
+                    0.45,
+                    0.35,
+                    0.8,
+                    0.2,
+                    vec![],
+                    vec![],
+                ),
             ],
             // A slap off the walls, a little different left to right —
             // for live records, in combination with something longer.
             "Slap Room" => vec![
-                space("Slap Room", A::Reflections, 0.4, 10.0, 0.5, 0.3, 0.4, 0.22, vec![], vec![]),
-                space("Wide Slap", A::Reflections, 0.5, 14.0, 0.6, 0.3, 0.3, 0.22, vec![shelf(1.0)], vec![]),
-                space("Tight Slap", A::Reflections, 0.3, 6.0, 0.35, 0.3, 0.5, 0.22, vec![], vec![]),
+                space(
+                    "Slap Room",
+                    A::Reflections,
+                    0.4,
+                    10.0,
+                    0.5,
+                    0.3,
+                    0.4,
+                    0.22,
+                    vec![],
+                    vec![],
+                ),
+                space(
+                    "Wide Slap",
+                    A::Reflections,
+                    0.5,
+                    14.0,
+                    0.6,
+                    0.3,
+                    0.3,
+                    0.22,
+                    vec![shelf(1.0)],
+                    vec![],
+                ),
+                space(
+                    "Tight Slap",
+                    A::Reflections,
+                    0.3,
+                    6.0,
+                    0.35,
+                    0.3,
+                    0.5,
+                    0.22,
+                    vec![],
+                    vec![],
+                ),
             ],
             // Early reflections and no tail: a real space that takes
             // up no space, the source pushed back by the distance.
             "Early" => vec![
-                space("Cinematic Near", A::Reflections, 0.25, 2.0, 0.5, 0.3, 0.6, 0.3, vec![], vec![]),
-                space("Cinematic Far", A::Reflections, 0.35, 12.0, 0.8, 0.5, 0.6, 0.3, vec![shelf(-6.0)], vec![]),
-                space("Reflective", A::Reflections, 0.3, 4.0, 0.6, 0.1, 0.7, 0.3, vec![shelf(2.0)], vec![]),
+                space(
+                    "Cinematic Near",
+                    A::Reflections,
+                    0.25,
+                    2.0,
+                    0.5,
+                    0.3,
+                    0.6,
+                    0.3,
+                    vec![],
+                    vec![],
+                ),
+                space(
+                    "Cinematic Far",
+                    A::Reflections,
+                    0.35,
+                    12.0,
+                    0.8,
+                    0.5,
+                    0.6,
+                    0.3,
+                    vec![shelf(-6.0)],
+                    vec![],
+                ),
+                space(
+                    "Reflective",
+                    A::Reflections,
+                    0.3,
+                    4.0,
+                    0.6,
+                    0.1,
+                    0.7,
+                    0.3,
+                    vec![shelf(2.0)],
+                    vec![],
+                ),
             ],
             // The 480's fat plate: under two seconds, bright and airy,
             // the one every tool bag has.
             "Fat Plate" => vec![
-                space("Fat Plate", A::Plate, 1.9, 10.0, 0.6, 0.15, 1.0, 0.2, vec![shelf(2.0)], vec![]),
-                space("Bright Plate", A::Plate, 1.6, 8.0, 0.5, 0.1, 1.0, 0.2, vec![shelf(3.0)], vec![]),
-                space("Thin Plate", A::Plate, 1.4, 10.0, 0.4, 0.15, 0.9, 0.2, vec![low_cut(300.0), shelf(2.0)], vec![]),
+                space(
+                    "Fat Plate",
+                    A::Plate,
+                    1.9,
+                    10.0,
+                    0.6,
+                    0.15,
+                    1.0,
+                    0.2,
+                    vec![shelf(2.0)],
+                    vec![],
+                ),
+                space(
+                    "Bright Plate",
+                    A::Plate,
+                    1.6,
+                    8.0,
+                    0.5,
+                    0.1,
+                    1.0,
+                    0.2,
+                    vec![shelf(3.0)],
+                    vec![],
+                ),
+                space(
+                    "Thin Plate",
+                    A::Plate,
+                    1.4,
+                    10.0,
+                    0.4,
+                    0.15,
+                    0.9,
+                    0.2,
+                    vec![low_cut(300.0), shelf(2.0)],
+                    vec![],
+                ),
             ],
             // The same decay, decaying darker: for a steel-string
             // acoustic that needs it.
             "Dark Plate" => vec![
-                space("Lustrous", A::Plate, 1.9, 12.0, 0.6, 0.55, 1.0, 0.2, vec![shelf(-4.0)], dark(2.0, -6.0)),
-                space("Warm Plate", A::Plate, 2.2, 15.0, 0.65, 0.65, 1.0, 0.2, vec![shelf(-6.0)], dark(3.0, -9.0)),
-                space("Velvet Plate", A::Velvet, 1.8, 12.0, 0.6, 0.5, 1.0, 0.2, vec![shelf(-3.0)], vec![]),
+                space(
+                    "Lustrous",
+                    A::Plate,
+                    1.9,
+                    12.0,
+                    0.6,
+                    0.55,
+                    1.0,
+                    0.2,
+                    vec![shelf(-4.0)],
+                    dark(2.0, -6.0),
+                ),
+                space(
+                    "Warm Plate",
+                    A::Plate,
+                    2.2,
+                    15.0,
+                    0.65,
+                    0.65,
+                    1.0,
+                    0.2,
+                    vec![shelf(-6.0)],
+                    dark(3.0, -9.0),
+                ),
+                space(
+                    "Velvet Plate",
+                    A::Velvet,
+                    1.8,
+                    12.0,
+                    0.6,
+                    0.5,
+                    1.0,
+                    0.2,
+                    vec![shelf(-3.0)],
+                    vec![],
+                ),
             ],
             // A different kind of tail — and a decay that can be
             // darkened band by band without getting shorter.
             "Gold Plate" => vec![
-                space("Gold Plate", A::Plate, 2.0, 10.0, 0.7, 0.35, 1.0, 0.2, vec![], dark(0.0, -3.0)),
-                space("Tai Chi", A::Bloom, 2.2, 10.0, 0.7, 0.4, 1.0, 0.2, vec![], dark(0.0, -6.0)),
-                space("Tai Chi Air", A::Bloom, 2.2, 10.0, 0.7, 0.2, 1.0, 0.2, vec![shelf(2.0)], dark(0.0, 3.0)),
+                space(
+                    "Gold Plate",
+                    A::Plate,
+                    2.0,
+                    10.0,
+                    0.7,
+                    0.35,
+                    1.0,
+                    0.2,
+                    vec![],
+                    dark(0.0, -3.0),
+                ),
+                space(
+                    "Tai Chi",
+                    A::Bloom,
+                    2.2,
+                    10.0,
+                    0.7,
+                    0.4,
+                    1.0,
+                    0.2,
+                    vec![],
+                    dark(0.0, -6.0),
+                ),
+                space(
+                    "Tai Chi Air",
+                    A::Bloom,
+                    2.2,
+                    10.0,
+                    0.7,
+                    0.2,
+                    1.0,
+                    0.2,
+                    vec![shelf(2.0)],
+                    dark(0.0, 3.0),
+                ),
             ],
             // The 480's large hall: three seconds, no pre-delay, the
             // whole thing set further away.
             "Large Hall" => vec![
-                space("Large Hall", A::Hall, 3.0, 0.0, 0.8, 0.45, 0.85, 0.18, vec![shelf(-3.0)], dark(2.0, -4.0)),
-                space("Short Hall", A::Hall, 2.0, 0.0, 0.7, 0.45, 0.85, 0.18, vec![shelf(-2.0)], vec![]),
-                space("Distant Hall", A::Hall, 3.2, 0.0, 0.9, 0.6, 0.85, 0.18, vec![shelf(-8.0), band(1, 4_000.0, -6.0, 0.7, EqBandShape::HighShelf)], dark(3.0, -9.0)),
+                space(
+                    "Large Hall",
+                    A::Hall,
+                    3.0,
+                    0.0,
+                    0.8,
+                    0.45,
+                    0.85,
+                    0.18,
+                    vec![shelf(-3.0)],
+                    dark(2.0, -4.0),
+                ),
+                space(
+                    "Short Hall",
+                    A::Hall,
+                    2.0,
+                    0.0,
+                    0.7,
+                    0.45,
+                    0.85,
+                    0.18,
+                    vec![shelf(-2.0)],
+                    vec![],
+                ),
+                space(
+                    "Distant Hall",
+                    A::Hall,
+                    3.2,
+                    0.0,
+                    0.9,
+                    0.6,
+                    0.85,
+                    0.18,
+                    vec![
+                        shelf(-8.0),
+                        band(1, 4_000.0, -6.0, 0.7, EqBandShape::HighShelf),
+                    ],
+                    dark(3.0, -9.0),
+                ),
             ],
             // Brighter, and long: a sustaining wall of warmth under the
             // instrument, ten seconds if it wants to be.
             "Vienna" => vec![
-                space("Vienna Hall", A::Hall, 4.0, 20.0, 0.9, 0.35, 0.9, 0.16, vec![], dark(2.0, 0.0)),
-                space("Vienna Long", A::Hall, 10.0, 20.0, 1.0, 0.4, 0.9, 0.14, vec![shelf(-3.0)], dark(3.0, -3.0)),
-                space("Edgy Hall", A::Cloud, 3.5, 20.0, 0.9, 0.2, 0.9, 0.16, vec![shelf(3.0)], dark(-3.0, 3.0)),
+                space(
+                    "Vienna Hall",
+                    A::Hall,
+                    4.0,
+                    20.0,
+                    0.9,
+                    0.35,
+                    0.9,
+                    0.16,
+                    vec![],
+                    dark(2.0, 0.0),
+                ),
+                space(
+                    "Vienna Long",
+                    A::Hall,
+                    10.0,
+                    20.0,
+                    1.0,
+                    0.4,
+                    0.9,
+                    0.14,
+                    vec![shelf(-3.0)],
+                    dark(3.0, -3.0),
+                ),
+                space(
+                    "Edgy Hall",
+                    A::Cloud,
+                    3.5,
+                    20.0,
+                    0.9,
+                    0.2,
+                    0.9,
+                    0.16,
+                    vec![shelf(3.0)],
+                    dark(-3.0, 3.0),
+                ),
             ],
             // Really long, and a low-pass on the way back: a synth bed
             // under the instrument rather than a room around it.
             "Atmosphere" => vec![
-                space("Atmosphere", A::Cloud, 14.0, 40.0, 1.0, 0.5, 1.0, 0.2, vec![band(1, 3_000.0, -9.0, 0.7, EqBandShape::HighShelf)], dark(0.0, -6.0)),
-                space("Swell Hall", A::Swell, 8.0, 80.0, 1.0, 0.5, 1.0, 0.22, vec![shelf(-4.0)], dark(0.0, -6.0)),
-                space("Long Choir", A::Chorale, 9.0, 60.0, 1.0, 0.55, 1.0, 0.2, vec![shelf(-6.0)], dark(2.0, -6.0)),
+                space(
+                    "Atmosphere",
+                    A::Cloud,
+                    14.0,
+                    40.0,
+                    1.0,
+                    0.5,
+                    1.0,
+                    0.2,
+                    vec![band(1, 3_000.0, -9.0, 0.7, EqBandShape::HighShelf)],
+                    dark(0.0, -6.0),
+                ),
+                space(
+                    "Swell Hall",
+                    A::Swell,
+                    8.0,
+                    80.0,
+                    1.0,
+                    0.5,
+                    1.0,
+                    0.22,
+                    vec![shelf(-4.0)],
+                    dark(0.0, -6.0),
+                ),
+                space(
+                    "Long Choir",
+                    A::Chorale,
+                    9.0,
+                    60.0,
+                    1.0,
+                    0.55,
+                    1.0,
+                    0.2,
+                    vec![shelf(-6.0)],
+                    dark(2.0, -6.0),
+                ),
             ],
             // A spring that is not a model of one box: any decay, from
             // clean through a gritty combo to driven.
             "Big Sky" => vec![
-                space("Combo Spring", A::Spring, 2.0, 0.0, 0.5, 0.4, 0.5, 0.25, vec![band(0, 2_000.0, 2.0, 1.0, EqBandShape::Bell)], vec![]),
-                space("Clean Spring", A::Spring, 2.5, 0.0, 0.5, 0.3, 0.5, 0.25, vec![], vec![]),
-                space("Dirty Spring", A::Spring, 1.6, 0.0, 0.5, 0.5, 0.4, 0.25, vec![band(0, 1_500.0, 4.0, 1.2, EqBandShape::Bell), shelf(-4.0)], vec![]),
-                space("Long Spring", A::Spring, 4.0, 0.0, 0.6, 0.4, 0.5, 0.22, vec![], vec![]),
+                space(
+                    "Combo Spring",
+                    A::Spring,
+                    2.0,
+                    0.0,
+                    0.5,
+                    0.4,
+                    0.5,
+                    0.25,
+                    vec![band(0, 2_000.0, 2.0, 1.0, EqBandShape::Bell)],
+                    vec![],
+                ),
+                space(
+                    "Clean Spring",
+                    A::Spring,
+                    2.5,
+                    0.0,
+                    0.5,
+                    0.3,
+                    0.5,
+                    0.25,
+                    vec![],
+                    vec![],
+                ),
+                space(
+                    "Dirty Spring",
+                    A::Spring,
+                    1.6,
+                    0.0,
+                    0.5,
+                    0.5,
+                    0.4,
+                    0.25,
+                    vec![band(0, 1_500.0, 4.0, 1.2, EqBandShape::Bell), shelf(-4.0)],
+                    vec![],
+                ),
+                space(
+                    "Long Spring",
+                    A::Spring,
+                    4.0,
+                    0.0,
+                    0.6,
+                    0.4,
+                    0.5,
+                    0.22,
+                    vec![],
+                    vec![],
+                ),
             ],
             // The classic tank: the newer model warm and lush, the
             // vintage one shorter and brighter, and 2 kHz for anger.
             _ => vec![
-                space("XL35", A::Spring, 2.2, 0.0, 0.5, 0.45, 0.5, 0.25, vec![], vec![]),
-                space("XL35 Vintage", A::Spring, 1.5, 0.0, 0.4, 0.3, 0.4, 0.25, vec![shelf(2.0)], vec![]),
-                space("XL35 Angry", A::Spring, 2.2, 0.0, 0.5, 0.45, 0.5, 0.25, vec![band(0, 2_000.0, 5.0, 1.5, EqBandShape::Bell)], vec![]),
-                space("Air Spring", A::Spring, 2.8, 0.0, 0.6, 0.6, 0.4, 0.25, vec![band(0, 800.0, 3.0, 0.8, EqBandShape::Bell), shelf(-6.0)], vec![]),
+                space(
+                    "XL35",
+                    A::Spring,
+                    2.2,
+                    0.0,
+                    0.5,
+                    0.45,
+                    0.5,
+                    0.25,
+                    vec![],
+                    vec![],
+                ),
+                space(
+                    "XL35 Vintage",
+                    A::Spring,
+                    1.5,
+                    0.0,
+                    0.4,
+                    0.3,
+                    0.4,
+                    0.25,
+                    vec![shelf(2.0)],
+                    vec![],
+                ),
+                space(
+                    "XL35 Angry",
+                    A::Spring,
+                    2.2,
+                    0.0,
+                    0.5,
+                    0.45,
+                    0.5,
+                    0.25,
+                    vec![band(0, 2_000.0, 5.0, 1.5, EqBandShape::Bell)],
+                    vec![],
+                ),
+                space(
+                    "Air Spring",
+                    A::Spring,
+                    2.8,
+                    0.0,
+                    0.6,
+                    0.6,
+                    0.4,
+                    0.25,
+                    vec![band(0, 800.0, 3.0, 0.8, EqBandShape::Bell), shelf(-6.0)],
+                    vec![],
+                ),
             ],
         };
     }
@@ -5191,53 +6766,368 @@ fn reverb_presets(name: &str) -> Vec<Preset> {
         return vec![
             // The 480's brick wall: two hundred and forty milliseconds
             // with the early reflections lopsided, for motion.
-
-                space("Brick Wall", A::Reflections, 0.24, 0.0, 0.3, 0.2, 0.3, 0.3, vec![], vec![]),
-                space("Sidewall Slap", A::Reflections, 0.3, 8.0, 0.4, 0.2, 0.2, 0.3, vec![shelf(2.0)], vec![]),
-                space("Lopsided", A::Reflections, 0.35, 12.0, 0.5, 0.3, 0.4, 0.3, vec![], vec![]),
+            space(
+                "Brick Wall",
+                A::Reflections,
+                0.24,
+                0.0,
+                0.3,
+                0.2,
+                0.3,
+                0.3,
+                vec![],
+                vec![],
+            ),
+            space(
+                "Sidewall Slap",
+                A::Reflections,
+                0.3,
+                8.0,
+                0.4,
+                0.2,
+                0.2,
+                0.3,
+                vec![shelf(2.0)],
+                vec![],
+            ),
+            space(
+                "Lopsided",
+                A::Reflections,
+                0.35,
+                12.0,
+                0.5,
+                0.3,
+                0.4,
+                0.3,
+                vec![],
+                vec![],
+            ),
         ];
     }
     match slot_of(name, REVERB_SLOTS) {
         "Room" => vec![
-            space("Small Room", A::Room, 0.6, 8.0, 0.35, 0.15, 0.6, 0.2, vec![shelf(1.5)], vec![]),
-            space("Wood Room", A::Room, 0.8, 10.0, 0.45, 0.4, 0.7, 0.2, vec![shelf(-2.0)], vec![]),
-            space("Reflections", A::Reflections, 0.5, 4.0, 0.3, 0.2, 0.4, 0.22, vec![], vec![]),
-            space("Tight Plate", A::Plate, 0.8, 5.0, 0.3, 0.25, 0.9, 0.18, vec![shelf(1.0)], vec![]),
-            space("Velvet", A::Velvet, 0.7, 6.0, 0.4, 0.3, 1.0, 0.2, vec![], vec![]),
+            space(
+                "Small Room",
+                A::Room,
+                0.6,
+                8.0,
+                0.35,
+                0.15,
+                0.6,
+                0.2,
+                vec![shelf(1.5)],
+                vec![],
+            ),
+            space(
+                "Wood Room",
+                A::Room,
+                0.8,
+                10.0,
+                0.45,
+                0.4,
+                0.7,
+                0.2,
+                vec![shelf(-2.0)],
+                vec![],
+            ),
+            space(
+                "Reflections",
+                A::Reflections,
+                0.5,
+                4.0,
+                0.3,
+                0.2,
+                0.4,
+                0.22,
+                vec![],
+                vec![],
+            ),
+            space(
+                "Tight Plate",
+                A::Plate,
+                0.8,
+                5.0,
+                0.3,
+                0.25,
+                0.9,
+                0.18,
+                vec![shelf(1.0)],
+                vec![],
+            ),
+            space(
+                "Velvet",
+                A::Velvet,
+                0.7,
+                6.0,
+                0.4,
+                0.3,
+                1.0,
+                0.2,
+                vec![],
+                vec![],
+            ),
         ],
         "Long" => vec![
-            space("Hall 2.6", A::Hall, 2.6, 40.0, 0.7, 0.5, 0.8, 0.18, vec![shelf(-4.0)], dark(-6.0, -6.0)),
-            space("Dark Hall", A::Hall, 3.0, 50.0, 0.8, 0.7, 0.8, 0.18, vec![shelf(-8.0)], dark(-6.0, -12.0)),
-            space("Magneto", A::Magneto, 2.4, 30.0, 0.6, 0.5, 0.9, 0.2, vec![shelf(-5.0)], dark(-4.0, -6.0)),
-            space("Chorale", A::Chorale, 3.2, 40.0, 0.75, 0.45, 0.9, 0.18, vec![shelf(-4.0)], dark(-6.0, -4.0)),
-            space("Random Space", A::Random, 2.8, 35.0, 0.7, 0.5, 0.85, 0.18, vec![shelf(-5.0)], dark(-6.0, -6.0)),
+            space(
+                "Hall 2.6",
+                A::Hall,
+                2.6,
+                40.0,
+                0.7,
+                0.5,
+                0.8,
+                0.18,
+                vec![shelf(-4.0)],
+                dark(-6.0, -6.0),
+            ),
+            space(
+                "Dark Hall",
+                A::Hall,
+                3.0,
+                50.0,
+                0.8,
+                0.7,
+                0.8,
+                0.18,
+                vec![shelf(-8.0)],
+                dark(-6.0, -12.0),
+            ),
+            space(
+                "Magneto",
+                A::Magneto,
+                2.4,
+                30.0,
+                0.6,
+                0.5,
+                0.9,
+                0.2,
+                vec![shelf(-5.0)],
+                dark(-4.0, -6.0),
+            ),
+            space(
+                "Chorale",
+                A::Chorale,
+                3.2,
+                40.0,
+                0.75,
+                0.45,
+                0.9,
+                0.18,
+                vec![shelf(-4.0)],
+                dark(-6.0, -4.0),
+            ),
+            space(
+                "Random Space",
+                A::Random,
+                2.8,
+                35.0,
+                0.7,
+                0.5,
+                0.85,
+                0.18,
+                vec![shelf(-5.0)],
+                dark(-6.0, -6.0),
+            ),
         ],
         "Moment" => vec![
-            space("Cloud", A::Cloud, 5.5, 60.0, 0.9, 0.65, 0.9, 0.25, vec![shelf(-7.0)], dark(-9.0, -9.0)),
-            space("Bloom", A::Bloom, 5.0, 80.0, 0.9, 0.6, 1.0, 0.25, vec![shelf(-6.0)], dark(-9.0, -6.0)),
-            space("Swell", A::Swell, 6.0, 100.0, 0.95, 0.6, 1.0, 0.25, vec![shelf(-6.0)], dark(-9.0, -8.0)),
-            space("Convolution", A::Convolution, 4.5, 40.0, 0.8, 0.5, 1.0, 0.22, vec![shelf(-5.0)], dark(-6.0, -6.0)),
-            space("Velvet Wash", A::Velvet, 5.0, 60.0, 0.9, 0.7, 1.0, 0.25, vec![shelf(-8.0)], dark(-9.0, -12.0)),
+            space(
+                "Cloud",
+                A::Cloud,
+                5.5,
+                60.0,
+                0.9,
+                0.65,
+                0.9,
+                0.25,
+                vec![shelf(-7.0)],
+                dark(-9.0, -9.0),
+            ),
+            space(
+                "Bloom",
+                A::Bloom,
+                5.0,
+                80.0,
+                0.9,
+                0.6,
+                1.0,
+                0.25,
+                vec![shelf(-6.0)],
+                dark(-9.0, -6.0),
+            ),
+            space(
+                "Swell",
+                A::Swell,
+                6.0,
+                100.0,
+                0.95,
+                0.6,
+                1.0,
+                0.25,
+                vec![shelf(-6.0)],
+                dark(-9.0, -8.0),
+            ),
+            space(
+                "Convolution",
+                A::Convolution,
+                4.5,
+                40.0,
+                0.8,
+                0.5,
+                1.0,
+                0.22,
+                vec![shelf(-5.0)],
+                dark(-6.0, -6.0),
+            ),
+            space(
+                "Velvet Wash",
+                A::Velvet,
+                5.0,
+                60.0,
+                0.9,
+                0.7,
+                1.0,
+                0.25,
+                vec![shelf(-8.0)],
+                dark(-9.0, -12.0),
+            ),
         ],
         "Throw" => vec![
-            space("Shimmer", A::Shimmer, 8.0, 90.0, 1.0, 0.7, 1.0, 0.35, vec![shelf(-9.0), band(1, 2_500.0, 3.0, 1.2, EqBandShape::Bell)], vec![band(0, 2_000.0, 6.0, 1.0, EqBandShape::Bell)]),
-            space("Dark Shimmer", A::Shimmer, 6.0, 90.0, 1.0, 0.85, 1.0, 0.3, vec![shelf(-12.0)], vec![band(0, 1_200.0, 4.0, 1.0, EqBandShape::Bell)]),
-            space("Bloom Throw", A::Bloom, 7.0, 120.0, 1.0, 0.6, 1.0, 0.35, vec![shelf(-7.0)], dark(-9.0, -6.0)),
-            space("Cloud Throw", A::Cloud, 9.0, 100.0, 1.0, 0.7, 1.0, 0.35, vec![shelf(-9.0)], dark(-12.0, -9.0)),
-            space("Chorale Throw", A::Chorale, 7.0, 80.0, 1.0, 0.5, 1.0, 0.3, vec![shelf(-6.0)], dark(-9.0, -4.0)),
+            space(
+                "Shimmer",
+                A::Shimmer,
+                8.0,
+                90.0,
+                1.0,
+                0.7,
+                1.0,
+                0.35,
+                vec![shelf(-9.0), band(1, 2_500.0, 3.0, 1.2, EqBandShape::Bell)],
+                vec![band(0, 2_000.0, 6.0, 1.0, EqBandShape::Bell)],
+            ),
+            space(
+                "Dark Shimmer",
+                A::Shimmer,
+                6.0,
+                90.0,
+                1.0,
+                0.85,
+                1.0,
+                0.3,
+                vec![shelf(-12.0)],
+                vec![band(0, 1_200.0, 4.0, 1.0, EqBandShape::Bell)],
+            ),
+            space(
+                "Bloom Throw",
+                A::Bloom,
+                7.0,
+                120.0,
+                1.0,
+                0.6,
+                1.0,
+                0.35,
+                vec![shelf(-7.0)],
+                dark(-9.0, -6.0),
+            ),
+            space(
+                "Cloud Throw",
+                A::Cloud,
+                9.0,
+                100.0,
+                1.0,
+                0.7,
+                1.0,
+                0.35,
+                vec![shelf(-9.0)],
+                dark(-12.0, -9.0),
+            ),
+            space(
+                "Chorale Throw",
+                A::Chorale,
+                7.0,
+                80.0,
+                1.0,
+                0.5,
+                1.0,
+                0.3,
+                vec![shelf(-6.0)],
+                dark(-9.0, -4.0),
+            ),
         ],
         _ => vec![
-            space("Plate 1.4", A::Plate, 1.4, 20.0, 0.5, 0.3, 0.8, 0.2, vec![shelf(-1.5)], vec![]),
-            space("Bright Plate", A::Plate, 1.2, 15.0, 0.45, 0.15, 0.9, 0.2, vec![shelf(2.0)], vec![]),
-            space("Spring", A::Spring, 1.6, 10.0, 0.4, 0.4, 0.5, 0.2, vec![shelf(-3.0)], vec![]),
-            space("Non-Linear", A::NonLinear, 1.0, 10.0, 0.5, 0.3, 0.9, 0.22, vec![], vec![]),
-            space("FreeVerb", A::FreeVerb, 1.5, 20.0, 0.5, 0.35, 0.7, 0.2, vec![shelf(-2.0)], vec![]),
+            space(
+                "Plate 1.4",
+                A::Plate,
+                1.4,
+                20.0,
+                0.5,
+                0.3,
+                0.8,
+                0.2,
+                vec![shelf(-1.5)],
+                vec![],
+            ),
+            space(
+                "Bright Plate",
+                A::Plate,
+                1.2,
+                15.0,
+                0.45,
+                0.15,
+                0.9,
+                0.2,
+                vec![shelf(2.0)],
+                vec![],
+            ),
+            space(
+                "Spring",
+                A::Spring,
+                1.6,
+                10.0,
+                0.4,
+                0.4,
+                0.5,
+                0.2,
+                vec![shelf(-3.0)],
+                vec![],
+            ),
+            space(
+                "Non-Linear",
+                A::NonLinear,
+                1.0,
+                10.0,
+                0.5,
+                0.3,
+                0.9,
+                0.22,
+                vec![],
+                vec![],
+            ),
+            space(
+                "FreeVerb",
+                A::FreeVerb,
+                1.5,
+                20.0,
+                0.5,
+                0.35,
+                0.7,
+                0.2,
+                vec![shelf(-2.0)],
+                vec![],
+            ),
         ],
     }
 }
 
 /// A parallel compressor from its numbers, with what shapes its return.
-fn squash(name: &str, threshold: f32, ratio: f32, attack: f32, release: f32, drive: f32, eq: Vec<EqBand>) -> Preset {
+fn squash(
+    name: &str,
+    threshold: f32,
+    ratio: f32,
+    attack: f32,
+    release: f32,
+    drive: f32,
+    eq: Vec<EqBand>,
+) -> Preset {
     let mut t = placeholder(0);
     t.role = Role::Parallel;
     t.comp = Comp {
@@ -5260,27 +7150,100 @@ fn parallel_presets(name: &str) -> Vec<Preset> {
     let lower = name.to_lowercase();
     if lower.contains("punch") {
         vec![
-            squash("Punch", -24.0, 4.0, 30.0, 80.0, 1.0, vec![band(0, 80.0, 2.0, 0.7, EqBandShape::LowShelf)]),
+            squash(
+                "Punch",
+                -24.0,
+                4.0,
+                30.0,
+                80.0,
+                1.0,
+                vec![band(0, 80.0, 2.0, 0.7, EqBandShape::LowShelf)],
+            ),
             squash("Slow Grab", -20.0, 6.0, 50.0, 120.0, 1.0, vec![]),
-            squash("Snap", -26.0, 3.0, 20.0, 60.0, 1.2, vec![band(0, 3_000.0, 2.0, 1.0, EqBandShape::Bell)]),
+            squash(
+                "Snap",
+                -26.0,
+                3.0,
+                20.0,
+                60.0,
+                1.2,
+                vec![band(0, 3_000.0, 2.0, 1.0, EqBandShape::Bell)],
+            ),
         ]
     } else if lower.contains("smash") {
         vec![
-            squash("Smash", -40.0, 20.0, 0.5, 60.0, 1.0, vec![band(0, 100.0, -3.0, 0.7, EqBandShape::LowShelf), band(1, 8_000.0, -3.0, 0.7, EqBandShape::HighShelf)]),
-            squash("All Buttons", -45.0, 20.0, 0.2, 40.0, 1.0, vec![band(0, 120.0, -4.0, 0.7, EqBandShape::LowShelf)]),
+            squash(
+                "Smash",
+                -40.0,
+                20.0,
+                0.5,
+                60.0,
+                1.0,
+                vec![
+                    band(0, 100.0, -3.0, 0.7, EqBandShape::LowShelf),
+                    band(1, 8_000.0, -3.0, 0.7, EqBandShape::HighShelf),
+                ],
+            ),
+            squash(
+                "All Buttons",
+                -45.0,
+                20.0,
+                0.2,
+                40.0,
+                1.0,
+                vec![band(0, 120.0, -4.0, 0.7, EqBandShape::LowShelf)],
+            ),
             squash("Pumping", -36.0, 12.0, 1.0, 200.0, 1.0, vec![]),
         ]
     } else if lower.contains("crunch") {
         vec![
-            squash("Crunch", -36.0, 10.0, 1.0, 80.0, 3.5, vec![band(0, 150.0, -6.0, 0.7, EqBandShape::LowShelf), band(1, 2_500.0, 3.0, 1.0, EqBandShape::Bell)]),
-            squash("Transformer", -30.0, 8.0, 3.0, 100.0, 2.5, vec![band(0, 120.0, -3.0, 0.7, EqBandShape::LowShelf)]),
-            squash("Fuzz", -40.0, 20.0, 0.3, 50.0, 6.0, vec![band(0, 200.0, -9.0, 0.7, EqBandShape::LowShelf), band(1, 6_000.0, -6.0, 0.7, EqBandShape::HighShelf)]),
+            squash(
+                "Crunch",
+                -36.0,
+                10.0,
+                1.0,
+                80.0,
+                3.5,
+                vec![
+                    band(0, 150.0, -6.0, 0.7, EqBandShape::LowShelf),
+                    band(1, 2_500.0, 3.0, 1.0, EqBandShape::Bell),
+                ],
+            ),
+            squash(
+                "Transformer",
+                -30.0,
+                8.0,
+                3.0,
+                100.0,
+                2.5,
+                vec![band(0, 120.0, -3.0, 0.7, EqBandShape::LowShelf)],
+            ),
+            squash(
+                "Fuzz",
+                -40.0,
+                20.0,
+                0.3,
+                50.0,
+                6.0,
+                vec![
+                    band(0, 200.0, -9.0, 0.7, EqBandShape::LowShelf),
+                    band(1, 6_000.0, -6.0, 0.7, EqBandShape::HighShelf),
+                ],
+            ),
         ]
     } else {
         vec![
             squash("Tight", -22.0, 4.0, 3.0, 100.0, 1.0, vec![]),
             squash("Glue", -18.0, 2.5, 10.0, 200.0, 1.0, vec![]),
-            squash("Fast Four", -26.0, 4.0, 1.0, 60.0, 1.0, vec![band(0, 60.0, -2.0, 0.7, EqBandShape::LowShelf)]),
+            squash(
+                "Fast Four",
+                -26.0,
+                4.0,
+                1.0,
+                60.0,
+                1.0,
+                vec![band(0, 60.0, -2.0, 0.7, EqBandShape::LowShelf)],
+            ),
         ]
     }
 }
@@ -5292,7 +7255,11 @@ fn wide_presets() -> Vec<Preset> {
         t.wide = wide;
         preset(name, t)
     };
-    vec![widen("Subtle", 1.25), widen("Wide", 1.7), widen("Huge", 2.2)]
+    vec![
+        widen("Subtle", 1.25),
+        widen("Wide", 1.7),
+        widen("Huge", 2.2),
+    ]
 }
 
 /// The movement returns — chorus, flanger — as the widener until they
@@ -5308,7 +7275,11 @@ fn mod_presets(name: &str) -> Vec<Preset> {
     if name.to_lowercase().contains("flang") {
         vec![widen("Flanger", 1.4), widen("MXR", 1.6), widen("Jet", 2.0)]
     } else {
-        vec![widen("Dimension D", 1.5), widen("Chorus", 1.7), widen("Tri-Chorus", 2.0)]
+        vec![
+            widen("Dimension D", 1.5),
+            widen("Chorus", 1.7),
+            widen("Tri-Chorus", 2.0),
+        ]
     }
 }
 
@@ -5324,9 +7295,17 @@ fn pitch_presets(name: &str) -> Vec<Preset> {
     };
     let lower = name.to_lowercase();
     if lower.contains('-') || lower.contains("down") || lower.contains("sub") {
-        vec![shift("Oct-", -12, 0.4), shift("Oct- Soft", -12, 0.2), shift("Sub", -24, 0.3)]
+        vec![
+            shift("Oct-", -12, 0.4),
+            shift("Oct- Soft", -12, 0.2),
+            shift("Sub", -24, 0.3),
+        ]
     } else {
-        vec![shift("Oct+", 12, 0.35), shift("Oct+ Soft", 12, 0.18), shift("5th+", 7, 0.25)]
+        vec![
+            shift("Oct+", 12, 0.35),
+            shift("Oct+ Soft", 12, 0.18),
+            shift("5th+", 7, 0.25),
+        ]
     }
 }
 
@@ -5674,7 +7653,10 @@ fn mapper(body: Panel, db_range: f64) -> GraphMapper {
 /// `panel` is the rack's whole box in the same coordinates as `x` and
 /// `y` — the strip's, not the window's.
 #[must_use]
-#[expect(clippy::too_many_arguments, reason = "a hit test and everything it reads")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a hit test and everything it reads"
+)]
 pub fn grip_at(
     panels: &[Which],
     tone: &Tone,
@@ -5738,7 +7720,13 @@ pub fn grip_at(
             // cannot aim at, and grabbing one by accident moves a
             // setting you did not know was there.
             _ if which.is_spectral() && !rack.detailed() => {}
-            Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq | Which::PolishEq => {
+            Which::RescueEq
+            | Which::Eq
+            | Which::Space
+            | Which::PreEq
+            | Which::PostEq
+            | Which::DecayEq
+            | Which::PolishEq => {
                 // The zoom chip first: it is small, it sits over the
                 // graph, and a band that happened to be under it would
                 // otherwise take every click aimed at it.
@@ -5901,7 +7889,10 @@ fn suppress_grip(tone: &Tone, which: Which, body: Panel, rack: Rack, x: f64, y: 
         && y < strip.y + strip.height + 2.0
     {
         let zoom = SuppressZoom::top();
-        for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
+        for (hz, side) in [
+            (f64::from(set.low), Side::Low),
+            (f64::from(set.high), Side::High),
+        ] {
             if (x - zoom.x_of(hz, strip)).abs() <= GRAB {
                 return Grip::Edge(which, side);
             }
@@ -6022,7 +8013,11 @@ pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
                 return;
             }
             let at = tone.preset.unwrap_or(0);
-            let next = if delta_y > 0.0 { at.saturating_add(1).min(len.saturating_sub(1)) } else { at.saturating_sub(1) };
+            let next = if delta_y > 0.0 {
+                at.saturating_add(1).min(len.saturating_sub(1))
+            } else {
+                at.saturating_sub(1)
+            };
             if next != at {
                 tone.load_preset(next);
             }
@@ -6150,7 +8145,8 @@ fn wheel_more(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
         }
         Grip::Feedback => {
             let step = interaction::gain_step(delta_y, mods) * 0.02;
-            tone.delay.feedback = f64_to_f32((f64::from(tone.delay.feedback) + step).clamp(0.0, 0.99));
+            tone.delay.feedback =
+                f64_to_f32((f64::from(tone.delay.feedback) + step).clamp(0.0, 0.99));
         }
         Grip::Decay => {
             let ratio = interaction::gain_step(delta_y, mods).mul_add(0.05, 1.0);
@@ -6158,7 +8154,8 @@ fn wheel_more(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
         }
         Grip::Predelay => {
             let step = interaction::gain_step(delta_y, mods) * 2.0;
-            tone.reverb.predelay = f64_to_f32((f64::from(tone.reverb.predelay) + step).clamp(0.0, 250.0));
+            tone.reverb.predelay =
+                f64_to_f32((f64::from(tone.reverb.predelay) + step).clamp(0.0, 250.0));
         }
         Grip::Mix(which) => {
             let step = interaction::gain_step(delta_y, mods) * 0.02;
@@ -6191,7 +8188,9 @@ fn move_edge(tone: &mut Tone, which: Which, side: Side, ratio: f64) {
     let (low, high) = (f64::from(set.low), f64::from(set.high));
     match side {
         Side::Low => set.low = f64_to_f32((low * ratio).clamp(20.0, high / SUPPRESS_SHOULDER)),
-        Side::High => set.high = f64_to_f32((high * ratio).clamp(low * SUPPRESS_SHOULDER, 20_000.0)),
+        Side::High => {
+            set.high = f64_to_f32((high * ratio).clamp(low * SUPPRESS_SHOULDER, 20_000.0))
+        }
     }
 }
 
@@ -6275,11 +8274,13 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
         }
         // Resetting a bypass is switching it back in, which is what
         // the double-click would have done anyway.
-        Grip::Bypass(which) => tone.bypass = {
-            let mut next = tone.bypass;
-            next.toggle(which);
-            next
-        },
+        Grip::Bypass(which) => {
+            tone.bypass = {
+                let mut next = tone.bypass;
+                next.toggle(which);
+                next
+            }
+        }
         Grip::Ratio(which) => {
             if let Some(comp) = tone.compressor(which) {
                 comp.ratio = Comp::default().ratio;
@@ -6462,7 +8463,9 @@ pub fn drag(
         Grip::Attack(which) | Grip::Release(which) => {
             let display = comp_split(body, rack);
             let dx = dx * interaction::fine_scale(mods);
-            let span = Strips::of(display).map_or(display.width * 0.4, |s| s.attack.width()).max(1.0);
+            let span = Strips::of(display)
+                .map_or(display.width * 0.4, |s| s.attack.width())
+                .max(1.0);
             if let Some(comp) = tone.compressor(which) {
                 let time = if matches!(grip, Grip::Attack(_)) {
                     Time::attack(comp.attack)
@@ -6532,7 +8535,8 @@ fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, d
             let (_, ladder_box) = sat_split(display_of(body, Which::Sat, rack), rack);
             let per_db = ladder_box.map_or(body.height, |lb| lb.height) / 24.0;
             let dy = dy * interaction::fine_scale(mods);
-            let to = (f64::from(tone.sat.tilt_db()) - dy / per_db.max(f64::EPSILON)).clamp(-12.0, 12.0);
+            let to =
+                (f64::from(tone.sat.tilt_db()) - dy / per_db.max(f64::EPSILON)).clamp(-12.0, 12.0);
             tone.sat.set_tilt_db(f64_to_f32(to));
         }
         // The range line is pulled DOWN for more, against the display's
@@ -6552,7 +8556,11 @@ fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, d
             let dy = dy * interaction::fine_scale(mods);
             let per_unit = display.height.max(1.0);
             if let Some(set) = tone.suppressor(which) {
-                let value = if matches!(grip, Grip::Depth(_)) { &mut set.depth } else { &mut set.sharpness };
+                let value = if matches!(grip, Grip::Depth(_)) {
+                    &mut set.depth
+                } else {
+                    &mut set.sharpness
+                };
                 *value = f64_to_f32((f64::from(*value) + dy / per_unit).clamp(0.0, 1.0));
             }
         }
@@ -6590,7 +8598,8 @@ fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, d
             let body = display_of(body, Which::Reverb, rack);
             let dx = dx * interaction::fine_scale(mods);
             let ratio = 1.0 + dx / body.width.max(1.0);
-            tone.reverb.decay = f64_to_f32((f64::from(tone.reverb.decay) * ratio.max(0.2)).clamp(0.1, 12.0));
+            tone.reverb.decay =
+                f64_to_f32((f64::from(tone.reverb.decay) * ratio.max(0.2)).clamp(0.1, 12.0));
         }
         // The gap rule moves along the decay window.
         Grip::Predelay => {
@@ -6665,7 +8674,9 @@ pub fn set_knob_value(tone: &mut Tone, which: Which, index: usize, to: f64) {
         (Which::Knobs, _, 3) => tone.delay.width = f,
         (Which::Knobs, _, _) => tone.delay.mix = f,
         (Which::Wide, _, _) => tone.wide = f64_to_f32(to * 2.0),
-        (Which::Pitch, _, 0) => tone.pitch = crate::num::quantise(to.mul_add(48.0, -24.0), 1.0).clamp(-24, 24),
+        (Which::Pitch, _, 0) => {
+            tone.pitch = crate::num::quantise(to.mul_add(48.0, -24.0), 1.0).clamp(-24, 24)
+        }
         (Which::Pitch, _, _) => tone.pitch_mix = f,
         _ => {}
     }
@@ -6693,7 +8704,10 @@ pub fn knob_at(body: Panel, x: f64) -> usize {
 /// Which preset chip a point is over, if any.
 #[must_use]
 pub fn preset_chip_at(tone: &Tone, at: Panel, x: f64) -> Option<usize> {
-    preset_chips(tone, at).into_iter().find(|(_, chip)| x >= chip.x0 && x < chip.x1).map(|(i, _)| i)
+    preset_chips(tone, at)
+        .into_iter()
+        .find(|(_, chip)| x >= chip.x0 && x < chip.x1)
+        .map(|(i, _)| i)
 }
 
 /// The chips that fit the row, with the loaded one always among them.
@@ -6713,7 +8727,10 @@ fn preset_chips(tone: &Tone, at: Panel) -> Vec<(usize, Rect)> {
             if left + w > right {
                 break;
             }
-            out.push((i, Rect::new(left, at.y + 2.0, left + w, at.y + at.height - 2.0)));
+            out.push((
+                i,
+                Rect::new(left, at.y + 2.0, left + w, at.y + at.height - 2.0),
+            ));
             left += w + 2.0;
         }
         out
@@ -6822,7 +8839,10 @@ pub fn is_pair(rows: &[(daw_proto::Track, u32)], index: usize, depth: u32) -> bo
 /// Whether a track is one half of a stereo pair, by name.
 #[must_use]
 pub fn is_pair_half(name: &str) -> bool {
-    matches!(name.trim().to_uppercase().as_str(), "L" | "R" | "LEFT" | "RIGHT")
+    matches!(
+        name.trim().to_uppercase().as_str(),
+        "L" | "R" | "LEFT" | "RIGHT"
+    )
 }
 
 fn band(index: usize, frequency: f64, gain: f64, q: f64, shape: EqBandShape) -> EqBand {
@@ -6872,8 +8892,14 @@ mod tests {
         // From the top, under Rescue's blank bar and the phase's own
         // container bar, and the space below is left alone.
         assert!((laid[0].1.y - tall.y - 2.0 * HEAD_H).abs() < f64::EPSILON);
-        let used = super::tall(&[Which::Eq, Which::Comp, Which::Sat], super::Folded::default());
-        assert!(used < tall.height, "the rack filled everything it was given");
+        let used = super::tall(
+            &[Which::Eq, Which::Comp, Which::Sat],
+            super::Folded::default(),
+        );
+        assert!(
+            used < tall.height,
+            "the rack filled everything it was given"
+        );
     }
 
     /// A rack too short for its chain SCROLLS rather than shrinking.
@@ -6903,7 +8929,10 @@ mod tests {
             );
         }
         let bottom = laid.last().map_or(0.0, |(_, at)| at.y + at.height);
-        assert!(bottom > short.height, "the chain fitted, so nothing was proved");
+        assert!(
+            bottom > short.height,
+            "the chain fitted, so nothing was proved"
+        );
         // To the last ROW's floor: the blank bars for the phases this
         // chain lacks come after the last panel, and are scrolled to.
         let floor = super::chain(&panels, short, super::Folded::default())
@@ -6911,7 +8940,10 @@ mod tests {
             .map_or(0.0, |(_, at)| at.y + at.height);
         assert!(floor > bottom);
         assert!(
-            (super::scroll_span(&panels, short.height, super::Folded::default()) - (floor - short.height)).abs() < 0.01,
+            (super::scroll_span(&panels, short.height, super::Folded::default())
+                - (floor - short.height))
+                .abs()
+                < 0.01,
             "the span does not reach the last row's floor"
         );
 
@@ -6925,8 +8957,16 @@ mod tests {
     #[test]
     fn a_scroll_moves_every_panel_by_the_same_amount() {
         let panels = [Which::Eq, Which::Comp, Which::Sat];
-        let box_at = Panel { x: 0.0, y: 40.0, width: 133.0, height: 200.0 };
-        let moved = Panel { y: box_at.y - 75.0, ..box_at };
+        let box_at = Panel {
+            x: 0.0,
+            y: 40.0,
+            width: 133.0,
+            height: 200.0,
+        };
+        let moved = Panel {
+            y: box_at.y - 75.0,
+            ..box_at
+        };
         for ((_, rest), (_, down)) in layout(&panels, box_at).iter().zip(layout(&panels, moved)) {
             assert!((rest.y - down.y - 75.0).abs() < f64::EPSILON);
             assert!((rest.height - down.height).abs() < f64::EPSILON);
@@ -6971,7 +9011,9 @@ mod tests {
             );
         }
         // One height at every tier: that is the point.
-        assert!((body_of(panel, Rack::Curves).y - body_of(panel, Rack::Focus).y).abs() < f64::EPSILON);
+        assert!(
+            (body_of(panel, Rack::Curves).y - body_of(panel, Rack::Focus).y).abs() < f64::EPSILON
+        );
     }
 
     /// A focused strip may not be lent below the width that made it
@@ -6990,8 +9032,12 @@ mod tests {
         assert_eq!(Rack::at(SHAPE - 0.5), Rack::Minimal);
         assert_eq!(Rack::at(MINIMAL), Rack::Minimal);
         assert_eq!(Rack::at(MINIMAL - 0.5), Rack::Off);
-        assert!(Rack::Full < Rack::Curves && Rack::Curves < Rack::Minimal && Rack::Minimal < Rack::Off);
-        assert!(Rack::at(LEGIBLE).on() && Rack::at(SHAPE - 0.5).on() && !Rack::at(MINIMAL - 0.5).on());
+        assert!(
+            Rack::Full < Rack::Curves && Rack::Curves < Rack::Minimal && Rack::Minimal < Rack::Off
+        );
+        assert!(
+            Rack::at(LEGIBLE).on() && Rack::at(SHAPE - 0.5).on() && !Rack::at(MINIMAL - 0.5).on()
+        );
     }
 
     /// A rack with no room records nothing at all, rather than three
@@ -7125,7 +9171,10 @@ mod fold_tests {
         let mut fold = Fold::shared();
         fold.toggle("kick", P::Rescue);
         assert!(fold.of("kick").is(P::Rescue));
-        assert!(fold.of("snare").is(P::Rescue), "the fold stayed on one track");
+        assert!(
+            fold.of("snare").is(P::Rescue),
+            "the fold stayed on one track"
+        );
     }
 
     /// And unsynced, it reaches only the one you folded.
@@ -7183,7 +9232,9 @@ mod container_tests {
                     assert_eq!(which.phase(), phase, "{which:?} under {phase:?}");
                     assert!(at.y >= y, "{which:?} sat above its own container");
                 }
-                Row::Blank(phase) => panic!("the full chain has every phase, but {phase:?} came up blank"),
+                Row::Blank(phase) => {
+                    panic!("the full chain has every phase, but {phase:?} came up blank")
+                }
             }
         }
         assert_eq!(seen.len(), 5, "expected one container per phase: {seen:?}");
@@ -7214,7 +9265,12 @@ mod container_tests {
             super::wheel(&mut walk, Grip::Preset(0), Mods::default(), 1.0);
         }
         assert_eq!(walk.preset, Some(walk.presets.len() - 1));
-        let narrow = Panel { x: 0.0, y: 0.0, width: 60.0, height: super::PRESETS_H };
+        let narrow = Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 60.0,
+            height: super::PRESETS_H,
+        };
         let chips = super::preset_chips(&walk, narrow);
         assert!(chips.iter().any(|(i, _)| Some(*i) == walk.preset));
         assert!(chips.len() < walk.presets.len());
@@ -7228,21 +9284,36 @@ mod container_tests {
     #[test]
     fn a_missing_phase_is_a_blank_bar_at_the_same_height() {
         let bus = chain(&super::BUS_CHAIN, box_at(), Folded::rest());
-        assert_eq!(bus.first().map(|(row, _)| *row), Some(Row::Blank(P::Rescue)));
+        assert_eq!(
+            bus.first().map(|(row, _)| *row),
+            Some(Row::Blank(P::Rescue))
+        );
         let tone_y = |rows: &[(Row, Panel)]| {
-            rows.iter().find(|(row, _)| *row == Row::Head(P::Tone)).map(|(_, at)| at.y).expect("a Tone bar")
+            rows.iter()
+                .find(|(row, _)| *row == Row::Head(P::Tone))
+                .map(|(_, at)| at.y)
+                .expect("a Tone bar")
         };
         let full = chain(&ALL_PANELS, box_at(), Folded::rest());
         assert!((tone_y(&bus) - tone_y(&full)).abs() < f64::EPSILON);
         // Every phase is accounted for, blank or not.
-        let bars = bus.iter().filter(|(row, _)| matches!(row, Row::Head(_) | Row::Blank(_))).count();
+        let bars = bus
+            .iter()
+            .filter(|(row, _)| matches!(row, Row::Head(_) | Row::Blank(_)))
+            .count();
         assert_eq!(bars, super::RACK_PHASES.len());
         assert!(chain(&[], box_at(), Folded::rest()).is_empty());
         // A return is only Depth, and gets only Depth: no bars for the
         // phases a channel has and it never will.
         let delay = chain(&super::DELAY_CHAIN, box_at(), Folded::rest());
         assert!(!delay.iter().any(|(row, _)| matches!(row, Row::Blank(_))));
-        assert_eq!(delay.iter().filter(|(row, _)| matches!(row, Row::Head(_))).count(), 1);
+        assert_eq!(
+            delay
+                .iter()
+                .filter(|(row, _)| matches!(row, Row::Head(_)))
+                .count(),
+            1
+        );
     }
 
     /// Folding a phase takes its units out of the column and leaves its
@@ -7311,7 +9382,11 @@ mod phase_tests {
     #[test]
     fn every_phase_shows_the_whole_chain() {
         for phase in P::ALL {
-            assert_eq!(panels_for(phase), super::ALL_PANELS, "{phase:?} showed a subset");
+            assert_eq!(
+                panels_for(phase),
+                super::ALL_PANELS,
+                "{phase:?} showed a subset"
+            );
         }
     }
 
@@ -7389,7 +9464,10 @@ mod grip_tests {
         let band = &tone.eq[2];
         let x = freq.freq_to_x(f64::from(band.frequency), body.x, body.x + body.width);
         let y = db.db_to_y(f64::from(band.gain), body.y, body.y + body.height);
-        assert_eq!(grip_at(&ALL, &tone, rack(), super::Folded::default(), x, y), Some(Grip::Band(Which::Eq, 2)));
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), x, y),
+            Some(Grip::Band(Which::Eq, 2))
+        );
     }
 
     /// And a point well away from every band grabs nothing, rather
@@ -7426,7 +9504,14 @@ mod grip_tests {
         let body = super::body_of(at, super::Rack::at(rack().width));
         let chip = super::scale_chip(body);
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), super::Folded::default(), chip.x + chip.width / 2.0, chip.y + 2.0),
+            grip_at(
+                &ALL,
+                &tone,
+                rack(),
+                super::Folded::default(),
+                chip.x + chip.width / 2.0,
+                chip.y + 2.0
+            ),
             Some(Grip::Scale(Which::Eq))
         );
         // It is a switch, so a click acts and a drag does not.
@@ -7446,7 +9531,9 @@ mod grip_tests {
     #[test]
     fn the_zoom_walks_the_plugins_stops() {
         let mut tone = placeholder(0);
-        assert!((tone.eq_db_range() - eq_ui::eq_graph_model::DEFAULT_DB_RANGE).abs() < f64::EPSILON);
+        assert!(
+            (tone.eq_db_range() - eq_ui::eq_graph_model::DEFAULT_DB_RANGE).abs() < f64::EPSILON
+        );
 
         // Down is out, which is the way a wheel zooms out everywhere.
         super::wheel(&mut tone, Grip::Scale(Which::Eq), Mods::default(), -1.0);
@@ -7502,7 +9589,16 @@ mod grip_tests {
     fn a_band_follows_the_pointer() {
         let mut tone = placeholder(0);
         let (before_f, before_g) = (tone.eq[1].frequency, tone.eq[1].gain);
-        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), super::Folded::default(), Mods::default(), 12.0, -20.0);
+        drag(
+            &mut tone,
+            Grip::Band(Which::Eq, 1),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            12.0,
+            -20.0,
+        );
         assert!(tone.eq[1].frequency > before_f, "right is higher");
         assert!(tone.eq[1].gain > before_g, "up is more gain");
     }
@@ -7512,12 +9608,30 @@ mod grip_tests {
     fn a_band_stays_inside_the_panel() {
         let mut tone = placeholder(0);
         for _ in 0..50 {
-            drag(&mut tone, Grip::Band(Which::Eq, 0), &ALL, rack(), super::Folded::default(), Mods::default(), 400.0, -400.0);
+            drag(
+                &mut tone,
+                Grip::Band(Which::Eq, 0),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                400.0,
+                -400.0,
+            );
         }
         assert!(tone.eq[0].gain <= super::f64_to_f32(super::EQ_GAIN_LIMIT));
         assert!(tone.eq[0].frequency <= 24_000.0);
         for _ in 0..50 {
-            drag(&mut tone, Grip::Band(Which::Eq, 0), &ALL, rack(), super::Folded::default(), Mods::default(), -400.0, 400.0);
+            drag(
+                &mut tone,
+                Grip::Band(Which::Eq, 0),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                -400.0,
+                400.0,
+            );
         }
         assert!(tone.eq[0].gain >= -super::f64_to_f32(super::EQ_GAIN_LIMIT));
         assert!(tone.eq[0].frequency > 0.0);
@@ -7529,10 +9643,28 @@ mod grip_tests {
     fn dragging_the_threshold_up_compresses_less() {
         let mut tone = placeholder(0);
         let before = tone.comp.threshold;
-        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -10.0);
+        drag(
+            &mut tone,
+            Grip::Threshold(Which::Comp),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            0.0,
+            -10.0,
+        );
         assert!(tone.comp.threshold > before);
         for _ in 0..200 {
-            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, 40.0);
+            drag(
+                &mut tone,
+                Grip::Threshold(Which::Comp),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                0.0,
+                40.0,
+            );
         }
         assert!(tone.comp.threshold >= -60.0, "the threshold clamps");
     }
@@ -7543,7 +9675,16 @@ mod grip_tests {
     fn drive_stays_positive() {
         let mut tone = placeholder(0);
         for _ in 0..200 {
-            drag(&mut tone, Grip::Drive, &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, 40.0);
+            drag(
+                &mut tone,
+                Grip::Drive,
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                0.0,
+                40.0,
+            );
         }
         assert!(tone.sat.drive >= 0.0);
     }
@@ -7628,7 +9769,10 @@ mod tier_tests {
         let y = db.db_to_y(f64::from(band.gain), body.y, body.y + body.height);
 
         let x_wide = freq.freq_to_x(f64::from(band.frequency), body.x, body.x + body.width);
-        assert_eq!(grip_at(&ALL, &tone, wide, super::Folded::default(), x_wide, y), Some(Grip::Band(Which::Eq, 2)));
+        assert_eq!(
+            grip_at(&ALL, &tone, wide, super::Folded::default(), x_wide, y),
+            Some(Grip::Band(Which::Eq, 2))
+        );
 
         let narrow_body = super::body_of(
             super::layout(&ALL, narrow)
@@ -7643,7 +9787,10 @@ mod tier_tests {
             narrow_body.x,
             narrow_body.x + narrow_body.width,
         );
-        assert_eq!(grip_at(&ALL, &tone, narrow, super::Folded::default(), x_narrow, y), None);
+        assert_eq!(
+            grip_at(&ALL, &tone, narrow, super::Folded::default(), x_narrow, y),
+            None
+        );
     }
 
     /// The compressor and the saturator stay grabbable when the rack
@@ -7659,7 +9806,14 @@ mod tier_tests {
             .1;
         let inside = comp.y + comp.height / 2.0;
         assert_eq!(
-            grip_at(&ALL, &tone, narrow, super::Folded::default(), narrow.width / 2.0, inside),
+            grip_at(
+                &ALL,
+                &tone,
+                narrow,
+                super::Folded::default(),
+                narrow.width / 2.0,
+                inside
+            ),
             Some(Grip::Threshold(Which::Comp))
         );
     }
@@ -7670,7 +9824,10 @@ mod tier_tests {
         let tone = placeholder(0);
         let rail = rack_of(30.0);
         assert_eq!(super::Rack::at(rail.width), super::Rack::Minimal);
-        assert_eq!(grip_at(&ALL, &tone, rail, super::Folded::default(), 15.0, 300.0), None);
+        assert_eq!(
+            grip_at(&ALL, &tone, rail, super::Folded::default(), 15.0, 300.0),
+            None
+        );
         assert_eq!(super::Rack::at(10.0), super::Rack::Off);
     }
 
@@ -7681,27 +9838,70 @@ mod tier_tests {
         let tone = placeholder(2);
         let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
         let font = crate::text::Font::embedded().expect("the embedded font");
-        let rail = Panel { x: 0.0, y: 0.0, width: 26.0, height: 900.0 };
+        let rail = Panel {
+            x: 0.0,
+            y: 0.0,
+            width: 26.0,
+            height: 900.0,
+        };
         let rows = super::chain(&super::ALL_PANELS, rail, super::Folded::default());
         // The same rows as the strip beside it: a row per unit and one
         // per container, at the same heights.
-        let wide = Panel { width: 133.0, ..rail };
+        let wide = Panel {
+            width: 133.0,
+            ..rail
+        };
         let full = super::chain(&super::ALL_PANELS, wide, super::Folded::default());
-        assert_eq!(rows.len(), full.len(), "a rail's chain is the strip's chain");
+        assert_eq!(
+            rows.len(),
+            full.len(),
+            "a rail's chain is the strip's chain"
+        );
         for ((a, at), (b, full_at)) in rows.iter().zip(full.iter()) {
             assert_eq!(a, b);
-            assert!((at.y - full_at.y).abs() < f64::EPSILON, "{a:?} at {} vs {}", at.y, full_at.y);
+            assert!(
+                (at.y - full_at.y).abs() < f64::EPSILON,
+                "{a:?} at {} vs {}",
+                at.y,
+                full_at.y
+            );
         }
         let mut still = anyrender::Scene::new();
-        super::draw(&mut still, &palette, &font, &tone, &crate::live::Meters::default(), &super::ALL_PANELS, rail, super::Folded::default(), None, None);
+        super::draw(
+            &mut still,
+            &palette,
+            &font,
+            &tone,
+            &crate::live::Meters::default(),
+            &super::ALL_PANELS,
+            rail,
+            super::Folded::default(),
+            None,
+            None,
+        );
         // A track per unit, and an indicator for every unit whose
         // setting shows with no signal — the EQs, the gate's light, the
         // heat, the repeats, the tail. The bars (reduction, fire) wait
         // for a signal.
-        assert!(still.commands.len() > rows.len() + 6, "a track and the still indicators: {}", still.commands.len());
+        assert!(
+            still.commands.len() > rows.len() + 6,
+            "a track and the still indicators: {}",
+            still.commands.len()
+        );
         let mut moving = anyrender::Scene::new();
         let meters = crate::simulate::meters(2, 1.25, &tone);
-        super::draw(&mut moving, &palette, &font, &tone, &meters, &super::ALL_PANELS, rail, super::Folded::default(), None, None);
+        super::draw(
+            &mut moving,
+            &palette,
+            &font,
+            &tone,
+            &meters,
+            &super::ALL_PANELS,
+            rail,
+            super::Folded::default(),
+            None,
+            None,
+        );
         assert!(moving.commands.len() >= still.commands.len());
     }
 }
@@ -7727,7 +9927,16 @@ mod reset_tests {
     fn reset_undoes_a_drag() {
         let mut tone = placeholder(0);
         let before = tone.eq[1].gain;
-        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -40.0);
+        drag(
+            &mut tone,
+            Grip::Band(Which::Eq, 1),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            0.0,
+            -40.0,
+        );
         assert!(
             (tone.eq[1].gain - before).abs() > 0.5,
             "the drag moved nothing"
@@ -7735,16 +9944,37 @@ mod reset_tests {
         reset(&mut tone, Grip::Band(Which::Eq, 1));
         assert!(tone.eq[1].gain.abs() < f32::EPSILON, "the band went flat");
 
-        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -30.0);
+        drag(
+            &mut tone,
+            Grip::Threshold(Which::Comp),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            0.0,
+            -30.0,
+        );
         reset(&mut tone, Grip::Threshold(Which::Comp));
         assert!(
             (tone.comp.threshold - Comp::default().threshold).abs() < f32::EPSILON,
             "the threshold went back to its default"
         );
 
-        drag(&mut tone, Grip::Drive, &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -60.0);
+        drag(
+            &mut tone,
+            Grip::Drive,
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            0.0,
+            -60.0,
+        );
         reset(&mut tone, Grip::Drive);
-        assert!((tone.sat.drive - 1.0).abs() < f32::EPSILON, "drive is unity");
+        assert!(
+            (tone.sat.drive - 1.0).abs() < f32::EPSILON,
+            "drive is unity"
+        );
     }
 
     /// A band reset keeps its FREQUENCY: where you put it is not the
@@ -7752,7 +9982,16 @@ mod reset_tests {
     #[test]
     fn resetting_a_band_keeps_where_it_sits() {
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Band(Which::Eq, 2), &ALL, rack(), super::Folded::default(), Mods::default(), 20.0, -20.0);
+        drag(
+            &mut tone,
+            Grip::Band(Which::Eq, 2),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            20.0,
+            -20.0,
+        );
         let moved = tone.eq[2].frequency;
         reset(&mut tone, Grip::Band(Which::Eq, 2));
         assert!((tone.eq[2].frequency - moved).abs() < f32::EPSILON);
@@ -7768,7 +10007,9 @@ mod reset_tests {
 
 #[cfg(test)]
 mod plugin_interaction_tests {
-    use super::{EQ_GAIN_LIMIT, Grip, Mods, Panel, Which, drag, dot_click, grip_at, placeholder, wheel};
+    use super::{
+        EQ_GAIN_LIMIT, Grip, Mods, Panel, Which, dot_click, drag, grip_at, placeholder, wheel,
+    };
     use eq_ui::eq_graph_model::EqBandShape;
 
     const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
@@ -7814,7 +10055,16 @@ mod plugin_interaction_tests {
         let mut tone = placeholder(0);
         let (before_f, before_g) = (tone.eq[1].frequency, tone.eq[1].gain);
         let alt = Mods::new(true, false, false);
-        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), super::Folded::default(), alt, 15.0, -30.0);
+        drag(
+            &mut tone,
+            Grip::Band(Which::Eq, 1),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            alt,
+            15.0,
+            -30.0,
+        );
         assert!(tone.eq[1].frequency > before_f, "frequency followed");
         assert!(
             (tone.eq[1].gain - before_g).abs() < f32::EPSILON,
@@ -7829,9 +10079,21 @@ mod plugin_interaction_tests {
         let mut tone = placeholder(0);
         let before = tone.eq[1].q;
         let cmd = Mods::new(false, false, true);
-        drag(&mut tone, Grip::Band(Which::Eq, 1), &ALL, rack(), super::Folded::default(), cmd, 0.0, -20.0);
+        drag(
+            &mut tone,
+            Grip::Band(Which::Eq, 1),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            cmd,
+            0.0,
+            -20.0,
+        );
         assert!((tone.eq[1].q - before).abs() > f32::EPSILON, "q moved");
-        assert!(tone.eq[1].q > 0.0 && tone.eq[1].q <= 18.0, "and stayed sane");
+        assert!(
+            tone.eq[1].q > 0.0 && tone.eq[1].q <= 18.0,
+            "and stayed sane"
+        );
     }
 
     /// Shift is the fine-tune modifier everywhere, including the two
@@ -7840,13 +10102,31 @@ mod plugin_interaction_tests {
     fn shift_is_fine_everywhere() {
         let coarse = {
             let mut tone = placeholder(0);
-            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -20.0);
+            drag(
+                &mut tone,
+                Grip::Threshold(Which::Comp),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                0.0,
+                -20.0,
+            );
             tone.comp.threshold
         };
         let fine = {
             let mut tone = placeholder(0);
             let shift = Mods::new(false, true, false);
-            drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), shift, 0.0, -20.0);
+            drag(
+                &mut tone,
+                Grip::Threshold(Which::Comp),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                shift,
+                0.0,
+                -20.0,
+            );
             tone.comp.threshold
         };
         let from = placeholder(0).comp.threshold;
@@ -7874,7 +10154,12 @@ mod plugin_interaction_tests {
     fn cmd_wheel_moves_the_gain() {
         let mut tone = placeholder(0);
         let before = tone.eq[1].gain;
-        wheel(&mut tone, Grip::Band(Which::Eq, 1), Mods::new(false, false, true), -1.0);
+        wheel(
+            &mut tone,
+            Grip::Band(Which::Eq, 1),
+            Mods::new(false, false, true),
+            -1.0,
+        );
         assert!(tone.eq[1].gain > before);
         assert!(tone.eq[1].gain <= super::f64_to_f32(EQ_GAIN_LIMIT));
     }
@@ -7885,9 +10170,19 @@ mod plugin_interaction_tests {
     fn alt_click_bypasses_a_band() {
         let mut tone = placeholder(0);
         assert!(tone.eq[0].enabled);
-        assert!(dot_click(&mut tone, Which::Eq, 0, Mods::new(true, false, false)));
+        assert!(dot_click(
+            &mut tone,
+            Which::Eq,
+            0,
+            Mods::new(true, false, false)
+        ));
         assert!(!tone.eq[0].enabled);
-        assert!(dot_click(&mut tone, Which::Eq, 0, Mods::new(true, false, false)));
+        assert!(dot_click(
+            &mut tone,
+            Which::Eq,
+            0,
+            Mods::new(true, false, false)
+        ));
         assert!(tone.eq[0].enabled);
     }
 
@@ -7983,7 +10278,14 @@ mod comp_tests {
         // display is what is being claimed here.
         let inside = body.y + body.height * 0.55;
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), super::Folded::default(), body.x + body.width * 0.3, inside),
+            grip_at(
+                &ALL,
+                &tone,
+                rack(),
+                super::Folded::default(),
+                body.x + body.width * 0.3,
+                inside
+            ),
             Some(Grip::Threshold(Which::Comp))
         );
     }
@@ -8002,7 +10304,10 @@ mod comp_tests {
         let display = super::comp_split(comp_panel(), Rack::at(rack().width));
         let level = super::threshold_y(tone.comp, display);
         let strips = super::Strips::of(display).expect("strips to grab");
-        for (grip, strip) in [(Grip::Attack(Which::Comp), strips.attack), (Grip::Release(Which::Comp), strips.release)] {
+        for (grip, strip) in [
+            (Grip::Attack(Which::Comp), strips.attack),
+            (Grip::Release(Which::Comp), strips.release),
+        ] {
             let mid = strip.center();
             assert_eq!(
                 grip_at(&ALL, &tone, rack(), super::Folded::default(), mid.x, mid.y),
@@ -8013,8 +10318,21 @@ mod comp_tests {
         // Dragging left on the attack strip is faster, and the default
         // sits in the middle of the strip.
         let was = tone.comp.attack;
-        drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), -15.0, 0.0);
-        assert!(tone.comp.attack < was, "left is fast: {} vs {was}", tone.comp.attack);
+        drag(
+            &mut tone,
+            Grip::Attack(Which::Comp),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            -15.0,
+            0.0,
+        );
+        assert!(
+            tone.comp.attack < was,
+            "left is fast: {} vs {was}",
+            tone.comp.attack
+        );
         assert!((super::Time::attack(super::Comp::default().attack).place() - 0.5).abs() < 1e-9);
         assert!((super::Time::release(super::Comp::default().release).place() - 0.5).abs() < 1e-9);
         // The ratio's arrow hangs off the threshold line near the left
@@ -8023,14 +10341,28 @@ mod comp_tests {
         assert!((arrow.top - level).abs() < f64::EPSILON);
         assert!(arrow.tip > arrow.top);
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), super::Folded::default(), arrow.x, (arrow.top + arrow.tip) / 2.0),
+            grip_at(
+                &ALL,
+                &tone,
+                rack(),
+                super::Folded::default(),
+                arrow.x,
+                (arrow.top + arrow.tip) / 2.0
+            ),
             Some(Grip::Ratio(Which::Comp))
         );
         assert!((super::Time::ratio(super::Comp::default().ratio).place() - 0.5).abs() < 1e-9);
         // Right of the arrow and above the time strips is nothing but
         // the display, which belongs to the threshold.
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), super::Folded::default(), arrow.x + 30.0, (arrow.top + arrow.tip) / 2.0),
+            grip_at(
+                &ALL,
+                &tone,
+                rack(),
+                super::Folded::default(),
+                arrow.x + 30.0,
+                (arrow.top + arrow.tip) / 2.0
+            ),
             Some(Grip::Threshold(Which::Comp))
         );
     }
@@ -8042,9 +10374,27 @@ mod comp_tests {
     fn the_threshold_follows_the_pointer_down() {
         let mut tone = placeholder(0);
         let before = tone.comp.threshold;
-        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, 20.0);
+        drag(
+            &mut tone,
+            Grip::Threshold(Which::Comp),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            0.0,
+            20.0,
+        );
         assert!(tone.comp.threshold < before, "down is a lower threshold");
-        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -40.0);
+        drag(
+            &mut tone,
+            Grip::Threshold(Which::Comp),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            0.0,
+            -40.0,
+        );
         assert!(tone.comp.threshold > before, "and up is a higher one");
     }
 
@@ -8052,10 +10402,23 @@ mod comp_tests {
     /// the threshold, which shares the display with all three.
     #[test]
     fn each_edge_moves_one_thing() {
-        for grip in [Grip::Ratio(Which::Comp), Grip::Attack(Which::Comp), Grip::Release(Which::Comp)] {
+        for grip in [
+            Grip::Ratio(Which::Comp),
+            Grip::Attack(Which::Comp),
+            Grip::Release(Which::Comp),
+        ] {
             let mut tone = placeholder(0);
             let was = tone.comp;
-            drag(&mut tone, grip, &ALL, rack(), super::Folded::default(), Mods::default(), 30.0, 30.0);
+            drag(
+                &mut tone,
+                grip,
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                30.0,
+                30.0,
+            );
             let now = tone.comp;
             let moved = [
                 (now.ratio - was.ratio).abs() > f32::EPSILON,
@@ -8078,10 +10441,22 @@ mod comp_tests {
         let step = |from: f32| {
             let mut tone = placeholder(0);
             tone.comp.attack = from;
-            drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 15.0, 0.0);
+            drag(
+                &mut tone,
+                Grip::Attack(Which::Comp),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                15.0,
+                0.0,
+            );
             tone.comp.attack - from
         };
-        assert!(step(1.0) < step(100.0), "the fast end moves in smaller steps");
+        assert!(
+            step(1.0) < step(100.0),
+            "the fast end moves in smaller steps"
+        );
     }
 
     /// Every control clamps to its own range rather than running away.
@@ -8093,23 +10468,93 @@ mod comp_tests {
     fn the_controls_clamp() {
         let mut tone = placeholder(0);
         for _ in 0..80 {
-            drag(&mut tone, Grip::Ratio(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, 60.0);
-            drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 60.0, 0.0);
-            drag(&mut tone, Grip::Release(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 60.0, 0.0);
+            drag(
+                &mut tone,
+                Grip::Ratio(Which::Comp),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                0.0,
+                60.0,
+            );
+            drag(
+                &mut tone,
+                Grip::Attack(Which::Comp),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                60.0,
+                0.0,
+            );
+            drag(
+                &mut tone,
+                Grip::Release(Which::Comp),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                60.0,
+                0.0,
+            );
         }
         assert!((tone.comp.ratio - 20.0).abs() < 0.01, "{}", tone.comp.ratio);
-        assert!((tone.comp.attack - 200.0).abs() < 0.5, "{}", tone.comp.attack);
-        assert!((tone.comp.release - 3_000.0).abs() < 5.0, "{}", tone.comp.release);
+        assert!(
+            (tone.comp.attack - 200.0).abs() < 0.5,
+            "{}",
+            tone.comp.attack
+        );
+        assert!(
+            (tone.comp.release - 3_000.0).abs() < 5.0,
+            "{}",
+            tone.comp.release
+        );
 
         let mut back = placeholder(0);
         for _ in 0..80 {
-            drag(&mut back, Grip::Ratio(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -60.0);
-            drag(&mut back, Grip::Attack(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), -60.0, 0.0);
-            drag(&mut back, Grip::Release(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), -60.0, 0.0);
+            drag(
+                &mut back,
+                Grip::Ratio(Which::Comp),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                0.0,
+                -60.0,
+            );
+            drag(
+                &mut back,
+                Grip::Attack(Which::Comp),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                -60.0,
+                0.0,
+            );
+            drag(
+                &mut back,
+                Grip::Release(Which::Comp),
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                -60.0,
+                0.0,
+            );
         }
         assert!((back.comp.ratio - 1.0).abs() < 0.01, "{}", back.comp.ratio);
-        assert!((back.comp.attack - 0.1).abs() < 0.01, "{}", back.comp.attack);
-        assert!((back.comp.release - 5.0).abs() < 0.01, "{}", back.comp.release);
+        assert!(
+            (back.comp.attack - 0.1).abs() < 0.01,
+            "{}",
+            back.comp.attack
+        );
+        assert!(
+            (back.comp.release - 5.0).abs() < 0.01,
+            "{}",
+            back.comp.release
+        );
     }
 
     /// Each control moves the way its own control runs: you pull the
@@ -8122,15 +10567,45 @@ mod comp_tests {
         let was = placeholder(0).comp;
 
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Ratio(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, 20.0);
+        drag(
+            &mut tone,
+            Grip::Ratio(Which::Comp),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            0.0,
+            20.0,
+        );
         assert!(tone.comp.ratio > was.ratio, "down did not harden the ratio");
 
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Attack(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 20.0, 0.0);
-        assert!(tone.comp.attack > was.attack, "right did not lengthen the attack");
+        drag(
+            &mut tone,
+            Grip::Attack(Which::Comp),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            20.0,
+            0.0,
+        );
+        assert!(
+            tone.comp.attack > was.attack,
+            "right did not lengthen the attack"
+        );
 
         let mut tone = placeholder(0);
-        drag(&mut tone, Grip::Release(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 20.0, 0.0);
+        drag(
+            &mut tone,
+            Grip::Release(Which::Comp),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            20.0,
+            0.0,
+        );
         assert!(
             tone.comp.release > was.release,
             "right did not lengthen the release"
@@ -8172,7 +10647,16 @@ mod comp_tests {
         };
         let before = at_db(tone.comp);
         let moved = 24.0;
-        drag(&mut tone, Grip::Threshold(Which::Comp), &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, moved);
+        drag(
+            &mut tone,
+            Grip::Threshold(Which::Comp),
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            0.0,
+            moved,
+        );
         let after = at_db(tone.comp);
         assert!(
             (after - before - moved).abs() < 0.5,
@@ -8185,8 +10669,22 @@ mod comp_tests {
     #[test]
     fn each_knob_resets_to_its_own_default() {
         let mut tone = placeholder(0);
-        for grip in [Grip::Ratio(Which::Comp), Grip::Attack(Which::Comp), Grip::Release(Which::Comp), Grip::Threshold(Which::Comp)] {
-            drag(&mut tone, grip, &ALL, rack(), super::Folded::default(), Mods::default(), 0.0, -25.0);
+        for grip in [
+            Grip::Ratio(Which::Comp),
+            Grip::Attack(Which::Comp),
+            Grip::Release(Which::Comp),
+            Grip::Threshold(Which::Comp),
+        ] {
+            drag(
+                &mut tone,
+                grip,
+                &ALL,
+                rack(),
+                super::Folded::default(),
+                Mods::default(),
+                0.0,
+                -25.0,
+            );
             reset(&mut tone, grip);
         }
         let default = Comp::default();
@@ -8340,9 +10838,11 @@ impl Levels {
     /// its trace for that is the cost this cache exists to remove.
     pub fn push(&mut self, peak: f32) {
         let peak = peak.clamp(0.0, 1.0);
-        if self.peaks.back().is_some_and(|last| {
-            (last - peak).abs() < 1e-4 && self.peaks.len() >= HISTORY
-        }) {
+        if self
+            .peaks
+            .back()
+            .is_some_and(|last| (last - peak).abs() < 1e-4 && self.peaks.len() >= HISTORY)
+        {
             return;
         }
         if self.peaks.len() >= HISTORY {
@@ -8597,7 +11097,11 @@ fn lanes(
                 let offset = HISTORY.saturating_sub(count);
                 for (i, peak) in levels.peaks().enumerate() {
                     let i_f = crate::num::coord(i);
-                    let db = if peak <= 0.0 { -120.0 } else { 20.0 * f64::from(peak).log10() };
+                    let db = if peak <= 0.0 {
+                        -120.0
+                    } else {
+                        20.0 * f64::from(peak).log10()
+                    };
                     if db > f64::from(tone.gate.threshold) {
                         open_until = i_f + hold;
                     }
@@ -8618,11 +11122,27 @@ fn lanes(
                     }
                 }
                 if let Some(from) = run {
-                    path.extend(Rect::new(from, lane.y + 1.0, lane.x + lane.width, lane.y + lane.height - 1.0)
-                        .to_path(0.1).elements().iter().copied());
+                    path.extend(
+                        Rect::new(
+                            from,
+                            lane.y + 1.0,
+                            lane.x + lane.width,
+                            lane.y + lane.height - 1.0,
+                        )
+                        .to_path(0.1)
+                        .elements()
+                        .iter()
+                        .copied(),
+                    );
                 }
                 if !path.is_empty() {
-                    scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.85), None, &path);
+                    scene.fill(
+                        Fill::NonZero,
+                        Affine::IDENTITY,
+                        tint.multiply_alpha(0.85),
+                        None,
+                        &path,
+                    );
                 }
             }
         }
@@ -8648,7 +11168,12 @@ fn ess_trace(scene: &mut Scene, levels: &Levels, tone: &Tone, display: Panel) {
     // The cuts are pushed once a frame like the levels are, so the two
     // histories end together: line them up from the end.
     let skew = count.saturating_sub(levels.fired.len());
-    let cut_at = |i: usize| i.checked_sub(skew).and_then(|k| levels.fired.get(k)).copied().unwrap_or(0.0);
+    let cut_at = |i: usize| {
+        i.checked_sub(skew)
+            .and_then(|k| levels.fired.get(k))
+            .copied()
+            .unwrap_or(0.0)
+    };
     let input: Vec<(f64, f64)> = levels
         .ess
         .iter()
@@ -8668,7 +11193,12 @@ fn ess_trace(scene: &mut Scene, levels: &Levels, tone: &Tone, display: Panel) {
         .enumerate()
         .map(|(i, (_, around))| (x_at(i), suppress_y(f64::from(*around) + threshold, display)));
     let grey = Color::from_rgba8(0x9a, 0x9a, 0xa0, 0xff);
-    area_under(scene, grey.multiply_alpha(0.16), &input, display.y + display.height);
+    area_under(
+        scene,
+        grey.multiply_alpha(0.16),
+        &input,
+        display.y + display.height,
+    );
     curve(scene, grey.multiply_alpha(0.55), input.iter().copied(), 1.0);
     if levels.fired.iter().any(|db| *db > 0.05) {
         ribbon(scene, DEESS_INK.multiply_alpha(0.5), &input, &output);
@@ -8724,8 +11254,20 @@ fn one_level(
         // because the threshold is drawn over it and a solid fill makes
         // the line the thing you cannot see.
         let grey = hex(comp_ui::comp_graph_svg::colors::GREY);
-        scene.fill(Fill::NonZero, at, grey.multiply_alpha(0.30), None, path.as_ref());
-        scene.stroke(&Stroke::new(1.0), at, grey.multiply_alpha(0.9), None, path.as_ref());
+        scene.fill(
+            Fill::NonZero,
+            at,
+            grey.multiply_alpha(0.30),
+            None,
+            path.as_ref(),
+        );
+        scene.stroke(
+            &Stroke::new(1.0),
+            at,
+            grey.multiply_alpha(0.9),
+            None,
+            path.as_ref(),
+        );
     }
     // And what the compressor took off, red, hanging down from the top.
     // Down is the direction it moves the signal; red because it is the
@@ -8734,7 +11276,13 @@ fn one_level(
     if let Some(path) = levels.reduction_path(comp, body.width, body.height) {
         let fill = hex(comp_ui::comp_graph_svg::colors::REDUCTION_FILL);
         let edge = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
-        scene.fill(Fill::NonZero, at, fill.multiply_alpha(0.45), None, path.as_ref());
+        scene.fill(
+            Fill::NonZero,
+            at,
+            fill.multiply_alpha(0.45),
+            None,
+            path.as_ref(),
+        );
         scene.stroke(&Stroke::new(1.0), at, edge, None, path.as_ref());
     }
 }
@@ -8851,9 +11399,18 @@ mod reduction_tests {
                 knee: 0.0,
                 ..Comp::default()
             };
-            hits().reduction_db(comp).iter().copied().fold(0.0, f32::max)
+            hits()
+                .reduction_db(comp)
+                .iter()
+                .copied()
+                .fold(0.0, f32::max)
         };
-        assert!(at(8.0) > at(2.0), "{} was not more than {}", at(8.0), at(2.0));
+        assert!(
+            at(8.0) > at(2.0),
+            "{} was not more than {}",
+            at(8.0),
+            at(2.0)
+        );
     }
 
     /// A ratio of one is no compressor at all, so nothing hangs from
@@ -8887,7 +11444,9 @@ mod reduction_tests {
         let mut levels = hits();
         let (w, h) = (120.0, 60.0);
         let input = levels.path(w, h).expect("an input trace");
-        let gr = levels.reduction_path(comp, w, h).expect("a reduction trace");
+        let gr = levels
+            .reduction_path(comp, w, h)
+            .expect("a reduction trace");
         let mean_y = |path: &vello::kurbo::BezPath| {
             let points: Vec<f64> = path
                 .elements()
@@ -8983,7 +11542,14 @@ mod bypass_tests {
             // A pixel inside the panel but above its body.
             let y = at.y + 3.0;
             assert_eq!(
-                grip_at(&ALL, &tone, rack(), super::Folded::default(), at.x + at.width / 2.0, y),
+                grip_at(
+                    &ALL,
+                    &tone,
+                    rack(),
+                    super::Folded::default(),
+                    at.x + at.width / 2.0,
+                    y
+                ),
                 Some(Grip::Bypass(which)),
                 "{which:?}"
             );
@@ -9008,7 +11574,10 @@ mod bypass_tests {
         let band = &tone.eq[2];
         let x = body.x + map.freq_to_x(f64::from(band.frequency));
         let y = body.y + map.db_to_y(f64::from(band.gain));
-        assert_eq!(grip_at(&ALL, &tone, rack(), super::Folded::default(), x, y), Some(Grip::Band(Which::Eq, 2)));
+        assert_eq!(
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), x, y),
+            Some(Grip::Band(Which::Eq, 2))
+        );
 
         tone.bypass.toggle(Which::Eq);
         assert_eq!(
@@ -9026,7 +11595,16 @@ mod bypass_tests {
         let was = tone.bypass;
         let grip = Grip::Bypass(Which::Sat);
         assert!(grip.is_switch());
-        drag(&mut tone, grip, &ALL, rack(), super::Folded::default(), Mods::default(), 30.0, -30.0);
+        drag(
+            &mut tone,
+            grip,
+            &ALL,
+            rack(),
+            super::Folded::default(),
+            Mods::default(),
+            30.0,
+            -30.0,
+        );
         assert_eq!(tone.bypass, was, "a drag flipped a switch");
         super::wheel(&mut tone, grip, Mods::default(), -1.0);
         assert_eq!(tone.bypass, was, "a wheel flipped a switch");
@@ -9056,8 +11634,7 @@ mod character_tests {
             for b in chains.iter().skip(i + 1) {
                 assert!(
                     a.eq.iter().zip(&b.eq).any(|(x, y)| {
-                        (x.frequency - y.frequency).abs() > 1.0
-                            || (x.gain - y.gain).abs() > 0.5
+                        (x.frequency - y.frequency).abs() > 1.0 || (x.gain - y.gain).abs() > 0.5
                     }),
                     "two chains had the same EQ"
                 );
@@ -9097,8 +11674,8 @@ mod character_tests {
 mod face_tests {
     //! The faces the six units grew: each grip is where its picture is.
     use super::{
-        ALL_PANELS, Folded, Grip, Mods, Panel, Rack, RoomGeometry, Side, Which, body_of, display_of,
-        drag, echo_taps, grip_at, lane_of, placeholder, reset, sat_split, units, wheel,
+        ALL_PANELS, Folded, Grip, Mods, Panel, Rack, RoomGeometry, Side, Which, body_of,
+        display_of, drag, echo_taps, grip_at, lane_of, placeholder, reset, sat_split, units, wheel,
     };
     use crate::live::Meters;
 
@@ -9133,14 +11710,26 @@ mod face_tests {
         let line = to_y(f64::from(tone.gate.threshold));
         let floor = to_y(f64::from(tone.gate.threshold + tone.gate.range));
         let shape = super::GateGlyph::of(tone.gate, at, line, floor).expect("room for a glyph");
-        assert_eq!(shape.grip_at(shape.open.0, shape.open.1 + 1.0), Some(Grip::Attack(Which::Gate)));
+        assert_eq!(
+            shape.grip_at(shape.open.0, shape.open.1 + 1.0),
+            Some(Grip::Attack(Which::Gate))
+        );
         let mid_run = (f64::midpoint(shape.open.0, shape.close.0), shape.open.1);
-        assert_eq!(shape.grip_at(mid_run.0, mid_run.1), Some(Grip::Hold(Which::Gate)));
-        assert_eq!(shape.grip_at(shape.end.0, shape.end.1 - 1.0), Some(Grip::Release(Which::Gate)));
+        assert_eq!(
+            shape.grip_at(mid_run.0, mid_run.1),
+            Some(Grip::Hold(Which::Gate))
+        );
+        assert_eq!(
+            shape.grip_at(shape.end.0, shape.end.1 - 1.0),
+            Some(Grip::Release(Which::Gate))
+        );
         // The range line, well away from the glyph.
         assert_eq!(grip(at.x + at.width - 4.0, floor, &tone), Some(Grip::Range));
         // And the threshold everywhere else.
-        assert_eq!(grip(at.x + at.width - 4.0, at.y + 2.0, &tone), Some(Grip::Threshold(Which::Gate)));
+        assert_eq!(
+            grip(at.x + at.width - 4.0, at.y + 2.0, &tone),
+            Some(Grip::Threshold(Which::Gate))
+        );
     }
 
     /// Dragging the hold right lengthens it; resetting puts it back.
@@ -9148,8 +11737,21 @@ mod face_tests {
     fn the_hold_is_dragged_sideways() {
         let mut tone = placeholder(0);
         let was = tone.gate.hold;
-        drag(&mut tone, Grip::Hold(Which::Gate), &ALL_PANELS, rack(), Folded::default(), Mods::default(), 20.0, 0.0);
-        assert!(tone.gate.hold > was, "{} should exceed {was}", tone.gate.hold);
+        drag(
+            &mut tone,
+            Grip::Hold(Which::Gate),
+            &ALL_PANELS,
+            rack(),
+            Folded::default(),
+            Mods::default(),
+            20.0,
+            0.0,
+        );
+        assert!(
+            tone.gate.hold > was,
+            "{} should exceed {was}",
+            tone.gate.hold
+        );
         reset(&mut tone, Grip::Hold(Which::Gate));
         assert!((tone.gate.hold - super::Gate::default().hold).abs() < f32::EPSILON);
     }
@@ -9166,20 +11768,44 @@ mod face_tests {
         assert_eq!(grip(taps[1].0, y, &tone), Some(Grip::Time));
         assert_eq!(grip(taps[2].0, y, &tone), Some(Grip::Feedback));
         let was = tone.delay.time;
-        drag(&mut tone, Grip::Time, &ALL_PANELS, rack(), Folded::default(), Mods::default(), 10.0, 0.0);
+        drag(
+            &mut tone,
+            Grip::Time,
+            &ALL_PANELS,
+            rack(),
+            Folded::default(),
+            Mods::default(),
+            10.0,
+            0.0,
+        );
         assert!(tone.delay.time > was);
         let fb = tone.delay.feedback;
-        drag(&mut tone, Grip::Feedback, &ALL_PANELS, rack(), Folded::default(), Mods::default(), 0.0, -20.0);
+        drag(
+            &mut tone,
+            Grip::Feedback,
+            &ALL_PANELS,
+            rack(),
+            Folded::default(),
+            Mods::default(),
+            0.0,
+            -20.0,
+        );
         assert!(tone.delay.feedback > fb, "up is more feedback");
         // The spacing follows the time.
         let after = echo_taps(tone.delay, at);
-        assert!((after[1].0 - after[0].0 - (taps[1].0 - taps[0].0)).abs() < 1e-6, "the window scales with the time, so the first gap holds its share");
+        assert!(
+            (after[1].0 - after[0].0 - (taps[1].0 - taps[0].0)).abs() < 1e-6,
+            "the window scales with the time, so the first gap holds its share"
+        );
         // The header glyph is the family switch.
         let (_, unit) = units(&ALL_PANELS, rack(), Folded::default())
             .into_iter()
             .find(|(w, _)| *w == Which::Delay)
             .expect("a delay");
-        assert_eq!(grip(unit.x + 4.0, unit.y + 4.0, &tone), Some(Grip::Family(Which::Delay)));
+        assert_eq!(
+            grip(unit.x + 4.0, unit.y + 4.0, &tone),
+            Some(Grip::Family(Which::Delay))
+        );
         let style = tone.delay.style;
         tone.delay.cycle_style();
         assert_ne!(tone.delay.style, style);
@@ -9198,9 +11824,21 @@ mod face_tests {
         let y = at.y + at.height / 2.0;
         assert_eq!(grip(geometry.start, y, &tone), Some(Grip::Predelay));
         assert_eq!(grip(at.x + at.width - 5.0, y, &tone), Some(Grip::Decay));
-        assert_eq!(grip(at.width.mul_add(0.4, at.x), y, &tone), Some(Grip::Mix(Which::Reverb)));
+        assert_eq!(
+            grip(at.width.mul_add(0.4, at.x), y, &tone),
+            Some(Grip::Mix(Which::Reverb))
+        );
         let was = tone.reverb.decay;
-        drag(&mut tone, Grip::Decay, &ALL_PANELS, rack(), Folded::default(), Mods::default(), 30.0, 0.0);
+        drag(
+            &mut tone,
+            Grip::Decay,
+            &ALL_PANELS,
+            rack(),
+            Folded::default(),
+            Mods::default(),
+            30.0,
+            0.0,
+        );
         assert!(tone.reverb.decay > was);
         wheel(&mut tone, Grip::Predelay, Mods::default(), -1.0);
         assert!(tone.reverb.predelay > super::Room::default().predelay - 1.0);
@@ -9221,7 +11859,10 @@ mod face_tests {
         let strip = lane_of(body(Which::Delay), Which::Delay, Rack::Full).expect("a selector");
         // Chip 1 is tape.
         let x = super::CHIP.mul_add(1.5, strip.x + 2.0);
-        assert_eq!(grip(x, strip.y + 4.0, &tone), Some(Grip::Choose(Which::Delay, 1)));
+        assert_eq!(
+            grip(x, strip.y + 4.0, &tone),
+            Some(Grip::Choose(Which::Delay, 1))
+        );
         assert!(Grip::Choose(Which::Delay, 1).is_switch());
         tone.delay.choose_family(1);
         assert_eq!(tone.delay.family(), delay_dsp::engine::Family::Tape);
@@ -9232,10 +11873,20 @@ mod face_tests {
         assert_ne!(tone.delay.style, first);
         assert_eq!(tone.delay.family(), delay_dsp::engine::Family::Rhythmic);
         // Past the chips is the bypass, not a chip.
-        assert_eq!(grip(strip.x + strip.width - 2.0, strip.y + 4.0, &tone), Some(Grip::Bypass(Which::Delay)));
+        assert_eq!(
+            grip(strip.x + strip.width - 2.0, strip.y + 4.0, &tone),
+            Some(Grip::Bypass(Which::Delay))
+        );
         // And the reverb's picks an algorithm of the family.
         let strip = lane_of(body(Which::Reverb), Which::Reverb, Rack::Full).expect("a selector");
-        assert_eq!(grip(super::CHIP.mul_add(2.5, strip.x + 2.0), strip.y + 4.0, &tone), Some(Grip::Choose(Which::Reverb, 2)));
+        assert_eq!(
+            grip(
+                super::CHIP.mul_add(2.5, strip.x + 2.0),
+                strip.y + 4.0,
+                &tone
+            ),
+            Some(Grip::Choose(Which::Reverb, 2))
+        );
         tone.reverb.choose_family(2);
         assert_eq!(tone.reverb.family(), reverb_dsp::algorithm::Family::Plate);
         tone.reverb.choose_family(99);
@@ -9248,13 +11899,23 @@ mod face_tests {
     fn the_saturators_selector_picks_a_circuit() {
         let mut tone = placeholder(0);
         let strip = lane_of(body(Which::Sat), Which::Sat, Rack::Full).expect("a selector");
-        assert_eq!(grip(super::CHIP.mul_add(4.5, strip.x + 2.0), strip.y + 4.0, &tone), Some(Grip::Choose(Which::Sat, 4)));
+        assert_eq!(
+            grip(
+                super::CHIP.mul_add(4.5, strip.x + 2.0),
+                strip.y + 4.0,
+                &tone
+            ),
+            Some(Grip::Choose(Which::Sat, 4))
+        );
         let drive = tone.sat.drive;
         tone.choose_sat_family(4);
         assert_eq!(tone.sat_circuit(), saturate_dsp::preamp::Circuit::Steps);
         assert_eq!(saturate_profiles::PROFILES[tone.sat_profile].name, "Clip");
         tone.choose_sat_family(4);
-        assert_eq!(saturate_profiles::PROFILES[tone.sat_profile].name, "Bitcrush");
+        assert_eq!(
+            saturate_profiles::PROFILES[tone.sat_profile].name,
+            "Bitcrush"
+        );
         assert!(!tone.sat_digital.is_transparent(), "a bitcrusher quantises");
         tone.choose_sat_family(0);
         assert_eq!(tone.sat_circuit(), saturate_dsp::preamp::Circuit::Valve);
@@ -9263,7 +11924,10 @@ mod face_tests {
         // triode at the same knob, not the same gain.
         assert!(tone.sat.drive > 1.0 && (tone.sat.drive - drive).abs() < 8.0);
         tone.cycle_sat();
-        assert_eq!(saturate_profiles::PROFILES[tone.sat_profile].name, "Pentode");
+        assert_eq!(
+            saturate_profiles::PROFILES[tone.sat_profile].name,
+            "Pentode"
+        );
     }
 
     /// A suppressor: edges where they are drawn, then threshold, depth,
@@ -9276,20 +11940,49 @@ mod face_tests {
         assert!(strip.y < at.y, "the strip is over the display");
         let zoom = super::SuppressZoom::top();
         let low_x = zoom.x_of(f64::from(tone.de_ess.low), strip);
-        assert_eq!(grip(low_x, strip.y + 5.0, &tone), Some(Grip::Edge(Which::DeEss, Side::Low)));
+        assert_eq!(
+            grip(low_x, strip.y + 5.0, &tone),
+            Some(Grip::Edge(Which::DeEss, Side::Low))
+        );
         let mid_x = at.x + at.width / 2.0;
         // Between the edges the strip is the sharpness; the display
         // is the threshold, with the depth along its floor.
-        assert_eq!(grip(strip.x + 3.0, strip.y + 5.0, &tone), Some(Grip::Sharpness(Which::DeEss)));
-        assert_eq!(grip(mid_x, at.y + 2.0, &tone), Some(Grip::Threshold(Which::DeEss)));
-        assert_eq!(grip(mid_x, at.y + at.height / 2.0, &tone), Some(Grip::Threshold(Which::DeEss)));
-        assert_eq!(grip(mid_x, at.y + at.height - 2.0, &tone), Some(Grip::Depth(Which::DeEss)));
+        assert_eq!(
+            grip(strip.x + 3.0, strip.y + 5.0, &tone),
+            Some(Grip::Sharpness(Which::DeEss))
+        );
+        assert_eq!(
+            grip(mid_x, at.y + 2.0, &tone),
+            Some(Grip::Threshold(Which::DeEss))
+        );
+        assert_eq!(
+            grip(mid_x, at.y + at.height / 2.0, &tone),
+            Some(Grip::Threshold(Which::DeEss))
+        );
+        assert_eq!(
+            grip(mid_x, at.y + at.height - 2.0, &tone),
+            Some(Grip::Depth(Which::DeEss))
+        );
         let was = tone.de_ess.low;
-        wheel(&mut tone, Grip::Edge(Which::DeEss, Side::Low), Mods::default(), -1.0);
+        wheel(
+            &mut tone,
+            Grip::Edge(Which::DeEss, Side::Low),
+            Mods::default(),
+            -1.0,
+        );
         assert!(tone.de_ess.low > was, "the wheel moves the edge up");
         assert!(tone.de_ess.low < tone.de_ess.high);
         let depth = tone.de_ess.depth;
-        drag(&mut tone, Grip::Depth(Which::DeEss), &ALL_PANELS, rack(), Folded::default(), Mods::default(), 0.0, 20.0);
+        drag(
+            &mut tone,
+            Grip::Depth(Which::DeEss),
+            &ALL_PANELS,
+            rack(),
+            Folded::default(),
+            Mods::default(),
+            0.0,
+            20.0,
+        );
         assert!(tone.de_ess.depth > depth, "down is deeper");
     }
 
@@ -9301,10 +11994,25 @@ mod face_tests {
         let at = display_of(body(Which::Sat), Which::Sat, Rack::Full);
         let (curve, ladder) = sat_split(at, Rack::Full);
         let ladder = ladder.expect("a ladder at a working width");
-        assert_eq!(grip(ladder.x + 3.0, ladder.y + 3.0, &tone), Some(Grip::Tilt));
-        assert_eq!(grip(curve.x + curve.width / 2.0, curve.y + 5.0, &tone), Some(Grip::Bias));
+        assert_eq!(
+            grip(ladder.x + 3.0, ladder.y + 3.0, &tone),
+            Some(Grip::Tilt)
+        );
+        assert_eq!(
+            grip(curve.x + curve.width / 2.0, curve.y + 5.0, &tone),
+            Some(Grip::Bias)
+        );
         assert_eq!(grip(curve.x + 3.0, curve.y + 5.0, &tone), Some(Grip::Drive));
-        drag(&mut tone, Grip::Bias, &ALL_PANELS, rack(), Folded::default(), Mods::default(), 15.0, 0.0);
+        drag(
+            &mut tone,
+            Grip::Bias,
+            &ALL_PANELS,
+            rack(),
+            Folded::default(),
+            Mods::default(),
+            15.0,
+            0.0,
+        );
         assert!(tone.sat.q_point > 0.25);
         let tilt = tone.sat.tilt_db();
         wheel(&mut tone, Grip::Tilt, Mods::default(), -1.0);
@@ -9317,10 +12025,32 @@ mod face_tests {
         let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
         let font = crate::text::Font::embedded().expect("the embedded font");
         let mut still = anyrender::Scene::new();
-        super::draw(&mut still, &palette, &font, &tone, &Meters::default(), &ALL_PANELS, rack(), Folded::default(), None, None);
+        super::draw(
+            &mut still,
+            &palette,
+            &font,
+            &tone,
+            &Meters::default(),
+            &ALL_PANELS,
+            rack(),
+            Folded::default(),
+            None,
+            None,
+        );
         let mut moving = anyrender::Scene::new();
         let meters = crate::simulate::meters(0, 1.25, &tone);
-        super::draw(&mut moving, &palette, &font, &tone, &meters, &ALL_PANELS, rack(), Folded::default(), None, None);
+        super::draw(
+            &mut moving,
+            &palette,
+            &font,
+            &tone,
+            &meters,
+            &ALL_PANELS,
+            rack(),
+            Folded::default(),
+            None,
+            None,
+        );
         assert!(moving.commands.len() > still.commands.len());
     }
 
@@ -9329,9 +12059,17 @@ mod face_tests {
     #[test]
     fn three_units_carry_a_machine_glyph() {
         let tone = placeholder(0);
-        let with: Vec<Which> = ALL_PANELS.iter().copied().filter(|w| w.glyph(&tone).is_some()).collect();
+        let with: Vec<Which> = ALL_PANELS
+            .iter()
+            .copied()
+            .filter(|w| w.glyph(&tone).is_some())
+            .collect();
         assert_eq!(with, vec![Which::Sat, Which::Delay, Which::Reverb]);
-        assert!(Which::Sat.glyph_switches() && Which::Delay.glyph_switches() && Which::Reverb.glyph_switches());
+        assert!(
+            Which::Sat.glyph_switches()
+                && Which::Delay.glyph_switches()
+                && Which::Reverb.glyph_switches()
+        );
         assert!(!Which::Gate.glyph_switches());
     }
 
@@ -9342,15 +12080,34 @@ mod face_tests {
         let tone = placeholder(0);
         let mut levels = super::Levels::default();
         let mut silent = anyrender::Scene::new();
-        super::lanes(&mut silent, &ALL_PANELS, &levels, &tone, rack(), Folded::default(), Rack::Full);
+        super::lanes(
+            &mut silent,
+            &ALL_PANELS,
+            &levels,
+            &tone,
+            rack(),
+            Folded::default(),
+            Rack::Full,
+        );
         for i in 0..40 {
             levels.push(if i % 8 < 3 { 0.5 } else { 0.001 });
             levels.push_fire(if i % 8 == 1 { 6.0 } else { 0.0 });
             levels.push_ess(if i % 8 == 1 { 4.0 } else { -20.0 }, -22.0);
         }
         let mut busy = anyrender::Scene::new();
-        super::lanes(&mut busy, &ALL_PANELS, &levels, &tone, rack(), Folded::default(), Rack::Full);
-        assert!(busy.commands.len() >= silent.commands.len() + 2, "a door lane and a fire lane");
+        super::lanes(
+            &mut busy,
+            &ALL_PANELS,
+            &levels,
+            &tone,
+            rack(),
+            Folded::default(),
+            Rack::Full,
+        );
+        assert!(
+            busy.commands.len() >= silent.commands.len() + 2,
+            "a door lane and a fire lane"
+        );
     }
 
     /// Every grip names a panel that is in the chain.

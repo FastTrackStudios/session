@@ -145,9 +145,9 @@ mod tests {
     fn tracks_are_out_of_phase_with_each_other() {
         let mut t = tracks(32);
         drive(&mut t, 0.2);
-        let same = t.windows(2).filter(|w| {
-            (w[0].volume - w[1].volume).abs() < 1e-6 && w[0].muted == w[1].muted
-        });
+        let same = t
+            .windows(2)
+            .filter(|w| (w[0].volume - w[1].volume).abs() < 1e-6 && w[0].muted == w[1].muted);
         assert!(
             same.count() < 4,
             "too many neighbouring tracks share a state"

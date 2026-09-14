@@ -65,7 +65,12 @@ pub fn summed_columns(
 /// Column values as one mirrored polygon, the shape
 /// [`crate::canvas::take_waveform`] draws: zero on the row's midline, full
 /// scale just short of its edges. `None` when there is nothing to draw.
-pub(super) fn columns_polygon(cols: &[f32], w: f64, y0: f64, h: f64) -> Option<super::geometry::Polygon> {
+pub(super) fn columns_polygon(
+    cols: &[f32],
+    w: f64,
+    y0: f64,
+    h: f64,
+) -> Option<super::geometry::Polygon> {
     if cols.len() < 2 || cols.iter().all(|&v| v <= 0.0) {
         return None;
     }

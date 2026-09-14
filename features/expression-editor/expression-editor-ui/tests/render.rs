@@ -130,9 +130,16 @@ fn every_note_reaches_the_canvas() {
     let notes = ed.doc.notes.len();
     let mut labels = expression_editor_ui::text::Labeller::new();
 
-    let with_notes = paint::roll_scene(&ed, 900.0, 480.0, &paint::Overlay::default(), &mut labels, &paint::Look::default())
-        .commands
-        .len();
+    let with_notes = paint::roll_scene(
+        &ed,
+        900.0,
+        480.0,
+        &paint::Overlay::default(),
+        &mut labels,
+        &paint::Look::default(),
+    )
+    .commands
+    .len();
 
     // The same view with nothing in it, so the comparison is against
     // this roll's own chrome rather than a guessed constant: rows, grid,
@@ -190,9 +197,16 @@ fn zone_structure_is_drawn_and_reported() {
 
     let mut labels = expression_editor_ui::text::Labeller::new();
     let mut commands = |ed| {
-        paint::roll_scene(&ed, 900.0, 480.0, &paint::Overlay::default(), &mut labels, &paint::Look::default())
-            .commands
-            .len()
+        paint::roll_scene(
+            &ed,
+            900.0,
+            480.0,
+            &paint::Overlay::default(),
+            &mut labels,
+            &paint::Look::default(),
+        )
+        .commands
+        .len()
     };
     let plain = commands(demo_editor(false, false));
     let zoned = commands(demo_editor(false, true));

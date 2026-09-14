@@ -40,6 +40,10 @@ pub mod menu_ui;
 pub mod mode_picker;
 pub mod multitool_ui;
 pub use expression_editor_paint::paint;
+/// Real frames per second, from the engine that paints them. WebView
+/// only — native measures at the widget, which is a better vantage.
+#[cfg(feature = "webview")]
+pub mod frame_meter;
 pub mod quantize_panel;
 pub mod quantize_panel_view;
 pub mod roll;
@@ -50,10 +54,6 @@ pub mod roll_widget;
 /// (dioxus-desktop's WebView, dioxus-web). Native replays it directly.
 #[cfg(feature = "webview")]
 pub mod scene_image;
-/// Real frames per second, from the engine that paints them. WebView
-/// only — native measures at the widget, which is a better vantage.
-#[cfg(feature = "webview")]
-pub mod frame_meter;
 pub mod scroll;
 pub mod sizing;
 pub mod stack;
@@ -370,7 +370,6 @@ pub fn ExpressionEditor(
         }
     }
 }
-
 
 /// Lanes shown by default in either domain.
 ///
