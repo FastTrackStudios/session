@@ -584,11 +584,7 @@ impl Runner {
             viewport,
             opened.path.as_deref(),
         )?;
-        Ok((
-            built.label,
-            built.editor,
-            std::sync::Arc::new(built.host),
-        ))
+        Ok((built.label, built.editor, std::sync::Arc::new(built.host)))
     }
 
     /// Try one item, audio first.

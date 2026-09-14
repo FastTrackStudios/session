@@ -295,7 +295,8 @@ pub fn meters(track: usize, seconds: f64, tone: &crate::tone::Tone) -> Meters {
         let mut level = feedback;
         let mut wet = 0.0_f64;
         for k in 1..=6 {
-            wet = wet.max(envelope(voice, track, crate::num::coord(k).mul_add(-time, seconds)) * level);
+            wet = wet
+                .max(envelope(voice, track, crate::num::coord(k).mul_add(-time, seconds)) * level);
             level *= feedback;
         }
         crate::mcp::f64_to_f32(wet * f64::from(tone.delay.mix.clamp(0.0, 1.0)))
@@ -436,7 +437,8 @@ pub fn suppression(spectrum: &[f32], set: crate::tone::Suppress) -> Vec<f32> {
         let proud = if hz < low || hz > high {
             0.0
         } else {
-            (f64::from(*db) - average_at(i) - f64::from(set.threshold)).max(0.0) * f64::from(set.depth)
+            (f64::from(*db) - average_at(i) - f64::from(set.threshold)).max(0.0)
+                * f64::from(set.depth)
         };
         let last = cut.last().copied().unwrap_or(0.0);
         cut.push(last + proud);
@@ -446,10 +448,14 @@ pub fn suppression(spectrum: &[f32], set: crate::tone::Suppress) -> Vec<f32> {
     (0..spectrum.len())
         .map(|i| {
             let from = i.saturating_sub(SMOOTH);
-            let to = i.saturating_add(SMOOTH).min(spectrum.len().saturating_sub(1));
+            let to = i
+                .saturating_add(SMOOTH)
+                .min(spectrum.len().saturating_sub(1));
             let sum = cut.get(to.saturating_add(1)).copied().unwrap_or(0.0)
                 - cut.get(from).copied().unwrap_or(0.0);
-            crate::mcp::f64_to_f32(sum / crate::num::coord(to.saturating_sub(from).saturating_add(1)))
+            crate::mcp::f64_to_f32(
+                sum / crate::num::coord(to.saturating_sub(from).saturating_add(1)),
+            )
         })
         .collect()
 }
@@ -479,7 +485,9 @@ mod tests {
     /// it exists to exercise.
     #[test]
     fn it_moves() {
-        let peaks: Vec<f32> = (0..60).map(|i| frame(0, f64::from(i) / 30.0).peak).collect();
+        let peaks: Vec<f32> = (0..60)
+            .map(|i| frame(0, f64::from(i) / 30.0).peak)
+            .collect();
         let spread = peaks.iter().copied().fold(f32::MIN, f32::max)
             - peaks.iter().copied().fold(f32::MAX, f32::min);
         assert!(spread > 0.4, "the meter barely moved: {spread}");
@@ -529,7 +537,10 @@ mod tests {
         let high = suppression(&frame(2, 1.25).spectrum, ess);
         let low = suppression(&frame(0, 1.25).spectrum, ess);
         let deepest = |v: &[f32]| v.iter().copied().fold(0.0_f32, f32::max);
-        assert!(deepest(&high) >= deepest(&low), "the cymbal should be the sibilant one");
+        assert!(
+            deepest(&high) >= deepest(&low),
+            "the cymbal should be the sibilant one"
+        );
         // Outside the band nothing comes off.
         assert!(high[..20].iter().all(|v| *v <= f32::EPSILON));
         assert!((0.0..=1.0).contains(&m.delay_wet) && (0.0..=1.0).contains(&m.reverb_wet));

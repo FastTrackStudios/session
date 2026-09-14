@@ -461,8 +461,16 @@ mod tests {
         // A single-ended stage still makes a third — iron on the
         // bottom half does — so the test is the CONTRAST, which is
         // what the ladder's colours show.
-        assert!(valve.even_share() > 0.25, "valve even share {}", valve.even_share());
-        assert!(solid.even_share() < 0.1, "solid even share {}", solid.even_share());
+        assert!(
+            valve.even_share() > 0.25,
+            "valve even share {}",
+            valve.even_share()
+        );
+        assert!(
+            solid.even_share() < 0.1,
+            "solid even share {}",
+            solid.even_share()
+        );
         assert!(valve.even_share() > solid.even_share() + 0.2);
     }
 
@@ -476,7 +484,10 @@ mod tests {
         assert_eq!(rungs.at(-3.0).len(), RUNGS);
         // Between two measured levels is between their ladders.
         let mid: f32 = rungs.at(-12.0).iter().sum();
-        assert!(mid > quiet && mid < loud, "mid {mid} outside {quiet}..{loud}");
+        assert!(
+            mid > quiet && mid < loud,
+            "mid {mid} outside {quiet}..{loud}"
+        );
     }
 
     /// The first ask for a tail is the estimate, and after a synchronous

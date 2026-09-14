@@ -115,24 +115,16 @@ fn path_of(shape: &Shape) -> BezPath {
 
     match *shape {
         Shape::Rect { x, y, w, h, r } => {
-            let rect = Rect::new(
-                x,
-                y,
-                x + w,
-                y + h,
-            );
+            let rect = Rect::new(x, y, x + w, y + h);
             if r > 0.0 {
                 RoundedRect::from_rect(rect, r).to_path(TOLERANCE)
             } else {
                 rect.to_path(TOLERANCE)
             }
         }
-        Shape::Ellipse { cx, cy, rx, ry } => Ellipse::new(
-            Point::new(cx, cy),
-            (rx, ry),
-            0.0,
-        )
-        .to_path(TOLERANCE),
+        Shape::Ellipse { cx, cy, rx, ry } => {
+            Ellipse::new(Point::new(cx, cy), (rx, ry), 0.0).to_path(TOLERANCE)
+        }
         // Degrees clockwise from twelve o'clock, which is how the knobs
         // were measured; kurbo counts counter-clockwise from three, so
         // this is the whole of the conversion.
@@ -150,11 +142,7 @@ fn path_of(shape: &Shape) -> BezPath {
             0.0,
         )
         .to_path(TOLERANCE),
-        Shape::Line { from, to } => Line::new(
-            (from.0, from.1),
-            (to.0, to.1),
-        )
-        .to_path(TOLERANCE),
+        Shape::Line { from, to } => Line::new((from.0, from.1), (to.0, to.1)).to_path(TOLERANCE),
         Shape::Poly(ref points) => {
             let mut path = BezPath::new();
             for (i, (px, py)) in points.iter().enumerate() {
@@ -180,13 +168,9 @@ const fn convert(c: ThemeColor) -> Color {
 fn paint(brush: &Brush) -> anyrender::Paint {
     match brush {
         Brush::Solid(c) => anyrender::Paint::Solid(convert(*c)),
-        Brush::Linear { from, to, stops } => {
-            anyrender::Paint::Gradient(Gradient::new_linear(
-                (from.0, from.1),
-                (to.0, to.1),
-            )
-            .with_stops(collect(stops)))
-        }
+        Brush::Linear { from, to, stops } => anyrender::Paint::Gradient(
+            Gradient::new_linear((from.0, from.1), (to.0, to.1)).with_stops(collect(stops)),
+        ),
         Brush::Radial {
             centre,
             radius,

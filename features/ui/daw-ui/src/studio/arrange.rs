@@ -95,11 +95,7 @@ pub fn Ruler(project: ProjectRef, clock: Clock) -> Element {
 /// The lanes: one per visible track, in the same pitch the TCP column
 /// uses, with the playhead over them.
 #[component]
-pub fn Lanes(
-    project: ProjectRef,
-    rows: RowsRef,
-    clock: Clock,
-) -> Element {
+pub fn Lanes(project: ProjectRef, rows: RowsRef, clock: Clock) -> Element {
     rsx! {
         div {
             class: "studio-lanes",

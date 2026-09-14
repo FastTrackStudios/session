@@ -137,7 +137,9 @@ fn strip(file: &std::path::Path) -> Option<[ImageBrush; 3]> {
     let cells: Vec<ImageBrush> = (0..3)
         .map(|i| {
             let mut pixels = Vec::with_capacity(
-                (cell_w as usize).saturating_mul(height as usize).saturating_mul(4),
+                (cell_w as usize)
+                    .saturating_mul(height as usize)
+                    .saturating_mul(4),
             );
             for y in 0..height {
                 for x in 0..cell_w {
@@ -193,11 +195,15 @@ mod tests {
         let dir = std::env::temp_dir().join("fts-icon-strip-test");
         std::fs::create_dir_all(&dir).expect("a temp dir");
         let file = dir.join("odd.png");
-        image::RgbaImage::new(7, 3).save(&file).expect("write a png");
+        image::RgbaImage::new(7, 3)
+            .save(&file)
+            .expect("write a png");
         assert!(strip(&file).is_none());
 
         let three = dir.join("three.png");
-        image::RgbaImage::new(9, 3).save(&three).expect("write a png");
+        image::RgbaImage::new(9, 3)
+            .save(&three)
+            .expect("write a png");
         let cells = strip(&three).expect("a three-cell strip");
         assert!(cells.iter().all(|cell| cell.image.width == 3));
     }

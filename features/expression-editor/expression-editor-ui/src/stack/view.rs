@@ -159,7 +159,8 @@ pub fn StackView(
     // exactly once — `CustomWidgetAttr` is write-once, and rebuilding it
     // is what makes a painted surface go blank. See `crate::roll`.
     let slot = use_hook(crate::roll_widget::SceneSlot::new);
-    let labels = use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(crate::text::Labeller::new())));
+    let labels =
+        use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(crate::text::Labeller::new())));
     // What the `data` attribute carries.
     //
     // Under Blitz this is the custom-widget seam: the renderer calls the
@@ -337,19 +338,19 @@ pub fn StackView(
     }
 
     let chrome = super::paint::StackChrome {
-            chrome_rows: &chrome_rows,
-            sections: &sections,
-            marks: &marks,
-            ticks: &ticks,
-            fill_bands: &fill_bands,
-            mic_menu: mic_menu(),
-            ruler_h,
-            chrome_row_h: CHROME_ROW_H,
-            mark_row_h,
-            mic_chip_top: MIC_CHIP_TOP,
-            mic_menu_top: MIC_MENU_TOP,
-            mic_item_h: MIC_ITEM_H,
-            mic_menu_w: MIC_MENU_W,
+        chrome_rows: &chrome_rows,
+        sections: &sections,
+        marks: &marks,
+        ticks: &ticks,
+        fill_bands: &fill_bands,
+        mic_menu: mic_menu(),
+        ruler_h,
+        chrome_row_h: CHROME_ROW_H,
+        mark_row_h,
+        mic_chip_top: MIC_CHIP_TOP,
+        mic_menu_top: MIC_MENU_TOP,
+        mic_item_h: MIC_ITEM_H,
+        mic_menu_w: MIC_MENU_W,
         hit_margin: HIT_MARGIN,
     };
     // The same picture, drawn the way each renderer is fast at.
@@ -444,7 +445,9 @@ pub fn StackView(
     let marquee_x = marquee
         .as_ref()
         .map_or(0.0, |z| z.origin.min(z.current) + canvas::GUTTER_W);
-    let marquee_w = marquee.as_ref().map_or(0.0, |z| (z.current - z.origin).abs());
+    let marquee_w = marquee
+        .as_ref()
+        .map_or(0.0, |z| (z.current - z.origin).abs());
 
     // The surface's pixels, where the renderer needs an element to put
     // them in. Built here rather than inline because `rsx!` takes no

@@ -59,7 +59,7 @@ impl HasDisplayHandle for Surface {
     }
 }
 
-use session_daw::arrangement::{Arrangement, Palette, Viewport, TCP_WIDTH};
+use session_daw::arrangement::{Arrangement, Palette, TCP_WIDTH, Viewport};
 use session_daw::ruler::{Bars, RULER_H};
 use session_daw::{open, theme};
 
@@ -306,9 +306,8 @@ impl ApplicationHandler for App {
         let attrs = WindowAttributes::default()
             .with_title(self.view.title())
             .with_surface_size(winit::dpi::LogicalSize::new(want_w, want_h));
-        let window: Arc<dyn Window> = Arc::from(
-            event_loop.create_window(attrs).expect("create window"),
-        );
+        let window: Arc<dyn Window> =
+            Arc::from(event_loop.create_window(attrs).expect("create window"));
         let size = window.surface_size();
         self.surface_size = (f64::from(size.width), f64::from(size.height));
         let surface: Arc<dyn anyrender::WindowHandle> = Arc::new(Surface(window.clone()));
@@ -333,7 +332,8 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::SurfaceResized(size) => {
                 self.surface_size = (f64::from(size.width), f64::from(size.height));
-                self.renderer.set_size(size.width.max(1), size.height.max(1));
+                self.renderer
+                    .set_size(size.width.max(1), size.height.max(1));
                 self.redraw();
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -452,7 +452,8 @@ impl ApplicationHandler for App {
                         winit::keyboard::Key::Named(n) => Some(format!("{n:?}")),
                         _ => None,
                     };
-                    let code = session_daw::keys::key_code(named.as_deref(), event.logical_key.to_text());
+                    let code =
+                        session_daw::keys::key_code(named.as_deref(), event.logical_key.to_text());
                     if let Some(code) = code {
                         let modifiers = input::Modifiers {
                             ctrl: self.keys.ctrl,
@@ -513,9 +514,10 @@ impl ApplicationHandler for App {
                     // state, so the strips' fold icons agree with it
                     // and a click on one carries on from there.
                     if let Some(scene) = self.view_scene.and_then(session_daw::plan::scene) {
-                        let (all, depths) =
-                            daw_ui::components::folders::FolderState::default().visible(&self.tracks);
-                        let rows: Vec<(daw_proto::Track, u32)> = all.into_iter().zip(depths).collect();
+                        let (all, depths) = daw_ui::components::folders::FolderState::default()
+                            .visible(&self.tracks);
+                        let rows: Vec<(daw_proto::Track, u32)> =
+                            all.into_iter().zip(depths).collect();
                         self.folders = daw_ui::components::folders::FolderState::default();
                         for guid in session_daw::plan::collapsed_by(scene, &rows) {
                             self.folders.toggle(&guid);
@@ -658,7 +660,10 @@ impl ApplicationHandler for App {
                 if self.editor.zoom.is_some() {
                     let view = self.viewport();
                     let lanes = self.lanes_origin();
-                    if let Some(next) = self.editor.zoom_move((position.x, position.y), &view, lanes, self.keys) {
+                    if let Some(next) =
+                        self.editor
+                            .zoom_move((position.x, position.y), &view, lanes, self.keys)
+                    {
                         self.apply_view(next);
                     }
                     self.redraw();
@@ -673,8 +678,12 @@ impl ApplicationHandler for App {
                         };
                         let by = bar.scroll_per_thumb(along);
                         match axis {
-                            session_daw::scrollbar::Axis::X => self.scroll_to(self.scroll_x + by, self.scroll_y),
-                            session_daw::scrollbar::Axis::Y => self.scroll_to(self.scroll_x, self.scroll_y + by),
+                            session_daw::scrollbar::Axis::X => {
+                                self.scroll_to(self.scroll_x + by, self.scroll_y)
+                            }
+                            session_daw::scrollbar::Axis::Y => {
+                                self.scroll_to(self.scroll_x, self.scroll_y + by)
+                            }
                         }
                     }
                     self.redraw();
@@ -690,7 +699,10 @@ impl ApplicationHandler for App {
                 }
                 // The item under the pointer, for its handles.
                 if self.view == View::Arrangement && !self.editor.dragging() {
-                    let over = match self.arrange_hit_at(position.x, position.y).map(|h| h.target) {
+                    let over = match self
+                        .arrange_hit_at(position.x, position.y)
+                        .map(|h| h.target)
+                    {
                         Some(session_daw::hit::Target::Item { index, .. }) => Some(index),
                         _ => None,
                     };
@@ -794,7 +806,9 @@ impl ApplicationHandler for App {
                         if state.is_pressed() {
                             self.dock_focus = true;
                         }
-                        if let Some(asked) = self.expression.as_mut().and_then(|ex| ex.take_pending()) {
+                        if let Some(asked) =
+                            self.expression.as_mut().and_then(|ex| ex.take_pending())
+                        {
                             tracing::info!(
                                 expression.pending = ?asked,
                                 "the editor asked for a panel this window does not draw yet"
@@ -830,7 +844,10 @@ impl ApplicationHandler for App {
                     // zooms rather than selects.
                     if self.zoom_held && self.view == View::Arrangement {
                         let view = self.viewport();
-                        if self.editor.zoom_press((x, y), &view, self.lanes_origin(), self.keys) {
+                        if self
+                            .editor
+                            .zoom_press((x, y), &view, self.lanes_origin(), self.keys)
+                        {
                             self.redraw();
                             return;
                         }
@@ -978,10 +995,8 @@ impl ApplicationHandler for App {
                                 // selected the track, which is what you
                                 // wanted on the way here anyway.
                                 self.last_row_click = None;
-                                if let Some(track) = self
-                                    .arrange_map
-                                    .index(row)
-                                    .and_then(|i| self.tracks.get(i))
+                                if let Some(track) =
+                                    self.arrange_map.index(row).and_then(|i| self.tracks.get(i))
                                 {
                                     self.rename = Some(session_daw::rename::Rename::new(
                                         session_daw::rename::Surface::Arrange,
@@ -1178,8 +1193,7 @@ impl App {
         if panel_x < 0.0 || panel_x >= TCP_WIDTH {
             return None;
         }
-        let content_y =
-            y - session_daw::rails::TOP - RULER_H + self.scroll_y;
+        let content_y = y - session_daw::rails::TOP - RULER_H + self.scroll_y;
         let index = scene.row_at(content_y)?;
         let (top, height) = scene.row_box(index)?;
         let (track, depth) = self.rows_at(index)?;
@@ -1273,7 +1287,9 @@ impl App {
             .iter()
             .map(|track| {
                 session_daw::tone::scroll_span(
-                    self.tone_settings.get(&track.guid).map_or(panels, |t| t.panels(panels)),
+                    self.tone_settings
+                        .get(&track.guid)
+                        .map_or(panels, |t| t.panels(panels)),
                     mixer.rack_h,
                     self.rack_folds.of(&track.guid),
                 )
@@ -1510,13 +1526,21 @@ impl App {
         if self.view != View::Arrangement || self.scene.is_none() {
             return None;
         }
-        Some(session_daw::scrollbar::bars(self.lanes_box(), (self.scroll_x, self.scroll_y), self.spans()))
+        Some(session_daw::scrollbar::bars(
+            self.lanes_box(),
+            (self.scroll_x, self.scroll_y),
+            self.spans(),
+        ))
     }
 
     /// A press on a scrollbar: the thumb taken (returned as the drag to
     /// hold), or a page turned and nothing held. `None` if the press
     /// was not on a bar.
-    fn press_scrollbar(&mut self, x: f64, y: f64) -> Option<Option<(session_daw::scrollbar::Axis, f64)>> {
+    fn press_scrollbar(
+        &mut self,
+        x: f64,
+        y: f64,
+    ) -> Option<Option<(session_daw::scrollbar::Axis, f64)>> {
         use session_daw::scrollbar::{Axis, Press};
         let bars = self.scrollbars()?;
         for bar in [bars.0, bars.1] {
@@ -1524,7 +1548,11 @@ impl App {
                 Press::Miss => {}
                 Press::Thumb => return Some(Some((bar.axis, 0.0))),
                 Press::PageBack | Press::PageForward => {
-                    let by = if bar.press(x, y) == Press::PageBack { -bar.page() } else { bar.page() };
+                    let by = if bar.press(x, y) == Press::PageBack {
+                        -bar.page()
+                    } else {
+                        bar.page()
+                    };
                     match bar.axis {
                         Axis::X => self.scroll_to(self.scroll_x + by, self.scroll_y),
                         Axis::Y => self.scroll_to(self.scroll_x, self.scroll_y + by),
@@ -1584,8 +1612,12 @@ impl App {
     /// Do what a bound key asks. `false` when the window cannot, so the
     /// key falls through to what the window binds itself.
     fn act_on_key(&mut self, action: session_daw::keys::Action) -> bool {
-        let Some((project_ref, _)) = self.session.as_mut() else { return false };
-        let Some(scene) = self.scene.as_ref() else { return false };
+        let Some((project_ref, _)) = self.session.as_mut() else {
+            return false;
+        };
+        let Some(scene) = self.scene.as_ref() else {
+            return false;
+        };
         let project = std::sync::Arc::make_mut(&mut project_ref.0);
         let bpm = scene.bpm;
         let mut effects = Vec::new();
@@ -1610,7 +1642,13 @@ impl App {
         }
         let scene = self.scene.as_ref()?;
         let modes = session::modes::Mode::ALL.len();
-        Some(session_daw::hit::arrangement(scene, self.viewport(), modes, x, y))
+        Some(session_daw::hit::arrangement(
+            scene,
+            self.viewport(),
+            modes,
+            x,
+            y,
+        ))
     }
 
     /// The time under a point, if it is on the ruler.
@@ -1631,7 +1669,9 @@ impl App {
     /// The time under an x, wherever the pointer is vertically — for
     /// continuing a drag that began on the ruler.
     fn ruler_time_unclamped(&self, x: f64) -> Option<f64> {
-        (self.view == View::Arrangement).then(|| self.time_at(x)).flatten()
+        (self.view == View::Arrangement)
+            .then(|| self.time_at(x))
+            .flatten()
     }
 
     fn time_at(&self, x: f64) -> Option<f64> {
@@ -1773,18 +1813,12 @@ impl App {
         };
         let fraction = session_daw::gesture::drag_fraction(scaled, KNOB_TRAVEL);
         let mapped = match control {
-            C::Volume => session_daw::engine::drag(
-                session_daw::mcp::Control::Volume,
-                &guid,
-                track,
-                fraction,
-            ),
-            C::Pan => session_daw::engine::drag(
-                session_daw::mcp::Control::Pan,
-                &guid,
-                track,
-                fraction,
-            ),
+            C::Volume => {
+                session_daw::engine::drag(session_daw::mcp::Control::Volume, &guid, track, fraction)
+            }
+            C::Pan => {
+                session_daw::engine::drag(session_daw::mcp::Control::Pan, &guid, track, fraction)
+            }
             _ => None,
         };
         let Some(edit) = mapped else { return };
@@ -1918,7 +1952,10 @@ impl App {
     /// to orient by where this has nothing.
     fn scroll_mixer(&mut self, by: f64) {
         let width = self.surface_size.0;
-        let content = self.mixer.as_ref().map_or(0.0, session_daw::mcp::Mixer::content_width);
+        let content = self
+            .mixer
+            .as_ref()
+            .map_or(0.0, session_daw::mcp::Mixer::content_width);
         let most = (content - width).max(0.0);
         self.mixer_scroll = (self.mixer_scroll - by).clamp(0.0, most);
     }
@@ -1938,9 +1975,12 @@ impl App {
             // a preset.
             let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(
                 match self.view_scene.and_then(session_daw::plan::scene) {
-                    Some(scene) => {
-                        session_daw::plan::apply_scene(rows.as_slice(), scene, self.settings, height)
-                    }
+                    Some(scene) => session_daw::plan::apply_scene(
+                        rows.as_slice(),
+                        scene,
+                        self.settings,
+                        height,
+                    ),
                     None => session_daw::plan::apply(
                         rows.as_slice(),
                         session_daw::plan::slug(self.preset).unwrap_or(self.preset),
@@ -1999,7 +2039,9 @@ impl App {
     /// Whether a window point is on the dock's top edge — the grip
     /// that resizes it.
     fn dock_grip_at(&self, x: f64, y: f64) -> bool {
-        let Some(dock) = self.frame().dock_box() else { return false };
+        let Some(dock) = self.frame().dock_box() else {
+            return false;
+        };
         x >= dock.x0 && x < dock.x1 && (y - dock.y0).abs() <= DOCK_GRIP
     }
 
@@ -2025,7 +2067,10 @@ impl App {
             let from_item = wanted.as_deref().and_then(|guid| {
                 let scene = self.scene.as_ref()?;
                 let item = scene.item_by_guid(guid)?;
-                let track = self.arrange_rows.get(item.row).map(|(t, _)| t.name.as_str());
+                let track = self
+                    .arrange_rows
+                    .get(item.row)
+                    .map(|(t, _)| t.name.as_str());
                 let drums = track.is_some_and(session_daw::expression::is_drum_track);
                 let snapshot =
                     session_daw::expression::load_take(guid, scene.bpm, item.x1 - item.x0)?;
@@ -2135,10 +2180,8 @@ impl App {
                 None,
                 &vello::kurbo::Rect::new(0.0, 0.0, width, height),
             );
-            let at = Affine::translate((
-                session_daw::rails::SIDE - scroll,
-                session_daw::rails::TOP,
-            ));
+            let at =
+                Affine::translate((session_daw::rails::SIDE - scroll, session_daw::rails::TOP));
             // The recorded chrome.
             let a = mixer.replay(painter, scroll, frame.content_width(), at);
             // Then every control whose value can change, from the
@@ -2165,7 +2208,8 @@ impl App {
                 if let Some((left, strip_w, strip_h)) = mixer.strip_box(open.row) {
                     let _ = (strip_w, strip_h);
                     let strip = mixer.strip(open.row);
-                    if let Some(field) = strip.and_then(|s| s.rect(session_daw::mcp::Control::Name)) {
+                    if let Some(field) = strip.and_then(|s| s.rect(session_daw::mcp::Control::Name))
+                    {
                         session_daw::rename::paint(
                             painter,
                             palette,
@@ -2248,9 +2292,10 @@ impl App {
         let view = self.viewport();
         let hit = session_daw::hit::arrangement(scene, view, modes.len(), x, y);
         match hit.target {
-            session_daw::hit::Target::Mode(index) => {
-                modes.get(index).copied().map(session_daw::rails::Action::Mode)
-            }
+            session_daw::hit::Target::Mode(index) => modes
+                .get(index)
+                .copied()
+                .map(session_daw::rails::Action::Mode),
             _ => None,
         }
     }
@@ -2440,7 +2485,10 @@ impl App {
             return;
         }
         for track in &self.tracks {
-            let Some(level) = usize::try_from(track.index).ok().and_then(|i| levels.get(i)) else {
+            let Some(level) = usize::try_from(track.index)
+                .ok()
+                .and_then(|i| levels.get(i))
+            else {
                 continue;
             };
             self.clips.note(&track.guid, *level);
@@ -2503,7 +2551,9 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         let theme = self.theme.clone();
         let layout = self.layout;
-        let preset = session_daw::plan::slug(self.preset).unwrap_or(self.preset).to_owned();
+        let preset = session_daw::plan::slug(self.preset)
+            .unwrap_or(self.preset)
+            .to_owned();
         let settings = self.settings;
         if std::thread::Builder::new()
             .name("session-daw-reload".into())
@@ -2829,7 +2879,8 @@ fn main() {
         hovered_item: None,
         keys: session_daw::mousemap::Mods::default(),
         bar_drag: None,
-        follow: !std::env::var("FTS_FOLLOW").is_ok_and(|v| matches!(v.trim(), "off" | "0" | "false")),
+        follow: !std::env::var("FTS_FOLLOW")
+            .is_ok_and(|v| matches!(v.trim(), "off" | "0" | "false")),
         bindings: session_daw::keys::Keys::load(),
         pressed_row: None,
         hovered_rail: None,
@@ -2901,7 +2952,8 @@ fn build_scene(
         .ok()?;
     let project = rt.block_on(daw_ui::studio::project::fetch())?;
     let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
-    let (visible, depths) = daw_ui::components::folders::FolderState::default().visible(&project.tracks);
+    let (visible, depths) =
+        daw_ui::components::folders::FolderState::default().visible(&project.tracks);
     let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
         visible.into_iter().zip(depths).collect(),
     ));

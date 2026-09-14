@@ -62,7 +62,11 @@ pub fn FrameMeter(rate: Signal<FrameRate>) -> Element {
         let mut rate = rate;
         async move {
             while let Ok([fps, worst_frame_ms]) = eval.recv::<[f64; 2]>().await {
-                tracing::info!(ui.fps = fps, ui.worst_frame_ms = worst_frame_ms, "studio frame rate");
+                tracing::info!(
+                    ui.fps = fps,
+                    ui.worst_frame_ms = worst_frame_ms,
+                    "studio frame rate"
+                );
                 rate.set(FrameRate {
                     fps,
                     worst_frame_ms,

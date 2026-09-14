@@ -56,7 +56,11 @@ impl Bar {
         let content = (span + visible).max(1.0);
         let thumb_len = (length * visible / content).clamp(THUMB_MIN.min(length), length);
         let travel = (length - thumb_len).max(0.0);
-        let at = if span > 0.0 { (scroll / span).clamp(0.0, 1.0) * travel } else { 0.0 };
+        let at = if span > 0.0 {
+            (scroll / span).clamp(0.0, 1.0) * travel
+        } else {
+            0.0
+        };
         let thumb = match axis {
             Axis::X => Rect::new(track.x0 + at, track.y0, track.x0 + at + thumb_len, track.y1),
             Axis::Y => Rect::new(track.x0, track.y0 + at, track.x1, track.y0 + at + thumb_len),
@@ -107,7 +111,11 @@ impl Bar {
             Axis::X => x < self.thumb.x0,
             Axis::Y => y < self.thumb.y0,
         };
-        if before { Press::PageBack } else { Press::PageForward }
+        if before {
+            Press::PageBack
+        } else {
+            Press::PageForward
+        }
     }
 }
 
@@ -130,18 +138,39 @@ pub fn bars(lanes: Rect, scroll: (f64, f64), spans: (f64, f64)) -> (Bar, Bar) {
     let horizontal = Rect::new(lanes.x0, lanes.y1 - THICK, lanes.x1 - THICK, lanes.y1);
     let vertical = Rect::new(lanes.x1 - THICK, lanes.y0, lanes.x1, lanes.y1 - THICK);
     (
-        Bar::new(Axis::X, horizontal, scroll.0, spans.0, lanes.width() - THICK),
+        Bar::new(
+            Axis::X,
+            horizontal,
+            scroll.0,
+            spans.0,
+            lanes.width() - THICK,
+        ),
         Bar::new(Axis::Y, vertical, scroll.1, spans.1, lanes.height() - THICK),
     )
 }
 
 /// Draw both bars: a faint track, a thumb the panel can grab.
-pub fn draw(painter: &mut impl PaintScene, palette: &Palette, bars: (Bar, Bar), held: Option<Axis>) {
+pub fn draw(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    bars: (Bar, Bar),
+    held: Option<Axis>,
+) {
     for bar in [bars.0, bars.1] {
         // The track a shade off the lanes, the thumb a shade off the
         // text: enough to find, not enough to compete with an item.
-        painter.fill(Fill::NonZero, Affine::IDENTITY, palette.tcp_field.multiply_alpha(0.9), None, &bar.track);
-        let ink: Color = if held == Some(bar.axis) { palette.text } else { palette.text_dim };
+        painter.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            palette.tcp_field.multiply_alpha(0.9),
+            None,
+            &bar.track,
+        );
+        let ink: Color = if held == Some(bar.axis) {
+            palette.text
+        } else {
+            palette.text_dim
+        };
         painter.fill(
             Fill::NonZero,
             Affine::IDENTITY,
@@ -214,7 +243,10 @@ mod tests {
     #[test]
     fn the_thumb_is_the_views_share() {
         let (h, v) = bars(lanes(), (0.0, 0.0), (1000.0, 0.0));
-        assert!((h.thumb.x0 - h.track.x0).abs() < f64::EPSILON, "at the start when unscrolled");
+        assert!(
+            (h.thumb.x0 - h.track.x0).abs() < f64::EPSILON,
+            "at the start when unscrolled"
+        );
         assert!(h.thumb.width() < h.track.width());
         // No vertical span: the thumb is the whole track.
         assert!((v.thumb.height() - v.track.height()).abs() < f64::EPSILON);
@@ -266,6 +298,9 @@ mod tests {
         assert_eq!(follow(0.0, 1000.0, 500.0), None);
         let next = follow(0.0, 1000.0, 1001.0).expect("a page turn");
         assert!((next - 901.0).abs() < 1e-6);
-        assert!(follow(2000.0, 1000.0, 100.0).is_some(), "behind the view turns back");
+        assert!(
+            follow(2000.0, 1000.0, 100.0).is_some(),
+            "behind the view turns back"
+        );
     }
 }

@@ -62,12 +62,12 @@ pub use components::arrangement_view::ArrangementView;
 pub use components::fx_chain_tree::FxChainTree;
 pub use components::fx_parameter_browser::FxParameterBrowser;
 pub use components::mixer::MixerPanel;
+/// The TCP. One row implementation, one surface — see `components::tcp`.
+pub use components::tcp::{TrackPanel, TrackRow};
 #[cfg(feature = "web")]
 pub use components::toolbars::{KeybindProfile, ProfilePicker};
 pub use components::toolbars::{
     LeftToolbar, ModeDropdown, ModeIndicator, ModeOption, RightToolbar, ToolbarAction, TopToolbar,
 };
-/// The TCP. One row implementation, one surface — see `components::tcp`.
-pub use components::tcp::{TrackPanel, TrackRow};
 pub use layouts::daw_panels::{DawApplication, FxBrowserDockPanel};
 pub use panel_registration::register_panels;

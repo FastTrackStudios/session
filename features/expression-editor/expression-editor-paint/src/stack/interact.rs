@@ -31,8 +31,8 @@ use super::paint::{StackChrome, stack_scene};
 use super::zoom::TimeZoom;
 use crate::canvas::{self, Tick};
 use crate::interaction::{PAN_GAIN, ZOOM_DIVISOR};
-use crate::paint::{Look, stroke_of, with_alpha};
 use crate::num;
+use crate::paint::{Look, stroke_of, with_alpha};
 use crate::text::Labeller;
 use crate::theme;
 
@@ -337,7 +337,10 @@ impl Stack {
                 at,
                 with_alpha(look.text_dim, 0.5),
                 None,
-                &Line::new((slip.hit_x, slip.lane_y), (slip.hit_x, slip.lane_y + slip.lane_h)),
+                &Line::new(
+                    (slip.hit_x, slip.lane_y),
+                    (slip.hit_x, slip.lane_y + slip.lane_h),
+                ),
             );
             scene.stroke(
                 &stroke_of(2.0),
@@ -494,17 +497,22 @@ impl Stack {
         // Otherwise the press selects the lane under it. Clicking
         // targets a lane, never a track within one.
         let sy = ly + ed.stack_scroll;
-        let rows = ed
-            .tracks
-            .stack(num::sample(vp.h / 4096.0) * 4096.0, Editor::ACTIVE_BOOST, ed.lane_floor().max(MIN_LANE));
-        let hit = expression_editor_core::tracks::Workspace::row_at(&rows, num::sample(sy / 4096.0) * 4096.0)
-            .filter(|&lane| Some(lane) != ed.tracks.active_lane())
-            .and_then(|lane| {
-                ed.tracks
-                    .lane_tracks(lane)
-                    .into_iter()
-                    .find(|&i| ed.tracks.track(i).is_some_and(|t| !t.hidden))
-            });
+        let rows = ed.tracks.stack(
+            num::sample(vp.h / 4096.0) * 4096.0,
+            Editor::ACTIVE_BOOST,
+            ed.lane_floor().max(MIN_LANE),
+        );
+        let hit = expression_editor_core::tracks::Workspace::row_at(
+            &rows,
+            num::sample(sy / 4096.0) * 4096.0,
+        )
+        .filter(|&lane| Some(lane) != ed.tracks.active_lane())
+        .and_then(|lane| {
+            ed.tracks
+                .lane_tracks(lane)
+                .into_iter()
+                .find(|&i| ed.tracks.track(i).is_some_and(|t| !t.hidden))
+        });
         if let Some(track) = hit {
             ed.switch_track(track);
             return true;
@@ -577,9 +585,7 @@ impl Stack {
             };
             let grid_secs = Self::grid_secs(ed);
             // Double-click snaps the hit to its nearest division.
-            if double
-                && grid_secs > 0.0
-                && act(MouseGesture::DoubleClick) == Action::SnapHitToGrid
+            if double && grid_secs > 0.0 && act(MouseGesture::DoubleClick) == Action::SnapHitToGrid
             {
                 let target = (s.hit_secs / grid_secs).round() * grid_secs;
                 let delta = target - s.hit_secs;
@@ -620,7 +626,9 @@ impl Stack {
         }
         if let Some(s) = self.slipping.as_mut() {
             s.x = x;
-            let both = ed.mouse.resolve_for(MouseContext::Hit, MouseGesture::Drag, mods, ed.tool)
+            let both = ed
+                .mouse
+                .resolve_for(MouseContext::Hit, MouseGesture::Drag, mods, ed.tool)
                 == Action::MoveHitBothEnds;
             s.both = both;
             return true;
@@ -701,7 +709,13 @@ impl Stack {
     }
 
     /// A key, by its browser-style name. `true` when the stack took it.
-    pub fn key(&mut self, ed: &mut Editor, key: &str, mods: Mods, out: &mut Vec<HitGesture>) -> bool {
+    pub fn key(
+        &mut self,
+        ed: &mut Editor,
+        key: &str,
+        mods: Mods,
+        out: &mut Vec<HitGesture>,
+    ) -> bool {
         let vp = ed.viewport;
         if key.eq_ignore_ascii_case("z") && !mods.ctrl && !mods.alt {
             if self.zoom_from.is_none() {
@@ -736,7 +750,11 @@ impl Stack {
         match key {
             "ArrowLeft" | "ArrowRight" if self.editable => {
                 // The division, with Shift for the fine step: 1 ms.
-                let step = if mods.shift { 0.001 } else { Self::grid_secs(ed) };
+                let step = if mods.shift {
+                    0.001
+                } else {
+                    Self::grid_secs(ed)
+                };
                 if step <= 0.0 {
                     return false;
                 }

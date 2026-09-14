@@ -27,7 +27,7 @@ use anyrender::PaintScene;
 use vello::kurbo::{Affine, Rect};
 use vello::peniko::{Color, Fill};
 
-use crate::arrangement::{Palette, Viewport, TCP_WIDTH};
+use crate::arrangement::{Palette, TCP_WIDTH, Viewport};
 use crate::text::Font;
 
 /// The bar strip's height. REAPER's, measured.
@@ -104,7 +104,16 @@ pub fn grid(
     if let Some(division) = adaptive.fit(finest, measure_px) {
         let step = division * 4.0 * bars.secs_per_beat;
         if step > 0.0 {
-            line_every(painter, view, step, from, to, palette.grid_beat, 1.0, origin);
+            line_every(
+                painter,
+                view,
+                step,
+                from,
+                to,
+                palette.grid_beat,
+                1.0,
+                origin,
+            );
         }
     }
     // Bar lines always, and brighter: they are what the numbers above
@@ -220,8 +229,20 @@ pub fn lanes(
     for (row, name) in LANE_NAMES.iter().enumerate() {
         let top = LANE_H.mul_add(crate::num::coord(row), oy);
         // A rule under each lane, and the lane's name in the column.
-        fill(painter, palette.tcp_rule, Rect::new(ox, top + LANE_H - 1.0, right, top + LANE_H));
-        crate::tcp::glyphs(painter, font, palette.text_faint, name, ox + 8.0, top + LANE_H - 4.0, SIZE);
+        fill(
+            painter,
+            palette.tcp_rule,
+            Rect::new(ox, top + LANE_H - 1.0, right, top + LANE_H),
+        );
+        crate::tcp::glyphs(
+            painter,
+            font,
+            palette.text_faint,
+            name,
+            ox + 8.0,
+            top + LANE_H - 4.0,
+            SIZE,
+        );
     }
     // Regions: a band, clipped to the timeline, named where it starts
     // — or where the view starts, if the band began off screen, so a
@@ -234,13 +255,33 @@ pub fn lanes(
         if x1 <= x0 {
             continue;
         }
-        let tint = section.color.as_deref().and_then(css_hex).unwrap_or(palette.accent);
-        fill(painter, tint.multiply_alpha(0.45), Rect::new(x0, top, x1, top + LANE_H - 4.0));
-        fill(painter, tint, Rect::new(x0, top, (x0 + 2.0).min(x1), top + LANE_H - 4.0));
+        let tint = section
+            .color
+            .as_deref()
+            .and_then(css_hex)
+            .unwrap_or(palette.accent);
+        fill(
+            painter,
+            tint.multiply_alpha(0.45),
+            Rect::new(x0, top, x1, top + LANE_H - 4.0),
+        );
+        fill(
+            painter,
+            tint,
+            Rect::new(x0, top, (x0 + 2.0).min(x1), top + LANE_H - 4.0),
+        );
         if x1 - x0 > 24.0 {
             let room = x1 - x0 - 8.0;
             if let Some(name) = fit(font, &section.name, SIZE, room) {
-                crate::tcp::glyphs(painter, font, palette.text, name, x0 + 5.0, top + LANE_H - 6.0, SIZE);
+                crate::tcp::glyphs(
+                    painter,
+                    font,
+                    palette.text,
+                    name,
+                    x0 + 5.0,
+                    top + LANE_H - 6.0,
+                    SIZE,
+                );
             }
         }
     }
@@ -252,11 +293,31 @@ pub fn lanes(
         if x < left || x > right {
             continue;
         }
-        let tint = marker.color.as_deref().and_then(css_hex).unwrap_or(palette.ruler_fg);
-        fill(painter, tint, Rect::new(x, top, x + 2.0, top + LANE_H - 4.0));
-        fill(painter, tint, Rect::new(x, top, (x + 8.0).min(right), top + 4.0));
+        let tint = marker
+            .color
+            .as_deref()
+            .and_then(css_hex)
+            .unwrap_or(palette.ruler_fg);
+        fill(
+            painter,
+            tint,
+            Rect::new(x, top, x + 2.0, top + LANE_H - 4.0),
+        );
+        fill(
+            painter,
+            tint,
+            Rect::new(x, top, (x + 8.0).min(right), top + 4.0),
+        );
         if let Some(name) = fit(font, &marker.name, SIZE, right - x - 6.0) {
-            crate::tcp::glyphs(painter, font, palette.text, name, x + 5.0, top + LANE_H - 6.0, SIZE);
+            crate::tcp::glyphs(
+                painter,
+                font,
+                palette.text,
+                name,
+                x + 5.0,
+                top + LANE_H - 6.0,
+                SIZE,
+            );
         }
     }
 }
@@ -289,12 +350,20 @@ pub fn lane_lines(
     let mut lines: Vec<(f64, usize, bool, Color)> = Vec::new();
     for section in sections {
         let row = lane_row(section.lane);
-        let tint = section.color.as_deref().and_then(css_hex).unwrap_or(palette.accent);
+        let tint = section
+            .color
+            .as_deref()
+            .and_then(css_hex)
+            .unwrap_or(palette.accent);
         lines.push((x_of(section.start), row, true, tint));
         lines.push((x_of(section.end), row, false, tint));
     }
     for marker in markers {
-        let tint = marker.color.as_deref().and_then(css_hex).unwrap_or(palette.ruler_fg);
+        let tint = marker
+            .color
+            .as_deref()
+            .and_then(css_hex)
+            .unwrap_or(palette.ruler_fg);
         lines.push((x_of(marker.at), lane_row(marker.lane), true, tint));
     }
     // Sorted so the winner of each pixel comes LAST, then drawn in that
@@ -318,7 +387,11 @@ pub fn lane_lines(
             (_, false) => 0.5,
         };
         let x = x.round();
-        fill(painter, tint.multiply_alpha(alpha), Rect::new(x, top, x + 1.0, bottom));
+        fill(
+            painter,
+            tint.multiply_alpha(alpha),
+            Rect::new(x, top, x + 1.0, bottom),
+        );
     }
 }
 
@@ -326,7 +399,9 @@ pub fn lane_lines(
 /// one, the default lane is the first, and anything past the last row
 /// is drawn on it rather than off the strip.
 fn lane_row(lane: u32) -> usize {
-    usize::try_from(lane.saturating_sub(1)).unwrap_or(0).min(LANES.saturating_sub(1))
+    usize::try_from(lane.saturating_sub(1))
+        .unwrap_or(0)
+        .min(LANES.saturating_sub(1))
 }
 
 /// As much of a name as fits a width, or nothing.
@@ -350,7 +425,12 @@ fn css_hex(css: &str) -> Option<Color> {
         return None;
     }
     let channel = |at: usize| u8::from_str_radix(digits.get(at..at.saturating_add(2))?, 16).ok();
-    Some(Color::from_rgba8(channel(0)?, channel(2)?, channel(4)?, 0xff))
+    Some(Color::from_rgba8(
+        channel(0)?,
+        channel(2)?,
+        channel(4)?,
+        0xff,
+    ))
 }
 
 /// How many bar numbers a ruler will ever print.

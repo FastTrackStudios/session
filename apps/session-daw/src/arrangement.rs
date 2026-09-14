@@ -132,9 +132,7 @@ pub struct Palette {
 impl Palette {
     #[must_use]
     pub fn from_theme(theme: &daw_ui::theming::Theme) -> Self {
-        let c = |col: daw_ui::theming::Color| {
-            Color::from_rgba8(col.r, col.g, col.b, col.a)
-        };
+        let c = |col: daw_ui::theming::Color| Color::from_rgba8(col.r, col.g, col.b, col.a);
         Self {
             surface: c(theme.arrange.bg),
             row_a: c(theme.arrange.row_bg[0]),
@@ -261,7 +259,11 @@ impl Arrangement {
     #[must_use]
     fn row_height(&self, row: usize) -> f64 {
         let top = self.offsets.get(row).copied().unwrap_or(0.0);
-        let bottom = self.offsets.get(row.saturating_add(1)).copied().unwrap_or(top);
+        let bottom = self
+            .offsets
+            .get(row.saturating_add(1))
+            .copied()
+            .unwrap_or(top);
         bottom - top
     }
 
@@ -316,7 +318,10 @@ impl Arrangement {
         let bottom = (view.scroll_y + view.height) / zoom;
         // `partition_point` gives the first row whose TOP is past the
         // edge; the row before it is the one the edge falls inside.
-        let first = self.offsets.partition_point(|&y| y <= top).saturating_sub(1);
+        let first = self
+            .offsets
+            .partition_point(|&y| y <= top)
+            .saturating_sub(1);
         let last = self.offsets.partition_point(|&y| y < bottom);
         first.min(rows)..last.min(rows)
     }
@@ -392,7 +397,11 @@ impl Arrangement {
             // divider lives INSIDE the row, so a 24 track is 24 tall.
             let h = layout.height_of(track.height);
             let body = (h - DIVIDER).max(0.5);
-            let stripe = if row % 2 == 0 { palette.row_a } else { palette.row_b };
+            let stripe = if row % 2 == 0 {
+                palette.row_a
+            } else {
+                palette.row_b
+            };
 
             // The lane's background and the divider under it. Recorded
             // absurdly wide so a replay at any zoom still covers the
@@ -522,7 +531,11 @@ impl Arrangement {
         // The bottom of the last row, so every row has a `..end`.
         offsets.push(y);
 
-        debug_assert_eq!(index.x.len(), lanes.commands.len(), "one x extent per lane command");
+        debug_assert_eq!(
+            index.x.len(),
+            lanes.commands.len(),
+            "one x extent per lane command"
+        );
 
         Self {
             lanes,
@@ -549,7 +562,13 @@ impl Arrangement {
     /// the edges, and the body — checked in that order, because a
     /// handle sits on an edge and an edge sits on the body.
     #[must_use]
-    pub fn item_at(&self, view: Viewport, row: usize, x: f64, content_y: f64) -> Option<(usize, ItemZone)> {
+    pub fn item_at(
+        &self,
+        view: Viewport,
+        row: usize,
+        x: f64,
+        content_y: f64,
+    ) -> Option<(usize, ItemZone)> {
         let (top, height) = self.row_box(row)?;
         let scale = view.pps;
         // Last drawn is on top, so the last match wins.
@@ -767,7 +786,10 @@ pub fn fade_overlay(
         && let Some((top, height)) = scene.row_box(item.row)
     {
         let inset = (height * 0.05).clamp(0.0, 2.0);
-        let (top, bottom) = (top.mul_add(view.zoom_y, oy) + inset, (top + height).mul_add(view.zoom_y, oy) - inset);
+        let (top, bottom) = (
+            top.mul_add(view.zoom_y, oy) + inset,
+            (top + height).mul_add(view.zoom_y, oy) - inset,
+        );
         let px = Fades {
             fade_in: fades.fade_in * view.pps,
             fade_out: fades.fade_out * view.pps,
@@ -795,7 +817,10 @@ pub fn fade_overlay(
     };
     let fades = in_flight.map_or(item.fades, |(_, f)| f);
     let top = top.mul_add(view.zoom_y, oy) + 2.0;
-    for x in [x_of(item.x0 + fades.fade_in), x_of(item.x1 - fades.fade_out)] {
+    for x in [
+        x_of(item.x0 + fades.fade_in),
+        x_of(item.x1 - fades.fade_out),
+    ] {
         let r = Rect::new(x - 3.0, top, x + 3.0, top + 6.0);
         painter.fill(Fill::NonZero, Affine::IDENTITY, palette.text, None, &r);
     }
@@ -819,8 +844,14 @@ pub fn selection_overlay(
     let (ox, oy) = origin;
     let x_of = |t: f64| t.mul_add(view.pps, ox);
     let rows = scene.visible_rows(view);
-    for item in scene.items.iter().filter(|i| rows.contains(&i.row) && selected.contains(&i.guid)) {
-        let Some((top, height)) = scene.row_box(item.row) else { continue };
+    for item in scene
+        .items
+        .iter()
+        .filter(|i| rows.contains(&i.row) && selected.contains(&i.guid))
+    {
+        let Some((top, height)) = scene.row_box(item.row) else {
+            continue;
+        };
         let inset = (height * 0.05).clamp(0.0, 2.0);
         let r = Rect::new(
             x_of(item.x0),
@@ -828,7 +859,13 @@ pub fn selection_overlay(
             x_of(item.x1),
             (top + height).mul_add(view.zoom_y, oy) - inset,
         );
-        painter.stroke(&vello::kurbo::Stroke::new(1.5), Affine::IDENTITY, palette.text, None, &r.inset(-0.75));
+        painter.stroke(
+            &vello::kurbo::Stroke::new(1.5),
+            Affine::IDENTITY,
+            palette.text,
+            None,
+            &r.inset(-0.75),
+        );
     }
     if let Some((index, x0, x1)) = ghost
         && let Some(item) = scene.item(index)
@@ -841,8 +878,20 @@ pub fn selection_overlay(
             x_of(x1),
             (top + height).mul_add(view.zoom_y, oy) - inset,
         );
-        painter.fill(Fill::NonZero, Affine::IDENTITY, palette.text.multiply_alpha(0.12), None, &r);
-        painter.stroke(&vello::kurbo::Stroke::new(1.0), Affine::IDENTITY, palette.text, None, &r);
+        painter.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            palette.text.multiply_alpha(0.12),
+            None,
+            &r,
+        );
+        painter.stroke(
+            &vello::kurbo::Stroke::new(1.0),
+            Affine::IDENTITY,
+            palette.text,
+            None,
+            &r,
+        );
     }
 }
 
@@ -1074,11 +1123,7 @@ fn rgb24(rgb: u32, alpha: u8) -> Color {
 /// `just daw-verify` renders both and compares the pixels — a claim
 /// about what is off screen is exactly the kind that is easy to argue
 /// and easy to get subtly wrong at the edges.
-pub fn replay_all(
-    painter: &mut impl PaintScene,
-    scene: &Scene,
-    transform: Affine,
-) -> Counts {
+pub fn replay_all(painter: &mut impl PaintScene, scene: &Scene, transform: Affine) -> Counts {
     let mut counts = Counts::default();
     for cmd in &scene.commands {
         counts.replayed = counts.replayed.saturating_add(1);
@@ -1234,7 +1279,10 @@ mod chrome_tests {
     fn the_hardware_the_cap_is_moulded_from_is_opaque() {
         let chrome = super::chrome(&daw_ui::theming::Theme::dark());
         assert_eq!(chrome.hardware.a, 255, "the cap's body is translucent");
-        assert_eq!(chrome.hardware_edge.a, 255, "the cap's border is translucent");
+        assert_eq!(
+            chrome.hardware_edge.a, 255,
+            "the cap's border is translucent"
+        );
         // And it has to be TELLABLE from the strip it sits on. An
         // opaque ring the same grey as the background reads as no ring
         // at all, which looks exactly like a transparent one.

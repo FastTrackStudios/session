@@ -29,7 +29,7 @@
 
 use anyrender::PaintScene;
 use anyrender_vello::VelloScenePainter;
-use eyre::{eyre, Result, WrapErr};
+use eyre::{Result, WrapErr, eyre};
 use vello::wgpu;
 
 /// How many frames are submitted between waits.
@@ -60,7 +60,8 @@ impl Headless {
     /// would report a number for a machine nobody has, and it would
     /// report it in the same format as a real one.
     pub fn new(width: u32, height: u32) -> Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,

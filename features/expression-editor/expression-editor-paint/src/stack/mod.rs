@@ -65,7 +65,9 @@ pub fn submit(
             run.glyph_transform,
             run.glyphs.iter().copied(),
         ),
-        RenderCommand::PushClipLayer(clip) => painter.push_clip_layer(compose(at, clip.transform), &clip.clip),
+        RenderCommand::PushClipLayer(clip) => {
+            painter.push_clip_layer(compose(at, clip.transform), &clip.clip)
+        }
         RenderCommand::PushLayer(layer) => painter.push_layer(
             layer.blend,
             layer.alpha,
@@ -84,7 +86,6 @@ pub fn submit(
         ),
     }
 }
-
 
 /// `outer` after `inner`.
 fn compose(outer: kurbo::Affine, inner: kurbo::Affine) -> kurbo::Affine {

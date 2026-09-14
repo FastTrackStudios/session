@@ -84,7 +84,6 @@ const FX_BAND_H: f64 = 144.0;
 /// ground before anyone had noticed it moved.
 const COMMIT_X: f32 = 160.0;
 
-
 /// The Blitz cursor/scheme fixes every native window embeds (the same
 /// three lines the REAPER test panels carry).
 const BLITZ_FIXES: &str = r#"

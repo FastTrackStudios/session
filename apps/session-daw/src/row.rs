@@ -139,7 +139,10 @@ impl Row {
                         BUTTON.0 + BUTTON_GAP
                     };
                 let (top, h) = if self.density == Density::Full {
-                    (self.y + f64::from(g::ROW_ONE) + (24.0 - BUTTON.1) / 2.0, BUTTON.1)
+                    (
+                        self.y + f64::from(g::ROW_ONE) + (24.0 - BUTTON.1) / 2.0,
+                        BUTTON.1,
+                    )
                 } else {
                     let h = self.field_h.min(BUTTON.1);
                     (self.field_top + (self.field_h - h) / 2.0, h)
@@ -175,7 +178,12 @@ impl Row {
             }
             Control::Routing => (self.density == Density::Full).then(|| {
                 let x = f64::from(g::ROUTING_X);
-                Some(Rect::new(x, self.field_top, x + 26.0, self.field_top + self.field_h))
+                Some(Rect::new(
+                    x,
+                    self.field_top,
+                    x + 26.0,
+                    self.field_top + self.field_h,
+                ))
             })?,
             // Hidden on rows too short for it, by the theme's own
             // formula — the row's shape must not depend on its height.
@@ -194,7 +202,12 @@ impl Row {
             })?,
             Control::Fx => (self.density == Density::Full).then(|| {
                 let x = f64::from(g::FX_IN_X);
-                Some(Rect::new(x, self.field_top, x + 36.0, self.field_top + self.field_h))
+                Some(Rect::new(
+                    x,
+                    self.field_top,
+                    x + 36.0,
+                    self.field_top + self.field_h,
+                ))
             })?,
             Control::Name => {
                 let x = 58.0 + self.indent;
@@ -284,7 +297,12 @@ mod tests {
     fn a_band_has_no_controls() {
         let band = Row::new(0.0, 4.0, 0, false);
         assert_eq!(band.density, Density::Bar);
-        for control in [Control::Mute, Control::Volume, Control::Name, Control::Folder] {
+        for control in [
+            Control::Mute,
+            Control::Volume,
+            Control::Name,
+            Control::Folder,
+        ] {
             assert!(band.rect(control).is_none(), "{control:?} on a band");
         }
         assert!(band.control_at(100.0, 2.0).is_none());

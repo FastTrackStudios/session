@@ -14,6 +14,21 @@
 # Deliberately simpler than the monorepo gate it replaces: that one drove
 # `cargo rail plan` to pick affected crates out of a 238-member workspace.
 # These workspaces are small enough to just build.
+#
+# Sibling checkouts: the root Cargo.toml patches every daw and processor
+# crate to `../daw` and `../processor` (see the `[patch."https://github.com/
+# FastTrackStudios/daw"]` block for why it is a path and not a tag). The
+# runner therefore needs those two repos beside this one. actions/checkout
+# refuses a `path` outside $GITHUB_WORKSPACE, so all three land INSIDE the
+# workspace — `session/`, `daw/`, `processor/` — and every step runs from
+# `session/`, where `../daw` and `../processor` resolve. Both repos are
+# public, so the default GITHUB_TOKEN can clone them.
+#
+# The sibling refs are pinned to the shas the local siblings were on when
+# this was wired up (daw: the mouse-contexts-for-the-vello-surfaces branch,
+# 2 ahead of main; processor: main == v0.2.1). Bump them here when the
+# local siblings move — that is the CI half of "edit ../daw directly".
+# See issue #40.
 
 name: checks
 
@@ -35,16 +50,61 @@ jobs:
     name: Build + test
     runs-on: [self-hosted, session]
     timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: session
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: session
+      - name: Sibling checkout — daw
+        uses: actions/checkout@v4
+        with:
+          repository: FastTrackStudios/daw
+          ref: c433f1b32741797a1842b36c75e0df8295fe7331
+          path: daw
+      - name: Sibling checkout — processor
+        uses: actions/checkout@v4
+        with:
+          repository: FastTrackStudios/processor
+          ref: b3dbe81936663d52ffe1d8c1d96bc699775fb42f
+          path: processor
       - name: Persistent target dir
         run: |
           dir="${CACHE_DIRECTORY:-$HOME/.cache}/cargo-target"
           mkdir -p "$dir"
           echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
           echo "target dir: $dir ($(du -sh "$dir" 2>/dev/null | cut -f1))"
+      # Not `--locked`: cargo writes the lockfile's [[patch.unused]] trailer
+      # in HashMap order — one group per patched source URL (crates-io,
+      # daw, processor) — so the same inputs serialise differently from
+      # one run to the next and `--locked` fails at random (observed
+      # locally: four consecutive `cargo metadata` runs, three orderings).
+      # Instead: resolve, then diff the committed lockfile against the
+      # written one with the trailer compared as a sorted set. The whole
+      # body runs inside the dev shell: the NixOS host has no `diff` on
+      # the runner's PATH (sed/awk/sort happen to be there, diffutils is
+      # not).
       - name: Manifests + lockfile
-        run: ${NIX_DEV} cargo metadata --locked --format-version 1 > /dev/null
+        run: |
+          ${NIX_DEV} bash -euo pipefail -s <<'EOF'
+          committed="$RUNNER_TEMP/Cargo.lock.committed"
+          cp Cargo.lock "$committed"
+          cargo metadata --format-version 1 > /dev/null
+          packages() { sed '/^\[\[patch\.unused\]\]/,$d' "$1"; }
+          unused() {
+            awk '/^\[\[patch\.unused\]\]/ { f = 1; next }
+                 f && /^name = /    { n = $3 }
+                 f && /^version = / { print n "@" $3 }' "$1" | sort
+          }
+          ok=1
+          diff -u <(packages "$committed") <(packages Cargo.lock) || ok=0
+          diff -u <(unused "$committed") <(unused Cargo.lock) || ok=0
+          if [ "$ok" = 0 ]; then
+            echo "::error::Cargo.lock is out of date — run cargo metadata and commit the result"
+            exit 1
+          fi
+          EOF
       - name: cargo fmt --check
         run: ${NIX_DEV} cargo fmt --all --check
       # apps/web/assets/tailwind.css is gitignored build output that

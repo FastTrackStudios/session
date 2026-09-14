@@ -60,7 +60,11 @@ async fn drive() -> eyre::Result<()> {
     loop {
         tester.drain();
         tester.relayout();
-        if tester.query(by_testid("workstation-ready")).immediately().is_ok() {
+        if tester
+            .query(by_testid("workstation-ready"))
+            .immediately()
+            .is_ok()
+        {
             break;
         }
         eyre::ensure!(
@@ -70,7 +74,10 @@ async fn drive() -> eyre::Result<()> {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
-    let pane = tester.query(by_testid("workstation-arrange")).immediately().unwrap();
+    let pane = tester
+        .query(by_testid("workstation-arrange"))
+        .immediately()
+        .unwrap();
     let (ox, oy) = pane.document_origin();
     let (w, h) = pane.size();
     let (x, y) = (ox + f64::from(w) * 0.5, oy + f64::from(h) * 0.5);

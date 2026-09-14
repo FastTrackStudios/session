@@ -78,9 +78,10 @@ impl Scene {
                 scene.starts.push(item.position.as_seconds());
                 scene.lengths.push(item.length.as_seconds());
                 scene.rows.push(row);
-                scene
-                    .colors
-                    .push(item.color.map_or_else(|| fallback.clone(), |c| format!("#{c:06x}")));
+                scene.colors.push(
+                    item.color
+                        .map_or_else(|| fallback.clone(), |c| format!("#{c:06x}")),
+                );
                 scene.muted.push(item.muted);
             }
         }
@@ -90,15 +91,30 @@ impl Scene {
     /// The scene as a JSON literal, ready to paste into a script.
     fn to_json(&self) -> String {
         let nums = |v: &[f64]| {
-            v.iter().map(|n| format!("{n:.4}")).collect::<Vec<_>>().join(",")
+            v.iter()
+                .map(|n| format!("{n:.4}"))
+                .collect::<Vec<_>>()
+                .join(",")
         };
         format!(
             "{{\"starts\":[{}],\"lengths\":[{}],\"rows\":[{}],\"colors\":[{}],\"muted\":[{}]}}",
             nums(&self.starts),
             nums(&self.lengths),
-            self.rows.iter().map(usize::to_string).collect::<Vec<_>>().join(","),
-            self.colors.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
-            self.muted.iter().map(|b| i32::from(*b).to_string()).collect::<Vec<_>>().join(","),
+            self.rows
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+            self.colors
+                .iter()
+                .map(|s| format!("\"{s}\""))
+                .collect::<Vec<_>>()
+                .join(","),
+            self.muted
+                .iter()
+                .map(|b| i32::from(*b).to_string())
+                .collect::<Vec<_>>()
+                .join(","),
         )
     }
 }
@@ -110,14 +126,11 @@ pub fn LaneCanvas(project: ProjectRef, rows: RowsRef) -> Element {
     // Installed once; the page keeps drawing whatever scene it last had.
     use_hook(|| document::eval(RENDERER));
 
-    use_effect(use_reactive(
-        (&project, &rows),
-        move |(project, rows)| {
-            let json = Scene::build(&theme, &project, &rows).to_json();
-            let count = rows.len();
-            document::eval(&format!("window.__ftsLanes?.scene({json},{count});"));
-        },
-    ));
+    use_effect(use_reactive((&project, &rows), move |(project, rows)| {
+        let json = Scene::build(&theme, &project, &rows).to_json();
+        let count = rows.len();
+        document::eval(&format!("window.__ftsLanes?.scene({json},{count});"));
+    }));
 
     rsx! { canvas { class: "studio-canvas", "data-testid": "studio-canvas" } }
 }

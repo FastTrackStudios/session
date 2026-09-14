@@ -94,9 +94,7 @@ impl Probes {
 
     /// The `row:<family>` selection, if one was asked for.
     pub fn row(&self) -> Option<&str> {
-        self.0
-            .iter()
-            .find_map(|s| s.strip_prefix("row:"))
+        self.0.iter().find_map(|s| s.strip_prefix("row:"))
     }
 
     /// The zoom the `items:px` probe positions at. Fixed, because that

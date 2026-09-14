@@ -12,10 +12,10 @@
 //! the most frequent event a window gets.
 
 use anyrender::PaintScene;
+use daw_proto::Track;
 use daw_theme_art::geometry::mcp as g;
 use daw_theme_art::mixer_controls::Interaction;
 use daw_theme_art::paint::tcp as art;
-use daw_proto::Track;
 use vello::kurbo::Affine;
 
 use crate::arrangement::Palette;
@@ -92,8 +92,7 @@ impl Racks<'_> {
         // Leaked once, for the life of the process, so a `&mut` can be
         // handed out without a caller having to own the maps. This is
         // only reached by the shot path, which runs once.
-        static EMPTY_SETTINGS: std::sync::OnceLock<crate::tone::Store> =
-            std::sync::OnceLock::new();
+        static EMPTY_SETTINGS: std::sync::OnceLock<crate::tone::Store> = std::sync::OnceLock::new();
         static EMPTY_FOLD: std::sync::OnceLock<crate::tone::Fold> = std::sync::OnceLock::new();
         Racks {
             folded: EMPTY_FOLD.get_or_init(crate::tone::Fold::default),
@@ -139,7 +138,8 @@ pub fn control(
     rack_h: f64,
     transform: Affine,
 ) {
-    let (Some((left, _, _)), Some(strip)) = (mixer.strip_box(spot.row), mixer.strip(spot.row)) else {
+    let (Some((left, _, _)), Some(strip)) = (mixer.strip_box(spot.row), mixer.strip(spot.row))
+    else {
         return;
     };
     // The SAME layout the strip was drawn from — the mixer's own
@@ -220,7 +220,12 @@ pub fn control(
         Control::Fx => {
             crate::art::place(
                 &mut scene,
-                &art::fx_pill(&palette.chrome, crate::tcp::lit(palette), chain(track), state),
+                &art::fx_pill(
+                    &palette.chrome,
+                    crate::tcp::lit(palette),
+                    chain(track),
+                    state,
+                ),
                 font,
                 left + 7.0,
                 rack_h + f64::from(g::FX_PILL_TOP),
@@ -261,9 +266,8 @@ mod tests {
         let rows = RowsRef(std::sync::Arc::new(
             tracks.iter().cloned().map(|t| (t, 0)).collect(),
         ));
-        let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(
-            daw_ui::studio::Project::default(),
-        ));
+        let project =
+            daw_ui::studio::ProjectRef(std::sync::Arc::new(daw_ui::studio::Project::default()));
         let mixer = Mixer::build(
             &palette,
             &font,
@@ -294,9 +298,8 @@ mod tests {
         let rows = RowsRef(std::sync::Arc::new(
             tracks.iter().cloned().map(|t| (t, 0)).collect(),
         ));
-        let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(
-            daw_ui::studio::Project::default(),
-        ));
+        let project =
+            daw_ui::studio::ProjectRef(std::sync::Arc::new(daw_ui::studio::Project::default()));
         let mut settings = crate::tone::Store::default();
         settings.seed(rows.as_slice());
         let mixer = Mixer::build(
@@ -685,7 +688,10 @@ pub fn controls(
             // row: the mixer shows a subset in its own order, and a
             // meter reading another track's level is worse than one
             // reading none.
-            usize::try_from(track.index).ok().and_then(|i| levels.get(i)).copied(),
+            usize::try_from(track.index)
+                .ok()
+                .and_then(|i| levels.get(i))
+                .copied(),
             clipped.is(&track.guid),
             racks.history.get_mut(&track.guid),
             racks.spectra.get_mut(&track.guid),
@@ -866,8 +872,18 @@ fn draw_strip_controls(
     }
 
     for (control, label, on, lit) in [
-        (Control::Mute, "M", track.muted, crate::tcp::mute_lit(palette)),
-        (Control::Solo, "S", track.soloed, crate::tcp::solo_lit(palette)),
+        (
+            Control::Mute,
+            "M",
+            track.muted,
+            crate::tcp::mute_lit(palette),
+        ),
+        (
+            Control::Solo,
+            "S",
+            track.soloed,
+            crate::tcp::solo_lit(palette),
+        ),
     ] {
         let Some((x, y)) = at(control) else { continue };
         crate::art::place(
@@ -893,12 +909,7 @@ fn draw_strip_controls(
         // strip's own controls.
         scene.push_clip_layer(
             Affine::IDENTITY,
-            &vello::kurbo::Rect::new(
-                left + box_.x0,
-                box_.y0,
-                left + box_.x1,
-                box_.y1,
-            ),
+            &vello::kurbo::Rect::new(left + box_.x0, box_.y0, left + box_.x1, box_.y1),
         );
         // The scroll is the panel's own `y` — see `tone::layout`. One
         // offset, applied where the rack is placed, so the drawing and
@@ -933,7 +944,9 @@ fn draw_strip_controls(
                 let meters = analyser.meters().clone();
                 scene.commands.extend(paint(&meters).commands);
             }
-            None => scene.commands.extend(paint(&crate::live::Meters::default()).commands),
+            None => scene
+                .commands
+                .extend(paint(&crate::live::Meters::default()).commands),
         }
         scene.pop_layer();
     }
@@ -1071,10 +1084,22 @@ fn draw_strip_controls(
         // value you are actually changing is the one you have to infer
         // from where the cap sits. Only while dragging: a permanent
         // readout on forty strips is forty numbers nobody is reading.
-        if pointer.state(crate::pointer::Spot { row, control: Control::Volume })
-            == daw_theme_art::mixer_controls::Interaction::Pressed
+        if pointer.state(crate::pointer::Spot {
+            row,
+            control: Control::Volume,
+        }) == daw_theme_art::mixer_controls::Interaction::Pressed
         {
-            readout(scene, palette, font, track.volume, x, y, strip.columns.fader_w, cap_y, cap_h);
+            readout(
+                scene,
+                palette,
+                font,
+                track.volume,
+                x,
+                y,
+                strip.columns.fader_w,
+                cap_y,
+                cap_h,
+            );
         }
         // And the level again where the cap crosses it, so the column
         // is continuous rather than interrupted at the one height you
@@ -1310,7 +1335,10 @@ fn name(
 /// Placed against the cap rather than at a fixed height, because the
 /// thing it labels moves — and on the side away from the scale, so it
 /// cannot be read as one of the meter's marks.
-#[expect(clippy::too_many_arguments, reason = "a placement, and every part of it is one")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a placement, and every part of it is one"
+)]
 fn readout(
     scene: &mut anyrender::Scene,
     palette: &Palette,
@@ -1403,7 +1431,12 @@ pub fn panel_controls(
         let Some((top, height)) = scene.row_box(index) else {
             continue;
         };
-        let row = Row::new(top, height, i32::try_from(*depth).unwrap_or(0), track.is_folder);
+        let row = Row::new(
+            top,
+            height,
+            i32::try_from(*depth).unwrap_or(0),
+            track.is_folder,
+        );
         if row.density == crate::tcp::Density::Bar {
             continue;
         }
@@ -1411,7 +1444,12 @@ pub fn panel_controls(
         // recorded scene like the mixer is, so a hover cannot repaint
         // the row — it repaints the ONE control, here, in the same pass
         // that already redraws every live value.
-        let look = |control| pointer.state(RowSpot { row: index, control });
+        let look = |control| {
+            pointer.state(RowSpot {
+                row: index,
+                control,
+            })
+        };
 
         // Mute and solo.
         for (control, label, on, lit) in [
@@ -1602,7 +1640,13 @@ mod panel_tests {
     /// Four rows tall enough that every control has somewhere to be —
     /// the narrow tiers drop mute and solo on purpose, and a test that
     /// used them would be asserting they are missing.
-    fn panel() -> (crate::arrangement::Arrangement, Palette, Font, Vec<Track>, RowsRef) {
+    fn panel() -> (
+        crate::arrangement::Arrangement,
+        Palette,
+        Font,
+        Vec<Track>,
+        RowsRef,
+    ) {
         let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
         let font = Font::embedded().expect("the embedded font");
         let tracks: Vec<Track> = (0..4)

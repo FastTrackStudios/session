@@ -56,7 +56,10 @@ impl Groups {
     #[must_use]
     pub fn seed(tracks: &[Track]) -> Self {
         let mut groups = Vec::new();
-        for folder in tracks.iter().filter(|t| t.is_folder && is_group_folder(&t.name)) {
+        for folder in tracks
+            .iter()
+            .filter(|t| t.is_folder && is_group_folder(&t.name))
+        {
             let members: Vec<String> = tracks
                 .iter()
                 .filter(|t| t.parent_guid.as_deref() == Some(folder.guid.as_str()))
@@ -83,7 +86,10 @@ impl Groups {
     /// The group a track is in, if any.
     #[must_use]
     pub fn group_of(&self, guid: &str) -> Option<&[String]> {
-        self.groups.iter().find(|g| g.iter().any(|m| m == guid)).map(Vec::as_slice)
+        self.groups
+            .iter()
+            .find(|g| g.iter().any(|m| m == guid))
+            .map(Vec::as_slice)
     }
 
     /// The edits that keep a group balanced when one of its faders
@@ -127,7 +133,8 @@ impl Groups {
                 // that would reach it stops a hair above, still in, and
                 // comes back up with the next move the other way. Only
                 // the hand takes a track out.
-                let db = (db_of(t.volume) + share).clamp(FLOOR_DB + HAIR_DB, daw_theme_art::paint::tcp::FADER_TOP_DB);
+                let db = (db_of(t.volume) + share)
+                    .clamp(FLOOR_DB + HAIR_DB, daw_theme_art::paint::tcp::FADER_TOP_DB);
                 Edit::SetVolume(t.guid.clone(), db_to_gain(db))
             })
             .collect()
@@ -137,7 +144,9 @@ impl Groups {
 /// Whether a folder's name says its children are a balance group.
 fn is_group_folder(name: &str) -> bool {
     let lower = name.to_lowercase();
-    lower.starts_with("compress") || lower.starts_with("parallel comp") || lower.ends_with("(balance)")
+    lower.starts_with("compress")
+        || lower.starts_with("parallel comp")
+        || lower.ends_with("(balance)")
 }
 
 /// A gain in dB, with silence at the fader's floor rather than at minus
@@ -213,7 +222,11 @@ mod tests {
         for other in ["dry", "punch", "smash", "crunch"] {
             assert!((db(gain_of(&edits, other)) + 0.25).abs() < 1e-6, "{other}");
         }
-        assert!(edits.iter().all(|e| !matches!(e, Edit::SetVolume(g, _) if g == "tight")));
+        assert!(
+            edits
+                .iter()
+                .all(|e| !matches!(e, Edit::SetVolume(g, _) if g == "tight"))
+        );
     }
 
     /// The dry pulled to nothing is out: the next move spreads across
@@ -221,7 +234,11 @@ mod tests {
     #[test]
     fn a_silent_member_is_out_of_the_split() {
         let mut tracks = kit();
-        tracks.iter_mut().find(|t| t.guid == "dry").expect("dry").volume = 0.0;
+        tracks
+            .iter_mut()
+            .find(|t| t.guid == "dry")
+            .expect("dry")
+            .volume = 0.0;
         let groups = Groups::seed(&tracks);
         let edits = groups.companions(&tracks, "tight", db_to_gain(1.5));
         assert_eq!(edits.len(), 3);
@@ -255,11 +272,17 @@ mod tests {
         for t in &mut tracks {
             t.volume = db_to_gain(FLOOR_DB + 0.1);
         }
-        tracks.iter_mut().find(|t| t.guid == "tight").expect("tight").volume = 1.0;
+        tracks
+            .iter_mut()
+            .find(|t| t.guid == "tight")
+            .expect("tight")
+            .volume = 1.0;
         let groups = Groups::seed(&tracks);
         let edits = groups.companions(&tracks, "tight", db_to_gain(6.0));
         for e in &edits {
-            let Edit::SetVolume(_, v) = e else { panic!("{e:?}") };
+            let Edit::SetVolume(_, v) = e else {
+                panic!("{e:?}")
+            };
             assert!(*v > OUT);
         }
     }

@@ -646,7 +646,17 @@ mod look_tests {
     #[test]
     fn a_cursor_in_the_lanes_keeps_its_trail() {
         let mut scene = anyrender::Scene::new();
-        paint(&mut scene, Look { shadow: 200.0, ..Look::default() }, 900.0, 0.0, 900.0, 400.0);
+        paint(
+            &mut scene,
+            Look {
+                shadow: 200.0,
+                ..Look::default()
+            },
+            900.0,
+            0.0,
+            900.0,
+            400.0,
+        );
         assert_eq!(scene.commands.len(), 5);
     }
 }

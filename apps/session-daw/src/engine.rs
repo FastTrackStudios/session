@@ -153,8 +153,7 @@ impl Edit {
     /// Whether `other` is the same control on the same track.
     #[must_use]
     fn same_control_as(&self, other: &Self) -> bool {
-        self.guid() == other.guid()
-            && std::mem::discriminant(self) == std::mem::discriminant(other)
+        self.guid() == other.guid() && std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 }
 
@@ -479,8 +478,8 @@ mod tests {
             panic!("expected a volume edit");
         };
         let db = 20.0 * gain.log10();
-        let span = daw_theme_art::paint::tcp::FADER_TOP_DB
-            - daw_theme_art::paint::tcp::FADER_BOTTOM_DB;
+        let span =
+            daw_theme_art::paint::tcp::FADER_TOP_DB - daw_theme_art::paint::tcp::FADER_BOTTOM_DB;
         assert!(
             (db + span * 0.25).abs() < 0.01,
             "a quarter of the travel should be a quarter of the scale: {db} dB"
@@ -500,7 +499,10 @@ mod tests {
             panic!("expected a volume edit");
         };
         let ceiling = 10.0_f64.powf(daw_theme_art::paint::tcp::FADER_TOP_DB / 20.0);
-        assert!((up - ceiling).abs() < 1e-6, "should have stopped at +12 dB: {up}");
+        assert!(
+            (up - ceiling).abs() < 1e-6,
+            "should have stopped at +12 dB: {up}"
+        );
 
         let Some(Edit::SetVolume(_, down)) = drag(Control::Volume, "k", &unity, -5.0) else {
             panic!("expected a volume edit");
@@ -668,19 +670,31 @@ async fn apply(edit: &Edit) {
             // source until the standalone grows a split that carries
             // one; it says so here rather than pretending.
             Edit::SplitItem(_, split_at, _new_guid) => {
-                let (Ok(position), Ok(length)) = (item.position().await, item.length().await) else {
+                let (Ok(position), Ok(length)) = (item.position().await, item.length().await)
+                else {
                     return;
                 };
-                let (start, end) = (position.as_seconds(), position.as_seconds() + length.as_seconds());
+                let (start, end) = (
+                    position.as_seconds(),
+                    position.as_seconds() + length.as_seconds(),
+                );
                 if *split_at <= start || *split_at >= end {
                     return;
                 }
                 match item.set_length(secs(split_at - start)).await {
                     Ok(()) => {
-                        let Ok(Some(track)) = project.tracks().by_guid(&item_track(&project, edit.guid()).await).await else {
+                        let Ok(Some(track)) = project
+                            .tracks()
+                            .by_guid(&item_track(&project, edit.guid()).await)
+                            .await
+                        else {
                             return;
                         };
-                        track.items().add(at(*split_at), secs(end - split_at)).await.map(|_| ())
+                        track
+                            .items()
+                            .add(at(*split_at), secs(end - split_at))
+                            .await
+                            .map(|_| ())
                     }
                     Err(error) => Err(error),
                 }
@@ -919,7 +933,13 @@ mod watch_tests {
         // The window predicted a mute.
         t[0].muted = true;
         // The engine says otherwise — a solo-exclusive elsewhere, say.
-        apply_event(&mut t, &E::MuteChanged { guid: "a".into(), muted: false });
+        apply_event(
+            &mut t,
+            &E::MuteChanged {
+                guid: "a".into(),
+                muted: false,
+            },
+        );
         assert!(!t[0].muted);
     }
 
@@ -929,7 +949,13 @@ mod watch_tests {
     #[test]
     fn an_unknown_track_is_ignored() {
         let mut t = tracks();
-        apply_event(&mut t, &E::VolumeChanged { guid: "gone".into(), volume: 0.5 });
+        apply_event(
+            &mut t,
+            &E::VolumeChanged {
+                guid: "gone".into(),
+                volume: 0.5,
+            },
+        );
         assert!((t[0].volume - 1.0).abs() < f64::EPSILON);
     }
 
@@ -938,12 +964,48 @@ mod watch_tests {
     #[test]
     fn every_drawn_field_can_be_corrected() {
         let mut t = tracks();
-        apply_event(&mut t, &E::Renamed { guid: "a".into(), name: "Kick".into() });
-        apply_event(&mut t, &E::SoloChanged { guid: "a".into(), soloed: true });
-        apply_event(&mut t, &E::ArmChanged { guid: "a".into(), armed: true });
-        apply_event(&mut t, &E::VolumeChanged { guid: "a".into(), volume: 0.25 });
-        apply_event(&mut t, &E::PanChanged { guid: "a".into(), pan: -0.5 });
-        apply_event(&mut t, &E::SelectionChanged { guid: "a".into(), selected: true });
+        apply_event(
+            &mut t,
+            &E::Renamed {
+                guid: "a".into(),
+                name: "Kick".into(),
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::SoloChanged {
+                guid: "a".into(),
+                soloed: true,
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::ArmChanged {
+                guid: "a".into(),
+                armed: true,
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::VolumeChanged {
+                guid: "a".into(),
+                volume: 0.25,
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::PanChanged {
+                guid: "a".into(),
+                pan: -0.5,
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::SelectionChanged {
+                guid: "a".into(),
+                selected: true,
+            },
+        );
         assert_eq!(t[0].name, "Kick");
         assert!(t[0].soloed && t[0].armed && t[0].selected);
         assert!((t[0].volume - 0.25).abs() < f64::EPSILON);
@@ -954,7 +1016,13 @@ mod watch_tests {
     #[test]
     fn events_do_not_leak_between_tracks() {
         let mut t = tracks();
-        apply_event(&mut t, &E::MuteChanged { guid: "b".into(), muted: true });
+        apply_event(
+            &mut t,
+            &E::MuteChanged {
+                guid: "b".into(),
+                muted: true,
+            },
+        );
         assert!(!t[0].muted && t[1].muted);
     }
 }
@@ -1109,12 +1177,21 @@ mod meter_tests {
             (unity - meter_norm(0.0)).abs() < 1e-6,
             "0 dBFS landed at {unity}, not on the 0 mark"
         );
-        assert!(unity < 1.0, "0 dBFS filled the column, leaving no room for an over");
+        assert!(
+            unity < 1.0,
+            "0 dBFS filled the column, leaving no room for an over"
+        );
         // And an over goes ABOVE it rather than pinning to the same bar.
-        assert!(meter_fraction(1.5) > unity, "an over did not rise past unity");
+        assert!(
+            meter_fraction(1.5) > unity,
+            "an over did not rise past unity"
+        );
         // Up to the ceiling, where it stops rather than running off.
         let way_over = meter_fraction(10.0);
-        assert!(way_over <= 1.0, "a loud over ran off the column: {way_over}");
+        assert!(
+            way_over <= 1.0,
+            "a loud over ran off the column: {way_over}"
+        );
         assert!((METER_TOP_DB - 12.0).abs() < f64::EPSILON);
     }
 

@@ -524,7 +524,11 @@ fn rows(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, w: f64) {
 fn grid(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, h: f64) {
     let mut lines = Batch::default();
     for g in canvas::grid_lines(ed) {
-        let c = if g.beat { look.grid_beat } else { look.grid_sub };
+        let c = if g.beat {
+            look.grid_beat
+        } else {
+            look.grid_sub
+        };
         lines.add(c, &Line::new((g.x, 0.0), (g.x, h)));
     }
     lines.stroke(scene, at, 1.0);
@@ -609,13 +613,7 @@ fn audio(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine) {
     for (sx, ex) in canvas::sibilant_bands(ed) {
         let r = Rect::new(sx, 0.0, sx + (ex - sx).max(1.0), ed.viewport.h);
         scene.fill(Fill::NonZero, at, with_alpha(Color::BLACK, 0.35), None, &r);
-        scene.stroke(
-            &stroke_of(1.0),
-            at,
-            with_alpha(look.accent, 0.5),
-            None,
-            &r,
-        );
+        scene.stroke(&stroke_of(1.0), at, with_alpha(look.accent, 0.5), None, &r);
     }
 }
 
@@ -626,7 +624,14 @@ fn audio(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine) {
 /// than as an overlay. A guitarist reads bends as "full" and "half", so
 /// the peak carries the number and the curve only shows how it got
 /// there.
-fn strings(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, overlay: &Overlay, labels: &mut Labeller) {
+fn strings(
+    scene: &mut Scene,
+    look: &Look,
+    ed: &Editor,
+    at: Affine,
+    overlay: &Overlay,
+    labels: &mut Labeller,
+) {
     if overlay.flow.on_row() {
         for f in crate::guitar::flow_paths(ed) {
             scene.stroke(
@@ -673,13 +678,7 @@ fn draft(scene: &mut Scene, look: &Look, overlay: &Overlay, at: Affine) {
         None,
         &polyline(&d.original),
     );
-    scene.stroke(
-        &stroke_of(2.0),
-        at,
-        look.accent,
-        None,
-        &polyline(&d.line),
-    );
+    scene.stroke(&stroke_of(2.0), at, look.accent, None, &polyline(&d.line));
     for (x, y) in &d.anchors {
         let r = 3.5;
         scene.fill(
@@ -746,13 +745,7 @@ fn razors(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, pending: Opti
     let Some(area) = pending else { return };
     let r = canvas::razor_rect(ed, area);
     let box_ = Rect::new(r.x, r.y, r.x + r.w, r.y + r.h);
-    scene.fill(
-        Fill::NonZero,
-        at,
-        with_alpha(look.razor, 0.22),
-        None,
-        &box_,
-    );
+    scene.fill(Fill::NonZero, at, with_alpha(look.razor, 0.22), None, &box_);
     for x in [r.x, r.x + r.w] {
         scene.stroke(
             &stroke_of(1.5),
@@ -852,10 +845,7 @@ fn notes(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, labels: &mut L
             let r = Rect::new(n.x, n.y, n.x + n.w, n.y + n.h);
             bodies.add(fill, &r);
             if let Some(ribbon) = &n.ribbon {
-                ribbons.add(
-                    with_alpha(look.selected, 0.18 * alpha),
-                    &polygon(ribbon),
-                );
+                ribbons.add(with_alpha(look.selected, 0.18 * alpha), &polygon(ribbon));
             }
             // Zones, and which one a write would land on.
             for (x0, _x1, active) in &n.zones {
@@ -875,7 +865,11 @@ fn notes(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, labels: &mut L
             // wholesale. Two independent facts cannot share one channel;
             // one of them has to lose, and the one you are actively
             // changing must not be it.
-            let edge = if n.selected { look.selected } else { look.border_strong };
+            let edge = if n.selected {
+                look.selected
+            } else {
+                look.border_strong
+            };
             // Two widths, so two batches: a stroke width belongs to the
             // command, not to the path.
             if n.selected {
@@ -981,13 +975,7 @@ fn handles(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine) {
         }
         for h in &set.rects {
             let c = Rect::new(h.x, h.y, h.x + h.w, h.y + h.h);
-            scene.fill(
-                Fill::NonZero,
-                at,
-                with_alpha(look.handle, 0.9),
-                None,
-                &c,
-            );
+            scene.fill(Fill::NonZero, at, with_alpha(look.handle, 0.9), None, &c);
             scene.stroke(&stroke_of(1.0), at, look.accent, None, &c);
             // Each mark says what the handle *does* rather than naming
             // it. At fourteen pixels there is no room for a word, and a
@@ -1115,7 +1103,11 @@ fn keyboard(scene: &mut Scene, look: &Look, ed: &Editor, h: f64, labels: &mut La
     scene.fill(
         Fill::NonZero,
         at,
-        if piano { look.key_white } else { look.surface_bar },
+        if piano {
+            look.key_white
+        } else {
+            look.surface_bar
+        },
         None,
         &band,
     );
@@ -1139,7 +1131,11 @@ fn keyboard(scene: &mut Scene, look: &Look, ed: &Editor, h: f64, labels: &mut La
             }
         } else {
             faces.add(
-                if k.black { look.key_black } else { look.key_white },
+                if k.black {
+                    look.key_black
+                } else {
+                    look.key_white
+                },
                 &Rect::new(0.0, k.y, canvas::GUTTER_W, k.y + k.h),
             );
             edges.add(

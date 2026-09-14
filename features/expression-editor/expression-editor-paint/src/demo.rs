@@ -740,7 +740,13 @@ pub fn audio_kit(bars: usize, viewport: Viewport) -> Editor {
     let mut mics = groove.mics().into_iter();
     let Some((name, role, doc)) = mics.next() else {
         return Editor::new(
-            ExpressionDoc::new(TimeBase::Frames { frame_rate: Groove::RATE }, 0.0, 1.0),
+            ExpressionDoc::new(
+                TimeBase::Frames {
+                    frame_rate: Groove::RATE,
+                },
+                0.0,
+                1.0,
+            ),
             viewport,
         );
     };
@@ -812,14 +818,18 @@ impl Groove {
         for bar in 0..bars {
             let b0 = crate::num::coord(bar) * 4.0 * beat;
             g.kick.push((b0, wobble().mul_add(0.05, 0.95)));
-            g.kick.push((2.0f64.mul_add(beat, b0), wobble().mul_add(0.08, 0.9)));
+            g.kick
+                .push((2.0f64.mul_add(beat, b0), wobble().mul_add(0.08, 0.9)));
             if bar % 2 == 1 {
-                g.kick.push((3.5f64.mul_add(beat, b0), wobble().mul_add(0.1, 0.7)));
+                g.kick
+                    .push((3.5f64.mul_add(beat, b0), wobble().mul_add(0.1, 0.7)));
             }
             g.snare.push((b0 + beat, wobble().mul_add(0.06, 0.92)));
-            g.snare.push((3.0f64.mul_add(beat, b0), wobble().mul_add(0.08, 0.9)));
+            g.snare
+                .push((3.0f64.mul_add(beat, b0), wobble().mul_add(0.08, 0.9)));
             if bar % 4 == 2 {
-                g.snare.push((1.75f64.mul_add(beat, b0), wobble().mul_add(0.1, 0.25)));
+                g.snare
+                    .push((1.75f64.mul_add(beat, b0), wobble().mul_add(0.1, 0.25)));
             }
             for i in 0..16u8 {
                 let accent = if i % 4 == 0 { 0.8 } else { 0.45 };
@@ -871,9 +881,12 @@ impl Groove {
     fn doc(&self, hits: &Hits, peaks: Vec<f32>) -> ExpressionDoc {
         let rate = Self::RATE;
         let bar_units = 4.0 * Self::BEAT * rate;
-        let mut doc = ExpressionDoc::new(TimeBase::Frames { frame_rate: rate }, 0.0, self.secs * rate);
+        let mut doc =
+            ExpressionDoc::new(TimeBase::Frames { frame_rate: rate }, 0.0, self.secs * rate);
         doc.peaks = peaks;
-        doc.bars = (0..=self.bars).map(|b| crate::num::coord(b) * bar_units).collect();
+        doc.bars = (0..=self.bars)
+            .map(|b| crate::num::coord(b) * bar_units)
+            .collect();
         for (i, start) in (0..self.bars).step_by(8).enumerate() {
             let t0 = crate::num::coord(start) * bar_units;
             let t1 = crate::num::coord(start.saturating_add(8).min(self.bars)) * bar_units;
@@ -911,7 +924,13 @@ impl Groove {
     }
 
     /// Every mic of the kit, with what it hears.
-    fn mics(&self) -> Vec<(&'static str, expression_editor_core::kit::LaneRole, ExpressionDoc)> {
+    fn mics(
+        &self,
+    ) -> Vec<(
+        &'static str,
+        expression_editor_core::kit::LaneRole,
+        ExpressionDoc,
+    )> {
         use expression_editor_core::kit::LaneRole as R;
         let (k, s, h, c) = (&self.kick, &self.snare, &self.hat, &self.crash);
         let [t1, t2, t3] = [&self.toms[0], &self.toms[1], &self.toms[2]];
@@ -923,17 +942,47 @@ impl Groove {
             mic("Kick In", R::Kick, k, &[(k, 1.0, 0.12), (s, 0.12, 0.1)]),
             mic("Kick Out", R::Kick, k, &[(k, 0.8, 0.25), (t3, 0.2, 0.3)]),
             mic("Kick Trig", R::Kick, k, &[(k, 1.0, 0.03)]),
-            mic("Snare Top", R::Snare, s, &[(s, 1.0, 0.15), (h, 0.18, 0.04), (k, 0.1, 0.1)]),
-            mic("Snare Bottom", R::Snare, s, &[(s, 0.9, 0.2), (k, 0.15, 0.1)]),
+            mic(
+                "Snare Top",
+                R::Snare,
+                s,
+                &[(s, 1.0, 0.15), (h, 0.18, 0.04), (k, 0.1, 0.1)],
+            ),
+            mic(
+                "Snare Bottom",
+                R::Snare,
+                s,
+                &[(s, 0.9, 0.2), (k, 0.15, 0.1)],
+            ),
             mic("Tom 1", R::Toms, t1, &[(t1, 1.0, 0.3), (s, 0.2, 0.1)]),
             mic("Tom 2", R::Toms, t2, &[(t2, 1.0, 0.35), (s, 0.15, 0.1)]),
             mic("Floor Tom", R::Toms, t3, &[(t3, 1.0, 0.45), (k, 0.2, 0.15)]),
             // The other lane is heard, not detected: its mics carry
             // peaks and no hit list.
             mic("HH", R::Other, &none, &[(h, 0.9, 0.05), (s, 0.3, 0.1)]),
-            mic("OH L", R::Other, &none, &[(h, 0.5, 0.08), (c, 1.0, 1.2), (s, 0.5, 0.15), (k, 0.3, 0.1)]),
-            mic("OH R", R::Other, &none, &[(h, 0.4, 0.08), (c, 0.9, 1.3), (s, 0.5, 0.15), (t1, 0.4, 0.3)]),
-            mic("Room", R::Other, &none, &[(k, 0.5, 0.3), (s, 0.6, 0.35), (c, 0.6, 1.5), (h, 0.2, 0.1)]),
+            mic(
+                "OH L",
+                R::Other,
+                &none,
+                &[(h, 0.5, 0.08), (c, 1.0, 1.2), (s, 0.5, 0.15), (k, 0.3, 0.1)],
+            ),
+            mic(
+                "OH R",
+                R::Other,
+                &none,
+                &[
+                    (h, 0.4, 0.08),
+                    (c, 0.9, 1.3),
+                    (s, 0.5, 0.15),
+                    (t1, 0.4, 0.3),
+                ],
+            ),
+            mic(
+                "Room",
+                R::Other,
+                &none,
+                &[(k, 0.5, 0.3), (s, 0.6, 0.35), (c, 0.6, 1.5), (h, 0.2, 0.1)],
+            ),
         ]
     }
 }

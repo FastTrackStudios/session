@@ -62,8 +62,6 @@ use daw_theme_art::geometry::tcp::{ROW_H, ROW_W};
 /// guesswork — the same shape of experiment that found the column in
 /// the first place.
 
-
-
 /// A row plus the one-pixel divider under it — the pitch the lanes
 /// beside the column have to match, and the single fact that keeps the
 /// two columns level.

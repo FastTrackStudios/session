@@ -30,7 +30,8 @@ fn strip_range(offset: f64, count: usize) -> std::ops::Range<usize> {
     let first = (offset.max(0.0) / STRIP_W as f64).floor() as usize;
     let visible = (MIXER_W / STRIP_W as f64).ceil() as usize;
     let first = first.min(count.saturating_sub(visible));
-    first.saturating_sub(OVERSCAN_STRIPS)..first.saturating_add(visible + OVERSCAN_STRIPS).min(count)
+    first.saturating_sub(OVERSCAN_STRIPS)
+        ..first.saturating_add(visible + OVERSCAN_STRIPS).min(count)
 }
 
 #[component]

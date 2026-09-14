@@ -114,12 +114,25 @@ pub struct Editor {
 impl Editor {
     /// The pointer went down on `hit`, with `keys` held. `true` if the
     /// press was taken here.
-    pub fn press(&mut self, hit: Option<Hit>, keys: Mods, scene: &Arrangement, effects: &mut Vec<Effect>) -> bool {
+    pub fn press(
+        &mut self,
+        hit: Option<Hit>,
+        keys: Mods,
+        scene: &Arrangement,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
         let Some(hit) = hit else { return false };
         match hit.target {
-            Target::Item { index, zone, seconds, .. } => {
+            Target::Item {
+                index,
+                zone,
+                seconds,
+                ..
+            } => {
                 let action = mousemap::resolve(hit.context, Gesture::Drag, keys);
-                let Some(item) = scene.item(index) else { return false };
+                let Some(item) = scene.item(index) else {
+                    return false;
+                };
                 match action {
                     mousemap::Action::FadeIn | mousemap::Action::FadeShape => {
                         self.fade_drag = Some(FadeDrag {
@@ -132,7 +145,9 @@ impl Editor {
                         });
                         true
                     }
-                    mousemap::Action::MoveItem | mousemap::Action::TrimLeft | mousemap::Action::TrimRight => {
+                    mousemap::Action::MoveItem
+                    | mousemap::Action::TrimLeft
+                    | mousemap::Action::TrimRight => {
                         self.item_press = Some(ItemPress {
                             index,
                             guid: item.guid.clone(),
@@ -148,7 +163,9 @@ impl Editor {
                 }
             }
             Target::Lane { seconds, .. } | Target::Ruler { seconds } => {
-                if mousemap::resolve(hit.context, Gesture::Click, keys) != mousemap::Action::SetEditCursor {
+                if mousemap::resolve(hit.context, Gesture::Click, keys)
+                    != mousemap::Action::SetEditCursor
+                {
                     return false;
                 }
                 // A press moves the cursor at once — the click is what
@@ -175,7 +192,13 @@ impl Editor {
                 return false;
             }
             let beat = 60.0 / bpm.max(1.0);
-            let snap = |t: f64| if keys.shift { t } else { (t / beat).round() * beat };
+            let snap = |t: f64| {
+                if keys.shift {
+                    t
+                } else {
+                    (t / beat).round() * beat
+                }
+            };
             press.ghost = Some(match press.zone {
                 ItemZone::LeftEdge => (snap(press.x0 + dx).clamp(0.0, press.x1 - 0.01), press.x1),
                 ItemZone::RightEdge => (press.x0, snap(press.x1 + dx).max(press.x0 + 0.01)),
@@ -203,13 +226,21 @@ impl Editor {
     }
 
     /// The pointer came up at the time `at`.
-    pub fn release(&mut self, at: Option<f64>, keys: Mods, project: &mut Project, effects: &mut Vec<Effect>) -> bool {
+    pub fn release(
+        &mut self,
+        at: Option<f64>,
+        keys: Mods,
+        project: &mut Project,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
         if let Some(press) = self.item_press.take() {
             match press.ghost {
                 None => self.select(&press.guid, !keys.ctrl, project, effects),
                 Some((x0, x1)) => {
                     let edit = match press.zone {
-                        ItemZone::LeftEdge | ItemZone::RightEdge => Edit::TrimItem(press.guid.clone(), x0, x1 - x0),
+                        ItemZone::LeftEdge | ItemZone::RightEdge => {
+                            Edit::TrimItem(press.guid.clone(), x0, x1 - x0)
+                        }
                         _ => Edit::MoveItem(press.guid.clone(), x0),
                     };
                     edit_item(project, &press.guid, |item| {
@@ -224,13 +255,19 @@ impl Editor {
         }
         if let Some(drag) = self.fade_drag.take() {
             let edit = match drag.zone {
-                ItemZone::FadeIn => Edit::SetFadeIn(drag.guid.clone(), drag.fades.fade_in, drag.fades.in_shape),
-                ItemZone::FadeOut => Edit::SetFadeOut(drag.guid.clone(), drag.fades.fade_out, drag.fades.out_shape),
+                ItemZone::FadeIn => {
+                    Edit::SetFadeIn(drag.guid.clone(), drag.fades.fade_in, drag.fades.in_shape)
+                }
+                ItemZone::FadeOut => {
+                    Edit::SetFadeOut(drag.guid.clone(), drag.fades.fade_out, drag.fades.out_shape)
+                }
                 _ => return true,
             };
             edit_item(project, &drag.guid, |item| {
-                item.fade_in_length = daw_proto::primitives::Duration::from_seconds(drag.fades.fade_in);
-                item.fade_out_length = daw_proto::primitives::Duration::from_seconds(drag.fades.fade_out);
+                item.fade_in_length =
+                    daw_proto::primitives::Duration::from_seconds(drag.fades.fade_in);
+                item.fade_out_length =
+                    daw_proto::primitives::Duration::from_seconds(drag.fades.fade_out);
             });
             effects.push(Effect::Send(edit));
             effects.push(Effect::ReRecord);
@@ -250,7 +287,13 @@ impl Editor {
 
     /// The zoom tool takes hold at a window point. `true` when it did
     /// — it only takes a press on the lanes.
-    pub fn zoom_press(&mut self, at: (f64, f64), view: &Viewport, lanes: LanesOrigin, keys: Mods) -> bool {
+    pub fn zoom_press(
+        &mut self,
+        at: (f64, f64),
+        view: &Viewport,
+        lanes: LanesOrigin,
+        keys: Mods,
+    ) -> bool {
         let (x, y) = at;
         if x < lanes.0 || y < lanes.1 {
             return false;
@@ -272,7 +315,13 @@ impl Editor {
     /// or `None` when no zoom is in flight or a sweep is still being
     /// drawn. The scroll comes back unclamped; the window clamps it to
     /// its spans as it does every scroll.
-    pub fn zoom_move(&mut self, at: (f64, f64), view: &Viewport, lanes: LanesOrigin, keys: Mods) -> Option<Viewport> {
+    pub fn zoom_move(
+        &mut self,
+        at: (f64, f64),
+        view: &Viewport,
+        lanes: LanesOrigin,
+        keys: Mods,
+    ) -> Option<Viewport> {
         let z = self.zoom.as_mut()?;
         z.current = at;
         if z.marquee {
@@ -336,7 +385,9 @@ impl Editor {
     /// The Alt sweep's box, in window pixels, while one is being drawn.
     #[must_use]
     pub fn zoom_marquee(&self) -> Option<((f64, f64), (f64, f64))> {
-        self.zoom.filter(|z| z.marquee).map(|z| (z.origin, z.current))
+        self.zoom
+            .filter(|z| z.marquee)
+            .map(|z| (z.origin, z.current))
     }
 
     /// Whether a drag is in flight — what the edge autoscroll asks.
@@ -351,7 +402,9 @@ impl Editor {
     /// The ghost of an item being moved or trimmed: its index and span.
     #[must_use]
     pub fn ghost(&self) -> Option<(usize, f64, f64)> {
-        self.item_press.as_ref().and_then(|p| p.ghost.map(|(x0, x1)| (p.index, x0, x1)))
+        self.item_press
+            .as_ref()
+            .and_then(|p| p.ghost.map(|(x0, x1)| (p.index, x0, x1)))
     }
 
     /// The fade in flight: its item and where the fades are now.
@@ -361,7 +414,13 @@ impl Editor {
     }
 
     /// Select an item — alone, or added — here and in the engine.
-    pub fn select(&mut self, guid: &str, exclusive: bool, project: &mut Project, effects: &mut Vec<Effect>) {
+    pub fn select(
+        &mut self,
+        guid: &str,
+        exclusive: bool,
+        project: &mut Project,
+        effects: &mut Vec<Effect>,
+    ) {
         if exclusive {
             self.selected.clear();
         }
@@ -375,7 +434,10 @@ impl Editor {
 
     /// A bound key. `false` when this cannot do it, so the key falls
     /// through to what the window binds itself.
-    #[expect(clippy::too_many_arguments, reason = "everything a key can touch, passed rather than owned")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "everything a key can touch, passed rather than owned"
+    )]
     pub fn key(
         &mut self,
         action: Action,
@@ -388,7 +450,9 @@ impl Editor {
         effects: &mut Vec<Effect>,
     ) -> bool {
         match action {
-            Action::PlayStop | Action::PlayPause => effects.push(Effect::Transport(Move::PlayStop, 0.0)),
+            Action::PlayStop | Action::PlayPause => {
+                effects.push(Effect::Transport(Move::PlayStop, 0.0))
+            }
             Action::GoToStart => {
                 effects.push(Effect::Transport(Move::Home, 0.0));
                 effects.push(Effect::Playhead(0.0));
@@ -426,18 +490,30 @@ impl Editor {
                 effects.push(Effect::Send(Edit::DeselectAllItems(String::new())));
             }
             Action::CursorBar(by) | Action::CursorBeat(by) => {
-                let step = if matches!(action, Action::CursorBar(_)) { 240.0 } else { 60.0 } / bpm.max(1.0);
+                let step = if matches!(action, Action::CursorBar(_)) {
+                    240.0
+                } else {
+                    60.0
+                } / bpm.max(1.0);
                 // To the grid line in that direction — from a cursor
                 // between lines, the next line, not a step past it.
                 let at = self.cursor.at / step;
-                let to = if by > 0 { (at + 1e-6).floor() + 1.0 } else { (at - 1e-6).ceil() - 1.0 };
+                let to = if by > 0 {
+                    (at + 1e-6).floor() + 1.0
+                } else {
+                    (at - 1e-6).ceil() - 1.0
+                };
                 self.cursor.at = (to * step).max(0.0);
             }
             Action::TrackStep { by, extend } => {
                 let current = rows.iter().position(|(t, _)| t.selected);
-                let next = current.map_or(0, |i| i.saturating_add_signed(isize::try_from(by).unwrap_or(0)));
+                let next = current.map_or(0, |i| {
+                    i.saturating_add_signed(isize::try_from(by).unwrap_or(0))
+                });
                 let next = next.min(rows.len().saturating_sub(1));
-                let Some((track, _)) = rows.get(next) else { return true };
+                let Some((track, _)) = rows.get(next) else {
+                    return true;
+                };
                 let guid = track.guid.clone();
                 if let Some(index) = row_to_track.index(next) {
                     if !extend {
@@ -449,7 +525,11 @@ impl Editor {
                         t.selected = true;
                     }
                 }
-                effects.push(Effect::Send(if extend { Edit::AddToSelection(guid) } else { Edit::Select(guid) }));
+                effects.push(Effect::Send(if extend {
+                    Edit::AddToSelection(guid)
+                } else {
+                    Edit::Select(guid)
+                }));
                 effects.push(Effect::ReRecord);
             }
             Action::Marker(by) => {
@@ -523,7 +603,12 @@ impl Editor {
 
 /// Change one item in the window's copy of the project.
 fn edit_item(project: &mut Project, guid: &str, change: impl FnOnce(&mut daw_proto::Item)) {
-    if let Some(item) = project.items.values_mut().flatten().find(|i| i.guid == guid) {
+    if let Some(item) = project
+        .items
+        .values_mut()
+        .flatten()
+        .find(|i| i.guid == guid)
+    {
         change(item);
     }
 }
@@ -551,9 +636,17 @@ mod zoom_tests {
         let at = (887.0, 400.0);
         assert!(ed.zoom_press(at, &v, LANES, Mods::default()));
         let t_under = (at.0 - LANES.0 + v.scroll_x) / v.pps;
-        let next = ed.zoom_move((1087.0, 400.0), &v, LANES, Mods::default()).expect("a zoom");
-        assert!((next.pps / v.pps - std::f64::consts::E).abs() < 1e-9, "200px is one e-fold");
-        assert!((next.zoom_y - 1.0).abs() < 1e-12, "no vertical travel, no vertical zoom");
+        let next = ed
+            .zoom_move((1087.0, 400.0), &v, LANES, Mods::default())
+            .expect("a zoom");
+        assert!(
+            (next.pps / v.pps - std::f64::consts::E).abs() < 1e-9,
+            "200px is one e-fold"
+        );
+        assert!(
+            (next.zoom_y - 1.0).abs() < 1e-12,
+            "no vertical travel, no vertical zoom"
+        );
         // The second under the press is still under it.
         let t_after = (at.0 - LANES.0 + next.scroll_x) / next.pps;
         assert!((t_after - t_under).abs() < 1e-9);
@@ -566,7 +659,9 @@ mod zoom_tests {
         let at = (887.0, 400.0);
         ed.zoom_press(at, &v, LANES, Mods::default());
         let row_under = (at.1 - LANES.1 + v.scroll_y) / v.zoom_y;
-        let next = ed.zoom_move((887.0, 200.0), &v, LANES, Mods::default()).expect("a zoom");
+        let next = ed
+            .zoom_move((887.0, 200.0), &v, LANES, Mods::default())
+            .expect("a zoom");
         assert!((next.zoom_y - std::f64::consts::E).abs() < 1e-9);
         assert!((next.pps - v.pps).abs() < 1e-12);
         let row_after = (at.1 - LANES.1 + next.scroll_y) / next.zoom_y;
@@ -577,12 +672,23 @@ mod zoom_tests {
     fn shift_is_the_fine_control_and_the_press_must_be_on_the_lanes() {
         let mut ed = Editor::default();
         let v = view();
-        assert!(!ed.zoom_press((10.0, 400.0), &v, LANES, Mods::default()), "the panel is not the lanes");
+        assert!(
+            !ed.zoom_press((10.0, 400.0), &v, LANES, Mods::default()),
+            "the panel is not the lanes"
+        );
         ed.zoom_press((887.0, 400.0), &v, LANES, Mods::default());
-        let shift = Mods { shift: true, ..Mods::default() };
-        let next = ed.zoom_move((1087.0, 400.0), &v, LANES, shift).expect("a zoom");
+        let shift = Mods {
+            shift: true,
+            ..Mods::default()
+        };
+        let next = ed
+            .zoom_move((1087.0, 400.0), &v, LANES, shift)
+            .expect("a zoom");
         assert!((next.pps / v.pps - (0.25f64).exp()).abs() < 1e-9);
-        assert!(ed.zoom_release(&v, LANES).is_none(), "a drag zoomed on the way; the release adds nothing");
+        assert!(
+            ed.zoom_release(&v, LANES).is_none(),
+            "a drag zoomed on the way; the release adds nothing"
+        );
         assert!(!ed.dragging());
     }
 
@@ -590,9 +696,15 @@ mod zoom_tests {
     fn an_alt_sweep_frames_its_box_on_release() {
         let mut ed = Editor::default();
         let v = view();
-        let alt = Mods { alt: true, ..Mods::default() };
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
         ed.zoom_press((587.0, 203.0), &v, LANES, alt);
-        assert!(ed.zoom_move((987.0, 403.0), &v, LANES, alt).is_none(), "a sweep moves nothing until release");
+        assert!(
+            ed.zoom_move((987.0, 403.0), &v, LANES, alt).is_none(),
+            "a sweep moves nothing until release"
+        );
         assert_eq!(ed.zoom_marquee(), Some(((587.0, 203.0), (987.0, 403.0))));
         let next = ed.zoom_release(&v, LANES).expect("the box framed");
         // Four hundred pixels of sweep at 40 px/s is ten seconds; the
@@ -608,7 +720,7 @@ mod zoom_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arrangement::{Palette, Viewport, TCP_WIDTH};
+    use crate::arrangement::{Palette, TCP_WIDTH, Viewport};
     use crate::ruler::RULER_H;
     use daw_proto::primitives::{Duration, PositionInSeconds};
     use daw_ui::studio::{ProjectRef, RowsRef};
@@ -634,7 +746,10 @@ mod tests {
             ..daw_proto::Item::default()
         };
         let mut items = std::collections::HashMap::new();
-        items.insert("kick".to_owned(), vec![item("k1", "kick", 2.0, 4.0), item("k2", "kick", 10.0, 4.0)]);
+        items.insert(
+            "kick".to_owned(),
+            vec![item("k1", "kick", 2.0, 4.0), item("k2", "kick", 10.0, 4.0)],
+        );
         items.insert("snare".to_owned(), vec![item("s1", "snare", 4.0, 8.0)]);
         Project {
             tracks: vec![track("kick", 0), track("snare", 1)],
@@ -695,17 +810,21 @@ mod tests {
 
         fn press(&mut self, x: f64, y: f64, keys: Mods) -> (bool, Vec<Effect>) {
             let mut effects = Vec::new();
-            let taken = self.editor.press(Some(self.hit(x, y)), keys, &self.scene, &mut effects);
+            let taken = self
+                .editor
+                .press(Some(self.hit(x, y)), keys, &self.scene, &mut effects);
             (taken, effects)
         }
 
         fn drag_to(&mut self, x: f64, keys: Mods) -> bool {
-            self.editor.moved(Some(self.at(x)), PPS, self.project.bpm, keys)
+            self.editor
+                .moved(Some(self.at(x)), PPS, self.project.bpm, keys)
         }
 
         fn release(&mut self, x: f64, keys: Mods) -> Vec<Effect> {
             let mut effects = Vec::new();
-            self.editor.release(Some(self.at(x)), keys, &mut self.project, &mut effects);
+            self.editor
+                .release(Some(self.at(x)), keys, &mut self.project, &mut effects);
             effects
         }
 
@@ -729,7 +848,12 @@ mod tests {
         }
 
         fn item(&self, guid: &str) -> &daw_proto::Item {
-            self.project.items.values().flatten().find(|i| i.guid == guid).expect(guid)
+            self.project
+                .items
+                .values()
+                .flatten()
+                .find(|i| i.guid == guid)
+                .expect(guid)
         }
 
         fn rerecord(&mut self) {
@@ -750,10 +874,13 @@ mod tests {
     }
 
     fn sends(effects: &[Effect]) -> Vec<&Edit> {
-        effects.iter().filter_map(|e| match e {
-            Effect::Send(edit) => Some(edit),
-            _ => None,
-        }).collect()
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Send(edit) => Some(edit),
+                _ => None,
+            })
+            .collect()
     }
 
     /// A click on an item's body selects it, alone; with Ctrl it is
@@ -804,7 +931,9 @@ mod tests {
         s.press(x, y, shift);
         s.drag_to(x + 0.13 * PPS, shift);
         let effects = s.release(x + 0.13 * PPS, shift);
-        let Some(Edit::MoveItem(_, to)) = sends(&effects).first().copied() else { panic!("a move") };
+        let Some(Edit::MoveItem(_, to)) = sends(&effects).first().copied() else {
+            panic!("a move")
+        };
         assert!((to - 3.63).abs() < 1e-6);
     }
 
@@ -815,17 +944,32 @@ mod tests {
         let mut s = Stage::new();
         let (x, y) = s.point(1, 4.0, 15.0);
         let hit = s.hit(x + 1.0, y);
-        assert!(matches!(hit.target, Target::Item { zone: ItemZone::LeftEdge, .. }), "{hit:?}");
+        assert!(
+            matches!(
+                hit.target,
+                Target::Item {
+                    zone: ItemZone::LeftEdge,
+                    ..
+                }
+            ),
+            "{hit:?}"
+        );
         s.press(x + 1.0, y, Mods::default());
         s.drag_to(x + 1.0 + 2.0 * PPS, Mods::default());
         let effects = s.release(x + 1.0 + 2.0 * PPS, Mods::default());
-        assert_eq!(sends(&effects), vec![&Edit::TrimItem("s1".into(), 6.0, 6.0)]);
+        assert_eq!(
+            sends(&effects),
+            vec![&Edit::TrimItem("s1".into(), 6.0, 6.0)]
+        );
         s.rerecord();
         let (x, y) = s.point(1, 12.0, 15.0);
         s.press(x - 1.0, y, Mods::default());
         s.drag_to(x - 1.0 - 1.0 * PPS, Mods::default());
         let effects = s.release(x - 1.0 - 1.0 * PPS, Mods::default());
-        assert_eq!(sends(&effects), vec![&Edit::TrimItem("s1".into(), 6.0, 5.0)]);
+        assert_eq!(
+            sends(&effects),
+            vec![&Edit::TrimItem("s1".into(), 6.0, 5.0)]
+        );
     }
 
     /// A fade handle drags the fade's length, clamped to the item.
@@ -836,14 +980,25 @@ mod tests {
         // in the band along the top.
         let (x, y) = s.point(0, 2.5, 4.0);
         let hit = s.hit(x, y);
-        assert!(matches!(hit.target, Target::Item { zone: ItemZone::FadeIn, .. }), "{hit:?}");
+        assert!(
+            matches!(
+                hit.target,
+                Target::Item {
+                    zone: ItemZone::FadeIn,
+                    ..
+                }
+            ),
+            "{hit:?}"
+        );
         assert!(s.press(x, y, Mods::default()).0);
         s.drag_to(x + 1.0 * PPS, Mods::default());
         assert!((s.editor.fade_in_flight().expect("in flight").1.fade_in - 1.5).abs() < 1e-9);
         // Past the end of the item it stops at the item.
         s.drag_to(x + 20.0 * PPS, Mods::default());
         let effects = s.release(x + 20.0 * PPS, Mods::default());
-        let Some(Edit::SetFadeIn(guid, len, _)) = sends(&effects).first().copied() else { panic!("a fade") };
+        let Some(Edit::SetFadeIn(guid, len, _)) = sends(&effects).first().copied() else {
+            panic!("a fade")
+        };
         assert_eq!(guid, "k1");
         assert!((len - 4.0).abs() < 1e-9);
         assert!((s.item("k1").fade_in_length.as_seconds() - 4.0).abs() < 1e-9);
@@ -902,7 +1057,10 @@ mod tests {
         let mut s = Stage::new();
         s.editor.cursor.click(1.3);
         s.key(Action::CursorBar(1));
-        assert!((s.editor.cursor.at - 2.0).abs() < 1e-9, "next bar line at 120 bpm");
+        assert!(
+            (s.editor.cursor.at - 2.0).abs() < 1e-9,
+            "next bar line at 120 bpm"
+        );
         s.key(Action::CursorBeat(-1));
         assert!((s.editor.cursor.at - 1.5).abs() < 1e-9);
         s.key(Action::GoToStart);
@@ -923,10 +1081,20 @@ mod tests {
     #[test]
     fn track_steps_walk_the_rows() {
         let mut s = Stage::new();
-        let (_, effects) = s.key(Action::TrackStep { by: 1, extend: false });
-        assert_eq!(sends(&effects), vec![&Edit::Select("kick".into())], "from nothing, the first row");
+        let (_, effects) = s.key(Action::TrackStep {
+            by: 1,
+            extend: false,
+        });
+        assert_eq!(
+            sends(&effects),
+            vec![&Edit::Select("kick".into())],
+            "from nothing, the first row"
+        );
         s.rows[0].0.selected = true;
-        let (_, effects) = s.key(Action::TrackStep { by: 1, extend: true });
+        let (_, effects) = s.key(Action::TrackStep {
+            by: 1,
+            extend: true,
+        });
         assert_eq!(sends(&effects), vec![&Edit::AddToSelection("snare".into())]);
     }
 

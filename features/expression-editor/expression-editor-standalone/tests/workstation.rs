@@ -140,7 +140,10 @@ fn the_three_panes_mount_and_the_project_arrives() {
             tester.relayout();
         }
         assert!(hidden("workstation-editor"), "E hides the editor");
-        assert!(!hidden("workstation-mixer-slot"), "E leaves the mixer alone");
+        assert!(
+            !hidden("workstation-mixer-slot"),
+            "E leaves the mixer alone"
+        );
 
         tap("x");
         for _ in 0..8 {
