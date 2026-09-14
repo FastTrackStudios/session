@@ -83,6 +83,10 @@ struct App {
     scroll_x: f64,
     scroll_y: f64,
     pps: f64,
+    /// The rows' scale — the zoom tool's vertical axis.
+    zoom_y: f64,
+    /// `z` is down: the next press on the lanes is the zoom tool.
+    zoom_held: bool,
     /// The surface size, tracked so the draw can cull to it. Culling is
     /// the difference between encoding 30,000 commands a frame and 367;
     /// it needs to know how much fits on screen, and the surface is the
@@ -407,6 +411,17 @@ impl ApplicationHandler for App {
                     self.redraw();
                     return;
                 }
+                // `z` held is the zoom tool, on the arrangement as on
+                // the roll: the next press on the lanes drags a zoom.
+                // The dock's own `z` is the editor's when it has focus.
+                if event.logical_key.to_text() == Some("z")
+                    && !self.keys.ctrl
+                    && !self.keys.alt
+                    && !(self.dock_focus && self.dock.is_some())
+                {
+                    self.zoom_held = true;
+                    return;
+                }
                 // `e` docks the expression editor under the arrangement
                 // on the selected item, and closes the dock again.
                 // Before the editor sees the key, or there would be no
@@ -571,6 +586,9 @@ impl ApplicationHandler for App {
             // This was a field nothing ever wrote: every drag in the
             // window has been coarse because no event set it.
             WindowEvent::KeyboardInput { event, .. } => {
+                if event.logical_key.to_text() == Some("z") {
+                    self.zoom_held = false;
+                }
                 // A release. The editor's keymap has to hear it, or a
                 // held prefix repeats its way down the sequence tree;
                 // and a spring-loaded tool springs back on it.
@@ -637,6 +655,15 @@ impl ApplicationHandler for App {
                 // the fade-in is as long as the pointer is past the
                 // item's start, the fade-out as long as it is short of
                 // its end, either clamped to the item.
+                if self.editor.zoom.is_some() {
+                    let view = self.viewport();
+                    let lanes = self.lanes_origin();
+                    if let Some(next) = self.editor.zoom_move((position.x, position.y), &view, lanes, self.keys) {
+                        self.apply_view(next);
+                    }
+                    self.redraw();
+                    return;
+                }
                 if let Some((axis, _)) = self.bar_drag {
                     let (dx, dy) = (position.x - last.0, position.y - last.1);
                     if let Some(bars) = self.scrollbars() {
@@ -799,6 +826,15 @@ impl ApplicationHandler for App {
                         self.redraw();
                         return;
                     }
+                    // The zoom tool, while `z` is held: a drag from here
+                    // zooms rather than selects.
+                    if self.zoom_held && self.view == View::Arrangement {
+                        let view = self.viewport();
+                        if self.editor.zoom_press((x, y), &view, self.lanes_origin(), self.keys) {
+                            self.redraw();
+                            return;
+                        }
+                    }
                     // The scrollbars are drawn over the lanes, so they
                     // are pressed before them: a thumb is taken hold
                     // of, the track beside it turns a page.
@@ -877,6 +913,15 @@ impl ApplicationHandler for App {
                         self.gestures.press(hit, x, y);
                     }
                 } else {
+                    if self.editor.zoom.is_some() {
+                        let view = self.viewport();
+                        let lanes = self.lanes_origin();
+                        if let Some(next) = self.editor.zoom_release(&view, lanes) {
+                            self.apply_view(next);
+                        }
+                        self.redraw();
+                        return;
+                    }
                     if self.bar_drag.take().is_some() {
                         self.redraw();
                         return;
@@ -1059,7 +1104,7 @@ impl App {
             (scene.length_secs * self.pps - (width - TCP_WIDTH)).max(1.0),
             // The ruler takes a strip off the top, so there is that much
             // more to scroll before the last row reaches the bottom.
-            (scene.content_height() - (height - RULER_H)).max(1.0),
+            (scene.content_height() * self.zoom_y - (height - RULER_H)).max(1.0),
         )
     }
 
@@ -1074,6 +1119,23 @@ impl App {
     /// One wheel notch is about sixteen percent; the scale is clamped
     /// between two pixels a second, where an hour fits a screen, and
     /// two thousand, where a millisecond is two pixels.
+    /// Where the lanes start in the window.
+    fn lanes_origin(&self) -> session_daw::arrange_edit::LanesOrigin {
+        (
+            session_daw::rails::SIDE + TCP_WIDTH,
+            session_daw::rails::TOP + RULER_H,
+        )
+    }
+
+    /// Show the view a zoom asked for: its scale on both axes, and its
+    /// scroll clamped to the spans that scale gives.
+    fn apply_view(&mut self, next: Viewport) {
+        self.pps = next.pps;
+        self.zoom_y = next.zoom_y;
+        self.scroll_to(next.scroll_x, next.scroll_y);
+        self.mixer = None;
+    }
+
     fn zoom_about(&mut self, x: f64, dy: f64) {
         const MIN_PPS: f64 = 2.0;
         const MAX_PPS: f64 = 2000.0;
@@ -1589,7 +1651,7 @@ impl App {
             scroll_x: self.scroll_x,
             scroll_y: self.scroll_y,
             pps: self.pps,
-            zoom_y: 1.0,
+            zoom_y: self.zoom_y,
             width: frame.content_width(),
             height: frame.content_height(),
         }
@@ -2618,6 +2680,7 @@ impl App {
             scroll_bars,
             bar_held,
             dock: self.expression.as_mut().filter(|_| frame.dock > 0.0),
+            zoom_box: self.editor.zoom_marquee(),
         };
         let mut drawn = session_daw::profile::Counts::default();
         self.renderer.render(|painter| {
@@ -2733,6 +2796,8 @@ fn main() {
         scroll_x: 0.0,
         scroll_y: 0.0,
         pps: DEFAULT_PPS,
+        zoom_y: 1.0,
+        zoom_held: false,
         // Replaced the moment the surface exists; until then it culls to
         // nothing, which is correct — there is no surface to draw on.
         surface_size: (0.0, 0.0),

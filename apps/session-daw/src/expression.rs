@@ -1254,6 +1254,27 @@ mod tests {
         assert!(!v.dragging());
     }
 
+    /// Hold `z`, drag right and up: time and rows both zoom in, anchored
+    /// on the press; let go of `z` and the tool springs back.
+    #[test]
+    fn holding_z_makes_a_drag_zoom_both_axes() {
+        let mut v = view();
+        let (upp, ppr) = (v.editor.camera.units_per_px, v.editor.camera.vertical.px_per_row);
+        let before = v.editor.tool;
+        assert!(v.key("z", plain()));
+        assert_eq!(v.editor.tool, Tool::Zoom);
+        let (x, y) = (ORIGIN.0 + 400.0, ORIGIN.1 + TOOLBAR_H + 200.0);
+        let t_under = v.editor.camera.t_at(400.0 - canvas::GUTTER_W);
+        assert!(v.press(x, y, plain(), 0));
+        v.moved(x + 200.0, y - 200.0, plain());
+        v.release(x + 200.0, y - 200.0, plain());
+        assert!(v.editor.camera.units_per_px < upp, "time zoomed in");
+        assert!(v.editor.camera.vertical.px_per_row > ppr, "rows zoomed in");
+        assert!((v.editor.camera.t_at(400.0 - canvas::GUTTER_W) - t_under).abs() < 1e-6);
+        v.key_up("z", plain());
+        assert_eq!(v.editor.tool, before);
+    }
+
     #[test]
     fn a_track_is_drums_by_its_words() {
         assert!(is_drum_track("Kick In"));

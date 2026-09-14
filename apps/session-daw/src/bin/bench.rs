@@ -1421,6 +1421,7 @@ impl AtRest {
             scroll_bars: None,
             bar_held: None,
             dock,
+            zoom_box: None,
         }
     }
 }
@@ -1504,7 +1505,16 @@ fn studio(
             "fit whole session",
             Box::new(move |t| (0.0, 0.0, 1.0, fit + slow(t) * (0.25 - fit))),
         ),
+        // The zoom tool: `z` held, a press in the lanes, and the
+        // pointer drawn sideways and up in a slow figure — through the
+        // same gesture code the window runs, on the arrangement and on
+        // the docked kit at once. The gesture's own outputs are the
+        // view; this closure only says where the pointer is.
+        ("zoom tool drag", Box::new(|t| (0.0, 0.3, 1.0, 1.0))),
     ];
+    let lanes_origin = (session_daw::rails::SIDE + TCP_WIDTH, session_daw::rails::TOP + RULER_H);
+    let press_at = (lanes_origin.0 + 600.0, lanes_origin.1 + 300.0);
+    let mut zoom_editor = session_daw::arrange_edit::Editor::default();
 
     println!();
     println!("  studio        arrangement {width}x{height} with the editor docked ({dock:.0}px),");
@@ -1535,12 +1545,43 @@ fn studio(
                 let t = frame_index as f64 / FRAMES as f64;
                 let (fx, fy, zx, zy) = gesture(t);
                 let (scroll_x, scroll_y) = (span_x * fx, span_y * fy);
-                let view = session_daw::frame::viewport(frame, (scroll_x, scroll_y), PPS * zx, zy);
-                // The editor: the playhead across the song, the camera
-                // following it a page at a time — the hits scroll past,
-                // and every frame is a fresh page of markers.
+                let mut view = session_daw::frame::viewport(frame, (scroll_x, scroll_y), PPS * zx, zy);
                 editor.editor.playhead = Some(t * doc_end);
-                editor.editor.pan_px(-2.0, 0.0);
+                if *name == "zoom tool drag" {
+                    // The pointer's path: out to the right and up over
+                    // the phase, back, and again — a slow figure, so the
+                    // zoom sweeps its range rather than jumping.
+                    let travel = (tri(t / 3.0) - 0.5) * 2.0;
+                    let at = (press_at.0 + travel * 300.0, press_at.1 - travel * 150.0);
+                    let base = session_daw::frame::viewport(frame, (span_x * 0.2, span_y * 0.3), PPS, 1.0);
+                    if frame_index == 0 {
+                        zoom_editor.zoom_press(press_at, &base, lanes_origin, Default::default());
+                        editor.key("z", Default::default());
+                        editor.press(
+                            dock_box.x0 + 400.0,
+                            dock_box.y0 + 26.0 + 120.0,
+                            Default::default(),
+                            0,
+                        );
+                    }
+                    if let Some(next) = zoom_editor.zoom_move(at, &base, lanes_origin, Default::default()) {
+                        view = next;
+                        view.scroll_x = view.scroll_x.clamp(0.0, span_x);
+                        view.scroll_y = view.scroll_y.clamp(0.0, span_y);
+                    }
+                    // The same drag on the docked kit, through its own
+                    // zoom tool.
+                    editor.moved(
+                        dock_box.x0 + 400.0 + travel * 300.0,
+                        dock_box.y0 + 26.0 + 120.0 - travel * 60.0,
+                        Default::default(),
+                    );
+                } else {
+                    // The playhead across the song, the camera following
+                    // it a page at a time — the hits scroll past, and
+                    // every frame is a fresh page of markers.
+                    editor.editor.pan_px(-2.0, 0.0);
+                }
 
                 painted += arrange
                     .frame(|painter| {

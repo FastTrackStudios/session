@@ -65,6 +65,8 @@ pub struct Arrange<'a> {
     pub bar_held: Option<crate::scrollbar::Axis>,
     /// The editor in the dock, if one is docked.
     pub dock: Option<&'a mut Expression>,
+    /// The zoom tool's Alt sweep, in window pixels, while one is drawn.
+    pub zoom_box: Option<((f64, f64), (f64, f64))>,
 }
 
 impl Arrange<'_> {
@@ -96,8 +98,10 @@ impl Arrange<'_> {
             scroll_bars,
             bar_held,
             dock,
+            zoom_box,
         } = self;
         let (sx, sy, pps) = (view.scroll_x, view.scroll_y, view.pps);
+        let zoom_y = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
         let rail = (rails::SIDE, rails::TOP);
         let surface = palette.surface;
         let mut drawn = Counts::default();
@@ -125,26 +129,15 @@ impl Arrange<'_> {
         let a = scene.replay_lanes(
             painter,
             view,
-            Affine::scale_non_uniform(pps, 1.0).then_translate(lanes_at.into()),
+            Affine::scale_non_uniform(pps, zoom_y).then_translate(lanes_at.into()),
         );
-        // The items' titles, in pixel space over the lanes: text
-        // recorded in seconds would stretch with the zoom.
-        crate::arrangement::titles(painter, palette, font, scene, view, lanes_at);
-        // The fade handles on the item under the pointer, and the fade
-        // in flight over its recorded self.
-        crate::arrangement::fade_overlay(
+        items_over(
             painter,
-            palette,
-            scene,
+            (palette, font, scene),
             view,
             lanes_at,
-            hovered_item,
-            in_flight,
-        );
-        // The selection's outlines, and the ghost of an item being
-        // moved or trimmed.
-        crate::arrangement::selection_overlay(
-            painter, palette, scene, view, lanes_at, selected, ghost,
+            (hovered_item, in_flight),
+            (selected, ghost),
         );
         // The panel: the SAME vertical offset, which is the entire
         // point. It cannot drift from the lanes because there is
@@ -174,6 +167,7 @@ impl Arrange<'_> {
                 scroll_bars,
                 bar_held,
                 dock,
+                zoom_box,
             },
             panel_at,
         );
@@ -194,6 +188,37 @@ impl Arrange<'_> {
         drawn.submitted = a.submitted.saturating_add(b.submitted).saturating_add(c.submitted);
         drawn
     }
+}
+
+/// What is drawn over the lanes in pixel space: the items' titles,
+/// the fade handles and a fade in flight, the selection and a ghost.
+fn items_over(
+    painter: &mut impl PaintScene,
+    (palette, font, scene): (&Palette, &Font, &Arrangement),
+    view: Viewport,
+    lanes_at: (f64, f64),
+    (hovered_item, in_flight): (Option<usize>, Option<(usize, Fades)>),
+    (selected, ghost): (&HashSet<String>, Option<(usize, f64, f64)>),
+) {
+        // The items' titles, in pixel space over the lanes: text
+    // recorded in seconds would stretch with the zoom.
+    crate::arrangement::titles(painter, palette, font, scene, view, lanes_at);
+    // The fade handles on the item under the pointer, and the fade
+    // in flight over its recorded self.
+    crate::arrangement::fade_overlay(
+        painter,
+        palette,
+        scene,
+        view,
+        lanes_at,
+        hovered_item,
+        in_flight,
+    );
+    // The selection's outlines, and the ghost of an item being
+    // moved or trimmed.
+    crate::arrangement::selection_overlay(
+        painter, palette, scene, view, lanes_at, selected, ghost,
+    );
 }
 
 /// The viewport for a frame at a scroll and zoom.
@@ -225,6 +250,7 @@ struct Chrome<'a> {
     scroll_bars: Option<(crate::scrollbar::Bar, crate::scrollbar::Bar)>,
     bar_held: Option<crate::scrollbar::Axis>,
     dock: Option<&'a mut Expression>,
+    zoom_box: Option<((f64, f64), (f64, f64))>,
 }
 
 fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
@@ -242,6 +268,7 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
         scroll_bars,
         bar_held,
         dock,
+        zoom_box,
     } = parts;
     let rail = (rails::SIDE, rails::TOP);
     let surface = palette.surface;
@@ -284,6 +311,19 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
         bottom,
         rail.0 + TCP_WIDTH,
     );
+    // The zoom tool's sweep: the box that will fill the lanes on
+    // release.
+    if let Some((a, b)) = zoom_box {
+        let r = Rect::new(a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1));
+        painter.fill(Fill::NonZero, Affine::IDENTITY, palette.accent.multiply_alpha(0.15), None, &r);
+        painter.stroke(
+            &vello::kurbo::Stroke::new(1.0),
+            Affine::IDENTITY,
+            palette.accent,
+            None,
+            &r,
+        );
+    }
     // The scrollbars, over the lanes and under the rails.
     if let Some(pair) = scroll_bars {
         crate::scrollbar::draw(painter, palette, pair, bar_held);
