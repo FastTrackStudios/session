@@ -32,6 +32,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+gethostname = "1"
 # Parsing a document to a tree for schema validation in the tests —
 # the same rc facet-styx is pinned to.
 styx-tree = "5.0.0-rc.5"
