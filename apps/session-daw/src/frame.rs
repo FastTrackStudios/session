@@ -125,7 +125,7 @@ impl Arrange<'_> {
         let a = scene.replay_lanes(
             painter,
             view,
-            Affine::translate(lanes_at) * Affine::scale_non_uniform(pps, 1.0),
+            Affine::scale_non_uniform(pps, 1.0).then_translate(lanes_at.into()),
         );
         // The items' titles, in pixel space over the lanes: text
         // recorded in seconds would stretch with the zoom.
