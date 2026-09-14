@@ -457,19 +457,28 @@ fn show_all(_name: &str, _is_folder: bool, _ancestors: &[String]) -> Fold {
     Fold::Show
 }
 
+/// The bus tree hidden: a scene about the instruments, not the mix.
+fn hide_buses(name: &str, is_folder: bool, _ancestors: &[String]) -> Fold {
+    if is_folder && is(name, &["MIX BUS"]) {
+        Fold::Hide
+    } else {
+        Fold::Show
+    }
+}
+
 /// Every scene, in the order the number keys recall them.
-pub const SCENES: [Scene; 8] = [
+pub const SCENES: [Scene; 9] = [
     Scene {
         name: "Drum Tracking",
         slug: "drum-tracking",
         size: drum_tracking,
-        fold: show_all,
+        fold: hide_buses,
     },
     Scene {
         name: "Drum Mixing",
         slug: "drum-mixing",
         size: drum_mixing,
-        fold: show_all,
+        fold: hide_buses,
     },
     Scene {
         name: "Drum Overview",
@@ -481,13 +490,19 @@ pub const SCENES: [Scene; 8] = [
         name: "Drum Advanced",
         slug: "drum-advanced",
         size: drum_advanced,
-        fold: show_all,
+        fold: hide_buses,
     },
     Scene {
         name: "Drum FX",
         slug: "drum-fx",
         size: drum_fx,
-        fold: show_all,
+        fold: hide_buses,
+    },
+    Scene {
+        name: "Buses",
+        slug: "buses",
+        size: buses,
+        fold: buses_fold,
     },
     Scene {
         name: "Guitar FX",
@@ -591,9 +606,10 @@ fn drum_overview(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
     }
 }
 
-/// The overview's folds: the pieces shut, the Process folder gone.
+/// The overview's folds: the pieces shut, the Process folder and the
+/// bus tree gone.
 fn drum_overview_fold(name: &str, is_folder: bool, ancestors: &[String]) -> Fold {
-    if is_folder && is(name, &["Process"]) {
+    if is_folder && is(name, &["Process", "MIX BUS"]) {
         Fold::Hide
     } else if is_folder && is(name, &PIECES) && !under(ancestors, &["Process"]) {
         Fold::Collapse
@@ -667,7 +683,27 @@ fn guitar_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
 /// The instrument scene's folds: the kit, its process and the vocals
 /// hidden — they are not what this scene is about.
 fn guitar_fx_fold(name: &str, is_folder: bool, _ancestors: &[String]) -> Fold {
-    if is_folder && is(name, &["Drum Kit", "Process", "Vocals"]) {
+    if is_folder && is(name, &["Drum Kit", "Process", "Vocals", "MIX BUS"]) {
+        Fold::Hide
+    } else {
+        Fold::Show
+    }
+}
+
+/// The mix: the bus tree and nothing else — every bus at working
+/// width, the stem buses compact, the instruments gone.
+fn buses(_name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
+    if is_folder {
+        Size::Compact
+    } else {
+        Size::Working
+    }
+}
+
+/// The bus scene's folds: every top-level folder but the mix bus is
+/// hidden.
+fn buses_fold(name: &str, is_folder: bool, ancestors: &[String]) -> Fold {
+    if is_folder && ancestors.is_empty() && !is(name, &["MIX BUS"]) {
         Fold::Hide
     } else {
         Fold::Show

@@ -52,6 +52,11 @@ def guid() -> str:
 
 # (name, colour, children). A track with children is a folder; one
 # without is where the audio actually lives.
+def node(name, colour, children=(), **opts):
+    """A track with routing options — see `flatten` for what they mean."""
+    return (name, colour, list(children), opts)
+
+
 def mics(colour, *names):
     """Close mics, in their piece's colour.
 
@@ -110,8 +115,30 @@ CYMBALS = 0xC76B7A  # rose: red lifted, for the top of the kit
 ROOMS = 0x93425C  # wine: red cooled, for the air around it
 PROCESS = 0x7A2E3A  # garnet: the kit's family, darker — what is fed off it
 
+# Bus colours: a cool slate for the bus tree, so it reads as
+# plumbing rather than as another instrument.
+BUS = 0x3E4C5E
+BASS = 0x6B8E3F
+GTR = 0xA85A3B
+KEYS = 0x4F7A8A
+VOX = 0xB04A6A
+
+# The three electric-guitar buses follow the Electric folder's
+# fader, mute and solo — group 1 — except that the solo bus keeps
+# its own fader: turning the guitars down in a song must not turn
+# the solo down with them.
+GTR_LEAD_GROUP = {"volume_lead": 1, "mute_lead": 1, "solo_lead": 1}
+GTR_FOLLOW = {"volume_follow": 1, "mute_follow": 1, "solo_follow": 1}
+GTR_SOLO_FOLLOW = {"mute_follow": 1, "solo_follow": 1}
+
+
+def to_bus(name, colour, children, bus):
+    """An instrument folder that reaches the mix by a send to its bus."""
+    return node(name, colour, children, send=bus)
+
+
 TREE = [
-    (
+    node(
         "Drum Kit",
         DRUMS,
         [
@@ -155,13 +182,14 @@ TREE = [
                 ],
             ),
         ],
+        send="DRUM BUS",
     ),
     # What the kit is sent to: a Compress folder of parallel
     # compressors from dry to crushed, and an FX folder with a fake
     # room for when there are no room mics or bad ones and a bank of
     # reverbs to pick the room the band is in — short and bright down
     # to long and dark, plus the odd ones.
-    (
+    node(
         "Process",
         PROCESS,
         [
@@ -193,32 +221,67 @@ TREE = [
                 ],
             ),
         ],
+        send="DRUM BUS",
     ),
-    (
+    # Bass, maximally: a bass guitar (DI and amp, summed) and a synth
+    # bass (its sub and the synth), to the bass bus.
+    to_bus(
         "Bass",
-        0x6B8E3F,
+        BASS,
         [
-            summed("Electric", 0x6B8E3F, ["DI", "Amp"], ["Sub"]),
-            ("Synth", 0x6B8E3F, []),
+            summed("Guitar", BASS, ["DI", "Amp"]),
+            ("Synth", BASS, [("Sub", BASS, []), ("Synth", BASS, [])]),
         ],
+        "BASS BUS",
     ),
-    (
+    # Guitars take a different shape every song, so there are no Sum
+    # folders: each part is a track, and each part goes to one of the
+    # three electric buses — RHYTHM, LEAD, SOLO — by a send, which is
+    # what makes stems of the three fall out and lets a part move
+    # between them mid-song by automating the sends.
+    #
+    # The Electric folder is a dead end that still sums and meters
+    # every part (the parts keep their parent send), and it LEADS the
+    # three buses' faders, mutes and solos through group 1 — a VCA
+    # without a VCA track. The solo bus follows mute and solo only,
+    # so the guitars can come down without the solo coming with them.
+    node(
         "Guitars",
-        0xA85A3B,
+        GTR,
         [
-            summed("Rhythm L", 0xA85A3B, ["Amp", "DI"]),
-            summed("Rhythm R", 0xA85A3B, ["Amp", "DI"]),
-            ("Lead", 0xA85A3B, []),
+            node(
+                "Electric",
+                GTR,
+                [
+                    node("Rhythm L", GTR, send="GTR RHYTHM", keep_parent=True),
+                    node("Rhythm R", GTR, send="GTR RHYTHM", keep_parent=True),
+                    node("Lead", GTR, send="GTR LEAD", keep_parent=True),
+                    node("Solo", GTR, send="GTR SOLO", keep_parent=True),
+                ],
+                no_parent=True,
+                group=GTR_LEAD_GROUP,
+            ),
+            node(
+                "Acoustic",
+                GTR,
+                [
+                    node("Steel", GTR, send="ACOUSTIC BUS", keep_parent=True),
+                    node("Nylon", GTR, send="ACOUSTIC BUS", keep_parent=True),
+                ],
+                no_parent=True,
+            ),
         ],
+        no_parent=True,
     ),
-    (
+    to_bus(
         "Keys",
-        0x4F7A8A,
+        KEYS,
         [
-            summed("Piano", 0x4F7A8A, ["L", "R"]),
-            ("Rhodes", 0x4F7A8A, []),
-            ("Pad", 0x4F7A8A, []),
+            summed("Piano", KEYS, ["L", "R"]),
+            ("Rhodes", KEYS, []),
+            ("Pad", KEYS, []),
         ],
+        "KEYS BUS",
     ),
     # One set of effects for everything that is not drums or a voice —
     # electric and acoustic guitars, piano, keys, synths, strings if
@@ -227,7 +290,7 @@ TREE = [
     # halls short to endless, springs for guitars, delays slap to
     # long, and movement. Every return is a slot: its presets are
     # takes on the one job.
-    (
+    to_bus(
         "Inst FX",
         0x5C6B7A,
         [
@@ -238,15 +301,62 @@ TREE = [
             ("Delay", 0x5C6B7A, [("Slap", 0x5C6B7A, []), ("Tape", 0x5C6B7A, []), ("Echo Boy", 0x5C6B7A, []), ("Space Echo", 0x5C6B7A, [])]),
             ("Mod", 0x5C6B7A, [("Chorus", 0x5C6B7A, []), ("Flanger", 0x5C6B7A, [])]),
         ],
+        "INST BUS",
     ),
-    (
+    to_bus(
         "Vocals",
-        0xB04A6A,
+        VOX,
         [
-            summed("Lead", 0xB04A6A, ["Close", "Room"], ["Verb"]),
-            ("Doubles", 0xB04A6A, []),
-            ("Harmonies", 0xB04A6A, []),
+            summed("Lead", VOX, ["Close", "Room"], ["Verb"]),
+            ("Doubles", VOX, []),
+            ("Harmonies", VOX, []),
         ],
+        "LEAD VOX BUS",
+    ),
+    # The bus tree — the dynamic template's canonical one (see
+    # `dynamic_template::buses`): group buses into a stem bus, stem
+    # buses into the mix. The three electric-guitar buses sit under
+    # ELECTRIC BUS, in the bus list rather than in the Guitars folder.
+    node(
+        "MIX BUS",
+        BUS,
+        [
+            node(
+                "INST BUS",
+                BUS,
+                [
+                    node("DRUM BUS", DRUMS, bus=True),
+                    node("BASS BUS", BASS, bus=True),
+                    node(
+                        "GUITAR BUS",
+                        GTR,
+                        [
+                            node("ACOUSTIC BUS", GTR, bus=True),
+                            node(
+                                "ELECTRIC BUS",
+                                GTR,
+                                [
+                                    node("GTR RHYTHM", GTR, bus=True, group=GTR_FOLLOW),
+                                    node("GTR LEAD", GTR, bus=True, group=GTR_FOLLOW),
+                                    node("GTR SOLO", GTR, bus=True, group=GTR_SOLO_FOLLOW),
+                                ],
+                                bus=True,
+                            ),
+                        ],
+                        bus=True,
+                    ),
+                    node("KEYS BUS", KEYS, bus=True),
+                ],
+                bus=True,
+            ),
+            node(
+                "VOX BUS",
+                BUS,
+                [node("LEAD VOX BUS", VOX, bus=True), node("BGV BUS", VOX, bus=True)],
+                bus=True,
+            ),
+        ],
+        bus=True,
     ),
 ]
 
@@ -305,14 +415,52 @@ def is_piece(name, children, parent_is_piece):
 
 
 def flatten(nodes, depth=0, out=None, parent_is_piece=False):
-    """Depth-first, carrying each track's nesting level and its role."""
+    """Depth-first, carrying each track's nesting level, its role and
+    its routing.
+
+    A node is `(name, colour, children)` or, from `node()`, the same
+    with an options dict:
+
+    - `send="X BUS"`: an explicit send to that bus, and the parent send
+      OFF — the track reaches the mix through the bus, not the folder.
+    - `keep_parent=True` with `send`: the parent send stays ON as well,
+      so the folder above still sums (and meters) what it holds while
+      the audio that reaches the mix goes by the send. The folder is
+      then made a dead end (`no_parent`) so nothing is heard twice.
+    - `no_parent=True`: the parent send OFF and no send — a dead end
+      whose fader and meter are still real, for a folder that is a
+      group lead rather than a sum point.
+    - `group={...}`: REAPER track-grouping flags, by field name.
+    - `bus=True`: a bus — no items, not armed.
+    """
     if out is None:
         out = []
-    for name, colour, children in nodes:
+    for entry in nodes:
+        name, colour, children = entry[0], entry[1], entry[2]
+        opts = entry[3] if len(entry) > 3 else {}
         piece = is_piece(name, children, parent_is_piece)
-        out.append((name, colour, depth, bool(children), piece))
+        out.append((name, colour, depth, bool(children), piece, opts))
         flatten(children, depth + 1, out, piece)
     return out
+
+
+# REAPER's GROUP_FLAGS fields, in its documented order. Each is a
+# bitmask of groups: group 1 is bit 0.
+GROUP_FIELDS = [
+    "volume_lead", "volume_follow", "pan_lead", "pan_follow", "width_lead", "width_follow",
+    "mute_lead", "mute_follow", "solo_lead", "solo_follow", "recarm_lead", "recarm_follow",
+    "polarity_lead", "polarity_follow", "automode_lead", "automode_follow",
+    "volume_reverse", "pan_reverse", "width_reverse", "no_lead_when_following",
+    "vca_lead", "vca_follow", "vca_prefx_follow", "media_edit_lead", "media_edit_follow",
+]
+
+
+def group_flags(group):
+    """The GROUP_FLAGS line for a `group=` dict of field -> group number."""
+    fields = [0] * len(GROUP_FIELDS)
+    for field, number in group.items():
+        fields[GROUP_FIELDS.index(field)] |= 1 << (number - 1)
+    return " ".join(str(f) for f in fields)
 
 
 # The narrowest a strip may be set to — `Layout::strip_min`. Unlike the
@@ -424,7 +572,7 @@ def check_the_kit_fits(tracks) -> None:
         elif kit:
             kit.append(track)
 
-    widths = [strip_width(name, folder, piece) for name, _, _, folder, piece in kit]
+    widths = [strip_width(name, folder, piece) for name, _, _, folder, piece, _ in kit]
     resting = sum(w + 1 for w in widths)
     if resting > FITS_WIDTH:
         # A warning, not a refusal: the kit grew a Fund per piece, and
@@ -458,7 +606,7 @@ def main() -> None:
     # amount of attention in both views, which is very little.
     narrow = [
         f"{g}={strip_width(name, is_folder, piece)}"
-        for g, (name, _, _, is_folder, piece) in zip(guids, tracks)
+        for g, (name, _, _, is_folder, piece, _) in zip(guids, tracks)
     ]
     if narrow:
         out("  <EXTSTATE\n    <FTSMCP\n")
@@ -472,18 +620,26 @@ def main() -> None:
     # The piece itself rather than one of its mics — "the kick" is the
     # drum, and its In/Out/Trig are how it was captured.
     selected = next(
-        (i for i, (name, _, _, _, _) in enumerate(tracks) if name == "Kick"),
+        (i for i, (name, _, _, _, _, _) in enumerate(tracks) if name == "Kick"),
         next(
             (
                 i
-                for i, (name, _, _, is_folder, piece) in enumerate(tracks)
+                for i, (name, _, _, is_folder, piece, _) in enumerate(tracks)
                 if not is_folder and not piece and not is_auxiliary(name)
             ),
             -1,
         ),
     )
 
-    for i, (name, colour, depth, is_folder, _piece) in enumerate(tracks):
+    # Who receives from whom: a send is written on the RECEIVING track
+    # in REAPER, as the index of the track it comes from.
+    index_of = {name: i for i, (name, *_rest) in enumerate(tracks)}
+    receives = {}
+    for i, (_name, _c, _d, _f, _p, opts) in enumerate(tracks):
+        if opts.get("send"):
+            receives.setdefault(opts["send"], []).append(i)
+
+    for i, (name, colour, depth, is_folder, _piece, opts) in enumerate(tracks):
         # REAPER stores the depth DELTA, not the depth: the running level
         # after this track is where the next one starts. A folder always
         # opens one; a leaf closes however many end on it, which is what
@@ -517,13 +673,21 @@ def main() -> None:
         out(f"    VOLPAN {0.10 + 1.10 * ((i % 11) / 10.0):.4f} {-0.8 + 1.6 * ((i % 5) / 4.0):.4f} -1 -1 1\n")
         out("    MUTESOLO 0 0 0\n    IPHASE 0\n")
         out(f"    ISBUS {1 if is_folder else 0} {delta}\n")
+        # Where the audio goes: the folder above, unless the track
+        # reaches the mix by a send instead — see `flatten`.
+        dead_end = opts.get("no_parent") or (opts.get("send") and not opts.get("keep_parent"))
+        out(f"    MAINSEND {0 if dead_end else 1} 0\n")
+        if opts.get("group"):
+            out(f"    GROUP_FLAGS {group_flags(opts['group'])}\n")
+        for src in receives.get(name, []):
+            out(f"    AUXRECV {src} 0 1 0 0 0 0 0 0 -1:U 0 -1 ''\n")
         out("    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0\n")
         # The close mics are armed, the way a kit is before a take.
         # Folders are not — you do not record a bus — and neither are
         # the triggers and returns. Left unarmed across the board the
         # record arm was a ring that never lit, which is a control you
         # cannot tell from an ornament.
-        armed = 0 if is_folder or is_auxiliary(name) else 1
+        armed = 0 if is_folder or is_auxiliary(name) or opts.get("bus") else 1
         # REAPER's second REC field is the input: a small integer is a
         # mono hardware input, counted from zero. 5088 was a value
         # copied from a real project and it decodes to nothing useful,
@@ -539,8 +703,9 @@ def main() -> None:
         height = MIN_HEIGHT if is_auxiliary(name) else 0
         out(f"    TRACKHEIGHT {height} 0 0 0 0 0 0\n")
 
-        # Audio only on the leaves. A folder's items are its children's.
-        if not is_folder:
+        # Audio only on the leaves. A folder's items are its children's,
+        # and a bus has none of its own.
+        if not is_folder and not opts.get("bus"):
             bar = random.randrange(0, 8)
             while bar < BARS:
                 length = random.choice([4, 8, 8, 16])

@@ -1208,14 +1208,14 @@ daw-bench PROJECT="" SIZE="5120x1440":
 # `just daw-scene lead-vocal-fx` renders the vocal template with the
 # Short delay and the Long verb in focus; the drum scenes render the
 # drum template. Scenes are `plan::SCENES`: drum-tracking, drum-mixing,
-# drum-overview, drum-advanced, drum-fx, guitar-fx, lead-vocal,
-# lead-vocal-fx. In the window the number keys 1–8 recall the same
+# drum-overview, drum-advanced, drum-fx, buses, guitar-fx, lead-vocal,
+# lead-vocal-fx. In the window the number keys 1–9 recall the same
 # scenes, and 0 goes back to the rail's preset.
 daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{SCENE}}" in
-        drum-*|guitar-*) project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
+        drum-*|guitar-*|buses) project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
                 [[ -f "$project" ]] || scripts/ui-stress/make-template-rpp.py > "$project" ;;
         *)      project="${FTS_DAW_VOCAL:-/tmp/fts-vocal-fx.rpp}"
                 [[ -f "$project" ]] || scripts/ui-stress/make-vocal-fx-rpp.py > "$project" ;;

@@ -183,6 +183,11 @@ impl Role {
             return Self::Bus;
         }
         let lower = name.to_lowercase();
+        // A bus that is a leaf — the three electric-guitar buses, a
+        // stem bus with nothing under it yet — is still a bus.
+        if lower.ends_with(" bus") || lower.starts_with("gtr ") {
+            return Self::Bus;
+        }
         if lower.starts_with("wide") || lower.starts_with("widen") {
             return Self::Wide;
         }
