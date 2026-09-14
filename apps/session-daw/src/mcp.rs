@@ -799,7 +799,7 @@ fn widths(
 }
 
 /// How wide the track-coloured rule up a strip's left edge is.
-const STRIP_EDGE: f64 = 2.0;
+const STRIP_EDGE: f64 = 1.0;
 
 /// How thick the selected strip's top rule is.
 const SELECTED_RULE: f64 = 2.0;
@@ -849,7 +849,7 @@ fn strip(
     // And the track's colour as a rule up the strip's whole left edge,
     // top to bottom. The rack is tall and the coloured band is a
     // strip's height down; between two racks there was nothing to say
-    // where one track ends and the next begins. Two pixels, always
+    // where one track ends and the next begins. One pixel, always
     // there, in the colour the strip is read by.
     fill(
         scene,
