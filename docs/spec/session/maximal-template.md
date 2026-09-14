@@ -41,24 +41,24 @@ fixed tree.
 - [x] To **BASS BUS** by send.
 - [ ] Upright / DI-only variants when a song has them.
 
-### Guitars — `Guitars/` (a different shape every song)
+### Guitars — `Electric/`, `Acoustic/` (a different shape every song)
 
 - [x] **No Sum folders**: each part is a track named for the part
       (Rhythm, Lead, Solo, …). A **stereo pair is a folder over L and R**
       with the processing on the folder; the halves are rails and carry
       no processing of their own.
+- [x] Electrics and acoustics are **separate top-level folders with
+      their own buses** — no Guitars folder, no GUITAR BUS.
 - [x] Every electric part goes to exactly one of **GTR RHYTHM, GTR LEAD,
       GTR SOLO** by a send — the three live under **ELECTRIC BUS** in the
       bus list, not in the folder. A part moves between them mid-song by
       automating the sends. Stems are the three buses.
-- [x] The parts keep their parent send, so the **Electric** folder still
-      sums and meters its parts — and it is a dead end (parent send off)
-      so nothing is heard twice.
-- [x] **GUITAR BUS sends back into the Guitars folder**, which is a dead
-      end that meters the guitars after their buses, and is the **VCA
-      lead of GUITAR BUS** (group 1, with mute and solo): the folder's
-      fader is the guitars' fader. No VCA track.
-- [x] **Acoustic/** Steel, Nylon → **ACOUSTIC BUS** the same way.
+- [x] **ELECTRIC BUS sends back into the Electric folder**, which is a
+      dead end that meters the electrics after their bus, and is the
+      **VCA lead of ELECTRIC BUS** (group 1, with mute and solo): the
+      folder's fader is the electrics' fader. No VCA track.
+- [x] **Acoustic/** Steel, Nylon → **ACOUSTIC BUS**, which returns to the
+      Acoustic folder the same way (group 2).
 - [ ] Per-part amp/DI pairs when both were captured (a part folder of
       two mics is the one case a Sum is right).
 
@@ -87,9 +87,10 @@ fixed tree.
 
 ### Buses — `MIX BUS/`
 
-- [x] `MIX BUS / INST BUS / {DRUM, BASS, GUITAR/{ACOUSTIC, ELECTRIC/{GTR
-      RHYTHM, GTR LEAD, GTR SOLO}}, KEYS}` and `VOX BUS / {LEAD VOX, BGV}`
-      — `dynamic_template::buses`' tree, with the three guitar buses added.
+- [x] `MIX BUS / INST BUS / {DRUM, BASS, ELECTRIC/{GTR RHYTHM, GTR LEAD,
+      GTR SOLO}, ACOUSTIC, KEYS}` and `VOX BUS / {LEAD VOX, BGV}` —
+      `dynamic_template::buses`' tree without GUITAR BUS, with the three
+      electric buses added.
 - [x] A bus is a track with no items, unarmed; its chain is EQ → Comp.
 - [x] Scene: **Buses** — the tree alone.
 - [ ] Monitor buses beside MIX BUS (Click + Guide, Headphones, Talkback,
@@ -100,8 +101,9 @@ fixed tree.
 1. An instrument folder reaches the mix by a **send to its bus**, parent
    send off (`to_bus`).
 2. Where a folder's fader must still be the instrument's fader — the
-   guitars — its bus sends back into it, the folder is a **dead end**
-   that meters that return, and it is the **VCA lead** of the bus.
+   electrics, the acoustics — its bus sends back into it, the folder is
+   a **dead end** that meters that return, and it is the **VCA lead** of
+   the bus.
 3. A **stereo pair** is a folder over `L` and `R`; the folder is the
    channel (`tone::is_pair`), the halves are rails in every scene.
 4. Buses nest as folders inside the bus they feed; a bus reaches its

@@ -664,7 +664,7 @@ fn drum_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     }
 }
 
-/// The instrument bus: the guitars and keys at working width with
+/// The instrument bus: the electrics, acoustics, keys and synths at working width with
 /// the Inst FX returns open beside them, the first plate in focus, and
 /// the drums, their process and the vocals out of the way.
 fn guitar_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
@@ -673,7 +673,7 @@ fn guitar_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
         Size::Compact
     } else if fx && is(name, &["Fat Plate"]) {
         Size::Focus
-    } else if fx || under(ancestors, &["Guitars", "Keys", "Synths"]) {
+    } else if fx || under(ancestors, &["Electric", "Acoustic", "Keys", "Synths"]) {
         Size::Working
     } else {
         Size::Minimum

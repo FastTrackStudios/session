@@ -126,14 +126,17 @@ ELECTRIC = 0x3A6FB5
 ACOUSTIC = 0x3FA9A0
 KEYS = 0x4E9A55
 SYNTHS = 0x8CAA3A
-GTR = 0x35608F  # the guitar folder and bus: the electrics' blue, deeper
 VOX = 0xB04A6A
 
-# The Guitars folder is the VCA lead of GUITAR BUS — group 1 — with
-# mute and solo along for the ride: the folder's fader is the
-# guitars' fader, at the bus.
-GTR_VCA_LEAD = {"vca_lead": 1, "mute_lead": 1, "solo_lead": 1}
-GTR_VCA_FOLLOW = {"vca_follow": 1, "mute_follow": 1, "solo_follow": 1}
+# An instrument folder is the VCA lead of its bus, with mute and solo
+# along for the ride: the folder's fader is the instrument's fader,
+# at the bus. Electrics are group 1, acoustics group 2.
+def vca_lead(group):
+    return {"vca_lead": group, "mute_lead": group, "solo_lead": group}
+
+
+def vca_follow(group):
+    return {"vca_follow": group, "mute_follow": group, "solo_follow": group}
 
 
 def pair(name, colour, **opts):
@@ -249,40 +252,33 @@ TREE = [
     # what makes stems of the three fall out and lets a part move
     # between them mid-song by automating the sends.
     #
-    # The Guitars folder's fader still does something: GUITAR BUS
-    # sends back into the folder — so the folder meters what the
-    # guitars are doing after their buses — and the folder is the VCA
-    # lead of GUITAR BUS (group 1), so turning the folder down turns
-    # every guitar down at the bus. The folder is a dead end; the
-    # Electric and Acoustic folders under it are too, and sum their
-    # parts for their own meters. A stereo pair — Rhythm — is a folder
+    # Electrics and acoustics are their own instruments, with their
+    # own buses. Each folder's fader still does something: its bus
+    # sends back into the folder — so the folder meters the instrument
+    # after its bus — and the folder is the VCA lead of that bus, so
+    # turning the folder down turns the instrument down at the bus.
+    # The folders are dead ends. A stereo pair — Rhythm — is a folder
     # over L and R with the processing on the folder.
     node(
-        "Guitars",
-        GTR,
+        "Electric",
+        ELECTRIC,
         [
-            node(
-                "Electric",
-                ELECTRIC,
-                [
-                    pair("Rhythm", ELECTRIC, send="GTR RHYTHM", keep_parent=True),
-                    node("Lead", ELECTRIC, send="GTR LEAD", keep_parent=True),
-                    node("Solo", ELECTRIC, send="GTR SOLO", keep_parent=True),
-                ],
-                no_parent=True,
-            ),
-            node(
-                "Acoustic",
-                ACOUSTIC,
-                [
-                    node("Steel", ACOUSTIC, send="ACOUSTIC BUS", keep_parent=True),
-                    node("Nylon", ACOUSTIC, send="ACOUSTIC BUS", keep_parent=True),
-                ],
-                no_parent=True,
-            ),
+            pair("Rhythm", ELECTRIC, send="GTR RHYTHM"),
+            node("Lead", ELECTRIC, send="GTR LEAD"),
+            node("Solo", ELECTRIC, send="GTR SOLO"),
         ],
         no_parent=True,
-        group=GTR_VCA_LEAD,
+        group=vca_lead(1),
+    ),
+    node(
+        "Acoustic",
+        ACOUSTIC,
+        [
+            node("Steel", ACOUSTIC, send="ACOUSTIC BUS"),
+            node("Nylon", ACOUSTIC, send="ACOUSTIC BUS"),
+        ],
+        no_parent=True,
+        group=vca_lead(2),
     ),
     to_bus(
         "Keys",
@@ -348,28 +344,28 @@ TREE = [
                 [
                     node("DRUM BUS", DRUMS, bus=True),
                     node("BASS BUS", BASS, bus=True),
-                    # GUITAR BUS goes on to INST BUS and ALSO back to
-                    # the Guitars folder, which meters it and leads it.
+                    # Each guitar bus goes on to INST BUS and ALSO back
+                    # to its folder, which meters it and leads it.
                     node(
-                        "GUITAR BUS",
-                        GTR,
+                        "ELECTRIC BUS",
+                        ELECTRIC,
                         [
-                            node("ACOUSTIC BUS", ACOUSTIC, bus=True),
-                            node(
-                                "ELECTRIC BUS",
-                                ELECTRIC,
-                                [
-                                    node("GTR RHYTHM", ELECTRIC, bus=True),
-                                    node("GTR LEAD", ELECTRIC, bus=True),
-                                    node("GTR SOLO", ELECTRIC, bus=True),
-                                ],
-                                bus=True,
-                            ),
+                            node("GTR RHYTHM", ELECTRIC, bus=True),
+                            node("GTR LEAD", ELECTRIC, bus=True),
+                            node("GTR SOLO", ELECTRIC, bus=True),
                         ],
                         bus=True,
-                        send="Guitars",
+                        send="Electric",
                         keep_parent=True,
-                        group=GTR_VCA_FOLLOW,
+                        group=vca_follow(1),
+                    ),
+                    node(
+                        "ACOUSTIC BUS",
+                        ACOUSTIC,
+                        bus=True,
+                        send="Acoustic",
+                        keep_parent=True,
+                        group=vca_follow(2),
                     ),
                     node("KEYS BUS", KEYS, bus=True),
                 ],
