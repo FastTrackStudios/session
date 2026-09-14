@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 PREFIX = "flow."
 CONFIG = ".config/tracey/config.styx"
@@ -62,14 +63,39 @@ def declared_rules(root: str, globs: list[str]) -> dict[str, str]:
     return rules
 
 
+def tracey_json(root: str, *args: str, retries: int = 60):
+    """`tracey query --json <root> <args…>`, parsed.
+
+    The first query starts the daemon, and until its initial index is
+    built every query answers `{"error": "Cancelled"}` with exit 0 (a
+    cold CI runner sees this; a dev box with the daemon warm never
+    does). Retry that, once a second, for a minute. Any other error
+    object — an unknown rule id, a config problem — is final.
+    """
+    cmd = ["tracey", "query", "--json", root, *args]
+    for _ in range(retries):
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            sys.stderr.write(proc.stderr)
+            sys.exit(2)
+        data = json.loads(proc.stdout)
+        if isinstance(data, dict) and "error" in data:
+            if "Cancelled" in str(data["error"]):
+                time.sleep(1)
+                continue
+            sys.exit(f"tracey query {args[0]}: {data['error']}")
+        return data
+    sys.exit(f"tracey query {args[0]}: still indexing after {retries}s")
+
+
 def tracey_rules(root: str, ids: list[str]) -> list[dict]:
     """`tracey query --json rule <ids…>` — implRefs/verifyRefs per rule."""
-    cmd = ["tracey", "query", "--json", root, "rule", *ids]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if proc.returncode != 0:
-        sys.stderr.write(proc.stderr)
-        sys.exit(2)
-    data = json.loads(proc.stdout)
+    # Warm the daemon on the cheap query first, so the big one is not
+    # what waits out the index.
+    status = tracey_json(root, "status")
+    if not status.get("impls"):
+        sys.exit(f"tracey query status: no impls configured ({CONFIG})")
+    data = tracey_json(root, "rule", *ids)
     return data if isinstance(data, list) else [data]
 
 
