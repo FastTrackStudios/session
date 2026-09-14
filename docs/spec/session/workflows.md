@@ -135,7 +135,7 @@ that have to be tracked the same way — so it lives above the session
 and is applied to each, and each session keeps the copy it was
 tracked with.
 
-r[flow.sources.plan]
+r[flow.patch-list.plan]
 The **patch list** names every input the project records and what it
 is for: per performer, their rig (`flow.scenes.performer-rig`) —
 "Cody's guitar rig is DI 3, pedalboard 4, amp A 57 on 5, amp A 121 on
@@ -145,7 +145,7 @@ plan is edited in the **Patch List** as a table of source kinds
 against inputs, grouped the way tracking sorts
 (`flow.scenes.performer-order`).
 
-r[flow.sources.project-level]
+r[flow.patch-list.project-level]
 The patch list is saved **with the project — the album — not the session**:
 a file beside the sessions that every session of the project applies,
 so ten songs are tracked with one setup and a change to the plan
@@ -153,7 +153,7 @@ reaches all of them. Each session also stores the patch list it was last
 applied with, so a session opened on its own, or years later, still
 says where its tracks came from.
 
-r[flow.sources.studio-profiles]
+r[flow.patch-list.studio-profiles]
 A **studio profile** is the room: the physical inputs a location has
 and what is patched to them — the patchbay's view of the studio
 (`crates/patchbay`). The patch list names inputs by their role in the
@@ -161,14 +161,14 @@ profile ("kick in", "DI 3"), and the profile resolves them to the
 device's channels, so the same patch list tracks the same album in two
 rooms with two profiles and nothing in it changes.
 
-r[flow.sources.session-override]
+r[flow.patch-list.session-override]
 A session can **override** the patch list for the day — a spare mic on a
 different channel, a kit tracked in another room, a performer on a
 different rig — without editing the list: the override is layered on
 top, marked as such in the Patch List, and stays with that session
 alone. Removing it returns the session to the list.
 
-r[flow.sources.apply]
+r[flow.patch-list.apply]
 Applying the patch list sets **every source track's input** from it: a
 performer's tracks from their rig by source kind, a kit's channels by
 piece, a bass's by channel — and arms and monitoring follow the same
