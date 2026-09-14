@@ -473,13 +473,25 @@ def flatten(nodes, depth=0, out=None, parent_is_piece=False):
     return out
 
 
-# REAPER's GROUP_FLAGS fields, in its documented order. Each is a
-# bitmask of groups: group 1 is bit 0.
+# REAPER's GROUP_FLAGS fields, in the order REAPER writes them. Each is
+# a bitmask of groups: group 1 is bit 0.
+#
+# Seven lead/follow pairs come FIRST — volume, pan, mute, solo, rec-arm,
+# polarity, automation mode — then the reverse and no-lead flags, and
+# width only at 19/20. That is not the order the grouping dialog lists
+# them in, so it was checked against a project REAPER itself saved
+# (helgobox/resources/test-projects/issue-45-grouping-vca-test.RPP: a
+# lead of everything writes `1 0 1 0 1 0 1 0 1 0 1 0 1 0 0 0 0 0 1`),
+# and it is the order daw-standalone's `decode_grouping` reads. Width
+# at 5/6 shifted mute, solo, rec-arm, polarity and automode by two, so
+# a folder meant to be mute/solo lead of its bus came out solo lead and
+# rec-arm lead instead. `test_template_rpp.py` pins it.
 GROUP_FIELDS = [
-    "volume_lead", "volume_follow", "pan_lead", "pan_follow", "width_lead", "width_follow",
-    "mute_lead", "mute_follow", "solo_lead", "solo_follow", "recarm_lead", "recarm_follow",
-    "polarity_lead", "polarity_follow", "automode_lead", "automode_follow",
-    "volume_reverse", "pan_reverse", "width_reverse", "no_lead_when_following",
+    "volume_lead", "volume_follow", "pan_lead", "pan_follow", "mute_lead", "mute_follow",
+    "solo_lead", "solo_follow", "recarm_lead", "recarm_follow", "polarity_lead", "polarity_follow",
+    "automode_lead", "automode_follow",
+    "volume_reverse", "pan_reverse", "no_lead_when_following", "width_reverse",
+    "width_lead", "width_follow",
     "vca_lead", "vca_follow", "vca_prefx_follow", "media_edit_lead", "media_edit_follow",
 ]
 
