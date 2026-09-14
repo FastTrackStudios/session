@@ -2180,7 +2180,19 @@ fn eq(
     // authored for a graph eight hundred pixels wide and this one is a
     // hundred and thirty: at that size a labelled node with a shape
     // glyph is a smudge, where a dot is a position.
-    let painted = tint.is_none() && rack.detailed() && eq_from_plugin(scene, tone, bands, spectrum, at, rack);
+    // The analyser at a glance width is a wash, not the painter's
+    // analyser: at a hundred and thirty pixels the painter's fill sat
+    // over the curve as brightly as the curve itself, and the setting
+    // was the thing you could not find. The wash is behind the graph
+    // and a fraction of the strength; the focus tier, with room to
+    // read both, gets the painter's own.
+    let washed = rack == Rack::Full && spectrum.len() >= 2 && tint.is_none();
+    if washed {
+        spectrum_wash(scene, spectrum, at);
+    }
+    let painted = tint.is_none()
+        && rack.detailed()
+        && eq_from_plugin(scene, tone, bands, if washed { &[] } else { spectrum }, at, rack);
     if !painted {
         // The fallback: the same response function the plugin's painter
         // uses, as one polyline. What the narrow tier gets, what a
@@ -2253,6 +2265,29 @@ fn eq(
     // The zoom, last, so nothing draws over the one thing in the panel
     // that says what the rest of it means.
     scale(scene, palette, font, tone, which, at, lit);
+}
+
+/// The analyser as a faint wash behind a glance-width EQ.
+///
+/// The painter's grey, at a quarter of the painter's strength: enough
+/// to see where the energy is under the curve, not enough to compete
+/// with it.
+fn spectrum_wash(scene: &mut Scene, spectrum: &[f32], at: Panel) {
+    const ACROSS: usize = 48;
+    let bottom = at.y + at.height;
+    let full = (20_000.0_f64 / 20.0).log10();
+    let points: Vec<(f64, f64)> = (0..ACROSS)
+        .map(|i| {
+            let t = crate::num::coord(i) / crate::num::coord(ACROSS.saturating_sub(1));
+            let hz = 20.0 * 10.0_f64.powf(t * full);
+            let db = bin_at(spectrum, hz);
+            let level = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
+            (t.mul_add(at.width, at.x), bottom - level * at.height)
+        })
+        .collect();
+    let grey = Color::from_rgba8(140, 140, 150, 0xff);
+    area_under(scene, grey.multiply_alpha(0.07), &points, bottom);
+    curve(scene, grey.multiply_alpha(0.22), points.into_iter(), 1.0);
 }
 
 /// The ladder's spacing for a given range.
@@ -4110,10 +4145,12 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
         // The whole graph — the plugin's own fills, nodes and total
         // curve — read, not edited. A rail is thin, not blind: the
         // band colours still say which band is where, and the nodes
-        // still say how many decisions there were.
+        // still say how many decisions there were. Without the
+        // analyser: at this width a spectrum behind the curve is a
+        // curve you cannot find.
         Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq => {
             let tint = (which == Which::DecayEq).then_some(DECAY_INK);
-            eq(scene, palette, font, tone, which, tone.bands_ref(which), &meters.spectrum, at, Rack::Full, None, tint);
+            eq(scene, palette, font, tone, which, tone.bands_ref(which), &[], at, Rack::Full, None, tint);
         }
         // The level against the threshold, and a light for the door.
         Which::Gate => {
