@@ -35,9 +35,12 @@ def guid() -> str:
 
 
 VOX = 0xB04A6A
-DELAY = 0x8B5CF6
-VERB = 0x6D6AD9
-WIDE = 0x3B82F6
+# The returns take their unit's colour: delay blue, reverb purple —
+# the same inks the visualisers are drawn in.
+DELAY = 0x3B82F6
+VERB = 0x8B5CF6
+FX = 0x64748B
+WIDE = 0x22C55E
 PITCH = 0xEC4899
 
 TREE = [
@@ -48,7 +51,7 @@ TREE = [
             ("Chase Vox", VOX, [("Lead Vox", VOX, []), ("Vox Dbl", VOX, [])]),
             (
                 "Vox FX",
-                DELAY,
+                FX,
                 [
                     ("Delay", DELAY, [(n, DELAY, []) for n in ("Slap", "Short", "Long", "Throw")]),
                     ("Verb", VERB, [(n, VERB, []) for n in ("Room", "Short", "Long", "Moment", "Throw")]),

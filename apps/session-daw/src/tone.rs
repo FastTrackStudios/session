@@ -3133,7 +3133,7 @@ fn echo(
             }
         }
     }
-    let wet = hex_of(crate::tcp::to_theme(palette.pan));
+    let wet = DELAY_INK;
     let time_held = lit == Some(Grip::Time);
     let feedback_held = lit == Some(Grip::Feedback);
     let mix = f64::from(echo.mix).clamp(0.0, 1.0);
@@ -3298,7 +3298,7 @@ fn room(
     if rack.detailed() {
         rule(scene, palette.grid, Line::new((at.x, floor), (at.x + at.width, floor)));
     }
-    let ink = hex_of(crate::tcp::to_theme(palette.pan));
+    let ink = REVERB_INK;
     let mix = f64::from(room.mix).clamp(0.0, 1.0);
     let geometry = RoomGeometry::of(room, at);
 
@@ -3388,11 +3388,6 @@ impl RoomGeometry {
             end: at.x + at.width,
         }
     }
-}
-
-/// A theme colour as a paint colour — the inverse of `crate::tcp::to_theme`.
-const fn hex_of(color: daw_theme::Color) -> Color {
-    Color::from_rgba8(color.r, color.g, color.b, color.a)
 }
 
 /// The saturator: its curve, where the signal is on it, and what it
@@ -3712,7 +3707,7 @@ fn selector(
         ),
     };
     let baseline = at.y + at.height - 4.0;
-    let tint = if which == Which::Sat { SAT_INK } else { phase_tint(which.phase()) };
+    let tint = unit_ink(which).unwrap_or_else(|| phase_tint(which.phase()));
     for (i, chip) in chips.iter().enumerate() {
         let x = crate::num::coord(i).mul_add(CHIP, at.x + 2.0);
         let is_current = i == current;
@@ -3756,9 +3751,28 @@ fn selector(
 /// of the top end it is there to take the edge off.
 const DEESS_INK: Color = Color::from_rgba8(0xfa, 0xcc, 0x15, 0xff);
 
-/// The decay-rate EQ's colour: blue, so a graph of time is never read
-/// as a graph of gain.
-const DECAY_INK: Color = Color::from_rgba8(0x4f, 0x8c, 0xff, 0xff);
+/// The delay's colour: blue. The machine, its repeats, its knobs and
+/// its selector, and the delay tracks in the template — one colour
+/// for the one thing.
+pub const DELAY_INK: Color = Color::from_rgba8(0x3b, 0x82, 0xf6, 0xff);
+
+/// The reverb's colour: purple, likewise.
+pub const REVERB_INK: Color = Color::from_rgba8(0x8b, 0x5c, 0xf6, 0xff);
+
+/// The decay-rate EQ's colour: a lighter violet — the reverb's family,
+/// and never the EQ's own look, so a graph of time is not read as a
+/// graph of gain.
+const DECAY_INK: Color = Color::from_rgba8(0xa7, 0x8b, 0xfa, 0xff);
+
+/// The colour a unit is drawn in where it has one of its own.
+const fn unit_ink(which: Which) -> Option<Color> {
+    match which {
+        Which::Sat => Some(SAT_INK),
+        Which::Delay => Some(DELAY_INK),
+        Which::Reverb => Some(REVERB_INK),
+        _ => None,
+    }
+}
 
 /// The preset row: one chip per preset, brighter to darker, the loaded
 /// one lit.
@@ -3849,7 +3863,11 @@ fn knobs(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Pan
     let labels = knob_labels(tone.role);
     let each = at.width / crate::num::coord(KNOBS);
     let r = (each * 0.32).min(at.height * 0.32).max(4.0);
-    let tint = phase_tint(Which::Knobs.phase());
+    let tint = match tone.role {
+        Role::Reverb => REVERB_INK,
+        Role::Delay => DELAY_INK,
+        _ => phase_tint(Which::Knobs.phase()),
+    };
     for (i, label) in labels.iter().enumerate() {
         let cx = crate::num::coord(i).mul_add(each, at.x + each / 2.0);
         let cy = at.y + r + 3.0;
