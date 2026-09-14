@@ -35,8 +35,9 @@ use crate::mcp::{Columns, Control, Squeeze};
 const PAN_FROM_EDGE: f64 = 5.0;
 
 /// How much further apart the button column's steps are than REAPER's
-/// — added at each step, so the monitor comes down by one of these and
-/// the routing by four.
+/// on a strip wide enough to have the column beside the fader — added
+/// at each step, so the monitor comes down by one of these and the
+/// routing by four. A rail gets none of it.
 const SPREAD: f64 = 4.0;
 
 /// The side of the panel's bare record-arm ring — what a rail draws in
@@ -260,15 +261,20 @@ impl Strip {
     /// into the top of a strip whose fader wants the height, and ours
     /// has the room — the column is beside the fader, not over it —
     /// so the buttons sit a little lower and a little further apart.
+    ///
+    /// A rail keeps REAPER's pitch: its buttons sit OVER the fader,
+    /// and every pixel the column spreads is a pixel of travel the
+    /// fader loses.
     fn column_step(&self, control: Control) -> f64 {
-        let monitor = f64::from(g::RECMON_FROM_ARM) + SPREAD;
-        let mute = monitor + f64::from(g::MUTE_FROM_RECMON) + SPREAD;
-        let solo = mute + f64::from(g::SOLO_FROM_MUTE) + SPREAD;
+        let spread = if self.squeeze.columns() { SPREAD } else { 0.0 };
+        let monitor = f64::from(g::RECMON_FROM_ARM) + spread;
+        let mute = monitor + f64::from(g::MUTE_FROM_RECMON) + spread;
+        let solo = mute + f64::from(g::SOLO_FROM_MUTE) + spread;
         match control {
             Control::Monitor => monitor,
             Control::Mute => mute,
             Control::Solo => solo,
-            _ => solo + f64::from(g::IO_FROM_SOLO) + SPREAD,
+            _ => solo + f64::from(g::IO_FROM_SOLO) + spread,
         }
     }
 
@@ -585,6 +591,10 @@ mod tests {
         assert!(arm.x0 >= 0.0 && arm.x1 <= 30.0);
         assert!((arm.center().x - monitor.center().x).abs() < 1.0);
         assert!(rail.fader_top() >= rail.rect(Control::Solo).expect("solo").y1);
+        // The rail's pitch is REAPER's own: the spread is for the
+        // column beside a fader, not the stack over one.
+        let mute = rail.rect(Control::Mute).expect("mute");
+        assert!((mute.y0 - monitor.y0 - f64::from(g::MUTE_FROM_RECMON)).abs() < f64::EPSILON);
 
         let full = Strip::new(86.0, 1440.0, 1440.0, 0.0, 1000.0);
         assert_eq!(full.arm(), art::Arm::Mixer);
