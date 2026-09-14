@@ -64,8 +64,8 @@ fts-chrome = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" 
 # split and have diverged since — `../daw` still carries an older copy,
 # and taking that one puts two different `fts-audio-ui v0.1.0` in one
 # lockfile, which cargo refuses outright.
-fts-audio-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.0" }
-fts-plug-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.0" }
+fts-audio-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+fts-plug-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
 dock-dioxus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15", default-features = false }
 dock-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # nice-plug lives in its own fork repo (upstream RustAudio/nice-plug's
@@ -257,18 +257,18 @@ align-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # Core only — `default-features = false` drops the nice-plug/Blitz
 # editors, which is what keeps this to response math rather than a
 # second plugin host inside the mixer.
-comp-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.0", default-features = false }
-eq-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.0", default-features = false }
-saturate-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.0", default-features = false }
+comp-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+eq-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+saturate-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
 # The Depth units draw the plugins' own machines: the delay's style
 # family decides how a repeat is drawn, and the reverb's envelope is
 # the algorithm's actual impulse response, rendered by `reverb-dsp`'s
 # analysis probe rather than an exponential drawn from the decay knob.
-delay-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.0" }
-reverb-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.0" }
+delay-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+reverb-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
 # The saturator's five circuits and their profiles — what its selector
 # picks from, applied through the plugin's own `apply`.
-saturate-profiles = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.0" }
+saturate-profiles = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
 
 expression-editor-audio = { path = "features/expression-editor/expression-editor-audio" }
 expression-editor-core = { path = "features/expression-editor/expression-editor-core" }
@@ -761,7 +761,7 @@ vox-phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.3.0" 
 # takes `&Self::Window` there — and against the 0.3.0 this rev resolves it
 # does not compile at all. The two workspaces were building the same
 # plugin stack against different window systems.
-baseview = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.0", package = "baseview" }
+baseview = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", package = "baseview" }
 # pipewire-rs one commit past its v0.10.0 release. PipeWire 1.6 rewrote
 # constants like SPA_ID_INVALID from a bare `0xffffffff` into a cast form,
 # `((uint32_t)0xffffffff)`, which bindgen's own macro evaluator cannot fold —

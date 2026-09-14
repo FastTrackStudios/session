@@ -1300,7 +1300,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "baseview"
 version = "0.3.3"
-source = "git+https://github.com/FastTrackStudios/processor?tag=v0.2.0#b4bae71b02ec2fe053612c8c91cc323e08f580d2"
+source = "git+https://github.com/FastTrackStudios/processor?tag=v0.2.1#b3dbe81936663d52ffe1d8c1d96bc699775fb42f"
 dependencies = [
  "block2 0.6.2",
  "bytemuck",
@@ -12390,6 +12390,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "saturate-profiles"
+version = "0.1.0"
+dependencies = [
+ "saturate-dsp",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12874,6 +12881,7 @@ dependencies = [
  "pollster",
  "reverb-dsp",
  "saturate-dsp",
+ "saturate-profiles",
  "session",
  "skrifa 0.42.1",
  "tokio",
