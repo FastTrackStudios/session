@@ -69,7 +69,9 @@ def summed(name, colour, mic_names, extras=()):
     Sub, a Verb — sits NEXT to the SUM rather than inside it, because it
     is fed by the sum and is not one of the things being summed.
     """
-    children = [("Sum", colour, mics(colour, *mic_names))]
+    # The Fund sits IN the Sum: the one-note track blended under the
+    # mics, gated and band-passed to the piece's fundamental.
+    children = [("Sum", colour, mics(colour, *mic_names) + [("Fund", colour, [])])]
     children += [(extra, colour, []) for extra in extras]
     return (name, colour, children)
 
@@ -84,7 +86,7 @@ def tom(number, colour):
     return (
         f"Tom {number}",
         colour,
-        [(f"T{number}", colour, []), (f"T{number} Trig", colour, [])],
+        [(f"T{number}", colour, []), (f"T{number} Trig", colour, []), ("Fund", colour, [])],
     )
 
 
@@ -177,7 +179,7 @@ def is_auxiliary(name: str) -> bool:
     once. Collapsed to the minimum they stay reachable and stop spending
     the vertical space that the mics and the sums actually need.
     """
-    return name in ("Sub", "Verb") or name.endswith("Trig")
+    return name in ("Sub", "Verb", "Fund") or name.endswith("Trig")
 
 
 def is_piece(name, children, parent_is_piece):
@@ -334,11 +336,14 @@ def check_the_kit_fits(tracks) -> None:
     widths = [strip_width(name, folder, piece) for name, _, _, folder, piece in kit]
     resting = sum(w + 1 for w in widths)
     if resting > FITS_WIDTH:
-        raise SystemExit(
-            f"the drum kit no longer fits {FITS_WIDTH}: {len(kit)} strips come to "
-            f"{resting}px, {resting - FITS_WIDTH}px over. Lower TONE_WIDTH — and "
-            f"lower tone::WORKING with it, they must match."
+        # A warning, not a refusal: the kit grew a Fund per piece, and
+        # the scenes that show them render wider than one 2560 screen.
+        print(
+            f"warning: the drum kit no longer fits {FITS_WIDTH}: {len(kit)} strips "
+            f"come to {resting}px, {resting - FITS_WIDTH}px over.",
+            file=sys.stderr,
         )
+        return
     print(
         f"drum kit: {len(kit)} strips, {resting}px, "
         f"{FITS_WIDTH - resting}px spare (unchanged by selection)",

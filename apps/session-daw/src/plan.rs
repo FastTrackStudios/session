@@ -432,7 +432,7 @@ pub struct Scene {
 }
 
 /// Every scene, in the order the number keys recall them.
-pub const SCENES: [Scene; 5] = [
+pub const SCENES: [Scene; 6] = [
     Scene {
         name: "Drum Tracking",
         slug: "drum-tracking",
@@ -457,6 +457,11 @@ pub const SCENES: [Scene; 5] = [
         name: "Lead Vocal FX Edit",
         slug: "lead-vocal-fx",
         size: lead_vocal_fx,
+    },
+    Scene {
+        name: "Drum Fund",
+        slug: "drum-fund",
+        size: drum_fund,
     },
 ];
 
@@ -507,6 +512,21 @@ fn drum_overview(name: &str, _is_folder: bool, ancestors: &[String]) -> Size {
     if is(name, &PIECES) || is(name, &["OH"]) {
         Size::Working
     } else if under(ancestors, &PIECES) {
+        Size::Minimum
+    } else {
+        Size::Compact
+    }
+}
+
+/// The one-note tracks — each piece's Fund, Sub and Trig — open, the
+/// rest present.
+fn drum_fund(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+    let lower = name.to_lowercase();
+    if is_folder {
+        Size::Compact
+    } else if lower == "fund" || lower == "sub" || lower.ends_with("trig") {
+        Size::Working
+    } else if under(ancestors, &["Drum Kit"]) {
         Size::Minimum
     } else {
         Size::Compact

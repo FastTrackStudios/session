@@ -2356,7 +2356,7 @@ fn main() {
         // Synced by default: the chain is read across the mixer, and
         // folds that differed per strip would put a different processor
         // at the same height on every track.
-        rack_folds: session_daw::tone::Fold::shared(),
+        rack_folds: session_daw::tone::Fold::rest(),
         rack_scroll: std::env::var("FTS_VELLO_RACK_SCROLL")
             .ok()
             .and_then(|v| v.trim().parse::<f64>().ok())

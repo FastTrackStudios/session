@@ -464,7 +464,7 @@ fn mixer_shot(
             spectra: &mut spectra,
             lit: None,
             panels: session_daw::tone::panels_for(TONE),
-            folded: Box::leak(Box::default()),
+            folded: Box::leak(Box::new(session_daw::tone::Fold::rest())),
         }
     } else {
         session_daw::overlay::Racks::none()

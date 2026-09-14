@@ -974,10 +974,11 @@ fn strip(
             // edge — so the box the rack is drawn in is the box a grip
             // is measured against.
             crate::tone::Panel::of(rack_box, x),
-            // The recorded rack is never folded: the fold is live, and
-            // a strip whose rack the overlay draws is the one that
-            // answers to it. See `overlay::Racks::folded`.
-            crate::tone::Folded::default(),
+            // The recorded rack is at rest — Rescue shut, the rest
+            // open, see `Folded::rest` — and a fold beyond that is
+            // live: a strip whose rack the overlay draws is the one
+            // that answers to it. See `overlay::Racks::folded`.
+            crate::tone::Folded::rest(),
         );
         scene.pop_layer();
     }

@@ -151,6 +151,13 @@ pub enum Role {
     Wide,
     /// A pitch shifter.
     Pitch,
+    /// A fundamental: the Fund track under a piece's Sum, and its Sub.
+    /// A band-pass tuned to the note, a gate to keep it tight, a
+    /// saturator — and nothing else, because the track is one note
+    /// blended in under the piece.
+    Fund,
+    /// A trigger: a spike track for a sampler, with nothing on it yet.
+    Trig,
 }
 
 impl Role {
@@ -167,6 +174,21 @@ impl Role {
         }
         if lower.starts_with("oct") || lower.starts_with("pitch") {
             return Self::Pitch;
+        }
+        // A piece's own sends and helpers, wherever they sit: its verb
+        // is a reverb return, and its fundamental, its sub and its
+        // trigger are the one-note tracks.
+        if lower == "verb" || lower == "reverb" {
+            return Self::Reverb;
+        }
+        if lower == "delay" {
+            return Self::Delay;
+        }
+        if lower == "fund" || lower == "sub" {
+            return Self::Fund;
+        }
+        if lower.ends_with("trig") {
+            return Self::Trig;
         }
         for folder in ancestors.iter().rev() {
             let folder = folder.to_lowercase();
@@ -196,9 +218,17 @@ impl Role {
             Self::Reverb => Some(&REVERB_CHAIN),
             Self::Wide => Some(&WIDE_CHAIN),
             Self::Pitch => Some(&PITCH_CHAIN),
+            Self::Fund => Some(&FUND_CHAIN),
+            Self::Trig => Some(&[]),
         }
     }
 }
+
+/// A fundamental: the gate that keeps it tight, the band-pass tuned to
+/// the note, and the saturator that gives it an edge. In the order the
+/// rack reads — Rescue, then Tone — which is also the order the signal
+/// wants: gate the bleed before the filter rings on it.
+pub const FUND_CHAIN: [Which; 3] = [Which::Gate, Which::Eq, Which::Sat];
 
 /// A delay return: the de-esser on the way in, the delay itself with
 /// its machine selector and knobs, and an EQ on the way out.
@@ -968,7 +998,12 @@ pub const LEGIBLE: f64 = 96.0;
 /// Below this a curve is a few pixels of wiggle — it reads as ornament
 /// rather than as a setting, and ornament in a mixer is worse than
 /// space. Below it the rack is indicators — see [`Rack::Minimal`].
-pub const SHAPE: f64 = 90.0;
+///
+/// Eighty, so that REAPER's own eighty-six-pixel strip — a bus, a
+/// bass, a guitar at its normal width — draws its curves: its rack is
+/// eighty-two wide once the insets come off, and at ninety it fell to
+/// the rail's indicators, which are for tracks a third that wide.
+pub const SHAPE: f64 = 80.0;
 
 /// The narrowest rack that still draws indicators: a rail's own width
 /// less its edges.
@@ -1146,6 +1181,19 @@ impl Folded {
     pub const fn any(self) -> bool {
         self.shut != 0
     }
+
+    /// Where a mixer opens: Rescue shut, the rest open.
+    ///
+    /// Rescue is dialled in once, at the start of a mix, and then it
+    /// is done — and a pass that is done should not spend the top of
+    /// every rack for the rest of the session. Unfold it when you need
+    /// it; it stays where you left it.
+    #[must_use]
+    pub fn rest() -> Self {
+        let mut folded = Self::default();
+        folded.toggle(session::mix_phases::MixPhase::Rescue);
+        folded
+    }
 }
 
 /// Where the folds live: one answer for the mixer, or one per track.
@@ -1164,6 +1212,15 @@ pub struct Fold {
 }
 
 impl Fold {
+    /// Where a mixer opens: synced, at [`Folded::rest`].
+    #[must_use]
+    pub fn rest() -> Self {
+        Self {
+            every: Folded::rest(),
+            ..Self::shared()
+        }
+    }
+
     /// Synced, which is the default a mixer wants.
     #[must_use]
     pub fn shared() -> Self {
@@ -1178,7 +1235,9 @@ impl Fold {
         if self.synced {
             self.every
         } else {
-            self.by_guid.get(guid).copied().unwrap_or_default()
+            // A track with no answer of its own follows the shared one,
+            // which is where the mixer opened — Rescue shut.
+            self.by_guid.get(guid).copied().unwrap_or(self.every)
         }
     }
 
@@ -1315,7 +1374,7 @@ pub fn draw(
                 );
                 continue;
             };
-            minimal(scene, palette, tone, meters, which, at.inset(1.0));
+            minimal(scene, palette, font, tone, meters, which, at.inset(1.0));
             if tone.bypass.is(which) {
                 scene.fill(
                     Fill::NonZero,
@@ -4023,7 +4082,7 @@ fn pitch(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Pan
 /// because it is the one still setting. Reductions hang from the top,
 /// the way they do in the full panel; levels and tails stand on the
 /// floor.
-fn minimal(scene: &mut Scene, palette: &Palette, tone: &Tone, meters: &Meters, which: Which, at: Panel) {
+fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meters: &Meters, which: Which, at: Panel) {
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     let mid = at.y + at.height / 2.0;
@@ -4048,19 +4107,13 @@ fn minimal(scene: &mut Scene, palette: &Palette, tone: &Tone, meters: &Meters, w
         Some(20.0 * f64::from(meters.sat_peak.max(1e-4)).log10())
     };
     match which {
-        // The response, as a sparkline across the row.
+        // The whole graph — the plugin's own fills, nodes and total
+        // curve — read, not edited. A rail is thin, not blind: the
+        // band colours still say which band is where, and the nodes
+        // still say how many decisions there were.
         Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq => {
-            let bands = tone.bands_ref(which);
-            let ink = if which == Which::DecayEq { DECAY_INK } else { EQ_INK };
-            let range = tone.eq_db_range();
-            let freq = FreqAxis::audible();
-            let points = (0..24).map(|i| {
-                let t = crate::num::coord(i) / 23.0;
-                let gain = calculate_combined_response(bands, freq.norm_to_freq(t), DISPLAY_RATE);
-                let y = mid - (gain / range).clamp(-1.0, 1.0) * (at.height / 2.0 - 1.5);
-                (t.mul_add(at.width, at.x), y)
-            });
-            curve(scene, ink, points, 1.0);
+            let tint = (which == Which::DecayEq).then_some(DECAY_INK);
+            eq(scene, palette, font, tone, which, tone.bands_ref(which), &meters.spectrum, at, Rack::Full, None, tint);
         }
         // The level against the threshold, and a light for the door.
         Which::Gate => {
@@ -4633,15 +4686,18 @@ pub fn placeholder(index: usize) -> Tone {
 /// the one its name asks for, so a "Long" verb is a long verb before
 /// anything is clicked.
 #[must_use]
-pub fn placeholder_for(role: Role, index: usize, name: &str) -> Tone {
+pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String]) -> Tone {
     let mut tone = placeholder(index);
     tone.role = role;
+    if role == Role::Fund {
+        return fundamental(tone, name, ancestors);
+    }
     let presets = match role {
         Role::Reverb => reverb_presets(),
         Role::Delay => delay_presets(),
         Role::Wide => wide_presets(),
         Role::Pitch => pitch_presets(),
-        Role::Channel | Role::Bus => Vec::new(),
+        Role::Channel | Role::Bus | Role::Fund | Role::Trig => Vec::new(),
     };
     if presets.is_empty() {
         return tone;
@@ -4654,6 +4710,46 @@ pub fn placeholder_for(role: Role, index: usize, name: &str) -> Tone {
         .unwrap_or(0);
     tone.presets = presets;
     tone.load_preset(wanted);
+    tone
+}
+
+/// A fundamental's chain, tuned to the piece it sits under.
+///
+/// One band: a band-pass at the note, whose Q says how much of the
+/// spectrum around it comes along. The note comes from the piece — a
+/// kick's fundamental is in the fifties, a snare's around two hundred,
+/// the toms step down — which is read off the folders above the track.
+fn fundamental(mut tone: Tone, name: &str, ancestors: &[String]) -> Tone {
+    let lower = name.to_lowercase();
+    let piece = ancestors.iter().rev().map(|a| a.to_lowercase()).find(|a| {
+        a.starts_with("kick") || a.starts_with("snare") || a.starts_with("tom")
+    });
+    let hz = match piece.as_deref() {
+        Some(p) if p.starts_with("kick") => 55.0,
+        Some(p) if p.starts_with("snare") => 200.0,
+        Some(p) if p.starts_with("tom") => {
+            // "Tom 1" is the highest; each one down is a whole step or
+            // so lower.
+            let number = p.chars().filter_map(|c| c.to_digit(10)).next().unwrap_or(1);
+            [130.0, 110.0, 92.0, 78.0].get(usize::try_from(number.saturating_sub(1)).unwrap_or(0)).copied().unwrap_or(78.0)
+        }
+        _ => 100.0,
+    };
+    // A sub is the octave under the note.
+    let hz = if lower == "sub" { hz / 2.0 } else { hz };
+    let q = 2.2;
+    tone.eq = vec![band(0, hz, 0.0, q, EqBandShape::BandPass)];
+    tone.gate = Gate {
+        threshold: -32.0,
+        range: -40.0,
+        attack: 0.5,
+        hold: 40.0,
+        release: 90.0,
+    };
+    tone.set_sat_profile(saturate_profiles::profile_index("transformer").unwrap_or(0));
+    tone.sat.drive = 2.0;
+    tone.presets = Vec::new();
+    tone.preset = None;
     tone
 }
 
@@ -6209,7 +6305,7 @@ impl Store {
             }
             self.by_guid
                 .entry(track.guid.clone())
-                .or_insert_with(|| placeholder_for(role, index, &track.name));
+                .or_insert_with(|| placeholder_for(role, index, &track.name, &ancestors));
         }
     }
 
