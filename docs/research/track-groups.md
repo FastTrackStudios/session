@@ -154,7 +154,7 @@ and it is 64 bits wide — it cannot represent groups 65–128. Carried on
 
 ## What the template writer emits
 
-`/run/media/Development/fts/session/scripts/ui-stress/make-template-rpp.py`
+`dynamic_template::golden_session` (formerly `scripts/ui-stress/make-template-rpp.py`)
 (present on `main`; not in this research worktree's tree).
 
 - `GROUP_FIELDS` (`:476-484`) lists 25 field names and `group_flags()`

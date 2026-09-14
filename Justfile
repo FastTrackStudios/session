@@ -10,9 +10,14 @@
 # orchestral fixture is 2000 flat tracks; it exists to be slow, not to
 # be looked at.
 #
-# `just daw-template` writes it. Override for a one-off with an argument
+# It is the golden session — built by the Rust builder in
+# `dynamic_template::golden_session` and committed under
+# features/dynamic-template/fixtures/golden/. `just daw-template`
+# regenerates it. Override for a one-off with an argument
 # (`just daw-window some.rpp`) or for a session with FTS_DAW_TEMPLATE.
-DAW_PROJECT := env("FTS_DAW_TEMPLATE", "/tmp/fts-template.rpp")
+GOLDEN_DIR := "features/dynamic-template/fixtures/golden"
+DAW_PROJECT := env("FTS_DAW_TEMPLATE", GOLDEN_DIR / "template.rpp")
+DAW_VOCAL := env("FTS_DAW_VOCAL", GOLDEN_DIR / "vocal-fx.rpp")
 
 # List recipes by default
 default:
@@ -1173,14 +1178,25 @@ daw-fixture TRACKS="2000" ITEMS="20000":
 # cannot show whether the panel draws a folder structure at all.
 #
 # The hierarchy and the names come from features/dynamic-template's own
-# group definitions rather than being invented here.
+# group definitions rather than being invented here: the builder walks
+# the config-derived template tree with a fixture song shape
+# (`dynamic_template::golden_session`), and the result is the golden
+# session. This regenerates the committed project files
+# (template.rpp, vocal-fx.rpp), the uncommitted synthetic media beside
+# them, and the checklist in docs/spec/session/maximal-template.md —
+# which is regenerated from the golden-rule checks, never hand-ticked.
+# A test fails when any of the committed text is stale.
 daw-template:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
-    scripts/ui-stress/make-template-rpp.py > "$out"
-    printf 'wrote %s — %s tracks, %s items\n' "$out" \
-        "$(grep -c '^  <TRACK' "$out")" "$(grep -c '^    <ITEM' "$out")"
+    cargo run -p dynamic-template --bin golden-session -- "{{GOLDEN_DIR}}"
+
+# Re-render every scene's committed picture from the golden session.
+#
+# The pictures under features/dynamic-template/fixtures/golden/scenes/
+# are test fixtures (`apps/session-daw/tests/golden_scenes.rs`): a
+# change to what a scene shows is a diff in a PR. Run this after a
+# deliberate scene or template change and commit the result.
+daw-scenes:
+    FTS_UPDATE_GOLDEN=1 cargo test -p session-daw --test golden_scenes
 
 # Benchmark the arrangement HEADLESSLY: no window, no surface, no vsync.
 #
@@ -1233,8 +1249,8 @@ daw-dock OUT="/tmp/fts-dock.png" PROJECT="" SIZE="2560x1440":
     set -euo pipefail
     project="{{PROJECT}}"
     if [[ -z "$project" ]]; then
-        project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
-        [[ -f "$project" ]] || scripts/ui-stress/make-template-rpp.py > "$project"
+        project="{{DAW_PROJECT}}"
+        [[ -f "$project" ]] || just daw-template
     fi
     cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
     FTS_BENCH_DOCK="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" \
@@ -1270,11 +1286,10 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{SCENE}}" in
-        drum-*|guitar-*|buses) project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
-                [[ -f "$project" ]] || scripts/ui-stress/make-template-rpp.py > "$project" ;;
-        *)      project="${FTS_DAW_VOCAL:-/tmp/fts-vocal-fx.rpp}"
-                [[ -f "$project" ]] || scripts/ui-stress/make-vocal-fx-rpp.py > "$project" ;;
+        drum-*|guitar-*|buses) project="{{DAW_PROJECT}}" ;;
+        *)                     project="{{DAW_VOCAL}}" ;;
     esac
+    [[ -f "$project" ]] || just daw-template
     out="{{OUT}}"; [[ -n "$out" ]] || out="/tmp/fts-scene-{{SCENE}}.png"
     cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
     FTS_BENCH_MIXER="$out" FTS_BENCH_SCENE="{{SCENE}}" FTS_BENCH_SIZE="{{SIZE}}" \
