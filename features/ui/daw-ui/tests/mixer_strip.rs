@@ -583,6 +583,7 @@ fn the_column_spreads_as_the_strip_grows() {
 fn the_rows_corner_controls_need_the_height() {
     use daw_proto::Track;
     use daw_ui::components::tcp::TrackRow;
+    use daw_theme_art::geometry::tcp::{GUTTER_BUTTON_X, TINT_W};
     use daw_ui::controls::TrackStore;
 
     fn row(height: f32) -> String {
@@ -609,26 +610,55 @@ fn the_rows_corner_controls_need_the_height() {
         dioxus_ssr::render(&dom)
     }
 
-    // A default row has neither — REAPER's does not either.
-    let short = row(70.0);
-    assert_eq!(short.matches("lanes").count(), 0);
+    // The two corner boxes, by the left edge each is drawn at: phase
+    // three past the gutter button, the lanes button one past it. Each
+    // comes back as (top, hidden) — hidden being the `display:none` the
+    // row writes instead of leaving the node out.
+    fn corner(html: &str, left: f32) -> (f32, bool) {
+        html.split("style=\"")
+            .skip(1)
+            .filter_map(|rest| {
+                let style = rest.split('"').next()?;
+                let px = |name: &str| {
+                    style.split(';').map(str::trim).find_map(|decl| {
+                        decl.strip_prefix(name)?
+                            .strip_prefix(':')?
+                            .strip_suffix("px")?
+                            .parse::<f32>()
+                            .ok()
+                    })
+                };
+                if !style.contains("position:absolute") || px("left")? != left {
+                    return None;
+                }
+                Some((px("top")?, style.contains("display:none")))
+            })
+            .next()
+            .unwrap_or_else(|| panic!("no corner control at left {left}"))
+    }
+    let phase_x = TINT_W + GUTTER_BUTTON_X + 3.0;
+    let lanes_x = TINT_W + GUTTER_BUTTON_X + 1.0;
 
-    // A tall one has both. They are the only things the extra height
-    // adds, so the markup simply gets longer.
+    // A default row shows neither — REAPER's does not either. The nodes
+    // are still there, hidden: the track panel recycles a fixed pool of
+    // rows, so a row's shape may not depend on its height.
+    let short = row(70.0);
+    assert!(corner(&short, phase_x).1, "phase is shown on a short row");
+    assert!(corner(&short, lanes_x).1, "lanes is shown on a short row");
+
+    // A tall one shows both, and the markup is the same shape — the
+    // extra height changes what is visible, not what is mounted.
     let tall = row(120.0);
-    assert!(tall.len() > short.len(), "the tall row gained nothing");
+    assert_eq!(
+        abs_boxes(&short).len(),
+        abs_boxes(&tall).len(),
+        "the tall row is a different shape from the short one"
+    );
 
     // And phase sits below the lanes button — both measured from the
     // row's floor, 24 and 47 above it.
-    let tops: Vec<f32> = abs_boxes(&tall)
-        .into_iter()
-        .filter_map(|b| b.top)
-        .filter(|t| *t > 60.0)
-        .collect();
-    assert!(
-        tops.contains(&96.0) && tops.contains(&73.0),
-        "phase and lanes are not on the row's floor: {tops:?}"
-    );
+    assert_eq!(corner(&tall, phase_x), (96.0, false), "phase is off the floor");
+    assert_eq!(corner(&tall, lanes_x), (73.0, false), "lanes is off the floor");
 }
 
 /// Envelope and phase sit on the stretch section's floor, envelope below.
