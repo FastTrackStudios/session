@@ -90,6 +90,14 @@ fn main() {
     let font = session_daw::text::Font::embedded().expect("the embedded font");
     let layout = session_daw::layout::Layout::from_env();
 
+    if let Ok(out) = std::env::var("FTS_BENCH_EXPRESSION") {
+        // The expression editor over the demo drum groove — no project
+        // needed, which is the point: the view is exercisable before
+        // a session has any MIDI in it.
+        expression_shot(&palette, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
+
     let opened = session_daw::open::open_and_serve(&path).expect("open project");
     let scene = build_scene(&palette, layout).expect("read project back");
     if std::env::var_os("FTS_BENCH_DEPTHS").is_some() {
@@ -326,6 +334,42 @@ fn main() {
         "  headroom there at 240Hz: {:.2}x   at 60Hz: {:.2}x\n",
         (1000.0 / 240.0) / frame.p99,
         (1000.0 / 60.0) / frame.p99,
+    );
+}
+
+/// Write one frame of the expression editor to a PNG.
+///
+/// `FTS_BENCH_EXPRESSION=/tmp/expression.png`. The demo drum groove,
+/// the way `e` opens it in the window with nothing selected.
+fn expression_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
+    let size = (f64::from(width), f64::from(height));
+    let mut view = session_daw::expression::Expression::demo((0.0, 0.0), size);
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut buffer = Vec::new();
+    image.render_to_vec(
+        |painter| {
+            painter.reset();
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                palette.surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, size.0, size.1),
+            );
+            view.paint(painter);
+        },
+        &mut buffer,
+    );
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+    println!(
+        "  wrote {} — {} hits on {} lanes",
+        out.display(),
+        view.editor.doc.notes.len(),
+        match &view.editor.row_space {
+            expression_editor_core::RowSpace::Drums(map) => map.lanes.len(),
+            _ => 0,
+        }
     );
 }
 

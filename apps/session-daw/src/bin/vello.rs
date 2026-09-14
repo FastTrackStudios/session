@@ -152,6 +152,10 @@ struct App {
     /// `arrange_edit`. The window forwards what the pointer and the
     /// keys did and carries out what it asks for.
     editor: session_daw::arrange_edit::Editor,
+    /// The expression editor, once `e` has opened it on an item. Kept
+    /// across view switches so coming back finds the same zoom and
+    /// selection.
+    expression: Option<session_daw::expression::Expression>,
     /// The item under the pointer in the lanes, whose fade handles are
     /// drawn.
     hovered_item: Option<usize>,
@@ -321,6 +325,25 @@ impl ApplicationHandler for App {
                 self.redraw();
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                // The expression editor takes the wheel in notches —
+                // one line of a mouse wheel — which is what its zoom
+                // and pan gains are tuned for.
+                if self.view == View::Expression {
+                    let (nx, ny) = match delta {
+                        MouseScrollDelta::LineDelta(x, y) => (f64::from(x), f64::from(y)),
+                        MouseScrollDelta::PixelDelta(p) => (
+                            p.x / expression_editor_paint::scroll::PIXELS_PER_NOTCH,
+                            p.y / expression_editor_paint::scroll::PIXELS_PER_NOTCH,
+                        ),
+                    };
+                    let (x, y) = self.cursor;
+                    if let Some(ex) = self.expression.as_mut()
+                        && ex.wheel(x, y, nx, ny, self.keys)
+                    {
+                        self.redraw();
+                    }
+                    return;
+                }
                 // Lines or pixels depending on the device; treating both
                 // as pixels is how a trackpad ends up feeling wrong.
                 let (dx, dy) = match delta {
@@ -366,6 +389,24 @@ impl ApplicationHandler for App {
                 // it — `x` must type an x, not switch views.
                 if self.rename.is_some() {
                     self.type_into_rename(&event);
+                    self.redraw();
+                    return;
+                }
+                // `e` opens the expression editor on the selected item,
+                // and closes it again. Before the editor sees the key,
+                // or there would be no way out of a view that binds it.
+                if event.logical_key.to_text() == Some("e") && !self.keys.ctrl && !self.keys.alt {
+                    self.toggle_expression();
+                    self.redraw();
+                    return;
+                }
+                // In the expression editor the keyboard is the
+                // editor's: its own keymap, its own actions.
+                if self.view == View::Expression
+                    && let Some(name) = expression_key_name(&event.logical_key)
+                    && let Some(ex) = self.expression.as_mut()
+                    && ex.key(&name, self.keys)
+                {
                     self.redraw();
                     return;
                 }
@@ -539,6 +580,14 @@ impl ApplicationHandler for App {
                 // knobs did not turn.
                 let last = self.cursor;
                 self.cursor = (position.x, position.y);
+                if self.view == View::Expression {
+                    if let Some(ex) = self.expression.as_mut()
+                        && ex.moved(position.x, position.y, self.keys)
+                    {
+                        self.redraw();
+                    }
+                    return;
+                }
                 let spot = self.spot_at(position.x, position.y);
                 // A fade in flight follows the pointer along the item:
                 // the fade-in is as long as the pointer is past the
@@ -641,6 +690,26 @@ impl ApplicationHandler for App {
                 button,
                 ..
             } => {
+                // The expression editor takes every button: middle
+                // pans, right resolves through its mouse map.
+                if self.view == View::Expression {
+                    let code = match button.mouse_button() {
+                        Some(winit::event::MouseButton::Right) => 2,
+                        Some(winit::event::MouseButton::Middle) => 1,
+                        _ => 0,
+                    };
+                    self.cursor = (position.x, position.y);
+                    let keys = self.keys;
+                    let changed = match self.expression.as_mut() {
+                        Some(ex) if state.is_pressed() => ex.press(position.x, position.y, keys, code),
+                        Some(ex) => ex.release(position.x, position.y, keys),
+                        None => false,
+                    };
+                    if changed {
+                        self.redraw();
+                    }
+                    return;
+                }
                 if button.mouse_button() != Some(winit::event::MouseButton::Left) {
                     return;
                 }
@@ -1756,6 +1825,84 @@ impl App {
         self.mixer.is_some()
     }
 
+    /// Open the expression editor on the selected item, or close it.
+    ///
+    /// The first selected item's active take, if it has notes; the
+    /// demo groove otherwise, so the editor can be exercised on a
+    /// session with no MIDI in it yet. A track whose name says drums
+    /// opens as a kit; anything else as a roll.
+    fn toggle_expression(&mut self) {
+        if self.view == View::Expression {
+            self.view = View::Arrangement;
+        } else {
+            let origin = (0.0, 0.0);
+            let size = self.surface_size;
+            let wanted = self.editor.selected.iter().next().cloned();
+            let from_item = wanted.as_deref().and_then(|guid| {
+                let scene = self.scene.as_ref()?;
+                let item = scene.item_by_guid(guid)?;
+                let track = self.arrange_rows.get(item.row).map(|(t, _)| t.name.as_str());
+                let drums = track.is_some_and(session_daw::expression::is_drum_track);
+                let snapshot =
+                    session_daw::expression::load_take(guid, scene.bpm, item.x1 - item.x0)?;
+                Some(session_daw::expression::Expression::from_take(
+                    &snapshot,
+                    guid.to_owned(),
+                    drums,
+                    origin,
+                    size,
+                ))
+            });
+            let already = self
+                .expression
+                .as_ref()
+                .is_some_and(|ex| ex.item.is_some() && ex.item == wanted);
+            match from_item {
+                Some(ex) => self.expression = Some(ex),
+                None if already => {}
+                None => {
+                    tracing::info!(
+                        expression.item = wanted.as_deref().unwrap_or("none"),
+                        "no MIDI take to edit; opening the demo groove"
+                    );
+                    if self.expression.as_ref().is_none_or(|ex| ex.item.is_some()) {
+                        self.expression =
+                            Some(session_daw::expression::Expression::demo(origin, size));
+                    }
+                }
+            }
+            self.view = View::Expression;
+        }
+        if let Some(window) = &self.window {
+            window.set_title(self.view.title());
+        }
+        tracing::info!(view = ?self.view, "view");
+    }
+
+    fn redraw_expression(&mut self) {
+        let (width, height) = self.surface_size;
+        let surface = self.palette.surface;
+        let Self {
+            renderer, expression, ..
+        } = self;
+        let Some(ex) = expression.as_mut() else { return };
+        ex.layout((0.0, 0.0), (width, height));
+        renderer.render(|painter| {
+            painter.reset();
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, width, height),
+            );
+            ex.paint(painter);
+        });
+        if let Some(window) = &self.window {
+            window.pre_present_notify();
+        }
+    }
+
     fn redraw_mixer(&mut self) {
         let (width, height) = self.surface_size;
         let surface = self.palette.surface;
@@ -1889,7 +2036,10 @@ impl App {
     fn profile(&self) -> session_daw::rails::Profile {
         session_daw::rails::profile(
             match self.view {
-                View::Arrangement => session_daw::rails::Surface::Arrange,
+                // The editor draws no rails yet; the arrangement's
+                // profile is what a hover over its box would read, and
+                // its events never reach the rails while it is up.
+                View::Arrangement | View::Expression => session_daw::rails::Surface::Arrange,
                 View::Mixer => session_daw::rails::Surface::Mixer,
             },
             self.mode,
@@ -2298,6 +2448,10 @@ impl App {
             self.redraw_mixer();
             return;
         }
+        if self.view == View::Expression {
+            self.redraw_expression();
+            return;
+        }
         if self.scene.is_none() {
             return;
         }
@@ -2653,6 +2807,7 @@ fn main() {
         transport: session_daw::engine::Transport::start(),
         playhead: session_daw::cursor::Playhead::stopped(0.0),
         editor: session_daw::arrange_edit::Editor::default(),
+        expression: None,
         hovered_item: None,
         keys: session_daw::mousemap::Mods::default(),
         bar_drag: None,
@@ -2775,17 +2930,29 @@ struct Loaded {
 /// Multi-window comes later; a single window that can reach both is
 /// what makes the mixer usable at all today, and a split would have to
 /// decide how to divide the height before either half has earned it.
+/// A key as the expression editor's keymap names it — the browser's
+/// names, which is what its bindings were written against: `"Delete"`,
+/// `"ArrowLeft"`, `"F2"`, and the character itself for the rest.
+fn expression_key_name(key: &winit::keyboard::Key) -> Option<String> {
+    match key {
+        winit::keyboard::Key::Named(named) => Some(format!("{named:?}")),
+        _ => key.to_text().map(str::to_owned),
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum View {
     Arrangement,
     Mixer,
+    /// The expression editor over one item — see `session_daw::expression`.
+    Expression,
 }
 
 impl View {
     const fn toggled(self) -> Self {
         match self {
             Self::Arrangement => Self::Mixer,
-            Self::Mixer => Self::Arrangement,
+            Self::Mixer | Self::Expression => Self::Arrangement,
         }
     }
 
@@ -2793,6 +2960,7 @@ impl View {
         match self {
             Self::Arrangement => "Session — arrangement (Vello)",
             Self::Mixer => "Session — mixer (Vello)",
+            Self::Expression => "Session — expression editor (Vello)",
         }
     }
 }

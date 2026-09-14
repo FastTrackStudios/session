@@ -588,6 +588,12 @@ impl Arrangement {
         self.items.get(index)
     }
 
+    /// An item's box, by its guid.
+    #[must_use]
+    pub fn item_by_guid(&self, guid: &str) -> Option<&ItemBox> {
+        self.items.iter().find(|b| b.guid == guid)
+    }
+
     /// The regions, for the ruler's lanes.
     #[must_use]
     pub fn sections(&self) -> &[daw_ui::studio::project::Section] {
