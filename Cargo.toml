@@ -45,6 +45,7 @@ members = [
     "features/dynamic-template/dynamic-template-proto",
     "features/dynamic-template/tests",
     "features/guide",
+    "features/patch-list",
     "features/reaper/session-extension",
     "features/reaper/session-extension/xtask",
     "features/song",
@@ -401,6 +402,7 @@ totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
 
 # ── Dynamic session templates (subtree-imported into the tree) ────────
 dynamic-template = { path = "features/dynamic-template/dynamic-template" }
+patch-list = { path = "features/patch-list" }
 dynamic-template-proto = { path = "features/dynamic-template/dynamic-template-proto" }
 chord-tool = { path = "features/chord-tool/chord-tool" }
 chord-tool-daw = { path = "features/chord-tool/chord-tool-daw" }

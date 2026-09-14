@@ -1,0 +1,10 @@
+//! The patch list: an album's inputs by performer, resolved through a
+//! studio profile.
+//!
+//! See `Cargo.toml` for what this is; the spec is
+//! `docs/spec/session/workflows.md` (`flow.patch-list.*`) and the
+//! decision is session #29.
+
+pub mod list;
+
+pub use list::{Bus, Entry, PatchList, Performer, Rig};
