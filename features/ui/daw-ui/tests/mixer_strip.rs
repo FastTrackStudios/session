@@ -582,8 +582,8 @@ fn the_column_spreads_as_the_strip_grows() {
 #[test]
 fn the_rows_corner_controls_need_the_height() {
     use daw_proto::Track;
-    use daw_ui::components::tcp::TrackRow;
     use daw_theme_art::geometry::tcp::{GUTTER_BUTTON_X, TINT_W};
+    use daw_ui::components::tcp::TrackRow;
     use daw_ui::controls::TrackStore;
 
     fn row(height: f32) -> String {
@@ -657,8 +657,16 @@ fn the_rows_corner_controls_need_the_height() {
 
     // And phase sits below the lanes button — both measured from the
     // row's floor, 24 and 47 above it.
-    assert_eq!(corner(&tall, phase_x), (96.0, false), "phase is off the floor");
-    assert_eq!(corner(&tall, lanes_x), (73.0, false), "lanes is off the floor");
+    assert_eq!(
+        corner(&tall, phase_x),
+        (96.0, false),
+        "phase is off the floor"
+    );
+    assert_eq!(
+        corner(&tall, lanes_x),
+        (73.0, false),
+        "lanes is off the floor"
+    );
 }
 
 /// Envelope and phase sit on the stretch section's floor, envelope below.
