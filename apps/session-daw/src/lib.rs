@@ -11,6 +11,7 @@
 
 pub mod animate;
 pub mod arrangement;
+pub mod balance;
 #[cfg(target_os = "linux")]
 pub mod cursor;
 pub mod engine;

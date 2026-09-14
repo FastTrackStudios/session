@@ -1288,10 +1288,7 @@ impl App {
             C::Folder | C::Fx | C::Volume | C::Pan => None,
         };
         let Some(edit) = edit else { return };
-        apply_locally(&mut self.tracks, row, &edit);
-        if let Some(applier) = &self.applier {
-            applier.send(edit);
-        }
+        self.commit(row, edit);
     }
 
     /// A drag on a panel knob.
@@ -1329,9 +1326,33 @@ impl App {
             _ => None,
         };
         let Some(edit) = mapped else { return };
+        self.commit(row, edit);
+    }
+
+    /// Apply an edit here and send it to the engine — and, for a
+    /// fader in a balance group, the edits that keep the group
+    /// balanced with it. See `balance`.
+    fn commit(&mut self, row: usize, edit: session_daw::engine::Edit) {
+        use session_daw::engine::Edit;
+        let companions = match &edit {
+            Edit::SetVolume(guid, to) => {
+                session_daw::balance::Groups::seed(&self.tracks).companions(&self.tracks, guid, *to)
+            }
+            _ => Vec::new(),
+        };
         apply_locally(&mut self.tracks, row, &edit);
         if let Some(applier) = &self.applier {
             applier.send(edit);
+        }
+        for companion in companions {
+            if let Edit::SetVolume(guid, _) = &companion
+                && let Some(index) = self.tracks.iter().position(|t| t.guid == *guid)
+            {
+                apply_locally(&mut self.tracks, index, &companion);
+            }
+            if let Some(applier) = &self.applier {
+                applier.send(companion);
+            }
         }
     }
 
@@ -1412,11 +1433,7 @@ impl App {
             session_daw::engine::click(spot.control, &guid, track, self.fine)
         };
         let Some(edit) = edit else { return };
-
-        apply_locally(&mut self.tracks, index, &edit);
-        if let Some(applier) = &self.applier {
-            applier.send(edit);
-        }
+        self.commit(index, edit);
     }
 
     /// Move along the strips, stopping at both ends.

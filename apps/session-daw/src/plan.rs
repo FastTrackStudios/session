@@ -439,11 +439,11 @@ pub struct Scene {
 }
 
 /// Every scene, in the order the number keys recall them.
-pub const SCENES: [Scene; 7] = [
+pub const SCENES: [Scene; 6] = [
     Scene {
-        name: "Drum Recording",
-        slug: "drum-recording",
-        size: drum_recording,
+        name: "Drum Tracking",
+        slug: "drum-tracking",
+        size: drum_tracking,
     },
     Scene {
         name: "Drum Mixing",
@@ -451,9 +451,14 @@ pub const SCENES: [Scene; 7] = [
         size: drum_mixing,
     },
     Scene {
-        name: "Drum Overview",
-        slug: "drum-overview",
-        size: drum_overview,
+        name: "Drum Advanced",
+        slug: "drum-advanced",
+        size: drum_advanced,
+    },
+    Scene {
+        name: "Drum FX",
+        slug: "drum-fx",
+        size: drum_fx,
     },
     Scene {
         name: "Lead Vocal",
@@ -464,16 +469,6 @@ pub const SCENES: [Scene; 7] = [
         name: "Lead Vocal FX Edit",
         slug: "lead-vocal-fx",
         size: lead_vocal_fx,
-    },
-    Scene {
-        name: "Drum Fund",
-        slug: "drum-fund",
-        size: drum_fund,
-    },
-    Scene {
-        name: "Drum FX",
-        slug: "drum-fx",
-        size: drum_fx,
     },
 ];
 
@@ -494,9 +489,9 @@ fn under(ancestors: &[String], any: &[&str]) -> bool {
 /// The kit's pieces: the folders a drum mix is made on.
 const PIECES: [&str; 5] = ["Kick", "Snare", "Toms", "Cymbals", "Rooms"];
 
-/// Recording: the microphones you are getting a sound on, and nothing
-/// else that needs reading.
-fn drum_recording(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+/// Tracking: the core microphones you are getting a sound on, and
+/// nothing else that needs reading.
+fn drum_tracking(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     if parallel(name, ancestors) {
         Size::Minimum
     } else if is_folder {
@@ -527,26 +522,16 @@ fn drum_mixing(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
     }
 }
 
-/// Overview: the pieces and the overheads, and the rest present.
-fn drum_overview(name: &str, _is_folder: bool, ancestors: &[String]) -> Size {
+/// Advanced: the tracks under the pieces that are not the core mics
+/// — each Sub, Fund and Trig, and every verb the kit carries — open,
+/// the mics and the buses present.
+fn drum_advanced(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+    let lower = name.to_lowercase();
     if parallel(name, ancestors) {
         Size::Minimum
-    } else if is(name, &PIECES) || is(name, &["OH"]) {
-        Size::Working
-    } else if under(ancestors, &PIECES) {
-        Size::Minimum
-    } else {
+    } else if is_folder {
         Size::Compact
-    }
-}
-
-/// The one-note tracks — each piece's Fund, Sub and Trig — open, the
-/// rest present.
-fn drum_fund(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
-    let lower = name.to_lowercase();
-    if is_folder {
-        Size::Compact
-    } else if lower == "fund" || lower == "sub" || lower.ends_with("trig") {
+    } else if lower == "fund" || lower == "sub" || lower.ends_with("trig") || lower == "verb" || under(ancestors, &["Verb"]) {
         Size::Working
     } else if under(ancestors, &["Drum Kit"]) {
         Size::Minimum
@@ -555,20 +540,25 @@ fn drum_fund(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     }
 }
 
-/// The kit's effects: what it is sent to. The parallel folder's
-/// returns and the snare's three verbs open at working width, the
-/// room sim in focus, and the kit itself present as rails.
+/// The kit's effects: what it is sent to. The room sim in focus, the
+/// verb banks — the parallel folder's and the snare's — at working
+/// width, the parallel compressors as tight rails (once a compressor
+/// is dialled in it is a volume-balance game, and a rail is a fader),
+/// and the kit itself present as rails.
 fn drum_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     let parallel = under(ancestors, &["Parallel"]);
+    let compression = under(ancestors, &["Compression"]);
     let snare_verb = under(ancestors, &["Snare"]) && under(ancestors, &["Verb"]);
     if is_folder {
-        if is(name, &["Parallel", "Compression", "Verb"]) && (parallel || is(name, &["Parallel"])) {
+        if is(name, &["Parallel", "Verb"]) && (parallel || is(name, &["Parallel"])) {
             Size::Compact
         } else {
             Size::Minimum
         }
     } else if is(name, &["Room Sim"]) && parallel {
         Size::Focus
+    } else if compression {
+        Size::Minimum
     } else if parallel || snare_verb {
         Size::Working
     } else if under(ancestors, &["Drum Kit"]) {
@@ -664,10 +654,13 @@ mod scene_tests {
     #[test]
     fn the_drum_scenes_disagree_about_the_mics() {
         let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"].iter().map(|s| (*s).to_owned()).collect();
-        assert_eq!((scene("drum-recording").unwrap().size)("In", false, &kick), Size::Working);
+        assert_eq!((scene("drum-tracking").unwrap().size)("In", false, &kick), Size::Working);
         assert_eq!((scene("drum-mixing").unwrap().size)("In", false, &kick), Size::Minimum);
         assert_eq!((scene("drum-mixing").unwrap().size)("Kick", true, &kick[..1]), Size::Working);
-        assert_eq!((scene("drum-overview").unwrap().size)("OH", false, &["Drum Kit".to_owned(), "Cymbals".to_owned()]), Size::Working);
+        let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"].iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!((scene("drum-advanced").unwrap().size)("Nonlin", false, &snare_verb), Size::Working);
+        assert_eq!((scene("drum-advanced").unwrap().size)("Sub", false, &kick[..2]), Size::Working);
+        assert_eq!((scene("drum-advanced").unwrap().size)("In", false, &kick), Size::Minimum);
     }
 
     #[test]
@@ -678,7 +671,7 @@ mod scene_tests {
         let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"].iter().map(|s| (*s).to_owned()).collect();
         let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"].iter().map(|s| (*s).to_owned()).collect();
         assert_eq!((s.size)("Room Sim", false, &parallel), Size::Focus);
-        assert_eq!((s.size)("Smash", false, &comp), Size::Working);
+        assert_eq!((s.size)("Smash", false, &comp), Size::Minimum);
         assert_eq!((s.size)("Nonlin", false, &snare_verb), Size::Working);
         assert_eq!((s.size)("In", false, &kick), Size::Minimum);
         assert_eq!((s.size)("Kick", true, &kick[..1]), Size::Minimum);

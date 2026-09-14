@@ -169,7 +169,10 @@ TREE = [
             (
                 "Compression",
                 PARALLEL,
-                [("Tight", PARALLEL, []), ("Punch", PARALLEL, []), ("Smash", PARALLEL, []), ("Crunch", PARALLEL, [])],
+                # A balance group (see session-daw's `balance`): the
+                # Dry is the kit uncompressed, and the four are its
+                # colours; bring one up and the others come down.
+                [("Dry", PARALLEL, []), ("Tight", PARALLEL, []), ("Punch", PARALLEL, []), ("Smash", PARALLEL, []), ("Crunch", PARALLEL, [])],
             ),
             (
                 "Verb",

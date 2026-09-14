@@ -168,6 +168,10 @@ pub enum Role {
     /// it. Its compressor first, an EQ to shape what comes back, and
     /// a saturator for the ones that are meant to crunch.
     Parallel,
+    /// The dry member of a parallel group: the kit as it is, with an
+    /// EQ and nothing that changes its dynamics — it is what the
+    /// others are balanced against.
+    Dry,
 }
 
 impl Role {
@@ -196,6 +200,9 @@ impl Role {
         }
         if lower == "fund" || lower == "sub" {
             return Self::Fund;
+        }
+        if lower == "dry" {
+            return Self::Dry;
         }
         if lower.ends_with("trig") {
             return Self::Trig;
@@ -234,6 +241,7 @@ impl Role {
             Self::Fund => Some(&FUND_CHAIN),
             Self::Trig => Some(&[]),
             Self::Parallel => Some(&PARALLEL_CHAIN),
+            Self::Dry => Some(&DRY_CHAIN),
         }
     }
 }
@@ -266,6 +274,9 @@ pub const BUS_CHAIN: [Which; 2] = [Which::Eq, Which::Comp];
 /// A parallel compressor's chain: the compressor is the point, then
 /// what shapes the return, then what dirties it.
 pub const PARALLEL_CHAIN: [Which; 4] = [Which::Presets, Which::Comp, Which::Eq, Which::Sat];
+
+/// The dry member's chain: an EQ, and nothing that touches dynamics.
+pub const DRY_CHAIN: [Which; 1] = [Which::Eq];
 
 pub const WIDE_CHAIN: [Which; 2] = [Which::Presets, Which::Wide];
 pub const PITCH_CHAIN: [Which; 2] = [Which::Presets, Which::Pitch];
@@ -4809,7 +4820,7 @@ pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String
         Role::Wide => wide_presets(),
         Role::Pitch => pitch_presets(name),
         Role::Parallel => parallel_presets(name),
-        Role::Channel | Role::Bus | Role::Fund | Role::Trig => Vec::new(),
+        Role::Channel | Role::Bus | Role::Fund | Role::Trig | Role::Dry => Vec::new(),
     };
     if presets.is_empty() {
         return tone;
