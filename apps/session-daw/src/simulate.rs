@@ -274,7 +274,6 @@ pub fn meters(track: usize, seconds: f64, tone: &crate::tone::Tone) -> Meters {
     // averages out and the resonances stay, which is the point of the
     // settled curve — and it is one spectrum, not eight: this runs for
     // every track every meter frame, and the bench counts it.
-    let settled_spectrum = settled(voice);
     // The wet returns: what the delay and reverb are putting out is
     // what went in earlier, scaled by how much of it survives. A
     // repeat is the peak one delay time ago times the feedback, and so
@@ -305,8 +304,6 @@ pub fn meters(track: usize, seconds: f64, tone: &crate::tone::Tone) -> Meters {
     Meters {
         sat_peak: now.peak,
         deess_db: suppression(&now.spectrum, tone.de_ess),
-        resonance_db: suppression(&now.spectrum, tone.resonance),
-        resonance_settled_db: suppression(&settled_spectrum, tone.resonance),
         delay_wet,
         reverb_wet,
         spectrum: now.spectrum,
@@ -324,32 +321,6 @@ fn bin_hz() -> &'static [f64; BINS] {
             *slot = 20.0 * 10.0_f64.powf(crate::num::coord(i) / last * full);
         }
         out
-    })
-}
-
-/// A voice's long-term spectrum, built once.
-///
-/// It depends on the voice alone — the shimmer averages out and the
-/// envelope is taken at its mean — so there are four of them in the
-/// whole simulation, and building one per track per meter frame was
-/// most of what the bench charged the rack for.
-fn settled(voice: Voice) -> Vec<f32> {
-    thread_local! {
-        static SETTLED: std::cell::RefCell<[Option<Vec<f32>>; 4]> =
-            const { std::cell::RefCell::new([None, None, None, None]) };
-    }
-    let slot = match voice {
-        Voice::Low => 0,
-        Voice::Mid => 1,
-        Voice::High => 2,
-        Voice::Broad => 3,
-    };
-    SETTLED.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        cache
-            .get_mut(slot)
-            .map(|entry| entry.get_or_insert_with(|| spectrum_with(voice, 0.35, None)).clone())
-            .unwrap_or_default()
     })
 }
 
@@ -524,7 +495,6 @@ mod tests {
         let m = meters(2, 1.25, &tone);
         assert_eq!(m.spectrum.len(), BINS);
         assert_eq!(m.deess_db.len(), BINS);
-        assert!(m.resonance_settled_db.len() == BINS);
         let ess = crate::tone::Suppress::sibilance();
         let high = suppression(&frame(2, 1.25).spectrum, ess);
         let low = suppression(&frame(0, 1.25).spectrum, ess);

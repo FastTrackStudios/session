@@ -88,7 +88,13 @@ pub struct Tone {
     pub sat_digital: saturate_dsp::digital::DigitalStage,
     /// Polish.
     pub de_ess: Suppress,
-    pub resonance: Suppress,
+    /// The Polish EQ: the narrow, surgical cuts — the resonances a room
+    /// or a body puts in — as bands on the same graph the Tone EQ has,
+    /// with the same spectral bands. It was a suppressor of its own,
+    /// finding them by comparing the spectrum with its own average;
+    /// the EQ's spectral bands do the same job, on a graph you can
+    /// already read.
+    pub polish_eq: Vec<EqBand>,
     /// Relational.
     pub space: Vec<EqBand>,
     /// Depth.
@@ -304,6 +310,7 @@ impl Tone {
             Which::PreEq => Some(&mut self.pre_eq),
             Which::PostEq => Some(&mut self.post_eq),
             Which::DecayEq => Some(&mut self.decay_eq),
+            Which::PolishEq => Some(&mut self.polish_eq),
             _ => None,
         }
     }
@@ -350,6 +357,7 @@ impl Tone {
             Which::PreEq => &self.pre_eq,
             Which::PostEq => &self.post_eq,
             Which::DecayEq => &self.decay_eq,
+            Which::PolishEq => &self.polish_eq,
             _ => &self.eq,
         }
     }
@@ -443,7 +451,6 @@ impl Tone {
     pub const fn suppressor(&mut self, which: Which) -> Option<&mut Suppress> {
         match which {
             Which::DeEss | Which::DeEssIn => Some(&mut self.de_ess),
-            Which::Resonance => Some(&mut self.resonance),
             _ => None,
         }
     }
@@ -470,7 +477,6 @@ impl Tone {
             // A suppressor's threshold is how far ABOVE its own average
             // a peak has to stand, so its range is small and positive.
             Which::DeEss | Which::DeEssIn => Some((self.de_ess.threshold, 0.0, 24.0)),
-            Which::Resonance => Some((self.resonance.threshold, 0.0, 24.0)),
             _ => None,
         }
     }
@@ -492,7 +498,6 @@ impl Tone {
             Which::Comp => self.comp.threshold = to,
             Which::Gate => self.gate.threshold = to,
             Which::DeEss | Which::DeEssIn => self.de_ess.threshold = to,
-            Which::Resonance => self.resonance.threshold = to,
             _ => {}
         }
     }
@@ -1317,7 +1322,7 @@ pub const ALL_PANELS: [Which; 11] = [
     Which::Comp,
     Which::Sat,
     Which::DeEss,
-    Which::Resonance,
+    Which::PolishEq,
     Which::Space,
     Which::Delay,
     Which::Reverb,
@@ -1462,7 +1467,7 @@ pub fn draw(
                 // The three EQs are one drawing over three band sets.
                 // What differs is what the bands are FOR, which is the
                 // panel's name and not its picture.
-                Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq => {
+                Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::PolishEq => {
                     eq(scene, palette, font, tone, which, tone.bands_ref(which), &meters.spectrum, body, rack, lit, None);
                 }
                 // Blue, because the vertical axis is not gain: it is
@@ -1485,9 +1490,6 @@ pub fn draw(
                 }
                 Which::DeEss | Which::DeEssIn => {
                     suppress(scene, palette, which, tone.de_ess, meters, body, rack, lit);
-                }
-                Which::Resonance => {
-                    suppress(scene, palette, which, tone.resonance, meters, body, rack, lit);
                 }
                 Which::Delay => {
                     echo(scene, palette, tone.delay, meters, display_of(body, which, rack), rack, lit);
@@ -1703,8 +1705,8 @@ pub enum Which {
     /// Sibilance, dynamically.
     DeEss,
     /// And every other resonance — the narrow peaks a room or a body
-    /// puts in, found by comparing the spectrum with its own average.
-    Resonance,
+    /// puts in — as surgical bands on the EQ's own graph.
+    PolishEq,
 
     // ── Relational: make it sit with the others ──────────────────────
     /// The EQ that is not about this track: it carves the room another
@@ -1752,7 +1754,7 @@ impl Which {
             Self::Comp => "COMP",
             Self::Sat => "SAT",
             Self::DeEss | Self::DeEssIn => "DE-ESS",
-            Self::Resonance => "RESONANCE",
+            Self::PolishEq => "POLISH EQ",
             Self::Space => "SPACE",
             Self::Delay => "DELAY",
             Self::Reverb => "REVERB",
@@ -1777,7 +1779,7 @@ impl Which {
         match self {
             Self::RescueEq | Self::Gate | Self::RescueComp => P::Rescue,
             Self::Eq | Self::Comp | Self::Sat => P::Tone,
-            Self::DeEss | Self::Resonance => P::Polish,
+            Self::DeEss | Self::PolishEq => P::Polish,
             Self::Space => P::Relational,
             // Every part of an FX return is Depth — the return is where
             // a track is put, front to back — including the de-esser on
@@ -1811,7 +1813,7 @@ impl Which {
                 | Self::Space
                 | Self::DeEss
                 | Self::DeEssIn
-                | Self::Resonance
+                | Self::PolishEq
                 | Self::PreEq
                 | Self::PostEq
                 | Self::DecayEq
@@ -1854,6 +1856,7 @@ impl Which {
         match self {
             Self::RescueEq => curve(&tone.rescue_eq),
             Self::Eq => curve(&tone.eq),
+            Self::PolishEq => curve(&tone.polish_eq),
             Self::Space => curve(&tone.space),
             Self::PreEq => curve(&tone.pre_eq),
             Self::PostEq => curve(&tone.post_eq),
@@ -1886,7 +1889,6 @@ impl Which {
                 format!("x{:.1} · 2nd {even:.0}%", tone.sat.drive)
             }
             Self::DeEss | Self::DeEssIn => suppression(tone.de_ess),
-            Self::Resonance => suppression(tone.resonance),
             Self::Delay => {
                 let head = format!("{} · {:.0}%", millis(tone.delay.time), tone.delay.feedback * 100.0);
                 if rack.editing() {
@@ -1960,7 +1962,7 @@ impl Which {
             // Two axes to read, and the panels where extra height buys
             // resolution rather than air: a 3 dB decision and a 12 dB
             // one have to look different.
-            Self::RescueEq | Self::Eq | Self::Space | Self::PreEq | Self::PostEq => 175.0,
+            Self::RescueEq | Self::Eq | Self::Space | Self::PreEq | Self::PostEq | Self::PolishEq => 175.0,
             // Time over frequency: the same graph, read as a rate.
             Self::DecayEq => 150.0,
             // A row of five knobs and their legends.
@@ -1973,7 +1975,7 @@ impl Which {
             // The suppressors are a spectrum and a cut hanging off it —
             // shorter than an EQ, because there is one curve to read
             // rather than a curve against a grid of decisions.
-            Self::DeEss | Self::DeEssIn | Self::Resonance => 130.0,
+            Self::DeEss | Self::DeEssIn => 130.0,
             // One display, with the envelope drawn into it. Taller than
             // the saturator because the levels in it are read against a
             // threshold, and a threshold you cannot place precisely is
@@ -2994,12 +2996,6 @@ pub const SELECTOR: f64 = 16.0;
 /// How wide one chip of the selector is.
 pub const CHIP: f64 = 14.0;
 
-/// How tall the comb under a resonance suppressor is.
-///
-/// The teeth hang below the spectrum's floor by their settled depth;
-/// this is the depth a six-decibel notch reaches.
-pub const TEETH: f64 = 20.0;
-
 /// The part of a body a unit's main display occupies.
 ///
 /// Three units keep a strip along the bottom for a second picture —
@@ -3016,7 +3012,6 @@ pub const fn display_of(body: Panel, which: Which, rack: Rack) -> Panel {
     let keep = match which {
         Which::Gate | Which::DeEss | Which::DeEssIn => LANE + 2.0,
         Which::Sat | Which::Delay | Which::Reverb => SELECTOR + 2.0,
-        Which::Resonance => TEETH + 2.0,
         _ => 0.0,
     };
     Panel {
@@ -3068,7 +3063,6 @@ fn suppress(
     rack: Rack,
     lit: Option<Grip>,
 ) {
-    let full_body = at;
     let at = display_of(at, which, rack);
     let bottom = at.y + at.height;
     let zoom = SuppressZoom::of(set);
@@ -3078,13 +3072,11 @@ fn suppress(
     // subject. Drawn before the spectrum so they can be seen through
     // it, and drawn even with nothing playing, because they are the
     // setting.
-    // The de-esser's colour is yellow — the colour of the top end it
-    // is there to take the edge off — and everything it draws is in
+    // The de-esser's colour is its own, and everything it draws is in
     // it: the band, the reference, the bite. The compressor's red is
     // the compressor's; a spectrum with a red ribbon hanging off it
-    // read as one. The resonance panel keeps the accent, and its
-    // teeth.
-    let ink = if which == Which::Resonance { palette.accent } else { DEESS_INK };
+    // read as one. Not the EQ's gold either, for the same reason.
+    let ink = DEESS_INK;
     // The band it acts in, as a wash between its two edges: the
     // subject, lit, and the shoulders either side of it context.
     let (x_low, x_high) = (zoom.x_of(f64::from(set.low), at), zoom.x_of(f64::from(set.high), at));
@@ -3109,10 +3101,8 @@ fn suppress(
     }
 
     let spectrum = &meters.spectrum;
-    let reduction = match which {
-        Which::DeEss | Which::DeEssIn => &meters.deess_db,
-        _ => &meters.resonance_db,
-    };
+    let _ = which;
+    let reduction = &meters.deess_db;
     if spectrum.len() < 4 || reduction.len() != spectrum.len() {
         return;
     }
@@ -3155,10 +3145,8 @@ fn suppress(
     let x_at = |i: usize| at.x + sample(i) * at.width;
 
     // What arrived, as an area — it is the material, and an outline
-    // reads as another curve competing with the two that matter. The
-    // resonance panel draws it dimmer: there the spectrum is context
-    // and the teeth are the subject.
-    let dim = if which == Which::Resonance { 0.6 } else { 1.0 };
+    // reads as another curve competing with the two that matter.
+    let dim = 1.0;
     // The material in grey: what arrived is context, and what is done
     // to it is what the panel is for.
     let material = palette.text_faint;
@@ -3210,17 +3198,10 @@ fn suppress(
         1.0,
     );
     let held = matches!(lit, Some(Grip::Depth(_)));
-    let width = if which == Which::Resonance { 0.9 } else { 1.3 };
-    curve(scene, ink, output.into_iter(), if held { 1.8 } else { width });
+    curve(scene, ink, output.into_iter(), if held { 1.8 } else { 1.3 });
 
     if rack.detailed() {
         marks(scene, palette, zoom, at);
-    }
-
-    if which == Which::Resonance
-        && let Some(comb_at) = lane_of(full_body, which, rack)
-    {
-        comb(scene, palette, &meters.resonance_settled_db, zoom, comb_at);
     }
 }
 
@@ -3243,32 +3224,6 @@ fn marks(scene: &mut Scene, palette: &Palette, zoom: SuppressZoom, at: Panel) {
             None,
             &Rect::new(x - 0.5, bottom - 3.0, x + 0.5, bottom),
         );
-    }
-}
-
-/// The comb: the settled reduction, one tooth per notch, hanging below
-/// the floor at the frequency it lives.
-///
-/// Slow by construction — the engine averages it over seconds — so
-/// across a mixer a snare with three teeth is a snare you will go and
-/// look at.
-fn comb(scene: &mut Scene, palette: &Palette, settled: &[f32], zoom: SuppressZoom, at: Panel) {
-    rule(scene, palette.grid_beat, Line::new((at.x, at.y), (at.x + at.width, at.y)));
-    let tint = phase_tint(session::mix_phases::MixPhase::Polish);
-    for tooth in teeth(settled, &zoom) {
-        let x = tooth.place.mul_add(at.width, at.x);
-        // Six decibels is the whole comb: a suppressor that has found a
-        // six-decibel resonance has found what it exists for, and the
-        // decibel it usually takes off a room mode still has to read as
-        // a tooth rather than a smudge — hence the floor.
-        let depth = ((f64::from(tooth.depth_db) / 6.0).clamp(0.0, 1.0) * (at.height - 2.0)).max(3.0);
-        let half = f64::from(tooth.depth_db).min(6.0).mul_add(0.4, 2.0);
-        let mut tri = BezPath::new();
-        tri.move_to((x - half, at.y));
-        tri.line_to((x + half, at.y));
-        tri.line_to((x, at.y + depth));
-        tri.close_path();
-        scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.8), None, &tri);
     }
 }
 
@@ -3303,41 +3258,6 @@ fn area_under(scene: &mut Scene, color: Color, points: &[(f64, f64)], floor: f64
     area.line_to((x1, floor));
     area.close_path();
     scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &area);
-}
-
-/// A notch the settled reduction has found.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Tooth {
-    /// Where across the zoomed band, 0..1.
-    pub place: f64,
-    /// How deep, in dB.
-    pub depth_db: f32,
-}
-
-/// The local maxima of a settled reduction curve that are worth a
-/// tooth: deeper than half a decibel, and the deepest bin of their
-/// neighbourhood.
-#[must_use]
-pub fn teeth(settled: &[f32], zoom: &SuppressZoom) -> Vec<Tooth> {
-    let bins = crate::num::coord(settled.len().saturating_sub(1).max(1));
-    let full = (20_000.0_f64 / 20.0).log10();
-    settled
-        .iter()
-        .enumerate()
-        .filter(|(i, depth)| {
-            **depth > 0.5
-                && settled.get(i.wrapping_sub(1)).is_none_or(|left| left <= *depth)
-                && settled.get(i.saturating_add(1)).is_none_or(|right| right < *depth)
-        })
-        .filter_map(|(i, depth)| {
-            let hz = 20.0 * 10.0_f64.powf(crate::num::coord(i) / bins * full);
-            let place = zoom.place_of(hz);
-            (0.0..=1.0).contains(&place).then_some(Tooth {
-                place,
-                depth_db: *depth,
-            })
-        })
-        .collect()
 }
 
 /// A value read out of the analyser's log-spaced bins at a frequency.
@@ -4094,9 +4014,12 @@ fn selector(
 /// draws it in.
 const EQ_INK: Color = Color::from_rgb8(212, 169, 50);
 
-/// The de-esser's ink: yellow — the Tone phase's own, and the colour
-/// of the top end it is there to take the edge off.
-const DEESS_INK: Color = Color::from_rgba8(0xfa, 0xcc, 0x15, 0xff);
+/// The de-esser's ink: a pink. Not the EQ's gold — the two share a
+/// panel shape, and a yellow curve over a spectrum read as the EQ's
+/// total — and not the compressor's red, the saturator's orange, the
+/// gate's green or the returns' blue and violet. Sibilance is a
+/// bright, sharp thing; so is the colour.
+const DEESS_INK: Color = Color::from_rgba8(0xf4, 0x72, 0xb6, 0xff);
 
 /// The delay's colour: blue. The machine, its repeats, its knobs and
 /// its selector, and the delay tracks in the template — one colour
@@ -4353,7 +4276,7 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
         // still say how many decisions there were. Without the
         // analyser: at this width a spectrum behind the curve is a
         // curve you cannot find.
-        Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq => {
+        Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq | Which::PolishEq => {
             let tint = (which == Which::DecayEq).then_some(DECAY_INK);
             eq(scene, palette, font, tone, which, tone.bands_ref(which), &[], at, Rack::Full, None, tint);
         }
@@ -4407,10 +4330,6 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
             glow(scene, at, (at.x + at.width / 2.0, mid), heat);
         }
         Which::DeEss | Which::DeEssIn => bar(scene, DEESS_INK, f64::from(meters.deess_deepest()) / 12.0),
-        Which::Resonance => {
-            let deepest = meters.resonance_db.iter().copied().fold(0.0_f32, f32::max);
-            bar(scene, palette.accent, f64::from(deepest) / 12.0);
-        }
         // The repeats, tiny.
         Which::Delay => {
             for (k, (x, level)) in echo_taps(tone.delay, at).into_iter().enumerate() {
@@ -4866,7 +4785,7 @@ pub fn placeholder(index: usize) -> Tone {
         eq: voice.bands(drift),
         comp: voice.comp(drift),
         de_ess: Suppress::sibilance(),
-        resonance: Suppress::broadband(),
+        polish_eq: vec![band(0, 3_200.0, -3.0, 6.0, EqBandShape::Bell)],
         // The relational pass carves rather than shapes: one wide dip
         // where something else lives.
         space: vec![band(
@@ -5574,7 +5493,7 @@ pub fn grip_at(
             // cannot aim at, and grabbing one by accident moves a
             // setting you did not know was there.
             _ if which.is_spectral() && !rack.detailed() => {}
-            Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq => {
+            Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq | Which::PolishEq => {
                 // The zoom chip first: it is small, it sits over the
                 // graph, and a band that happened to be under it would
                 // otherwise take every click aimed at it.
@@ -5609,7 +5528,7 @@ pub fn grip_at(
             // curves, because the curves move with the audio and a
             // grip that moved with the audio would be a grip you could
             // not aim at.
-            Which::DeEss | Which::DeEssIn | Which::Resonance => {
+            Which::DeEss | Which::DeEssIn => {
                 return Some(suppress_grip(tone, which, body, rack, x, y));
             }
             Which::Comp => return Some(comp_grip(tone.comp, which, body, rack, x, y)),
@@ -5729,7 +5648,7 @@ fn gate_grip(gate: Gate, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
 fn suppress_grip(tone: &Tone, which: Which, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
     let set = match which {
         Which::DeEss | Which::DeEssIn => tone.de_ess,
-        _ => tone.resonance,
+        _ => tone.de_ess,
     };
     let display = display_of(body, which, rack);
     if rack.detailed() {
@@ -5745,11 +5664,7 @@ fn suppress_grip(tone: &Tone, which: Which, body: Panel, rack: Rack, x: f64, y: 
         if let Some(lane) = lane_of(body, which, rack)
             && y >= lane.y
         {
-            return if which == Which::Resonance {
-                Grip::Sharpness(which)
-            } else {
-                Grip::Depth(which)
-            };
+            return Grip::Depth(which);
         }
     }
     let third = display.height / 3.0;
@@ -6114,7 +6029,6 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
             let to = match which {
                 Which::Gate => Gate::default().threshold,
                 Which::DeEss | Which::DeEssIn => Suppress::sibilance().threshold,
-                Which::Resonance => Suppress::broadband().threshold,
                 _ => Comp::default().threshold,
             };
             tone.set_threshold(which, to);
@@ -6408,7 +6322,7 @@ fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, d
             let display = display_of(body, which, rack);
             let set = match which {
                 Which::DeEss | Which::DeEssIn => tone.de_ess,
-                _ => tone.resonance,
+                _ => tone.de_ess,
             };
             let zoom = SuppressZoom::of(set);
             let dx = dx * interaction::fine_scale(mods);
@@ -6921,7 +6835,7 @@ mod suppress_tests {
             "the de-esser should be the narrower of the two"
         );
         // Both draw the same picture, and both are spectral.
-        assert!(Which::DeEss.is_spectral() && Which::Resonance.is_spectral());
+        assert!(Which::DeEss.is_spectral() && Which::PolishEq.is_spectral());
     }
 }
 
@@ -7165,7 +7079,7 @@ mod phase_tests {
         for which in super::ALL_PANELS {
             let spectral = matches!(
                 which,
-                Which::RescueEq | Which::Eq | Which::Space | Which::DeEss | Which::Resonance
+                Which::RescueEq | Which::Eq | Which::Space | Which::DeEss | Which::PolishEq
             );
             assert_eq!(which.is_spectral(), spectral, "{which:?}");
         }
@@ -9142,7 +9056,7 @@ mod face_tests {
             Grip::Range,
             Grip::Bias,
             Grip::Tilt,
-            Grip::Depth(Which::Resonance),
+            Grip::Depth(Which::DeEss),
             Grip::Sharpness(Which::DeEss),
             Grip::Edge(Which::DeEss, Side::High),
             Grip::Time,
