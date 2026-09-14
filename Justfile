@@ -1219,6 +1219,19 @@ daw-studio PROJECT="" SIZE="5120x1440" MIXER="2560x1440":
     FTS_BENCH_STUDIO=1 FTS_BENCH_SIZE="{{SIZE}}" FTS_BENCH_MIXER_SIZE="{{MIXER}}" \
         ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
 
+# The arrangement with the editor docked under it, as a PNG.
+daw-dock OUT="/tmp/fts-dock.png" PROJECT="" SIZE="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
+        [[ -f "$project" ]] || scripts/ui-stress/make-template-rpp.py > "$project"
+    fi
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    FTS_BENCH_DOCK="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" \
+        ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
 # The expression editor over the demo drum groove, as a PNG — the view
 # `e` opens in the window with nothing selected, painted headless.
 daw-expression OUT="/tmp/fts-expression.png" SIZE="1600x900":
