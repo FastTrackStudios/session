@@ -155,7 +155,8 @@ impl Layout {
 ///   (the band's muted tint — the default), `full` (the track's
 ///   colour, the same as a full edge rule).
 /// - `FTS_STRIP_EDGE`: `full` (the track's colour), `tint` (the band's
-///   muted tint — the default), `off`.
+///   muted tint), `off` (the default — the gap between strips is the
+///   divider).
 /// - `FTS_STRIP_FILL`: the strip's own ground under the controls, FX
 ///   section included — `off` (the panel's grey — the default),
 ///   `tint`, `full`.
@@ -204,7 +205,7 @@ pub fn strip_fill() -> Wash {
 #[must_use]
 pub fn strip_edge() -> Wash {
     static ON: std::sync::OnceLock<Wash> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| Wash::from_env("FTS_STRIP_EDGE", Wash::Tint))
+    *ON.get_or_init(|| Wash::from_env("FTS_STRIP_EDGE", Wash::Off))
 }
 
 /// A positive number from the environment, if it is one.
