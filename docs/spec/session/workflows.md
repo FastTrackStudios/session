@@ -22,7 +22,7 @@ and quantize specs.
 | Instrument | Tracking | Comping | Editing | Mixing | More |
 |---|---|---|---|---|---|
 | Patch List | [ ] the view · [ ] project-level list · [ ] studio profiles · [ ] session override · [ ] apply | | | | |
-| Scenes | [ ] by performer in Record · [ ] rig per performer · [ ] headphone mix · [ ] folder record preview · [ ] Guide folder · [ ] Keyflow folder | | [ ] by arrangement | [ ] by arrangement | [ ] follow the mode · [ ] every scene renders |
+| Scenes | [ ] REAPER's model underneath · [ ] FTS grouping · [ ] by performer in Record · [ ] rig per performer · [ ] headphone mix · [ ] folder record preview · [ ] Guide folder · [ ] Keyflow folder | | [ ] by arrangement | [ ] by arrangement | [ ] follow the mode · [ ] every scene renders |
 | Drums (audio) | [x] full · [ ] overview | [ ] folder items | [ ] edit scene · [x] stack · [x] slip/stretch · [x] quantize · [ ] align hits | [x] scenes · [x] balance | [ ] triggering samples |
 | Percussion | [ ] | [ ] on the track | [ ] | [ ] | [ ] folder |
 | Bass | [ ] full · [ ] overview · [ ] folder preview | [ ] on the track | [ ] | [ ] later | |
@@ -54,6 +54,27 @@ per piece**: a session may record a kick trigger and no snare trigger,
 or a snare trigger and no tom triggers. The tracking scene follows that
 decision — the trigger is a source track where it is recorded, and only
 there. Nothing in the template forces it either way.
+
+r[flow.scenes.reaper-model]
+The window is a **control surface over REAPER's data model**. Takes,
+fixed lanes and comp areas, track groups, VCAs, ext-state — where
+REAPER has a model, the window uses it and never invents a parallel
+one, so the same flows operate on REAPER directly and on
+daw-standalone, which implements the same model. A stereo pair — OH,
+Rooms, Piano: two mics capturing one thing — is one stereo track; a
+double is two performances and is two mono channel tracks, never a
+stereo track.
+
+r[flow.scenes.groups]
+REAPER's track groups are a **finite resource shared across every
+project of an album**, and the flows that need tracks to move
+together — arm follows the layer, the fader follows the folder, mute
+follows the language — are provided by **FTS's own grouping watcher**
+in the dynamic template wherever the facade allows, spending no
+REAPER group. Where a REAPER group is still needed (a VCA lead), it is
+allocated **from the top of the range downward**, consistently across
+the album, leaving the front of the range free for the session's own
+use.
 
 r[flow.scenes.render]
 Every scene named in this spec renders headless from the reference
