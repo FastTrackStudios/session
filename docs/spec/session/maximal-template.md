@@ -61,8 +61,16 @@ fixed tree.
 - [x] **Acoustic/** Steel, Nylon, Nashville (the high-strung layer over
       the steel) → **ACOUSTIC BUS**, which returns to the Acoustic folder
       the same way (group 2).
-- [ ] Per-part amp/DI pairs when both were captured (a part folder of
-      two mics is the one case a Sum is right).
+- [ ] **Rhythm**: double-tracked, each channel with seven sources (DI,
+      pedalboard, two amps with a 57 and a 121 each), and Main and
+      Octave layers doing the same part (`flow.guitars.golden`).
+- [ ] **Lead**: a double-tracked DI-only part — L and R tracks, no
+      folder under them.
+- [ ] **Solo**: one DI track, with a Harmony Solo beside it.
+- [ ] Sources start at the default balance
+      (`flow.guitars.mixing.source-defaults`): DI muted and centred
+      beside other sources, pedalboard muted beside an amp, one amp's
+      57 and 121 hard left and right, two amps soft left and soft right.
 
 ### Keys — `Keys/`, Synths — `Synths/`
 

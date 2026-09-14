@@ -22,8 +22,8 @@ and quantize specs.
 | Instrument | Tracking | Comping | Editing | Mixing | More |
 |---|---|---|---|---|---|
 | Drums (audio) | [x] full · [ ] overview | [ ] folder items | [ ] edit scene · [x] stack · [x] slip/stretch · [x] quantize · [ ] align hits | [x] scenes · [x] balance | [ ] triggering samples |
-| Bass | [ ] | [ ] | [ ] | [ ] | |
-| Guitars (electric and acoustic) | [ ] full · [ ] overview · [ ] grow | [ ] folder items | [ ] edit scene · [ ] doubles aligned | [x] buses/VCA | [ ] same at every depth · [ ] acoustics |
+| Bass | [ ] full · [ ] overview · [ ] folder preview | [ ] on the track | [ ] | [ ] later | |
+| Guitars (electric and acoustic) | [ ] full · [ ] overview · [ ] grow | [ ] folder items | [ ] edit scene · [ ] doubles aligned | [x] buses/VCA · [ ] layers collapsed · [ ] balance scene · [ ] source defaults | [ ] golden shapes · [ ] same at every depth · [ ] acoustics |
 | Vocals | [ ] | [ ] | [ ] doubles aligned | [x] lead vocal scenes | [ ] tuning · [ ] fx · [ ] automation |
 | Keys | [ ] record MIDI | [ ] | [x] MIDI in the editor | [ ] | |
 
@@ -65,6 +65,14 @@ a scene chosen by hand stays until the mode changes. Comping is not a
 mode; its view lives inside Record and Edit (see
 `flow.drums.comping.folder-items`), because a kit is comped while it
 is still being tracked as often as afterwards.
+
+r[flow.scenes.folder-record-preview]
+A **folder track shows the recording as it happens** even while it is
+closed: the waveform of what is being recorded to the tracks beneath
+it draws on the folder's row, live, as a folder item of the take in
+progress. That is what lets the bass folder — or a kit's piece, or a
+guitar part — stay collapsed in an overview while the take is still
+visibly going in. REAPER draws nothing on a closed folder; this does.
 
 r[flow.scenes.two-audiences]
 A flow has views for two audiences where they differ: the engineer's
@@ -249,22 +257,33 @@ piece, and the blend is what the Drum Mixing scene mixes.
 
 ## Bass
 
+Bass is simple: usually one track at a time, sometimes a second for a
+layer — a DI and an amp, a sub synth under the bass, an octave. The
+one thing that separates it from REAPER is the folder: the Bass folder
+stays closed and still shows the take going in
+(`flow.scenes.folder-record-preview`).
+
 r[flow.bass.tracking]
-**Bass Tracking** shows the bass's source tracks — DI and Amp, or the
-synth's — at working size with everything else collapsed.
+**Bass Tracking** shows the bass's source tracks — the DI and the amp,
+or the synth's — at working size with everything else collapsed; the
+**Bass Tracking Overview** is the Bass folder alone, closed, with the
+take's waveform drawing on it live.
 
 r[flow.bass.comping]
-The bass comps like a two-mic drum: DI and Amp as a group, take lanes
-lined up, crossfades at the boundaries.
+The bass comps **on the track directly** — its take lanes under it, a
+comp lane on top — and still has a comping scene: **Bass Comping**
+opens the bass's tracks with their lanes and collapses the rest. A DI
+and amp pair comps as a group.
 
 r[flow.bass.editing]
-The bass is edited in the stack with its DI as the detection source:
-its hits are moved and quantized like a kit's, and the DI and Amp move
-together.
+**Bass Editing** shows the comped bass — one row per layer, sources
+folded into it — and the bass is edited in the stack with its DI as
+the detection source: its hits moved and quantized like a kit's, the
+DI and the amp moving together.
 
 r[flow.bass.mixing]
 **Bass Mixing** shows the bass folder and BASS BUS with its rack, the
-DI and Amp as rails.
+layers as rails. What a bass mix needs beyond that is defined later.
 
 ## Guitars
 
@@ -359,8 +378,33 @@ r[flow.guitars.mixing]
 **Guitar Mixing** shows the electric and acoustic folders, their buses
 (GTR RHYTHM, GTR LEAD, GTR SOLO under ELECTRIC BUS; ACOUSTIC BUS) and
 the Inst FX returns, with the folder's fader as the VCA lead of its
-bus. A part's sources mix on the channel's Sum; the part mixes on its
-bus.
+bus. By default **every layer and every multi-mic folder is
+collapsed**: almost all of a guitar mix happens at the arrangement —
+the part — and its bus, so that is the level the scene shows.
+
+r[flow.guitars.mixing.balance-scene]
+**Guitar Balance** is the scene that opens what Guitar Mixing hides:
+every channel's sources as strips, so the initial balance and panning
+of a configuration can be set. It is the one guitar scene that shows
+the multi-mic level at working size.
+
+r[flow.guitars.mixing.source-defaults]
+A configuration's sources start with a **default balance**, applied
+when a part is created or a source is added, and it is what the
+golden session is laid out with:
+
+- A **DI beside any other source is muted and centred** — it is the
+  reamp and the safety, not the sound.
+- A **pedalboard beside an amp is muted**: the amp, the "Main", takes
+  priority.
+- **One amp with a 57 and a 121**: the two mics panned **hard left and
+  hard right**.
+- **Two amps, each with a 57 and a 121**: **each amp panned soft to
+  one side** — amp A soft left, amp B soft right — with each amp's two
+  mics spread inside its side, so both mics of both amps are heard.
+
+A source a user has moved keeps its place; the default applies to
+what has never been set.
 
 r[flow.guitars.acoustics]
 Acoustics are the same structure with their own sources. A layer's
@@ -374,6 +418,20 @@ section — the dimensions, growing a part, the overview, folder items,
 comping, the edit scene, alignment — applies to an acoustic part
 unchanged. A Nashville-strung layer over the steel is a Layer of the
 same part, so it comps and aligns with it.
+
+r[flow.guitars.golden]
+The golden session (`maximal-template.md`) carries every guitar shape
+the rules have to handle, so each scene renders against all of them:
+
+- **Rhythm** — double-tracked, each channel with the seven sources
+  (DI, pedalboard, two amps with a 57 and a 121 each), and two
+  **octave layers** doing the same part, layered together: the
+  arrangement is a folder over Main and Octave, each a folder over L
+  and R, each channel a folder over its seven.
+- **Lead** — a double-tracked **DI-only** part: L and R tracks carrying
+  items, no folder under them.
+- **Solo** — a **single DI track**, and a **Harmony Solo** beside it: an
+  arrangement with a Main layer and a Harmony layer of one track each.
 
 r[flow.guitars.same-everywhere]
 Every guitar scene and gesture works at every depth of the hierarchy:
