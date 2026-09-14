@@ -1933,23 +1933,16 @@ impl Which {
 
     /// How tall this panel is at a given rack tier.
     ///
-    /// The natural height at every tier but focus. A focused rack is a
-    /// column the height of the mixer, and the pictures that are time —
-    /// the delay's repeats, the reverb's tail — earn more of it: at a
-    /// hundred pixels tall and four hundred wide they read as a strip
-    /// under a selector rather than as the visualiser they are.
+    /// The natural height at every tier. A focused rack used to give
+    /// the pictures that are time — the delay's repeats, the reverb's
+    /// tail — twice the height, and the saturator half again; that
+    /// put a focused return's rows at different heights from the same
+    /// rows on the return beside it, and the mixer is read across.
+    /// Height is a fact about the unit, not about how wide it is.
     #[must_use]
     pub const fn natural_at(self, rack: Rack) -> f64 {
-        let base = self.natural();
-        if !rack.editing() {
-            return base;
-        }
-        match self {
-            Self::Delay | Self::Reverb => base * 2.2,
-            Self::Sat => base * 1.4,
-            Self::Wide | Self::Pitch => base * 1.6,
-            _ => base,
-        }
+        let _ = rack;
+        self.natural()
     }
 
     /// How tall this panel wants to be, in pixels.
