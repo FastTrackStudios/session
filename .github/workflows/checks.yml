@@ -81,13 +81,16 @@ jobs:
       # one run to the next and `--locked` fails at random (observed
       # locally: four consecutive `cargo metadata` runs, three orderings).
       # Instead: resolve, then diff the committed lockfile against the
-      # written one with the trailer compared as a sorted set.
+      # written one with the trailer compared as a sorted set. The whole
+      # body runs inside the dev shell: the NixOS host has no `diff` on
+      # the runner's PATH (sed/awk/sort happen to be there, diffutils is
+      # not).
       - name: Manifests + lockfile
         run: |
-          set -euo pipefail
+          ${NIX_DEV} bash -euo pipefail -s <<'EOF'
           committed="$RUNNER_TEMP/Cargo.lock.committed"
           cp Cargo.lock "$committed"
-          ${NIX_DEV} cargo metadata --format-version 1 > /dev/null
+          cargo metadata --format-version 1 > /dev/null
           packages() { sed '/^\[\[patch\.unused\]\]/,$d' "$1"; }
           unused() {
             awk '/^\[\[patch\.unused\]\]/ { f = 1; next }
@@ -101,6 +104,7 @@ jobs:
             echo "::error::Cargo.lock is out of date — run cargo metadata and commit the result"
             exit 1
           fi
+          EOF
       - name: cargo fmt --check
         run: ${NIX_DEV} cargo fmt --all --check
       # apps/web/assets/tailwind.css is gitignored build output that
