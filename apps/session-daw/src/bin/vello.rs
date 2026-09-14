@@ -146,13 +146,12 @@ struct App {
     /// The play cursor, which glides between the transport's reports.
     playhead: session_daw::cursor::Playhead,
     /// The edit cursor and the time selection.
-    edit: session_daw::cursor::Edit,
     /// Where a ruler drag started, in seconds.
-    dragging_time: Option<f64>,
-    /// A fade being dragged by its handle: which item, which end, and
-    /// where the fades are at this instant — drawn live over the
-    /// recording until the release re-records.
-    fade_drag: Option<FadeDrag>,
+    /// The arrangement's editing: the selection, the edit cursor and
+    /// the time selection, and whatever is being dragged — see
+    /// `arrange_edit`. The window forwards what the pointer and the
+    /// keys did and carries out what it asks for.
+    editor: session_daw::arrange_edit::Editor,
     /// The item under the pointer in the lanes, whose fade handles are
     /// drawn.
     hovered_item: Option<usize>,
@@ -164,12 +163,6 @@ struct App {
     /// Whether the view turns the page to follow the playhead. A
     /// setting: `FTS_FOLLOW=off` opens with it off; `f` toggles it.
     follow: bool,
-    /// The selected items, by guid — the window's own copy of what the
-    /// project's items say, kept so a frame does not walk them all.
-    selected_items: std::collections::HashSet<String>,
-    /// An item taken hold of by its body or an edge: a click until it
-    /// moves, then a move or a trim with a ghost at the new place.
-    item_press: Option<ItemPress>,
     /// The keyboard, through the FTS profile's bindings.
     bindings: session_daw::keys::Keys,
     /// The panel control the pointer went down on.
@@ -567,51 +560,16 @@ impl ApplicationHandler for App {
                     self.redraw();
                     return;
                 }
+                // What is being dragged in the arrangement — an item, a
+                // fade, a time selection — follows the pointer.
                 let at_time = self.ruler_time_unclamped(position.x);
-                if let Some(press) = self.item_press.as_mut()
-                    && let Some(at) = at_time
-                {
-                    let dx = at - press.from;
-                    let moved = press.ghost.is_some() || (dx * self.pps).abs() > session_daw::gesture::SLOP;
-                    if moved {
-                        let beat = 60.0 / self.scene.as_ref().map_or(120.0, |s| s.bpm).max(1.0);
-                        let snap = |t: f64| if self.keys.shift { t } else { (t / beat).round() * beat };
-                        press.ghost = Some(match press.zone {
-                            session_daw::arrangement::ItemZone::LeftEdge => {
-                                let x0 = snap(press.x0 + dx).clamp(0.0, press.x1 - 0.01);
-                                (x0, press.x1)
-                            }
-                            session_daw::arrangement::ItemZone::RightEdge => {
-                                let x1 = snap(press.x1 + dx).max(press.x0 + 0.01);
-                                (press.x0, x1)
-                            }
-                            _ => {
-                                let x0 = snap(press.x0 + dx).max(0.0);
-                                (x0, x0 + (press.x1 - press.x0))
-                            }
-                        });
-                        self.redraw();
-                    }
-                    return;
-                }
-                if let Some(drag) = self.fade_drag.as_mut()
-                    && let Some(at) = at_time
-                {
-                    let span = (drag.x1 - drag.x0).max(0.0);
-                    match drag.zone {
-                        session_daw::arrangement::ItemZone::FadeIn => {
-                            drag.fades.fade_in = (at - drag.x0).clamp(0.0, span);
-                        }
-                        session_daw::arrangement::ItemZone::FadeOut => {
-                            drag.fades.fade_out = (drag.x1 - at).clamp(0.0, span);
-                        }
-                        _ => {}
-                    }
+                let bpm = self.scene.as_ref().map_or(120.0, |s| s.bpm);
+                if self.editor.moved(at_time, self.pps, bpm, self.keys) {
                     self.redraw();
                     return;
                 }
                 // The item under the pointer, for its handles.
-                if self.view == View::Arrangement && self.dragging_time.is_none() {
+                if self.view == View::Arrangement && !self.editor.dragging() {
                     let over = match self.arrange_hit_at(position.x, position.y).map(|h| h.target) {
                         Some(session_daw::hit::Target::Item { index, .. }) => Some(index),
                         _ => None,
@@ -623,13 +581,6 @@ impl ApplicationHandler for App {
                 }
                 // A drag outranks a hover: while the pointer is down on
                 // a fader it is setting a level, not browsing.
-                if let Some(from) = self.dragging_time {
-                    if let Some(to) = self.ruler_time_unclamped(position.x) {
-                        self.edit.drag(from, to);
-                        self.redraw();
-                        return;
-                    }
-                }
                 if let Some((row, grip)) = self.rack_drag {
                     let (dx, dy) = (position.x - last.0, position.y - last.1);
                     let (dx, dy) = if self.fine {
@@ -715,77 +666,17 @@ impl ApplicationHandler for App {
                         self.redraw();
                         return;
                     }
-                    // What the press landed on in the lanes, through the
-                    // mouse map: a fade handle takes hold of the fade;
-                    // the empty area is the ruler's twin.
-                    let lane_hit = self.arrange_hit_at(x, y);
-                    if let Some(hit) = lane_hit
-                        && let session_daw::hit::Target::Item { index, zone, .. } = hit.target
-                        && matches!(
-                            session_daw::mousemap::resolve(hit.context, session_daw::mousemap::Gesture::Drag, self.keys),
-                            session_daw::mousemap::Action::FadeIn | session_daw::mousemap::Action::FadeShape
-                        )
-                        && let Some(item) = self.scene.as_ref().and_then(|s| s.item(index))
-                    {
-                        self.fade_drag = Some(FadeDrag {
-                            index,
-                            guid: item.guid.clone(),
-                            zone,
-                            x0: item.x0,
-                            x1: item.x1,
-                            fades: item.fades,
-                        });
-                        self.redraw();
-                        return;
-                    }
-                    if let Some(hit) = lane_hit
-                        && let session_daw::hit::Target::Item { index, zone, seconds, .. } = hit.target
-                        && matches!(
-                            session_daw::mousemap::resolve(hit.context, session_daw::mousemap::Gesture::Drag, self.keys),
-                            session_daw::mousemap::Action::MoveItem
-                                | session_daw::mousemap::Action::TrimLeft
-                                | session_daw::mousemap::Action::TrimRight
-                        )
-                        && let Some(item) = self.scene.as_ref().and_then(|s| s.item(index))
-                    {
-                        self.item_press = Some(ItemPress {
-                            index,
-                            guid: item.guid.clone(),
-                            zone,
-                            x0: item.x0,
-                            x1: item.x1,
-                            from: seconds,
-                            ghost: None,
-                        });
-                        return;
-                    }
-                    let lane_seconds = match lane_hit.map(|h| (h.context, h.target)) {
-                        Some((context, session_daw::hit::Target::Lane { seconds, .. }))
-                            if session_daw::mousemap::resolve(
-                                context,
-                                session_daw::mousemap::Gesture::Click,
-                                self.keys,
-                            ) == session_daw::mousemap::Action::SetEditCursor =>
-                        {
-                            Some(seconds)
+                    // What the press landed on in the arrangement — an
+                    // item, a fade handle, the ruler, the empty area —
+                    // through the mouse map, to the editor.
+                    if let Some(scene) = self.scene.as_ref() {
+                        let hit = self.arrange_hit_at(x, y);
+                        let mut effects = Vec::new();
+                        if self.editor.press(hit, self.keys, scene, &mut effects) {
+                            self.run(effects);
+                            self.redraw();
+                            return;
                         }
-                        _ => None,
-                    };
-                    if let Some(seconds) = self.ruler_time(x, y).or(lane_seconds) {
-                        // A press on the ruler moves the cursor at once
-                        // — the click is what you meant, and waiting
-                        // for the release to show it feels like a lag
-                        // rather than like care.
-                        self.dragging_time = Some(seconds);
-                        self.edit.click(seconds);
-                        // And the transport goes there, which is what
-                        // clicking a ruler means in every DAW: the edit
-                        // cursor and the play position are the same
-                        // thing until a time selection separates them.
-                        session_daw::engine::transport(
-                            session_daw::engine::Move::Seek,
-                            seconds,
-                        );
                     }
                     // The rack is above the strip's controls and is
                     // drawn over them, so it is claimed first.
@@ -849,13 +740,21 @@ impl ApplicationHandler for App {
                         self.redraw();
                         return;
                     }
-                    if let Some(press) = self.item_press.take() {
-                        self.release_item(press);
-                        return;
-                    }
-                    if let Some(drag) = self.fade_drag.take() {
-                        self.commit_fade(drag);
-                        return;
+                    {
+                        let at = self.ruler_time_unclamped(x);
+                        let mut effects = Vec::new();
+                        let released = match self.session.as_mut() {
+                            Some((project, _)) => {
+                                let project = std::sync::Arc::make_mut(&mut project.0);
+                                self.editor.release(at, self.keys, project, &mut effects)
+                            }
+                            None => false,
+                        };
+                        if released {
+                            self.run(effects);
+                            self.redraw();
+                            return;
+                        }
                     }
                     if self.rack_drag.take().is_some() {
                         // Back into the recording: a rack that is not
@@ -871,13 +770,6 @@ impl ApplicationHandler for App {
                         }
                         self.redraw();
                         return;
-                    }
-                    if let (Some(from), Some(to)) = (self.dragging_time.take(), self.ruler_time(x, y)) {
-                        // A drag across the ruler is a time selection;
-                        // a click is just the cursor. `Edit::drag`
-                        // decides which, so a twitch does not leave a
-                        // four-millisecond selection behind.
-                        self.edit.drag(from, to);
                     }
                     // A click on a panel control acts if the pointer is
                     // still on the control it went down on — the same
@@ -1427,29 +1319,15 @@ impl App {
     /// turns the page when the playhead leaves the view.
     fn before_arrange_frame(&mut self) {
         let lanes = self.lanes_box();
-        let dragging = self.fade_drag.is_some() || self.dragging_time.is_some();
-        if dragging {
+        if self.editor.dragging() {
             let (dx, dy) = session_daw::scrollbar::autoscroll(lanes, self.cursor.0, self.cursor.1);
             if dx != 0.0 || dy != 0.0 {
                 self.scroll_to(self.scroll_x + dx, self.scroll_y + dy);
                 // The thing being dragged follows the pointer, which
                 // is now over a different time than a frame ago.
                 let at = self.ruler_time_unclamped(self.cursor.0);
-                if let Some(from) = self.dragging_time
-                    && let Some(to) = at
-                {
-                    self.edit.drag(from, to);
-                }
-                if let Some(drag) = self.fade_drag.as_mut()
-                    && let Some(at) = at
-                {
-                    let span = (drag.x1 - drag.x0).max(0.0);
-                    match drag.zone {
-                        session_daw::arrangement::ItemZone::FadeIn => drag.fades.fade_in = (at - drag.x0).clamp(0.0, span),
-                        session_daw::arrangement::ItemZone::FadeOut => drag.fades.fade_out = (drag.x1 - at).clamp(0.0, span),
-                        _ => {}
-                    }
-                }
+                let bpm = self.scene.as_ref().map_or(120.0, |s| s.bpm);
+                self.editor.moved(at, self.pps, bpm, self.keys);
             }
             return;
         }
@@ -1461,61 +1339,6 @@ impl App {
         }
     }
 
-    /// An item let go: a click selects it, a move or a trim lands it
-    /// where its ghost was.
-    fn release_item(&mut self, press: ItemPress) {
-        use session_daw::arrangement::ItemZone;
-        use session_daw::engine::Edit;
-        let Some((x0, x1)) = press.ghost else {
-            self.select_item(&press.guid, !self.keys.ctrl);
-            return;
-        };
-        let edit = match press.zone {
-            ItemZone::LeftEdge | ItemZone::RightEdge => Edit::TrimItem(press.guid.clone(), x0, x1 - x0),
-            _ => Edit::MoveItem(press.guid.clone(), x0),
-        };
-        self.edit_item(&press.guid, |item| {
-            item.position = daw_proto::primitives::PositionInSeconds::from_seconds(x0);
-            item.length = daw_proto::primitives::Duration::from_seconds(x1 - x0);
-        });
-        self.send(edit);
-        self.re_record();
-        self.redraw();
-    }
-
-    /// Select an item — alone, or added — here and in the engine.
-    fn select_item(&mut self, guid: &str, exclusive: bool) {
-        use session_daw::engine::Edit;
-        if exclusive {
-            self.selected_items.clear();
-        }
-        self.selected_items.insert(guid.to_owned());
-        let selected = self.selected_items.clone();
-        self.edit_items(|item| item.selected = selected.contains(&item.guid));
-        self.send(Edit::SelectItem(guid.to_owned(), exclusive));
-        self.redraw();
-    }
-
-    /// Change one item in the window's copy of the project.
-    fn edit_item(&mut self, guid: &str, change: impl FnOnce(&mut daw_proto::Item)) {
-        if let Some((project, _)) = self.session.as_mut() {
-            let project = std::sync::Arc::make_mut(&mut project.0);
-            if let Some(item) = project.items.values_mut().flatten().find(|i| i.guid == guid) {
-                change(item);
-            }
-        }
-    }
-
-    /// Change every item in the window's copy of the project.
-    fn edit_items(&mut self, mut change: impl FnMut(&mut daw_proto::Item)) {
-        if let Some((project, _)) = self.session.as_mut() {
-            let project = std::sync::Arc::make_mut(&mut project.0);
-            for item in project.items.values_mut().flatten() {
-                change(item);
-            }
-        }
-    }
-
     /// An edit to the engine, if one is listening.
     fn send(&self, edit: session_daw::engine::Edit) {
         if let Some(applier) = &self.applier {
@@ -1523,159 +1346,39 @@ impl App {
         }
     }
 
+    /// Carry out what the editor asked for.
+    fn run(&mut self, effects: Vec<session_daw::arrange_edit::Effect>) {
+        use session_daw::arrange_edit::Effect;
+        for effect in effects {
+            match effect {
+                Effect::Send(edit) => self.send(edit),
+                Effect::ReRecord => self.re_record(),
+                Effect::Transport(command, at) => session_daw::engine::transport(command, at),
+                Effect::Playhead(at) => self.playhead.report(at, 1.0, std::time::Instant::now()),
+            }
+        }
+    }
+
     /// Do what a bound key asks. `false` when the window cannot, so the
     /// key falls through to what the window binds itself.
     fn act_on_key(&mut self, action: session_daw::keys::Action) -> bool {
-        use session_daw::engine::{Edit, Move};
-        use session_daw::keys::Action;
-        match action {
-            Action::PlayStop | Action::PlayPause => {
-                session_daw::engine::transport(Move::PlayStop, 0.0);
-            }
-            Action::GoToStart => {
-                session_daw::engine::transport(Move::Home, 0.0);
-                self.playhead.report(0.0, 1.0, std::time::Instant::now());
-                self.edit.click(0.0);
-            }
-            Action::SplitAtCursor => self.split_at(self.edit.at),
-            Action::DeleteSelectedItems => {
-                let doomed: Vec<String> = self.selected_items.drain().collect();
-                if doomed.is_empty() {
-                    return true;
-                }
-                if let Some((project, _)) = self.session.as_mut() {
-                    let project = std::sync::Arc::make_mut(&mut project.0);
-                    for lane in project.items.values_mut() {
-                        lane.retain(|i| !doomed.contains(&i.guid));
-                    }
-                    project.item_count = project.items.values().map(Vec::len).sum();
-                }
-                for guid in doomed {
-                    self.send(Edit::DeleteItem(guid));
-                }
-                self.re_record();
-            }
-            Action::SelectAllItems => {
-                let mut all = std::collections::HashSet::new();
-                self.edit_items(|item| {
-                    item.selected = true;
-                    all.insert(item.guid.clone());
-                });
-                self.selected_items = all;
-                self.send(Edit::SelectAllItems(String::new()));
-            }
-            Action::ClearSelection => {
-                self.edit.selection = None;
-                self.selected_items.clear();
-                self.edit_items(|item| item.selected = false);
-                self.send(Edit::DeselectAllItems(String::new()));
-            }
-            Action::CursorBar(by) | Action::CursorBeat(by) => {
-                let bpm = self.scene.as_ref().map_or(120.0, |s| s.bpm).max(1.0);
-                let step = if matches!(action, Action::CursorBar(_)) { 240.0 / bpm } else { 60.0 / bpm };
-                // To the grid line in that direction — from a cursor
-                // between lines, the next line, not a step past it.
-                let at = self.edit.at / step;
-                let to = if by > 0 { (at + 1e-6).floor() + 1.0 } else { (at - 1e-6).ceil() - 1.0 };
-                self.edit.at = (to * step).max(0.0);
-            }
-            Action::TrackStep { by, extend } => {
-                let rows = &self.arrange_rows;
-                let current = rows.iter().position(|(t, _)| t.selected);
-                let next = match current {
-                    Some(i) => i.saturating_add_signed(isize::try_from(by).unwrap_or(0)),
-                    None => 0,
-                };
-                let Some((track, _)) = rows.get(next.min(rows.len().saturating_sub(1))) else {
-                    return true;
-                };
-                let guid = track.guid.clone();
-                let edit = if extend { Edit::AddToSelection(guid) } else { Edit::Select(guid) };
-                if let Some(index) = self.arrange_map.index(next) {
-                    // The window's own prediction: the engine's answer
-                    // arrives a frame later and corrects it.
-                    if !extend {
-                        for t in &mut self.tracks {
-                            t.selected = false;
-                        }
-                    }
-                    if let Some(t) = self.tracks.get_mut(index) {
-                        t.selected = true;
-                    }
-                }
-                self.send(edit);
-                self.re_record();
-            }
-            Action::Marker(by) => {
-                let at = self.edit.at;
-                let to = self.scene.as_ref().and_then(|scene| {
-                    let mut times: Vec<f64> = scene.markers().iter().map(|m| m.at).collect();
-                    times.extend(scene.sections().iter().map(|s| s.start));
-                    times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                    if by > 0 {
-                        times.into_iter().find(|t| *t > at + 1e-3)
-                    } else {
-                        times.into_iter().rev().find(|t| *t < at - 1e-3)
-                    }
-                });
-                if let Some(to) = to {
-                    self.edit.click(to);
-                    session_daw::engine::transport(Move::Seek, to);
-                }
-            }
-            Action::ToggleRecord => {
-                tracing::info!("record is not wired to the transport yet");
-            }
-            Action::Unbound(id) => {
-                tracing::info!(ui.action = %id, "bound in the profile, not built here yet");
-                return false;
-            }
-        }
-        true
-    }
-
-    /// Split at a time: the selected items that contain it, or every
-    /// item that does when nothing is selected — REAPER's rule for the
-    /// split key. Each becomes two here, and the engine is told.
-    fn split_at(&mut self, at: f64) {
-        use session_daw::engine::Edit;
-        let mut splits: Vec<(String, String, String)> = Vec::new();
-        if let Some((project, _)) = self.session.as_mut() {
-            let project = std::sync::Arc::make_mut(&mut project.0);
-            let selected = &self.selected_items;
-            let mut counter = 0_usize;
-            for (track_guid, lane) in project.items.iter_mut() {
-                let mut halves = Vec::new();
-                for item in lane.iter_mut() {
-                    let start = item.position.as_seconds();
-                    let end = start + item.length.as_seconds();
-                    let mine = selected.is_empty() || selected.contains(&item.guid);
-                    if !mine || at <= start + 1e-3 || at >= end - 1e-3 {
-                        continue;
-                    }
-                    counter = counter.saturating_add(1);
-                    let mut right = item.clone();
-                    right.guid = format!("{}-split-{counter}", item.guid);
-                    right.position = daw_proto::primitives::PositionInSeconds::from_seconds(at);
-                    right.length = daw_proto::primitives::Duration::from_seconds(end - at);
-                    right.fade_in_length = daw_proto::primitives::Duration::from_seconds(0.0);
-                    item.length = daw_proto::primitives::Duration::from_seconds(at - start);
-                    item.fade_out_length = daw_proto::primitives::Duration::from_seconds(0.0);
-                    splits.push((item.guid.clone(), right.guid.clone(), track_guid.clone()));
-                    halves.push(right);
-                }
-                lane.extend(halves);
-                lane.sort_by(|a, b| a.position.as_seconds().partial_cmp(&b.position.as_seconds()).unwrap_or(std::cmp::Ordering::Equal));
-            }
-            project.item_count = project.items.values().map(Vec::len).sum();
-        }
-        if splits.is_empty() {
-            return;
-        }
-        for (guid, new_guid, _) in splits {
-            self.send(Edit::SplitItem(guid, at, new_guid));
-        }
-        self.re_record();
+        let Some((project_ref, _)) = self.session.as_mut() else { return false };
+        let Some(scene) = self.scene.as_ref() else { return false };
+        let project = std::sync::Arc::make_mut(&mut project_ref.0);
+        let bpm = scene.bpm;
+        let mut effects = Vec::new();
+        let handled = self.editor.key(
+            action,
+            project,
+            scene,
+            &self.arrange_rows,
+            &mut self.tracks,
+            &self.arrange_map,
+            bpm,
+            &mut effects,
+        );
+        self.run(effects);
+        handled
     }
 
     /// What the pointer is over in the arrangement, if that is the view.
@@ -1686,32 +1389,6 @@ impl App {
         let scene = self.scene.as_ref()?;
         let modes = session::modes::Mode::ALL.len();
         Some(session_daw::hit::arrangement(scene, self.viewport(), modes, x, y))
-    }
-
-    /// A fade drag let go: the fade is what the window has been
-    /// drawing, so it goes to the engine, into the window's own copy of
-    /// the project, and into the recording — once, on the release,
-    /// rather than a re-record per pixel.
-    fn commit_fade(&mut self, drag: FadeDrag) {
-        use session_daw::arrangement::ItemZone;
-        use session_daw::engine::Edit;
-        let edit = match drag.zone {
-            ItemZone::FadeIn => Edit::SetFadeIn(drag.guid.clone(), drag.fades.fade_in, drag.fades.in_shape),
-            ItemZone::FadeOut => Edit::SetFadeOut(drag.guid.clone(), drag.fades.fade_out, drag.fades.out_shape),
-            _ => return,
-        };
-        if let Some((project, _)) = self.session.as_mut() {
-            let project = std::sync::Arc::make_mut(&mut project.0);
-            if let Some(item) = project.items.values_mut().flatten().find(|i| i.guid == drag.guid) {
-                item.fade_in_length = daw_proto::primitives::Duration::from_seconds(drag.fades.fade_in);
-                item.fade_out_length = daw_proto::primitives::Duration::from_seconds(drag.fades.fade_out);
-            }
-        }
-        if let Some(applier) = &self.applier {
-            applier.send(edit);
-        }
-        self.re_record();
-        self.redraw();
     }
 
     /// The time under a point, if it is on the ruler.
@@ -2667,7 +2344,7 @@ impl App {
             self.playhead.report(at, 1.0, now);
         }
         let play_at = self.playhead.at_time(std::time::Instant::now());
-        let edit = self.edit;
+        let edit = self.editor.cursor;
         let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
         let profile = session_daw::rails::profile(
             session_daw::rails::Surface::Arrange,
@@ -2679,9 +2356,9 @@ impl App {
 
         let grid = &self.grid;
         let hovered_item = self.hovered_item;
-        let in_flight = self.fade_drag.as_ref().map(|d| (d.index, d.fades));
-        let selected_items = &self.selected_items;
-        let ghost = self.item_press.as_ref().and_then(|p| p.ghost.map(|(x0, x1)| (p.index, x0, x1)));
+        let in_flight = self.editor.fade_in_flight();
+        let selected_items = &self.editor.selected;
+        let ghost = self.editor.ghost();
         /// The finest the grid ever gets — sixteenths, as a fraction of
         /// a whole note. The zoom only ever coarsens away from it.
         const FINEST: f64 = 1.0 / 16.0;
@@ -2975,15 +2652,11 @@ fn main() {
         applier: session_daw::engine::Applier::start(),
         transport: session_daw::engine::Transport::start(),
         playhead: session_daw::cursor::Playhead::stopped(0.0),
-        edit: session_daw::cursor::Edit::default(),
-        dragging_time: None,
-        fade_drag: None,
+        editor: session_daw::arrange_edit::Editor::default(),
         hovered_item: None,
         keys: session_daw::mousemap::Mods::default(),
         bar_drag: None,
         follow: !std::env::var("FTS_FOLLOW").is_ok_and(|v| matches!(v.trim(), "off" | "0" | "false")),
-        selected_items: std::collections::HashSet::new(),
-        item_press: None,
         bindings: session_daw::keys::Keys::load(),
         pressed_row: None,
         hovered_rail: None,
@@ -3164,33 +2837,6 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         // looks slow — and the frame is one round trip in-process.
         Edit::Select(_) | Edit::AddToSelection(_) => {}
     }
-}
-
-/// An item taken hold of by its body or an edge.
-#[derive(Clone, Debug)]
-struct ItemPress {
-    index: usize,
-    guid: String,
-    zone: session_daw::arrangement::ItemZone,
-    /// The item's span when it was taken, in seconds.
-    x0: f64,
-    x1: f64,
-    /// The time under the pointer when it was taken.
-    from: f64,
-    /// Where it would land, once the press has become a drag.
-    ghost: Option<(f64, f64)>,
-}
-
-/// A fade taken hold of by its handle.
-#[derive(Clone, Debug)]
-struct FadeDrag {
-    index: usize,
-    guid: String,
-    zone: session_daw::arrangement::ItemZone,
-    /// The item's span in seconds, which the fade is clamped to.
-    x0: f64,
-    x1: f64,
-    fades: session_daw::arrangement::Fades,
 }
 
 /// The size to open at, as `FTS_VELLO_SIZE=WxH`.

@@ -10,6 +10,7 @@
 //! up.
 
 pub mod animate;
+pub mod arrange_edit;
 pub mod arrangement;
 pub mod balance;
 #[cfg(target_os = "linux")]
