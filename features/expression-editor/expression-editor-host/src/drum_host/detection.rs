@@ -35,6 +35,7 @@ impl<D: DrumDaw> DrumHost<D> {
 
     /// The same snapshot, keeping which role each signal came from.
     pub(super) fn role_sums(&self) -> Vec<(LaneRole, Arc<Vec<f64>>)> {
+        self.ensure_signals();
         self.sums.lock().map(|s| s.clone()).unwrap_or_default()
     }
 

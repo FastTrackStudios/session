@@ -8,3 +8,11 @@ slow-timeout = { period = "30s", terminate-after = 1 }
 [[profile.default.overrides]]
 filter = 'test(=shoot_every_scene)'
 slow-timeout = { period = "60s", terminate-after = 10 }
+
+# The fill detector's album check decodes six real drum sessions and
+# runs detection over each — 55 s measured on a loaded 32-core box — so
+# it is slow for the same reason: it does real work, and it finishes.
+# Headroom for a slower runner, still short enough to catch a hang.
+[[profile.default.overrides]]
+filter = 'test(=fills_land_where_a_drummer_puts_them)'
+slow-timeout = { period = "60s", terminate-after = 5 }

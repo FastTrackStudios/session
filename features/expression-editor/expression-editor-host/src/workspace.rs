@@ -208,8 +208,9 @@ pub fn drum_workspace<D: expression_editor_audio::daw_bound::DrumDaw>(
         |job| {
             // The cache answers with what detection produced, which is
             // all the lanes need to be drawn. The samples behind it are
-            // only wanted for re-detection during an edit, and those are
-            // filled in afterwards — see `signals_pending`.
+            // wanted the first time anything detects — fills, the
+            // quantize panel — and the host reads them then; see
+            // `DrumHost::signals_pending`.
             if let Some(project) = cache_in
                 && let Some(hit) = crate::analysis_cache::load(project, &job.guid)
             {
