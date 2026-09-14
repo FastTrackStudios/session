@@ -330,6 +330,13 @@ impl Rows {
         tracks.get(*self.rows.get(row)?)
     }
 
+    /// Whether any row's track is selected — what decides whether the
+    /// unselected ones are dimmed at all.
+    #[must_use]
+    pub fn any_selected(&self, tracks: &[Track]) -> bool {
+        self.rows.iter().filter_map(|i| tracks.get(*i)).any(|t| t.selected)
+    }
+
     /// The same, as an index — for the paths that need to write.
     #[must_use]
     pub fn index(&self, row: usize) -> Option<usize> {
@@ -429,41 +436,114 @@ pub struct Scene {
     /// and never hides: hiding is the preset's job, and a scene over a
     /// preset that hid a track would be arguing with it.
     pub size: fn(&str, bool, &[String]) -> Size,
+    /// What the scene does to a folder and what it holds: shows it,
+    /// collapses it (the folder stays, its rows go), or hides it and
+    /// everything in it.
+    pub fold: fn(&str, bool, &[String]) -> Fold,
+}
+
+/// What a scene does to a folder — see [`Scene::fold`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fold {
+    Show,
+    /// The folder stays as one strip; the rows inside it go.
+    Collapse,
+    /// The folder and everything in it go.
+    Hide,
+}
+
+/// Every scene's default: nothing folded.
+fn show_all(_name: &str, _is_folder: bool, _ancestors: &[String]) -> Fold {
+    Fold::Show
+}
+
+/// The bus tree hidden: a scene about the instruments, not the mix.
+fn hide_buses(name: &str, is_folder: bool, _ancestors: &[String]) -> Fold {
+    if is_folder && is(name, &["MIX BUS"]) {
+        Fold::Hide
+    } else {
+        Fold::Show
+    }
 }
 
 /// Every scene, in the order the number keys recall them.
-pub const SCENES: [Scene; 6] = [
+pub const SCENES: [Scene; 9] = [
     Scene {
         name: "Drum Tracking",
         slug: "drum-tracking",
         size: drum_tracking,
+        fold: hide_buses,
     },
     Scene {
         name: "Drum Mixing",
         slug: "drum-mixing",
         size: drum_mixing,
+        fold: hide_buses,
     },
     Scene {
         name: "Drum Overview",
         slug: "drum-overview",
         size: drum_overview,
+        fold: drum_overview_fold,
+    },
+    Scene {
+        name: "Drum Advanced",
+        slug: "drum-advanced",
+        size: drum_advanced,
+        fold: hide_buses,
+    },
+    Scene {
+        name: "Drum FX",
+        slug: "drum-fx",
+        size: drum_fx,
+        fold: hide_buses,
+    },
+    Scene {
+        name: "Buses",
+        slug: "buses",
+        size: buses,
+        fold: buses_fold,
+    },
+    Scene {
+        name: "Guitar FX",
+        slug: "guitar-fx",
+        size: guitar_fx,
+        fold: guitar_fx_fold,
     },
     Scene {
         name: "Lead Vocal",
         slug: "lead-vocal",
         size: lead_vocal,
+        fold: show_all,
     },
     Scene {
         name: "Lead Vocal FX Edit",
         slug: "lead-vocal-fx",
         size: lead_vocal_fx,
-    },
-    Scene {
-        name: "Drum Fund",
-        slug: "drum-fund",
-        size: drum_fund,
+        fold: show_all,
     },
 ];
+
+/// The folders a scene collapses, as GUIDs — what the window's own
+/// folder state is set to when the scene is recalled, so the strips'
+/// fold icons agree with the scene and a click on one carries on
+/// from where the scene left it.
+#[must_use]
+pub fn collapsed_by(scene: &Scene, tracks: &[(Track, u32)]) -> Vec<String> {
+    let mut folders: Vec<(u32, String)> = Vec::new();
+    let mut out = Vec::new();
+    for (track, depth) in tracks {
+        folders.retain(|(at, _)| *at < *depth);
+        let ancestors: Vec<String> = folders.iter().map(|(_, n)| n.clone()).collect();
+        if track.is_folder {
+            folders.push((*depth, track.name.clone()));
+            if (scene.fold)(&track.name, true, &ancestors) == Fold::Collapse {
+                out.push(track.guid.clone());
+            }
+        }
+    }
+    out
+}
 
 /// The scene for a slug.
 #[must_use]
@@ -482,10 +562,13 @@ fn under(ancestors: &[String], any: &[&str]) -> bool {
 /// The kit's pieces: the folders a drum mix is made on.
 const PIECES: [&str; 5] = ["Kick", "Snare", "Toms", "Cymbals", "Rooms"];
 
-/// Tracking: the microphones you are getting a sound on, and nothing
-/// else that needs reading.
+/// Tracking: the core microphones you are getting a sound on, and
+/// nothing else that needs reading.
+// r[impl flow.drums.tracking.full]
 fn drum_tracking(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
-    if is_folder {
+    if parallel(name, ancestors) {
+        Size::Minimum
+    } else if is_folder {
         Size::Compact
     } else if is(name, &["In", "Out", "Top", "Bottom"]) && under(ancestors, &["Kick", "Snare"]) {
         Size::Working
@@ -496,7 +579,14 @@ fn drum_tracking(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     }
 }
 
+/// The Process folder and everything in it — what the kit is sent
+/// to, which the tracking and advanced scenes only need present.
+fn parallel(name: &str, ancestors: &[String]) -> bool {
+    is(name, &["Process"]) || under(ancestors, &["Process"])
+}
+
 /// Mixing: the buses are the instrument; every mic is a rail.
+// r[impl flow.drums.mixing.scenes]
 fn drum_mixing(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
     if is_folder && is(name, &PIECES) {
         Size::Working
@@ -507,24 +597,41 @@ fn drum_mixing(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
     }
 }
 
-/// Overview: the pieces and the overheads, and the rest present.
-fn drum_overview(name: &str, _is_folder: bool, ancestors: &[String]) -> Size {
-    if is(name, &PIECES) || is(name, &["OH"]) {
+/// Overview: the kit as its pieces — Kick, Snare, Toms, Cymbals,
+/// Rooms — each collapsed to one strip at working width, and the
+/// Process folder hidden. What the kit sounds like, five faders.
+// r[impl flow.drums.mixing.scenes]
+fn drum_overview(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
+    if is_folder && is(name, &PIECES) {
         Size::Working
-    } else if under(ancestors, &PIECES) {
-        Size::Minimum
     } else {
         Size::Compact
     }
 }
 
-/// The one-note tracks — each piece's Fund, Sub and Trig — open, the
-/// rest present.
-fn drum_fund(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+/// The overview's folds: the pieces shut, the Process folder and the
+/// bus tree gone.
+fn drum_overview_fold(name: &str, is_folder: bool, ancestors: &[String]) -> Fold {
+    if is_folder && is(name, &["Process", "MIX BUS"]) {
+        Fold::Hide
+    } else if is_folder && is(name, &PIECES) && !under(ancestors, &["Process"]) {
+        Fold::Collapse
+    } else {
+        Fold::Show
+    }
+}
+
+/// Advanced: the tracks under the pieces that are not the core mics
+/// — each Sub, Fund and Trig, and every verb the kit carries — open,
+/// the mics and the buses present.
+// r[impl flow.drums.mixing.scenes]
+fn drum_advanced(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     let lower = name.to_lowercase();
-    if is_folder {
+    if parallel(name, ancestors) {
+        Size::Minimum
+    } else if is_folder {
         Size::Compact
-    } else if lower == "fund" || lower == "sub" || lower.ends_with("trig") {
+    } else if lower == "fund" || lower == "sub" || lower.ends_with("trig") || lower == "verb" || under(ancestors, &["Verb"]) {
         Size::Working
     } else if under(ancestors, &["Drum Kit"]) {
         Size::Minimum
@@ -533,7 +640,82 @@ fn drum_fund(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     }
 }
 
+/// The kit's effects: what it is sent to. The room sim in focus, the
+/// verb banks — the parallel folder's and the snare's — at working
+/// width, the parallel compressors as tight rails (once a compressor
+/// is dialled in it is a volume-balance game, and a rail is a fader),
+/// and the kit itself present as rails.
+fn drum_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+    let parallel = under(ancestors, &["Process"]);
+    let compression = under(ancestors, &["Compress"]);
+    let snare_verb = under(ancestors, &["Snare"]) && under(ancestors, &["Verb"]);
+    if is_folder {
+        if is(name, &["Process", "FX", "Verb"]) && (parallel || is(name, &["Process"])) {
+            Size::Compact
+        } else {
+            Size::Minimum
+        }
+    } else if is(name, &["Room Sim"]) && parallel {
+        Size::Focus
+    } else if compression {
+        Size::Minimum
+    } else if parallel || snare_verb {
+        Size::Working
+    } else if under(ancestors, &["Drum Kit"]) {
+        Size::Minimum
+    } else {
+        Size::Compact
+    }
+}
+
+/// The instrument bus: the electrics, acoustics, keys and synths at working width with
+/// the Inst FX returns open beside them, the first plate in focus, and
+/// the drums, their process and the vocals out of the way.
+fn guitar_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+    let fx = under(ancestors, &["Inst FX"]);
+    if is_folder {
+        Size::Compact
+    } else if fx && is(name, &["Fat Plate"]) {
+        Size::Focus
+    } else if fx || under(ancestors, &["Electric", "Acoustic", "Keys", "Synths"]) {
+        Size::Working
+    } else {
+        Size::Minimum
+    }
+}
+
+/// The instrument scene's folds: the kit, its process and the vocals
+/// hidden — they are not what this scene is about.
+fn guitar_fx_fold(name: &str, is_folder: bool, _ancestors: &[String]) -> Fold {
+    if is_folder && is(name, &["Drum Kit", "Process", "Vocals", "MIX BUS"]) {
+        Fold::Hide
+    } else {
+        Fold::Show
+    }
+}
+
+/// The mix: the bus tree and nothing else — every bus at working
+/// width, the stem buses compact, the instruments gone.
+fn buses(_name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
+    if is_folder {
+        Size::Compact
+    } else {
+        Size::Working
+    }
+}
+
+/// The bus scene's folds: every top-level folder but the mix bus is
+/// hidden.
+fn buses_fold(name: &str, is_folder: bool, ancestors: &[String]) -> Fold {
+    if is_folder && ancestors.is_empty() && !is(name, &["MIX BUS"]) {
+        Fold::Hide
+    } else {
+        Fold::Show
+    }
+}
+
 /// The lead vocal open, every return present as a short rail.
+// r[impl flow.vocals.mixing.main]
 fn lead_vocal(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     let fx = under(ancestors, &["Vox FX"]);
     if is_folder {
@@ -555,6 +737,7 @@ fn lead_vocal(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
 /// rail. The returns are all live — a slap is a slap whether or not it
 /// is the one being edited — so the scene shows them all working and
 /// opens the two under the hands.
+// r[impl flow.vocals.mixing.fx]
 fn lead_vocal_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     let fx = under(ancestors, &["Vox FX"]);
     if is_folder {
@@ -582,13 +765,38 @@ pub fn apply_scene(
 ) -> Vec<(Track, u32)> {
     let mut folders: Vec<(u32, String)> = Vec::new();
     let mut out = Vec::with_capacity(tracks.len());
+    // A folded folder: rows deeper than it are dropped until the walk
+    // comes back up to its level, and a hidden one drops itself too.
+    let mut folded: Option<u32> = None;
     for (track, depth) in tracks {
         folders.retain(|(at, _)| *at < *depth);
         let ancestors: Vec<String> = folders.iter().map(|(_, n)| n.clone()).collect();
         if track.is_folder {
             folders.push((*depth, track.name.clone()));
         }
-        let size = (scene.size)(&track.name, track.is_folder, &ancestors);
+        if let Some(at) = folded {
+            if *depth > at {
+                continue;
+            }
+            folded = None;
+        }
+        if track.is_folder {
+            match (scene.fold)(&track.name, true, &ancestors) {
+                Fold::Show => {}
+                Fold::Collapse => folded = Some(*depth),
+                Fold::Hide => {
+                    folded = Some(*depth);
+                    continue;
+                }
+            }
+        }
+        // One half of a stereo pair is a rail whatever the scene says:
+        // the pair's folder carries the processing and the width.
+        let size = if crate::tone::is_pair_half(&track.name) && !track.is_folder {
+            Size::Minimum
+        } else {
+            (scene.size)(&track.name, track.is_folder, &ancestors)
+        };
         let mut track = track.clone();
         track.width = Some(pixels(mixer_width(size, settings, panel)));
         // A focused strip is the selected one: that is what the mixer
@@ -622,6 +830,67 @@ mod scene_tests {
         assert_eq!((scene("drum-tracking").unwrap().size)("In", false, &kick), Size::Working);
         assert_eq!((scene("drum-mixing").unwrap().size)("In", false, &kick), Size::Minimum);
         assert_eq!((scene("drum-mixing").unwrap().size)("Kick", true, &kick[..1]), Size::Working);
-        assert_eq!((scene("drum-overview").unwrap().size)("OH", false, &["Drum Kit".to_owned(), "Cymbals".to_owned()]), Size::Working);
+        let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"].iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!((scene("drum-advanced").unwrap().size)("Nonlin", false, &snare_verb), Size::Working);
+        assert_eq!((scene("drum-advanced").unwrap().size)("Sub", false, &kick[..2]), Size::Working);
+        assert_eq!((scene("drum-advanced").unwrap().size)("In", false, &kick), Size::Minimum);
+    }
+
+    #[test]
+    fn the_fx_scene_opens_what_the_kit_is_sent_to() {
+        let s = scene("drum-fx").expect("the scene");
+        let parallel: Vec<String> = ["Process", "FX"].iter().map(|s| (*s).to_owned()).collect();
+        let comp: Vec<String> = ["Process", "Compress"].iter().map(|s| (*s).to_owned()).collect();
+        let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"].iter().map(|s| (*s).to_owned()).collect();
+        let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"].iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!((s.size)("Room Sim", false, &parallel), Size::Focus);
+        assert_eq!((s.size)("Smash", false, &comp), Size::Minimum);
+        assert_eq!((s.size)("Nonlin", false, &snare_verb), Size::Working);
+        assert_eq!((s.size)("In", false, &kick), Size::Minimum);
+        assert_eq!((s.size)("Kick", true, &kick[..1]), Size::Minimum);
+    }
+
+    /// The overview folds the pieces shut and hides the Process folder:
+    /// applied, the rows are the kit and its five pieces.
+    #[test]
+    fn the_overview_is_five_pieces() {
+        use daw_proto::Track;
+        let folder = |name: &str, depth: u32| {
+            let mut t = Track {
+                guid: name.to_lowercase(),
+                name: name.to_owned(),
+                ..Track::default()
+            };
+            t.is_folder = true;
+            (t, depth)
+        };
+        let leaf = |name: &str, depth: u32| {
+            (
+                Track {
+                    guid: format!("{}-{depth}", name.to_lowercase()),
+                    name: name.to_owned(),
+                    ..Track::default()
+                },
+                depth,
+            )
+        };
+        let rows = vec![
+            folder("Drum Kit", 0),
+            folder("Kick", 1),
+            leaf("In", 2),
+            leaf("Out", 2),
+            folder("Snare", 1),
+            leaf("Top", 2),
+            folder("Process", 0),
+            folder("Compress", 1),
+            leaf("Dry", 2),
+            folder("Bass", 0),
+            leaf("DI", 1),
+        ];
+        let s = scene("drum-overview").expect("the scene");
+        let out = super::apply_scene(&rows, s, crate::settings::Settings::default(), 1000.0);
+        let names: Vec<&str> = out.iter().map(|(t, _)| t.name.as_str()).collect();
+        assert_eq!(names, ["Drum Kit", "Kick", "Snare", "Bass", "DI"]);
+        assert_eq!(super::collapsed_by(s, &rows), ["kick", "snare"]);
     }
 }

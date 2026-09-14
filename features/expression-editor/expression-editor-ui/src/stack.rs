@@ -19,15 +19,15 @@
 //! occupying a twentieth of its lane. Each lane instead fits its own
 //! content to its own height.
 
-mod geometry;
+// The geometry, the painter, the waveform summing and the drag-zoom
+// live in `expression-editor-paint::stack`; the component and its
+// element markup stay here.
+use expression_editor_paint::stack::{geometry, paint, waveform, zoom};
 /// The same picture as `paint`, as elements — for renderers that are
 /// fast with them (WebView, web). See its module docs for why both.
 #[cfg(feature = "webview")]
 mod markup;
-mod paint;
 mod view;
-mod waveform;
-mod zoom;
 
 pub use expression_editor_core::drum::HitGesture;
 pub use geometry::{LaneNote, LaneView, SubLane, chrome_shelves, lanes, ruler_height};

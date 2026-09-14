@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use anyrender::{PaintScene, WindowRenderer};
 use anyrender_vello::VelloWindowRenderer;
-use vello::kurbo::Affine;
+use vello::kurbo::{Affine, Rect};
 use winit::application::ApplicationHandler;
 use winit::event::{MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -60,7 +60,7 @@ impl HasDisplayHandle for Surface {
 }
 
 use session_daw::arrangement::{Arrangement, Palette, Viewport, TCP_WIDTH};
-use session_daw::ruler::{self, Bars, RULER_H};
+use session_daw::ruler::{Bars, RULER_H};
 use session_daw::{open, theme};
 
 /// Pixels per second at rest.
@@ -83,6 +83,10 @@ struct App {
     scroll_x: f64,
     scroll_y: f64,
     pps: f64,
+    /// The rows' scale — the zoom tool's vertical axis.
+    zoom_y: f64,
+    /// `z` is down: the next press on the lanes is the zoom tool.
+    zoom_held: bool,
     /// The surface size, tracked so the draw can cull to it. Culling is
     /// the difference between encoding 30,000 commands a frame and 367;
     /// it needs to know how much fits on screen, and the surface is the
@@ -146,9 +150,37 @@ struct App {
     /// The play cursor, which glides between the transport's reports.
     playhead: session_daw::cursor::Playhead,
     /// The edit cursor and the time selection.
-    edit: session_daw::cursor::Edit,
     /// Where a ruler drag started, in seconds.
-    dragging_time: Option<f64>,
+    /// The arrangement's editing: the selection, the edit cursor and
+    /// the time selection, and whatever is being dragged — see
+    /// `arrange_edit`. The window forwards what the pointer and the
+    /// keys did and carries out what it asks for.
+    editor: session_daw::arrange_edit::Editor,
+    /// The expression editor, once `e` has opened it on an item. Kept
+    /// while the dock is closed so reopening finds the same zoom and
+    /// selection.
+    expression: Option<session_daw::expression::Expression>,
+    /// The dock's height along the bottom of the arrangement, while
+    /// the editor is docked there.
+    dock: Option<f64>,
+    /// Whether the keyboard belongs to the dock — the last press was
+    /// in it.
+    dock_focus: bool,
+    /// The dock's top edge being dragged to resize it.
+    dock_drag: bool,
+    /// The item under the pointer in the lanes, whose fade handles are
+    /// drawn.
+    hovered_item: Option<usize>,
+    /// The keys held, for the mouse map.
+    keys: session_daw::mousemap::Mods,
+    /// A scrollbar thumb being dragged: which bar, and where on the
+    /// thumb it was taken.
+    bar_drag: Option<(session_daw::scrollbar::Axis, f64)>,
+    /// Whether the view turns the page to follow the playhead. A
+    /// setting: `FTS_FOLLOW=off` opens with it off; `f` toggles it.
+    follow: bool,
+    /// The keyboard, through the FTS profile's bindings.
+    bindings: session_daw::keys::Keys,
     /// The panel control the pointer went down on.
     pressed_row: Option<(usize, session_daw::row::Control)>,
     /// The rail button the pointer is over.
@@ -305,6 +337,25 @@ impl ApplicationHandler for App {
                 self.redraw();
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                // The expression editor takes the wheel in notches —
+                // one line of a mouse wheel — which is what its zoom
+                // and pan gains are tuned for.
+                if self.dock_at(self.cursor.0, self.cursor.1) {
+                    let (nx, ny) = match delta {
+                        MouseScrollDelta::LineDelta(x, y) => (f64::from(x), f64::from(y)),
+                        MouseScrollDelta::PixelDelta(p) => (
+                            p.x / expression_editor_paint::scroll::PIXELS_PER_NOTCH,
+                            p.y / expression_editor_paint::scroll::PIXELS_PER_NOTCH,
+                        ),
+                    };
+                    let (x, y) = self.cursor;
+                    if let Some(ex) = self.expression.as_mut()
+                        && ex.wheel(x, y, nx, ny, self.keys)
+                    {
+                        self.redraw();
+                    }
+                    return;
+                }
                 // Lines or pixels depending on the device; treating both
                 // as pixels is how a trackpad ends up feeling wrong.
                 let (dx, dy) = match delta {
@@ -331,6 +382,13 @@ impl ApplicationHandler for App {
                     self.redraw();
                     return;
                 }
+                // Ctrl+wheel is REAPER's horizontal zoom, about the
+                // pointer: the second under it stays under it.
+                if self.view == View::Arrangement && self.keys.ctrl {
+                    self.zoom_about(self.cursor.0, dy);
+                    self.redraw();
+                    return;
+                }
                 if self.view == View::Mixer {
                     // The mixer has one axis. Either wheel direction
                     // moves along the strips, because a mixer scrolled
@@ -353,6 +411,66 @@ impl ApplicationHandler for App {
                     self.redraw();
                     return;
                 }
+                // `z` held is the zoom tool, on the arrangement as on
+                // the roll: the next press on the lanes drags a zoom.
+                // The dock's own `z` is the editor's when it has focus.
+                if event.logical_key.to_text() == Some("z")
+                    && !self.keys.ctrl
+                    && !self.keys.alt
+                    && !(self.dock_focus && self.dock.is_some())
+                {
+                    self.zoom_held = true;
+                    return;
+                }
+                // `e` docks the expression editor under the arrangement
+                // on the selected item, and closes the dock again.
+                // Before the editor sees the key, or there would be no
+                // way out of a dock that binds it.
+                if event.logical_key.to_text() == Some("e") && !self.keys.ctrl && !self.keys.alt {
+                    self.toggle_dock();
+                    self.redraw();
+                    return;
+                }
+                // While the dock has focus the keyboard is the
+                // editor's: its own keymap, its own actions.
+                if self.dock_focus
+                    && self.dock.is_some()
+                    && let Some(name) = expression_key_name(&event.logical_key)
+                    && let Some(ex) = self.expression.as_mut()
+                    && ex.key(&name, self.keys)
+                {
+                    self.redraw();
+                    return;
+                }
+                // The profile first: what a key does here is what it
+                // does in REAPER with the extension loaded. A binding
+                // the window cannot do yet is logged and falls through
+                // to the window's own keys, so `x` still switches views
+                // while it is bound to a cut nobody has built.
+                {
+                    let named = match &event.logical_key {
+                        winit::keyboard::Key::Named(n) => Some(format!("{n:?}")),
+                        _ => None,
+                    };
+                    let code = session_daw::keys::key_code(named.as_deref(), event.logical_key.to_text());
+                    if let Some(code) = code {
+                        let modifiers = input::Modifiers {
+                            ctrl: self.keys.ctrl,
+                            alt: self.keys.alt,
+                            shift: self.keys.shift,
+                            meta: false,
+                        };
+                        let actions = self.bindings.press(code, modifiers);
+                        let mut handled = false;
+                        for action in actions {
+                            handled |= self.act_on_key(action);
+                        }
+                        if handled {
+                            self.redraw();
+                            return;
+                        }
+                    }
+                }
                 // Space plays and stops, Home returns — REAPER's own
                 // keys, and the two that make the playhead this window
                 // already draws mean something.
@@ -361,6 +479,13 @@ impl ApplicationHandler for App {
                 // reports it as the text " ".
                 if event.logical_key.to_text() == Some(" ") {
                     session_daw::engine::transport(session_daw::engine::Move::PlayStop, 0.0);
+                    self.redraw();
+                    return;
+                }
+                // `f` follows the playhead, or stops following it.
+                if event.logical_key.to_text() == Some("f") {
+                    self.follow = !self.follow;
+                    tracing::info!(ui.follow = self.follow, "follow playhead");
                     self.redraw();
                     return;
                 }
@@ -384,6 +509,19 @@ impl ApplicationHandler for App {
                         .and_then(|i| session_daw::plan::SCENES.get(i))
                         .map(|s| s.slug);
                     tracing::info!(ui.scene = self.view_scene.unwrap_or("none"), "scene");
+                    // The scene's folds become the window's folder
+                    // state, so the strips' fold icons agree with it
+                    // and a click on one carries on from there.
+                    if let Some(scene) = self.view_scene.and_then(session_daw::plan::scene) {
+                        let (all, depths) =
+                            daw_ui::components::folders::FolderState::default().visible(&self.tracks);
+                        let rows: Vec<(daw_proto::Track, u32)> = all.into_iter().zip(depths).collect();
+                        self.folders = daw_ui::components::folders::FolderState::default();
+                        for guid in session_daw::plan::collapsed_by(scene, &rows) {
+                            self.folders.toggle(&guid);
+                        }
+                        self.re_record();
+                    }
                     self.mixer = None;
                     self.redraw();
                     return;
@@ -447,9 +585,30 @@ impl ApplicationHandler for App {
             //
             // This was a field nothing ever wrote: every drag in the
             // window has been coarse because no event set it.
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.logical_key.to_text() == Some("z") {
+                    self.zoom_held = false;
+                }
+                // A release. The editor's keymap has to hear it, or a
+                // held prefix repeats its way down the sequence tree;
+                // and a spring-loaded tool springs back on it.
+                if self.dock_focus
+                    && self.dock.is_some()
+                    && let Some(name) = expression_key_name(&event.logical_key)
+                    && let Some(ex) = self.expression.as_mut()
+                    && ex.key_up(&name, self.keys)
+                {
+                    self.redraw();
+                }
+            }
             WindowEvent::ModifiersChanged(modifiers) => {
                 let state = modifiers.state();
                 self.fine = state.control_key();
+                self.keys = session_daw::mousemap::Mods {
+                    shift: state.shift_key(),
+                    ctrl: state.control_key() || state.meta_key(),
+                    alt: state.alt_key(),
+                };
                 self.mods = eq_ui::eq_graph_interaction::Mods::new(
                     state.alt_key(),
                     state.shift_key(),
@@ -469,16 +628,79 @@ impl ApplicationHandler for App {
                 // knobs did not turn.
                 let last = self.cursor;
                 self.cursor = (position.x, position.y);
-                let spot = self.spot_at(position.x, position.y);
-                // A drag outranks a hover: while the pointer is down on
-                // a fader it is setting a level, not browsing.
-                if let Some(from) = self.dragging_time {
-                    if let Some(to) = self.ruler_time_unclamped(position.x) {
-                        self.edit.drag(from, to);
+                // The dock's edge, being dragged: the dock follows the
+                // pointer and the arrangement gives way above it.
+                if self.dock_drag {
+                    let height = self.surface_size.1;
+                    let most = height - session_daw::rails::TOP - DOCK_MIN;
+                    self.dock = Some((height - position.y).clamp(DOCK_MIN, most.max(DOCK_MIN)));
+                    self.redraw();
+                    return;
+                }
+                // A gesture in the dock keeps the pointer after it
+                // leaves the box; otherwise the dock takes only what is
+                // over it.
+                if self.dock_at(position.x, position.y)
+                    || self.expression.as_ref().is_some_and(|ex| ex.dragging())
+                {
+                    if let Some(ex) = self.expression.as_mut()
+                        && ex.moved(position.x, position.y, self.keys)
+                    {
                         self.redraw();
-                        return;
+                    }
+                    return;
+                }
+                let spot = self.spot_at(position.x, position.y);
+                // A fade in flight follows the pointer along the item:
+                // the fade-in is as long as the pointer is past the
+                // item's start, the fade-out as long as it is short of
+                // its end, either clamped to the item.
+                if self.editor.zoom.is_some() {
+                    let view = self.viewport();
+                    let lanes = self.lanes_origin();
+                    if let Some(next) = self.editor.zoom_move((position.x, position.y), &view, lanes, self.keys) {
+                        self.apply_view(next);
+                    }
+                    self.redraw();
+                    return;
+                }
+                if let Some((axis, _)) = self.bar_drag {
+                    let (dx, dy) = (position.x - last.0, position.y - last.1);
+                    if let Some(bars) = self.scrollbars() {
+                        let (bar, along) = match axis {
+                            session_daw::scrollbar::Axis::X => (bars.0, dx),
+                            session_daw::scrollbar::Axis::Y => (bars.1, dy),
+                        };
+                        let by = bar.scroll_per_thumb(along);
+                        match axis {
+                            session_daw::scrollbar::Axis::X => self.scroll_to(self.scroll_x + by, self.scroll_y),
+                            session_daw::scrollbar::Axis::Y => self.scroll_to(self.scroll_x, self.scroll_y + by),
+                        }
+                    }
+                    self.redraw();
+                    return;
+                }
+                // What is being dragged in the arrangement — an item, a
+                // fade, a time selection — follows the pointer.
+                let at_time = self.ruler_time_unclamped(position.x);
+                let bpm = self.scene.as_ref().map_or(120.0, |s| s.bpm);
+                if self.editor.moved(at_time, self.pps, bpm, self.keys) {
+                    self.redraw();
+                    return;
+                }
+                // The item under the pointer, for its handles.
+                if self.view == View::Arrangement && !self.editor.dragging() {
+                    let over = match self.arrange_hit_at(position.x, position.y).map(|h| h.target) {
+                        Some(session_daw::hit::Target::Item { index, .. }) => Some(index),
+                        _ => None,
+                    };
+                    if over != self.hovered_item {
+                        self.hovered_item = over;
+                        self.redraw();
                     }
                 }
+                // A drag outranks a hover: while the pointer is down on
+                // a fader it is setting a level, not browsing.
                 if let Some((row, grip)) = self.rack_drag {
                     let (dx, dy) = (position.x - last.0, position.y - last.1);
                     let (dx, dy) = if self.fine {
@@ -539,6 +761,54 @@ impl ApplicationHandler for App {
                 button,
                 ..
             } => {
+                // The dock's top edge resizes it; the dock itself takes
+                // every button — middle pans, right opens the editor's
+                // menu. A press anywhere else takes the keyboard back.
+                if self.view == View::Arrangement && self.dock.is_some() {
+                    self.cursor = (position.x, position.y);
+                    if !state.is_pressed() && std::mem::take(&mut self.dock_drag) {
+                        self.redraw();
+                        return;
+                    }
+                    if state.is_pressed() && self.dock_grip_at(position.x, position.y) {
+                        self.dock_drag = true;
+                        self.dock_focus = true;
+                        return;
+                    }
+                    let in_dock = self.dock_at(position.x, position.y)
+                        || self.expression.as_ref().is_some_and(|ex| ex.dragging());
+                    if in_dock {
+                        let code = match button.mouse_button() {
+                            Some(winit::event::MouseButton::Right) => 2,
+                            Some(winit::event::MouseButton::Middle) => 1,
+                            _ => 0,
+                        };
+                        let keys = self.keys;
+                        let changed = match self.expression.as_mut() {
+                            Some(ex) if state.is_pressed() => {
+                                ex.press(position.x, position.y, keys, code)
+                            }
+                            Some(ex) => ex.release(position.x, position.y, keys),
+                            None => false,
+                        };
+                        if state.is_pressed() {
+                            self.dock_focus = true;
+                        }
+                        if let Some(asked) = self.expression.as_mut().and_then(|ex| ex.take_pending()) {
+                            tracing::info!(
+                                expression.pending = ?asked,
+                                "the editor asked for a panel this window does not draw yet"
+                            );
+                        }
+                        if changed {
+                            self.redraw();
+                        }
+                        return;
+                    }
+                    if state.is_pressed() {
+                        self.dock_focus = false;
+                    }
+                }
                 if button.mouse_button() != Some(winit::event::MouseButton::Left) {
                     return;
                 }
@@ -556,21 +826,34 @@ impl ApplicationHandler for App {
                         self.redraw();
                         return;
                     }
-                    if let Some(seconds) = self.ruler_time(x, y) {
-                        // A press on the ruler moves the cursor at once
-                        // — the click is what you meant, and waiting
-                        // for the release to show it feels like a lag
-                        // rather than like care.
-                        self.dragging_time = Some(seconds);
-                        self.edit.click(seconds);
-                        // And the transport goes there, which is what
-                        // clicking a ruler means in every DAW: the edit
-                        // cursor and the play position are the same
-                        // thing until a time selection separates them.
-                        session_daw::engine::transport(
-                            session_daw::engine::Move::Seek,
-                            seconds,
-                        );
+                    // The zoom tool, while `z` is held: a drag from here
+                    // zooms rather than selects.
+                    if self.zoom_held && self.view == View::Arrangement {
+                        let view = self.viewport();
+                        if self.editor.zoom_press((x, y), &view, self.lanes_origin(), self.keys) {
+                            self.redraw();
+                            return;
+                        }
+                    }
+                    // The scrollbars are drawn over the lanes, so they
+                    // are pressed before them: a thumb is taken hold
+                    // of, the track beside it turns a page.
+                    if let Some(action) = self.press_scrollbar(x, y) {
+                        self.bar_drag = action;
+                        self.redraw();
+                        return;
+                    }
+                    // What the press landed on in the arrangement — an
+                    // item, a fade handle, the ruler, the empty area —
+                    // through the mouse map, to the editor.
+                    if let Some(scene) = self.scene.as_ref() {
+                        let hit = self.arrange_hit_at(x, y);
+                        let mut effects = Vec::new();
+                        if self.editor.press(hit, self.keys, scene, &mut effects) {
+                            self.run(effects);
+                            self.redraw();
+                            return;
+                        }
                     }
                     // The rack is above the strip's controls and is
                     // drawn over them, so it is claimed first.
@@ -630,6 +913,35 @@ impl ApplicationHandler for App {
                         self.gestures.press(hit, x, y);
                     }
                 } else {
+                    if self.editor.zoom.is_some() {
+                        let view = self.viewport();
+                        let lanes = self.lanes_origin();
+                        if let Some(next) = self.editor.zoom_release(&view, lanes) {
+                            self.apply_view(next);
+                        }
+                        self.redraw();
+                        return;
+                    }
+                    if self.bar_drag.take().is_some() {
+                        self.redraw();
+                        return;
+                    }
+                    {
+                        let at = self.ruler_time_unclamped(x);
+                        let mut effects = Vec::new();
+                        let released = match self.session.as_mut() {
+                            Some((project, _)) => {
+                                let project = std::sync::Arc::make_mut(&mut project.0);
+                                self.editor.release(at, self.keys, project, &mut effects)
+                            }
+                            None => false,
+                        };
+                        if released {
+                            self.run(effects);
+                            self.redraw();
+                            return;
+                        }
+                    }
                     if self.rack_drag.take().is_some() {
                         // Back into the recording: a rack that is not
                         // being dragged is constant again, and the
@@ -644,13 +956,6 @@ impl ApplicationHandler for App {
                         }
                         self.redraw();
                         return;
-                    }
-                    if let (Some(from), Some(to)) = (self.dragging_time.take(), self.ruler_time(x, y)) {
-                        // A drag across the ruler is a time selection;
-                        // a click is just the cursor. `Edit::drag`
-                        // decides which, so a twitch does not leave a
-                        // four-millisecond selection behind.
-                        self.edit.drag(from, to);
                     }
                     // A click on a panel control acts if the pointer is
                     // still on the control it went down on — the same
@@ -793,13 +1098,13 @@ impl App {
         // The rails take their share before anything scrolls: the span
         // is how far the CONTENT can move inside them, not how far it
         // could move if it owned the window.
-        let frame = session_daw::rails::Frame::new(self.surface_size.0, self.surface_size.1);
+        let frame = self.frame();
         let (width, height) = (frame.content_width(), frame.content_height());
         (
             (scene.length_secs * self.pps - (width - TCP_WIDTH)).max(1.0),
             // The ruler takes a strip off the top, so there is that much
             // more to scroll before the last row reaches the bottom.
-            (scene.content_height() - (height - RULER_H)).max(1.0),
+            (scene.content_height() * self.zoom_y - (height - RULER_H)).max(1.0),
         )
     }
 
@@ -808,6 +1113,43 @@ impl App {
     /// The single place scroll position is written, so the wheel and the
     /// autoscroll cannot end up with different ideas about the bounds or
     /// the units.
+    /// Zoom the arrangement horizontally by a wheel travel of `dy`
+    /// pixels, keeping the time under window x `x` where it is.
+    ///
+    /// One wheel notch is about sixteen percent; the scale is clamped
+    /// between two pixels a second, where an hour fits a screen, and
+    /// two thousand, where a millisecond is two pixels.
+    /// Where the lanes start in the window.
+    fn lanes_origin(&self) -> session_daw::arrange_edit::LanesOrigin {
+        (
+            session_daw::rails::SIDE + TCP_WIDTH,
+            session_daw::rails::TOP + RULER_H,
+        )
+    }
+
+    /// Show the view a zoom asked for: its scale on both axes, and its
+    /// scroll clamped to the spans that scale gives.
+    fn apply_view(&mut self, next: Viewport) {
+        self.pps = next.pps;
+        self.zoom_y = next.zoom_y;
+        self.scroll_to(next.scroll_x, next.scroll_y);
+        self.mixer = None;
+    }
+
+    fn zoom_about(&mut self, x: f64, dy: f64) {
+        const MIN_PPS: f64 = 2.0;
+        const MAX_PPS: f64 = 2000.0;
+        let factor = (dy / 53.0 * 0.15).exp();
+        let anchor = x - session_daw::rails::SIDE - TCP_WIDTH;
+        let at = (anchor + self.scroll_x) / self.pps.max(f64::EPSILON);
+        self.pps = (self.pps * factor).clamp(MIN_PPS, MAX_PPS);
+        let scroll_x = at.mul_add(self.pps, -anchor);
+        self.scroll_to(scroll_x, self.scroll_y);
+        // The bars, titles and ruler all read `pps` from the viewport,
+        // so nothing else has to be told; the recording is untouched.
+        self.mixer = None;
+    }
+
     fn scroll_to(&mut self, x: f64, y: f64) {
         let (span_x, span_y) = self.spans();
         self.scroll_x = x.clamp(0.0, span_x);
@@ -1150,6 +1492,127 @@ impl App {
         Some(session_daw::hit::mixer(mixer, self.mixer_scroll, x, y))
     }
 
+    /// The box the lanes are drawn in: under the ruler, right of the
+    /// panel, inside the rails.
+    fn lanes_box(&self) -> Rect {
+        let frame = self.frame();
+        let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
+        Rect::new(
+            rail.0 + TCP_WIDTH,
+            rail.1 + RULER_H,
+            rail.0 + frame.content_width(),
+            rail.1 + frame.content_height(),
+        )
+    }
+
+    /// The arrangement's two scrollbars, for this frame's scroll.
+    fn scrollbars(&self) -> Option<(session_daw::scrollbar::Bar, session_daw::scrollbar::Bar)> {
+        if self.view != View::Arrangement || self.scene.is_none() {
+            return None;
+        }
+        Some(session_daw::scrollbar::bars(self.lanes_box(), (self.scroll_x, self.scroll_y), self.spans()))
+    }
+
+    /// A press on a scrollbar: the thumb taken (returned as the drag to
+    /// hold), or a page turned and nothing held. `None` if the press
+    /// was not on a bar.
+    fn press_scrollbar(&mut self, x: f64, y: f64) -> Option<Option<(session_daw::scrollbar::Axis, f64)>> {
+        use session_daw::scrollbar::{Axis, Press};
+        let bars = self.scrollbars()?;
+        for bar in [bars.0, bars.1] {
+            match bar.press(x, y) {
+                Press::Miss => {}
+                Press::Thumb => return Some(Some((bar.axis, 0.0))),
+                Press::PageBack | Press::PageForward => {
+                    let by = if bar.press(x, y) == Press::PageBack { -bar.page() } else { bar.page() };
+                    match bar.axis {
+                        Axis::X => self.scroll_to(self.scroll_x + by, self.scroll_y),
+                        Axis::Y => self.scroll_to(self.scroll_x, self.scroll_y + by),
+                    }
+                    return Some(None);
+                }
+            }
+        }
+        None
+    }
+
+    /// What moves the view before a frame is drawn: a drag held at the
+    /// edge of the lanes scrolls under it, and a playing transport
+    /// turns the page when the playhead leaves the view.
+    fn before_arrange_frame(&mut self) {
+        let lanes = self.lanes_box();
+        if self.editor.dragging() {
+            let (dx, dy) = session_daw::scrollbar::autoscroll(lanes, self.cursor.0, self.cursor.1);
+            if dx != 0.0 || dy != 0.0 {
+                self.scroll_to(self.scroll_x + dx, self.scroll_y + dy);
+                // The thing being dragged follows the pointer, which
+                // is now over a different time than a frame ago.
+                let at = self.ruler_time_unclamped(self.cursor.0);
+                let bpm = self.scene.as_ref().map_or(120.0, |s| s.bpm);
+                self.editor.moved(at, self.pps, bpm, self.keys);
+            }
+            return;
+        }
+        if self.follow && self.playhead.playing() && self.bar_drag.is_none() {
+            let play_x = self.playhead.at_time(std::time::Instant::now()) * self.pps;
+            if let Some(to) = session_daw::scrollbar::follow(self.scroll_x, lanes.width(), play_x) {
+                self.scroll_to(to, self.scroll_y);
+            }
+        }
+    }
+
+    /// An edit to the engine, if one is listening.
+    fn send(&self, edit: session_daw::engine::Edit) {
+        if let Some(applier) = &self.applier {
+            applier.send(edit);
+        }
+    }
+
+    /// Carry out what the editor asked for.
+    fn run(&mut self, effects: Vec<session_daw::arrange_edit::Effect>) {
+        use session_daw::arrange_edit::Effect;
+        for effect in effects {
+            match effect {
+                Effect::Send(edit) => self.send(edit),
+                Effect::ReRecord => self.re_record(),
+                Effect::Transport(command, at) => session_daw::engine::transport(command, at),
+                Effect::Playhead(at) => self.playhead.report(at, 1.0, std::time::Instant::now()),
+            }
+        }
+    }
+
+    /// Do what a bound key asks. `false` when the window cannot, so the
+    /// key falls through to what the window binds itself.
+    fn act_on_key(&mut self, action: session_daw::keys::Action) -> bool {
+        let Some((project_ref, _)) = self.session.as_mut() else { return false };
+        let Some(scene) = self.scene.as_ref() else { return false };
+        let project = std::sync::Arc::make_mut(&mut project_ref.0);
+        let bpm = scene.bpm;
+        let mut effects = Vec::new();
+        let handled = self.editor.key(
+            action,
+            project,
+            scene,
+            &self.arrange_rows,
+            &mut self.tracks,
+            &self.arrange_map,
+            bpm,
+            &mut effects,
+        );
+        self.run(effects);
+        handled
+    }
+
+    /// What the pointer is over in the arrangement, if that is the view.
+    fn arrange_hit_at(&self, x: f64, y: f64) -> Option<session_daw::hit::Hit> {
+        if self.view != View::Arrangement {
+            return None;
+        }
+        let scene = self.scene.as_ref()?;
+        let modes = session::modes::Mode::ALL.len();
+        Some(session_daw::hit::arrangement(scene, self.viewport(), modes, x, y))
+    }
+
     /// The time under a point, if it is on the ruler.
     fn ruler_time(&self, x: f64, y: f64) -> Option<f64> {
         if self.view != View::Arrangement {
@@ -1183,13 +1646,12 @@ impl App {
     /// The viewport this frame sees — the one number both the drawing
     /// and the hit tests resolve against.
     fn viewport(&self) -> Viewport {
-        let (width, height) = self.surface_size;
-        let frame = session_daw::rails::Frame::new(width, height);
+        let frame = self.frame();
         Viewport {
             scroll_x: self.scroll_x,
             scroll_y: self.scroll_y,
             pps: self.pps,
-            zoom_y: 1.0,
+            zoom_y: self.zoom_y,
             width: frame.content_width(),
             height: frame.content_height(),
         }
@@ -1288,10 +1750,7 @@ impl App {
             C::Folder | C::Fx | C::Volume | C::Pan => None,
         };
         let Some(edit) = edit else { return };
-        apply_locally(&mut self.tracks, row, &edit);
-        if let Some(applier) = &self.applier {
-            applier.send(edit);
-        }
+        self.commit(row, edit);
     }
 
     /// A drag on a panel knob.
@@ -1329,9 +1788,33 @@ impl App {
             _ => None,
         };
         let Some(edit) = mapped else { return };
+        self.commit(row, edit);
+    }
+
+    /// Apply an edit here and send it to the engine — and, for a
+    /// fader in a balance group, the edits that keep the group
+    /// balanced with it. See `balance`.
+    fn commit(&mut self, row: usize, edit: session_daw::engine::Edit) {
+        use session_daw::engine::Edit;
+        let companions = match &edit {
+            Edit::SetVolume(guid, to) => {
+                session_daw::balance::Groups::seed(&self.tracks).companions(&self.tracks, guid, *to)
+            }
+            _ => Vec::new(),
+        };
         apply_locally(&mut self.tracks, row, &edit);
         if let Some(applier) = &self.applier {
             applier.send(edit);
+        }
+        for companion in companions {
+            if let Edit::SetVolume(guid, _) = &companion
+                && let Some(index) = self.tracks.iter().position(|t| t.guid == *guid)
+            {
+                apply_locally(&mut self.tracks, index, &companion);
+            }
+            if let Some(applier) = &self.applier {
+                applier.send(companion);
+            }
         }
     }
 
@@ -1371,6 +1854,18 @@ impl App {
             return;
         };
         let guid = track.guid.clone();
+        let is_folder = track.is_folder;
+
+        // The fold at the foot of a folder's strip: a view edit, like
+        // the panel's — it changes which strips exist — so it goes to
+        // the folder state and re-records rather than to the engine.
+        if spot.control == session_daw::mcp::Control::Folder {
+            if is_folder && !double {
+                self.folders.toggle(&guid);
+                self.re_record();
+            }
+            return;
+        }
 
         // The clip latch, which is a band across the top of the meter
         // and only a target while it is lit. Clearing it is the window
@@ -1412,11 +1907,7 @@ impl App {
             session_daw::engine::click(spot.control, &guid, track, self.fine)
         };
         let Some(edit) = edit else { return };
-
-        apply_locally(&mut self.tracks, index, &edit);
-        if let Some(applier) = &self.applier {
-            applier.send(edit);
-        }
+        self.commit(index, edit);
     }
 
     /// Move along the strips, stopping at both ends.
@@ -1484,6 +1975,99 @@ impl App {
             ));
         }
         self.mixer.is_some()
+    }
+
+    /// The frame the view now on screen is laid out in — with the
+    /// dock taken off the arrangement's bottom while one is open.
+    fn frame(&self) -> session_daw::rails::Frame {
+        let (width, height) = self.surface_size;
+        match (self.view, self.dock) {
+            (View::Arrangement, Some(dock)) => {
+                session_daw::rails::Frame::docked(width, height, dock)
+            }
+            _ => session_daw::rails::Frame::new(width, height),
+        }
+    }
+
+    /// Whether a window point is on the docked editor.
+    fn dock_at(&self, x: f64, y: f64) -> bool {
+        self.view == View::Arrangement
+            && self.dock.is_some()
+            && self.expression.as_ref().is_some_and(|ex| ex.contains(x, y))
+    }
+
+    /// Whether a window point is on the dock's top edge — the grip
+    /// that resizes it.
+    fn dock_grip_at(&self, x: f64, y: f64) -> bool {
+        let Some(dock) = self.frame().dock_box() else { return false };
+        x >= dock.x0 && x < dock.x1 && (y - dock.y0).abs() <= DOCK_GRIP
+    }
+
+    /// Dock the expression editor under the arrangement on the
+    /// selected item, or close the dock.
+    ///
+    /// The first selected item's active take, if it has notes; the
+    /// demo groove otherwise, so the editor can be exercised on a
+    /// session with no MIDI in it yet. A track whose name says drums
+    /// opens as a kit; anything else as a roll.
+    fn toggle_dock(&mut self) {
+        if self.dock.take().is_some() {
+            self.dock_focus = false;
+            self.dock_drag = false;
+        } else {
+            let (width, height) = self.surface_size;
+            let dock = (height * DOCK_SHARE).max(DOCK_MIN);
+            let frame = session_daw::rails::Frame::docked(width, height, dock);
+            let dock_box = frame.dock_box().unwrap_or_default();
+            let origin = (dock_box.x0, dock_box.y0);
+            let size = (dock_box.width(), dock_box.height());
+            let wanted = self.editor.selected.iter().next().cloned();
+            let from_item = wanted.as_deref().and_then(|guid| {
+                let scene = self.scene.as_ref()?;
+                let item = scene.item_by_guid(guid)?;
+                let track = self.arrange_rows.get(item.row).map(|(t, _)| t.name.as_str());
+                let drums = track.is_some_and(session_daw::expression::is_drum_track);
+                let snapshot =
+                    session_daw::expression::load_take(guid, scene.bpm, item.x1 - item.x0)?;
+                Some(session_daw::expression::Expression::from_take(
+                    &snapshot,
+                    guid.to_owned(),
+                    drums,
+                    origin,
+                    size,
+                ))
+            });
+            let already = self
+                .expression
+                .as_ref()
+                .is_some_and(|ex| ex.item.is_some() && ex.item == wanted);
+            match from_item {
+                Some(ex) => self.expression = Some(ex),
+                None if already => {}
+                None => {
+                    tracing::info!(
+                        expression.item = wanted.as_deref().unwrap_or("none"),
+                        "no MIDI take to edit; opening the demo groove"
+                    );
+                    if self.expression.as_ref().is_none_or(|ex| ex.item.is_some()) {
+                        self.expression =
+                            Some(session_daw::expression::Expression::demo(origin, size));
+                    }
+                }
+            }
+            // The window's colours, not the standalone editor's: a
+            // docked roll is part of this arrangement.
+            if let Some(ex) = self.expression.as_mut() {
+                ex.set_look(session_daw::expression::look_of(&self.palette));
+            }
+            self.dock = Some(dock);
+            self.dock_focus = true;
+            self.view = View::Arrangement;
+        }
+        if let Some(window) = &self.window {
+            window.set_title(self.view.title());
+        }
+        tracing::info!(view = ?self.view, dock = self.dock.unwrap_or(0.0), "view");
     }
 
     fn redraw_mixer(&mut self) {
@@ -1636,8 +2220,7 @@ impl App {
     /// the item, not looked up by index in a second table.
     fn rail_action_at(&self, x: f64, y: f64) -> Option<session_daw::rails::Action> {
         use session_daw::hit::{Side, Target};
-        let (width, height) = self.surface_size;
-        let frame = session_daw::rails::Frame::new(width, height);
+        let frame = self.frame();
         let profile = self.profile();
         // The corner above the track panel is the mode selector, and it
         // is drawn over the ruler, so it is asked first.
@@ -1841,6 +2424,7 @@ impl App {
                 let history = self.tone_levels.entry(track.guid.clone()).or_default();
                 history.push(peak);
                 history.push_fire(meters.deess_deepest());
+                history.push_ess(meters.ess_db, meters.ess_ref_db);
                 self.tone_spectra
                     .entry(track.guid.clone())
                     .or_default()
@@ -2027,31 +2611,21 @@ impl App {
             self.redraw_mixer();
             return;
         }
-        let Some(scene) = &self.scene else { return };
-        let (sx, sy, pps) = (self.scroll_x, self.scroll_y, self.pps);
-        let (width, surface_h) = self.surface_size;
-        let frame = session_daw::rails::Frame::new(width, surface_h);
+        if self.scene.is_none() {
+            return;
+        }
+        // What moves the view before the frame — the edge autoscroll,
+        // the playhead's page turn — goes first, so the scroll the
+        // frame reads is the one it draws.
+        self.before_arrange_frame();
+        let scroll_bars = self.scrollbars();
+        let bar_held = self.bar_drag.map(|(axis, _)| axis);
+        let frame = self.frame();
         // What this frame can see. Everything outside it is skipped
         // before it reaches Vello's encoder — see `Arrangement::index`.
         // The rails are excluded, or the panel draws rows behind them
         // and pays for every one.
         let view = self.viewport();
-        let surface = self.palette.surface;
-        let palette = &self.palette;
-        let font = &self.font;
-        let bars = Bars::at(scene.bpm);
-        // The rows the SCENE was recorded from — after the preset, not
-        // the session's full list. The scene's row indices are indices
-        // into these, and reading the full list here is how a hidden
-        // track makes every row below it name the wrong track.
-        let rows: &[(daw_proto::Track, u32)] = self.arrange_rows.as_slice();
-        let tracks = self.tracks.as_slice();
-        let arrange_map = &self.arrange_map;
-        let rename = self.rename.as_ref();
-        let panel = &self.panel;
-        let mode = self.mode;
-        let rail_at = (self.hovered_rail, self.pressed_rail);
-        let icons = &mut self.icons;
         // The transport's last word, and where that puts the cursor
         // NOW — the reading is per-block, the drawing is per-frame, and
         // the difference between them is the glide.
@@ -2064,8 +2638,6 @@ impl App {
             self.playhead.report(at, 1.0, now);
         }
         let play_at = self.playhead.at_time(std::time::Instant::now());
-        let edit = self.edit;
-        let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
         let profile = session_daw::rails::profile(
             session_daw::rails::Surface::Arrange,
             self.mode,
@@ -2073,120 +2645,46 @@ impl App {
             self.preset,
             self.settings,
         );
-
-        let grid = &self.grid;
-        /// The finest the grid ever gets — sixteenths, as a fraction of
-        /// a whole note. The zoom only ever coarsens away from it.
-        const FINEST: f64 = 1.0 / 16.0;
+        let Some(scene) = &self.scene else { return };
+        let bars = Bars::at(scene.bpm);
+        // One painter for the frame, shared with the bench and every
+        // shot — see `session_daw::frame`.
+        let arrange = session_daw::frame::Arrange {
+            scene,
+            palette: &self.palette,
+            font: &self.font,
+            frame,
+            view,
+            bars,
+            grid: &self.grid,
+            // The rows the SCENE was recorded from — after the preset,
+            // not the session's full list. The scene's row indices are
+            // indices into these, and reading the full list here is how
+            // a hidden track makes every row below it name the wrong
+            // track.
+            rows: self.arrange_rows.as_slice(),
+            tracks: self.tracks.as_slice(),
+            map: &self.arrange_map,
+            panel: &self.panel,
+            rename: self.rename.as_ref(),
+            profile: &profile,
+            rail_at: (self.hovered_rail, self.pressed_rail),
+            icons: &mut self.icons,
+            mode: self.mode,
+            play_at,
+            edit: self.editor.cursor,
+            hovered_item: self.hovered_item,
+            in_flight: self.editor.fade_in_flight(),
+            selected: &self.editor.selected,
+            ghost: self.editor.ghost(),
+            scroll_bars,
+            bar_held,
+            dock: self.expression.as_mut().filter(|_| frame.dock > 0.0),
+            zoom_box: self.editor.zoom_marquee(),
+        };
         let mut drawn = session_daw::profile::Counts::default();
         self.renderer.render(|painter| {
-            painter.reset();
-            // The theme's surface, under everything.
-            //
-            // `VelloWindowRenderer` clears to WHITE, so any pixel the
-            // arrangement does not cover is not merely undrawn, it is
-            // bright white on a dark theme — during a fast scroll, at
-            // the end of the session, or in the gap under the last row.
-            // One rectangle makes the window's background the theme's
-            // instead of the renderer's.
-            painter.fill(
-                vello::peniko::Fill::NonZero,
-                Affine::IDENTITY,
-                surface,
-                None,
-                &vello::kurbo::Rect::new(0.0, 0.0, width, surface_h),
-            );
-            // The lanes: scrolled both ways, and scaled horizontally by
-            // the zoom. Recorded at one pixel per second, so the scale IS
-            // the zoom — no rebuild, no re-record.
-            let a = scene.replay_lanes(
-                painter,
-                view,
-                Affine::translate((rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy))
-                    * Affine::scale_non_uniform(pps, 1.0),
-            );
-            // The panel: the SAME vertical offset, which is the entire
-            // point. It cannot drift from the lanes because there is
-            // nothing to drift — one number moves both.
-            let b = scene.replay_panel(
-                painter,
-                view,
-                Affine::translate((rail.0, rail.1 + RULER_H - sy)),
-            );
-            // After the lanes — their backgrounds are opaque — and the
-            // ruler last of all, over everything scrolled under it.
-            ruler::grid(painter, &palette, view, bars, &grid, FINEST, rail);
-            // An open rename, over the name it replaces.
-            if let Some(open) = rename.filter(|r| r.surface == session_daw::rename::Surface::Arrange)
-            {
-                if let Some((top, height)) = scene.row_box(open.row) {
-                    let depth = rows
-                        .get(open.row)
-                        .map_or(0, |(_, d)| i32::try_from(*d).unwrap_or(0));
-                    let is_folder = rows.get(open.row).is_some_and(|(t, _)| t.is_folder);
-                    let row = session_daw::row::Row::new(top, height, depth, is_folder);
-                    if let Some(field) = row.rect(session_daw::row::Control::Name) {
-                        session_daw::rename::paint(
-                            painter,
-                            &palette,
-                            &font,
-                            open,
-                            field,
-                            Affine::translate((rail.0, rail.1 + RULER_H - sy)),
-                        );
-                    }
-                }
-            }
-
-            // The panel's live values, over its recorded chrome.
-            let c = session_daw::overlay::panel_controls(
-                painter,
-                &palette,
-                &font,
-                scene,
-                rows,
-                tracks,
-                arrange_map,
-                view,
-                panel,
-                Affine::translate((rail.0, rail.1 + RULER_H - sy)),
-            );
-            ruler::ruler(painter, &palette, &font, view, bars, rail);
-            // The cursors last, over the lanes and under nothing: a
-            // playhead behind an item is a playhead you cannot follow.
-            let top = rail.1 + RULER_H;
-            let bottom = rail.1 + view.height;
-            session_daw::cursor::paint_edit(
-                painter, &palette, &edit, view, rail, top, bottom,
-            );
-            let x = play_at.mul_add(
-                view.pps,
-                rail.0 + TCP_WIDTH - view.scroll_x,
-            );
-            session_daw::cursor::paint(
-                painter,
-                session_daw::cursor::Look::default(),
-                x,
-                top,
-                bottom,
-                rail.0 + TCP_WIDTH,
-            );
-            // The rails over everything that scrolled under them, and
-            // the mode selector in the corner the ruler leaves.
-            session_daw::rails::draw(
-                painter,
-                &palette,
-                &font,
-                icons,
-                rail_at,
-                frame,
-                &profile.left,
-                &profile.right,
-                &profile.top,
-            );
-            session_daw::rails::main_toolbar(painter, &palette, &font, icons, rail_at, mode);
-            drawn.replayed = a.replayed + b.replayed + c.replayed;
-            drawn.submitted = a.submitted + b.submitted + c.submitted;
+            drawn = arrange.paint(painter);
         });
         self.after_frame(drawn);
     }
@@ -2298,6 +2796,8 @@ fn main() {
         scroll_x: 0.0,
         scroll_y: 0.0,
         pps: DEFAULT_PPS,
+        zoom_y: 1.0,
+        zoom_held: false,
         // Replaced the moment the surface exists; until then it culls to
         // nothing, which is correct — there is no surface to draw on.
         surface_size: (0.0, 0.0),
@@ -2321,8 +2821,16 @@ fn main() {
         applier: session_daw::engine::Applier::start(),
         transport: session_daw::engine::Transport::start(),
         playhead: session_daw::cursor::Playhead::stopped(0.0),
-        edit: session_daw::cursor::Edit::default(),
-        dragging_time: None,
+        editor: session_daw::arrange_edit::Editor::default(),
+        expression: None,
+        dock: None,
+        dock_focus: false,
+        dock_drag: false,
+        hovered_item: None,
+        keys: session_daw::mousemap::Mods::default(),
+        bar_drag: None,
+        follow: !std::env::var("FTS_FOLLOW").is_ok_and(|v| matches!(v.trim(), "off" | "0" | "false")),
+        bindings: session_daw::keys::Keys::load(),
         pressed_row: None,
         hovered_rail: None,
         pressed_rail: None,
@@ -2440,6 +2948,16 @@ struct Loaded {
 /// Multi-window comes later; a single window that can reach both is
 /// what makes the mixer usable at all today, and a split would have to
 /// decide how to divide the height before either half has earned it.
+/// A key as the expression editor's keymap names it — the browser's
+/// names, which is what its bindings were written against: `"Delete"`,
+/// `"ArrowLeft"`, `"F2"`, and the character itself for the rest.
+fn expression_key_name(key: &winit::keyboard::Key) -> Option<String> {
+    match key {
+        winit::keyboard::Key::Named(named) => Some(format!("{named:?}")),
+        _ => key.to_text().map(str::to_owned),
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum View {
     Arrangement,
@@ -2461,6 +2979,14 @@ impl View {
         }
     }
 }
+
+/// The dock's height when it first opens, as a share of the window.
+const DOCK_SHARE: f64 = 0.4;
+/// The least the dock can be dragged to, and the least the arrangement
+/// keeps above it.
+const DOCK_MIN: f64 = 160.0;
+/// How near the dock's top edge a press takes hold of it to resize.
+const DOCK_GRIP: f64 = 4.0;
 
 /// Show an edit here, now, rather than waiting for the engine.
 ///
@@ -2484,6 +3010,17 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         Edit::SetPhase(_, inverted) => track.phase_inverted = *inverted,
         Edit::SetInputMonitor(_, mode) => track.input_monitor = *mode,
         Edit::SetParentSend(_, enabled) => track.parent_send = *enabled,
+        // An item's, not the track's: applied to the project copy where
+        // the drag ends — see `commit_fade`.
+        Edit::SetFadeIn(..)
+        | Edit::SetFadeOut(..)
+        | Edit::SelectItem(..)
+        | Edit::DeselectAllItems(_)
+        | Edit::SelectAllItems(_)
+        | Edit::MoveItem(..)
+        | Edit::TrimItem(..)
+        | Edit::SplitItem(..)
+        | Edit::DeleteItem(_) => {}
         // Selection is the engine's to decide: an exclusive select
         // changes every OTHER track too, and predicting which ones
         // stop being selected would be predicting the engine's whole

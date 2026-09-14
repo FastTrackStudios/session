@@ -90,6 +90,20 @@ fn main() {
     let font = session_daw::text::Font::embedded().expect("the embedded font");
     let layout = session_daw::layout::Layout::from_env();
 
+    if let Ok(out) = std::env::var("FTS_BENCH_KIT") {
+        // The audio drum workflow: a tracked kit's mics stacked as role
+        // lanes, `FTS_BENCH_BARS` bars of hits (two hundred by default).
+        kit_shot(&palette, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
+    if let Ok(out) = std::env::var("FTS_BENCH_EXPRESSION") {
+        // The expression editor over the demo drum groove — no project
+        // needed, which is the point: the view is exercisable before
+        // a session has any MIDI in it.
+        expression_shot(&palette, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
+
     let opened = session_daw::open::open_and_serve(&path).expect("open project");
     let scene = build_scene(&palette, layout).expect("read project back");
     if std::env::var_os("FTS_BENCH_DEPTHS").is_some() {
@@ -101,6 +115,17 @@ fn main() {
         scene.rows = scene.rows,
         "benchmarking"
     );
+
+    if std::env::var_os("FTS_BENCH_STUDIO").is_some() {
+        studio(&scene, &palette, &font, layout, width, height);
+        return;
+    }
+    if let Ok(out) = std::env::var("FTS_BENCH_DOCK") {
+        // The arrangement with the editor docked under it, as the
+        // studio benchmark draws its first frame.
+        dock_shot(&scene, &palette, &font, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
 
     let mut renderer = Headless::new(width, height).expect("open a gpu device");
     // The bar grid, and the adaptive division that follows the zoom.
@@ -329,6 +354,96 @@ fn main() {
     );
 }
 
+/// How many bars of groove the synthetic kit carries.
+fn bench_bars() -> usize {
+    std::env::var("FTS_BENCH_BARS")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(200)
+}
+
+/// One frame of the stacked audio kit, to a PNG.
+///
+/// `FTS_BENCH_KIT=/tmp/kit.png`, zoomed to a four-bar page so the hits
+/// are markers on the waveforms rather than a solid bar.
+fn kit_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
+    let size = (f64::from(width), f64::from(height));
+    let mut view = session_daw::expression::Expression::audio_kit(bench_bars(), (0.0, 0.0), size);
+    view.set_look(session_daw::expression::look_of(palette));
+    view.editor.frame_bars(4);
+    view.editor.playhead = Some(view.editor.doc.time_base.units_per_second(view.editor.bpm) * 3.2);
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut buffer = Vec::new();
+    image.render_to_vec(
+        |painter| {
+            painter.reset();
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                palette.surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, size.0, size.1),
+            );
+            view.paint(painter);
+        },
+        &mut buffer,
+    );
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+    let hits: usize = (0..view.editor.tracks.len())
+        .map(|i| {
+            if i == view.editor.tracks.active() {
+                view.editor.doc.notes.len()
+            } else {
+                view.editor.tracks.doc_of(i).map_or(0, |d| d.notes.len())
+            }
+        })
+        .sum();
+    println!(
+        "  wrote {} — {} mics, {} hits over {} bars",
+        out.display(),
+        view.editor.tracks.len(),
+        hits,
+        bench_bars()
+    );
+}
+
+/// Write one frame of the expression editor to a PNG.
+///
+/// `FTS_BENCH_EXPRESSION=/tmp/expression.png`. The demo drum groove,
+/// the way `e` opens it in the window with nothing selected.
+fn expression_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
+    let size = (f64::from(width), f64::from(height));
+    let mut view = session_daw::expression::Expression::demo((0.0, 0.0), size);
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut buffer = Vec::new();
+    image.render_to_vec(
+        |painter| {
+            painter.reset();
+            painter.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                palette.surface,
+                None,
+                &vello::kurbo::Rect::new(0.0, 0.0, size.0, size.1),
+            );
+            view.paint(painter);
+        },
+        &mut buffer,
+    );
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+    println!(
+        "  wrote {} — {} hits on {} lanes",
+        out.display(),
+        view.editor.doc.notes.len(),
+        match &view.editor.row_space {
+            expression_editor_core::RowSpace::Drums(map) => map.lanes.len(),
+            _ => 0,
+        }
+    );
+}
+
 /// Write one mixer frame to a PNG.
 ///
 /// `FTS_BENCH_MIXER=/tmp/mixer.png`, with `FTS_BENCH_SCROLL=x,y` to move
@@ -438,6 +553,7 @@ fn mixer_shot(
                 let meters = session_daw::simulate::meters(i, t, tone);
                 entry.push(meters.sat_peak);
                 entry.push_fire(meters.deess_deepest());
+                entry.push_ess(meters.ess_db, meters.ess_ref_db);
                 last = Some(meters);
             }
             if let Some(meters) = last {
@@ -797,6 +913,14 @@ fn shot(
                     rail_y + RULER_H - scroll_y,
                 )) * Affine::scale_non_uniform(PPS * zoom_x, zoom_y),
             );
+            session_daw::arrangement::titles(
+                painter,
+                palette,
+                font,
+                scene,
+                view,
+                (rail_x + TCP_WIDTH - scroll_x, rail_y + RULER_H - scroll_y),
+            );
             let b = scene.replay_panel(
                 painter,
                 view,
@@ -828,6 +952,35 @@ fn shot(
                 Affine::translate((rail_x, rail_y + RULER_H - scroll_y)),
             );
             ruler::ruler(painter, palette, font, view, Bars::at(scene.bpm), (rail_x, rail_y));
+            ruler::lanes(painter, palette, font, view, (rail_x, rail_y), scene.sections(), scene.markers());
+            ruler::lane_lines(
+                painter,
+                palette,
+                view,
+                (rail_x, rail_y),
+                scene.sections(),
+                scene.markers(),
+                rail_y + RULER_H,
+                rail_y + view.height,
+            );
+            // The scrollbars, as the window draws them: the shot is
+            // compared to the screen.
+            let lanes = vello::kurbo::Rect::new(
+                rail_x + TCP_WIDTH,
+                rail_y + RULER_H,
+                rail_x + view.width,
+                rail_y + view.height,
+            );
+            let spans = (
+                (scene.length_secs * view.pps - (view.width - TCP_WIDTH)).max(1.0),
+                (scene.content_height() - (view.height - RULER_H)).max(1.0),
+            );
+            session_daw::scrollbar::draw(
+                painter,
+                palette,
+                session_daw::scrollbar::bars(lanes, (scroll_x, scroll_y), spans),
+                None,
+            );
             // The arrangement's left rail carries the same visual
             // presets the mixer's does — they are layouts of the
             // SESSION, not of one panel, so switching one switches
@@ -924,6 +1077,173 @@ fn build_scene(palette: &Palette, layout: session_daw::layout::Layout) -> Option
     ))
 }
 
+/// The mixer window as the stress tests drive it: the recorded chrome,
+/// every control changing every frame, the racks lit by a simulated
+/// signal.
+///
+/// One rig serves both the mixer-only stress test and the studio
+/// benchmark, so the two measure the same mixer.
+struct MixerRig {
+    mixer: Mixer,
+    tracks: Vec<daw_proto::Track>,
+    map: session_daw::plan::Rows,
+    settings: session_daw::tone::Store,
+    history: std::collections::HashMap<String, session_daw::tone::Levels>,
+    spectra: std::collections::HashMap<String, session_daw::tone::Analyser>,
+    pointer: session_daw::pointer::Pointer,
+    frame: session_daw::rails::Frame,
+    levels: Vec<daw_proto::TrackLevels>,
+    width: f64,
+    height: f64,
+}
+
+impl MixerRig {
+    fn new(
+        palette: &Palette,
+        font: &session_daw::text::Font,
+        layout: session_daw::layout::Layout,
+        width: u32,
+        height: u32,
+    ) -> Option<Self> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()?;
+        let project = rt.block_on(daw_ui::studio::project::fetch())?;
+        let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
+        let (visible, depths) =
+            daw_ui::components::folders::FolderState::default().visible(&project.tracks);
+        let tracks: Vec<daw_proto::Track> = visible.clone();
+        let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
+            visible.into_iter().zip(depths).collect(),
+        ));
+
+        // The rack's settings, seeded from the placeholder — see
+        // `tone::Store`. The shot and the stress test both want the
+        // same racks the window draws.
+        let mut settings = session_daw::tone::Store::default();
+        settings.seed(rows.as_slice());
+        // The reverb tails, rendered before a frame is measured: a
+        // render landing between two passes would make them differ,
+        // and the verify run compares them byte for byte.
+        settings.prerender_tails();
+        let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
+        let mixer = Mixer::build(
+            palette,
+            font,
+            &project,
+            &rows,
+            f64::from(height) - session_daw::rails::TOP,
+            layout,
+            session_daw::tone::panels_for(TONE),
+            // The racks are driven here, so they are drawn live and
+            // the recording reserves their space without filling it —
+            // which is what the window does the moment anything feeds
+            // a spectrum.
+            true,
+            session_daw::settings::Settings::default(),
+            &settings,
+        );
+        let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
+        Some(Self {
+            mixer,
+            tracks,
+            map,
+            settings,
+            history: std::collections::HashMap::new(),
+            spectra: std::collections::HashMap::new(),
+            pointer: session_daw::pointer::Pointer::default(),
+            frame,
+            levels: Vec::new(),
+            width: f64::from(width),
+            height: f64::from(height),
+        })
+    }
+
+    /// The session's state for this instant — every parameter, the
+    /// meters, and (at the engine's own rate) the racks' displays.
+    fn drive(&mut self, t: f64, frame_index: usize) {
+        // The same on every run — see `animate::drive`.
+        session_daw::animate::drive(&mut self.tracks, t);
+        // Meters arrive on their own subscription, so they are driven
+        // separately — and per frame, which is faster than the
+        // engine's pump will ever publish them.
+        self.levels = session_daw::animate::meters(self.tracks.len(), t);
+        // And the compressor's display, at the rate the ENGINE
+        // publishes meter frames — about 30 Hz — rather than at the
+        // frame rate. Everything else here is driven per frame on
+        // purpose, because a stress test should measure a case that
+        // cannot happen. This one would measure a case that cannot
+        // happen in the other direction: levels arriving faster than
+        // they are drawn, which would defeat the trace's cache and
+        // report a cost no session can produce.
+        if frame_index % 8 == 0 {
+            for (i, track) in self.tracks.iter().enumerate() {
+                let Some(tone) = self.settings.get(&track.guid) else {
+                    continue;
+                };
+                let meters = session_daw::simulate::meters(i, t * 8.0, tone);
+                let entry = self.history.entry(track.guid.clone()).or_default();
+                entry.push(meters.sat_peak);
+                entry.push_fire(meters.deess_deepest());
+                entry.push_ess(meters.ess_db, meters.ess_ref_db);
+                self.spectra
+                    .entry(track.guid.clone())
+                    .or_default()
+                    .set(meters);
+            }
+        }
+    }
+
+    /// One frame of the mixer window.
+    fn draw(
+        &mut self,
+        painter: &mut impl PaintScene,
+        palette: &Palette,
+        font: &session_daw::text::Font,
+    ) -> Counts {
+        painter.reset();
+        painter.fill(
+            vello::peniko::Fill::NonZero,
+            Affine::IDENTITY,
+            palette.surface,
+            None,
+            &vello::kurbo::Rect::new(0.0, 0.0, self.width, self.height),
+        );
+        let at = Affine::translate((session_daw::rails::SIDE, session_daw::rails::TOP));
+        // The recorded chrome, then the live values over it.
+        let a = self.mixer.replay(painter, 0.0, self.frame.content_width(), at);
+        let b = session_daw::overlay::controls(
+            painter,
+            palette,
+            font,
+            &self.mixer,
+            &self.tracks,
+            &self.map,
+            &self.pointer,
+            &self.levels,
+            &session_daw::overlay::Clips::default(),
+            0.0,
+            &mut session_daw::overlay::Racks {
+                folded: &session_daw::tone::Fold::default(),
+                settings: &self.settings,
+                history: &mut self.history,
+                spectra: &mut self.spectra,
+                lit: None,
+                panels: session_daw::tone::panels_for(TONE),
+            },
+            0.0,
+            self.frame.content_width(),
+            at,
+        );
+        Counts {
+            replayed: a.replayed + b.replayed,
+            submitted: a.submitted + b.submitted,
+            ..Counts::default()
+        }
+    }
+}
+
 /// Every parameter on every track, moving, measured.
 ///
 /// `FTS_BENCH_ANIMATE=1`. The mixer's controls are drawn live so a mute
@@ -941,57 +1261,10 @@ fn animate(
     width: u32,
     height: u32,
 ) {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("runtime");
-    let Some(project) = rt.block_on(daw_ui::studio::project::fetch()) else {
+    let Some(mut rig) = MixerRig::new(palette, font, layout, width, height) else {
         eprintln!("could not read the project back");
         return;
     };
-    let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
-    let (visible, depths) =
-        daw_ui::components::folders::FolderState::default().visible(&project.tracks);
-    let mut tracks: Vec<daw_proto::Track> = visible.clone();
-    let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
-        visible.into_iter().zip(depths).collect(),
-    ));
-
-    // The rack's settings, seeded from the placeholder — see
-    // `tone::Store`. The shot and the stress test both want the same
-    // racks the window draws.
-    let mut settings = session_daw::tone::Store::default();
-    settings.seed(rows.as_slice());
-    // The reverb tails, rendered before a frame is measured: a render
-    // landing between two passes would make them differ, and the
-    // verify run compares them byte for byte.
-    settings.prerender_tails();
-    let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
-    let mixer = Mixer::build(
-        palette,
-        font,
-        &project,
-        &rows,
-        f64::from(height) - session_daw::rails::TOP,
-        layout,
-        session_daw::tone::panels_for(TONE),
-        // The racks are driven here, so they are drawn live and the
-        // recording reserves their space without filling it — which is
-        // what the window does the moment anything feeds a spectrum.
-        true,
-        session_daw::settings::Settings::default(),
-        &settings,
-    );
-    let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
-    let mut history: std::collections::HashMap<String, session_daw::tone::Levels> =
-        std::collections::HashMap::new();
-    // The analyser's bins per track — what makes a rack MOVE, and so
-    // what makes it live rather than replayed. Driven here, because a
-    // stress test of a mixer that shows audio has to show audio.
-    let mut spectra: std::collections::HashMap<String, session_daw::tone::Analyser> =
-        std::collections::HashMap::new();
-    let pointer = session_daw::pointer::Pointer::default();
-
     let mut renderer = Headless::new(width, height).expect("a headless renderer");
     let mut stages = Stages::with_capacity(FRAMES);
     let mut counts = Counts::default();
@@ -1001,83 +1274,11 @@ fn animate(
         for step in 0..BATCH {
             let frame_index = batch * BATCH + step;
             let t = frame_index as f64 / FRAMES as f64;
-            // The session's state for this instant, the same on every
-            // run — see `animate::drive`.
-            session_daw::animate::drive(&mut tracks, t);
-            // Meters arrive on their own subscription, so they are
-            // driven separately — and per frame, which is faster than
-            // the engine's pump will ever publish them.
-            let levels = session_daw::animate::meters(tracks.len(), t);
-            // And the compressor's display, at the rate the ENGINE
-            // publishes meter frames — about 30 Hz — rather than at the
-            // frame rate.
-            //
-            // Everything else here is driven per frame on purpose,
-            // because a stress test should measure a case that cannot
-            // happen. This one would measure a case that cannot happen
-            // in the other direction: levels arriving faster than they
-            // are drawn, which would defeat the trace's cache and
-            // report a cost no session can produce. The draw still
-            // happens every frame either way.
-            if frame_index % 8 == 0 {
-                for (i, track) in tracks.iter().enumerate() {
-                    let Some(tone) = settings.get(&track.guid) else {
-                        continue;
-                    };
-                    // One simulation per track: the peak the history
-                    // takes is the peak the meters carry.
-                    let meters = session_daw::simulate::meters(i, t * 8.0, tone);
-                    let entry = history.entry(track.guid.clone()).or_default();
-                    entry.push(meters.sat_peak);
-                    entry.push_fire(meters.deess_deepest());
-                    spectra
-                        .entry(track.guid.clone())
-                        .or_default()
-                        .set(meters);
-                }
-            }
+            rig.drive(t, frame_index);
             let mut drawn = Counts::default();
             painted += renderer
                 .frame(|painter| {
-                    painter.reset();
-                    painter.fill(
-                        vello::peniko::Fill::NonZero,
-                        Affine::IDENTITY,
-                        palette.surface,
-                        None,
-                        &vello::kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
-                    );
-                    let at = Affine::translate((
-                        session_daw::rails::SIDE,
-                        session_daw::rails::TOP,
-                    ));
-                    // The recorded chrome, then the live values over it.
-                    let a = mixer.replay(painter, 0.0, frame.content_width(), at);
-                    let b = session_daw::overlay::controls(
-                        painter,
-                        palette,
-                        font,
-                        &mixer,
-                        &tracks,
-                        &map,
-                        &pointer,
-                        &levels,
-                        &session_daw::overlay::Clips::default(),
-                        0.0,
-                        &mut session_daw::overlay::Racks {
-                            folded: &session_daw::tone::Fold::default(),
-                            settings: &settings,
-                            history: &mut history,
-                            spectra: &mut spectra,
-                            lit: None,
-                            panels: session_daw::tone::panels_for(TONE),
-                        },
-                        0.0,
-                        frame.content_width(),
-                        at,
-                    );
-                    drawn.replayed = a.replayed + b.replayed;
-                    drawn.submitted = a.submitted + b.submitted;
+                    drawn = rig.draw(painter, palette, font);
                 })
                 .expect("render a frame");
             counts = drawn;
@@ -1106,9 +1307,326 @@ fn animate(
     );
     println!(
         "\n  {} strips, {} commands submitted a frame — every mute, solo, arm,",
-        mixer.count, counts.submitted
+        rig.mixer.count, counts.submitted
     );
     println!("  fader, pan and meter on every visible strip changing on every frame.");
+}
+
+/// One frame of the arrangement with the editor docked, to a PNG.
+///
+/// `FTS_BENCH_DOCK=/tmp/dock.png`. The window's own painter, with what
+/// a headless run has no pointer for left at rest.
+fn dock_shot(
+    scene: &Arrangement,
+    palette: &Palette,
+    font: &session_daw::text::Font,
+    out: &std::path::Path,
+    width: u32,
+    height: u32,
+) {
+    let (w, h) = (f64::from(width), f64::from(height));
+    let dock = (h * 0.4).max(160.0);
+    let frame = session_daw::rails::Frame::docked(w, h, dock);
+    let dock_box = frame.dock_box().expect("a dock");
+    let mut editor = session_daw::expression::Expression::demo(
+        (dock_box.x0, dock_box.y0),
+        (dock_box.width(), dock_box.height()),
+    );
+    editor.set_look(session_daw::expression::look_of(palette));
+    editor.editor.playhead = Some(editor.editor.doc.end * 0.3);
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut buffer = Vec::new();
+    image.render_to_vec(
+        |painter| {
+            let mut at_rest = AtRest::new(frame, palette);
+            at_rest.arrange(scene, font, session_daw::frame::viewport(frame, (0.0, 0.0), PPS, 1.0), Some(&mut editor)).paint(painter);
+        },
+        &mut buffer,
+    );
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+    println!("  wrote {}", out.display());
+}
+
+/// What a headless frame has instead of a window's state: no pointer,
+/// no rename, no selection, no icons — every input at rest, so the
+/// frame is the window's frame with nothing happening in it.
+struct AtRest {
+    frame: session_daw::rails::Frame,
+    grid: adaptive_grid::Adaptive,
+    rows: Vec<(daw_proto::Track, u32)>,
+    tracks: Vec<daw_proto::Track>,
+    map: session_daw::plan::Rows,
+    panel: session_daw::pointer::Pointer<session_daw::pointer::RowSpot>,
+    profile: session_daw::rails::Profile,
+    icons: session_daw::icons::Icons,
+    selected: std::collections::HashSet<String>,
+    palette: Palette,
+}
+
+impl AtRest {
+    fn new(frame: session_daw::rails::Frame, palette: &Palette) -> Self {
+        let (rows, tracks) = panel_rows();
+        let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
+        Self {
+            frame,
+            grid: adaptive_grid::Adaptive::default(),
+            rows,
+            tracks,
+            map,
+            panel: session_daw::pointer::Pointer::default(),
+            profile: session_daw::rails::profile(
+                session_daw::rails::Surface::Arrange,
+                session::modes::Mode::Mix,
+                TONE,
+                "Mix",
+                session_daw::settings::Settings::default(),
+            ),
+            icons: session_daw::icons::Icons::none(),
+            selected: std::collections::HashSet::new(),
+            palette: palette.clone(),
+        }
+    }
+
+    fn arrange<'a>(
+        &'a mut self,
+        scene: &'a Arrangement,
+        font: &'a session_daw::text::Font,
+        view: Viewport,
+        dock: Option<&'a mut session_daw::expression::Expression>,
+    ) -> session_daw::frame::Arrange<'a> {
+        session_daw::frame::Arrange {
+            scene,
+            palette: &self.palette,
+            font,
+            frame: self.frame,
+            view,
+            bars: Bars::at(scene.bpm),
+            grid: &self.grid,
+            rows: &self.rows,
+            tracks: &self.tracks,
+            map: &self.map,
+            panel: &self.panel,
+            rename: None,
+            profile: &self.profile,
+            rail_at: (None, None),
+            icons: &mut self.icons,
+            mode: session::modes::Mode::Mix,
+            play_at: 0.0,
+            edit: session_daw::cursor::Edit::default(),
+            hovered_item: None,
+            in_flight: None,
+            selected: &self.selected,
+            ghost: None,
+            scroll_bars: None,
+            bar_held: None,
+            dock,
+            zoom_box: None,
+        }
+    }
+}
+
+/// The studio: the arrangement with the expression editor docked under
+/// it on one display, the mixer on a second, every frame drawing both.
+///
+/// `FTS_BENCH_STUDIO=1`. The arrangement is `FTS_BENCH_SIZE` (5120x1440
+/// by default) and the mixer `FTS_BENCH_MIXER_SIZE` (2560x1440). The
+/// target is 240 frames a second for the pair — a budget of 4.17 ms
+/// for both windows together, since one GPU draws them in turn — and
+/// the verdict is printed against it.
+///
+/// What moves: the arrangement scrolls and zooms as the single-window
+/// phases do; the editor's playhead runs and its camera pans, which is
+/// the frame every drum edit is made on; the mixer has every control
+/// changing and every rack lit. Nothing is cached across frames that
+/// the window does not cache.
+// r[verify flow.verify.frame-rate]
+fn studio(
+    scene: &Arrangement,
+    palette: &Palette,
+    font: &session_daw::text::Font,
+    layout: session_daw::layout::Layout,
+    width: u32,
+    height: u32,
+) {
+    const BUDGET_MS: f64 = 1000.0 / 240.0;
+    let (mixer_w, mixer_h) = std::env::var("FTS_BENCH_MIXER_SIZE")
+        .ok()
+        .and_then(|s| {
+            let (w, h) = s.split_once(['x', 'X'])?;
+            Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+        })
+        .unwrap_or((2560, 1440));
+
+    let Some(mut mixer) = MixerRig::new(palette, font, layout, mixer_w, mixer_h) else {
+        eprintln!("could not read the project back");
+        return;
+    };
+    let mut arrange = Headless::new(width, height).expect("a headless renderer for the arrangement");
+    let mut mixer_gpu = Headless::new(mixer_w, mixer_h).expect("a headless renderer for the mixer");
+
+    // The dock: forty percent of the window, the editor over the demo
+    // groove inside it.
+    let (w, h) = (f64::from(width), f64::from(height));
+    let dock = (h * 0.4).max(160.0);
+    let frame = session_daw::rails::Frame::docked(w, h, dock);
+    let dock_box = frame.dock_box().expect("a dock");
+    // The audio drum workflow in the dock: the kit's mics as role
+    // lanes, a song's worth of hits, framed four bars at a time the way
+    // drums get edited — and paged through as the frames go by.
+    let bars = bench_bars();
+    let mut editor = session_daw::expression::Expression::audio_kit(
+        bars,
+        (dock_box.x0, dock_box.y0),
+        (dock_box.width(), dock_box.height()),
+    );
+    editor.set_look(session_daw::expression::look_of(palette));
+    editor.editor.frame_bars(4);
+    let doc_end = editor.editor.doc.end;
+    let mut at_rest = AtRest::new(frame, palette);
+    let span_y = (scene.content_height() - frame.content_height()).max(1.0);
+    let span_x = (scene.length_secs * PPS - frame.content_width()).max(1.0);
+    let fit = frame.content_height() / scene.content_height().max(1.0);
+
+    fn tri(t: f64) -> f64 {
+        let t = (t * 6.0) % 1.0;
+        if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 }
+    }
+    fn slow(t: f64) -> f64 {
+        let t = (t * 2.0) % 1.0;
+        if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 }
+    }
+    let phases: Vec<(&str, Gesture)> = vec![
+        ("scroll both", Box::new(|t| (tri(t), tri((t * 1.7) % 1.0), 1.0, 1.0))),
+        (
+            "zoom both",
+            Box::new(|t| (0.0, 0.3, 0.25 + slow(t) * 7.75, 0.25 + slow(t) * 3.75)),
+        ),
+        (
+            "fit whole session",
+            Box::new(move |t| (0.0, 0.0, 1.0, fit + slow(t) * (0.25 - fit))),
+        ),
+        // The zoom tool: `z` held, a press in the lanes, and the
+        // pointer drawn sideways and up in a slow figure — through the
+        // same gesture code the window runs, on the arrangement and on
+        // the docked kit at once. The gesture's own outputs are the
+        // view; this closure only says where the pointer is.
+        ("zoom tool drag", Box::new(|t| (0.0, 0.3, 1.0, 1.0))),
+    ];
+    let lanes_origin = (session_daw::rails::SIDE + TCP_WIDTH, session_daw::rails::TOP + RULER_H);
+    let press_at = (lanes_origin.0 + 600.0, lanes_origin.1 + 300.0);
+    let mut zoom_editor = session_daw::arrange_edit::Editor::default();
+
+    println!();
+    println!("  studio        arrangement {width}x{height} with the editor docked ({dock:.0}px),");
+    println!("                mixer {mixer_w}x{mixer_h} on a second display, both every frame");
+    println!(
+        "  scene         {} rows, {} items; {} strips; a {bars}-bar kit in the dock",
+        scene.rows,
+        scene.items(),
+        mixer.mixer.count
+    );
+    println!("  frames        {FRAMES} per phase, batches of {BATCH}, waited on once per batch");
+    println!("  target        240 Hz — {BUDGET_MS:.2} ms for both windows together\n");
+    println!(
+        "  {:<20} {:>9} {:>9} {:>9} {:>9}   {:>7} {:>7}",
+        "phase", "mean", "p99", "worst", "fps(p99)", "paint", "gpu"
+    );
+    println!("  {}", "-".repeat(78));
+
+    let mut worst_p99 = 0.0_f64;
+    let mut worst_name = "";
+    for (name, gesture) in &phases {
+        let mut stages = Stages::with_capacity(FRAMES);
+        for batch in 0..FRAMES / BATCH {
+            let batch_start = Instant::now();
+            let mut painted = 0.0;
+            for step in 0..BATCH {
+                let frame_index = batch * BATCH + step;
+                let t = frame_index as f64 / FRAMES as f64;
+                let (fx, fy, zx, zy) = gesture(t);
+                let (scroll_x, scroll_y) = (span_x * fx, span_y * fy);
+                let mut view = session_daw::frame::viewport(frame, (scroll_x, scroll_y), PPS * zx, zy);
+                editor.editor.playhead = Some(t * doc_end);
+                if *name == "zoom tool drag" {
+                    // The pointer's path: out to the right and up over
+                    // the phase, back, and again — a slow figure, so the
+                    // zoom sweeps its range rather than jumping.
+                    let travel = (tri(t / 3.0) - 0.5) * 2.0;
+                    let at = (press_at.0 + travel * 300.0, press_at.1 - travel * 150.0);
+                    let base = session_daw::frame::viewport(frame, (span_x * 0.2, span_y * 0.3), PPS, 1.0);
+                    if frame_index == 0 {
+                        zoom_editor.zoom_press(press_at, &base, lanes_origin, Default::default());
+                        editor.key("z", Default::default());
+                        editor.press(
+                            dock_box.x0 + 400.0,
+                            dock_box.y0 + 26.0 + 120.0,
+                            Default::default(),
+                            0,
+                        );
+                    }
+                    if let Some(next) = zoom_editor.zoom_move(at, &base, lanes_origin, Default::default()) {
+                        view = next;
+                        view.scroll_x = view.scroll_x.clamp(0.0, span_x);
+                        view.scroll_y = view.scroll_y.clamp(0.0, span_y);
+                    }
+                    // The same drag on the docked kit, through its own
+                    // zoom tool.
+                    editor.moved(
+                        dock_box.x0 + 400.0 + travel * 300.0,
+                        dock_box.y0 + 26.0 + 120.0 - travel * 60.0,
+                        Default::default(),
+                    );
+                } else {
+                    // The playhead across the song, the camera following
+                    // it a page at a time — the hits scroll past, and
+                    // every frame is a fresh page of markers.
+                    editor.editor.pan_px(-2.0, 0.0);
+                }
+
+                painted += arrange
+                    .frame(|painter| {
+                        let mut drawn = at_rest.arrange(scene, font, view, Some(&mut editor));
+                        drawn.play_at = t * scene.length_secs;
+                        drawn.paint(painter);
+                    })
+                    .expect("render the arrangement");
+                mixer.drive(t, frame_index);
+                painted += mixer_gpu
+                    .frame(|painter| {
+                        mixer.draw(painter, palette, font);
+                    })
+                    .expect("render the mixer");
+            }
+            arrange.wait().expect("the gpu to finish the arrangement batch");
+            mixer_gpu.wait().expect("the gpu to finish the mixer batch");
+            let per_frame = batch_start.elapsed().as_secs_f64() * 1000.0 / BATCH as f64;
+            stages.frame.push_ms(per_frame);
+            stages.paint.push_ms(painted / BATCH as f64);
+        }
+        stages.frame.drop_warmup(1);
+        stages.paint.drop_warmup(1);
+        let frame = stages.frame.summary().expect("batches");
+        let paint = stages.paint.summary().expect("batches");
+        println!(
+            "  {name:<20} {:>7.2}ms {:>7.2}ms {:>7.2}ms {:>9.0}   {:>7.2} {:>7.2}",
+            frame.mean,
+            frame.p99,
+            frame.worst,
+            frame.fps(),
+            paint.mean,
+            (frame.mean - paint.mean).max(0.0),
+        );
+        if frame.p99 > worst_p99 {
+            worst_p99 = frame.p99;
+            worst_name = name;
+        }
+    }
+    let verdict = if worst_p99 <= BUDGET_MS { "PASS" } else { "FAIL" };
+    println!(
+        "\n  240 Hz {verdict}: worst gesture {worst_name} at {worst_p99:.2} ms p99 — headroom {:.2}x\n",
+        BUDGET_MS / worst_p99.max(0.001)
+    );
 }
 
 /// The visible rows and their tracks, for the panel's live controls.

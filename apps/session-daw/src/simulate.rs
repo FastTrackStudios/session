@@ -152,6 +152,15 @@ pub fn frame(track: usize, seconds: f64) -> Frame {
 /// Offset per track by an irrational-ish step so no two tracks land on
 /// the same beat — a mixer where every meter jumps together is one
 /// gradient, and the thing being looked at is how tracks differ.
+/// The level of a track's audio at a moment, linear 0..1 — what an
+/// item's waveform is drawn from until peaks stream in from the
+/// engine. The same envelope the meters run on, so the picture in
+/// the lane and the meter on the strip agree.
+#[must_use]
+pub fn waveform(track: usize, seconds: f64) -> f64 {
+    envelope(Voice::of(track), track, seconds)
+}
+
 fn envelope(voice: Voice, track: usize, seconds: f64) -> f64 {
     let period = 1.0 / voice.rate();
     let offset = crate::num::coord(track) * 0.6180339887 * period;
@@ -274,7 +283,6 @@ pub fn meters(track: usize, seconds: f64, tone: &crate::tone::Tone) -> Meters {
     // averages out and the resonances stay, which is the point of the
     // settled curve — and it is one spectrum, not eight: this runs for
     // every track every meter frame, and the bench counts it.
-    let settled_spectrum = settled(voice);
     // The wet returns: what the delay and reverb are putting out is
     // what went in earlier, scaled by how much of it survives. A
     // repeat is the peak one delay time ago times the feedback, and so
@@ -302,11 +310,12 @@ pub fn meters(track: usize, seconds: f64, tone: &crate::tone::Tone) -> Meters {
         }
         crate::mcp::f64_to_f32(wet * f64::from(tone.reverb.mix.clamp(0.0, 1.0)))
     };
+    let (ess_db, ess_ref_db) = band_levels(&now.spectrum, tone.de_ess);
     Meters {
         sat_peak: now.peak,
         deess_db: suppression(&now.spectrum, tone.de_ess),
-        resonance_db: suppression(&now.spectrum, tone.resonance),
-        resonance_settled_db: suppression(&settled_spectrum, tone.resonance),
+        ess_db,
+        ess_ref_db,
         delay_wet,
         reverb_wet,
         spectrum: now.spectrum,
@@ -327,30 +336,22 @@ fn bin_hz() -> &'static [f64; BINS] {
     })
 }
 
-/// A voice's long-term spectrum, built once.
-///
-/// It depends on the voice alone — the shimmer averages out and the
-/// envelope is taken at its mean — so there are four of them in the
-/// whole simulation, and building one per track per meter frame was
-/// most of what the bench charged the rack for.
-fn settled(voice: Voice) -> Vec<f32> {
-    thread_local! {
-        static SETTLED: std::cell::RefCell<[Option<Vec<f32>>; 4]> =
-            const { std::cell::RefCell::new([None, None, None, None]) };
+/// The de-esser's band as two numbers: the peak inside it, and the
+/// average of the octave either side of it — what the peak is judged
+/// against. The trace in the strip is these two over time.
+fn band_levels(spectrum: &[f32], set: crate::tone::Suppress) -> (f32, f32) {
+    let (low, high) = (f64::from(set.low), f64::from(set.high));
+    let mut peak = -60.0_f32;
+    let (mut sum, mut count) = (0.0_f64, 0.0_f64);
+    for (hz, db) in bin_hz().iter().zip(spectrum) {
+        if (low..=high).contains(hz) {
+            peak = peak.max(*db);
+        } else if (low / 2.0..high * 2.0).contains(hz) {
+            sum += f64::from(*db);
+            count += 1.0;
+        }
     }
-    let slot = match voice {
-        Voice::Low => 0,
-        Voice::Mid => 1,
-        Voice::High => 2,
-        Voice::Broad => 3,
-    };
-    SETTLED.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        cache
-            .get_mut(slot)
-            .map(|entry| entry.get_or_insert_with(|| spectrum_with(voice, 0.35, None)).clone())
-            .unwrap_or_default()
-    })
+    (peak, crate::mcp::f64_to_f32(sum / count.max(1.0)))
 }
 
 /// The suppressor's rule, applied to a spectrum: how much comes off
@@ -524,7 +525,6 @@ mod tests {
         let m = meters(2, 1.25, &tone);
         assert_eq!(m.spectrum.len(), BINS);
         assert_eq!(m.deess_db.len(), BINS);
-        assert!(m.resonance_settled_db.len() == BINS);
         let ess = crate::tone::Suppress::sibilance();
         let high = suppression(&frame(2, 1.25).spectrum, ess);
         let low = suppression(&frame(0, 1.25).spectrum, ess);

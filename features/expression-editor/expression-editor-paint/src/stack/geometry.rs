@@ -4,7 +4,32 @@ use crate::theme;
 use expression_editor_core::doc::{ExpressionDoc, Note};
 use expression_editor_core::{Editor, Mode, kit, rows::RowSpace, tracks::StackRow};
 const LANE_PAD: f64 = 3.0;
+/// How far past the view a hit is still laid out — the painter's own
+/// margin, so a marker sliding in from the edge is already there.
+const HIT_MARGIN_PX: f64 = 96.0;
 const FIT_PAD: f64 = 1.0;
+/// A closed polygon in lane space — a waveform's outline, top edge
+/// left to right then bottom edge back.
+///
+/// Points, not the `"x,y x,y"` string they used to be: the painter
+/// turned that string straight back into numbers, twice per lane per
+/// frame, and a renderer that wants the attribute formats it once.
+pub type Polygon = Vec<(f64, f64)>;
+
+/// The svg `points` attribute for a polygon.
+#[must_use]
+pub fn points_attr(polygon: &[(f64, f64)]) -> String {
+    let mut s = String::with_capacity(polygon.len().saturating_mul(12));
+    for (i, (x, y)) in polygon.iter().enumerate() {
+        if i > 0 {
+            s.push(' ');
+        }
+        use std::fmt::Write as _;
+        let _ = write!(s, "{x:.1},{y:.1}");
+    }
+    s
+}
+
 /// One track's lane in the stack.
 pub struct LaneView {
     /// Index into the workspace.
@@ -31,8 +56,12 @@ pub struct LaneView {
     /// Labels down the left edge, paired with their y.
     pub labels: Vec<(f64, String)>,
     /// Whether this lane is a folded role lane (kick, snare, toms,
-    /// other) — the lanes whose hits take the slip drag.
+    /// other).
     pub is_role: bool,
+    /// Whether hits are detected and edited on this lane — kick,
+    /// snare and toms. The other lane is context and takes no hit
+    /// gesture.
+    pub detects: bool,
     /// The role's hue, when the lane has one — the drum map's kit
     /// palette, tinting waveform, hits and label alike so the lane
     /// reads as one thing.
@@ -49,11 +78,11 @@ pub struct LaneView {
     /// mirrored polygon points — the same shape
     /// [`crate::canvas::take_waveform`] builds for the roll. `None` when the
     /// lane has no role, no members with peaks, or splits its members.
-    pub waveform: Option<String>,
+    pub waveform: Option<Polygon>,
     /// Trigger tracks drawn over `waveform` in the same space, rather
     /// than averaged into it. Empty for a split lane, whose triggers
     /// ride on their own tom's sub-row instead.
-    pub overlays: Vec<String>,
+    pub overlays: Vec<Polygon>,
     /// One sub-row per member for a split role lane (toms). Empty
     /// otherwise.
     pub sub_lanes: Vec<SubLane>,
@@ -67,10 +96,10 @@ pub struct LaneView {
 /// One member's sub-row inside a split role lane (toms).
 pub struct SubLane {
     /// The member's own waveform polygon, if it carries peaks.
-    pub points: Option<String>,
+    pub points: Option<Polygon>,
     /// Triggers drawn over this member in the same space — a trigger is
     /// the same drum sensed a second way, not another drum.
-    pub overlays: Vec<String>,
+    pub overlays: Vec<Polygon>,
     /// The member track's name, drawn small in the gutter.
     pub label: String,
     /// Baseline y of that label, in viewport pixels.
@@ -128,9 +157,9 @@ pub fn ruler_height(ed: &Editor) -> f64 {
 /// project with a single lane of chrome renders identically to how it
 /// always did; extra shelves grow the ruler rather than shrinking each
 /// other into illegibility.
-pub(super) const CHROME_ROW_H: f64 = 15.0;
+pub const CHROME_ROW_H: f64 = 15.0;
 /// Height of the tick/timecode strip below the shelves.
-pub(super) const RULER_TICKS_H: f64 = 13.0;
+pub const RULER_TICKS_H: f64 = 13.0;
 
 /// A note as it appears in a lane.
 pub struct LaneNote {
@@ -242,7 +271,17 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
         };
         let member_active = i == ed.tracks.active();
         let from = notes.len();
-        notes.extend(member_doc.notes.iter().map(|n| {
+        // Only what can be seen, plus the margin the painter draws
+        // past the edges. A song's worth of hits is thousands of
+        // notes, and at a four-bar zoom a hundred of them are on
+        // screen; converting the rest was most of the frame.
+        let (t0, t1) = ed.camera.time_span(ed.viewport);
+        let margin = HIT_MARGIN_PX * ed.camera.units_per_px;
+        let in_view = |n: &&Note| {
+            to_editor_time(ed, member_doc, n.end) >= t0 - margin
+                && to_editor_time(ed, member_doc, n.start) <= t1 + margin
+        };
+        notes.extend(member_doc.notes.iter().filter(in_view).map(|n| {
             lane_note(
                 ed,
                 member_doc,
@@ -300,7 +339,7 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
     };
 
     let mut waveform = None;
-    let mut overlays: Vec<String> = Vec::new();
+    let mut overlays: Vec<Polygon> = Vec::new();
     let mut sub_lanes = Vec::new();
     let mut sub_dividers = Vec::new();
     if let Some((v0, v1)) = view_span_secs(ed) {
@@ -505,6 +544,7 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
         two_handed_row,
         split,
         is_role: role.is_some(),
+        detects: role.is_some_and(kit::LaneRole::detects),
         role_color: role.map(|r| r.color()),
         lane: row.lane,
         members: members
@@ -659,7 +699,7 @@ fn doc_for(ed: &Editor, i: usize) -> Option<&ExpressionDoc> {
 /// Seconds for the same reason [`to_editor_time`] goes through them:
 /// each member's peaks are indexed in its *own* document's units, and
 /// seconds are the one base they all share.
-pub(super) fn view_span_secs(ed: &Editor) -> Option<(f64, f64)> {
+pub fn view_span_secs(ed: &Editor) -> Option<(f64, f64)> {
     let (t0, t1) = ed.camera.time_span(ed.viewport);
     let ups = ed.doc.time_base.units_per_second(ed.bpm);
     if ups.abs() < 1e-9 {

@@ -429,6 +429,11 @@ impl Mixer {
             let column = tone_settings.get(&track.guid).is_some_and(crate::tone::Tone::wants_column);
             columns.push(column);
             labels.push(fit_name(font, track, w, &ancestor_names));
+            // A folder with nothing under it in the rows is folded: the
+            // rows are what the folder state left, so the next row not
+            // being deeper is the fold.
+            let collapsed =
+                track.is_folder && rows.get(ordinal.saturating_add(1)).is_none_or(|(_, next)| usize::try_from(*next).unwrap_or(0) <= depth);
             strip(
                 &mut strips,
                 palette,
@@ -442,6 +447,7 @@ impl Mixer {
                     rack_h,
                     mixer_h: height,
                     column,
+                    collapsed,
                 },
                 rack,
                 // A track with no settings yet gets none drawn rather
@@ -605,15 +611,19 @@ struct Slot {
     mixer_h: f64,
     /// Whether the track wants the column layout when focused.
     column: bool,
+    /// Whether the track is a folder whose rows are folded away.
+    collapsed: bool,
 }
 
 /// How much of the panel the REAPER strip keeps, with the rack on.
 ///
-/// About a third, off the bottom. The rack gets the other two thirds to
-/// lay its panels out in, and leaves whatever it does not need — that
-/// space belongs to the processors the other phases bring, and holding
-/// it open is what keeps the fader still when the phase changes.
-const CONTROL_SHARE: f64 = 0.34;
+/// Two fifths, off the bottom. The rack gets the rest to lay its
+/// panels out in, and leaves whatever it does not need — that space
+/// belongs to the processors the other phases bring, and holding it
+/// open is what keeps the fader still when the phase changes. It was
+/// a third; the rack scrolls, the fader does not, and a tall window
+/// was spending its height on the part that had somewhere else to go.
+const CONTROL_SHARE: f64 = 0.40;
 
 /// The least the strip may be squeezed to.
 ///
@@ -652,6 +662,11 @@ pub enum Control {
     /// clear, and the band falls through to the fader underneath it so
     /// the strip behaves exactly as it would without a latch.
     Clip,
+    /// The fold at the foot of a folder's strip — clicked to collapse
+    /// the folder to one strip, or open it again. Only a target on a
+    /// folder; the rect is there on every strip because geometry is
+    /// worked out without knowing what the track is.
+    Folder,
 }
 
 impl Control {
@@ -863,19 +878,18 @@ fn strip(
     let chrome_w = geometry.chrome_width();
 
     // The strip's ground, and the track's colour as a band across it.
-    fill(scene, palette.tcp_tint, Rect::new(x, 0.0, x + w, h));
+    fill(scene, strip_ground(palette, track), Rect::new(x, 0.0, x + w, h));
     // And the track's colour as a rule up the strip's whole left edge,
     // top to bottom. The rack is tall and the coloured band is a
     // strip's height down; between two racks there was nothing to say
     // where one track ends and the next begins. One pixel, always
     // there, in the colour the strip is read by.
-    fill(
-        scene,
-        // The track's colour itself, not the band's muted tint of it:
-        // two pixels have to carry the colour on their own.
-        crate::tcp::track_color(palette, track),
-        Rect::new(x, 0.0, x + STRIP_EDGE, h),
-    );
+    // The track's colour itself by default, not the band's muted tint
+    // of it: one pixel has to carry the colour on its own. The tint,
+    // or nothing, when the mixer is set that way — see `layout::Wash`.
+    if let Some(edge) = wash(crate::layout::strip_edge(), palette, track) {
+        fill(scene, edge, Rect::new(x, 0.0, x + STRIP_EDGE, h));
+    }
 
     // ── The folders this strip sits inside ──
     //
@@ -979,6 +993,7 @@ fn strip(
             // live: a strip whose rack the overlay draws is the one
             // that answers to it. See `overlay::Racks::folded`.
             crate::tone::Folded::rest(),
+            rack_ground(palette, track),
         );
         scene.pop_layer();
     }
@@ -997,6 +1012,7 @@ fn strip(
             rack_h,
             mixer_h: slot.mixer_h,
             column: slot.column,
+            collapsed: slot.collapsed,
         },
         (band_top, pan_band, input_band),
         &shape,
@@ -1007,7 +1023,36 @@ fn strip(
     // it are placed against it.
     let _ = stretch_h;
 
-    bottom(scene, palette, font, track, x, chrome_w, h);
+    bottom(scene, palette, font, track, x, chrome_w, h, slot.collapsed);
+}
+
+/// What the rack paints under its chain's end: the track's colour when
+/// the mixer is set to fill the rack that way, else nothing.
+///
+/// One answer for the recording and the live pass, so a rack that
+/// starts moving does not change colour under its chain.
+#[must_use]
+pub fn rack_ground(palette: &Palette, track: &Track) -> Option<Color> {
+    wash(crate::layout::rack_fill(), palette, track)
+}
+
+/// The strip's ground: the panel's grey, or the track's wash when the
+/// mixer is set to paint the strip in it — the FX section, the space
+/// beside the fader, all of it, so the strip is one surface with its
+/// band and its rack.
+#[must_use]
+pub fn strip_ground(palette: &Palette, track: &Track) -> Color {
+    wash(crate::layout::strip_fill(), palette, track).unwrap_or(palette.tcp_tint)
+}
+
+/// A wash setting as a colour for this track: nothing, the band's
+/// tint, or the track's own colour.
+fn wash(wash: crate::layout::Wash, palette: &Palette, track: &Track) -> Option<Color> {
+    match wash {
+        crate::layout::Wash::Off => None,
+        crate::layout::Wash::Tint => Some(crate::tcp::row_tint(palette, track)),
+        crate::layout::Wash::Full => Some(crate::tcp::track_color(palette, track)),
+    }
 }
 
 /// The coloured band: pan, the record input, and the arm hanging off its
@@ -1211,8 +1256,8 @@ fn bottom(
     x: f64,
     w: f64,
     h: f64,
+    collapsed: bool,
 ) {
-
     // The number sits on the track's own colour, in a band exactly one
     // indent step tall.
     //
@@ -1256,7 +1301,30 @@ fn bottom(
         number_top + (number_h + f64::from(NUMBER_SIZE) * 0.72) / 2.0,
         NUMBER_SIZE,
     );
+    // A folder's fold, at the left of the band: a chevron pointing
+    // down into its open rows, or right at the rows it is holding
+    // shut. See `Control::Folder`.
+    if track.is_folder {
+        let cx = x + f64::from(FOLD_W) / 2.0;
+        let cy = number_top + number_h / 2.0;
+        let arm = 3.0;
+        let mut path = vello::kurbo::BezPath::new();
+        if collapsed {
+            path.move_to((cx - arm * 0.6, cy - arm));
+            path.line_to((cx + arm * 0.6, cy));
+            path.line_to((cx - arm * 0.6, cy + arm));
+        } else {
+            path.move_to((cx - arm, cy - arm * 0.6));
+            path.line_to((cx, cy + arm * 0.6));
+            path.line_to((cx + arm, cy - arm * 0.6));
+        }
+        path.close_path();
+        scene.fill(Fill::NonZero, vello::kurbo::Affine::IDENTITY, palette.text_dim, None, &path);
+    }
 }
+
+/// How wide the fold target at the foot of a folder's strip is.
+pub const FOLD_W: u32 = 14;
 
 /// How big the track number under a strip is drawn.
 const NUMBER_SIZE: f32 = 9.0;

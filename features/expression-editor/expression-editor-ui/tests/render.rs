@@ -130,7 +130,7 @@ fn every_note_reaches_the_canvas() {
     let notes = ed.doc.notes.len();
     let mut labels = expression_editor_ui::text::Labeller::new();
 
-    let with_notes = paint::roll_scene(&ed, 900.0, 480.0, &paint::Overlay::default(), &mut labels)
+    let with_notes = paint::roll_scene(&ed, 900.0, 480.0, &paint::Overlay::default(), &mut labels, &paint::Look::default())
         .commands
         .len();
 
@@ -146,6 +146,7 @@ fn every_note_reaches_the_canvas() {
         480.0,
         &paint::Overlay::default(),
         &mut labels,
+        &paint::Look::default(),
     )
     .commands
     .len();
@@ -189,7 +190,7 @@ fn zone_structure_is_drawn_and_reported() {
 
     let mut labels = expression_editor_ui::text::Labeller::new();
     let mut commands = |ed| {
-        paint::roll_scene(&ed, 900.0, 480.0, &paint::Overlay::default(), &mut labels)
+        paint::roll_scene(&ed, 900.0, 480.0, &paint::Overlay::default(), &mut labels, &paint::Look::default())
             .commands
             .len()
     };

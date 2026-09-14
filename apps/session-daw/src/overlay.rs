@@ -171,14 +171,15 @@ pub fn control(
             }
         }
         Control::Monitor => {
-            if let Some((x, y)) = at(Control::Monitor) {
+            if let Some((x, y)) = at(Control::Monitor).filter(|_| track.armed) {
                 crate::art::place(
                     &mut scene,
                     &art::monitor(
                         &palette.chrome,
                         monitoring(track),
-                        crate::tcp::lit(palette).rec,
+                        monitor_lit(palette, monitoring(track)),
                         state,
+                        art::Facing::Up,
                     ),
                     font,
                     x,
@@ -195,7 +196,7 @@ pub fn control(
                     track.armed,
                     state,
                     strip.arm(),
-                    crate::tcp::to_theme(palette.tcp_tint),
+                    crate::tcp::to_theme(crate::mcp::strip_ground(palette, track)),
                 ),
                 font,
                 at(Control::RecArm).map_or(left, |(x, _)| x),
@@ -233,7 +234,7 @@ pub fn control(
         // Nor does the clip latch: it is drawn by the meter, which
         // knows whether it is lit, and a hover cell for it here would
         // be a second opinion about that.
-        Control::Volume | Control::Name | Control::Routing | Control::Clip => {}
+        Control::Volume | Control::Name | Control::Routing | Control::Clip | Control::Folder => {}
     }
 
     for command in &scene.commands {
@@ -699,6 +700,22 @@ pub fn controls(
             mixer.buttons_top,
             mixer.height,
         );
+        // The racks of the strips that are not selected, darkened —
+        // over the recording and everything live on it, so the
+        // selected one's is the bright one. The rack only: the strip's
+        // own controls are the mixer's grey already and stay readable
+        // across every track. A setting, and off when the mixer has no
+        // selection at all: then there is nothing to be brighter than.
+        let dim = crate::layout::dim_unselected();
+        if dim > 0.0 && mixer.rack_h > 0.0 && !track.selected && live.any_selected(tracks) {
+            scene.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                vello::peniko::Color::from_rgba8(0, 0, 0, 0xff).multiply_alpha(dim),
+                None,
+                &vello::kurbo::Rect::new(left, 0.0, left + strip_w, mixer.rack_h),
+            );
+        }
     }
     for command in &scene.commands {
         counts.replayed = counts.replayed.saturating_add(1);
@@ -815,7 +832,7 @@ fn draw_strip_controls(
                 track.armed,
                 state(Control::RecArm),
                 strip.arm(),
-                crate::tcp::to_theme(palette.tcp_tint),
+                crate::tcp::to_theme(crate::mcp::strip_ground(palette, track)),
             ),
             font,
             x,
@@ -823,17 +840,24 @@ fn draw_strip_controls(
         );
     }
 
-    // Input monitoring, directly under the arm — REAPER stacks the two
-    // because they are one decision made twice: what the track records,
-    // and whether you hear it while it does.
-    if let Some((x, y)) = at(Control::Monitor) {
+    // Input monitoring, directly OVER the arm, in the band — the two
+    // are one decision made twice, what the track records and whether
+    // you hear it while it does, so they stack; and over rather than
+    // under so the column below the arm is mute, solo, routing with
+    // no gap where a lamp is not lit.
+    //
+    // Only on an armed track: monitoring is a fact about recording,
+    // and a lamp for it on a track that is not recording is a lamp
+    // with nothing to report.
+    if let Some((x, y)) = at(Control::Monitor).filter(|_| track.armed) {
         crate::art::place(
             scene,
             &art::monitor(
                 &palette.chrome,
                 monitoring(track),
-                crate::tcp::lit(palette).rec,
+                monitor_lit(palette, monitoring(track)),
                 state(Control::Monitor),
+                art::Facing::Up,
             ),
             font,
             x,
@@ -882,7 +906,18 @@ fn draw_strip_controls(
         let at = crate::tone::Panel::of(box_, left).up(scroll);
         let paint = |meters: &crate::live::Meters| {
             let mut rack = anyrender::Scene::new();
-            crate::tone::draw(&mut rack, palette, font, tone, meters, tone.panels(panels), at, folded, lit);
+            crate::tone::draw(
+                &mut rack,
+                palette,
+                font,
+                tone,
+                meters,
+                tone.panels(panels),
+                at,
+                folded,
+                lit,
+                crate::mcp::rack_ground(palette, track),
+            );
             rack
         };
         match spectrum {
@@ -1179,6 +1214,28 @@ mod clip_tests {
 /// Mapped here so the drawing does not have to know what a `daw_proto`
 /// track is — the art speaks in what it draws, not in what the engine
 /// calls it.
+/// The colour the monitor lamp lights in.
+///
+/// Not the arm's red: the arm already says "recording", and a second
+/// red lamp under it read as a second arm. Through is a light grey —
+/// a lamp that is on — and the tape-style mode, which is the one you
+/// set deliberately, is the one that gets a colour.
+fn monitor_lit(palette: &Palette, mode: art::Monitoring) -> daw_theme::Color {
+    match mode {
+        art::Monitoring::NotWhenPlaying => TAPE,
+        art::Monitoring::Off | art::Monitoring::Normal => crate::tcp::to_theme(palette.text),
+    }
+}
+
+/// The tape-style monitoring colour: an orange, so it is neither the
+/// arm's red nor the grey of monitoring straight through.
+const TAPE: daw_theme::Color = daw_theme::Color {
+    r: 0xf0,
+    g: 0x8c,
+    b: 0x2e,
+    a: 0xff,
+};
+
 fn monitoring(track: &Track) -> art::Monitoring {
     use daw_proto::track::InputMonitoringMode as M;
     match track.input_monitor {
@@ -1362,12 +1419,16 @@ pub fn panel_controls(
             (C::Solo, "S", live.soloed, crate::tcp::solo_lit(palette)),
         ] {
             let Some(r) = row.rect(control) else { continue };
-            crate::art::place(
+            // Flattened to the rect on a row too short for the full
+            // button — the row's shape says how tall, not the art.
+            crate::art::squashed(
                 &mut out,
                 &art::gutter_button(&palette.chrome, label, on, lit, look(control)),
                 font,
                 r.x0,
                 r.y0,
+                1.0,
+                (r.height() / crate::tcp::BUTTON.1).min(1.0),
             );
         }
 

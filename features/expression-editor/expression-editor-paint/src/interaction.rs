@@ -445,6 +445,12 @@ pub fn context_at(ed: &Editor, x: f64, y: f64) -> Context {
     }
     match ed.hit_test(x, y) {
         Hit::ZoneSplit { .. } => Context::ZoneSplit,
+        // A drum hit is a head, not a bar: it has an onset and no
+        // length worth resizing, and at a few pixels wide it is *all*
+        // edge zone. Every gesture on it is a gesture on the note —
+        // otherwise a right-click on a hit pans, because the edge row
+        // of the map has nothing for it.
+        Hit::NoteEdge { .. } if ed.mode == Mode::Drums => Context::Note,
         Hit::NoteEdge { .. } => Context::NoteEdge,
         Hit::Note { .. } | Hit::CurvePoint { .. } => Context::Note,
         Hit::Empty { .. } => Context::PianoRoll,
@@ -2530,7 +2536,7 @@ pub fn apply_shape(ed: &mut Editor, drag: &Drag, shape: Shape) {
 /// raw delta moved the view a few pixels a notch and read as broken.
 /// Tuned by hand at the window rather than derived: the units differ per
 /// platform and input device, so there is no figure to compute.
-pub(crate) const PAN_GAIN: f64 = 140.0;
+pub const PAN_GAIN: f64 = 140.0;
 
 /// Wheel travel that doubles the zoom, near enough.
 ///
@@ -2538,7 +2544,7 @@ pub(crate) const PAN_GAIN: f64 = 140.0;
 /// zoom a percent or two, because winit's delta for one notch is around
 /// 1 rather than the ~100 px a browser reports — so the useful divisor
 /// is single digits, not hundreds.
-pub(crate) const ZOOM_DIVISOR: f64 = 3.0;
+pub const ZOOM_DIVISOR: f64 = 3.0;
 
 /// Wheel/trackpad routing. `(dx, dy)` are the raw deltas.
 ///

@@ -88,7 +88,13 @@ pub struct Tone {
     pub sat_digital: saturate_dsp::digital::DigitalStage,
     /// Polish.
     pub de_ess: Suppress,
-    pub resonance: Suppress,
+    /// The Polish EQ: the narrow, surgical cuts — the resonances a room
+    /// or a body puts in — as bands on the same graph the Tone EQ has,
+    /// with the same spectral bands. It was a suppressor of its own,
+    /// finding them by comparing the spectrum with its own average;
+    /// the EQ's spectral bands do the same job, on a graph you can
+    /// already read.
+    pub polish_eq: Vec<EqBand>,
     /// Relational.
     pub space: Vec<EqBand>,
     /// Depth.
@@ -158,6 +164,18 @@ pub enum Role {
     Fund,
     /// A trigger: a spike track for a sampler, with nothing on it yet.
     Trig,
+    /// One half of a stereo pair. The pair's folder is the instrument
+    /// and carries the processing; a half is almost never processed on
+    /// its own, so it gets nothing.
+    Half,
+    /// A parallel compressor: fed the kit, crushed, blended back under
+    /// it. Its compressor first, an EQ to shape what comes back, and
+    /// a saturator for the ones that are meant to crunch.
+    Parallel,
+    /// The dry member of a parallel group: the kit as it is, with an
+    /// EQ and nothing that changes its dynamics — it is what the
+    /// others are balanced against.
+    Dry,
 }
 
 impl Role {
@@ -169,6 +187,11 @@ impl Role {
             return Self::Bus;
         }
         let lower = name.to_lowercase();
+        // A bus that is a leaf — the three electric-guitar buses, a
+        // stem bus with nothing under it yet — is still a bus.
+        if lower.ends_with(" bus") || lower.starts_with("gtr ") {
+            return Self::Bus;
+        }
         if lower.starts_with("wide") || lower.starts_with("widen") {
             return Self::Wide;
         }
@@ -178,7 +201,7 @@ impl Role {
         // A piece's own sends and helpers, wherever they sit: its verb
         // is a reverb return, and its fundamental, its sub and its
         // trigger are the one-note tracks.
-        if lower == "verb" || lower == "reverb" {
+        if lower == "verb" || lower == "reverb" || lower.starts_with("room sim") {
             return Self::Reverb;
         }
         if lower == "delay" {
@@ -187,22 +210,42 @@ impl Role {
         if lower == "fund" || lower == "sub" {
             return Self::Fund;
         }
+        if lower == "dry" {
+            return Self::Dry;
+        }
         if lower.ends_with("trig") {
             return Self::Trig;
+        }
+        if is_pair_half(name) {
+            return Self::Half;
         }
         for folder in ancestors.iter().rev() {
             let folder = folder.to_lowercase();
             if folder.starts_with("delay") {
                 return Self::Delay;
             }
-            if folder.starts_with("verb") || folder.starts_with("reverb") {
+            if folder.starts_with("verb")
+                || folder.starts_with("reverb")
+                || folder.starts_with("ambience")
+                || folder.starts_with("plate")
+                || folder.starts_with("hall")
+                || folder.starts_with("spring")
+            {
                 return Self::Reverb;
+            }
+            // Movement — chorus, flanger — has no face of its own yet;
+            // the widener's is the nearest picture, and it stands in.
+            if folder.starts_with("mod") || folder.starts_with("chorus") {
+                return Self::Wide;
             }
             if folder.starts_with("pitch") {
                 return Self::Pitch;
             }
             if folder.starts_with("wide") {
                 return Self::Wide;
+            }
+            if folder.starts_with("compress") {
+                return Self::Parallel;
             }
         }
         Self::Channel
@@ -219,7 +262,9 @@ impl Role {
             Self::Wide => Some(&WIDE_CHAIN),
             Self::Pitch => Some(&PITCH_CHAIN),
             Self::Fund => Some(&FUND_CHAIN),
-            Self::Trig => Some(&[]),
+            Self::Trig | Self::Half => Some(&[]),
+            Self::Parallel => Some(&PARALLEL_CHAIN),
+            Self::Dry => Some(&DRY_CHAIN),
         }
     }
 }
@@ -248,6 +293,13 @@ pub const REVERB_CHAIN: [Which; 7] = [
 
 /// A bus: what it sums is processed elsewhere.
 pub const BUS_CHAIN: [Which; 2] = [Which::Eq, Which::Comp];
+
+/// A parallel compressor's chain: the compressor is the point, then
+/// what shapes the return, then what dirties it.
+pub const PARALLEL_CHAIN: [Which; 4] = [Which::Presets, Which::Comp, Which::Eq, Which::Sat];
+
+/// The dry member's chain: an EQ, and nothing that touches dynamics.
+pub const DRY_CHAIN: [Which; 1] = [Which::Eq];
 
 pub const WIDE_CHAIN: [Which; 2] = [Which::Presets, Which::Wide];
 pub const PITCH_CHAIN: [Which; 2] = [Which::Presets, Which::Pitch];
@@ -304,6 +356,7 @@ impl Tone {
             Which::PreEq => Some(&mut self.pre_eq),
             Which::PostEq => Some(&mut self.post_eq),
             Which::DecayEq => Some(&mut self.decay_eq),
+            Which::PolishEq => Some(&mut self.polish_eq),
             _ => None,
         }
     }
@@ -350,6 +403,7 @@ impl Tone {
             Which::PreEq => &self.pre_eq,
             Which::PostEq => &self.post_eq,
             Which::DecayEq => &self.decay_eq,
+            Which::PolishEq => &self.polish_eq,
             _ => &self.eq,
         }
     }
@@ -443,7 +497,6 @@ impl Tone {
     pub const fn suppressor(&mut self, which: Which) -> Option<&mut Suppress> {
         match which {
             Which::DeEss | Which::DeEssIn => Some(&mut self.de_ess),
-            Which::Resonance => Some(&mut self.resonance),
             _ => None,
         }
     }
@@ -470,7 +523,6 @@ impl Tone {
             // A suppressor's threshold is how far ABOVE its own average
             // a peak has to stand, so its range is small and positive.
             Which::DeEss | Which::DeEssIn => Some((self.de_ess.threshold, 0.0, 24.0)),
-            Which::Resonance => Some((self.resonance.threshold, 0.0, 24.0)),
             _ => None,
         }
     }
@@ -492,7 +544,6 @@ impl Tone {
             Which::Comp => self.comp.threshold = to,
             Which::Gate => self.gate.threshold = to,
             Which::DeEss | Which::DeEssIn => self.de_ess.threshold = to,
-            Which::Resonance => self.resonance.threshold = to,
             _ => {}
         }
     }
@@ -1273,8 +1324,27 @@ impl Fold {
 pub enum Row {
     /// The container's bar: its name and the chevron that folds it.
     Head(session::mix_phases::MixPhase),
+    /// A phase this chain has no units for, kept as a bar so the
+    /// phases after it land where they land on every other strip.
+    Blank(session::mix_phases::MixPhase),
     Unit(Which),
 }
+
+/// The phases a rack is divided into, in signal order.
+///
+/// Every rack that starts where a channel's does has all five: a
+/// phase with no units is a [`Row::Blank`] bar the height of a header,
+/// which is what keeps a bus's Tone level with a channel's — a rack
+/// that only had the phases it used put every unit at a different
+/// height on every strip. A chain that is only the late phases (a
+/// return) has nothing to line up with and gets only what it has.
+pub const RACK_PHASES: [session::mix_phases::MixPhase; 5] = [
+    session::mix_phases::MixPhase::Rescue,
+    session::mix_phases::MixPhase::Tone,
+    session::mix_phases::MixPhase::Polish,
+    session::mix_phases::MixPhase::Relational,
+    session::mix_phases::MixPhase::Depth,
+];
 
 /// How tall a phase header is.
 pub const HEAD_H: f64 = 15.0;
@@ -1298,7 +1368,7 @@ pub const ALL_PANELS: [Which; 11] = [
     Which::Comp,
     Which::Sat,
     Which::DeEss,
-    Which::Resonance,
+    Which::PolishEq,
     Which::Space,
     Which::Delay,
     Which::Reverb,
@@ -1326,8 +1396,9 @@ pub fn record(
     panels: &[Which],
     panel: Panel,
     folded: Folded,
+    under: Option<Color>,
 ) {
-    draw(scene, palette, font, tone, &Meters::default(), panels, panel, folded, None);
+    draw(scene, palette, font, tone, &Meters::default(), panels, panel, folded, None, under);
 }
 
 /// The same, with one grip lit.
@@ -1351,10 +1422,30 @@ pub fn draw(
     panel: Panel,
     folded: Folded,
     lit: Option<Grip>,
+    // What to paint under the chain's end, when the rack's box is
+    // taller than the chain — the track's colour, if the mixer is set
+    // to (see `layout::rack_fill`); nothing, and the panel's
+    // ground shows, otherwise. Here rather than in either caller,
+    // because the recording and the live pass both draw the rack and
+    // whichever one is on top has to paint it.
+    under: Option<Color>,
 ) {
     let rack = Rack::at(panel.width);
     if !rack.on() || panel.height < 24.0 || panels.is_empty() {
         return;
+    }
+    if let Some(under) = under {
+        // From the chain's end down past the box: the caller clips to
+        // the box, and the panel may be scrolled up by an amount only
+        // the caller knows.
+        let top = panel.y + tall(panels, folded);
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            under,
+            None,
+            &Rect::new(panel.x, top, panel.x + panel.width, panel.y + panel.height * 2.0),
+        );
     }
     // A rail: the same chain, the same rows at the same heights as the
     // strip beside it — so every compressor sits on one line across
@@ -1364,17 +1455,24 @@ pub fn draw(
     if rack == Rack::Minimal {
         for (row, at) in chain(panels, panel, folded) {
             let Row::Unit(which) = row else {
-                let Row::Head(phase) = row else { continue };
+                // A blank phase is the same tick, faint: the phase is
+                // still there in the order, it just has nothing in it.
+                let (phase, tint) = match row {
+                    Row::Head(phase) => (phase, phase_tint(phase)),
+                    Row::Blank(phase) => (phase, phase_tint(phase).multiply_alpha(BLANK_ALPHA)),
+                    Row::Unit(_) => continue,
+                };
+                let _ = phase;
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
-                    phase_tint(phase),
+                    tint,
                     None,
                     &Rect::new(at.x, at.y + 3.0, at.x + 2.0, at.y + at.height - 3.0),
                 );
                 continue;
             };
-            minimal(scene, palette, font, tone, meters, which, at.inset(1.0));
+            minimal(scene, palette, font, tone, meters, which, at.inset(1.0), rack);
             if tone.bypass.is(which) {
                 scene.fill(
                     Fill::NonZero,
@@ -1390,8 +1488,11 @@ pub fn draw(
 
     for (row, at) in chain(panels, panel, folded) {
         let Row::Unit(which) = row else {
-            let Row::Head(phase) = row else { continue };
-            container(scene, palette, font, phase, at, folded.is(phase), lit);
+            match row {
+                Row::Head(phase) => container(scene, palette, font, phase, at, folded.is(phase), lit),
+                Row::Blank(phase) => blank(scene, palette, font, phase, at),
+                Row::Unit(_) => {}
+            }
             continue;
         };
         if which == Which::Presets {
@@ -1400,9 +1501,11 @@ pub fn draw(
         }
         ground(scene, palette, at);
         let inner = at.inset(2.0);
-        // The header is only taken at `Full`. At `Curves` the panel is
-        // a shape and nothing else fits; giving up a tenth of its
-        // height for a number nobody can read would cost the shape too.
+        // The header is taken at EVERY tier the row is tall enough for,
+        // and says only the name where the value will not fit. It was
+        // skipped at `Curves`, which moved the display up by its height
+        // on a strip a few pixels narrower than its neighbour — and
+        // the compressors across the mixer stopped sitting on one line.
         let body = body_of(at, rack);
         let head = (body.y > inner.y).then(|| inner.split_top(HEAD).0);
         if body.width > 0.0 && body.height > 0.0 {
@@ -1410,7 +1513,7 @@ pub fn draw(
                 // The three EQs are one drawing over three band sets.
                 // What differs is what the bands are FOR, which is the
                 // panel's name and not its picture.
-                Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq => {
+                Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::PolishEq => {
                     eq(scene, palette, font, tone, which, tone.bands_ref(which), &meters.spectrum, body, rack, lit, None);
                 }
                 // Blue, because the vertical axis is not gain: it is
@@ -1433,9 +1536,6 @@ pub fn draw(
                 }
                 Which::DeEss | Which::DeEssIn => {
                     suppress(scene, palette, which, tone.de_ess, meters, body, rack, lit);
-                }
-                Which::Resonance => {
-                    suppress(scene, palette, which, tone.resonance, meters, body, rack, lit);
                 }
                 Which::Delay => {
                     echo(scene, palette, tone.delay, meters, display_of(body, which, rack), rack, lit);
@@ -1513,7 +1613,7 @@ pub fn units(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Which, Pane
         .into_iter()
         .filter_map(|(row, at)| match row {
             Row::Unit(which) => Some((which, at)),
-            Row::Head(_) => None,
+            Row::Head(_) | Row::Blank(_) => None,
         })
         .collect()
 }
@@ -1525,9 +1625,13 @@ pub fn units(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Which, Pane
 /// built on, applied down instead of across.
 #[must_use]
 pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)> {
-    let mut out = Vec::with_capacity(panels.len() + 5);
+    let mut out = Vec::with_capacity(panels.len() + RACK_PHASES.len());
+    // No chain, no rack: a track that carries nothing gets no bars
+    // either, blank or otherwise.
+    if panels.is_empty() {
+        return out;
+    }
     let mut y = panel.y;
-    let mut phase = None;
     let row = |y: f64, height: f64| Panel {
         x: panel.x,
         y,
@@ -1535,28 +1639,47 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
         height,
     };
     let tier = Rack::at(panel.width);
-    for which in panels.iter().copied() {
-        // The preset row is in no phase: it caps the chain, and folds
-        // with nothing.
-        if which == Which::Presets {
-            out.push((Row::Unit(which), row(y, which.natural())));
-            y += which.natural() + GAP;
+    // The preset row is in no phase: it caps the chain, and folds with
+    // nothing.
+    for which in panels.iter().copied().filter(|which| *which == Which::Presets) {
+        out.push((Row::Unit(which), row(y, which.natural())));
+        y += which.natural() + GAP;
+    }
+    // Every phase in order. A phase with units gets a header and the
+    // units under it — the chain's ORDER does the grouping, so a
+    // container is a run of them. On a chain that starts where a
+    // channel's does, a phase without units gets a blank bar the same
+    // height, so what follows it sits where it sits on a strip that
+    // has the phase. A chain that is only the late phases — a return,
+    // which is nothing but Depth — has no channel to line up with,
+    // and four bars of nothing over it would say it was missing
+    // something it was never going to have.
+    let level = panels
+        .iter()
+        .any(|which| matches!(which.phase(), session::mix_phases::MixPhase::Rescue | session::mix_phases::MixPhase::Tone));
+    for phase in RACK_PHASES {
+        let mut units = panels
+            .iter()
+            .copied()
+            .filter(|which| *which != Which::Presets && which.phase() == phase)
+            .peekable();
+        if units.peek().is_none() {
+            if level {
+                out.push((Row::Blank(phase), row(y, HEAD_H)));
+                y += HEAD_H;
+            }
             continue;
         }
-        // A header whenever the phase changes, which is what makes the
-        // chain's ORDER do the grouping: the units are already in phase
-        // order, so a container is a run of them.
-        if phase != Some(which.phase()) {
-            phase = Some(which.phase());
-            out.push((Row::Head(which.phase()), row(y, HEAD_H)));
-            y += HEAD_H;
-        }
-        if folded.is(which.phase()) {
+        out.push((Row::Head(phase), row(y, HEAD_H)));
+        y += HEAD_H;
+        if folded.is(phase) {
             continue;
         }
-        let height = which.natural_at(tier);
-        out.push((Row::Unit(which), row(y, height)));
-        y += height + GAP;
+        for which in units {
+            let height = which.natural_at(tier);
+            out.push((Row::Unit(which), row(y, height)));
+            y += height + GAP;
+        }
     }
     out
 }
@@ -1591,8 +1714,14 @@ pub fn tall(panels: &[Which], folded: Folded) -> f64 {
 /// measured against the body.
 #[must_use]
 pub fn body_of(at: Panel, rack: Rack) -> Panel {
+    // The header is taken at every tier — the same rows at the same
+    // heights across the mixer, so a display's top edge is one line
+    // whatever each strip's width — and only when the row can spare
+    // it. `rack` used to decide; now it is the caller's tier for the
+    // record, and the height decides.
+    let _ = rack;
     let inner = at.inset(2.0);
-    if rack.detailed() && inner.height > HEAD * 2.0 {
+    if inner.height > HEAD * 2.0 {
         inner.split_top(HEAD).1
     } else {
         inner
@@ -1622,8 +1751,8 @@ pub enum Which {
     /// Sibilance, dynamically.
     DeEss,
     /// And every other resonance — the narrow peaks a room or a body
-    /// puts in, found by comparing the spectrum with its own average.
-    Resonance,
+    /// puts in — as surgical bands on the EQ's own graph.
+    PolishEq,
 
     // ── Relational: make it sit with the others ──────────────────────
     /// The EQ that is not about this track: it carves the room another
@@ -1671,7 +1800,7 @@ impl Which {
             Self::Comp => "COMP",
             Self::Sat => "SAT",
             Self::DeEss | Self::DeEssIn => "DE-ESS",
-            Self::Resonance => "RESONANCE",
+            Self::PolishEq => "POLISH EQ",
             Self::Space => "SPACE",
             Self::Delay => "DELAY",
             Self::Reverb => "REVERB",
@@ -1696,7 +1825,7 @@ impl Which {
         match self {
             Self::RescueEq | Self::Gate | Self::RescueComp => P::Rescue,
             Self::Eq | Self::Comp | Self::Sat => P::Tone,
-            Self::DeEss | Self::Resonance => P::Polish,
+            Self::DeEss | Self::PolishEq => P::Polish,
             Self::Space => P::Relational,
             // Every part of an FX return is Depth — the return is where
             // a track is put, front to back — including the de-esser on
@@ -1730,7 +1859,7 @@ impl Which {
                 | Self::Space
                 | Self::DeEss
                 | Self::DeEssIn
-                | Self::Resonance
+                | Self::PolishEq
                 | Self::PreEq
                 | Self::PostEq
                 | Self::DecayEq
@@ -1773,6 +1902,7 @@ impl Which {
         match self {
             Self::RescueEq => curve(&tone.rescue_eq),
             Self::Eq => curve(&tone.eq),
+            Self::PolishEq => curve(&tone.polish_eq),
             Self::Space => curve(&tone.space),
             Self::PreEq => curve(&tone.pre_eq),
             Self::PostEq => curve(&tone.post_eq),
@@ -1805,7 +1935,6 @@ impl Which {
                 format!("x{:.1} · 2nd {even:.0}%", tone.sat.drive)
             }
             Self::DeEss | Self::DeEssIn => suppression(tone.de_ess),
-            Self::Resonance => suppression(tone.resonance),
             Self::Delay => {
                 let head = format!("{} · {:.0}%", millis(tone.delay.time), tone.delay.feedback * 100.0);
                 if rack.editing() {
@@ -1852,23 +1981,16 @@ impl Which {
 
     /// How tall this panel is at a given rack tier.
     ///
-    /// The natural height at every tier but focus. A focused rack is a
-    /// column the height of the mixer, and the pictures that are time —
-    /// the delay's repeats, the reverb's tail — earn more of it: at a
-    /// hundred pixels tall and four hundred wide they read as a strip
-    /// under a selector rather than as the visualiser they are.
+    /// The natural height at every tier. A focused rack used to give
+    /// the pictures that are time — the delay's repeats, the reverb's
+    /// tail — twice the height, and the saturator half again; that
+    /// put a focused return's rows at different heights from the same
+    /// rows on the return beside it, and the mixer is read across.
+    /// Height is a fact about the unit, not about how wide it is.
     #[must_use]
     pub const fn natural_at(self, rack: Rack) -> f64 {
-        let base = self.natural();
-        if !rack.editing() {
-            return base;
-        }
-        match self {
-            Self::Delay | Self::Reverb => base * 2.2,
-            Self::Sat => base * 1.4,
-            Self::Wide | Self::Pitch => base * 1.6,
-            _ => base,
-        }
+        let _ = rack;
+        self.natural()
     }
 
     /// How tall this panel wants to be, in pixels.
@@ -1886,7 +2008,7 @@ impl Which {
             // Two axes to read, and the panels where extra height buys
             // resolution rather than air: a 3 dB decision and a 12 dB
             // one have to look different.
-            Self::RescueEq | Self::Eq | Self::Space | Self::PreEq | Self::PostEq => 175.0,
+            Self::RescueEq | Self::Eq | Self::Space | Self::PreEq | Self::PostEq | Self::PolishEq => 175.0,
             // Time over frequency: the same graph, read as a rate.
             Self::DecayEq => 150.0,
             // A row of five knobs and their legends.
@@ -1899,7 +2021,7 @@ impl Which {
             // The suppressors are a spectrum and a cut hanging off it —
             // shorter than an EQ, because there is one curve to read
             // rather than a curve against a grid of decisions.
-            Self::DeEss | Self::DeEssIn | Self::Resonance => 130.0,
+            Self::DeEss | Self::DeEssIn => 130.0,
             // One display, with the envelope drawn into it. Taller than
             // the saturator because the levels in it are read against a
             // threshold, and a threshold you cannot place precisely is
@@ -2001,6 +2123,39 @@ fn container(
     let base = if shut { cy - arm * 0.6 } else { cy + arm * 0.6 };
     rule_wide(scene, ink, Line::new((cx - arm, base), (cx, tip)), 1.4);
     rule_wide(scene, ink, Line::new((cx, tip), (cx + arm, base)), 1.4);
+}
+
+/// How faint a blank phase is drawn against a real one.
+const BLANK_ALPHA: f32 = 0.35;
+
+/// A phase this chain has nothing in: the container's bar, faint, with
+/// no chevron — there is nothing to fold. It holds the row so the
+/// phases under it line up with the strips beside it.
+fn blank(scene: &mut Scene, palette: &Palette, font: &Font, phase: session::mix_phases::MixPhase, at: Panel) {
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        palette.tcp_meter_well.multiply_alpha(0.5),
+        None,
+        &at.rect(),
+    );
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        phase_tint(phase).multiply_alpha(BLANK_ALPHA),
+        None,
+        &Rect::new(at.x, at.y, at.x + 2.0, at.y + at.height),
+    );
+    const SIZE: f32 = 8.0;
+    crate::tcp::glyphs(
+        scene,
+        font,
+        palette.text_faint.multiply_alpha(BLANK_ALPHA),
+        phase.display_name(),
+        at.x + 6.0,
+        at.y + at.height - 4.0,
+        SIZE,
+    );
 }
 
 /// A panel's well — darker than the strip, so the rack reads as inset
@@ -2415,16 +2570,19 @@ fn comp(
         Line::new((at.x, y), (right, y)),
         if held { 2.5 } else { 1.5 },
     );
-    // A grab tab at the right end, so there is something to aim at on a
-    // line that is otherwise one pixel tall.
+    // A tab at the right end while the line is HELD, so the drag has
+    // something under it. Not at rest: the whole display is the
+    // threshold's target (see `comp_grip`), so there is nothing to
+    // aim at — and a knob on the line's end, where the ratio's arrow
+    // used to hang, read as the arrow still being there.
     if rack.detailed() {
-        let r = if held { HANDLE + 1.6 } else { HANDLE };
-        dot(scene, red, (right - r - 1.0, y), r);
+        if held {
+            dot(scene, red, (right - HANDLE - 2.6, y), HANDLE + 1.6);
+        }
         // And the settings themselves, as the reduction they produce —
         // outlined over the live one, in the same axes.
-        envelope(scene, comp, at, lit);
+        envelope(scene, font, comp, at, lit);
     }
-    let _ = font;
 }
 
 /// Where the threshold line sits in a compressor display.
@@ -2439,22 +2597,21 @@ fn threshold_y(comp: Comp, at: Panel) -> f64 {
 
 /// The compressor's settings, drawn on the display they act in.
 ///
-/// Three strips, one instrument. The RATIO stands in the bottom-left
-/// corner, up the rail from the floor — 1:1 at its top, 20:1 at the
-/// floor, the default at the centre tick — pulled down for more,
-/// because down is the direction the signal goes. The two TIMES run along the floor — attack over
-/// release, fast at the left and slow at the right, the default dead
-/// centre. Each is a marker on a two-sided scale with the fill running
-/// from the tick to the marker, so a departure from the default is a
-/// bar in the direction it departed. They were an arrow and two ramps
-/// once; a ramp's slope is a poor readout of a millisecond, an arrow's
-/// length a poor readout of a ratio, and a marker on a scale is what
-/// both have always been read off.
-fn envelope(scene: &mut Scene, comp: Comp, at: Panel, lit: Option<Grip>) {
+/// Two strips and an arrow. The RATIO is an arrow down from the
+/// threshold line near the left edge, as far as the ratio would take
+/// a full-scale signal, with the number at its tip — pulled down for
+/// more, because down is the direction the signal goes. The two TIMES
+/// run along the floor — attack over release, FAST at the left and
+/// SLOW at the right, the default dead centre. Each is a marker on a
+/// two-sided scale with the fill running from the tick to the marker,
+/// so a departure from the default is a bar in the direction it
+/// departed.
+fn envelope(scene: &mut Scene, font: &Font, comp: Comp, at: Panel, lit: Option<Grip>) {
     let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
     if let Some(strips) = Strips::of(at) {
-        strips.draw(scene, comp, red, lit);
+        strips.draw(scene, font, comp, red, lit);
     }
+    Arrow::of(comp, at).draw(scene, font, comp, red, matches!(lit, Some(Grip::Ratio(_))));
 }
 
 /// The column the ratio's strip lives in, at the display's left edge.
@@ -2536,41 +2693,102 @@ impl Time {
 pub struct Strips {
     pub attack: Rect,
     pub release: Rect,
-    /// Up the left rail: 1:1 at the top, 20:1 at the floor.
-    pub ratio: Rect,
+}
+
+/// The ratio's arrow: down from the threshold line, near the left
+/// edge, as far as the ratio would take a full-scale signal.
+///
+/// Back from a strip up the rail: the arrow hangs off the line it
+/// acts on, so it is read against the threshold and not against a
+/// scale of its own. Near the LEFT edge so a hand aiming at the line
+/// — which is the whole display — does not land on it, and clear of
+/// where the line's right end used to carry it.
+#[derive(Clone, Copy, Debug)]
+pub struct Arrow {
+    pub x: f64,
+    pub top: f64,
+    pub tip: f64,
+}
+
+/// How far in from the display's left edge the arrow hangs.
+const ARROW_X: f64 = 14.0;
+
+/// The number at the arrow's tip, and the words at the strips' ends.
+const TINY: f32 = 6.0;
+
+impl Arrow {
+    #[must_use]
+    pub fn of(comp: Comp, at: Panel) -> Self {
+        let top = threshold_y(comp, at);
+        let floor = at.y + at.height - STRIPS_H;
+        Self {
+            x: at.x + ARROW_X,
+            top,
+            tip: (top + ratio_drop(comp, at.height)).min(floor.max(top)),
+        }
+    }
+
+    fn draw(self, scene: &mut Scene, font: &Font, comp: Comp, ink: Color, held: bool) {
+        let ink = if held { ink } else { ink.multiply_alpha(0.85) };
+        rule_wide(scene, ink, Line::new((self.x, self.top), (self.x, self.tip)), if held { 2.0 } else { 1.2 });
+        let head = 3.0;
+        let mut path = BezPath::new();
+        path.move_to((self.x - head, self.tip - head * 1.6));
+        path.line_to((self.x + head, self.tip - head * 1.6));
+        path.line_to((self.x, self.tip));
+        path.close_path();
+        scene.fill(Fill::NonZero, Affine::IDENTITY, ink, None, &path);
+        // The number, tiny, beside the tip: 4:1 is what the arrow says,
+        // and the arrow's length says it only roughly.
+        let ratio = f64::from(comp.ratio);
+        let label = if (ratio - ratio.round()).abs() < 0.05 {
+            format!("{ratio:.0}:1")
+        } else {
+            format!("{ratio:.1}:1")
+        };
+        crate::tcp::glyphs(scene, font, ink, &label, self.x + head + 2.0, self.tip + 1.0, TINY);
+    }
+
+    fn holds(self, x: f64, y: f64) -> bool {
+        near_segment((x, y), (self.x, self.top), (self.x, self.tip.max(self.top + 6.0))) <= GRAB
+    }
 }
 
 /// How tall one strip is.
 const STRIP_H: f64 = 5.0;
+
+/// The letter at a time strip's right end, and the room kept for it.
+const STRIP_LABEL_SIZE: f32 = 7.0;
+const STRIP_LABEL_W: f64 = 8.0;
+
+/// The row over the strips where FAST and SLOW sit, so the strips
+/// keep the whole width for their travel.
+const STRIP_WORDS_H: f64 = 7.0;
 
 /// The gap between the two, and under the lower one.
 const STRIP_GAP: f64 = 4.0;
 
 /// How tall the pair takes, with their gaps: what the live trace under
 /// them is clear of.
-pub const STRIPS_H: f64 = STRIP_H * 2.0 + STRIP_GAP * 3.0;
+pub const STRIPS_H: f64 = STRIP_H * 2.0 + STRIP_GAP * 3.0 + STRIP_WORDS_H;
 
 impl Strips {
     /// The two strips for a display, or `None` when there is no room
     /// for a marker to travel.
     #[must_use]
     pub fn of(at: Panel) -> Option<Self> {
-        if at.width < 40.0 || at.height < 40.0 {
+        if at.width < 70.0 || at.height < 40.0 {
             return None;
         }
-        // Clear of the arrow's rail, so the two never cross it.
-        let left = at.x + RAIL + 3.0;
-        let right = at.x + at.width - 3.0;
+        // The whole width but the letter at the right: the direction
+        // words sit in their own row above, so the travel is as long
+        // as the display is wide.
+        let left = at.x + 3.0;
+        let right = at.x + at.width - 3.0 - STRIP_LABEL_W;
         let floor = at.y + at.height - STRIP_GAP;
         let release = Rect::new(left, floor - STRIP_H, right, floor);
         let attack = Rect::new(left, release.y0 - STRIP_GAP - STRIP_H, right, release.y0 - STRIP_GAP);
-        // The ratio's strip stands on the floor in the bottom-left
-        // corner, beside the time strips' left ends, and rises to just
-        // under half the display: the three controls share one corner,
-        // and the rest of the display is the threshold's.
-        let rail_x = at.x + (RAIL - STRIP_H) / 2.0;
-        let ratio = Rect::new(rail_x, floor - at.height * 0.45, rail_x + STRIP_H, floor);
-        Some(Self { attack, release, ratio })
+        Some(Self { attack, release })
     }
 
     /// Where a time's marker sits on its strip: fast at the left, slow
@@ -2579,44 +2797,49 @@ impl Strips {
         (time.place().mul_add(strip.width(), strip.x0), strip.center().y)
     }
 
-    fn draw(self, scene: &mut Scene, comp: Comp, ink: Color, lit: Option<Grip>) {
-        for (strip, grip, time) in [
-            (self.attack, Grip::Attack(Which::Comp), Time::attack(comp.attack)),
-            (self.release, Grip::Release(Which::Comp), Time::release(comp.release)),
+    fn draw(self, scene: &mut Scene, font: &Font, comp: Comp, ink: Color, lit: Option<Grip>) {
+        // FAST and SLOW once each, in the row over the strips at their
+        // two ends: the direction is the same for both, so it is said
+        // once, and above rather than beside so the strips keep the
+        // width.
+        let over = self.attack.y0 - STRIP_GAP + 1.0;
+        let words = ink.multiply_alpha(0.6);
+        crate::tcp::glyphs(scene, font, words, "FAST", self.attack.x0, over, TINY);
+        let slow_w = f64::from(font.width("SLOW", TINY));
+        crate::tcp::glyphs(scene, font, words, "SLOW", self.attack.x1 - slow_w, over, TINY);
+        for (strip, grip, time, label) in [
+            (self.attack, Grip::Attack(Which::Comp), Time::attack(comp.attack), "A"),
+            (self.release, Grip::Release(Which::Comp), Time::release(comp.release), "R"),
         ] {
             let held = lit == Some(grip);
+            // Its letter at the right end, so the two are told apart
+            // without reading the header.
+            crate::tcp::glyphs(
+                scene,
+                font,
+                ink.multiply_alpha(if held { 1.0 } else { 0.7 }),
+                label,
+                strip.x1 + 3.0,
+                strip.y1 + 1.0,
+                STRIP_LABEL_SIZE,
+            );
             // The track, a tick at the default, and the travel filled
             // from the default to the marker — so a departure from the
             // default is a bar in the direction it departed.
-            scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.18), None, &strip.to_rounded_rect(2.0));
+            scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.28), None, &strip.to_rounded_rect(2.0));
             let centre = strip.center().x;
             rule(scene, ink.multiply_alpha(0.6), Line::new((centre, strip.y0 - 1.5), (centre, strip.y1 + 1.5)));
             let (x, y) = Self::marker(strip, time);
             scene.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
-                ink.multiply_alpha(if held { 0.7 } else { 0.45 }),
+                ink.multiply_alpha(if held { 0.8 } else { 0.55 }),
                 None,
                 &Rect::new(centre.min(x), strip.y0, centre.max(x), strip.y1).to_rounded_rect(2.0),
             );
             dot(scene, ink, (x, y), if held { HANDLE + 1.4 } else { HANDLE });
         }
-        // The ratio, the same way, turned upright: the marker sits at
-        // the strip's place down from the top.
-        let strip = self.ratio;
-        let held = lit == Some(Grip::Ratio(Which::Comp));
-        scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.18), None, &strip.to_rounded_rect(2.0));
-        let centre = strip.center().y;
-        rule(scene, ink.multiply_alpha(0.6), Line::new((strip.x0 - 1.5, centre), (strip.x1 + 1.5, centre)));
-        let y = Time::ratio(comp.ratio).place().mul_add(strip.height(), strip.y0);
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            ink.multiply_alpha(if held { 0.7 } else { 0.45 }),
-            None,
-            &Rect::new(strip.x0, centre.min(y), strip.x1, centre.max(y)).to_rounded_rect(2.0),
-        );
-        dot(scene, ink, (strip.center().x, y), if held { HANDLE + 1.4 } else { HANDLE });
+        let _ = comp;
     }
 
     /// Which strip a point is on, if any — the whole strip, not just
@@ -2625,15 +2848,10 @@ impl Strips {
         let reach = |strip: Rect| {
             x >= strip.x0 - GRAB && x <= strip.x1 + GRAB && y >= strip.y0 - GRAB / 2.0 && y <= strip.y1 + GRAB / 2.0
         };
-        let upright = |strip: Rect| {
-            x >= strip.x0 - GRAB / 2.0 && x <= strip.x1 + GRAB / 2.0 && y >= strip.y0 - GRAB && y <= strip.y1 + GRAB
-        };
         if reach(self.attack) {
             Some(Grip::Attack(Which::Comp))
         } else if reach(self.release) {
             Some(Grip::Release(Which::Comp))
-        } else if upright(self.ratio) {
-            Some(Grip::Ratio(Which::Comp))
         } else {
             None
         }
@@ -2824,12 +3042,6 @@ pub const SELECTOR: f64 = 16.0;
 /// How wide one chip of the selector is.
 pub const CHIP: f64 = 14.0;
 
-/// How tall the comb under a resonance suppressor is.
-///
-/// The teeth hang below the spectrum's floor by their settled depth;
-/// this is the depth a six-decibel notch reaches.
-pub const TEETH: f64 = 20.0;
-
 /// The part of a body a unit's main display occupies.
 ///
 /// Three units keep a strip along the bottom for a second picture —
@@ -2844,16 +3056,23 @@ pub const fn display_of(body: Panel, which: Which, rack: Rack) -> Panel {
         return body;
     }
     let keep = match which {
-        Which::Gate | Which::DeEss | Which::DeEssIn => LANE + 2.0,
+        Which::Gate => LANE + 2.0,
+        // The de-esser's strip is OVER its display: the band it
+        // watches, then what happened in it.
+        Which::DeEss | Which::DeEssIn => BAND_STRIP + 2.0,
         Which::Sat | Which::Delay | Which::Reverb => SELECTOR + 2.0,
-        Which::Resonance => TEETH + 2.0,
         _ => 0.0,
     };
+    let over = matches!(which, Which::DeEss | Which::DeEssIn);
     Panel {
+        y: if over { body.y + keep } else { body.y },
         height: body.height - keep,
         ..body
     }
 }
+
+/// How tall the de-esser's band strip is.
+pub const BAND_STRIP: f64 = 18.0;
 
 /// The lane under a unit's display, if it has one at this width.
 #[must_use]
@@ -2862,6 +3081,13 @@ pub const fn lane_of(body: Panel, which: Which, rack: Rack) -> Option<Panel> {
     if display.height >= body.height {
         return None;
     }
+    if matches!(which, Which::DeEss | Which::DeEssIn) {
+        return Some(Panel {
+            y: body.y,
+            height: BAND_STRIP,
+            ..body
+        });
+    }
     Some(Panel {
         y: display.y + display.height + 2.0,
         height: body.height - display.height - 2.0,
@@ -2869,25 +3095,18 @@ pub const fn lane_of(body: Panel, which: Which, rack: Rack) -> Option<Panel> {
     })
 }
 
-/// A spectral suppressor: what is there, and what it is taking out of
-/// it — in place, at the frequency it happens.
+/// The de-esser: the band it watches, and what happened in it.
 ///
-/// Two units, one engine, two questions. The de-esser is an event
-/// detector — it fires on an "s" and lets go — so its identity is the
-/// fire lane under the display, a strip of time (see [`levels`]). The
-/// resonance suppressor finds what is ALWAYS there, so its identity is
-/// the comb below the floor: the engine's settled reduction, one tooth
-/// per notch, at the frequency it lives. Same spectrum, same ribbon,
-/// and you cannot mistake one panel for the other.
-///
-/// The reduction is the engine's own per-bin gain, arriving in
-/// `meters`, not something worked out here from the spectrum: the
-/// density, tilt and gate rules live in the plugin, and a second copy
-/// of them would drift. What IS worked out here is the reference line
-/// — the neighbourhood average the threshold stands above — because
-/// that is the picture of a SETTING, and dragging it is how the
-/// threshold is set.
-#[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
+/// Two pictures. A strip along the top is the top end of the spectrum
+/// — 800 Hz to the ceiling — with the band as a wash between its two
+/// edges, so where it is looking is the first thing read. Under it
+/// the display is TIME: the band's level as a trace, the reference
+/// it is judged against dashed over it, and what came off the top
+/// lit in the panel's colour where it came off — drawn in the live
+/// pass from the level history (see `lanes`), because it moves with
+/// the audio. It was a spectrum with a ribbon hanging off it, which
+/// was a compressor's picture drawn sideways and told you neither
+/// when it fired nor how hard.
 fn suppress(
     scene: &mut Scene,
     palette: &Palette,
@@ -2898,142 +3117,64 @@ fn suppress(
     rack: Rack,
     lit: Option<Grip>,
 ) {
-    let full_body = at;
-    let at = display_of(at, which, rack);
-    let bottom = at.y + at.height;
-    let zoom = SuppressZoom::of(set);
+    let body = at;
+    let at = display_of(body, which, rack);
+    let ink = DEESS_INK;
 
-    // The band it actually acts in, marked on the axis rather than as a
-    // wash over the panel: the shoulders are context, the band is the
-    // subject. Drawn before the spectrum so they can be seen through
-    // it, and drawn even with nothing playing, because they are the
-    // setting.
+    // The ladder the trace is read against.
     if rack.detailed() {
-        for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
-            let x = zoom.x_of(hz, at);
-            let held = lit == Some(Grip::Edge(which, side));
-            rule_wide(
-                scene,
-                if held { palette.text } else { palette.grid_beat },
-                Line::new((x, at.y), (x, bottom)),
-                if held { 1.8 } else { 1.0 },
-            );
+        for db in [-12.0, -24.0] {
+            let y = suppress_y(db, at);
+            rule(scene, palette.grid_beat, Line::new((at.x, y), (at.x + at.width, y)));
         }
     }
 
-    let spectrum = &meters.spectrum;
-    let reduction = match which {
-        Which::DeEss | Which::DeEssIn => &meters.deess_db,
-        _ => &meters.resonance_db,
-    };
-    if spectrum.len() < 4 || reduction.len() != spectrum.len() {
+    let Some(strip) = lane_of(body, which, rack) else {
         return;
-    }
-    let level_at = |hz: f64| bin_at(spectrum, hz);
-    let cut_at = |hz: f64| bin_at(reduction, hz);
+    };
+    let zoom = SuppressZoom::top();
+    let strip_bottom = strip.y + strip.height;
 
-    // The baseline the peaks are judged against: the spectrum's own
-    // average over a span set by the sharpness. What stands proud of it
-    // by more than the threshold is what gets cut, so the threshold IS
-    // the height of the dashed line above the average — and that is
-    // the line you drag.
-    let octaves = f64::from(set.sharpness).mul_add(-0.9, 1.2);
-    let span = (octaves / 2.0).exp2();
-    // The neighbourhood without the bin itself — the shoulders either
-    // side of the centre third — so a peak is judged against what
-    // surrounds it and not against half of itself. The same rule the
-    // reduction is computed by.
-    let average_at = |hz: f64| {
-        const STEPS: usize = 11;
-        let (sum, count) = (0..=STEPS)
-            .filter(|k| !(4..=6).contains(k))
-            .map(|k| {
-                let t = crate::num::coord(k) / crate::num::coord(STEPS);
-                level_at(hz / span * (span * span).powf(t))
+    // The top end, faint, so the band is seen against what is there.
+    if meters.spectrum.len() >= 4 {
+        const ACROSS: usize = 48;
+        let points: Vec<(f64, f64)> = (0..ACROSS)
+            .map(|i| {
+                let t = crate::num::coord(i) / crate::num::coord(ACROSS - 1);
+                let db = bin_at(&meters.spectrum, zoom.hz_at(t));
+                let share = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
+                (t.mul_add(strip.width, strip.x), share.mul_add(-(strip.height - 1.0), strip_bottom))
             })
-            .fold((0.0_f64, 0.0_f64), |(sum, n), v| (sum + v, n + 1.0));
-        sum / count.max(1.0)
-    };
+            .collect();
+        area_under(scene, palette.text_faint.multiply_alpha(0.25), &points, strip_bottom);
+    }
 
-    // One sample per bin, no finer. The analyser has ninety-six of them
-    // across the audible range and a zoomed band holds a fraction of
-    // that, so sampling past the data invents detail that is not there
-    // and pays for it in path length.
-    let across = spectrum.len().clamp(24, 96);
-    let sample = |i: usize| crate::num::coord(i) / crate::num::coord(across.saturating_sub(1).max(1));
-    let to_y = |db: f64| {
-        let t = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
-        bottom - t * (at.height - 2.0) - 1.0
-    };
-    let x_at = |i: usize| at.x + sample(i) * at.width;
-
-    // What arrived, as an area — it is the material, and an outline
-    // reads as another curve competing with the two that matter. The
-    // resonance panel draws it dimmer: there the spectrum is context
-    // and the teeth are the subject.
-    let dim = if which == Which::Resonance { 0.6 } else { 1.0 };
-    // The de-esser's is yellow — the colour of the top end it is there
-    // to take the edge off.
-    let ink = if which == Which::Resonance { palette.accent } else { DEESS_INK };
-    let input: Vec<(f64, f64)> = (0..across)
-        .map(|i| (x_at(i), to_y(level_at(zoom.hz_at(sample(i))))))
-        .collect();
-    area_under(
-        scene,
-        ink.multiply_alpha(crate::mcp::f64_to_f32(0.16 * dim)),
-        &input,
-        bottom,
+    // The band: a wash between its edges, and the edges themselves.
+    let (x_low, x_high) = (zoom.x_of(f64::from(set.low), strip), zoom.x_of(f64::from(set.high), strip));
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        ink.multiply_alpha(0.2),
+        None,
+        &Rect::new(x_low.min(x_high), strip.y, x_low.max(x_high), strip_bottom),
     );
-
-    // The reference, dashed: the average plus the threshold. Where the
-    // spectrum crosses above it is where the engine acts.
-    if rack.detailed() {
-        let held = matches!(lit, Some(Grip::Threshold(_) | Grip::Sharpness(_)));
-        let reference = (0..across).map(|i| {
-            (x_at(i), to_y(average_at(zoom.hz_at(sample(i))) + f64::from(set.threshold)))
-        });
-        dashed(scene, palette.text.multiply_alpha(0.75), reference, if held { 1.6 } else { 0.8 });
+    for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
+        let x = zoom.x_of(hz, strip);
+        let held = lit == Some(Grip::Edge(which, side));
+        rule_wide(
+            scene,
+            if held { palette.text } else { ink },
+            Line::new((x, strip.y), (x, strip_bottom)),
+            if held { 2.0 } else { 1.2 },
+        );
     }
+    marks(scene, palette, zoom, strip);
+}
 
-    // And what leaves. The gap between the two is the reduction, at the
-    // frequency it is happening, over the peak that caused it. NOT
-    // clamped at zero: these are decibels.
-    let output: Vec<(f64, f64)> = (0..across)
-        .map(|i| {
-            let hz = zoom.hz_at(sample(i));
-            (x_at(i), to_y(level_at(hz) - cut_at(hz)))
-        })
-        .collect();
-    let red = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
-    // Only when there is something to show. With nothing being cut the
-    // two curves coincide, and the ribbon between them is a degenerate
-    // polygon — two hundred vertices tracing out and back along the
-    // same line, which the rasteriser pays for in full and which draws
-    // nothing. That cost half a millisecond a frame across a mixer.
-    let deepest = reduction.iter().copied().fold(0.0_f32, f32::max);
-    if deepest > 0.15 {
-        let held = matches!(lit, Some(Grip::Depth(_)));
-        ribbon(scene, red.multiply_alpha(if held { 0.8 } else { 0.55 }), &input, &output);
-    }
-    curve(
-        scene,
-        ink.multiply_alpha(crate::mcp::f64_to_f32(0.7 * dim)),
-        input.into_iter(),
-        1.0,
-    );
-    let held = matches!(lit, Some(Grip::Depth(_)));
-    let ribbon = if which == Which::Resonance { 0.9 } else { 1.1 };
-    curve(scene, red, output.into_iter(), if held { 1.8 } else { ribbon });
-
-    if rack.detailed() {
-        marks(scene, palette, zoom, at);
-    }
-
-    if which == Which::Resonance
-        && let Some(comb_at) = lane_of(full_body, which, rack)
-    {
-        comb(scene, palette, &meters.resonance_settled_db, zoom, comb_at);
-    }
+/// Where a level in the de-esser's band lands on its display.
+fn suppress_y(db: f64, at: Panel) -> f64 {
+    let t = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
+    t.mul_add(-(at.height - 2.0), at.y + at.height - 1.0)
 }
 
 /// Where you are on a zoomed axis, since it is no longer the familiar
@@ -3055,32 +3196,6 @@ fn marks(scene: &mut Scene, palette: &Palette, zoom: SuppressZoom, at: Panel) {
             None,
             &Rect::new(x - 0.5, bottom - 3.0, x + 0.5, bottom),
         );
-    }
-}
-
-/// The comb: the settled reduction, one tooth per notch, hanging below
-/// the floor at the frequency it lives.
-///
-/// Slow by construction — the engine averages it over seconds — so
-/// across a mixer a snare with three teeth is a snare you will go and
-/// look at.
-fn comb(scene: &mut Scene, palette: &Palette, settled: &[f32], zoom: SuppressZoom, at: Panel) {
-    rule(scene, palette.grid_beat, Line::new((at.x, at.y), (at.x + at.width, at.y)));
-    let tint = phase_tint(session::mix_phases::MixPhase::Polish);
-    for tooth in teeth(settled, &zoom) {
-        let x = tooth.place.mul_add(at.width, at.x);
-        // Six decibels is the whole comb: a suppressor that has found a
-        // six-decibel resonance has found what it exists for, and the
-        // decibel it usually takes off a room mode still has to read as
-        // a tooth rather than a smudge — hence the floor.
-        let depth = ((f64::from(tooth.depth_db) / 6.0).clamp(0.0, 1.0) * (at.height - 2.0)).max(3.0);
-        let half = f64::from(tooth.depth_db).min(6.0).mul_add(0.4, 2.0);
-        let mut tri = BezPath::new();
-        tri.move_to((x - half, at.y));
-        tri.line_to((x + half, at.y));
-        tri.line_to((x, at.y + depth));
-        tri.close_path();
-        scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.8), None, &tri);
     }
 }
 
@@ -3117,41 +3232,6 @@ fn area_under(scene: &mut Scene, color: Color, points: &[(f64, f64)], floor: f64
     scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &area);
 }
 
-/// A notch the settled reduction has found.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Tooth {
-    /// Where across the zoomed band, 0..1.
-    pub place: f64,
-    /// How deep, in dB.
-    pub depth_db: f32,
-}
-
-/// The local maxima of a settled reduction curve that are worth a
-/// tooth: deeper than half a decibel, and the deepest bin of their
-/// neighbourhood.
-#[must_use]
-pub fn teeth(settled: &[f32], zoom: &SuppressZoom) -> Vec<Tooth> {
-    let bins = crate::num::coord(settled.len().saturating_sub(1).max(1));
-    let full = (20_000.0_f64 / 20.0).log10();
-    settled
-        .iter()
-        .enumerate()
-        .filter(|(i, depth)| {
-            **depth > 0.5
-                && settled.get(i.wrapping_sub(1)).is_none_or(|left| left <= *depth)
-                && settled.get(i.saturating_add(1)).is_none_or(|right| right < *depth)
-        })
-        .filter_map(|(i, depth)| {
-            let hz = 20.0 * 10.0_f64.powf(crate::num::coord(i) / bins * full);
-            let place = zoom.place_of(hz);
-            (0.0..=1.0).contains(&place).then_some(Tooth {
-                place,
-                depth_db: *depth,
-            })
-        })
-        .collect()
-}
-
 /// A value read out of the analyser's log-spaced bins at a frequency.
 ///
 /// Between two bins rather than snapped to one, or a zoomed view turns
@@ -3181,11 +3261,14 @@ pub struct SuppressZoom {
 }
 
 impl SuppressZoom {
+    /// The top end: from 800 Hz to the ceiling, where every de-esser's
+    /// band is. Fixed, so the band is read as a place on the axis and
+    /// the edges move along it, rather than the axis moving under them.
     #[must_use]
-    pub fn of(set: Suppress) -> Self {
+    pub const fn top() -> Self {
         Self {
-            low: f64::from(set.low) / SUPPRESS_SHOULDER,
-            high: f64::from(set.high) * SUPPRESS_SHOULDER,
+            low: 800.0,
+            high: 20_000.0,
         }
     }
 
@@ -3212,7 +3295,8 @@ impl SuppressZoom {
     }
 }
 
-/// How far past its band a suppressor's display opens out.
+/// The least a band's two edges may close to: a fifth of an octave.
+/// A band narrower than that is a notch, and a notch is the EQ's.
 const SUPPRESS_SHOULDER: f64 = 1.26;
 
 /// The frequencies a zoomed suppressor ticks, where they fall inside
@@ -3906,9 +3990,12 @@ fn selector(
 /// draws it in.
 const EQ_INK: Color = Color::from_rgb8(212, 169, 50);
 
-/// The de-esser's ink: yellow — the Tone phase's own, and the colour
-/// of the top end it is there to take the edge off.
-const DEESS_INK: Color = Color::from_rgba8(0xfa, 0xcc, 0x15, 0xff);
+/// The de-esser's ink: a pink. Not the EQ's gold — the two share a
+/// panel shape, and a yellow curve over a spectrum read as the EQ's
+/// total — and not the compressor's red, the saturator's orange, the
+/// gate's green or the returns' blue and violet. Sibilance is a
+/// bright, sharp thing; so is the colour.
+const DEESS_INK: Color = Color::from_rgba8(0xf4, 0x72, 0xb6, 0xff);
 
 /// The delay's colour: blue. The machine, its repeats, its knobs and
 /// its selector, and the delay tracks in the template — one colour
@@ -3918,10 +4005,10 @@ pub const DELAY_INK: Color = Color::from_rgba8(0x3b, 0x82, 0xf6, 0xff);
 /// The reverb's colour: purple, likewise.
 pub const REVERB_INK: Color = Color::from_rgba8(0x8b, 0x5c, 0xf6, 0xff);
 
-/// The decay-rate EQ's colour: a lighter violet — the reverb's family,
-/// and never the EQ's own look, so a graph of time is not read as a
-/// graph of gain.
-const DECAY_INK: Color = Color::from_rgba8(0xa7, 0x8b, 0xfa, 0xff);
+/// The decay-rate EQ's colour: a sky blue — never the EQ's own look, so a
+/// graph of time is not read as a graph of gain, and not the delay's
+/// blue either.
+const DECAY_INK: Color = Color::from_rgba8(0x38, 0xbd, 0xf8, 0xff);
 
 /// The colour a unit is drawn in where it has one of its own.
 const fn unit_ink(which: Which) -> Option<Color> {
@@ -3946,17 +4033,13 @@ fn presets(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: P
         return;
     }
     let count = crate::num::coord(tone.presets.len().max(2).saturating_sub(1));
-    let mut left = at.x + 2.0;
-    for (i, preset) in tone.presets.iter().enumerate() {
-        let w = preset_chip_width(&preset.name);
-        if left + w > at.x + at.width {
-            break;
-        }
+    for (i, chip) in preset_chips(tone, at) {
+        let Some(preset) = tone.presets.get(i) else { continue };
+        let (left, w) = (chip.x0, chip.width());
         let current = tone.preset == Some(i);
         let hovered = lit == Some(Grip::Preset(i));
         let t = crate::num::coord(i) / count;
         let swatch = swatch_at(t);
-        let chip = Rect::new(left, at.y + 2.0, left + w, at.y + at.height - 2.0);
         scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
@@ -3991,7 +4074,6 @@ fn presets(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: P
                 1.5,
             );
         }
-        left += w + 2.0;
     }
 }
 
@@ -4132,12 +4214,19 @@ fn pitch(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Pan
 /// because it is the one still setting. Reductions hang from the top,
 /// the way they do in the full panel; levels and tails stand on the
 /// floor.
-fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meters: &Meters, which: Which, at: Panel) {
+fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meters: &Meters, which: Which, at: Panel, rack: Rack) {
+    // The row's ground, so the rail's chain reads as a chain.
+    scene.fill(Fill::NonZero, Affine::IDENTITY, palette.tcp_meter_well.multiply_alpha(0.5), None, &at.rect());
+    // The same header row the panel takes, so the indicator starts on
+    // the line the display does — with the name where it fits.
+    let row = at;
+    let at = body_of(row, rack);
+    if at.y > row.inset(2.0).y {
+        header(scene, palette, font, which.name(), None, "", tone.bypass.is(which), row.inset(2.0).split_top(HEAD).0);
+    }
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     let mid = at.y + at.height / 2.0;
-    // The row's ground, so the rail's chain reads as a chain.
-    scene.fill(Fill::NonZero, Affine::IDENTITY, palette.tcp_meter_well.multiply_alpha(0.5), None, &at.rect());
     // A length down the row, hanging from the top, as a share of it.
     let bar = |scene: &mut Scene, ink: Color, share: f64| {
         let share = share.clamp(0.0, 1.0);
@@ -4163,7 +4252,7 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
         // still say how many decisions there were. Without the
         // analyser: at this width a spectrum behind the curve is a
         // curve you cannot find.
-        Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq => {
+        Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq | Which::PolishEq => {
             let tint = (which == Which::DecayEq).then_some(DECAY_INK);
             eq(scene, palette, font, tone, which, tone.bands_ref(which), &[], at, Rack::Full, None, tint);
         }
@@ -4217,10 +4306,6 @@ fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meter
             glow(scene, at, (at.x + at.width / 2.0, mid), heat);
         }
         Which::DeEss | Which::DeEssIn => bar(scene, DEESS_INK, f64::from(meters.deess_deepest()) / 12.0),
-        Which::Resonance => {
-            let deepest = meters.resonance_db.iter().copied().fold(0.0_f32, f32::max);
-            bar(scene, palette.accent, f64::from(deepest) / 12.0);
-        }
         // The repeats, tiny.
         Which::Delay => {
             for (k, (x, level)) in echo_taps(tone.delay, at).into_iter().enumerate() {
@@ -4509,6 +4594,12 @@ fn header(
         glyph(scene, name_ink, mark, left, baseline - 0.5);
         left += GLYPH_W;
     }
+    // A name that will not fit is not drawn: the row is still taken,
+    // because the row is what keeps the display under it level with
+    // its neighbours, but a rail is not wide enough to be read.
+    if (left - at.x) + font.width(name, SIZE) > at.width {
+        return;
+    }
     crate::tcp::glyphs(scene, font, name_ink, name, left, baseline, SIZE);
 
     // "BYPASS" replaces the value, because the value is what the
@@ -4670,7 +4761,7 @@ pub fn placeholder(index: usize) -> Tone {
         eq: voice.bands(drift),
         comp: voice.comp(drift),
         de_ess: Suppress::sibilance(),
-        resonance: Suppress::broadband(),
+        polish_eq: vec![band(0, 3_200.0, -3.0, 6.0, EqBandShape::Bell)],
         // The relational pass carves rather than shapes: one wide dip
         // where something else lives.
         space: vec![band(
@@ -4744,24 +4835,28 @@ pub fn placeholder_for(role: Role, index: usize, name: &str, ancestors: &[String
     if role == Role::Fund {
         return fundamental(tone, name, ancestors);
     }
+    // The presets are the slot's — a Short delay offers short delays
+    // — and the track opens on the slot's default, which is first.
     let presets = match role {
-        Role::Reverb => reverb_presets(),
-        Role::Delay => delay_presets(),
-        Role::Wide => wide_presets(),
-        Role::Pitch => pitch_presets(),
-        Role::Channel | Role::Bus | Role::Fund | Role::Trig => Vec::new(),
+        Role::Reverb => reverb_presets(name),
+        Role::Delay => delay_presets(name),
+        Role::Wide => {
+            let lower = name.to_lowercase();
+            if lower.contains("chorus") || lower.contains("flang") || lower.contains("dimension") {
+                mod_presets(name)
+            } else {
+                wide_presets()
+            }
+        }
+        Role::Pitch => pitch_presets(name),
+        Role::Parallel => parallel_presets(name),
+        Role::Channel | Role::Bus | Role::Fund | Role::Trig | Role::Dry | Role::Half => Vec::new(),
     };
     if presets.is_empty() {
         return tone;
     }
-    // Open on the preset the track is named after, else the first.
-    let lower = name.to_lowercase();
-    let wanted = presets
-        .iter()
-        .position(|p| lower.contains(&p.name.to_lowercase()))
-        .unwrap_or(0);
     tone.presets = presets;
-    tone.load_preset(wanted);
+    tone.load_preset(0);
     tone
 }
 
@@ -4819,129 +4914,420 @@ fn shelf(gain: f64) -> EqBand {
     band(0, 6_000.0, gain, 0.7, EqBandShape::HighShelf)
 }
 
-/// The reverb presets: brighter and shorter to darker and longer, the
-/// way a template's rows run.
-fn reverb_presets() -> Vec<Preset> {
-    let base = || {
-        let mut t = placeholder(0);
-        t.role = Role::Reverb;
-        t.pre_eq = vec![band(0, 180.0, -18.0, 0.7, EqBandShape::LowCut)];
-        t
-    };
-    let mut room = base();
-    room.reverb = Room {
-        algorithm: AlgorithmType::Room,
-        decay: 0.6,
-        predelay: 8.0,
-        damping: 0.15,
-        size: 0.35,
-        diffusion: 0.6,
-        mix: 0.2,
-    };
-    room.post_eq = vec![shelf(1.5)];
-    let mut short = base();
-    short.reverb = Room {
-        algorithm: AlgorithmType::Plate,
-        decay: 1.4,
-        predelay: 20.0,
-        damping: 0.3,
-        size: 0.5,
-        diffusion: 0.8,
-        mix: 0.2,
-    };
-    short.post_eq = vec![shelf(-1.5)];
-    let mut long = base();
-    long.reverb = Room {
-        algorithm: AlgorithmType::Hall,
-        decay: 2.6,
-        predelay: 40.0,
-        damping: 0.5,
-        size: 0.7,
-        diffusion: 0.8,
-        mix: 0.18,
-    };
-    long.post_eq = vec![shelf(-4.0)];
-    long.decay_eq = vec![band(0, 300.0, -6.0, 0.7, EqBandShape::LowShelf), band(1, 5_000.0, -6.0, 0.7, EqBandShape::HighShelf)];
-    let mut moment = base();
-    moment.reverb = Room {
-        algorithm: AlgorithmType::Cloud,
-        decay: 5.5,
-        predelay: 60.0,
-        damping: 0.65,
-        size: 0.9,
-        diffusion: 0.9,
-        mix: 0.25,
-    };
-    moment.post_eq = vec![shelf(-7.0)];
-    moment.decay_eq = vec![band(0, 250.0, -9.0, 0.7, EqBandShape::LowShelf), band(1, 4_000.0, -9.0, 0.7, EqBandShape::HighShelf)];
-    let mut throw = base();
-    throw.reverb = Room {
-        algorithm: AlgorithmType::Shimmer,
-        decay: 8.0,
-        predelay: 90.0,
-        damping: 0.7,
-        size: 1.0,
-        diffusion: 1.0,
-        mix: 0.35,
-    };
-    throw.post_eq = vec![shelf(-9.0), band(1, 2_500.0, 3.0, 1.2, EqBandShape::Bell)];
-    throw.decay_eq = vec![band(0, 2_000.0, 6.0, 1.0, EqBandShape::Bell)];
-    vec![
-        preset("Room", room),
-        preset("Short", short),
-        preset("Long", long),
-        preset("Moment", moment),
-        preset("Throw", throw),
-    ]
+/// The slot a return fills, read off its name.
+///
+/// A return is not "a delay": it is THE slap, or THE throw, and the
+/// presets it offers are the ones that fill that slot — so cycling
+/// them swaps one slap for another slap, never for a throw. A name
+/// that says nothing lands on the middle slot.
+fn slot_of(name: &str, slots: &'static [&'static str]) -> &'static str {
+    let lower = name.to_lowercase();
+    slots
+        .iter()
+        .copied()
+        .find(|slot| lower.contains(&slot.to_lowercase()))
+        .unwrap_or_else(|| slots.get(slots.len() / 2).copied().unwrap_or(""))
 }
 
-/// The delay presets, brighter and tighter to darker and wider.
-fn delay_presets() -> Vec<Preset> {
-    let base = || {
-        let mut t = placeholder(1);
-        t.role = Role::Delay;
-        t
+/// The delay slots, tightest first.
+const DELAY_SLOTS: &[&str] = &["Slap", "Short", "Long", "Throw"];
+
+/// The reverb slots, shortest first.
+const REVERB_SLOTS: &[&str] = &["Room", "Short", "Long", "Moment", "Throw"];
+
+/// A delay preset from its numbers.
+fn repeat(name: &str, style: DelayStyle, time: f32, feedback: f32, mix: f32, tone: f32, width: f32, post_eq: Vec<EqBand>) -> Preset {
+    let mut t = placeholder(1);
+    t.role = Role::Delay;
+    t.delay = Echo { time, feedback, mix, tone, width, style };
+    t.post_eq = post_eq;
+    preset(name, t)
+}
+
+/// A reverb preset from its numbers. Every one cuts the lows on the
+/// way in; what differs is the space and how it is shaped after.
+fn space(name: &str, algorithm: AlgorithmType, decay: f32, predelay: f32, size: f32, damping: f32, diffusion: f32, mix: f32, post_eq: Vec<EqBand>, decay_eq: Vec<EqBand>) -> Preset {
+    let mut t = placeholder(0);
+    t.role = Role::Reverb;
+    t.pre_eq = vec![band(0, 180.0, -18.0, 0.7, EqBandShape::LowCut)];
+    t.reverb = Room { algorithm, decay, predelay, damping, size, diffusion, mix };
+    t.post_eq = post_eq;
+    t.decay_eq = decay_eq;
+    preset(name, t)
+}
+
+fn low_cut(hz: f64) -> EqBand {
+    band(0, hz, -18.0, 0.7, EqBandShape::LowCut)
+}
+
+/// The curated presets for one delay slot, cleanest to most coloured.
+///
+/// The first is the slot's default — what the track opens on — and
+/// the rest are the same job done by a different machine.
+fn delay_presets(name: &str) -> Vec<Preset> {
+    use DelayStyle as D;
+    let lower = name.to_lowercase();
+    // The instrument bus's delays, by name.
+    if lower.contains("tape") && !lower.contains("throw") {
+        return vec![
+            repeat("Tape 1/16", D::Tape, 187.0, 0.3, 0.25, 0.5, 0.6, vec![low_cut(200.0), shelf(-6.0)]),
+            repeat("Tape 1/8", D::Tape, 375.0, 0.38, 0.22, 0.55, 0.7, vec![low_cut(250.0), shelf(-6.0)]),
+            repeat("Dragged 1/8", D::Tape, 395.0, 0.38, 0.22, 0.55, 0.7, vec![low_cut(250.0), shelf(-6.0)]),
+            repeat("Dark Tape", D::Tape, 375.0, 0.45, 0.2, 0.8, 0.6, vec![low_cut(300.0), shelf(-10.0)]),
+        ];
+    }
+    if lower.contains("echo boy") || lower.contains("echoboy") {
+        return vec![
+            repeat("Memory Man", D::Bbd, 375.0, 0.4, 0.22, 0.55, 0.7, vec![low_cut(200.0), band(1, 1_200.0, 3.0, 1.0, EqBandShape::Bell), shelf(-6.0)]),
+            repeat("Telephone", D::LoFi, 375.0, 0.4, 0.22, 0.6, 0.3, vec![low_cut(600.0), shelf(-12.0)]),
+            repeat("Binson", D::OilCan, 400.0, 0.45, 0.2, 0.6, 0.7, vec![low_cut(250.0), shelf(-6.0)]),
+            repeat("Ping-Pong 1/4", D::MultiTap, 750.0, 0.4, 0.2, 0.4, 1.0, vec![low_cut(250.0)]),
+            repeat("Motion", D::Bbd, 375.0, 0.4, 0.22, 0.5, 1.0, vec![low_cut(200.0), shelf(-4.0)]),
+        ];
+    }
+    if lower.contains("space echo") {
+        return vec![
+            repeat("Space Echo", D::Reverb, 340.0, 0.4, 0.25, 0.55, 0.6, vec![low_cut(200.0), shelf(-6.0)]),
+            repeat("Space Slap", D::Reverb, 130.0, 0.2, 0.25, 0.5, 0.5, vec![low_cut(200.0), shelf(-4.0)]),
+            repeat("Space Spring", D::Reverb, 300.0, 0.55, 0.25, 0.6, 0.7, vec![low_cut(250.0), shelf(-8.0)]),
+        ];
+    }
+    match slot_of(name, DELAY_SLOTS) {
+        "Slap" => vec![
+            repeat("Tape 95", D::Tape, 95.0, 0.08, 0.3, 0.3, 0.2, vec![shelf(-1.0)]),
+            repeat("Slap 15", D::Tape, 15.0, 0.05, 0.35, 0.4, 0.4, vec![shelf(-3.0)]),
+            repeat("Slap 30", D::Tape, 30.0, 0.05, 0.35, 0.4, 0.4, vec![shelf(-3.0)]),
+            repeat("Crowd", D::MultiTap, 45.0, 0.2, 0.3, 0.5, 1.0, vec![low_cut(300.0), shelf(-6.0)]),
+            repeat("Rockabilly", D::Tape, 120.0, 0.15, 0.35, 0.4, 0.2, vec![shelf(-2.0)]),
+            repeat("Tight", D::Clean, 70.0, 0.02, 0.25, 0.1, 0.1, vec![]),
+            repeat("Drum Slap", D::Drum, 110.0, 0.1, 0.3, 0.35, 0.6, vec![low_cut(150.0)]),
+            repeat("Lo-Fi Slap", D::LoFi, 100.0, 0.12, 0.3, 0.6, 0.3, vec![shelf(-4.0)]),
+        ],
+        "Long" => vec![
+            repeat("Tape 1/8", D::Tape, 375.0, 0.42, 0.22, 0.55, 0.85, vec![low_cut(250.0), shelf(-5.0)]),
+            repeat("Dotted 8th", D::Clean, 560.0, 0.38, 0.2, 0.3, 0.9, vec![low_cut(250.0), shelf(-3.0)]),
+            repeat("Dark BBD", D::Bbd, 375.0, 0.5, 0.22, 0.7, 0.8, vec![low_cut(300.0), shelf(-7.0)]),
+            repeat("Oil Can", D::OilCan, 400.0, 0.45, 0.2, 0.6, 0.7, vec![low_cut(300.0), shelf(-6.0)]),
+            repeat("Shimmer 1/8", D::Shimmer, 375.0, 0.5, 0.18, 0.4, 1.0, vec![low_cut(400.0)]),
+        ],
+        "Throw" => vec![
+            repeat("BBD Throw", D::Bbd, 750.0, 0.55, 0.4, 0.7, 1.0, vec![low_cut(400.0), band(1, 1_000.0, 6.0, 2.0, EqBandShape::Bell), shelf(-9.0)]),
+            repeat("Tape 1/4", D::Tape, 750.0, 0.6, 0.4, 0.75, 0.9, vec![low_cut(400.0), shelf(-8.0)]),
+            repeat("Reverse", D::Reverse, 700.0, 0.4, 0.4, 0.5, 1.0, vec![low_cut(300.0), shelf(-4.0)]),
+            repeat("Pitch Throw", D::Pitch, 750.0, 0.5, 0.35, 0.45, 1.0, vec![low_cut(400.0), shelf(-5.0)]),
+            repeat("Spectral", D::Spectral, 750.0, 0.6, 0.35, 0.5, 1.0, vec![low_cut(500.0)]),
+        ],
+        _ => vec![
+            repeat("Clean 1/16", D::Clean, 187.0, 0.25, 0.25, 0.15, 0.5, vec![low_cut(200.0)]),
+            repeat("Tape 1/16", D::Tape, 187.0, 0.3, 0.25, 0.35, 0.5, vec![low_cut(200.0), shelf(-3.0)]),
+            repeat("BBD Bounce", D::Bbd, 210.0, 0.35, 0.25, 0.5, 0.6, vec![low_cut(200.0), shelf(-5.0)]),
+            repeat("Ping-Pong", D::MultiTap, 187.0, 0.3, 0.25, 0.2, 1.0, vec![low_cut(200.0)]),
+            repeat("Filtered", D::Filter, 187.0, 0.4, 0.25, 0.6, 0.5, vec![low_cut(300.0), shelf(-6.0)]),
+        ],
+    }
+}
+
+/// The named rooms a drum mix keeps ready — the bank a mixer picks
+/// the band's room out of, short and bright down to long and dark,
+/// then the odd ones. Each name is a return in the drum template's
+/// Parallel folder, and each carries a few takes on the same idea.
+const ROOM_NAMES: &[&str] = &[
+    "Room Sim",
+    "Wood Room",
+    "Music Club",
+    "Stadium",
+    "RMX 16",
+    "Nonlin",
+    "Brick Wall",
+    // The instrument bus: rooms, plates, halls and springs for
+    // everything that is not drums or a voice.
+    "Short Room",
+    "Slap Room",
+    "Early",
+    "Fat Plate",
+    "Dark Plate",
+    "Gold Plate",
+    "Large Hall",
+    "Vienna",
+    "Atmosphere",
+    "Big Sky",
+    "XL35",
+];
+
+/// The curated presets for one reverb slot, plainest to most coloured.
+fn reverb_presets(name: &str) -> Vec<Preset> {
+    use AlgorithmType as A;
+    let dark = |low: f64, high: f64| vec![band(0, 300.0, low, 0.7, EqBandShape::LowShelf), band(1, 5_000.0, high, 0.7, EqBandShape::HighShelf)];
+    let lower = name.to_lowercase();
+    if let Some(room) = ROOM_NAMES.iter().copied().find(|r| lower.contains(&r.to_lowercase())) {
+        return match room {
+            // A captured room, not a digital one, and treated like a
+            // room mic: compressed fast on the way back. Fed off a
+            // send so the blend into it is not the drum blend.
+            "Room Sim" => vec![
+                space("Sunset Sound", A::Convolution, 0.9, 0.0, 0.5, 0.2, 1.0, 0.3, vec![shelf(1.0)], vec![]),
+                space("Ocean Way", A::Convolution, 1.2, 0.0, 0.7, 0.3, 1.0, 0.3, vec![], vec![]),
+                space("Small Booth", A::Convolution, 0.5, 0.0, 0.3, 0.3, 1.0, 0.3, vec![shelf(-2.0)], vec![]),
+                space("Live Room", A::Room, 1.0, 4.0, 0.6, 0.25, 0.8, 0.3, vec![], vec![]),
+            ],
+            // Short and bright: sizzle and snap and air around the kit
+            // on the uptempo song that has no room for a tail.
+            "Wood Room" => vec![
+                space("Wood Room", A::Room, 0.7, 6.0, 0.4, 0.2, 0.7, 0.22, vec![shelf(2.0)], vec![]),
+                space("Ruckus", A::Room, 0.8, 4.0, 0.45, 0.1, 0.5, 0.22, vec![shelf(3.0), band(1, 3_000.0, 2.0, 1.0, EqBandShape::Bell)], vec![]),
+                space("Studio A", A::Hall, 0.9, 8.0, 0.5, 0.3, 0.8, 0.22, vec![], vec![]),
+            ],
+            // Short and smooth: the 480's music club, low mids and the
+            // smoothest decay of the short ones.
+            "Music Club" => vec![
+                space("Music Club", A::Room, 0.9, 10.0, 0.5, 0.55, 0.9, 0.22, vec![shelf(-4.0)], vec![]),
+                space("Warm Room", A::Room, 1.1, 12.0, 0.55, 0.65, 0.9, 0.22, vec![shelf(-6.0)], dark(2.0, -6.0)),
+                space("Velvet Room", A::Velvet, 1.0, 10.0, 0.5, 0.5, 1.0, 0.22, vec![shelf(-3.0)], vec![]),
+            ],
+            // The big ballad: about two seconds, some top rolled off,
+            // a little low end — then high-passed on the way back.
+            "Stadium" => vec![
+                space("Stadium", A::Hall, 2.0, 30.0, 0.8, 0.5, 0.85, 0.2, vec![low_cut(150.0), shelf(-3.0)], dark(2.0, -4.0)),
+                space("Arena", A::Hall, 2.6, 40.0, 0.9, 0.55, 0.85, 0.2, vec![low_cut(180.0), shelf(-5.0)], dark(3.0, -6.0)),
+                space("Marble Room", A::Bloom, 1.8, 20.0, 0.7, 0.45, 1.0, 0.2, vec![low_cut(120.0)], vec![]),
+            ],
+            // The eighties snare: dense, a bit of tail, blends with the
+            // shorter rooms.
+            "RMX 16" => vec![
+                space("Ambience 1.7", A::Plate, 1.7, 20.0, 0.6, 0.5, 1.0, 0.22, vec![low_cut(100.0), shelf(-5.0)], dark(3.0, -6.0)),
+                space("Big Snare", A::Plate, 2.2, 30.0, 0.7, 0.45, 1.0, 0.25, vec![low_cut(120.0), shelf(-3.0)], dark(4.0, -4.0)),
+                space("Room Hall", A::Random, 1.5, 15.0, 0.6, 0.5, 0.9, 0.22, vec![low_cut(100.0)], vec![]),
+            ],
+            // Phil Collins. Not a lush tail and not supposed to be —
+            // which is why even a grainy one sounds right.
+            "Nonlin" => vec![
+                space("Nonlin", A::NonLinear, 0.9, 0.0, 0.6, 0.3, 0.9, 0.3, vec![low_cut(120.0)], vec![]),
+                space("Gated", A::NonLinear, 0.6, 0.0, 0.5, 0.3, 0.9, 0.3, vec![low_cut(150.0), shelf(2.0)], vec![]),
+                space("Reverse", A::NonLinear, 1.2, 0.0, 0.7, 0.4, 0.9, 0.3, vec![low_cut(120.0)], vec![]),
+            ],
+            // Sits an instrument back into an acoustic space without
+            // changing its sound: no pre-delay, under a second.
+            "Short Room" => vec![
+                space("Sonsig", A::Room, 0.8, 0.0, 0.4, 0.3, 0.8, 0.2, vec![], vec![]),
+                space("Small Studio", A::Room, 0.6, 0.0, 0.3, 0.25, 0.7, 0.2, vec![shelf(1.0)], vec![]),
+                space("D-Verb", A::Hall, 0.9, 0.0, 0.4, 0.4, 0.4, 0.2, vec![shelf(-2.0)], vec![]),
+                space("PCM 60", A::Room, 0.7, 4.0, 0.45, 0.35, 0.8, 0.2, vec![], vec![]),
+            ],
+            // A slap off the walls, a little different left to right —
+            // for live records, in combination with something longer.
+            "Slap Room" => vec![
+                space("Slap Room", A::Reflections, 0.4, 10.0, 0.5, 0.3, 0.4, 0.22, vec![], vec![]),
+                space("Wide Slap", A::Reflections, 0.5, 14.0, 0.6, 0.3, 0.3, 0.22, vec![shelf(1.0)], vec![]),
+                space("Tight Slap", A::Reflections, 0.3, 6.0, 0.35, 0.3, 0.5, 0.22, vec![], vec![]),
+            ],
+            // Early reflections and no tail: a real space that takes
+            // up no space, the source pushed back by the distance.
+            "Early" => vec![
+                space("Cinematic Near", A::Reflections, 0.25, 2.0, 0.5, 0.3, 0.6, 0.3, vec![], vec![]),
+                space("Cinematic Far", A::Reflections, 0.35, 12.0, 0.8, 0.5, 0.6, 0.3, vec![shelf(-6.0)], vec![]),
+                space("Reflective", A::Reflections, 0.3, 4.0, 0.6, 0.1, 0.7, 0.3, vec![shelf(2.0)], vec![]),
+            ],
+            // The 480's fat plate: under two seconds, bright and airy,
+            // the one every tool bag has.
+            "Fat Plate" => vec![
+                space("Fat Plate", A::Plate, 1.9, 10.0, 0.6, 0.15, 1.0, 0.2, vec![shelf(2.0)], vec![]),
+                space("Bright Plate", A::Plate, 1.6, 8.0, 0.5, 0.1, 1.0, 0.2, vec![shelf(3.0)], vec![]),
+                space("Thin Plate", A::Plate, 1.4, 10.0, 0.4, 0.15, 0.9, 0.2, vec![low_cut(300.0), shelf(2.0)], vec![]),
+            ],
+            // The same decay, decaying darker: for a steel-string
+            // acoustic that needs it.
+            "Dark Plate" => vec![
+                space("Lustrous", A::Plate, 1.9, 12.0, 0.6, 0.55, 1.0, 0.2, vec![shelf(-4.0)], dark(2.0, -6.0)),
+                space("Warm Plate", A::Plate, 2.2, 15.0, 0.65, 0.65, 1.0, 0.2, vec![shelf(-6.0)], dark(3.0, -9.0)),
+                space("Velvet Plate", A::Velvet, 1.8, 12.0, 0.6, 0.5, 1.0, 0.2, vec![shelf(-3.0)], vec![]),
+            ],
+            // A different kind of tail — and a decay that can be
+            // darkened band by band without getting shorter.
+            "Gold Plate" => vec![
+                space("Gold Plate", A::Plate, 2.0, 10.0, 0.7, 0.35, 1.0, 0.2, vec![], dark(0.0, -3.0)),
+                space("Tai Chi", A::Bloom, 2.2, 10.0, 0.7, 0.4, 1.0, 0.2, vec![], dark(0.0, -6.0)),
+                space("Tai Chi Air", A::Bloom, 2.2, 10.0, 0.7, 0.2, 1.0, 0.2, vec![shelf(2.0)], dark(0.0, 3.0)),
+            ],
+            // The 480's large hall: three seconds, no pre-delay, the
+            // whole thing set further away.
+            "Large Hall" => vec![
+                space("Large Hall", A::Hall, 3.0, 0.0, 0.8, 0.45, 0.85, 0.18, vec![shelf(-3.0)], dark(2.0, -4.0)),
+                space("Short Hall", A::Hall, 2.0, 0.0, 0.7, 0.45, 0.85, 0.18, vec![shelf(-2.0)], vec![]),
+                space("Distant Hall", A::Hall, 3.2, 0.0, 0.9, 0.6, 0.85, 0.18, vec![shelf(-8.0), band(1, 4_000.0, -6.0, 0.7, EqBandShape::HighShelf)], dark(3.0, -9.0)),
+            ],
+            // Brighter, and long: a sustaining wall of warmth under the
+            // instrument, ten seconds if it wants to be.
+            "Vienna" => vec![
+                space("Vienna Hall", A::Hall, 4.0, 20.0, 0.9, 0.35, 0.9, 0.16, vec![], dark(2.0, 0.0)),
+                space("Vienna Long", A::Hall, 10.0, 20.0, 1.0, 0.4, 0.9, 0.14, vec![shelf(-3.0)], dark(3.0, -3.0)),
+                space("Edgy Hall", A::Cloud, 3.5, 20.0, 0.9, 0.2, 0.9, 0.16, vec![shelf(3.0)], dark(-3.0, 3.0)),
+            ],
+            // Really long, and a low-pass on the way back: a synth bed
+            // under the instrument rather than a room around it.
+            "Atmosphere" => vec![
+                space("Atmosphere", A::Cloud, 14.0, 40.0, 1.0, 0.5, 1.0, 0.2, vec![band(1, 3_000.0, -9.0, 0.7, EqBandShape::HighShelf)], dark(0.0, -6.0)),
+                space("Swell Hall", A::Swell, 8.0, 80.0, 1.0, 0.5, 1.0, 0.22, vec![shelf(-4.0)], dark(0.0, -6.0)),
+                space("Long Choir", A::Chorale, 9.0, 60.0, 1.0, 0.55, 1.0, 0.2, vec![shelf(-6.0)], dark(2.0, -6.0)),
+            ],
+            // A spring that is not a model of one box: any decay, from
+            // clean through a gritty combo to driven.
+            "Big Sky" => vec![
+                space("Combo Spring", A::Spring, 2.0, 0.0, 0.5, 0.4, 0.5, 0.25, vec![band(0, 2_000.0, 2.0, 1.0, EqBandShape::Bell)], vec![]),
+                space("Clean Spring", A::Spring, 2.5, 0.0, 0.5, 0.3, 0.5, 0.25, vec![], vec![]),
+                space("Dirty Spring", A::Spring, 1.6, 0.0, 0.5, 0.5, 0.4, 0.25, vec![band(0, 1_500.0, 4.0, 1.2, EqBandShape::Bell), shelf(-4.0)], vec![]),
+                space("Long Spring", A::Spring, 4.0, 0.0, 0.6, 0.4, 0.5, 0.22, vec![], vec![]),
+            ],
+            // The classic tank: the newer model warm and lush, the
+            // vintage one shorter and brighter, and 2 kHz for anger.
+            _ => vec![
+                space("XL35", A::Spring, 2.2, 0.0, 0.5, 0.45, 0.5, 0.25, vec![], vec![]),
+                space("XL35 Vintage", A::Spring, 1.5, 0.0, 0.4, 0.3, 0.4, 0.25, vec![shelf(2.0)], vec![]),
+                space("XL35 Angry", A::Spring, 2.2, 0.0, 0.5, 0.45, 0.5, 0.25, vec![band(0, 2_000.0, 5.0, 1.5, EqBandShape::Bell)], vec![]),
+                space("Air Spring", A::Spring, 2.8, 0.0, 0.6, 0.6, 0.4, 0.25, vec![band(0, 800.0, 3.0, 0.8, EqBandShape::Bell), shelf(-6.0)], vec![]),
+            ],
+        };
+    }
+    if lower.contains("brick") {
+        return vec![
+            // The 480's brick wall: two hundred and forty milliseconds
+            // with the early reflections lopsided, for motion.
+
+                space("Brick Wall", A::Reflections, 0.24, 0.0, 0.3, 0.2, 0.3, 0.3, vec![], vec![]),
+                space("Sidewall Slap", A::Reflections, 0.3, 8.0, 0.4, 0.2, 0.2, 0.3, vec![shelf(2.0)], vec![]),
+                space("Lopsided", A::Reflections, 0.35, 12.0, 0.5, 0.3, 0.4, 0.3, vec![], vec![]),
+        ];
+    }
+    match slot_of(name, REVERB_SLOTS) {
+        "Room" => vec![
+            space("Small Room", A::Room, 0.6, 8.0, 0.35, 0.15, 0.6, 0.2, vec![shelf(1.5)], vec![]),
+            space("Wood Room", A::Room, 0.8, 10.0, 0.45, 0.4, 0.7, 0.2, vec![shelf(-2.0)], vec![]),
+            space("Reflections", A::Reflections, 0.5, 4.0, 0.3, 0.2, 0.4, 0.22, vec![], vec![]),
+            space("Tight Plate", A::Plate, 0.8, 5.0, 0.3, 0.25, 0.9, 0.18, vec![shelf(1.0)], vec![]),
+            space("Velvet", A::Velvet, 0.7, 6.0, 0.4, 0.3, 1.0, 0.2, vec![], vec![]),
+        ],
+        "Long" => vec![
+            space("Hall 2.6", A::Hall, 2.6, 40.0, 0.7, 0.5, 0.8, 0.18, vec![shelf(-4.0)], dark(-6.0, -6.0)),
+            space("Dark Hall", A::Hall, 3.0, 50.0, 0.8, 0.7, 0.8, 0.18, vec![shelf(-8.0)], dark(-6.0, -12.0)),
+            space("Magneto", A::Magneto, 2.4, 30.0, 0.6, 0.5, 0.9, 0.2, vec![shelf(-5.0)], dark(-4.0, -6.0)),
+            space("Chorale", A::Chorale, 3.2, 40.0, 0.75, 0.45, 0.9, 0.18, vec![shelf(-4.0)], dark(-6.0, -4.0)),
+            space("Random Space", A::Random, 2.8, 35.0, 0.7, 0.5, 0.85, 0.18, vec![shelf(-5.0)], dark(-6.0, -6.0)),
+        ],
+        "Moment" => vec![
+            space("Cloud", A::Cloud, 5.5, 60.0, 0.9, 0.65, 0.9, 0.25, vec![shelf(-7.0)], dark(-9.0, -9.0)),
+            space("Bloom", A::Bloom, 5.0, 80.0, 0.9, 0.6, 1.0, 0.25, vec![shelf(-6.0)], dark(-9.0, -6.0)),
+            space("Swell", A::Swell, 6.0, 100.0, 0.95, 0.6, 1.0, 0.25, vec![shelf(-6.0)], dark(-9.0, -8.0)),
+            space("Convolution", A::Convolution, 4.5, 40.0, 0.8, 0.5, 1.0, 0.22, vec![shelf(-5.0)], dark(-6.0, -6.0)),
+            space("Velvet Wash", A::Velvet, 5.0, 60.0, 0.9, 0.7, 1.0, 0.25, vec![shelf(-8.0)], dark(-9.0, -12.0)),
+        ],
+        "Throw" => vec![
+            space("Shimmer", A::Shimmer, 8.0, 90.0, 1.0, 0.7, 1.0, 0.35, vec![shelf(-9.0), band(1, 2_500.0, 3.0, 1.2, EqBandShape::Bell)], vec![band(0, 2_000.0, 6.0, 1.0, EqBandShape::Bell)]),
+            space("Dark Shimmer", A::Shimmer, 6.0, 90.0, 1.0, 0.85, 1.0, 0.3, vec![shelf(-12.0)], vec![band(0, 1_200.0, 4.0, 1.0, EqBandShape::Bell)]),
+            space("Bloom Throw", A::Bloom, 7.0, 120.0, 1.0, 0.6, 1.0, 0.35, vec![shelf(-7.0)], dark(-9.0, -6.0)),
+            space("Cloud Throw", A::Cloud, 9.0, 100.0, 1.0, 0.7, 1.0, 0.35, vec![shelf(-9.0)], dark(-12.0, -9.0)),
+            space("Chorale Throw", A::Chorale, 7.0, 80.0, 1.0, 0.5, 1.0, 0.3, vec![shelf(-6.0)], dark(-9.0, -4.0)),
+        ],
+        _ => vec![
+            space("Plate 1.4", A::Plate, 1.4, 20.0, 0.5, 0.3, 0.8, 0.2, vec![shelf(-1.5)], vec![]),
+            space("Bright Plate", A::Plate, 1.2, 15.0, 0.45, 0.15, 0.9, 0.2, vec![shelf(2.0)], vec![]),
+            space("Spring", A::Spring, 1.6, 10.0, 0.4, 0.4, 0.5, 0.2, vec![shelf(-3.0)], vec![]),
+            space("Non-Linear", A::NonLinear, 1.0, 10.0, 0.5, 0.3, 0.9, 0.22, vec![], vec![]),
+            space("FreeVerb", A::FreeVerb, 1.5, 20.0, 0.5, 0.35, 0.7, 0.2, vec![shelf(-2.0)], vec![]),
+        ],
+    }
+}
+
+/// A parallel compressor from its numbers, with what shapes its return.
+fn squash(name: &str, threshold: f32, ratio: f32, attack: f32, release: f32, drive: f32, eq: Vec<EqBand>) -> Preset {
+    let mut t = placeholder(0);
+    t.role = Role::Parallel;
+    t.comp = Comp {
+        threshold,
+        ratio,
+        attack,
+        release,
+        ..Comp::default()
     };
-    let mut slap = base();
-    slap.delay = Echo { time: 95.0, feedback: 0.08, mix: 0.3, tone: 0.3, width: 0.2, style: DelayStyle::Tape };
-    slap.post_eq = vec![shelf(-1.0)];
-    let mut short = base();
-    short.delay = Echo { time: 187.0, feedback: 0.25, mix: 0.25, tone: 0.15, width: 0.5, style: DelayStyle::Clean };
-    short.post_eq = vec![band(0, 200.0, -18.0, 0.7, EqBandShape::LowCut)];
-    let mut long = base();
-    long.delay = Echo { time: 375.0, feedback: 0.42, mix: 0.22, tone: 0.55, width: 0.85, style: DelayStyle::Tape };
-    long.post_eq = vec![band(0, 250.0, -18.0, 0.7, EqBandShape::LowCut), shelf(-5.0)];
-    let mut throw = base();
-    throw.delay = Echo { time: 750.0, feedback: 0.55, mix: 0.4, tone: 0.7, width: 1.0, style: DelayStyle::Bbd };
-    throw.post_eq = vec![band(0, 400.0, -18.0, 0.7, EqBandShape::LowCut), band(1, 1_000.0, 6.0, 2.0, EqBandShape::Bell), shelf(-9.0)];
-    vec![
-        preset("Slap", slap),
-        preset("Short", short),
-        preset("Long", long),
-        preset("Throw", throw),
-    ]
+    t.eq = eq;
+    t.sat.drive = drive;
+    preset(name, t)
+}
+
+/// The curated presets for one parallel compressor, by what it is for:
+/// tight holds the kit together, punch lets the transient through and
+/// grabs what follows, smash is the crushed room under everything, and
+/// crunch is smash driven into a transformer.
+fn parallel_presets(name: &str) -> Vec<Preset> {
+    let lower = name.to_lowercase();
+    if lower.contains("punch") {
+        vec![
+            squash("Punch", -24.0, 4.0, 30.0, 80.0, 1.0, vec![band(0, 80.0, 2.0, 0.7, EqBandShape::LowShelf)]),
+            squash("Slow Grab", -20.0, 6.0, 50.0, 120.0, 1.0, vec![]),
+            squash("Snap", -26.0, 3.0, 20.0, 60.0, 1.2, vec![band(0, 3_000.0, 2.0, 1.0, EqBandShape::Bell)]),
+        ]
+    } else if lower.contains("smash") {
+        vec![
+            squash("Smash", -40.0, 20.0, 0.5, 60.0, 1.0, vec![band(0, 100.0, -3.0, 0.7, EqBandShape::LowShelf), band(1, 8_000.0, -3.0, 0.7, EqBandShape::HighShelf)]),
+            squash("All Buttons", -45.0, 20.0, 0.2, 40.0, 1.0, vec![band(0, 120.0, -4.0, 0.7, EqBandShape::LowShelf)]),
+            squash("Pumping", -36.0, 12.0, 1.0, 200.0, 1.0, vec![]),
+        ]
+    } else if lower.contains("crunch") {
+        vec![
+            squash("Crunch", -36.0, 10.0, 1.0, 80.0, 3.5, vec![band(0, 150.0, -6.0, 0.7, EqBandShape::LowShelf), band(1, 2_500.0, 3.0, 1.0, EqBandShape::Bell)]),
+            squash("Transformer", -30.0, 8.0, 3.0, 100.0, 2.5, vec![band(0, 120.0, -3.0, 0.7, EqBandShape::LowShelf)]),
+            squash("Fuzz", -40.0, 20.0, 0.3, 50.0, 6.0, vec![band(0, 200.0, -9.0, 0.7, EqBandShape::LowShelf), band(1, 6_000.0, -6.0, 0.7, EqBandShape::HighShelf)]),
+        ]
+    } else {
+        vec![
+            squash("Tight", -22.0, 4.0, 3.0, 100.0, 1.0, vec![]),
+            squash("Glue", -18.0, 2.5, 10.0, 200.0, 1.0, vec![]),
+            squash("Fast Four", -26.0, 4.0, 1.0, 60.0, 1.0, vec![band(0, 60.0, -2.0, 0.7, EqBandShape::LowShelf)]),
+        ]
+    }
 }
 
 fn wide_presets() -> Vec<Preset> {
-    let mut subtle = placeholder(2);
-    subtle.role = Role::Wide;
-    subtle.wide = 1.25;
-    let mut wide = placeholder(2);
-    wide.role = Role::Wide;
-    wide.wide = 1.7;
-    vec![preset("Subtle", subtle), preset("Wide", wide)]
+    let widen = |name: &str, wide: f32| {
+        let mut t = placeholder(2);
+        t.role = Role::Wide;
+        t.wide = wide;
+        preset(name, t)
+    };
+    vec![widen("Subtle", 1.25), widen("Wide", 1.7), widen("Huge", 2.2)]
 }
 
-fn pitch_presets() -> Vec<Preset> {
-    let mut up = placeholder(3);
-    up.role = Role::Pitch;
-    up.pitch = 12;
-    up.pitch_mix = 0.35;
-    let mut down = placeholder(3);
-    down.role = Role::Pitch;
-    down.pitch = -12;
-    down.pitch_mix = 0.4;
-    vec![preset("Oct+", up), preset("Oct-", down)]
+/// The movement returns — chorus, flanger — as the widener until they
+/// have a face: what they do to the width is the part the picture
+/// can show.
+fn mod_presets(name: &str) -> Vec<Preset> {
+    let widen = |name: &str, wide: f32| {
+        let mut t = placeholder(2);
+        t.role = Role::Wide;
+        t.wide = wide;
+        preset(name, t)
+    };
+    if name.to_lowercase().contains("flang") {
+        vec![widen("Flanger", 1.4), widen("MXR", 1.6), widen("Jet", 2.0)]
+    } else {
+        vec![widen("Dimension D", 1.5), widen("Chorus", 1.7), widen("Tri-Chorus", 2.0)]
+    }
+}
+
+/// One list per direction: an up track offers ways up, a down track
+/// ways down.
+fn pitch_presets(name: &str) -> Vec<Preset> {
+    let shift = |name: &str, pitch: i32, mix: f32| {
+        let mut t = placeholder(3);
+        t.role = Role::Pitch;
+        t.pitch = pitch;
+        t.pitch_mix = mix;
+        preset(name, t)
+    };
+    let lower = name.to_lowercase();
+    if lower.contains('-') || lower.contains("down") || lower.contains("sub") {
+        vec![shift("Oct-", -12, 0.4), shift("Oct- Soft", -12, 0.2), shift("Sub", -24, 0.3)]
+    } else {
+        vec![shift("Oct+", 12, 0.35), shift("Oct+ Soft", 12, 0.18), shift("5th+", 7, 0.25)]
+    }
 }
 
 /// What a track sounds like, as far as a placeholder can know.
@@ -5327,9 +5713,9 @@ pub fn grip_at(
         // The header first: it sits above the body, and a click there
         // is a bypass rather than whatever the body would have done —
         // except on the machine glyph, which cycles the machine.
-        if rack.detailed() && y >= at.y && y < body.y {
+        if y >= at.y && y < body.y {
             let inner = at.inset(2.0);
-            if which.glyph_switches() && x >= inner.x && x < inner.x + GLYPH_W {
+            if rack.detailed() && which.glyph_switches() && x >= inner.x && x < inner.x + GLYPH_W {
                 return Some(Grip::Family(which));
             }
             return Some(Grip::Bypass(which));
@@ -5352,7 +5738,7 @@ pub fn grip_at(
             // cannot aim at, and grabbing one by accident moves a
             // setting you did not know was there.
             _ if which.is_spectral() && !rack.detailed() => {}
-            Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq => {
+            Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq | Which::PolishEq => {
                 // The zoom chip first: it is small, it sits over the
                 // graph, and a band that happened to be under it would
                 // otherwise take every click aimed at it.
@@ -5387,7 +5773,7 @@ pub fn grip_at(
             // curves, because the curves move with the audio and a
             // grip that moved with the audio would be a grip you could
             // not aim at.
-            Which::DeEss | Which::DeEssIn | Which::Resonance => {
+            Which::DeEss | Which::DeEssIn => {
                 return Some(suppress_grip(tone, which, body, rack, x, y));
             }
             Which::Comp => return Some(comp_grip(tone.comp, which, body, rack, x, y)),
@@ -5505,38 +5891,29 @@ fn gate_grip(gate: Gate, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
 
 /// What is under a point in a suppressor's panel.
 fn suppress_grip(tone: &Tone, which: Which, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
-    let set = match which {
-        Which::DeEss | Which::DeEssIn => tone.de_ess,
-        _ => tone.resonance,
-    };
+    let set = tone.de_ess;
     let display = display_of(body, which, rack);
-    if rack.detailed() {
-        let zoom = SuppressZoom::of(set);
+    // The band strip over the display: an edge where one is drawn,
+    // else the sharpness — how wide a neighbourhood the band is judged
+    // against, which is a fact about the band.
+    if rack.detailed()
+        && let Some(strip) = lane_of(body, which, rack)
+        && y < strip.y + strip.height + 2.0
+    {
+        let zoom = SuppressZoom::top();
         for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
-            if (x - zoom.x_of(hz, display)).abs() <= GRAB {
+            if (x - zoom.x_of(hz, strip)).abs() <= GRAB {
                 return Grip::Edge(which, side);
             }
         }
-        // The lane under the display: the resonance panel's comb is
-        // the sharpness (how narrow a peak has to be to earn a tooth),
-        // the de-esser's fire lane is the depth (how hard it fires).
-        if let Some(lane) = lane_of(body, which, rack)
-            && y >= lane.y
-        {
-            return if which == Which::Resonance {
-                Grip::Sharpness(which)
-            } else {
-                Grip::Depth(which)
-            };
-        }
+        return Grip::Sharpness(which);
     }
-    let third = display.height / 3.0;
-    if y < display.y + third {
+    // The display: the threshold over most of it — it is the line you
+    // are moving — and the depth along the floor.
+    if y < display.y + display.height * 2.0 / 3.0 {
         Grip::Threshold(which)
-    } else if y < display.y + third * 2.0 {
-        Grip::Depth(which)
     } else {
-        Grip::Sharpness(which)
+        Grip::Depth(which)
     }
 }
 
@@ -5604,11 +5981,12 @@ fn comp_grip(comp: Comp, which: Which, body: Panel, rack: Rack, x: f64, y: f64) 
         {
             return match grip {
                 Grip::Attack(_) => Grip::Attack(which),
-                Grip::Release(_) => Grip::Release(which),
-                _ => Grip::Ratio(which),
+                _ => Grip::Release(which),
             };
         }
-        let _ = comp;
+        if Arrow::of(comp, display).holds(x, y) {
+            return Grip::Ratio(which);
+        }
     }
     // And everything else is the threshold: it is a line across a
     // display, and a line one pixel tall is not something you aim at —
@@ -5635,6 +6013,20 @@ pub const EQ_GAIN_LIMIT: f64 = 30.0;
 /// over the editor do the same thing.
 pub fn wheel(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
     match grip {
+        // The wheel over the row walks the list — the way you audition
+        // a slot's presets, one after another, without aiming at chips
+        // that may not all be on the row.
+        Grip::Preset(_) => {
+            let len = tone.presets.len();
+            if len == 0 {
+                return;
+            }
+            let at = tone.preset.unwrap_or(0);
+            let next = if delta_y > 0.0 { at.saturating_add(1).min(len.saturating_sub(1)) } else { at.saturating_sub(1) };
+            if next != at {
+                tone.load_preset(next);
+            }
+        }
         Grip::Band(which, index) => {
             let Some(band) = tone.bands(which).and_then(|set| set.get_mut(index)) else {
                 return;
@@ -5877,7 +6269,6 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
             let to = match which {
                 Which::Gate => Gate::default().threshold,
                 Which::DeEss | Which::DeEssIn => Suppress::sibilance().threshold,
-                Which::Resonance => Suppress::broadband().threshold,
                 _ => Comp::default().threshold,
             };
             tone.set_threshold(which, to);
@@ -6113,12 +6504,13 @@ pub fn drag(
 /// height is worth on it.
 fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, dx: f64, dy: f64) {
     match grip {
-        // Down the strip for more: the strip's whole height is the
-        // whole range, through the same two-sided scale as the times.
+        // Down for more: the arrow points the way the signal goes.
+        // Six tenths of the display is the whole range, through the
+        // same two-sided scale as the times.
         Grip::Ratio(which) => {
             let display = comp_split(body, rack);
             let dy = dy * interaction::fine_scale(mods);
-            let span = Strips::of(display).map_or(display.height * 0.6, |s| s.ratio.height()).max(1.0);
+            let span = (display.height * 0.6).max(1.0);
             if let Some(comp) = tone.compressor(which) {
                 let scale = Time::ratio(comp.ratio);
                 comp.ratio = f64_to_f32(scale.at(scale.place() + dy / span));
@@ -6168,11 +6560,7 @@ fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, d
         // width is the window's whole span in decades.
         Grip::Edge(which, side) => {
             let display = display_of(body, which, rack);
-            let set = match which {
-                Which::DeEss | Which::DeEssIn => tone.de_ess,
-                _ => tone.resonance,
-            };
-            let zoom = SuppressZoom::of(set);
+            let zoom = SuppressZoom::top();
             let dx = dx * interaction::fine_scale(mods);
             let decades = (zoom.high / zoom.low).log10();
             let ratio = 10.0_f64.powf(dx / display.width.max(1.0) * decades);
@@ -6305,15 +6693,40 @@ pub fn knob_at(body: Panel, x: f64) -> usize {
 /// Which preset chip a point is over, if any.
 #[must_use]
 pub fn preset_chip_at(tone: &Tone, at: Panel, x: f64) -> Option<usize> {
-    let mut left = at.x + 2.0;
-    for (i, preset) in tone.presets.iter().enumerate() {
-        let w = preset_chip_width(&preset.name);
-        if x >= left && x < left + w {
-            return Some(i);
+    preset_chips(tone, at).into_iter().find(|(_, chip)| x >= chip.x0 && x < chip.x1).map(|(i, _)| i)
+}
+
+/// The chips that fit the row, with the loaded one always among them.
+///
+/// A row narrower than its list shows a window onto it that starts
+/// far enough back for the loaded chip to be the last one in — so the
+/// wheel walks the list and the chip you are on never leaves the row.
+/// One place for the drawing and the hit test both, for the usual
+/// reason.
+fn preset_chips(tone: &Tone, at: Panel) -> Vec<(usize, Rect)> {
+    let right = at.x + at.width;
+    let fits = |first: usize| {
+        let mut left = at.x + 2.0;
+        let mut out = Vec::new();
+        for (i, preset) in tone.presets.iter().enumerate().skip(first) {
+            let w = preset_chip_width(&preset.name);
+            if left + w > right {
+                break;
+            }
+            out.push((i, Rect::new(left, at.y + 2.0, left + w, at.y + at.height - 2.0)));
+            left += w + 2.0;
         }
-        left += w + 2.0;
+        out
+    };
+    let current = tone.preset.unwrap_or(0);
+    let mut first = 0;
+    loop {
+        let chips = fits(first);
+        if chips.iter().any(|(i, _)| *i == current) || first >= current {
+            return chips;
+        }
+        first = first.saturating_add(1);
     }
-    None
 }
 
 /// A chip's width for a name: the swatch, the text, the air.
@@ -6354,7 +6767,13 @@ impl Store {
         for (index, (track, depth)) in rows.iter().enumerate() {
             folders.retain(|(at, _)| *at < *depth);
             let ancestors: Vec<String> = folders.iter().map(|(_, name)| name.clone()).collect();
-            let role = Role::of(&track.name, track.is_folder, &ancestors);
+            let mut role = Role::of(&track.name, track.is_folder, &ancestors);
+            // A stereo pair is one instrument: the folder over an L and
+            // an R carries the processing, and the two halves are rails
+            // under it. So the folder is a channel, not a bus.
+            if track.is_folder && is_pair(rows, index, *depth) {
+                role = Role::Channel;
+            }
             if track.is_folder {
                 folders.push((*depth, track.name.clone()));
             }
@@ -6385,6 +6804,25 @@ impl Store {
             tone.prerender_tails();
         }
     }
+}
+
+/// Whether the folder at `index` holds exactly a left and a right half.
+#[must_use]
+pub fn is_pair(rows: &[(daw_proto::Track, u32)], index: usize, depth: u32) -> bool {
+    let inside: Vec<&str> = rows
+        .iter()
+        .skip(index.saturating_add(1))
+        .take_while(|(_, d)| *d > depth)
+        .filter(|(_, d)| *d == depth.saturating_add(1))
+        .map(|(t, _)| t.name.as_str())
+        .collect();
+    inside.len() == 2 && is_pair_half(inside[0]) && is_pair_half(inside[1])
+}
+
+/// Whether a track is one half of a stereo pair, by name.
+#[must_use]
+pub fn is_pair_half(name: &str) -> bool {
+    matches!(name.trim().to_uppercase().as_str(), "L" | "R" | "LEFT" | "RIGHT")
 }
 
 fn band(index: usize, frequency: f64, gain: f64, q: f64, shape: EqBandShape) -> EqBand {
@@ -6431,9 +6869,9 @@ mod tests {
                 which.natural()
             );
         }
-        // From the top, under the phase's container bar, and the space
-        // below is left alone.
-        assert!((laid[0].1.y - tall.y - HEAD_H).abs() < f64::EPSILON);
+        // From the top, under Rescue's blank bar and the phase's own
+        // container bar, and the space below is left alone.
+        assert!((laid[0].1.y - tall.y - 2.0 * HEAD_H).abs() < f64::EPSILON);
         let used = super::tall(&[Which::Eq, Which::Comp, Which::Sat], super::Folded::default());
         assert!(used < tall.height, "the rack filled everything it was given");
     }
@@ -6466,9 +6904,15 @@ mod tests {
         }
         let bottom = laid.last().map_or(0.0, |(_, at)| at.y + at.height);
         assert!(bottom > short.height, "the chain fitted, so nothing was proved");
+        // To the last ROW's floor: the blank bars for the phases this
+        // chain lacks come after the last panel, and are scrolled to.
+        let floor = super::chain(&panels, short, super::Folded::default())
+            .last()
+            .map_or(0.0, |(_, at)| at.y + at.height);
+        assert!(floor > bottom);
         assert!(
-            (super::scroll_span(&panels, short.height, super::Folded::default()) - (bottom - short.height)).abs() < 0.01,
-            "the span does not reach the last panel's floor"
+            (super::scroll_span(&panels, short.height, super::Folded::default()) - (floor - short.height)).abs() < 0.01,
+            "the span does not reach the last row's floor"
         );
 
         // And a box tall enough to hold the chain does not scroll.
@@ -6519,17 +6963,15 @@ mod tests {
             width: 300.0,
             height: 200.0,
         };
-        for rack in [Rack::Focus, Rack::Full] {
+        for rack in [Rack::Focus, Rack::Full, Rack::Curves, Rack::Minimal] {
             let body = body_of(panel, rack);
             assert!(
                 body.y > panel.inset(2.0).y,
                 "{rack:?} did not reserve a header"
             );
         }
-        assert!(
-            (body_of(panel, Rack::Curves).y - panel.inset(2.0).y).abs() < f64::EPSILON,
-            "the narrow tier has no room for one"
-        );
+        // One height at every tier: that is the point.
+        assert!((body_of(panel, Rack::Curves).y - body_of(panel, Rack::Focus).y).abs() < f64::EPSILON);
     }
 
     /// A focused strip may not be lent below the width that made it
@@ -6572,6 +7014,7 @@ mod tests {
                 height: 8.0,
             },
             super::Folded::default(),
+            None,
         );
         assert!(scene.commands.is_empty());
     }
@@ -6595,6 +7038,7 @@ mod tests {
                 height: 180.0,
             },
             super::Folded::default(),
+            None,
         );
         // Three grounds, three curves, the rules and the labels.
         assert!(
@@ -6652,7 +7096,7 @@ mod suppress_tests {
             "the de-esser should be the narrower of the two"
         );
         // Both draw the same picture, and both are spectral.
-        assert!(Which::DeEss.is_spectral() && Which::Resonance.is_spectral());
+        assert!(Which::DeEss.is_spectral() && Which::PolishEq.is_spectral());
     }
 }
 
@@ -6708,7 +7152,7 @@ mod fold_tests {
 
 #[cfg(test)]
 mod container_tests {
-    use super::{ALL_PANELS, Folded, HEAD_H, Panel, Row, Which, chain, tall, units};
+    use super::{ALL_PANELS, Folded, Grip, HEAD_H, Mods, Panel, Row, Which, chain, tall, units};
     use session::mix_phases::MixPhase as P;
 
     fn box_at() -> Panel {
@@ -6739,9 +7183,66 @@ mod container_tests {
                     assert_eq!(which.phase(), phase, "{which:?} under {phase:?}");
                     assert!(at.y >= y, "{which:?} sat above its own container");
                 }
+                Row::Blank(phase) => panic!("the full chain has every phase, but {phase:?} came up blank"),
             }
         }
         assert_eq!(seen.len(), 5, "expected one container per phase: {seen:?}");
+    }
+
+    /// A return's presets are its slot's: a Short delay offers short
+    /// delays, a Throw verb throws, and no list has another slot's
+    /// default in it.
+    #[test]
+    fn a_return_offers_presets_for_its_own_slot() {
+        let short = super::placeholder_for(super::Role::Delay, 1, "Short", &[]);
+        let throw = super::placeholder_for(super::Role::Delay, 1, "Throw", &[]);
+        assert!(short.delay.time < 300.0 && throw.delay.time > 500.0);
+        assert!(short.presets.iter().all(|p| p.tone.delay.time < 300.0));
+        assert!(throw.presets.iter().all(|p| p.tone.delay.time > 500.0));
+        assert_eq!(short.preset, Some(0));
+        let room = super::placeholder_for(super::Role::Reverb, 0, "Room", &[]);
+        let moment = super::placeholder_for(super::Role::Reverb, 0, "Moment", &[]);
+        assert!(room.presets.iter().all(|p| p.tone.reverb.decay < 1.0));
+        assert!(moment.presets.iter().all(|p| p.tone.reverb.decay > 4.0));
+        // A name that says nothing lands on the middle slot.
+        let plain = super::placeholder_for(super::Role::Delay, 1, "Delay", &[]);
+        assert!(plain.presets.len() >= 4);
+        // The wheel walks the list and stops at its ends; a narrow row
+        // keeps the loaded chip on it.
+        let mut walk = short.clone();
+        for _ in 0..10 {
+            super::wheel(&mut walk, Grip::Preset(0), Mods::default(), 1.0);
+        }
+        assert_eq!(walk.preset, Some(walk.presets.len() - 1));
+        let narrow = Panel { x: 0.0, y: 0.0, width: 60.0, height: super::PRESETS_H };
+        let chips = super::preset_chips(&walk, narrow);
+        assert!(chips.iter().any(|(i, _)| Some(*i) == walk.preset));
+        assert!(chips.len() < walk.presets.len());
+        super::wheel(&mut walk, Grip::Preset(0), Mods::default(), -1.0);
+        assert_eq!(walk.preset, Some(walk.presets.len() - 2));
+    }
+
+    /// A chain without a phase keeps the phase's row as a blank bar, so
+    /// the phases after it start where they start on a full chain —
+    /// and a chain with nothing in it gets no bars at all.
+    #[test]
+    fn a_missing_phase_is_a_blank_bar_at_the_same_height() {
+        let bus = chain(&super::BUS_CHAIN, box_at(), Folded::rest());
+        assert_eq!(bus.first().map(|(row, _)| *row), Some(Row::Blank(P::Rescue)));
+        let tone_y = |rows: &[(Row, Panel)]| {
+            rows.iter().find(|(row, _)| *row == Row::Head(P::Tone)).map(|(_, at)| at.y).expect("a Tone bar")
+        };
+        let full = chain(&ALL_PANELS, box_at(), Folded::rest());
+        assert!((tone_y(&bus) - tone_y(&full)).abs() < f64::EPSILON);
+        // Every phase is accounted for, blank or not.
+        let bars = bus.iter().filter(|(row, _)| matches!(row, Row::Head(_) | Row::Blank(_))).count();
+        assert_eq!(bars, super::RACK_PHASES.len());
+        assert!(chain(&[], box_at(), Folded::rest()).is_empty());
+        // A return is only Depth, and gets only Depth: no bars for the
+        // phases a channel has and it never will.
+        let delay = chain(&super::DELAY_CHAIN, box_at(), Folded::rest());
+        assert!(!delay.iter().any(|(row, _)| matches!(row, Row::Blank(_))));
+        assert_eq!(delay.iter().filter(|(row, _)| matches!(row, Row::Head(_))).count(), 1);
     }
 
     /// Folding a phase takes its units out of the column and leaves its
@@ -6839,7 +7340,7 @@ mod phase_tests {
         for which in super::ALL_PANELS {
             let spectral = matches!(
                 which,
-                Which::RescueEq | Which::Eq | Which::Space | Which::DeEss | Which::Resonance
+                Which::RescueEq | Which::Eq | Which::Space | Which::DeEss | Which::PolishEq
             );
             assert_eq!(which.is_spectral(), spectral, "{which:?}");
         }
@@ -6902,9 +7403,10 @@ mod grip_tests {
     #[test]
     fn empty_space_in_the_eq_grabs_nothing() {
         let tone = placeholder(0);
-        // Inside the EQ's own body, far from any band — below the
-        // phase's container bar, which owns the first fifteen pixels.
-        let y = super::HEAD_H + 14.0;
+        // Inside the EQ's own body, far from any band — below Rescue's
+        // blank bar and the phase's own container bar, which own the
+        // first thirty pixels, and below the unit's header row.
+        let y = 2.0 * super::HEAD_H + 14.0;
         assert_eq!(
             grip_at(&ALL, &tone, rack(), super::Folded::default(), 3.0, y),
             None
@@ -7191,7 +7693,7 @@ mod tier_tests {
             assert!((at.y - full_at.y).abs() < f64::EPSILON, "{a:?} at {} vs {}", at.y, full_at.y);
         }
         let mut still = anyrender::Scene::new();
-        super::draw(&mut still, &palette, &font, &tone, &crate::live::Meters::default(), &super::ALL_PANELS, rail, super::Folded::default(), None);
+        super::draw(&mut still, &palette, &font, &tone, &crate::live::Meters::default(), &super::ALL_PANELS, rail, super::Folded::default(), None, None);
         // A track per unit, and an indicator for every unit whose
         // setting shows with no signal — the EQs, the gate's light, the
         // heat, the repeats, the tail. The bars (reduction, fire) wait
@@ -7199,7 +7701,7 @@ mod tier_tests {
         assert!(still.commands.len() > rows.len() + 6, "a track and the still indicators: {}", still.commands.len());
         let mut moving = anyrender::Scene::new();
         let meters = crate::simulate::meters(2, 1.25, &tone);
-        super::draw(&mut moving, &palette, &font, &tone, &meters, &super::ALL_PANELS, rail, super::Folded::default(), None);
+        super::draw(&mut moving, &palette, &font, &tone, &meters, &super::ALL_PANELS, rail, super::Folded::default(), None, None);
         assert!(moving.commands.len() >= still.commands.len());
     }
 }
@@ -7515,18 +8017,20 @@ mod comp_tests {
         assert!(tone.comp.attack < was, "left is fast: {} vs {was}", tone.comp.attack);
         assert!((super::Time::attack(super::Comp::default().attack).place() - 0.5).abs() < 1e-9);
         assert!((super::Time::release(super::Comp::default().release).place() - 0.5).abs() < 1e-9);
-        // The ratio's strip up the rail, and its default in the middle.
-        let _ = level;
-        let ratio = strips.ratio.center();
+        // The ratio's arrow hangs off the threshold line near the left
+        // edge, and is grabbed along its length.
+        let arrow = super::Arrow::of(tone.comp, display);
+        assert!((arrow.top - level).abs() < f64::EPSILON);
+        assert!(arrow.tip > arrow.top);
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), super::Folded::default(), ratio.x, ratio.y),
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), arrow.x, (arrow.top + arrow.tip) / 2.0),
             Some(Grip::Ratio(Which::Comp))
         );
         assert!((super::Time::ratio(super::Comp::default().ratio).place() - 0.5).abs() < 1e-9);
-        // Right of the rail and above the time strips is nothing but the
-        // display, which belongs to the threshold.
+        // Right of the arrow and above the time strips is nothing but
+        // the display, which belongs to the threshold.
         assert_eq!(
-            grip_at(&ALL, &tone, rack(), super::Folded::default(), strips.ratio.x1 + 12.0, strips.ratio.center().y),
+            grip_at(&ALL, &tone, rack(), super::Folded::default(), arrow.x + 30.0, (arrow.top + arrow.tip) / 2.0),
             Some(Grip::Threshold(Which::Comp))
         );
     }
@@ -7780,8 +8284,11 @@ impl Analyser {
 #[derive(Clone, Debug, Default)]
 pub struct Levels {
     peaks: std::collections::VecDeque<f32>,
-    /// The de-esser's deepest cut per frame, in dB — the fire lane.
+    /// The de-esser's deepest cut per frame, in dB.
     fired: std::collections::VecDeque<f32>,
+    /// The de-esser's band per frame: the level in it, and the level
+    /// around it — the trace, and the line it is judged against.
+    ess: std::collections::VecDeque<(f32, f32)>,
     /// The input trace, built once per CHANGE rather than once per
     /// frame.
     ///
@@ -7855,6 +8362,14 @@ impl Levels {
             self.fired.pop_front();
         }
         self.fired.push_back(db.max(0.0));
+    }
+
+    /// The de-esser's band this frame: its level, and its surroundings'.
+    pub fn push_ess(&mut self, level_db: f32, reference_db: f32) {
+        if self.ess.len() >= HISTORY {
+            self.ess.pop_front();
+        }
+        self.ess.push_back((level_db, reference_db));
     }
 
     /// The peaks, oldest first.
@@ -8055,6 +8570,10 @@ fn lanes(
             continue;
         }
         let body = body_of(at, rack);
+        if which != Which::Gate {
+            ess_trace(scene, levels, tone, display_of(body, which, rack));
+            continue;
+        }
         let Some(lane) = lane_of(body, which, rack) else {
             continue;
         };
@@ -8062,7 +8581,7 @@ fn lanes(
             continue;
         }
         let per = lane.width / crate::num::coord(HISTORY);
-        if which == Which::Gate {
+        {
             {
                 // Open where the level is over the threshold, and for
                 // the hold after it drops back, and ramping shut over
@@ -8106,27 +8625,56 @@ fn lanes(
                     scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.85), None, &path);
                 }
             }
-        } else {
-            {
-                let red = hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE);
-                let count = levels.fired.len();
-                let offset = HISTORY.saturating_sub(count);
-                let mut path = BezPath::new();
-                for (i, db) in levels.fired.iter().enumerate() {
-                    if *db <= 0.05 {
-                        continue;
-                    }
-                    let h = (f64::from(*db) / 9.0).clamp(0.0, 1.0) * (lane.height - 2.0);
-                    let x = crate::num::coord(i.saturating_add(offset)).mul_add(per, lane.x);
-                    path.extend(Rect::new(x, lane.y + lane.height - 1.0 - h, x + per - 0.3, lane.y + lane.height - 1.0)
-                        .to_path(0.1).elements().iter().copied());
-                }
-                if !path.is_empty() {
-                    scene.fill(Fill::NonZero, Affine::IDENTITY, red.multiply_alpha(0.85), None, &path);
-                }
-            }
         }
     }
+}
+
+/// The de-esser's trace: the band's level over time in grey, the
+/// reference it is judged against dashed over it, and the bite — what
+/// came off the top — lit in the panel's colour between the two.
+///
+/// Time runs the way the compressor's does, so the two are read the
+/// same way across a rack: an "S" is a spike in the band, the dashed
+/// line is where the de-esser starts to care, and the bite is what it
+/// did about it.
+fn ess_trace(scene: &mut Scene, levels: &Levels, tone: &Tone, display: Panel) {
+    let count = levels.ess.len();
+    if count < 2 || display.width < 2.0 || display.height < 4.0 {
+        return;
+    }
+    let per = display.width / crate::num::coord(HISTORY);
+    let offset = HISTORY.saturating_sub(count);
+    let x_at = |i: usize| crate::num::coord(i.saturating_add(offset)).mul_add(per, display.x);
+    // The cuts are pushed once a frame like the levels are, so the two
+    // histories end together: line them up from the end.
+    let skew = count.saturating_sub(levels.fired.len());
+    let cut_at = |i: usize| i.checked_sub(skew).and_then(|k| levels.fired.get(k)).copied().unwrap_or(0.0);
+    let input: Vec<(f64, f64)> = levels
+        .ess
+        .iter()
+        .enumerate()
+        .map(|(i, (level, _))| (x_at(i), suppress_y(f64::from(*level), display)))
+        .collect();
+    let output: Vec<(f64, f64)> = levels
+        .ess
+        .iter()
+        .enumerate()
+        .map(|(i, (level, _))| (x_at(i), suppress_y(f64::from(level - cut_at(i)), display)))
+        .collect();
+    let threshold = f64::from(tone.de_ess.threshold);
+    let reference = levels
+        .ess
+        .iter()
+        .enumerate()
+        .map(|(i, (_, around))| (x_at(i), suppress_y(f64::from(*around) + threshold, display)));
+    let grey = Color::from_rgba8(0x9a, 0x9a, 0xa0, 0xff);
+    area_under(scene, grey.multiply_alpha(0.16), &input, display.y + display.height);
+    curve(scene, grey.multiply_alpha(0.55), input.iter().copied(), 1.0);
+    if levels.fired.iter().any(|db| *db > 0.05) {
+        ribbon(scene, DEESS_INK.multiply_alpha(0.5), &input, &output);
+    }
+    dashed(scene, DEESS_INK.multiply_alpha(0.8), reference, 0.8);
+    curve(scene, DEESS_INK, output.into_iter(), 1.3);
 }
 
 /// The colour a gate's open segments are lit in.
@@ -8724,17 +9272,18 @@ mod face_tests {
     fn a_suppressor_is_three_bands_and_two_edges() {
         let mut tone = placeholder(3);
         let at = display_of(body(Which::DeEss), Which::DeEss, Rack::Full);
-        let zoom = super::SuppressZoom::of(tone.de_ess);
-        let low_x = zoom.x_of(f64::from(tone.de_ess.low), at);
-        assert_eq!(grip(low_x, at.y + 10.0, &tone), Some(Grip::Edge(Which::DeEss, Side::Low)));
+        let strip = lane_of(body(Which::DeEss), Which::DeEss, Rack::Full).expect("a band strip");
+        assert!(strip.y < at.y, "the strip is over the display");
+        let zoom = super::SuppressZoom::top();
+        let low_x = zoom.x_of(f64::from(tone.de_ess.low), strip);
+        assert_eq!(grip(low_x, strip.y + 5.0, &tone), Some(Grip::Edge(Which::DeEss, Side::Low)));
         let mid_x = at.x + at.width / 2.0;
+        // Between the edges the strip is the sharpness; the display
+        // is the threshold, with the depth along its floor.
+        assert_eq!(grip(strip.x + 3.0, strip.y + 5.0, &tone), Some(Grip::Sharpness(Which::DeEss)));
         assert_eq!(grip(mid_x, at.y + 2.0, &tone), Some(Grip::Threshold(Which::DeEss)));
-        assert_eq!(grip(mid_x, at.y + at.height / 2.0, &tone), Some(Grip::Depth(Which::DeEss)));
-        assert_eq!(grip(mid_x, at.y + at.height - 2.0, &tone), Some(Grip::Sharpness(Which::DeEss)));
-        // The lane under it is the depth for a de-esser and the
-        // sharpness for the resonance panel.
-        let lane = lane_of(body(Which::DeEss), Which::DeEss, Rack::Full).expect("a fire lane");
-        assert_eq!(grip(mid_x, lane.y + 2.0, &tone), Some(Grip::Depth(Which::DeEss)));
+        assert_eq!(grip(mid_x, at.y + at.height / 2.0, &tone), Some(Grip::Threshold(Which::DeEss)));
+        assert_eq!(grip(mid_x, at.y + at.height - 2.0, &tone), Some(Grip::Depth(Which::DeEss)));
         let was = tone.de_ess.low;
         wheel(&mut tone, Grip::Edge(Which::DeEss, Side::Low), Mods::default(), -1.0);
         assert!(tone.de_ess.low > was, "the wheel moves the edge up");
@@ -8768,10 +9317,10 @@ mod face_tests {
         let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
         let font = crate::text::Font::embedded().expect("the embedded font");
         let mut still = anyrender::Scene::new();
-        super::draw(&mut still, &palette, &font, &tone, &Meters::default(), &ALL_PANELS, rack(), Folded::default(), None);
+        super::draw(&mut still, &palette, &font, &tone, &Meters::default(), &ALL_PANELS, rack(), Folded::default(), None, None);
         let mut moving = anyrender::Scene::new();
         let meters = crate::simulate::meters(0, 1.25, &tone);
-        super::draw(&mut moving, &palette, &font, &tone, &meters, &ALL_PANELS, rack(), Folded::default(), None);
+        super::draw(&mut moving, &palette, &font, &tone, &meters, &ALL_PANELS, rack(), Folded::default(), None, None);
         assert!(moving.commands.len() > still.commands.len());
     }
 
@@ -8797,6 +9346,7 @@ mod face_tests {
         for i in 0..40 {
             levels.push(if i % 8 < 3 { 0.5 } else { 0.001 });
             levels.push_fire(if i % 8 == 1 { 6.0 } else { 0.0 });
+            levels.push_ess(if i % 8 == 1 { 4.0 } else { -20.0 }, -22.0);
         }
         let mut busy = anyrender::Scene::new();
         super::lanes(&mut busy, &ALL_PANELS, &levels, &tone, rack(), Folded::default(), Rack::Full);
@@ -8811,7 +9361,7 @@ mod face_tests {
             Grip::Range,
             Grip::Bias,
             Grip::Tilt,
-            Grip::Depth(Which::Resonance),
+            Grip::Depth(Which::DeEss),
             Grip::Sharpness(Which::DeEss),
             Grip::Edge(Which::DeEss, Side::High),
             Grip::Time,

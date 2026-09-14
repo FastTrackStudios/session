@@ -27,6 +27,8 @@ pub struct Section {
     /// Already resolved to CSS, so a render is a projection and not a
     /// colour conversion per band per frame.
     pub color: Option<String>,
+    /// The ruler lane it sits on (REAPER 7.62+); 0 is the default lane.
+    pub lane: u32,
 }
 
 /// A project marker — the numbered flags under the region lane.
@@ -38,6 +40,8 @@ pub struct Marker {
     /// REAPER's own marker number, which is what the flag is labelled
     /// with. Not the index in this list: markers can be renumbered.
     pub idx: u32,
+    /// The ruler lane it sits on (REAPER 7.62+); 0 is the default lane.
+    pub lane: u32,
 }
 
 /// Everything the window stands on, in one pass.
@@ -68,9 +72,23 @@ pub struct Project {
     /// because a count of a grouped map is a walk, and the readout
     /// wants it every render.
     pub item_count: usize,
+    /// Each item's title — its active take's name — keyed by item guid.
+    /// An item carries no name of its own; the take does, and the
+    /// arrangement writes it on the item.
+    pub names: HashMap<String, String>,
 }
 
 impl Project {
+    /// What an item is called: its active take's name, else its label,
+    /// else nothing.
+    pub fn title<'a>(&'a self, item: &'a Item) -> Option<&'a str> {
+        self.names
+            .get(&item.guid)
+            .map(String::as_str)
+            .filter(|n| !n.is_empty())
+            .or(item.label.as_deref())
+    }
+
     /// This track's items, or an empty slice. Never allocates: a lane
     /// renders every frame it is on screen.
     pub fn lane(&self, track_guid: &str) -> &[Item] {
@@ -95,8 +113,17 @@ pub async fn fetch() -> Option<Project> {
     let mut length = 0.0f64;
     let item_count = all_items.len();
     let mut items: HashMap<String, Vec<Item>> = HashMap::new();
+    let mut names: HashMap<String, String> = HashMap::with_capacity(item_count);
     for item in all_items {
         length = length.max(item.position.as_seconds() + item.length.as_seconds());
+        // The title is the active take's name — two calls per item,
+        // in-process, once per open.
+        if let Ok(Some(handle)) = project.items().by_guid(&item.guid).await
+            && let Ok(name) = handle.active_take().name().await
+            && !name.is_empty()
+        {
+            names.insert(item.guid.clone(), name);
+        }
         items.entry(item.track_guid.clone()).or_default().push(item);
     }
     // Sorted, and sorted TOTALLY — position alone is not enough.
@@ -132,6 +159,7 @@ pub async fn fetch() -> Option<Project> {
             end: r.time_range.end_seconds(),
             name: r.name.clone(),
             color: r.color.map(|c| format!("#{c:06x}")),
+            lane: r.lane.unwrap_or(0),
         })
         .collect();
 
@@ -151,6 +179,7 @@ pub async fn fetch() -> Option<Project> {
             name: m.name.clone(),
             color: m.color.map(|c| format!("#{c:06x}")),
             idx: m.id.unwrap_or(i as u32 + 1),
+            lane: m.lane.unwrap_or(0),
         })
         .collect();
 
@@ -166,6 +195,7 @@ pub async fn fetch() -> Option<Project> {
         // the timeline still has somewhere to put its bar numbers.
         length_secs: length.max(60.0),
         item_count,
+        names,
     })
 }
 

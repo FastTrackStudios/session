@@ -22,24 +22,24 @@ use dioxus::prelude::*;
 use expression_editor_core::{Dimension, Editor};
 
 pub mod arp_panel;
-pub mod canvas;
+pub use expression_editor_paint::canvas;
 pub mod cursor;
 pub mod curve_editor;
-pub mod demo;
+pub use expression_editor_paint::demo;
 pub mod drag;
 pub mod drawer;
 pub mod envelopes;
-pub mod guitar;
+pub use expression_editor_paint::guitar;
 #[cfg(feature = "host")]
 pub mod host;
 pub mod inspector;
-pub mod interaction;
-pub mod keys;
+pub use expression_editor_paint::interaction;
+pub use expression_editor_paint::keys;
 pub mod lane_strip;
 pub mod menu_ui;
 pub mod mode_picker;
 pub mod multitool_ui;
-pub mod paint;
+pub use expression_editor_paint::paint;
 pub mod quantize_panel;
 pub mod quantize_panel_view;
 pub mod roll;
@@ -58,8 +58,9 @@ pub mod scroll;
 pub mod sizing;
 pub mod stack;
 pub mod switcher;
-pub mod text;
-pub mod theme;
+pub use expression_editor_paint::text;
+pub use expression_editor_paint::theme;
+mod theme_audit;
 pub mod toolbar;
 pub mod velocity_panel;
 pub mod velocity_ramp;
@@ -69,8 +70,8 @@ pub mod workflow;
 
 pub use drawer::ModDrawer;
 pub use expression_editor_core as core;
-pub use guitar::BendFlow;
-pub use interaction::Drag;
+pub use expression_editor_paint::BendFlow;
+pub use expression_editor_paint::Drag;
 pub use lane_strip::LaneStrip;
 pub use menu_ui::ContextMenu;
 pub use multitool_ui::MultiTool;
@@ -370,83 +371,6 @@ pub fn ExpressionEditor(
     }
 }
 
-/// The glyph drawn on a handle, as an SVG path.
-///
-/// Each mark says what the handle *does* rather than naming it: the
-/// slopes are the slope they apply, fine pitch is a tick, formant a
-/// bar, amplitude a dot, vibrato a wave. At fourteen pixels there is no
-/// room for a word, and a shape is faster to read than one anyway.
-/// `hollow` draws the amplitude handle as an empty circle, which is how
-/// the manual signals that a drag will hit only the sibilants rather
-/// than the whole note.
-pub(crate) fn handle_mark(
-    handle: expression_editor_core::Handle,
-    cx: f64,
-    cy: f64,
-    r: f64,
-    hollow: bool,
-) -> String {
-    use expression_editor_core::Handle as H;
-    match handle {
-        H::LeftSlope => format!(
-            "M {:.1} {:.1} L {:.1} {:.1}",
-            cx - r,
-            cy + r * 0.5,
-            cx + r,
-            cy - r * 0.5
-        ),
-        H::RightSlope => format!(
-            "M {:.1} {:.1} L {:.1} {:.1}",
-            cx - r,
-            cy - r * 0.5,
-            cx + r,
-            cy + r * 0.5
-        ),
-        H::FinePitch => format!(
-            "M {:.1} {:.1} L {:.1} {:.1}",
-            cx - r * 0.6,
-            cy,
-            cx + r * 0.6,
-            cy
-        ),
-        H::Formant => format!(
-            "M {:.1} {:.1} L {:.1} {:.1}",
-            cx,
-            cy - r * 0.7,
-            cx,
-            cy + r * 0.7
-        ),
-        H::Amplitude => {
-            // A small circle, drawn as two arcs so it stays one path.
-            // Larger when hollow, since an outline reads smaller than a
-            // filled dot at this size.
-            let d = if hollow { r * 0.58 } else { r * 0.42 };
-            format!(
-                "M {:.1} {:.1} a {:.1} {:.1} 0 1 0 {:.1} 0 a {:.1} {:.1} 0 1 0 {:.1} 0",
-                cx - d,
-                cy,
-                d,
-                d,
-                d * 2.0,
-                d,
-                d,
-                -d * 2.0
-            )
-        }
-        H::Vibrato => format!(
-            "M {:.1} {:.1} q {:.1} {:.1} {:.1} 0 q {:.1} {:.1} {:.1} 0",
-            cx - r,
-            cy,
-            r * 0.25,
-            -r * 0.9,
-            r,
-            r * 0.25,
-            r * 0.9,
-            r
-        ),
-        H::Pitch => String::new(),
-    }
-}
 
 /// Lanes shown by default in either domain.
 ///

@@ -16,9 +16,9 @@ description = "The Session DAW window — open a REAPER project and move around 
 # here has to move when it becomes a surface of the app rather than an
 # app of its own.
 #
-# The expression editor is deliberately absent. It arrives once this
-# holds its frame rate with a real session open, and it arrives as a
-# panel this window mounts.
+# The expression editor is a view this window mounts — see
+# `src/expression.rs`. It arrived once the arrangement held its frame
+# rate with a real session open.
 
 [dependencies]
 # The window itself. WRY, not Blitz: it is what session-desktop ships on,
@@ -52,7 +52,15 @@ dynamic-template = { workspace = true }
 # The mouse-modifier contexts a hit reports, so bindings stay
 # configurable rather than being hard-coded per widget.
 input-config-proto = { workspace = true }
+input = { workspace = true }
+input-keybinds = { workspace = true }
 daw-theme = { workspace = true }
+
+# The expression editor: its engine, its painter and gestures (no
+# dioxus), and the take-to-document conversion.
+expression-editor-core = { workspace = true }
+expression-editor-paint = { workspace = true }
+expression-editor-daw = { workspace = true }
 
 # The Tone rack's response math — the plugins' own, not a copy. See the
 # `signal` block in the root manifest for why these are core-only.

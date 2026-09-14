@@ -52,6 +52,11 @@ def guid() -> str:
 
 # (name, colour, children). A track with children is a folder; one
 # without is where the audio actually lives.
+def node(name, colour, children=(), **opts):
+    """A track with routing options — see `flatten` for what they mean."""
+    return (name, colour, list(children), opts)
+
+
 def mics(colour, *names):
     """Close mics, in their piece's colour.
 
@@ -96,19 +101,76 @@ def tom(number, colour):
     )
 
 
-KICK = 0x8E5A3B
-SNARE = 0xA8873E
-TOMS = 0x7B5EA7
-CYMBALS = 0x3F8E7D
-ROOMS = 0x9A5A6B
+# The kit is one family — red — and each piece is a step through it,
+# so a drum strip reads as a drum at a glance and as a piece on the
+# second look. Ordered the way the kit is stacked: the kick darkest,
+# the snare hottest, the toms warmed towards orange, the cymbals
+# lifted towards rose, the rooms cooled towards wine. Every step keeps
+# roughly the same saturation so no piece shouts over the others.
+DRUMS = 0xB23A3F  # crimson — the family's anchor, on the folder
+KICK = 0x8C2F35  # oxblood: darkest, lowest
+SNARE = 0xC94540  # scarlet: the hottest of the five
+TOMS = 0xB8613F  # terracotta: red warmed towards orange
+CYMBALS = 0xC76B7A  # rose: red lifted, for the top of the kit
+ROOMS = 0x93425C  # wine: red cooled, for the air around it
+PROCESS = 0x7A2E3A  # garnet: the kit's family, darker — what is fed off it
+
+# Bus colours: a cool slate for the bus tree, so it reads as
+# plumbing rather than as another instrument.
+BUS = 0x3E4C5E
+BASS = 0x6B8E3F
+# The instruments that are not drums, a voice or a bass, in the order
+# they sit in the session and on the hue wheel: electrics blue,
+# acoustics the seafoam between, keys green, synths past them.
+ELECTRIC = 0x3A6FB5
+ACOUSTIC = 0x3FA9A0
+KEYS = 0x4E9A55
+SYNTHS = 0x8CAA3A
+VOX = 0xB04A6A
+
+# An instrument folder is the VCA lead of its bus, with mute and solo
+# along for the ride: the folder's fader is the instrument's fader,
+# at the bus. Electrics are group 1, acoustics group 2.
+def vca_lead(group):
+    return {"vca_lead": group, "mute_lead": group, "solo_lead": group}
+
+
+def vca_follow(group):
+    return {"vca_follow": group, "mute_follow": group, "solo_follow": group}
+
+
+def pair(name, colour, **opts):
+    """A stereo pair: ONE stereo track, not a folder over an L and an R.
+
+    Two channels on one track, recording from a stereo input, with the
+    processing on it — a pair is one instrument, and its halves are
+    almost never processed apart."""
+    return node(name, colour, [], stereo=True, **opts)
+
+
+def to_bus(name, colour, children, bus):
+    """An instrument folder that reaches the mix by a send to its bus."""
+    return node(name, colour, children, send=bus)
+
 
 TREE = [
-    (
+    node(
         "Drum Kit",
-        0x4A6FA5,
+        DRUMS,
         [
             summed("Kick", KICK, ["In", "Out", "Trig"], ["Sub", "Verb"]),
-            summed("Snare", SNARE, ["Top", "Bottom", "Trig"], ["Verb"], fund=True),
+            # The snare's verb is a folder of three: a short one, a long
+            # one and a nonlin — the three rooms a snare is put in, so
+            # the one the song wants is a mute away rather than a
+            # patch change.
+            (
+                "Snare",
+                SNARE,
+                [
+                    ("Sum", SNARE, mics(SNARE, "Top", "Bottom", "Trig") + [("Fund", SNARE, [])]),
+                    ("Verb", SNARE, [("Short", SNARE, []), ("Long", SNARE, []), ("Nonlin", SNARE, [])]),
+                ],
+            ),
             (
                 "Toms",
                 TOMS,
@@ -129,39 +191,201 @@ TREE = [
             (
                 "Rooms",
                 ROOMS,
+                # Two stereo pairs: the room, and the far room.
                 [
-                    ("Mono", ROOMS, []),
-                    ("Stereo L", ROOMS, []),
-                    ("Stereo R", ROOMS, []),
+                    pair("Rooms", ROOMS),
+                    pair("Rooms Far", ROOMS),
                 ],
             ),
         ],
+        send="DRUM BUS",
     ),
-    (
+    # What the kit is sent to: a Compress folder of parallel
+    # compressors from dry to crushed, and an FX folder with a fake
+    # room for when there are no room mics or bad ones and a bank of
+    # reverbs to pick the room the band is in — short and bright down
+    # to long and dark, plus the odd ones.
+    node(
+        "Process",
+        PROCESS,
+        [
+            (
+                "Compress",
+                PROCESS,
+                # A balance group (see session-daw's `balance`): the
+                # Dry is the kit uncompressed, and the four are its
+                # colours; bring one up and the others come down.
+                [("Dry", PROCESS, []), ("Tight", PROCESS, []), ("Punch", PROCESS, []), ("Smash", PROCESS, []), ("Crunch", PROCESS, [])],
+            ),
+            (
+                "FX",
+                PROCESS,
+                [
+                    ("Room Sim", PROCESS, []),
+                    (
+                        "Verb",
+                        PROCESS,
+                        [
+                            ("Wood Room", PROCESS, []),
+                            ("Music Club", PROCESS, []),
+                            ("Stadium", PROCESS, []),
+                            ("RMX 16", PROCESS, []),
+                            ("Nonlin", PROCESS, []),
+                            ("Brick Wall", PROCESS, []),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+        send="DRUM BUS",
+    ),
+    # Bass, maximally: a bass guitar (DI and amp, summed) and a synth
+    # bass (its sub and the synth), to the bass bus.
+    to_bus(
         "Bass",
-        0x6B8E3F,
+        BASS,
         [
-            summed("Electric", 0x6B8E3F, ["DI", "Amp"], ["Sub"]),
-            ("Synth", 0x6B8E3F, []),
+            summed("Guitar", BASS, ["DI", "Amp"]),
+            ("Synth", BASS, [("Sub", BASS, []), ("Synth", BASS, [])]),
         ],
+        "BASS BUS",
     ),
-    (
-        "Guitars",
-        0xA85A3B,
+    # Guitars take a different shape every song, so there are no Sum
+    # folders: each part is a track, and each part goes to one of the
+    # three electric buses — RHYTHM, LEAD, SOLO — by a send, which is
+    # what makes stems of the three fall out and lets a part move
+    # between them mid-song by automating the sends.
+    #
+    # Electrics and acoustics are their own instruments, with their
+    # own buses. Each folder's fader still does something: its bus
+    # sends back into the folder — so the folder meters the instrument
+    # after its bus — and the folder is the VCA lead of that bus, so
+    # turning the folder down turns the instrument down at the bus.
+    # The folders are dead ends. A stereo pair — Rhythm — is a folder
+    # over L and R with the processing on the folder.
+    node(
+        "Electric",
+        ELECTRIC,
         [
-            summed("Rhythm L", 0xA85A3B, ["Amp", "DI"]),
-            summed("Rhythm R", 0xA85A3B, ["Amp", "DI"]),
-            ("Lead", 0xA85A3B, []),
+            pair("Rhythm", ELECTRIC, send="GTR RHYTHM"),
+            node("Lead", ELECTRIC, send="GTR LEAD"),
+            node("Solo", ELECTRIC, send="GTR SOLO"),
         ],
+        no_parent=True,
+        group=vca_lead(1),
     ),
-    (
+    node(
+        "Acoustic",
+        ACOUSTIC,
+        [
+            node("Steel", ACOUSTIC, send="ACOUSTIC BUS"),
+            node("Nylon", ACOUSTIC, send="ACOUSTIC BUS"),
+            # High-strung, doubling the steel an octave up: a layer,
+            # not a second guitar, so it sits with the steel it doubles.
+            node("Nashville", ACOUSTIC, send="ACOUSTIC BUS"),
+        ],
+        no_parent=True,
+        group=vca_lead(2),
+    ),
+    to_bus(
+        "Keys",
+        KEYS,
+        [
+            pair("Piano", KEYS),
+            ("Rhodes", KEYS, []),
+            ("Organ", KEYS, []),
+        ],
+        "KEYS BUS",
+    ),
+    to_bus(
+        "Synths",
+        SYNTHS,
+        [
+            ("Pad", SYNTHS, []),
+            ("Lead Synth", SYNTHS, []),
+            ("Arp", SYNTHS, []),
+        ],
+        "KEYS BUS",
+    ),
+    # One set of effects for everything that is not drums or a voice —
+    # electric and acoustic guitars, piano, keys, synths, strings if
+    # there are any — the way a mixer's template keeps them: rooms to
+    # sit an instrument in without changing it, plates bright to dark,
+    # halls short to endless, springs for guitars, delays slap to
+    # long, and movement. Every return is a slot: its presets are
+    # takes on the one job.
+    to_bus(
+        "Inst FX",
+        0x5C6B7A,
+        [
+            ("Ambience", 0x5C6B7A, [("Short Room", 0x5C6B7A, []), ("Slap Room", 0x5C6B7A, []), ("Early", 0x5C6B7A, [])]),
+            ("Plate", 0x5C6B7A, [("Fat Plate", 0x5C6B7A, []), ("Dark Plate", 0x5C6B7A, []), ("Gold Plate", 0x5C6B7A, [])]),
+            ("Hall", 0x5C6B7A, [("Large Hall", 0x5C6B7A, []), ("Vienna", 0x5C6B7A, []), ("Atmosphere", 0x5C6B7A, [])]),
+            ("Spring", 0x5C6B7A, [("Big Sky", 0x5C6B7A, []), ("XL35", 0x5C6B7A, [])]),
+            ("Delay", 0x5C6B7A, [("Slap", 0x5C6B7A, []), ("Tape", 0x5C6B7A, []), ("Echo Boy", 0x5C6B7A, []), ("Space Echo", 0x5C6B7A, [])]),
+            ("Mod", 0x5C6B7A, [("Chorus", 0x5C6B7A, []), ("Flanger", 0x5C6B7A, [])]),
+        ],
+        "INST BUS",
+    ),
+    to_bus(
         "Vocals",
-        0xB04A6A,
+        VOX,
         [
-            summed("Lead", 0xB04A6A, ["Close", "Room"], ["Verb"]),
-            ("Doubles", 0xB04A6A, []),
-            ("Harmonies", 0xB04A6A, []),
+            summed("Lead", VOX, ["Close", "Room"], ["Verb"]),
+            ("Doubles", VOX, []),
+            ("Harmonies", VOX, []),
         ],
+        "LEAD VOX BUS",
+    ),
+    # The bus tree — the dynamic template's canonical one (see
+    # `dynamic_template::buses`): group buses into a stem bus, stem
+    # buses into the mix. The three electric-guitar buses sit under
+    # ELECTRIC BUS, in the bus list rather than in the Guitars folder.
+    node(
+        "MIX BUS",
+        BUS,
+        [
+            node(
+                "INST BUS",
+                BUS,
+                [
+                    node("DRUM BUS", DRUMS, bus=True),
+                    node("BASS BUS", BASS, bus=True),
+                    # Each guitar bus goes on to INST BUS and ALSO back
+                    # to its folder, which meters it and leads it.
+                    node(
+                        "ELECTRIC BUS",
+                        ELECTRIC,
+                        [
+                            node("GTR RHYTHM", ELECTRIC, bus=True),
+                            node("GTR LEAD", ELECTRIC, bus=True),
+                            node("GTR SOLO", ELECTRIC, bus=True),
+                        ],
+                        bus=True,
+                        send="Electric",
+                        keep_parent=True,
+                        group=vca_follow(1),
+                    ),
+                    node(
+                        "ACOUSTIC BUS",
+                        ACOUSTIC,
+                        bus=True,
+                        send="Acoustic",
+                        keep_parent=True,
+                        group=vca_follow(2),
+                    ),
+                    node("KEYS BUS", KEYS, bus=True),
+                ],
+                bus=True,
+            ),
+            node(
+                "VOX BUS",
+                BUS,
+                [node("LEAD VOX BUS", VOX, bus=True), node("BGV BUS", VOX, bus=True)],
+                bus=True,
+            ),
+        ],
+        bus=True,
     ),
 ]
 
@@ -220,14 +444,52 @@ def is_piece(name, children, parent_is_piece):
 
 
 def flatten(nodes, depth=0, out=None, parent_is_piece=False):
-    """Depth-first, carrying each track's nesting level and its role."""
+    """Depth-first, carrying each track's nesting level, its role and
+    its routing.
+
+    A node is `(name, colour, children)` or, from `node()`, the same
+    with an options dict:
+
+    - `send="X BUS"`: an explicit send to that bus, and the parent send
+      OFF — the track reaches the mix through the bus, not the folder.
+    - `keep_parent=True` with `send`: the parent send stays ON as well,
+      so the folder above still sums (and meters) what it holds while
+      the audio that reaches the mix goes by the send. The folder is
+      then made a dead end (`no_parent`) so nothing is heard twice.
+    - `no_parent=True`: the parent send OFF and no send — a dead end
+      whose fader and meter are still real, for a folder that is a
+      group lead rather than a sum point.
+    - `group={...}`: REAPER track-grouping flags, by field name.
+    - `bus=True`: a bus — no items, not armed.
+    """
     if out is None:
         out = []
-    for name, colour, children in nodes:
+    for entry in nodes:
+        name, colour, children = entry[0], entry[1], entry[2]
+        opts = entry[3] if len(entry) > 3 else {}
         piece = is_piece(name, children, parent_is_piece)
-        out.append((name, colour, depth, bool(children), piece))
+        out.append((name, colour, depth, bool(children), piece, opts))
         flatten(children, depth + 1, out, piece)
     return out
+
+
+# REAPER's GROUP_FLAGS fields, in its documented order. Each is a
+# bitmask of groups: group 1 is bit 0.
+GROUP_FIELDS = [
+    "volume_lead", "volume_follow", "pan_lead", "pan_follow", "width_lead", "width_follow",
+    "mute_lead", "mute_follow", "solo_lead", "solo_follow", "recarm_lead", "recarm_follow",
+    "polarity_lead", "polarity_follow", "automode_lead", "automode_follow",
+    "volume_reverse", "pan_reverse", "width_reverse", "no_lead_when_following",
+    "vca_lead", "vca_follow", "vca_prefx_follow", "media_edit_lead", "media_edit_follow",
+]
+
+
+def group_flags(group):
+    """The GROUP_FLAGS line for a `group=` dict of field -> group number."""
+    fields = [0] * len(GROUP_FIELDS)
+    for field, number in group.items():
+        fields[GROUP_FIELDS.index(field)] |= 1 << (number - 1)
+    return " ".join(str(f) for f in fields)
 
 
 # The narrowest a strip may be set to — `Layout::strip_min`. Unlike the
@@ -339,7 +601,7 @@ def check_the_kit_fits(tracks) -> None:
         elif kit:
             kit.append(track)
 
-    widths = [strip_width(name, folder, piece) for name, _, _, folder, piece in kit]
+    widths = [strip_width(name, folder, piece) for name, _, _, folder, piece, _ in kit]
     resting = sum(w + 1 for w in widths)
     if resting > FITS_WIDTH:
         # A warning, not a refusal: the kit grew a Fund per piece, and
@@ -366,6 +628,44 @@ def main() -> None:
     out("<REAPER_PROJECT 0.1 '7.0' 0\n")
     out(f"  TEMPO {BPM:g} 4 4\n")
 
+    # The ruler's lanes — REAPER 7.62's — the way an FTS session keeps
+    # them: lane 1 is the SONG, one region over the whole song; lane 2
+    # the SECTIONS; lane 3 the MARKS. A region is a MARKER line with
+    # flag 1 and a closing line at its end; the lane is the last field.
+    out('  RULERLANE 1 8 "SONG" 0 -1\n  RULERLANE 2 8 "SECTIONS" 0 -1\n  RULERLANE 3 8 "MARKS" 0 -1\n')
+    marker_id = 1
+
+    def region(name, start_bar, end_bar, lane, colour=0):
+        nonlocal marker_id
+        out(f'  MARKER {marker_id} {start_bar * SECS_PER_BAR:.6f} "{name}" 1 {colour} 1 B {guid()} 0 {lane}\n')
+        out(f'  MARKER {marker_id} {end_bar * SECS_PER_BAR:.6f} "" 1\n')
+        marker_id += 1
+
+    def mark(name, bar, lane, colour=0):
+        nonlocal marker_id
+        out(f'  MARKER {marker_id} {bar * SECS_PER_BAR:.6f} "{name}" 0 {colour} 1 B {guid()} 0 {lane}\n')
+        marker_id += 1
+
+    def native(rgb):
+        red, green, blue = (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF
+        return 0x1000000 | (blue << 16) | (green << 8) | red
+
+    region("SONG", 0, BARS, 1)
+    for name, start, end, colour in [
+        ("Intro", 0, 4, 0x4A6FA5),
+        ("Verse 1", 4, 12, 0x3FA9A0),
+        ("Chorus 1", 12, 20, 0xC94540),
+        ("Verse 2", 20, 28, 0x3FA9A0),
+        ("Chorus 2", 28, 36, 0xC94540),
+        ("Bridge", 36, 44, 0x8CAA3A),
+        ("Chorus 3", 44, 56, 0xC94540),
+        ("Outro", 56, 64, 0x4A6FA5),
+    ]:
+        region(name, start, end, 2, native(colour))
+    mark("SONGSTART", 0, 3)
+    mark("SOLO", 40, 3)
+    mark("SONGEND", BARS, 3)
+
     # Mixer strip widths, in the project's extension block — where
     # REAPER keeps what it does not model, and REAPER does not model
     # this. The same tracks that open at the minimum HEIGHT in the panel
@@ -373,7 +673,7 @@ def main() -> None:
     # amount of attention in both views, which is very little.
     narrow = [
         f"{g}={strip_width(name, is_folder, piece)}"
-        for g, (name, _, _, is_folder, piece) in zip(guids, tracks)
+        for g, (name, _, _, is_folder, piece, _) in zip(guids, tracks)
     ]
     if narrow:
         out("  <EXTSTATE\n    <FTSMCP\n")
@@ -387,18 +687,26 @@ def main() -> None:
     # The piece itself rather than one of its mics — "the kick" is the
     # drum, and its In/Out/Trig are how it was captured.
     selected = next(
-        (i for i, (name, _, _, _, _) in enumerate(tracks) if name == "Kick"),
+        (i for i, (name, _, _, _, _, _) in enumerate(tracks) if name == "Kick"),
         next(
             (
                 i
-                for i, (name, _, _, is_folder, piece) in enumerate(tracks)
+                for i, (name, _, _, is_folder, piece, _) in enumerate(tracks)
                 if not is_folder and not piece and not is_auxiliary(name)
             ),
             -1,
         ),
     )
 
-    for i, (name, colour, depth, is_folder, _piece) in enumerate(tracks):
+    # Who receives from whom: a send is written on the RECEIVING track
+    # in REAPER, as the index of the track it comes from.
+    index_of = {name: i for i, (name, *_rest) in enumerate(tracks)}
+    receives = {}
+    for i, (_name, _c, _d, _f, _p, opts) in enumerate(tracks):
+        if opts.get("send"):
+            receives.setdefault(opts["send"], []).append(i)
+
+    for i, (name, colour, depth, is_folder, _piece, opts) in enumerate(tracks):
         # REAPER stores the depth DELTA, not the depth: the running level
         # after this track is where the next one starts. A folder always
         # opens one; a leaf closes however many end on it, which is what
@@ -432,13 +740,21 @@ def main() -> None:
         out(f"    VOLPAN {0.10 + 1.10 * ((i % 11) / 10.0):.4f} {-0.8 + 1.6 * ((i % 5) / 4.0):.4f} -1 -1 1\n")
         out("    MUTESOLO 0 0 0\n    IPHASE 0\n")
         out(f"    ISBUS {1 if is_folder else 0} {delta}\n")
+        # Where the audio goes: the folder above, unless the track
+        # reaches the mix by a send instead — see `flatten`.
+        dead_end = opts.get("no_parent") or (opts.get("send") and not opts.get("keep_parent"))
+        out(f"    MAINSEND {0 if dead_end else 1} 0\n")
+        if opts.get("group"):
+            out(f"    GROUP_FLAGS {group_flags(opts['group'])}\n")
+        for src in receives.get(name, []):
+            out(f"    AUXRECV {src} 0 1 0 0 0 0 0 0 -1:U 0 -1 ''\n")
         out("    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0\n")
         # The close mics are armed, the way a kit is before a take.
         # Folders are not — you do not record a bus — and neither are
         # the triggers and returns. Left unarmed across the board the
         # record arm was a ring that never lit, which is a control you
         # cannot tell from an ornament.
-        armed = 0 if is_folder or is_auxiliary(name) else 1
+        armed = 0 if is_folder or is_auxiliary(name) or opts.get("bus") else 1
         # REAPER's second REC field is the input: a small integer is a
         # mono hardware input, counted from zero. 5088 was a value
         # copied from a real project and it decodes to nothing useful,
@@ -446,6 +762,11 @@ def main() -> None:
         # that says the fixture forgot rather than that the track has
         # none.
         source = 0 if is_folder or is_auxiliary(name) else (i % 16)
+        # A stereo track records from a stereo pair of inputs, which
+        # REAPER numbers from 1024: 1024 + the pair's first channel.
+        if opts.get("stereo"):
+            source = 1024 + (source & ~1)
+            out("    NCHAN 2\n")
         # One track selected, because a session is never opened with
         # nothing in focus — and because selection is what opens a mic's
         # strip to a working width in the Tone sub-mode. The kick's In is
@@ -454,8 +775,9 @@ def main() -> None:
         height = MIN_HEIGHT if is_auxiliary(name) else 0
         out(f"    TRACKHEIGHT {height} 0 0 0 0 0 0\n")
 
-        # Audio only on the leaves. A folder's items are its children's.
-        if not is_folder:
+        # Audio only on the leaves. A folder's items are its children's,
+        # and a bus has none of its own.
+        if not is_folder and not opts.get("bus"):
             bar = random.randrange(0, 8)
             while bar < BARS:
                 length = random.choice([4, 8, 8, 16])
@@ -463,6 +785,11 @@ def main() -> None:
                 out(f"      POSITION {bar * SECS_PER_BAR:.6f}\n")
                 out(f"      LENGTH {length * SECS_PER_BAR:.6f}\n")
                 out(f"      NAME \"{name} {bar // 4 + 1}\"\n")
+                # Fades the way a comped session has them: a short one
+                # in, a longer one out, in a shape or two — so the
+                # arrangement has fades to draw and handles to grab.
+                out(f"      FADEIN {random.choice([0, 0, 1, 2, 5])} {random.choice([0.02, 0.05, 0.25, 0.5]):.4f} 0 0 0 0 0\n")
+                out(f"      FADEOUT {random.choice([0, 0, 1, 2, 5])} {random.choice([0.1, 0.5, 1.0, 2.0]):.4f} 0 0 0 0 0\n")
                 out("      IGUID " + guid() + "\n      GUID " + guid() + "\n")
                 out("    >\n")
                 bar += length + random.choice([0, 0, 4])

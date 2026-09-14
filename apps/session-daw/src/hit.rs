@@ -43,6 +43,13 @@ pub enum Target {
     Track { row: usize },
     /// The lane area of a row, at a time.
     Lane { row: usize, seconds: f64 },
+    /// An item on a row, by the arrangement's index, and which part.
+    Item {
+        row: usize,
+        index: usize,
+        zone: crate::arrangement::ItemZone,
+        seconds: f64,
+    },
     /// Somewhere with nothing on it.
     Empty,
 }
@@ -140,16 +147,30 @@ pub fn arrangement(
     if x < rail_x + crate::arrangement::TCP_WIDTH {
         return Hit::new(Target::Track { row }, Context::TrackControlPanel);
     }
-    Hit::new(
-        Target::Lane {
-            row,
-            seconds: seconds_at(x - rail_x, view),
-        },
-        // The empty arrange area. An item under the pointer narrows
-        // this to one of the item contexts — see `Arrangement::item_at`,
-        // which is the next piece and needs the recorded item extents.
-        Context::ArrangeView,
-    )
+    let seconds = seconds_at(x - rail_x, view);
+    // An item under the pointer narrows the empty arrange area to one
+    // of the item contexts: its body, an edge, a fade's handle.
+    if let Some((index, zone)) =
+        scene.item_at(view, row, x - rail_x - crate::arrangement::TCP_WIDTH, content_y)
+    {
+        use crate::arrangement::ItemZone as Z;
+        let context = match zone {
+            Z::Body => Context::MediaItemBottomHalf,
+            Z::LeftEdge => Context::MediaItemLeftEdge,
+            Z::RightEdge => Context::MediaItemRightEdge,
+            Z::FadeIn | Z::FadeOut => Context::MediaItemFade,
+        };
+        return Hit::new(
+            Target::Item {
+                row,
+                index,
+                zone,
+                seconds,
+            },
+            context,
+        );
+    }
+    Hit::new(Target::Lane { row, seconds }, Context::ArrangeView)
 }
 
 /// What the pointer is over in the mixer.

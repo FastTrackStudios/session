@@ -2,7 +2,7 @@
 use expression_editor_core::Editor;
 
 #[derive(Clone, Copy)]
-pub(super) struct TimeZoom {
+pub struct TimeZoom {
     pub origin: f64,
     pub current: f64,
     pub marquee: bool,

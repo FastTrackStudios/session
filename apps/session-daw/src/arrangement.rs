@@ -22,7 +22,7 @@
 
 use anyrender::recording::RenderCommand;
 use anyrender::{PaintScene, Scene};
-use vello::kurbo::{Affine, Rect};
+use vello::kurbo::{Affine, BezPath, Rect};
 use vello::peniko::{Color, Fill};
 
 use daw_ui::studio::{ProjectRef, RowsRef};
@@ -79,6 +79,7 @@ fn chrome(theme: &daw_ui::theming::Theme) -> daw_theme::Chrome {
 }
 
 /// Colours resolved once, so the draw loop never parses a hex string.
+#[derive(Clone)]
 pub struct Palette {
     pub surface: Color,
     pub row_a: Color,
@@ -196,6 +197,16 @@ pub struct Arrangement {
     pub length_secs: f64,
     /// The project tempo, for the ruler's bar lines.
     pub bpm: f64,
+    /// Every item's title, by row, in seconds — drawn per frame in
+    /// pixel space over the lanes, because recorded text would stretch
+    /// with the zoom.
+    titles: Vec<Title>,
+    /// Every item, by row, in seconds, with its fades — what a hit
+    /// test asks and what the fade handles are drawn from.
+    items: Vec<ItemBox>,
+    /// The song's shape, for the ruler's lanes.
+    sections: Vec<daw_ui::studio::project::Section>,
+    markers: Vec<daw_ui::studio::project::Marker>,
     /// How many items were recorded, for reports that want to say what
     /// was actually drawn.
     pub item_count: usize,
@@ -353,6 +364,8 @@ impl Arrangement {
         let mut panel = Scene::new();
         let mut panel_bar = Scene::new();
         let mut index = Index::default();
+        let mut titles = Vec::with_capacity(project.item_count);
+        let mut boxes = Vec::with_capacity(project.item_count);
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         // The colour of the folder open at each depth, so a row can
         // paint the folders it sits inside down its own left edge.
@@ -450,20 +463,55 @@ impl Arrangement {
             // row shrinks, so a collapsed session still shows its items
             // as bands rather than as empty lanes.
             let inset = (body * 0.05).clamp(0.0, 2.0);
+            let track_index = usize::try_from(track.index).unwrap_or(0);
             for item in project.lane(&track.guid) {
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
                 let color = item.color.map_or(track_color, |rgb| {
                     rgb24(rgb, if item.muted { 0x66 } else { 0xff })
                 });
+                // The body, dimmed, and the waveform over it in the
+                // full colour: the item is read by its waveform, and a
+                // solid block of colour was a waveform you could not
+                // see through.
                 lanes.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
-                    color,
+                    color.multiply_alpha(0.42),
                     None,
                     &Rect::new(x0, y + inset, x1, y + body - inset),
                 );
                 index.x.push((x0, x1));
+                let top = y + inset;
+                let bottom = y + body - inset;
+                if let Some(wave) = waveform(track_index, x0, x1, top, bottom) {
+                    lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &wave);
+                    index.x.push((x0, x1));
+                }
+                // The fades, as the part of the item they take away:
+                // the region over the gain curve, darkened, from each
+                // end. Recorded in seconds like the item, so the zoom
+                // stretches them with it.
+                let fades = Fades::of(item);
+                if let Some(path) = fades.path(x0, x1, top, bottom, 1.0) {
+                    lanes.fill(Fill::NonZero, Affine::IDENTITY, FADE_SHADE, None, &path);
+                    index.x.push((x0, x1));
+                }
+                boxes.push(ItemBox {
+                    row,
+                    guid: item.guid.clone(),
+                    x0,
+                    x1,
+                    fades,
+                });
+                if let Some(name) = project.title(item) {
+                    titles.push(Title {
+                        row,
+                        x0,
+                        x1,
+                        name: name.to_owned(),
+                    });
+                }
             }
 
             index.lanes.push(lanes_from..command_index(&lanes));
@@ -486,7 +534,423 @@ impl Arrangement {
             length_secs: project.length_secs,
             bpm: project.bpm,
             item_count: project.item_count,
+            titles,
+            items: boxes,
+            sections: project.sections.clone(),
+            markers: project.markers.clone(),
         }
+    }
+
+    /// The item under a point in the lanes, and which part of it.
+    ///
+    /// `x` is the content x in pixels from the lanes' left edge (the
+    /// TCP's right), `content_y` the content y the row was found at.
+    /// The parts are REAPER's: the fade handles in the top corners,
+    /// the edges, and the body — checked in that order, because a
+    /// handle sits on an edge and an edge sits on the body.
+    #[must_use]
+    pub fn item_at(&self, view: Viewport, row: usize, x: f64, content_y: f64) -> Option<(usize, ItemZone)> {
+        let (top, height) = self.row_box(row)?;
+        let scale = view.pps;
+        // Last drawn is on top, so the last match wins.
+        let mut found = None;
+        for (index, item) in self.items.iter().enumerate() {
+            if item.row != row {
+                continue;
+            }
+            let x0 = item.x0.mul_add(scale, -view.scroll_x);
+            let x1 = item.x1.mul_add(scale, -view.scroll_x);
+            if x < x0 - GRAB || x > x1 + GRAB {
+                continue;
+            }
+            let in_handle_band = content_y - top <= HANDLE_BAND * view.zoom_y.max(0.1) + 2.0;
+            let fade_in_x = item.fades.fade_in.mul_add(scale, x0);
+            let fade_out_x = x1 - item.fades.fade_out * scale;
+            let zone = if in_handle_band && (x - fade_in_x).abs() <= GRAB {
+                ItemZone::FadeIn
+            } else if in_handle_band && (x - fade_out_x).abs() <= GRAB {
+                ItemZone::FadeOut
+            } else if (x - x0).abs() <= EDGE {
+                ItemZone::LeftEdge
+            } else if (x - x1).abs() <= EDGE {
+                ItemZone::RightEdge
+            } else {
+                ItemZone::Body
+            };
+            let _ = height;
+            found = Some((index, zone));
+        }
+        found
+    }
+
+    /// An item's box, by the index `item_at` gave.
+    #[must_use]
+    pub fn item(&self, index: usize) -> Option<&ItemBox> {
+        self.items.get(index)
+    }
+
+    /// An item's box, by its guid.
+    #[must_use]
+    pub fn item_by_guid(&self, guid: &str) -> Option<&ItemBox> {
+        self.items.iter().find(|b| b.guid == guid)
+    }
+
+    /// The regions, for the ruler's lanes.
+    #[must_use]
+    pub fn sections(&self) -> &[daw_ui::studio::project::Section] {
+        &self.sections
+    }
+
+    /// The markers, for the ruler's lanes.
+    #[must_use]
+    pub fn markers(&self) -> &[daw_ui::studio::project::Marker] {
+        &self.markers
+    }
+
+    /// The item titles on the rows a viewport shows, with where each
+    /// sits — for the per-frame pass that writes them in pixel space.
+    pub fn titles_in(&self, view: Viewport) -> impl Iterator<Item = (&Title, f64, f64)> + '_ {
+        let rows = self.visible_rows(view);
+        self.titles.iter().filter_map(move |title| {
+            if !rows.contains(&title.row) {
+                return None;
+            }
+            let (top, height) = self.row_box(title.row)?;
+            Some((title, top, height))
+        })
+    }
+}
+
+/// How far from a fade handle or an item edge a hit still takes it.
+const GRAB: f64 = 6.0;
+
+/// How far from an item's end a hit is the edge rather than the body.
+const EDGE: f64 = 5.0;
+
+/// How deep the band along an item's top is where the fade handles
+/// live, in pixels at zoom 1.
+const HANDLE_BAND: f64 = 10.0;
+
+/// The shade a fade takes off the item: what is faded out is darker.
+const FADE_SHADE: Color = Color::from_rgba8(0x00, 0x00, 0x00, 0x5c);
+
+/// Which part of an item a point is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemZone {
+    Body,
+    LeftEdge,
+    RightEdge,
+    /// The fade-in's handle: the top corner where the fade ends.
+    FadeIn,
+    /// The fade-out's handle: the top corner where the fade starts.
+    FadeOut,
+}
+
+/// An item as the hit test and the handles see it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ItemBox {
+    pub row: usize,
+    pub guid: String,
+    /// Its span, in seconds.
+    pub x0: f64,
+    pub x1: f64,
+    pub fades: Fades,
+}
+
+/// An item's two fades: how long, and what shape.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fades {
+    pub fade_in: f64,
+    pub fade_out: f64,
+    pub in_shape: daw_proto::item::FadeShape,
+    pub out_shape: daw_proto::item::FadeShape,
+}
+
+impl Fades {
+    #[must_use]
+    pub fn of(item: &daw_proto::Item) -> Self {
+        Self {
+            fade_in: item.fade_in_length.as_seconds().max(0.0),
+            fade_out: item.fade_out_length.as_seconds().max(0.0),
+            in_shape: item.fade_in_shape,
+            out_shape: item.fade_out_shape,
+        }
+    }
+
+    /// The gain a fade shape has reached at `t` of its length, 0..1.
+    ///
+    /// The plugin's own seven shapes: linear; fast start (the gain is
+    /// up quickly) and fast end (it is up late), each with a steeper
+    /// cousin; and the slow-start-and-end S, with its steeper cousin.
+    #[must_use]
+    pub fn gain(shape: daw_proto::item::FadeShape, t: f64) -> f64 {
+        use daw_proto::item::FadeShape as S;
+        let t = t.clamp(0.0, 1.0);
+        match shape {
+            S::Linear => t,
+            S::FastStart => 1.0 - (1.0 - t).powi(2),
+            S::FastStartSteep => 1.0 - (1.0 - t).powi(3),
+            S::FastEnd => t.powi(2),
+            S::FastEndSteep => t.powi(3),
+            S::SlowStartEnd => t * t * (3.0 - 2.0 * t),
+            S::SlowStartEndSteep => {
+                let s = t * t * (3.0 - 2.0 * t);
+                s * s * (3.0 - 2.0 * s)
+            }
+        }
+    }
+
+    /// Both fades as one path: the region over each gain curve, which
+    /// is the part of the item the fade takes away.
+    ///
+    /// `x0..x1` and the fades are in the same unit — seconds for the
+    /// recording, pixels for the live overlay — and `scale` turns that
+    /// unit into the x axis; `top..bottom` are pixels either way.
+    /// `None` when there is no fade to draw.
+    #[must_use]
+    pub fn path(self, x0: f64, x1: f64, top: f64, bottom: f64, scale: f64) -> Option<BezPath> {
+        const STEPS: usize = 12;
+        let height = bottom - top;
+        if height <= 0.0 || (self.fade_in <= 0.0 && self.fade_out <= 0.0) {
+            return None;
+        }
+        let span = (x1 - x0).max(0.0);
+        let fade_in = self.fade_in.min(span);
+        let fade_out = self.fade_out.min(span);
+        let at = |x: f64| x * scale;
+        let y_of = |gain: f64| gain.mul_add(-height, bottom);
+        let mut path = BezPath::new();
+        if fade_in > 0.0 {
+            path.move_to((at(x0), top));
+            for k in 0..=STEPS {
+                let t = crate::num::coord(k) / crate::num::coord(STEPS);
+                let x = fade_in.mul_add(t, x0);
+                path.line_to((at(x), y_of(Self::gain(self.in_shape, t))));
+            }
+            path.close_path();
+        }
+        if fade_out > 0.0 {
+            path.move_to((at(x1), top));
+            for k in 0..=STEPS {
+                let t = crate::num::coord(k) / crate::num::coord(STEPS);
+                let x = x1 - fade_out * t;
+                path.line_to((at(x), y_of(Self::gain(self.out_shape, t))));
+            }
+            path.close_path();
+        }
+        Some(path)
+    }
+}
+
+/// The fade handles and the fade being dragged, in pixel space over
+/// the lanes: the per-frame pass.
+///
+/// A handle is drawn on the hovered item — a small square at the top
+/// corner where each fade ends — so a fade you can grab is a fade you
+/// can see the grab for, and nothing is drawn on the others: twenty
+/// thousand handles would be a texture. A fade in flight is drawn
+/// whole over its recorded self, so the drag is seen before the
+/// recording catches up.
+pub fn fade_overlay(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+    hovered: Option<usize>,
+    in_flight: Option<(usize, Fades)>,
+) {
+    let (ox, oy) = origin;
+    let x_of = |t: f64| t.mul_add(view.pps, ox);
+    if let Some((index, fades)) = in_flight
+        && let Some(item) = scene.item(index)
+        && let Some((top, height)) = scene.row_box(item.row)
+    {
+        let inset = (height * 0.05).clamp(0.0, 2.0);
+        let (top, bottom) = (top.mul_add(view.zoom_y, oy) + inset, (top + height).mul_add(view.zoom_y, oy) - inset);
+        let px = Fades {
+            fade_in: fades.fade_in * view.pps,
+            fade_out: fades.fade_out * view.pps,
+            ..fades
+        };
+        if let Some(path) = px.path(x_of(item.x0), x_of(item.x1), top, bottom, 1.0) {
+            painter.fill(Fill::NonZero, Affine::IDENTITY, FADE_SHADE, None, &path);
+            painter.stroke(
+                &vello::kurbo::Stroke::new(1.2),
+                Affine::IDENTITY,
+                palette.text,
+                None,
+                &path,
+            );
+        }
+    }
+    let Some(index) = hovered.or(in_flight.map(|(i, _)| i)) else {
+        return;
+    };
+    let Some(item) = scene.item(index) else {
+        return;
+    };
+    let Some((top, _)) = scene.row_box(item.row) else {
+        return;
+    };
+    let fades = in_flight.map_or(item.fades, |(_, f)| f);
+    let top = top.mul_add(view.zoom_y, oy) + 2.0;
+    for x in [x_of(item.x0 + fades.fade_in), x_of(item.x1 - fades.fade_out)] {
+        let r = Rect::new(x - 3.0, top, x + 3.0, top + 6.0);
+        painter.fill(Fill::NonZero, Affine::IDENTITY, palette.text, None, &r);
+    }
+}
+
+/// The selection and the ghosts, in pixel space over the lanes.
+///
+/// A selected item wears an outline; an item being moved or trimmed
+/// shows where it will land as an outline at the new place, over the
+/// recorded item where it still is — the recording catches up on the
+/// release.
+pub fn selection_overlay(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+    selected: &std::collections::HashSet<String>,
+    ghost: Option<(usize, f64, f64)>,
+) {
+    let (ox, oy) = origin;
+    let x_of = |t: f64| t.mul_add(view.pps, ox);
+    let rows = scene.visible_rows(view);
+    for item in scene.items.iter().filter(|i| rows.contains(&i.row) && selected.contains(&i.guid)) {
+        let Some((top, height)) = scene.row_box(item.row) else { continue };
+        let inset = (height * 0.05).clamp(0.0, 2.0);
+        let r = Rect::new(
+            x_of(item.x0),
+            top.mul_add(view.zoom_y, oy) + inset,
+            x_of(item.x1),
+            (top + height).mul_add(view.zoom_y, oy) - inset,
+        );
+        painter.stroke(&vello::kurbo::Stroke::new(1.5), Affine::IDENTITY, palette.text, None, &r.inset(-0.75));
+    }
+    if let Some((index, x0, x1)) = ghost
+        && let Some(item) = scene.item(index)
+        && let Some((top, height)) = scene.row_box(item.row)
+    {
+        let inset = (height * 0.05).clamp(0.0, 2.0);
+        let r = Rect::new(
+            x_of(x0),
+            top.mul_add(view.zoom_y, oy) + inset,
+            x_of(x1),
+            (top + height).mul_add(view.zoom_y, oy) - inset,
+        );
+        painter.fill(Fill::NonZero, Affine::IDENTITY, palette.text.multiply_alpha(0.12), None, &r);
+        painter.stroke(&vello::kurbo::Stroke::new(1.0), Affine::IDENTITY, palette.text, None, &r);
+    }
+}
+
+/// An item's name and where it sits: the row, and its span in seconds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Title {
+    pub row: usize,
+    pub x0: f64,
+    pub x1: f64,
+    pub name: String,
+}
+
+/// How many points a second a recorded waveform has.
+///
+/// Recorded once in seconds, so the zoom stretches it: at a hundred
+/// pixels a second twelve points is a facet every eight pixels, which
+/// is the coarsest a waveform can be before it reads as a polygon —
+/// and at the opening zoom it is finer than the pixels.
+const WAVE_POINTS_PER_SECOND: f64 = 12.0;
+
+/// How many readings each point holds the peak of.
+///
+/// A waveform display is a peak display: each column is the loudest
+/// the audio got across it, not a sample from it. Sampled, a hit that
+/// fell between two points was a bead where a transient should be.
+const WAVE_HOLD: usize = 4;
+
+/// An item's waveform as one closed path: the envelope forward along
+/// the top, back along the bottom, mirrored about the lane's middle.
+///
+/// From the simulation until the engine streams peaks — see
+/// `simulate::waveform` — and `None` for a lane too short to show one.
+fn waveform(track: usize, x0: f64, x1: f64, top: f64, bottom: f64) -> Option<BezPath> {
+    let half = (bottom - top) / 2.0;
+    if half < 1.5 {
+        return None;
+    }
+    let mid = (top + bottom) / 2.0;
+    let span = (x1 - x0).max(0.0);
+    let count = crate::num::index((span * WAVE_POINTS_PER_SECOND).ceil()).max(2);
+    let at = |i: usize| x0 + span * crate::num::coord(i) / crate::num::coord(count);
+    // A hair of amplitude at silence, so a quiet item still has a
+    // line down its middle and reads as audio rather than as a gap.
+    // Each point holds the peak over the stretch it stands for.
+    let step = 1.0 / WAVE_POINTS_PER_SECOND / crate::num::coord(WAVE_HOLD);
+    let amp = |t: f64| {
+        (0..WAVE_HOLD)
+            .map(|k| crate::simulate::waveform(track, crate::num::coord(k).mul_add(-step, t)))
+            .fold(0.0_f64, f64::max)
+            .mul_add(half - 1.0, 0.6)
+    };
+    let mut path = BezPath::new();
+    path.move_to((x0, mid - amp(x0)));
+    for i in 1..=count {
+        let x = at(i).min(x1);
+        path.line_to((x, mid - amp(x)));
+    }
+    for i in (0..=count).rev() {
+        let x = at(i).min(x1);
+        path.line_to((x, mid + amp(x)));
+    }
+    path.close_path();
+    Some(path)
+}
+
+/// The item titles, in pixel space, over the lanes: the per-frame pass.
+///
+/// `origin` is where the lanes' (0 s, row 0) lands on the surface —
+/// the same translation the lanes are replayed under, so a title sits
+/// on its item at every scroll and zoom. Written only where there is
+/// room to read one: a row shorter than a line, or an item narrower
+/// than a few characters, gets none.
+pub fn titles(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &crate::text::Font,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+) {
+    const SIZE: f32 = 8.0;
+    const PAD: f64 = 3.0;
+    for (title, top, height) in scene.titles_in(view) {
+        let row_h = height * view.zoom_y;
+        if row_h < 12.0 {
+            continue;
+        }
+        let left = title.x0.mul_add(view.pps, origin.0);
+        let right = title.x1.mul_add(view.pps, origin.0);
+        let room = right - left - PAD * 2.0;
+        if room < 12.0 {
+            continue;
+        }
+        // Cut the name to what fits, so a title never runs off its item
+        // onto the next one.
+        let mut name: &str = &title.name;
+        while !name.is_empty() && font.width(name, SIZE) > room {
+            let mut end = name.len().saturating_sub(1);
+            while end > 0 && !name.is_char_boundary(end) {
+                end = end.saturating_sub(1);
+            }
+            name = name.get(..end).unwrap_or("");
+        }
+        if name.is_empty() {
+            continue;
+        }
+        let y = top.mul_add(view.zoom_y, origin.1) + f64::from(SIZE) + 2.0;
+        crate::tcp::glyphs(painter, font, palette.text, name, left + PAD, y, SIZE);
     }
 }
 

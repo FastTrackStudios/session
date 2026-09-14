@@ -42,11 +42,12 @@ pub struct Meters {
     pub sat_peak: f32,
     /// The de-esser's reduction, per spectrum bin, in dB (positive).
     pub deess_db: Vec<f32>,
-    /// The resonance suppressor's reduction right now, per bin.
-    pub resonance_db: Vec<f32>,
-    /// And the reduction that has been there for the last few seconds
-    /// — the engine's settled curve, which is where the resonances ARE.
-    pub resonance_settled_db: Vec<f32>,
+    /// The level in the de-esser's band this frame, in dB on the
+    /// analyser's scale — the "S" as a number.
+    pub ess_db: f32,
+    /// And the level of the material around the band — the octave
+    /// either side — which is what the threshold stands above.
+    pub ess_ref_db: f32,
     /// The delay's wet return, linear peak.
     pub delay_wet: f32,
     /// The reverb's wet return, linear peak.

@@ -400,7 +400,7 @@ pub fn shortcut_for(action: &str) -> &'static str {
 /// pointer position for MeMagic.
 ///
 /// Velocity is absent from *both* — it holds a live shape that outlives
-/// the keypress, so `crate::roll` handles it where the signal lives.
+/// the keypress, so the roll component in `expression-editor-ui` handles it where the signal lives.
 /// `tests/actions.rs` asserts that between the three nothing declared is
 /// unreachable.
 pub fn dispatch(

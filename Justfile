@@ -1203,18 +1203,74 @@ daw-bench PROJECT="" SIZE="5120x1440":
     echo "load before: $(cut -d' ' -f1-3 /proc/loadavg)"
     FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN'
 
+# The master workflow checklist (docs/spec/session/workflows.md): which
+# flows have an implementation and a test, and which are still open.
+daw-flows:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "covered:";   tracey query status 2>/dev/null | grep -E "requirements are covered" || true
+    echo "open flows:"; tracey query uncovered 2>/dev/null | grep -E "flow\." || true
+
+# The studio benchmark: a 5120x1440 arrangement with the expression
+# editor docked under it, and a 2560x1440 mixer on a second display,
+# both drawn every frame. The verdict is against 240 Hz for the pair.
+daw-studio PROJECT="" SIZE="5120x1440" MIXER="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="${FTS_DAW_FIXTURE:-/tmp/fts-orchestral.rpp}"
+        [[ -f "$project" ]] || just daw-fixture
+    fi
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    echo "load before: $(cut -d' ' -f1-3 /proc/loadavg)"
+    FTS_BENCH_STUDIO=1 FTS_BENCH_SIZE="{{SIZE}}" FTS_BENCH_MIXER_SIZE="{{MIXER}}" \
+        ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
+# The arrangement with the editor docked under it, as a PNG.
+daw-dock OUT="/tmp/fts-dock.png" PROJECT="" SIZE="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
+        [[ -f "$project" ]] || scripts/ui-stress/make-template-rpp.py > "$project"
+    fi
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    FTS_BENCH_DOCK="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" \
+        ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
+# The audio drum workflow: a tracked kit stacked as role lanes with a
+# song's worth of hits, as a PNG. BARS sets how much groove.
+daw-kit OUT="/tmp/fts-kit.png" SIZE="2560x900" BARS="200":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    FTS_BENCH_KIT="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" FTS_BENCH_BARS="{{BARS}}" \
+        ./target/release/bench /dev/null 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
+# The expression editor over the demo drum groove, as a PNG — the view
+# `e` opens in the window with nothing selected, painted headless.
+daw-expression OUT="/tmp/fts-expression.png" SIZE="1600x900":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    FTS_BENCH_EXPRESSION="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" \
+        ./target/release/bench /dev/null 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
 # One scene of the visual track manager, as a PNG.
 #
 # `just daw-scene lead-vocal-fx` renders the vocal template with the
 # Short delay and the Long verb in focus; the drum scenes render the
 # drum template. Scenes are `plan::SCENES`: drum-tracking, drum-mixing,
-# drum-overview, lead-vocal, lead-vocal-fx. In the window the number
-# keys 1–5 recall the same scenes, and 0 goes back to the rail's preset.
+# drum-overview, drum-advanced, drum-fx, buses, guitar-fx, lead-vocal,
+# lead-vocal-fx. In the window the number keys 1–9 recall the same
+# scenes, and 0 goes back to the rail's preset.
 daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{SCENE}}" in
-        drum-*) project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
+        drum-*|guitar-*|buses) project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
                 [[ -f "$project" ]] || scripts/ui-stress/make-template-rpp.py > "$project" ;;
         *)      project="${FTS_DAW_VOCAL:-/tmp/fts-vocal-fx.rpp}"
                 [[ -f "$project" ]] || scripts/ui-stress/make-vocal-fx-rpp.py > "$project" ;;
