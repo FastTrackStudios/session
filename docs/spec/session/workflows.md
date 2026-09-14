@@ -399,9 +399,10 @@ golden session is laid out with:
   priority.
 - **One amp with a 57 and a 121**: the two mics panned **hard left and
   hard right**.
-- **Two amps, each with a 57 and a 121**: **each amp panned soft to
-  one side** — amp A soft left, amp B soft right — with each amp's two
-  mics spread inside its side, so both mics of both amps are heard.
+- **Two amps, each with a 57 and a 121**: the mics stay **hard left
+  and hard right** inside each amp, and the **amp's own track is
+  panned 60 % to a side** — Amp 1 60 % left, Amp 2 60 % right — so
+  both mics of both amps are heard, each amp leaning to its side.
 
 A source a user has moved keeps its place; the default applies to
 what has never been set.

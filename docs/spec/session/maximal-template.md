@@ -70,7 +70,8 @@ fixed tree.
 - [ ] Sources start at the default balance
       (`flow.guitars.mixing.source-defaults`): DI muted and centred
       beside other sources, pedalboard muted beside an amp, one amp's
-      57 and 121 hard left and right, two amps soft left and soft right.
+      57 and 121 hard left and right, two amps' mics still hard left and
+      right with Amp 1's track 60 % left and Amp 2's 60 % right.
 
 ### Keys — `Keys/`, Synths — `Synths/`
 
