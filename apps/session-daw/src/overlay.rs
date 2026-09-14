@@ -171,13 +171,13 @@ pub fn control(
             }
         }
         Control::Monitor => {
-            if let Some((x, y)) = at(Control::Monitor) {
+            if let Some((x, y)) = at(Control::Monitor).filter(|_| track.armed) {
                 crate::art::place(
                     &mut scene,
                     &art::monitor(
                         &palette.chrome,
                         monitoring(track),
-                        crate::tcp::lit(palette).rec,
+                        monitor_lit(palette, monitoring(track)),
                         state,
                     ),
                     font,
@@ -826,13 +826,17 @@ fn draw_strip_controls(
     // Input monitoring, directly under the arm — REAPER stacks the two
     // because they are one decision made twice: what the track records,
     // and whether you hear it while it does.
-    if let Some((x, y)) = at(Control::Monitor) {
+    //
+    // Only on an armed track: monitoring is a fact about recording,
+    // and a lamp for it on a track that is not recording is a lamp
+    // with nothing to report.
+    if let Some((x, y)) = at(Control::Monitor).filter(|_| track.armed) {
         crate::art::place(
             scene,
             &art::monitor(
                 &palette.chrome,
                 monitoring(track),
-                crate::tcp::lit(palette).rec,
+                monitor_lit(palette, monitoring(track)),
                 state(Control::Monitor),
             ),
             font,
@@ -1179,6 +1183,28 @@ mod clip_tests {
 /// Mapped here so the drawing does not have to know what a `daw_proto`
 /// track is — the art speaks in what it draws, not in what the engine
 /// calls it.
+/// The colour the monitor lamp lights in.
+///
+/// Not the arm's red: the arm already says "recording", and a second
+/// red lamp under it read as a second arm. Through is a light grey —
+/// a lamp that is on — and the tape-style mode, which is the one you
+/// set deliberately, is the one that gets a colour.
+fn monitor_lit(palette: &Palette, mode: art::Monitoring) -> daw_theme::Color {
+    match mode {
+        art::Monitoring::NotWhenPlaying => TAPE,
+        art::Monitoring::Off | art::Monitoring::Normal => crate::tcp::to_theme(palette.text),
+    }
+}
+
+/// The tape-style monitoring colour: an orange, so it is neither the
+/// arm's red nor the grey of monitoring straight through.
+const TAPE: daw_theme::Color = daw_theme::Color {
+    r: 0xf0,
+    g: 0x8c,
+    b: 0x2e,
+    a: 0xff,
+};
+
 fn monitoring(track: &Track) -> art::Monitoring {
     use daw_proto::track::InputMonitoringMode as M;
     match track.input_monitor {

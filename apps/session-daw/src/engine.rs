@@ -179,9 +179,11 @@ pub fn click(
         // window forgetting something, not the engine being told
         // something. Handled where the latch lives.
         crate::mcp::Control::Clip => None,
-        crate::mcp::Control::Monitor => {
-            Some(Edit::SetInputMonitor(guid, next_monitor(from.input_monitor)))
-        }
+        // The lamp is only drawn on an armed track, and what is not
+        // drawn is not clicked.
+        crate::mcp::Control::Monitor => from
+            .armed
+            .then(|| Edit::SetInputMonitor(guid, next_monitor(from.input_monitor))),
     }
 }
 

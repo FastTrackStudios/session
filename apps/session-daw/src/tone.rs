@@ -1273,8 +1273,27 @@ impl Fold {
 pub enum Row {
     /// The container's bar: its name and the chevron that folds it.
     Head(session::mix_phases::MixPhase),
+    /// A phase this chain has no units for, kept as a bar so the
+    /// phases after it land where they land on every other strip.
+    Blank(session::mix_phases::MixPhase),
     Unit(Which),
 }
+
+/// The phases a rack is divided into, in signal order.
+///
+/// Every rack has all five, whatever its chain: a phase with no units
+/// is a [`Row::Blank`] bar the height of a header. That is what keeps
+/// a bus's Tone level with a channel's, and a return's Depth level
+/// with a channel's once its phases are folded — a rack that only had
+/// the phases it used put every unit at a different height on every
+/// strip.
+pub const RACK_PHASES: [session::mix_phases::MixPhase; 5] = [
+    session::mix_phases::MixPhase::Rescue,
+    session::mix_phases::MixPhase::Tone,
+    session::mix_phases::MixPhase::Polish,
+    session::mix_phases::MixPhase::Relational,
+    session::mix_phases::MixPhase::Depth,
+];
 
 /// How tall a phase header is.
 pub const HEAD_H: f64 = 15.0;
@@ -1364,17 +1383,24 @@ pub fn draw(
     if rack == Rack::Minimal {
         for (row, at) in chain(panels, panel, folded) {
             let Row::Unit(which) = row else {
-                let Row::Head(phase) = row else { continue };
+                // A blank phase is the same tick, faint: the phase is
+                // still there in the order, it just has nothing in it.
+                let (phase, tint) = match row {
+                    Row::Head(phase) => (phase, phase_tint(phase)),
+                    Row::Blank(phase) => (phase, phase_tint(phase).multiply_alpha(BLANK_ALPHA)),
+                    Row::Unit(_) => continue,
+                };
+                let _ = phase;
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
-                    phase_tint(phase),
+                    tint,
                     None,
                     &Rect::new(at.x, at.y + 3.0, at.x + 2.0, at.y + at.height - 3.0),
                 );
                 continue;
             };
-            minimal(scene, palette, font, tone, meters, which, at.inset(1.0));
+            minimal(scene, palette, font, tone, meters, which, at.inset(1.0), rack);
             if tone.bypass.is(which) {
                 scene.fill(
                     Fill::NonZero,
@@ -1390,8 +1416,11 @@ pub fn draw(
 
     for (row, at) in chain(panels, panel, folded) {
         let Row::Unit(which) = row else {
-            let Row::Head(phase) = row else { continue };
-            container(scene, palette, font, phase, at, folded.is(phase), lit);
+            match row {
+                Row::Head(phase) => container(scene, palette, font, phase, at, folded.is(phase), lit),
+                Row::Blank(phase) => blank(scene, palette, font, phase, at),
+                Row::Unit(_) => {}
+            }
             continue;
         };
         if which == Which::Presets {
@@ -1400,9 +1429,11 @@ pub fn draw(
         }
         ground(scene, palette, at);
         let inner = at.inset(2.0);
-        // The header is only taken at `Full`. At `Curves` the panel is
-        // a shape and nothing else fits; giving up a tenth of its
-        // height for a number nobody can read would cost the shape too.
+        // The header is taken at EVERY tier the row is tall enough for,
+        // and says only the name where the value will not fit. It was
+        // skipped at `Curves`, which moved the display up by its height
+        // on a strip a few pixels narrower than its neighbour — and
+        // the compressors across the mixer stopped sitting on one line.
         let body = body_of(at, rack);
         let head = (body.y > inner.y).then(|| inner.split_top(HEAD).0);
         if body.width > 0.0 && body.height > 0.0 {
@@ -1513,7 +1544,7 @@ pub fn units(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Which, Pane
         .into_iter()
         .filter_map(|(row, at)| match row {
             Row::Unit(which) => Some((which, at)),
-            Row::Head(_) => None,
+            Row::Head(_) | Row::Blank(_) => None,
         })
         .collect()
 }
@@ -1525,9 +1556,13 @@ pub fn units(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Which, Pane
 /// built on, applied down instead of across.
 #[must_use]
 pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)> {
-    let mut out = Vec::with_capacity(panels.len() + 5);
+    let mut out = Vec::with_capacity(panels.len() + RACK_PHASES.len());
+    // No chain, no rack: a track that carries nothing gets no bars
+    // either, blank or otherwise.
+    if panels.is_empty() {
+        return out;
+    }
     let mut y = panel.y;
-    let mut phase = None;
     let row = |y: f64, height: f64| Panel {
         x: panel.x,
         y,
@@ -1535,28 +1570,38 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
         height,
     };
     let tier = Rack::at(panel.width);
-    for which in panels.iter().copied() {
-        // The preset row is in no phase: it caps the chain, and folds
-        // with nothing.
-        if which == Which::Presets {
-            out.push((Row::Unit(which), row(y, which.natural())));
-            y += which.natural() + GAP;
-            continue;
-        }
-        // A header whenever the phase changes, which is what makes the
-        // chain's ORDER do the grouping: the units are already in phase
-        // order, so a container is a run of them.
-        if phase != Some(which.phase()) {
-            phase = Some(which.phase());
-            out.push((Row::Head(which.phase()), row(y, HEAD_H)));
+    // The preset row is in no phase: it caps the chain, and folds with
+    // nothing.
+    for which in panels.iter().copied().filter(|which| *which == Which::Presets) {
+        out.push((Row::Unit(which), row(y, which.natural())));
+        y += which.natural() + GAP;
+    }
+    // Every phase in order, present or not. A phase with units gets a
+    // header and the units under it — the chain's ORDER does the
+    // grouping, so a container is a run of them — and a phase without
+    // gets a blank bar the same height, so what follows it sits where
+    // it sits on a strip that has the phase.
+    for phase in RACK_PHASES {
+        let mut units = panels
+            .iter()
+            .copied()
+            .filter(|which| *which != Which::Presets && which.phase() == phase)
+            .peekable();
+        if units.peek().is_none() {
+            out.push((Row::Blank(phase), row(y, HEAD_H)));
             y += HEAD_H;
-        }
-        if folded.is(which.phase()) {
             continue;
         }
-        let height = which.natural_at(tier);
-        out.push((Row::Unit(which), row(y, height)));
-        y += height + GAP;
+        out.push((Row::Head(phase), row(y, HEAD_H)));
+        y += HEAD_H;
+        if folded.is(phase) {
+            continue;
+        }
+        for which in units {
+            let height = which.natural_at(tier);
+            out.push((Row::Unit(which), row(y, height)));
+            y += height + GAP;
+        }
     }
     out
 }
@@ -1591,8 +1636,14 @@ pub fn tall(panels: &[Which], folded: Folded) -> f64 {
 /// measured against the body.
 #[must_use]
 pub fn body_of(at: Panel, rack: Rack) -> Panel {
+    // The header is taken at every tier — the same rows at the same
+    // heights across the mixer, so a display's top edge is one line
+    // whatever each strip's width — and only when the row can spare
+    // it. `rack` used to decide; now it is the caller's tier for the
+    // record, and the height decides.
+    let _ = rack;
     let inner = at.inset(2.0);
-    if rack.detailed() && inner.height > HEAD * 2.0 {
+    if inner.height > HEAD * 2.0 {
         inner.split_top(HEAD).1
     } else {
         inner
@@ -2001,6 +2052,39 @@ fn container(
     let base = if shut { cy - arm * 0.6 } else { cy + arm * 0.6 };
     rule_wide(scene, ink, Line::new((cx - arm, base), (cx, tip)), 1.4);
     rule_wide(scene, ink, Line::new((cx, tip), (cx + arm, base)), 1.4);
+}
+
+/// How faint a blank phase is drawn against a real one.
+const BLANK_ALPHA: f32 = 0.35;
+
+/// A phase this chain has nothing in: the container's bar, faint, with
+/// no chevron — there is nothing to fold. It holds the row so the
+/// phases under it line up with the strips beside it.
+fn blank(scene: &mut Scene, palette: &Palette, font: &Font, phase: session::mix_phases::MixPhase, at: Panel) {
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        palette.tcp_meter_well.multiply_alpha(0.5),
+        None,
+        &at.rect(),
+    );
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        phase_tint(phase).multiply_alpha(BLANK_ALPHA),
+        None,
+        &Rect::new(at.x, at.y, at.x + 2.0, at.y + at.height),
+    );
+    const SIZE: f32 = 8.0;
+    crate::tcp::glyphs(
+        scene,
+        font,
+        palette.text_faint.multiply_alpha(BLANK_ALPHA),
+        phase.display_name(),
+        at.x + 6.0,
+        at.y + at.height - 4.0,
+        SIZE,
+    );
 }
 
 /// A panel's well — darker than the strip, so the rack reads as inset
@@ -2415,11 +2499,15 @@ fn comp(
         Line::new((at.x, y), (right, y)),
         if held { 2.5 } else { 1.5 },
     );
-    // A grab tab at the right end, so there is something to aim at on a
-    // line that is otherwise one pixel tall.
+    // A tab at the right end while the line is HELD, so the drag has
+    // something under it. Not at rest: the whole display is the
+    // threshold's target (see `comp_grip`), so there is nothing to
+    // aim at — and a knob on the line's end, where the ratio's arrow
+    // used to hang, read as the arrow still being there.
     if rack.detailed() {
-        let r = if held { HANDLE + 1.6 } else { HANDLE };
-        dot(scene, red, (right - r - 1.0, y), r);
+        if held {
+            dot(scene, red, (right - HANDLE - 2.6, y), HANDLE + 1.6);
+        }
         // And the settings themselves, as the reduction they produce —
         // outlined over the live one, in the same axes.
         envelope(scene, comp, at, lit);
@@ -2588,14 +2676,14 @@ impl Strips {
             // The track, a tick at the default, and the travel filled
             // from the default to the marker — so a departure from the
             // default is a bar in the direction it departed.
-            scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.18), None, &strip.to_rounded_rect(2.0));
+            scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.28), None, &strip.to_rounded_rect(2.0));
             let centre = strip.center().x;
             rule(scene, ink.multiply_alpha(0.6), Line::new((centre, strip.y0 - 1.5), (centre, strip.y1 + 1.5)));
             let (x, y) = Self::marker(strip, time);
             scene.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
-                ink.multiply_alpha(if held { 0.7 } else { 0.45 }),
+                ink.multiply_alpha(if held { 0.8 } else { 0.55 }),
                 None,
                 &Rect::new(centre.min(x), strip.y0, centre.max(x), strip.y1).to_rounded_rect(2.0),
             );
@@ -2605,14 +2693,14 @@ impl Strips {
         // the strip's place down from the top.
         let strip = self.ratio;
         let held = lit == Some(Grip::Ratio(Which::Comp));
-        scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.18), None, &strip.to_rounded_rect(2.0));
+        scene.fill(Fill::NonZero, Affine::IDENTITY, ink.multiply_alpha(0.28), None, &strip.to_rounded_rect(2.0));
         let centre = strip.center().y;
         rule(scene, ink.multiply_alpha(0.6), Line::new((strip.x0 - 1.5, centre), (strip.x1 + 1.5, centre)));
         let y = Time::ratio(comp.ratio).place().mul_add(strip.height(), strip.y0);
         scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
-            ink.multiply_alpha(if held { 0.7 } else { 0.45 }),
+            ink.multiply_alpha(if held { 0.8 } else { 0.55 }),
             None,
             &Rect::new(strip.x0, centre.min(y), strip.x1, centre.max(y)).to_rounded_rect(2.0),
         );
@@ -4132,12 +4220,19 @@ fn pitch(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Pan
 /// because it is the one still setting. Reductions hang from the top,
 /// the way they do in the full panel; levels and tails stand on the
 /// floor.
-fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meters: &Meters, which: Which, at: Panel) {
+fn minimal(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, meters: &Meters, which: Which, at: Panel, rack: Rack) {
+    // The row's ground, so the rail's chain reads as a chain.
+    scene.fill(Fill::NonZero, Affine::IDENTITY, palette.tcp_meter_well.multiply_alpha(0.5), None, &at.rect());
+    // The same header row the panel takes, so the indicator starts on
+    // the line the display does — with the name where it fits.
+    let row = at;
+    let at = body_of(row, rack);
+    if at.y > row.inset(2.0).y {
+        header(scene, palette, font, which.name(), None, "", tone.bypass.is(which), row.inset(2.0).split_top(HEAD).0);
+    }
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     let mid = at.y + at.height / 2.0;
-    // The row's ground, so the rail's chain reads as a chain.
-    scene.fill(Fill::NonZero, Affine::IDENTITY, palette.tcp_meter_well.multiply_alpha(0.5), None, &at.rect());
     // A length down the row, hanging from the top, as a share of it.
     let bar = |scene: &mut Scene, ink: Color, share: f64| {
         let share = share.clamp(0.0, 1.0);
@@ -4508,6 +4603,12 @@ fn header(
     if let Some(mark) = mark {
         glyph(scene, name_ink, mark, left, baseline - 0.5);
         left += GLYPH_W;
+    }
+    // A name that will not fit is not drawn: the row is still taken,
+    // because the row is what keeps the display under it level with
+    // its neighbours, but a rail is not wide enough to be read.
+    if (left - at.x) + font.width(name, SIZE) > at.width {
+        return;
     }
     crate::tcp::glyphs(scene, font, name_ink, name, left, baseline, SIZE);
 
@@ -5327,9 +5428,9 @@ pub fn grip_at(
         // The header first: it sits above the body, and a click there
         // is a bypass rather than whatever the body would have done —
         // except on the machine glyph, which cycles the machine.
-        if rack.detailed() && y >= at.y && y < body.y {
+        if y >= at.y && y < body.y {
             let inner = at.inset(2.0);
-            if which.glyph_switches() && x >= inner.x && x < inner.x + GLYPH_W {
+            if rack.detailed() && which.glyph_switches() && x >= inner.x && x < inner.x + GLYPH_W {
                 return Some(Grip::Family(which));
             }
             return Some(Grip::Bypass(which));
@@ -6431,9 +6532,9 @@ mod tests {
                 which.natural()
             );
         }
-        // From the top, under the phase's container bar, and the space
-        // below is left alone.
-        assert!((laid[0].1.y - tall.y - HEAD_H).abs() < f64::EPSILON);
+        // From the top, under Rescue's blank bar and the phase's own
+        // container bar, and the space below is left alone.
+        assert!((laid[0].1.y - tall.y - 2.0 * HEAD_H).abs() < f64::EPSILON);
         let used = super::tall(&[Which::Eq, Which::Comp, Which::Sat], super::Folded::default());
         assert!(used < tall.height, "the rack filled everything it was given");
     }
@@ -6466,9 +6567,15 @@ mod tests {
         }
         let bottom = laid.last().map_or(0.0, |(_, at)| at.y + at.height);
         assert!(bottom > short.height, "the chain fitted, so nothing was proved");
+        // To the last ROW's floor: the blank bars for the phases this
+        // chain lacks come after the last panel, and are scrolled to.
+        let floor = super::chain(&panels, short, super::Folded::default())
+            .last()
+            .map_or(0.0, |(_, at)| at.y + at.height);
+        assert!(floor > bottom);
         assert!(
-            (super::scroll_span(&panels, short.height, super::Folded::default()) - (bottom - short.height)).abs() < 0.01,
-            "the span does not reach the last panel's floor"
+            (super::scroll_span(&panels, short.height, super::Folded::default()) - (floor - short.height)).abs() < 0.01,
+            "the span does not reach the last row's floor"
         );
 
         // And a box tall enough to hold the chain does not scroll.
@@ -6519,17 +6626,15 @@ mod tests {
             width: 300.0,
             height: 200.0,
         };
-        for rack in [Rack::Focus, Rack::Full] {
+        for rack in [Rack::Focus, Rack::Full, Rack::Curves, Rack::Minimal] {
             let body = body_of(panel, rack);
             assert!(
                 body.y > panel.inset(2.0).y,
                 "{rack:?} did not reserve a header"
             );
         }
-        assert!(
-            (body_of(panel, Rack::Curves).y - panel.inset(2.0).y).abs() < f64::EPSILON,
-            "the narrow tier has no room for one"
-        );
+        // One height at every tier: that is the point.
+        assert!((body_of(panel, Rack::Curves).y - body_of(panel, Rack::Focus).y).abs() < f64::EPSILON);
     }
 
     /// A focused strip may not be lent below the width that made it
@@ -6739,9 +6844,28 @@ mod container_tests {
                     assert_eq!(which.phase(), phase, "{which:?} under {phase:?}");
                     assert!(at.y >= y, "{which:?} sat above its own container");
                 }
+                Row::Blank(phase) => panic!("the full chain has every phase, but {phase:?} came up blank"),
             }
         }
         assert_eq!(seen.len(), 5, "expected one container per phase: {seen:?}");
+    }
+
+    /// A chain without a phase keeps the phase's row as a blank bar, so
+    /// the phases after it start where they start on a full chain —
+    /// and a chain with nothing in it gets no bars at all.
+    #[test]
+    fn a_missing_phase_is_a_blank_bar_at_the_same_height() {
+        let bus = chain(&super::BUS_CHAIN, box_at(), Folded::rest());
+        assert_eq!(bus.first().map(|(row, _)| *row), Some(Row::Blank(P::Rescue)));
+        let tone_y = |rows: &[(Row, Panel)]| {
+            rows.iter().find(|(row, _)| *row == Row::Head(P::Tone)).map(|(_, at)| at.y).expect("a Tone bar")
+        };
+        let full = chain(&ALL_PANELS, box_at(), Folded::rest());
+        assert!((tone_y(&bus) - tone_y(&full)).abs() < f64::EPSILON);
+        // Every phase is accounted for, blank or not.
+        let bars = bus.iter().filter(|(row, _)| matches!(row, Row::Head(_) | Row::Blank(_))).count();
+        assert_eq!(bars, super::RACK_PHASES.len());
+        assert!(chain(&[], box_at(), Folded::rest()).is_empty());
     }
 
     /// Folding a phase takes its units out of the column and leaves its
@@ -6902,9 +7026,10 @@ mod grip_tests {
     #[test]
     fn empty_space_in_the_eq_grabs_nothing() {
         let tone = placeholder(0);
-        // Inside the EQ's own body, far from any band — below the
-        // phase's container bar, which owns the first fifteen pixels.
-        let y = super::HEAD_H + 14.0;
+        // Inside the EQ's own body, far from any band — below Rescue's
+        // blank bar and the phase's own container bar, which own the
+        // first thirty pixels, and below the unit's header row.
+        let y = 2.0 * super::HEAD_H + 14.0;
         assert_eq!(
             grip_at(&ALL, &tone, rack(), super::Folded::default(), 3.0, y),
             None
