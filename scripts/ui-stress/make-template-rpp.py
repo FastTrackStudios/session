@@ -96,16 +96,23 @@ def tom(number, colour):
     )
 
 
-KICK = 0x8E5A3B
-SNARE = 0xA8873E
-TOMS = 0x7B5EA7
-CYMBALS = 0x3F8E7D
-ROOMS = 0x9A5A6B
+# The kit is one family — red — and each piece is a step through it,
+# so a drum strip reads as a drum at a glance and as a piece on the
+# second look. Ordered the way the kit is stacked: the kick darkest,
+# the snare hottest, the toms warmed towards orange, the cymbals
+# lifted towards rose, the rooms cooled towards wine. Every step keeps
+# roughly the same saturation so no piece shouts over the others.
+DRUMS = 0xB23A3F  # crimson — the family's anchor, on the folder
+KICK = 0x8C2F35  # oxblood: darkest, lowest
+SNARE = 0xC94540  # scarlet: the hottest of the five
+TOMS = 0xB8613F  # terracotta: red warmed towards orange
+CYMBALS = 0xC76B7A  # rose: red lifted, for the top of the kit
+ROOMS = 0x93425C  # wine: red cooled, for the air around it
 
 TREE = [
     (
         "Drum Kit",
-        0x4A6FA5,
+        DRUMS,
         [
             summed("Kick", KICK, ["In", "Out", "Trig"], ["Sub", "Verb"]),
             summed("Snare", SNARE, ["Top", "Bottom", "Trig"], ["Verb"], fund=True),

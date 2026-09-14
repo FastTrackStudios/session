@@ -2510,9 +2510,8 @@ fn comp(
         }
         // And the settings themselves, as the reduction they produce —
         // outlined over the live one, in the same axes.
-        envelope(scene, comp, at, lit);
+        envelope(scene, font, comp, at, lit);
     }
-    let _ = font;
 }
 
 /// Where the threshold line sits in a compressor display.
@@ -2538,10 +2537,10 @@ fn threshold_y(comp: Comp, at: Panel) -> f64 {
 /// once; a ramp's slope is a poor readout of a millisecond, an arrow's
 /// length a poor readout of a ratio, and a marker on a scale is what
 /// both have always been read off.
-fn envelope(scene: &mut Scene, comp: Comp, at: Panel, lit: Option<Grip>) {
+fn envelope(scene: &mut Scene, font: &Font, comp: Comp, at: Panel, lit: Option<Grip>) {
     let red = hex(comp_ui::comp_graph_svg::colors::THRESHOLD);
     if let Some(strips) = Strips::of(at) {
-        strips.draw(scene, comp, red, lit);
+        strips.draw(scene, font, comp, red, lit);
     }
 }
 
@@ -2631,6 +2630,10 @@ pub struct Strips {
 /// How tall one strip is.
 const STRIP_H: f64 = 5.0;
 
+/// The letter at a time strip's right end, and the room kept for it.
+const STRIP_LABEL_SIZE: f32 = 7.0;
+const STRIP_LABEL_W: f64 = 8.0;
+
 /// The gap between the two, and under the lower one.
 const STRIP_GAP: f64 = 4.0;
 
@@ -2646,9 +2649,10 @@ impl Strips {
         if at.width < 40.0 || at.height < 40.0 {
             return None;
         }
-        // Clear of the arrow's rail, so the two never cross it.
+        // Clear of the ratio's rail at the left, and of the letter
+        // that names each strip at the right.
         let left = at.x + RAIL + 3.0;
-        let right = at.x + at.width - 3.0;
+        let right = at.x + at.width - 3.0 - STRIP_LABEL_W;
         let floor = at.y + at.height - STRIP_GAP;
         let release = Rect::new(left, floor - STRIP_H, right, floor);
         let attack = Rect::new(left, release.y0 - STRIP_GAP - STRIP_H, right, release.y0 - STRIP_GAP);
@@ -2667,12 +2671,23 @@ impl Strips {
         (time.place().mul_add(strip.width(), strip.x0), strip.center().y)
     }
 
-    fn draw(self, scene: &mut Scene, comp: Comp, ink: Color, lit: Option<Grip>) {
-        for (strip, grip, time) in [
-            (self.attack, Grip::Attack(Which::Comp), Time::attack(comp.attack)),
-            (self.release, Grip::Release(Which::Comp), Time::release(comp.release)),
+    fn draw(self, scene: &mut Scene, font: &Font, comp: Comp, ink: Color, lit: Option<Grip>) {
+        for (strip, grip, time, label) in [
+            (self.attack, Grip::Attack(Which::Comp), Time::attack(comp.attack), "A"),
+            (self.release, Grip::Release(Which::Comp), Time::release(comp.release), "R"),
         ] {
             let held = lit == Some(grip);
+            // Its letter at the right end, so the two are told apart
+            // without reading the header.
+            crate::tcp::glyphs(
+                scene,
+                font,
+                ink.multiply_alpha(if held { 1.0 } else { 0.7 }),
+                label,
+                strip.x1 + 3.0,
+                strip.y1 + 1.0,
+                STRIP_LABEL_SIZE,
+            );
             // The track, a tick at the default, and the travel filled
             // from the default to the marker — so a departure from the
             // default is a bar in the direction it departed.
