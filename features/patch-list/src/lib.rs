@@ -6,5 +6,7 @@
 //! decision is session #29.
 
 pub mod list;
+pub mod profile;
 
 pub use list::{Bus, Entry, Lowered, PatchList, Performer, Rig};
+pub use profile::{Resolved, StudioProfile};
