@@ -23,7 +23,7 @@ and quantize specs.
 |---|---|---|---|---|---|
 | Drums (audio) | [x] full · [ ] overview | [ ] folder items | [ ] edit scene · [x] stack · [x] slip/stretch · [x] quantize · [ ] align hits | [x] scenes · [x] balance | [ ] triggering samples |
 | Bass | [ ] | [ ] | [ ] | [ ] | |
-| Guitars | [ ] full · [ ] overview · [ ] grow | [ ] folder items | [ ] edit scene · [ ] doubles aligned | [x] buses/VCA | [ ] same at every depth |
+| Guitars (electric and acoustic) | [ ] full · [ ] overview · [ ] grow | [ ] folder items | [ ] edit scene · [ ] doubles aligned | [x] buses/VCA | [ ] same at every depth · [ ] acoustics |
 | Vocals | [ ] | [ ] | [ ] doubles aligned | [x] lead vocal scenes | [ ] tuning · [ ] fx · [ ] automation |
 | Keys | [ ] record MIDI | [ ] | [x] MIDI in the editor | [ ] | |
 
@@ -280,11 +280,13 @@ Group → Section → Performer → Arrangement → Layers → Channels → Mult
 ```
 
 An **Arrangement** is what the part is for — Clean, Crunch, Drive,
-Lead, Rhythm, Chug, "Chorus Lead". A **Layer** is a voice inside it —
-Main, Harmony, an octave. **Channels** are the doubles — L and R, or a
-triple. **MultiMic** is the sources of one channel — DI, pedalboard,
-two amps each with a 57 and a 121: up to seven for a single take of a
-single channel, before it is even doubled. `TrackDimension` in
+Lead, Rhythm, Chug, "Chorus Lead"; for an acoustic, Strum,
+Fingerpick, Nashville. A **Layer** is a voice inside it — Main,
+Harmony, an octave. **Channels** are the doubles — L and R, or a
+triple. **MultiMic** is the sources of one channel — for an electric,
+DI, pedalboard, two amps each with a 57 and a 121: up to seven for a
+single take of a single channel, before it is even doubled; for an
+acoustic, a DI and two mics. `TrackDimension` in
 `track_schema.rs` classifies a track into one of these by its name.
 
 r[flow.guitars.dimensions]
@@ -359,6 +361,19 @@ r[flow.guitars.mixing]
 the Inst FX returns, with the folder's fader as the VCA lead of its
 bus. A part's sources mix on the channel's Sum; the part mixes on its
 bus.
+
+r[flow.guitars.acoustics]
+Acoustics are the same structure with their own sources. A layer's
+channel is recorded as a **DI and two mics** — a pickup DI, a
+neck-side condenser, a body-side condenser, or whatever the pair is
+that day — and then doubled, tripled, harmonised and layered exactly
+as an electric part is: Arrangement (Strum, Fingerpick, Nashville),
+Layer (Main, Harmony), Channel (L, R), MultiMic (DI, Neck, Body). The
+acoustic folder's parts reach ACOUSTIC BUS, and every rule in this
+section — the dimensions, growing a part, the overview, folder items,
+comping, the edit scene, alignment — applies to an acoustic part
+unchanged. A Nashville-strung layer over the steel is a Layer of the
+same part, so it comps and aligns with it.
 
 r[flow.guitars.same-everywhere]
 Every guitar scene and gesture works at every depth of the hierarchy:
