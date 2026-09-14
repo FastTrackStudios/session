@@ -530,8 +530,11 @@ fn lead_vocal(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     }
 }
 
-/// Editing the returns: one delay and one verb in focus, the others
-/// legible, every folder a rail.
+/// Editing the returns: one delay and one verb in focus, every other
+/// return at the working width with its chain drawn, every folder a
+/// rail. The returns are all live — a slap is a slap whether or not it
+/// is the one being edited — so the scene shows them all working and
+/// opens the two under the hands.
 fn lead_vocal_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     let fx = under(ancestors, &["Vox FX"]);
     if is_folder {
@@ -539,7 +542,7 @@ fn lead_vocal_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
     } else if fx && ((is(name, &["Short"]) && under(ancestors, &["Delay"])) || (is(name, &["Long"]) && under(ancestors, &["Verb"]))) {
         Size::Focus
     } else if fx {
-        Size::Compact
+        Size::Working
     } else if name.to_lowercase().contains("lead") {
         // The lead beside its returns, so the chain being fed and the
         // instances feeding it are all open at once.
@@ -587,7 +590,7 @@ mod scene_tests {
         let verb: Vec<String> = ["Vox Lead", "Vox FX", "Verb"].iter().map(|s| (*s).to_owned()).collect();
         assert_eq!((s.size)("Short", false, &delay), Size::Focus);
         assert_eq!((s.size)("Long", false, &verb), Size::Focus);
-        assert_eq!((s.size)("Short", false, &verb), Size::Compact);
+        assert_eq!((s.size)("Short", false, &verb), Size::Working);
         assert_eq!((s.size)("Delay", true, &delay[..2]), Size::Minimum);
         assert_eq!((s.size)("Lead Vox", false, &delay[..1]), Size::Focus);
         assert_eq!((s.size)("Vox Dbl", false, &delay[..1]), Size::Working);
