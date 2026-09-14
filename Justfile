@@ -1203,6 +1203,22 @@ daw-bench PROJECT="" SIZE="5120x1440":
     echo "load before: $(cut -d' ' -f1-3 /proc/loadavg)"
     FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN'
 
+# The studio benchmark: a 5120x1440 arrangement with the expression
+# editor docked under it, and a 2560x1440 mixer on a second display,
+# both drawn every frame. The verdict is against 240 Hz for the pair.
+daw-studio PROJECT="" SIZE="5120x1440" MIXER="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="${FTS_DAW_FIXTURE:-/tmp/fts-orchestral.rpp}"
+        [[ -f "$project" ]] || just daw-fixture
+    fi
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    echo "load before: $(cut -d' ' -f1-3 /proc/loadavg)"
+    FTS_BENCH_STUDIO=1 FTS_BENCH_SIZE="{{SIZE}}" FTS_BENCH_MIXER_SIZE="{{MIXER}}" \
+        ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
 # The expression editor over the demo drum groove, as a PNG — the view
 # `e` opens in the window with nothing selected, painted headless.
 daw-expression OUT="/tmp/fts-expression.png" SIZE="1600x900":

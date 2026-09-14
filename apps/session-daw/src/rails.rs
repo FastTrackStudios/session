@@ -84,15 +84,33 @@ pub struct Item<'a> {
 pub struct Frame {
     pub width: f64,
     pub height: f64,
+    /// The height of the dock along the bottom, inside the side rails
+    /// — where the expression editor sits under the arrangement. Zero
+    /// when nothing is docked.
+    pub dock: f64,
 }
 
 impl Frame {
     #[must_use]
     pub const fn new(width: f64, height: f64) -> Self {
-        Self { width, height }
+        Self {
+            width,
+            height,
+            dock: 0.0,
+        }
     }
 
-    /// The box the panel gets, inside the rails.
+    /// A frame with `dock` pixels taken off the bottom of the panel.
+    #[must_use]
+    pub fn docked(width: f64, height: f64, dock: f64) -> Self {
+        Self {
+            width,
+            height,
+            dock: dock.clamp(0.0, (height - TOP).max(0.0)),
+        }
+    }
+
+    /// The box the panel gets, inside the rails and above the dock.
     ///
     /// Returned rather than assumed, because the panel culls to it: a
     /// mixer handed the whole window draws strips underneath the right
@@ -103,8 +121,22 @@ impl Frame {
             SIDE,
             TOP,
             (self.width - SIDE).max(SIDE),
-            self.height.max(TOP),
+            (self.height - self.dock).max(TOP),
         )
+    }
+
+    /// The dock's box, when there is one: between the side rails,
+    /// along the bottom.
+    #[must_use]
+    pub fn dock_box(self) -> Option<Rect> {
+        (self.dock > 0.0).then(|| {
+            Rect::new(
+                SIDE,
+                (self.height - self.dock).max(TOP),
+                (self.width - SIDE).max(SIDE),
+                self.height,
+            )
+        })
     }
 
     /// Where the `index`th item in the top rail sits.
@@ -126,10 +158,10 @@ impl Frame {
         (self.width - SIDE * 2.0).max(0.0)
     }
 
-    /// The height the panel has.
+    /// The height the panel has, above the dock.
     #[must_use]
     pub fn content_height(self) -> f64 {
-        (self.height - TOP).max(0.0)
+        (self.height - TOP - self.dock).max(0.0)
     }
 
     /// Where the `index`th item in a side rail sits.
@@ -180,7 +212,7 @@ pub fn draw(
     right: &[Item<'_>],
     top: &[Item<'_>],
 ) {
-    let Frame { width, height } = frame;
+    let Frame { width, height, .. } = frame;
 
     // The rails' ground, drawn over the panel rather than under it: the
     // panel is a recorded scene that does not know where the rails are,
@@ -554,6 +586,17 @@ mod tests {
 
     /// A window narrower than its own rails must not produce a negative
     /// panel — it produces none.
+    #[test]
+    fn a_dock_comes_off_the_bottom_of_the_panel() {
+        let frame = Frame::docked(2560.0, 1440.0, 400.0);
+        assert!((frame.content_height() - (1440.0 - TOP - 400.0)).abs() < f64::EPSILON);
+        let dock = frame.dock_box().expect("a dock");
+        assert!((dock.y0 - 1040.0).abs() < f64::EPSILON);
+        assert!((dock.x0 - SIDE).abs() < f64::EPSILON);
+        assert!((dock.x1 - (2560.0 - SIDE)).abs() < f64::EPSILON);
+        assert!(Frame::new(2560.0, 1440.0).dock_box().is_none());
+    }
+
     #[test]
     fn a_tiny_window_has_no_content_rather_than_negative_content() {
         let frame = Frame::new(40.0, 20.0);

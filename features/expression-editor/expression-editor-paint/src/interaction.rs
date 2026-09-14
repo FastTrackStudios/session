@@ -445,6 +445,12 @@ pub fn context_at(ed: &Editor, x: f64, y: f64) -> Context {
     }
     match ed.hit_test(x, y) {
         Hit::ZoneSplit { .. } => Context::ZoneSplit,
+        // A drum hit is a head, not a bar: it has an onset and no
+        // length worth resizing, and at a few pixels wide it is *all*
+        // edge zone. Every gesture on it is a gesture on the note —
+        // otherwise a right-click on a hit pans, because the edge row
+        // of the map has nothing for it.
+        Hit::NoteEdge { .. } if ed.mode == Mode::Drums => Context::Note,
         Hit::NoteEdge { .. } => Context::NoteEdge,
         Hit::Note { .. } | Hit::CurvePoint { .. } => Context::Note,
         Hit::Empty { .. } => Context::PianoRoll,

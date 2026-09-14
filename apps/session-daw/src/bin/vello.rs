@@ -153,9 +153,17 @@ struct App {
     /// keys did and carries out what it asks for.
     editor: session_daw::arrange_edit::Editor,
     /// The expression editor, once `e` has opened it on an item. Kept
-    /// across view switches so coming back finds the same zoom and
+    /// while the dock is closed so reopening finds the same zoom and
     /// selection.
     expression: Option<session_daw::expression::Expression>,
+    /// The dock's height along the bottom of the arrangement, while
+    /// the editor is docked there.
+    dock: Option<f64>,
+    /// Whether the keyboard belongs to the dock — the last press was
+    /// in it.
+    dock_focus: bool,
+    /// The dock's top edge being dragged to resize it.
+    dock_drag: bool,
     /// The item under the pointer in the lanes, whose fade handles are
     /// drawn.
     hovered_item: Option<usize>,
@@ -328,7 +336,7 @@ impl ApplicationHandler for App {
                 // The expression editor takes the wheel in notches —
                 // one line of a mouse wheel — which is what its zoom
                 // and pan gains are tuned for.
-                if self.view == View::Expression {
+                if self.dock_at(self.cursor.0, self.cursor.1) {
                     let (nx, ny) = match delta {
                         MouseScrollDelta::LineDelta(x, y) => (f64::from(x), f64::from(y)),
                         MouseScrollDelta::PixelDelta(p) => (
@@ -392,17 +400,19 @@ impl ApplicationHandler for App {
                     self.redraw();
                     return;
                 }
-                // `e` opens the expression editor on the selected item,
-                // and closes it again. Before the editor sees the key,
-                // or there would be no way out of a view that binds it.
+                // `e` docks the expression editor under the arrangement
+                // on the selected item, and closes the dock again.
+                // Before the editor sees the key, or there would be no
+                // way out of a dock that binds it.
                 if event.logical_key.to_text() == Some("e") && !self.keys.ctrl && !self.keys.alt {
-                    self.toggle_expression();
+                    self.toggle_dock();
                     self.redraw();
                     return;
                 }
-                // In the expression editor the keyboard is the
+                // While the dock has focus the keyboard is the
                 // editor's: its own keymap, its own actions.
-                if self.view == View::Expression
+                if self.dock_focus
+                    && self.dock.is_some()
                     && let Some(name) = expression_key_name(&event.logical_key)
                     && let Some(ex) = self.expression.as_mut()
                     && ex.key(&name, self.keys)
@@ -553,6 +563,19 @@ impl ApplicationHandler for App {
             //
             // This was a field nothing ever wrote: every drag in the
             // window has been coarse because no event set it.
+            WindowEvent::KeyboardInput { event, .. } => {
+                // A release. The editor's keymap has to hear it, or a
+                // held prefix repeats its way down the sequence tree;
+                // and a spring-loaded tool springs back on it.
+                if self.dock_focus
+                    && self.dock.is_some()
+                    && let Some(name) = expression_key_name(&event.logical_key)
+                    && let Some(ex) = self.expression.as_mut()
+                    && ex.key_up(&name, self.keys)
+                {
+                    self.redraw();
+                }
+            }
             WindowEvent::ModifiersChanged(modifiers) => {
                 let state = modifiers.state();
                 self.fine = state.control_key();
@@ -580,7 +603,21 @@ impl ApplicationHandler for App {
                 // knobs did not turn.
                 let last = self.cursor;
                 self.cursor = (position.x, position.y);
-                if self.view == View::Expression {
+                // The dock's edge, being dragged: the dock follows the
+                // pointer and the arrangement gives way above it.
+                if self.dock_drag {
+                    let height = self.surface_size.1;
+                    let most = height - session_daw::rails::TOP - DOCK_MIN;
+                    self.dock = Some((height - position.y).clamp(DOCK_MIN, most.max(DOCK_MIN)));
+                    self.redraw();
+                    return;
+                }
+                // A gesture in the dock keeps the pointer after it
+                // leaves the box; otherwise the dock takes only what is
+                // over it.
+                if self.dock_at(position.x, position.y)
+                    || self.expression.as_ref().is_some_and(|ex| ex.dragging())
+                {
                     if let Some(ex) = self.expression.as_mut()
                         && ex.moved(position.x, position.y, self.keys)
                     {
@@ -690,25 +727,53 @@ impl ApplicationHandler for App {
                 button,
                 ..
             } => {
-                // The expression editor takes every button: middle
-                // pans, right resolves through its mouse map.
-                if self.view == View::Expression {
-                    let code = match button.mouse_button() {
-                        Some(winit::event::MouseButton::Right) => 2,
-                        Some(winit::event::MouseButton::Middle) => 1,
-                        _ => 0,
-                    };
+                // The dock's top edge resizes it; the dock itself takes
+                // every button — middle pans, right opens the editor's
+                // menu. A press anywhere else takes the keyboard back.
+                if self.view == View::Arrangement && self.dock.is_some() {
                     self.cursor = (position.x, position.y);
-                    let keys = self.keys;
-                    let changed = match self.expression.as_mut() {
-                        Some(ex) if state.is_pressed() => ex.press(position.x, position.y, keys, code),
-                        Some(ex) => ex.release(position.x, position.y, keys),
-                        None => false,
-                    };
-                    if changed {
+                    if !state.is_pressed() && std::mem::take(&mut self.dock_drag) {
                         self.redraw();
+                        return;
                     }
-                    return;
+                    if state.is_pressed() && self.dock_grip_at(position.x, position.y) {
+                        self.dock_drag = true;
+                        self.dock_focus = true;
+                        return;
+                    }
+                    let in_dock = self.dock_at(position.x, position.y)
+                        || self.expression.as_ref().is_some_and(|ex| ex.dragging());
+                    if in_dock {
+                        let code = match button.mouse_button() {
+                            Some(winit::event::MouseButton::Right) => 2,
+                            Some(winit::event::MouseButton::Middle) => 1,
+                            _ => 0,
+                        };
+                        let keys = self.keys;
+                        let changed = match self.expression.as_mut() {
+                            Some(ex) if state.is_pressed() => {
+                                ex.press(position.x, position.y, keys, code)
+                            }
+                            Some(ex) => ex.release(position.x, position.y, keys),
+                            None => false,
+                        };
+                        if state.is_pressed() {
+                            self.dock_focus = true;
+                        }
+                        if let Some(asked) = self.expression.as_mut().and_then(|ex| ex.take_pending()) {
+                            tracing::info!(
+                                expression.pending = ?asked,
+                                "the editor asked for a panel this window does not draw yet"
+                            );
+                        }
+                        if changed {
+                            self.redraw();
+                        }
+                        return;
+                    }
+                    if state.is_pressed() {
+                        self.dock_focus = false;
+                    }
                 }
                 if button.mouse_button() != Some(winit::event::MouseButton::Left) {
                     return;
@@ -981,7 +1046,7 @@ impl App {
         // The rails take their share before anything scrolls: the span
         // is how far the CONTENT can move inside them, not how far it
         // could move if it owned the window.
-        let frame = session_daw::rails::Frame::new(self.surface_size.0, self.surface_size.1);
+        let frame = self.frame();
         let (width, height) = (frame.content_width(), frame.content_height());
         (
             (scene.length_secs * self.pps - (width - TCP_WIDTH)).max(1.0),
@@ -1341,8 +1406,7 @@ impl App {
     /// The box the lanes are drawn in: under the ruler, right of the
     /// panel, inside the rails.
     fn lanes_box(&self) -> Rect {
-        let (width, height) = self.surface_size;
-        let frame = session_daw::rails::Frame::new(width, height);
+        let frame = self.frame();
         let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
         Rect::new(
             rail.0 + TCP_WIDTH,
@@ -1493,8 +1557,7 @@ impl App {
     /// The viewport this frame sees — the one number both the drawing
     /// and the hit tests resolve against.
     fn viewport(&self) -> Viewport {
-        let (width, height) = self.surface_size;
-        let frame = session_daw::rails::Frame::new(width, height);
+        let frame = self.frame();
         Viewport {
             scroll_x: self.scroll_x,
             scroll_y: self.scroll_y,
@@ -1825,18 +1888,50 @@ impl App {
         self.mixer.is_some()
     }
 
-    /// Open the expression editor on the selected item, or close it.
+    /// The frame the view now on screen is laid out in — with the
+    /// dock taken off the arrangement's bottom while one is open.
+    fn frame(&self) -> session_daw::rails::Frame {
+        let (width, height) = self.surface_size;
+        match (self.view, self.dock) {
+            (View::Arrangement, Some(dock)) => {
+                session_daw::rails::Frame::docked(width, height, dock)
+            }
+            _ => session_daw::rails::Frame::new(width, height),
+        }
+    }
+
+    /// Whether a window point is on the docked editor.
+    fn dock_at(&self, x: f64, y: f64) -> bool {
+        self.view == View::Arrangement
+            && self.dock.is_some()
+            && self.expression.as_ref().is_some_and(|ex| ex.contains(x, y))
+    }
+
+    /// Whether a window point is on the dock's top edge — the grip
+    /// that resizes it.
+    fn dock_grip_at(&self, x: f64, y: f64) -> bool {
+        let Some(dock) = self.frame().dock_box() else { return false };
+        x >= dock.x0 && x < dock.x1 && (y - dock.y0).abs() <= DOCK_GRIP
+    }
+
+    /// Dock the expression editor under the arrangement on the
+    /// selected item, or close the dock.
     ///
     /// The first selected item's active take, if it has notes; the
     /// demo groove otherwise, so the editor can be exercised on a
     /// session with no MIDI in it yet. A track whose name says drums
     /// opens as a kit; anything else as a roll.
-    fn toggle_expression(&mut self) {
-        if self.view == View::Expression {
-            self.view = View::Arrangement;
+    fn toggle_dock(&mut self) {
+        if self.dock.take().is_some() {
+            self.dock_focus = false;
+            self.dock_drag = false;
         } else {
-            let origin = (0.0, 0.0);
-            let size = self.surface_size;
+            let (width, height) = self.surface_size;
+            let dock = (height * DOCK_SHARE).max(DOCK_MIN);
+            let frame = session_daw::rails::Frame::docked(width, height, dock);
+            let dock_box = frame.dock_box().unwrap_or_default();
+            let origin = (dock_box.x0, dock_box.y0);
+            let size = (dock_box.width(), dock_box.height());
             let wanted = self.editor.selected.iter().next().cloned();
             let from_item = wanted.as_deref().and_then(|guid| {
                 let scene = self.scene.as_ref()?;
@@ -1871,36 +1966,14 @@ impl App {
                     }
                 }
             }
-            self.view = View::Expression;
+            self.dock = Some(dock);
+            self.dock_focus = true;
+            self.view = View::Arrangement;
         }
         if let Some(window) = &self.window {
             window.set_title(self.view.title());
         }
-        tracing::info!(view = ?self.view, "view");
-    }
-
-    fn redraw_expression(&mut self) {
-        let (width, height) = self.surface_size;
-        let surface = self.palette.surface;
-        let Self {
-            renderer, expression, ..
-        } = self;
-        let Some(ex) = expression.as_mut() else { return };
-        ex.layout((0.0, 0.0), (width, height));
-        renderer.render(|painter| {
-            painter.reset();
-            painter.fill(
-                vello::peniko::Fill::NonZero,
-                Affine::IDENTITY,
-                surface,
-                None,
-                &vello::kurbo::Rect::new(0.0, 0.0, width, height),
-            );
-            ex.paint(painter);
-        });
-        if let Some(window) = &self.window {
-            window.pre_present_notify();
-        }
+        tracing::info!(view = ?self.view, dock = self.dock.unwrap_or(0.0), "view");
     }
 
     fn redraw_mixer(&mut self) {
@@ -2036,10 +2109,7 @@ impl App {
     fn profile(&self) -> session_daw::rails::Profile {
         session_daw::rails::profile(
             match self.view {
-                // The editor draws no rails yet; the arrangement's
-                // profile is what a hover over its box would read, and
-                // its events never reach the rails while it is up.
-                View::Arrangement | View::Expression => session_daw::rails::Surface::Arrange,
+                View::Arrangement => session_daw::rails::Surface::Arrange,
                 View::Mixer => session_daw::rails::Surface::Mixer,
             },
             self.mode,
@@ -2056,8 +2126,7 @@ impl App {
     /// the item, not looked up by index in a second table.
     fn rail_action_at(&self, x: f64, y: f64) -> Option<session_daw::rails::Action> {
         use session_daw::hit::{Side, Target};
-        let (width, height) = self.surface_size;
-        let frame = session_daw::rails::Frame::new(width, height);
+        let frame = self.frame();
         let profile = self.profile();
         // The corner above the track panel is the mode selector, and it
         // is drawn over the ruler, so it is asked first.
@@ -2448,10 +2517,6 @@ impl App {
             self.redraw_mixer();
             return;
         }
-        if self.view == View::Expression {
-            self.redraw_expression();
-            return;
-        }
         if self.scene.is_none() {
             return;
         }
@@ -2464,7 +2529,7 @@ impl App {
         let Some(scene) = &self.scene else { return };
         let (sx, sy, pps) = (self.scroll_x, self.scroll_y, self.pps);
         let (width, surface_h) = self.surface_size;
-        let frame = session_daw::rails::Frame::new(width, surface_h);
+        let frame = self.frame();
         // What this frame can see. Everything outside it is skipped
         // before it reaches Vello's encoder — see `Arrangement::index`.
         // The rails are excluded, or the panel draws rows behind them
@@ -2513,6 +2578,15 @@ impl App {
         let in_flight = self.editor.fade_in_flight();
         let selected_items = &self.editor.selected;
         let ghost = self.editor.ghost();
+        // The docked editor, laid out in the dock's box for this frame.
+        let dock_box = frame.dock_box();
+        let dock_view = match (dock_box, self.expression.as_mut()) {
+            (Some(dock), Some(ex)) => {
+                ex.layout((dock.x0, dock.y0), (dock.width(), dock.height()));
+                Some(ex)
+            }
+            _ => None,
+        };
         /// The finest the grid ever gets — sixteenths, as a fraction of
         /// a whole note. The zoom only ever coarsens away from it.
         const FINEST: f64 = 1.0 / 16.0;
@@ -2655,6 +2729,26 @@ impl App {
             // The scrollbars, over the lanes and under the rails.
             if let Some(pair) = scroll_bars {
                 session_daw::scrollbar::draw(painter, &palette, pair, bar_held);
+            }
+            // The docked editor, under the arrangement: its own bars,
+            // roll and strip, and a rule along its top edge that is
+            // also the grip that resizes it.
+            if let (Some(dock), Some(ex)) = (dock_box, dock_view) {
+                painter.fill(
+                    vello::peniko::Fill::NonZero,
+                    Affine::IDENTITY,
+                    surface,
+                    None,
+                    &dock,
+                );
+                ex.paint(painter);
+                painter.fill(
+                    vello::peniko::Fill::NonZero,
+                    Affine::IDENTITY,
+                    palette.tcp_rule,
+                    None,
+                    &vello::kurbo::Rect::new(dock.x0, dock.y0 - 1.0, dock.x1, dock.y0 + 1.0),
+                );
             }
             // The rails over everything that scrolled under them, and
             // the mode selector in the corner the ruler leaves.
@@ -2808,6 +2902,9 @@ fn main() {
         playhead: session_daw::cursor::Playhead::stopped(0.0),
         editor: session_daw::arrange_edit::Editor::default(),
         expression: None,
+        dock: None,
+        dock_focus: false,
+        dock_drag: false,
         hovered_item: None,
         keys: session_daw::mousemap::Mods::default(),
         bar_drag: None,
@@ -2944,15 +3041,13 @@ fn expression_key_name(key: &winit::keyboard::Key) -> Option<String> {
 enum View {
     Arrangement,
     Mixer,
-    /// The expression editor over one item — see `session_daw::expression`.
-    Expression,
 }
 
 impl View {
     const fn toggled(self) -> Self {
         match self {
             Self::Arrangement => Self::Mixer,
-            Self::Mixer | Self::Expression => Self::Arrangement,
+            Self::Mixer => Self::Arrangement,
         }
     }
 
@@ -2960,10 +3055,17 @@ impl View {
         match self {
             Self::Arrangement => "Session — arrangement (Vello)",
             Self::Mixer => "Session — mixer (Vello)",
-            Self::Expression => "Session — expression editor (Vello)",
         }
     }
 }
+
+/// The dock's height when it first opens, as a share of the window.
+const DOCK_SHARE: f64 = 0.4;
+/// The least the dock can be dragged to, and the least the arrangement
+/// keeps above it.
+const DOCK_MIN: f64 = 160.0;
+/// How near the dock's top edge a press takes hold of it to resize.
+const DOCK_GRIP: f64 = 4.0;
 
 /// Show an edit here, now, rather than waiting for the engine.
 ///

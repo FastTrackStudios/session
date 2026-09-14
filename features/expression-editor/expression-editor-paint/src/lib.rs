@@ -17,6 +17,7 @@
 //! these modules under their old names.
 
 pub mod canvas;
+pub mod chrome;
 pub mod demo;
 pub mod guitar;
 pub mod interaction;

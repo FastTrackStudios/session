@@ -16,21 +16,34 @@
 //!
 //! # Layout
 //!
-//! The view is a box in window space: the roll on top, with its key
-//! gutter and ruler, and the velocity strip under it. The editor's
-//! viewport is the roll's *note area* — the box minus the chrome — which
-//! is the convention every `interaction` handler assumes, so the
+//! The view is a box in window space: the toolbar across the top, the
+//! roll under it with its key gutter and ruler, the velocity strip
+//! under that, and the status bar along the bottom. The editor's
+//! viewport is the roll's *note area* — the box minus all that chrome —
+//! which is the convention every `interaction` handler assumes, so the
 //! pointer is translated into roll space here and nowhere else.
+//!
+//! # Input
+//!
+//! Keys go through the editor's own keymap first (`keys::resolve`,
+//! with its prefixes and sequences, and the spring-loaded zoom and
+//! velocity tools), then the mode's own keys, then the plain
+//! `interaction::key_down` table — the same order the Dioxus roll
+//! uses. A right-click opens the context menu the core builds for
+//! what was under it; the toolbar and status bar are the core's state
+//! drawn as buttons, so a press on one is one call back into it.
 
 use anyrender::PaintScene;
 use expression_editor_core::mouse::{Action, Context, Gesture};
 use expression_editor_core::rows::DrumMap;
 use expression_editor_core::tools::{self, Hit};
-use expression_editor_core::{Edit, Editor, Mode, RowSpace, StripLane, Viewport};
+use expression_editor_core::{Edit, Editor, Mode, RowSpace, StripLane, Tool, Viewport, memagic};
+use expression_editor_paint::chrome::{self, Button, Choice, Control, Menu, Pending, STATUS_H, TOOLBAR_H};
 use expression_editor_paint::interaction::{self, Drag};
 use expression_editor_paint::paint::{self, Overlay};
 use expression_editor_paint::text::Labeller;
-use expression_editor_paint::{canvas, demo};
+use expression_editor_paint::{canvas, demo, keys};
+use input::InputCommand;
 use vello::kurbo::Affine;
 
 use crate::mousemap::Mods;
@@ -56,13 +69,29 @@ pub struct Expression {
     origin: (f64, f64),
     /// The view's box.
     size: (f64, f64),
+    /// The bars' buttons, laid out for this box and this state.
+    toolbar: Vec<Button>,
+    status: Vec<Button>,
+    /// The button under the pointer.
+    hover: Option<Control>,
+    /// Where the pointer last was over the roll, in roll space — what
+    /// a zoom key anchors on.
+    hover_at: Option<(f64, f64)>,
+    /// The context menu, while one is open.
+    menu: Option<Menu>,
+    /// The tool before a spring-loaded one was armed by a held key.
+    spring_from: Option<Tool>,
+    /// What a menu command still needs from the host.
+    pending: Option<Pending>,
 }
 
 /// Which part of the view a point is in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Zone {
+    Toolbar,
     Roll,
     Strip,
+    Status,
     Outside,
 }
 
@@ -70,10 +99,11 @@ impl Expression {
     /// The demo drum groove, sized to `size` at `origin`.
     #[must_use]
     pub fn demo(origin: (f64, f64), size: (f64, f64)) -> Self {
-        let vp = viewport_in(size, demo::default_viewport());
+        let vp = viewport_for(size, DEFAULT_STRIP);
         let editor = demo::editor(demo::Scene::Drums, vp);
         let mut this = Self::hold(editor, None, origin, size);
         this.editor.set_mode(Mode::Drums);
+        this.relayout();
         this
     }
 
@@ -93,7 +123,7 @@ impl Expression {
         origin: (f64, f64),
         size: (f64, f64),
     ) -> Self {
-        let vp = viewport_in(size, demo::default_viewport());
+        let vp = viewport_for(size, DEFAULT_STRIP);
         let mut doc = expression_editor_daw::to_doc(snapshot, 48.0);
         if drums {
             let map = kit_for(&doc);
@@ -120,7 +150,9 @@ impl Expression {
             editor.set_mode(Mode::Drums);
         }
         editor.reset_view();
-        Self::hold(editor, Some(item), origin, size)
+        let mut this = Self::hold(editor, Some(item), origin, size);
+        this.relayout();
+        this
     }
 
     fn hold(editor: Editor, item: Option<String>, origin: (f64, f64), size: (f64, f64)) -> Self {
@@ -135,6 +167,13 @@ impl Expression {
             strip_pan: None,
             origin,
             size,
+            toolbar: Vec::new(),
+            status: Vec::new(),
+            hover: None,
+            hover_at: None,
+            menu: None,
+            spring_from: None,
+            pending: None,
         }
     }
 
@@ -143,27 +182,76 @@ impl Expression {
         self.origin = origin;
         if self.size != size {
             self.size = size;
-            let vp = viewport_in(size, self.editor.viewport);
-            self.editor.resize(vp);
+            self.relayout();
         }
     }
 
-    /// The roll's height — the box less the strip under it.
-    fn roll_h(&self) -> f64 {
-        (self.size.1 - self.editor.lane_strip_h).max(canvas::RULER_H + 1.0)
+    /// The editor's viewport and the bars, for the box and the state
+    /// now. The bars are rebuilt every frame anyway — they are the
+    /// state drawn — so this is the one place that sizes anything.
+    fn relayout(&mut self) {
+        let vp = viewport_for(self.size, self.editor.lane_strip_h);
+        if (vp.w - self.editor.viewport.w).abs() > 0.5 || (vp.h - self.editor.viewport.h).abs() > 0.5 {
+            self.editor.resize(vp);
+        }
+        self.toolbar = chrome::toolbar(&self.editor, self.size.0, &mut self.labels);
+        self.status = chrome::status(&self.editor, self.size.0, &mut self.labels);
     }
 
-    /// Draw the roll and the strip into the frame.
+    /// The roll's height — the box less the bars and the strip.
+    fn roll_h(&self) -> f64 {
+        (self.size.1 - TOOLBAR_H - STATUS_H - self.editor.lane_strip_h).max(canvas::RULER_H + 1.0)
+    }
+
+    /// Where the roll starts, below the toolbar.
+    const fn roll_top() -> f64 {
+        TOOLBAR_H
+    }
+
+    /// Draw the bars, the roll, the strip and any menu into the frame.
     pub fn paint(&mut self, painter: &mut impl PaintScene) {
+        // The strip may have been toggled by a key or a button since
+        // the last frame; the viewport follows it.
+        self.relayout();
         let (w, h) = self.size;
+        let (ox, oy) = self.origin;
         let roll_h = self.roll_h();
+        let strip_h = (h - TOOLBAR_H - STATUS_H - roll_h).max(0.0);
+        self.overlay.marquee = match &self.drag {
+            Drag::Marquee { origin, current, .. } => Some((
+                origin.0.min(current.0),
+                origin.1.min(current.1),
+                (current.0 - origin.0).abs(),
+                (current.1 - origin.1).abs(),
+            )),
+            _ => None,
+        };
+        self.overlay.razor = match &self.drag {
+            Drag::RazorCreate { pending, .. } => *pending,
+            _ => None,
+        };
+        let bar = chrome::paint(&self.toolbar, self.hover, w, TOOLBAR_H, &mut self.labels);
+        painter.append_scene(bar, Affine::translate((ox, oy)));
         let roll = paint::roll_scene(&self.editor, w, roll_h, &self.overlay, &mut self.labels);
-        painter.append_scene(roll, Affine::translate(self.origin));
-        let strip = paint::strip_scene(&self.editor, w, h - roll_h, &mut self.labels);
-        painter.append_scene(
-            strip,
-            Affine::translate((self.origin.0, self.origin.1 + roll_h)),
-        );
+        painter.append_scene(roll, Affine::translate((ox, oy + TOOLBAR_H)));
+        if strip_h > 0.0 {
+            let strip = paint::strip_scene(&self.editor, w, strip_h, &mut self.labels);
+            painter.append_scene(strip, Affine::translate((ox, oy + TOOLBAR_H + roll_h)));
+        }
+        let status = chrome::paint(&self.status, self.hover, w, STATUS_H, &mut self.labels);
+        painter.append_scene(status, Affine::translate((ox, oy + h - STATUS_H)));
+        if let Some(menu) = &self.menu {
+            let scene = menu.paint(&mut self.labels);
+            painter.append_scene(
+                scene,
+                Affine::translate((ox + canvas::GUTTER_W, oy + TOOLBAR_H + canvas::RULER_H)),
+            );
+        }
+    }
+
+    /// What a menu command still needs from the host, once.
+    pub const fn take_pending(&mut self) -> Option<Pending> {
+        self.pending.take()
     }
 
     /// A window point in the view's own space.
@@ -175,23 +263,43 @@ impl Expression {
         let (lx, ly) = self.local(x, y);
         if lx < 0.0 || ly < 0.0 || lx >= self.size.0 || ly >= self.size.1 {
             Zone::Outside
-        } else if ly < self.roll_h() {
+        } else if ly < Self::roll_top() {
+            Zone::Toolbar
+        } else if ly >= self.size.1 - STATUS_H {
+            Zone::Status
+        } else if ly < Self::roll_top() + self.roll_h() {
             Zone::Roll
         } else {
             Zone::Strip
         }
     }
 
-    /// A window point in roll space — past the gutter and the ruler.
+    /// Whether a window point is inside the view's box.
+    #[must_use]
+    pub fn contains(&self, x: f64, y: f64) -> bool {
+        self.zone(x, y) != Zone::Outside
+    }
+
+    /// A window point in roll space — past the toolbar, the gutter and
+    /// the ruler.
     fn roll_point(&self, x: f64, y: f64) -> (f64, f64) {
         let (lx, ly) = self.local(x, y);
-        (lx - canvas::GUTTER_W, ly - canvas::RULER_H)
+        (lx - canvas::GUTTER_W, ly - Self::roll_top() - canvas::RULER_H)
     }
 
     /// A window point in strip space.
     fn strip_point(&self, x: f64, y: f64) -> (f64, f64) {
         let (lx, ly) = self.local(x, y);
-        (lx, ly - self.roll_h())
+        (lx, ly - Self::roll_top() - self.roll_h())
+    }
+
+    /// A window point in a bar's space.
+    fn bar_point(&self, x: f64, y: f64, zone: Zone) -> (f64, f64) {
+        let (lx, ly) = self.local(x, y);
+        match zone {
+            Zone::Status => (lx, ly - (self.size.1 - STATUS_H)),
+            _ => (lx, ly),
+        }
     }
 
     /// Whether a gesture is in flight, so the window keeps sending
@@ -204,8 +312,34 @@ impl Expression {
     /// A button press. `button` is 0 left, 1 middle, 2 right. `true`
     /// when the view took it.
     pub fn press(&mut self, x: f64, y: f64, mods: Mods, button: u16) -> bool {
+        // An open menu owns the next press: on an item it runs it, and
+        // anywhere else it closes without doing anything — a click
+        // that both dismissed a menu and moved a note would be two
+        // surprises in one.
+        if let Some(menu) = self.menu.take() {
+            let (rx, ry) = self.roll_point(x, y);
+            if button == 0
+                && let Choice::Done(pending) = menu.choose(&mut self.editor, rx, ry)
+            {
+                self.pending = pending;
+            }
+            return true;
+        }
         match self.zone(x, y) {
             Zone::Outside => false,
+            Zone::Toolbar | Zone::Status => {
+                let zone = self.zone(x, y);
+                let (bx, by) = self.bar_point(x, y, zone);
+                let bar = if zone == Zone::Toolbar { &self.toolbar } else { &self.status };
+                if button == 0
+                    && let Some(control) = chrome::hit(bar, bx, by)
+                    && bar.iter().any(|b| b.control == control && b.enabled)
+                {
+                    chrome::activate(&mut self.editor, &self.drag, control);
+                    self.relayout();
+                }
+                true
+            }
             Zone::Roll => {
                 let (rx, ry) = self.roll_point(x, y);
                 let under = match self.editor.hit_test(rx, ry) {
@@ -214,10 +348,14 @@ impl Expression {
                 };
                 self.pressed = (button == 0).then_some(((rx, ry), under));
                 let drag = interaction::pointer_down(&mut self.editor, rx, ry, mods_of(mods), button);
-                // A right-click asks for a menu this window does not
-                // draw yet; it is not a drag.
+                // A right-click resolves to a menu request rather than
+                // a drag. Opened here, so the core pointer path stays
+                // free of UI state — the same split as the Dioxus roll.
                 self.drag = match drag {
-                    Drag::ContextMenu { .. } => Drag::None,
+                    Drag::ContextMenu { x, y, under, t, row } => {
+                        self.menu = Some(Menu::open(&self.editor, x, y, under, t, row));
+                        Drag::None
+                    }
                     other => other,
                 };
                 true
@@ -241,6 +379,25 @@ impl Expression {
 
     /// The pointer moved. `true` when something changed.
     pub fn moved(&mut self, x: f64, y: f64, mods: Mods) -> bool {
+        let zone = self.zone(x, y);
+        self.hover_at = (zone == Zone::Roll).then(|| self.roll_point(x, y));
+        let (rx, ry) = self.roll_point(x, y);
+        if let Some(menu) = self.menu.as_mut() {
+            return menu.hover_at(rx, ry);
+        }
+        let hover = match zone {
+            Zone::Toolbar => {
+                let (bx, by) = self.bar_point(x, y, zone);
+                chrome::hit(&self.toolbar, bx, by)
+            }
+            Zone::Status => {
+                let (bx, by) = self.bar_point(x, y, zone);
+                chrome::hit(&self.status, bx, by)
+            }
+            _ => None,
+        };
+        let lit = hover != self.hover;
+        self.hover = hover;
         if let Some(last) = self.strip_pan {
             let (sx, _) = self.strip_point(x, y);
             // Time only: the strip's vertical is a value, not a scroll.
@@ -254,7 +411,7 @@ impl Expression {
             return true;
         }
         if !self.drag.is_active() {
-            return false;
+            return lit;
         }
         let (rx, ry) = self.roll_point(x, y);
         interaction::pointer_move(&mut self.editor, &mut self.drag, rx, ry, mods_of(mods));
@@ -319,7 +476,112 @@ impl Expression {
     /// A key, by its browser-style name (`"Delete"`, `"ArrowLeft"`,
     /// `"a"`). `true` when the editor took it.
     pub fn key(&mut self, key: &str, mods: Mods) -> bool {
-        interaction::key_down(&mut self.editor, &self.drag, key, mods_of(mods))
+        let m = mods_of(mods);
+        if key == "Escape" && self.menu.take().is_some() {
+            return true;
+        }
+        // Escape backs out of a half-typed sequence rather than firing
+        // whatever a bare Escape means.
+        if key == "Escape" && keys::is_pending() {
+            keys::cancel();
+            return true;
+        }
+        // The editor's own keymap: prefixes, sequences, the zoom tree.
+        let commands = keys::resolve(key, m);
+        let mut ran = false;
+        for cmd in &commands {
+            let action = match cmd {
+                InputCommand::Action(a) => Some(a.0.as_str()),
+                InputCommand::ActionWithArgs { action, .. } => Some(action.0.as_str()),
+                _ => None,
+            };
+            if let Some(action) = action {
+                let (region, anchor) = self.memagic();
+                ran |= keys::dispatch(&mut self.editor, action, region, anchor);
+            }
+        }
+        // A spring-loaded tool arms the instant its prefix goes down,
+        // so the toolbar lights while the surface is already in it.
+        if let Some(armed) = keys::held_prefix().as_deref().and_then(spring_tool)
+            && self.spring_from.is_none()
+        {
+            let previous = self.editor.tool;
+            if previous != armed {
+                self.spring_from = Some(previous);
+                self.editor.tool = armed;
+            }
+        }
+        if ran || keys::is_pending() {
+            self.relayout();
+            return true;
+        }
+        // Drum-mode keys before the general ones: `f` is a flam here.
+        if key == "f" && !m.ctrl && self.editor.mode == Mode::Drums && self.editor.flam_selection() > 0 {
+            return true;
+        }
+        let took = interaction::key_down(&mut self.editor, &self.drag, key, m);
+        if took {
+            self.relayout();
+        }
+        took
+    }
+
+    /// A key came up. The keymap has to hear it, or a held prefix
+    /// walks its sequence tree on auto-repeat; and a spring-loaded tool
+    /// goes back when its key does.
+    pub fn key_up(&mut self, key: &str, mods: Mods) -> bool {
+        keys::release(key, mods_of(mods));
+        let mut changed = false;
+        match key {
+            "r" => {
+                self.editor.refs_to_front = false;
+                changed = true;
+            }
+            "m" => {
+                self.editor.reference_to_front = false;
+                changed = true;
+            }
+            _ => {}
+        }
+        if spring_tool(key).is_some()
+            && let Some(previous) = self.spring_from.take()
+        {
+            self.editor.tool = previous;
+            changed = true;
+        }
+        if changed {
+            self.relayout();
+        }
+        changed
+    }
+
+    /// Where a zoom key anchors: the playhead while running, else the
+    /// pointer, else the middle of the view.
+    fn memagic(&self) -> (memagic::Region, memagic::Anchor) {
+        let ed = &self.editor;
+        let Some((x, y)) = self.hover_at else {
+            return (
+                memagic::Region::Elsewhere,
+                memagic::Anchor {
+                    t: ed.playhead.unwrap_or_else(|| ed.camera.t_at(ed.viewport.w * 0.5)),
+                    row: None,
+                },
+            );
+        };
+        let region = if y < 0.0 {
+            memagic::Region::Ruler
+        } else if x < 0.0 {
+            memagic::Region::Piano
+        } else {
+            memagic::Region::NoteArea
+        };
+        (
+            region,
+            memagic::Anchor {
+                t: ed.playhead.unwrap_or_else(|| ed.camera.t_at(x)),
+                row: Some(ed.camera.pitch_at(y, ed.viewport)),
+            },
+        )
     }
 
     /// Set the velocity of the notes under a strip point to its height.
@@ -327,7 +589,7 @@ impl Expression {
     /// A generous grab around the onset: a stem is a few pixels wide and
     /// this is a value edit, not a precision selection.
     fn strip_write(&mut self, at_x: f64, at_y: f64) {
-        let strip_h = (self.size.1 - self.roll_h()).max(1.0);
+        let strip_h = (self.size.1 - TOOLBAR_H - STATUS_H - self.roll_h()).max(1.0);
         let velocity = (1.0 - at_y / strip_h).clamp(0.0, 1.0);
         let roll_x = at_x - canvas::GUTTER_W;
         let time = self.editor.camera.t_at(roll_x);
@@ -406,14 +668,24 @@ pub fn load_take(
 
 /// How far a press may travel and still be a click, in pixels.
 const CLICK_SLOP: f64 = 3.0;
+/// The strip's height before the editor has said otherwise.
+const DEFAULT_STRIP: f64 = 96.0;
 
-/// The roll's viewport inside a box: the note area, less the gutter,
-/// the ruler and the strip under it.
-fn viewport_in(size: (f64, f64), _fallback: Viewport) -> Viewport {
-    let strip = 96.0;
+/// The tools a held key springs into: `z` zooms, `v` edits velocity.
+fn spring_tool(key: &str) -> Option<Tool> {
+    match key {
+        "z" => Some(Tool::Zoom),
+        "v" => Some(Tool::Velocity),
+        _ => None,
+    }
+}
+
+/// The roll's viewport inside a box: the note area, less the bars, the
+/// gutter, the ruler and the strip.
+fn viewport_for(size: (f64, f64), strip_h: f64) -> Viewport {
     Viewport::new(
         (size.0 - canvas::GUTTER_W).max(1.0),
-        (size.1 - strip - canvas::RULER_H).max(1.0),
+        (size.1 - TOOLBAR_H - STATUS_H - strip_h - canvas::RULER_H).max(1.0),
     )
 }
 
@@ -485,7 +757,7 @@ mod tests {
         let y = ed.camera.y(f64::from(n.row), ed.viewport);
         (
             x + canvas::GUTTER_W + ORIGIN.0,
-            y + canvas::RULER_H + ORIGIN.1,
+            y + canvas::RULER_H + ORIGIN.1 + TOOLBAR_H,
         )
     }
 
@@ -501,7 +773,10 @@ mod tests {
     fn the_box_less_the_chrome_is_the_viewport() {
         let v = view();
         assert!((v.editor.viewport.w - (SIZE.0 - canvas::GUTTER_W)).abs() < 1e-9);
-        assert!((v.editor.viewport.h - (SIZE.1 - 96.0 - canvas::RULER_H)).abs() < 1e-9);
+        assert!(
+            (v.editor.viewport.h - (SIZE.1 - TOOLBAR_H - STATUS_H - 96.0 - canvas::RULER_H)).abs()
+                < 1e-9
+        );
     }
 
     #[test]
@@ -572,13 +847,13 @@ mod tests {
         let mut v = view();
         let (x, _) = at_note(&v, 1);
         // Near the top of the strip: loud.
-        let top = ORIGIN.1 + v.roll_h() + 4.0;
+        let top = ORIGIN.1 + TOOLBAR_H + v.roll_h() + 4.0;
         assert!(v.press(x, top, plain(), 0));
         v.release(x, top, plain());
         let loud = v.editor.doc.notes[0].velocity;
         assert!(loud > 0.9, "top of the strip should be loud: {loud}");
         // Near the bottom: quiet.
-        let bottom = ORIGIN.1 + SIZE.1 - 4.0;
+        let bottom = ORIGIN.1 + SIZE.1 - STATUS_H - 4.0;
         v.press(x, bottom, plain(), 0);
         v.release(x, bottom, plain());
         let quiet = v.editor.doc.notes[0].velocity;
@@ -589,12 +864,96 @@ mod tests {
     fn a_middle_drag_over_the_strip_pans_time() {
         let mut v = view();
         let t0 = v.editor.camera.time_span(v.editor.viewport).0;
-        let y = ORIGIN.1 + v.roll_h() + 20.0;
+        let y = ORIGIN.1 + TOOLBAR_H + v.roll_h() + 20.0;
         v.press(ORIGIN.0 + 400.0, y, plain(), 1);
         v.moved(ORIGIN.0 + 300.0, y, plain());
         v.release(ORIGIN.0 + 300.0, y, plain());
         let t1 = v.editor.camera.time_span(v.editor.viewport).0;
         assert!(t1 > t0, "dragging left should show later time: {t0} -> {t1}");
+    }
+
+    #[test]
+    fn a_toolbar_press_sets_the_tool() {
+        let mut v = view();
+        let button = v
+            .toolbar
+            .iter()
+            .find(|b| b.control == Control::Tool(Tool::Eraser))
+            .expect("an eraser button")
+            .rect
+            .center();
+        assert!(v.press(ORIGIN.0 + button.x, ORIGIN.1 + button.y, plain(), 0));
+        v.release(ORIGIN.0 + button.x, ORIGIN.1 + button.y, plain());
+        assert_eq!(v.editor.tool, Tool::Eraser);
+        // And the bar shows it lit — as the mode shows it, which for
+        // drums is the note eraser.
+        let shown = v.editor.shown_tool();
+        assert!(v.toolbar.iter().any(|b| b.control == Control::Tool(shown) && b.active));
+    }
+
+    #[test]
+    fn a_status_press_toggles_snap() {
+        let mut v = view();
+        let was = v.editor.grid.enabled;
+        let button = v
+            .status
+            .iter()
+            .find(|b| b.control == Control::SnapGrid)
+            .expect("a snap button")
+            .rect
+            .center();
+        let y = ORIGIN.1 + SIZE.1 - STATUS_H + button.y;
+        assert!(v.press(ORIGIN.0 + button.x, y, plain(), 0));
+        assert_eq!(v.editor.grid.enabled, !was);
+    }
+
+    #[test]
+    fn a_right_click_opens_the_menu_and_a_click_elsewhere_closes_it() {
+        let mut v = view();
+        let (x, y) = at_note(&v, 1);
+        assert!(v.press(x, y, plain(), 2));
+        v.release(x, y, plain());
+        assert!(v.menu.is_some(), "a right-click on a hit opens its menu");
+        // A press outside the menu closes it and does nothing else.
+        let count = v.editor.doc.notes.len();
+        v.press(x + 400.0, y, plain(), 0);
+        assert!(v.menu.is_none());
+        assert_eq!(v.editor.doc.notes.len(), count);
+    }
+
+    #[test]
+    fn the_menu_runs_a_command_on_the_hit() {
+        let mut v = view();
+        let (x, y) = at_note(&v, 1);
+        v.press(x, y, plain(), 2);
+        v.release(x, y, plain());
+        let menu = v.menu.as_ref().expect("a menu");
+        let delete = menu
+            .items
+            .iter()
+            .position(|i| i.command == expression_editor_core::menu::Command::Delete)
+            .expect("delete on the menu");
+        let (rx, ry) = {
+            let r = menu.item_rect(delete);
+            (r.center().x, r.center().y)
+        };
+        let count = v.editor.doc.notes.len();
+        // Menu space is roll space; back to the window.
+        let wx = rx + canvas::GUTTER_W + ORIGIN.0;
+        let wy = ry + canvas::RULER_H + ORIGIN.1 + TOOLBAR_H;
+        v.press(wx, wy, plain(), 0);
+        assert!(v.menu.is_none());
+        assert_eq!(v.editor.doc.notes.len(), count - 1);
+    }
+
+    #[test]
+    fn a_held_zoom_key_springs_the_tool_and_lets_go() {
+        let mut v = view();
+        let before = v.editor.tool;
+        v.key("z", plain());
+        assert_eq!(v.editor.tool, Tool::Zoom);
+        v.key_up("z", plain());
+        assert_eq!(v.editor.tool, before);
     }
 
     #[test]
