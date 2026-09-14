@@ -7,4 +7,4 @@
 
 pub mod list;
 
-pub use list::{Bus, Entry, PatchList, Performer, Rig};
+pub use list::{Bus, Entry, Lowered, PatchList, Performer, Rig};

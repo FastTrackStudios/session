@@ -11,6 +11,7 @@
 //! view lists performers in and the scene engine orders performer rows
 //! by (`flow.scenes.performer-order`).
 
+use dynamic_template::scenes::Selector;
 use facet::Facet;
 use indexmap::IndexMap;
 
@@ -87,5 +88,75 @@ impl PatchList {
             self,
             &facet_styx::SerializeOptions::default().omit_none(),
         )
+    }
+
+    /// Every rig entry as a `(selector, entry)` pair, in file order.
+    ///
+    /// The performer and the source kind become the selector's
+    /// `performer` and `kind`; a key's `/`-separated segments are the
+    /// group path over its last segment, the multi-mic — so `kick/in`
+    /// is the `in` mic under the `kick` piece and `di` is the `di` mic
+    /// with no path. Nothing is inferred beyond the split: the scene
+    /// engine's matcher decides what a segment means against a
+    /// session's taxonomy.
+    // r[impl flow.patch-list.plan]
+    #[must_use]
+    pub fn entries(&self) -> Vec<Lowered> {
+        let mut out = Vec::new();
+        for (performer, rigs) in &self.performers {
+            for (kind, rig) in rigs {
+                for (key, entry) in rig {
+                    out.push(Lowered {
+                        performer: performer.clone(),
+                        kind: kind.clone(),
+                        key: key.clone(),
+                        selector: selector_of(performer, kind, key),
+                        entry: entry.clone(),
+                    });
+                }
+            }
+        }
+        out
+    }
+}
+
+/// One rig entry, flattened: where it sits in the list and the
+/// selector it lowers to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lowered {
+    /// The performer the rig belongs to.
+    pub performer: String,
+    /// The kind of source (`guitar`, `drums`, `bass`, `vocal`, `keys`).
+    pub kind: String,
+    /// The rig key as written (`di`, `amp-a/57`, `kick/in`).
+    pub key: String,
+    /// The same, in the scene engine's vocabulary.
+    pub selector: Selector,
+    /// What the channel or mic is patched to.
+    pub entry: Entry,
+}
+
+impl Entry {
+    /// The input role, when the entry names one — a MIDI entry is its
+    /// own resolution and has none.
+    #[must_use]
+    pub fn role(&self) -> Option<&str> {
+        match self {
+            Self::Role(role) => Some(role),
+            Self::Midi { .. } => None,
+        }
+    }
+}
+
+/// The selector for one rig key.
+fn selector_of(performer: &str, kind: &str, key: &str) -> Selector {
+    let mut segments: Vec<String> = key.split('/').map(str::to_owned).collect();
+    let multi_mic = segments.pop();
+    Selector {
+        group: segments,
+        kind: Some(kind.to_owned()),
+        performer: Some(performer.to_owned()),
+        multi_mic,
+        ..Selector::default()
     }
 }
