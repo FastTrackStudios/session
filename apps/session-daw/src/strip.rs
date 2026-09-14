@@ -34,6 +34,14 @@ use crate::mcp::{Columns, Control, Squeeze};
 /// control touching it reads as bleeding out of the strip.
 const PAN_FROM_EDGE: f64 = 5.0;
 
+/// The side of the panel's bare record-arm ring — what a rail draws in
+/// place of the housed arm (`art::Arm::Panel` is 20x20).
+const ARM_RING: f64 = 20.0;
+
+/// The ring's clearance: under the band, and to each edge of the
+/// narrowest rail allowed to carry it.
+const ARM_RING_GAP: f64 = 1.0;
+
 /// The air between the bottom of the fader column and the name plate.
 ///
 /// Small, but not nothing: a meter whose last pixel touches the plate
@@ -204,7 +212,25 @@ impl Strip {
     /// which is about eighteen pixels lower than the arm, so every
     /// button sat that much below where REAPER draws it.
     fn arm_top(&self) -> f64 {
+        if !self.squeeze.columns() {
+            // A rail has no housing to sink into the band: its arm is
+            // the panel's bare ring, and it sits UNDER the band, first
+            // in the stack the monitor, mute and solo hang from.
+            return self.band_bottom() + ARM_RING_GAP;
+        }
         self.band_bottom() + f64::from(g::ARM_OVERHANG) - f64::from(g::ARM_CELL_H)
+    }
+
+    /// Whether the arm is drawn in its housing (the measured strip) or
+    /// as the panel's bare ring (a rail). The layout decides, so the
+    /// drawing and the hit test agree on which glyph is there.
+    #[must_use]
+    pub fn arm(&self) -> art::Arm {
+        if self.squeeze.columns() {
+            art::Arm::Mixer
+        } else {
+            art::Arm::Panel
+        }
     }
 
     /// How far down the button column a control sits, from the arm.
@@ -359,16 +385,26 @@ impl Strip {
                         self.band_bottom(),
                     )
                 }),
-            Control::RecArm => self.squeeze.columns().then(|| {
-                let x = self.columns.column_axis - f64::from(g::ARM_CELL_W) * 0.486;
+            Control::RecArm => {
                 let y = self.arm_top();
-                Rect::new(
-                    x,
-                    y,
-                    x + f64::from(g::ARM_CELL_W),
-                    y + f64::from(g::ARM_CELL_H),
-                )
-            }),
+                if self.squeeze.columns() {
+                    let x = self.columns.column_axis - f64::from(g::ARM_CELL_W) * 0.486;
+                    return Some(Rect::new(
+                        x,
+                        y,
+                        x + f64::from(g::ARM_CELL_W),
+                        y + f64::from(g::ARM_CELL_H),
+                    ));
+                }
+                // The bare ring, centred on the rail's button column —
+                // the one control a rail used to drop that it has room
+                // for. It was gated on the measured column, so a 60-px
+                // return had a monitor and no arm over it.
+                (self.width >= ARM_RING + 2.0 * ARM_RING_GAP).then(|| {
+                    let x = self.columns.column_axis - ARM_RING / 2.0;
+                    Rect::new(x, y, x + ARM_RING, y + ARM_RING)
+                })
+            }
             Control::Monitor | Control::Mute | Control::Solo | Control::Routing => {
                 if !self.squeeze.columns() && control == Control::Routing {
                     return None;
@@ -517,13 +553,31 @@ mod tests {
     /// with nothing behind it.
     #[test]
     fn what_is_not_drawn_is_not_hit() {
-        let narrow = Strip::new(30.0, 1440.0, 1440.0, 0.0, 1000.0);
+        let narrow = Strip::new(18.0, 1440.0, 1440.0, 0.0, 1000.0);
         assert!(narrow.rect(Control::RecArm).is_none());
         assert!(narrow.rect(Control::Pan).is_none());
         for y in [50.0, 300.0, 700.0] {
             assert_ne!(narrow.control_at(15.0, y), Some(Control::RecArm));
             assert_ne!(narrow.control_at(15.0, y), Some(Control::Pan));
         }
+    }
+
+    /// A rail keeps its record arm: the bare ring, first in the stack
+    /// the monitor hangs from, clear of the band and of both edges.
+    #[test]
+    fn rail_stacks_the_arm_over_the_monitor() {
+        let rail = Strip::new(30.0, 1440.0, 1440.0, 0.0, 1000.0);
+        assert_eq!(rail.arm(), art::Arm::Panel);
+        let arm = rail.rect(Control::RecArm).expect("a 30-px rail has room for the ring");
+        let monitor = rail.rect(Control::Monitor).expect("the monitor");
+        assert!(arm.y0 >= rail.band_bottom());
+        assert!(arm.y1 <= monitor.y0);
+        assert!(arm.x0 >= 0.0 && arm.x1 <= 30.0);
+        assert!((arm.center().x - monitor.center().x).abs() < 1.0);
+        assert!(rail.fader_top() >= rail.rect(Control::Solo).expect("solo").y1);
+
+        let full = Strip::new(86.0, 1440.0, 1440.0, 0.0, 1000.0);
+        assert_eq!(full.arm(), art::Arm::Mixer);
     }
 
     /// The top sections do NOT move with the strip's own height —
