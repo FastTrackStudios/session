@@ -22,7 +22,7 @@
 
 use anyrender::recording::RenderCommand;
 use anyrender::{PaintScene, Scene};
-use vello::kurbo::{Affine, Rect};
+use vello::kurbo::{Affine, BezPath, Rect};
 use vello::peniko::{Color, Fill};
 
 use daw_ui::studio::{ProjectRef, RowsRef};
@@ -196,6 +196,10 @@ pub struct Arrangement {
     pub length_secs: f64,
     /// The project tempo, for the ruler's bar lines.
     pub bpm: f64,
+    /// Every item's title, by row, in seconds — drawn per frame in
+    /// pixel space over the lanes, because recorded text would stretch
+    /// with the zoom.
+    titles: Vec<Title>,
     /// How many items were recorded, for reports that want to say what
     /// was actually drawn.
     pub item_count: usize,
@@ -353,6 +357,7 @@ impl Arrangement {
         let mut panel = Scene::new();
         let mut panel_bar = Scene::new();
         let mut index = Index::default();
+        let mut titles = Vec::with_capacity(project.item_count);
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
         // The colour of the folder open at each depth, so a row can
         // paint the folders it sits inside down its own left edge.
@@ -450,20 +455,39 @@ impl Arrangement {
             // row shrinks, so a collapsed session still shows its items
             // as bands rather than as empty lanes.
             let inset = (body * 0.05).clamp(0.0, 2.0);
+            let track_index = usize::try_from(track.index).unwrap_or(0);
             for item in project.lane(&track.guid) {
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
                 let color = item.color.map_or(track_color, |rgb| {
                     rgb24(rgb, if item.muted { 0x66 } else { 0xff })
                 });
+                // The body, dimmed, and the waveform over it in the
+                // full colour: the item is read by its waveform, and a
+                // solid block of colour was a waveform you could not
+                // see through.
                 lanes.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
-                    color,
+                    color.multiply_alpha(0.42),
                     None,
                     &Rect::new(x0, y + inset, x1, y + body - inset),
                 );
                 index.x.push((x0, x1));
+                let top = y + inset;
+                let bottom = y + body - inset;
+                if let Some(wave) = waveform(track_index, x0, x1, top, bottom) {
+                    lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &wave);
+                    index.x.push((x0, x1));
+                }
+                if let Some(name) = project.title(item) {
+                    titles.push(Title {
+                        row,
+                        x0,
+                        x1,
+                        name: name.to_owned(),
+                    });
+                }
             }
 
             index.lanes.push(lanes_from..command_index(&lanes));
@@ -486,7 +510,129 @@ impl Arrangement {
             length_secs: project.length_secs,
             bpm: project.bpm,
             item_count: project.item_count,
+            titles,
         }
+    }
+
+    /// The item titles on the rows a viewport shows, with where each
+    /// sits — for the per-frame pass that writes them in pixel space.
+    pub fn titles_in(&self, view: Viewport) -> impl Iterator<Item = (&Title, f64, f64)> + '_ {
+        let rows = self.visible_rows(view);
+        self.titles.iter().filter_map(move |title| {
+            if !rows.contains(&title.row) {
+                return None;
+            }
+            let (top, height) = self.row_box(title.row)?;
+            Some((title, top, height))
+        })
+    }
+}
+
+/// An item's name and where it sits: the row, and its span in seconds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Title {
+    pub row: usize,
+    pub x0: f64,
+    pub x1: f64,
+    pub name: String,
+}
+
+/// How many points a second a recorded waveform has.
+///
+/// Recorded once in seconds, so the zoom stretches it: at a hundred
+/// pixels a second twelve points is a facet every eight pixels, which
+/// is the coarsest a waveform can be before it reads as a polygon —
+/// and at the opening zoom it is finer than the pixels.
+const WAVE_POINTS_PER_SECOND: f64 = 12.0;
+
+/// How many readings each point holds the peak of.
+///
+/// A waveform display is a peak display: each column is the loudest
+/// the audio got across it, not a sample from it. Sampled, a hit that
+/// fell between two points was a bead where a transient should be.
+const WAVE_HOLD: usize = 4;
+
+/// An item's waveform as one closed path: the envelope forward along
+/// the top, back along the bottom, mirrored about the lane's middle.
+///
+/// From the simulation until the engine streams peaks — see
+/// `simulate::waveform` — and `None` for a lane too short to show one.
+fn waveform(track: usize, x0: f64, x1: f64, top: f64, bottom: f64) -> Option<BezPath> {
+    let half = (bottom - top) / 2.0;
+    if half < 1.5 {
+        return None;
+    }
+    let mid = (top + bottom) / 2.0;
+    let span = (x1 - x0).max(0.0);
+    let count = crate::num::index((span * WAVE_POINTS_PER_SECOND).ceil()).max(2);
+    let at = |i: usize| x0 + span * crate::num::coord(i) / crate::num::coord(count);
+    // A hair of amplitude at silence, so a quiet item still has a
+    // line down its middle and reads as audio rather than as a gap.
+    // Each point holds the peak over the stretch it stands for.
+    let step = 1.0 / WAVE_POINTS_PER_SECOND / crate::num::coord(WAVE_HOLD);
+    let amp = |t: f64| {
+        (0..WAVE_HOLD)
+            .map(|k| crate::simulate::waveform(track, crate::num::coord(k).mul_add(-step, t)))
+            .fold(0.0_f64, f64::max)
+            .mul_add(half - 1.0, 0.6)
+    };
+    let mut path = BezPath::new();
+    path.move_to((x0, mid - amp(x0)));
+    for i in 1..=count {
+        let x = at(i).min(x1);
+        path.line_to((x, mid - amp(x)));
+    }
+    for i in (0..=count).rev() {
+        let x = at(i).min(x1);
+        path.line_to((x, mid + amp(x)));
+    }
+    path.close_path();
+    Some(path)
+}
+
+/// The item titles, in pixel space, over the lanes: the per-frame pass.
+///
+/// `origin` is where the lanes' (0 s, row 0) lands on the surface —
+/// the same translation the lanes are replayed under, so a title sits
+/// on its item at every scroll and zoom. Written only where there is
+/// room to read one: a row shorter than a line, or an item narrower
+/// than a few characters, gets none.
+pub fn titles(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &crate::text::Font,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+) {
+    const SIZE: f32 = 8.0;
+    const PAD: f64 = 3.0;
+    for (title, top, height) in scene.titles_in(view) {
+        let row_h = height * view.zoom_y;
+        if row_h < 12.0 {
+            continue;
+        }
+        let left = title.x0.mul_add(view.pps, origin.0);
+        let right = title.x1.mul_add(view.pps, origin.0);
+        let room = right - left - PAD * 2.0;
+        if room < 12.0 {
+            continue;
+        }
+        // Cut the name to what fits, so a title never runs off its item
+        // onto the next one.
+        let mut name: &str = &title.name;
+        while !name.is_empty() && font.width(name, SIZE) > room {
+            let mut end = name.len().saturating_sub(1);
+            while end > 0 && !name.is_char_boundary(end) {
+                end = end.saturating_sub(1);
+            }
+            name = name.get(..end).unwrap_or("");
+        }
+        if name.is_empty() {
+            continue;
+        }
+        let y = top.mul_add(view.zoom_y, origin.1) + f64::from(SIZE) + 2.0;
+        crate::tcp::glyphs(painter, font, palette.text, name, left + PAD, y, SIZE);
     }
 }
 

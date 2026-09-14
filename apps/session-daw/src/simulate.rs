@@ -152,6 +152,15 @@ pub fn frame(track: usize, seconds: f64) -> Frame {
 /// Offset per track by an irrational-ish step so no two tracks land on
 /// the same beat — a mixer where every meter jumps together is one
 /// gradient, and the thing being looked at is how tracks differ.
+/// The level of a track's audio at a moment, linear 0..1 — what an
+/// item's waveform is drawn from until peaks stream in from the
+/// engine. The same envelope the meters run on, so the picture in
+/// the lane and the meter on the strip agree.
+#[must_use]
+pub fn waveform(track: usize, seconds: f64) -> f64 {
+    envelope(Voice::of(track), track, seconds)
+}
+
 fn envelope(voice: Voice, track: usize, seconds: f64) -> f64 {
     let period = 1.0 / voice.rate();
     let offset = crate::num::coord(track) * 0.6180339887 * period;

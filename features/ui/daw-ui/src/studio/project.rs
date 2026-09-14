@@ -68,9 +68,23 @@ pub struct Project {
     /// because a count of a grouped map is a walk, and the readout
     /// wants it every render.
     pub item_count: usize,
+    /// Each item's title — its active take's name — keyed by item guid.
+    /// An item carries no name of its own; the take does, and the
+    /// arrangement writes it on the item.
+    pub names: HashMap<String, String>,
 }
 
 impl Project {
+    /// What an item is called: its active take's name, else its label,
+    /// else nothing.
+    pub fn title<'a>(&'a self, item: &'a Item) -> Option<&'a str> {
+        self.names
+            .get(&item.guid)
+            .map(String::as_str)
+            .filter(|n| !n.is_empty())
+            .or(item.label.as_deref())
+    }
+
     /// This track's items, or an empty slice. Never allocates: a lane
     /// renders every frame it is on screen.
     pub fn lane(&self, track_guid: &str) -> &[Item] {
@@ -95,8 +109,17 @@ pub async fn fetch() -> Option<Project> {
     let mut length = 0.0f64;
     let item_count = all_items.len();
     let mut items: HashMap<String, Vec<Item>> = HashMap::new();
+    let mut names: HashMap<String, String> = HashMap::with_capacity(item_count);
     for item in all_items {
         length = length.max(item.position.as_seconds() + item.length.as_seconds());
+        // The title is the active take's name — two calls per item,
+        // in-process, once per open.
+        if let Ok(Some(handle)) = project.items().by_guid(&item.guid).await
+            && let Ok(name) = handle.active_take().name().await
+            && !name.is_empty()
+        {
+            names.insert(item.guid.clone(), name);
+        }
         items.entry(item.track_guid.clone()).or_default().push(item);
     }
     // Sorted, and sorted TOTALLY — position alone is not enough.
@@ -166,6 +189,7 @@ pub async fn fetch() -> Option<Project> {
         // the timeline still has somewhere to put its bar numbers.
         length_secs: length.max(60.0),
         item_count,
+        names,
     })
 }
 

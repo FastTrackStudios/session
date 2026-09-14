@@ -2148,6 +2148,16 @@ impl App {
                 Affine::translate((rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy))
                     * Affine::scale_non_uniform(pps, 1.0),
             );
+            // The items' titles, in pixel space over the lanes: text
+            // recorded in seconds would stretch with the zoom.
+            session_daw::arrangement::titles(
+                painter,
+                &palette,
+                &font,
+                scene,
+                view,
+                (rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy),
+            );
             // The panel: the SAME vertical offset, which is the entire
             // point. It cannot drift from the lanes because there is
             // nothing to drift — one number moves both.

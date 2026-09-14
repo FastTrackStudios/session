@@ -798,6 +798,14 @@ fn shot(
                     rail_y + RULER_H - scroll_y,
                 )) * Affine::scale_non_uniform(PPS * zoom_x, zoom_y),
             );
+            session_daw::arrangement::titles(
+                painter,
+                palette,
+                font,
+                scene,
+                view,
+                (rail_x + TCP_WIDTH - scroll_x, rail_y + RULER_H - scroll_y),
+            );
             let b = scene.replay_panel(
                 painter,
                 view,
