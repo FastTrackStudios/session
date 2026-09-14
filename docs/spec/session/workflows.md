@@ -96,7 +96,11 @@ from its **headphone bus**: each performer has a headphone bus
 (`groups/headphones.rs`, the template's monitor buses), and a track
 routed to a performer's headphone mix is that performer's. Assigning a
 track to a performer assigns its cue send; the two never disagree
-because the send is the assignment.
+because the send is the assignment. That send is also the **record of
+who played what**: the organizer sorts by it, a track can be renamed
+into the Performer dimension from it, and "can I have more of myself"
+works across the board — for every performer, on every instrument —
+because every performer's tracks are already on their bus.
 
 r[flow.scenes.performer-rig]
 A performer has a **rig**: the input for each kind of source they
