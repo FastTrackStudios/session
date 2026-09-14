@@ -46,10 +46,11 @@ const NAME_GAP: f64 = 3.0;
 /// A focused strip is wide, and stacking a rack over a strip that wide
 /// wastes the one thing a focused track needs — height. The column
 /// layout is REAPER's "layout C" idea: the strip's own controls in a
-/// column at the left, the fader running from the top of the mixer to
-/// the name plate, the buttons on the same lines as every neighbour's,
-/// and the rack as a second column beside it that spans the whole
-/// height. What a docked mixer wants too.
+/// column at the left, every one of them on the same line as its
+/// neighbour's — the fader included, which keeps its height — and the
+/// rack as a second column beside it that spans the whole height. The
+/// column above the coloured band is left empty: it is room for what
+/// a focused track will want next. What a docked mixer wants too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layout {
     /// The rack over the strip.
@@ -142,17 +143,12 @@ impl Strip {
         }
     }
 
-    /// Where the fader column starts.
-    ///
-    /// Under the coloured band when stacked; at the mixer's top in the
-    /// column layout, where the fader is the whole height of the
-    /// strip — the one control that gets better with length, given
-    /// all of it.
+    /// Where the fader column starts: under the coloured band, in
+    /// either layout. A focused strip's fader is the same height as
+    /// its neighbours', so a level reads across the mixer whatever is
+    /// focused.
     fn fader_top(&self) -> f64 {
-        match self.layout() {
-            Layout::Stacked => self.band_bottom(),
-            Layout::Column => EDGE + 2.0,
-        }
+        self.band_bottom()
     }
 
     /// The top of the coloured band.
@@ -231,13 +227,7 @@ impl Strip {
         let floor = self
             .rect(Control::Name)
             .map_or(self.height, |plate| plate.y0 - NAME_GAP);
-        match self.layout() {
-            Layout::Stacked => (floor - self.band_bottom()).clamp(0.0, self.stretch()),
-            // Not clamped to the section's allotment: the allotment is
-            // what was left under the rack, and there is no rack over
-            // this column.
-            Layout::Column => (floor - self.fader_top()).max(0.0),
-        }
+        (floor - self.fader_top()).clamp(0.0, self.stretch())
     }
 
     /// Whether the volume control is a fader rather than a knob.
@@ -322,14 +312,11 @@ impl Strip {
     pub fn rect(&self, control: Control) -> Option<Rect> {
         let top = |y: f64, h: f64| Rect::new(0.0, y, self.chrome_width(), y + h);
         match control {
-            // No FX pill in the column layout: the pill opens the
-            // chain, and the chain is open beside it — and the pill's
-            // line is where the fader now runs.
-            Control::Fx => (self.squeeze.head() && self.layout() == Layout::Stacked).then(|| {
+            Control::Fx => self.squeeze.head().then(|| {
                 Rect::new(
                     7.0,
                     self.rack_h + f64::from(g::FX_PILL_TOP),
-                    self.width - 7.0,
+                    self.chrome_width() - 7.0,
                     self.rack_h + f64::from(daw_theme_art::collapse::FX_SECTION),
                 )
             }),
@@ -383,15 +370,12 @@ impl Strip {
                     y + f64::from(g::BUTTON_H),
                 ))
             }
-            Control::Volume => match self.layout() {
-                Layout::Stacked => Some(Rect::new(
-                    self.columns.fader_x,
-                    self.buttons_top,
-                    self.columns.fader_x + self.columns.fader_w,
-                    self.buttons_top + self.stretch(),
-                )),
-                Layout::Column => self.fader_rect(),
-            },
+            Control::Volume => Some(Rect::new(
+                self.columns.fader_x,
+                self.buttons_top,
+                self.columns.fader_x + self.columns.fader_w,
+                self.buttons_top + self.stretch(),
+            )),
             Control::Clip => self.fader_rect().map(|fader| {
                 Rect::new(
                     fader.x0,
