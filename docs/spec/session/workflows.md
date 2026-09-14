@@ -23,7 +23,7 @@ and quantize specs.
 |---|---|---|---|---|---|
 | Drums (audio) | [x] full · [ ] overview | [ ] folder items | [ ] edit scene · [x] stack · [x] slip/stretch · [x] quantize · [ ] align hits | [x] scenes · [x] balance | [ ] triggering samples |
 | Bass | [ ] | [ ] | [ ] | [ ] | |
-| Guitars | [ ] | [ ] | [ ] doubles aligned | [x] buses/VCA | |
+| Guitars | [ ] full · [ ] overview · [ ] grow | [ ] folder items | [ ] edit scene · [ ] doubles aligned | [x] buses/VCA | [ ] same at every depth |
 | Vocals | [ ] | [ ] | [ ] doubles aligned | [x] lead vocal scenes | [ ] tuning · [ ] fx · [ ] automation |
 | Keys | [ ] record MIDI | [ ] | [x] MIDI in the editor | [ ] | |
 
@@ -268,30 +268,104 @@ DI and Amp as rails.
 
 ## Guitars
 
-Guitars take a different shape every song, so every guitar scene is a
-rule over parts, not a fixed tree (`maximal-template.md`).
+Guitars are where a session has to be most flexible, and where the
+experience has to stay the same however it is set up. A part can be
+one DI track, or a double-tracked part with seven sources a side; a
+session starts with one guitar and grows a double, a second
+arrangement and a harmony as the song is built. The dynamic template's
+hierarchy is the vocabulary (`groups/guitars/example-guitar.md`):
 
-r[flow.guitars.tracking]
-**Guitar Tracking** shows every part being recorded — each part's
-track, or its DI and amp pair where both are captured — at working
-size, the electrics and the acoustics as separate folders.
+```text
+Group → Section → Performer → Arrangement → Layers → Channels → MultiMic
+```
+
+An **Arrangement** is what the part is for — Clean, Crunch, Drive,
+Lead, Rhythm, Chug, "Chorus Lead". A **Layer** is a voice inside it —
+Main, Harmony, an octave. **Channels** are the doubles — L and R, or a
+triple. **MultiMic** is the sources of one channel — DI, pedalboard,
+two amps each with a 57 and a 121: up to seven for a single take of a
+single channel, before it is even doubled. `TrackDimension` in
+`track_schema.rs` classifies a track into one of these by its name.
+
+r[flow.guitars.dimensions]
+A guitar part is organised by the template's dimensions in that order
+— Arrangement, Layer, Channel, MultiMic — and **a level is a folder
+only when it has more than one member**. A DI-only double-tracked part
+is an L and an R track carrying items, with no folder under them; a
+channel with seven sources is a folder over the seven; an arrangement
+with a Main and a Harmony is a folder over two layers, each a folder
+over its channels. The smallest session and the maximal one are the
+same rule at different depths.
+
+r[flow.guitars.grow]
+A part grows by session actions, never by restructuring: **double**
+a track (add the R channel to a part that had one, folding the
+existing track into L), **add an arrangement** (a Chug beside the
+Rhythm), **add a layer** (a Harmony beside the Main), **add a source**
+(a second amp mic to every channel of a part). Each action inserts
+the missing level around what exists, names the new tracks so the
+classifier reads them back into the same dimensions, and leaves items
+and routing where they were.
+
+r[flow.guitars.tracking.full]
+**Guitar Tracking** shows every source of the part being recorded —
+each channel's DI, pedalboard and amp mics — at working size with
+their arm, monitor and input on the strip, the other parts' folders
+collapsed, the electrics and the acoustics as separate folders. This
+is the engineer's view while a part is dialled in.
+
+r[flow.guitars.tracking.overview]
+**Guitar Tracking Overview** is the structure set up once and then
+collapsed to **one folder per part**: a double-tracked part is one row
+whose folder item is the double rendered as one stereo waveform, L and
+R as the two sides; a triple is that row with its channels stacked
+under it when opened; each channel can carry the full stack of
+sources without the overview showing any of it. A DI-only part with
+no folder shows as its own tracks. This is what the player looks at.
+
+r[flow.guitars.folder-items]
+A part's folder item sums its channels, a channel's folder item sums
+its sources, and a layer's folder item sums its channels — the same
+folder-item rule as the kit (`flow.drums.comping.folder-items`) at
+every level. A double's folder item draws L and R as the two sides of
+one stereo waveform, each side in its own shade, so a double reads as
+two performances in one item.
 
 r[flow.guitars.comping]
-A part comps on its own take lanes; a DI and amp pair comps as a group.
+A part comps on its folder as the kit does: one lane per take on the
+part's row, each take one folder item however many channels and
+sources it has, a comp lane on top, and a choice on the comp lane
+made on every source of every channel. A channel or a source can be
+opened for its own choice and closed again.
+
+r[flow.guitars.editing.scene]
+**Guitar Editing** shows one row per part with its channels as its
+lanes — the double as L and R, the harmony under the main — and every
+source folded into its channel, so an edit to a channel is an edit to
+its seven sources at once.
 
 r[flow.guitars.editing.doubles]
 Doubled parts are **aligned**: the second take of a rhythm part is
 retimed to the first by the alignment engine (`align.rs`), with a
 reference and a dub chosen by the user, the alignment previewed as
-warp markers, and applied as one undo step. This is the whole
-alignment system applied to guitars; the editor's stack shows both
-takes on one timeline while it is done.
+warp markers, and applied as one undo step across every source of the
+dub's channel. This is the whole alignment system applied to guitars;
+the editor's stack shows both channels on one timeline while it is
+done.
 
 r[flow.guitars.mixing]
 **Guitar Mixing** shows the electric and acoustic folders, their buses
 (GTR RHYTHM, GTR LEAD, GTR SOLO under ELECTRIC BUS; ACOUSTIC BUS) and
 the Inst FX returns, with the folder's fader as the VCA lead of its
+bus. A part's sources mix on the channel's Sum; the part mixes on its
 bus.
+
+r[flow.guitars.same-everywhere]
+Every guitar scene and gesture works at every depth of the hierarchy:
+the overview, the comp, the edit scene and the alignment are the same
+on a one-track DI part and on a triple-tracked part with seven sources
+a channel. A configuration the rules above do not handle is a bug in
+the rules, not a special case for the session.
 
 ## Vocals
 
