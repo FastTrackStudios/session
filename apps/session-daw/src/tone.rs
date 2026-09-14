@@ -974,9 +974,6 @@ pub const SHAPE: f64 = 90.0;
 /// less its edges.
 pub const MINIMAL: f64 = 16.0;
 
-/// How tall one unit's indicator is on a rail.
-pub const THIN: f64 = 14.0;
-
 /// The narrowest rack that gives the panel over to the plugin's own
 /// editing surface.
 ///
@@ -1300,10 +1297,25 @@ pub fn draw(
     if !rack.on() || panel.height < 24.0 || panels.is_empty() {
         return;
     }
+    // A rail: the same chain, the same rows at the same heights as the
+    // strip beside it — so every compressor sits on one line across
+    // the mixer whatever each strip's width — with one indicator drawn
+    // in each row instead of a panel. A container is a tick of its
+    // colour; a preset row is nothing.
     if rack == Rack::Minimal {
         for (row, at) in chain(panels, panel, folded) {
-            let Row::Unit(which) = row else { continue };
-            minimal(scene, palette, tone, meters, which, at);
+            let Row::Unit(which) = row else {
+                let Row::Head(phase) = row else { continue };
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    phase_tint(phase),
+                    None,
+                    &Rect::new(at.x, at.y + 3.0, at.x + 2.0, at.y + at.height - 3.0),
+                );
+                continue;
+            };
+            minimal(scene, palette, tone, meters, which, at.inset(1.0));
             if tone.bypass.is(which) {
                 scene.fill(
                     Fill::NonZero,
@@ -1465,17 +1477,6 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
     };
     let tier = Rack::at(panel.width);
     for which in panels.iter().copied() {
-        // A rail's rack is indicators only: no containers, no folds, no
-        // preset row — a row of chips has nowhere to go at sixteen
-        // pixels.
-        if tier == Rack::Minimal {
-            let height = which.natural_at(tier);
-            if height > 0.0 {
-                out.push((Row::Unit(which), row(y, height)));
-                y += height + 1.0;
-            }
-            continue;
-        }
         // The preset row is in no phase: it caps the chain, and folds
         // with nothing.
         if which == Which::Presets {
@@ -1800,14 +1801,6 @@ impl Which {
     #[must_use]
     pub const fn natural_at(self, rack: Rack) -> f64 {
         let base = self.natural();
-        // On a rail every unit is one thin indicator, and the rows that
-        // are not units at all — the presets, the knobs — are nothing.
-        if matches!(rack, Rack::Minimal) {
-            return match self {
-                Self::Presets | Self::Knobs => 0.0,
-                _ => THIN,
-            };
-        }
         if !rack.editing() {
             return base;
         }
@@ -4014,21 +4007,23 @@ fn pitch(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Pan
     }
 }
 
-/// One unit as a thin indicator on a rail.
+/// One unit as an indicator on a rail.
 ///
-/// Fourteen pixels tall and a rail wide: enough for one number drawn
-/// as a length or a light, and nothing you would try to read a
-/// decision off. Live, because a rail is watched for what its track is
-/// DOING — a compressor's bar and a gate's light move with the signal;
-/// an EQ's sparkline is the one still thing, because it is the one
-/// still setting.
+/// The unit's own row — the height its panel would have — and a rail
+/// wide: one number drawn as a length or a light, and nothing you
+/// would try to read a decision off. Live, because a rail is watched
+/// for what its track is DOING — a compressor's bar and a gate's light
+/// move with the signal; an EQ's sparkline is the one still thing,
+/// because it is the one still setting. Reductions hang from the top,
+/// the way they do in the full panel; levels and tails stand on the
+/// floor.
 fn minimal(scene: &mut Scene, palette: &Palette, tone: &Tone, meters: &Meters, which: Which, at: Panel) {
     let right = at.x + at.width;
     let bottom = at.y + at.height;
     let mid = at.y + at.height / 2.0;
-    // The track the length is read against, faint.
-    rule(scene, palette.grid, Line::new((at.x, bottom - 0.5), (right, bottom - 0.5)));
-    // A length across the row, from the left, as a share of it.
+    // The row's ground, so the rail's chain reads as a chain.
+    scene.fill(Fill::NonZero, Affine::IDENTITY, palette.tcp_meter_well.multiply_alpha(0.5), None, &at.rect());
+    // A length down the row, hanging from the top, as a share of it.
     let bar = |scene: &mut Scene, ink: Color, share: f64| {
         let share = share.clamp(0.0, 1.0);
         if share > 0.01 {
@@ -4037,7 +4032,7 @@ fn minimal(scene: &mut Scene, palette: &Palette, tone: &Tone, meters: &Meters, w
                 Affine::IDENTITY,
                 ink,
                 None,
-                &Rect::new(at.x, at.y + 2.0, share.mul_add(at.width, at.x), bottom - 2.0),
+                &Rect::new(at.x + 2.0, at.y, right - 2.0, share.mul_add(at.height, at.y)),
             );
         }
     };
@@ -4061,15 +4056,28 @@ fn minimal(scene: &mut Scene, palette: &Palette, tone: &Tone, meters: &Meters, w
             });
             curve(scene, ink, points, 1.0);
         }
-        // Open or shut: a light.
+        // The level against the threshold, and a light for the door.
         Which::Gate => {
+            let to_y = |db: f64| at.y + comp_ui::comp_graph_svg::db_to_y(db, at.height);
+            let line = to_y(f64::from(tone.gate.threshold)).clamp(at.y, bottom);
+            rule(scene, GATE_INK.multiply_alpha(0.7), Line::new((at.x, line), (right, line)));
+            if let Some(db) = peak_db {
+                let top = to_y(db).clamp(at.y, bottom);
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    hex(comp_ui::comp_graph_svg::colors::GREY).multiply_alpha(0.6),
+                    None,
+                    &Rect::new(at.x + 2.0, top, right - 2.0, bottom),
+                );
+            }
             let open = peak_db.is_some_and(|db| db > f64::from(tone.gate.threshold));
             scene.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
-                GATE_INK.multiply_alpha(if open { 0.9 } else { 0.15 }),
+                GATE_INK.multiply_alpha(if open { 0.95 } else { 0.2 }),
                 None,
-                &Rect::new(at.x + 1.0, at.y + 2.0, right - 1.0, bottom - 2.0).to_rounded_rect(2.0),
+                &Rect::new(at.x + 2.0, at.y + 2.0, right - 2.0, at.y + 8.0).to_rounded_rect(1.5),
             );
         }
         // What the compressor is taking off right now, as a length.
@@ -4084,31 +4092,29 @@ fn minimal(scene: &mut Scene, palette: &Palette, tone: &Tone, meters: &Meters, w
                 );
                 (db - f64::from(out)).max(0.0)
             });
-            bar(scene, hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE), reduction / 24.0);
+            // The threshold where the panel would draw it, and the
+            // reduction hanging from the ceiling in the panel's red.
+            let line = (at.y + comp_ui::comp_graph_svg::db_to_y(f64::from(comp.threshold), at.height)).clamp(at.y, bottom);
+            rule(scene, hex(comp_ui::comp_graph_svg::colors::THRESHOLD).multiply_alpha(0.7), Line::new((at.x, line), (right, line)));
+            bar(scene, hex(comp_ui::comp_graph_svg::colors::REDUCTION_EDGE), reduction / 60.0);
         }
         // Heat.
         Which::Sat => {
             let ladder = crate::live::ladder(&tone.sat);
             let rungs = peak_db.map_or_else(|| ladder.full(), |db| ladder.at(crate::mcp::f64_to_f32(db)));
             let heat = (f64::from(rungs.iter().sum::<f32>()) / 0.9).clamp(0.0, 1.0).powf(0.7);
-            scene.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                SAT_GLOW.multiply_alpha(crate::mcp::f64_to_f32(0.1 + 0.8 * heat)),
-                None,
-                &Rect::new(at.x + 1.0, at.y + 2.0, right - 1.0, bottom - 2.0).to_rounded_rect(2.0),
-            );
+            glow(scene, at, (at.x + at.width / 2.0, mid), heat);
         }
-        Which::DeEss | Which::DeEssIn => bar(scene, DEESS_INK, f64::from(meters.deess_deepest()) / 9.0),
+        Which::DeEss | Which::DeEssIn => bar(scene, DEESS_INK, f64::from(meters.deess_deepest()) / 12.0),
         Which::Resonance => {
             let deepest = meters.resonance_db.iter().copied().fold(0.0_f32, f32::max);
-            bar(scene, palette.accent, f64::from(deepest) / 6.0);
+            bar(scene, palette.accent, f64::from(deepest) / 12.0);
         }
         // The repeats, tiny.
         Which::Delay => {
             for (k, (x, level)) in echo_taps(tone.delay, at).into_iter().enumerate() {
                 let ink = if k == 0 { palette.text } else { DELAY_INK };
-                rule(scene, ink, Line::new((x, bottom - 1.0), (x, bottom - 1.0 - level * (at.height - 3.0))));
+                rule(scene, ink, Line::new((x, bottom - 1.0), (x, bottom - 1.0 - level * (at.height * 0.9))));
             }
         }
         // The tail, tiny.
@@ -4118,7 +4124,7 @@ fn minimal(scene: &mut Scene, palette: &Palette, tone: &Tone, meters: &Meters, w
             let points = tail.envelope.iter().enumerate().map(|(i, db)| {
                 let t = crate::num::coord(i) / crate::num::coord(crate::live::TAIL_BINS.saturating_sub(1));
                 let level = (1.0 + f64::from(*db) / 60.0).clamp(0.0, 1.0);
-                (t.mul_add(geometry.end - geometry.start, geometry.start), bottom - 1.0 - level * (at.height - 3.0))
+                (t.mul_add(geometry.end - geometry.start, geometry.start), bottom - 1.0 - level * (at.height * 0.9))
             });
             curve(scene, REVERB_INK, points, 1.0);
         }
@@ -7018,7 +7024,15 @@ mod tier_tests {
         let font = crate::text::Font::embedded().expect("the embedded font");
         let rail = Panel { x: 0.0, y: 0.0, width: 26.0, height: 900.0 };
         let rows = super::chain(&super::ALL_PANELS, rail, super::Folded::default());
-        assert_eq!(rows.len(), super::ALL_PANELS.len(), "one row per unit, no containers");
+        // The same rows as the strip beside it: a row per unit and one
+        // per container, at the same heights.
+        let wide = Panel { width: 133.0, ..rail };
+        let full = super::chain(&super::ALL_PANELS, wide, super::Folded::default());
+        assert_eq!(rows.len(), full.len(), "a rail's chain is the strip's chain");
+        for ((a, at), (b, full_at)) in rows.iter().zip(full.iter()) {
+            assert_eq!(a, b);
+            assert!((at.y - full_at.y).abs() < f64::EPSILON, "{a:?} at {} vs {}", at.y, full_at.y);
+        }
         let mut still = anyrender::Scene::new();
         super::draw(&mut still, &palette, &font, &tone, &crate::live::Meters::default(), &super::ALL_PANELS, rail, super::Folded::default(), None);
         // A track per unit, and an indicator for every unit whose

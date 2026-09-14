@@ -405,11 +405,17 @@ impl Strip {
                     y + f64::from(g::BUTTON_H),
                 ))
             }
+            // The fader IS its column — the same rect the meter and the
+            // scale read — so it starts where they do: under the band,
+            // or under the buttons where the buttons sit over it. It
+            // used to start on the mixer's button line regardless,
+            // which put the groove up behind the mute and the solo on
+            // every narrow strip while the meter beside it had moved.
             Control::Volume => Some(Rect::new(
                 self.columns.fader_x,
-                self.buttons_top,
+                self.fader_top(),
                 self.columns.fader_x + self.columns.fader_w,
-                self.buttons_top + self.stretch(),
+                self.fader_top() + self.travel(),
             )),
             Control::Clip => self.fader_rect().map(|fader| {
                 Rect::new(
