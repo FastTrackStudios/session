@@ -81,6 +81,14 @@ fixed tree.
       acoustics seafoam, keys green, synths lime.
 - [ ] Clav, strings and pads as the song has them.
 
+### Orchestra — `Orchestra/` (expanded in a later spec)
+
+- [ ] **Winds/** Flute, Oboe, Clarinet, Bassoon.
+- [ ] **Brass/** Trumpets, Horns, Trombones, Bass Trombone, Tuba.
+- [ ] **Strings/** Violin 1, Violin 2, Viola, Cello, Bass.
+- [ ] **Orch Percussion/** — present, empty for now.
+- [ ] One bus per section under INST BUS (`flow.orchestra.golden`).
+
 ### Instrument FX — `Inst FX/` (one set for guitars, keys, synths, strings)
 
 - [x] **Ambience**: Short Room, Slap Room, Early.

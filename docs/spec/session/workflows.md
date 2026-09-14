@@ -28,6 +28,7 @@ and quantize specs.
 | Guitars (electric and acoustic) | [ ] full · [ ] overview · [ ] grow | [ ] folder items | [ ] edit scene · [ ] doubles aligned | [x] buses/VCA · [ ] layers collapsed · [ ] balance scene · [ ] source defaults | [ ] golden shapes · [ ] same at every depth · [ ] acoustics |
 | Vocals | [ ] by performer | [ ] lanes · [ ] parts as folder items | [ ] doubles aligned | [x] lead vocal scenes | [ ] language dimension · [ ] active language · [ ] render per language · [ ] leads · [ ] bgv parts · [ ] choir · [ ] tuning · [ ] automation · [ ] golden |
 | Keys | [ ] record MIDI | [ ] | [x] MIDI in the editor | [ ] | |
+| Orchestra | [ ] | [ ] | [ ] | [ ] | [ ] sections · [ ] golden · later spec |
 
 ## Views a flow is done in
 
@@ -658,6 +659,30 @@ track with Main and DBL under it and a source per language under
 those; BGVs with every part above, doubled, and one
 "Hey!" of many layers in `All`; a four-section choir per language;
 `VOX EN`, `VOX ES`, `VOX PT` VCAs; and a render per language.
+
+## Orchestra
+
+The orchestra is in the golden session so every scene has to cope
+with its shape, and it will get a spec of its own later; for now the
+sections and their instruments, sorted the way the template already
+sorts them (`groups/orchestra`, `groups/strings`, `groups/horns`).
+
+r[flow.orchestra.sections]
+`Orchestra/` holds four sections — **Winds, Brass, Strings, Orch
+Percussion** — each a folder with its instruments as parts, each part
+layered, doubled and multi-miked by the same dimensions as a guitar
+part (`flow.guitars.dimensions`), so every scene and gesture in this
+spec applies to an orchestral part unchanged. The section is the
+mixing level; the instrument is the tracking and editing level.
+
+r[flow.orchestra.golden]
+The golden session's orchestra: **Winds** — Flute, Oboe, Clarinet,
+Bassoon; **Brass** — Trumpets, Horns, Trombones, Bass Trombone, Tuba;
+**Strings** — Violin 1, Violin 2, Viola, Cello, Bass; **Orch
+Percussion** — present and empty for now. Each section reaches the
+mix by its own bus under INST BUS. The orchestral flows — divisi,
+section balancing, the seating and spot mics, scoring against
+picture — are expanded in a later spec; nothing here forecloses them.
 
 ## Keys
 
