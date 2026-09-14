@@ -526,7 +526,7 @@ impl Stack {
         let vp = ed.viewport;
         let ly = y - ruler_h;
         let lx = x - canvas::GUTTER_W;
-        let in_lane = |l: &LaneView| l.is_role && ly >= l.y && ly < l.y + l.h;
+        let in_lane = |l: &LaneView| l.detects && ly >= l.y && ly < l.y + l.h;
         let on_lane = views.iter().any(in_lane);
         let on_marker = views
             .iter()
@@ -776,7 +776,7 @@ impl Stack {
 fn pick_hit(views: &[LaneView], lx: f64, ly: f64, x: f64, both: bool) -> Option<SlipDrag> {
     views
         .iter()
-        .filter(|l| l.is_role && ly >= l.y && ly < l.y + l.h)
+        .filter(|l| l.detects && ly >= l.y && ly < l.y + l.h)
         .flat_map(|l| l.notes.iter().map(move |n| (l, n)))
         .filter(|(_, n)| (n.x - lx).abs() <= SLIP_PICK_PX)
         .min_by(|(_, a), (_, b)| (a.x - lx).abs().total_cmp(&(b.x - lx).abs()))

@@ -1142,15 +1142,18 @@ mod tests {
         let v = kit();
         assert!(v.stacked());
         assert_eq!(v.editor.tracks.len(), 12);
-        // Sixteen bars of sixteenth hats alone is two hundred and
-        // fifty-six markers on one lane.
-        let hats = v
-            .editor
-            .tracks
-            .index_of("HH")
-            .and_then(|i| v.editor.tracks.doc_of(i))
-            .map_or(0, |d| d.notes.len());
-        assert_eq!(hats, 16 * 16);
+        // Sixteen bars of snare on the twos and fours, with a ghost
+        // every fourth bar, is thirty-six hits per snare mic; the hats
+        // are heard and not detected, so their mic carries none.
+        let notes_of = |name: &str| {
+            v.editor
+                .tracks
+                .index_of(name)
+                .and_then(|i| v.editor.tracks.doc_of(i))
+                .map_or(0, |d| d.notes.len())
+        };
+        assert_eq!(notes_of("Snare Top"), 16 * 2 + 4);
+        assert_eq!(notes_of("HH"), 0);
         assert!(!v.editor.doc.peaks.is_empty());
     }
 
@@ -1225,6 +1228,30 @@ mod tests {
             .iter()
             .any(|n| n.start / ups > secs + 0.02 && n.start / ups < secs + 4.0 && (n.start / ups - 1.0).abs() > 0.01);
         assert!(!still_there && moved, "the hit at {secs}s did not slip");
+    }
+
+    /// A press on the other lane's audio selects the lane and never
+    /// picks up or adds a hit: hats are context, not a hit list.
+    #[test]
+    fn the_other_lane_takes_no_hit_gesture() {
+        let mut v = kit();
+        let lanes = stack::lanes(&v.editor, Editor::ACTIVE_BOOST, v.editor.lane_floor().max(22.0));
+        let other = lanes.iter().find(|l| l.name == "Other").expect("an other lane");
+        assert!(!other.detects && other.notes.is_empty());
+        let ruler = Stack::ruler_h(&v.editor);
+        let x = ORIGIN.0 + canvas::GUTTER_W + 200.0;
+        let y = ORIGIN.1 + TOOLBAR_H + ruler + other.y + other.h * 0.5;
+        let notes: usize = (0..v.editor.tracks.len())
+            .map(|i| v.editor.tracks.doc_of(i).map_or(v.editor.doc.notes.len(), |d| d.notes.len()))
+            .sum();
+        // Alt-click is "add a hit" on a lane that detects.
+        v.press(x, y, Mods { alt: true, ..Mods::default() }, 0);
+        v.release(x, y, Mods { alt: true, ..Mods::default() });
+        let after: usize = (0..v.editor.tracks.len())
+            .map(|i| v.editor.tracks.doc_of(i).map_or(v.editor.doc.notes.len(), |d| d.notes.len()))
+            .sum();
+        assert_eq!(notes, after);
+        assert!(!v.dragging());
     }
 
     #[test]

@@ -729,9 +729,9 @@ pub fn default_viewport() -> Viewport {
 /// kick on the ones and threes with pushes, snare on the twos and
 /// fours with ghosts, hats in sixteenths, a tom fill every fourth bar,
 /// a crash every eighth — each mic's peaks the sum of its own drum's
-/// decays and the bleed of the others, and every hit a slice note.
-/// Sixteenth hats alone are sixteen a bar; at two hundred bars that is
-/// the "ton of hits" the markers thin themselves for.
+/// decays and the bleed of the others, and every kick, snare and tom
+/// hit a slice note. The other lane's mics are heard and not
+/// detected, as in the workflow: hats and cymbals are context.
 #[must_use]
 pub fn audio_kit(bars: usize, viewport: Viewport) -> Editor {
     use expression_editor_core::Mode;
@@ -928,7 +928,9 @@ impl Groove {
             mic("Tom 1", R::Toms, t1, &[(t1, 1.0, 0.3), (s, 0.2, 0.1)]),
             mic("Tom 2", R::Toms, t2, &[(t2, 1.0, 0.35), (s, 0.15, 0.1)]),
             mic("Floor Tom", R::Toms, t3, &[(t3, 1.0, 0.45), (k, 0.2, 0.15)]),
-            mic("HH", R::Other, h, &[(h, 0.9, 0.05), (s, 0.3, 0.1)]),
+            // The other lane is heard, not detected: its mics carry
+            // peaks and no hit list.
+            mic("HH", R::Other, &none, &[(h, 0.9, 0.05), (s, 0.3, 0.1)]),
             mic("OH L", R::Other, &none, &[(h, 0.5, 0.08), (c, 1.0, 1.2), (s, 0.5, 0.15), (k, 0.3, 0.1)]),
             mic("OH R", R::Other, &none, &[(h, 0.4, 0.08), (c, 0.9, 1.3), (s, 0.5, 0.15), (t1, 0.4, 0.3)]),
             mic("Room", R::Other, &none, &[(k, 0.5, 0.3), (s, 0.6, 0.35), (c, 0.6, 1.5), (h, 0.2, 0.1)]),

@@ -826,7 +826,7 @@ pub fn StackView(
                         ctrl: mods.contains(Modifiers::CONTROL),
                         alt: mods.contains(Modifiers::ALT),
                     };
-                    let in_lane = |l: &LaneView| l.is_role && ly >= l.y && ly < l.y + l.h;
+                    let in_lane = |l: &LaneView| l.detects && ly >= l.y && ly < l.y + l.h;
                     let on_lane = views.iter().any(in_lane);
                     let on_marker = views
                         .iter()
@@ -871,7 +871,7 @@ pub fn StackView(
                     last_press.set(Some((now, c.x, c.y)));
                     let picked = views
                         .iter()
-                        .filter(|l| l.is_role && ly >= l.y && ly < l.y + l.h)
+                        .filter(|l| l.detects && ly >= l.y && ly < l.y + l.h)
                         .flat_map(|l| l.notes.iter().map(move |n| (l, n)))
                         .filter(|(_, n)| (n.x - lx).abs() <= SLIP_PICK_PX)
                         .min_by(|(_, a), (_, b)| {
@@ -949,7 +949,7 @@ pub fn StackView(
                     {
                         let lane = views
                             .iter()
-                            .find(|l| l.is_role && ly >= l.y && ly < l.y + l.h);
+                            .find(|l| l.detects && ly >= l.y && ly < l.y + l.h);
                         if let (Some(l), Some(h)) = (lane, &on_hit) {
                             h.call(HitGesture::Add {
                                 lane: l.name.clone(),

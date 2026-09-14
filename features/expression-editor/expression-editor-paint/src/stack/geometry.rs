@@ -56,8 +56,12 @@ pub struct LaneView {
     /// Labels down the left edge, paired with their y.
     pub labels: Vec<(f64, String)>,
     /// Whether this lane is a folded role lane (kick, snare, toms,
-    /// other) — the lanes whose hits take the slip drag.
+    /// other).
     pub is_role: bool,
+    /// Whether hits are detected and edited on this lane — kick,
+    /// snare and toms. The other lane is context and takes no hit
+    /// gesture.
+    pub detects: bool,
     /// The role's hue, when the lane has one — the drum map's kit
     /// palette, tinting waveform, hits and label alike so the lane
     /// reads as one thing.
@@ -540,6 +544,7 @@ fn lane_view(ed: &Editor, row: &StackRow) -> Option<LaneView> {
         two_handed_row,
         split,
         is_role: role.is_some(),
+        detects: role.is_some_and(kit::LaneRole::detects),
         role_color: role.map(|r| r.color()),
         lane: row.lane,
         members: members

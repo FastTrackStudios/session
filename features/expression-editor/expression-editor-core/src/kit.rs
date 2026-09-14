@@ -50,6 +50,16 @@ impl LaneRole {
         }
     }
 
+    /// Whether hits are detected on this lane and edited there.
+    ///
+    /// Kick, snare and toms are the drums the editor targets; the
+    /// other lane — hats, cymbals, rooms, returns — is drawn summed
+    /// for context and carries no hit list. A gesture on it selects
+    /// the lane and nothing more.
+    pub fn detects(self) -> bool {
+        !matches!(self, LaneRole::Other)
+    }
+
     /// Whether the lane draws each member in its own sub-row (toms)
     /// rather than one summed waveform (kick, snare, other).
     pub fn splits_members(self) -> bool {
