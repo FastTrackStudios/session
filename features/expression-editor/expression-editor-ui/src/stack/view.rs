@@ -286,6 +286,13 @@ pub fn StackView(
         })
         .unwrap_or_default();
 
+    // The bands as text, for the `data-fills` attribute below.
+    let fill_attr = fill_bands
+        .iter()
+        .map(|(x0, x1)| format!("{x0:.1}:{x1:.1}"))
+        .collect::<Vec<_>>()
+        .join(",");
+
     let (view0, px_per_sec) = view_span_secs(&ed)
         .map(|(v0, v1)| {
             if (v1 - v0).abs() < 1e-9 {
@@ -482,6 +489,12 @@ pub fn StackView(
             // mode the stress harness exists to catch. So the pane says
             // so itself: time origin, scale, and the lane scroll.
             "data-view": "{view0:.4},{px_per_sec:.4},{stack_scroll:.1}",
+            // And where its fill bands are, `x0:x1,...` in the surface's
+            // own units, for the same reason: the wash is painted, so a
+            // test that asks whether it landed over the right seconds
+            // has nothing else to read.
+            // r[impl drums.fills.draw]
+            "data-fills": "{fill_attr}",
             onkeydown: move |e: KeyboardEvent| {
                 if e.is_auto_repeating() {
                     return;

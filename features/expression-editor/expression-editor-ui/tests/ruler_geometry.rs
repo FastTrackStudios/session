@@ -179,22 +179,25 @@ async fn a_fill_draws_a_band_where_it_happened() -> dioxus_test::Result<()> {
 
     let tester = render(Surface).with_window_size(1400, 700).build();
     let cell = tester.query(by_testid("stack-cell")).immediately()?;
-    let html = cell.inner_html();
     FILLS.with(|f| f.borrow_mut().clear());
 
-    // The band is the only rect drawn at this opacity.
-    let band = html
-        .split("<rect")
-        .find(|r| r.contains("opacity=\"0.10\""))
+    // The band is painted into the stack's scene, not emitted as
+    // markup — e23f0f0 moved the whole drawing off the DOM, and a
+    // custom widget's scene never reaches `render_png` either. So the
+    // pane says where its bands are, the way `data-view` says where
+    // its camera is: the same numbers the painter is handed.
+    let bands = cell
+        .attribute("data-fills")
+        .unwrap_or_else(|| panic!("the stack cell carries no data-fills"));
+    let band = bands
+        .split(',')
+        .find(|b| !b.is_empty())
         .unwrap_or_else(|| panic!("no fill band in the rendered stack"));
-    let attr = |name: &str| -> f64 {
-        band.split(&format!("{name}=\""))
-            .nth(1)
-            .and_then(|v| v.split('"').next())
-            .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(f64::NAN)
-    };
-    let (x, width) = (attr("x"), attr("width"));
+    let (x0, x1) = band
+        .split_once(':')
+        .and_then(|(a, b)| Some((a.parse::<f64>().ok()?, b.parse::<f64>().ok()?)))
+        .unwrap_or_else(|| panic!("malformed fill band {band:?}"));
+    let (x, width) = (x0, x1 - x0);
     // Against the span and viewport the editor *actually* rendered,
     // read back from the mounted component. Two traps here, both hit:
     // the editor resizes to its frame on mount, so the span it was
