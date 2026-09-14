@@ -1841,6 +1841,7 @@ impl App {
                 let history = self.tone_levels.entry(track.guid.clone()).or_default();
                 history.push(peak);
                 history.push_fire(meters.deess_deepest());
+                history.push_ess(meters.ess_db, meters.ess_ref_db);
                 self.tone_spectra
                     .entry(track.guid.clone())
                     .or_default()

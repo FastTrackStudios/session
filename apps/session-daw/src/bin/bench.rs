@@ -438,6 +438,7 @@ fn mixer_shot(
                 let meters = session_daw::simulate::meters(i, t, tone);
                 entry.push(meters.sat_peak);
                 entry.push_fire(meters.deess_deepest());
+                entry.push_ess(meters.ess_db, meters.ess_ref_db);
                 last = Some(meters);
             }
             if let Some(meters) = last {
@@ -1030,6 +1031,7 @@ fn animate(
                     let entry = history.entry(track.guid.clone()).or_default();
                     entry.push(meters.sat_peak);
                     entry.push_fire(meters.deess_deepest());
+                entry.push_ess(meters.ess_db, meters.ess_ref_db);
                     spectra
                         .entry(track.guid.clone())
                         .or_default()

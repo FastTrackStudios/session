@@ -301,9 +301,12 @@ pub fn meters(track: usize, seconds: f64, tone: &crate::tone::Tone) -> Meters {
         }
         crate::mcp::f64_to_f32(wet * f64::from(tone.reverb.mix.clamp(0.0, 1.0)))
     };
+    let (ess_db, ess_ref_db) = band_levels(&now.spectrum, tone.de_ess);
     Meters {
         sat_peak: now.peak,
         deess_db: suppression(&now.spectrum, tone.de_ess),
+        ess_db,
+        ess_ref_db,
         delay_wet,
         reverb_wet,
         spectrum: now.spectrum,
@@ -322,6 +325,24 @@ fn bin_hz() -> &'static [f64; BINS] {
         }
         out
     })
+}
+
+/// The de-esser's band as two numbers: the peak inside it, and the
+/// average of the octave either side of it — what the peak is judged
+/// against. The trace in the strip is these two over time.
+fn band_levels(spectrum: &[f32], set: crate::tone::Suppress) -> (f32, f32) {
+    let (low, high) = (f64::from(set.low), f64::from(set.high));
+    let mut peak = -60.0_f32;
+    let (mut sum, mut count) = (0.0_f64, 0.0_f64);
+    for (hz, db) in bin_hz().iter().zip(spectrum) {
+        if (low..=high).contains(hz) {
+            peak = peak.max(*db);
+        } else if (low / 2.0..high * 2.0).contains(hz) {
+            sum += f64::from(*db);
+            count += 1.0;
+        }
+    }
+    (peak, crate::mcp::f64_to_f32(sum / count.max(1.0)))
 }
 
 /// The suppressor's rule, applied to a spectrum: how much comes off

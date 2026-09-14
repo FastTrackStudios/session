@@ -3010,15 +3010,23 @@ pub const fn display_of(body: Panel, which: Which, rack: Rack) -> Panel {
         return body;
     }
     let keep = match which {
-        Which::Gate | Which::DeEss | Which::DeEssIn => LANE + 2.0,
+        Which::Gate => LANE + 2.0,
+        // The de-esser's strip is OVER its display: the band it
+        // watches, then what happened in it.
+        Which::DeEss | Which::DeEssIn => BAND_STRIP + 2.0,
         Which::Sat | Which::Delay | Which::Reverb => SELECTOR + 2.0,
         _ => 0.0,
     };
+    let over = matches!(which, Which::DeEss | Which::DeEssIn);
     Panel {
+        y: if over { body.y + keep } else { body.y },
         height: body.height - keep,
         ..body
     }
 }
+
+/// How tall the de-esser's band strip is.
+pub const BAND_STRIP: f64 = 18.0;
 
 /// The lane under a unit's display, if it has one at this width.
 #[must_use]
@@ -3027,6 +3035,13 @@ pub const fn lane_of(body: Panel, which: Which, rack: Rack) -> Option<Panel> {
     if display.height >= body.height {
         return None;
     }
+    if matches!(which, Which::DeEss | Which::DeEssIn) {
+        return Some(Panel {
+            y: body.y,
+            height: BAND_STRIP,
+            ..body
+        });
+    }
     Some(Panel {
         y: display.y + display.height + 2.0,
         height: body.height - display.height - 2.0,
@@ -3034,25 +3049,18 @@ pub const fn lane_of(body: Panel, which: Which, rack: Rack) -> Option<Panel> {
     })
 }
 
-/// A spectral suppressor: what is there, and what it is taking out of
-/// it — in place, at the frequency it happens.
+/// The de-esser: the band it watches, and what happened in it.
 ///
-/// Two units, one engine, two questions. The de-esser is an event
-/// detector — it fires on an "s" and lets go — so its identity is the
-/// fire lane under the display, a strip of time (see [`levels`]). The
-/// resonance suppressor finds what is ALWAYS there, so its identity is
-/// the comb below the floor: the engine's settled reduction, one tooth
-/// per notch, at the frequency it lives. Same spectrum, same ribbon,
-/// and you cannot mistake one panel for the other.
-///
-/// The reduction is the engine's own per-bin gain, arriving in
-/// `meters`, not something worked out here from the spectrum: the
-/// density, tilt and gate rules live in the plugin, and a second copy
-/// of them would drift. What IS worked out here is the reference line
-/// — the neighbourhood average the threshold stands above — because
-/// that is the picture of a SETTING, and dragging it is how the
-/// threshold is set.
-#[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
+/// Two pictures. A strip along the top is the top end of the spectrum
+/// — 800 Hz to the ceiling — with the band as a wash between its two
+/// edges, so where it is looking is the first thing read. Under it
+/// the display is TIME: the band's level as a trace, the reference
+/// it is judged against dashed over it, and what came off the top
+/// lit in the panel's colour where it came off — drawn in the live
+/// pass from the level history (see `lanes`), because it moves with
+/// the audio. It was a spectrum with a ribbon hanging off it, which
+/// was a compressor's picture drawn sideways and told you neither
+/// when it fired nor how hard.
 fn suppress(
     scene: &mut Scene,
     palette: &Palette,
@@ -3063,146 +3071,64 @@ fn suppress(
     rack: Rack,
     lit: Option<Grip>,
 ) {
-    let at = display_of(at, which, rack);
-    let bottom = at.y + at.height;
-    let zoom = SuppressZoom::of(set);
-
-    // The band it actually acts in, marked on the axis rather than as a
-    // wash over the panel: the shoulders are context, the band is the
-    // subject. Drawn before the spectrum so they can be seen through
-    // it, and drawn even with nothing playing, because they are the
-    // setting.
-    // The de-esser's colour is its own, and everything it draws is in
-    // it: the band, the reference, the bite. The compressor's red is
-    // the compressor's; a spectrum with a red ribbon hanging off it
-    // read as one. Not the EQ's gold either, for the same reason.
+    let body = at;
+    let at = display_of(body, which, rack);
     let ink = DEESS_INK;
-    // The band it acts in, as a wash between its two edges: the
-    // subject, lit, and the shoulders either side of it context.
-    let (x_low, x_high) = (zoom.x_of(f64::from(set.low), at), zoom.x_of(f64::from(set.high), at));
-    scene.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        ink.multiply_alpha(0.08),
-        None,
-        &Rect::new(x_low.min(x_high), at.y, x_low.max(x_high), bottom),
-    );
+
+    // The ladder the trace is read against.
     if rack.detailed() {
-        for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
-            let x = zoom.x_of(hz, at);
-            let held = lit == Some(Grip::Edge(which, side));
-            rule_wide(
-                scene,
-                if held { palette.text } else { ink.multiply_alpha(0.55) },
-                Line::new((x, at.y), (x, bottom)),
-                if held { 1.8 } else { 1.0 },
-            );
+        for db in [-12.0, -24.0] {
+            let y = suppress_y(db, at);
+            rule(scene, palette.grid_beat, Line::new((at.x, y), (at.x + at.width, y)));
         }
     }
 
-    let spectrum = &meters.spectrum;
-    let _ = which;
-    let reduction = &meters.deess_db;
-    if spectrum.len() < 4 || reduction.len() != spectrum.len() {
+    let Some(strip) = lane_of(body, which, rack) else {
         return;
-    }
-    let level_at = |hz: f64| bin_at(spectrum, hz);
-    let cut_at = |hz: f64| bin_at(reduction, hz);
+    };
+    let zoom = SuppressZoom::top();
+    let strip_bottom = strip.y + strip.height;
 
-    // The baseline the peaks are judged against: the spectrum's own
-    // average over a span set by the sharpness. What stands proud of it
-    // by more than the threshold is what gets cut, so the threshold IS
-    // the height of the dashed line above the average — and that is
-    // the line you drag.
-    let octaves = f64::from(set.sharpness).mul_add(-0.9, 1.2);
-    let span = (octaves / 2.0).exp2();
-    // The neighbourhood without the bin itself — the shoulders either
-    // side of the centre third — so a peak is judged against what
-    // surrounds it and not against half of itself. The same rule the
-    // reduction is computed by.
-    let average_at = |hz: f64| {
-        const STEPS: usize = 11;
-        let (sum, count) = (0..=STEPS)
-            .filter(|k| !(4..=6).contains(k))
-            .map(|k| {
-                let t = crate::num::coord(k) / crate::num::coord(STEPS);
-                level_at(hz / span * (span * span).powf(t))
+    // The top end, faint, so the band is seen against what is there.
+    if meters.spectrum.len() >= 4 {
+        const ACROSS: usize = 48;
+        let points: Vec<(f64, f64)> = (0..ACROSS)
+            .map(|i| {
+                let t = crate::num::coord(i) / crate::num::coord(ACROSS - 1);
+                let db = bin_at(&meters.spectrum, zoom.hz_at(t));
+                let share = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
+                (t.mul_add(strip.width, strip.x), share.mul_add(-(strip.height - 1.0), strip_bottom))
             })
-            .fold((0.0_f64, 0.0_f64), |(sum, n), v| (sum + v, n + 1.0));
-        sum / count.max(1.0)
-    };
+            .collect();
+        area_under(scene, palette.text_faint.multiply_alpha(0.25), &points, strip_bottom);
+    }
 
-    // One sample per bin, no finer. The analyser has ninety-six of them
-    // across the audible range and a zoomed band holds a fraction of
-    // that, so sampling past the data invents detail that is not there
-    // and pays for it in path length.
-    let across = spectrum.len().clamp(24, 96);
-    let sample = |i: usize| crate::num::coord(i) / crate::num::coord(across.saturating_sub(1).max(1));
-    let to_y = |db: f64| {
-        let t = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
-        bottom - t * (at.height - 2.0) - 1.0
-    };
-    let x_at = |i: usize| at.x + sample(i) * at.width;
-
-    // What arrived, as an area — it is the material, and an outline
-    // reads as another curve competing with the two that matter.
-    let dim = 1.0;
-    // The material in grey: what arrived is context, and what is done
-    // to it is what the panel is for.
-    let material = palette.text_faint;
-    let input: Vec<(f64, f64)> = (0..across)
-        .map(|i| (x_at(i), to_y(level_at(zoom.hz_at(sample(i))))))
-        .collect();
-    area_under(
-        scene,
-        material.multiply_alpha(crate::mcp::f64_to_f32(0.18 * dim)),
-        &input,
-        bottom,
+    // The band: a wash between its edges, and the edges themselves.
+    let (x_low, x_high) = (zoom.x_of(f64::from(set.low), strip), zoom.x_of(f64::from(set.high), strip));
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        ink.multiply_alpha(0.2),
+        None,
+        &Rect::new(x_low.min(x_high), strip.y, x_low.max(x_high), strip_bottom),
     );
-
-    // The reference, dashed: the average plus the threshold. Where the
-    // spectrum crosses above it is where the engine acts.
-    if rack.detailed() {
-        let held = matches!(lit, Some(Grip::Threshold(_) | Grip::Sharpness(_)));
-        let reference = (0..across).map(|i| {
-            (x_at(i), to_y(average_at(zoom.hz_at(sample(i))) + f64::from(set.threshold)))
-        });
-        dashed(scene, ink.multiply_alpha(0.8), reference, if held { 1.6 } else { 0.8 });
+    for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
+        let x = zoom.x_of(hz, strip);
+        let held = lit == Some(Grip::Edge(which, side));
+        rule_wide(
+            scene,
+            if held { palette.text } else { ink },
+            Line::new((x, strip.y), (x, strip_bottom)),
+            if held { 2.0 } else { 1.2 },
+        );
     }
+    marks(scene, palette, zoom, strip);
+}
 
-    // And what leaves. The gap between the two is the reduction, at the
-    // frequency it is happening, over the peak that caused it. NOT
-    // clamped at zero: these are decibels.
-    let output: Vec<(f64, f64)> = (0..across)
-        .map(|i| {
-            let hz = zoom.hz_at(sample(i));
-            (x_at(i), to_y(level_at(hz) - cut_at(hz)))
-        })
-        .collect();
-    // Only when there is something to show. With nothing being cut the
-    // two curves coincide, and the ribbon between them is a degenerate
-    // polygon — two hundred vertices tracing out and back along the
-    // same line, which the rasteriser pays for in full and which draws
-    // nothing. That cost half a millisecond a frame across a mixer.
-    // The bite: what was taken off the top, lit in the panel's own
-    // colour between the material's edge and what leaves.
-    let deepest = reduction.iter().copied().fold(0.0_f32, f32::max);
-    if deepest > 0.15 {
-        let held = matches!(lit, Some(Grip::Depth(_)));
-        ribbon(scene, ink.multiply_alpha(if held { 0.7 } else { 0.45 }), &input, &output);
-    }
-    curve(
-        scene,
-        material.multiply_alpha(crate::mcp::f64_to_f32(0.6 * dim)),
-        input.into_iter(),
-        1.0,
-    );
-    let held = matches!(lit, Some(Grip::Depth(_)));
-    curve(scene, ink, output.into_iter(), if held { 1.8 } else { 1.3 });
-
-    if rack.detailed() {
-        marks(scene, palette, zoom, at);
-    }
+/// Where a level in the de-esser's band lands on its display.
+fn suppress_y(db: f64, at: Panel) -> f64 {
+    let t = ((db - SUPPRESS_FLOOR_DB) / (SUPPRESS_CEIL_DB - SUPPRESS_FLOOR_DB)).clamp(0.0, 1.0);
+    t.mul_add(-(at.height - 2.0), at.y + at.height - 1.0)
 }
 
 /// Where you are on a zoomed axis, since it is no longer the familiar
@@ -3289,11 +3215,14 @@ pub struct SuppressZoom {
 }
 
 impl SuppressZoom {
+    /// The top end: from 800 Hz to the ceiling, where every de-esser's
+    /// band is. Fixed, so the band is read as a place on the axis and
+    /// the edges move along it, rather than the axis moving under them.
     #[must_use]
-    pub fn of(set: Suppress) -> Self {
+    pub const fn top() -> Self {
         Self {
-            low: f64::from(set.low) / SUPPRESS_SHOULDER,
-            high: f64::from(set.high) * SUPPRESS_SHOULDER,
+            low: 800.0,
+            high: 20_000.0,
         }
     }
 
@@ -3320,7 +3249,8 @@ impl SuppressZoom {
     }
 }
 
-/// How far past its band a suppressor's display opens out.
+/// The least a band's two edges may close to: a fifth of an octave.
+/// A band narrower than that is a notch, and a notch is the EQ's.
 const SUPPRESS_SHOULDER: f64 = 1.26;
 
 /// The frequencies a zoomed suppressor ticks, where they fall inside
@@ -5646,34 +5576,29 @@ fn gate_grip(gate: Gate, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
 
 /// What is under a point in a suppressor's panel.
 fn suppress_grip(tone: &Tone, which: Which, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
-    let set = match which {
-        Which::DeEss | Which::DeEssIn => tone.de_ess,
-        _ => tone.de_ess,
-    };
+    let set = tone.de_ess;
     let display = display_of(body, which, rack);
-    if rack.detailed() {
-        let zoom = SuppressZoom::of(set);
+    // The band strip over the display: an edge where one is drawn,
+    // else the sharpness — how wide a neighbourhood the band is judged
+    // against, which is a fact about the band.
+    if rack.detailed()
+        && let Some(strip) = lane_of(body, which, rack)
+        && y < strip.y + strip.height + 2.0
+    {
+        let zoom = SuppressZoom::top();
         for (hz, side) in [(f64::from(set.low), Side::Low), (f64::from(set.high), Side::High)] {
-            if (x - zoom.x_of(hz, display)).abs() <= GRAB {
+            if (x - zoom.x_of(hz, strip)).abs() <= GRAB {
                 return Grip::Edge(which, side);
             }
         }
-        // The lane under the display: the resonance panel's comb is
-        // the sharpness (how narrow a peak has to be to earn a tooth),
-        // the de-esser's fire lane is the depth (how hard it fires).
-        if let Some(lane) = lane_of(body, which, rack)
-            && y >= lane.y
-        {
-            return Grip::Depth(which);
-        }
+        return Grip::Sharpness(which);
     }
-    let third = display.height / 3.0;
-    if y < display.y + third {
+    // The display: the threshold over most of it — it is the line you
+    // are moving — and the depth along the floor.
+    if y < display.y + display.height * 2.0 / 3.0 {
         Grip::Threshold(which)
-    } else if y < display.y + third * 2.0 {
-        Grip::Depth(which)
     } else {
-        Grip::Sharpness(which)
+        Grip::Depth(which)
     }
 }
 
@@ -6320,11 +6245,7 @@ fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, d
         // width is the window's whole span in decades.
         Grip::Edge(which, side) => {
             let display = display_of(body, which, rack);
-            let set = match which {
-                Which::DeEss | Which::DeEssIn => tone.de_ess,
-                _ => tone.de_ess,
-            };
-            let zoom = SuppressZoom::of(set);
+            let zoom = SuppressZoom::top();
             let dx = dx * interaction::fine_scale(mods);
             let decades = (zoom.high / zoom.low).log10();
             let ratio = 10.0_f64.powf(dx / display.width.max(1.0) * decades);
@@ -8023,8 +7944,11 @@ impl Analyser {
 #[derive(Clone, Debug, Default)]
 pub struct Levels {
     peaks: std::collections::VecDeque<f32>,
-    /// The de-esser's deepest cut per frame, in dB — the fire lane.
+    /// The de-esser's deepest cut per frame, in dB.
     fired: std::collections::VecDeque<f32>,
+    /// The de-esser's band per frame: the level in it, and the level
+    /// around it — the trace, and the line it is judged against.
+    ess: std::collections::VecDeque<(f32, f32)>,
     /// The input trace, built once per CHANGE rather than once per
     /// frame.
     ///
@@ -8098,6 +8022,14 @@ impl Levels {
             self.fired.pop_front();
         }
         self.fired.push_back(db.max(0.0));
+    }
+
+    /// The de-esser's band this frame: its level, and its surroundings'.
+    pub fn push_ess(&mut self, level_db: f32, reference_db: f32) {
+        if self.ess.len() >= HISTORY {
+            self.ess.pop_front();
+        }
+        self.ess.push_back((level_db, reference_db));
     }
 
     /// The peaks, oldest first.
@@ -8298,6 +8230,10 @@ fn lanes(
             continue;
         }
         let body = body_of(at, rack);
+        if which != Which::Gate {
+            ess_trace(scene, levels, tone, display_of(body, which, rack));
+            continue;
+        }
         let Some(lane) = lane_of(body, which, rack) else {
             continue;
         };
@@ -8305,7 +8241,7 @@ fn lanes(
             continue;
         }
         let per = lane.width / crate::num::coord(HISTORY);
-        if which == Which::Gate {
+        {
             {
                 // Open where the level is over the threshold, and for
                 // the hold after it drops back, and ramping shut over
@@ -8349,29 +8285,56 @@ fn lanes(
                     scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.85), None, &path);
                 }
             }
-        } else {
-            {
-                // The fire lane in the de-esser's own yellow: when it
-                // acted, in its colour, under the display it acted on.
-                let red = DEESS_INK;
-                let count = levels.fired.len();
-                let offset = HISTORY.saturating_sub(count);
-                let mut path = BezPath::new();
-                for (i, db) in levels.fired.iter().enumerate() {
-                    if *db <= 0.05 {
-                        continue;
-                    }
-                    let h = (f64::from(*db) / 9.0).clamp(0.0, 1.0) * (lane.height - 2.0);
-                    let x = crate::num::coord(i.saturating_add(offset)).mul_add(per, lane.x);
-                    path.extend(Rect::new(x, lane.y + lane.height - 1.0 - h, x + per - 0.3, lane.y + lane.height - 1.0)
-                        .to_path(0.1).elements().iter().copied());
-                }
-                if !path.is_empty() {
-                    scene.fill(Fill::NonZero, Affine::IDENTITY, red.multiply_alpha(0.85), None, &path);
-                }
-            }
         }
     }
+}
+
+/// The de-esser's trace: the band's level over time in grey, the
+/// reference it is judged against dashed over it, and the bite — what
+/// came off the top — lit in the panel's colour between the two.
+///
+/// Time runs the way the compressor's does, so the two are read the
+/// same way across a rack: an "S" is a spike in the band, the dashed
+/// line is where the de-esser starts to care, and the bite is what it
+/// did about it.
+fn ess_trace(scene: &mut Scene, levels: &Levels, tone: &Tone, display: Panel) {
+    let count = levels.ess.len();
+    if count < 2 || display.width < 2.0 || display.height < 4.0 {
+        return;
+    }
+    let per = display.width / crate::num::coord(HISTORY);
+    let offset = HISTORY.saturating_sub(count);
+    let x_at = |i: usize| crate::num::coord(i.saturating_add(offset)).mul_add(per, display.x);
+    // The cuts are pushed once a frame like the levels are, so the two
+    // histories end together: line them up from the end.
+    let skew = count.saturating_sub(levels.fired.len());
+    let cut_at = |i: usize| i.checked_sub(skew).and_then(|k| levels.fired.get(k)).copied().unwrap_or(0.0);
+    let input: Vec<(f64, f64)> = levels
+        .ess
+        .iter()
+        .enumerate()
+        .map(|(i, (level, _))| (x_at(i), suppress_y(f64::from(*level), display)))
+        .collect();
+    let output: Vec<(f64, f64)> = levels
+        .ess
+        .iter()
+        .enumerate()
+        .map(|(i, (level, _))| (x_at(i), suppress_y(f64::from(level - cut_at(i)), display)))
+        .collect();
+    let threshold = f64::from(tone.de_ess.threshold);
+    let reference = levels
+        .ess
+        .iter()
+        .enumerate()
+        .map(|(i, (_, around))| (x_at(i), suppress_y(f64::from(*around) + threshold, display)));
+    let grey = Color::from_rgba8(0x9a, 0x9a, 0xa0, 0xff);
+    area_under(scene, grey.multiply_alpha(0.16), &input, display.y + display.height);
+    curve(scene, grey.multiply_alpha(0.55), input.iter().copied(), 1.0);
+    if levels.fired.iter().any(|db| *db > 0.05) {
+        ribbon(scene, DEESS_INK.multiply_alpha(0.5), &input, &output);
+    }
+    dashed(scene, DEESS_INK.multiply_alpha(0.8), reference, 0.8);
+    curve(scene, DEESS_INK, output.into_iter(), 1.3);
 }
 
 /// The colour a gate's open segments are lit in.
@@ -8969,17 +8932,18 @@ mod face_tests {
     fn a_suppressor_is_three_bands_and_two_edges() {
         let mut tone = placeholder(3);
         let at = display_of(body(Which::DeEss), Which::DeEss, Rack::Full);
-        let zoom = super::SuppressZoom::of(tone.de_ess);
-        let low_x = zoom.x_of(f64::from(tone.de_ess.low), at);
-        assert_eq!(grip(low_x, at.y + 10.0, &tone), Some(Grip::Edge(Which::DeEss, Side::Low)));
+        let strip = lane_of(body(Which::DeEss), Which::DeEss, Rack::Full).expect("a band strip");
+        assert!(strip.y < at.y, "the strip is over the display");
+        let zoom = super::SuppressZoom::top();
+        let low_x = zoom.x_of(f64::from(tone.de_ess.low), strip);
+        assert_eq!(grip(low_x, strip.y + 5.0, &tone), Some(Grip::Edge(Which::DeEss, Side::Low)));
         let mid_x = at.x + at.width / 2.0;
+        // Between the edges the strip is the sharpness; the display
+        // is the threshold, with the depth along its floor.
+        assert_eq!(grip(strip.x + 3.0, strip.y + 5.0, &tone), Some(Grip::Sharpness(Which::DeEss)));
         assert_eq!(grip(mid_x, at.y + 2.0, &tone), Some(Grip::Threshold(Which::DeEss)));
-        assert_eq!(grip(mid_x, at.y + at.height / 2.0, &tone), Some(Grip::Depth(Which::DeEss)));
-        assert_eq!(grip(mid_x, at.y + at.height - 2.0, &tone), Some(Grip::Sharpness(Which::DeEss)));
-        // The lane under it is the depth for a de-esser and the
-        // sharpness for the resonance panel.
-        let lane = lane_of(body(Which::DeEss), Which::DeEss, Rack::Full).expect("a fire lane");
-        assert_eq!(grip(mid_x, lane.y + 2.0, &tone), Some(Grip::Depth(Which::DeEss)));
+        assert_eq!(grip(mid_x, at.y + at.height / 2.0, &tone), Some(Grip::Threshold(Which::DeEss)));
+        assert_eq!(grip(mid_x, at.y + at.height - 2.0, &tone), Some(Grip::Depth(Which::DeEss)));
         let was = tone.de_ess.low;
         wheel(&mut tone, Grip::Edge(Which::DeEss, Side::Low), Mods::default(), -1.0);
         assert!(tone.de_ess.low > was, "the wheel moves the edge up");
@@ -9042,6 +9006,7 @@ mod face_tests {
         for i in 0..40 {
             levels.push(if i % 8 < 3 { 0.5 } else { 0.001 });
             levels.push_fire(if i % 8 == 1 { 6.0 } else { 0.0 });
+            levels.push_ess(if i % 8 == 1 { 4.0 } else { -20.0 }, -22.0);
         }
         let mut busy = anyrender::Scene::new();
         super::lanes(&mut busy, &ALL_PANELS, &levels, &tone, rack(), Folded::default(), Rack::Full);
