@@ -151,11 +151,14 @@ impl Layout {
 /// to carry it: the rack below the chain, and the rule up the left
 /// edge. Each is one of three, from the environment.
 ///
-/// - `FTS_RACK_FILL`: `off` (the panel's grey — the default), `tint`
-///   or `track` (the band's muted tint), `full` (the track's colour,
-///   the same as the edge rule).
-/// - `FTS_STRIP_EDGE`: `full` (the track's colour — the default),
-///   `tint` (the band's muted tint), `off`.
+/// - `FTS_RACK_FILL`: `off` (the panel's grey), `tint` or `track`
+///   (the band's muted tint — the default), `full` (the track's
+///   colour, the same as a full edge rule).
+/// - `FTS_STRIP_EDGE`: `full` (the track's colour), `tint` (the band's
+///   muted tint — the default), `off`.
+/// - `FTS_STRIP_FILL`: the strip's own ground under the controls, FX
+///   section included — `off` (the panel's grey — the default),
+///   `tint`, `full`.
 ///
 /// Settings rather than decisions: the grey says "room for more", the
 /// colour says "this is the track's", and which one a mixer wants is
@@ -186,14 +189,22 @@ impl Wash {
 #[must_use]
 pub fn rack_fill() -> Wash {
     static ON: std::sync::OnceLock<Wash> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| Wash::from_env("FTS_RACK_FILL", Wash::Off))
+    *ON.get_or_init(|| Wash::from_env("FTS_RACK_FILL", Wash::Tint))
+}
+
+/// What the strip's own ground — under the FX section, the band, the
+/// fader and the buttons — is painted in. See [`Wash`].
+#[must_use]
+pub fn strip_fill() -> Wash {
+    static ON: std::sync::OnceLock<Wash> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| Wash::from_env("FTS_STRIP_FILL", Wash::Off))
 }
 
 /// What the rule up a strip's left edge is drawn in — see [`Wash`].
 #[must_use]
 pub fn strip_edge() -> Wash {
     static ON: std::sync::OnceLock<Wash> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| Wash::from_env("FTS_STRIP_EDGE", Wash::Full))
+    *ON.get_or_init(|| Wash::from_env("FTS_STRIP_EDGE", Wash::Tint))
 }
 
 /// A positive number from the environment, if it is one.

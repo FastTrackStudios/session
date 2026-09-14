@@ -865,7 +865,7 @@ fn strip(
     let chrome_w = geometry.chrome_width();
 
     // The strip's ground, and the track's colour as a band across it.
-    fill(scene, palette.tcp_tint, Rect::new(x, 0.0, x + w, h));
+    fill(scene, strip_ground(palette, track), Rect::new(x, 0.0, x + w, h));
     // And the track's colour as a rule up the strip's whole left edge,
     // top to bottom. The rack is tall and the coloured band is a
     // strip's height down; between two racks there was nothing to say
@@ -1020,6 +1020,15 @@ fn strip(
 #[must_use]
 pub fn rack_ground(palette: &Palette, track: &Track) -> Option<Color> {
     wash(crate::layout::rack_fill(), palette, track)
+}
+
+/// The strip's ground: the panel's grey, or the track's wash when the
+/// mixer is set to paint the strip in it — the FX section, the space
+/// beside the fader, all of it, so the strip is one surface with its
+/// band and its rack.
+#[must_use]
+pub fn strip_ground(palette: &Palette, track: &Track) -> Color {
+    wash(crate::layout::strip_fill(), palette, track).unwrap_or(palette.tcp_tint)
 }
 
 /// A wash setting as a colour for this track: nothing, the band's
