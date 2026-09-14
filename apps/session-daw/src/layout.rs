@@ -147,20 +147,53 @@ impl Layout {
     }
 }
 
-/// Whether the part of the rack a chain does not reach is painted in
-/// the track's colour rather than left as the panel's grey.
+/// How a strip carries its track's colour where there is no control
+/// to carry it: the rack below the chain, and the rule up the left
+/// edge. Each is one of three, from the environment.
 ///
-/// `FTS_RACK_FILL=track` (or `1`, `on`). Off by default: the grey says
-/// "room for more", the colour says "this is the track's" — which one
-/// a mixer wants is a matter of taste, so it is a setting.
+/// - `FTS_RACK_FILL`: `off` (the panel's grey — the default), `tint`
+///   or `track` (the band's muted tint), `full` (the track's colour,
+///   the same as the edge rule).
+/// - `FTS_STRIP_EDGE`: `full` (the track's colour — the default),
+///   `tint` (the band's muted tint), `off`.
+///
+/// Settings rather than decisions: the grey says "room for more", the
+/// colour says "this is the track's", and which one a mixer wants is
+/// taste.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Wash {
+    Off,
+    Tint,
+    Full,
+}
+
+impl Wash {
+    fn parse(value: &str, default: Self) -> Self {
+        match value.trim().to_lowercase().as_str() {
+            "off" | "0" | "none" | "false" => Self::Off,
+            "tint" | "track" | "1" | "on" | "true" => Self::Tint,
+            "full" | "color" | "colour" => Self::Full,
+            _ => default,
+        }
+    }
+
+    fn from_env(key: &str, default: Self) -> Self {
+        std::env::var(key).map_or(default, |v| Self::parse(&v, default))
+    }
+}
+
+/// What the rack paints under its chain — see [`Wash`].
 #[must_use]
-pub fn rack_fill_is_track() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::var("FTS_RACK_FILL")
-            .map(|v| matches!(v.trim().to_lowercase().as_str(), "track" | "1" | "on" | "true"))
-            .unwrap_or(false)
-    })
+pub fn rack_fill() -> Wash {
+    static ON: std::sync::OnceLock<Wash> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| Wash::from_env("FTS_RACK_FILL", Wash::Off))
+}
+
+/// What the rule up a strip's left edge is drawn in — see [`Wash`].
+#[must_use]
+pub fn strip_edge() -> Wash {
+    static ON: std::sync::OnceLock<Wash> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| Wash::from_env("FTS_STRIP_EDGE", Wash::Full))
 }
 
 /// A positive number from the environment, if it is one.

@@ -871,13 +871,12 @@ fn strip(
     // strip's height down; between two racks there was nothing to say
     // where one track ends and the next begins. One pixel, always
     // there, in the colour the strip is read by.
-    fill(
-        scene,
-        // The track's colour itself, not the band's muted tint of it:
-        // two pixels have to carry the colour on their own.
-        crate::tcp::track_color(palette, track),
-        Rect::new(x, 0.0, x + STRIP_EDGE, h),
-    );
+    // The track's colour itself by default, not the band's muted tint
+    // of it: one pixel has to carry the colour on its own. The tint,
+    // or nothing, when the mixer is set that way — see `layout::Wash`.
+    if let Some(edge) = wash(crate::layout::strip_edge(), palette, track) {
+        fill(scene, edge, Rect::new(x, 0.0, x + STRIP_EDGE, h));
+    }
 
     // ── The folders this strip sits inside ──
     //
@@ -1020,7 +1019,17 @@ fn strip(
 /// starts moving does not change colour under its chain.
 #[must_use]
 pub fn rack_ground(palette: &Palette, track: &Track) -> Option<Color> {
-    crate::layout::rack_fill_is_track().then(|| crate::tcp::row_tint(palette, track))
+    wash(crate::layout::rack_fill(), palette, track)
+}
+
+/// A wash setting as a colour for this track: nothing, the band's
+/// tint, or the track's own colour.
+fn wash(wash: crate::layout::Wash, palette: &Palette, track: &Track) -> Option<Color> {
+    match wash {
+        crate::layout::Wash::Off => None,
+        crate::layout::Wash::Tint => Some(crate::tcp::row_tint(palette, track)),
+        crate::layout::Wash::Full => Some(crate::tcp::track_color(palette, track)),
+    }
 }
 
 /// The coloured band: pan, the record input, and the arm hanging off its

@@ -1373,7 +1373,7 @@ pub fn draw(
     lit: Option<Grip>,
     // What to paint under the chain's end, when the rack's box is
     // taller than the chain — the track's colour, if the mixer is set
-    // to (see `layout::rack_fill_is_track`); nothing, and the panel's
+    // to (see `layout::rack_fill`); nothing, and the panel's
     // ground shows, otherwise. Here rather than in either caller,
     // because the recording and the live pass both draw the rack and
     // whichever one is on top has to paint it.
