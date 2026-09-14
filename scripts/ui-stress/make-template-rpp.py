@@ -62,16 +62,22 @@ def mics(colour, *names):
     return [(n, colour, []) for n in names]
 
 
-def summed(name, colour, mic_names, extras=()):
+def summed(name, colour, mic_names, extras=(), fund=False):
     """A kit piece: its close mics under a SUM, with sends beside it.
 
     The SUM is a folder of the mics; anything the piece sends to — a
     Sub, a Verb — sits NEXT to the SUM rather than inside it, because it
     is fed by the sum and is not one of the things being summed.
+
+    `fund` puts a Fund IN the Sum: the one-note track blended under the
+    mics, gated and band-passed to the piece's fundamental. The snare
+    and the toms have one; the kick's is its Sub, and a guitar has no
+    fundamental to add.
     """
-    # The Fund sits IN the Sum: the one-note track blended under the
-    # mics, gated and band-passed to the piece's fundamental.
-    children = [("Sum", colour, mics(colour, *mic_names) + [("Fund", colour, [])])]
+    inside = mics(colour, *mic_names)
+    if fund:
+        inside = inside + [("Fund", colour, [])]
+    children = [("Sum", colour, inside)]
     children += [(extra, colour, []) for extra in extras]
     return (name, colour, children)
 
@@ -102,7 +108,7 @@ TREE = [
         0x4A6FA5,
         [
             summed("Kick", KICK, ["In", "Out", "Trig"], ["Sub", "Verb"]),
-            summed("Snare", SNARE, ["Top", "Bottom", "Trig"], ["Verb"]),
+            summed("Snare", SNARE, ["Top", "Bottom", "Trig"], ["Verb"], fund=True),
             (
                 "Toms",
                 TOMS,
