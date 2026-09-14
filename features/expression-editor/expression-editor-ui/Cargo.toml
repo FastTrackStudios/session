@@ -32,6 +32,9 @@ expression-editor-tools.workspace = true
 # Wasm-clean (serde + tracing only), so this does not cost the web build.
 input.workspace = true
 expression-editor-core = { workspace = true }
+# The portable painter and interaction — see that crate for why it is
+# separate. Re-exported below under the module names they had here.
+expression-editor-paint = { workspace = true }
 # The grid that follows the zoom — named directly because the status bar
 # offers its densities, not only because the core re-exports the type.
 adaptive-grid = { workspace = true }

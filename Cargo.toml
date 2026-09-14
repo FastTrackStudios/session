@@ -19,6 +19,7 @@ members = [
     "features/expression-editor/expression-editor-reaper",
     "features/expression-editor/expression-editor-standalone",
     "features/expression-editor/expression-editor-tools",
+    "features/expression-editor/expression-editor-paint",
     "features/expression-editor/expression-editor-ui",
     "features/ui/daw-ui",
     "features/ui/daw-theme",
@@ -280,6 +281,7 @@ expression-editor-host = { path = "features/expression-editor/expression-editor-
 expression-editor-reaper = { path = "features/expression-editor/expression-editor-reaper" }
 expression-editor-standalone = { path = "features/expression-editor/expression-editor-standalone" }
 expression-editor-tools = { path = "features/expression-editor/expression-editor-tools" }
+expression-editor-paint = { path = "features/expression-editor/expression-editor-paint" }
 expression-editor-ui = { path = "features/expression-editor/expression-editor-ui" }
 level-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # Internal DSP cores (behind the facades).

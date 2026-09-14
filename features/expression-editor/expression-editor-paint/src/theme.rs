@@ -278,56 +278,67 @@ mod tests {
     ///
     /// Every module is listed explicitly rather than walked: a new file
     /// should have to opt in here, which is a moment to ask whether it
-    /// needs a new named colour or an existing one.
+    /// needs a new named colour or an existing one. The Dioxus crate
+    /// keeps the same test over its own modules.
     #[test]
     fn no_module_writes_a_hex_literal() {
         const MODULES: [(&str, &str); 9] = [
             ("theme.rs", include_str!("theme.rs")),
             ("lib.rs", include_str!("lib.rs")),
             ("canvas.rs", include_str!("canvas.rs")),
-            ("drawer.rs", include_str!("drawer.rs")),
-            ("inspector.rs", include_str!("inspector.rs")),
+            ("guitar.rs", include_str!("guitar.rs")),
             ("interaction.rs", include_str!("interaction.rs")),
-            ("multitool_ui.rs", include_str!("multitool_ui.rs")),
-            ("toolbar.rs", include_str!("toolbar.rs")),
-            ("widgets.rs", include_str!("widgets.rs")),
+            ("keys.rs", include_str!("keys.rs")),
+            ("paint.rs", include_str!("paint.rs")),
+            ("scroll.rs", include_str!("scroll.rs")),
+            ("text.rs", include_str!("text.rs")),
         ];
-
-        let mut found = Vec::new();
-        for (name, src) in MODULES {
-            for (n, line) in src.lines().enumerate() {
-                let trimmed = line.trim_start();
-                // Doc comments legitimately name colours when explaining a
-                // choice; only real code counts.
-                if trimmed.starts_with("//") {
-                    continue;
-                }
-                if is_hex_literal(line) {
-                    found.push(format!("{name}:{}: {}", n + 1, line.trim()));
-                }
-            }
-        }
+        let found = super::hex_literals(MODULES);
         assert!(
             found.is_empty(),
             "hex literals must come from daw_theme::defaults:\n  {}",
             found.join("\n  ")
         );
     }
+}
 
-    /// A `#` followed by exactly 3, 6 or 8 hex digits — a CSS colour.
-    ///
-    /// Deliberately not a regex: SVG path data is full of `#`-free hex-ish
-    /// tokens, and CSS ids would false-positive on a looser rule.
-    fn is_hex_literal(line: &str) -> bool {
-        let bytes = line.as_bytes();
-        for (i, _) in line.match_indices('#') {
-            let rest = &bytes[i + 1..];
-            let n = rest.iter().take_while(|b| b.is_ascii_hexdigit()).count();
-            let terminated = rest.get(n).is_none_or(|b| !b.is_ascii_alphanumeric());
-            if matches!(n, 3 | 6 | 8) && terminated {
-                return true;
+/// Every line of `modules` that writes a CSS colour literal, as
+/// `file:line: text`. Doc and line comments are skipped — they
+/// legitimately name colours when explaining a choice.
+///
+/// A test helper that is not `cfg(test)`, because the Dioxus crate runs
+/// the same audit over its own modules and must agree with this one on
+/// what counts.
+#[must_use]
+pub fn hex_literals<const N: usize>(modules: [(&str, &str); N]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (name, src) in modules {
+        for (n, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if is_hex_literal(line) {
+                found.push(format!("{name}:{}: {}", n + 1, line.trim()));
             }
         }
-        false
     }
+    found
+}
+
+/// A `#` followed by exactly 3, 6 or 8 hex digits — a CSS colour.
+///
+/// Deliberately not a regex: SVG path data is full of `#`-free hex-ish
+/// tokens, and CSS ids would false-positive on a looser rule.
+fn is_hex_literal(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    for (i, _) in line.match_indices('#') {
+        let rest = &bytes[i + 1..];
+        let n = rest.iter().take_while(|b| b.is_ascii_hexdigit()).count();
+        let terminated = rest.get(n).is_none_or(|b| !b.is_ascii_alphanumeric());
+        if matches!(n, 3 | 6 | 8) && terminated {
+            return true;
+        }
+    }
+    false
 }

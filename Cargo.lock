@@ -5085,6 +5085,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "expression-editor-paint"
+version = "0.1.0"
+dependencies = [
+ "adaptive-grid",
+ "anyrender",
+ "daw-theme",
+ "expression-editor-core",
+ "input",
+ "kurbo 0.13.1",
+ "parley 0.10.0",
+ "peniko 0.6.1",
+ "tracing",
+]
+
+[[package]]
 name = "expression-editor-reaper"
 version = "0.1.0"
 dependencies = [
@@ -5162,6 +5177,7 @@ dependencies = [
  "expression-editor-core",
  "expression-editor-guitarpro",
  "expression-editor-host",
+ "expression-editor-paint",
  "expression-editor-tools",
  "futures-timer",
  "image",
@@ -12874,10 +12890,15 @@ dependencies = [
  "dirs",
  "dynamic-template",
  "eq-ui",
+ "expression-editor-core",
+ "expression-editor-daw",
+ "expression-editor-paint",
  "eyre",
  "fts-audio-ui",
  "image",
+ "input",
  "input-config-proto",
+ "input-keybinds",
  "pollster",
  "reverb-dsp",
  "saturate-dsp",
@@ -17815,6 +17836,11 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "phon"
+version = "0.2.0-rc.5"
+source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
+
+[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -17916,17 +17942,4 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "phon"
-version = "0.2.0-rc.5"
-source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
-
-[[patch.unused]]
-name = "baseview"
-version = "0.3.3"
-
-[[patch.unused]]
-name = "dsp-golden"
 version = "0.1.0"

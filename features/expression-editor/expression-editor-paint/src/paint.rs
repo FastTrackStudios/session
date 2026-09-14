@@ -4,7 +4,7 @@
 //! renderer, no window, no dioxus. A [`Scene`] is a plain recording of
 //! draw commands, so this module compiles anywhere the geometry does —
 //! including wasm — and whatever anyrender backend is present replays
-//! it. `paint.rs` is portable; only the [`crate::roll_widget`] seam that
+//! it. `paint.rs` is portable; only the widget seam in `expression-editor-ui` that
 //! puts a scene on screen is native.
 //!
 //! ## Why this exists at all
@@ -17,7 +17,7 @@
 //!   scaled by (element box / declared size) — and an svg that declares
 //!   no size takes it from its own content. The drawing therefore
 //!   rescaled as the roll scrolled, and the pointer mapping with it.
-//!   See `crate::sizing` for the full account.
+//!   See `sizing` in `expression-editor-ui` for the full account.
 //! - **Speed.** Every camera move rebuilt the roll's markup, which Blitz
 //!   re-parsed into a usvg tree before drawing a pixel. That cost scales
 //!   with the note count and there is no way to tune it from above.
@@ -78,7 +78,7 @@ pub fn color(css: &str) -> Color {
         .unwrap_or(Color::TRANSPARENT)
 }
 
-pub(crate) fn with_alpha(c: Color, alpha: f64) -> Color {
+pub fn with_alpha(c: Color, alpha: f64) -> Color {
     c.with_alpha(alpha as f32)
 }
 
@@ -123,7 +123,7 @@ fn line_of(points: &[(f64, f64)]) -> BezPath {
     path_of(points.iter().map(|&(x, y)| Point::new(x, y)), false)
 }
 
-pub(crate) fn polygon(s: &str) -> BezPath {
+pub fn polygon(s: &str) -> BezPath {
     let mut path = polyline(s);
     if !path.is_empty() {
         path.close_path();
@@ -131,7 +131,7 @@ pub(crate) fn polygon(s: &str) -> BezPath {
     path
 }
 
-pub(crate) fn stroke_of(width: f64) -> Stroke {
+pub fn stroke_of(width: f64) -> Stroke {
     Stroke::new(width)
 }
 
@@ -152,14 +152,14 @@ pub(crate) fn stroke_of(width: f64) -> Stroke {
 /// covers shapes that sit at the same depth: every row, or every note
 /// body. Anything drawn *over* something else goes in a later batch.
 #[derive(Default)]
-pub(crate) struct Batch {
+pub struct Batch {
     // A `Vec` rather than a map: there are only ever a handful of
     // distinct paints, so a linear scan beats hashing a colour.
     entries: Vec<(Color, BezPath)>,
 }
 
 impl Batch {
-    pub(crate) fn add(&mut self, color: Color, shape: &impl kurbo::Shape) {
+    pub fn add(&mut self, color: Color, shape: &impl kurbo::Shape) {
         let path = match self.entries.iter_mut().find(|(c, _)| *c == color) {
             Some((_, path)) => path,
             None => {
@@ -173,17 +173,17 @@ impl Batch {
     /// The gathered paths, for a caller that must vary something per
     /// colour (the grace notes' lighter weight) and so cannot use the
     /// one-shot `fill`.
-    pub(crate) fn take(self) -> Vec<(Color, BezPath)> {
+    pub fn take(self) -> Vec<(Color, BezPath)> {
         self.entries
     }
 
-    pub(crate) fn fill(self, scene: &mut Scene, at: Affine) {
+    pub fn fill(self, scene: &mut Scene, at: Affine) {
         for (color, path) in self.entries {
             scene.fill(Fill::NonZero, at, color, None, &path);
         }
     }
 
-    pub(crate) fn stroke(self, scene: &mut Scene, at: Affine, width: f64) {
+    pub fn stroke(self, scene: &mut Scene, at: Affine, width: f64) {
         let stroke = stroke_of(width);
         for (color, path) in self.entries {
             scene.stroke(&stroke, at, color, None, &path);
