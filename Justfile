@@ -1249,6 +1249,16 @@ daw-kit OUT="/tmp/fts-kit.png" SIZE="2560x900" BARS="200":
     FTS_BENCH_KIT="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" FTS_BENCH_BARS="{{BARS}}" \
         ./target/release/bench /dev/null 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
 
+# PROTOTYPE (issue #27): folder items summed from their children, per
+# role colour, mute vs hide, and the comp view — as a PNG. WINDOW is
+# "t0,t1" in seconds over the simulated eight-bar kit.
+daw-folder-items OUT="/tmp/fts-folder-items.png" SIZE="2560x1720" WINDOW="0,16":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    FTS_BENCH_FOLDER_ITEMS="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" FTS_BENCH_WINDOW="{{WINDOW}}" \
+        ./target/release/bench /dev/null 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
 # The expression editor over the demo drum groove, as a PNG — the view
 # `e` opens in the window with nothing selected, painted headless.
 daw-expression OUT="/tmp/fts-expression.png" SIZE="1600x900":

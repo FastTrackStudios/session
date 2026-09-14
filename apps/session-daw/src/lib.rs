@@ -35,6 +35,7 @@ pub mod keys;
 pub mod plan;
 pub mod pointer;
 pub mod profile;
+pub mod proto_folder_items;
 pub mod rails;
 pub mod rename;
 pub mod row;

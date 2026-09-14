@@ -90,6 +90,13 @@ fn main() {
     let font = session_daw::text::Font::embedded().expect("the embedded font");
     let layout = session_daw::layout::Layout::from_env();
 
+    if let Ok(out) = std::env::var("FTS_BENCH_FOLDER_ITEMS") {
+        // PROTOTYPE (issue #27): folder items summed from their
+        // children, per role colour, and the comp view. No project
+        // needed — the kit is simulated.
+        folder_items_shot(&palette, &font, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
     if let Ok(out) = std::env::var("FTS_BENCH_KIT") {
         // The audio drum workflow: a tracked kit's mics stacked as role
         // lanes, `FTS_BENCH_BARS` bars of hits (two hundred by default).
@@ -360,6 +367,41 @@ fn bench_bars() -> usize {
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(200)
+}
+
+/// PROTOTYPE (issue #27) — the folder-items findings sheet, to a PNG.
+///
+/// `FTS_BENCH_FOLDER_ITEMS=/tmp/folder-items.png`, with
+/// `FTS_BENCH_WINDOW=t0,t1` (seconds) to zoom in on part of the groove.
+fn folder_items_shot(palette: &Palette, font: &session_daw::text::Font, out: &std::path::Path, width: u32, height: u32) {
+    let size = (f64::from(width), f64::from(height));
+    let window = std::env::var("FTS_BENCH_WINDOW")
+        .ok()
+        .and_then(|s| {
+            let (a, b) = s.split_once(',')?;
+            Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+        })
+        .unwrap_or((0.0, 16.0));
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut buffer = Vec::new();
+    let mut stats = (0, 0);
+    image.render_to_vec(
+        |painter| {
+            painter.reset();
+            stats = session_daw::proto_folder_items::shot(painter, palette, font, size.0, size.1, window);
+        },
+        &mut buffer,
+    );
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+    println!(
+        "  wrote {} — window {:.1}s..{:.1}s; picture cache: {} hits, {} misses",
+        out.display(),
+        window.0,
+        window.1,
+        stats.0,
+        stats.1
+    );
 }
 
 /// One frame of the stacked audio kit, to a PNG.
