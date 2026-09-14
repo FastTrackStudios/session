@@ -875,7 +875,7 @@ fn draw_strip_controls(
         let at = crate::tone::Panel::of(box_, left).up(scroll);
         let paint = |meters: &crate::live::Meters| {
             let mut rack = anyrender::Scene::new();
-            crate::tone::draw(&mut rack, palette, font, tone, meters, panels, at, folded, lit);
+            crate::tone::draw(&mut rack, palette, font, tone, meters, tone.panels(panels), at, folded, lit);
             rack
         };
         match spectrum {
@@ -911,7 +911,7 @@ fn draw_strip_controls(
         );
         crate::tone::levels(
             scene,
-            panels,
+            tone.panels(panels),
             history,
             // The reduction is what each compressor is DOING, so it is
             // computed from the settings it is doing it with — which is

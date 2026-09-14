@@ -352,10 +352,20 @@ fn mixer_shot(
     let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
     let (visible, depths) =
         daw_ui::components::folders::FolderState::default().visible(&project.tracks);
-    let tracks: Vec<daw_proto::Track> = visible.clone();
-    let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
-        visible.into_iter().zip(depths).collect(),
-    ));
+    let mut planned: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
+    // A scene, if one is asked for: the visual track manager's answer
+    // to which strips and how wide — `FTS_BENCH_SCENE=lead-vocal-fx`.
+    let scene = std::env::var("FTS_BENCH_SCENE").ok().and_then(|slug| session_daw::plan::scene(&slug));
+    if let Some(scene) = scene {
+        planned = session_daw::plan::apply_scene(
+            &planned,
+            scene,
+            session_daw::settings::Settings::default(),
+            f64::from(height),
+        );
+    }
+    let tracks: Vec<daw_proto::Track> = planned.iter().map(|(t, _)| t.clone()).collect();
+    let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(planned));
 
     let scroll_x = std::env::var("FTS_BENCH_SCROLL")
         .ok()
@@ -363,8 +373,9 @@ fn mixer_shot(
         .unwrap_or(0.0);
 
     // The Tone rack, which is a mix sub-mode rather than a permanent
-    // fixture — so the shot asks for it explicitly.
-    let tone = std::env::var("FTS_BENCH_TONE").is_ok();
+    // fixture — so the shot asks for it explicitly. A scene is a
+    // picture of the racks, so it asks for it too.
+    let tone = std::env::var("FTS_BENCH_TONE").is_ok() || scene.is_some();
     // The whole frame, so a shot matches the window.
     //
     // The mixer splits internally — the REAPER strip takes a third off

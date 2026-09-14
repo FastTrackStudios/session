@@ -171,6 +171,8 @@ struct App {
     /// Which visual preset is recalled — which tracks show, and how
     /// wide. The left rail's upper half.
     preset: &'static str,
+    /// A scene recalled over the preset, by slug — see `plan::SCENES`.
+    view_scene: Option<&'static str>,
     /// The right rail's switches.
     settings: session_daw::settings::Settings,
     /// An open rename, if a name is being edited.
@@ -365,6 +367,24 @@ impl ApplicationHandler for App {
                 if event.logical_key == Key::Named(NamedKey::Home) {
                     session_daw::engine::transport(session_daw::engine::Move::Home, 0.0);
                     self.playhead.report(0.0, 1.0, std::time::Instant::now());
+                    self.redraw();
+                    return;
+                }
+                // The number keys recall scenes — the visual track
+                // manager's snapshots: `1` is drum tracking, `5` is
+                // editing the vocal's returns. `0` goes back to the
+                // rail's preset.
+                if let Some(text) = event.logical_key.to_text()
+                    && text.len() == 1
+                    && let Some(digit) = text.chars().next().and_then(|c| c.to_digit(10))
+                {
+                    self.view_scene = usize::try_from(digit)
+                        .ok()
+                        .and_then(|d| d.checked_sub(1))
+                        .and_then(|i| session_daw::plan::SCENES.get(i))
+                        .map(|s| s.slug);
+                    tracing::info!(ui.scene = self.view_scene.unwrap_or("none"), "scene");
+                    self.mixer = None;
                     self.redraw();
                     return;
                 }
@@ -916,7 +936,7 @@ impl App {
             .iter()
             .map(|track| {
                 session_daw::tone::scroll_span(
-                    panels,
+                    self.tone_settings.get(&track.guid).map_or(panels, |t| t.panels(panels)),
                     mixer.rack_h,
                     self.rack_folds.of(&track.guid),
                 )
@@ -952,7 +972,7 @@ impl App {
         let track = self.mixer_map.index(row).and_then(|i| self.tracks.get(i))?;
         let tone = self.tone_settings.get(&track.guid)?;
         session_daw::tone::grip_at(
-            self.rack_panels(),
+            tone.panels(self.rack_panels()),
             tone,
             rack,
             self.rack_folds.of(&track.guid),
@@ -1054,6 +1074,8 @@ impl App {
                 Grip::Choose(session_daw::tone::Which::Sat, i) => tone.choose_sat_family(i),
                 Grip::Choose(session_daw::tone::Which::Delay, i) => tone.delay.choose_family(i),
                 Grip::Choose(session_daw::tone::Which::Reverb, i) => tone.reverb.choose_family(i),
+                // A preset chip loads the preset: the whole rack follows.
+                Grip::Preset(i) => tone.load_preset(i),
                 _ => {}
             }
         }
@@ -1129,6 +1151,7 @@ impl App {
         };
         let folded = self.rack_folds.of(&guid);
         if let Some(tone) = self.tone_settings.edit(&guid) {
+            let panels = tone.panels(panels);
             session_daw::tone::drag(tone, grip, panels, rack, folded, mods, dx, dy);
         }
         self.invalidate_rack(row);
@@ -1435,13 +1458,20 @@ impl App {
             // each one opens, so it is applied BEFORE the recording —
             // the mixer records what it is given and has never heard of
             // a preset.
-            let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(session_daw::plan::apply(
-                rows.as_slice(),
-                session_daw::plan::slug(self.preset).unwrap_or(self.preset),
-                session_daw::plan::Surface::Mixer,
-                self.settings,
-                height,
-            )));
+            let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(
+                match self.view_scene.and_then(session_daw::plan::scene) {
+                    Some(scene) => {
+                        session_daw::plan::apply_scene(rows.as_slice(), scene, self.settings, height)
+                    }
+                    None => session_daw::plan::apply(
+                        rows.as_slice(),
+                        session_daw::plan::slug(self.preset).unwrap_or(self.preset),
+                        session_daw::plan::Surface::Mixer,
+                        self.settings,
+                        height,
+                    ),
+                },
+            ));
             self.tone_settings.seed(planned.as_slice());
             self.mixer_map = session_daw::plan::Rows::of(planned.as_slice(), &self.tracks);
             self.mixer = Some(session_daw::mcp::Mixer::build(
@@ -1675,6 +1705,9 @@ impl App {
                     return;
                 }
                 self.preset = name;
+                // A preset chosen on the rail is the view again; a
+                // scene was over it.
+                self.view_scene = None;
                 self.re_record();
             }
             A::Phase(phase) => {
@@ -2317,6 +2350,7 @@ fn main() {
         mode: session::modes::Mode::Mix,
         phase: session::mix_phases::MixPhase::Tone,
         preset: session_daw::rails::PRESETS[0],
+        view_scene: None,
         settings: session_daw::settings::Settings::default(),
         rename: None,
         last_row_click: None,

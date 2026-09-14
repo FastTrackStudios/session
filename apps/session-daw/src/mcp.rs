@@ -921,7 +921,9 @@ fn strip(
             palette,
             font,
             tone,
-            rack,
+            // The track's own chain: a return draws its one instance,
+            // a channel the eleven.
+            tone.panels(rack),
             // From `Strip::rack_rect`, translated by the strip's left
             // edge — so the box the rack is drawn in is the box a grip
             // is measured against.

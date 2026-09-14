@@ -1203,6 +1203,27 @@ daw-bench PROJECT="" SIZE="5120x1440":
     echo "load before: $(cut -d' ' -f1-3 /proc/loadavg)"
     FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN'
 
+# One scene of the visual track manager, as a PNG.
+#
+# `just daw-scene lead-vocal-fx` renders the vocal template with the
+# Short delay and the Long verb in focus; the drum scenes render the
+# drum template. Scenes are `plan::SCENES`: drum-tracking, drum-mixing,
+# drum-overview, lead-vocal, lead-vocal-fx. In the window the number
+# keys 1–5 recall the same scenes, and 0 goes back to the rail's preset.
+daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{SCENE}}" in
+        drum-*) project="${FTS_DAW_TEMPLATE:-/tmp/fts-template.rpp}"
+                [[ -f "$project" ]] || scripts/ui-stress/make-template-rpp.py > "$project" ;;
+        *)      project="${FTS_DAW_VOCAL:-/tmp/fts-vocal-fx.rpp}"
+                [[ -f "$project" ]] || scripts/ui-stress/make-vocal-fx-rpp.py > "$project" ;;
+    esac
+    out="{{OUT}}"; [[ -n "$out" ]] || out="/tmp/fts-scene-{{SCENE}}.png"
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    FTS_BENCH_MIXER="$out" FTS_BENCH_SCENE="{{SCENE}}" FTS_BENCH_SIZE="{{SIZE}}" \
+        ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN'
+
 # Prove the culling draws the same frame as drawing everything.
 #
 # The bench's headline number comes from NOT drawing what is off screen,

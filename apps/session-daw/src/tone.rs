@@ -94,6 +94,27 @@ pub struct Tone {
     /// Depth.
     pub delay: Echo,
     pub reverb: Room,
+    /// The advanced Depth units' own EQs: ahead of the effect, and
+    /// after it. Inside the one instance — a reverb return does not
+    /// carry three plugins, it carries one with an EQ at each end.
+    pub pre_eq: Vec<EqBand>,
+    pub post_eq: Vec<EqBand>,
+    /// The reverb's Decay Rate EQ: bands of decay-TIME multipliers over
+    /// frequency, drawn as gain where ±12 dB is ×0.25..×4. The plugin's
+    /// `decay_bands`, in the shape the EQ graph already draws.
+    pub decay_eq: Vec<EqBand>,
+    /// The widener: 0 is mono, 1 is as recorded, 2 is pushed past the
+    /// speakers.
+    pub wide: f32,
+    /// The pitch shifter, in semitones, and how much of it is heard.
+    pub pitch: i32,
+    pub pitch_mix: f32,
+    /// What this track is FOR, which decides its chain — see [`Role`].
+    pub role: Role,
+    /// The presets this track keeps, brighter to darker, and which of
+    /// them was loaded last. A row of chips at the top of the rack.
+    pub presets: Vec<Preset>,
+    pub preset: Option<usize>,
     /// Which of the three are switched out.
     pub bypass: Bypass,
     /// How far the EQ graph is zoomed, as an index into the plugin's
@@ -105,6 +126,111 @@ pub struct Tone {
     /// means. Per track, like everything else here: a vocal worked at
     /// ±3 and a room mic at ±18 is the normal case, not a special one.
     pub eq_range: i32,
+}
+
+/// What a track is for, which decides which units its rack shows.
+///
+/// Not every track carries every step. A lead vocal is a channel and
+/// gets the whole chain; a delay return is ONE delay — a de-esser on
+/// the way in, the delay itself, an EQ on the way out — and a reverb
+/// return is one reverb with a de-esser, an EQ at each end and its own
+/// decay-rate EQ. Decided from where the track sits (the folder it is
+/// in) and what it is called, at seed time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// An instrument or a voice: the eleven-unit chain.
+    Channel,
+    /// A folder. Its level and its mute; the processing is on what it
+    /// sums.
+    Bus,
+    /// A delay return: the advanced delay, one instance.
+    Delay,
+    /// A reverb return: the advanced reverb, one instance.
+    Reverb,
+    /// A widener.
+    Wide,
+    /// A pitch shifter.
+    Pitch,
+}
+
+impl Role {
+    /// Decide a track's role from its name, whether it is a folder,
+    /// and the names of the folders above it, nearest last.
+    #[must_use]
+    pub fn of(name: &str, is_folder: bool, ancestors: &[String]) -> Self {
+        if is_folder {
+            return Self::Bus;
+        }
+        let lower = name.to_lowercase();
+        if lower.starts_with("wide") || lower.starts_with("widen") {
+            return Self::Wide;
+        }
+        if lower.starts_with("oct") || lower.starts_with("pitch") {
+            return Self::Pitch;
+        }
+        for folder in ancestors.iter().rev() {
+            let folder = folder.to_lowercase();
+            if folder.starts_with("delay") {
+                return Self::Delay;
+            }
+            if folder.starts_with("verb") || folder.starts_with("reverb") {
+                return Self::Reverb;
+            }
+            if folder.starts_with("pitch") {
+                return Self::Pitch;
+            }
+            if folder.starts_with("wide") {
+                return Self::Wide;
+            }
+        }
+        Self::Channel
+    }
+
+    /// The chain this role shows, or `None` for the channel's own.
+    #[must_use]
+    pub const fn panels(self) -> Option<&'static [Which]> {
+        match self {
+            Self::Channel => None,
+            Self::Bus => Some(&BUS_CHAIN),
+            Self::Delay => Some(&DELAY_CHAIN),
+            Self::Reverb => Some(&REVERB_CHAIN),
+            Self::Wide => Some(&WIDE_CHAIN),
+            Self::Pitch => Some(&PITCH_CHAIN),
+        }
+    }
+}
+
+/// A delay return: the de-esser on the way in, the delay itself with
+/// its machine selector and knobs, and an EQ on the way out.
+pub const DELAY_CHAIN: [Which; 5] = [Which::Presets, Which::DeEssIn, Which::Delay, Which::Knobs, Which::PostEq];
+
+/// A reverb return: de-esser, an EQ into the space, the space with its
+/// selector and knobs, its decay-rate EQ, and an EQ out.
+pub const REVERB_CHAIN: [Which; 7] = [
+    Which::Presets,
+    Which::DeEssIn,
+    Which::PreEq,
+    Which::Reverb,
+    Which::Knobs,
+    Which::DecayEq,
+    Which::PostEq,
+];
+
+/// A bus: what it sums is processed elsewhere.
+pub const BUS_CHAIN: [Which; 2] = [Which::Eq, Which::Comp];
+
+pub const WIDE_CHAIN: [Which; 2] = [Which::Presets, Which::Wide];
+pub const PITCH_CHAIN: [Which; 2] = [Which::Presets, Which::Pitch];
+
+/// A named setting of the whole rack, kept on the track.
+///
+/// Stored as a whole `Tone` rather than a diff, so loading one is a
+/// copy and nothing is left over from the setting before it. The stored
+/// tone carries no presets of its own.
+#[derive(Clone, Debug)]
+pub struct Preset {
+    pub name: String,
+    pub tone: Box<Tone>,
 }
 
 /// The EQ graph's default zoom.
@@ -145,6 +271,9 @@ impl Tone {
             Which::RescueEq => Some(&mut self.rescue_eq),
             Which::Eq => Some(&mut self.eq),
             Which::Space => Some(&mut self.space),
+            Which::PreEq => Some(&mut self.pre_eq),
+            Which::PostEq => Some(&mut self.post_eq),
+            Which::DecayEq => Some(&mut self.decay_eq),
             _ => None,
         }
     }
@@ -157,6 +286,52 @@ impl Tone {
             Which::Comp => Some(&mut self.comp),
             _ => None,
         }
+    }
+
+    /// The chain this track shows, given the chain the window would
+    /// show a channel.
+    ///
+    /// `default` is what the phase filter and the tone toggle decided
+    /// for a channel — empty when the rack is off — so an FX return
+    /// follows those decisions and then draws its own units instead.
+    #[must_use]
+    pub fn panels<'a>(&self, default: &'a [Which]) -> &'a [Which] {
+        if default.is_empty() {
+            return default;
+        }
+        self.role.panels().unwrap_or(default)
+    }
+
+    /// The band set a panel draws, to read.
+    #[must_use]
+    pub fn bands_ref(&self, which: Which) -> &[EqBand] {
+        match which {
+            Which::RescueEq => &self.rescue_eq,
+            Which::Space => &self.space,
+            Which::PreEq => &self.pre_eq,
+            Which::PostEq => &self.post_eq,
+            Which::DecayEq => &self.decay_eq,
+            _ => &self.eq,
+        }
+    }
+
+    /// Load one of this track's presets into every setting the rack
+    /// draws, keeping the presets and the role.
+    ///
+    /// The whole visualiser follows, because the settings ARE the
+    /// picture: a preset is not a name on a chip, it is what the chain
+    /// becomes when you click it.
+    pub fn load_preset(&mut self, index: usize) {
+        let Some(preset) = self.presets.get(index) else {
+            return;
+        };
+        let loaded = (*preset.tone).clone();
+        let presets = std::mem::take(&mut self.presets);
+        let role = self.role;
+        *self = loaded;
+        self.presets = presets;
+        self.role = role;
+        self.preset = Some(index);
     }
 
     /// Which machine the saturator reads as: the quantiser if a digital
@@ -228,7 +403,7 @@ impl Tone {
     #[must_use]
     pub const fn suppressor(&mut self, which: Which) -> Option<&mut Suppress> {
         match which {
-            Which::DeEss => Some(&mut self.de_ess),
+            Which::DeEss | Which::DeEssIn => Some(&mut self.de_ess),
             Which::Resonance => Some(&mut self.resonance),
             _ => None,
         }
@@ -255,7 +430,7 @@ impl Tone {
             Which::Gate => Some((self.gate.threshold, -80.0, 0.0)),
             // A suppressor's threshold is how far ABOVE its own average
             // a peak has to stand, so its range is small and positive.
-            Which::DeEss => Some((self.de_ess.threshold, 0.0, 24.0)),
+            Which::DeEss | Which::DeEssIn => Some((self.de_ess.threshold, 0.0, 24.0)),
             Which::Resonance => Some((self.resonance.threshold, 0.0, 24.0)),
             _ => None,
         }
@@ -277,7 +452,7 @@ impl Tone {
             Which::RescueComp => self.rescue_comp.threshold = to,
             Which::Comp => self.comp.threshold = to,
             Which::Gate => self.gate.threshold = to,
-            Which::DeEss => self.de_ess.threshold = to,
+            Which::DeEss | Which::DeEssIn => self.de_ess.threshold = to,
             Which::Resonance => self.resonance.threshold = to,
             _ => {}
         }
@@ -431,6 +606,10 @@ pub struct Echo {
     pub time: f32,
     pub feedback: f32,
     pub mix: f32,
+    /// How dark the repeats are, 0 bright .. 1 dark.
+    pub tone: f32,
+    /// How wide, 0 mono .. 1 full.
+    pub width: f32,
     /// Which machine makes the repeats. Not a picture of a knob: the
     /// plugin's fourteen styles are fourteen different engines, and
     /// the strip draws the family the style belongs to the way the
@@ -445,6 +624,8 @@ impl Default for Echo {
             time: 320.0,
             feedback: 0.38,
             mix: 0.22,
+            tone: 0.4,
+            width: 0.5,
             style: DelayStyle::Tape,
         }
     }
@@ -500,6 +681,8 @@ pub struct Room {
     pub size: f32,
     /// High-frequency damping, 0..1.
     pub damping: f32,
+    /// How dense the reflections are, 0..1.
+    pub diffusion: f32,
 }
 
 impl Default for Room {
@@ -511,6 +694,7 @@ impl Default for Room {
             algorithm: AlgorithmType::Room,
             size: 0.5,
             damping: 0.3,
+            diffusion: 0.7,
         }
     }
 }
@@ -1098,6 +1282,10 @@ pub fn draw(
             container(scene, palette, font, phase, at, folded.is(phase), lit);
             continue;
         };
+        if which == Which::Presets {
+            presets(scene, palette, font, tone, at, lit);
+            continue;
+        }
         ground(scene, palette, at);
         let inner = at.inset(2.0);
         // The header is only taken at `Full`. At `Curves` the panel is
@@ -1110,15 +1298,19 @@ pub fn draw(
                 // The three EQs are one drawing over three band sets.
                 // What differs is what the bands are FOR, which is the
                 // panel's name and not its picture.
-                Which::RescueEq => {
-                    eq(scene, palette, font, tone, which, &tone.rescue_eq, &meters.spectrum, body, rack, lit);
+                Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq => {
+                    eq(scene, palette, font, tone, which, tone.bands_ref(which), &meters.spectrum, body, rack, lit, None);
                 }
-                Which::Eq => {
-                    eq(scene, palette, font, tone, which, &tone.eq, &meters.spectrum, body, rack, lit);
+                // Blue, because the vertical axis is not gain: it is
+                // how long each band rings, and a graph that looked
+                // like the EQ above it would be read as one.
+                Which::DecayEq => {
+                    eq(scene, palette, font, tone, which, &tone.decay_eq, &[], body, rack, lit, Some(DECAY_INK));
                 }
-                Which::Space => {
-                    eq(scene, palette, font, tone, which, &tone.space, &meters.spectrum, body, rack, lit);
-                }
+                Which::Knobs => knobs(scene, palette, font, tone, body, rack, lit),
+                Which::Wide => wide(scene, palette, tone, body, rack, lit),
+                Which::Pitch => pitch(scene, palette, font, tone, body, rack, lit),
+                Which::Presets => {}
                 Which::Gate => gate(scene, palette, tone.gate, body, rack, lit),
                 Which::RescueComp => {
                     comp(scene, palette, font, tone.rescue_comp, body, rack, lit);
@@ -1127,7 +1319,7 @@ pub fn draw(
                 Which::Sat => {
                     sat(scene, palette, tone, meters, display_of(body, which, rack), rack, lit);
                 }
-                Which::DeEss => {
+                Which::DeEss | Which::DeEssIn => {
                     suppress(scene, palette, which, tone.de_ess, meters, body, rack, lit);
                 }
                 Which::Resonance => {
@@ -1231,6 +1423,13 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
         height,
     };
     for which in panels.iter().copied() {
+        // The preset row is in no phase: it caps the chain, and folds
+        // with nothing.
+        if which == Which::Presets {
+            out.push((Row::Unit(which), row(y, which.natural())));
+            y += which.natural() + GAP;
+            continue;
+        }
         // A header whenever the phase changes, which is what makes the
         // chain's ORDER do the grouping: the units are already in phase
         // order, so a container is a run of them.
@@ -1325,6 +1524,28 @@ pub enum Which {
     /// as a repeat.
     Delay,
     Reverb,
+
+    // ── The advanced units' own parts ────────────────────────────────
+    /// The de-esser INSIDE an effect: the same detector as the Polish
+    /// unit, on the way into the delay or the reverb, so a return
+    /// carries one instance and not two. Lives in Depth, because the
+    /// return does.
+    DeEssIn,
+    /// The EQ into an effect — inside the one instance.
+    PreEq,
+    /// The EQ out of it.
+    PostEq,
+    /// The reverb's decay-rate EQ, drawn blue: gain here is TIME.
+    DecayEq,
+    /// A row of the effect's knobs.
+    Knobs,
+    /// The widener.
+    Wide,
+    /// The pitch shifter.
+    Pitch,
+    /// The track's presets, brighter to darker — a row of chips at the
+    /// top of the rack, in no phase.
+    Presets,
 }
 
 impl Which {
@@ -1336,11 +1557,17 @@ impl Which {
             Self::Eq => "EQ",
             Self::Comp => "COMP",
             Self::Sat => "SAT",
-            Self::DeEss => "DE-ESS",
+            Self::DeEss | Self::DeEssIn => "DE-ESS",
             Self::Resonance => "RESONANCE",
             Self::Space => "SPACE",
             Self::Delay => "DELAY",
             Self::Reverb => "REVERB",
+            Self::PreEq => "PRE EQ",
+            Self::PostEq => "POST EQ",
+            Self::DecayEq => "DECAY EQ",
+            Self::Knobs | Self::Presets => "",
+            Self::Wide => "WIDE",
+            Self::Pitch => "PITCH",
         }
     }
 
@@ -1358,7 +1585,21 @@ impl Which {
             Self::Eq | Self::Comp | Self::Sat => P::Tone,
             Self::DeEss | Self::Resonance => P::Polish,
             Self::Space => P::Relational,
-            Self::Delay | Self::Reverb => P::Depth,
+            // Every part of an FX return is Depth — the return is where
+            // a track is put, front to back — including the de-esser on
+            // its way in and the widener and the shifter.
+            Self::Delay
+            | Self::Reverb
+            | Self::DeEssIn
+            | Self::PreEq
+            | Self::PostEq
+            | Self::DecayEq
+            | Self::Knobs
+            | Self::Wide
+            | Self::Pitch => P::Depth,
+            // No phase: the row sits above the chain. `chain` never
+            // opens a container for it.
+            Self::Presets => P::Overview,
         }
     }
 
@@ -1369,7 +1610,18 @@ impl Which {
     /// the curve MEANS rather than in how it is drawn.
     #[must_use]
     pub const fn is_spectral(self) -> bool {
-        matches!(self, Self::RescueEq | Self::Eq | Self::Space | Self::DeEss | Self::Resonance)
+        matches!(
+            self,
+            Self::RescueEq
+                | Self::Eq
+                | Self::Space
+                | Self::DeEss
+                | Self::DeEssIn
+                | Self::Resonance
+                | Self::PreEq
+                | Self::PostEq
+                | Self::DecayEq
+        )
     }
 
     /// What this panel's settings come to, in one short line.
@@ -1409,6 +1661,26 @@ impl Which {
             Self::RescueEq => curve(&tone.rescue_eq),
             Self::Eq => curve(&tone.eq),
             Self::Space => curve(&tone.space),
+            Self::PreEq => curve(&tone.pre_eq),
+            Self::PostEq => curve(&tone.post_eq),
+            // Gain here is time: the deepest band, as a rate.
+            Self::DecayEq => {
+                let live = tone.decay_eq.iter().filter(|b| b.enabled && b.used).count();
+                let peak = tone
+                    .decay_eq
+                    .iter()
+                    .filter(|b| b.enabled && b.used)
+                    .map(|b| b.gain)
+                    .fold(0.0_f32, |a, g| if g.abs() > a.abs() { g } else { a });
+                if live == 0 {
+                    "flat".to_owned()
+                } else {
+                    format!("{live} · ×{:.2}", 10.0_f32.powf(peak / 20.0))
+                }
+            }
+            Self::Knobs | Self::Presets => String::new(),
+            Self::Wide => format!("{:.0}%", tone.wide * 100.0),
+            Self::Pitch => format!("{:+}st · {:.0}%", tone.pitch, tone.pitch_mix * 100.0),
             Self::Gate => format!("{:.0}dB · {:.0}", tone.gate.threshold, tone.gate.range),
             Self::RescueComp => squash(tone.rescue_comp),
             Self::Comp => squash(tone.comp),
@@ -1419,7 +1691,7 @@ impl Which {
                 let even = crate::live::ladder(&tone.sat).even_share() * 100.0;
                 format!("x{:.1} · 2nd {even:.0}%", tone.sat.drive)
             }
-            Self::DeEss => suppression(tone.de_ess),
+            Self::DeEss | Self::DeEssIn => suppression(tone.de_ess),
             Self::Resonance => suppression(tone.resonance),
             Self::Delay => {
                 let head = format!("{} · {:.0}%", millis(tone.delay.time), tone.delay.feedback * 100.0);
@@ -1480,11 +1752,20 @@ impl Which {
             // Two axes to read, and the panels where extra height buys
             // resolution rather than air: a 3 dB decision and a 12 dB
             // one have to look different.
-            Self::RescueEq | Self::Eq | Self::Space => 175.0,
+            Self::RescueEq | Self::Eq | Self::Space | Self::PreEq | Self::PostEq => 175.0,
+            // Time over frequency: the same graph, read as a rate.
+            Self::DecayEq => 150.0,
+            // A row of five knobs and their legends.
+            Self::Knobs => 52.0,
+            // A field and an interval: one figure each.
+            Self::Wide => 90.0,
+            Self::Pitch => 74.0,
+            // One row of chips.
+            Self::Presets => PRESETS_H,
             // The suppressors are a spectrum and a cut hanging off it —
             // shorter than an EQ, because there is one curve to read
             // rather than a curve against a grid of decisions.
-            Self::DeEss | Self::Resonance => 130.0,
+            Self::DeEss | Self::DeEssIn | Self::Resonance => 130.0,
             // One display, with the envelope drawn into it. Taller than
             // the saturator because the levels in it are read against a
             // threshold, and a threshold you cannot place precisely is
@@ -1687,11 +1968,18 @@ fn eq(
     at: Panel,
     rack: Rack,
     lit: Option<Grip>,
+    // A colour for the whole graph, for a graph whose vertical axis is
+    // not gain. `None` is the EQ's own look: the plugin's painter and
+    // its per-band hues.
+    tint: Option<Color>,
 ) {
     let freq = FreqAxis::audible();
     let db = DbAxis::symmetric(tone.eq_db_range());
     let right = at.x + at.width;
     let bottom = at.y + at.height;
+    if let Some(tint) = tint {
+        scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.08), None, &at.rect());
+    }
 
     // Only at Full: at Focus the plugin draws its own grid and labels,
     // calibrated for a graph you are working in rather than glancing at.
@@ -1754,21 +2042,37 @@ fn eq(
     // authored for a graph eight hundred pixels wide and this one is a
     // hundred and thirty: at that size a labelled node with a shape
     // glyph is a smudge, where a dot is a position.
-    let painted = rack.detailed() && eq_from_plugin(scene, tone, bands, spectrum, at, rack);
+    let painted = tint.is_none() && rack.detailed() && eq_from_plugin(scene, tone, bands, spectrum, at, rack);
     if !painted {
         // The fallback: the same response function the plugin's painter
-        // uses, as one polyline. What the narrow tier gets, and what a
-        // graph too small for the plugin's own drawing falls back to.
-        let points = (0..SAMPLES).map(|i| {
-            let t = crate::num::coord(i) / crate::num::coord(SAMPLES.saturating_sub(1).max(1));
-            let hz = freq.norm_to_freq(t);
-            let gain = calculate_combined_response(bands, hz, DISPLAY_RATE);
-            (
-                freq.freq_to_x(hz, at.x, right),
-                db.db_to_y(gain, at.y, bottom).clamp(at.y, bottom),
-            )
-        });
-        curve(scene, palette.accent, points, 1.5);
+        // uses, as one polyline. What the narrow tier gets, what a
+        // graph too small for the plugin's own drawing falls back to,
+        // and what a tinted graph always is.
+        let points: Vec<(f64, f64)> = (0..SAMPLES)
+            .map(|i| {
+                let t = crate::num::coord(i) / crate::num::coord(SAMPLES.saturating_sub(1).max(1));
+                let hz = freq.norm_to_freq(t);
+                let gain = calculate_combined_response(bands, hz, DISPLAY_RATE);
+                (
+                    freq.freq_to_x(hz, at.x, right),
+                    db.db_to_y(gain, at.y, bottom).clamp(at.y, bottom),
+                )
+            })
+            .collect();
+        if let Some(tint) = tint {
+            // Filled to unity, so a longer band and a shorter one read
+            // as areas above and below the line rather than as one
+            // wiggle.
+            let mut area = BezPath::new();
+            area.move_to((at.x, zero));
+            for point in points.iter().copied() {
+                area.line_to(point);
+            }
+            area.line_to((right, zero));
+            area.close_path();
+            scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(0.22), None, &area);
+        }
+        curve(scene, tint.unwrap_or(palette.accent), points.into_iter(), 1.5);
     }
 
     // The bands themselves, as handles on the curve.
@@ -1805,7 +2109,7 @@ fn eq(
         let grown = lit == Some(Grip::Band(which, index));
         let r = if grown { HANDLE + 1.6 } else { HANDLE };
         dot(scene, palette.tcp_meter_well, (x, y), r + 1.0);
-        dot(scene, band_color(f64::from(band.frequency)), (x, y), r);
+        dot(scene, tint.unwrap_or_else(|| band_color(f64::from(band.frequency))), (x, y), r);
     }
 
     // The zoom, last, so nothing draws over the one thing in the panel
@@ -1834,7 +2138,6 @@ fn ladder_step(range: f64) -> f64 {
 /// ±30. This is the label that makes the panel readable at a glance,
 /// and the control that changes it — clicked to step out, wheeled
 /// either way, double-clicked back to the default.
-#[expect(clippy::too_many_arguments, reason = "a drawing and everything it needs")]
 fn scale(
     scene: &mut Scene,
     palette: &Palette,
@@ -2346,7 +2649,7 @@ pub const fn display_of(body: Panel, which: Which, rack: Rack) -> Panel {
         return body;
     }
     let keep = match which {
-        Which::Gate | Which::DeEss => LANE + 2.0,
+        Which::Gate | Which::DeEss | Which::DeEssIn => LANE + 2.0,
         Which::Sat | Which::Delay | Which::Reverb => SELECTOR + 2.0,
         Which::Resonance => TEETH + 2.0,
         _ => 0.0,
@@ -2425,7 +2728,7 @@ fn suppress(
 
     let spectrum = &meters.spectrum;
     let reduction = match which {
-        Which::DeEss => &meters.deess_db,
+        Which::DeEss | Which::DeEssIn => &meters.deess_db,
         _ => &meters.resonance_db,
     };
     if spectrum.len() < 4 || reduction.len() != spectrum.len() {
@@ -2474,12 +2777,15 @@ fn suppress(
     // resonance panel draws it dimmer: there the spectrum is context
     // and the teeth are the subject.
     let dim = if which == Which::Resonance { 0.6 } else { 1.0 };
+    // The de-esser's is yellow — the colour of the top end it is there
+    // to take the edge off.
+    let ink = if which == Which::Resonance { palette.accent } else { DEESS_INK };
     let input: Vec<(f64, f64)> = (0..across)
         .map(|i| (x_at(i), to_y(level_at(zoom.hz_at(sample(i))))))
         .collect();
     area_under(
         scene,
-        palette.accent.multiply_alpha(crate::mcp::f64_to_f32(0.16 * dim)),
+        ink.multiply_alpha(crate::mcp::f64_to_f32(0.16 * dim)),
         &input,
         bottom,
     );
@@ -2516,7 +2822,7 @@ fn suppress(
     }
     curve(
         scene,
-        palette.accent.multiply_alpha(crate::mcp::f64_to_f32(0.7 * dim)),
+        ink.multiply_alpha(crate::mcp::f64_to_f32(0.7 * dim)),
         input.into_iter(),
         1.0,
     );
@@ -3404,6 +3710,199 @@ fn selector(
     }
 }
 
+/// The de-esser's ink: yellow — the Tone phase's own, and the colour
+/// of the top end it is there to take the edge off.
+const DEESS_INK: Color = Color::from_rgba8(0xfa, 0xcc, 0x15, 0xff);
+
+/// The decay-rate EQ's colour: blue, so a graph of time is never read
+/// as a graph of gain.
+const DECAY_INK: Color = Color::from_rgba8(0x4f, 0x8c, 0xff, 0xff);
+
+/// The preset row: one chip per preset, brighter to darker, the loaded
+/// one lit.
+///
+/// Each chip carries a swatch that runs from warm white to deep blue
+/// down the row — a template's rows run bright and close to dark and
+/// far, and the swatch says where a chip sits on that run before you
+/// read its name.
+fn presets(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Panel, lit: Option<Grip>) {
+    const SIZE: f32 = 6.5;
+    if tone.presets.is_empty() {
+        return;
+    }
+    let count = crate::num::coord(tone.presets.len().max(2).saturating_sub(1));
+    let mut left = at.x + 2.0;
+    for (i, preset) in tone.presets.iter().enumerate() {
+        let w = preset_chip_width(&preset.name);
+        if left + w > at.x + at.width {
+            break;
+        }
+        let current = tone.preset == Some(i);
+        let hovered = lit == Some(Grip::Preset(i));
+        let t = crate::num::coord(i) / count;
+        let swatch = swatch_at(t);
+        let chip = Rect::new(left, at.y + 2.0, left + w, at.y + at.height - 2.0);
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            if current {
+                palette.tcp_meter_well.multiply_alpha(1.0)
+            } else {
+                palette.tcp_meter_well.multiply_alpha(0.5)
+            },
+            None,
+            &chip.to_rounded_rect(2.0),
+        );
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            swatch,
+            None,
+            &Rect::new(left + 2.0, at.y + 4.0, left + 8.0, at.y + at.height - 4.0).to_rounded_rect(1.0),
+        );
+        let ink = if current {
+            palette.text
+        } else if hovered {
+            palette.text_dim
+        } else {
+            palette.text_faint
+        };
+        crate::tcp::glyphs(scene, font, ink, &preset.name, left + 11.0, at.y + at.height - 5.0, SIZE);
+        if current {
+            rule_wide(
+                scene,
+                swatch,
+                Line::new((left + 1.0, at.y + at.height - 1.0), (left + w - 1.0, at.y + at.height - 1.0)),
+                1.5,
+            );
+        }
+        left += w + 2.0;
+    }
+}
+
+/// Where a chip sits on the bright-to-dark run, as a colour.
+fn swatch_at(t: f64) -> Color {
+    let bright = (0xff_u8, 0xe6_u8, 0xa0_u8);
+    let dark = (0x3b_u8, 0x4a_u8, 0x8a_u8);
+    let mix = |a: u8, b: u8| {
+        let v = f64::from(a).mul_add(1.0 - t, f64::from(b) * t);
+        crate::num::index(v.round()).min(255)
+    };
+    Color::from_rgba8(
+        u8::try_from(mix(bright.0, dark.0)).unwrap_or(0),
+        u8::try_from(mix(bright.1, dark.1)).unwrap_or(0),
+        u8::try_from(mix(bright.2, dark.2)).unwrap_or(0),
+        0xff,
+    )
+}
+
+/// A row of the effect's knobs.
+///
+/// Five, evenly across, each an arc from seven o'clock to five with
+/// the travel filled in the phase's colour and a pointer on the value.
+/// Legends under them at a detailed width. What the plugin's face has
+/// under its centrepiece, at strip size.
+fn knobs(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Panel, rack: Rack, lit: Option<Grip>) {
+    const SIZE: f32 = 5.5;
+    let labels = knob_labels(tone.role);
+    let each = at.width / crate::num::coord(KNOBS);
+    let r = (each * 0.32).min(at.height * 0.32).max(4.0);
+    let tint = phase_tint(Which::Knobs.phase());
+    for (i, label) in labels.iter().enumerate() {
+        let cx = crate::num::coord(i).mul_add(each, at.x + each / 2.0);
+        let cy = at.y + r + 3.0;
+        let value = knob_value(tone, Which::Knobs, i);
+        let held = lit == Some(Grip::Knob(Which::Knobs, i));
+        knob_arc(scene, palette, (cx, cy), r, value, tint, held);
+        if rack.detailed() {
+            let w = font.width(label, SIZE);
+            crate::tcp::glyphs(scene, font, palette.text_faint, label, cx - w / 2.0, at.y + at.height - 2.0, SIZE);
+        }
+    }
+}
+
+/// One knob: its track, its travel, its pointer.
+fn knob_arc(scene: &mut Scene, palette: &Palette, centre: (f64, f64), r: f64, value: f64, tint: Color, held: bool) {
+    use std::f64::consts::PI;
+    // Seven o'clock to five o'clock, clockwise: 270 degrees of travel.
+    let start = PI * 0.75;
+    let sweep = PI * 1.5;
+    let arc = |from: f64, to: f64| vello::kurbo::Arc::new(centre, (r, r), from, to - from, 0.0);
+    scene.stroke(&Stroke::new(if held { 2.4 } else { 1.6 }), Affine::IDENTITY, palette.grid_beat, None, &arc(start, start + sweep));
+    let to = value.clamp(0.0, 1.0).mul_add(sweep, start);
+    if value > 0.005 {
+        scene.stroke(&Stroke::new(if held { 2.4 } else { 1.6 }), Affine::IDENTITY, tint, None, &arc(start, to));
+    }
+    let (px, py) = (to.cos().mul_add(r, centre.0), to.sin().mul_add(r, centre.1));
+    rule_wide(scene, if held { palette.text } else { palette.text_dim }, Line::new(centre, (px, py)), 1.2);
+}
+
+/// The widener: the stereo field as a fan, as wide as the setting.
+///
+/// A semicircle is the whole field; the filled wedge is how much of it
+/// the track occupies — a sliver for mono, the speakers at unity, and
+/// past them when pushed. The one picture of width that survives a
+/// strip.
+fn wide(scene: &mut Scene, palette: &Palette, tone: &Tone, at: Panel, rack: Rack, lit: Option<Grip>) {
+    use std::f64::consts::PI;
+    let centre = (at.x + at.width / 2.0, at.y + at.height - 4.0);
+    let r = (at.width / 2.0 - 4.0).min(at.height - 8.0).max(6.0);
+    let tint = phase_tint(Which::Wide.phase());
+    let field = vello::kurbo::Arc::new(centre, (r, r), PI, PI, 0.0);
+    scene.stroke(&Stroke::new(1.0), Affine::IDENTITY, palette.grid_beat, None, &field);
+    if rack.detailed() {
+        // The speakers, at unity.
+        for side in [-1.0_f64, 1.0] {
+            let angle = PI * side.mul_add(0.25, 0.5);
+            let (x, y) = ((-angle.cos()).mul_add(r, centre.0), (-angle.sin()).mul_add(r, centre.1));
+            rule(scene, palette.grid_beat, Line::new(centre, (x, y)));
+        }
+    }
+    // The wedge: half the field per unit of width.
+    let half = (f64::from(tone.wide).clamp(0.0, 2.0) * PI / 4.0).min(PI / 2.0);
+    let held = lit == Some(Grip::Knob(Which::Wide, 0));
+    let mut wedge = BezPath::new();
+    wedge.move_to(centre);
+    let steps = 24;
+    for k in 0..=steps {
+        let t = crate::num::coord(k) / crate::num::coord(steps);
+        let angle = (t * 2.0).mul_add(half, -PI / 2.0 - half);
+        wedge.line_to((angle.cos().mul_add(r, centre.0), angle.sin().mul_add(r, centre.1)));
+    }
+    wedge.close_path();
+    scene.fill(Fill::NonZero, Affine::IDENTITY, tint.multiply_alpha(if held { 0.55 } else { 0.35 }), None, &wedge);
+    scene.stroke(&Stroke::new(if held { 2.0 } else { 1.2 }), Affine::IDENTITY, tint, None, &wedge);
+}
+
+/// The pitch shifter: the note, and where it goes.
+///
+/// Two bars — the input at unity and the shifted copy raised or
+/// lowered by the interval — and the interval as a number, because an
+/// octave is an octave and a bar's height is not a thing anyone can
+/// read to the semitone.
+fn pitch(scene: &mut Scene, palette: &Palette, font: &Font, tone: &Tone, at: Panel, rack: Rack, lit: Option<Grip>) {
+    let tint = phase_tint(Which::Pitch.phase());
+    let floor = at.y + at.height - 2.0;
+    let mid = at.y + at.height / 2.0;
+    rule(scene, palette.grid_beat, Line::new((at.x, mid), (at.x + at.width, mid)));
+    let held = matches!(lit, Some(Grip::Knob(Which::Pitch, _)));
+    // The input.
+    let x0 = at.width.mul_add(0.3, at.x);
+    rule_wide(scene, palette.text, Line::new((x0, floor), (x0, mid)), 3.0);
+    // The shift: up for a positive interval, down for a negative one,
+    // a quarter of the panel per octave.
+    let shift = f64::from(tone.pitch) / 12.0 * at.height * 0.25;
+    let x1 = at.width.mul_add(0.6, at.x);
+    let top = (mid - shift).clamp(at.y + 2.0, floor);
+    let alpha = crate::mcp::f64_to_f32(f64::from(tone.pitch_mix).mul_add(0.7, 0.3));
+    rule_wide(scene, tint.multiply_alpha(alpha), Line::new((x1, floor), (x1, top)), if held { 4.0 } else { 3.0 });
+    rule(scene, tint.multiply_alpha(0.6), Line::new((x0, mid), (x1, top)));
+    if rack.detailed() {
+        let text = format!("{:+}", tone.pitch);
+        crate::tcp::glyphs(scene, font, palette.text, &text, x1 + 6.0, top.max(at.y + 8.0), 7.0);
+    }
+}
+
 /// A stroked glyph path, round-capped.
 fn stroke_glyph(scene: &mut Scene, ink: Color, path: &BezPath, width: f64) {
     scene.stroke(
@@ -3851,6 +4350,15 @@ pub fn placeholder(index: usize) -> Tone {
         },
         sat_profile: 0,
         sat_digital: saturate_dsp::digital::DigitalStage::new(),
+        pre_eq: Vec::new(),
+        post_eq: Vec::new(),
+        decay_eq: Vec::new(),
+        wide: 1.0,
+        pitch: 0,
+        pitch_mix: 0.5,
+        role: Role::Channel,
+        presets: Vec::new(),
+        preset: None,
         bypass: Bypass::default(),
     };
     // Each voice on its own circuit, so a mixer of racks shows the five
@@ -3859,6 +4367,175 @@ pub fn placeholder(index: usize) -> Tone {
     tone.set_sat_profile(saturate_profiles::profile_index(voice.sat_profile()).unwrap_or(0));
     tone.sat.drive = drive;
     tone
+}
+
+/// A placeholder for a track of a given role.
+///
+/// An FX return carries its presets — brighter to darker — and opens on
+/// the one its name asks for, so a "Long" verb is a long verb before
+/// anything is clicked.
+#[must_use]
+pub fn placeholder_for(role: Role, index: usize, name: &str) -> Tone {
+    let mut tone = placeholder(index);
+    tone.role = role;
+    let presets = match role {
+        Role::Reverb => reverb_presets(),
+        Role::Delay => delay_presets(),
+        Role::Wide => wide_presets(),
+        Role::Pitch => pitch_presets(),
+        Role::Channel | Role::Bus => Vec::new(),
+    };
+    if presets.is_empty() {
+        return tone;
+    }
+    // Open on the preset the track is named after, else the first.
+    let lower = name.to_lowercase();
+    let wanted = presets
+        .iter()
+        .position(|p| lower.contains(&p.name.to_lowercase()))
+        .unwrap_or(0);
+    tone.presets = presets;
+    tone.load_preset(wanted);
+    tone
+}
+
+fn preset(name: &str, mut tone: Tone) -> Preset {
+    tone.presets = Vec::new();
+    tone.preset = None;
+    Preset {
+        name: name.to_owned(),
+        tone: Box::new(tone),
+    }
+}
+
+/// A high shelf at 6 kHz, which is most of what "darker" means.
+fn shelf(gain: f64) -> EqBand {
+    band(0, 6_000.0, gain, 0.7, EqBandShape::HighShelf)
+}
+
+/// The reverb presets: brighter and shorter to darker and longer, the
+/// way a template's rows run.
+fn reverb_presets() -> Vec<Preset> {
+    let base = || {
+        let mut t = placeholder(0);
+        t.role = Role::Reverb;
+        t.pre_eq = vec![band(0, 180.0, -18.0, 0.7, EqBandShape::LowCut)];
+        t
+    };
+    let mut room = base();
+    room.reverb = Room {
+        algorithm: AlgorithmType::Room,
+        decay: 0.6,
+        predelay: 8.0,
+        damping: 0.15,
+        size: 0.35,
+        diffusion: 0.6,
+        mix: 0.2,
+    };
+    room.post_eq = vec![shelf(1.5)];
+    let mut short = base();
+    short.reverb = Room {
+        algorithm: AlgorithmType::Plate,
+        decay: 1.4,
+        predelay: 20.0,
+        damping: 0.3,
+        size: 0.5,
+        diffusion: 0.8,
+        mix: 0.2,
+    };
+    short.post_eq = vec![shelf(-1.5)];
+    let mut long = base();
+    long.reverb = Room {
+        algorithm: AlgorithmType::Hall,
+        decay: 2.6,
+        predelay: 40.0,
+        damping: 0.5,
+        size: 0.7,
+        diffusion: 0.8,
+        mix: 0.18,
+    };
+    long.post_eq = vec![shelf(-4.0)];
+    long.decay_eq = vec![band(0, 300.0, -6.0, 0.7, EqBandShape::LowShelf), band(1, 5_000.0, -6.0, 0.7, EqBandShape::HighShelf)];
+    let mut moment = base();
+    moment.reverb = Room {
+        algorithm: AlgorithmType::Cloud,
+        decay: 5.5,
+        predelay: 60.0,
+        damping: 0.65,
+        size: 0.9,
+        diffusion: 0.9,
+        mix: 0.25,
+    };
+    moment.post_eq = vec![shelf(-7.0)];
+    moment.decay_eq = vec![band(0, 250.0, -9.0, 0.7, EqBandShape::LowShelf), band(1, 4_000.0, -9.0, 0.7, EqBandShape::HighShelf)];
+    let mut throw = base();
+    throw.reverb = Room {
+        algorithm: AlgorithmType::Shimmer,
+        decay: 8.0,
+        predelay: 90.0,
+        damping: 0.7,
+        size: 1.0,
+        diffusion: 1.0,
+        mix: 0.35,
+    };
+    throw.post_eq = vec![shelf(-9.0), band(1, 2_500.0, 3.0, 1.2, EqBandShape::Bell)];
+    throw.decay_eq = vec![band(0, 2_000.0, 6.0, 1.0, EqBandShape::Bell)];
+    vec![
+        preset("Room", room),
+        preset("Short", short),
+        preset("Long", long),
+        preset("Moment", moment),
+        preset("Throw", throw),
+    ]
+}
+
+/// The delay presets, brighter and tighter to darker and wider.
+fn delay_presets() -> Vec<Preset> {
+    let base = || {
+        let mut t = placeholder(1);
+        t.role = Role::Delay;
+        t
+    };
+    let mut slap = base();
+    slap.delay = Echo { time: 95.0, feedback: 0.08, mix: 0.3, tone: 0.3, width: 0.2, style: DelayStyle::Tape };
+    slap.post_eq = vec![shelf(-1.0)];
+    let mut short = base();
+    short.delay = Echo { time: 187.0, feedback: 0.25, mix: 0.25, tone: 0.15, width: 0.5, style: DelayStyle::Clean };
+    short.post_eq = vec![band(0, 200.0, -18.0, 0.7, EqBandShape::LowCut)];
+    let mut long = base();
+    long.delay = Echo { time: 375.0, feedback: 0.42, mix: 0.22, tone: 0.55, width: 0.85, style: DelayStyle::Tape };
+    long.post_eq = vec![band(0, 250.0, -18.0, 0.7, EqBandShape::LowCut), shelf(-5.0)];
+    let mut throw = base();
+    throw.delay = Echo { time: 750.0, feedback: 0.55, mix: 0.4, tone: 0.7, width: 1.0, style: DelayStyle::Bbd };
+    throw.post_eq = vec![band(0, 400.0, -18.0, 0.7, EqBandShape::LowCut), band(1, 1_000.0, 6.0, 2.0, EqBandShape::Bell), shelf(-9.0)];
+    vec![
+        preset("Slap", slap),
+        preset("Short", short),
+        preset("Long", long),
+        preset("Throw", throw),
+    ]
+}
+
+fn wide_presets() -> Vec<Preset> {
+    let mut subtle = placeholder(2);
+    subtle.role = Role::Wide;
+    subtle.wide = 1.25;
+    let mut wide = placeholder(2);
+    wide.role = Role::Wide;
+    wide.wide = 1.7;
+    vec![preset("Subtle", subtle), preset("Wide", wide)]
+}
+
+fn pitch_presets() -> Vec<Preset> {
+    let mut up = placeholder(3);
+    up.role = Role::Pitch;
+    up.pitch = 12;
+    up.pitch_mix = 0.35;
+    let mut down = placeholder(3);
+    down.role = Role::Pitch;
+    down.pitch = -12;
+    down.pitch_mix = 0.4;
+    vec![preset("Oct+", up), preset("Oct-", down)]
 }
 
 /// What a track sounds like, as far as a placeholder can know.
@@ -4051,6 +4728,11 @@ pub enum Grip {
     /// One chip of a unit's machine selector — clicked to choose that
     /// family. A switch, like the glyph.
     Choose(Which, usize),
+    /// One of the track's presets — clicked to load it. A switch.
+    Preset(usize),
+    /// One knob of a unit's knob row (or the widener's and the pitch
+    /// shifter's single figures), dragged up and down.
+    Knob(Which, usize),
     /// A unit's machine glyph — clicked to cycle to the next style or
     /// algorithm. A switch, like a bypass: it acts on the click.
     Family(Which),
@@ -4098,7 +4780,12 @@ impl Grip {
     pub const fn is_switch(self) -> bool {
         matches!(
             self,
-            Self::Bypass(_) | Self::Scale(_) | Self::Phase(_) | Self::Family(_) | Self::Choose(..)
+            Self::Bypass(_)
+                | Self::Scale(_)
+                | Self::Phase(_)
+                | Self::Family(_)
+                | Self::Choose(..)
+                | Self::Preset(_)
         )
     }
 
@@ -4118,10 +4805,12 @@ impl Grip {
             | Self::Mix(which)
             | Self::Family(which)
             | Self::Choose(which, _)
+            | Self::Knob(which, _)
             | Self::Scale(which)
             | Self::Bypass(which) => which,
             Self::Drive | Self::Bias | Self::Tilt => Which::Sat,
             Self::Range => Which::Gate,
+            Self::Preset(_) => Which::Presets,
             Self::Time | Self::Feedback => Which::Delay,
             Self::Decay | Self::Predelay => Which::Reverb,
             // A header belongs to no unit: it caps a run of them.
@@ -4221,6 +4910,13 @@ pub fn grip_at(
         if body.width <= 0.0 || body.height <= 0.0 {
             continue;
         }
+        // The preset row has no header and no body: it is chips.
+        if which == Which::Presets {
+            if y < at.y || y >= at.y + at.height {
+                continue;
+            }
+            return preset_chip_at(tone, at, x).map(Grip::Preset);
+        }
         // The header first: it sits above the body, and a click there
         // is a bypass rather than whatever the body would have done —
         // except on the machine glyph, which cycles the machine.
@@ -4249,7 +4945,7 @@ pub fn grip_at(
             // cannot aim at, and grabbing one by accident moves a
             // setting you did not know was there.
             _ if which.is_spectral() && !rack.detailed() => {}
-            Which::RescueEq | Which::Eq | Which::Space => {
+            Which::RescueEq | Which::Eq | Which::Space | Which::PreEq | Which::PostEq | Which::DecayEq => {
                 // The zoom chip first: it is small, it sits over the
                 // graph, and a band that happened to be under it would
                 // otherwise take every click aimed at it.
@@ -4260,11 +4956,7 @@ pub fn grip_at(
                 // here: `nearest_band` already decides which of four
                 // overlapping bands you meant, and a rack that decided
                 // differently from the editor would be two EQs.
-                let bands = match which {
-                    Which::RescueEq => &tone.rescue_eq,
-                    Which::Space => &tone.space,
-                    _ => &tone.eq,
-                };
+                let bands = tone.bands_ref(which);
                 if let Some((index, _)) = interaction::nearest_band(
                     bands,
                     mapper(body, tone.eq_db_range()),
@@ -4288,7 +4980,7 @@ pub fn grip_at(
             // curves, because the curves move with the audio and a
             // grip that moved with the audio would be a grip you could
             // not aim at.
-            Which::DeEss | Which::Resonance => {
+            Which::DeEss | Which::DeEssIn | Which::Resonance => {
                 return Some(suppress_grip(tone, which, body, rack, x, y));
             }
             Which::Comp => return Some(comp_grip(tone.comp, which, body, rack, x, y)),
@@ -4296,6 +4988,14 @@ pub fn grip_at(
                 return Some(comp_grip(tone.rescue_comp, which, body, rack, x, y));
             }
             Which::Gate => return Some(gate_grip(tone.gate, body, rack, x, y)),
+            Which::Knobs => return Some(Grip::Knob(which, knob_at(body, x))),
+            Which::Wide => return Some(Grip::Knob(which, 0)),
+            // The interval on the top half, the mix on the bottom.
+            Which::Pitch => {
+                let index = usize::from(y >= body.y + body.height / 2.0);
+                return Some(Grip::Knob(which, index));
+            }
+            Which::Presets => {}
             // The ladder is the tilt; the curve's centre is the bias;
             // the rest of the curve is the drive.
             Which::Sat => {
@@ -4399,7 +5099,7 @@ fn gate_grip(gate: Gate, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
 /// What is under a point in a suppressor's panel.
 fn suppress_grip(tone: &Tone, which: Which, body: Panel, rack: Rack, x: f64, y: f64) -> Grip {
     let set = match which {
-        Which::DeEss => tone.de_ess,
+        Which::DeEss | Which::DeEssIn => tone.de_ess,
         _ => tone.resonance,
     };
     let display = display_of(body, which, rack);
@@ -4665,6 +5365,18 @@ fn wheel_more(tone: &mut Tone, grip: Grip, mods: Mods, delta_y: f64) {
                 *mix = f64_to_f32((f64::from(*mix) + step).clamp(0.0, 1.0));
             }
         }
+        // A notch of a knob is a fortieth of its travel — the
+        // compressor's law; a semitone for the pitch shifter, because
+        // an interval is an integer.
+        Grip::Knob(Which::Pitch, 0) => {
+            let step = if delta_y < 0.0 { 1 } else { -1 };
+            tone.pitch = tone.pitch.saturating_add(step).clamp(-24, 24);
+        }
+        Grip::Knob(which, index) => {
+            let step = interaction::gain_step(delta_y, mods) / 40.0;
+            let to = knob_value(tone, which, index) + step;
+            set_knob_value(tone, which, index, to);
+        }
         _ => {}
     }
 }
@@ -4755,7 +5467,7 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
         Grip::Threshold(which) => {
             let to = match which {
                 Which::Gate => Gate::default().threshold,
-                Which::DeEss => Suppress::sibilance().threshold,
+                Which::DeEss | Which::DeEssIn => Suppress::sibilance().threshold,
                 Which::Resonance => Suppress::broadband().threshold,
                 _ => Comp::default().threshold,
             };
@@ -4793,7 +5505,7 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
         Grip::Range => tone.gate.range = Gate::default().range,
         Grip::Depth(which) | Grip::Sharpness(which) | Grip::Edge(which, _) => {
             let fresh = match which {
-                Which::DeEss => Suppress::sibilance(),
+                Which::DeEss | Which::DeEssIn => Suppress::sibilance(),
                 _ => Suppress::broadband(),
             };
             if let Some(set) = tone.suppressor(which) {
@@ -4825,7 +5537,15 @@ pub fn reset(tone: &mut Tone, grip: Grip) {
         // A machine is a choice, not a value with a default to go back
         // to; and folding is not a setting on the track, so there is
         // nothing to put back — see `Fold`.
-        Grip::Family(_) | Grip::Choose(..) | Grip::Phase(_) => {}
+        Grip::Family(_) | Grip::Choose(..) | Grip::Phase(_) | Grip::Preset(_) => {}
+        // Back to what the loaded preset had, if one was loaded — a
+        // knob's default is the preset's value, not a number.
+        Grip::Knob(which, index) => {
+            if let Some(preset) = tone.preset.and_then(|i| tone.presets.get(i)) {
+                let was = knob_value(&preset.tone, which, index);
+                set_knob_value(tone, which, index, was);
+            }
+        }
     }
 }
 
@@ -4945,12 +5665,33 @@ pub fn drag(
                 set_knob(comp, grip, moved);
             }
         }
-        Grip::Hold(_) => {}
         // The floor is pulled DOWN for more, which is the direction the
         // signal goes. Against the display's own dB height, so it stays
         // under the finger — and the ratio keeps moving past the point
         // where the depth stops growing, because the depth saturates
         // and the setting does not.
+        // A switch has no drag. Dragging off one is how you change your
+        // mind about pressing it, which is the mixer's own rule — and a
+        // zoom is a switch between stops.
+        Grip::Bypass(_) | Grip::Scale(_) | Grip::Phase(_) => {}
+        Grip::Drive => {
+            // A quarter of the panel's height is the whole range, so a
+            // short drag is a real change — drive is the parameter you
+            // nudge, not the one you sweep.
+            let per_unit = body.height / 4.0;
+            let dy = dy * interaction::fine_scale(mods);
+            let moved = f64::from(tone.sat.drive) - dy / per_unit.max(f64::EPSILON);
+            tone.sat.drive = f64_to_f32(moved.clamp(0.0, 10.0));
+        }
+        _ => drag_more(tone, grip, body, rack, mods, dx, dy),
+    }
+}
+
+/// The drags the newer faces added — split from [`drag`] by size alone.
+/// Each arm states the axis its grip moves on and what a panel width or
+/// height is worth on it.
+fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, dx: f64, dy: f64) {
+    match grip {
         Grip::Ratio(which) => {
             let display = comp_split(body, rack);
             let dy = dy * interaction::fine_scale(mods);
@@ -4973,29 +5714,7 @@ pub fn drag(
                 comp.ratio = f64_to_f32(ratio.clamp(1.0, 20.0));
             }
         }
-        // A switch has no drag. Dragging off one is how you change your
-        // mind about pressing it, which is the mixer's own rule — and a
-        // zoom is a switch between stops.
-        Grip::Bypass(_) | Grip::Scale(_) | Grip::Phase(_) => {}
-        Grip::Drive => {
-            // A quarter of the panel's height is the whole range, so a
-            // short drag is a real change — drive is the parameter you
-            // nudge, not the one you sweep.
-            let per_unit = body.height / 4.0;
-            let dy = dy * interaction::fine_scale(mods);
-            let moved = f64::from(tone.sat.drive) - dy / per_unit.max(f64::EPSILON);
-            tone.sat.drive = f64_to_f32(moved.clamp(0.0, 10.0));
-        }
-        _ => drag_more(tone, grip, body, rack, mods, dx, dy),
-    }
-}
 
-/// The drags the newer faces added — split from [`drag`] by size alone.
-/// Each arm states the axis its grip moves on and what a panel width or
-/// height is worth on it.
-#[expect(clippy::too_many_arguments, reason = "a drag and everything it reads")]
-fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, dx: f64, dy: f64) {
-    match grip {
         // The bias leans the curve, so it is dragged the way the curve
         // leans: sideways, half the curve's width for the whole range.
         Grip::Bias => {
@@ -5040,7 +5759,7 @@ fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, d
         Grip::Edge(which, side) => {
             let display = display_of(body, which, rack);
             let set = match which {
-                Which::DeEss => tone.de_ess,
+                Which::DeEss | Which::DeEssIn => tone.de_ess,
                 _ => tone.resonance,
             };
             let zoom = SuppressZoom::of(set);
@@ -5091,9 +5810,109 @@ fn drag_more(tone: &mut Tone, grip: Grip, body: Panel, rack: Rack, mods: Mods, d
                 *mix = f64_to_f32((f64::from(*mix) - dy / per_unit).clamp(0.0, 1.0));
             }
         }
+        Grip::Knob(which, index) => drag_knob(tone, which, index, mods, dy),
         _ => {}
     }
 }
+
+/// A knob's drag: its whole travel is a hundred pixels, up for more.
+/// The pitch shifter's interval steps a semitone every six, because an
+/// interval is an integer.
+fn drag_knob(tone: &mut Tone, which: Which, index: usize, mods: Mods, dy: f64) {
+    let dy = dy * interaction::fine_scale(mods);
+    if which == Which::Pitch && index == 0 {
+        let steps = crate::num::quantise(-dy / 6.0, 1.0);
+        tone.pitch = tone.pitch.saturating_add(steps).clamp(-24, 24);
+        return;
+    }
+    let to = knob_value(tone, which, index) - dy / 100.0;
+    set_knob_value(tone, which, index, to);
+}
+
+/// A knob's value as a fraction of its travel — see [`knob_labels`]
+/// for which knob is which.
+#[must_use]
+pub fn knob_value(tone: &Tone, which: Which, index: usize) -> f64 {
+    match (which, tone.role, index) {
+        (Which::Knobs, Role::Reverb, 0) => f64::from(tone.reverb.size),
+        (Which::Knobs, Role::Reverb, 1) => f64::from(tone.reverb.damping),
+        (Which::Knobs, Role::Reverb, 2) => f64::from(tone.reverb.diffusion),
+        (Which::Knobs, Role::Reverb, 3) => f64::from(tone.reverb.predelay) / 250.0,
+        (Which::Knobs, Role::Reverb, _) => f64::from(tone.reverb.mix),
+        (Which::Knobs, _, 0) => log_norm(f64::from(tone.delay.time), 1.0, 2_500.0),
+        (Which::Knobs, _, 1) => f64::from(tone.delay.feedback) / 0.99,
+        (Which::Knobs, _, 2) => f64::from(tone.delay.tone),
+        (Which::Knobs, _, 3) => f64::from(tone.delay.width),
+        (Which::Knobs, _, _) => f64::from(tone.delay.mix),
+        (Which::Wide, _, _) => f64::from(tone.wide) / 2.0,
+        (Which::Pitch, _, 0) => (f64::from(tone.pitch) + 24.0) / 48.0,
+        (Which::Pitch, _, _) => f64::from(tone.pitch_mix),
+        _ => 0.0,
+    }
+}
+
+/// And setting it, clamped to the travel.
+pub fn set_knob_value(tone: &mut Tone, which: Which, index: usize, to: f64) {
+    let to = to.clamp(0.0, 1.0);
+    let f = f64_to_f32(to);
+    match (which, tone.role, index) {
+        (Which::Knobs, Role::Reverb, 0) => tone.reverb.size = f,
+        (Which::Knobs, Role::Reverb, 1) => tone.reverb.damping = f,
+        (Which::Knobs, Role::Reverb, 2) => tone.reverb.diffusion = f,
+        (Which::Knobs, Role::Reverb, 3) => tone.reverb.predelay = f64_to_f32(to * 250.0),
+        (Which::Knobs, Role::Reverb, _) => tone.reverb.mix = f,
+        (Which::Knobs, _, 0) => tone.delay.time = f64_to_f32(log_denorm(to, 1.0, 2_500.0)),
+        (Which::Knobs, _, 1) => tone.delay.feedback = f64_to_f32(to * 0.99),
+        (Which::Knobs, _, 2) => tone.delay.tone = f,
+        (Which::Knobs, _, 3) => tone.delay.width = f,
+        (Which::Knobs, _, _) => tone.delay.mix = f,
+        (Which::Wide, _, _) => tone.wide = f64_to_f32(to * 2.0),
+        (Which::Pitch, _, 0) => tone.pitch = crate::num::quantise(to.mul_add(48.0, -24.0), 1.0).clamp(-24, 24),
+        (Which::Pitch, _, _) => tone.pitch_mix = f,
+        _ => {}
+    }
+}
+
+/// What the knob row's five knobs are, for a role.
+#[must_use]
+pub const fn knob_labels(role: Role) -> [&'static str; KNOBS] {
+    match role {
+        Role::Reverb => ["SIZE", "DAMP", "DIFF", "PRE", "MIX"],
+        _ => ["TIME", "FDBK", "TONE", "WIDE", "MIX"],
+    }
+}
+
+/// How many knobs the row holds.
+pub const KNOBS: usize = 5;
+
+/// Which knob of the row a point is over.
+#[must_use]
+pub fn knob_at(body: Panel, x: f64) -> usize {
+    let each = body.width / crate::num::coord(KNOBS);
+    crate::num::index(((x - body.x) / each.max(1.0)).floor()).min(KNOBS.saturating_sub(1))
+}
+
+/// Which preset chip a point is over, if any.
+#[must_use]
+pub fn preset_chip_at(tone: &Tone, at: Panel, x: f64) -> Option<usize> {
+    let mut left = at.x + 2.0;
+    for (i, preset) in tone.presets.iter().enumerate() {
+        let w = preset_chip_width(&preset.name);
+        if x >= left && x < left + w {
+            return Some(i);
+        }
+        left += w + 2.0;
+    }
+    None
+}
+
+/// A chip's width for a name: the swatch, the text, the air.
+fn preset_chip_width(name: &str) -> f64 {
+    crate::num::coord(name.len()).mul_add(3.6, 14.0)
+}
+
+/// How tall the preset row is.
+pub const PRESETS_H: f64 = 18.0;
 
 /// The Tone settings for every track the window has opened.
 ///
@@ -5119,10 +5938,19 @@ impl Store {
     /// recording can take `&self` — a `&mut` threaded through the
     /// drawing would put a lock between the mixer and its strips.
     pub fn seed(&mut self, rows: &[(daw_proto::Track, u32)]) {
-        for (index, (track, _)) in rows.iter().enumerate() {
+        // The folders above each track, nearest last: a row's depth
+        // says how many of the folders before it still enclose it.
+        let mut folders: Vec<(u32, String)> = Vec::new();
+        for (index, (track, depth)) in rows.iter().enumerate() {
+            folders.retain(|(at, _)| *at < *depth);
+            let ancestors: Vec<String> = folders.iter().map(|(_, name)| name.clone()).collect();
+            let role = Role::of(&track.name, track.is_folder, &ancestors);
+            if track.is_folder {
+                folders.push((*depth, track.name.clone()));
+            }
             self.by_guid
                 .entry(track.guid.clone())
-                .or_insert_with(|| placeholder(index));
+                .or_insert_with(|| placeholder_for(role, index, &track.name));
         }
     }
 
@@ -6777,7 +7605,7 @@ fn lanes(
     rack: Rack,
 ) {
     for (which, at) in units(panels, panel, folded) {
-        if !matches!(which, Which::Gate | Which::DeEss) || tone.bypass.is(which) {
+        if !matches!(which, Which::Gate | Which::DeEss | Which::DeEssIn) || tone.bypass.is(which) {
             continue;
         }
         let body = body_of(at, rack);

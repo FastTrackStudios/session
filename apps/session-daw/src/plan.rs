@@ -407,3 +407,190 @@ mod row_tests {
         }
     }
 }
+
+
+// ── Scenes ────────────────────────────────────────────────────────────
+
+/// A scene: a named answer to "which tracks, how large" for one moment
+/// of a session — tracking the drums, mixing their buses, editing the
+/// vocal's returns.
+///
+/// A visual track manager, as a set of rules rather than a list of
+/// GUIDs, so the same scene means the right thing in any project that
+/// uses the template's names. Recalled from the keyboard while mixing,
+/// and rendered by the bench to a PNG so a scene can be looked at
+/// without opening anything.
+#[derive(Clone, Copy)]
+pub struct Scene {
+    pub name: &'static str,
+    pub slug: &'static str,
+    /// The size a track opens at, given its name, whether it is a
+    /// folder, and the folders above it (nearest last). A scene sizes
+    /// and never hides: hiding is the preset's job, and a scene over a
+    /// preset that hid a track would be arguing with it.
+    pub size: fn(&str, bool, &[String]) -> Size,
+}
+
+/// Every scene, in the order the number keys recall them.
+pub const SCENES: [Scene; 5] = [
+    Scene {
+        name: "Drum Tracking",
+        slug: "drum-tracking",
+        size: drum_tracking,
+    },
+    Scene {
+        name: "Drum Mixing",
+        slug: "drum-mixing",
+        size: drum_mixing,
+    },
+    Scene {
+        name: "Drum Overview",
+        slug: "drum-overview",
+        size: drum_overview,
+    },
+    Scene {
+        name: "Lead Vocal",
+        slug: "lead-vocal",
+        size: lead_vocal,
+    },
+    Scene {
+        name: "Lead Vocal FX Edit",
+        slug: "lead-vocal-fx",
+        size: lead_vocal_fx,
+    },
+];
+
+/// The scene for a slug.
+#[must_use]
+pub fn scene(slug: &str) -> Option<&'static Scene> {
+    SCENES.iter().find(|s| s.slug == slug)
+}
+
+fn is(name: &str, any: &[&str]) -> bool {
+    any.iter().any(|n| name.eq_ignore_ascii_case(n))
+}
+
+fn under(ancestors: &[String], any: &[&str]) -> bool {
+    ancestors.iter().any(|a| is(a, any))
+}
+
+/// The kit's pieces: the folders a drum mix is made on.
+const PIECES: [&str; 5] = ["Kick", "Snare", "Toms", "Cymbals", "Rooms"];
+
+/// Tracking: the microphones you are getting a sound on, and nothing
+/// else that needs reading.
+fn drum_tracking(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+    if is_folder {
+        Size::Compact
+    } else if is(name, &["In", "Out", "Top", "Bottom"]) && under(ancestors, &["Kick", "Snare"]) {
+        Size::Working
+    } else if under(ancestors, &["Drum Kit"]) {
+        Size::Minimum
+    } else {
+        Size::Compact
+    }
+}
+
+/// Mixing: the buses are the instrument; every mic is a rail.
+fn drum_mixing(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
+    if is_folder && is(name, &PIECES) {
+        Size::Working
+    } else if is_folder {
+        Size::Compact
+    } else {
+        Size::Minimum
+    }
+}
+
+/// Overview: the pieces and the overheads, and the rest present.
+fn drum_overview(name: &str, _is_folder: bool, ancestors: &[String]) -> Size {
+    if is(name, &PIECES) || is(name, &["OH"]) {
+        Size::Working
+    } else if under(ancestors, &PIECES) {
+        Size::Minimum
+    } else {
+        Size::Compact
+    }
+}
+
+/// The lead vocal open, every return present as a short rail.
+fn lead_vocal(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+    let fx = under(ancestors, &["Vox FX"]);
+    if is_folder {
+        Size::Compact
+    } else if fx {
+        Size::Minimum
+    } else if name.to_lowercase().contains("lead") || under(ancestors, &["Vox Lead"]) {
+        Size::Working
+    } else {
+        Size::Compact
+    }
+}
+
+/// Editing the returns: one delay and one verb in focus, the others
+/// legible, every folder a rail.
+fn lead_vocal_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
+    let fx = under(ancestors, &["Vox FX"]);
+    if is_folder {
+        Size::Minimum
+    } else if fx && ((is(name, &["Short"]) && under(ancestors, &["Delay"])) || (is(name, &["Long"]) && under(ancestors, &["Verb"]))) {
+        Size::Focus
+    } else if fx {
+        Size::Compact
+    } else {
+        Size::Working
+    }
+}
+
+/// Apply a scene to a track list — the same contract as [`apply`].
+#[must_use]
+pub fn apply_scene(
+    tracks: &[(Track, u32)],
+    scene: &Scene,
+    settings: crate::settings::Settings,
+    panel: f64,
+) -> Vec<(Track, u32)> {
+    let mut folders: Vec<(u32, String)> = Vec::new();
+    let mut out = Vec::with_capacity(tracks.len());
+    for (track, depth) in tracks {
+        folders.retain(|(at, _)| *at < *depth);
+        let ancestors: Vec<String> = folders.iter().map(|(_, n)| n.clone()).collect();
+        if track.is_folder {
+            folders.push((*depth, track.name.clone()));
+        }
+        let size = (scene.size)(&track.name, track.is_folder, &ancestors);
+        let mut track = track.clone();
+        track.width = Some(pixels(mixer_width(size, settings, panel)));
+        // A focused strip is the selected one: that is what the mixer
+        // opens to the focus width and reads the rack of.
+        track.selected = size == Size::Focus;
+        out.push((track, *depth));
+    }
+    out
+}
+
+#[cfg(test)]
+mod scene_tests {
+    use super::{Size, scene};
+
+    #[test]
+    fn the_fx_edit_scene_focuses_one_delay_and_one_verb() {
+        let s = scene("lead-vocal-fx").expect("the scene");
+        let delay: Vec<String> = ["Vox Lead", "Vox FX", "Delay"].iter().map(|s| (*s).to_owned()).collect();
+        let verb: Vec<String> = ["Vox Lead", "Vox FX", "Verb"].iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!((s.size)("Short", false, &delay), Size::Focus);
+        assert_eq!((s.size)("Long", false, &verb), Size::Focus);
+        assert_eq!((s.size)("Short", false, &verb), Size::Compact);
+        assert_eq!((s.size)("Delay", true, &delay[..2]), Size::Minimum);
+        assert_eq!((s.size)("Lead Vox", false, &delay[..1]), Size::Working);
+    }
+
+    #[test]
+    fn the_drum_scenes_disagree_about_the_mics() {
+        let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"].iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!((scene("drum-tracking").unwrap().size)("In", false, &kick), Size::Working);
+        assert_eq!((scene("drum-mixing").unwrap().size)("In", false, &kick), Size::Minimum);
+        assert_eq!((scene("drum-mixing").unwrap().size)("Kick", true, &kick[..1]), Size::Working);
+        assert_eq!((scene("drum-overview").unwrap().size)("OH", false, &["Drum Kit".to_owned(), "Cymbals".to_owned()]), Size::Working);
+    }
+}
