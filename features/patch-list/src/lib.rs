@@ -8,7 +8,9 @@
 pub mod discover;
 pub mod list;
 pub mod profile;
+pub mod validate;
 
 pub use discover::{Studios, find_album};
 pub use list::{Bus, Entry, Lowered, PatchList, Performer, Rig};
 pub use profile::{Resolved, StudioProfile};
+pub use validate::{Error, Plan, Planned, PlannedBus, validate};
