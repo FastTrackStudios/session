@@ -44,10 +44,6 @@ const SPREAD: f64 = 4.0;
 /// without touching.
 const MONITOR_TUCK: f64 = 3.0;
 
-/// The coloured band on a rail: a rule of the track's colour where a
-/// wider strip has the pan and the record input.
-pub const RAIL_BAND: f64 = 8.0;
-
 /// The side of the panel's bare record-arm ring — what a rail draws in
 /// place of the housed arm (`art::Arm::Panel` is 20x20).
 const ARM_RING: f64 = 20.0;
@@ -205,13 +201,9 @@ impl Strip {
     /// Its bottom — what the record arm hangs from.
     #[must_use]
     pub fn band_bottom(&self) -> f64 {
-        // A rail has no pan and no record input, so the band that
-        // holds them is a rule of the track's colour and no more —
-        // and the height it gives up is fader travel, which is what
-        // a rail is for.
-        if !self.squeeze.head() {
-            return self.band_top() + RAIL_BAND;
-        }
+        // One height on every strip, rail included: the band is the
+        // line the mixer is read across, and a rail whose band was a
+        // rule put its arm and its mute on a line of their own.
         self.band_top() + f64::from(self.shared.pan_band) + f64::from(self.shared.input_band)
     }
 
@@ -278,10 +270,10 @@ impl Strip {
     /// so the buttons sit a little lower and a little further apart.
     fn column_step(&self, control: Control) -> f64 {
         // Everywhere but the head tier: a wide strip has the column
-        // beside the fader, and a rail has the band's height back
-        // (see `band_bottom`) — more than the spread costs. The head
-        // tier keeps its band for the pan and its buttons over the
-        // fader, so it keeps REAPER's pitch.
+        // beside the fader, and a rail has the strip's taller share
+        // (see `mcp::CONTROL_SHARE`) to spend on it. The head tier
+        // keeps its pan in the band and its buttons over the fader,
+        // so it keeps REAPER's pitch.
         let spread = if self.squeeze.columns() || !self.squeeze.head() { SPREAD } else { 0.0 };
         let mute = f64::from(g::RECMON_FROM_ARM) + spread;
         let solo = mute + f64::from(g::SOLO_FROM_MUTE) + spread;
@@ -620,12 +612,10 @@ mod tests {
         assert!(arm.x0 >= 0.0 && arm.x1 <= 30.0);
         assert!((arm.center().x - monitor.center().x).abs() < 1.0);
         assert!(rail.fader_top() >= rail.rect(Control::Solo).expect("solo").y1);
-        // The rail's band is a rule, and the fader has the rest: its
-        // top is higher than a wide strip's even with the column
-        // spread under the ring.
-        assert!((rail.band_bottom() - rail.band_top() - RAIL_BAND).abs() < f64::EPSILON);
+        // The rail's band is the strip's band: one line across the
+        // mixer whatever the width.
         let full = Strip::new(86.0, 1440.0, 1440.0, 0.0, 1000.0);
-        assert!(rail.fader_top() < full.fader_top() + f64::from(g::BUTTON_H) * 2.0);
+        assert!((rail.band_bottom() - full.band_bottom()).abs() < f64::EPSILON);
 
         let full = Strip::new(86.0, 1440.0, 1440.0, 0.0, 1000.0);
         assert_eq!(full.arm(), art::Arm::Mixer);

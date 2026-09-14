@@ -609,11 +609,13 @@ struct Slot {
 
 /// How much of the panel the REAPER strip keeps, with the rack on.
 ///
-/// About a third, off the bottom. The rack gets the other two thirds to
-/// lay its panels out in, and leaves whatever it does not need — that
-/// space belongs to the processors the other phases bring, and holding
-/// it open is what keeps the fader still when the phase changes.
-const CONTROL_SHARE: f64 = 0.34;
+/// Two fifths, off the bottom. The rack gets the rest to lay its
+/// panels out in, and leaves whatever it does not need — that space
+/// belongs to the processors the other phases bring, and holding it
+/// open is what keeps the fader still when the phase changes. It was
+/// a third; the rack scrolls, the fader does not, and a tall window
+/// was spending its height on the part that had somewhere else to go.
+const CONTROL_SHARE: f64 = 0.40;
 
 /// The least the strip may be squeezed to.
 ///
@@ -1024,17 +1026,10 @@ fn tinted_band(
     let Slot { x, width: w, .. } = slot;
     let (band_top, pan_band, input_band) = bands;
     let squeeze = Squeeze::at(w);
-    // The same band `Strip::band_bottom` measures: a rule on a rail,
-    // the pan and input sections where there is a pan.
-    let band_h = if squeeze.head() {
-        pan_band + input_band
-    } else {
-        crate::strip::RAIL_BAND
-    };
     fill(
         scene,
         crate::tcp::row_tint(palette, track),
-        Rect::new(x, band_top, x + w, band_top + band_h),
+        Rect::new(x, band_top, x + w, band_top + pan_band + input_band),
     );
     // Pan moves into the input area when its own section is gone, which
     // is `Collapse`'s call rather than a height comparison here.
