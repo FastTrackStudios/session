@@ -520,7 +520,10 @@ fn lead_vocal(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
         Size::Compact
     } else if fx {
         Size::Minimum
-    } else if name.to_lowercase().contains("lead") || under(ancestors, &["Vox Lead"]) {
+    } else if name.to_lowercase().contains("lead") {
+        // The subject of the scene: its whole chain, top to bottom.
+        Size::Focus
+    } else if under(ancestors, &["Vox Lead"]) {
         Size::Working
     } else {
         Size::Compact
@@ -537,6 +540,10 @@ fn lead_vocal_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
         Size::Focus
     } else if fx {
         Size::Compact
+    } else if name.to_lowercase().contains("lead") {
+        // The lead beside its returns, so the chain being fed and the
+        // instances feeding it are all open at once.
+        Size::Focus
     } else {
         Size::Working
     }
@@ -582,7 +589,8 @@ mod scene_tests {
         assert_eq!((s.size)("Long", false, &verb), Size::Focus);
         assert_eq!((s.size)("Short", false, &verb), Size::Compact);
         assert_eq!((s.size)("Delay", true, &delay[..2]), Size::Minimum);
-        assert_eq!((s.size)("Lead Vox", false, &delay[..1]), Size::Working);
+        assert_eq!((s.size)("Lead Vox", false, &delay[..1]), Size::Focus);
+        assert_eq!((s.size)("Vox Dbl", false, &delay[..1]), Size::Working);
     }
 
     #[test]
