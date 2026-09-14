@@ -1281,12 +1281,12 @@ pub enum Row {
 
 /// The phases a rack is divided into, in signal order.
 ///
-/// Every rack has all five, whatever its chain: a phase with no units
-/// is a [`Row::Blank`] bar the height of a header. That is what keeps
-/// a bus's Tone level with a channel's, and a return's Depth level
-/// with a channel's once its phases are folded — a rack that only had
-/// the phases it used put every unit at a different height on every
-/// strip.
+/// Every rack that starts where a channel's does has all five: a
+/// phase with no units is a [`Row::Blank`] bar the height of a header,
+/// which is what keeps a bus's Tone level with a channel's — a rack
+/// that only had the phases it used put every unit at a different
+/// height on every strip. A chain that is only the late phases (a
+/// return) has nothing to line up with and gets only what it has.
 pub const RACK_PHASES: [session::mix_phases::MixPhase; 5] = [
     session::mix_phases::MixPhase::Rescue,
     session::mix_phases::MixPhase::Tone,
@@ -1576,11 +1576,18 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
         out.push((Row::Unit(which), row(y, which.natural())));
         y += which.natural() + GAP;
     }
-    // Every phase in order, present or not. A phase with units gets a
-    // header and the units under it — the chain's ORDER does the
-    // grouping, so a container is a run of them — and a phase without
-    // gets a blank bar the same height, so what follows it sits where
-    // it sits on a strip that has the phase.
+    // Every phase in order. A phase with units gets a header and the
+    // units under it — the chain's ORDER does the grouping, so a
+    // container is a run of them. On a chain that starts where a
+    // channel's does, a phase without units gets a blank bar the same
+    // height, so what follows it sits where it sits on a strip that
+    // has the phase. A chain that is only the late phases — a return,
+    // which is nothing but Depth — has no channel to line up with,
+    // and four bars of nothing over it would say it was missing
+    // something it was never going to have.
+    let level = panels
+        .iter()
+        .any(|which| matches!(which.phase(), session::mix_phases::MixPhase::Rescue | session::mix_phases::MixPhase::Tone));
     for phase in RACK_PHASES {
         let mut units = panels
             .iter()
@@ -1588,8 +1595,10 @@ pub fn chain(panels: &[Which], panel: Panel, folded: Folded) -> Vec<(Row, Panel)
             .filter(|which| *which != Which::Presets && which.phase() == phase)
             .peekable();
         if units.peek().is_none() {
-            out.push((Row::Blank(phase), row(y, HEAD_H)));
-            y += HEAD_H;
+            if level {
+                out.push((Row::Blank(phase), row(y, HEAD_H)));
+                y += HEAD_H;
+            }
             continue;
         }
         out.push((Row::Head(phase), row(y, HEAD_H)));
@@ -6881,6 +6890,11 @@ mod container_tests {
         let bars = bus.iter().filter(|(row, _)| matches!(row, Row::Head(_) | Row::Blank(_))).count();
         assert_eq!(bars, super::RACK_PHASES.len());
         assert!(chain(&[], box_at(), Folded::rest()).is_empty());
+        // A return is only Depth, and gets only Depth: no bars for the
+        // phases a channel has and it never will.
+        let delay = chain(&super::DELAY_CHAIN, box_at(), Folded::rest());
+        assert!(!delay.iter().any(|(row, _)| matches!(row, Row::Blank(_))));
+        assert_eq!(delay.iter().filter(|(row, _)| matches!(row, Row::Head(_))).count(), 1);
     }
 
     /// Folding a phase takes its units out of the column and leaves its
