@@ -848,6 +848,24 @@ fn shot(
                 rail_y + RULER_H,
                 rail_y + view.height,
             );
+            // The scrollbars, as the window draws them: the shot is
+            // compared to the screen.
+            let lanes = vello::kurbo::Rect::new(
+                rail_x + TCP_WIDTH,
+                rail_y + RULER_H,
+                rail_x + view.width,
+                rail_y + view.height,
+            );
+            let spans = (
+                (scene.length_secs * view.pps - (view.width - TCP_WIDTH)).max(1.0),
+                (scene.content_height() - (view.height - RULER_H)).max(1.0),
+            );
+            session_daw::scrollbar::draw(
+                painter,
+                palette,
+                session_daw::scrollbar::bars(lanes, (scroll_x, scroll_y), spans),
+                None,
+            );
             // The arrangement's left rail carries the same visual
             // presets the mixer's does — they are layouts of the
             // SESSION, not of one panel, so switching one switches

@@ -35,6 +35,7 @@ pub mod rails;
 pub mod rename;
 pub mod row;
 pub mod ruler;
+pub mod scrollbar;
 pub mod settings;
 pub mod simulate;
 pub mod strip;

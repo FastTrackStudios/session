@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use anyrender::{PaintScene, WindowRenderer};
 use anyrender_vello::VelloWindowRenderer;
-use vello::kurbo::Affine;
+use vello::kurbo::{Affine, Rect};
 use winit::application::ApplicationHandler;
 use winit::event::{MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -158,6 +158,12 @@ struct App {
     hovered_item: Option<usize>,
     /// The keys held, for the mouse map.
     keys: session_daw::mousemap::Mods,
+    /// A scrollbar thumb being dragged: which bar, and where on the
+    /// thumb it was taken.
+    bar_drag: Option<(session_daw::scrollbar::Axis, f64)>,
+    /// Whether the view turns the page to follow the playhead. A
+    /// setting: `FTS_FOLLOW=off` opens with it off; `f` toggles it.
+    follow: bool,
     /// The panel control the pointer went down on.
     pressed_row: Option<(usize, session_daw::row::Control)>,
     /// The rail button the pointer is over.
@@ -373,6 +379,13 @@ impl ApplicationHandler for App {
                     self.redraw();
                     return;
                 }
+                // `f` follows the playhead, or stops following it.
+                if event.logical_key.to_text() == Some("f") {
+                    self.follow = !self.follow;
+                    tracing::info!(ui.follow = self.follow, "follow playhead");
+                    self.redraw();
+                    return;
+                }
                 if event.logical_key == Key::Named(NamedKey::Home) {
                     session_daw::engine::transport(session_daw::engine::Move::Home, 0.0);
                     self.playhead.report(0.0, 1.0, std::time::Instant::now());
@@ -501,6 +514,22 @@ impl ApplicationHandler for App {
                 // the fade-in is as long as the pointer is past the
                 // item's start, the fade-out as long as it is short of
                 // its end, either clamped to the item.
+                if let Some((axis, _)) = self.bar_drag {
+                    let (dx, dy) = (position.x - last.0, position.y - last.1);
+                    if let Some(bars) = self.scrollbars() {
+                        let (bar, along) = match axis {
+                            session_daw::scrollbar::Axis::X => (bars.0, dx),
+                            session_daw::scrollbar::Axis::Y => (bars.1, dy),
+                        };
+                        let by = bar.scroll_per_thumb(along);
+                        match axis {
+                            session_daw::scrollbar::Axis::X => self.scroll_to(self.scroll_x + by, self.scroll_y),
+                            session_daw::scrollbar::Axis::Y => self.scroll_to(self.scroll_x, self.scroll_y + by),
+                        }
+                    }
+                    self.redraw();
+                    return;
+                }
                 let at_time = self.ruler_time_unclamped(position.x);
                 if let Some(drag) = self.fade_drag.as_mut()
                     && let Some(at) = at_time
@@ -615,6 +644,14 @@ impl ApplicationHandler for App {
                         self.redraw();
                         return;
                     }
+                    // The scrollbars are drawn over the lanes, so they
+                    // are pressed before them: a thumb is taken hold
+                    // of, the track beside it turns a page.
+                    if let Some(action) = self.press_scrollbar(x, y) {
+                        self.bar_drag = action;
+                        self.redraw();
+                        return;
+                    }
                     // What the press landed on in the lanes, through the
                     // mouse map: a fade handle takes hold of the fade;
                     // the empty area is the ruler's twin.
@@ -724,6 +761,10 @@ impl ApplicationHandler for App {
                         self.gestures.press(hit, x, y);
                     }
                 } else {
+                    if self.bar_drag.take().is_some() {
+                        self.redraw();
+                        return;
+                    }
                     if let Some(drag) = self.fade_drag.take() {
                         self.commit_fade(drag);
                         return;
@@ -1246,6 +1287,90 @@ impl App {
     fn hit_at(&self, x: f64, y: f64) -> Option<session_daw::hit::Hit> {
         let mixer = self.mixer.as_ref()?;
         Some(session_daw::hit::mixer(mixer, self.mixer_scroll, x, y))
+    }
+
+    /// The box the lanes are drawn in: under the ruler, right of the
+    /// panel, inside the rails.
+    fn lanes_box(&self) -> Rect {
+        let (width, height) = self.surface_size;
+        let frame = session_daw::rails::Frame::new(width, height);
+        let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
+        Rect::new(
+            rail.0 + TCP_WIDTH,
+            rail.1 + RULER_H,
+            rail.0 + frame.content_width(),
+            rail.1 + frame.content_height(),
+        )
+    }
+
+    /// The arrangement's two scrollbars, for this frame's scroll.
+    fn scrollbars(&self) -> Option<(session_daw::scrollbar::Bar, session_daw::scrollbar::Bar)> {
+        if self.view != View::Arrangement || self.scene.is_none() {
+            return None;
+        }
+        Some(session_daw::scrollbar::bars(self.lanes_box(), (self.scroll_x, self.scroll_y), self.spans()))
+    }
+
+    /// A press on a scrollbar: the thumb taken (returned as the drag to
+    /// hold), or a page turned and nothing held. `None` if the press
+    /// was not on a bar.
+    fn press_scrollbar(&mut self, x: f64, y: f64) -> Option<Option<(session_daw::scrollbar::Axis, f64)>> {
+        use session_daw::scrollbar::{Axis, Press};
+        let bars = self.scrollbars()?;
+        for bar in [bars.0, bars.1] {
+            match bar.press(x, y) {
+                Press::Miss => {}
+                Press::Thumb => return Some(Some((bar.axis, 0.0))),
+                Press::PageBack | Press::PageForward => {
+                    let by = if bar.press(x, y) == Press::PageBack { -bar.page() } else { bar.page() };
+                    match bar.axis {
+                        Axis::X => self.scroll_to(self.scroll_x + by, self.scroll_y),
+                        Axis::Y => self.scroll_to(self.scroll_x, self.scroll_y + by),
+                    }
+                    return Some(None);
+                }
+            }
+        }
+        None
+    }
+
+    /// What moves the view before a frame is drawn: a drag held at the
+    /// edge of the lanes scrolls under it, and a playing transport
+    /// turns the page when the playhead leaves the view.
+    fn before_arrange_frame(&mut self) {
+        let lanes = self.lanes_box();
+        let dragging = self.fade_drag.is_some() || self.dragging_time.is_some();
+        if dragging {
+            let (dx, dy) = session_daw::scrollbar::autoscroll(lanes, self.cursor.0, self.cursor.1);
+            if dx != 0.0 || dy != 0.0 {
+                self.scroll_to(self.scroll_x + dx, self.scroll_y + dy);
+                // The thing being dragged follows the pointer, which
+                // is now over a different time than a frame ago.
+                let at = self.ruler_time_unclamped(self.cursor.0);
+                if let Some(from) = self.dragging_time
+                    && let Some(to) = at
+                {
+                    self.edit.drag(from, to);
+                }
+                if let Some(drag) = self.fade_drag.as_mut()
+                    && let Some(at) = at
+                {
+                    let span = (drag.x1 - drag.x0).max(0.0);
+                    match drag.zone {
+                        session_daw::arrangement::ItemZone::FadeIn => drag.fades.fade_in = (at - drag.x0).clamp(0.0, span),
+                        session_daw::arrangement::ItemZone::FadeOut => drag.fades.fade_out = (drag.x1 - at).clamp(0.0, span),
+                        _ => {}
+                    }
+                }
+            }
+            return;
+        }
+        if self.follow && self.playhead.playing() && self.bar_drag.is_none() {
+            let play_x = self.playhead.at_time(std::time::Instant::now()) * self.pps;
+            if let Some(to) = session_daw::scrollbar::follow(self.scroll_x, lanes.width(), play_x) {
+                self.scroll_to(to, self.scroll_y);
+            }
+        }
     }
 
     /// What the pointer is over in the arrangement, if that is the view.
@@ -2191,6 +2316,15 @@ impl App {
             self.redraw_mixer();
             return;
         }
+        if self.scene.is_none() {
+            return;
+        }
+        // What moves the view before the frame — the edge autoscroll,
+        // the playhead's page turn — goes first, so the scroll the
+        // frame reads is the one it draws.
+        self.before_arrange_frame();
+        let scroll_bars = self.scrollbars();
+        let bar_held = self.bar_drag.map(|(axis, _)| axis);
         let Some(scene) = &self.scene else { return };
         let (sx, sy, pps) = (self.scroll_x, self.scroll_y, self.pps);
         let (width, surface_h) = self.surface_size;
@@ -2369,6 +2503,10 @@ impl App {
                 bottom,
                 rail.0 + TCP_WIDTH,
             );
+            // The scrollbars, over the lanes and under the rails.
+            if let Some(pair) = scroll_bars {
+                session_daw::scrollbar::draw(painter, &palette, pair, bar_held);
+            }
             // The rails over everything that scrolled under them, and
             // the mode selector in the corner the ruler leaves.
             session_daw::rails::draw(
@@ -2524,6 +2662,8 @@ fn main() {
         fade_drag: None,
         hovered_item: None,
         keys: session_daw::mousemap::Mods::default(),
+        bar_drag: None,
+        follow: !std::env::var("FTS_FOLLOW").is_ok_and(|v| matches!(v.trim(), "off" | "0" | "false")),
         pressed_row: None,
         hovered_rail: None,
         pressed_rail: None,
