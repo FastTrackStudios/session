@@ -179,6 +179,7 @@ pub fn control(
                         monitoring(track),
                         monitor_lit(palette, monitoring(track)),
                         state,
+                        art::Facing::Up,
                     ),
                     font,
                     x,
@@ -823,9 +824,11 @@ fn draw_strip_controls(
         );
     }
 
-    // Input monitoring, directly under the arm — REAPER stacks the two
-    // because they are one decision made twice: what the track records,
-    // and whether you hear it while it does.
+    // Input monitoring, directly OVER the arm, in the band — the two
+    // are one decision made twice, what the track records and whether
+    // you hear it while it does, so they stack; and over rather than
+    // under so the column below the arm is mute, solo, routing with
+    // no gap where a lamp is not lit.
     //
     // Only on an armed track: monitoring is a fact about recording,
     // and a lamp for it on a track that is not recording is a lamp
@@ -838,6 +841,7 @@ fn draw_strip_controls(
                 monitoring(track),
                 monitor_lit(palette, monitoring(track)),
                 state(Control::Monitor),
+                art::Facing::Up,
             ),
             font,
             x,

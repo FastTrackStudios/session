@@ -39,6 +39,11 @@ const PAN_FROM_EDGE: f64 = 5.0;
 /// the routing by four.
 const SPREAD: f64 = 4.0;
 
+/// How far the monitor's cell reaches down into the arm's: the ring
+/// starts five pixels into its cell, so the lamp sits close over it
+/// without touching.
+const MONITOR_TUCK: f64 = 3.0;
+
 /// The coloured band on a rail: a rule of the track's colour where a
 /// wider strip has the pan and the record input.
 pub const RAIL_BAND: f64 = 8.0;
@@ -252,8 +257,7 @@ impl Strip {
     /// How far down the button column a control sits, from the arm.
     ///
     /// REAPER states this as a chain of offsets rather than a pitch,
-    /// and the steps are deliberately unequal — 19 against a 20-tall
-    /// button is a one-row overlap:
+    /// and the steps are deliberately unequal:
     ///
     /// ```text
     /// recmon  = recarm + 20
@@ -262,10 +266,11 @@ impl Strip {
     /// io      = solo   + 23
     /// ```
     ///
-    /// Walked here rather than multiplied out, because a pitch computed
-    /// from a row index is a number nobody measured — and the one we
-    /// had put MUTE where the monitor belongs, which is why the monitor
-    /// had nowhere to go until now.
+    /// Our monitor is over the arm rather than under it (see
+    /// [`Control::Monitor`] in [`Strip::rect`]), so the mute takes the
+    /// monitor's step and the rest follow: the column under the arm
+    /// is mute, solo, routing, with nothing in it that is sometimes
+    /// not there.
     ///
     /// Plus [`SPREAD`] at every step: REAPER's chain packs the column
     /// into the top of a strip whose fader wants the height, and ours
@@ -278,11 +283,9 @@ impl Strip {
         // tier keeps its band for the pan and its buttons over the
         // fader, so it keeps REAPER's pitch.
         let spread = if self.squeeze.columns() || !self.squeeze.head() { SPREAD } else { 0.0 };
-        let monitor = f64::from(g::RECMON_FROM_ARM) + spread;
-        let mute = monitor + f64::from(g::MUTE_FROM_RECMON) + spread;
+        let mute = f64::from(g::RECMON_FROM_ARM) + spread;
         let solo = mute + f64::from(g::SOLO_FROM_MUTE) + spread;
         match control {
-            Control::Monitor => monitor,
             Control::Mute => mute,
             Control::Solo => solo,
             _ => solo + f64::from(g::IO_FROM_SOLO) + spread,
@@ -432,7 +435,20 @@ impl Strip {
                     Rect::new(x, y, x + ARM_RING, y + ARM_RING)
                 })
             }
-            Control::Monitor | Control::Mute | Control::Solo | Control::Routing => {
+            // Over the arm, tucked into the band beside the pan — a
+            // lamp about recording, next to the ring that starts it.
+            // Only where there is a band to sit in: a rail's band is a
+            // rule, and a rail is read for its level, not its input.
+            Control::Monitor => self.squeeze.columns().then(|| {
+                let y = self.arm_top() + MONITOR_TUCK - f64::from(g::BUTTON_H);
+                Rect::new(
+                    self.columns.column_x,
+                    y,
+                    self.columns.column_x + f64::from(g::BUTTON_W),
+                    y + f64::from(g::BUTTON_H),
+                )
+            }),
+            Control::Mute | Control::Solo | Control::Routing => {
                 if !self.squeeze.columns() && control == Control::Routing {
                     return None;
                 }
@@ -590,13 +606,15 @@ mod tests {
     }
 
     /// A rail keeps its record arm: the bare ring, first in the stack
-    /// the monitor hangs from, clear of the band and of both edges.
+    /// the mute hangs from, clear of the band and of both edges — and
+    /// no monitor, which lives in a band the rail does not have.
     #[test]
-    fn rail_stacks_the_arm_over_the_monitor() {
+    fn rail_stacks_the_arm_over_the_mute() {
         let rail = Strip::new(30.0, 1440.0, 1440.0, 0.0, 1000.0);
         assert_eq!(rail.arm(), art::Arm::Panel);
         let arm = rail.rect(Control::RecArm).expect("a 30-px rail has room for the ring");
-        let monitor = rail.rect(Control::Monitor).expect("the monitor");
+        assert!(rail.rect(Control::Monitor).is_none());
+        let monitor = rail.rect(Control::Mute).expect("the mute");
         assert!(arm.y0 >= rail.band_bottom());
         assert!(arm.y1 <= monitor.y0);
         assert!(arm.x0 >= 0.0 && arm.x1 <= 30.0);
@@ -611,6 +629,20 @@ mod tests {
 
         let full = Strip::new(86.0, 1440.0, 1440.0, 0.0, 1000.0);
         assert_eq!(full.arm(), art::Arm::Mixer);
+    }
+
+    /// On a strip with a band, the monitor sits in it, over the arm
+    /// and on the column's axis, and the mute follows the arm directly.
+    #[test]
+    fn the_monitor_sits_in_the_band_over_the_arm() {
+        let full = strip();
+        let monitor = full.rect(Control::Monitor).expect("the monitor");
+        let arm = full.rect(Control::RecArm).expect("the arm");
+        let mute = full.rect(Control::Mute).expect("the mute");
+        assert!(monitor.y0 >= full.band_top());
+        assert!(monitor.y1 <= arm.y0 + MONITOR_TUCK + f64::EPSILON);
+        assert!((monitor.center().x - mute.center().x).abs() < f64::EPSILON);
+        assert!((mute.y0 - arm.y0 - f64::from(g::RECMON_FROM_ARM) - SPREAD).abs() < f64::EPSILON);
     }
 
     /// The top sections do NOT move with the strip's own height —

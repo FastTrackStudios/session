@@ -1295,8 +1295,15 @@ pub mod tcp {
     /// "sometimes" has to look like neither of the other two or it is
     /// just a dimmer ON.
     #[must_use]
-    pub fn monitor(chrome: &Chrome, mode: Monitoring, lit: Color, at: Interaction) -> Drawing {
+    pub fn monitor(chrome: &Chrome, mode: Monitoring, lit: Color, at: Interaction, facing: Facing) -> Drawing {
         let (w, h) = (21.0_f64, 20.0_f64);
+        // Mirrored top to bottom when the glyph sits OVER the arm: the
+        // arcs open towards the ring they belong to, so the two read
+        // as one control however they are stacked.
+        let flip = |y: f64| match facing {
+            Facing::Down => y,
+            Facing::Up => h - y,
+        };
         // No plate: REAPER's monitor is a bare glyph on the strip,
         // unlike the mute and solo it sits above. That is not an
         // oversight in the theme — the buttons are things you press and
@@ -1314,7 +1321,7 @@ pub mod tcp {
         // The dome, then two arcs widening under it. Measured off the
         // cell as proportions so the glyph survives a different size.
         drawing.fill(
-            Shape::Ellipse { cx, cy: h * 0.34, rx: w * 0.14, ry: h * 0.15 },
+            Shape::Ellipse { cx, cy: flip(h * 0.34), rx: w * 0.14, ry: h * 0.15 },
             on(mode != Monitoring::Off),
         );
         for (index, (radius, thickness)) in
@@ -1327,13 +1334,31 @@ pub mod tcp {
                 Monitoring::Normal => true,
                 Monitoring::NotWhenPlaying => index == 0,
             };
+            // A vertical mirror sends a clockwise-from-twelve angle θ
+            // to 180 − θ, so the arcs under the dome become the same
+            // arcs over it.
+            let start = match facing {
+                Facing::Down => 115.0,
+                Facing::Up => -65.0,
+            };
             drawing.stroke(
-                Shape::Arc { cx, cy: h * 0.42, r: radius, start: 115.0, sweep: 130.0 },
+                Shape::Arc { cx, cy: flip(h * 0.42), r: radius, start, sweep: 130.0 },
                 on(through),
                 Stroke::new(thickness),
             );
         }
         drawing
+    }
+
+    /// Which way the monitor glyph opens: arcs under the dome, or
+    /// over it.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    pub enum Facing {
+        /// Under the arm, arcs opening downwards — REAPER's own.
+        #[default]
+        Down,
+        /// Over the arm, in the band, arcs opening upwards.
+        Up,
     }
 
     /// Which input-monitoring state a strip is in.
