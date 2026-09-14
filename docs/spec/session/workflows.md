@@ -546,24 +546,35 @@ and a choir. The template's dimensions hold (Performer → Arrangement
 → Layers → Channels → MultiMic), with one more on top.
 
 r[flow.vocals.language]
-**Language** is a dimension of every vocal track: a track is sung in
-one language, or in **All** when it is language-free — a wordless
-"Hey!", a hummed pad. It is read from the track's name or inherited
-from a Language folder, and the project's vocal folders are split by
-it first: `Vocals / {EN, ES, PT, All}`, each holding the leads, the
-BGVs and the choir sung in that language. A performer who does not
-sing a language simply has no tracks in it — Aline sings only the
+**Language** is a dimension of every vocal source track: a track is
+sung in one language, or in **All** when it is language-free — a
+wordless "Hey!", a hummed pad. It is read from the track's name or
+inherited from a Language folder. Language sits **under the
+performer and the layer, at the source level**, never above them:
+`Vocals / Ron / Main / {EN, ES, PT}` and `Vocals / Ron / DBL / {EN,
+ES, PT}`. The `Ron` track is where Ron's vocal is **mixed** — one
+chain of plugins, one set of sends, for every language — and the
+`DBL` track under it is where his doubles are mixed, the same way;
+the language tracks under them are sources only, carrying takes and
+the corrections a take needs (its tuning, its alignment, its comp).
+The English and the Spanish vocal get the same mix because they go
+through the same track, and one chain per performer instead of one
+per language is also most of the CPU. A performer who does not sing a
+language simply has no source track in it — Aline sings only the
 Portuguese version, Belen does not sing on it.
 
 r[flow.vocals.language.active]
 The session has an **active language**, and every vocal scene follows
 it: tracking, comping, editing and mixing show that language's
-vocals, hide the others, and the other languages are **muted through
-their VCA** — one VCA per language, `VOX EN`, `VOX ES`, `VOX PT`, over
-the leads, the BGVs and the choir of that language together, with
-`All` always audible. Switching the language switches the scene and
-the VCAs in one step, so "look at the English version" is one action
-and it cannot leave a Spanish double audible.
+source tracks, hide the other languages' sources, and the other
+languages are **muted through their VCA** — one VCA per language,
+`VOX EN`, `VOX ES`, `VOX PT`, over every source track of that
+language across every performer, part and choir section, with `All`
+always audible. The mix tracks above them — `Ron`, `DBL`, a BGV part
+— are the same tracks whatever the language and stay in view.
+Switching the language switches the scene and the VCAs in one step,
+so "look at the English version" is one action and it cannot leave a
+Spanish double audible.
 
 r[flow.vocals.language.render]
 Rendering the project renders **one version per language**: each
@@ -573,24 +584,28 @@ active language does not have to be changed to render the others.
 
 r[flow.vocals.leads]
 A **lead** is a performer — the golden session has two soloists — and
-each lead has, per language, a **Main** and a **DBL**, each a layer
-with its own take lanes, sources (close, room) and tuning. The lead
-row of an overview is the soloist, collapsed, its folder item the
-Main with the DBL under it.
+each lead is a **mix track** with a **Main** and a **DBL** under it,
+each of those a layer holding one source track per language the
+performer sings. The performer's mix track carries the chain and the
+sends; the DBL track carries the doubles' chain; the sources carry
+the takes. The lead row of an overview is the soloist, collapsed,
+its folder item the active language's Main with the DBL under it.
 
 r[flow.vocals.bgvs]
 **Background vocals** are arranged by **part** — Octave Down, Octave
 Up, Higher Harmony, Lower Harmony, Whisper, Bass, Tenor, Alto,
-Soprano — usually doubled, and a part may carry **as many layers as it
-needs**: a "Hey!" of fifty layers is fifty tracks under one part, and
-the part's row shows them as one folder item summed. Nothing in the
-scenes, the comp or the edit assumes a count.
+Soprano — each part a mix track like a lead's, usually doubled, with
+its layers' source tracks per language under it. A part may carry
+**as many layers as it needs**: a "Hey!" of fifty layers is fifty
+source tracks under one part, mixed on the part, and the part's row
+shows them as one folder item summed. Nothing in the scenes, the comp
+or the edit assumes a count.
 
 r[flow.vocals.choir]
 A **choir** is a folder beside the BGVs — its sections (Soprano, Alto,
-Tenor, Bass) as parts, each layered like a BGV part — sung per
-language like everything else, on the language's VCA, collapsed to
-one row per section in every overview.
+Tenor, Bass) as parts, each a mix track layered like a BGV part with
+its sources per language under it — on the language's VCA like
+everything else, collapsed to one row per section in every overview.
 
 r[flow.vocals.tracking]
 **Vocal Tracking** shows the active language's leads and every BGV
@@ -620,10 +635,11 @@ to the key, and written back as the retuned audio — docked under the
 arrangement like the kit's stack, on the active language's tracks.
 
 r[flow.vocals.mixing.main]
-**Lead Vocal** shows the active language's leads — each soloist's
-Main and DBL, the close mic, its room and verb returns — at working
-size with its rack, and the lead vocal bus; the BGVs and the choir
-collapsed to their parts.
+**Lead Vocal** shows each soloist's mix track and DBL track — where
+the vocal is mixed, whatever the language — with the active
+language's sources under them, the room and verb returns, the racks,
+and the lead vocal bus; the BGVs and the choir collapsed to their
+parts.
 
 r[flow.vocals.mixing.fx]
 **Lead Vocal FX Edit** opens the vocal's returns — delays, verbs,
@@ -637,8 +653,9 @@ written from a fader move, and shown per parameter.
 
 r[flow.vocals.golden]
 The golden session's vocals: **EN, ES and PT**; leads **Ron** (all
-three), **Belen** (EN and ES) and **Aline** (PT only), each with Main
-and DBL per language; BGVs with every part above, doubled, and one
+three), **Belen** (EN and ES) and **Aline** (PT only), each a mix
+track with Main and DBL under it and a source per language under
+those; BGVs with every part above, doubled, and one
 "Hey!" of many layers in `All`; a four-section choir per language;
 `VOX EN`, `VOX ES`, `VOX PT` VCAs; and a render per language.
 
