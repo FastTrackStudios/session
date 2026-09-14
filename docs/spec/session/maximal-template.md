@@ -21,7 +21,8 @@ fixed tree.
 - [x] **Kick**: In, Out, Trig; Sub; Verb.
 - [x] **Snare**: Top, Bottom, Trig, Fund; **Verb/** Short, Long, Nonlin.
 - [x] **Toms**: per tom T*n*, Trig, Fund; one shared Verb.
-- [x] **Cymbals**: OH, Hi-Hat, Ride. **Rooms**: Mono, Stereo L/R.
+- [x] **Cymbals**: OH, Hi-Hat, Ride. **Rooms**: two stereo pairs, Rooms
+      and Rooms Far.
 - [x] One-note tracks (Fund, Sub) get Gate → band-pass at the fundamental
       → Sat; triggers get nothing.
 - [x] **Process/Compress/**: Dry, Tight, Punch, Smash, Crunch — a balance
@@ -44,9 +45,9 @@ fixed tree.
 ### Guitars — `Electric/`, `Acoustic/` (a different shape every song)
 
 - [x] **No Sum folders**: each part is a track named for the part
-      (Rhythm, Lead, Solo, …). A **stereo pair is a folder over L and R**
-      with the processing on the folder; the halves are rails and carry
-      no processing of their own.
+      (Rhythm, Lead, Solo, …). A **stereo pair is one stereo track** —
+      two channels, a stereo input — not a folder over an L and an R:
+      its halves are almost never processed apart.
 - [x] Electrics and acoustics are **separate top-level folders with
       their own buses** — no Guitars folder, no GUITAR BUS.
 - [x] Every electric part goes to exactly one of **GTR RHYTHM, GTR LEAD,
@@ -65,7 +66,7 @@ fixed tree.
 
 ### Keys — `Keys/`, Synths — `Synths/`
 
-- [x] Keys: Piano (an L/R pair), Rhodes, Organ → **KEYS BUS**.
+- [x] Keys: Piano (a stereo track), Rhodes, Organ → **KEYS BUS**.
 - [x] Synths: Pad, Lead Synth, Arp → **KEYS BUS**.
 - [x] Colours, in session order and hue order: electrics blue,
       acoustics seafoam, keys green, synths lime.
@@ -105,8 +106,10 @@ fixed tree.
    electrics, the acoustics — its bus sends back into it, the folder is
    a **dead end** that meters that return, and it is the **VCA lead** of
    the bus.
-3. A **stereo pair** is a folder over `L` and `R`; the folder is the
-   channel (`tone::is_pair`), the halves are rails in every scene.
+3. A **stereo pair** is one stereo track (`pair()` in the template:
+   `NCHAN 2`, a stereo input). A folder over an `L` and an `R` is still
+   read as one instrument by the rack (`tone::is_pair`) for sessions
+   that arrive that way, with the halves as rails carrying nothing.
 4. Buses nest as folders inside the bus they feed; a bus reaches its
    parent by the ordinary folder send.
 5. A balance group is a folder named `Compress…`.

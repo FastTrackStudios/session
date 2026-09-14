@@ -140,9 +140,12 @@ def vca_follow(group):
 
 
 def pair(name, colour, **opts):
-    """A stereo pair: a folder over L and R. The processing is on the
-    folder — it is one instrument — and the halves are rails under it."""
-    return node(name, colour, [("L", colour, []), ("R", colour, [])], **opts)
+    """A stereo pair: ONE stereo track, not a folder over an L and an R.
+
+    Two channels on one track, recording from a stereo input, with the
+    processing on it — a pair is one instrument, and its halves are
+    almost never processed apart."""
+    return node(name, colour, [], stereo=True, **opts)
 
 
 def to_bus(name, colour, children, bus):
@@ -188,9 +191,10 @@ TREE = [
             (
                 "Rooms",
                 ROOMS,
+                # Two stereo pairs: the room, and the far room.
                 [
-                    ("Mono", ROOMS, []),
-                    pair("Stereo", ROOMS),
+                    pair("Rooms", ROOMS),
+                    pair("Rooms Far", ROOMS),
                 ],
             ),
         ],
@@ -758,6 +762,11 @@ def main() -> None:
         # that says the fixture forgot rather than that the track has
         # none.
         source = 0 if is_folder or is_auxiliary(name) else (i % 16)
+        # A stereo track records from a stereo pair of inputs, which
+        # REAPER numbers from 1024: 1024 + the pair's first channel.
+        if opts.get("stereo"):
+            source = 1024 + (source & ~1)
+            out("    NCHAN 2\n")
         # One track selected, because a session is never opened with
         # nothing in focus — and because selection is what opens a mic's
         # strip to a working width in the Tone sub-mode. The kick's In is
