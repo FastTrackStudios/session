@@ -149,6 +149,15 @@ struct App {
     edit: session_daw::cursor::Edit,
     /// Where a ruler drag started, in seconds.
     dragging_time: Option<f64>,
+    /// A fade being dragged by its handle: which item, which end, and
+    /// where the fades are at this instant — drawn live over the
+    /// recording until the release re-records.
+    fade_drag: Option<FadeDrag>,
+    /// The item under the pointer in the lanes, whose fade handles are
+    /// drawn.
+    hovered_item: Option<usize>,
+    /// The keys held, for the mouse map.
+    keys: session_daw::mousemap::Mods,
     /// The panel control the pointer went down on.
     pressed_row: Option<(usize, session_daw::row::Control)>,
     /// The rail button the pointer is over.
@@ -463,6 +472,11 @@ impl ApplicationHandler for App {
             WindowEvent::ModifiersChanged(modifiers) => {
                 let state = modifiers.state();
                 self.fine = state.control_key();
+                self.keys = session_daw::mousemap::Mods {
+                    shift: state.shift_key(),
+                    ctrl: state.control_key() || state.meta_key(),
+                    alt: state.alt_key(),
+                };
                 self.mods = eq_ui::eq_graph_interaction::Mods::new(
                     state.alt_key(),
                     state.shift_key(),
@@ -483,6 +497,38 @@ impl ApplicationHandler for App {
                 let last = self.cursor;
                 self.cursor = (position.x, position.y);
                 let spot = self.spot_at(position.x, position.y);
+                // A fade in flight follows the pointer along the item:
+                // the fade-in is as long as the pointer is past the
+                // item's start, the fade-out as long as it is short of
+                // its end, either clamped to the item.
+                let at_time = self.ruler_time_unclamped(position.x);
+                if let Some(drag) = self.fade_drag.as_mut()
+                    && let Some(at) = at_time
+                {
+                    let span = (drag.x1 - drag.x0).max(0.0);
+                    match drag.zone {
+                        session_daw::arrangement::ItemZone::FadeIn => {
+                            drag.fades.fade_in = (at - drag.x0).clamp(0.0, span);
+                        }
+                        session_daw::arrangement::ItemZone::FadeOut => {
+                            drag.fades.fade_out = (drag.x1 - at).clamp(0.0, span);
+                        }
+                        _ => {}
+                    }
+                    self.redraw();
+                    return;
+                }
+                // The item under the pointer, for its handles.
+                if self.view == View::Arrangement && self.dragging_time.is_none() {
+                    let over = match self.arrange_hit_at(position.x, position.y).map(|h| h.target) {
+                        Some(session_daw::hit::Target::Item { index, .. }) => Some(index),
+                        _ => None,
+                    };
+                    if over != self.hovered_item {
+                        self.hovered_item = over;
+                        self.redraw();
+                    }
+                }
                 // A drag outranks a hover: while the pointer is down on
                 // a fader it is setting a level, not browsing.
                 if let Some(from) = self.dragging_time {
@@ -569,7 +615,42 @@ impl ApplicationHandler for App {
                         self.redraw();
                         return;
                     }
-                    if let Some(seconds) = self.ruler_time(x, y) {
+                    // What the press landed on in the lanes, through the
+                    // mouse map: a fade handle takes hold of the fade;
+                    // the empty area is the ruler's twin.
+                    let lane_hit = self.arrange_hit_at(x, y);
+                    if let Some(hit) = lane_hit
+                        && let session_daw::hit::Target::Item { index, zone, .. } = hit.target
+                        && matches!(
+                            session_daw::mousemap::resolve(hit.context, session_daw::mousemap::Gesture::Drag, self.keys),
+                            session_daw::mousemap::Action::FadeIn | session_daw::mousemap::Action::FadeShape
+                        )
+                        && let Some(item) = self.scene.as_ref().and_then(|s| s.item(index))
+                    {
+                        self.fade_drag = Some(FadeDrag {
+                            index,
+                            guid: item.guid.clone(),
+                            zone,
+                            x0: item.x0,
+                            x1: item.x1,
+                            fades: item.fades,
+                        });
+                        self.redraw();
+                        return;
+                    }
+                    let lane_seconds = match lane_hit.map(|h| (h.context, h.target)) {
+                        Some((context, session_daw::hit::Target::Lane { seconds, .. }))
+                            if session_daw::mousemap::resolve(
+                                context,
+                                session_daw::mousemap::Gesture::Click,
+                                self.keys,
+                            ) == session_daw::mousemap::Action::SetEditCursor =>
+                        {
+                            Some(seconds)
+                        }
+                        _ => None,
+                    };
+                    if let Some(seconds) = self.ruler_time(x, y).or(lane_seconds) {
                         // A press on the ruler moves the cursor at once
                         // — the click is what you meant, and waiting
                         // for the release to show it feels like a lag
@@ -643,6 +724,10 @@ impl ApplicationHandler for App {
                         self.gestures.press(hit, x, y);
                     }
                 } else {
+                    if let Some(drag) = self.fade_drag.take() {
+                        self.commit_fade(drag);
+                        return;
+                    }
                     if self.rack_drag.take().is_some() {
                         // Back into the recording: a rack that is not
                         // being dragged is constant again, and the
@@ -1161,6 +1246,42 @@ impl App {
     fn hit_at(&self, x: f64, y: f64) -> Option<session_daw::hit::Hit> {
         let mixer = self.mixer.as_ref()?;
         Some(session_daw::hit::mixer(mixer, self.mixer_scroll, x, y))
+    }
+
+    /// What the pointer is over in the arrangement, if that is the view.
+    fn arrange_hit_at(&self, x: f64, y: f64) -> Option<session_daw::hit::Hit> {
+        if self.view != View::Arrangement {
+            return None;
+        }
+        let scene = self.scene.as_ref()?;
+        let modes = session::modes::Mode::ALL.len();
+        Some(session_daw::hit::arrangement(scene, self.viewport(), modes, x, y))
+    }
+
+    /// A fade drag let go: the fade is what the window has been
+    /// drawing, so it goes to the engine, into the window's own copy of
+    /// the project, and into the recording — once, on the release,
+    /// rather than a re-record per pixel.
+    fn commit_fade(&mut self, drag: FadeDrag) {
+        use session_daw::arrangement::ItemZone;
+        use session_daw::engine::Edit;
+        let edit = match drag.zone {
+            ItemZone::FadeIn => Edit::SetFadeIn(drag.guid.clone(), drag.fades.fade_in, drag.fades.in_shape),
+            ItemZone::FadeOut => Edit::SetFadeOut(drag.guid.clone(), drag.fades.fade_out, drag.fades.out_shape),
+            _ => return,
+        };
+        if let Some((project, _)) = self.session.as_mut() {
+            let project = std::sync::Arc::make_mut(&mut project.0);
+            if let Some(item) = project.items.values_mut().flatten().find(|i| i.guid == drag.guid) {
+                item.fade_in_length = daw_proto::primitives::Duration::from_seconds(drag.fades.fade_in);
+                item.fade_out_length = daw_proto::primitives::Duration::from_seconds(drag.fades.fade_out);
+            }
+        }
+        if let Some(applier) = &self.applier {
+            applier.send(edit);
+        }
+        self.re_record();
+        self.redraw();
     }
 
     /// The time under a point, if it is on the ruler.
@@ -2118,6 +2239,8 @@ impl App {
         );
 
         let grid = &self.grid;
+        let hovered_item = self.hovered_item;
+        let in_flight = self.fade_drag.as_ref().map(|d| (d.index, d.fades));
         /// The finest the grid ever gets — sixteenths, as a fraction of
         /// a whole note. The zoom only ever coarsens away from it.
         const FINEST: f64 = 1.0 / 16.0;
@@ -2157,6 +2280,17 @@ impl App {
                 scene,
                 view,
                 (rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy),
+            );
+            // The fade handles on the item under the pointer, and the
+            // fade in flight over its recorded self.
+            session_daw::arrangement::fade_overlay(
+                painter,
+                &palette,
+                scene,
+                view,
+                (rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy),
+                hovered_item,
+                in_flight,
             );
             // The panel: the SAME vertical offset, which is the entire
             // point. It cannot drift from the lanes because there is
@@ -2387,6 +2521,9 @@ fn main() {
         playhead: session_daw::cursor::Playhead::stopped(0.0),
         edit: session_daw::cursor::Edit::default(),
         dragging_time: None,
+        fade_drag: None,
+        hovered_item: None,
+        keys: session_daw::mousemap::Mods::default(),
         pressed_row: None,
         hovered_rail: None,
         pressed_rail: None,
@@ -2548,6 +2685,9 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         Edit::SetPhase(_, inverted) => track.phase_inverted = *inverted,
         Edit::SetInputMonitor(_, mode) => track.input_monitor = *mode,
         Edit::SetParentSend(_, enabled) => track.parent_send = *enabled,
+        // An item's, not the track's: applied to the project copy where
+        // the drag ends — see `commit_fade`.
+        Edit::SetFadeIn(..) | Edit::SetFadeOut(..) => {}
         // Selection is the engine's to decide: an exclusive select
         // changes every OTHER track too, and predicting which ones
         // stop being selected would be predicting the engine's whole
@@ -2555,6 +2695,18 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         // looks slow — and the frame is one round trip in-process.
         Edit::Select(_) | Edit::AddToSelection(_) => {}
     }
+}
+
+/// A fade taken hold of by its handle.
+#[derive(Clone, Debug)]
+struct FadeDrag {
+    index: usize,
+    guid: String,
+    zone: session_daw::arrangement::ItemZone,
+    /// The item's span in seconds, which the fade is clamped to.
+    x0: f64,
+    x1: f64,
+    fades: session_daw::arrangement::Fades,
 }
 
 /// The size to open at, as `FTS_VELLO_SIZE=WxH`.

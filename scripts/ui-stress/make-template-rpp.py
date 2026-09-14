@@ -785,6 +785,11 @@ def main() -> None:
                 out(f"      POSITION {bar * SECS_PER_BAR:.6f}\n")
                 out(f"      LENGTH {length * SECS_PER_BAR:.6f}\n")
                 out(f"      NAME \"{name} {bar // 4 + 1}\"\n")
+                # Fades the way a comped session has them: a short one
+                # in, a longer one out, in a shape or two — so the
+                # arrangement has fades to draw and handles to grab.
+                out(f"      FADEIN {random.choice([0, 0, 1, 2, 5])} {random.choice([0.02, 0.05, 0.25, 0.5]):.4f} 0 0 0 0 0\n")
+                out(f"      FADEOUT {random.choice([0, 0, 1, 2, 5])} {random.choice([0.1, 0.5, 1.0, 2.0]):.4f} 0 0 0 0 0\n")
                 out("      IGUID " + guid() + "\n      GUID " + guid() + "\n")
                 out("    >\n")
                 bar += length + random.choice([0, 0, 4])

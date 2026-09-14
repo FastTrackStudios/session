@@ -22,6 +22,7 @@ pub mod hit;
 pub mod layout;
 pub mod live;
 pub mod mcp;
+pub mod mousemap;
 pub mod num;
 pub mod open;
 pub mod art;

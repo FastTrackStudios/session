@@ -65,6 +65,11 @@ pub enum Edit {
     /// is heard only through its own sends, which is how a parallel
     /// path is built. The routing widget's first lane says which.
     SetParentSend(String, bool),
+    /// An ITEM's fade-in: its length in seconds and its shape. The guid
+    /// is the item's, not a track's.
+    SetFadeIn(String, f64, daw_proto::item::FadeShape),
+    /// And its fade-out.
+    SetFadeOut(String, f64, daw_proto::item::FadeShape),
 }
 
 impl Edit {
@@ -82,8 +87,16 @@ impl Edit {
             | Self::Rename(g, _)
             | Self::SetPhase(g, _)
             | Self::SetInputMonitor(g, _)
-            | Self::SetParentSend(g, _) => g,
+            | Self::SetParentSend(g, _)
+            | Self::SetFadeIn(g, ..)
+            | Self::SetFadeOut(g, ..) => g,
         }
+    }
+
+    /// Whether this is about an item rather than a track.
+    #[must_use]
+    pub const fn is_item(&self) -> bool {
+        matches!(self, Self::SetFadeIn(..) | Self::SetFadeOut(..))
     }
 
     /// Whether a newer edit of this kind replaces this one.
@@ -94,7 +107,7 @@ impl Edit {
     /// double-click.
     #[must_use]
     pub const fn coalesces(&self) -> bool {
-        matches!(self, Self::SetVolume(..) | Self::SetPan(..))
+        matches!(self, Self::SetVolume(..) | Self::SetPan(..) | Self::SetFadeIn(..) | Self::SetFadeOut(..))
     }
 
     /// Whether `other` is the same control on the same track.
@@ -576,6 +589,24 @@ async fn apply(edit: &Edit) {
     let Ok(project) = daw.current_project().await else {
         return;
     };
+    if edit.is_item() {
+        let Ok(Some(item)) = project.items().by_guid(edit.guid()).await else {
+            return;
+        };
+        let outcome = match edit {
+            Edit::SetFadeIn(_, secs, shape) => {
+                item.set_fade_in(daw_proto::primitives::Duration::from_seconds(*secs), *shape).await
+            }
+            Edit::SetFadeOut(_, secs, shape) => {
+                item.set_fade_out(daw_proto::primitives::Duration::from_seconds(*secs), *shape).await
+            }
+            _ => Ok(()),
+        };
+        if let Err(error) = outcome {
+            tracing::warn!(error = %error, edit = ?edit, "the engine refused an item edit");
+        }
+        return;
+    }
     let Ok(Some(track)) = project.tracks().by_guid(edit.guid()).await else {
         // The track went away between the click and the apply — a
         // project reload, or another client removing it. Nothing to
@@ -594,6 +625,7 @@ async fn apply(edit: &Edit) {
         Edit::SetPhase(_, inverted) => track.set_phase_inverted(*inverted).await,
         Edit::SetInputMonitor(_, mode) => track.set_input_monitor(*mode).await,
         Edit::SetParentSend(_, enabled) => track.set_parent_send(*enabled).await,
+        Edit::SetFadeIn(..) | Edit::SetFadeOut(..) => Ok(()),
     };
     if let Err(error) = outcome {
         // One line, because a failed edit is a thing the user did that
