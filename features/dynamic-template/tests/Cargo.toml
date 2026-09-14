@@ -51,6 +51,12 @@ path = "04_visibility_classification.rs"
 name = "06_organize_is_lossless"
 path = "06_organize_is_lossless.rs"
 
+# Runs scripts/ui-stress/make-template-rpp.py (python3) and reads its
+# GROUP_FLAGS back through dawfile-reaper.
+[[test]]
+name = "07_template_group_flags"
+path = "07_template_group_flags.rs"
+
 [[test]]
 name = "multitrack_examples"
 path = "multitrack_examples.rs"
