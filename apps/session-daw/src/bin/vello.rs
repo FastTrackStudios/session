@@ -60,7 +60,7 @@ impl HasDisplayHandle for Surface {
 }
 
 use session_daw::arrangement::{Arrangement, Palette, Viewport, TCP_WIDTH};
-use session_daw::ruler::{self, Bars, RULER_H};
+use session_daw::ruler::{Bars, RULER_H};
 use session_daw::{open, theme};
 
 /// Pixels per second at rest.
@@ -375,6 +375,13 @@ impl ApplicationHandler for App {
                 // more than a few — so the box travels over it.
                 if self.in_rack(self.cursor.0, self.cursor.1) {
                     self.scroll_rack(dy);
+                    self.redraw();
+                    return;
+                }
+                // Ctrl+wheel is REAPER's horizontal zoom, about the
+                // pointer: the second under it stays under it.
+                if self.view == View::Arrangement && self.keys.ctrl {
+                    self.zoom_about(self.cursor.0, dy);
                     self.redraw();
                     return;
                 }
@@ -1061,6 +1068,26 @@ impl App {
     /// The single place scroll position is written, so the wheel and the
     /// autoscroll cannot end up with different ideas about the bounds or
     /// the units.
+    /// Zoom the arrangement horizontally by a wheel travel of `dy`
+    /// pixels, keeping the time under window x `x` where it is.
+    ///
+    /// One wheel notch is about sixteen percent; the scale is clamped
+    /// between two pixels a second, where an hour fits a screen, and
+    /// two thousand, where a millisecond is two pixels.
+    fn zoom_about(&mut self, x: f64, dy: f64) {
+        const MIN_PPS: f64 = 2.0;
+        const MAX_PPS: f64 = 2000.0;
+        let factor = (dy / 53.0 * 0.15).exp();
+        let anchor = x - session_daw::rails::SIDE - TCP_WIDTH;
+        let at = (anchor + self.scroll_x) / self.pps.max(f64::EPSILON);
+        self.pps = (self.pps * factor).clamp(MIN_PPS, MAX_PPS);
+        let scroll_x = at.mul_add(self.pps, -anchor);
+        self.scroll_to(scroll_x, self.scroll_y);
+        // The bars, titles and ruler all read `pps` from the viewport,
+        // so nothing else has to be told; the recording is untouched.
+        self.mixer = None;
+    }
+
     fn scroll_to(&mut self, x: f64, y: f64) {
         let (span_x, span_y) = self.spans();
         self.scroll_x = x.clamp(0.0, span_x);
@@ -1966,6 +1993,11 @@ impl App {
                     }
                 }
             }
+            // The window's colours, not the standalone editor's: a
+            // docked roll is part of this arrangement.
+            if let Some(ex) = self.expression.as_mut() {
+                ex.set_look(session_daw::expression::look_of(&self.palette));
+            }
             self.dock = Some(dock);
             self.dock_focus = true;
             self.view = View::Arrangement;
@@ -2526,31 +2558,12 @@ impl App {
         self.before_arrange_frame();
         let scroll_bars = self.scrollbars();
         let bar_held = self.bar_drag.map(|(axis, _)| axis);
-        let Some(scene) = &self.scene else { return };
-        let (sx, sy, pps) = (self.scroll_x, self.scroll_y, self.pps);
-        let (width, surface_h) = self.surface_size;
         let frame = self.frame();
         // What this frame can see. Everything outside it is skipped
         // before it reaches Vello's encoder — see `Arrangement::index`.
         // The rails are excluded, or the panel draws rows behind them
         // and pays for every one.
         let view = self.viewport();
-        let surface = self.palette.surface;
-        let palette = &self.palette;
-        let font = &self.font;
-        let bars = Bars::at(scene.bpm);
-        // The rows the SCENE was recorded from — after the preset, not
-        // the session's full list. The scene's row indices are indices
-        // into these, and reading the full list here is how a hidden
-        // track makes every row below it name the wrong track.
-        let rows: &[(daw_proto::Track, u32)] = self.arrange_rows.as_slice();
-        let tracks = self.tracks.as_slice();
-        let arrange_map = &self.arrange_map;
-        let rename = self.rename.as_ref();
-        let panel = &self.panel;
-        let mode = self.mode;
-        let rail_at = (self.hovered_rail, self.pressed_rail);
-        let icons = &mut self.icons;
         // The transport's last word, and where that puts the cursor
         // NOW — the reading is per-block, the drawing is per-frame, and
         // the difference between them is the glide.
@@ -2563,8 +2576,6 @@ impl App {
             self.playhead.report(at, 1.0, now);
         }
         let play_at = self.playhead.at_time(std::time::Instant::now());
-        let edit = self.editor.cursor;
-        let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
         let profile = session_daw::rails::profile(
             session_daw::rails::Surface::Arrange,
             self.mode,
@@ -2572,200 +2583,45 @@ impl App {
             self.preset,
             self.settings,
         );
-
-        let grid = &self.grid;
-        let hovered_item = self.hovered_item;
-        let in_flight = self.editor.fade_in_flight();
-        let selected_items = &self.editor.selected;
-        let ghost = self.editor.ghost();
-        // The docked editor, laid out in the dock's box for this frame.
-        let dock_box = frame.dock_box();
-        let dock_view = match (dock_box, self.expression.as_mut()) {
-            (Some(dock), Some(ex)) => {
-                ex.layout((dock.x0, dock.y0), (dock.width(), dock.height()));
-                Some(ex)
-            }
-            _ => None,
+        let Some(scene) = &self.scene else { return };
+        let bars = Bars::at(scene.bpm);
+        // One painter for the frame, shared with the bench and every
+        // shot — see `session_daw::frame`.
+        let arrange = session_daw::frame::Arrange {
+            scene,
+            palette: &self.palette,
+            font: &self.font,
+            frame,
+            view,
+            bars,
+            grid: &self.grid,
+            // The rows the SCENE was recorded from — after the preset,
+            // not the session's full list. The scene's row indices are
+            // indices into these, and reading the full list here is how
+            // a hidden track makes every row below it name the wrong
+            // track.
+            rows: self.arrange_rows.as_slice(),
+            tracks: self.tracks.as_slice(),
+            map: &self.arrange_map,
+            panel: &self.panel,
+            rename: self.rename.as_ref(),
+            profile: &profile,
+            rail_at: (self.hovered_rail, self.pressed_rail),
+            icons: &mut self.icons,
+            mode: self.mode,
+            play_at,
+            edit: self.editor.cursor,
+            hovered_item: self.hovered_item,
+            in_flight: self.editor.fade_in_flight(),
+            selected: &self.editor.selected,
+            ghost: self.editor.ghost(),
+            scroll_bars,
+            bar_held,
+            dock: self.expression.as_mut().filter(|_| frame.dock > 0.0),
         };
-        /// The finest the grid ever gets — sixteenths, as a fraction of
-        /// a whole note. The zoom only ever coarsens away from it.
-        const FINEST: f64 = 1.0 / 16.0;
         let mut drawn = session_daw::profile::Counts::default();
         self.renderer.render(|painter| {
-            painter.reset();
-            // The theme's surface, under everything.
-            //
-            // `VelloWindowRenderer` clears to WHITE, so any pixel the
-            // arrangement does not cover is not merely undrawn, it is
-            // bright white on a dark theme — during a fast scroll, at
-            // the end of the session, or in the gap under the last row.
-            // One rectangle makes the window's background the theme's
-            // instead of the renderer's.
-            painter.fill(
-                vello::peniko::Fill::NonZero,
-                Affine::IDENTITY,
-                surface,
-                None,
-                &vello::kurbo::Rect::new(0.0, 0.0, width, surface_h),
-            );
-            // The lanes: scrolled both ways, and scaled horizontally by
-            // the zoom. Recorded at one pixel per second, so the scale IS
-            // the zoom — no rebuild, no re-record.
-            let a = scene.replay_lanes(
-                painter,
-                view,
-                Affine::translate((rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy))
-                    * Affine::scale_non_uniform(pps, 1.0),
-            );
-            // The items' titles, in pixel space over the lanes: text
-            // recorded in seconds would stretch with the zoom.
-            session_daw::arrangement::titles(
-                painter,
-                &palette,
-                &font,
-                scene,
-                view,
-                (rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy),
-            );
-            // The fade handles on the item under the pointer, and the
-            // fade in flight over its recorded self.
-            session_daw::arrangement::fade_overlay(
-                painter,
-                &palette,
-                scene,
-                view,
-                (rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy),
-                hovered_item,
-                in_flight,
-            );
-            // The selection's outlines, and the ghost of an item being
-            // moved or trimmed.
-            session_daw::arrangement::selection_overlay(
-                painter,
-                &palette,
-                scene,
-                view,
-                (rail.0 + TCP_WIDTH - sx, rail.1 + RULER_H - sy),
-                selected_items,
-                ghost,
-            );
-            // The panel: the SAME vertical offset, which is the entire
-            // point. It cannot drift from the lanes because there is
-            // nothing to drift — one number moves both.
-            let b = scene.replay_panel(
-                painter,
-                view,
-                Affine::translate((rail.0, rail.1 + RULER_H - sy)),
-            );
-            // After the lanes — their backgrounds are opaque — and the
-            // ruler last of all, over everything scrolled under it.
-            ruler::grid(painter, &palette, view, bars, &grid, FINEST, rail);
-            // An open rename, over the name it replaces.
-            if let Some(open) = rename.filter(|r| r.surface == session_daw::rename::Surface::Arrange)
-            {
-                if let Some((top, height)) = scene.row_box(open.row) {
-                    let depth = rows
-                        .get(open.row)
-                        .map_or(0, |(_, d)| i32::try_from(*d).unwrap_or(0));
-                    let is_folder = rows.get(open.row).is_some_and(|(t, _)| t.is_folder);
-                    let row = session_daw::row::Row::new(top, height, depth, is_folder);
-                    if let Some(field) = row.rect(session_daw::row::Control::Name) {
-                        session_daw::rename::paint(
-                            painter,
-                            &palette,
-                            &font,
-                            open,
-                            field,
-                            Affine::translate((rail.0, rail.1 + RULER_H - sy)),
-                        );
-                    }
-                }
-            }
-
-            // The panel's live values, over its recorded chrome.
-            let c = session_daw::overlay::panel_controls(
-                painter,
-                &palette,
-                &font,
-                scene,
-                rows,
-                tracks,
-                arrange_map,
-                view,
-                panel,
-                Affine::translate((rail.0, rail.1 + RULER_H - sy)),
-            );
-            ruler::ruler(painter, &palette, &font, view, bars, rail);
-            ruler::lanes(painter, &palette, &font, view, rail, scene.sections(), scene.markers());
-            ruler::lane_lines(
-                painter,
-                &palette,
-                view,
-                rail,
-                scene.sections(),
-                scene.markers(),
-                rail.1 + RULER_H,
-                rail.1 + view.height,
-            );
-            // The cursors last, over the lanes and under nothing: a
-            // playhead behind an item is a playhead you cannot follow.
-            let top = rail.1 + RULER_H;
-            let bottom = rail.1 + view.height;
-            session_daw::cursor::paint_edit(
-                painter, &palette, &edit, view, rail, top, bottom,
-            );
-            let x = play_at.mul_add(
-                view.pps,
-                rail.0 + TCP_WIDTH - view.scroll_x,
-            );
-            session_daw::cursor::paint(
-                painter,
-                session_daw::cursor::Look::default(),
-                x,
-                top,
-                bottom,
-                rail.0 + TCP_WIDTH,
-            );
-            // The scrollbars, over the lanes and under the rails.
-            if let Some(pair) = scroll_bars {
-                session_daw::scrollbar::draw(painter, &palette, pair, bar_held);
-            }
-            // The docked editor, under the arrangement: its own bars,
-            // roll and strip, and a rule along its top edge that is
-            // also the grip that resizes it.
-            if let (Some(dock), Some(ex)) = (dock_box, dock_view) {
-                painter.fill(
-                    vello::peniko::Fill::NonZero,
-                    Affine::IDENTITY,
-                    surface,
-                    None,
-                    &dock,
-                );
-                ex.paint(painter);
-                painter.fill(
-                    vello::peniko::Fill::NonZero,
-                    Affine::IDENTITY,
-                    palette.tcp_rule,
-                    None,
-                    &vello::kurbo::Rect::new(dock.x0, dock.y0 - 1.0, dock.x1, dock.y0 + 1.0),
-                );
-            }
-            // The rails over everything that scrolled under them, and
-            // the mode selector in the corner the ruler leaves.
-            session_daw::rails::draw(
-                painter,
-                &palette,
-                &font,
-                icons,
-                rail_at,
-                frame,
-                &profile.left,
-                &profile.right,
-                &profile.top,
-            );
-            session_daw::rails::main_toolbar(painter, &palette, &font, icons, rail_at, mode);
-            drawn.replayed = a.replayed + b.replayed + c.replayed;
-            drawn.submitted = a.submitted + b.submitted + c.submitted;
+            drawn = arrange.paint(painter);
         });
         self.after_frame(drawn);
     }

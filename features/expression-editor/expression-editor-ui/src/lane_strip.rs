@@ -101,7 +101,7 @@ pub fn LaneStrip(editor: Signal<Editor>) -> Element {
     let vp = ed.viewport;
     let per_note = ed.strip_lane.is_per_note();
     let w = vp.w + canvas::GUTTER_W;
-    slot.put(paint::strip_scene(&ed, w, h, &mut labels.borrow_mut()));
+    slot.put(paint::strip_scene(&ed, w, h, &mut labels.borrow_mut(), &paint::Look::default()));
     drop(ed);
 
     rsx! {

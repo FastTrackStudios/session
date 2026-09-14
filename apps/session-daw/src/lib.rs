@@ -17,6 +17,7 @@ pub mod balance;
 pub mod cursor;
 pub mod engine;
 pub mod expression;
+pub mod frame;
 pub mod frame_rate;
 pub mod gesture;
 pub mod headless;

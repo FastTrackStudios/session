@@ -79,6 +79,7 @@ fn chrome(theme: &daw_ui::theming::Theme) -> daw_theme::Chrome {
 }
 
 /// Colours resolved once, so the draw loop never parses a hex string.
+#[derive(Clone)]
 pub struct Palette {
     pub surface: Color,
     pub row_a: Color,

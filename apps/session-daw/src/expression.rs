@@ -40,7 +40,7 @@ use expression_editor_core::tools::{self, Hit};
 use expression_editor_core::{Edit, Editor, Mode, RowSpace, StripLane, Tool, Viewport, memagic};
 use expression_editor_paint::chrome::{self, Button, Choice, Control, Menu, Pending, STATUS_H, TOOLBAR_H};
 use expression_editor_paint::interaction::{self, Drag};
-use expression_editor_paint::paint::{self, Overlay};
+use expression_editor_paint::paint::{self, Look, Overlay};
 use expression_editor_paint::text::Labeller;
 use expression_editor_paint::{canvas, demo, keys};
 use input::InputCommand;
@@ -83,6 +83,8 @@ pub struct Expression {
     spring_from: Option<Tool>,
     /// What a menu command still needs from the host.
     pending: Option<Pending>,
+    /// The colours, from the host's palette.
+    look: Look,
 }
 
 /// Which part of the view a point is in.
@@ -174,7 +176,13 @@ impl Expression {
             menu: None,
             spring_from: None,
             pending: None,
+            look: Look::default(),
         }
+    }
+
+    /// Draw in the host's colours from now on.
+    pub const fn set_look(&mut self, look: Look) {
+        self.look = look;
     }
 
     /// Give the view its box. Cheap when nothing changed.
@@ -230,18 +238,18 @@ impl Expression {
             Drag::RazorCreate { pending, .. } => *pending,
             _ => None,
         };
-        let bar = chrome::paint(&self.toolbar, self.hover, w, TOOLBAR_H, &mut self.labels);
+        let bar = chrome::paint(&self.toolbar, self.hover, w, TOOLBAR_H, &mut self.labels, &self.look);
         painter.append_scene(bar, Affine::translate((ox, oy)));
-        let roll = paint::roll_scene(&self.editor, w, roll_h, &self.overlay, &mut self.labels);
+        let roll = paint::roll_scene(&self.editor, w, roll_h, &self.overlay, &mut self.labels, &self.look);
         painter.append_scene(roll, Affine::translate((ox, oy + TOOLBAR_H)));
         if strip_h > 0.0 {
-            let strip = paint::strip_scene(&self.editor, w, strip_h, &mut self.labels);
+            let strip = paint::strip_scene(&self.editor, w, strip_h, &mut self.labels, &self.look);
             painter.append_scene(strip, Affine::translate((ox, oy + TOOLBAR_H + roll_h)));
         }
-        let status = chrome::paint(&self.status, self.hover, w, STATUS_H, &mut self.labels);
+        let status = chrome::paint(&self.status, self.hover, w, STATUS_H, &mut self.labels, &self.look);
         painter.append_scene(status, Affine::translate((ox, oy + h - STATUS_H)));
         if let Some(menu) = &self.menu {
-            let scene = menu.paint(&mut self.labels);
+            let scene = menu.paint(&mut self.labels, &self.look);
             painter.append_scene(
                 scene,
                 Affine::translate((ox + canvas::GUTTER_W, oy + TOOLBAR_H + canvas::RULER_H)),
@@ -666,6 +674,45 @@ pub fn load_take(
     })
 }
 
+/// The editor's colours from the window's palette.
+///
+/// So a docked roll reads as part of the arrangement above it rather
+/// than a second application: the same surface, the same row shades,
+/// the same grid and text, the accent for what is selected and
+/// playing. A drum family's band is only a tint over the rows here,
+/// where the standalone editor paints it solid.
+#[must_use]
+pub fn look_of(palette: &crate::arrangement::Palette) -> Look {
+    let canonical = Look::default();
+    Look {
+        bg: palette.surface,
+        row_a: palette.row_a,
+        row_b: palette.row_b,
+        grid_beat: palette.grid_beat,
+        grid_sub: palette.grid,
+        panel: palette.tcp_tint,
+        panel_border: palette.divider,
+        border_strong: palette.item_edge,
+        surface_inset: palette.tcp_field,
+        surface_bar: palette.tcp_gutter,
+        gutter_bg: palette.tcp_column,
+        key_white: palette.tcp_button,
+        key_black: palette.tcp_field,
+        key_label: palette.text_dim,
+        text: palette.text,
+        text_dim: palette.text_dim,
+        text_bright: palette.text,
+        accent: palette.accent,
+        selected: palette.accent,
+        playhead: palette.accent,
+        control: palette.tcp_button,
+        control_active: palette.accent.multiply_alpha(0.55),
+        control_hover: palette.tcp_field,
+        band_tint: 0.35,
+        ..canonical
+    }
+}
+
 /// How far a press may travel and still be a click, in pixels.
 const CLICK_SLOP: f64 = 3.0;
 /// The strip's height before the editor has said otherwise.
@@ -996,5 +1043,25 @@ mod tests {
         assert_eq!(v.editor.doc.notes.len(), 2);
         assert!(v.editor.doc.notes.iter().all(|n| n.row == 0));
         assert_eq!(v.item.as_deref(), Some("item"));
+    }
+}
+#[cfg(test)]
+mod probe {
+    use super::*;
+    #[test]
+    fn probe() {
+        let mut v = Expression::demo((0.0, 0.0), (1200.0, 400.0));
+        let (t0, t1) = v.editor.camera.time_span(v.editor.viewport);
+        eprintln!("before span {t0}..{t1} upp {}", v.editor.camera.units_per_px);
+        v.wheel(600.0, 200.0, 0.0, -3.0, Mods { ctrl: true, ..Mods::default() });
+        let (t0, t1) = v.editor.camera.time_span(v.editor.viewport);
+        eprintln!("after ctrl-wheel span {t0}..{t1} upp {}", v.editor.camera.units_per_px);
+        v.wheel(600.0, 200.0, 0.0, -3.0, Mods::default());
+        let (t0, t1) = v.editor.camera.time_span(v.editor.viewport);
+        eprintln!("after plain wheel span {t0}..{t1}");
+        v.wheel(600.0, 200.0, 0.0, -3.0, Mods { alt: true, ..Mods::default() });
+        let (t0, t1) = v.editor.camera.time_span(v.editor.viewport);
+        eprintln!("after alt wheel span {t0}..{t1}");
+        eprintln!("{}", expression_editor_paint::scroll::hint());
     }
 }

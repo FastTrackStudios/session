@@ -271,6 +271,7 @@ pub fn Canvas(
             flow: try_consume_context::<BendFlow>().unwrap_or_default(),
         },
         &mut labels.borrow_mut(),
+        &paint::Look::default(),
     ));
     drop(ed);
 

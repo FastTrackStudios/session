@@ -67,6 +67,121 @@ pub struct Overlay {
     pub flow: crate::guitar::BendFlow,
 }
 
+/// The colours the roll and the strip are drawn in.
+///
+/// The painter used to read the canonical palette straight from
+/// `theme`, which is right for the standalone editor and wrong for a
+/// host with a palette of its own: docked under an arrangement drawn
+/// from a resolved theme, the roll's fixed blues stood out as a
+/// different application. A host builds a `Look` from its palette and
+/// hands it in; the standalone editor takes the default, which is the
+/// canonical palette exactly as before.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    pub bg: Color,
+    /// The two row shades — white and black keys on a pitch roll,
+    /// alternate lanes elsewhere.
+    pub row_a: Color,
+    pub row_b: Color,
+    pub grid_beat: Color,
+    pub grid_sub: Color,
+    pub panel: Color,
+    pub panel_border: Color,
+    pub border_strong: Color,
+    pub surface_inset: Color,
+    pub surface_bar: Color,
+    pub gutter_bg: Color,
+    pub key_white: Color,
+    pub key_black: Color,
+    pub key_label: Color,
+    pub text: Color,
+    pub text_dim: Color,
+    pub text_bright: Color,
+    pub accent: Color,
+    pub selected: Color,
+    pub playhead: Color,
+    pub razor: Color,
+    pub gold: Color,
+    pub zone: Color,
+    pub reference: Color,
+    pub handle: Color,
+    pub control: Color,
+    pub control_active: Color,
+    pub control_hover: Color,
+    /// How strongly a drum family's band tints its rows over `row_a`,
+    /// 0 for none.
+    pub band_tint: f32,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Self {
+            bg: color(theme::BG),
+            row_a: color(theme::ROW_WHITE),
+            row_b: color(theme::ROW_BLACK),
+            grid_beat: color(theme::GRID_BEAT),
+            grid_sub: color(theme::GRID_SUB),
+            panel: color(theme::PANEL),
+            panel_border: color(theme::PANEL_BORDER),
+            border_strong: color(theme::BORDER_STRONG),
+            surface_inset: color(theme::SURFACE_INSET),
+            surface_bar: color(theme::SURFACE_BAR),
+            gutter_bg: color(theme::GUTTER_BG),
+            key_white: color(theme::KEY_WHITE),
+            key_black: color(theme::KEY_BLACK),
+            key_label: color(theme::KEY_LABEL),
+            text: color(theme::TEXT),
+            text_dim: color(theme::TEXT_DIM),
+            text_bright: color(theme::TEXT_BRIGHT),
+            accent: color(theme::ACCENT),
+            selected: color(theme::SELECTED),
+            playhead: color(theme::PLAYHEAD),
+            razor: color(theme::RAZOR),
+            gold: color(theme::GOLD),
+            zone: color(theme::ZONE),
+            reference: color(theme::REFERENCE),
+            handle: color(theme::HANDLE),
+            control: color(theme::CONTROL),
+            control_active: color(theme::CONTROL_ACTIVE),
+            control_hover: color(theme::CONTROL_HOVER),
+            // The canonical bands are drawn as they are.
+            band_tint: 1.0,
+        }
+    }
+}
+
+impl Look {
+    /// The fill for a row the geometry layer described by its theme
+    /// string: the two plain shades map to this look's rows, and a
+    /// drum family's band is tinted over the first of them.
+    #[must_use]
+    pub fn row_fill(&self, css: &str) -> Color {
+        if css == theme::ROW_WHITE {
+            self.row_a
+        } else if css == theme::ROW_BLACK {
+            self.row_b
+        } else if self.band_tint >= 1.0 {
+            color(css)
+        } else {
+            mix(self.row_a, color(css), self.band_tint)
+        }
+    }
+}
+
+/// `a` towards `b` by `t`, per channel.
+#[must_use]
+pub fn mix(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let ca = a.components;
+    let cb = b.components;
+    Color::new([
+        (cb[0] - ca[0]).mul_add(t, ca[0]),
+        (cb[1] - ca[1]).mul_add(t, ca[1]),
+        (cb[2] - ca[2]).mul_add(t, ca[2]),
+        (cb[3] - ca[3]).mul_add(t, ca[3]),
+    ])
+}
+
 /// Parse a theme colour.
 ///
 /// The palette is CSS strings because it is shared with the parts of the
@@ -196,7 +311,14 @@ impl Batch {
 /// `w` and `h` are the element's box, handed down by the widget. Nothing
 /// here derives a size from the content, which is the property the svg
 /// could not offer.
-pub fn roll_scene(ed: &Editor, w: f64, h: f64, overlay: &Overlay, labels: &mut Labeller) -> Scene {
+pub fn roll_scene(
+    ed: &Editor,
+    w: f64,
+    h: f64,
+    overlay: &Overlay,
+    labels: &mut Labeller,
+    look: &Look,
+) -> Scene {
     let mut scene = Scene::new();
     let vp = ed.viewport;
 
@@ -204,7 +326,7 @@ pub fn roll_scene(ed: &Editor, w: f64, h: f64, overlay: &Overlay, labels: &mut L
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        color(theme::BG),
+        look.bg,
         None,
         &Rect::new(0.0, 0.0, w, h),
     );
@@ -225,31 +347,31 @@ pub fn roll_scene(ed: &Editor, w: f64, h: f64, overlay: &Overlay, labels: &mut L
         ),
     );
 
-    rows(&mut scene, ed, roll_at, vp.w);
-    grid(&mut scene, ed, roll_at, vp.h);
-    lanes(&mut scene, ed, roll_at, vp.w);
-    guides(&mut scene, ed, roll_at, vp.w, labels);
-    audio(&mut scene, ed, roll_at);
-    time_selection(&mut scene, ed, roll_at, vp.h);
-    razors(&mut scene, ed, roll_at, overlay.razor.as_ref());
-    references(&mut scene, ed, roll_at);
-    notes(&mut scene, ed, roll_at, labels);
+    rows(&mut scene, look, ed, roll_at, vp.w);
+    grid(&mut scene, look, ed, roll_at, vp.h);
+    lanes(&mut scene, look, ed, roll_at, vp.w);
+    guides(&mut scene, look, ed, roll_at, vp.w, labels);
+    audio(&mut scene, look, ed, roll_at);
+    time_selection(&mut scene, look, ed, roll_at, vp.h);
+    razors(&mut scene, look, ed, roll_at, overlay.razor.as_ref());
+    references(&mut scene, look, ed, roll_at);
+    notes(&mut scene, look, ed, roll_at, labels);
     curves(&mut scene, ed, roll_at);
-    strings(&mut scene, ed, roll_at, overlay, labels);
-    draft(&mut scene, overlay, roll_at);
+    strings(&mut scene, look, ed, roll_at, overlay, labels);
+    draft(&mut scene, look, overlay, roll_at);
     controllers(&mut scene, ed, roll_at, vp.w, vp.h, labels);
-    playhead(&mut scene, ed, roll_at, vp.h);
+    playhead(&mut scene, look, ed, roll_at, vp.h);
 
     if let Some((x, y, mw, mh)) = overlay.marquee {
         let r = Rect::new(x, y, x + mw, y + mh);
         scene.fill(
             Fill::NonZero,
             roll_at,
-            with_alpha(color(theme::ACCENT), 0.15),
+            with_alpha(look.accent, 0.15),
             None,
             &r,
         );
-        scene.stroke(&stroke_of(1.0), roll_at, color(theme::ACCENT), None, &r);
+        scene.stroke(&stroke_of(1.0), roll_at, look.accent, None, &r);
     }
 
     scene.pop_layer();
@@ -258,8 +380,8 @@ pub fn roll_scene(ed: &Editor, w: f64, h: f64, overlay: &Overlay, labels: &mut L
     //
     // Painted after the roll, so anything that overflowed is covered
     // rather than showing through the keyboard.
-    keyboard(&mut scene, ed, h, labels);
-    ruler(&mut scene, ed, w, labels);
+    keyboard(&mut scene, look, ed, h, labels);
+    ruler(&mut scene, look, ed, w, labels);
 
     scene
 }
@@ -288,12 +410,12 @@ fn label(
 /// Blitz restyled and re-laid-out every one of them on every camera
 /// move. That was most of the twelve milliseconds a pan cost at that
 /// note count — the drawing was never the problem, the *elements* were.
-pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller) -> Scene {
+pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller, look: &Look) -> Scene {
     let mut scene = Scene::new();
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        color(theme::SURFACE_BAR),
+        look.surface_bar,
         None,
         &Rect::new(0.0, 0.0, w, h),
     );
@@ -302,7 +424,7 @@ pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller) -> Scene 
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        color(theme::GUTTER_BG),
+        look.gutter_bg,
         None,
         &Rect::new(0.0, 0.0, canvas::GUTTER_W, h),
     );
@@ -314,7 +436,7 @@ pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller) -> Scene 
         14.0,
         9.0,
         text::Align::Left,
-        color(theme::TEXT_DIM),
+        look.text_dim,
         Affine::IDENTITY,
     );
 
@@ -324,11 +446,7 @@ pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller) -> Scene 
     let mut guides = Batch::default();
     for (y, major) in canvas::strip_guides(h) {
         guides.add(
-            color(if major {
-                theme::GRID_BEAT
-            } else {
-                theme::GRID_SUB
-            }),
+            if major { look.grid_beat } else { look.grid_sub },
             &Line::new((0.0, y), (vp_w, y)),
         );
     }
@@ -346,7 +464,7 @@ pub fn strip_scene(ed: &Editor, w: f64, h: f64, labels: &mut Labeller) -> Scene 
         // move are obvious.
         if s.selected {
             caps.add(
-                color(theme::SELECTED),
+                look.selected,
                 &Rect::new(s.x - 1.0, s.y - 2.0, s.x + s.w + 1.0, s.y + 1.0),
             );
         }
@@ -379,55 +497,51 @@ fn scene_mut(scene: &mut Scene) -> &mut Scene {
     scene
 }
 
-fn rows(scene: &mut Scene, ed: &Editor, at: Affine, w: f64) {
+fn rows(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, w: f64) {
     let mut bands = Batch::default();
     let mut dividers = Batch::default();
     for r in canvas::rows(ed) {
-        bands.add(color(r.fill), &Rect::new(0.0, r.y, w, r.y + r.h));
+        bands.add(look.row_fill(r.fill), &Rect::new(0.0, r.y, w, r.y + r.h));
         // One divider per group rather than per row: evenly-ruled lanes
         // give the eye nothing to steer by.
         if r.starts_group {
-            dividers.add(color(theme::PANEL_BORDER), &Line::new((0.0, r.y), (w, r.y)));
+            dividers.add(look.panel_border, &Line::new((0.0, r.y), (w, r.y)));
         }
     }
     bands.fill(scene, at);
     dividers.stroke(scene, at, 1.0);
 }
 
-fn grid(scene: &mut Scene, ed: &Editor, at: Affine, h: f64) {
+fn grid(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, h: f64) {
     let mut lines = Batch::default();
     for g in canvas::grid_lines(ed) {
-        let c = if g.beat {
-            theme::GRID_BEAT
-        } else {
-            theme::GRID_SUB
-        };
-        lines.add(color(c), &Line::new((g.x, 0.0), (g.x, h)));
+        let c = if g.beat { look.grid_beat } else { look.grid_sub };
+        lines.add(c, &Line::new((g.x, 0.0), (g.x, h)));
     }
     lines.stroke(scene, at, 1.0);
 }
 
-fn lanes(scene: &mut Scene, ed: &Editor, at: Affine, w: f64) {
+fn lanes(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, w: f64) {
     let _ = w;
     for b in canvas::lane_boxes(ed) {
         let r = Rect::new(b.x, b.y, b.x + b.w, b.y + b.h);
         scene.fill(
             Fill::NonZero,
             at,
-            with_alpha(color(theme::SURFACE_INSET), 0.55),
+            with_alpha(look.surface_inset, 0.55),
             None,
             &r,
         );
-        scene.stroke(&stroke_of(1.0), at, color(theme::PANEL_BORDER), None, &r);
+        scene.stroke(&stroke_of(1.0), at, look.panel_border, None, &r);
     }
 }
 
-fn guides(scene: &mut Scene, ed: &Editor, at: Affine, w: f64, labels: &mut Labeller) {
+fn guides(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, w: f64, labels: &mut Labeller) {
     for g in canvas::tuning_guides(ed) {
         scene.stroke(
             &stroke_of(1.0),
             at,
-            with_alpha(color(theme::GOLD), 0.7),
+            with_alpha(look.gold, 0.7),
             None,
             &Line::new((0.0, g.y), (w, g.y)),
         );
@@ -439,7 +553,7 @@ fn guides(scene: &mut Scene, ed: &Editor, at: Affine, w: f64, labels: &mut Label
             g.y - 3.0,
             9.0,
             text::Align::Left,
-            color(theme::GOLD),
+            look.gold,
             at,
         );
     }
@@ -447,7 +561,7 @@ fn guides(scene: &mut Scene, ed: &Editor, at: Affine, w: f64, labels: &mut Label
         scene.stroke(
             &stroke_of(1.0),
             at,
-            with_alpha(color(theme::ZONE), 0.8),
+            with_alpha(look.zone, 0.8),
             None,
             &Line::new((z.x0, z.y), (z.x1, z.y)),
         );
@@ -470,12 +584,12 @@ fn guides(scene: &mut Scene, ed: &Editor, at: Affine, w: f64, labels: &mut Label
 /// "the dark areas in the waveform" the manual describes. A band over an
 /// already-dark backdrop is nearly invisible, so it is edged as well as
 /// filled.
-fn audio(scene: &mut Scene, ed: &Editor, at: Affine) {
+fn audio(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine) {
     if let Some(wave) = canvas::take_waveform(ed) {
         scene.fill(
             Fill::NonZero,
             at,
-            with_alpha(color(theme::REFERENCE), 0.13),
+            with_alpha(look.reference, 0.13),
             None,
             &polygon(&wave),
         );
@@ -489,7 +603,7 @@ fn audio(scene: &mut Scene, ed: &Editor, at: Affine) {
         scene.stroke(
             &stroke_of(1.0),
             at,
-            with_alpha(color(theme::ACCENT), 0.5),
+            with_alpha(look.accent, 0.5),
             None,
             &r,
         );
@@ -503,7 +617,7 @@ fn audio(scene: &mut Scene, ed: &Editor, at: Affine) {
 /// than as an overlay. A guitarist reads bends as "full" and "half", so
 /// the peak carries the number and the curve only shows how it got
 /// there.
-fn strings(scene: &mut Scene, ed: &Editor, at: Affine, overlay: &Overlay, labels: &mut Labeller) {
+fn strings(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, overlay: &Overlay, labels: &mut Labeller) {
     if overlay.flow.on_row() {
         for f in crate::guitar::flow_paths(ed) {
             scene.stroke(
@@ -522,7 +636,7 @@ fn strings(scene: &mut Scene, ed: &Editor, at: Affine, overlay: &Overlay, labels
                     f.peak_at.1 - 4.0,
                     9.0,
                     text::Align::Left,
-                    color(theme::ACCENT),
+                    look.accent,
                     at,
                 );
             }
@@ -539,21 +653,21 @@ fn strings(scene: &mut Scene, ed: &Editor, at: Affine, overlay: &Overlay, labels
 
 /// An open pitch drawing: the line being drawn, what it is replacing,
 /// and the anchors that shape it.
-fn draft(scene: &mut Scene, overlay: &Overlay, at: Affine) {
+fn draft(scene: &mut Scene, look: &Look, overlay: &Overlay, at: Affine) {
     let Some(d) = &overlay.draft else { return };
     // The curve as it was before drawing began — the thin line
     // underneath, which is how you can see what you are changing.
     scene.stroke(
         &stroke_of(1.0),
         at,
-        with_alpha(color(theme::TEXT_DIM), 0.6),
+        with_alpha(look.text_dim, 0.6),
         None,
         &polyline(&d.original),
     );
     scene.stroke(
         &stroke_of(2.0),
         at,
-        color(theme::ACCENT),
+        look.accent,
         None,
         &polyline(&d.line),
     );
@@ -562,7 +676,7 @@ fn draft(scene: &mut Scene, overlay: &Overlay, at: Affine) {
         scene.fill(
             Fill::NonZero,
             at,
-            color(theme::ACCENT),
+            look.accent,
             None,
             &kurbo::Circle::new((*x, *y), r),
         );
@@ -576,7 +690,7 @@ fn draft(scene: &mut Scene, overlay: &Overlay, at: Affine) {
 /// and what it holds is what it will carve. A time selection is two
 /// points on the timeline and says nothing about pitch, so drawing it as
 /// a box would claim a boundary it does not have.
-fn time_selection(scene: &mut Scene, ed: &Editor, at: Affine, h: f64) {
+fn time_selection(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, h: f64) {
     let Some((t0, t1)) = ed.time_selection else {
         return;
     };
@@ -587,7 +701,7 @@ fn time_selection(scene: &mut Scene, ed: &Editor, at: Affine, h: f64) {
     scene.fill(
         Fill::NonZero,
         at,
-        with_alpha(color(theme::SELECTED), 0.10),
+        with_alpha(look.selected, 0.10),
         None,
         &Rect::new(x0, 0.0, x1, h),
     );
@@ -597,19 +711,19 @@ fn time_selection(scene: &mut Scene, ed: &Editor, at: Affine, h: f64) {
         scene.stroke(
             &stroke_of(1.0),
             at,
-            with_alpha(color(theme::SELECTED), 0.8),
+            with_alpha(look.selected, 0.8),
             None,
             &Line::new((x, 0.0), (x, h)),
         );
     }
 }
 
-fn razors(scene: &mut Scene, ed: &Editor, at: Affine, pending: Option<&RazorArea>) {
+fn razors(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, pending: Option<&RazorArea>) {
     for r in canvas::razor_rects(ed) {
         scene.fill(
             Fill::NonZero,
             at,
-            with_alpha(color(theme::RAZOR), 0.25),
+            with_alpha(look.razor, 0.25),
             None,
             &Rect::new(r.x, r.y, r.x + r.w, r.y + r.h),
         );
@@ -626,7 +740,7 @@ fn razors(scene: &mut Scene, ed: &Editor, at: Affine, pending: Option<&RazorArea
     scene.fill(
         Fill::NonZero,
         at,
-        with_alpha(color(theme::RAZOR), 0.22),
+        with_alpha(look.razor, 0.22),
         None,
         &box_,
     );
@@ -634,7 +748,7 @@ fn razors(scene: &mut Scene, ed: &Editor, at: Affine, pending: Option<&RazorArea
         scene.stroke(
             &stroke_of(1.5),
             at,
-            with_alpha(color(theme::RAZOR), 0.95),
+            with_alpha(look.razor, 0.95),
             None,
             &kurbo::Line::new((x, r.y), (x, r.y + r.h)),
         );
@@ -642,13 +756,13 @@ fn razors(scene: &mut Scene, ed: &Editor, at: Affine, pending: Option<&RazorArea
     scene.stroke(
         &stroke_of(1.0),
         at,
-        with_alpha(color(theme::RAZOR), 0.6),
+        with_alpha(look.razor, 0.6),
         None,
         &box_,
     );
 }
 
-fn references(scene: &mut Scene, ed: &Editor, at: Affine) {
+fn references(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine) {
     let opacity = if ed.refs_to_front { 0.95 } else { 0.45 };
     for r in canvas::reference_rects(ed) {
         let box_ = Rect::new(r.x, r.y, r.x + r.w, r.y + r.h);
@@ -675,14 +789,14 @@ fn references(scene: &mut Scene, ed: &Editor, at: Affine) {
         scene.stroke(
             &stroke_of(1.0),
             at,
-            with_alpha(color(theme::TEXT_DIM), 0.8),
+            with_alpha(look.text_dim, 0.8),
             None,
             &Rect::new(r.x, r.y, r.x + r.w, r.y + r.h),
         );
     }
 }
 
-fn notes(scene: &mut Scene, ed: &Editor, at: Affine, labels: &mut Labeller) {
+fn notes(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, labels: &mut Labeller) {
     // Notes recede while a controller is being edited: the roll is that
     // dimension's editing surface for the moment, and full-strength
     // notes would compete with the curve for the same pixels.
@@ -719,7 +833,7 @@ fn notes(scene: &mut Scene, ed: &Editor, at: Affine, labels: &mut Labeller) {
             bodies.add(fill, &polygon(blob));
             if let Some(cy) = n.blob_center {
                 centres.add(
-                    with_alpha(color(theme::TEXT), 0.5 * alpha),
+                    with_alpha(look.text, 0.5 * alpha),
                     &Line::new((n.x, cy), (n.x + n.w, cy)),
                 );
             }
@@ -730,7 +844,7 @@ fn notes(scene: &mut Scene, ed: &Editor, at: Affine, labels: &mut Labeller) {
             bodies.add(fill, &r);
             if let Some(ribbon) = &n.ribbon {
                 ribbons.add(
-                    with_alpha(color(theme::SELECTED), 0.18 * alpha),
+                    with_alpha(look.selected, 0.18 * alpha),
                     &polygon(ribbon),
                 );
             }
@@ -738,9 +852,9 @@ fn notes(scene: &mut Scene, ed: &Editor, at: Affine, labels: &mut Labeller) {
             for (x0, _x1, active) in &n.zones {
                 let line = Line::new((*x0, n.y), (*x0, n.y + n.h));
                 if *active {
-                    zones_active.add(color(theme::ACCENT), &line);
+                    zones_active.add(look.accent, &line);
                 } else {
-                    zones.add(color(theme::ZONE), &line);
+                    zones.add(look.zone, &line);
                 }
             }
             // The outline says one thing and one thing only: whether
@@ -752,11 +866,7 @@ fn notes(scene: &mut Scene, ed: &Editor, at: Affine, labels: &mut Labeller) {
             // wholesale. Two independent facts cannot share one channel;
             // one of them has to lose, and the one you are actively
             // changing must not be it.
-            let edge = color(if n.selected {
-                theme::SELECTED
-            } else {
-                theme::BORDER_STRONG
-            });
+            let edge = if n.selected { look.selected } else { look.border_strong };
             // Two widths, so two batches: a stroke width belongs to the
             // command, not to the path.
             if n.selected {
@@ -771,7 +881,7 @@ fn notes(scene: &mut Scene, ed: &Editor, at: Affine, labels: &mut Labeller) {
             if n.ambiguous {
                 let bar = (n.h * 0.25).clamp(1.5, 3.0);
                 warnings.add(
-                    with_alpha(color(theme::ZONE), 0.95 * alpha),
+                    with_alpha(look.zone, 0.95 * alpha),
                     &Rect::new(n.x, n.y, n.x + n.w, n.y + bar),
                 );
             }
@@ -811,7 +921,7 @@ fn notes(scene: &mut Scene, ed: &Editor, at: Affine, labels: &mut Labeller) {
                 n.x,
                 n.y - 3.0,
                 8.0,
-                with_alpha(color(theme::TEXT_DIM), alpha),
+                with_alpha(look.text_dim, alpha),
             ));
         }
     }
@@ -830,7 +940,7 @@ fn notes(scene: &mut Scene, ed: &Editor, at: Affine, labels: &mut Labeller) {
         label(scene, labels, &s, x, y, size, text::Align::Left, c, at);
     }
 
-    handles(scene, ed, at);
+    handles(scene, look, ed, at);
 }
 
 /// How far a black key reaches across the gutter, as a fraction of it.
@@ -848,14 +958,14 @@ const BLACK_KEY_W: f64 = 0.62;
 const LABEL_MIN_H: f64 = 9.0;
 const LABEL_MIN_W: f64 = 18.0;
 
-fn handles(scene: &mut Scene, ed: &Editor, at: Affine) {
+fn handles(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine) {
     for set in canvas::note_handles(ed) {
         // The temporary-note range, when a drawing is open on this note.
         if let Some((x0, x1)) = set.scope {
             scene.stroke(
                 &stroke_of(1.0),
                 at,
-                with_alpha(color(theme::ACCENT), 0.6),
+                with_alpha(look.accent, 0.6),
                 None,
                 &Line::new((x0, 0.0), (x1, 0.0)),
             );
@@ -865,11 +975,11 @@ fn handles(scene: &mut Scene, ed: &Editor, at: Affine) {
             scene.fill(
                 Fill::NonZero,
                 at,
-                with_alpha(color(theme::HANDLE), 0.9),
+                with_alpha(look.handle, 0.9),
                 None,
                 &c,
             );
-            scene.stroke(&stroke_of(1.0), at, color(theme::ACCENT), None, &c);
+            scene.stroke(&stroke_of(1.0), at, look.accent, None, &c);
             // Each mark says what the handle *does* rather than naming
             // it. At fourteen pixels there is no room for a word, and a
             // shape is faster to read than one anyway.
@@ -880,7 +990,7 @@ fn handles(scene: &mut Scene, ed: &Editor, at: Affine) {
             if let Ok(mark) =
                 kurbo::BezPath::from_svg(&crate::handle_mark(h.handle, cx, cy, half, hollow))
             {
-                scene.stroke(&stroke_of(1.2), at, color(theme::TEXT), None, &mark);
+                scene.stroke(&stroke_of(1.2), at, look.text, None, &mark);
             }
         }
     }
@@ -947,19 +1057,19 @@ fn controllers(scene: &mut Scene, ed: &Editor, at: Affine, w: f64, h: f64, label
     }
 }
 
-fn playhead(scene: &mut Scene, ed: &Editor, at: Affine, h: f64) {
+fn playhead(scene: &mut Scene, look: &Look, ed: &Editor, at: Affine, h: f64) {
     let Some(t) = ed.playhead else { return };
     let x = ed.camera.x(t);
     scene.stroke(
         &stroke_of(2.0),
         at,
-        color(theme::ACCENT),
+        look.accent,
         None,
         &Line::new((x, 0.0), (x, h)),
     );
 }
 
-fn keyboard(scene: &mut Scene, ed: &Editor, h: f64, labels: &mut Labeller) {
+fn keyboard(scene: &mut Scene, look: &Look, ed: &Editor, h: f64, labels: &mut Labeller) {
     let at = Affine::translate((0.0, canvas::RULER_H));
 
     // The keyboard occupies exactly the band the note area does.
@@ -996,11 +1106,7 @@ fn keyboard(scene: &mut Scene, ed: &Editor, h: f64, labels: &mut Labeller) {
     scene.fill(
         Fill::NonZero,
         at,
-        color(if piano {
-            theme::KEY_WHITE
-        } else {
-            theme::SURFACE_BAR
-        }),
+        if piano { look.key_white } else { look.surface_bar },
         None,
         &band,
     );
@@ -1011,28 +1117,24 @@ fn keyboard(scene: &mut Scene, ed: &Editor, h: f64, labels: &mut Labeller) {
         if piano {
             if k.black {
                 faces.add(
-                    color(theme::KEY_BLACK),
+                    look.key_black,
                     &Rect::new(0.0, k.y, canvas::GUTTER_W * BLACK_KEY_W, k.y + k.h),
                 );
             } else {
                 // Only the white keys are parted. A rule drawn across a
                 // black key is exactly what made this read as a grid.
                 edges.add(
-                    with_alpha(color(theme::PANEL_BORDER), 0.8),
+                    with_alpha(look.panel_border, 0.8),
                     &Line::new((0.0, k.y), (canvas::GUTTER_W, k.y)),
                 );
             }
         } else {
             faces.add(
-                color(if k.black {
-                    theme::KEY_BLACK
-                } else {
-                    theme::KEY_WHITE
-                }),
+                if k.black { look.key_black } else { look.key_white },
                 &Rect::new(0.0, k.y, canvas::GUTTER_W, k.y + k.h),
             );
             edges.add(
-                with_alpha(color(theme::PANEL_BORDER), 0.8),
+                with_alpha(look.panel_border, 0.8),
                 &Line::new((0.0, k.y), (canvas::GUTTER_W, k.y)),
             );
         }
@@ -1054,7 +1156,7 @@ fn keyboard(scene: &mut Scene, ed: &Editor, h: f64, labels: &mut Labeller) {
                 k.y + k.h * 0.5 + 3.0,
                 9.0,
                 text::Align::Right,
-                color(theme::KEY_LABEL),
+                look.key_label,
                 at,
             );
         }
@@ -1071,7 +1173,7 @@ fn keyboard(scene: &mut Scene, ed: &Editor, h: f64, labels: &mut Labeller) {
             g.y + g.h * 0.5 + 3.0,
             9.0,
             text::Align::Left,
-            color(theme::TEXT_DIM),
+            look.text_dim,
             at,
         );
     }
@@ -1083,17 +1185,17 @@ fn keyboard(scene: &mut Scene, ed: &Editor, h: f64, labels: &mut Labeller) {
     scene.stroke(
         &stroke_of(1.0),
         Affine::IDENTITY,
-        color(theme::PANEL_BORDER),
+        look.panel_border,
         None,
         &Line::new((canvas::GUTTER_W, 0.0), (canvas::GUTTER_W, h)),
     );
 }
 
-fn ruler(scene: &mut Scene, ed: &Editor, w: f64, labels: &mut Labeller) {
+fn ruler(scene: &mut Scene, look: &Look, ed: &Editor, w: f64, labels: &mut Labeller) {
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        color(theme::SURFACE_BAR),
+        look.surface_bar,
         None,
         &Rect::new(0.0, 0.0, w, canvas::RULER_H),
     );
@@ -1120,7 +1222,7 @@ fn ruler(scene: &mut Scene, ed: &Editor, w: f64, labels: &mut Labeller) {
                 11.0,
                 9.0,
                 text::Align::Left,
-                color(theme::TEXT_DIM),
+                look.text_dim,
                 at,
             );
         }
@@ -1129,7 +1231,7 @@ fn ruler(scene: &mut Scene, ed: &Editor, w: f64, labels: &mut Labeller) {
         scene.fill(
             Fill::NonZero,
             at,
-            color(theme::GOLD),
+            look.gold,
             None,
             &Rect::new(m.x, 2.0, m.x + 6.0, 8.0),
         );
@@ -1141,14 +1243,14 @@ fn ruler(scene: &mut Scene, ed: &Editor, w: f64, labels: &mut Labeller) {
             canvas::RULER_H - 6.0,
             9.0,
             text::Align::Left,
-            color(theme::GOLD),
+            look.gold,
             at,
         );
     }
     scene.stroke(
         &stroke_of(1.0),
         Affine::IDENTITY,
-        color(theme::PANEL_BORDER),
+        look.panel_border,
         None,
         &Line::new((0.0, canvas::RULER_H), (w, canvas::RULER_H)),
     );

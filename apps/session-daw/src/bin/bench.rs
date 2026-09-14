@@ -1254,7 +1254,8 @@ fn animate(
 
 /// One frame of the arrangement with the editor docked, to a PNG.
 ///
-/// `FTS_BENCH_DOCK=/tmp/dock.png`.
+/// `FTS_BENCH_DOCK=/tmp/dock.png`. The window's own painter, with what
+/// a headless run has no pointer for left at rest.
 fn dock_shot(
     scene: &Arrangement,
     palette: &Palette,
@@ -1263,7 +1264,6 @@ fn dock_shot(
     width: u32,
     height: u32,
 ) {
-    const FINEST: f64 = 1.0 / 16.0;
     let (w, h) = (f64::from(width), f64::from(height));
     let dock = (h * 0.4).max(160.0);
     let frame = session_daw::rails::Frame::docked(w, h, dock);
@@ -1272,86 +1272,97 @@ fn dock_shot(
         (dock_box.x0, dock_box.y0),
         (dock_box.width(), dock_box.height()),
     );
+    editor.set_look(session_daw::expression::look_of(palette));
     editor.editor.playhead = Some(editor.editor.doc.end * 0.3);
-    let bars = Bars::at(scene.bpm);
-    let grid = adaptive_grid::Adaptive::default();
-    let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
-    let view = Viewport {
-        scroll_x: 0.0,
-        scroll_y: 0.0,
-        pps: PPS,
-        zoom_y: 1.0,
-        width: frame.content_width(),
-        height: frame.content_height(),
-    };
     let mut image = VelloImageRenderer::new(width, height);
     let mut buffer = Vec::new();
     image.render_to_vec(
         |painter| {
-            painter.reset();
-            painter.fill(
-                vello::peniko::Fill::NonZero,
-                Affine::IDENTITY,
-                palette.surface,
-                None,
-                &vello::kurbo::Rect::new(0.0, 0.0, w, h),
-            );
-            scene.replay_lanes(
-                painter,
-                view,
-                Affine::translate((rail.0 + TCP_WIDTH, rail.1 + RULER_H)),
-            );
-            session_daw::arrangement::titles(
-                painter,
-                palette,
-                font,
-                scene,
-                view,
-                (rail.0 + TCP_WIDTH, rail.1 + RULER_H),
-            );
-            scene.replay_panel(painter, view, Affine::translate((rail.0, rail.1 + RULER_H)));
-            ruler::grid(painter, palette, view, bars, &grid, FINEST, rail);
-            ruler::ruler(painter, palette, font, view, bars, rail);
-            ruler::lanes(painter, palette, font, view, rail, scene.sections(), scene.markers());
-            painter.fill(
-                vello::peniko::Fill::NonZero,
-                Affine::IDENTITY,
-                palette.surface,
-                None,
-                &dock_box,
-            );
-            editor.paint(painter);
-            painter.fill(
-                vello::peniko::Fill::NonZero,
-                Affine::IDENTITY,
-                palette.tcp_rule,
-                None,
-                &vello::kurbo::Rect::new(dock_box.x0, dock_box.y0 - 1.0, dock_box.x1, dock_box.y0 + 1.0),
-            );
-            let profile = session_daw::rails::profile(
-                session_daw::rails::Surface::Arrange,
-                session::modes::Mode::Mix,
-                session::mix_phases::MixPhase::Tone,
-                "Mix",
-                session_daw::settings::Settings::default(),
-            );
-            session_daw::rails::draw(
-                painter,
-                palette,
-                font,
-                &mut session_daw::icons::Icons::none(),
-                (None, None),
-                frame,
-                &profile.left,
-                &profile.right,
-                &profile.top,
-            );
+            let mut at_rest = AtRest::new(frame, palette);
+            at_rest.arrange(scene, font, session_daw::frame::viewport(frame, (0.0, 0.0), PPS, 1.0), Some(&mut editor)).paint(painter);
         },
         &mut buffer,
     );
     image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
         .expect("write the frame");
     println!("  wrote {}", out.display());
+}
+
+/// What a headless frame has instead of a window's state: no pointer,
+/// no rename, no selection, no icons — every input at rest, so the
+/// frame is the window's frame with nothing happening in it.
+struct AtRest {
+    frame: session_daw::rails::Frame,
+    grid: adaptive_grid::Adaptive,
+    rows: Vec<(daw_proto::Track, u32)>,
+    tracks: Vec<daw_proto::Track>,
+    map: session_daw::plan::Rows,
+    panel: session_daw::pointer::Pointer<session_daw::pointer::RowSpot>,
+    profile: session_daw::rails::Profile,
+    icons: session_daw::icons::Icons,
+    selected: std::collections::HashSet<String>,
+    palette: Palette,
+}
+
+impl AtRest {
+    fn new(frame: session_daw::rails::Frame, palette: &Palette) -> Self {
+        let (rows, tracks) = panel_rows();
+        let map = session_daw::plan::Rows::of(rows.as_slice(), &tracks);
+        Self {
+            frame,
+            grid: adaptive_grid::Adaptive::default(),
+            rows,
+            tracks,
+            map,
+            panel: session_daw::pointer::Pointer::default(),
+            profile: session_daw::rails::profile(
+                session_daw::rails::Surface::Arrange,
+                session::modes::Mode::Mix,
+                TONE,
+                "Mix",
+                session_daw::settings::Settings::default(),
+            ),
+            icons: session_daw::icons::Icons::none(),
+            selected: std::collections::HashSet::new(),
+            palette: palette.clone(),
+        }
+    }
+
+    fn arrange<'a>(
+        &'a mut self,
+        scene: &'a Arrangement,
+        font: &'a session_daw::text::Font,
+        view: Viewport,
+        dock: Option<&'a mut session_daw::expression::Expression>,
+    ) -> session_daw::frame::Arrange<'a> {
+        session_daw::frame::Arrange {
+            scene,
+            palette: &self.palette,
+            font,
+            frame: self.frame,
+            view,
+            bars: Bars::at(scene.bpm),
+            grid: &self.grid,
+            rows: &self.rows,
+            tracks: &self.tracks,
+            map: &self.map,
+            panel: &self.panel,
+            rename: None,
+            profile: &self.profile,
+            rail_at: (None, None),
+            icons: &mut self.icons,
+            mode: session::modes::Mode::Mix,
+            play_at: 0.0,
+            edit: session_daw::cursor::Edit::default(),
+            hovered_item: None,
+            in_flight: None,
+            selected: &self.selected,
+            ghost: None,
+            scroll_bars: None,
+            bar_held: None,
+            dock,
+        }
+    }
 }
 
 /// The studio: the arrangement with the expression editor docked under
@@ -1376,7 +1387,6 @@ fn studio(
     width: u32,
     height: u32,
 ) {
-    const FINEST: f64 = 1.0 / 16.0;
     const BUDGET_MS: f64 = 1000.0 / 240.0;
     let (mixer_w, mixer_h) = std::env::var("FTS_BENCH_MIXER_SIZE")
         .ok()
@@ -1403,11 +1413,9 @@ fn studio(
         (dock_box.x0, dock_box.y0),
         (dock_box.width(), dock_box.height()),
     );
+    editor.set_look(session_daw::expression::look_of(palette));
     let doc_end = editor.editor.doc.end;
-
-    let bars = Bars::at(scene.bpm);
-    let grid = adaptive_grid::Adaptive::default();
-    let rail = (session_daw::rails::SIDE, session_daw::rails::TOP);
+    let mut at_rest = AtRest::new(frame, palette);
     let span_y = (scene.content_height() - frame.content_height()).max(1.0);
     let span_x = (scene.length_secs * PPS - frame.content_width()).max(1.0);
     let fit = frame.content_height() / scene.content_height().max(1.0);
@@ -1456,14 +1464,7 @@ fn studio(
                 let t = frame_index as f64 / FRAMES as f64;
                 let (fx, fy, zx, zy) = gesture(t);
                 let (scroll_x, scroll_y) = (span_x * fx, span_y * fy);
-                let view = Viewport {
-                    scroll_x,
-                    scroll_y,
-                    pps: PPS * zx,
-                    zoom_y: zy,
-                    width: frame.content_width(),
-                    height: frame.content_height(),
-                };
+                let view = session_daw::frame::viewport(frame, (scroll_x, scroll_y), PPS * zx, zy);
                 // The editor: the playhead across the groove, the
                 // camera panning against it.
                 editor.editor.playhead = Some(t * doc_end);
@@ -1471,44 +1472,9 @@ fn studio(
 
                 painted += arrange
                     .frame(|painter| {
-                        painter.fill(
-                            vello::peniko::Fill::NonZero,
-                            Affine::IDENTITY,
-                            palette.surface,
-                            None,
-                            &vello::kurbo::Rect::new(0.0, 0.0, w, h),
-                        );
-                        scene.replay_lanes(
-                            painter,
-                            view,
-                            Affine::translate((rail.0 + TCP_WIDTH - scroll_x, rail.1 + RULER_H - scroll_y))
-                                * Affine::scale_non_uniform(PPS * zx, zy),
-                        );
-                        session_daw::arrangement::titles(
-                            painter,
-                            palette,
-                            font,
-                            scene,
-                            view,
-                            (rail.0 + TCP_WIDTH - scroll_x, rail.1 + RULER_H - scroll_y),
-                        );
-                        scene.replay_panel(
-                            painter,
-                            view,
-                            Affine::translate((rail.0, rail.1 + RULER_H - scroll_y)),
-                        );
-                        ruler::grid(painter, palette, view, bars, &grid, FINEST, rail);
-                        ruler::ruler(painter, palette, font, view, bars, rail);
-                        ruler::lanes(painter, palette, font, view, rail, scene.sections(), scene.markers());
-                        // The dock, over the arrangement's bottom.
-                        painter.fill(
-                            vello::peniko::Fill::NonZero,
-                            Affine::IDENTITY,
-                            palette.surface,
-                            None,
-                            &dock_box,
-                        );
-                        editor.paint(painter);
+                        let mut drawn = at_rest.arrange(scene, font, view, Some(&mut editor));
+                        drawn.play_at = t * scene.length_secs;
+                        drawn.paint(painter);
                     })
                     .expect("render the arrangement");
                 mixer.drive(t, frame_index);

@@ -23,7 +23,7 @@ use std::fmt::Write as _;
 use peniko::Fill;
 
 use crate::interaction::{self, Drag};
-use crate::paint::{color, stroke_of, with_alpha};
+use crate::paint::{Look, stroke_of, with_alpha};
 use crate::text::{self, Labeller};
 use crate::theme;
 
@@ -280,31 +280,32 @@ pub fn paint(
     width: f64,
     height: f64,
     labels: &mut Labeller,
+    look: &Look,
 ) -> Scene {
     let mut scene = Scene::new();
     scene.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        color(theme::SURFACE_BAR),
+        look.surface_bar,
         None,
         &Rect::new(0.0, 0.0, width, height),
     );
     scene.stroke(
         &stroke_of(1.0),
         Affine::IDENTITY,
-        color(theme::PANEL_BORDER),
+        look.panel_border,
         None,
         &Line::new((0.0, height - 0.5), (width, height - 0.5)),
     );
     for b in buttons {
         let fill = if b.active {
-            color(theme::CONTROL_ACTIVE)
+            look.control_active
         } else if hover == Some(b.control) && !b.is_readout() {
-            color(theme::CONTROL_HOVER)
+            look.control_hover
         } else if b.is_readout() {
-            color(theme::SURFACE_BAR)
+            look.surface_bar
         } else {
-            color(theme::CONTROL)
+            look.control
         };
         scene.fill(
             Fill::NonZero,
@@ -314,11 +315,11 @@ pub fn paint(
             &b.rect.to_rounded_rect(2.0),
         );
         let ink = if !b.enabled {
-            with_alpha(color(theme::TEXT), 0.35)
+            with_alpha(look.text, 0.35)
         } else if b.active {
-            color(theme::TEXT_BRIGHT)
+            look.text_bright
         } else {
-            color(theme::TEXT)
+            look.text
         };
         let shaped = labels.shape(&b.label, FONT);
         let baseline = text_top(b.rect.center().y, &shaped);
@@ -646,20 +647,20 @@ impl Menu {
     }
 
     /// Draw the menu, in roll space.
-    pub fn paint(&self, labels: &mut Labeller) -> Scene {
+    pub fn paint(&self, labels: &mut Labeller, look: &Look) -> Scene {
         let mut scene = Scene::new();
         let bounds = self.bounds();
         scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
-            color(theme::PANEL),
+            look.panel,
             None,
             &bounds.to_rounded_rect(3.0),
         );
         scene.stroke(
             &stroke_of(1.0),
             Affine::IDENTITY,
-            color(theme::BORDER_STRONG),
+            look.border_strong,
             None,
             &bounds.to_rounded_rect(3.0),
         );
@@ -669,7 +670,7 @@ impl Menu {
                 scene.stroke(
                     &stroke_of(1.0),
                     Affine::IDENTITY,
-                    color(theme::PANEL_BORDER),
+                    look.panel_border,
                     None,
                     &Line::new((rect.x0 + 6.0, y), (rect.x1 - 6.0, y)),
                 );
@@ -678,15 +679,15 @@ impl Menu {
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
-                    color(theme::CONTROL_HOVER),
+                    look.control_hover,
                     None,
                     &rect.inset(-2.0).inset(2.0),
                 );
             }
             let ink = if item.enabled {
-                color(theme::TEXT)
+                look.text
             } else {
-                with_alpha(color(theme::TEXT), 0.35)
+                with_alpha(look.text, 0.35)
             };
             let shaped = labels.shape(&item.label, FONT);
             let baseline = text_top(rect.center().y, &shaped);
@@ -707,7 +708,7 @@ impl Menu {
                     rect.x1 - 10.0,
                     baseline,
                     text::Align::Right,
-                    color(theme::TEXT_DIM),
+                    look.text_dim,
                     Affine::IDENTITY,
                 );
             }

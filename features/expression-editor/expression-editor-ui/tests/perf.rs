@@ -46,6 +46,7 @@ fn frame_cost_at_5120x1440() {
             h + canvas::RULER_H,
             &ov,
             &mut labels,
+            &paint::Look::default(),
         );
         let commands = scene.commands.len();
 
@@ -58,6 +59,7 @@ fn frame_cost_at_5120x1440() {
                 h + canvas::RULER_H,
                 &ov,
                 &mut labels,
+                &paint::Look::default(),
             ));
         }
         let build = t.elapsed().as_secs_f64() * 1000.0 / N as f64;
@@ -247,6 +249,7 @@ fn what_five_notes_cost_on_a_wide_display() {
         h + canvas::RULER_H,
         &ov,
         &mut labels,
+        &paint::Look::default(),
     );
     println!("commands    {}", scene.commands.len());
 
@@ -259,6 +262,7 @@ fn what_five_notes_cost_on_a_wide_display() {
             h + canvas::RULER_H,
             &ov,
             &mut labels,
+            &paint::Look::default(),
         ));
     }
     println!(
