@@ -30,6 +30,8 @@ pub mod drag;
 pub mod drawer;
 pub mod envelopes;
 pub mod guitar;
+#[cfg(feature = "host")]
+pub mod host;
 pub mod inspector;
 pub mod interaction;
 pub mod keys;
@@ -44,6 +46,14 @@ pub mod roll;
 /// The renderer seam. Native only — everything above it is portable.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod roll_widget;
+/// A painted scene as an image, for renderers that cannot replay one
+/// (dioxus-desktop's WebView, dioxus-web). Native replays it directly.
+#[cfg(feature = "webview")]
+pub mod scene_image;
+/// Real frames per second, from the engine that paints them. WebView
+/// only — native measures at the widget, which is a better vantage.
+#[cfg(feature = "webview")]
+pub mod frame_meter;
 pub mod scroll;
 pub mod sizing;
 pub mod stack;
@@ -174,6 +184,12 @@ pub fn ExpressionEditor(
     // r[impl drums.manual.undo]
     #[props(default)]
     on_undo: Option<EventHandler<()>>,
+    /// Redo through the same host that owns undo, when provided.
+    #[props(default)]
+    on_redo: Option<EventHandler<()>>,
+    /// The latest host operation failure, displayed until the next successful edit.
+    #[props(default)]
+    host_error: Option<String>,
     /// The transport's position, seconds — drawn as a playhead in the
     /// stacked view when present.
     #[props(default)]
@@ -272,7 +288,15 @@ pub fn ExpressionEditor(
         pending.set(None);
     }
 
+    // Where the frame rate comes from on a WebView. Native measures at
+    // the widget instead, which is closer to the paint.
+    #[cfg(feature = "webview")]
+    let frame_meter = rsx! { frame_meter::FrameMeter {} };
+    #[cfg(not(feature = "webview"))]
+    let frame_meter = rsx! {};
+
     rsx! {
+        {frame_meter}
         div {
             // The canvas is the only flexible child. Blitz sizes an
             // inline <svg> as a replaced element with an intrinsic
@@ -286,7 +310,14 @@ pub fn ExpressionEditor(
                     width: 100%; height: 100%; \
                     min-height: 0; overflow: hidden; background: {theme::BG}; \
                     color: {theme::TEXT}; font-family: system-ui, sans-serif;",
-            toolbar::Toolbar { editor, drag, drawer, quantize_open, on_save, on_undo }
+            toolbar::Toolbar { editor, drag, drawer, quantize_open, on_save, on_undo, on_redo }
+            if let Some(message) = host_error {
+                div {
+                    role: "alert", "data-testid": "host-error",
+                    style: "flex: 0 0 auto; padding: 6px 10px; color: {theme::TEXT}; background: {theme::BG}; font-size: 12px;",
+                    "{message}"
+                }
+            }
             switcher::TrackSwitcher { editor }
             div {
                 style: "display: flex; flex: 1 1 auto; min-height: 0;",

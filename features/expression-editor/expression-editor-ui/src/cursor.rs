@@ -698,9 +698,19 @@ pub fn CursorLayer(
     locked: bool,
 ) -> Element {
     let slot = use_hook(SceneSlot::new);
+    // A WebView has no seam for a painted scene and panics on the
+    // attribute that carries one ("Any attributes are not supported by
+    // the current renderer") — not on the surface that uses it, but on
+    // the first mutation, which takes the whole window with it. The
+    // roll, the lane strip and the drum stack are all gated for this;
+    // the painted cursor is mounted in EVERY view, so missing it meant
+    // the crash regardless of which surface was showing.
+    #[cfg(not(feature = "webview"))]
     let widget = use_hook(|| {
         dioxus_native_dom::CustomWidgetAttr::new(crate::roll_widget::SceneWidget::new(slot.clone()))
     });
+    #[cfg(feature = "webview")]
+    let widget = "";
 
     // Mounted unconditionally, from the very first render.
     //

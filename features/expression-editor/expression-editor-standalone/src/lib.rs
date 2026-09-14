@@ -60,6 +60,10 @@ pub mod app;
 pub mod cli;
 pub mod drum_host;
 pub mod library;
+pub mod practice;
+pub mod probe;
+/// Where the window's size comes from on each renderer.
+pub mod window_size;
 pub mod workstation;
 
 pub use app::{App, stage};
@@ -347,6 +351,31 @@ impl Loaded {
     }
 }
 
+impl Source {
+    /// The `.rpp` this source names, if it names one.
+    ///
+    /// For the two-phase open: everything else goes through
+    /// [`Runner::open`], which is one phase because nothing else is slow
+    /// enough to need two.
+    pub fn rpp_path(&self) -> Option<&Path> {
+        match self {
+            Self::Rpp(path) => Some(path),
+            _ => None,
+        }
+    }
+}
+
+/// A project that has been parsed and has a backend, before its kit has
+/// been looked at. See [`Runner::open_rpp_project`].
+pub struct OpenProject {
+    pub daw: Standalone,
+    pub ctx: ProjectContext,
+    pub name: String,
+    /// The `.rpp` it was parsed from — where detected hits are kept
+    /// between opens.
+    pub path: Option<std::path::PathBuf>,
+}
+
 impl Runner {
     /// Load a source into an editor.
     ///
@@ -509,15 +538,57 @@ impl Runner {
         kit_folder: Option<&str>,
         viewport: Viewport,
     ) -> Result<Self, LoadError> {
-        let (daw, name, summary) = open_project(path)?;
-        let ctx = ProjectContext::Project(summary.project_guid.clone());
-        let built = drum_workspace(&daw, ctx, &name, kit_folder, viewport)?;
+        let opened = Self::open_rpp_project(path)?;
+        let kit = Self::analyse_kit(&opened, kit_folder, viewport)?;
         Ok(Runner {
-            label: built.label,
-            daw: Some(daw),
-            loaded: Loaded::DrumWorkspace(Box::new(built.editor)),
-            host: Some(std::sync::Arc::new(built.host)),
+            label: kit.0,
+            daw: Some(opened.daw),
+            loaded: Loaded::DrumWorkspace(Box::new(kit.1)),
+            host: Some(kit.2),
         })
+    }
+
+    /// Phase one: parse the project and stand up its backend.
+    ///
+    /// Split from the kit analysis so a window can open on the
+    /// arrangement, mixer and transport while the drums are still
+    /// decoding — which is 28.8 s of the 44 s it takes to open a real
+    /// kit, and 28.8 s of staring at nothing if both are done before
+    /// `launch`.
+    pub fn open_rpp_project(path: &Path) -> Result<OpenProject, LoadError> {
+        let (daw, name, summary) = open_project(path)?;
+        Ok(OpenProject {
+            ctx: ProjectContext::Project(summary.project_guid.clone()),
+            daw,
+            name,
+            path: Some(path.to_path_buf()),
+        })
+    }
+
+    /// Phase two: decode the kit's audio and detect its hits.
+    ///
+    /// The slow half. Everything it touches is `Send`, so a caller that
+    /// has already opened its window can run this on a plain thread and
+    /// hand the result over with
+    /// [`crate::workstation::publish_kit`].
+    pub fn analyse_kit(
+        opened: &OpenProject,
+        kit_folder: Option<&str>,
+        viewport: Viewport,
+    ) -> Result<(String, Editor, std::sync::Arc<crate::drum_host::DrumHost>), LoadError> {
+        let built = drum_workspace(
+            &opened.daw,
+            opened.ctx.clone(),
+            &opened.name,
+            kit_folder,
+            viewport,
+            opened.path.as_deref(),
+        )?;
+        Ok((
+            built.label,
+            built.editor,
+            std::sync::Arc::new(built.host),
+        ))
     }
 
     /// Try one item, audio first.
@@ -683,735 +754,29 @@ fn candidate_items(
     Ok(out)
 }
 
-/// The analysis hop for a drum mic, in samples: the document's frame is
-/// `sample_rate / DRUM_HOP`. 512 matches the onset analyser's usual hop,
-/// so a peak bin here is the same width a percussive doc draws.
-const DRUM_HOP: usize = 512;
+// Compatibility exports: applications should use expression-editor-host directly.
+pub use expression_editor_host::{
+    DrumWorkspace, attach_timeline, bar_grid, read_take_mono, track_timeline,
+};
 
-/// The item worth editing on a drum mic: the **longest** audio item on
-/// the track whose fixed lane — when the track shows lanes at all — is
-/// playing. Returns how many items were looked at, and the pick as
-/// `(item guid, length secs, item volume)`.
-// r[impl drums.open.runner]
-fn edit_item<D: expression_editor_audio::daw_bound::DrumDaw>(
-    daw: &D,
-    ctx: &ProjectContext,
-    track: &daw::service::Track,
-) -> (usize, Option<(String, f64, f64)>) {
-    let items = Items::get_items(
-        daw,
-        ctx.clone(),
-        daw::service::TrackRef::Guid(track.guid.clone()),
-    );
-    let seen = items.len();
-    let mut best: Option<(String, f64, f64)> = None;
-    for item in items {
-        let is_audio = Takes::get_active_take(daw, ctx.clone(), ItemRef::Guid(item.guid.clone()))
-            .is_some_and(|t| t.source_type == daw::service::SourceType::Audio);
-        if !is_audio {
-            continue;
-        }
-        // A take parked on a muted lane is an alternate, not the
-        // performance; an item with no fixed lane is on whatever the
-        // track plays.
-        if track.lane_count > 0
-            && let Some(lane) = item.fixed_lane
-            && (lane >= 64 || track.lane_play_mask & (1u64 << lane) == 0)
-        {
-            continue;
-        }
-        let length = item.length.as_seconds();
-        if best.as_ref().is_none_or(|(_, l, _)| length > *l) {
-            best = Some((item.guid.clone(), length, item.volume));
-        }
-    }
-    (seen, best)
-}
-
-/// Compose one track's *playing* audio into a single timeline buffer —
-/// every playing-lane audio item read through the accessor and placed
-/// at its position, out to `take_secs`. This is what a lane draws
-/// after an edit landed on the daw: the split pieces where they now
-/// sit, not where the take was when it loaded.
-pub fn track_timeline<D: expression_editor_audio::daw_bound::DrumDaw>(
-    daw: &D,
-    ctx: &ProjectContext,
-    track: &daw::service::Track,
-    take_secs: f64,
-    sample_rate: f64,
-) -> Vec<f64> {
-    let mut out = vec![0.0f64; (take_secs * sample_rate).ceil().max(0.0) as usize];
-    let items = Items::get_items(
-        daw,
-        ctx.clone(),
-        daw::service::TrackRef::Guid(track.guid.clone()),
-    );
-    let mut placed: Vec<_> = items
-        .into_iter()
-        .filter(|item| {
-            if track.lane_count > 0
-                && let Some(lane) = item.fixed_lane
-                && (lane >= 64 || track.lane_play_mask & (1u64 << lane) == 0)
-            {
-                return false;
-            }
-            Takes::get_active_take(daw, ctx.clone(), ItemRef::Guid(item.guid.clone()))
-                .is_some_and(|t| t.source_type == daw::service::SourceType::Audio)
-        })
-        .collect();
-    // Ascending position: a later piece's attack overwrites the
-    // previous piece's crossfade tail, which is what detection needs.
-    placed.sort_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()));
-    for item in placed {
-        let Some((samples, rate)) =
-            read_take_mono(daw, ctx, &item.guid, item.length.as_seconds(), item.volume)
-        else {
-            continue;
-        };
-        let at = (item.position.as_seconds() * sample_rate).round().max(0.0) as usize;
-        if (rate - sample_rate).abs() < 1e-6 {
-            for (i, s) in samples.iter().enumerate() {
-                if at + i < out.len() {
-                    out[at + i] = *s;
-                }
-            }
-        } else {
-            // Rates differing inside one kit is unusual; nearest-
-            // neighbour is fine for drawing and detection.
-            let n = (samples.len() as f64 * sample_rate / rate) as usize;
-            for i in 0..n {
-                let src = (i as f64 * rate / sample_rate) as usize;
-                if at + i < out.len() && src < samples.len() {
-                    out[at + i] = samples[src];
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Pull one take's audio through the accessor, chunked, mono, at the
-/// source rate — the same read [`AudioSession::load`] does, capped at
-/// the item length. Returns `(samples, sample_rate)`.
-// r[impl drums.open.runner]
-pub fn read_take_mono<D: expression_editor_audio::daw_bound::DrumDaw>(
-    daw: &D,
-    ctx: &ProjectContext,
-    item_guid: &str,
-    length_secs: f64,
-    volume: f64,
-) -> Option<(Vec<f64>, f64)> {
-    use daw::service::audio_accessor::GetSamplesRequest;
-
-    let accessor = daw.create_take_accessor(
-        ctx.clone(),
-        ItemRef::Guid(item_guid.to_string()),
-        TakeRef::Active,
-    )?;
-    // Probe for the source's own rate and channel count: asking for a
-    // rate the host does not have would resample, and a resampled
-    // analysis puts every hit slightly off.
-    let probe = daw.get_samples(GetSamplesRequest {
-        accessor_id: accessor.clone(),
-        sample_rate: 0.0,
-        num_channels: 0,
-        start_time: 0.0,
-        num_samples: 1,
-    });
-    let sample_rate = if probe.sample_rate > 0.0 {
-        probe.sample_rate
-    } else {
-        48_000.0
-    };
-    let channels = probe.num_channels.max(1);
-
-    // Chunked, because a whole multitrack take in one call makes the
-    // host allocate all of it before returning any — same bound the
-    // audio session reads at.
-    const CHUNK: u32 = 1 << 16;
-    let total = (length_secs.max(0.0) * sample_rate).ceil() as u32;
-    let mut interleaved = Vec::with_capacity(total as usize * channels as usize);
-    let mut done = 0u32;
-    while done < total {
-        let want = CHUNK.min(total - done);
-        let chunk = daw.get_samples(GetSamplesRequest {
-            accessor_id: accessor.clone(),
-            sample_rate,
-            num_channels: channels,
-            start_time: done as f64 / sample_rate,
-            num_samples: want,
-        });
-        if chunk.samples.is_empty() {
-            break;
-        }
-        interleaved.extend_from_slice(&chunk.samples);
-        done += want;
-    }
-    daw.destroy_accessor(&accessor);
-
-    let mut samples = expression_editor_audio::to_mono(&interleaved, channels.max(1) as usize);
-    if samples.is_empty() {
-        return None;
-    }
-    // The accessor hands back source audio; the item's own gain is on
-    // top, and detection thresholds are absolute.
-    if volume != 1.0 && volume > 0.0 {
-        for s in &mut samples {
-            *s *= volume;
-        }
-    }
-    Some((samples, sample_rate))
-}
-
-/// A folded drum workspace: the view, the write half, and a label.
-pub struct DrumWorkspace<D: expression_editor_audio::daw_bound::DrumDaw> {
-    pub editor: Editor,
-    pub host: drum_host::DrumHost<D>,
-    pub label: String,
-}
-
-/// Fold an already-open project's kit into a drum workspace.
-///
-/// Split out of the `.rpp` loader because opening a file was the only
-/// part of that ever specific to the standalone backend. Everything
-/// here — finding the kit folder, scoring the candidates against each
-/// other, reading each mic's timeline, folding the role lanes — asks
-/// the daw the same questions whichever daw it is. That is what lets
-/// the REAPER panel build this same workspace from the project REAPER
-/// already has open, rather than re-reading it from disk.
-/// # Why this one needs `Send + Sync`
-///
-/// The mics are read in parallel — twenty tracks of a five-minute take
-/// is the slow part of opening a kit, and it is embarrassingly
-/// parallel. That requires the backend to cross threads, which
-/// `Standalone` does and REAPER cannot: REAPER's API is main-thread
-/// only, which is the same constraint that makes every service touching
-/// it dispatch through `main_thread::query`.
-///
-/// So the bound is honest rather than convenient. A REAPER panel wants
-/// this function's *logic* with a sequential read, and writing that is
-/// a smaller job than pretending a main-thread API is thread-safe —
-/// which would compile here and fail inside REAPER, at a distance from
-/// the cause.
-// r[impl drums.host.daw-agnostic]
-pub fn drum_workspace<D: expression_editor_audio::daw_bound::DrumDaw + Send + Sync>(
+pub fn drum_workspace<D: expression_editor_audio::daw_bound::DrumDaw>(
     daw: &D,
     ctx: ProjectContext,
     name: &str,
     kit_folder: Option<&str>,
     viewport: Viewport,
+    cache_in: Option<&std::path::Path>,
 ) -> Result<DrumWorkspace<D>, LoadError> {
-    let name = name.to_string();
-
-    let tracks = Tracks::all(daw, ctx.clone());
-
-    // The kit folder. Candidates come from the name — an explicit
-    // `--drums <name>` (exact, then substring) or, with no argument,
-    // any folder named like a kit — and the BEST-SCORING candidate
-    // wins, not the first.
-    //
-    // A session routinely has more than one folder called `Drums`: the
-    // tracked kit and a folder of reference stems or a printed mix.
-    // Name cannot separate them, so `--drums Drums` could not either.
-    // `score_kit` reads their shape instead — a kit covers kick, snare
-    // and toms and groups its mics in sub-folders; a stem folder is
-    // four flat tracks. Taking the first match opened the stems on a
-    // real project and presented as "the tom lanes are broken", since
-    // that folder has no toms.
-    let candidates: Vec<&daw::service::Track> = match kit_folder {
-        Some(want) => {
-            let w = want.to_ascii_lowercase();
-            let exact: Vec<_> = tracks
-                .iter()
-                .filter(|t| t.is_folder && t.name.to_ascii_lowercase() == w)
-                .collect();
-            if exact.is_empty() {
-                tracks
-                    .iter()
-                    .filter(|t| t.is_folder && t.name.to_ascii_lowercase().contains(&w))
-                    .collect()
-            } else {
-                exact
+    expression_editor_host::drum_workspace(daw, ctx, name, kit_folder, viewport, cache_in).map_err(
+        |e| match e {
+            expression_editor_host::WorkspaceError::NoKitFolder { project, wanted } => {
+                LoadError::NoKitFolder { project, wanted }
             }
-        }
-        None => tracks
-            .iter()
-            .filter(|t| t.is_folder && expression_editor_core::kit::is_kit_folder(&t.name))
-            .collect(),
-    };
-    let kit = pick_best_kit(&tracks, &candidates).ok_or_else(|| LoadError::NoKitFolder {
-        project: name.clone(),
-        wanted: kit_folder.map(str::to_string),
-    })?;
-
-    let by_guid: std::collections::HashMap<&str, &daw::service::Track> =
-        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
-
-    struct Member {
-        guid: String,
-        name: String,
-        folder: Option<String>,
-        role: expression_editor_core::kit::LaneRole,
-        doc: expression_editor_core::ExpressionDoc,
-        item: ItemRef,
-        length_secs: f64,
-    }
-
-    // The kit's member tracks, with their folder chains — cheap
-    // metadata, gathered sequentially.
-    struct Job {
-        guid: String,
-        name: String,
-        folder: Option<String>,
-        role: expression_editor_core::kit::LaneRole,
-        /// The whole track — its audio is composed from every playing
-        /// item, not read from one of them.
-        track: daw::service::Track,
-        /// The longest playing item, kept as the anchor edits are
-        /// written back through. Reading and writing want different
-        /// things: reading wants the whole performance, writing wants
-        /// a concrete item to address.
-        item_guid: String,
-        length_secs: f64,
-    }
-    let mut jobs: Vec<Job> = Vec::new();
-    let mut items_seen = 0usize;
-    for track in &tracks {
-        if track.is_folder {
-            continue;
-        }
-        // Folder chain, nearest first, walked over `parent_guid` —
-        // depth-capped so a cyclic project cannot hang the load.
-        let mut chain: Vec<&str> = Vec::new();
-        let mut under_kit = false;
-        let mut cur = track.parent_guid.as_deref();
-        for _ in 0..64 {
-            let Some(parent) = cur.and_then(|g| by_guid.get(g)) else {
-                break;
-            };
-            chain.push(parent.name.as_str());
-            if parent.guid == kit.guid {
-                under_kit = true;
+            expression_editor_host::WorkspaceError::NoEditableItem { project, items } => {
+                LoadError::NoEditableItem { project, items }
             }
-            cur = parent.parent_guid.as_deref();
-        }
-        if !under_kit {
-            continue;
-        }
-        let role = expression_editor_core::kit::kit_role(&track.name, &chain);
-        // `edit_item` is still the audio-track test — a track with no
-        // playing audio item is not a lane — but its pick is no longer
-        // what gets read.
-        let (seen, pick) = edit_item(daw, &ctx, track);
-        items_seen += seen;
-        let Some((item_guid, length_secs, _volume)) = pick else {
-            continue;
-        };
-        jobs.push(Job {
-            guid: track.guid.clone(),
-            name: track.name.clone(),
-            folder: chain.first().map(|s| s.to_string()),
-            role,
-            track: track.clone(),
-            item_guid,
-            length_secs,
-        });
-    }
-
-    // The span every lane is composed over: the furthest item end in
-    // the kit. Lanes must share one timeline or they cannot be
-    // compared, and a per-track length would make each mic its own
-    // clock.
-    let mut timeline_secs = 0.0f64;
-    for job in &jobs {
-        for item in Items::get_items(
-            daw,
-            ctx.clone(),
-            daw::service::TrackRef::Guid(job.track.guid.clone()),
-        ) {
-            let end = item.position.as_seconds() + item.length.as_seconds();
-            if end > timeline_secs {
-                timeline_secs = end;
-            }
-        }
-    }
-    // One rate for the composed buffers. Probed from a real take
-    // rather than assumed: `track_timeline` resamples anything that
-    // disagrees, but it needs a target to resample to.
-    let rate = jobs
-        .first()
-        .and_then(|job| {
-            let (_, pick) = edit_item(daw, &ctx, &job.track);
-            pick
-        })
-        .and_then(|(guid, len, vol)| read_take_mono(daw, &ctx, &guid, len, vol))
-        .map_or(48_000.0, |(_, r)| r);
-
-    // The expensive half — reading each mic's audio and finding its
-    // hits — is per-mic independent, so it runs one thread per mic.
-    // A kit is a dozen tracks; this is the difference between a
-    // multi-second open and about the longest single mic.
-    let analysed: Vec<Option<(Job, Vec<f64>, f64, expression_editor_core::ExpressionDoc)>> =
-        std::thread::scope(|scope| {
-            let handles: Vec<_> = jobs
-                .into_iter()
-                .map(|job| {
-                    let daw = daw.clone();
-                    let ctx = ctx.clone();
-                    scope.spawn(move || {
-                        // Compose EVERY playing item on the track, not
-                        // the longest one.
-                        //
-                        // Reading a single item is right only for a
-                        // track recorded in one pass. A comped or
-                        // sliced track is hundreds of short pieces —
-                        // a real kit's tom trigger tracks came in at
-                        // 486 items, the longest 2.5s of a 314s take —
-                        // so "longest item" drew a two-second sliver
-                        // and detected hits in it, while the rest of
-                        // the performance was simply not loaded. It
-                        // looked like the trigger tracks held no audio.
-                        let samples = track_timeline(&daw, &ctx, &job.track, timeline_secs, rate);
-                        if samples.is_empty() {
-                            return None;
-                        }
-                        let mut doc = percussion_doc(&samples, rate);
-                        attach_timeline(&daw, &ctx, &mut doc);
-                        Some((job, samples, rate, doc))
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .map(|h| h.join().unwrap_or(None))
-                .collect()
-        });
-
-    // The lanes' detection signals, built while the samples are in
-    // hand — the host detects on these. One signal per detection
-    // *unit*, not per lane: toms are a unit each, so a hit can be
-    // attributed to the tom that made it, and a trigger is weighted
-    // over the mics it shares a drum with.
-    // r[impl drums.group.detection-source]
-    let rows: Vec<(Job, Vec<f64>, f64, expression_editor_core::ExpressionDoc)> =
-        analysed.into_iter().flatten().collect();
-    let sample_rate = rows.first().map_or(0.0f64, |(_, _, rate, _)| *rate);
-
-    let mut signals: std::collections::HashMap<
-        expression_editor_core::kit::LaneRole,
-        Vec<Vec<f64>>,
-    > = std::collections::HashMap::new();
-    for role in expression_editor_core::kit::LaneRole::ALL {
-        let idx: Vec<usize> = rows
-            .iter()
-            .enumerate()
-            .filter(|(_, (job, _, _, _))| job.role == role)
-            .map(|(i, _)| i)
-            .collect();
-        if idx.is_empty() {
-            continue;
-        }
-        let names: Vec<&str> = idx.iter().map(|&i| rows[i].0.name.as_str()).collect();
-        let units = expression_editor_core::kit::detection_units(role, &names);
-        let built: Vec<Vec<f64>> = units
-            .iter()
-            .map(|unit| blend(unit.iter().map(|&(u, w)| (rows[idx[u]].1.as_slice(), w))))
-            .filter(|sig: &Vec<f64>| !sig.is_empty())
-            .collect();
-        if !built.is_empty() {
-            signals.insert(role, built);
-        }
-    }
-
-    let members: Vec<Member> = rows
-        .into_iter()
-        .map(|(job, _, _, doc)| Member {
-            guid: job.guid,
-            name: job.name,
-            folder: job.folder,
-            role: job.role,
-            doc,
-            item: ItemRef::Guid(job.item_guid),
-            length_secs: job.length_secs,
-        })
-        .collect();
-
-    if members.is_empty() {
-        return Err(LoadError::NoEditableItem {
-            project: name,
-            items: items_seen,
-        });
-    }
-
-    let mics = members.len();
-    let take_secs = members.iter().map(|m| m.length_secs).fold(0.0f64, f64::max);
-    // The kit group's items, by role — the host edits all of them
-    // for every gesture. r[impl drums.group.kit]
-    let host_lanes: Vec<drum_host::HostLane> = expression_editor_core::kit::LaneRole::ALL
-        .into_iter()
-        .filter_map(|role| {
-            let items: Vec<ItemRef> = members
-                .iter()
-                .filter(|m| m.role == role)
-                .map(|m| m.item.clone())
-                .collect();
-            if items.is_empty() {
-                return None;
-            }
-            Some(drum_host::HostLane {
-                role,
-                items,
-                signals: signals.remove(&role).unwrap_or_default(),
-            })
-        })
-        .collect();
-
-    let mut it = members.into_iter();
-    let first = it.next().expect("checked non-empty");
-    let mut editor = Editor::new(first.doc, viewport);
-    editor.set_mode(Mode::UnpitchedAudio);
-    let mut roles = vec![(first.guid.clone(), first.role)];
-    if let Some(t) = editor.tracks.track_mut(0) {
-        t.guid = first.guid;
-        t.name = first.name;
-        t.folder = first.folder;
-    }
-    for m in it {
-        let i = editor.add_track_with_guid(m.guid.clone(), m.name, m.doc);
-        if let Some(t) = editor.tracks.track_mut(i) {
-            t.set_mode(Mode::UnpitchedAudio);
-            t.folder = m.folder;
-        }
-        roles.push((m.guid, m.role));
-    }
-    editor.tracks.fold_roles(&roles);
-    // The stack *is* the drum workspace view; the roll is one click
-    // away per lane.
-    editor.stacked = true;
-    // Grid targets come from the project's tempo, not a default —
-    // a hit quantized against 120 in an 84 bpm session lands
-    // nowhere musical.
-    // r[impl drums.group.tempo]
-    let bpm = daw::service::tempo_map::TempoMap::get_tempo_at(daw, ctx.clone(), 0.0);
-    if bpm > 0.0 {
-        editor.bpm = bpm;
-    }
-
-    let host = drum_host::DrumHost::new(
-        daw.clone(),
-        ctx,
-        host_lanes,
-        sample_rate,
-        take_secs,
-        60.0 / editor.bpm.max(1.0),
-    );
-    Ok(DrumWorkspace {
-        label: format!("{name} — drums: {} ({mics} mics)", kit.name),
-        editor,
-        host,
-    })
-}
-
-/// One drum mic as a percussive document: per-hop peaks behind one note
-/// per transient.
-///
-/// Deliberately **not** [`expression_editor_audio::analyze_percussive`]:
-/// Carry the project's regions onto a document, in its own time units.
-///
-/// The sections are how a player knows where they are — "bar 38" says
-/// nothing, "CH 1" says everything — so every lane's ruler shows them.
-/// Host colours come through as `#rrggbb`; REAPER's section colours are
-/// the ones the band already knows from the arrange view.
-/// Attach the host's timeline chrome — the song's sections — to a doc.
-///
-/// Both kinds, because sessions use both. A region is a named *span*
-/// and a marker is a named *point*, and which one a song's sections
-/// live in comes down to how it was set up: the album's projects
-/// normally carry regions, but `set in stone` puts its whole structure
-/// — IN, VS 1, CH 1, 7/4 part, SOLO A, OUT — in sixteen markers and no
-/// regions at all. Reading only regions left the ruler blank on exactly
-/// the project with the most structure to show.
-///
-/// Markers are kept as points rather than being stretched into spans up
-/// to the next one. Not every marker is a section boundary — `tempo
-/// change` and `back to 4/4` are annotations — so inventing spans from
-/// them would draw a song structure that was never written.
-pub fn attach_timeline<D: expression_editor_audio::daw_bound::DrumDaw>(
-    daw: &D,
-    ctx: &ProjectContext,
-    doc: &mut expression_editor_core::ExpressionDoc,
-) {
-    use daw::service::{Markers, Projects, Regions};
-    let ups = doc.time_base.units_per_second(120.0);
-    if ups <= 0.0 {
-        return;
-    }
-    // The lane's name, for whichever ruler lane an item is filed under.
-    let lane_of = |idx: Option<u32>| {
-        idx.map(|i| {
-            let name = Projects::get_ruler_lane_name(daw, ctx.clone(), i);
-            // An unnamed lane still groups; it just has to be labelled
-            // by its number rather than pretending to a name.
-            let name = if name.is_empty() {
-                format!("Lane {i}")
-            } else {
-                name
-            };
-            (i, name)
-        })
-    };
-    doc.regions = Regions::all(daw, ctx.clone())
-        .into_iter()
-        .map(|r| expression_editor_core::doc::Region {
-            start: r.time_range.start_seconds() * ups,
-            end: r.time_range.end_seconds() * ups,
-            label: r.name,
-            color: r.color.map(|c| format!("#{c:06x}")),
-            lane: lane_of(r.lane),
-        })
-        .collect();
-    // Bar lines from the host's tempo map, so the view can page a
-    // phrase at a time and land on a downbeat in 6/8 and 7/4 as well as
-    // in 4/4.
-    // r[impl drums.view.page-bars]
-    let take_secs = if ups > 0.0 { doc.end / ups } else { 0.0 };
-    doc.bars = bar_grid(daw, ctx, take_secs)
-        .into_iter()
-        .map(|t| t * ups)
-        .collect();
-    doc.markers = Markers::all(daw, ctx.clone())
-        .into_iter()
-        // A marker whose position will not resolve to seconds cannot be
-        // drawn on a time axis; dropping it beats drawing it at zero,
-        // where it would claim the downbeat.
-        .filter_map(|m| {
-            Some(expression_editor_core::doc::Marker {
-                t: m.position.seconds()? * ups,
-                label: Some(m.name).filter(|n| !n.is_empty()),
-                color: m.color.map(|c| format!("#{c:06x}")),
-                lane: lane_of(m.lane),
-            })
-        })
-        .collect();
-}
-
-/// Bar start times across the take, from the host's tempo map.
-///
-/// Asks the map where each measure begins rather than multiplying a
-/// bar length, because a real take does not have one bar length.
-/// `set in stone` is 6/8, changes tempo at 77s, and has a 7/4 section
-/// from bar 148 — three different bar durations in one song. Anything
-/// derived from a single bpm and a `beats_per_bar` of 4 would drift out
-/// of phase within a few bars and put every fill in the wrong place.
-///
-/// Returns `n + 1` boundaries for `n` bars, the last being the end of
-/// the take, which is the shape [`fills::detect_fills`] expects.
-///
-/// Empty when the map cannot place bars — a caller that gets nothing
-/// back should do nothing rather than fall back to a guessed grid.
-// r[impl drums.fills.bars]
-pub fn bar_grid<D: expression_editor_audio::daw_bound::DrumDaw>(
-    daw: &D,
-    ctx: &ProjectContext,
-    take_secs: f64,
-) -> Vec<f64> {
-    use daw::service::TempoMap;
-    if take_secs <= 0.0 {
-        return Vec::new();
-    }
-    let (first_bar, _, _) = TempoMap::time_to_musical(daw, ctx.clone(), 0.0);
-    let mut out = Vec::new();
-    // A guard rather than a `while true`: a map that answers
-    // nonsensically would otherwise spin here forever.
-    let max_bars = 4096;
-    for i in 0..max_bars {
-        let t = TempoMap::musical_to_time(daw, ctx.clone(), first_bar + i, 0, 0.0);
-        // Bars must advance. A map that repeats or goes backwards is
-        // broken, and continuing would produce zero-length bars that
-        // every hit falls into at once.
-        if let Some(&last) = out.last()
-            && t <= last
-        {
-            break;
-        }
-        out.push(t);
-        if t >= take_secs {
-            break;
-        }
-    }
-    // The grid has to cover the take; the detector scores the span
-    // between consecutive boundaries and would drop a fill in the last,
-    // unterminated bar.
-    match out.last() {
-        Some(&last) if last < take_secs => out.push(take_secs),
-        None => return Vec::new(),
-        _ => {}
-    }
-    if out.len() < 2 { Vec::new() } else { out }
-}
-
-/// Blend weighted member signals into one detection signal.
-///
-/// The weights come from [`expression_editor_core::kit::detection_units`]
-/// and already sum to 1, so the result sits at the same level however
-/// many members fed it — a unit of one trigger and a unit of three mics
-/// hand the detector comparable material, and a threshold means the same
-/// thing in both.
-///
-/// Length is the longest member, so a trigger that stops short of the
-/// take does not truncate the mics that did not.
-fn blend<'a>(members: impl IntoIterator<Item = (&'a [f64], f64)>) -> Vec<f64> {
-    let members: Vec<(&[f64], f64)> = members.into_iter().collect();
-    let len = members.iter().map(|(s, _)| s.len()).max().unwrap_or(0);
-    let mut out = vec![0.0f64; len];
-    for (samples, weight) in members {
-        for (o, v) in out.iter_mut().zip(samples.iter()) {
-            *o += v * weight;
-        }
-    }
-    out
-}
-
-/// that segments by spectral flux over an STFT, which quantises every
-/// hit to a hop and costs a transform per mic. The envelope gate is the
-/// detector the quantize panel uses, sample-accurate and cheap — the
-/// price is that it measures no centroid, so every hit lands in the
-/// middle band rather than being sorted by brightness.
-// r[impl drums.open.runner]
-pub(crate) fn percussion_doc(
-    samples: &[f64],
-    sample_rate: f64,
-) -> expression_editor_core::ExpressionDoc {
-    use expression_editor_audio::{DetectConfig, transients};
-    use expression_editor_core::rows::SliceBands;
-    use expression_editor_core::{ExpressionDoc, Note, NoteId, RowSpace, TimeBase};
-
-    let frame_rate = sample_rate / DRUM_HOP as f64;
-    let total_frames = samples.len() as f64 / DRUM_HOP as f64;
-    let mut doc = ExpressionDoc::new(TimeBase::Frames { frame_rate }, 0.0, total_frames);
-    doc.row_space = RowSpace::Bands(SliceBands::default());
-    // The backdrop is the whole recording, hits and gaps alike — the
-    // only way to see a missed ghost note is to see past the notes.
-    doc.peaks = samples
-        .chunks(DRUM_HOP)
-        .map(|c| c.iter().fold(0.0f64, |m, v| m.max(v.abs())).min(1.0) as f32)
-        .collect();
-
-    let hits = transients(samples, sample_rate, DetectConfig::default());
-    for (i, hit) in hits.iter().enumerate() {
-        let start = hit.at * frame_rate;
-        // A slice runs to the next hit, so the slices tile the take and
-        // can be selected and levelled like notes.
-        let end = hits
-            .get(i + 1)
-            .map(|next| next.at * frame_rate)
-            .unwrap_or(total_frames);
-        let mut note = Note::new(NoteId(i as u64 + 1), start, end.max(start + 1.0), 1);
-        note.velocity = hit.loudness.clamp(0.0, 1.0);
-        note.weight = note.velocity;
-        doc.push(note);
-    }
-    doc
+        },
+    )
 }
 
 /// A project with nothing in it, so a file-backed session has a context
@@ -1472,46 +837,4 @@ fn file_label(path: &Path) -> String {
     path.file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
-}
-
-/// Every track beneath `folder`, as `(name, is_folder)` for scoring.
-///
-/// Walks `parent_guid` upward from each track rather than downward, so a
-/// project whose folder chain is malformed cannot loop; the depth cap is the
-/// same one the role walk uses.
-fn descendants_of<'a>(
-    tracks: &'a [daw::service::Track],
-    folder_guid: &str,
-) -> Vec<(&'a str, bool)> {
-    let by_guid: std::collections::HashMap<&str, &daw::service::Track> =
-        tracks.iter().map(|t| (t.guid.as_str(), t)).collect();
-    tracks
-        .iter()
-        .filter(|t| {
-            let mut cur = t.parent_guid.as_deref();
-            for _ in 0..64 {
-                let Some(parent) = cur.and_then(|g| by_guid.get(g)) else {
-                    return false;
-                };
-                if parent.guid == folder_guid {
-                    return true;
-                }
-                cur = parent.parent_guid.as_deref();
-            }
-            false
-        })
-        .map(|t| (t.name.as_str(), t.is_folder))
-        .collect()
-}
-
-/// The candidate that most looks like a tracked kit. Ties keep the earlier
-/// one, so a single-candidate project behaves exactly as before.
-fn pick_best_kit<'a>(
-    tracks: &'a [daw::service::Track],
-    candidates: &[&'a daw::service::Track],
-) -> Option<&'a daw::service::Track> {
-    candidates
-        .iter()
-        .copied()
-        .max_by_key(|c| expression_editor_core::kit::score_kit(&descendants_of(tracks, &c.guid)))
 }

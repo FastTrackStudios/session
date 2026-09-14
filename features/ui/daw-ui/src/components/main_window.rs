@@ -81,6 +81,8 @@ pub fn MainWindowPreview(
     #[props(default = 768.0)] height: f32,
     #[props(default = 120.0)] bpm: f64,
 ) -> Element {
+    let mut folders = super::folders::use_folder_state();
+    let (tracks, depths) = folders.read().visible(&tracks);
     let t = daw_theme::Theme::default();
     let ground = t.chrome.surface.css();
     let bar_bg = t.chrome.surface_sunken.shade(-0.05).css();
@@ -147,8 +149,10 @@ pub fn MainWindowPreview(
                                         TrackRow {
                                             key: "{tracks[i].guid}",
                                             track: tracks[i].clone(),
-                                            index: i as u32,
-                                            depth: crate::components::arrangement_view::folder_depths(&tracks)[i],
+                                            index: tracks[i].index,
+                                            depth: depths[i],
+                                            collapsed: folders.read().is_collapsed(&tracks[i].guid),
+                                            onfoldertoggle: { let guid = tracks[i].guid.clone(); move |_| folders.write().toggle(&guid) },
                                         }
                                     },
                                     ArrangeRowKind::EnvelopeLane { track, lane } => {
@@ -224,8 +228,11 @@ pub fn MainWindowPreview(
                             ChannelStripPreview {
                                 key: "{track.guid}",
                                 track: track.clone(),
-                                index: i as u32,
+                                index: tracks[i].index,
                                 height: MIXER_H,
+                                depth: depths[i],
+                                collapsed: folders.read().is_collapsed(&track.guid),
+                                onfoldertoggle: { let guid = track.guid.clone(); move |_| folders.write().toggle(&guid) },
                             }
                         }
                     }

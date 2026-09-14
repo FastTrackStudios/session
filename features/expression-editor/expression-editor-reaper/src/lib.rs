@@ -39,6 +39,10 @@ pub const PANEL_ID: &str = "FTS_EXPRESSION_EDITOR";
 pub enum Loaded {
     Midi(Box<Session>),
     Audio(Box<AudioSession>),
+    Drums {
+        editor: Box<expression_editor_core::Editor>,
+        host: expression_editor_host::SharedDrumHost<daw::reaper::Reaper>,
+    },
 }
 
 impl Loaded {
@@ -46,6 +50,7 @@ impl Loaded {
         match self {
             Loaded::Midi(s) => &s.editor,
             Loaded::Audio(s) => &s.editor,
+            Loaded::Drums { editor, .. } => editor,
         }
     }
 
@@ -53,6 +58,7 @@ impl Loaded {
         match self {
             Loaded::Midi(s) => &mut s.editor,
             Loaded::Audio(s) => &mut s.editor,
+            Loaded::Drums { editor, .. } => editor,
         }
     }
 
@@ -60,6 +66,7 @@ impl Loaded {
         match self {
             Loaded::Midi(s) => s.is_dirty(),
             Loaded::Audio(s) => s.is_dirty(),
+            Loaded::Drums { .. } => false,
         }
     }
 }
@@ -174,6 +181,40 @@ pub fn load_selected() -> bool {
     }
 }
 
+/// Open the current project's drum kit using the shared host services.
+/// Call on REAPER's owner thread; audio analysis never captures the facade.
+pub fn load_drums() -> bool {
+    let reaper = daw::reaper::Reaper;
+    let Some(project) = daw::service::Projects::current(&reaper) else {
+        return false;
+    };
+    match expression_editor_host::drum_workspace(
+        &reaper,
+        ProjectContext::Project(project.guid),
+        &project.name,
+        None,
+        Viewport::new(1100.0, 520.0),
+        // No cache here yet: REAPER hands us a project it already has
+        // open, and the path it came from is not part of what the facade
+        // reports. Analysing every time is what this has always done.
+        None,
+    ) {
+        Ok(workspace) => {
+            *label().lock().unwrap() = workspace.label;
+            *loaded_guid().lock().unwrap() = None;
+            *session().lock().unwrap() = Some(Loaded::Drums {
+                editor: Box::new(workspace.editor),
+                host: std::sync::Arc::new(workspace.host),
+            });
+            true
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not open drum workspace");
+            false
+        }
+    }
+}
+
 /// Write the panel's document back to the take it came from.
 ///
 /// MIDI is rewritten in place — the take *is* the document.
@@ -192,6 +233,7 @@ pub fn write_back() -> bool {
         return false;
     };
     match loaded {
+        Loaded::Drums { .. } => true, // Each drum operation already writes one host undo block.
         Loaded::Midi(s) => {
             // Warn before overwriting, not after: expression on
             // ambiguous notes is dropped on the way out, and the user
@@ -329,6 +371,15 @@ pub fn poll() {
 
     follow_cell_size();
 
+    // A kit is project-scoped. Selecting one of its slices must not
+    // replace the workspace with a single-take pitch editor.
+    if matches!(
+        session().lock().unwrap().as_ref(),
+        Some(Loaded::Drums { .. })
+    ) {
+        return;
+    }
+
     // Follow the selection.
     if let Some(sel) = selected_item_guid() {
         let current = loaded_guid().lock().unwrap().clone();
@@ -379,6 +430,10 @@ pub fn reload() -> bool {
     let reaper = daw::reaper::Reaper;
     let mut guard = session().lock().unwrap();
     match guard.as_mut() {
+        Some(Loaded::Drums { editor, host }) => {
+            host.refresh_editor(editor);
+            true
+        }
         Some(Loaded::Midi(s)) => {
             s.reload(&reaper);
             true
@@ -428,6 +483,20 @@ impl DawModule for ExpressionEditorModule {
     fn actions(&self) -> Vec<ActionDef> {
         vec![
             ActionDef::new(
+                "FTS_EXPRESSION_EDITOR_DRUMS",
+                "FTS: Open Expression Editor on drum kit",
+                || {
+                    if is_dirty() && !write_back() {
+                        return;
+                    }
+                    if load_drums() {
+                        daw::reaper_ui::dock::show_panel(PANEL_ID);
+                        daw::reaper_ui::dock::remount_panel(PANEL_ID);
+                    }
+                },
+            )
+            .in_menu(),
+            ActionDef::new(
                 "FTS_EXPRESSION_EDITOR_TOGGLE",
                 "FTS: Toggle Expression Editor",
                 || {
@@ -467,7 +536,9 @@ impl DawModule for ExpressionEditorModule {
                 "FTS_EXPRESSION_EDITOR_RELOAD",
                 "FTS: Reload Expression Editor from take",
                 || {
-                    reload();
+                    if reload() {
+                        daw::reaper_ui::dock::remount_panel(PANEL_ID);
+                    }
                 },
             ),
             // Write a known gain ride to the selected take's volume
@@ -525,6 +596,7 @@ fn loaded_kind() -> Option<&'static str> {
     session().lock().unwrap().as_ref().map(|s| match s {
         Loaded::Midi(_) => "MIDI",
         Loaded::Audio(_) => "audio",
+        Loaded::Drums { .. } => "drums",
     })
 }
 
@@ -543,6 +615,15 @@ pub fn EditorPanel() -> Element {
             .map(|s| s.editor().clone())
             .unwrap_or_else(empty_editor)
     });
+    let host = use_hook(|| match session().lock().unwrap().as_ref() {
+        Some(Loaded::Drums { host, .. }) => Some(host.clone()),
+        _ => None,
+    });
+    let bins = use_signal(Vec::new);
+    let previews = use_signal(Vec::new);
+    let fills = use_signal(Vec::new);
+    let callbacks =
+        expression_editor_ui::host::use_drum_callbacks(editor, host, bins, previews, fills);
     let loaded = use_signal(|| session().lock().unwrap().is_some());
     let take_label = use_signal(loaded_label);
     let take_kind = use_signal(|| loaded_kind().unwrap_or(""));
@@ -559,7 +640,7 @@ pub fn EditorPanel() -> Element {
         if let Some(s) = guard.as_mut() {
             let panel = editor.read();
             let mirror = s.editor_mut();
-            if mirror.doc != panel.doc {
+            if mirror.doc != panel.doc || mirror.tracks != panel.tracks {
                 // A real edit: mirror everything, it is what the
                 // auto-write sends to the take.
                 *mirror = panel.clone();
@@ -569,6 +650,11 @@ pub fn EditorPanel() -> Element {
                 // a many-thousand-note document per frame.
                 mirror.camera = panel.camera;
                 mirror.viewport = panel.viewport;
+                mirror.stack_scroll = panel.stack_scroll;
+                mirror.stacked = panel.stacked;
+                mirror.tool = panel.tool;
+                mirror.dimension = panel.dimension;
+                mirror.lane_cameras.clone_from(&panel.lane_cameras);
                 if mirror.selection != panel.selection {
                     mirror.selection = panel.selection.clone();
                 }
@@ -618,7 +704,18 @@ pub fn EditorPanel() -> Element {
             div {
                 style: "flex: 1 1 0; min-height: 0;",
                 if loaded() {
-                    ExpressionEditor { editor }
+                    ExpressionEditor {
+                        editor,
+                        quantize_bins: bins(),
+                        quantize_previews: previews(),
+                        fills: fills(),
+                        on_quantize_change: callbacks.on_change,
+                        on_quantize_apply: callbacks.on_apply,
+                        on_hit: callbacks.on_hit,
+                        on_undo: callbacks.on_undo,
+                        on_redo: callbacks.on_redo,
+                        host_error: callbacks.error.and_then(|error| error()),
+                    }
                 } else {
                     div {
                         style: "height: 100%; display: flex; flex-direction: column; \
@@ -714,32 +811,9 @@ pub fn module() -> Box<dyn DawModule> {
     Box::new(ExpressionEditorModule)
 }
 
-/// REAPER satisfies the drum workspace's daw bound.
-///
-/// The editing in drum mode — slip, stretch, split, quantize Apply —
-/// reaches the daw only through [`expression_editor_audio::daw_bound::DrumDaw`],
-/// and none of it is reachable from this panel yet because `DrumHost`
-/// is still typed on `Standalone`. That is a Rust generics job, not a
-/// compatibility one, and this assertion is the evidence: REAPER
-/// already serves every operation the workspace asks for, so the port
-/// cannot fail on a missing API.
-///
-/// It is a compile-time claim on purpose. Left as a comment it would
-/// rot the first time the workspace needed a service REAPER lacks;
-/// written this way that becomes a build error here.
-// r[impl drums.host.daw-agnostic]
+// These instantiate the complete loader and shared UI adapter, including their
+// method bodies, so a standalone-only dependency cannot hide behind a type alias.
 const _: fn() = || {
-    fn assert_impl<T: expression_editor_audio::daw_bound::DrumDaw>() {}
-    let _ = assert_impl::<daw::reaper::Reaper>;
+    let _ = expression_editor_host::drum_workspace::<daw::reaper::Reaper>;
+    let _ = expression_editor_ui::host::use_drum_callbacks::<daw::reaper::Reaper>;
 };
-
-/// And the drum host itself builds over REAPER.
-///
-/// The claim that matters, and the one the bound alone does not make: a
-/// backend can satisfy `DrumDaw` while `DrumHost` still fails to
-/// instantiate over it. This names the concrete type, so the editing
-/// path is REAPER-ready as a fact the compiler checks rather than an
-/// intention in a commit message.
-// r[impl drums.host.daw-agnostic]
-const _: Option<expression_editor_standalone::drum_host::SharedDrumHost<daw::reaper::Reaper>> =
-    None;

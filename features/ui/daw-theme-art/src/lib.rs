@@ -40,6 +40,7 @@ pub mod dress;
 pub mod generated;
 pub mod geometry;
 pub mod mixer_controls;
+pub mod paint;
 pub mod primitives;
 pub mod slice;
 pub mod strip;

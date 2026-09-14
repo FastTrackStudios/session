@@ -44,6 +44,8 @@ pub struct Applied {
 pub enum GroupError {
     /// No items to edit.
     Empty,
+    /// The current item layout cannot be represented by this write mode.
+    Unsupported { reason: &'static str },
     /// Items do not share a start time. Reported with the worst
     /// disagreement so a caller can say how far out they are rather than
     /// only that they are.
@@ -57,6 +59,21 @@ pub enum GroupError {
     /// three of the writes failed has no way to find out.
     Write { what: &'static str, detail: String },
 }
+
+impl std::fmt::Display for GroupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("No editable kit items"),
+            Self::Unsupported { reason } => f.write_str(reason),
+            Self::Ragged { spread_secs } => {
+                write!(f, "Mic starts differ by {spread_secs:.3} seconds")
+            }
+            Self::Missing => f.write_str("A kit item is no longer available; reload the workspace"),
+            Self::Write { what, detail } => write!(f, "Could not write {what}: {detail}"),
+        }
+    }
+}
+impl std::error::Error for GroupError {}
 
 impl GroupError {
     fn write(what: &'static str, e: impl core::fmt::Debug) -> Self {

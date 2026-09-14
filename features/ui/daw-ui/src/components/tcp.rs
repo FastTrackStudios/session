@@ -73,6 +73,8 @@ pub fn TrackRow(
     /// REAPER-style DAW-level selection). Draws an accent outline.
     #[props(default)]
     selected: bool,
+    #[props(default)] collapsed: bool,
+    #[props(default)] onfoldertoggle: Option<EventHandler<()>>,
 ) -> Element {
     // The store first, the prop as the seed — see `use_live_track`.
     let row_h = height;
@@ -121,6 +123,13 @@ pub fn TrackRow(
         SOLO_TOP + 20.0 + 2.0
     };
 
+    // Shown-or-hidden as a style, never as presence — see the folder
+    // glyph below for why the row must keep one shape.
+    let hide = "display:none;";
+    let folder_shown = if track.folder_depth > 0 { "" } else { hide };
+    let phase_shown = if row_h >= PHASE_HIDE_H { "" } else { hide };
+    let lanes_shown = if row_h >= LANES_HIDE_H { "" } else { hide };
+
     let selection_ring = if selected {
         format!("box-shadow: inset 0 0 0 2px {};", theme.chrome.accent.css())
     } else {
@@ -130,6 +139,7 @@ pub fn TrackRow(
     rsx! {
         div {
             class: "relative shrink-0",
+            "data-testid": "tcp-{track.guid}",
             style: "position:relative; width:{ROW_W}px; height:{row_h + 1.0}px; \
                     border-bottom:1px solid {rule}; {selection_ring}",
 
@@ -165,10 +175,23 @@ pub fn TrackRow(
             div { style: "position:absolute; left:{7.0 + indent}px; top:5px;",
                 art::TrackPin { colour: combo.clone() }
             }
-            // Only an actual folder-start track gets the folder glyph —
-            // it used to draw on every row regardless of `is_folder`.
-            if track.is_folder {
-                div { style: "position:absolute; left:{7.0 + indent}px; top:{row_h - 10.0}px;",
+            // Only an actual folder-start track SHOWS the folder glyph —
+            // it used to draw on every row regardless of `is_folder` —
+            // but the node is always here.
+            //
+            // A row whose node count depends on its track cannot be
+            // recycled: the panel scrolls by handing a slot a different
+            // track, and a glyph that comes and went with `folder_depth`
+            // would add and remove a subtree on an ordinary scroll. That
+            // is what leaves a dead id in blitz-dom's paint order for the
+            // next pointer move to walk (see `KeyPanel` in the expression
+            // editor's roll for the same note). Hidden, not absent.
+            div {
+                style: "position:absolute; left:{7.0 + indent}px; top:{row_h - 22.0}px; \
+                        {folder_shown}",
+                if let Some(ontoggle) = onfoldertoggle {
+                    super::folders::FolderButton { name: track.name.clone(), collapsed, ontoggle }
+                } else {
                     art::TrackFolder { colour: combo.clone() }
                 }
             }
@@ -292,20 +315,20 @@ pub fn TrackRow(
             // Phase in the corner, the lanes button above it — or, when
             // the row is too short for phase but not for lanes, the lanes
             // button tucked under solo instead.
-            if row_h >= PHASE_HIDE_H {
-                div {
-                    style: "position:absolute; \
-                            left:{TINT_W + GUTTER_BUTTON_X + 3.0}px; \
-                            top:{row_h - PHASE_FROM_FLOOR}px;",
-                    PhaseButton { track: track.guid.clone() }
-                }
+            // Both hidden rather than absent, for the reason above: the
+            // row's shape must not depend on its height either.
+            div {
+                style: "position:absolute; \
+                        left:{TINT_W + GUTTER_BUTTON_X + 3.0}px; \
+                        top:{row_h - PHASE_FROM_FLOOR}px; \
+                        {phase_shown}",
+                PhaseButton { track: track.guid.clone() }
             }
-            if row_h >= LANES_HIDE_H {
-                div {
-                    style: "position:absolute; \
-                            left:{TINT_W + GUTTER_BUTTON_X + 1.0}px; top:{lanes_top}px;",
-                    FixedLanes { on: false }
-                }
+            div {
+                style: "position:absolute; \
+                        left:{TINT_W + GUTTER_BUTTON_X + 1.0}px; top:{lanes_top}px; \
+                        {lanes_shown}",
+                FixedLanes { on: false }
             }
 
             // No scale: there is no column for numbers out here, and REAPER
@@ -476,6 +499,78 @@ fn FixedLanes(on: bool) -> Element {
             onmouseenter: move |_| at.set(art::Interaction::Hover),
             onmouseleave: move |_| at.set(art::Interaction::Normal),
             art::FixedLanesButton { on, width: Some(20), height: Some(24), at: at() }
+        }
+    }
+}
+
+/// The track control panel as a **standalone surface** — the dock panel,
+/// a window pane, a test harness.
+///
+/// [`TrackRow`] above is the one TCP row in this tree, and this is how a
+/// surface that owns nothing else mounts a column of them: it brings the
+/// track store, the feed that keeps it current, and the flush loop the
+/// controls write through, because on its own nothing above it will
+/// have.
+///
+/// There used to be a second track panel beside this one
+/// (`components::track_control_panel`) — a Tailwind list that polled the
+/// facade every two seconds and drew mute, solo and arm as coloured
+/// `<span>`s that could not be clicked. It was not a lighter TCP, it was
+/// a different and worse one, and it had already drifted: no routing
+/// button, no FX slot, no input, no phase, no envelope, no meter, and a
+/// row that looked nothing like the panel the REAPER theme is exported
+/// from. It is gone; this is the only TCP.
+///
+/// # Why the store is mounted here and not left to the caller
+///
+/// [`use_track_store`] is provide-or-consume, so a window that already
+/// has one (see `studio::Studio`) shares it and this adds nothing. A
+/// panel dropped into a dock by itself gets its own. Either way the
+/// controls inside have somewhere to read and write, which is the
+/// difference between a live panel and a picture of one.
+#[component]
+pub fn TrackPanel() -> Element {
+    let store = use_track_store();
+    crate::controls::use_daw_tracks(store);
+    let mut folders = super::folders::use_folder_state();
+
+    // Project order from the store, resolved to tracks. `order` is the
+    // thing that already learns about adds, removes and moves, so it is
+    // the honest source for "what is in this project and in what order" —
+    // a map's iteration order is not.
+    let tracks: Vec<daw_proto::Track> = store
+        .order()
+        .iter()
+        .filter_map(|guid| store.track(guid))
+        .collect();
+    let (visible, depths) = folders.read().visible(&tracks);
+
+    rsx! {
+        // The flush loop, so a fader or knob in here reaches the engine.
+        // Harmless if a window above already mounts one: each drains the
+        // drafts it finds, and an empty pass does nothing.
+        crate::controls::ControlSync {}
+        div {
+            class: "daw-tcp",
+            "data-testid": "tcp-panel",
+            style: "height:100%; width:{ROW_W}px; overflow-y:auto; overflow-x:hidden;",
+            for (i, track) in visible.iter().enumerate() {
+                {
+                    let guid = track.guid.clone();
+                    let collapsed = folders.read().is_collapsed(&guid);
+                    rsx! {
+                        TrackRow {
+                            key: "{guid}",
+                            track: track.clone(),
+                            index: track.index,
+                            depth: depths.get(i).copied().unwrap_or(0),
+                            selected: track.selected,
+                            collapsed,
+                            onfoldertoggle: move |()| folders.write().toggle(&guid),
+                        }
+                    }
+                }
+            }
         }
     }
 }

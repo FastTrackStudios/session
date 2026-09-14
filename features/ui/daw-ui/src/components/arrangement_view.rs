@@ -252,6 +252,22 @@ pub fn ArrangePreview(
     /// plan both this panel and the TCP column walk.
     #[props(default)]
     env_lanes: HashMap<String, Vec<EnvelopeLaneView>>,
+    /// Disable when a host owns the viewport. This keeps the ruler and
+    /// lanes in the host's coordinate system without nested scroll areas.
+    #[props(default = true)]
+    scrollable: bool,
+    /// What the host can actually see, in canvas coordinates:
+    /// `(left, top, width, height)`, where the canvas' origin is the
+    /// first lane's top-left. Rows, items and grid lines outside it plus
+    /// an overscan margin are not mounted at all.
+    ///
+    /// Only a host that owns the scroll can know this, so it is opt-in:
+    /// without it the canvas mounts everything, which is what a
+    /// screenshot of a whole arrangement wants. A host that supplies it
+    /// must keep it live — a stale window culls away what the user just
+    /// scrolled to.
+    #[props(default)]
+    viewport: Option<(f32, f32, f32, f32)>,
     width: f32,
     height: f32,
     /// Zoom, as pixels per second of timeline.
@@ -350,13 +366,30 @@ pub fn ArrangePreview(
         .map(|it| it.position.as_seconds() as f32 + it.length.as_seconds() as f32)
         .fold(0.0f32, f32::max)
         + width / pixels_per_second.max(1.0);
-    let content_w = (content_secs * pixels_per_second).max(width);
+    let content_w = if scrollable {
+        (content_secs * pixels_per_second).max(width)
+    } else {
+        width
+    };
+    let overflow = if scrollable { "scroll" } else { "visible" };
     let content_h = plan
         .iter()
         .map(|(_, top, h)| top + h)
         .fold(0.0f32, f32::max)
         .max(lanes_h);
     let bars = (content_w / bar_px).ceil() as usize + 1;
+    // Which of those bars the host can actually see. Without a viewport
+    // the whole ruler is drawn, which is what a screenshot of a whole
+    // arrangement wants.
+    const RULER_OVERSCAN: f32 = 320.0;
+    let ruler_range = match viewport {
+        Some((x, _, w, _)) if bar_px > 0.0 => {
+            let lo = ((x - RULER_OVERSCAN) / bar_px).floor().max(0.0) as usize;
+            let hi = ((x + w.max(0.0) + RULER_OVERSCAN) / bar_px).ceil().max(0.0) as usize;
+            lo..hi.min(bars)
+        }
+        _ => 0..bars,
+    };
 
     rsx! {
         div {
@@ -372,7 +405,18 @@ pub fn ArrangePreview(
                         overflow:hidden;",
                 div {
                     style: "position:relative; transform:translateX(-{scroll_x()}px);",
-                    for bar in 0..bars {
+                    // Only the bars in view get a number.
+                    //
+                    // This ran the whole song — ninety-odd numbered nodes
+                    // for a three-minute take, all of them off screen but
+                    // all of them real. Each carries text, so a zoom
+                    // moved every one and had its label shaped again:
+                    // measured, the ruler was most of the six
+                    // milliseconds a zoom frame spent building inline
+                    // layout. The lanes below have been culled to the
+                    // viewport since they were first hosted; the ruler
+                    // over them was simply missed.
+                    for bar in (0..bars).filter(|bar| ruler_range.contains(bar)) {
                         div {
                             key: "r{bar}",
                             style: "position:absolute; left:{bar as f32 * bar_px}px; top:0; \
@@ -395,7 +439,7 @@ pub fn ArrangePreview(
             // grows with content; this viewport never does.
             div {
                 style: "position:relative; flex:1 1 0; min-height:0; \
-                        overflow:scroll; cursor:default;",
+                        overflow:{overflow}; cursor:default;",
                 onscroll: move |evt: ScrollEvent| {
                     let x = evt.scroll_left() as f32;
                     let y = evt.scroll_top() as f32;
@@ -410,6 +454,7 @@ pub fn ArrangePreview(
                     previews: previews.clone(),
                     envelopes: envelopes.clone(),
                     env_lanes: env_lanes.clone(),
+                    viewport,
                     width: content_w,
                     height: content_h,
                     pixels_per_second,
@@ -462,6 +507,10 @@ fn ArrangeCanvas(
     #[props(default)] previews: HashMap<String, ItemPreview>,
     #[props(default)] envelopes: HashMap<String, Vec<EnvelopePreview>>,
     #[props(default)] env_lanes: HashMap<String, Vec<EnvelopeLaneView>>,
+    /// The visible window in canvas coordinates — see
+    /// [`ArrangePreview`]'s prop of the same name. `None` mounts the
+    /// whole canvas.
+    #[props(default)] viewport: Option<(f32, f32, f32, f32)>,
     /// The content canvas size — NOT a viewport; the caller already
     /// worked out how much timeline/track space there is to draw.
     width: f32,
@@ -492,12 +541,60 @@ fn ArrangeCanvas(
     let content_w = width;
     let content_h = height;
     let plan = plan_rows(&tracks, &env_lanes, row_h);
-    let track_top = |i: usize| -> f32 {
-        plan.iter()
-            .find(|(k, _, _)| *k == ArrangeRowKind::Track(i))
-            .map(|(_, top, _)| *top)
-            .unwrap_or(i as f32 * (row_h + 1.0))
+    // One pass over the plan, not a linear search per lookup: culling
+    // asks for a track's top once per item, and a scan there turned the
+    // canvas into `items × rows` work every frame.
+    let tops: Vec<f32> = (0..tracks.len())
+        .map(|i| {
+            plan.iter()
+                .find(|(k, _, _)| *k == ArrangeRowKind::Track(i))
+                .map(|(_, top, _)| *top)
+                .unwrap_or(i as f32 * (row_h + 1.0))
+        })
+        .collect();
+    let track_top = |i: usize| -> f32 { tops[i] };
+
+    // ── What is actually on screen ──
+    //
+    // A whole song at readable zoom is a canvas many screens wide and
+    // several tall, and every node in it costs a style/layout resolve on
+    // every frame — including frames that only scrolled. So the canvas
+    // mounts the window plus a margin and nothing else. The margin is
+    // what keeps a scroll from showing bare ground for a frame; it is
+    // in canvas pixels, not rows, because both axes scroll.
+    const OVERSCAN: f32 = 320.0;
+    // Vertically the margin is bigger, because the host tells this canvas
+    // about vertical movement far less often than horizontal: a timeline
+    // re-render is expensive and a vertical scroll does not change any of
+    // the horizontal layout, so the host commits that axis a screenful at
+    // a time. The overscan is what covers the drift in between, and must
+    // stay ahead of the host's step (`COMMIT_TIMELINE_Y`).
+    const OVERSCAN_Y: f32 = 560.0;
+    let cull = viewport.map(|(x, y, w, h)| {
+        (
+            x - OVERSCAN,
+            y - OVERSCAN_Y,
+            x + w.max(0.0) + OVERSCAN,
+            y + h.max(0.0) + OVERSCAN_Y,
+        )
+    });
+    let across = |left: f32, right: f32| cull.is_none_or(|(x0, _, x1, _)| right >= x0 && left <= x1);
+    let down = |top: f32, bottom: f32| cull.is_none_or(|(_, y0, _, y1)| bottom >= y0 && top <= y1);
+    // The grid is a line per bar over the whole width, so it is culled
+    // by index rather than by filtering: at 16x zoom the bars off screen
+    // outnumber the ones on it by an order of magnitude.
+    let bar_span = |px: f32| -> std::ops::Range<usize> {
+        match cull {
+            Some((x0, _, x1, _)) if px > 0.0 => {
+                let lo = (x0 / px).floor().max(0.0) as usize;
+                let hi = (x1 / px).ceil().max(0.0) as usize;
+                lo..hi
+            }
+            _ => 0..usize::MAX,
+        }
     };
+    let bar_range = bar_span(bar_px);
+    let beat_range = bar_span(beat_px);
 
     rsx! {
         div {
@@ -505,7 +602,7 @@ fn ArrangeCanvas(
 
             // The grid, behind everything: a line per bar, and per
             // beat when the zoom leaves room for them.
-            for bar in 1..bars {
+            for bar in (1..bars).filter(|bar| bar_range.contains(bar)) {
                 div {
                     key: "b{bar}",
                     style: "position:absolute; left:{bar as f32 * bar_px}px; top:0; \
@@ -513,7 +610,7 @@ fn ArrangeCanvas(
                 }
             }
             if draw_beats {
-                for beat in 1..bars * 4 {
+                for beat in (1..bars * 4).filter(|beat| beat_range.contains(beat)) {
                     if beat % 4 != 0 {
                         div {
                             key: "t{beat}",
@@ -528,7 +625,11 @@ fn ArrangeCanvas(
             // A lane per track, on the TCP's pitch: row plus one
             // divider. The lane carries the track's colour as a tint
             // faint enough to organise without shouting.
-            for (i, track) in tracks.iter().enumerate() {
+            for (i, track) in tracks
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| down(track_top(*i), track_top(*i) + row_h))
+            {
                 {
                     let top = track_top(i);
                     let tint = track
@@ -560,11 +661,14 @@ fn ArrangeCanvas(
             }
 
             // The items, over the lanes and the grid.
-            for item in items.iter() {
+            for item in items.iter().filter(|item| {
+                let left = item.position.as_seconds() as f32 * pixels_per_second;
+                across(left, left + item.length.as_seconds() as f32 * pixels_per_second)
+            }) {
                 {
                     let lane = tracks.iter().position(|tr| tr.guid == item.track_guid);
                     match lane {
-                        Some(i) => rsx! {
+                        Some(i) if down(track_top(i), track_top(i) + row_h) => rsx! {
                             ArrangeItem {
                                 key: "{item.guid}",
                                 item: item.clone(),
@@ -580,9 +684,10 @@ fn ArrangeCanvas(
                                 },
                             }
                         },
-                        // An item whose track is not in the list draws
-                        // nothing — better than inventing a lane.
-                        None => rsx! {},
+                        // An item whose track is not in the list, or
+                        // whose lane is scrolled off, draws nothing —
+                        // better than inventing a lane.
+                        _ => rsx! {},
                     }
                 }
             }
@@ -803,7 +908,16 @@ pub fn Waveform(amps: Vec<f32>, width: f32, top: f32, height: f32, colour: Strin
     let n = amps.len();
     // Above ~4 blocks per pixel the polygon outruns what the pixel can
     // show; fold blocks together so the shape stays a few hundred points.
-    let max_points = (width as usize).clamp(64, 512);
+    //
+    // Quantised to a power of two, which is what makes a zoom affordable.
+    // The `d` string below is a few hundred coordinates, and it is an
+    // ATTRIBUTE: rewriting it means dioxus diffs it, blitz re-parses it
+    // and the node is restyled. Taken straight from the pixel width, it
+    // changed on every zoom notch, so every visible item rewrote its
+    // whole path several times a second. On a ladder it changes only
+    // when the item's width actually doubles — the shape carries the
+    // same detail, and the frames in between write nothing at all.
+    let max_points = (width as usize).clamp(64, 512).next_power_of_two().min(512);
     let folded: Vec<f32> = if n > max_points {
         let per = n as f32 / max_points as f32;
         (0..max_points)
@@ -1136,6 +1250,7 @@ pub fn ArrangementView(
     top_actions: Vec<ToolbarAction>,
 ) -> Element {
     let store = use_track_store();
+    let mut folders = super::folders::use_folder_state();
     use_daw_tracks(store);
 
     let mut items = use_signal(Vec::<Item>::new);
@@ -1336,6 +1451,7 @@ pub fn ArrangementView(
         .iter()
         .filter_map(|guid| store.track(guid))
         .collect();
+    let (tracks, depths) = folders.read().visible(&tracks);
     let item_list = items.read().clone();
     // Drawn at the box the dock gives, measured on mount — the same move
     // the mixer makes, for the same reason.
@@ -1346,7 +1462,7 @@ pub fn ArrangementView(
     // `plan_rows` so an envcp lane is exactly as tall on both sides.
     let env_lanes_snapshot = env_lanes.read().clone();
     let plan = plan_rows(&tracks, &env_lanes_snapshot, row_h);
-    let depths = folder_depths(&tracks);
+
     let arrange_w = (w - ROW_W).max(0.0);
 
     // TCP and the arrange lanes are ONE scroll surface below (see the
@@ -1764,6 +1880,8 @@ pub fn ArrangementView(
                                             index: i as u32,
                                             height: row_h,
                                             depth: depths[i],
+                                            collapsed: folders.read().is_collapsed(&tracks[i].guid),
+                                            onfoldertoggle: { let guid = tracks[i].guid.clone(); move |_| folders.write().toggle(&guid) },
                                             selected: selected_track() == Some(i),
                                         }
                                     },

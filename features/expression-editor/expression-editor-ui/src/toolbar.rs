@@ -152,6 +152,9 @@ pub fn Toolbar(
     // r[impl drums.manual.undo]
     #[props(default)]
     on_undo: Option<EventHandler<()>>,
+    /// Redo through the same host that owns undo, when provided.
+    #[props(default)]
+    on_redo: Option<EventHandler<()>>,
 ) -> Element {
     let mut editor = editor;
     let mut drawer = drawer;
@@ -170,7 +173,7 @@ pub fn Toolbar(
     // button knows: the daw owns that history and cannot be asked
     // cheaply, and greying out a working button is the worse error.
     let can_undo = ed.can_undo() || on_undo.is_some();
-    let can_redo = ed.can_redo();
+    let can_redo = ed.can_redo() || on_redo.is_some();
     let mod_open = drawer.read().open;
     let mode = ed.mode;
     let stacked = ed.stacked;
@@ -436,7 +439,11 @@ pub fn Toolbar(
                     Seg {
                         active: false,
                         title: "Redo".to_string(),
-                        onclick: move |_| { editor.write().redo(); },
+                        testid: "redo".to_string(),
+                        onclick: move |_| match on_redo {
+                            Some(redo) => redo.call(()),
+                            None => { editor.write().redo(); }
+                        },
                         span { style: if can_redo { "" } else { "opacity: 0.3;" }, "↷" }
                     }
                 }

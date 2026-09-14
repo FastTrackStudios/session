@@ -191,12 +191,22 @@ pub fn Canvas(
     // a new one per render would hand the second render an empty
     // attribute and the roll would go blank.
     let frames = use_context::<roll_widget::Frames>();
+    // A WebView panics on the widget attribute ("Any attributes are not
+    // supported by the current renderer"), so there `data` carries
+    // nothing and the surface is drawn by the webview path instead. One
+    // rsx tree either way; only the seam moves.
+    #[cfg(not(feature = "webview"))]
     let widget = use_hook(|| {
         dioxus_native_dom::CustomWidgetAttr::new(roll_widget::RollWidget::new(
             slot.clone(),
             frames.clone(),
         ))
     });
+    #[cfg(feature = "webview")]
+    let widget = {
+        let _ = &frames;
+        ""
+    };
 
     // While the drawer is open its target is locked: editing gestures
     // are blocked, but every navigation path stays live so the preview

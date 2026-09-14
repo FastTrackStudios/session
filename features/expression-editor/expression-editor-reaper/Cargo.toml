@@ -13,8 +13,8 @@ expression-editor-daw = { workspace = true }
 # The audio half. `render` because writing a take back means producing
 # audio; `daw` because the session drives the facade.
 expression-editor-audio = { workspace = true, features = ["daw", "render"] }
-expression-editor-ui = { workspace = true }
-expression-editor-standalone = { workspace = true }
+expression-editor-ui = { workspace = true, features = ["host"] }
+expression-editor-host = { workspace = true }
 dioxus = { workspace = true }
 tracing = { workspace = true }
 

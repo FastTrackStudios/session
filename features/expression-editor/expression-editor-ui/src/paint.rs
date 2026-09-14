@@ -78,7 +78,7 @@ pub fn color(css: &str) -> Color {
         .unwrap_or(Color::TRANSPARENT)
 }
 
-fn with_alpha(c: Color, alpha: f64) -> Color {
+pub(crate) fn with_alpha(c: Color, alpha: f64) -> Color {
     c.with_alpha(alpha as f32)
 }
 
@@ -123,7 +123,7 @@ fn line_of(points: &[(f64, f64)]) -> BezPath {
     path_of(points.iter().map(|&(x, y)| Point::new(x, y)), false)
 }
 
-fn polygon(s: &str) -> BezPath {
+pub(crate) fn polygon(s: &str) -> BezPath {
     let mut path = polyline(s);
     if !path.is_empty() {
         path.close_path();
@@ -131,7 +131,7 @@ fn polygon(s: &str) -> BezPath {
     path
 }
 
-fn stroke_of(width: f64) -> Stroke {
+pub(crate) fn stroke_of(width: f64) -> Stroke {
     Stroke::new(width)
 }
 
@@ -152,14 +152,14 @@ fn stroke_of(width: f64) -> Stroke {
 /// covers shapes that sit at the same depth: every row, or every note
 /// body. Anything drawn *over* something else goes in a later batch.
 #[derive(Default)]
-struct Batch {
+pub(crate) struct Batch {
     // A `Vec` rather than a map: there are only ever a handful of
     // distinct paints, so a linear scan beats hashing a colour.
     entries: Vec<(Color, BezPath)>,
 }
 
 impl Batch {
-    fn add(&mut self, color: Color, shape: &impl kurbo::Shape) {
+    pub(crate) fn add(&mut self, color: Color, shape: &impl kurbo::Shape) {
         let path = match self.entries.iter_mut().find(|(c, _)| *c == color) {
             Some((_, path)) => path,
             None => {
@@ -170,13 +170,20 @@ impl Batch {
         path.extend(shape.path_elements(0.1));
     }
 
-    fn fill(self, scene: &mut Scene, at: Affine) {
+    /// The gathered paths, for a caller that must vary something per
+    /// colour (the grace notes' lighter weight) and so cannot use the
+    /// one-shot `fill`.
+    pub(crate) fn take(self) -> Vec<(Color, BezPath)> {
+        self.entries
+    }
+
+    pub(crate) fn fill(self, scene: &mut Scene, at: Affine) {
         for (color, path) in self.entries {
             scene.fill(Fill::NonZero, at, color, None, &path);
         }
     }
 
-    fn stroke(self, scene: &mut Scene, at: Affine, width: f64) {
+    pub(crate) fn stroke(self, scene: &mut Scene, at: Affine, width: f64) {
         let stroke = stroke_of(width);
         for (color, path) in self.entries {
             scene.stroke(&stroke, at, color, None, &path);

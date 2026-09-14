@@ -25,6 +25,8 @@
 //! mixer moves the faders the renderer reads, and the editor writes the
 //! edits — all visibly the same project.
 
+mod mixer;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -35,11 +37,10 @@ use daw::standalone::Standalone;
 use daw_theme_art::geometry::mcp::STRIP_W;
 use daw_theme_art::geometry::tcp::{ROW_H, ROW_W};
 use daw_ui::components::arrangement_view::{
-    ArrangePreview, ArrangeRowKind, ItemPreview, plan_rows, waveform_from_peaks,
+    ArrangePreview, ItemPreview, plan_rows, waveform_from_peaks,
 };
-use daw_ui::components::mixer::ChannelStripPreview;
 use daw_ui::components::tcp::TrackRow;
-use daw_ui::controls::{ControlSync, FxSlotStack, MeterFeed, use_daw_tracks, use_track_store};
+use daw_ui::controls::{ControlSync, MeterFeed, use_daw_tracks, use_track_store};
 use daw_ui::panels::native::NativeTransportBar;
 
 use expression_editor_core::Editor;
@@ -52,6 +53,19 @@ use crate::drum_host::SharedDrumHost;
 pub const MIXER_W: f64 = (STRIP_W as f64 + 1.0) * 4.0 + 2.0;
 /// The arrange pane's share of the left column.
 pub const ARRANGE_FRACTION: f64 = 0.45;
+/// How far the shared viewport must travel down before the timeline
+/// re-cuts what it mounts. A screenful, not a row: re-cutting unmounts,
+/// and unmounting is what the renderer's paint order is fragile about.
+/// `ArrangeCanvas`'s vertical overscan must stay ahead of this.
+const COMMIT_TIMELINE_Y: f32 = 360.0;
+
+/// A track row plus the one-pixel divider under it — the pitch the
+/// arrangement's lanes use, which is what the column has to match.
+const ROW_PITCH: f32 = ROW_H + 1.0;
+/// How many row slots the panel keeps. Enough for the tallest pane it is
+/// given plus room to scroll into; the count never changes.
+const TCP_SLOTS: usize = 28;
+
 /// The transport band, per the main window.
 const TRANSPORT_H: f64 = 40.0;
 /// The ruler's region lane — REAPER's colored section bands.
@@ -63,6 +77,13 @@ const MARKER_H: f64 = 14.0;
 const ARR_RULER_H: f32 = 26.0;
 /// The FX insert band over the mixer strips, when any track has a chain.
 const FX_BAND_H: f64 = 144.0;
+
+/// How far the shared viewport must travel before the panes re-cut what
+/// they mount. Each must stay comfortably under the overscan the panes
+/// keep mounted past their edges, or a scroll would reach unmounted
+/// ground before anyone had noticed it moved.
+const COMMIT_X: f32 = 160.0;
+
 
 /// The Blitz cursor/scheme fixes every native window embeds (the same
 /// three lines the REAPER test panels carry).
@@ -84,6 +105,33 @@ struct StagedWorkstation {
 }
 
 static STAGED: Mutex<Option<StagedWorkstation>> = Mutex::new(None);
+
+/// A kit that finished analysing after the window was already up.
+///
+/// Opening a drum project costs ~44 s before anything can be shown, and
+/// almost none of it is the UI: decoding eighteen mics' worth of the
+/// whole song takes 28.8 s on its own. Waiting for that before calling
+/// `launch` meant a blank screen for three quarters of a minute.
+///
+/// So the window opens on whatever is ready — the arrangement, the
+/// mixer, the transport, all of which read the daw facade — and the kit
+/// arrives here when it is done. The workstation already had the state
+/// for this: it shows "Opening the project…" until tracks land, because
+/// waveforms have always streamed in behind the first paint.
+static PENDING: Mutex<Option<(Editor, Option<SharedDrumHost>)>> = Mutex::new(None);
+
+/// Hand a finished kit to a window that is already open.
+///
+/// Called from whichever thread did the analysing; the window collects
+/// it on its own.
+pub fn publish_kit(editor: Editor, host: Option<SharedDrumHost>) {
+    *PENDING.lock().unwrap() = Some((editor, host));
+}
+
+/// Take a finished kit, if one has arrived.
+fn take_kit() -> Option<(Editor, Option<SharedDrumHost>)> {
+    PENDING.lock().ok()?.take()
+}
 
 /// Keeps the in-process daw link's acceptor alive for the window's
 /// lifetime. Dropping it would silently disconnect every panel.
@@ -305,27 +353,86 @@ pub fn WorkstationApp() -> Element {
                 }),
         )
     });
-    let (win_w, win_h) = staged.size;
-    let arrange_h = (win_h * ARRANGE_FRACTION).round();
-    let left_w = (win_w - MIXER_W).max(200.0);
+    // The window's size, from winit — never remembered.
+    //
+    // Every pane here is laid out from pixel numbers: the arrange pane's
+    // share of the height, the left column's width beside a fixed mixer,
+    // the editor's cell. They all used to come from the size handed to
+    // `stage_workstation` before the window existed, which never changed,
+    // so resizing left every panel at its opening size with bare ground
+    // around it.
+    //
+    // Asked of the window, not measured off the DOM. dioxus-native never
+    // delivers an element resize event (`convert_resize_data` is
+    // `unimplemented!()`), and awaiting a client rect from a task borrows
+    // the document out from under whatever already holds it — the
+    // "RefCell already borrowed" re-entrancy the sizing notes warn about.
+    // winit already knows, and `use_window_event` is how dioxus-native
+    // hands it over. That is the contract
+    // `expression_editor_ui::AVAILABLE` has always stated for the
+    // editor's own cell: "a desktop window from its winit resize event".
+    let window_size = use_signal(|| staged.size);
+    // Whether there IS a window. This same component is mounted headless
+    // by the DOM benchmark and by the workstation tests, where the winit
+    // context does not exist and `use_window` panics. Resolved once, so
+    // the subtree below keeps one shape for its lifetime.
+    // Whether there is a window to ask. The same component is mounted
+    // headless by the DOM benchmark and the workstation tests, where
+    // there is none and the staged size stands. Resolved once, so the
+    // subtree below keeps one shape for its lifetime.
+    let windowed = use_hook(crate::window_size::available);
+    // Which panels are showing — `E` and `X`. The arrangement grows into
+    // whatever is put away rather than leaving a hole.
+    let mut editor_open = use_signal(|| true);
+    let mut mixer_open = use_signal(|| true);
+
+    let (win_w, win_h) = window_size();
+
+    let arrange_h = if editor_open() {
+        (win_h * ARRANGE_FRACTION).round()
+    } else {
+        win_h
+    };
+    let mixer_w = if mixer_open() { MIXER_W } else { 0.0 };
+    let left_w = (win_w - mixer_w).max(200.0);
     // The editor's cell is everything under the arrange pane. It
     // subtracts its own chrome from what we report here.
     expression_editor_ui::available_space(left_w, win_h - arrange_h);
 
-    let editor = use_signal(|| {
+    let mut editor = use_signal(|| {
         let mut ed = staged.editor.clone();
         ed.viewport = expression_editor_ui::viewport_in(left_w, win_h - arrange_h);
         ed
     });
-    let host = use_signal(|| staged.host.clone());
+    let mut host = use_signal(|| staged.host.clone());
+    // The kit, if it is still being analysed. Polled rather than pushed:
+    // the analysis runs on a plain thread with no way into dioxus's
+    // reactive world, and this happens once per launch, so a slow tick
+    // costs nothing and a channel would be machinery for one event.
+    use_future(move || async move {
+        loop {
+            futures_timer::Delay::new(std::time::Duration::from_millis(120)).await;
+            if let Some((ready, ready_host)) = take_kit() {
+                let mut ready = ready;
+                // Whatever the window has become since it opened — it can
+                // be resized while the kit is still decoding.
+                ready.viewport = expression_editor_ui::current_viewport(ready.viewport);
+                editor.set(ready);
+                host.set(ready_host);
+                return;
+            }
+        }
+    });
     let bins = use_signal(Vec::new);
     let previews_sig = use_signal(Vec::new);
     let HostCallbacks {
+        error,
         on_change,
         on_apply,
         on_save,
         on_hit,
         on_undo,
+        on_redo,
     } = host_callbacks(
         editor,
         host.read().clone(),
@@ -347,12 +454,23 @@ pub fn WorkstationApp() -> Element {
     let mut shape = use_signal(ProjectShape::default);
     let item_previews_sig = use_signal(HashMap::<String, ItemPreview>::new);
     let previews_pending = use_signal(|| 0usize);
+    let mut previews_complete = use_signal(|| false);
+    let mut arrange_zoom = use_signal(|| 1.0_f32);
     use_effect(move || {
         spawn(async move {
+            // Waits for the backend rather than assuming it. The project
+            // is parsed on a thread so the window does not have to wait
+            // for it, which means the facade may not exist yet when this
+            // first runs — and a single attempt would leave the panels
+            // empty for the life of the window.
+            while daw::get().is_none() {
+                futures_timer::Delay::new(std::time::Duration::from_millis(100)).await;
+            }
             if let Some(s) = fetch_project().await {
                 let items = s.items.clone();
                 shape.set(s);
                 stream_previews(items, item_previews_sig, previews_pending).await;
+                previews_complete.set(true);
             }
         });
     });
@@ -420,15 +538,73 @@ pub fn WorkstationApp() -> Element {
         });
     });
 
+    let folders = use_signal(daw_ui::components::folders::FolderState::default);
+    // Where the shared TCP/timeline viewport is looking, in the scroll
+    // container's own pixels: `(left, top)`.
+    //
+    // Deliberately NOT read in this body. The panes below take it as a
+    // `Signal` and read it inside their own components, so a scroll
+    // re-renders the rows and the items that came into view — not the
+    // transport, the editor and the mixer as well.
+    //
+    // It is also deliberately COARSE. Blitz scrolls natively: the pane
+    // moves whether or not dioxus hears about it, and the only reason to
+    // hear about it is to mount whatever just came into range. Writing
+    // every pixel of it made every frame of a wheel gesture a re-render
+    // plus a style/layout resolve — which cost more than the whole
+    // uncut document had, and made scrolling the one thing this work
+    // made slower. So the window is committed in steps, and the mounted
+    // overscan is what covers the drift in between: most frames of a
+    // scroll now change no state at all and cost only what Blitz's own
+    // scroll costs.
+    // One signal per AXIS, not one for the viewport.
+    //
+    // They were a single `(left, top)` tuple, and that quietly cost more
+    // than everything the culling saved: the timeline reads it, so a
+    // VERTICAL scroll re-rendered the timeline — every item, every grid
+    // line, every lane — to arrive at exactly the same horizontal
+    // layout it already had. Measured, that was 10-12 ms a frame against
+    // 0.5 ms for the native scroll itself. Split, a vertical scroll
+    // re-renders only the track panel and a horizontal one only the
+    // timeline, because a dioxus component subscribes to the signals it
+    // actually reads.
+    let arrange_scroll_x = use_signal(|| 0.0f32);
+    // The timeline's vertical, on a deliberately coarse step.
+    //
+    // Culling down the tracks is worth a lot here — most of the 877
+    // items belong to tracks that are off screen, and mounting them all
+    // cost `arrange_zoom` seven times its budget. But re-cutting the
+    // window UNMOUNTS, and a subtree removal followed by a pointer move
+    // before the next layout is what walks blitz-dom's paint order into
+    // a node that no longer exists. So the step is a screenful and the
+    // canvas' overscan covers the drift: the unmounts still happen, but
+    // rarely, and never while the user is simply dragging down a row at
+    // a time. The track panel beside it does not cull at all.
+    let timeline_scroll_y = use_signal(|| 0.0f32);
+    // The track panel's vertical. It re-cuts per row, which it can
+    // afford because it never mounts or unmounts one — see `TcpColumn`.
+    let tcp_scroll_y = use_signal(|| 0.0f32);
     let s = shape.read();
-    let tracks = s.tracks.clone();
-    let items = s.items.clone();
+    let (tracks, depths) = folders.read().visible(&s.tracks);
+    // Shared, not copied: these two go to the TCP column and the
+    // timeline, both of which re-render on every scroll frame, and a
+    // `Vec<Track>`/`Vec<Item>` prop is deep-copied on each one.
+    let tracks = Arc::new(tracks);
+    let depths = Arc::new(depths);
+    let items = Arc::new(s.items.clone());
     let fx = s.fx.clone();
     let sections = s.sections.clone();
     let marker_flags = s.markers.clone();
     let bpm = s.bpm;
     let seconds = s.length_secs;
     drop(s);
+
+    // Put away, not taken down. Removing a subtree is what leaves a dead
+    // id in blitz-dom's paint order for the next pointer move to walk
+    // (see `TcpColumn`), and these are toggled by a keypress — exactly
+    // when a hand is also on the mouse.
+    let editor_shown = if editor_open() { "" } else { "display: none;" };
+    let mixer_shown = if mixer_open() { "" } else { "display: none;" };
 
     let t = daw_theme::Theme::default();
     let ground = t.chrome.surface.css();
@@ -443,7 +619,7 @@ pub fn WorkstationApp() -> Element {
     // at a second scale over a zoomed timeline — a map stapled to a
     // window.)
     let arrange_w = (left_w - ROW_W as f64).max(100.0) as f32;
-    let pps = (40.0 * bpm as f32 / 240.0).max(4.0);
+    let pps = (40.0 * bpm as f32 / 240.0).max(4.0) * arrange_zoom();
     let content_w = (seconds as f32 * pps).max(arrange_w);
     // The lanes' full content height: region lane + marker lane +
     // ruler + one pitch per row, the pitch both columns share. The
@@ -467,12 +643,17 @@ pub fn WorkstationApp() -> Element {
             "html, body {{ width: 100%; height: 100%; margin: 0; padding: 0; \
               overflow: hidden; background: {ground}; }}"
         }
-        document::Style { {daw_ui::TAILWIND_CSS} }
-        document::Style { {BLITZ_FIXES} }
+        WorkstationStyles {}
         // The engine sync pair, once for the whole window: drafts flush
         // to the facade at 30 Hz, meter frames feed every strip.
         ControlSync {}
         MeterFeed {}
+        if windowed {
+            crate::window_size::WindowSize { size: window_size }
+        }
+        if previews_complete() && !tracks.is_empty() {
+            span { "data-testid": "workstation-ready", style: "display:none", "{tracks.len()} tracks, {items.len()} items" }
+        }
         div {
             style: "display: flex; flex-direction: row; width: 100vw; height: 100vh; \
                     min-height: 0; min-width: 0;",
@@ -496,6 +677,20 @@ pub fn WorkstationApp() -> Element {
                                 let _ = p.transport().play_pause().await;
                             }
                         });
+                    }
+                    // The panel toggles. Bare letters, the way a DAW
+                    // hides what you are not using; a field that wants
+                    // its own letters stops the event before here (see
+                    // the inspector's lyric input).
+                    Key::Character(c) if c.eq_ignore_ascii_case("e") => {
+                        e.prevent_default();
+                        let open = !editor_open();
+                        editor_open.set(open);
+                    }
+                    Key::Character(c) if c.eq_ignore_ascii_case("x") => {
+                        e.prevent_default();
+                        let open = !mixer_open();
+                        mixer_open.set(open);
                     }
                     Key::Home => {
                         playhead.set(0.0);
@@ -527,24 +722,40 @@ pub fn WorkstationApp() -> Element {
                     style: "height: {lanes_h}px; flex: 0 0 auto; overflow-y: scroll; \
                             overflow-x: hidden;",
                     "data-testid": "workstation-arrange",
+                    onscroll: {
+                        let mut timeline_scroll_y = timeline_scroll_y;
+                        let mut tcp_scroll_y = tcp_scroll_y;
+                        move |event: ScrollEvent| {
+                            let y = event.scroll_top() as f32;
+                            if (*timeline_scroll_y.peek() - y).abs() >= COMMIT_TIMELINE_Y {
+                                timeline_scroll_y.set(y);
+                            }
+                            if (*tcp_scroll_y.peek() - y).abs() >= ROW_PITCH {
+                                tcp_scroll_y.set(y);
+                            }
+                        }
+                    },
                     div {
                         style: "position: relative; display: flex; \
                                 width: {left_w}px; height: {content_h}px;",
                         div {
-                            style: "width: {ROW_W}px; flex: 0 0 auto; overflow: hidden;",
+                            // `relative`, because the rows inside are a
+                            // recycled pool placed by absolute top — see
+                            // `TcpColumn`. This is their containing block.
+                            style: "position: relative; width: {ROW_W}px; \
+                                    flex: 0 0 auto; overflow: hidden;",
                             // The full ruler block's height in empty
                             // panel — region lane, marker lane and the
                             // bar ruler — so row one starts where lane
                             // one does.
                             div { style: "height: {ruler_block_h + ARR_RULER_H as f64 + 1.0}px;" }
-                            for (kind, _, _) in rows.iter() {
-                                if let ArrangeRowKind::Track(i) = kind {
-                                    TrackRow {
-                                        key: "{tracks[*i].guid}",
-                                        track: tracks[*i].clone(),
-                                        index: *i as u32,
-                                    }
-                                }
+                            TcpColumn {
+                                tracks: tracks.clone(),
+                                depths: depths.clone(),
+                                folders,
+                                scroll: tcp_scroll_y,
+                                rows_top: ruler_block_h as f32 + ARR_RULER_H + 1.0,
+                                view_h: lanes_h as f32,
                             }
                         }
                         if tracks.is_empty() {
@@ -560,8 +771,27 @@ pub fn WorkstationApp() -> Element {
                             // The lanes' own horizontal scroll — the
                             // TCP column stays put, the timeline pans.
                             div {
+                                "data-testid": "workstation-timeline",
                                 style: "width: {arrange_w}px; flex: 0 0 auto; \
                                         overflow-x: scroll; overflow-y: hidden;",
+                                onscroll: {
+                                    let mut arrange_scroll_x = arrange_scroll_x;
+                                    move |event: ScrollEvent| {
+                                        let x = event.scroll_left() as f32;
+                                        if (*arrange_scroll_x.peek() - x).abs() >= COMMIT_X {
+                                            arrange_scroll_x.set(x);
+                                        }
+                                    }
+                                },
+                                onwheel: move |event: WheelEvent| {
+                                    if event.modifiers().contains(Modifiers::CONTROL) {
+                                        let (_, dy) = expression_editor_ui::scroll::notches(&event.delta());
+                                        let next = (arrange_zoom() * (-dy as f32 * 0.12).exp()).clamp(0.25, 16.0);
+                                        arrange_zoom.set(next);
+                                        event.prevent_default();
+                                        event.stop_propagation();
+                                    }
+                                },
                                 div {
                                     style: "position: relative; width: {content_w}px; \
                                             height: {content_h}px;",
@@ -654,6 +884,17 @@ pub fn WorkstationApp() -> Element {
                                         tracks: tracks.clone(),
                                         items,
                                         previews: item_previews_sig,
+                                        scroll: arrange_scroll_x,
+                                        scroll_y: timeline_scroll_y,
+                                        canvas_top: ruler_block_h as f32 + ARR_RULER_H,
+                                        // The canvas' origin sits below
+                                        // the region/marker lanes and
+                                        // the arrange ruler, so that is
+                                        // what the scroll offset has to
+                                        // lose to land in canvas
+                                        // coordinates.
+                                        view_w: arrange_w,
+                                        view_h: lanes_h as f32,
                                         width: content_w,
                                         height: arr_h,
                                         pixels_per_second: pps,
@@ -670,7 +911,8 @@ pub fn WorkstationApp() -> Element {
                     }
                 }
                 div {
-                    style: "flex: 1 1 auto; min-height: 0; border-top: 1px solid {rule};",
+                    style: "flex: 1 1 auto; min-height: 0; \
+                            border-top: 1px solid {rule}; {editor_shown}",
                     "data-testid": "workstation-editor",
                     ExpressionEditor {
                         editor,
@@ -681,6 +923,8 @@ pub fn WorkstationApp() -> Element {
                         on_hit,
                         on_save,
                         on_undo,
+                        on_redo,
+                        host_error: error.and_then(|error| error()),
                         playhead_secs: playhead,
                     }
                 }
@@ -689,32 +933,14 @@ pub fn WorkstationApp() -> Element {
             // scroll carries each track's FX slots and strip together,
             // so a chain never drifts off its channel. ──
             div {
-                style: "flex: 0 0 {MIXER_W}px; width: {MIXER_W}px; min-height: 0; \
-                        overflow-x: scroll; overflow-y: hidden; display: flex; \
-                        border-left: 1px solid {rule}; background: {bar_bg};",
-                "data-testid": "workstation-mixer",
-                for (i, track) in tracks.iter().enumerate() {
-                    div {
-                        key: "{track.guid}",
-                        style: "width: {STRIP_W}px; flex: 0 0 auto; display: flex; \
-                                flex-direction: column; overflow: hidden;",
-                        if fx_band > 0.0 {
-                            div {
-                                style: "height: {FX_BAND_H}px; flex: 0 0 auto; \
-                                        display: flex; align-items: flex-end; \
-                                        overflow: hidden;",
-                                FxSlotStack {
-                                    fx: fx.get(&track.guid).cloned().unwrap_or_default(),
-                                    width: STRIP_W,
-                                }
-                            }
-                        }
-                        ChannelStripPreview {
-                            track: track.clone(),
-                            index: i as u32,
-                            height: strip_h,
-                        }
-                    }
+                // The mixer's slot. `WorkstationMixer` owns its own root
+                // (and the `workstation-mixer` testid on it), so showing
+                // and hiding happens here, one level out.
+                "data-testid": "workstation-mixer-slot",
+                style: "display: flex; min-height: 0; {mixer_shown}",
+                mixer::WorkstationMixer {
+                    tracks: tracks.as_ref().clone(), depths: depths.as_ref().clone(), fx, folders,
+                    height: strip_h, rule: rule.clone(), background: bar_bg.clone(),
                 }
             }
         }
@@ -725,11 +951,38 @@ pub fn WorkstationApp() -> Element {
 /// subtree and nothing else. The whole app reading the previews signal
 /// was the freeze: every arriving waveform re-laid-out the editor and
 /// the mixer too.
+///
+/// It is also where the song is cut down to what the window can see.
+/// That has to happen HERE, above the props boundary, because the props
+/// boundary is the expensive part: dioxus hands a component its props by
+/// value on every render, so an `items: Vec<Item>` of 877 takes and a
+/// `previews` map holding a peak vector each were being deep-copied —
+/// twice, once into this component and once into `ArrangePreview` — for
+/// every frame of a scroll. Filtering first means a scroll copies the
+/// forty items on screen, not the whole record.
 #[component]
 fn TimelineItems(
-    tracks: Vec<Track>,
-    items: Vec<Item>,
+    /// Behind an `Arc` for the same reason: the track list is re-read on
+    /// every scroll frame and nothing here mutates it.
+    tracks: Arc<Vec<Track>>,
+    items: Arc<Vec<Item>>,
     previews: Signal<HashMap<String, ItemPreview>>,
+    /// How far the timeline has been panned, read HERE and nowhere
+    /// above: this is the component a horizontal scroll is allowed to
+    /// re-render.
+    ///
+    /// Horizontal ONLY, on purpose. The lanes are a few screens tall and
+    /// many screens wide, so culling across time is what pays; culling
+    /// down the tracks saved a handful of nodes and cost a re-render of
+    /// the whole timeline on every vertical scroll. Reading only the
+    /// axis that matters is what keeps the two panes independent.
+    scroll: Signal<f32>,
+    /// The vertical, on its coarse step — see `COMMIT_TIMELINE_Y`.
+    scroll_y: Signal<f32>,
+    /// How far the canvas' origin sits below the scroll container's.
+    canvas_top: f32,
+    view_w: f32,
+    view_h: f32,
     width: f32,
     height: f32,
     pixels_per_second: f32,
@@ -738,11 +991,49 @@ fn TimelineItems(
     // Static preview — no live transport, so the cursors never move.
     let play_position = use_signal(|| 0.0f32);
     let edit_position = use_signal(|| 0.0f32);
+    let left = scroll();
+    // Horizontally culled, vertically whole.
+    //
+    // The lanes are a few screens tall and many screens wide, so culling
+    // across time is what pays. Down the tracks it did not: with enough
+    // overscan to survive a coarse commit it was mounting 94% of the
+    // content anyway — and the 6% it dropped had to be UNMOUNTED as you
+    // scrolled, which is a subtree removal, which is what leaves a dead
+    // id in blitz-dom's paint order for the next pointer move to walk.
+    // A scroll that mounts and unmounts nothing cannot do that.
+    let window = (left, scroll_y() - canvas_top, view_w, view_h);
+    // The same margin the canvas culls lanes and grid lines by, so an
+    // item and its lane come into view together.
+    const OVERSCAN: f32 = 320.0;
+    let (x0, x1) = (window.0 - OVERSCAN, window.0 + view_w + OVERSCAN);
+    let on_screen: Vec<Item> = items
+        .iter()
+        .filter(|item| {
+            let l = item.position.as_seconds() as f32 * pixels_per_second;
+            let r = l + item.length.as_seconds() as f32 * pixels_per_second;
+            r >= x0 && l <= x1
+        })
+        .cloned()
+        .collect();
+    // Read the map, copy the handful of peak vectors that are on
+    // screen, and drop the borrow — never clone the whole cache.
+    let seen = previews.read();
+    let previews: HashMap<String, ItemPreview> = on_screen
+        .iter()
+        .filter_map(|item| {
+            seen.get(&item.guid)
+                .map(|preview| (item.guid.clone(), preview.clone()))
+        })
+        .collect();
+    drop(seen);
+    let tracks = tracks.as_ref().clone();
     rsx! {
         ArrangePreview {
+            scrollable: false,
+            viewport: Some(window),
             tracks,
-            items,
-            previews: previews(),
+            items: on_screen,
+            previews,
             width,
             height,
             pixels_per_second,
@@ -750,6 +1041,101 @@ fn TimelineItems(
             play_position,
             edit_position,
         }
+    }
+}
+
+/// The TCP column, as a recycler: a fixed pool of row slots.
+///
+/// Scrolling a track list is the one gesture that used to change this
+/// subtree's shape. Mounting a window and re-cutting it meant UNMOUNTING
+/// rows, and a subtree removal followed by a pointer move before the
+/// next layout is what walks blitz-dom's paint order into a node that no
+/// longer exists — the workstation panicked in `hit_inner` about a
+/// hundred and fifty pixels down, which is exactly where the first row
+/// fell out of a six-row overscan. Mounting all sixty-five rows instead
+/// fixed that and cost the combined workload nearly half again as much,
+/// because a track panel row is ~138 nodes and the document carries
+/// every one of them.
+///
+/// So the pool is fixed and the tracks move through it. A slot is keyed
+/// by `index % TCP_SLOTS`, so advancing the window by one row hands
+/// exactly one slot a different track and leaves the rest untouched and
+/// memoised. Nothing is ever added or removed; only props change. That
+/// also puts a requirement on `TrackRow`, which now holds one shape of
+/// its own — its folder glyph and height-dependent buttons are hidden
+/// rather than absent, or recycling a track into a slot would add and
+/// remove nodes exactly the way this is avoiding.
+#[component]
+fn TcpColumn(
+    tracks: Arc<Vec<Track>>,
+    depths: Arc<Vec<u32>>,
+    mut folders: Signal<daw_ui::components::folders::FolderState>,
+    scroll: Signal<f32>,
+    /// Where row zero starts, below the ruler block.
+    rows_top: f32,
+    view_h: f32,
+) -> Element {
+    let count = tracks.len();
+    // The first track the pane can see, less a slot's worth of room to
+    // scroll back into.
+    let top = (scroll() - rows_top).max(0.0);
+    let visible = ((view_h / ROW_PITCH).ceil() as usize).max(1);
+    let overscan = TCP_SLOTS.saturating_sub(visible) / 2;
+    let first = ((top / ROW_PITCH).floor() as usize).saturating_sub(overscan);
+    let first = first.min(count.saturating_sub(TCP_SLOTS.min(count)));
+    rsx! {
+        for key in 0..TCP_SLOTS.min(count) {
+            {
+                // Which track this slot is showing: the one whose index
+                // is congruent to the slot's own key, modulo the pool.
+                //
+                // That is the whole trick, and the direction matters. Walk
+                // the window and take `key = i % POOL` and every slot gets
+                // a new track when the window moves by one. Walk the POOL
+                // and solve for `i` instead, and all but one slot keep the
+                // track they already had — so a row of scroll re-renders
+                // one row, and dioxus memoises the rest.
+                let pool = TCP_SLOTS.min(count);
+                // `first` is clamped so the whole pool fits, so this is
+                // always a real track.
+                let i = first + (key + pool - first % pool) % pool;
+                let guid = tracks[i].guid.clone();
+                rsx! {
+                    div {
+                        key: "{key}",
+                        // Positioned by the track it holds, so the rows
+                        // stay level with their lanes however the pool
+                        // is rotated.
+                        style: "position:absolute; left:0; \
+                                top:{rows_top + i as f32 * ROW_PITCH}px;",
+                        TrackRow {
+                            track: tracks[i].clone(),
+                            index: tracks[i].index,
+                            depth: depths[i],
+                            collapsed: folders.read().is_collapsed(&guid),
+                            onfoldertoggle: move |_| folders.write().toggle(&guid),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The sheets that go in the document head, mounted once.
+///
+/// `document::Style` warns — loudly, per render — when its props differ
+/// from the ones it first saw, because the head cannot be re-styled in
+/// place. Sitting directly in `WorkstationApp` it did exactly that: the
+/// app re-renders on every pan, and each render built a fresh child node
+/// for the same unchanging text. A props-less component has nothing to
+/// invalidate it, so this renders once for the life of the window and
+/// the sheets are set once, which is what they were always meant to be.
+#[component]
+fn WorkstationStyles() -> Element {
+    rsx! {
+        document::Style { {daw_ui::TAILWIND_CSS} }
+        document::Style { {BLITZ_FIXES} }
     }
 }
 

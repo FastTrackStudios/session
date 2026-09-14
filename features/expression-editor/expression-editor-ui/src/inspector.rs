@@ -295,6 +295,12 @@ pub fn Inspector(
                             // controlled input ate the space, so
                             // multi-word text could not be typed.
                             onkeydown: move |e| {
+                                // A field contains its own typing. The
+                                // workstation binds bare letters to panel
+                                // toggles, and without this an `e` in a
+                                // syllable would put the editor away
+                                // mid-word.
+                                e.stop_propagation();
                                 if e.key() == Key::Enter
                                     && let Some(id) = selected_id
                                 {

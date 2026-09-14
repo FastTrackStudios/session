@@ -139,10 +139,10 @@ fn lift(c: Color, amount: f32) -> Color {
 }
 
 /// A control's palette, resolved once per render.
-struct Ink {
-    face: Color,
-    border: Color,
-    text: Color,
+pub(crate) struct Ink {
+    pub(crate) face: Color,
+    pub(crate) border: Color,
+    pub(crate) text: Color,
 }
 
 /// `sinks` — does pressing darken the face?
@@ -151,9 +151,25 @@ struct Ink {
 /// track panel it does *not* — `track_mute_off` shows #494949 in both
 /// cells, identical. Assuming either way invents a state one of the two
 /// families does not have.
-fn ink(lit: Option<Color>, at: Interaction, sinks: bool, hover: f32) -> Ink {
-    let t = Theme::default();
-    let c = &t.chrome;
+pub(crate) fn ink(lit: Option<Color>, at: Interaction, sinks: bool, hover: f32) -> Ink {
+    ink_in(&Theme::default().chrome, lit, at, sinks, hover)
+}
+
+/// The same, against a palette the caller supplies.
+///
+/// The components above are drawn for one theme and reach for
+/// `Theme::default()`; the canvas is drawn against whatever REAPER theme
+/// the user actually opened, and taking the default there put the track
+/// panel's buttons in a grey the rest of the window had moved away from.
+/// So the palette became a parameter, and `ink` is the default-palette
+/// case of it rather than a second implementation.
+pub(crate) fn ink_in(
+    c: &daw_theme::Chrome,
+    lit: Option<Color>,
+    at: Interaction,
+    sinks: bool,
+    hover: f32,
+) -> Ink {
     // Unlit controls take the neutral control grey, not a shade of the
     // surface ladder: deriving it from `surface_raised` made every mute,
     // solo and FX button blue-cast and far darker than the art it stands

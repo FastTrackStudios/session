@@ -8,12 +8,14 @@
 resolver = "3"
 
 members = [
+    "libs/vendor/dioxus-native-dom",
     "features/expression-editor/expression-editor-audio",
     "features/expression-editor/expression-editor-core",
     "features/expression-editor/expression-editor-corpus",
     "features/expression-editor/expression-editor-daw",
     "features/expression-editor/expression-editor-demo",
     "features/expression-editor/expression-editor-guitarpro",
+    "features/expression-editor/expression-editor-host",
     "features/expression-editor/expression-editor-reaper",
     "features/expression-editor/expression-editor-standalone",
     "features/expression-editor/expression-editor-tools",
@@ -28,6 +30,7 @@ members = [
     "features/ui/daw-reaper-dioxus-ext-test",
     "apps/cli",
     "apps/desktop",
+    "apps/session-daw",
     "apps/session-player",
     "apps/vault-sync",
     "apps/web",
@@ -56,11 +59,15 @@ repository = "https://github.com/FastTrackStudios/session"
 
 [workspace.dependencies]
 # ── Internal — every moved crate, path declared ONCE here ─────────────
-fts-chrome = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-fts-audio-ui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-fts-plug-ui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-dock-dioxus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14", default-features = false }
-dock-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+fts-chrome = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+# These two moved from `daw` to `processor` on the September 2026 FX
+# split and have diverged since — `../daw` still carries an older copy,
+# and taking that one puts two different `fts-audio-ui v0.1.0` in one
+# lockfile, which cargo refuses outright.
+fts-audio-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+fts-plug-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+dock-dioxus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15", default-features = false }
+dock-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # nice-plug lives in its own fork repo (upstream RustAudio/nice-plug's
 # baseview-03 branch + the FTS delta: nice-plug-dioxus, embedded editors,
 # rich track-info, param rescan). The ONE sanctioned exception to
@@ -68,99 +75,99 @@ dock-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" 
 nice-plug = { git = "https://github.com/FastTrackStudios/nice-plug.git", branch = "fts-baseview-03" }
 nice-plug-dioxus = { git = "https://github.com/FastTrackStudios/nice-plug.git", branch = "fts-baseview-03" }
 nice-plug-xtask = { git = "https://github.com/FastTrackStudios/nice-plug.git", branch = "fts-baseview-03" }
-utils = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+utils = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # The grid that follows the zoom. Pure arithmetic and no dependencies, so
 # the arrange view and the expression editor can agree on it without
 # either depending on the other.
-adaptive-grid = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-installer-core = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-engine-launcher = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+adaptive-grid = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+installer-core = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+engine-launcher = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 neural-amp-modeler = { git = "https://github.com/FastTrackStudios/neural-amp-modeler-rs", tag = "v0.1.0" }
-audiocore-core = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-audiocore-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14", default-features = false }
-audiocore-gui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-fts-modulation = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+audiocore-core = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+audiocore-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15", default-features = false }
+audiocore-gui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+fts-modulation = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # Defaults OFF at the root so lean consumers (probe-only scanners, the
 # iOS-clean session-guide) don't drag the pack engine in; each consumer
 # names the features it needs ("load" / "write" / "engine").
-fts-sample = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14", default-features = false }
-fts-themes = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-meter-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-meter-ui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+fts-sample = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15", default-features = false }
+fts-themes = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+meter-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+meter-ui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # Canonical MIDI facade. Defaults OFF at the root: daw-proto re-exports
 # `midicore::MidiEvent` and must not drag midicore's `vox` service traits
 # (nor the `midir` feature — midicore-midir pins midir 0.10/alsa-sys 0.3,
 # colliding with daw's midir 0.11/alsa-sys 0.4 via `links = "alsa"`).
 # Consumers that want the vox surface set `features = ["vox"]` themselves.
-midicore = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14", default-features = false }
-midicore-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-midicore-midir = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-midicore-ui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+midicore = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15", default-features = false }
+midicore-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+midicore-midir = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+midicore-ui = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # NI Komplete Kontrol keyboard driver (Light Guide / per-key RGB LEDs).
-kontrol = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-input-config-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+kontrol = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+input-config-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 arborium ={ version = "2.16.0", default-features = false }
 arborium-theme = "2.16.0"
 arborium-tree-sitter = "2.16.0"
 ropey = "1.6"
-input = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-input-dioxus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-input-keybinds = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+input = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+input-dioxus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+input-keybinds = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 
 # ── daw domain (wave 2) ───────────────────────────────────────────────
 # Facade crate — the only public API surface for the daw domain.
 # daw-proto, daw-control, daw-standalone, dawfile-* are INTERNAL to the
 # domain; consumers outside it go through the `daw` facade.
-daw = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-actions = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-control = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-module = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-fts-devtools = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-test-macro = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-audio-graph = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-audio-io = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+daw = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-actions = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-control = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-module = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+fts-devtools = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-test-macro = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-audio-graph = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-audio-io = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # RT-aware allocator — offloads RT deallocation to background thread
-daw-allocator = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-fts-audio-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-audio-controls = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-synchronization = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-link = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-network = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-audio-sync = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-dawfile-aaf = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-dawfile-ableton = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-dawfile-dawproject = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-dawfile-logic = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-dawfile-protools = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-dawfile-reaper = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-dawfile-standalone = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+daw-allocator = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+fts-audio-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+audio-controls = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-synchronization = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-link = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-network = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-audio-sync = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+dawfile-aaf = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+dawfile-ableton = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+dawfile-dawproject = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+dawfile-logic = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+dawfile-protools = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+dawfile-reaper = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+dawfile-standalone = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # default = all-formats; the daw facade opts into formats individually,
 # so the root entry keeps defaults OFF and consumers that want every
 # importer set `default-features = true`.
-daw-reaper = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14", default-features = false }
-daw-bridge = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+daw-reaper = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15", default-features = false }
+daw-bridge = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # Extension runtime — integrated REAPER extension helpers
-daw-extension-runtime = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-reaper-dioxus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+daw-extension-runtime = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-reaper-dioxus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 daw-reaper-dioxus-ext = { path = "features/ui/daw-reaper-dioxus-ext" }
-daw-reaper-embed = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-reaper-launcher = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-fts-icons = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+daw-reaper-embed = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+reaper-launcher = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+fts-icons = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 fts-themer = { path = "features/ui/fts-themer", default-features = false }
 fts-themer-ui = { path = "features/ui/fts-themer-ui" }
-reaper-config = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-reaper-kbd = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-reaper-hwnd = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-reaper-embed = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-reaper-dioxus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+reaper-config = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+reaper-kbd = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+reaper-hwnd = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+reaper-embed = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+reaper-dioxus = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # default-features = false: `overlay-prewarm` allocates wgpu/Vello surfaces
 # eagerly, which OOMs when loaded at REAPER plugin_main time. The only
 # consumer (fts-extensions) wants it off; enable per-member if needed.
-reaper-input = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14", default-features = false }
-fts-launcher = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-standalone = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-daw-csi = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+reaper-input = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15", default-features = false }
+fts-launcher = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-standalone = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+daw-csi = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 daw-ui = { path = "features/ui/daw-ui", default-features = false }
 daw-theme = { path = "features/ui/daw-theme" }
 daw-theme-art = { path = "features/ui/daw-theme-art", default-features = false }
@@ -194,8 +201,8 @@ song = { path = "features/song" }
 # `keyflow-proto` and `keyflow-syntax` stay in `daw`: expression-editor-core,
 # which daw-reaper hard-depends on, needs them.
 keyflow = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
-keyflow-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-keyflow-syntax = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+keyflow-proto = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+keyflow-syntax = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 keyflow-text = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
 keyflow-chordpro = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
 keyflow-midi = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v0.2.1" }
@@ -234,21 +241,47 @@ engraver-score = { git = "https://github.com/FastTrackStudios/keyflow", tag = "v
 # is wasm-portable; the vello/nice-plug editor is behind its `native` feature.
 # The comp plugin editor. Core (profile view data model) is portable; the
 # nice-plug/Blitz editor is behind its `native` feature.
-pitch-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-world-sys = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-tune-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
-align-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+pitch-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+world-sys = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+tune-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+align-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
+
+# ── The built-in FX, from the processor repo ──────────────────────────
+# The mixer's Tone rack draws a real EQ, compressor and saturator, and
+# it draws them from the SAME functions the plugins' own editors do:
+# `eq_graph_response::calculate_combined_response`,
+# `comp_graph_svg::compress_transfer`, `preamp::transfer_curve`. A curve
+# in a strip that disagreed with the curve in the plugin window would be
+# worse than no curve at all, so the strip owns no response math.
+#
+# Core only — `default-features = false` drops the nice-plug/Blitz
+# editors, which is what keeps this to response math rather than a
+# second plugin host inside the mixer.
+comp-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+eq-ui = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+saturate-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", default-features = false }
+# The Depth units draw the plugins' own machines: the delay's style
+# family decides how a repeat is drawn, and the reverb's envelope is
+# the algorithm's actual impulse response, rendered by `reverb-dsp`'s
+# analysis probe rather than an exponential drawn from the decay knob.
+delay-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+reverb-dsp = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+# The saturator's five circuits and their profiles — what its selector
+# picks from, applied through the plugin's own `apply`.
+saturate-profiles = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1" }
+
 expression-editor-audio = { path = "features/expression-editor/expression-editor-audio" }
 expression-editor-core = { path = "features/expression-editor/expression-editor-core" }
 expression-editor-corpus = { path = "features/expression-editor/expression-editor-corpus" }
 expression-editor-daw = { path = "features/expression-editor/expression-editor-daw" }
 expression-editor-demo = { path = "features/expression-editor/expression-editor-demo" }
 expression-editor-guitarpro = { path = "features/expression-editor/expression-editor-guitarpro" }
+expression-editor-host = { path = "features/expression-editor/expression-editor-host" }
 expression-editor-reaper = { path = "features/expression-editor/expression-editor-reaper" }
 expression-editor-standalone = { path = "features/expression-editor/expression-editor-standalone" }
 expression-editor-tools = { path = "features/expression-editor/expression-editor-tools" }
 expression-editor-ui = { path = "features/expression-editor/expression-editor-ui" }
-level-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+level-dsp = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 # Internal DSP cores (behind the facades).
 
 # ── Facet reflection + vox RPC — the rc.5 fleet pins ──────────────────
@@ -410,16 +443,40 @@ dioxus-web = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a5
 # Both features can be on at once: the renderer is chosen by a `cfg_if`
 # chain that tests `vello` first, so this wins over the default without
 # having to turn defaults off and re-list them.
-dioxus-native = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", features = ["prelude", "system-fonts", "svg", "autofocus", "incremental", "data-uri", "vello"] }
+# `default-features = false` with every default re-listed, so that this
+# list is the whole truth: dropping a feature from a `features = [...]`
+# while defaults are on does NOTHING, which cost a day of chasing
+# `incremental` that was never actually off.
+#
+# `incremental` is back ON. It is not what crashes the window — the
+# panic reproduces with it off — and it is worth roughly 2x: without it
+# every resolve rebuilds layout children for the whole document, the
+# combined workload goes 5.7x to 11.6x, and a frame that changes nothing
+# stops being free.
+dioxus-native = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc", default-features = false, features = ["prelude", "system-fonts", "svg", "autofocus", "data-uri", "vello", "accessibility", "hot-reload", "net", "html", "clipboard", "file-dialog", "vello-hybrid", "woff", "apple-font-embolden", "incremental"] }
+# On `incremental`, which was suspected of the `hit_inner` panic and
+# exonerated: the crash reproduces with it off, so the stale ids that
+# `resolve.rs` knowingly keeps in `layout_children` are not the cause.
+# What is left is an ordering race — a pointer event hit-tests between
+# dioxus applying a mutation and the next resolve rebuilding
+# `paint_children` — which no feature flag reaches. The lever is to stop
+# REMOVING nodes; see `TcpColumn`'s recycler, which fixed the same panic
+# for the track panel.
 blitz-dom = "=0.3.0-beta.1"
 blitz-paint = "=0.3.0-beta.1"
 blitz-traits = "=0.3.0-beta.1"
 blitz-shell = "=0.3.0-beta.1"
 blitz-html = "=0.3.0-beta.1"
 dioxus-native-dom = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc" }
+# Runtime telemetry the `dioxus-mcp` server reads back: renders, signal
+# writes and PANICS, as JSONL under target/dioxus-mcp/. `dx serve` owns
+# the child's console, so a panic in the window otherwise reaches nobody
+# — this is how it becomes something an agent can be pointed at. A no-op
+# in release builds unless the `force` feature is on. Not on crates.io.
+dioxus-mcp-probe = { git = "https://github.com/tonybierman/dioxus-mcp" }
 # Vendored DioxusLabs/dioxus-test on the pins above — headless component
 # tests on blitz-dom (no browser). See libs/vendor/dioxus-test.
-dioxus-test = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.14" }
+dioxus-test = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.15" }
 dioxus-devtools = { git = "https://github.com/DioxusLabs/dioxus", rev = "f717a8e184a522d078b70bb4b4d62a5f9a99ddfc" }
 # FTS fork branches carrying the dioxus-0.8 bumps until upstream moves.
 lumen-blocks = { git = "https://github.com/FastTrackStudios/lumen-blocks", branch = "main" }
@@ -696,7 +753,15 @@ vox-phon = { git = "https://github.com/FastTrackStudios/vendor", tag = "v0.3.0" 
 #
 # Pinned by rev: this is a plugin-editor dependency, and a moving branch would
 # let a window-system change land in a released plugin without a bump.
-baseview = { git = "https://github.com/FastTrackStudios/baseview.git", rev = "fa0c2c870927ec27138f914c0841f305e9b4972f" }
+#
+# Superseded: the processor repo vendored baseview 0.3.3 in-tree (its
+# `vendor/baseview`, with the same one-line fix) precisely so the pin is
+# a file rather than a rev in a third repo. nice-plug-dioxus at
+# `fts-baseview-03` is written against 0.3.3 — `host_main_thread_callback`
+# takes `&Self::Window` there — and against the 0.3.0 this rev resolves it
+# does not compile at all. The two workspaces were building the same
+# plugin stack against different window systems.
+baseview = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.1", package = "baseview" }
 # pipewire-rs one commit past its v0.10.0 release. PipeWire 1.6 rewrote
 # constants like SPA_ID_INVALID from a bare `0xffffffff` into a cast form,
 # `((uint32_t)0xffffffff)`, which bindgen's own macro evaluator cannot fold —
@@ -947,3 +1012,129 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.pitch-dsp]
 opt-level = 3
+
+# Preserve audio sources on newly split items until the upstream exporter is fixed.
+[patch."https://github.com/FastTrackStudios/daw"]
+# The daw repository is developed as a SIBLING CHECKOUT, not consumed
+# by tag. Edit `../daw` directly and push upstream when a change is
+# worth landing; nothing here needs a tag bump to try something.
+#
+# The path is relative to this repo, so it holds for anyone who checks
+# the two out side by side — which is the convention this expects.
+# The root CLAUDE.md warns against committing path overrides because
+# they are usually machine-specific absolute paths; a sibling is not,
+# and this one is deliberate rather than a leftover from debugging.
+#
+# Why a patch rather than path deps in `[workspace.dependencies]`: the
+# dependency entries keep naming the canonical git source, so dropping
+# this block is all it takes to go back to consuming a tag.
+adaptive-grid = { path = "../daw/libs/adaptive-grid" }
+align-dsp = { path = "../daw/features/align/align-dsp" }
+audio-controls = { path = "../daw/features/audio/audio-controls" }
+audiocore-core = { path = "../daw/crates/audiocore/audiocore-core" }
+audiocore-dsp = { path = "../daw/crates/audiocore/audiocore-dsp" }
+audiocore-gui = { path = "../daw/crates/audiocore/audiocore-gui" }
+daw = { path = "../daw/crates/daw/daw" }
+# These two were un-forked into the sibling but never added here, so a
+# tag-version copy stayed in the graph alongside the patched one — and
+# compiled against the PATCHED `daw-proto`, whose `Track` has gained
+# `height` and `width` since. `cargo check -p session-daw` passed
+# throughout because it reaches them through the patched `daw`; only a
+# workspace-wide check sees the other copy.
+daw-standalone = { path = "../daw/features/standalone/daw-standalone" }
+dawfile-standalone = { path = "../daw/features/dawfile/dawfile-standalone" }
+daw-actions = { path = "../daw/crates/daw/actions" }
+daw-allocator = { path = "../daw/features/audio/daw-allocator" }
+daw-audio-graph = { path = "../daw/features/audio/daw-audio-graph" }
+daw-audio-io = { path = "../daw/features/audio/daw-audio-io" }
+daw-audio-sync = { path = "../daw/features/sync/daw-audio-sync" }
+daw-bridge = { path = "../daw/features/reaper/daw-bridge" }
+daw-control = { path = "../daw/crates/daw/control" }
+daw-csi = { path = "../daw/features/surfaces/daw-csi" }
+daw-extension-runtime = { path = "../daw/features/reaper/daw-extension-runtime" }
+daw-link = { path = "../daw/features/sync/daw-link" }
+daw-module = { path = "../daw/crates/daw/module" }
+daw-network = { path = "../daw/features/sync/daw-network" }
+daw-proto = { path = "../daw/crates/daw/proto" }
+daw-reaper = { path = "../daw/features/reaper/daw-reaper" }
+daw-reaper-dioxus = { path = "../daw/features/reaper/daw-reaper-dioxus" }
+daw-reaper-embed = { path = "../daw/features/reaper/daw-reaper-embed" }
+daw-synchronization = { path = "../daw/features/sync/daw-synchronization" }
+daw-test-macro = { path = "../daw/libs/devtools/daw-test-macro" }
+dawfile-aaf = { path = "../daw/features/dawfile/dawfile-aaf" }
+dawfile-ableton = { path = "../daw/features/dawfile/dawfile-ableton" }
+dawfile-dawproject = { path = "../daw/features/dawfile/dawfile-dawproject" }
+dawfile-logic = { path = "../daw/features/dawfile/dawfile-logic" }
+dawfile-protools = { path = "../daw/features/dawfile/dawfile-protools" }
+dawfile-reaper = { path = "../daw/features/dawfile/dawfile-reaper" }
+dioxus-test = { path = "../daw/libs/vendor/dioxus-test" }
+dock-dioxus = { path = "../daw/libs/dock/dock-dioxus" }
+dock-proto = { path = "../daw/libs/dock/dock-proto" }
+engine-launcher = { path = "../daw/libs/engine-launcher" }
+fts-audio-proto = { path = "../daw/features/audio/fts-audio-proto" }
+fts-chrome = { path = "../daw/libs/fts-chrome" }
+fts-devtools = { path = "../daw/libs/devtools/fts-devtools" }
+fts-icons = { path = "../daw/features/reaper/fts-icons" }
+fts-launcher = { path = "../daw/features/launcher/fts-launcher" }
+fts-modulation = { path = "../daw/crates/audiocore/fts-modulation" }
+fts-sample = { path = "../daw/crates/audiocore/fts-sample" }
+fts-themes = { path = "../daw/crates/audiocore/fts-themes" }
+input = { path = "../daw/crates/input/input" }
+input-config-proto = { path = "../daw/crates/input/input-config-proto" }
+input-dioxus = { path = "../daw/crates/input/input-dioxus" }
+input-keybinds = { path = "../daw/crates/input/input-keybinds" }
+installer-core = { path = "../daw/libs/installer-core" }
+keyflow-proto = { path = "../daw/crates/keyflow/keyflow-proto" }
+keyflow-syntax = { path = "../daw/crates/keyflow/keyflow-syntax" }
+kontrol = { path = "../daw/crates/kontrol/kontrol" }
+level-dsp = { path = "../daw/features/fx/level/level-dsp" }
+meter-dsp = { path = "../daw/crates/audiocore/meter-dsp" }
+meter-ui = { path = "../daw/crates/audiocore/meter-ui" }
+midicore = { path = "../daw/crates/midicore/midicore" }
+midicore-midir = { path = "../daw/crates/midicore/midicore-midir" }
+midicore-proto = { path = "../daw/crates/midicore/midicore-proto" }
+midicore-ui = { path = "../daw/crates/midicore/midicore-ui" }
+pitch-dsp = { path = "../daw/features/fx/pitch/pitch-dsp" }
+reaper-config = { path = "../daw/features/reaper/reaper-config" }
+reaper-dioxus = { path = "../daw/features/reaper/reaper-dioxus" }
+reaper-embed = { path = "../daw/features/reaper/reaper-embed" }
+reaper-hwnd = { path = "../daw/features/reaper/reaper-hwnd" }
+reaper-input = { path = "../daw/features/reaper/reaper-input" }
+reaper-kbd = { path = "../daw/features/reaper/reaper-kbd" }
+reaper-launcher = { path = "../daw/features/reaper/reaper-launcher" }
+tune-dsp = { path = "../daw/features/fx/tune/tune-dsp" }
+utils = { path = "../daw/libs/utils" }
+world-sys = { path = "../daw/libs/vendor/world" }
+
+# The processor repo is a sibling checkout too, for the same reason and
+# on the same terms as `../daw` above: the FX and the mixer that embeds
+# them are being built together, and a tag bump between every try is
+# friction with no benefit. Every crate the Tone rack reaches, direct or
+# transitive, is patched — one unpatched copy of a crate that is also
+# patched is the lockfile collision that cost a day last time.
+[patch."https://github.com/FastTrackStudios/processor"]
+# baseview lives in the processor repo's own `vendor/`, which is why it
+# is patched from here rather than from a fork's URL — see the
+# `[workspace.dependencies]` entry.
+baseview = { path = "../processor/vendor/baseview" }
+comp-dsp = { path = "../processor/features/fx/comp/comp-dsp" }
+comp-profiles = { path = "../processor/features/fx/comp/comp-profiles" }
+comp-ui = { path = "../processor/features/fx/comp/comp-ui" }
+dsp-core = { path = "../processor/features/fx/dsp-core" }
+dsp-golden = { path = "../processor/features/fx/dsp-golden" }
+eq-profiles = { path = "../processor/features/fx/eq/eq-profiles" }
+eq-ui = { path = "../processor/features/fx/eq/eq-ui" }
+saturate-dsp = { path = "../processor/features/fx/saturate/saturate-dsp" }
+delay-dsp = { path = "../processor/features/fx/delay/delay-dsp" }
+reverb-dsp = { path = "../processor/features/fx/reverb/reverb-dsp" }
+saturate-profiles = { path = "../processor/features/fx/saturate/saturate-profiles" }
+spectrum-analyzer = { path = "../processor/features/fx/eq/spectrum-analyzer/spectrum-analyzer" }
+spectrum-analyzer-dsp = { path = "../processor/features/fx/eq/spectrum-analyzer/spectrum-analyzer-dsp" }
+fts-audio-ui = { path = "../processor/libs/ui/fts-audio-ui" }
+fts-plug-ui = { path = "../processor/libs/ui/fts-plug-ui" }
+
+
+
+# Clear native DOM mappings before Blitz recycles removed node slots.
+[patch."https://github.com/DioxusLabs/dioxus"]
+dioxus-native-dom = { path = "libs/vendor/dioxus-native-dom" }

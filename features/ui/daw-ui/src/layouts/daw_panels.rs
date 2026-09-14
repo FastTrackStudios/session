@@ -28,7 +28,7 @@ pub fn DawApplication() -> Element {
 
             div { class: "flex-1 min-h-0 min-w-0 grid grid-cols-[280px_minmax(360px,1fr)_320px] grid-rows-[minmax(280px,1fr)_220px] bg-zinc-950",
                 div { class: "min-h-0 min-w-0 border-r border-zinc-800 row-span-2",
-                    crate::components::track_control_panel::TrackControlPanel {}
+                    crate::components::tcp::TrackPanel {}
                 }
 
                 div { class: "min-h-0 min-w-0 border-r border-zinc-800 border-b border-zinc-800",

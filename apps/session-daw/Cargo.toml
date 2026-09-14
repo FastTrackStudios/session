@@ -1,0 +1,118 @@
+[package]
+name = "session-daw"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+description = "The Session DAW window — open a REAPER project and move around inside it, at 120 fps"
+
+# What this is, and what it is not.
+#
+# `session-desktop` is the Session app: setlists, songs, charts, the
+# guide. This is the DAW window — the TCP, the arrangement, the transport
+# and the mixer over a real project, on the renderer Session ships on. It
+# is a separate binary while it is being built out one panel at a time;
+# the panels themselves live in `daw-ui`'s `studio` module, so nothing
+# here has to move when it becomes a surface of the app rather than an
+# app of its own.
+#
+# The expression editor is deliberately absent. It arrives once this
+# holds its frame rate with a real session open, and it arrives as a
+# panel this window mounts.
+
+[dependencies]
+# The window itself. WRY, not Blitz: it is what session-desktop ships on,
+# it has devtools and real CSS, and its DOM does not mind a pane adding
+# and removing nodes.
+dioxus = { workspace = true, default-features = true, features = ["desktop", "launch"] }
+
+# The UI. `studio` is the rebuilt full-DAW surface; the older
+# `components` family is the REAPER-theme tracing one and is not used
+# here.
+# `reaper-theme` is not optional here: this window's whole colour model
+# is `theming::Theme`, and a REAPER theme is how that gets filled in with
+# something other than the FTS defaults. See `src/theme.rs`.
+daw-ui = { workspace = true, features = ["studio", "reaper-theme"] }
+# The Blitz measurement — see `src/bin/blitz.rs`. Laying the mixer out
+# with a real layout engine would remove a whole class of bug; whether
+# it costs the frame budget is a question only a frame can answer.
+blitz-dom = { workspace = true }
+blitz-paint = { workspace = true }
+blitz-traits = { workspace = true }
+dioxus-native-dom = { workspace = true }
+daw-control = { workspace = true }
+daw-proto = { workspace = true }
+daw-theme-art = { workspace = true }
+# The mix phases the mixer's left rail lists.
+session = { workspace = true }
+# The visual presets. Which tracks a preset shows, and how large, is a
+# rule resolved against the session's own taxonomy — not a list of GUIDs
+# this window keeps. See `src/plan.rs`.
+dynamic-template = { workspace = true }
+# The mouse-modifier contexts a hit reports, so bindings stay
+# configurable rather than being hard-coded per widget.
+input-config-proto = { workspace = true }
+daw-theme = { workspace = true }
+
+# The Tone rack's response math — the plugins' own, not a copy. See the
+# `signal` block in the root manifest for why these are core-only.
+comp-ui = { workspace = true }
+# The shared frequency/dB axes the FX editors map their graphs with, so
+# the strip's curve lands on the same pixels as the plugin's.
+fts-audio-ui = { workspace = true }
+# `native` brings in `eq_graph_painter` — the plugin's own vello painter,
+# which records into an `anyrender::Scene` and is therefore usable from
+# this window's rack. Without it only the portable core compiles (the
+# model, the response maths and the interaction helpers), which is what
+# the wasm remotes take.
+eq-ui = { workspace = true, features = ["native"] }
+saturate-dsp = { workspace = true, features = ["analysis"] }
+# The delay's style families and the reverb's rendered impulse — the
+# Depth panels draw the machine, not a picture of its knob.
+delay-dsp = { workspace = true }
+reverb-dsp = { workspace = true }
+saturate-profiles = { workspace = true }
+
+# `standalone-rpp` = the standalone backend plus the `.rpp` loader and
+# source decoding — what makes a real project openable with no REAPER in
+# the picture. `standalone-bootstrap` = the in-process daw-control client
+# every panel reads through.
+daw = { workspace = true, features = ["standalone-rpp", "standalone-bootstrap"] }
+
+# The GPU-accelerated arrangement. `anyrender` is the 2D abstraction
+# (`PaintScene`: fill/stroke/draw_glyphs/draw_image) and the portable
+# recorded `Scene`; `anyrender_vello` is the wgpu/Vello backend behind
+# it. Both are already in the graph via dioxus-native, so these pin to
+# what is there rather than pulling a second copy.
+#
+# `vello` is here only for its re-exports — it republishes `peniko` and
+# `peniko::kurbo`, which is where `Rect`, `Affine` and `Color` come from.
+# Depending on kurbo and peniko directly would mean pinning two more
+# versions by hand and keeping them in step with whatever Vello moves to.
+anyrender = "0.11"
+anyrender_vello = "0.12"
+vello = "0.9"
+pollster = "0.4"
+image = { workspace = true }
+# Finding REAPER's resource path, for the toolbar icons it installs.
+dirs = "6"
+skrifa = "0.42"
+adaptive-grid = { workspace = true }
+winit = "0.31.0-beta.2"
+
+eyre = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
+
+# Reaching WebKit's own settings to turn off its 60fps render cap — see
+# `src/frame_rate.rs`. Linux only, and pinned to the versions wry already
+# resolves so there is ONE webkit2gtk and one wry in the graph, not two:
+# the pointer we hand to WebKit has to come from the same webview the
+# window is actually rendering in.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "=2.0.2"
+wry = { version = "0.55", default-features = false }
