@@ -916,6 +916,14 @@ fn strip(
     // when the pill sat up here.
     let rack_box = crate::strip::Strip::new(w, h, slot.mixer_h, rack_h, buttons_top).rack_rect();
     if let (Some(rack_box), Some(tone)) = (rack_box, tone) {
+        // Clipped to the box, like the live rack is: the chain is
+        // longer than the box and would otherwise run down over the
+        // strip's own controls. A whole strip is replayed as one span,
+        // so the layer's push and pop are never split by the culling.
+        scene.push_clip_layer(
+            Affine::IDENTITY,
+            &Rect::new(rack_box.x0 + x, rack_box.y0, rack_box.x1 + x, rack_box.y1),
+        );
         crate::tone::record(
             scene,
             palette,
@@ -933,6 +941,7 @@ fn strip(
             // answers to it. See `overlay::Racks::folded`.
             crate::tone::Folded::default(),
         );
+        scene.pop_layer();
     }
 
     let band_top = fx_section;
