@@ -255,6 +255,11 @@ pub struct Mixer {
     /// — which moved the arm, the buttons and the fader down by
     /// whatever the indent came to.
     heights: Vec<f64>,
+    /// Whether each strip's track wants the column layout when it is
+    /// focused — decided from its chain, and carried here so every
+    /// reading of a strip's geometry (the recording, the live pass,
+    /// the hit tests) resolves the same `Strip`.
+    columns: Vec<bool>,
     /// Each strip's track name, already fitted to its plate.
     ///
     /// Fitted HERE and drawn in the overlay, which is the split the
@@ -399,6 +404,7 @@ impl Mixer {
         let mut lineage_names: Vec<&str> = Vec::new();
 
         let mut heights = Vec::with_capacity(rows.len());
+        let mut columns = Vec::with_capacity(rows.len());
         let mut labels = Vec::with_capacity(rows.len());
 
         let mut x = 0.0_f64;
@@ -420,6 +426,8 @@ impl Mixer {
             // stay level and the bottoms staircase.
             let strip_h = (height - crate::num::coord(depth) * INDENT_STEP).max(1.0);
             heights.push(strip_h);
+            let column = tone_settings.get(&track.guid).is_some_and(crate::tone::Tone::wants_column);
+            columns.push(column);
             labels.push(fit_name(font, track, w, &ancestor_names));
             strip(
                 &mut strips,
@@ -433,6 +441,7 @@ impl Mixer {
                     buttons_top,
                     rack_h,
                     mixer_h: height,
+                    column,
                 },
                 rack,
                 // A track with no settings yet gets none drawn rather
@@ -462,8 +471,23 @@ impl Mixer {
             buttons_top,
             rack_h,
             heights,
+            columns,
             labels,
         }
+    }
+
+    /// One strip's geometry — the `Strip` everything reads.
+    #[must_use]
+    pub fn strip(&self, row: usize) -> Option<crate::strip::Strip> {
+        let (_, width, height) = self.strip_box(row)?;
+        Some(crate::strip::Strip::laid_out(
+            width,
+            height,
+            self.height,
+            self.rack_h,
+            self.buttons_top,
+            self.columns.get(row).copied().unwrap_or(false),
+        ))
     }
 
     /// How wide the whole mixer is, in content pixels.
@@ -579,6 +603,8 @@ struct Slot {
     rack_h: f64,
     /// The mixer's own height, which the top sections resolve against.
     mixer_h: f64,
+    /// Whether the track wants the column layout when focused.
+    column: bool,
 }
 
 /// How much of the panel the REAPER strip keeps, with the rack on.
@@ -652,16 +678,8 @@ impl Control {
 /// property worth having: these are two readings of one layout, not two
 /// layouts that have to be kept in step.
 #[must_use]
-pub fn control_at(
-    width: f64,
-    height: f64,
-    mixer_h: f64,
-    rack_h: f64,
-    buttons_top: f64,
-    x: f64,
-    y: f64,
-) -> Option<Control> {
-    crate::strip::Strip::new(width, height, mixer_h, rack_h, buttons_top).control_at(x, y)
+pub fn control_at(mixer: &Mixer, row: usize, x: f64, y: f64) -> Option<Control> {
+    mixer.strip(row)?.control_at(x, y)
 }
 
 /// How far a strip may be lent down.
@@ -838,7 +856,7 @@ fn strip(
     // scanned across tracks.
     let shape = Collapse::at(f64_to_f32((slot.mixer_h - rack_h).max(1.0)));
     let own = Collapse::at(f64_to_f32((h - rack_h).max(1.0)));
-    let geometry = crate::strip::Strip::new(w, h, slot.mixer_h, rack_h, buttons_top);
+    let geometry = crate::strip::Strip::laid_out(w, h, slot.mixer_h, rack_h, buttons_top, slot.column);
     // The strip's own chrome — band, sections, plate — is the whole
     // strip when the rack is stacked over it, and the left column when
     // the rack stands beside it. See `strip::Layout`.
@@ -977,6 +995,7 @@ fn strip(
             buttons_top,
             rack_h,
             mixer_h: slot.mixer_h,
+            column: slot.column,
         },
         (band_top, pan_band, input_band),
         &shape,

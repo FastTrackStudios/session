@@ -139,15 +139,15 @@ pub fn control(
     rack_h: f64,
     transform: Affine,
 ) {
-    let Some((left, width, height)) = mixer.strip_box(spot.row) else {
+    let (Some((left, _, _)), Some(strip)) = (mixer.strip_box(spot.row), mixer.strip(spot.row)) else {
         return;
     };
-    // The SAME layout the strip was drawn from. This used to work its
-    // own positions out of `Columns`, a `Collapse` and `buttons_top` —
-    // three recomputations of what `Strip` already resolves once, and
-    // the hover cell drifted away from the resting one every time the
-    // column moved.
-    let strip = crate::strip::Strip::new(width, height, mixer.height, rack_h, mixer.buttons_top);
+    // The SAME layout the strip was drawn from — the mixer's own
+    // `Strip` for the row. This used to work its own positions out of
+    // `Columns`, a `Collapse` and `buttons_top` — three recomputations
+    // of what `Strip` already resolves once, and the hover cell drifted
+    // away from the resting one every time the column moved.
+    let _ = rack_h;
     let at = |control: Control| strip.rect(control).map(|r| (left + r.x0, r.y0));
 
     // Recorded in content space and replayed under the transform, so
@@ -738,7 +738,14 @@ fn draw_strip_controls(
     buttons_top: f64,
     mixer_h: f64,
 ) {
-    let strip = crate::strip::Strip::new(width, height, mixer_h, rack_h, buttons_top);
+    let strip = crate::strip::Strip::laid_out(
+        width,
+        height,
+        mixer_h,
+        rack_h,
+        buttons_top,
+        settings.is_some_and(crate::tone::Tone::wants_column),
+    );
     // Every position comes from the layout, translated by the strip's
     // left edge. Nothing here works out where a control goes.
     let at = |control| strip.rect(control).map(|r| (left + r.x0, r.y0));

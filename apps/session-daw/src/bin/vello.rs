@@ -863,12 +863,10 @@ impl App {
         let row = mixer.strip_at(content_x)?;
         let (left, width, height) = mixer.strip_box(row)?;
         // The same layout the strip was drawn from — see `strip::Strip`.
+        let _ = (width, height);
         let control = session_daw::mcp::control_at(
-            width,
-            height,
-            mixer.height,
-            mixer.rack_h,
-            mixer.buttons_top,
+            mixer,
+            row,
             content_x - left,
             y - session_daw::rails::TOP,
         )?;
@@ -894,13 +892,10 @@ impl App {
         let Some((left, width, height)) = mixer.strip_box(row) else {
             return false;
         };
-        let strip = session_daw::strip::Strip::new(
-            width,
-            height,
-            mixer.height,
-            mixer.rack_h,
-            mixer.buttons_top,
-        );
+        let _ = (width, height);
+        let Some(strip) = mixer.strip(row) else {
+            return false;
+        };
         strip.rack_rect().is_some_and(|box_| {
             let at = y - session_daw::rails::TOP;
             content_x >= left + box_.x0
@@ -958,13 +953,8 @@ impl App {
         let content_x = x - session_daw::rails::SIDE + self.mixer_scroll;
         let row = mixer.strip_at(content_x)?;
         let (left, width, height) = mixer.strip_box(row)?;
-        let strip = session_daw::strip::Strip::new(
-            width,
-            height,
-            mixer.height,
-            mixer.rack_h,
-            mixer.buttons_top,
-        );
+        let _ = (width, height);
+        let strip = mixer.strip(row)?;
         // Scrolled, like the drawing — see `tone::layout`. A hit test
         // against the unscrolled box would grab whatever USED to be
         // under the pointer before the chain moved.
@@ -1127,13 +1117,10 @@ impl App {
         let Some((left, width, height)) = mixer.strip_box(row) else {
             return;
         };
-        let strip = session_daw::strip::Strip::new(
-            width,
-            height,
-            mixer.height,
-            mixer.rack_h,
-            mixer.buttons_top,
-        );
+        let _ = (width, height);
+        let Some(strip) = mixer.strip(row) else {
+            return;
+        };
         let Some(rack) = strip
             .rack_rect()
             .map(|r| session_daw::tone::Panel::of(r, left).up(self.rack_scroll))
@@ -1592,14 +1579,9 @@ impl App {
             // An open rename, over the plate it replaces.
             if let Some(open) = rename {
                 if let Some((left, strip_w, strip_h)) = mixer.strip_box(open.row) {
-                    let strip = session_daw::strip::Strip::new(
-                        strip_w,
-                        strip_h,
-                        mixer.height,
-                        mixer.rack_h,
-                        mixer.buttons_top,
-                    );
-                    if let Some(field) = strip.rect(session_daw::mcp::Control::Name) {
+                    let _ = (strip_w, strip_h);
+                    let strip = mixer.strip(open.row);
+                    if let Some(field) = strip.and_then(|s| s.rect(session_daw::mcp::Control::Name)) {
                         session_daw::rename::paint(
                             painter,
                             palette,

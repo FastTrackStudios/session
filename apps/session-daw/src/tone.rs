@@ -302,6 +302,15 @@ impl Tone {
         self.role.panels().unwrap_or(default)
     }
 
+    /// Whether this track wants the focused column layout — see
+    /// `strip::Layout`. A channel's chain is taller than the rack's
+    /// share and earns the column; a return's is short, and a focused
+    /// return stays stacked.
+    #[must_use]
+    pub fn wants_column(&self) -> bool {
+        self.role == Role::Channel
+    }
+
     /// The band set a panel draws, to read.
     #[must_use]
     pub fn bands_ref(&self, which: Which) -> &[EqBand] {

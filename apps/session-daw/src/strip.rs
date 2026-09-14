@@ -92,16 +92,37 @@ pub struct Strip {
     pub columns: Columns,
     pub rack_h: f64,
     pub buttons_top: f64,
+    layout: Layout,
 }
 
 impl Strip {
     /// Resolve a strip.
     #[must_use]
     pub fn new(width: f64, height: f64, mixer_h: f64, rack_h: f64, buttons_top: f64) -> Self {
-        // The column layout resolves the strip's own controls against
-        // REAPER's strip width, whatever the strip is: the rest is the
-        // rack's.
-        let own_w = if Self::column_layout(width, rack_h) { COLUMN_W } else { width };
+        Self::laid_out(width, height, mixer_h, rack_h, buttons_top, false)
+    }
+
+    /// Resolve a strip, saying whether its track WANTS the column
+    /// layout — a channel with a chain taller than the rack's share
+    /// does; a return with a short one does not.
+    ///
+    /// It gets the column only when it is also wide enough for one.
+    /// Either way, past twice REAPER's strip width the controls stop
+    /// centring and stay in the left 86 pixels: a fader drifting to
+    /// the middle of a wide strip is a fader you have to go and find,
+    /// and the box to the right of it is room for something else.
+    #[must_use]
+    pub fn laid_out(width: f64, height: f64, mixer_h: f64, rack_h: f64, buttons_top: f64, column: bool) -> Self {
+        let layout = if column && rack_h > 0.0 && width >= crate::tone::FOCUSED + COLUMN_W {
+            Layout::Column
+        } else {
+            Layout::Stacked
+        };
+        let own_w = if layout == Layout::Column || width >= COLUMN_W * 2.0 {
+            COLUMN_W
+        } else {
+            width
+        };
         Self {
             width,
             height,
@@ -111,25 +132,14 @@ impl Strip {
             columns: Columns::at(0.0, own_w),
             rack_h,
             buttons_top,
+            layout,
         }
-    }
-
-    /// Whether a strip this wide, with a rack, lays out as a column.
-    ///
-    /// At the width the rack's editing tier opens at — a strip that
-    /// wide is a focused one, and a focused one wants height.
-    fn column_layout(width: f64, rack_h: f64) -> bool {
-        rack_h > 0.0 && width >= crate::tone::FOCUSED + COLUMN_W
     }
 
     /// Which layout this strip is in.
     #[must_use]
-    pub fn layout(&self) -> Layout {
-        if Self::column_layout(self.width, self.rack_h) {
-            Layout::Column
-        } else {
-            Layout::Stacked
-        }
+    pub const fn layout(&self) -> Layout {
+        self.layout
     }
 
     /// How wide the strip's own chrome is — the band, the plate, the
@@ -143,12 +153,20 @@ impl Strip {
         }
     }
 
-    /// Where the fader column starts: under the coloured band, in
-    /// either layout. A focused strip's fader is the same height as
-    /// its neighbours', so a level reads across the mixer whatever is
-    /// focused.
+    /// Where the fader column starts.
+    ///
+    /// Under the coloured band, in either layout — a focused strip's
+    /// fader is the same height as its neighbours', so a level reads
+    /// across the mixer whatever is focused. Except on a strip too
+    /// narrow to put the buttons beside the fader: there the buttons
+    /// sit over it, so the fader starts under the last of them rather
+    /// than running up behind the mute and the solo.
     fn fader_top(&self) -> f64 {
-        self.band_bottom()
+        if self.squeeze.columns() {
+            return self.band_bottom();
+        }
+        let last = self.arm_top() + self.column_step(Control::Solo) + f64::from(g::BUTTON_H);
+        last.max(self.band_bottom()) + NAME_GAP
     }
 
     /// The top of the coloured band.
