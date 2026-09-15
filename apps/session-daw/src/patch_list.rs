@@ -44,6 +44,9 @@ pub struct Row {
     /// What the room makes of it, for the Input column.
     pub input: String,
     pub mark: Mark,
+    /// Whether the session override replaced this entry
+    /// (`flow.patch-list.session-override`) — marked, never hidden.
+    pub overridden: bool,
 }
 
 /// One performer's rows, under their header.
@@ -64,6 +67,8 @@ pub struct BusRow {
     /// The output pair, or `unresolved`.
     pub input: String,
     pub mark: Mark,
+    /// Whether the session override replaced this bus.
+    pub overridden: bool,
 }
 
 /// The whole view.
@@ -75,6 +80,13 @@ pub struct Table {
     pub buses: Vec<BusRow>,
     /// How many rows and buses the room could not resolve.
     pub unresolved: usize,
+    /// Tracks the session has that no entry names — a view state,
+    /// never acted on by apply (`flow.patch-list.apply`).
+    pub unpatched: Vec<String>,
+    /// When set, the session is stale (`flow.patch-list.apply`): the
+    /// album or the active profile has moved on since the last apply.
+    /// The banner text is what the view shows.
+    pub stale: Option<String>,
 }
 
 impl Table {
@@ -95,9 +107,33 @@ impl Table {
         list: &PatchList,
         profile: &StudioProfile,
     ) -> Result<Self, patch_list::ValidationError> {
-        let plan = patch_list::validate(list, profile)?;
+        Self::build_layered(studio, &patch_list::layer(list, None), profile)
+    }
+
+    /// Build the table from an album with a session override already
+    /// layered on top (`flow.patch-list.session-override`): the same
+    /// table [`build`] produces when there is no override, plus every
+    /// row the override touched marked.
+    ///
+    /// # Errors
+    ///
+    /// When two entries name one role the profile does not share.
+    // r[impl flow.patch-list.plan]
+    // r[impl flow.patch-list.studio-profiles]
+    // r[impl flow.patch-list.session-override]
+    pub fn build_layered(
+        studio: &str,
+        layered: &patch_list::Layered,
+        profile: &StudioProfile,
+    ) -> Result<Self, patch_list::ValidationError> {
+        let plan = patch_list::validate(&layered.list, profile)?;
         let mut performers: Vec<PerformerRows> = Vec::new();
         for entry in &plan.entries {
+            let overridden = layered.overridden_entries.contains(&(
+                entry.lowered.performer.clone(),
+                entry.lowered.kind.clone(),
+                entry.lowered.key.clone(),
+            ));
             let row = Row {
                 kind: entry.lowered.kind.clone(),
                 key: entry.lowered.key.clone(),
@@ -107,6 +143,7 @@ impl Table {
                 },
                 input: describe(&entry.resolved),
                 mark: mark(&entry.resolved),
+                overridden,
             };
             match performers
                 .iter_mut()
@@ -128,6 +165,7 @@ impl Table {
                 role: bus.bus.output.clone(),
                 input: describe(&bus.resolved),
                 mark: mark(&bus.resolved),
+                overridden: layered.overridden_buses.contains(&bus.name),
             })
             .collect();
         Ok(Self {
@@ -135,7 +173,25 @@ impl Table {
             performers,
             buses,
             unresolved: plan.unresolved(),
+            unpatched: Vec::new(),
+            stale: None,
         })
+    }
+
+    /// Mark the session stale with a banner message
+    /// (`flow.patch-list.apply`) — never auto-applies, only shown.
+    #[must_use]
+    pub fn with_stale(mut self, banner: Option<String>) -> Self {
+        self.stale = banner;
+        self
+    }
+
+    /// Record the session's own tracks that no entry names — a view
+    /// state, never acted on (`flow.patch-list.apply`).
+    #[must_use]
+    pub fn with_unpatched(mut self, tracks: Vec<String>) -> Self {
+        self.unpatched = tracks;
+        self
     }
 
     /// The fixture album in the fixture room — what the render fixture
@@ -154,6 +210,33 @@ impl Table {
             .map_err(|e| format!("the fixture room does not parse: {e}"))?;
         Self::build(patch_list::FIXTURE_STUDIO_NAME, &list, &room)
             .map_err(|e| format!("the fixture album is not valid: {e}"))
+    }
+
+    /// The fixture album, with a session override on Cody's DI and a
+    /// stale banner — what the second render fixture is a picture of
+    /// (#57: override-marked and stale states, #48's fixture
+    /// amendment).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::fixture`], plus when the override text itself
+    /// does not parse — which would mean this function's own literal
+    /// is wrong.
+    pub fn fixture_overridden_stale() -> Result<Self, String> {
+        let list = PatchList::from_styx(patch_list::FIXTURE_ALBUM)
+            .map_err(|e| format!("the fixture album does not parse: {e}"))?;
+        let room = StudioProfile::from_styx(patch_list::FIXTURE_STUDIO)
+            .map_err(|e| format!("the fixture room does not parse: {e}"))?;
+        let over = PatchList::from_styx("performers {\n    cody {guitar {di \"DI 9\"}}\n}")
+            .map_err(|e| format!("the override literal does not parse: {e}"))?;
+        let layered = patch_list::layer(&list, Some(&over));
+        let table = Self::build_layered(patch_list::FIXTURE_STUDIO_NAME, &layered, &room)
+            .map_err(|e| format!("the fixture album is not valid: {e}"))?;
+        Ok(table
+            .with_stale(Some(
+                "the album's patch list has changed since this session applied it".to_owned(),
+            ))
+            .with_unpatched(vec!["Extra Guitar (unpatched)".to_owned()]))
     }
 }
 
@@ -255,6 +338,10 @@ const ROW_H: f64 = 20.0;
 const HEADER_H: f64 = 28.0;
 /// The gutter down each side.
 const PAD: f64 = 16.0;
+/// The stale banner's height.
+const STALE_BANNER_H: f64 = 22.0;
+/// The width of an overridden row's left-edge marker.
+const OVERRIDE_MARKER_W: f64 = 4.0;
 /// Where each column starts, from the left edge of the table.
 const COL_KIND: f64 = 24.0;
 const COL_KEY: f64 = 132.0;
@@ -313,7 +400,7 @@ pub fn paint(
     width: f64,
 ) {
     let (x0, _) = origin;
-    let mut y = heading(painter, palette, font, table, origin);
+    let mut y = heading(painter, palette, font, table, origin, width);
     y = columns(
         painter,
         palette,
@@ -334,17 +421,20 @@ pub fn paint(
         y,
         width,
     );
-    buses(painter, palette, font, table, (x0, y), width);
+    y = buses(painter, palette, font, table, (x0, y), width);
+    unpatched(painter, palette, font, table, (x0, y), width);
 }
 
-/// The title and what the room made of the list, returning the y under
-/// them.
+/// The title, the room's summary, and — when the session is stale — the
+/// banner (`flow.patch-list.apply`: never auto-applies, only shown).
+/// Returns the y under everything drawn.
 fn heading(
     painter: &mut impl PaintScene,
     palette: &Palette,
     font: &Font,
     table: &Table,
     origin: (f64, f64),
+    width: f64,
 ) -> f64 {
     let (x0, y0) = origin;
     let y = y0 + PAD;
@@ -381,7 +471,25 @@ fn heading(
         baseline,
         ROW_SIZE,
     );
-    y + f64::from(TITLE_SIZE) + 12.0
+    let mut y = y + f64::from(TITLE_SIZE) + 12.0;
+    if let Some(banner) = &table.stale {
+        fill(
+            painter,
+            palette.rec,
+            Rect::new(x0 + PAD, y, x0 + width - PAD, y + STALE_BANNER_H),
+        );
+        crate::tcp::glyphs(
+            painter,
+            font,
+            palette.surface,
+            &format!("Stale — {banner}"),
+            x0 + PAD + 8.0,
+            y + STALE_BANNER_H - 8.0,
+            ROW_SIZE,
+        );
+        y += STALE_BANNER_H + 8.0;
+    }
+    y
 }
 
 /// Every performer's header and rig, returning the y under them.
@@ -423,6 +531,7 @@ fn performers(
                     cells: [&row.kind, &row.key, &row.role, &row.input],
                     mark: row.mark,
                     striped: striped.is_multiple_of(2),
+                    overridden: row.overridden,
                 },
                 (x0, y),
                 width,
@@ -434,7 +543,7 @@ fn performers(
     y
 }
 
-/// The headphone buses, the last thing drawn.
+/// The headphone buses, returning the y under them.
 fn buses(
     painter: &mut impl PaintScene,
     palette: &Palette,
@@ -442,7 +551,7 @@ fn buses(
     table: &Table,
     origin: (f64, f64),
     width: f64,
-) {
+) -> f64 {
     let (x0, mut y) = origin;
     for (index, bus) in table.buses.iter().enumerate() {
         line(
@@ -453,9 +562,50 @@ fn buses(
                 cells: [&bus.name, &bus.audience, &bus.role, &bus.input],
                 mark: bus.mark,
                 striped: index.is_multiple_of(2),
+                overridden: bus.overridden,
             },
             (x0, y),
             width,
+        );
+        y += ROW_H;
+    }
+    y
+}
+
+/// The session's unpatched tracks — a view state, never acted on by
+/// apply (`flow.patch-list.apply`). Nothing is drawn when there are
+/// none.
+fn unpatched(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    table: &Table,
+    origin: (f64, f64),
+    width: f64,
+) {
+    if table.unpatched.is_empty() {
+        return;
+    }
+    let (x0, mut y) = origin;
+    y += 12.0;
+    y = columns(
+        painter,
+        palette,
+        font,
+        ["Unpatched", "", "", ""],
+        x0,
+        y,
+        width,
+    );
+    for name in &table.unpatched {
+        crate::tcp::glyphs(
+            painter,
+            font,
+            palette.text_dim,
+            name,
+            x0 + PAD + COL_KIND,
+            y + ROW_H - 6.0,
+            ROW_SIZE,
         );
         y += ROW_H;
     }
@@ -469,6 +619,11 @@ struct Line<'a> {
     mark: Mark,
     /// Which band this row takes.
     striped: bool,
+    /// Whether the session override replaced this row
+    /// (`flow.patch-list.session-override`) — a marker on the left
+    /// edge, not a different band, so the resolved/unresolved colour
+    /// still reads.
+    overridden: bool,
 }
 
 /// Draw one row: its band, then its four cells.
@@ -491,6 +646,16 @@ fn line(
         band,
         Rect::new(x0 + PAD, y, x0 + width - PAD, y + ROW_H),
     );
+    if row.overridden {
+        // A marker on the row's own left edge — not a different band,
+        // so the resolved/unresolved colour in the last column still
+        // reads for what it is.
+        fill(
+            painter,
+            palette.accent,
+            Rect::new(x0 + PAD, y, x0 + PAD + OVERRIDE_MARKER_W, y + ROW_H),
+        );
+    }
     let baseline = y + ROW_H - 6.0;
     let last = match row.mark {
         Mark::Resolved => palette.text,

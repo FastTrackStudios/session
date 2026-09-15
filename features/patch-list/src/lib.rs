@@ -5,13 +5,17 @@
 //! `docs/spec/session/workflows.md` (`flow.patch-list.*`) and the
 //! decision is session #29.
 
+pub mod apply;
 pub mod discover;
+pub mod layer;
 pub mod list;
 pub mod profile;
 pub mod styx;
 pub mod validate;
 
+pub use apply::{Applied, Error as ApplyError, Report, Resolve, apply, selector_matches, stale};
 pub use discover::{Studios, find_album};
+pub use layer::{Layered, layer};
 pub use list::{Bus, Entry, Lowered, PatchList, Performer, Rig};
 pub use profile::{Resolved, StudioProfile};
 pub use validate::{Error as ValidationError, Plan, Planned, PlannedBus, validate};
