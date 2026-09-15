@@ -80,7 +80,11 @@ fn every_template_created_track_carries_a_kind_that_reads_back() -> Result<()> {
                 .collect()
         };
         if shape.name == "template" {
-            assert_eq!(kinds_of("MIX BUS"), vec![Some(Kind::Bus)]);
+            // The root of the bus tree is its own kind, so a scene can
+            // say "the mix bus tree, out of the way" in one rule; the
+            // buses under it are ordinary buses.
+            assert_eq!(kinds_of("MIX BUS"), vec![Some(Kind::MixBus)]);
+            assert_eq!(kinds_of("DRUM BUS"), vec![Some(Kind::Bus)]);
             assert!(kinds_of("Sum").iter().all(|k| *k == Some(Kind::Sum)));
             assert_eq!(kinds_of("Process"), vec![Some(Kind::Process)]);
             assert_eq!(kinds_of("Compress"), vec![Some(Kind::Compress)]);
