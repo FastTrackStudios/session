@@ -130,7 +130,7 @@ impl Studios {
             Err(err) if err.is_missing() => None,
             Err(err) => {
                 tracing::warn!(
-                    studio.profile = %name,
+                    patch.studio = %name,
                     error = %err,
                     "the active studio profile does not load"
                 );

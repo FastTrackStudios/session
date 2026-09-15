@@ -69,7 +69,7 @@ impl PatchList {
     ///
     /// When the text is not a patch list in this shape.
     pub fn from_styx(text: &str) -> Result<Self, facet_styx::DeserializeError> {
-        facet_styx::from_str(text)
+        crate::styx::read(text)
     }
 
     /// Write the list back as styx.
@@ -81,22 +81,23 @@ impl PatchList {
     ///
     /// When the value cannot be serialized — which a list built from
     /// these types cannot fail at.
-    pub fn to_styx(
-        &self,
-    ) -> Result<String, facet_styx::SerializeError<facet_styx::StyxSerializeError>> {
-        facet_styx::to_string_with_options(
-            self,
-            &facet_styx::SerializeOptions::default().omit_none(),
-        )
+    pub fn to_styx(&self) -> Result<String, crate::styx::WriteError> {
+        crate::styx::write(self)
     }
 
     /// Every rig entry as a `(selector, entry)` pair, in file order.
     ///
     /// The performer and the source kind become the selector's
     /// `performer` and `kind`; a key's `/`-separated segments are the
-    /// group path over its last segment, the multi-mic — so `kick/in`
-    /// is the `in` mic under the `kick` piece and `di` is the `di` mic
-    /// with no path. Nothing is inferred beyond the split: the scene
+    /// group path over its last segment — so `kick/in` is the `in` mic
+    /// under the `kick` piece and `di` is the `di` mic with no path.
+    ///
+    /// That last segment is the **multi-mic** unless it names the
+    /// **Channel** dimension (`l`, `r`, and their long spellings), in
+    /// which case it is the channel: decision #29 keys a bass rig by
+    /// channel and a kit by piece and mic, and both live in this one
+    /// shape, so the dimension has to come from the key rather than
+    /// from a second table. Nothing else is inferred — the scene
     /// engine's matcher decides what a segment means against a
     /// session's taxonomy.
     // r[impl flow.patch-list.plan]
@@ -148,14 +149,30 @@ impl Entry {
     }
 }
 
+/// The Channel dimension's own words, as a key can spell them.
+///
+/// The template's Channel dimension is a stereo pair's halves and
+/// nothing else, so this list is closed: anything else a key ends with
+/// is a mic.
+const CHANNELS: [&str; 4] = ["l", "r", "left", "right"];
+
 /// The selector for one rig key.
 fn selector_of(performer: &str, kind: &str, key: &str) -> Selector {
     let mut segments: Vec<String> = key.split('/').map(str::to_owned).collect();
-    let multi_mic = segments.pop();
+    let last = segments.pop();
+    let is_channel = last
+        .as_ref()
+        .is_some_and(|name| CHANNELS.contains(&name.to_ascii_lowercase().as_str()));
+    let (channel, multi_mic) = if is_channel {
+        (last, None)
+    } else {
+        (None, last)
+    };
     Selector {
         group: segments,
         kind: Some(kind.to_owned()),
         performer: Some(performer.to_owned()),
+        channel,
         multi_mic,
         ..Selector::default()
     }

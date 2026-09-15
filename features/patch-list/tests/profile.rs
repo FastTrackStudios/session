@@ -4,9 +4,8 @@
 //!
 //! r[verify flow.patch-list.studio-profiles]
 
+use patch_list::FIXTURE_STUDIO as ROOM;
 use patch_list::profile::{Endpoint, Input, Output, Resolved, StudioProfile};
-
-const ROOM: &str = include_str!("../fixtures/studios/golden-room.styx");
 
 #[test]
 fn the_fixture_profile_parses_with_its_tables_intact() {

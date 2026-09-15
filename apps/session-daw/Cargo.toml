@@ -117,6 +117,10 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+[dev-dependencies]
+# Temp project trees for the Patch List view's discovery tests.
+tempfile = { workspace = true }
+
 [lints]
 workspace = true
 

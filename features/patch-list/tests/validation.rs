@@ -5,12 +5,12 @@
 //! r[verify flow.patch-list.plan]
 //! r[verify flow.patch-list.studio-profiles]
 
-use patch_list::{Error, PatchList, Resolved, StudioProfile, validate};
+use patch_list::{
+    FIXTURE_ALBUM as ALBUM, FIXTURE_STUDIO as ROOM, PatchList, Resolved, StudioProfile,
+    ValidationError, validate,
+};
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
-
-const ALBUM: &str = include_str!("../fixtures/album/patch-list.styx");
-const ROOM: &str = include_str!("../fixtures/studios/golden-room.styx");
 
 /// Two performers on one DI, for the duplicate-role cases.
 const DOUBLE_BOOKED: &str =
@@ -80,7 +80,9 @@ fn two_entries_on_one_role_is_an_error() -> Result {
     let Err(err) = validate(&list, &StudioProfile::default()) else {
         return Err("a double-booked DI 3 validated".into());
     };
-    let Error::DuplicateRole { role, entries } = &err;
+    let ValidationError::DuplicateRole { role, entries } = &err else {
+        return Err(format!("wrong refusal: {err}").into());
+    };
     assert_eq!(role, "DI 3");
     assert_eq!(entries, &["cody/guitar/di", "john/guitar/di"]);
     assert!(err.to_string().contains("DI 3"), "{err}");
@@ -100,7 +102,9 @@ fn two_buses_on_one_output_is_an_error_too() -> Result {
     let list = PatchList::from_styx(
         "headphones {\n    cody {output \"HP 1\", for (cody)}\n    john {output \"HP 1\", for (john)}\n}",
     )?;
-    let Err(Error::DuplicateRole { role, .. }) = validate(&list, &StudioProfile::default()) else {
+    let Err(ValidationError::DuplicateRole { role, .. }) =
+        validate(&list, &StudioProfile::default())
+    else {
         return Err("a double-booked HP 1 validated".into());
     };
     assert_eq!(role, "HP 1");
@@ -110,5 +114,26 @@ fn two_buses_on_one_output_is_an_error_too() -> Result {
     let shared =
         PatchList::from_styx("headphones {\n    band {output \"HP 1\", for (cody john)}\n}")?;
     validate(&shared, &StudioProfile::default())?;
+    Ok(())
+}
+
+#[test]
+fn a_midi_channel_outside_one_to_sixteen_is_an_error() -> Result {
+    let list = PatchList::from_styx(
+        "performers {\n    ron {keys {nord @midi{device \"Nord\", channel 200}}}\n}",
+    )?;
+    let Err(ValidationError::MidiChannel { entry, channel }) =
+        validate(&list, &StudioProfile::default())
+    else {
+        return Err("MIDI channel 200 validated".into());
+    };
+    assert_eq!(entry, "ron/keys/nord");
+    assert_eq!(channel, 200);
+
+    // The negative control: the same entry on a channel MIDI has.
+    let ok = PatchList::from_styx(
+        "performers {\n    ron {keys {nord @midi{device \"Nord\", channel 16}}}\n}",
+    )?;
+    validate(&ok, &StudioProfile::default())?;
     Ok(())
 }

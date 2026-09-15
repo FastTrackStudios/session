@@ -9,7 +9,7 @@
 //! r[verify flow.patch-list.plan]
 //! r[verify flow.patch-list.studio-profiles]
 
-use session_daw::patch_list::{Mark, PerformerRows, Row, Table};
+use session_daw::patch_list::{Mark, Panel, PerformerRows, Row, Table};
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -107,5 +107,37 @@ fn the_view_renders_the_committed_fixture_byte_for_byte() -> Result {
         "the Patch List view no longer matches {FIXTURE}; if the change is intended, \
          regenerate it with `just daw-patch-list` and commit the picture"
     );
+    Ok(())
+}
+
+#[test]
+fn a_project_with_no_album_file_has_no_plan_to_show() -> Result {
+    let tmp = tempfile::tempdir()?;
+    let song = tmp.path().join("loose").join("song.rpp");
+    std::fs::create_dir_all(song.parent().ok_or("a parent")?)?;
+    std::fs::write(&song, "<REAPER_PROJECT>")?;
+    assert_eq!(Panel::for_project(&song), Panel::Absent);
+    Ok(())
+}
+
+#[test]
+fn a_double_booked_role_is_shown_in_the_view_not_hidden_by_it() -> Result {
+    // The refusal is the thing the engineer has to see before a take
+    // (spec #48, story 24), so it is a state of this view rather than
+    // an absent view.
+    let tmp = tempfile::tempdir()?;
+    let album = tmp.path().join("album");
+    std::fs::create_dir_all(&album)?;
+    std::fs::write(
+        album.join("patch-list.styx"),
+        "performers {\n    cody {guitar {di \"DI 3\"}}\n    john {guitar {di \"DI 3\"}}\n}",
+    )?;
+    let song = album.join("song.rpp");
+    std::fs::write(&song, "<REAPER_PROJECT>")?;
+
+    let Panel::Problem(why) = Panel::for_project(&song) else {
+        return Err("a double-booked DI 3 was not reported".into());
+    };
+    assert!(why.contains("DI 3"), "{why}");
     Ok(())
 }

@@ -9,9 +9,9 @@ use facet_styx::SchemaFile;
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
 
-const ALBUM: &str = include_str!("../fixtures/album/patch-list.styx");
+use patch_list::{FIXTURE_ALBUM as ALBUM, FIXTURE_STUDIO as ROOM};
+
 const ALBUM_SCHEMA: &str = include_str!("../schema/patch-list.schema.styx");
-const ROOM: &str = include_str!("../fixtures/studios/golden-room.styx");
 const ROOM_SCHEMA: &str = include_str!("../schema/studio.schema.styx");
 
 /// Every schema error a document raises, as `Kind at path`.

@@ -46,7 +46,17 @@ pub enum Error {
         /// The entries' paths, `performer/kind/key` or `headphones/name`.
         entries: Vec<String>,
     },
+    /// A MIDI entry names a channel MIDI does not have.
+    ///
+    /// The schema says `1..16` and the Rust type is a `u8`, which is
+    /// wider, so a list built in code (or read past the schema) can
+    /// carry a 200. Refused here so the two agree.
+    #[error("{entry} names MIDI channel {channel}; MIDI has channels 1 to 16")]
+    MidiChannel { entry: String, channel: u8 },
 }
+
+/// The channels MIDI has.
+const MIDI_CHANNELS: std::ops::RangeInclusive<u8> = 1..=16;
 
 impl Plan {
     /// How many entries and buses the room could not resolve.
@@ -73,11 +83,26 @@ impl Plan {
 ///
 /// [`Error::DuplicateRole`] for the first role (in file order) that
 /// more than one entry names without the profile sharing it. Input
-/// roles and bus roles are checked alike; a MIDI entry names no role
-/// and cannot collide.
+/// roles and bus roles are checked alike — an output pair is as
+/// double-bookable as a preamp, and `shared` covers both tables — while
+/// a MIDI entry names no role and cannot collide. [`Error::MidiChannel`]
+/// for a MIDI entry on a channel MIDI does not have.
 // r[impl flow.patch-list.plan]
 // r[impl flow.patch-list.studio-profiles]
 pub fn validate(list: &PatchList, profile: &StudioProfile) -> Result<Plan, Error> {
+    for entry in list.entries() {
+        if let crate::list::Entry::Midi {
+            channel: Some(channel),
+            ..
+        } = entry.entry
+            && !MIDI_CHANNELS.contains(&channel)
+        {
+            return Err(Error::MidiChannel {
+                entry: format!("{}/{}/{}", entry.performer, entry.kind, entry.key),
+                channel,
+            });
+        }
+    }
     let entries: Vec<Planned> = list
         .entries()
         .into_iter()

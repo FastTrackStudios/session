@@ -4,11 +4,9 @@
 //! r[verify flow.patch-list.plan]
 //! r[verify flow.patch-list.project-level]
 
-use patch_list::{Entry, PatchList};
+use patch_list::{Entry, FIXTURE_ALBUM as ALBUM, PatchList};
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
-
-const ALBUM: &str = include_str!("../fixtures/album/patch-list.styx");
 
 #[test]
 fn the_fixture_album_parses_with_its_shape_intact() -> Result {

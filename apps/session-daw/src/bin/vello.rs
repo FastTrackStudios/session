@@ -105,7 +105,7 @@ struct App {
     /// — read once when the window opens, because it is the ALBUM's
     /// file and not this session's state. `None` when the project is
     /// not part of an album.
-    patch_list: Option<session_daw::patch_list::Table>,
+    patch_list: session_daw::patch_list::Panel,
     /// The session, kept so the mixer can be re-recorded at whatever
     /// height the window is. `None` until the project lands.
     session: Option<(daw_ui::studio::ProjectRef, daw_ui::studio::RowsRef)>,
@@ -582,29 +582,15 @@ impl ApplicationHandler for App {
                 // on the mixer's rail: it reads the same whatever the
                 // window has open.
                 if event.logical_key.to_text() == Some("p") {
-                    self.view = if self.view == View::PatchList {
+                    self.show(if self.view == View::PatchList {
                         View::Arrangement
                     } else {
                         View::PatchList
-                    };
-                    if let Some(window) = &self.window {
-                        window.set_title(self.view.title());
-                    }
-                    tracing::info!(
-                        view = ?self.view,
-                        patch.unresolved = self.patch_list.as_ref().map_or(0, |t| t.unresolved),
-                        "view"
-                    );
-                    self.redraw();
+                    });
                     return;
                 }
                 if event.logical_key.to_text() == Some("x") {
-                    self.view = self.view.toggled();
-                    if let Some(window) = &self.window {
-                        window.set_title(self.view.title());
-                    }
-                    tracing::info!(view = ?self.view, "view");
-                    self.redraw();
+                    self.show(self.view.toggled());
                 }
             }
             // The fine-adjustment modifier. Held, a drag moves a
@@ -2146,6 +2132,24 @@ impl App {
     /// Nothing here is recorded: the table is a few hundred rows of
     /// text that change only when the album file or the profile does,
     /// so it is painted straight into the frame like the rails are.
+    /// Show a view: the title follows it, and so does the frame.
+    ///
+    /// One place rather than one per key, because the title and the
+    /// redraw are not optional — a switch that forgot either left the
+    /// window naming a view it was not drawing.
+    fn show(&mut self, view: View) {
+        self.view = view;
+        if let Some(window) = &self.window {
+            window.set_title(self.view.title());
+        }
+        tracing::info!(
+            view = ?self.view,
+            patch.unresolved = self.patch_list.table().map_or(0, |t| t.unresolved),
+            "view"
+        );
+        self.redraw();
+    }
+
     fn redraw_patch_list(&mut self) {
         let (width, height) = self.surface_size;
         let surface = self.palette.surface;
@@ -2175,29 +2179,14 @@ impl App {
                 None,
                 &vello::kurbo::Rect::new(0.0, 0.0, width, height),
             );
-            match patch_list {
-                Some(table) => {
-                    session_daw::patch_list::paint(
-                        painter,
-                        palette,
-                        font,
-                        table,
-                        (session_daw::rails::SIDE, session_daw::rails::TOP),
-                        frame.content_width(),
-                    );
-                }
-                None => {
-                    session_daw::tcp::glyphs(
-                        painter,
-                        font,
-                        palette.text_dim,
-                        "No patch list for this album — add patch-list.styx beside its sessions",
-                        session_daw::rails::SIDE + 16.0,
-                        session_daw::rails::TOP + 32.0,
-                        13.0,
-                    );
-                }
-            }
+            session_daw::patch_list::paint_panel(
+                painter,
+                palette,
+                font,
+                patch_list,
+                (session_daw::rails::SIDE, session_daw::rails::TOP),
+                frame.content_width(),
+            );
             session_daw::rails::draw(
                 painter,
                 palette,
@@ -2906,11 +2895,11 @@ fn main() {
     // against this machine's studio profile. Read here rather than on
     // the loader thread because it is neither the project nor the
     // facade — a few file reads that cannot fail the window.
-    let patch_list = session_daw::patch_list::Table::for_project(&path);
+    let patch_list = session_daw::patch_list::Panel::for_project(&path);
     tracing::info!(
-        patch.present = patch_list.is_some(),
-        patch.studio = patch_list.as_ref().map_or("", |t| t.studio.as_str()),
-        patch.unresolved = patch_list.as_ref().map_or(0, |t| t.unresolved),
+        patch.present = patch_list.table().is_some(),
+        patch.studio = patch_list.table().map_or("", |t| t.studio.as_str()),
+        patch.unresolved = patch_list.table().map_or(0, |t| t.unresolved),
         "patch list"
     );
 

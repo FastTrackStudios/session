@@ -77,13 +77,6 @@ pub struct Table {
     pub unresolved: usize,
 }
 
-/// The fixture album, for the render fixture and the tests.
-const FIXTURE_ALBUM: &str =
-    include_str!("../../../features/patch-list/fixtures/album/patch-list.styx");
-/// And the fixture room.
-const FIXTURE_ROOM: &str =
-    include_str!("../../../features/patch-list/fixtures/studios/golden-room.styx");
-
 impl Table {
     /// Build the table from a list and a room.
     ///
@@ -101,7 +94,7 @@ impl Table {
         studio: &str,
         list: &PatchList,
         profile: &StudioProfile,
-    ) -> Result<Self, patch_list::Error> {
+    ) -> Result<Self, patch_list::ValidationError> {
         let plan = patch_list::validate(list, profile)?;
         let mut performers: Vec<PerformerRows> = Vec::new();
         for entry in &plan.entries {
@@ -145,44 +138,6 @@ impl Table {
         })
     }
 
-    /// The table for a project: the album file found by walking up from
-    /// its directory, resolved against the machine's active studio
-    /// profile.
-    ///
-    /// `None` when the project is not part of an album, when the album
-    /// file does not parse, or when the list double-books a role the
-    /// profile does not share — each of which is one `warn` line and a
-    /// window with no Patch List in it, never a window that will not
-    /// open. A machine with no profile is NOT one of those: the table
-    /// builds against an empty profile and every role shows unresolved,
-    /// which is exactly what a list written in another room should look
-    /// like here.
-    // r[impl flow.patch-list.project-level]
-    // r[impl flow.patch-list.studio-profiles]
-    #[must_use]
-    pub fn for_project(project: &std::path::Path) -> Option<Self> {
-        let dir = project.parent()?;
-        let album = patch_list::find_album(dir)?;
-        let text = std::fs::read_to_string(&album)
-            .inspect_err(|error| {
-                tracing::warn!(error = %error, "the album's patch list did not read");
-            })
-            .ok()?;
-        let list = PatchList::from_styx(&text)
-            .inspect_err(|error| {
-                tracing::warn!(error = %error, "the album's patch list did not parse");
-            })
-            .ok()?;
-        let (studio, profile) = patch_list::Studios::in_config_dir()
-            .and_then(|studios| studios.active())
-            .unwrap_or_else(|| ("none".to_owned(), StudioProfile::default()));
-        Self::build(&studio, &list, &profile)
-            .inspect_err(|error| {
-                tracing::warn!(error = %error, "the album's patch list is not valid");
-            })
-            .ok()
-    }
-
     /// The fixture album in the fixture room — what the render fixture
     /// is a picture of.
     ///
@@ -193,12 +148,79 @@ impl Table {
     /// it is returned and named rather than panicked, and the test that
     /// reads it says which file to look at.
     pub fn fixture() -> Result<Self, String> {
-        let list = PatchList::from_styx(FIXTURE_ALBUM)
+        let list = PatchList::from_styx(patch_list::FIXTURE_ALBUM)
             .map_err(|e| format!("the fixture album does not parse: {e}"))?;
-        let room = StudioProfile::from_styx(FIXTURE_ROOM)
+        let room = StudioProfile::from_styx(patch_list::FIXTURE_STUDIO)
             .map_err(|e| format!("the fixture room does not parse: {e}"))?;
-        Self::build("golden-room", &list, &room)
+        Self::build(patch_list::FIXTURE_STUDIO_NAME, &list, &room)
             .map_err(|e| format!("the fixture album is not valid: {e}"))
+    }
+}
+
+/// What the Patch List view has to show.
+///
+/// A double-booked role is the one thing that refuses a list — and it
+/// is precisely the thing the engineer has to see before a take (spec
+/// #48, story 24), so it is a STATE of this view rather than an absent
+/// view: hiding the only panel that could explain the refusal would
+/// invert what the refusal is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Panel {
+    /// The album's plan, resolved.
+    Plan(Box<Table>),
+    /// There is a list and it cannot be shown, with why.
+    Problem(String),
+    /// This project is not part of an album.
+    Absent,
+}
+
+impl Panel {
+    /// The panel for a project: the album file found by walking up from
+    /// its directory, resolved against the machine's active studio
+    /// profile.
+    ///
+    /// A machine with no profile is not a problem: the table builds
+    /// against an empty profile and every role shows unresolved, which
+    /// is exactly what a list written in another room should look like
+    /// here.
+    // r[impl flow.patch-list.project-level]
+    // r[impl flow.patch-list.studio-profiles]
+    #[must_use]
+    pub fn for_project(project: &std::path::Path) -> Self {
+        let Some(album) = project.parent().and_then(patch_list::find_album) else {
+            return Self::Absent;
+        };
+        let text = match std::fs::read_to_string(&album) {
+            Ok(text) => text,
+            Err(error) => return Self::problem("the album's patch list did not read", &error),
+        };
+        let list = match PatchList::from_styx(&text) {
+            Ok(list) => list,
+            Err(error) => return Self::problem("the album's patch list did not parse", &error),
+        };
+        let (studio, profile) = patch_list::Studios::in_config_dir()
+            .and_then(|studios| studios.active())
+            .unwrap_or_else(|| ("none".to_owned(), StudioProfile::default()));
+        match Table::build(&studio, &list, &profile) {
+            Ok(table) => Self::Plan(Box::new(table)),
+            Err(error) => Self::problem("the album's patch list is not valid", &error),
+        }
+    }
+
+    /// One `warn` line — the refusal is alertable — and the same words
+    /// in the view.
+    fn problem(what: &'static str, error: &dyn std::fmt::Display) -> Self {
+        tracing::warn!(patch.problem = what, error = %error, "patch list");
+        Self::Problem(format!("{what}: {error}"))
+    }
+
+    /// The table, when there is one.
+    #[must_use]
+    pub const fn table(&self) -> Option<&Table> {
+        match self {
+            Self::Plan(table) => Some(table),
+            Self::Problem(_) | Self::Absent => None,
+        }
     }
 }
 
@@ -243,9 +265,44 @@ const TITLE_SIZE: f32 = 17.0;
 const HEADER_SIZE: f32 = 14.0;
 const ROW_SIZE: f32 = 12.5;
 
+/// Draw whichever state the view is in: the plan, why there is no plan,
+/// or a line saying this project has no album file.
+// r[impl flow.patch-list.plan]
+pub fn paint_panel(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    panel: &Panel,
+    origin: (f64, f64),
+    width: f64,
+) {
+    let (x0, y0) = origin;
+    match panel {
+        Panel::Plan(table) => paint(painter, palette, font, table, origin, width),
+        // A refusal is drawn in the same colour an unresolved row is,
+        // because it is the same kind of thing to look at.
+        Panel::Problem(why) => crate::tcp::glyphs(
+            painter,
+            font,
+            palette.rec,
+            why,
+            x0 + PAD,
+            y0 + PAD + f64::from(ROW_SIZE),
+            ROW_SIZE,
+        ),
+        Panel::Absent => crate::tcp::glyphs(
+            painter,
+            font,
+            palette.text_dim,
+            "No patch list for this album — add patch-list.styx beside its sessions",
+            x0 + PAD,
+            y0 + PAD + f64::from(ROW_SIZE),
+            ROW_SIZE,
+        ),
+    }
+}
+
 /// Draw the table into a scene, top-left at `origin`, `width` wide.
-///
-/// Returns the height it drew, so a caller can scroll it.
 // r[impl flow.patch-list.plan]
 pub fn paint(
     painter: &mut impl PaintScene,
@@ -254,8 +311,8 @@ pub fn paint(
     table: &Table,
     origin: (f64, f64),
     width: f64,
-) -> f64 {
-    let (x0, y0) = origin;
+) {
+    let (x0, _) = origin;
     let mut y = heading(painter, palette, font, table, origin);
     y = columns(
         painter,
@@ -277,8 +334,7 @@ pub fn paint(
         y,
         width,
     );
-    y = buses(painter, palette, font, table, (x0, y), width);
-    y - y0 + PAD
+    buses(painter, palette, font, table, (x0, y), width);
 }
 
 /// The title and what the room made of the list, returning the y under
@@ -378,7 +434,7 @@ fn performers(
     y
 }
 
-/// The headphone buses, returning the y under them.
+/// The headphone buses, the last thing drawn.
 fn buses(
     painter: &mut impl PaintScene,
     palette: &Palette,
@@ -386,7 +442,7 @@ fn buses(
     table: &Table,
     origin: (f64, f64),
     width: f64,
-) -> f64 {
+) {
     let (x0, mut y) = origin;
     for (index, bus) in table.buses.iter().enumerate() {
         line(
@@ -403,7 +459,6 @@ fn buses(
         );
         y += ROW_H;
     }
-    y
 }
 
 /// One row of the table, whichever half it is in.

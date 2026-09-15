@@ -92,7 +92,7 @@ impl StudioProfile {
     ///
     /// When the text is not a profile in this shape.
     pub fn from_styx(text: &str) -> Result<Self, facet_styx::DeserializeError> {
-        facet_styx::from_str(text)
+        crate::styx::read(text)
     }
 
     /// Write the profile back as styx, absent options omitted.
@@ -101,13 +101,8 @@ impl StudioProfile {
     ///
     /// When the value cannot be serialized — which a profile built from
     /// these types cannot fail at.
-    pub fn to_styx(
-        &self,
-    ) -> Result<String, facet_styx::SerializeError<facet_styx::StyxSerializeError>> {
-        facet_styx::to_string_with_options(
-            self,
-            &facet_styx::SerializeOptions::default().omit_none(),
-        )
+    pub fn to_styx(&self) -> Result<String, crate::styx::WriteError> {
+        crate::styx::write(self)
     }
 
     /// An input role, resolved.
