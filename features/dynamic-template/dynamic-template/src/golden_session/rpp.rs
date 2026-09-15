@@ -707,7 +707,10 @@ mod tests {
         assert!(by_path("Process/FX/Room Sim").is_some_and(|t| !t.piece));
         assert!(by_path("Drum Kit/Snare/Verb").is_some_and(|t| t.auxiliary() && t.is_folder));
         assert!(by_path("Inst FX/Ambience/Short Room").is_some_and(|t| t.piece));
-        assert_eq!(tracks.len(), 128);
+        // 128 instrument-side tracks, plus the fourteen the monitor
+        // side adds: the Guide and Keyflow folders with three tracks
+        // each, the four headphone buses and the talkback pair.
+        assert_eq!(tracks.len(), 142);
     }
 
     #[test]

@@ -64,9 +64,21 @@ fn committed(slug: &str) -> String {
 /// r[verify flow.vocals.mixing.fx]
 #[test]
 fn every_scene_resolves_to_its_committed_row_list() {
+    // `FTS_UPDATE_GOLDEN=1` rewrites instead of failing, the same way
+    // the picture fixtures do. Folded into the comparison rather than
+    // kept as a test of its own: two tests in one binary, one writing
+    // what the other reads, race each other and pass by luck.
+    let updating = std::env::var_os("FTS_UPDATE_GOLDEN").is_some();
     let mut failures = Vec::new();
     for scene in scenes::scenes() {
         let fresh = rows_of(&scene.slug);
+        if updating {
+            let path = fixtures_dir()
+                .join("scenes")
+                .join(format!("{}.rows", scene.slug));
+            std::fs::write(&path, &fresh).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            continue;
+        }
         let want = committed(&scene.slug);
         if fresh != want {
             let (n, a, b) = fresh
@@ -102,16 +114,34 @@ fn a_scene_resolving_to_no_rows_fails_its_fixture() {
             scene.slug
         );
     }
-    // And the control: a scene whose default hides everything does
-    // resolve to nothing, and this test would catch it.
+    // And the control: a scene whose default hides everything shows
+    // none of the session, and this test would catch it.
+    //
+    // Not *nothing*, though — the common prelude is not one of the
+    // scene's rules and does not go away with them, so the Guide and
+    // Keyflow folders survive, collapsed, exactly as
+    // `flow.scenes.guide-folder` says they must in every scene. That
+    // the two are independent is worth asserting rather than assuming.
     let mut blind = scenes::scene("drum-mixing").expect("a scene").clone();
     blind.default = scenes::Effect::hidden();
     blind.rules.clear();
     let facts = scenes::from_flat(&flatten(&maximal()));
     let rows = scenes::resolve(&blind, &facts, Surface::Mixer, None, None, None);
+    let survived: Vec<&str> = rows
+        .iter()
+        .filter_map(|row| row.guid())
+        .filter_map(|guid| facts.iter().find(|f| f.guid == guid))
+        .map(|fact| fact.name.as_str())
+        .collect();
     assert!(
-        rows.is_empty(),
-        "a scene that hides everything shows nothing"
+        survived
+            .iter()
+            .all(|name| *name == "Guide" || *name == "Keyflow"),
+        "a scene that hides everything still showed the session: {survived:?}"
+    );
+    assert!(
+        !survived.contains(&"Kick"),
+        "the blind scene showed an instrument"
     );
 }
 
@@ -131,13 +161,6 @@ fn a_scene_sizes_both_surfaces_from_its_own_table() {
         .expect("something is worked on");
     assert!((scenes::TABLES.width(kick.0.size, PANEL) - 133.0).abs() < f64::EPSILON);
     assert!((scenes::TABLES.height(kick.1.size) - 96.0).abs() < f64::EPSILON);
-}
-
-#[test]
-#[ignore]
-fn tmp_write_fixture() {
-    let path = fixtures_dir().join("scenes").join("drum-tracking.rows");
-    std::fs::write(&path, rows_of("drum-tracking")).unwrap();
 }
 
 /// **Drum Tracking Overview**: the kit as the drummer reads it. One row

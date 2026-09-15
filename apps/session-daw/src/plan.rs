@@ -351,7 +351,18 @@ mod tests {
                     .map(|(t, _)| t.name.as_str())
             })
             .collect();
-        assert_eq!(names, ["Kick", "Snare", "Toms", "Cymbals", "Rooms"]);
+        // Guide and Keyflow lead, and they are not the drum overview's
+        // doing: the common prelude collapses them in EVERY scene
+        // (`flow.scenes.guide-folder`, `flow.scenes.keyflow-folder`).
+        // They appear here now only because the golden session finally
+        // HAS those folders — until it did, the two rules were verified
+        // against a hand-built tree instead of the reference one.
+        assert_eq!(
+            names,
+            [
+                "Guide", "Keyflow", "Kick", "Snare", "Toms", "Cymbals", "Rooms"
+            ]
+        );
     }
 
     /// The pixel tables are the scenes module's, not this window's: a

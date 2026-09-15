@@ -286,6 +286,12 @@ const KEYS: u32 = 0x004E_9A55;
 const SYNTHS: u32 = 0x008C_AA3A;
 const VOX: u32 = 0x00B0_4A6A;
 const INST_FX: u32 = 0x005C_6B7A;
+/// The monitor side of the session — the count, the song's knowledge and
+/// the cue mixes. Deliberately dim: present at the top of every scene,
+/// read only when a flow opens one of them.
+const GUIDE: u32 = 0x006A_6A78;
+const KEYFLOW: u32 = 0x0058_6A84;
+const MONITOR: u32 = 0x004A_4A55;
 // The vocal template's returns take their unit's colour: delay blue,
 // reverb purple — the inks the visualisers are drawn in.
 const VOX_FX: u32 = 0x0064_748B;
@@ -641,6 +647,70 @@ fn vocals() -> Node {
 /// The bus tree — the dynamic template's canonical one without GUITAR
 /// BUS, with the three electric buses under ELECTRIC BUS, in the bus
 /// list rather than in the folder.
+/// The **Guide** folder: the count and the pulse the band tracks to.
+///
+/// It sits at the top of every session and every scene shows it
+/// collapsed until a flow opens it, which is why it is its own `Kind`
+/// rather than a folder named "Guide" — a scene says "the guide, out of
+/// the way" in one rule that survives someone renaming it.
+///
+/// Its tracks reach the headphone mixes and **never the mix bus**. A
+/// click printed into the record is the mistake this routing exists to
+/// make impossible, so each one is a dead end here and gets there by a
+/// cue send instead.
+fn guide() -> Node {
+    Node::new("Guide", GUIDE, Kind::Guide).children(vec![
+        Node::new("Click", GUIDE, Kind::Source).dead_end(),
+        Node::new("Guide", GUIDE, Kind::Source).dead_end(),
+        Node::new("Shaker", GUIDE, Kind::Source).dead_end(),
+    ])
+}
+
+/// The **Keyflow** folder: the song's knowledge as MIDI.
+///
+/// CHORDS, LINES and HITS are read by the guide, by the expression
+/// editor's key and chord tools, and by the click's count. They are
+/// knowledge, not audio — so they are dead ends too, and every scene
+/// keeps them collapsed until Write or Produce opens them.
+fn keyflow() -> Node {
+    Node::new("Keyflow", KEYFLOW, Kind::Keyflow).children(vec![
+        Node::new("CHORDS", KEYFLOW, Kind::Source).dead_end(),
+        Node::new("LINES", KEYFLOW, Kind::Source).dead_end(),
+        Node::new("HITS", KEYFLOW, Kind::Source).dead_end(),
+    ])
+}
+
+/// The monitor buses, beside `MIX BUS` rather than under it.
+///
+/// Beside is the whole point: everything here is heard by somebody in
+/// the room and none of it is heard by the record. Putting the cue
+/// mixes under the mix bus is how a foldback ends up printed.
+fn monitor_buses() -> Node {
+    // A bus is a bus: no items, unarmed, EQ then Comp. A cue mix gets
+    // compressed like any other, and the checklist's rule does not have
+    // an exception for the monitor side.
+    Node::new("HEADPHONE MIXES", MONITOR, Kind::Headphones)
+        .fx(BUS_CHAIN)
+        .dead_end()
+        .children(vec![
+            bus("HP Engineer", MONITOR).dead_end(),
+            bus("HP Producer", MONITOR).dead_end(),
+            bus("HP Broadcast", MONITOR).dead_end(),
+        ])
+}
+
+/// The talkback bus: the room's comms, recorded alongside the music so
+/// a take can be reviewed with the conversation intact — and summed
+/// nowhere near the mix.
+fn talkback() -> Node {
+    Node::new("TALKBACK", MONITOR, Kind::Bus)
+        .fx(BUS_CHAIN)
+        .dead_end()
+        .children(vec![
+            Node::new("TB Engineer", MONITOR, Kind::Source).dead_end()
+        ])
+}
+
 fn mix_bus() -> Node {
     // The root of the tree is its own kind, so a scene can say "the mix
     // bus tree, out of the way" in one rule instead of naming every bus
@@ -690,6 +760,12 @@ pub fn maximal() -> Shape {
         selected: "Kick",
         layout: Layout::Maximal,
         roots: vec![
+            // The Guide and Keyflow folders sit at the TOP of the
+            // session, above every instrument, because the count and
+            // the song's knowledge are what everything else is played
+            // against (`flow.scenes.guide-folder`).
+            guide(),
+            keyflow(),
             drum_kit(),
             process(),
             bass(),
@@ -700,6 +776,9 @@ pub fn maximal() -> Shape {
             inst_fx(),
             vocals(),
             mix_bus(),
+            // Beside MIX BUS, never under it.
+            monitor_buses(),
+            talkback(),
         ],
     }
 }
