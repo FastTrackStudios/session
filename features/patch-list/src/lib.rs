@@ -7,6 +7,7 @@
 
 pub mod apply;
 pub mod discover;
+pub mod headphones;
 pub mod layer;
 pub mod list;
 pub mod profile;

@@ -27,6 +27,7 @@ pub mod cache;
 pub mod draw;
 pub mod fold;
 pub mod load;
+pub mod preview;
 
 use anyrender::{PaintScene, Scene};
 use vello::peniko::Color;
