@@ -1,11 +1,29 @@
 //! Acoustic guitar group definition
 
 use super::mandolin::Mandolin;
-use crate::item_metadata::ItemMetadata;
-use monarchy::Group;
+use crate::item_metadata::{ItemMetadata, ItemMetadataField};
+use monarchy::{FieldValueDescriptor, Group};
 
 /// Acoustic guitar group
 pub struct AcousticGuitar;
+
+/// The sources of one acoustic channel, in the order a part grows them.
+///
+/// `flow.guitars.acoustics`: "a DI and two mics — a pickup DI, a
+/// neck-side condenser, a body-side condenser". The same `MultiMic`
+/// dimension as the electric's seven, with the acoustic's own vocabulary,
+/// which is the whole reason acoustics need no separate code path.
+fn build_multi_mic_descriptors() -> Vec<FieldValueDescriptor> {
+    vec![
+        FieldValueDescriptor::builder("DI").patterns(["di"]).build(),
+        FieldValueDescriptor::builder("Neck")
+            .patterns(["neck", "nk"])
+            .build(),
+        FieldValueDescriptor::builder("Body")
+            .patterns(["body", "bdy"])
+            .build(),
+    ]
+}
 
 impl From<AcousticGuitar> for Group<ItemMetadata> {
     fn from(_val: AcousticGuitar) -> Self {
@@ -70,6 +88,23 @@ impl From<AcousticGuitar> for Group<ItemMetadata> {
                 "headphone",
                 "talkback",
             ])
+            // Only the MultiMic vocabulary is declared here, not the
+            // whole dimension stack. The acoustic's sources are its own —
+            // a pickup DI and two condensers (`flow.guitars.acoustics`) —
+            // and nothing else in the template says what they are.
+            //
+            // Its arrangement and layer names stay global, deliberately.
+            // Declaring either on this group replaces the global list for
+            // every acoustic folder in every session, and two things
+            // break when it does: an acoustic folder stops grouping by
+            // player (the global Performer list no longer applies), and
+            // "Strum" is claimed here before Mandolin can claim it. So
+            // the acoustic's own Nashville arrangement and its Harmony
+            // layer are not in the vocabulary yet — see the note on #70.
+            // Growing an acoustic works either way: Strum grows a
+            // Fingerpick beside it and Main grows a DBL, both reading
+            // back as the dimension they were created as.
+            .field_value_descriptors(ItemMetadataField::MultiMic, build_multi_mic_descriptors())
             .group(Mandolin)
             .build()
     }

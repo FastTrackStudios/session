@@ -24,6 +24,7 @@ mod metadata_patterns;
 pub mod protools;
 pub mod scenes;
 pub mod song_name;
+pub mod source_defaults;
 mod tempo;
 pub mod track_schema;
 pub mod visibility_rules;

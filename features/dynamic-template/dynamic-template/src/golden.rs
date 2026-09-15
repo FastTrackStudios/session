@@ -244,8 +244,53 @@ mod tests {
         let layers = find(arrangement, "Layers").expect("Layers");
         let channel = find(layers, "Channel").expect("Channel");
         assert!(channel.vocabulary.contains(&"L".to_string()));
+        assert!(channel.vocabulary.contains(&"R".to_string()));
+        // The seven sources of one electric channel
+        // (`flow.guitars.dimensions`), in mixer order.
         let mics = find(channel, "MultiMic").expect("MultiMic captures");
-        assert_eq!(mics.vocabulary, vec!["Amp", "DI"]);
+        assert_eq!(
+            mics.vocabulary,
+            vec!["Amp", "DI", "Pedalboard", "Amp 1", "Amp 2", "SM57", "Royer"]
+        );
+    }
+
+    /// Acoustics carry the same four dimensions as the electric with
+    /// their own values, which is what lets one set of grow actions
+    /// handle both (`flow.guitars.acoustics`).
+    ///
+    /// Asserted through the classifier rather than the template tree:
+    /// only `MultiMic` is declared on the acoustic group — its performer,
+    /// arrangement, layer and channel names are the global ones — so the
+    /// question "what does the template say Nashville is, under an
+    /// acoustic" is the one worth asking.
+    #[test]
+    fn acoustic_guitar_carries_its_own_source_vocabulary() {
+        use crate::track_schema::{
+            classify_track_dimension, growth_values_for_dimension, TrackDimension,
+        };
+
+        let context = vec!["GTR A".to_string()];
+        assert_eq!(
+            growth_values_for_dimension(TrackDimension::MultiMic, &context),
+            vec!["DI", "Neck", "Body"]
+        );
+        for (name, dimension) in [
+            ("Strum", TrackDimension::Arrangement),
+            ("Fingerpick", TrackDimension::Arrangement),
+            ("Main", TrackDimension::Layer),
+            ("DBL", TrackDimension::Layer),
+            ("L", TrackDimension::Channel),
+            ("R", TrackDimension::Channel),
+            ("DI", TrackDimension::MultiMic),
+            ("Neck", TrackDimension::MultiMic),
+            ("Body", TrackDimension::MultiMic),
+        ] {
+            assert_eq!(
+                classify_track_dimension(name, &context),
+                dimension,
+                "{name} under an acoustic should read as {dimension}"
+            );
+        }
     }
 
     #[test]
