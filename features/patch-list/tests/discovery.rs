@@ -11,7 +11,8 @@ use std::fs;
 use std::path::Path;
 
 use patch_list::Resolved;
-use patch_list::discover::{ALBUM_FILE, Studios, find_album};
+use patch_list::discover::{ALBUM_FILE, Studios, find_album, write_album};
+use patch_list::{Entry, PatchList};
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -124,4 +125,26 @@ fn the_profile_directory_is_studios_under_the_config_root() {
         studios.profile_path("golden-room"),
         Path::new("/cfg/fts/studios/golden-room.styx")
     );
+}
+
+#[test]
+fn writing_the_album_is_read_back_by_from_styx() -> Result {
+    // Editing destinations (spec #48): edits write the album file by
+    // default. `write_album` is that write; the round trip through
+    // `PatchList::from_styx` is what proves it wrote a document this
+    // crate can open again, not just bytes.
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join(ALBUM_FILE);
+    let mut list = PatchList::from_styx(ALBUM)?;
+    list.performers
+        .get_mut("cody")
+        .and_then(|rigs| rigs.get_mut("guitar"))
+        .ok_or("cody's guitar rig")?
+        .insert("di".to_owned(), Entry::Role("DI 9".into()));
+
+    write_album(&path, &list)?;
+
+    let read_back = PatchList::from_styx(&fs::read_to_string(&path)?)?;
+    assert_eq!(read_back, list);
+    Ok(())
 }

@@ -103,6 +103,14 @@ fn main() {
         patch_list_shot(&std::path::PathBuf::from(out), width, height);
         return;
     }
+    if let Ok(out) = std::env::var("FTS_BENCH_PATCH_LIST_OVERRIDDEN_STALE") {
+        // The same view with a session override on Cody's DI and a
+        // stale banner (#57's fixture — #48's amendment: a structural
+        // threshold plus a negative control, not byte-identical
+        // pixels).
+        patch_list_shot_overridden_stale(&std::path::PathBuf::from(out), width, height);
+        return;
+    }
     if let Ok(out) = std::env::var("FTS_BENCH_EXPRESSION") {
         // The expression editor over the demo drum groove — no project
         // needed, which is the point: the view is exercisable before
@@ -1778,5 +1786,35 @@ fn patch_list_shot(out: &std::path::Path, width: u32, height: u32) {
         table.performers.len(),
         table.buses.len(),
         table.unresolved
+    );
+}
+
+/// Write one frame of the Patch List view, overridden and stale, to a
+/// PNG.
+///
+/// `FTS_BENCH_PATCH_LIST_OVERRIDDEN_STALE=apps/session-daw/fixtures/patch-list-overridden-stale.png`
+/// — the fixture album, a session override on Cody's DI, and a stale
+/// banner, the picture `apps/session-daw/tests/patch_list_view.rs`
+/// compares structurally.
+fn patch_list_shot_overridden_stale(out: &std::path::Path, width: u32, height: u32) {
+    let table = match session_daw::patch_list::Table::fixture_overridden_stale() {
+        Ok(table) => table,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    };
+    let Some(buffer) = session_daw::patch_list::shot(&table, (width, height)) else {
+        eprintln!("no gpu: the patch list picture needs a real device");
+        std::process::exit(2);
+    };
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+    println!(
+        "  wrote {} — {} performers, {} buses, stale: {}",
+        out.display(),
+        table.performers.len(),
+        table.buses.len(),
+        table.stale.is_some()
     );
 }

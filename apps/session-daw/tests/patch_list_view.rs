@@ -210,3 +210,105 @@ fn the_comparison_still_notices_a_table_that_changed() -> Result {
     );
     Ok(())
 }
+
+/// The second render fixture (#57): the fixture album with a session
+/// override on Cody's DI and a stale banner. Same threshold as the
+/// first — #48's fixture amendment applies to every render fixture
+/// this ticket lands, not just the album's own picture.
+const FIXTURE_OVERRIDDEN_STALE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/fixtures/patch-list-overridden-stale.png"
+);
+
+#[test]
+fn overriding_one_entry_marks_it_and_leaves_the_rest_alone() -> Result {
+    // r[verify flow.patch-list.session-override]
+    let table = Table::fixture_overridden_stale()?;
+    let cody = performer(&table, "cody").ok_or("cody")?;
+    let di = row(cody, "di").ok_or("cody's DI")?;
+    assert!(di.overridden, "the overridden entry is marked");
+    assert_eq!(di.role, "DI 9", "the override's value, not the album's");
+
+    // The negative control: an entry the override never named.
+    let pedalboard = row(cody, "pedalboard").ok_or("cody's pedalboard")?;
+    assert!(!pedalboard.overridden);
+    Ok(())
+}
+
+#[test]
+fn a_stale_session_carries_its_banner_and_its_unpatched_track() -> Result {
+    // r[verify flow.patch-list.apply]
+    let table = Table::fixture_overridden_stale()?;
+    assert!(table.stale.is_some(), "the session is shown stale");
+    assert_eq!(table.unpatched.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn an_entry_with_no_track_is_marked_unused_and_leaves_the_rest_alone() -> Result {
+    // r[verify flow.patch-list.apply]
+    let table = Table::fixture_overridden_stale()?;
+    let producer = performer(&table, "producer").ok_or("producer")?;
+    let mic = row(producer, "mic").ok_or("producer's talkback mic")?;
+    assert!(mic.unused, "the entry with no track is marked unused");
+
+    // The negative control: an entry the same rig does have a track
+    // for is not marked.
+    let engineer = performer(&table, "engineer").ok_or("engineer")?;
+    let engineer_mic = row(engineer, "mic").ok_or("engineer's talkback mic")?;
+    assert!(!engineer_mic.unused);
+    Ok(())
+}
+
+#[test]
+fn the_overridden_stale_view_renders_the_committed_fixture() -> Result {
+    // r[verify flow.patch-list.session-override]
+    let Some(rendered) = session_daw::patch_list::shot(&Table::fixture_overridden_stale()?, SIZE)
+    else {
+        tracing::warn!("no wgpu adapter; skipping the patch list picture");
+        return Ok(());
+    };
+    let committed = image::open(FIXTURE_OVERRIDDEN_STALE)
+        .map_err(|e| {
+            format!(
+                "{FIXTURE_OVERRIDDEN_STALE} did not open ({e}); run \
+                 `just daw-patch-list-overridden-stale`"
+            )
+        })?
+        .into_rgba8();
+    assert_eq!(committed.dimensions(), SIZE, "the fixture's size");
+    assert_eq!(committed.as_raw().len(), rendered.len(), "the frame's size");
+
+    let (differing, ratio) = difference(committed.as_raw(), &rendered);
+    assert!(
+        ratio <= FRAME_SLACK,
+        "the overridden/stale Patch List view no longer matches \
+         {FIXTURE_OVERRIDDEN_STALE}: {differing} pixels ({:.2}%) differ by more \
+         than {CHANNEL_SLACK} levels. If the change is intended, regenerate it \
+         with `just daw-patch-list-overridden-stale` and commit the picture",
+        ratio * 100.0
+    );
+    Ok(())
+}
+
+#[test]
+fn the_overridden_stale_comparison_still_notices_a_table_that_changed() -> Result {
+    // The negative control on this fixture's own comparison, same
+    // shape as the base fixture's.
+    let mut table = Table::fixture_overridden_stale()?;
+    table.stale = None;
+    let Some(rendered) = session_daw::patch_list::shot(&table, SIZE) else {
+        tracing::warn!("no wgpu adapter; skipping the patch list picture");
+        return Ok(());
+    };
+    let committed = image::open(FIXTURE_OVERRIDDEN_STALE)
+        .map_err(|e| format!("{FIXTURE_OVERRIDDEN_STALE} did not open ({e})"))?
+        .into_rgba8();
+    let (_, ratio) = difference(committed.as_raw(), &rendered);
+    assert!(
+        ratio > FRAME_SLACK,
+        "a table with the stale banner removed still matched the fixture ({:.2}% differing)",
+        ratio * 100.0
+    );
+    Ok(())
+}
