@@ -359,8 +359,44 @@ fn slot_of(group_by: GroupBy, child: &Child, channel: usize, channels: usize) ->
     }
 }
 
-/// Fold `take` of every unmuted child onto `columns` columns spanning
-/// `[start_secs, start_secs + length_secs)` of the timeline.
+/// The column grid a fold lands on: a window of the timeline, cut into
+/// columns.
+///
+/// One type rather than three parameters, because the three are never
+/// apart and because a grid is the thing a fold is *of*: the same
+/// children over a different grid is a different picture, which is the
+/// whole reason the zoom is in the cache key.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Grid {
+    pub from: f64,
+    pub to: f64,
+    pub columns: usize,
+}
+
+impl Grid {
+    /// A grid over `[from, to)` cut into `columns`.
+    #[must_use]
+    pub const fn over(from: f64, to: f64, columns: usize) -> Self {
+        Self { from, to, columns }
+    }
+
+    /// How long the window is, in seconds.
+    #[must_use]
+    pub fn span(self) -> f64 {
+        self.to - self.from
+    }
+
+    /// How long one column is, in seconds — zero for a degenerate grid.
+    #[must_use]
+    pub fn secs_per_column(self) -> f64 {
+        if self.columns == 0 {
+            return 0.0;
+        }
+        self.span() / crate::num::coord(self.columns)
+    }
+}
+
+/// Fold `take` of every unmuted child onto `grid`.
 ///
 /// `min(min)` / `max(max)` per column and per group — never a mean. A
 /// muted child is skipped; a hidden one is not, because hiding is the
@@ -372,22 +408,16 @@ fn slot_of(group_by: GroupBy, child: &Child, channel: usize, channels: usize) ->
 /// r[impl flow.drums.comping.folder-items]
 /// r[impl flow.guitars.folder-items]
 #[must_use]
-pub fn fold(
-    children: &[Child],
-    take: usize,
-    start_secs: f64,
-    length_secs: f64,
-    columns: usize,
-    group_by: GroupBy,
-) -> Fold {
+pub fn fold(children: &[Child], take: usize, grid: Grid, group_by: GroupBy) -> Fold {
+    let (start_secs, columns) = (grid.from, grid.columns);
     let mut out = vec![FoldColumn::default(); columns];
-    if length_secs <= 0.0 || columns == 0 {
+    let secs_per_col = grid.secs_per_column();
+    if secs_per_col <= 0.0 {
         return Fold {
             group_by,
             columns: out,
         };
     }
-    let secs_per_col = length_secs / crate::num::coord(columns);
     for child in children.iter().filter(|c| !c.muted) {
         let Some(lane) = child.takes.get(take) else {
             continue;

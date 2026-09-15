@@ -11,7 +11,7 @@ use anyrender::Paint;
 use expression_editor_core::kit::LaneRole;
 use vello::peniko::Color;
 
-use super::fold::{fold, Child, ChildTake, GroupBy, Placement, Side, TakePeaks};
+use super::fold::{fold, Child, ChildTake, Grid, GroupBy, Placement, Side, TakePeaks};
 use super::{Folder, FolderItems, Place};
 
 /// Peaks that rise from silence to `peak` over `blocks` blocks, mono —
@@ -69,6 +69,12 @@ fn kit() -> Folder {
     }
 }
 
+/// The grid the hand-written folder folds onto: its whole second, ten
+/// columns.
+const GRID10: Grid = Grid::over(0.0, 1.0, 10);
+/// The same folder at a zoom a picture is recorded at.
+const KIT_GRID: Grid = Grid::over(0.0, 1.0, 200);
+
 fn slot(role: LaneRole) -> usize {
     LaneRole::ALL
         .iter()
@@ -90,7 +96,7 @@ fn the_fold_is_min_min_max_max_per_role() {
     folder
         .children
         .push(child("Out", LaneRole::Kick, mono(10, 0.4)));
-    let folded = folder.fold_at(0, 10.0);
+    let folded = folder.fold(0, GRID10);
     assert_eq!(folded.columns.len(), 10);
     let last = folded.columns.last().expect("ten columns");
     let (lo, hi) = last.slots[slot(LaneRole::Kick)].expect("the kick fed its slot");
@@ -109,7 +115,7 @@ fn a_mean_of_the_same_children_would_be_quieter() {
     folder
         .children
         .push(child("Out", LaneRole::Kick, mono(10, 0.4)));
-    let folded = folder.fold_at(0, 10.0);
+    let folded = folder.fold(0, GRID10);
     let (_, hi) = folded.columns.last().and_then(|c| c.slots[slot(LaneRole::Kick)]).expect("kick");
     let mean = (0.9_f32 + 0.4) / 2.0;
     assert!(hi > mean, "min/max {hi} must exceed the mean {mean}");
@@ -119,7 +125,7 @@ fn a_mean_of_the_same_children_would_be_quieter() {
 /// rather than played — it is never narrower than any child.
 #[test]
 fn the_outer_envelope_covers_every_role() {
-    let folded = kit().fold_at(0, 10.0);
+    let folded = kit().fold(0, GRID10);
     let last = folded.columns.last().expect("ten columns");
     let (lo, hi) = last.outer().expect("something is audible");
     assert!((hi - 0.9).abs() < 1e-6, "outer max {hi}");
@@ -136,7 +142,7 @@ fn the_outer_envelope_covers_every_role() {
 fn a_muted_child_leaves_the_sum() {
     let mut folder = kit();
     assert!(folder.set_muted("{Top}", true));
-    let folded = folder.fold_at(0, 10.0);
+    let folded = folder.fold(0, GRID10);
     for col in &folded.columns {
         assert!(col.slots[slot(LaneRole::Snare)].is_none());
     }
@@ -153,9 +159,9 @@ fn a_muted_child_leaves_the_sum() {
 #[test]
 fn a_hidden_child_stays_in_the_sum() {
     let mut folder = kit();
-    let before = folder.fold_at(0, 10.0);
+    let before = folder.fold(0, GRID10);
     assert!(folder.set_hidden("{T1}", true));
-    assert_eq!(folder.fold_at(0, 10.0), before);
+    assert_eq!(folder.fold(0, GRID10), before);
 }
 
 /// A take is a lane, not an item: a child whose pass is a verse, a
@@ -187,7 +193,7 @@ fn one_take_holds_every_item_on_its_lane() {
             ],
         }],
     };
-    let folded = fold(&[child], 0, 0.0, 4.0, 40, GroupBy::Role);
+    let folded = fold(&[child], 0, Grid::over(0.0, 4.0, 40), GroupBy::Role);
     let fed = |i: usize| folded.columns.get(i).and_then(|c| c.slots[slot(LaneRole::Kick)]);
     assert!(fed(5).is_some(), "the first item");
     assert!(fed(20).is_none(), "the gap between them");
@@ -252,7 +258,7 @@ fn a_double_folds_into_two_sides() {
     left.side = Some(Side::Left);
     let mut right = child("Rhythm R", LaneRole::Other, mono(10, 0.3));
     right.side = Some(Side::Right);
-    let folded = fold(&[left, right], 0, 0.0, 1.0, 10, GroupBy::Side);
+    let folded = fold(&[left, right], 0, GRID10, GroupBy::Side);
     let last = folded.columns.last().expect("ten columns");
     let (_, l) = last.slots[Side::Left.slot()].expect("a left side");
     let (_, r) = last.slots[Side::Right.slot()].expect("a right side");
@@ -267,7 +273,7 @@ fn a_double_folds_into_two_sides() {
 #[test]
 fn a_stereo_pair_folds_into_two_sides() {
     let pair = child("Rooms", LaneRole::Other, stereo(10, 0.7, 0.2));
-    let folded = fold(&[pair], 0, 0.0, 1.0, 10, GroupBy::Side);
+    let folded = fold(&[pair], 0, GRID10, GroupBy::Side);
     let last = folded.columns.last().expect("ten columns");
     assert!((last.slots[Side::Left.slot()].expect("left").1 - 0.7).abs() < 1e-6);
     assert!((last.slots[Side::Right.slot()].expect("right").1 - 0.2).abs() < 1e-6);
@@ -280,9 +286,7 @@ fn a_mono_child_with_no_channel_is_on_both_sides() {
     let folded = fold(
         &[child("DI", LaneRole::Other, mono(10, 0.5))],
         0,
-        0.0,
-        1.0,
-        10,
+        GRID10,
         GroupBy::Side,
     );
     let last = folded.columns.last().expect("ten columns");
@@ -295,8 +299,8 @@ fn a_mono_child_with_no_channel_is_on_both_sides() {
 #[test]
 fn the_two_groupings_are_not_the_same_fold() {
     let pair = child("Rooms", LaneRole::Other, stereo(10, 0.7, 0.2));
-    let by_role = fold(std::slice::from_ref(&pair), 0, 0.0, 1.0, 10, GroupBy::Role);
-    let by_side = fold(&[pair], 0, 0.0, 1.0, 10, GroupBy::Side);
+    let by_role = fold(std::slice::from_ref(&pair), 0, GRID10, GroupBy::Role);
+    let by_side = fold(&[pair], 0, GRID10, GroupBy::Side);
     assert_ne!(by_role.columns, by_side.columns);
     assert_ne!(by_role.to_text(), by_side.to_text());
 }
@@ -318,17 +322,43 @@ fn mute_moves_the_revision_and_hide_does_not() {
     assert_ne!(folder.revision(), before, "muting leaves the sum");
 }
 
-/// The zoom is in the key, because the fold is on a column grid: the
-/// same folder at a different columns-per-second is a different
-/// picture, and the same folder at the same bucket is not.
+/// The zoom is in the key as the GRID it produces, because the fold is
+/// on a column grid: two zooms that fold onto the same columns share a
+/// picture, and two that do not, cannot.
 #[test]
-fn the_zoom_bucket_is_in_the_key() {
+fn the_grid_is_in_the_key() {
     let folder = kit();
-    let a = folder.picture_key(0, 100.0);
-    let b = folder.picture_key(0, 100.4);
-    let c = folder.picture_key(0, 400.0);
-    assert_eq!(a, b, "a zoom inside the bucket reuses the fold");
-    assert_ne!(a, c, "a zoom that moves the grid needs a refold");
+    let key = |pps: f64| folder.picture_key(0, folder.grid_at(pps));
+    assert_eq!(
+        key(100.0),
+        key(100.4),
+        "a one-second folder folds onto 100 columns either way"
+    );
+    assert_ne!(key(100.0), key(400.0), "a different grid is a refold");
+}
+
+/// And the key is the column count rather than the zoom, which for a
+/// long folder are not the same thing.
+///
+/// This is the negative control for the test above: on a folder as long
+/// as the golden session, a zoom bucketed to whole pixels-per-second
+/// would put 100.0 and 100.4 px/s in one bucket while they fold onto
+/// column counts sixty apart — a materially different fold replayed
+/// from cache, which is the failure the zoom is in the key to prevent.
+#[test]
+fn a_long_folder_refolds_where_a_zoom_bucket_would_not() {
+    let mut folder = kit();
+    folder.length_secs = 158.0;
+    let a = folder.grid_at(100.0);
+    let b = folder.grid_at(100.4);
+    assert!(
+        b.columns.saturating_sub(a.columns) > 50,
+        "{} vs {}",
+        a.columns,
+        b.columns
+    );
+    assert_ne!(folder.picture_key(0, a), folder.picture_key(0, b));
+    assert_eq!(crate::num::quantise(100.0, 1.0), crate::num::quantise(100.4, 1.0));
 }
 
 /// A hidden child replays the held picture; a muted one rebuilds it.
@@ -385,6 +415,22 @@ fn the_replayed_picture_is_byte_identical() {
         .expect("a picture");
     assert_eq!(before, after);
     assert_eq!(items.counts(), (1, 1));
+}
+
+/// The cache is bounded: a window left open across every zoom of every
+/// folder does not hold them all, and the one wanted most recently is
+/// never the one dropped.
+#[test]
+fn the_cache_evicts_rather_than_growing() {
+    let mut items = FolderItems::new(vec![kit()]);
+    for step in 0..40 {
+        items.picture(0, 0, f64::from(step).mul_add(37.0, 10.0));
+    }
+    assert!(items.held() <= super::cache::CAPACITY, "{}", items.held());
+    // The last zoom drawn is still there.
+    let (hits, _) = items.counts();
+    items.picture(0, 0, 39.0_f64.mul_add(37.0, 10.0));
+    assert_eq!(items.counts().0, hits.saturating_add(1));
 }
 
 /// The negative control: muting the same child changes the picture, so
@@ -444,7 +490,7 @@ fn kurbo_bounds(shape: &vello::kurbo::BezPath) -> String {
 /// r[verify flow.drums.comping.folder-item-colours]
 #[test]
 fn the_pieces_are_drawn_in_their_colours_kick_last() {
-    let scene = kit().picture(0, 200.0);
+    let scene = kit().picture(0, KIT_GRID);
     let brushes: Vec<Paint> = scene
         .commands
         .iter()
@@ -499,7 +545,7 @@ fn a_doubles_folder_item_renders_two_sides() {
         length_secs: 1.0,
         take_count: 1,
     };
-    let scene = folder.picture(0, 200.0);
+    let scene = folder.picture(0, KIT_GRID);
     let fills: Vec<_> = scene
         .commands
         .iter()
@@ -529,7 +575,7 @@ fn a_doubles_folder_item_renders_two_sides() {
 #[test]
 fn a_picture_is_recorded_in_the_unit_box() {
     use vello::kurbo::Shape as _;
-    let scene = kit().picture(0, 200.0);
+    let scene = kit().picture(0, KIT_GRID);
     for command in &scene.commands {
         let RenderCommand::Fill(fill) = command else {
             continue;
@@ -558,6 +604,6 @@ fn a_degenerate_folder_still_draws() {
     let mut folder = kit();
     folder.length_secs = 0.0;
     assert_eq!(folder.columns_at(200.0), 1);
-    let scene = folder.picture(0, 200.0);
+    let scene = folder.picture(0, KIT_GRID);
     assert!(!scene.commands.is_empty());
 }

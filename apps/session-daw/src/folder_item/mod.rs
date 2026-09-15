@@ -33,13 +33,7 @@ use vello::peniko::Color;
 
 pub use cache::{PictureCache, PictureKey};
 pub use draw::Place;
-pub use fold::{Child, ChildTake, Fold, FoldColumn, GroupBy, Placement, Side, TakePeaks};
-
-/// How many columns a picture is folded onto per pixel of width.
-///
-/// One: a waveform column is a pixel column, which is what every DAW
-/// draws and what makes the fold's grid the screen's grid.
-pub const COLUMNS_PER_PIXEL: f64 = 1.0;
+pub use fold::{Child, ChildTake, Fold, FoldColumn, Grid, GroupBy, Placement, Side, TakePeaks};
 
 /// The most columns one picture is ever folded onto.
 ///
@@ -67,9 +61,10 @@ pub fn fixture_text(folders: &[Folder], take: usize, from: f64, to: f64) -> Stri
     for folder in folders {
         let _ = write!(
             out,
-            "\nfolder {}\nchildren {}\nrevision {:016x}\nmute-mask {:016x}\n",
+            "\nfolder {}\nchildren {}\ntakes {}\nrevision {:016x}\nmute-mask {:016x}\n",
             folder.name,
             folder.children.len(),
+            folder.take_count,
             folder.revision(),
             folder.mute_mask(),
         );
@@ -87,7 +82,7 @@ pub fn fixture_text(folders: &[Folder], take: usize, from: f64, to: f64) -> Stri
         }
         out.push_str(
             &folder
-                .fold_over(take, from, to, FIXTURE_COLUMNS)
+                .fold(take, Grid::over(from, to, FIXTURE_COLUMNS))
                 .to_text(),
         );
     }
@@ -172,80 +167,57 @@ impl Folder {
         hash
     }
 
-    /// How many columns the item folds onto at `pixels_per_sec`.
-    #[must_use]
-    pub fn columns_at(&self, pixels_per_sec: f64) -> usize {
-        let wanted = self.length_secs * pixels_per_sec * COLUMNS_PER_PIXEL;
-        if !wanted.is_finite() || wanted <= 1.0 {
-            return 1;
-        }
-        crate::num::index(wanted.round()).clamp(1, MAX_COLUMNS)
-    }
-
-    /// The zoom bucket a `pixels_per_sec` falls in: whole columns per
-    /// second.
+    /// The grid the item folds onto at `pixels_per_sec`: the item's own
+    /// extent, one column per pixel of it.
     ///
-    /// The fold lives on a column grid, so a zoom that moves the grid
-    /// needs a refold and one that does not can reuse it. This is the
-    /// whole reason the zoom is in the key at all — the arrangement's
-    /// rectangles are recorded once at one pixel per second and scaled,
-    /// and a fold cannot be.
+    /// One column per pixel is what every DAW draws and what makes the
+    /// fold's grid the screen's grid. Past [`MAX_COLUMNS`] the picture
+    /// is coarser than the screen rather than a scene of forty thousand
+    /// fills.
     #[must_use]
-    pub fn zoom_bucket(pixels_per_sec: f64) -> i32 {
-        crate::num::quantise(pixels_per_sec * COLUMNS_PER_PIXEL, 1.0)
+    pub fn grid_at(&self, pixels_per_sec: f64) -> Grid {
+        let wanted = self.length_secs * pixels_per_sec;
+        let columns = if wanted.is_finite() && wanted > 1.0 {
+            crate::num::index(wanted.round()).clamp(1, MAX_COLUMNS)
+        } else {
+            1
+        };
+        Grid::over(
+            self.start_secs,
+            self.start_secs + self.length_secs,
+            columns,
+        )
     }
 
-    /// Everything this folder's picture for `take` at `pixels_per_sec`
-    /// depends on.
+    /// Everything this folder's picture for `take` on `grid` depends on.
+    ///
+    /// The zoom rides in as the grid's **column count**, which is the
+    /// quantity the fold actually turns on. Keying on the zoom itself
+    /// would let two pixels-per-second inside one bucket share a
+    /// picture while folding onto column counts dozens apart — for a
+    /// long folder, a tenth of a pixel a second is dozens of columns.
     #[must_use]
-    pub fn picture_key(&self, take: usize, pixels_per_sec: f64) -> PictureKey {
+    pub fn picture_key(&self, take: usize, grid: Grid) -> PictureKey {
         PictureKey {
             revision: self.revision(),
             mute_mask: self.mute_mask(),
             take,
-            columns_per_sec: Self::zoom_bucket(pixels_per_sec),
+            columns: grid.columns,
             group_by: self.group_by,
         }
     }
 
-    /// Fold `take` over an arbitrary window, onto `columns` columns.
-    ///
-    /// What the committed fold fixture is written from: the picture's
-    /// own grid is the screen's and would commit a megabyte of text a
-    /// zoom, so a fixture folds the same children over the same window
-    /// onto [`FIXTURE_COLUMNS`] instead — the same fold at a resolution
-    /// a person can diff.
+    /// Fold `take` onto `grid`.
     #[must_use]
-    pub fn fold_over(&self, take: usize, from: f64, to: f64, columns: usize) -> Fold {
-        fold::fold(
-            &self.children,
-            take,
-            from,
-            to - from,
-            columns,
-            self.group_by,
-        )
+    pub fn fold(&self, take: usize, grid: Grid) -> Fold {
+        fold::fold(&self.children, take, grid, self.group_by)
     }
 
-    /// Fold `take` onto the grid `pixels_per_sec` asks for.
+    /// Record the picture for `take` on `grid`, in the unit box.
     #[must_use]
-    pub fn fold_at(&self, take: usize, pixels_per_sec: f64) -> Fold {
-        fold::fold(
-            &self.children,
-            take,
-            self.start_secs,
-            self.length_secs,
-            self.columns_at(pixels_per_sec),
-            self.group_by,
-        )
-    }
-
-    /// Record the picture for `take` at `pixels_per_sec`, in the unit
-    /// box.
-    #[must_use]
-    pub fn picture(&self, take: usize, pixels_per_sec: f64) -> Scene {
+    pub fn picture(&self, take: usize, grid: Grid) -> Scene {
         let mut scene = Scene::new();
-        draw::draw(&mut scene, &self.fold_at(take, pixels_per_sec), self.colour);
+        draw::draw(&mut scene, &self.fold(take, grid), self.colour);
         scene
     }
 
@@ -302,14 +274,19 @@ impl FolderItems {
         self.cache.counts()
     }
 
+    /// How many pictures are held.
+    #[must_use]
+    pub fn held(&self) -> usize {
+        self.cache.len()
+    }
+
     /// The picture for one folder's take, built if it is not held.
     pub fn picture(&mut self, at: usize, take: usize, pixels_per_sec: f64) -> Option<&Scene> {
         // Split borrow: the folder is read out of one field while the
-        // picture is written into another.
+        // picture is written into another, which is what lets the
+        // painter replay straight out of the cache with no clone.
         let Self { folders, cache } = self;
-        let folder = folders.get(at)?;
-        let key = folder.picture_key(take, pixels_per_sec);
-        cache.get_or_build(key, || folder.picture(take, pixels_per_sec))
+        held(folders, cache, at, take, pixels_per_sec)
     }
 
     /// Draw one folder's take at `place`, replaying the held picture
@@ -325,15 +302,31 @@ impl FolderItems {
         pixels_per_sec: f64,
     ) {
         let Self { folders, cache } = self;
-        let Some(folder) = folders.get(at) else {
-            return;
-        };
-        let key = folder.picture_key(take, pixels_per_sec);
-        if let Some(scene) = cache.get_or_build(key, || folder.picture(take, pixels_per_sec)) {
+        if let Some(scene) = held(folders, cache, at, take, pixels_per_sec) {
             // Recorded in the unit box, so the replay is one transform.
             draw::replay(painter, scene, place);
         }
     }
+}
+
+/// The held picture for one folder's take at one zoom, built into the
+/// cache when it is not already there.
+///
+/// Free rather than a method so both callers can take the folders and
+/// the cache as separate borrows: a method on `&mut self` would borrow
+/// the whole struct and force the painter to clone the scene it is about
+/// to replay.
+fn held<'a>(
+    folders: &'a [Folder],
+    cache: &'a mut PictureCache,
+    at: usize,
+    take: usize,
+    pixels_per_sec: f64,
+) -> Option<&'a Scene> {
+    let folder = folders.get(at)?;
+    let grid = folder.grid_at(pixels_per_sec);
+    let key = folder.picture_key(take, grid);
+    cache.get_or_build(key, || folder.picture(take, grid))
 }
 
 #[cfg(test)]
