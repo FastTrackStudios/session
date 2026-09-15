@@ -42,15 +42,34 @@ pub struct PictureKey {
     pub mute_mask: u64,
     /// Which take the item is of.
     pub take: usize,
-    /// The zoom, bucketed to whole columns per second.
-    pub columns_per_sec: i32,
+    /// The zoom bucket: **how many columns the fold landed on**.
+    ///
+    /// Not the pixels-per-second the zoom was asked for. Two zooms that
+    /// fold onto the same number of columns produce the same fold and
+    /// may share a picture; two that do not, cannot — and for a long
+    /// folder a tenth of a pixel per second is dozens of columns. A key
+    /// on the zoom rather than on the grid it produces would replay a
+    /// materially different fold, which is the failure the zoom is in
+    /// the key to prevent.
+    pub columns: usize,
     /// Roles or sides.
     pub group_by: GroupBy,
 }
 
+/// How many pictures are held before the least recently wanted is
+/// dropped.
+///
+/// A recorded fold is thousands of fills; a zoom gesture walks a bucket
+/// a frame, and a window left open for an afternoon would otherwise
+/// hold every zoom of every folder it ever drew. Sixteen covers the
+/// folders on a screen across a couple of zooms, which is what a scroll
+/// and a pinch actually revisit.
+pub const CAPACITY: usize = 16;
+
 /// The pictures kept until what they depend on changes.
 #[derive(Default)]
 pub struct PictureCache {
+    /// Least recently wanted first, so eviction is the front.
     entries: Vec<(PictureKey, Scene)>,
     hits: usize,
     misses: usize,
@@ -79,25 +98,29 @@ impl PictureCache {
     /// held.
     ///
     /// r[impl flow.drums.comping.folder-items]
-    pub fn get_or_build(&mut self, key: PictureKey, build: impl FnOnce() -> Scene) -> Option<&Scene> {
-        let found = self.entries.iter().position(|(k, _)| *k == key);
-        let at = match found {
+    pub fn get_or_build(
+        &mut self,
+        key: PictureKey,
+        build: impl FnOnce() -> Scene,
+    ) -> Option<&Scene> {
+        match self.entries.iter().position(|(k, _)| *k == key) {
             Some(at) => {
                 self.hits = self.hits.saturating_add(1);
-                at
+                // Wanted again, so it goes to the back and something
+                // staler is next out.
+                let entry = self.entries.remove(at);
+                self.entries.push(entry);
             }
             None => {
                 self.misses = self.misses.saturating_add(1);
-                self.entries.push((key, build()));
-                self.entries.len().saturating_sub(1)
+                let scene = build();
+                if self.entries.len() >= CAPACITY && !self.entries.is_empty() {
+                    self.entries.remove(0);
+                }
+                self.entries.push((key, scene));
             }
-        };
-        self.entries.get(at).map(|(_, scene)| scene)
+        }
+        self.entries.last().map(|(_, scene)| scene)
     }
 
-    /// Drop every picture of a folder whose children changed, keeping
-    /// the ones at `revision`.
-    pub fn retain_revision(&mut self, revision: u64) {
-        self.entries.retain(|(k, _)| k.revision == revision);
-    }
 }

@@ -18,9 +18,6 @@ use super::fold::{Fold, FoldColumn, GroupBy, Side};
 /// long crash decays, so drawn as a colour they swamp the pieces — the
 /// prototype's "layered" variant, rejected on the evidence.
 const ENVELOPE_ALPHA: f32 = 0.45;
-/// How much of its own colour a piece keeps. Not quite opaque, so a
-/// piece under another is a shade rather than a hole.
-const PIECE_ALPHA: f32 = 0.92;
 /// How far the right side is lifted from the track colour, so the two
 /// halves of a stereo waveform read as two performances rather than one
 /// mirrored one.
@@ -67,7 +64,7 @@ pub fn replay(painter: &mut impl PaintScene, scene: &Scene, at: Place) {
 }
 
 /// A colour from the `#rrggbb` string a [`LaneRole`] names.
-fn hex(s: &str) -> Color {
+pub(crate) fn hex(s: &str) -> Color {
     let byte = |i: usize| {
         s.get(i..i.saturating_add(2))
             .and_then(|h| u8::from_str_radix(h, 16).ok())
@@ -184,7 +181,7 @@ pub fn draw(scene: &mut Scene, folded: &Fold, track: Color) {
                     mid,
                     half,
                 );
-                fill(scene, hex(role.color()).multiply_alpha(PIECE_ALPHA), &path);
+                fill(scene, hex(role.color()), &path);
             }
         }
         GroupBy::Side => {
