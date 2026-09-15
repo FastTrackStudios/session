@@ -833,6 +833,7 @@ pub fn apply_scene(
 mod scene_tests {
     use super::{Size, scene};
 
+    // r[verify flow.vocals.mixing.fx]
     #[test]
     fn the_fx_edit_scene_focuses_one_delay_and_one_verb() {
         let s = scene("lead-vocal-fx").expect("the scene");
@@ -852,6 +853,29 @@ mod scene_tests {
         assert_eq!((s.size)("Vox Dbl", false, &delay[..1]), Size::Working);
     }
 
+    /// Lead Vocal: the soloist's mix track in focus with its chain,
+    /// the tracks under the Vox Lead folder working, every return
+    /// under Vox FX a short rail, every folder a rail.
+    // r[verify flow.vocals.mixing.main]
+    #[test]
+    fn the_lead_vocal_scene_opens_the_lead_and_rails_the_returns() {
+        let s = scene("lead-vocal").expect("the scene");
+        let lead: Vec<String> = ["Vox Lead"].iter().map(|s| (*s).to_owned()).collect();
+        let verb: Vec<String> = ["Vox Lead", "Vox FX", "Verb"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        assert_eq!((s.size)("Lead Vox", false, &lead), Size::Focus);
+        assert_eq!((s.size)("Vox Dbl", false, &lead), Size::Working);
+        assert_eq!((s.size)("Long", false, &verb), Size::Minimum);
+        assert_eq!((s.size)("Vox FX", true, &lead), Size::Compact);
+        assert_eq!((s.size)("Kick", false, &[]), Size::Compact);
+    }
+
+    /// Drum Tracking works the core mics; Drum Mixing rails them and
+    /// works the pieces; Drum Advanced opens the subs and verbs.
+    // r[verify flow.drums.tracking.full]
+    // r[verify flow.drums.mixing.scenes]
     #[test]
     fn the_drum_scenes_disagree_about_the_mics() {
         let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"]
@@ -888,6 +912,7 @@ mod scene_tests {
         );
     }
 
+    // r[verify flow.drums.mixing.scenes]
     #[test]
     fn the_fx_scene_opens_what_the_kit_is_sent_to() {
         let s = scene("drum-fx").expect("the scene");
@@ -913,6 +938,7 @@ mod scene_tests {
 
     /// The overview folds the pieces shut and hides the Process folder:
     /// applied, the rows are the kit and its five pieces.
+    // r[verify flow.drums.mixing.scenes]
     #[test]
     fn the_overview_is_five_pieces() {
         use daw_proto::Track;

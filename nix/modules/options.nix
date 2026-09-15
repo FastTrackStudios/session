@@ -49,6 +49,10 @@
         type = lib.types.nullOr lib.types.package;
         description = "cargo-rail release binary (null where upstream ships no asset).";
       };
+      tracey = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        description = "tracey spec-coverage CLI, from the upstream release tarball (null where upstream ships no asset).";
+      };
     };
   });
 }

@@ -23,6 +23,10 @@
       # nix/modules/cargo-rail.nix. Store-sourced only (never installed
       # from a hook — see the stall note above).
       ++ lib.optionals (config.fts.cargoRail != null) [ config.fts.cargoRail ]
+      # tracey — the spec-coverage gate (`just daw-flows`, see
+      # nix/modules/tracey.nix). Store-sourced release binary, never the
+      # from-source cargo-install that the stall note above is about.
+      ++ lib.optionals (config.fts.tracey != null) [ config.fts.tracey ]
       ++ config.fts.buildInputs
       # The shared native tool list (pkg-config, bindgen, tailwindcss —
       # and on Linux, mold: .cargo/config.toml selects it for every
