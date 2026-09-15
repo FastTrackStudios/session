@@ -432,7 +432,8 @@ pub fn fold(children: &[Child], take: usize, grid: Grid, group_by: GroupBy) -> F
             // Only the columns the item actually covers: an item three
             // bars into a four-minute session must not cost a walk of
             // every column of it, once per child, per frame.
-            let first = crate::num::index(((placed.start_secs - start_secs) / secs_per_col).floor());
+            let first =
+                crate::num::index(((placed.start_secs - start_secs) / secs_per_col).floor());
             let last = crate::num::index(
                 ((placed.start_secs + placed.length_secs - start_secs) / secs_per_col).ceil(),
             )

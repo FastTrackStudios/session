@@ -122,5 +122,4 @@ impl PictureCache {
         }
         self.entries.last().map(|(_, scene)| scene)
     }
-
 }

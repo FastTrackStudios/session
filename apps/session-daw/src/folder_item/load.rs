@@ -12,8 +12,8 @@ use daw_ui::studio::project::Project;
 use expression_editor_core::kit::kit_role;
 use vello::peniko::Color;
 
-use super::fold::{Child, ChildTake, GroupBy, Placement, Side, TakePeaks};
 use super::Folder;
+use super::fold::{Child, ChildTake, GroupBy, Placement, Side, TakePeaks};
 
 /// Samples per peak asked of the backend.
 ///

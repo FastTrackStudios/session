@@ -6,12 +6,12 @@
 //! `tests/folder_items.rs`, which reads its peaks out of standalone and
 //! compares the fold and the picture with committed fixtures.
 
-use anyrender::recording::RenderCommand;
 use anyrender::Paint;
+use anyrender::recording::RenderCommand;
 use expression_editor_core::kit::LaneRole;
 use vello::peniko::Color;
 
-use super::fold::{fold, Child, ChildTake, Grid, GroupBy, Placement, Side, TakePeaks};
+use super::fold::{Child, ChildTake, Grid, GroupBy, Placement, Side, TakePeaks, fold};
 use super::{Folder, FolderItems, Place};
 
 /// Peaks that rise from silence to `peak` over `blocks` blocks, mono —
@@ -116,7 +116,11 @@ fn a_mean_of_the_same_children_would_be_quieter() {
         .children
         .push(child("Out", LaneRole::Kick, mono(10, 0.4)));
     let folded = folder.fold(0, GRID10);
-    let (_, hi) = folded.columns.last().and_then(|c| c.slots[slot(LaneRole::Kick)]).expect("kick");
+    let (_, hi) = folded
+        .columns
+        .last()
+        .and_then(|c| c.slots[slot(LaneRole::Kick)])
+        .expect("kick");
     let mean = (0.9_f32 + 0.4) / 2.0;
     assert!(hi > mean, "min/max {hi} must exceed the mean {mean}");
 }
@@ -146,10 +150,12 @@ fn a_muted_child_leaves_the_sum() {
     for col in &folded.columns {
         assert!(col.slots[slot(LaneRole::Snare)].is_none());
     }
-    assert!(folded
-        .columns
-        .iter()
-        .any(|c| c.slots[slot(LaneRole::Kick)].is_some()));
+    assert!(
+        folded
+            .columns
+            .iter()
+            .any(|c| c.slots[slot(LaneRole::Kick)].is_some())
+    );
 }
 
 /// A hidden child stays in it: hiding is the TCP's business, and the
@@ -194,7 +200,12 @@ fn one_take_holds_every_item_on_its_lane() {
         }],
     };
     let folded = fold(&[child], 0, Grid::over(0.0, 4.0, 40), GroupBy::Role);
-    let fed = |i: usize| folded.columns.get(i).and_then(|c| c.slots[slot(LaneRole::Kick)]);
+    let fed = |i: usize| {
+        folded
+            .columns
+            .get(i)
+            .and_then(|c| c.slots[slot(LaneRole::Kick)])
+    };
     assert!(fed(5).is_some(), "the first item");
     assert!(fed(20).is_none(), "the gap between them");
     assert!(fed(35).is_some(), "the second item");
@@ -222,7 +233,11 @@ fn an_off_rate_header_does_not_move_the_fold() {
     let lying = TakePeaks::new(&blocks, 1, 480, 44_100.0);
     for i in 0..20 {
         let (u0, u1) = (f64::from(i) / 20.0, f64::from(i + 1) / 20.0);
-        assert_eq!(honest.window(0, u0, u1), lying.window(0, u0, u1), "block {i}");
+        assert_eq!(
+            honest.window(0, u0, u1),
+            lying.window(0, u0, u1),
+            "block {i}"
+        );
     }
 }
 
@@ -290,7 +305,10 @@ fn a_mono_child_with_no_channel_is_on_both_sides() {
         GroupBy::Side,
     );
     let last = folded.columns.last().expect("ten columns");
-    assert_eq!(last.slots[Side::Left.slot()], last.slots[Side::Right.slot()]);
+    assert_eq!(
+        last.slots[Side::Left.slot()],
+        last.slots[Side::Right.slot()]
+    );
     assert!(last.slots[Side::Left.slot()].is_some());
 }
 
@@ -358,7 +376,10 @@ fn a_long_folder_refolds_where_a_zoom_bucket_would_not() {
         b.columns
     );
     assert_ne!(folder.picture_key(0, a), folder.picture_key(0, b));
-    assert_eq!(crate::num::quantise(100.0, 1.0), crate::num::quantise(100.4, 1.0));
+    assert_eq!(
+        crate::num::quantise(100.0, 1.0),
+        crate::num::quantise(100.4, 1.0)
+    );
 }
 
 /// A hidden child replays the held picture; a muted one rebuilds it.
@@ -510,7 +531,11 @@ fn the_pieces_are_drawn_in_their_colours_kick_last() {
         };
         Color::from_rgb8(byte(1), byte(3), byte(5))
     };
-    for (at, role) in [(2, LaneRole::Toms), (3, LaneRole::Snare), (4, LaneRole::Kick)] {
+    for (at, role) in [
+        (2, LaneRole::Toms),
+        (3, LaneRole::Snare),
+        (4, LaneRole::Kick),
+    ] {
         let Some(Paint::Solid(drawn)) = brushes.get(at) else {
             panic!("no solid fill at {at}: {brushes:?}");
         };
@@ -603,7 +628,7 @@ fn a_picture_is_recorded_in_the_unit_box() {
 fn a_degenerate_folder_still_draws() {
     let mut folder = kit();
     folder.length_secs = 0.0;
-    assert_eq!(folder.columns_at(200.0), 1);
+    assert_eq!(folder.grid_at(200.0).columns, 1);
     let scene = folder.picture(0, KIT_GRID);
     assert!(!scene.commands.is_empty());
 }
