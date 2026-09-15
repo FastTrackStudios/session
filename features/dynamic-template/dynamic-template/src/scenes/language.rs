@@ -17,11 +17,16 @@ use facet::Facet;
 
 /// The vocabulary a track name or a folder is checked against.
 ///
-/// Hardcoded rather than read from `DynamicTemplateConfig`, the way the
-/// kit's five pieces (`table::PIECES`) and the growth orders in
-/// `track_schema` are: a small, closed, project-wide vocabulary rather
-/// than a per-instrument one a user's own config extends. Widening this
-/// to a configured list is a mechanical follow-up, not a redesign — see
+/// The decision behind `flow.vocals.language` says "EN, ES, PT, All
+/// from the config" — read here as *the* config: a small, closed,
+/// project-wide vocabulary, the same status the kit's five pieces
+/// (`table::PIECES`) and the growth orders in `track_schema` have,
+/// hardcoded rather than threaded through `DynamicTemplateConfig`
+/// (monarchy's `Config<ItemMetadata>`, built for a per-instrument
+/// pattern vocabulary a user's own config extends — not a project-wide
+/// three-value taxonomy dimension). Widening this to a value a user's
+/// config can actually override is a mechanical follow-up once there is
+/// a real second vocabulary asking for it, not a redesign — see
 /// `track_schema::configured_values_for_dimension` for the shape it
 /// would take.
 #[derive(Facet, Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
