@@ -61,12 +61,42 @@ fn build_variant_descriptors() -> Vec<FieldValueDescriptor> {
     ]
 }
 
+/// The sources of one electric channel (`flow.guitars.dimensions`): up to
+/// seven for a single take of a single channel — the DI, the pedalboard,
+/// two amps, and the 57 and 121 on each amp.
+///
+/// This list is *mixer* order, which is what organizing a folder sorts
+/// by, so Amp stays at the head where it has always been. The order a
+/// part **grows** through these is a different question, and
+/// `track_schema::growth_values_for_dimension` answers it.
 fn build_multi_mic_descriptors() -> Vec<FieldValueDescriptor> {
     vec![
         FieldValueDescriptor::builder("Amp")
             .patterns(["amp", "amplitube"])
             .build(),
         FieldValueDescriptor::builder("DI").patterns(["di"]).build(),
+        FieldValueDescriptor::builder("Pedalboard")
+            .patterns(["pedalboard", "pedal board", "pedals", "pedalbrd"])
+            .build(),
+        FieldValueDescriptor::builder("Amp 1")
+            .patterns(["amp 1", "amp1", "amp-1"])
+            .build(),
+        FieldValueDescriptor::builder("Amp 2")
+            .patterns(["amp 2", "amp2", "amp-2"])
+            .build(),
+        // The two mics on a cab, by model. Not "57" and "R121", which is
+        // what an engineer says out loud: a bare "57" also matches the
+        // mic named in a capture's file name ("EG2 (57)"), where it is
+        // equipment metadata rather than a source track of its own, and
+        // matching it reshaped a real multitrack fixture; and "R121"
+        // reads as the R channel, because "R" is a channel and the
+        // classifier checks channels first.
+        FieldValueDescriptor::builder("SM57")
+            .patterns(["sm57", "sm-57"])
+            .build(),
+        FieldValueDescriptor::builder("Royer")
+            .patterns(["royer", "r121", "r-121", "121"])
+            .build(),
     ]
 }
 
@@ -131,13 +161,16 @@ impl From<ElectricGuitar> for ItemMetadataGroup {
             .performer(Self::builder("Performer").build()) // Priority 1: Performer (uses global patterns)
             .field_value_descriptors(ItemMetadataField::Variant, variant_descriptors) // Priority 2: Variant/model
             .arrangement(guitar_arrangement) // Priority 3: Arrangement
-            .layers(Self::builder("Layers").build()) // Priority 4: Layers (uses global patterns)
+            .layers(Self::builder("Layers").build()) // Priority 4: Layers (global patterns)
             .field_default_value(ItemMetadataField::Layers, "Main") // Default layer name for items without a layer
             .channel(
                 Self::builder("Channel")
                     .patterns(["L", "C", "R", "Left", "Center", "Right"])
                     .build(),
             ) // Priority 5: Channel (order: L, C, R)
+            // L/R is the Channel dimension for guitars, not a Layer: a
+            // Channel shares a chain, a Layer has its own
+            // (`flow.guitars.dimensions`).
             // Note: We use field_value_descriptors for MultiMic, so we don't need the nested .multi_mic() group
             // The field_value_descriptors handle the MultiMic value extraction and matching
             .field_value_descriptors(ItemMetadataField::MultiMic, multi_mic_descriptors)

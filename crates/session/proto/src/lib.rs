@@ -49,6 +49,7 @@ pub mod setlist_actions;
 pub mod song;
 // Action contracts (`#[architect::actions]`), traits only — see
 // `track_manager` for the rationale; implementations live in `session`.
+pub mod guitar_grow;
 pub mod track_manager;
 pub mod track_structure;
 pub mod track_template_actions;

@@ -189,6 +189,120 @@ pub fn next_configured_value(
         .find(|name| !existing.contains(&normalize(name)))
 }
 
+/// The configured values of `dimension`, in the order a part *grows*
+/// through them (`flow.guitars.grow`).
+///
+/// Declaration order is mixer order — what organizing a folder sorts by —
+/// and two dimensions grow in a different order than they sit in:
+///
+/// - Channel: listed L, C, R, but a part doubles before it triples, so it
+///   grows L, R, C.
+/// - `MultiMic`: the amp sits at the top of a channel because it is the
+///   sound, but a part is *recorded* outward from the instrument — the DI
+///   first, then the pedalboard, then the amps.
+/// - Layer: the global list starts at DBL because that is the common
+///   suffix to *parse*, but every part starts as its Main and grows the
+///   other voices beside it.
+#[must_use]
+pub fn growth_values_for_dimension(dimension: TrackDimension, context: &[String]) -> Vec<String> {
+    let values = configured_values_for_dimension(dimension, context);
+    match dimension {
+        TrackDimension::Channel => channel_scaffold_order(values),
+        TrackDimension::MultiMic => multi_mic_growth_order(values),
+        TrackDimension::Layer => layer_growth_order(values),
+        _ => values,
+    }
+}
+
+/// A part is its Main first, then the voices beside it — an octave, then
+/// the doubles.
+fn layer_growth_order(configured: Vec<String>) -> Vec<String> {
+    preferred_first(configured, &["main", "harmony", "oct", "octave"])
+}
+
+/// A channel fills out from the instrument outward: the DI, the
+/// pedalboard, then the amps in turn, then whatever else the group
+/// configures. The bare `Amp` sits behind the numbered ones so a part
+/// that wants two of them can reach the second.
+fn multi_mic_growth_order(configured: Vec<String>) -> Vec<String> {
+    preferred_first(configured, &["di", "pedalboard", "amp 1", "amp 2"])
+}
+
+/// `configured` reordered so the values named in `preferred` come first,
+/// in that order, with everything else following in declaration order.
+/// A preferred value the group does not configure is simply absent.
+fn preferred_first(configured: Vec<String>, preferred: &[&str]) -> Vec<String> {
+    let mut values = Vec::new();
+    for name in preferred {
+        push_matching(&configured, &mut values, &[name]);
+    }
+    for value in configured {
+        if !values
+            .iter()
+            .any(|existing| normalize(existing) == normalize(&value))
+        {
+            values.push(value);
+        }
+    }
+    values
+}
+
+/// The next value of `dimension` a part should grow into, given the
+/// values it already carries. [`growth_values_for_dimension`] decides the
+/// order.
+pub fn next_growth_value(
+    dimension: TrackDimension,
+    context: &[String],
+    existing: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<String> {
+    let existing = existing
+        .into_iter()
+        .map(|name| normalize(name.as_ref()))
+        .collect::<HashSet<_>>();
+    growth_values_for_dimension(dimension, context)
+        .into_iter()
+        .find(|name| !existing.contains(&normalize(name)))
+}
+
+/// The configured value of `dimension` carried by `name` itself, if any.
+///
+/// A part track is usually named for its own arrangement — "GTR E
+/// Rhythm" — so growing a second arrangement beside it has to read
+/// "Rhythm" back off the container before it can name the folder that
+/// takes its place.
+#[must_use]
+pub fn dimension_value(
+    name: &str,
+    context: &[String],
+    dimension: TrackDimension,
+) -> Option<String> {
+    let config = default_config();
+    // The name is part of its own group context here: a top-level part
+    // track named "GTR E Rhythm" is the only thing saying it is an
+    // electric, and the electric's arrangement list is the one that has
+    // "Rhythm" in it.
+    let mut group_context = context.to_vec();
+    group_context.push(name.to_string());
+    let configured =
+        configured_values_for_dimension_with_config(dimension, &group_context, &config);
+    let input = contextual_name(name, context);
+    let item = Parser::new(&config).parse(input).ok()?;
+    let candidates: Vec<String> = match dimension {
+        TrackDimension::Channel => item.metadata.channel.into_iter().collect(),
+        TrackDimension::Layer => item.metadata.layers.into_iter().collect(),
+        TrackDimension::MultiMic => item.metadata.multi_mic.unwrap_or_default(),
+        TrackDimension::Performer => item.metadata.performer.into_iter().collect(),
+        TrackDimension::Arrangement => item.metadata.arrangement.into_iter().collect(),
+        TrackDimension::Other => Vec::new(),
+    };
+    candidates.into_iter().find_map(|candidate| {
+        configured
+            .iter()
+            .find(|value| normalize(value) == normalize(&candidate))
+            .cloned()
+    })
+}
+
 #[must_use]
 pub fn initial_values_for_dimension(
     dimension: TrackDimension,

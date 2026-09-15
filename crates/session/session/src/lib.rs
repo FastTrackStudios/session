@@ -63,6 +63,10 @@ pub mod keyflow;
 pub mod mix_phases;
 pub mod modes;
 pub mod playback;
+// Growing a guitar part over the daw facade. Native-only for the same
+// reason as `track_manager`: it drives `dynamic-template`.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod guitar_grow;
 // REAPER-side helper (routing-project mutation). Not needed by the browser
 // build; kept native-only.
 #[cfg(not(target_arch = "wasm32"))]
@@ -105,8 +109,9 @@ pub use setlist::service::demo::{stamp_demo_into_project, stamp_demo_setlist};
 /// `FTS_SESSION_TOGGLE_PLAYBACK` sat dead in REAPER's action list.
 ///
 /// Scope nesting is composed here, not declared by the leaf traits:
-/// `track_manager` names only itself ("Track Manager") and gets wrapped
-/// in a `SESSION`-scoped backend on the way in.
+/// `track_manager` names only itself ("Track Manager"), `guitar_grow`
+/// only "Guitar Grow", and both get wrapped in a `SESSION`-scoped
+/// backend on the way in.
 ///
 /// `daw` is the backend the handlers drive (`daw::reaper::Reaper` in
 /// production, `daw_standalone::sync::Standalone` in tests).
@@ -146,7 +151,13 @@ where
         // `SESSION_*` left all five of those keybindings resolving to
         // nothing.
         &architect::action::ScopedActionBackend::new(backend.clone(), "FTS_SESSION", "Session"),
-        std::sync::Arc::new(track_manager::TrackManager::new(daw)),
+        std::sync::Arc::new(track_manager::TrackManager::new(daw.clone())),
+    );
+    session_proto::guitar_grow::register_guitar_grow_actions(
+        // Same scope as the track manager: these are Session commands
+        // too, and the trait says nothing about being nested under one.
+        &architect::action::ScopedActionBackend::new(backend.clone(), "FTS_SESSION", "Session"),
+        std::sync::Arc::new(guitar_grow::GuitarGrow::new(daw)),
     );
 }
 

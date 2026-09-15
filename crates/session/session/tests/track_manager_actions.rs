@@ -89,10 +89,18 @@ fn multi_mic_then_channel_on_electric_guitar() {
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].guid, electric_gtr);
 
-    // A third Add Multi-Mic has nowhere to go: electric_guitar.rs only
-    // configures Amp/DI as multi-mic descriptors (no Pedalboard yet).
-    let err = tm.add_multi_mic().unwrap_err();
-    assert!(err.to_string().contains("configured multi-mic"));
+    // A third Add Multi-Mic keeps going down the electric's source list
+    // (Amp, DI, Pedalboard, Amp 1, Amp 2, SM57, Royer) — the seven
+    // sources of one channel, `flow.guitars.dimensions`.
+    tm.add_multi_mic().expect("third Add Multi-Mic");
+    let expected = TrackStructureBuilder::new()
+        .folder("Electric GTR")
+        .track("Amp")
+        .track("DI")
+        .track("Pedalboard")
+        .end()
+        .build();
+    assert_tracks_equal(&hierarchy_of(&daw), &expected).unwrap();
 
     // Select the Amp child and Add Channel -> Amp gains L/R children.
     let amp_guid = daw.find_track("Amp").unwrap().guid;
@@ -106,6 +114,7 @@ fn multi_mic_then_channel_on_electric_guitar() {
         .track("R")
         .end()
         .track("DI")
+        .track("Pedalboard")
         .end()
         .build();
     assert_tracks_equal(&hierarchy_of(&daw), &expected).unwrap();
