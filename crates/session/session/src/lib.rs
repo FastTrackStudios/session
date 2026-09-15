@@ -38,6 +38,7 @@ pub use session_proto::{offset_map, ruler_lanes, services, track_structure};
 // non-REAPER backends). See setlist::service::live_daw_sync (native-only —
 // the SynchronizationEngine is REAPER-linked).
 pub mod comping;
+pub mod hits;
 pub mod section_kinds;
 pub mod setlist;
 pub mod song;

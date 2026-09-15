@@ -148,7 +148,7 @@ impl Preview {
 
 #[cfg(test)]
 mod tests {
-    use daw_proto::peak::{MeterFrame, TrackLevels};
+    use daw_proto::peak::MeterFrame;
 
     use super::{GroupBy, LaneRole, Preview};
     use crate::folder_item::fold::Child;
