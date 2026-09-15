@@ -16,6 +16,7 @@ pub mod equipment;
 mod error;
 pub mod golden;
 pub mod golden_session;
+pub mod grouping;
 mod groups;
 pub mod icons;
 mod item_metadata;
