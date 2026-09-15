@@ -382,10 +382,22 @@ mod tests {
         let slugs: Vec<&str> = available.iter().map(|s| s.slug.as_str()).collect();
         assert_eq!(
             slugs,
-            ["drum-tracking", "drum-advanced", "drum-fx", "buses"],
-            "the mode's own scene and the recall-only ones"
+            [
+                "drum-tracking",
+                "drum-tracking-overview",
+                "drum-advanced",
+                "drum-fx",
+                "buses"
+            ],
+            "the mode's own scenes and the recall-only ones"
         );
-        assert_eq!(follow.recall(table(), 3), Some("drum-fx"));
+        // The overview is the *player* audience's default, and it is
+        // still on a number key here: audience decides which scene a
+        // mode opens, not which ones a window can reach. An engineer
+        // looking at what the drummer sees is a reasonable thing to
+        // want, and nothing about it is player-only.
+        assert_eq!(follow.recall(table(), 2), Some("drum-tracking-overview"));
+        assert_eq!(follow.recall(table(), 4), Some("drum-fx"));
         assert_eq!(follow.recall(table(), 9), None, "past the end clears it");
         assert_eq!(follow.recall(table(), 0), None, "and so does zero");
     }

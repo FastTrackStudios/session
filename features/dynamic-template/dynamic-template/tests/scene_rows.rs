@@ -139,3 +139,65 @@ fn tmp_write_fixture() {
     let path = fixtures_dir().join("scenes").join("drum-tracking.rows");
     std::fs::write(&path, rows_of("drum-tracking")).unwrap();
 }
+
+/// **Drum Tracking Overview**: the kit as the drummer reads it. One row
+/// per piece, collapsed and big enough to carry an arm and a monitor
+/// lamp, and **no mic rows at all** — at this zoom a mic is a line, and
+/// thirty lines under a kit is the picture the scene exists to remove.
+///
+/// r[verify flow.drums.tracking.overview]
+/// r[verify flow.drums.tracking.arm]
+#[test]
+fn the_tracking_overview_is_one_row_per_piece_and_no_mics() {
+    let rows = rows_of("drum-tracking-overview");
+    let named: Vec<&str> = rows
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .collect();
+
+    for piece in ["Kick", "Snare", "Toms", "Cymbals", "Rooms"] {
+        assert!(
+            named.contains(&piece),
+            "the drummer cannot see {piece}: {named:?}"
+        );
+    }
+    for mic in ["In", "Out", "Top", "Bottom", "Trig"] {
+        assert!(
+            !named.contains(&mic),
+            "a mic row ({mic}) reached the overview: {named:?}"
+        );
+    }
+}
+
+/// **Drum Editing**: the same fold as the docked stack, so what is
+/// selected in one is what is edited in the other — and the Process
+/// folder and the bus tree gone, because editing is about takes and a
+/// send has no hits in it.
+///
+/// r[verify flow.drums.editing.scene]
+#[test]
+fn drum_editing_folds_like_the_stack_and_hides_the_sends() {
+    let rows = rows_of("drum-editing");
+    let named: Vec<&str> = rows
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .collect();
+
+    for piece in ["Kick", "Snare", "Toms"] {
+        assert!(named.contains(&piece), "no {piece} row to edit: {named:?}");
+    }
+    for gone in ["Process", "MIX BUS"] {
+        assert!(
+            !named.contains(&gone),
+            "{gone} reached the edit scene: {named:?}"
+        );
+    }
+    assert_eq!(
+        rows_of("drum-editing")
+            .lines()
+            .filter(|l| l.split('\t').nth(1) == Some("In"))
+            .count(),
+        0,
+        "the mics should be folded into their piece"
+    );
+}

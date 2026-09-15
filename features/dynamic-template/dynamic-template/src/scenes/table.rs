@@ -149,6 +149,8 @@ fn per_piece(effect: Effect) -> Vec<Rule> {
 fn build() -> Vec<Scene> {
     vec![
         drum_tracking(),
+        drum_tracking_overview(),
+        drum_editing(),
         drum_mixing(),
         drum_overview(),
         drum_advanced(),
@@ -158,6 +160,123 @@ fn build() -> Vec<Scene> {
         lead_vocal(),
         lead_vocal_fx(),
     ]
+}
+
+/// **Drum Tracking Overview**: the kit as the drummer reads it, one
+/// strip per piece.
+///
+/// This is not the engineer's view with fewer rows. While a sound is
+/// being got, the engineer needs every mic; once tracking is a
+/// whole-band session, everyone else needs to know the kit is going in
+/// and nothing more. So each piece is one collapsed folder carrying its
+/// folder item — the summed waveform in the piece's colour — and a
+/// stereo pair is one strip, because OH is one capture of one thing.
+///
+/// It is the Record-mode default for the **player** audience, which is
+/// what puts it on the drummer's tablet without anyone choosing it.
+// r[impl flow.drums.tracking.overview]
+// r[impl flow.drums.tracking.arm]
+// r[impl flow.scenes.two-audiences]
+fn drum_tracking_overview() -> Scene {
+    let mut rules = vec![
+        // Everything inside a piece folds away: at this zoom a mic is a
+        // line, and thirty lines under a kit is the picture this scene
+        // exists to remove.
+        Rule::new(
+            Selector {
+                role: Role::Leaf,
+                ..under(&KIT)
+            },
+            Effect::hidden(),
+        ),
+    ];
+    // Each piece: one row, collapsed, at a size worth reading — the arm
+    // and the monitor lamp sit on it, which is the half of
+    // `flow.drums.tracking.arm` this scene owns.
+    for piece in PIECES {
+        rules.push(Rule::new(
+            Selector {
+                role: Role::Bus,
+                ..under(&[KIT[0], KIT[1], piece])
+            },
+            Effect::at(Size::Working).folded(Fold::Collapsed),
+        ));
+    }
+    rules.push(Rule::new(under(&["process"]), Effect::hidden()));
+    rules.push(hide_the_bus_tree());
+    Scene {
+        name: "Drum Tracking Overview".to_owned(),
+        slug: "drum-tracking-overview".to_owned(),
+        short: "Kit".to_owned(),
+        instrument: "drums".to_owned(),
+        modes: vec!["record".to_owned()],
+        audience: Audience::Player,
+        // The drummer reads the kit, not the room's personnel.
+        group_by: GroupBy::Arrangement,
+        spec: vec![
+            "flow.drums.tracking.overview".to_owned(),
+            "flow.drums.tracking.arm".to_owned(),
+            "flow.scenes.two-audiences".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
+        default: Effect::at(Size::Compact),
+        rules,
+    }
+}
+
+/// **Drum Editing**: one row per source piece, the mics folded into it.
+///
+/// The arrangement's counterpart of the docked stack's lanes, and
+/// deliberately the same fold: what is selected in one is what is
+/// edited in the other, so an edit made in the stack lands where the
+/// arrangement says it should. The Process folder and the bus tree are
+/// hidden outright — editing is about the takes, and a send has no hits
+/// in it.
+///
+/// This is what Edit mode shows for the kit.
+// r[impl flow.drums.editing.scene]
+// r[impl flow.scenes.follow-mode]
+fn drum_editing() -> Scene {
+    let mut rules = vec![
+        // The mics fold into their piece: an edit to a piece is an edit
+        // to every mic of it at once, so the mic rows are noise here.
+        Rule::new(
+            Selector {
+                role: Role::Leaf,
+                ..under(&KIT)
+            },
+            Effect::hidden(),
+        ),
+    ];
+    for piece in PIECES {
+        rules.push(Rule::new(
+            Selector {
+                role: Role::Bus,
+                ..under(&[KIT[0], KIT[1], piece])
+            },
+            Effect::at(Size::Working).folded(Fold::Collapsed),
+        ));
+    }
+    rules.extend([
+        Rule::new(under(&["process"]), Effect::hidden()),
+        hide_the_bus_tree(),
+    ]);
+    Scene {
+        name: "Drum Editing".to_owned(),
+        slug: "drum-editing".to_owned(),
+        short: "Edit".to_owned(),
+        instrument: "drums".to_owned(),
+        modes: vec!["edit".to_owned()],
+        audience: Audience::Engineer,
+        group_by: GroupBy::Arrangement,
+        spec: vec![
+            "flow.drums.editing.scene".to_owned(),
+            "flow.scenes.follow-mode".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
+        default: Effect::at(Size::Compact),
+        rules,
+    }
 }
 
 /// Tracking: the core microphones you are getting a sound on, and
@@ -651,10 +770,12 @@ fn lead_vocal_fx() -> Scene {
 mod tests {
     use super::*;
 
-    /// Nine scenes, every slug distinct and every slug reachable.
+    /// Every slug distinct and every slug reachable. The count is
+    /// asserted so that adding a scene is a deliberate edit here rather
+    /// than something that slips in.
     #[test]
     fn every_scene_is_reachable_by_its_slug() {
-        assert_eq!(scenes().len(), 9);
+        assert_eq!(scenes().len(), 11);
         for s in scenes() {
             assert_eq!(
                 scene(&s.slug).map(|f| f.slug.as_str()),
@@ -687,6 +808,13 @@ mod tests {
             claimed,
             vec![
                 ("drum-tracking", "drums", vec!["record"], Audience::Engineer),
+                (
+                    "drum-tracking-overview",
+                    "drums",
+                    vec!["record"],
+                    Audience::Player,
+                ),
+                ("drum-editing", "drums", vec!["edit"], Audience::Engineer),
                 ("drum-mixing", "drums", vec!["mix"], Audience::Engineer),
                 ("drum-overview", "drums", vec!["mix"], Audience::Player),
                 ("drum-advanced", "drums", vec![], Audience::Engineer),
