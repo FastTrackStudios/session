@@ -22,10 +22,12 @@
 pub mod gangs;
 pub mod slots;
 pub mod vca;
+pub mod watch;
 
 pub use gangs::{diff, gangs, Gang, GangKey};
 pub use slots::{assign, survives_save, Purpose};
 pub use vca::{leads, VcaLead};
+pub use watch::{follow_arm, Followed};
 
 #[cfg(test)]
 mod tests;
