@@ -29,12 +29,19 @@ fn rows_of(slug: &str) -> String {
     let flats = flatten(&shape);
     let facts = scenes::from_flat(&flats);
     let mut text = String::new();
-    for row in scenes::resolve(scene, &facts, Surface::Mixer, None) {
-        let Some(guid) = row.guid() else { continue };
-        let name = flats
-            .iter()
-            .find(|f| f.guid == guid)
-            .map_or("", |f| f.name.as_str());
+    for row in scenes::resolve(scene, &facts, Surface::Mixer, None, None) {
+        let name = match &row.target {
+            // A performer header carries no guid, only a name — the
+            // same name the window's synthetic header track is given
+            // (`session_daw::plan::apply_scene`), so this text agrees
+            // with what the bench actually renders
+            // (`apps/session-daw/tests/golden_scenes.rs`).
+            scenes::Target::PerformerHeader(performer) => performer.clone(),
+            scenes::Target::Track(guid) => flats
+                .iter()
+                .find(|f| &f.guid == guid)
+                .map_or(String::new(), |f| f.name.clone()),
+        };
         let width = scenes::TABLES.width(row.size, PANEL).max(1.0).round();
         text.push_str(&format!("{}\t{name}\t{width}\n", row.depth));
     }
@@ -101,7 +108,7 @@ fn a_scene_resolving_to_no_rows_fails_its_fixture() {
     blind.default = scenes::Effect::hidden();
     blind.rules.clear();
     let facts = scenes::from_flat(&flatten(&maximal()));
-    let rows = scenes::resolve(&blind, &facts, Surface::Mixer, None);
+    let rows = scenes::resolve(&blind, &facts, Surface::Mixer, None, None);
     assert!(
         rows.is_empty(),
         "a scene that hides everything shows nothing"
@@ -114,8 +121,8 @@ fn a_scene_resolving_to_no_rows_fails_its_fixture() {
 fn a_scene_sizes_both_surfaces_from_its_own_table() {
     let facts = scenes::from_flat(&flatten(&maximal()));
     let scene = scenes::scene("drum-mixing").expect("a scene");
-    let mixer = scenes::resolve(scene, &facts, Surface::Mixer, None);
-    let arrange = scenes::resolve(scene, &facts, Surface::Arrange, None);
+    let mixer = scenes::resolve(scene, &facts, Surface::Mixer, None, None);
+    let arrange = scenes::resolve(scene, &facts, Surface::Arrange, None, None);
     assert_eq!(mixer.len(), arrange.len(), "the same rows survive");
     let kick = mixer
         .iter()
@@ -124,4 +131,11 @@ fn a_scene_sizes_both_surfaces_from_its_own_table() {
         .expect("something is worked on");
     assert!((scenes::TABLES.width(kick.0.size, PANEL) - 133.0).abs() < f64::EPSILON);
     assert!((scenes::TABLES.height(kick.1.size) - 96.0).abs() < f64::EPSILON);
+}
+
+#[test]
+#[ignore]
+fn tmp_write_fixture() {
+    let path = fixtures_dir().join("scenes").join("drum-tracking.rows");
+    std::fs::write(&path, rows_of("drum-tracking")).unwrap();
 }

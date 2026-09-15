@@ -103,17 +103,33 @@ pub fn apply_scene(
         settings,
         extent,
     } = at;
-    let facts = scenes::from_tracks(tracks, &kinds.by_guid);
-    let rows = scenes::resolve(scene, &facts, surface, mode);
+    // Cue-send routing is not wired into this window yet (#55/#61):
+    // every track falls back to its Performer dimension alone.
+    let facts = scenes::from_tracks(tracks, &kinds.by_guid, &HashMap::new());
+    let rows = scenes::resolve(scene, &facts, surface, mode, None);
     let by_guid: HashMap<&str, &(Track, u32)> = tracks
         .iter()
         .map(|row| (row.0.guid.as_str(), row))
         .collect();
     rows.iter()
         .filter_map(|row| {
-            let guid = row.guid()?;
-            let (track, _) = by_guid.get(guid)?;
-            let mut track = (*track).clone();
+            let mut track = match &row.target {
+                scenes::Target::Track(guid) => {
+                    let (track, _) = by_guid.get(guid.as_str())?;
+                    (*track).clone()
+                }
+                // A performer header is a row of the view with no track
+                // behind it (`flow.scenes.performer-order`): a
+                // synthetic folder row, named for the performer, so the
+                // window has something to draw. It never reaches the
+                // REAPER applier, which walks its own resolve of the
+                // same scene and matches on `Target::Track` alone.
+                scenes::Target::PerformerHeader(name) => {
+                    let mut header = Track::new(format!("performer:{name}"), 0, name.clone());
+                    header.is_folder = true;
+                    header
+                }
+            };
             match surface {
                 Surface::Mixer => {
                     track.width = Some(pixels(mixer_width(row.size, settings, extent)));
@@ -140,8 +156,8 @@ pub fn collapsed_by(
     scene: &Scene,
     mode: Option<&str>,
 ) -> Vec<String> {
-    let facts = scenes::from_tracks(tracks, &kinds.by_guid);
-    scenes::resolve(scene, &facts, Surface::Mixer, mode)
+    let facts = scenes::from_tracks(tracks, &kinds.by_guid, &HashMap::new());
+    scenes::resolve(scene, &facts, Surface::Mixer, mode, None)
         .iter()
         .filter(|row| row.fold == Fold::Collapsed)
         .filter_map(|row| row.guid())
@@ -162,7 +178,7 @@ pub fn collapsed_by(
 /// facts.
 #[must_use]
 pub fn instrument_of(tracks: &[(Track, u32)], kinds: &Kinds, guid: &str) -> Option<String> {
-    let facts = scenes::from_tracks(tracks, &kinds.by_guid);
+    let facts = scenes::from_tracks(tracks, &kinds.by_guid, &HashMap::new());
     scenes::follow::instrument_of(&facts, guid)
 }
 

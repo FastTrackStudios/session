@@ -720,8 +720,13 @@ mod tests {
     fn every_scene_collapses_the_guide_folder() {
         let facts = with_the_guide();
         for scene in scenes() {
-            let rows =
-                crate::scenes::resolve(scene, &facts, crate::scenes::Surface::Mixer, Some("mix"));
+            let rows = crate::scenes::resolve(
+                scene,
+                &facts,
+                crate::scenes::Surface::Mixer,
+                Some("mix"),
+                None,
+            );
             let guide: Vec<&str> = rows
                 .iter()
                 .filter_map(crate::scenes::Row::guid)
@@ -748,6 +753,7 @@ mod tests {
                 &facts,
                 crate::scenes::Surface::Mixer,
                 Some(mode),
+                None,
             )
             .iter()
             .filter_map(crate::scenes::Row::guid)

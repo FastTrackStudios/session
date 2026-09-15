@@ -387,12 +387,14 @@ fn live_taxonomy(rows: &[(daw_proto::Track, u32)]) -> HashMap<String, TrackExt> 
 /// `FTS_VISIBILITY_MANAGER_MODE_<SLUG>` actions on a mode switch.
 // r[impl flow.scenes.follow-mode]
 fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
-    use scenes::{follow, resolve, Audience, Surface, Target};
+    use scenes::{follow, resolve, Audience, Surface};
 
     let table = scenes::scenes();
     let rows = live_rows();
     let taxonomy = live_taxonomy(&rows);
-    let facts = scenes::from_tracks(&rows, &taxonomy);
+    // Cue-send routing is not read live yet (#55/#61): every track
+    // falls back to its Performer dimension alone until it is.
+    let facts = scenes::from_tracks(&rows, &taxonomy, &HashMap::new());
     // The instrument the session is about, with no window to ask: the
     // selected track's, else the default.
     let selected = rows
@@ -409,18 +411,13 @@ fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
         return Ok(());
     };
 
-    let arrange = resolve(scene, &facts, Surface::Arrange, Some(slug));
-    let mixer = resolve(scene, &facts, Surface::Mixer, Some(slug));
-    let shown_in = |rows: &[scenes::Row]| -> HashSet<String> {
-        rows.iter()
-            .filter_map(|row| match &row.target {
-                Target::Track(guid) => Some(guid.clone()),
-                Target::PerformerHeader(_) => None,
-            })
-            .collect()
-    };
-    let in_arrange = shown_in(&arrange);
-    let in_mixer = shown_in(&mixer);
+    let arrange = resolve(scene, &facts, Surface::Arrange, Some(slug), None);
+    let mixer = resolve(scene, &facts, Surface::Mixer, Some(slug), None);
+    let Writes {
+        in_arrange,
+        in_mixer,
+        heights,
+    } = writes_for(&arrange, &mixer);
 
     for (track, _) in &rows {
         set_visibility_on_main_thread(
@@ -433,21 +430,18 @@ fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
     // And the size, from the same table the window reads: a class
     // becomes a number in exactly one place, so a row that is
     // `Working` is the same height here and there.
-    let mut folds = 0usize;
-    for row in &arrange {
-        let Target::Track(guid) = &row.target else {
-            continue;
-        };
-        set_track_height(guid, scenes::TABLES.height_px(row.size))?;
-        // Folder-collapse (arrange `I_FOLDERCOMPACT` + mixer `BUSCOMP`)
-        // is resolved here but its application is pending
-        // `daw_reaper::track::set_folder_compact_on_main_thread`, which
-        // lives in the local daw checkout and is not yet published to
-        // the git dep this builds against. Re-enable once it lands.
-        if row.fold.compact().is_some_and(|compact| compact != 0) {
-            folds = folds.saturating_add(1);
-        }
+    for (guid, size) in &heights {
+        set_track_height(guid, scenes::TABLES.height_px(*size))?;
     }
+    // Folder-collapse (arrange `I_FOLDERCOMPACT` + mixer `BUSCOMP`) is
+    // resolved here but its application is pending
+    // `daw_reaper::track::set_folder_compact_on_main_thread`, which
+    // lives in the local daw checkout and is not yet published to the
+    // git dep this builds against. Re-enable once it lands.
+    let folds = arrange
+        .iter()
+        .filter(|row| row.fold.compact().is_some_and(|compact| compact != 0))
+        .count();
 
     tracing::info!(
         scene.mode = slug,
@@ -459,6 +453,97 @@ fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
         "scene applied"
     );
     Ok(())
+}
+
+/// The visibility and height writes a resolved scene comes to.
+///
+/// Pulled out of [`apply_mode_visibility`] as a pure function of the row
+/// lists so the claim in that function's own doc comment — "header rows
+/// are skipped: a performer header is a row of the view and there is no
+/// track to apply it to" — is a test rather than a claim nobody checks.
+///
+/// r[verify flow.scenes.performer-order]
+struct Writes {
+    in_arrange: HashSet<String>,
+    in_mixer: HashSet<String>,
+    /// Every track row's height write, arrangement side. A performer
+    /// header carries no guid, so it carries no entry here either.
+    heights: Vec<(String, scenes::Size)>,
+}
+
+fn writes_for(arrange: &[scenes::Row], mixer: &[scenes::Row]) -> Writes {
+    use scenes::Target;
+
+    let track_guids = |rows: &[scenes::Row]| -> HashSet<String> {
+        rows.iter()
+            .filter_map(|row| match &row.target {
+                Target::Track(guid) => Some(guid.clone()),
+                Target::PerformerHeader(_) => None,
+            })
+            .collect()
+    };
+    let heights = arrange
+        .iter()
+        .filter_map(|row| match &row.target {
+            Target::Track(guid) => Some((guid.clone(), row.size)),
+            Target::PerformerHeader(_) => None,
+        })
+        .collect();
+    Writes {
+        in_arrange: track_guids(arrange),
+        in_mixer: track_guids(mixer),
+        heights,
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::writes_for;
+    use crate::golden_session::Kind;
+    use crate::scenes::{self, Fact, GroupBy, Segment};
+
+    /// A performer-grouped scene's row list, with a header among the
+    /// real tracks — exactly what `flow.scenes.performer-order` regroups
+    /// a tracking scene into.
+    fn rows_with_a_header() -> Vec<scenes::Row> {
+        let group = Segment::named("Electric").of(Kind::Group);
+        let facts = vec![
+            Fact::folder("electric", "Electric", 0, 0)
+                .of(Kind::Group)
+                .at(vec![group.clone()]),
+            {
+                let mut f = Fact::leaf("rhythm", "Rhythm", 1, 1)
+                    .of(Kind::Part)
+                    .at(vec![group]);
+                f.performer = Some("Cody".to_owned());
+                f
+            },
+        ];
+        let mut scene = scenes::scene("drum-tracking")
+            .expect("the built-in scene")
+            .clone();
+        scene.group_by = GroupBy::Performer;
+        scenes::resolve(&scene, &facts, scenes::Surface::Arrange, None, None)
+    }
+
+    /// The REAPER applier's own claim, checked: a performer header
+    /// produces no visibility write and no height write, because it has
+    /// no guid to write one to.
+    #[test]
+    fn a_performer_header_produces_no_track_writes() {
+        let rows = rows_with_a_header();
+        assert!(
+            rows.iter().any(|r| r.guid().is_none()),
+            "the fixture has a header to prove the point with"
+        );
+        let writes = writes_for(&rows, &rows);
+        let header_count = rows.iter().filter(|r| r.guid().is_none()).count();
+        let track_count = rows.len() - header_count;
+        assert_eq!(writes.in_arrange.len(), track_count);
+        assert_eq!(writes.in_mixer.len(), track_count);
+        assert_eq!(writes.heights.len(), track_count);
+        assert!(header_count > 0, "nothing to prove without a header");
+    }
 }
 
 fn set_track_height(guid: &str, height_pixels: u32) -> eyre::Result<()> {

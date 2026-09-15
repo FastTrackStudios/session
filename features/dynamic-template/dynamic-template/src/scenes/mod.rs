@@ -36,7 +36,7 @@ pub mod types;
 pub use adapt::{from_flat, from_tracks, is_pair_half};
 pub use facts::{Fact, Segment};
 pub use follow::{Conflict, Follow};
-pub use resolve::{resolve, Row, Target};
+pub use resolve::{resolve, PerformerOrder, Row, Target, UNASSIGNED};
 pub use selector::{Rank, Role, Selector};
 pub use surface::{Focus, SurfaceTables, TABLES};
 pub use table::{scene, scenes};
