@@ -14,6 +14,7 @@ use super::language::{classify_language, Language};
 use crate::golden_session::kind::TrackExt;
 use crate::golden_session::rpp::Flat;
 use crate::golden_session::Kind;
+use crate::track_schema::{self, TrackDimension};
 
 /// One half of a stereo pair, which the engine always rails.
 ///
@@ -67,10 +68,18 @@ pub fn from_flat(flats: &[Flat]) -> Vec<Fact> {
 /// the project file, keyed by GUID. A track it says nothing about is a
 /// track the user added: it has no kind and no template group, which is
 /// exactly when a selector's `name` is the right escape hatch.
+///
+/// `sends` is a source track's cue send, by GUID of the destination
+/// track it sends to — how a live caller (a REAPER routing read, a
+/// standalone in-memory model, or a hand-built test) tells this adapter
+/// what `flow.scenes.performer-identity` calls "the send". An empty map
+/// is a session apply has not wired cue sends into yet (#55/#61): every
+/// track then falls back to its Performer dimension alone.
 #[must_use]
 pub fn from_tracks<S: std::hash::BuildHasher>(
     rows: &[(Track, u32)],
     ext: &HashMap<String, TrackExt, S>,
+    sends: &HashMap<String, String, S>,
 ) -> Vec<Fact> {
     let mut walk = Walk::default();
     rows.iter()
@@ -80,7 +89,7 @@ pub fn from_tracks<S: std::hash::BuildHasher>(
             let template: Option<Vec<String>> = known
                 .and_then(|e| e.group.as_deref())
                 .map(|g| g.split('/').map(str::to_owned).collect());
-            walk.step(
+            let mut fact = walk.step(
                 index,
                 &Node {
                     guid: &track.guid,
@@ -90,9 +99,62 @@ pub fn from_tracks<S: std::hash::BuildHasher>(
                     kind: known.and_then(|e| e.kind),
                     template: template.as_deref(),
                 },
-            )
+            );
+            // A folder's own name is a structural label, not a
+            // performer assignment — "Toms" (the piece) reads as the
+            // performer "Tom" under the same name parser that reads a
+            // source track's own name, which is exactly the false
+            // identity this guards against. Only a track that is
+            // actually a signal — a leaf — can belong to someone.
+            if !track.is_folder {
+                fact.performer = performer_of(&track.guid, &track.name, ext, sends);
+            }
+            fact
         })
         .collect()
+}
+
+/// Which performer a track belongs to (`flow.scenes.performer-identity`,
+/// decision #31): its own Performer dimension when its name carries one,
+/// else the performer whose headphone bus it cue-sends to, else
+/// unassigned.
+///
+/// r[impl flow.scenes.performer-order]
+fn performer_of<S: std::hash::BuildHasher>(
+    guid: &str,
+    name: &str,
+    ext: &HashMap<String, TrackExt, S>,
+    sends: &HashMap<String, String, S>,
+) -> Option<String> {
+    if let Some(named) = track_schema::dimension_value(name, &[], TrackDimension::Performer) {
+        return Some(named);
+    }
+    let dest_guid = sends.get(guid)?;
+    let dest = ext.get(dest_guid)?;
+    if dest.kind != Some(Kind::Headphones) {
+        return None;
+    }
+    performer_from_headphone_bus_name(&dest.name)
+}
+
+/// The performer a headphone bus's name names.
+///
+/// The template's own convention (`groups/headphones.rs`): `HP
+/// <performer>`. A bus for a group (`HP Choir`) names the group rather
+/// than one performer, and is returned the same way — identity is a
+/// name, whichever it turns out to be.
+#[must_use]
+fn performer_from_headphone_bus_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    let prefix = trimmed.get(..2)?;
+    if !prefix.eq_ignore_ascii_case("hp") {
+        return None;
+    }
+    let rest = trimmed
+        .get(2..)?
+        .trim_start_matches([' ', '-', '_', ':'])
+        .trim();
+    (!rest.is_empty()).then(|| rest.to_owned())
 }
 
 /// One track as the walk sees it, before its path is worked out.
@@ -330,5 +392,84 @@ mod tests {
                 assert_eq!(fact.language, None, "{name} should carry no language");
             }
         }
+    }
+
+    fn track(guid: &str, name: &str, is_folder: bool) -> Track {
+        let mut track = Track::new(guid.to_owned(), 0, name.to_owned());
+        track.is_folder = is_folder;
+        track
+    }
+
+    /// `flow.scenes.performer-identity`: a track named for its own
+    /// performer carries it, name alone, no send needed.
+    ///
+    /// r[verify flow.scenes.performer-order]
+    #[test]
+    fn a_track_named_for_its_performer_carries_it() {
+        let rows = vec![(track("gtr", "GTR E Rhythm Cody", false), 0)];
+        let facts = from_tracks(&rows, &HashMap::new(), &HashMap::new());
+        assert_eq!(facts[0].performer.as_deref(), Some("Cody"));
+    }
+
+    /// `flow.scenes.performer-identity` / decision #31: a track with no
+    /// Performer dimension in its own name, but a cue send to `HP
+    /// Cody`, groups under Cody — the send is the assignment.
+    ///
+    /// r[verify flow.scenes.performer-order]
+    #[test]
+    fn a_cue_send_to_a_headphone_bus_names_the_performer() {
+        let rows = vec![
+            (track("kick-in", "In", false), 0),
+            (track("hp-cody", "HP Cody", true), 0),
+        ];
+        let mut ext = HashMap::new();
+        ext.insert(
+            "hp-cody".to_owned(),
+            TrackExt {
+                guid: "hp-cody".to_owned(),
+                name: "HP Cody".to_owned(),
+                kind: Some(Kind::Headphones),
+                group: None,
+            },
+        );
+        let mut sends = HashMap::new();
+        sends.insert("kick-in".to_owned(), "hp-cody".to_owned());
+        let facts = from_tracks(&rows, &ext, &sends);
+        let kick = facts.iter().find(|f| f.guid == "kick-in").expect("a mic");
+        assert_eq!(kick.performer.as_deref(), Some("Cody"));
+    }
+
+    /// Neither a name nor a send: unassigned, not a guess.
+    ///
+    /// r[verify flow.scenes.performer-order]
+    #[test]
+    fn a_track_with_neither_is_unassigned() {
+        let rows = vec![(track("in", "In", false), 0)];
+        let facts = from_tracks(&rows, &HashMap::new(), &HashMap::new());
+        assert_eq!(facts[0].performer, None);
+    }
+
+    /// A send to a track that is not a headphone bus names nobody — the
+    /// convention is the kind, not just "some other track".
+    #[test]
+    fn a_send_to_a_non_headphone_track_is_not_an_identity() {
+        let rows = vec![
+            (track("in", "In", false), 0),
+            (track("verb", "Verb", true), 0),
+        ];
+        let mut ext = HashMap::new();
+        ext.insert(
+            "verb".to_owned(),
+            TrackExt {
+                guid: "verb".to_owned(),
+                name: "Verb".to_owned(),
+                kind: Some(Kind::Verb),
+                group: None,
+            },
+        );
+        let mut sends = HashMap::new();
+        sends.insert("in".to_owned(), "verb".to_owned());
+        let facts = from_tracks(&rows, &ext, &sends);
+        assert_eq!(facts[0].performer, None);
     }
 }

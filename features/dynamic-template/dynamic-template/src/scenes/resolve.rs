@@ -6,10 +6,13 @@
 //! resolve — which is the whole reason the row list is the output rather
 //! than a pile of per-surface booleans.
 
+use std::collections::HashMap;
+
 use super::facts::Fact;
 use super::language::Language;
 use super::selector::{Rank, Role, Selector};
-use super::types::{Fold, Resolved, Scene, Size, Surface};
+use super::types::{Fold, GroupBy, Resolved, Scene, Size, Surface};
+use crate::golden_session::Kind;
 
 /// What a row is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +52,21 @@ impl Row {
     }
 }
 
+/// The performer group a track with neither dimension nor send falls
+/// into (`flow.scenes.performer-identity`, decision #31): shown, never
+/// dropped, so the view says what the Patch List says.
+pub const UNASSIGNED: &str = "Unassigned";
+
+/// How performer header rows are ordered under an instrument folder.
+///
+/// Compares two performer names (`UNASSIGNED` for a track with neither
+/// dimension nor send). `None` — the only ordering the engine can do
+/// until the patch list (#61) supplies one — orders by first appearance
+/// in the track list instead, which [`resolve`] does without ever
+/// calling a comparator. The patch list will pass `Some(&cmp)` ranking
+/// by its own performer order.
+pub type PerformerOrder<'a> = dyn Fn(&str, &str) -> std::cmp::Ordering + 'a;
+
 /// Resolve a scene against a session, for one surface.
 ///
 /// Rules are evaluated in order and the **last** one that matches a
@@ -58,6 +76,11 @@ impl Row {
 ///
 /// Facts must arrive in project order — the row list is in that order,
 /// and the fold walk depends on it.
+///
+/// `order` is `flow.scenes.performer-order`'s injected comparator: read
+/// only when `scene.group_by` is [`GroupBy::Performer`], and even then
+/// only to break the tie between the performers found — the project's
+/// own track order (`facts`) is never touched.
 ///
 /// # Engine invariants
 ///
@@ -84,12 +107,25 @@ pub fn resolve(
     surface: Surface,
     mode: Option<&str>,
     active_language: Option<Language>,
+    order: Option<&PerformerOrder<'_>>,
 ) -> Vec<Row> {
     let effects = effects_for(scene, facts, surface, mode, active_language);
+    let rows = walk(facts, &effects);
+    if scene.group_by == GroupBy::Performer {
+        group_by_performer(facts, &rows, order)
+    } else {
+        rows
+    }
+}
+
+/// The plain walk: every fact that survives its fold, in project order,
+/// each a `Target::Track` row. `resolve` regroups this by performer
+/// afterwards when the scene asks for it.
+fn walk(facts: &[Fact], effects: &[Resolved]) -> Vec<Row> {
     let mut out: Vec<Row> = Vec::with_capacity(facts.len());
     // The depth of the shallowest folded folder we are inside, if any.
     let mut folded: Option<u32> = None;
-    for (fact, effect) in facts.iter().zip(&effects) {
+    for (fact, effect) in facts.iter().zip(effects) {
         if let Some(at) = folded {
             if fact.depth > at {
                 continue;
@@ -118,6 +154,103 @@ pub fn resolve(
             size,
             fold: effect.fold,
         });
+    }
+    out
+}
+
+/// `flow.scenes.performer-order`: under each visible instrument folder
+/// (`Kind::Group` — `Drum Kit`, `Electric`, …), replace its direct
+/// children with one `PerformerHeader` row per performer found among
+/// them, that performer's children nested beneath, each shifted one
+/// level deeper to make room for the header. The folder's own row, and
+/// everything outside it, is untouched: this is a view over `rows`, not
+/// a second pass over the project.
+///
+/// A child's performer is the first one found among its own subtree —
+/// every leaf a rig sends is one performer's, so any leaf will do. A
+/// child with none is `UNASSIGNED`, grouped and shown rather than
+/// dropped, exactly as the Patch List shows an unassigned track rather
+/// than hiding it.
+///
+/// r[impl flow.scenes.performer-order]
+fn group_by_performer(
+    facts: &[Fact],
+    rows: &[Row],
+    order: Option<&PerformerOrder<'_>>,
+) -> Vec<Row> {
+    let by_guid: HashMap<&str, &Fact> = facts.iter().map(|f| (f.guid.as_str(), f)).collect();
+    let is_instrument_folder = |row: &Row| -> bool {
+        row.guid()
+            .and_then(|g| by_guid.get(g))
+            .is_some_and(|f| f.is_folder && f.kind == Some(Kind::Group))
+    };
+    let performer_of_block = |block: &[Row]| -> Option<String> {
+        block.iter().find_map(|row| {
+            row.guid()
+                .and_then(|g| by_guid.get(g))
+                .and_then(|f| f.performer.clone())
+        })
+    };
+
+    let mut out = Vec::with_capacity(rows.len());
+    let mut i = 0_usize;
+    while let Some(row) = rows.get(i) {
+        if !is_instrument_folder(row) {
+            out.push(row.clone());
+            i = i.saturating_add(1);
+            continue;
+        }
+        let folder_depth = row.depth;
+        out.push(row.clone());
+        i = i.saturating_add(1);
+
+        // The folder's direct children, each with its whole subtree, as
+        // contiguous blocks — a block is everything from one child down
+        // to (not including) the next row at the child's own depth.
+        let mut blocks: Vec<(Option<String>, Vec<Row>)> = Vec::new();
+        while rows.get(i).is_some_and(|r| r.depth > folder_depth) {
+            let child_depth = rows.get(i).map_or(folder_depth, |r| r.depth);
+            let start = i;
+            i = i.saturating_add(1);
+            while rows.get(i).is_some_and(|r| r.depth > child_depth) {
+                i = i.saturating_add(1);
+            }
+            let block: Vec<Row> = rows.get(start..i).map_or_else(Vec::new, <[Row]>::to_vec);
+            let performer = performer_of_block(&block);
+            blocks.push((performer, block));
+        }
+        // Group the blocks by performer, keeping the order their first
+        // block appeared in — first appearance, until #61's patch list
+        // supplies `order`.
+        let mut seen: Vec<String> = Vec::new();
+        let mut groups: HashMap<String, Vec<Vec<Row>>> = HashMap::new();
+        for (performer, block) in blocks {
+            let key = performer.unwrap_or_else(|| UNASSIGNED.to_owned());
+            if !seen.contains(&key) {
+                seen.push(key.clone());
+            }
+            groups.entry(key).or_default().push(block);
+        }
+        if let Some(cmp) = order {
+            seen.sort_by(|a, b| cmp(a, b));
+        }
+        let header_depth = folder_depth.saturating_add(1);
+        for key in seen {
+            out.push(Row {
+                target: Target::PerformerHeader(key.clone()),
+                depth: header_depth,
+                size: Size::Compact,
+                fold: Fold::Open,
+            });
+            for block in groups.remove(&key).unwrap_or_default() {
+                for row in block {
+                    out.push(Row {
+                        depth: row.depth.saturating_add(1),
+                        ..row
+                    });
+                }
+            }
+        }
     }
     out
 }
@@ -231,7 +364,6 @@ fn topmost_per_instrument(base: &[usize], facts: &[Fact]) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::golden_session::Kind;
     use crate::scenes::facts::Segment;
     use crate::scenes::types::{Audience, Effect, GroupBy, Rule};
 
@@ -294,7 +426,7 @@ mod tests {
                 ),
             ],
         );
-        let rows = resolve(&scene, &kit(), Surface::Mixer, None, None);
+        let rows = resolve(&scene, &kit(), Surface::Mixer, None, None, None);
         let size = |guid: &str| {
             rows.iter()
                 .find(|r| r.guid() == Some(guid))
@@ -319,7 +451,7 @@ mod tests {
                 Effect::at(Size::Working).folded(Fold::Collapsed),
             )],
         );
-        let rows = resolve(&collapsed, &kit(), Surface::Mixer, None, None);
+        let rows = resolve(&collapsed, &kit(), Surface::Mixer, None, None, None);
         let guids: Vec<&str> = rows.iter().filter_map(Row::guid).collect();
         assert_eq!(guids, ["kit", "kick"], "the mics went with the fold");
 
@@ -333,7 +465,7 @@ mod tests {
                 Effect::hidden(),
             )],
         );
-        let rows = resolve(&hidden, &kit(), Surface::Mixer, None, None);
+        let rows = resolve(&hidden, &kit(), Surface::Mixer, None, None, None);
         let guids: Vec<&str> = rows.iter().filter_map(Row::guid).collect();
         assert_eq!(guids, ["kit"], "the piece went too");
     }
@@ -347,7 +479,7 @@ mod tests {
             fact.pair_half = true;
         }
         let wide = scene(Effect::at(Size::Focus), Vec::new());
-        let rows = resolve(&wide, &facts, Surface::Mixer, None, None);
+        let rows = resolve(&wide, &facts, Surface::Mixer, None, None, None);
         let size = |guid: &str| {
             rows.iter()
                 .find(|r| r.guid() == Some(guid))
@@ -382,7 +514,7 @@ mod tests {
                 Effect::at(Size::Minimum),
             )],
         );
-        let rows = resolve(&s, &facts, Surface::Mixer, None, None);
+        let rows = resolve(&s, &facts, Surface::Mixer, None, None, None);
         assert!(rows.iter().all(|r| r.size == Size::Minimum), "{rows:?}");
     }
 
@@ -402,8 +534,8 @@ mod tests {
                 mixer: None,
             }],
         );
-        let mixer = resolve(&s, &kit(), Surface::Mixer, None, None);
-        let arrange = resolve(&s, &kit(), Surface::Arrange, None, None);
+        let mixer = resolve(&s, &kit(), Surface::Mixer, None, None, None);
+        let arrange = resolve(&s, &kit(), Surface::Arrange, None, None, None);
         assert_eq!(mixer[2].size, Size::Minimum);
         assert_eq!(arrange[2].size, Size::Working);
     }
@@ -422,7 +554,7 @@ mod tests {
                 Effect::at(Size::Working),
             )],
         );
-        let rows = resolve(&s, &kit(), Surface::Mixer, None, None);
+        let rows = resolve(&s, &kit(), Surface::Mixer, None, None, None);
         let opened: Vec<&str> = rows
             .iter()
             .filter(|r| r.size == Size::Working)
@@ -486,7 +618,7 @@ mod tests {
 
         let s = scene(Effect::at(Size::Compact), Vec::new());
         let facts = ron();
-        let rows = resolve(&s, &facts, Surface::Mixer, None, Some(Language::En));
+        let rows = resolve(&s, &facts, Surface::Mixer, None, Some(Language::En), None);
         let shown: Vec<&str> = rows.iter().filter_map(Row::guid).collect();
         assert_eq!(
             shown,
@@ -503,7 +635,7 @@ mod tests {
 
         let s = scene(Effect::at(Size::Compact), Vec::new());
         let facts = ron();
-        let rows = resolve(&s, &facts, Surface::Mixer, None, Some(Language::Es));
+        let rows = resolve(&s, &facts, Surface::Mixer, None, Some(Language::Es), None);
         let shown: Vec<&str> = rows.iter().filter_map(Row::guid).collect();
         assert_eq!(shown, ["vocals", "ron", "main", "main-es", "dbl", "dbl-es"]);
     }
@@ -514,7 +646,7 @@ mod tests {
     fn with_no_active_language_nothing_is_hidden() {
         let s = scene(Effect::at(Size::Compact), Vec::new());
         let facts = ron();
-        let rows = resolve(&s, &facts, Surface::Mixer, None, None);
+        let rows = resolve(&s, &facts, Surface::Mixer, None, None, None);
         assert_eq!(rows.len(), facts.len(), "nothing hidden");
     }
 
@@ -534,8 +666,131 @@ mod tests {
                 .speaking(Language::All),
         ];
         let s = scene(Effect::at(Size::Compact), Vec::new());
-        let rows = resolve(&s, &facts, Surface::Mixer, None, Some(Language::En));
+        let rows = resolve(&s, &facts, Surface::Mixer, None, Some(Language::En), None);
         let shown: Vec<&str> = rows.iter().filter_map(Row::guid).collect();
         assert_eq!(shown, ["hey", "hey-all"]);
+    }
+
+    /// A guitar rig, two performers: each with a Rhythm and a Lead
+    /// track, in arrangement order — the project's own order, which the
+    /// scenario below asserts stays exactly this.
+    fn guitars() -> Vec<Fact> {
+        let group = Segment::named("Electric").of(Kind::Group);
+        let fact = |guid: &str, name: &str, index: u32, performer: &str| {
+            let mut f = Fact::leaf(guid, name, index, 1)
+                .of(Kind::Part)
+                .at(vec![group.clone()]);
+            f.performer = Some(performer.to_owned());
+            f
+        };
+        vec![
+            Fact::folder("electric", "Electric", 0, 0)
+                .of(Kind::Group)
+                .at(vec![group.clone()]),
+            fact("cody-rhythm", "Rhythm", 1, "Cody"),
+            fact("ron-rhythm", "Rhythm", 2, "Ron"),
+            fact("cody-lead", "Lead", 3, "Cody"),
+            fact("ron-lead", "Lead", 4, "Ron"),
+        ]
+    }
+
+    /// `flow.scenes.performer-order`: tracking regroups a guitar rig
+    /// under one header per performer, that performer's tracks beneath
+    /// it, without moving a single track in the underlying fact list —
+    /// which is the project's own order, asserted unchanged below.
+    ///
+    /// r[verify flow.scenes.performer-order]
+    #[test]
+    fn group_by_performer_synthesises_one_header_per_performer() {
+        let facts = guitars();
+        let before: Vec<&str> = facts.iter().map(|f| f.guid.as_str()).collect();
+        let mut s = scene(Effect::at(Size::Compact), Vec::new());
+        s.group_by = GroupBy::Performer;
+        let rows = resolve(&s, &facts, Surface::Mixer, None, None, None);
+
+        // The project's own order is exactly what it was — the
+        // regrouping is a view, not a move.
+        let after: Vec<&str> = facts.iter().map(|f| f.guid.as_str()).collect();
+        assert_eq!(before, after, "resolve never touches its input");
+
+        let targets: Vec<(u32, String)> = rows
+            .iter()
+            .map(|r| {
+                let label = match &r.target {
+                    Target::Track(guid) => facts
+                        .iter()
+                        .find(|f| &f.guid == guid)
+                        .map_or_else(|| guid.clone(), |f| f.name.clone()),
+                    Target::PerformerHeader(name) => format!("#{name}"),
+                };
+                (r.depth, label)
+            })
+            .collect();
+        assert_eq!(
+            targets,
+            vec![
+                (0, "Electric".to_owned()),
+                (1, "#Cody".to_owned()),
+                (2, "Rhythm".to_owned()),
+                (2, "Lead".to_owned()),
+                (1, "#Ron".to_owned()),
+                (2, "Rhythm".to_owned()),
+                (2, "Lead".to_owned()),
+            ],
+            "one header per performer, first appearance order, tracks nested a level deeper"
+        );
+    }
+
+    /// A track with no identified performer is shown, under
+    /// `UNASSIGNED`, rather than dropped — the Patch List's own rule for
+    /// an unassigned track, read onto the scene's view.
+    ///
+    /// r[verify flow.scenes.performer-order]
+    #[test]
+    fn an_unidentified_performer_groups_under_unassigned() {
+        let mut s = scene(Effect::at(Size::Compact), Vec::new());
+        s.group_by = GroupBy::Performer;
+        // The kit fixture's mics carry no performer at all.
+        let rows = resolve(&s, &kit(), Surface::Mixer, None, None, None);
+        assert_eq!(
+            rows.iter()
+                .find(|r| matches!(&r.target, Target::PerformerHeader(name) if name == UNASSIGNED))
+                .map(|r| r.depth),
+            Some(1),
+            "{rows:?}"
+        );
+    }
+
+    /// `order` breaks the tie between performers found — Ron before
+    /// Cody here, though Cody appeared first in the track list.
+    ///
+    /// r[verify flow.scenes.performer-order]
+    #[test]
+    fn the_injected_order_overrides_first_appearance() {
+        let facts = guitars();
+        let mut s = scene(Effect::at(Size::Compact), Vec::new());
+        s.group_by = GroupBy::Performer;
+        let reverse = |a: &str, b: &str| b.cmp(a);
+        let rows = resolve(&s, &facts, Surface::Mixer, None, None, Some(&reverse));
+        let headers: Vec<&str> = rows
+            .iter()
+            .filter_map(|r| match &r.target {
+                Target::PerformerHeader(name) => Some(name.as_str()),
+                Target::Track(_) => None,
+            })
+            .collect();
+        assert_eq!(headers, ["Ron", "Cody"]);
+    }
+
+    /// A scene that groups by arrangement is untouched by any of this —
+    /// the engine invariant is scoped to `GroupBy::Performer` alone.
+    #[test]
+    fn arrangement_grouping_is_the_plain_walk() {
+        let s = scene(Effect::at(Size::Compact), Vec::new());
+        let rows = resolve(&s, &guitars(), Surface::Mixer, None, None, None);
+        assert!(
+            rows.iter().all(|r| r.guid().is_some()),
+            "no header without group_by: performer"
+        );
     }
 }
