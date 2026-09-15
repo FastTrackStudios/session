@@ -5,7 +5,7 @@
 //! are never written, so a bad edit is always recoverable.
 
 use daw_proto::primitives::{Duration, PositionInSeconds};
-use daw_proto::{ProjectContext, ProjectInfo, Projects, TrackRef, Tracks};
+use daw_proto::{ProjectContext, ProjectInfo, TrackRef, Tracks};
 use daw_standalone::sync::Standalone;
 use session::comping::{Choice, Stage, areas, comp_group, establish};
 
