@@ -1,0 +1,115 @@
+0	Drum Kit	86
+1	Kick	133
+2	Sum	86
+3	In	30
+3	Out	30
+3	Trig	30
+2	Sub	30
+2	Verb	30
+1	Snare	133
+2	Sum	86
+3	Top	30
+3	Bottom	30
+3	Trig	30
+3	Fund	30
+2	Verb	86
+3	Short	30
+3	Long	30
+3	Nonlin	30
+1	Toms	133
+2	Tom 1	86
+3	T1	30
+3	T1 Trig	30
+3	Fund	30
+2	Tom 2	86
+3	T2	30
+3	T2 Trig	30
+3	Fund	30
+2	Tom 3	86
+3	T3	30
+3	T3 Trig	30
+3	Fund	30
+2	Tom 4	86
+3	T4	30
+3	T4 Trig	30
+3	Fund	30
+2	Verb	30
+1	Cymbals	133
+2	OH	30
+2	Hi-Hat	30
+2	Ride	30
+1	Rooms	133
+2	Rooms	30
+2	Rooms Far	30
+0	Process	86
+1	Compress	86
+2	Dry	30
+2	Tight	30
+2	Punch	30
+2	Smash	30
+2	Crunch	30
+1	FX	86
+2	Room Sim	30
+2	Verb	86
+3	Wood Room	30
+3	Music Club	30
+3	Stadium	30
+3	RMX 16	30
+3	Nonlin	30
+3	Brick Wall	30
+0	Bass	86
+1	Guitar	86
+2	Sum	86
+3	DI	30
+3	Amp	30
+1	Synth	86
+2	Sub	30
+2	Synth	30
+0	Electric	86
+1	Rhythm	30
+1	Lead	30
+1	Solo	30
+0	Acoustic	86
+1	Steel	30
+1	Nylon	30
+1	Nashville	30
+0	Keys	86
+1	Piano	30
+1	Rhodes	30
+1	Organ	30
+0	Synths	86
+1	Pad	30
+1	Lead Synth	30
+1	Arp	30
+0	Inst FX	86
+1	Ambience	86
+2	Short Room	30
+2	Slap Room	30
+2	Early	30
+1	Plate	86
+2	Fat Plate	30
+2	Dark Plate	30
+2	Gold Plate	30
+1	Hall	86
+2	Large Hall	30
+2	Vienna	30
+2	Atmosphere	30
+1	Spring	86
+2	Big Sky	30
+2	XL35	30
+1	Delay	86
+2	Slap	30
+2	Tape	30
+2	Echo Boy	30
+2	Space Echo	30
+1	Mod	86
+2	Chorus	30
+2	Flanger	30
+0	Vocals	86
+1	Lead	86
+2	Sum	86
+3	Close	30
+3	Room	30
+2	Verb	30
+1	Doubles	30
+1	Harmonies	30

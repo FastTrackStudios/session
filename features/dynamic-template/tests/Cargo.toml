@@ -52,11 +52,17 @@ path = "04_visibility_classification.rs"
 name = "06_organize_is_lossless"
 path = "06_organize_is_lossless.rs"
 
-# Runs scripts/ui-stress/make-template-rpp.py (python3) and reads its
+# Builds the golden session with the Rust builder and reads its
 # GROUP_FLAGS back through dawfile-reaper.
 [[test]]
 name = "07_template_group_flags"
 path = "07_template_group_flags.rs"
+
+# The golden session: builder output == the committed fixtures, kinds in
+# ext-state, the checklist regenerated from the golden-rule checks.
+[[test]]
+name = "08_golden_session"
+path = "08_golden_session.rs"
 
 [[test]]
 name = "multitrack_examples"

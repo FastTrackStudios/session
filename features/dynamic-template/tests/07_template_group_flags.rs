@@ -1,6 +1,6 @@
 //! The reference session's group flags survive the round trip.
 //!
-//! `scripts/ui-stress/make-template-rpp.py` writes the maximal session
+//! `dynamic_template::golden_session` builds the maximal session
 //! (`docs/spec/session/maximal-template.md`), where each instrument
 //! folder is the VCA lead of its bus with mute and solo along for the
 //! ride: `Electric` leads group 1, `ELECTRIC BUS` follows it. REAPER
@@ -11,13 +11,13 @@
 //! folder came out solo lead and rec-arm lead instead of mute/solo
 //! lead (session #41).
 //!
-//! This runs the writer and reads its output back through
+//! This builds the session and reads its output back through
 //! `dawfile-reaper`'s `GROUP_FLAGS` parsing, landing on the fields
-//! daw-standalone's `decode_grouping` reads, so the writer and the
-//! reader cannot drift apart again without this noticing.
-
-use std::path::Path;
-use std::process::Command;
+//! daw-standalone's `decode_grouping` reads, so the builder and the
+//! reader cannot drift apart again without this noticing. (The
+//! `GROUP_FLAGS` line is the builder's own — `dawfile-reaper` parses it
+//! but does not write it yet — which is exactly why the read-back
+//! matters.)
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -34,21 +34,9 @@ const WIDTH_FOLLOW: usize = 20;
 const VCA_LEAD: usize = 21;
 const VCA_FOLLOW: usize = 22;
 
-/// The writer's output: the maximal session as project text.
+/// The builder's output: the maximal session as project text.
 fn template_rpp() -> Result<String> {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts/ui-stress/make-template-rpp.py");
-    let output = Command::new("python3").arg(&script).output()?;
-    if !output.status.success() {
-        return Err(format!(
-            "{} failed ({}): {}",
-            script.display(),
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
-    }
-    Ok(String::from_utf8(output.stdout)?)
+    Ok(dynamic_template::golden_session::build(&dynamic_template::golden_session::maximal()).rpp)
 }
 
 /// The groups (1-based numbers) whose bit is set in one field of a

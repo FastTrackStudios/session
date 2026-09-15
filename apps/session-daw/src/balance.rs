@@ -213,6 +213,7 @@ mod tests {
     }
 
     /// One up a decibel, the other four down a quarter each.
+    // r[verify flow.drums.mixing.balance]
     #[test]
     fn a_decibel_up_is_a_quarter_down_on_each_of_four() {
         let tracks = kit();
@@ -231,6 +232,7 @@ mod tests {
 
     /// The dry pulled to nothing is out: the next move spreads across
     /// the other three, and the dry stays where it was put.
+    // r[verify flow.drums.mixing.balance]
     #[test]
     fn a_silent_member_is_out_of_the_split() {
         let mut tracks = kit();

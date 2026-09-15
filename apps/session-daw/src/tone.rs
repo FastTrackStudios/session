@@ -582,12 +582,18 @@ impl Tone {
 /// three functions that could disagree.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bypass {
-    out: u16,
+    out: u32,
 }
 
 impl Bypass {
-    const fn bit(which: Which) -> u16 {
-        1_u16 << (which as u16)
+    /// Wide enough for every [`Which`]: the chain passed sixteen units
+    /// when the widener, the pitch shifter and the presets row arrived,
+    /// and a `u16` bitset was silently aliasing their bits onto the
+    /// rescue EQ, the gate and the rescue compressor — an overflowing
+    /// shift in a debug build, a wrapped one in release, so bypassing
+    /// the widener switched out the rescue EQ instead.
+    const fn bit(which: Which) -> u32 {
+        1_u32 << (which as u32)
     }
 
     #[must_use]
@@ -11504,6 +11510,53 @@ mod bypass_tests {
     use super::{Bypass, Grip, Mods, Panel, Rack, Which, drag, grip_at, placeholder, reset};
 
     const ALL: [Which; 3] = [Which::Eq, Which::Comp, Which::Sat];
+
+    /// Every unit in the chain, so the bitset is checked against the
+    /// whole enum rather than the three the drag tests use.
+    const EVERY: [Which; 19] = [
+        Which::RescueEq,
+        Which::Gate,
+        Which::RescueComp,
+        Which::Eq,
+        Which::Comp,
+        Which::Sat,
+        Which::DeEss,
+        Which::PolishEq,
+        Which::Space,
+        Which::Delay,
+        Which::Reverb,
+        Which::DeEssIn,
+        Which::PreEq,
+        Which::PostEq,
+        Which::DecayEq,
+        Which::Knobs,
+        Which::Wide,
+        Which::Pitch,
+        Which::Presets,
+    ];
+
+    /// Switching one unit out switches out that unit and no other.
+    ///
+    /// The chain passed sixteen units and the bitset was still a `u16`,
+    /// so the last three wrapped onto the first three: bypassing the
+    /// widener read as bypassing the rescue EQ, and a debug build
+    /// panicked on the overflowing shift rather than drawing a frame.
+    #[test]
+    fn each_unit_has_its_own_bit() {
+        for which in EVERY {
+            let mut bypass = Bypass::default();
+            assert!(!bypass.any());
+            bypass.toggle(which);
+            assert!(bypass.is(which), "{which:?} did not switch out");
+            for other in EVERY {
+                if other != which {
+                    assert!(!bypass.is(other), "{which:?} also switched out {other:?}");
+                }
+            }
+            bypass.toggle(which);
+            assert!(!bypass.any(), "{which:?} did not switch back in");
+        }
+    }
 
     fn rack() -> Panel {
         Panel {

@@ -36,6 +36,10 @@
       # 0.7.0 — see nix/modules/cargo-rail.nix (incl. the plan/affected
       # caveat on this tree).
       ++ lib.optionals (config.fts.cargoRail != null) [ config.fts.cargoRail ]
+      # tracey — spec coverage (`just daw-flows`). Store-sourced from the
+      # upstream release tarball (nix/modules/tracey.nix); the old
+      # `cargo install tracey` shellHook is gone with it.
+      ++ lib.optionals (config.fts.tracey != null) [ config.fts.tracey ]
       ++ lib.optionals pkgs.stdenv.isLinux [
         # pw-jack — run the live rigs through PipeWire's JACK shim.
         pkgs.pipewire.jack
@@ -77,15 +81,16 @@
         # `dx serve` had to unset it by hand.
         # Append (not prepend): store-provided tools (dx, wasm-bindgen)
         # must win over stale cargo-installed copies; cargo/uv bins
-        # (tracey, graphify) only need to be reachable.
+        # (graphify) only need to be reachable.
         export PATH="$PATH:$HOME/.cargo/bin:$HOME/.local/bin"
 
-        # Dev-convenience installers (graphify, tracey) are for
-        # interactive shells ONLY. In CI they're dead weight — and
-        # worse: `cargo install tracey` compiled from source (or hung
-        # on flaky crates.io egress, stderr silenced) on EVERY job,
-        # stalling `nix develop -c true` for hours before the first
-        # cargo step. Forgejo/GitHub runners set CI=true.
+        # Dev-convenience installers (graphify) are for interactive
+        # shells ONLY. In CI they're dead weight — and worse: the old
+        # `cargo install tracey` compiled from source (or hung on flaky
+        # crates.io egress, stderr silenced) on EVERY job, stalling
+        # `nix develop -c true` for hours before the first cargo step.
+        # (tracey is a store binary now — nix/modules/tracey.nix.)
+        # Forgejo/GitHub runners set CI=true.
         if [ -z "''${CI:-}" ]; then
           # graphify — whole-repo knowledge-graph tool (safishamsi/graphify)
           # so any agent/assistant can understand this 160-crate tree without
@@ -100,15 +105,6 @@
               --python "${pkgs.python3}/bin/python3" \
               "graphifyy[mcp]==$GRAPHIFY_VERSION" >/dev/null 2>&1 || \
               echo "  (graphify install failed — run: uv tool install 'graphifyy[mcp]==$GRAPHIFY_VERSION')"
-          fi
-
-          # tracey — spec-coverage CLI (crates.io). Version-pinned so the
-          # requirement traceability in docs/spec/** is reproducible across
-          # machines. Config: .config/tracey/config.styx.
-          TRACEY_VERSION=$(tracey --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0")
-          if [ "$TRACEY_VERSION" != "1.3.0" ]; then
-            echo "  Installing tracey 1.3.0..."
-            cargo install tracey --locked --version "=1.3.0" 2>/dev/null || true
           fi
         fi
 
