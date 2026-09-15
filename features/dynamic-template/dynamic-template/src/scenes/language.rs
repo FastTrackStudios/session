@@ -161,7 +161,10 @@ mod tests {
     fn slug_round_trips() {
         for language in [Language::En, Language::Es, Language::Pt, Language::All] {
             assert_eq!(Language::parse(language.as_str()), Some(language));
-            assert_eq!(Language::parse(&language.as_str().to_uppercase()), Some(language));
+            assert_eq!(
+                Language::parse(&language.as_str().to_uppercase()),
+                Some(language)
+            );
         }
     }
 }

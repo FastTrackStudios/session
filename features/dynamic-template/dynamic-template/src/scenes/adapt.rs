@@ -297,10 +297,7 @@ mod tests {
     // r[verify flow.vocals.language]
     fn closing_a_language_folder_stops_its_inheritance() {
         let mut walk = Walk::default();
-        let mut node = |guid: &'static str,
-                        name: &'static str,
-                        depth: u32,
-                        is_folder: bool| {
+        let mut node = |guid: &'static str, name: &'static str, depth: u32, is_folder: bool| {
             walk.step(
                 0,
                 &Node {

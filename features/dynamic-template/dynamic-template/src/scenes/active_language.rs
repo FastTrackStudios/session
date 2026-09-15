@@ -75,7 +75,12 @@ mod tests {
         fn has(&self, _section: &str, _key: &str) -> bool {
             false
         }
-        fn get_project(&self, _project: ProjectContext, section: &str, key: &str) -> Option<String> {
+        fn get_project(
+            &self,
+            _project: ProjectContext,
+            section: &str,
+            key: &str,
+        ) -> Option<String> {
             self.project
                 .lock()
                 .expect("lock")
@@ -95,7 +100,12 @@ mod tests {
                 .insert((section.to_owned(), key.to_owned()), value.to_owned());
             Ok(())
         }
-        fn delete_project(&self, _project: ProjectContext, section: &str, key: &str) -> DawResult<()> {
+        fn delete_project(
+            &self,
+            _project: ProjectContext,
+            section: &str,
+            key: &str,
+        ) -> DawResult<()> {
             self.project
                 .lock()
                 .expect("lock")

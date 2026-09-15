@@ -13,9 +13,7 @@
 use daw::service::{ProjectContext, Track, TrackRef, Tracks};
 use daw::standalone::Standalone;
 use daw_proto::ProjectInfo;
-use dynamic_template::scenes::{
-    self, Audience, Effect, GroupBy, Language, Scene, Size, Surface,
-};
+use dynamic_template::scenes::{self, Audience, Effect, GroupBy, Language, Scene, Size, Surface};
 
 /// Append a track, folded by `folder_depth` the way a `.RPP` would
 /// encode it: positive opens that many folders, negative closes them,
