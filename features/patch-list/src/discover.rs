@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use facet::Facet;
 
+use crate::list::PatchList;
 use crate::profile::StudioProfile;
 
 /// The album file's name.
@@ -39,6 +40,40 @@ pub fn find_album(dir: &Path) -> Option<PathBuf> {
     dir.ancestors()
         .map(|ancestor| ancestor.join(ALBUM_FILE))
         .find(|candidate| candidate.is_file())
+}
+
+/// Write the album file.
+///
+/// Edits in the Patch List view write here by default (spec #48,
+/// "Editing destinations"); the per-session override
+/// (`apply::set_override`) is the only other place an edit can go,
+/// behind the view's "for this session" toggle.
+///
+/// # Errors
+///
+/// [`WriteError::Serialize`] when the list cannot be written back as
+/// styx; [`WriteError::Write`] when the file cannot be written.
+pub fn write_album(path: &Path, list: &PatchList) -> Result<(), WriteError> {
+    let text = list.to_styx().map_err(WriteError::Serialize)?;
+    std::fs::write(path, text).map_err(|source| WriteError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Why the album file could not be written.
+#[derive(Debug, thiserror::Error)]
+pub enum WriteError {
+    /// The list itself would not serialize.
+    #[error("the album list did not serialize: {0}")]
+    Serialize(crate::styx::WriteError),
+    /// The file could not be written.
+    #[error("writing {}: {source}", path.display())]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// The machine's studio profiles.
