@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use daw_proto::{ProjectContext, ProjectInfo, Projects, TrackRef, Tracks};
+use daw_proto::{ProjectContext, ProjectInfo, TrackRef, Tracks};
 use daw_standalone::sync::Standalone;
 use dynamic_template::golden_session::Kind;
 use dynamic_template::grouping::follow_arm;
