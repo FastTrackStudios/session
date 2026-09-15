@@ -99,7 +99,11 @@ fn switching_the_active_language_hides_the_others_on_daw_standalone() {
     // project has never had one to hide by.
     assert_eq!(scenes::get_active_language(&daw, project.clone()), None);
     let tracks = rows(&daw, project.clone());
-    let facts = scenes::from_tracks(&tracks, &std::collections::HashMap::new());
+    let facts = scenes::from_tracks(
+        &tracks,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    );
     let names = |rows: &[scenes::Row]| -> Vec<String> {
         rows.iter()
             .filter_map(scenes::Row::guid)
@@ -107,7 +111,7 @@ fn switching_the_active_language_hides_the_others_on_daw_standalone() {
             .map(|(t, _)| t.name.clone())
             .collect()
     };
-    let before = scenes::resolve(&bare_scene(), &facts, Surface::Mixer, None, None);
+    let before = scenes::resolve(&bare_scene(), &facts, Surface::Mixer, None, None, None);
     assert_eq!(before.len(), tracks.len(), "nothing hidden before a switch");
 
     // One write.
@@ -118,7 +122,7 @@ fn switching_the_active_language_hides_the_others_on_daw_standalone() {
     );
 
     let active = scenes::get_active_language(&daw, project.clone());
-    let rows_after = scenes::resolve(&bare_scene(), &facts, Surface::Mixer, None, active);
+    let rows_after = scenes::resolve(&bare_scene(), &facts, Surface::Mixer, None, active, None);
     let shown = names(&rows_after);
     assert_eq!(
         shown,
@@ -130,7 +134,7 @@ fn switching_the_active_language_hides_the_others_on_daw_standalone() {
     // list follows in the same step.
     scenes::set_active_language(&daw, project.clone(), Language::En).expect("one write");
     let active = scenes::get_active_language(&daw, project.clone());
-    let rows_after = scenes::resolve(&bare_scene(), &facts, Surface::Mixer, None, active);
+    let rows_after = scenes::resolve(&bare_scene(), &facts, Surface::Mixer, None, active, None);
     assert_eq!(
         names(&rows_after),
         ["Vocals", "Ron", "Main", "EN", "DBL", "EN"]

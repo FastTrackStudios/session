@@ -746,6 +746,7 @@ mod tests {
                 crate::scenes::Surface::Mixer,
                 Some("mix"),
                 None,
+                None,
             );
             let guide: Vec<&str> = rows
                 .iter()
@@ -773,6 +774,7 @@ mod tests {
                 &facts,
                 crate::scenes::Surface::Mixer,
                 Some(mode),
+                None,
                 None,
             )
             .iter()
