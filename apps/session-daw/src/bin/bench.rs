@@ -121,6 +121,12 @@ fn main() {
 
     let opened = session_daw::open::open_and_serve(&path).expect("open project");
     let scene = build_scene(&palette, layout).expect("read project back");
+    if let Ok(out) = std::env::var("FTS_BENCH_FOLDER_ITEMS") {
+        // The folder items of the open session, folded from the
+        // children's REAL peaks — see `folder_items_shot`.
+        folder_items_shot(&palette, &std::path::PathBuf::from(out), width, height);
+        return;
+    }
     if std::env::var_os("FTS_BENCH_DEPTHS").is_some() {
         depths();
         return;
@@ -456,6 +462,187 @@ fn kit_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
         hits,
         bench_bars()
     );
+}
+
+/// The folders a fixture sheet draws, and what each folds by.
+///
+/// Three, deliberately: a whole kit, one piece of it, and a double. The
+/// first two are `flow.drums.comping.folder-items` and
+/// `.folder-item-colours`; the third is `flow.guitars.folder-items`, and
+/// it is a stereo part rather than a folder because in a session that
+/// has not grown its channels out a double IS one stereo track.
+const SHEET: [(&str, session_daw::folder_item::GroupBy); 3] = [
+    ("Drum Kit", session_daw::folder_item::GroupBy::Role),
+    ("Snare", session_daw::folder_item::GroupBy::Role),
+    ("Rhythm", session_daw::folder_item::GroupBy::Side),
+];
+
+/// One sheet of folder items over the open session, to a PNG.
+///
+/// `FTS_BENCH_FOLDER_ITEMS=/tmp/folder-items.png`, with
+/// `FTS_BENCH_WINDOW=t0,t1` for the zoom (seconds; the whole project by
+/// default) and `FTS_BENCH_FOLD=<file>` for the fold beside it — the
+/// exact half of the fixture, which is what carries the decision.
+///
+/// The peaks are the session's own, read back through the facade:
+/// nothing here is simulated.
+fn folder_items_shot(palette: &Palette, out: &std::path::Path, width: u32, height: u32) {
+    use session_daw::folder_item::{FolderItems, Place};
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let Some(snapshot) = rt.block_on(daw_ui::studio::project::fetch()) else {
+        eprintln!("could not read the project back");
+        return;
+    };
+    let Some(daw) = daw_control::Daw::try_get() else {
+        eprintln!("no facade");
+        return;
+    };
+    let Ok(project) = rt.block_on(daw.current_project()) else {
+        eprintln!("no current project");
+        return;
+    };
+    // Named rather than picked by guid: the fixture is about what a
+    // folder of a kit and a double look like, and the golden session's
+    // names are the stable thing about it.
+    let wanted: Vec<(String, session_daw::folder_item::GroupBy)> = SHEET
+        .iter()
+        .filter_map(|(name, group_by)| {
+            snapshot
+                .tracks
+                .iter()
+                .find(|t| t.name == *name)
+                .map(|t| (t.guid.clone(), *group_by))
+        })
+        .collect();
+    let (folders, found) = rt.block_on(session_daw::folder_item::load::load(
+        &project,
+        &snapshot,
+        &wanted,
+        palette.text_faint,
+    ));
+    if folders.is_empty() {
+        eprintln!("no folder in this project has anything to fold");
+        return;
+    }
+
+    let (from, to) = std::env::var("FTS_BENCH_WINDOW")
+        .ok()
+        .and_then(|s| {
+            let (a, b) = s.split_once(',')?;
+            Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+        })
+        .unwrap_or((0.0, snapshot.length_secs));
+    let span = (to - from).max(1e-6);
+    let size = (f64::from(width), f64::from(height));
+    let pixels_per_sec = size.0 / span;
+    let row_height = size.1 / session_daw::num::coord(folders.len().max(1));
+    let pad = (row_height * 0.08).min(12.0);
+
+    if let Ok(path) = std::env::var("FTS_BENCH_FOLD") {
+        let text = session_daw::folder_item::fixture_text(&folders, 0, from, to);
+        std::fs::write(&path, text).expect("write the fold");
+    }
+
+    let mut items = FolderItems::new(folders);
+    let places: Vec<(usize, Place)> = (0..items.folders.len())
+        .filter_map(|i| {
+            let folder = items.folders.get(i)?;
+            Some((
+                i,
+                Place {
+                    x0: (folder.start_secs - from) * pixels_per_sec,
+                    top: session_daw::num::coord(i).mul_add(row_height, pad),
+                    width: folder.length_secs * pixels_per_sec,
+                    height: row_height - pad * 2.0,
+                },
+            ))
+        })
+        .collect();
+
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut shoot = |items: &mut FolderItems, to: &std::path::Path| {
+        let mut buffer = Vec::new();
+        image.render_to_vec(
+            |painter| {
+                painter.reset();
+                painter.fill(
+                    vello::peniko::Fill::NonZero,
+                    Affine::IDENTITY,
+                    palette.surface,
+                    None,
+                    &vello::kurbo::Rect::new(0.0, 0.0, size.0, size.1),
+                );
+                for (i, place) in &places {
+                    items.paint(painter, *i, 0, *place, pixels_per_sec);
+                }
+            },
+            &mut buffer,
+        );
+        image::save_buffer(to, &buffer, width, height, image::ColorType::Rgba8)
+            .expect("write the sheet");
+        let (hits, misses) = items.counts();
+        println!(
+            "  wrote {} — picture cache: {hits} hits, {misses} misses",
+            to.display()
+        );
+    };
+    shoot(&mut items, out);
+    println!(
+        "  {} folders, {} children, {} items, {from:.3}..{to:.3}s at {pixels_per_sec:.1} px/s; \
+         off-rate children: {} (worst drift {:.4})",
+        found.folders, found.children, found.items, found.off_rate, found.worst_drift,
+    );
+
+    // The same sheet with one child hidden, and again with it muted —
+    // in THIS process, so the two are comparable byte for byte rather
+    // than across a rasteriser. Hiding must replay the held picture;
+    // muting must build a new one.
+    let beside = |suffix: &str| out.with_extension(format!("{suffix}.png"));
+    if let Ok(name) = std::env::var("FTS_BENCH_FOLDER_HIDE") {
+        let moved = set_on_every_folder(&mut items, &name, true, false);
+        println!("  hid {name} on {moved} folders");
+        shoot(&mut items, &beside("hidden"));
+        set_on_every_folder(&mut items, &name, false, false);
+    }
+    if let Ok(name) = std::env::var("FTS_BENCH_FOLDER_MUTE") {
+        let moved = set_on_every_folder(&mut items, &name, true, true);
+        println!("  muted {name} on {moved} folders");
+        shoot(&mut items, &beside("muted"));
+    }
+}
+
+/// Mute or hide every child called `name`, and say on how many folders
+/// something moved.
+fn set_on_every_folder(
+    items: &mut session_daw::folder_item::FolderItems,
+    name: &str,
+    to: bool,
+    mute: bool,
+) -> usize {
+    let mut moved = 0_usize;
+    for folder in &mut items.folders {
+        let guids: Vec<String> = folder
+            .children
+            .iter()
+            .filter(|c| c.name == name)
+            .map(|c| c.guid.clone())
+            .collect();
+        for guid in guids {
+            let changed = if mute {
+                folder.set_muted(&guid, to)
+            } else {
+                folder.set_hidden(&guid, to)
+            };
+            if changed {
+                moved = moved.saturating_add(1);
+            }
+        }
+    }
+    moved
 }
 
 /// Write one frame of the expression editor to a PNG.

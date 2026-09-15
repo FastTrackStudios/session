@@ -1198,6 +1198,37 @@ daw-template:
 daw-scenes:
     FTS_UPDATE_GOLDEN=1 cargo test -p session-daw --test golden_scenes
 
+# Re-render the folder-item fixtures from the golden session's own peaks.
+#
+# Both halves, at three zooms, under
+# features/dynamic-template/fixtures/golden/folder-items/ — the fold
+# (`<slug>.fold`, compared byte for byte) and the picture (`<slug>.png`,
+# compared structurally). See `apps/session-daw/tests/folder_items.rs`.
+# Run this after a deliberate change to the fold, the colours or the
+# fixture media, and commit the result.
+daw-folder-items:
+    FTS_UPDATE_GOLDEN=1 cargo test -p session-daw --test folder_items
+
+# One sheet of folder items over a project, by hand — the same render the
+# fixtures come from, so it is the way to LOOK at a fold.
+#
+# `just daw-folder-item-sheet /tmp/fi.png "" 0,16` for eight bars.
+daw-folder-item-sheet OUT="/tmp/fts-folder-items.png" PROJECT="" WINDOW="" SIZE="1280x480":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="{{GOLDEN_DIR}}/template.rpp"
+        [[ -f "$project" ]] || just daw-template
+    fi
+    cargo build -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    window="{{WINDOW}}"
+    # No window given means the whole project.
+    export FTS_BENCH_WINDOW="$window"
+    [[ -n "$window" ]] || unset FTS_BENCH_WINDOW
+    FTS_BENCH_FOLDER_ITEMS="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" \
+        ./target/debug/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
 # Benchmark the arrangement HEADLESSLY: no window, no surface, no vsync.
 #
 # Sweeps both axes hard and reports percentiles. This is the number that

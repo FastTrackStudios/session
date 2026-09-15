@@ -67,9 +67,40 @@ pub fn quantise(value: f64, steps: f64) -> i32 {
     key
 }
 
+/// A `f64` reading, narrowed to the `f32` a waveform is drawn from.
+///
+/// Peaks arrive over the wire as `f64` and are drawn as `f32`: the
+/// values are linear `-1..1` and a single rounding at the boundary costs
+/// nothing a pixel could show. Non-finite becomes zero — a NaN peak
+/// would poison a min/max fold for a whole column rather than for one
+/// block.
+#[must_use]
+pub fn narrow(value: f64) -> f32 {
+    if !value.is_finite() {
+        return 0.0;
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::as_conversions,
+        reason = "no non-`as` f64->f32 conversion exists; finite-checked above"
+    )]
+    let narrowed = value as f32;
+    narrowed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Narrowing keeps a peak's value and refuses to carry a NaN into a
+    /// fold.
+    #[test]
+    fn narrows_a_reading() {
+        assert!((narrow(0.5) - 0.5_f32).abs() < f32::EPSILON);
+        assert!((narrow(-1.0) + 1.0_f32).abs() < f32::EPSILON);
+        assert!((narrow(f64::NAN) - 0.0_f32).abs() < f32::EPSILON);
+        assert!((narrow(f64::INFINITY) - 0.0_f32).abs() < f32::EPSILON);
+    }
 
     #[test]
     fn round_trips_an_index() {

@@ -65,9 +65,36 @@ pub fn samples(path: &str) -> Vec<i16> {
         .collect()
 }
 
-/// A mono 16-bit PCM WAV file's bytes.
+/// The right channel of a stereo pair's media.
+///
+/// A different tone from the left, not a copy of it: a stereo pair's two
+/// sides are two microphones or two performances, and a fixture whose
+/// sides are identical could not tell a folder item that draws two sides
+/// from one that draws the same side twice
+/// (`flow.guitars.folder-items`). Quieter as well, so which side is
+/// which is visible in a picture.
 #[must_use]
-pub fn wav(samples: &[i16]) -> Vec<u8> {
+pub fn right_samples(path: &str) -> Vec<i16> {
+    samples(&format!("{path}/R"))
+        .into_iter()
+        .map(|s| i16::try_from(i32::from(s).saturating_mul(5).checked_div(8).unwrap_or(0)).unwrap_or(0))
+        .collect()
+}
+
+/// A stereo pair's media, interleaved `[l, r, l, r, ...]`.
+#[must_use]
+pub fn stereo_samples(path: &str) -> Vec<i16> {
+    let left = samples(path);
+    let right = right_samples(path);
+    left.into_iter().zip(right).flat_map(<[i16; 2]>::from).collect()
+}
+
+/// A 16-bit PCM WAV file's bytes, `channels` interleaved.
+#[must_use]
+pub fn wav(samples: &[i16], channels: u16) -> Vec<u8> {
+    let channels = channels.max(1);
+    let block_align = channels.saturating_mul(2);
+    let byte_rate = SAMPLE_RATE.saturating_mul(u32::from(block_align));
     let data_len = u32::try_from(samples.len().saturating_mul(2)).unwrap_or(u32::MAX);
     let mut out = Vec::with_capacity(usize::try_from(data_len).unwrap_or(0).saturating_add(44));
     out.extend_from_slice(b"RIFF");
@@ -76,10 +103,10 @@ pub fn wav(samples: &[i16]) -> Vec<u8> {
     out.extend_from_slice(b"fmt ");
     out.extend_from_slice(&16_u32.to_le_bytes());
     out.extend_from_slice(&1_u16.to_le_bytes()); // PCM
-    out.extend_from_slice(&1_u16.to_le_bytes()); // mono
+    out.extend_from_slice(&channels.to_le_bytes());
     out.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
-    out.extend_from_slice(&SAMPLE_RATE.saturating_mul(2).to_le_bytes()); // byte rate
-    out.extend_from_slice(&2_u16.to_le_bytes()); // block align
+    out.extend_from_slice(&byte_rate.to_le_bytes());
+    out.extend_from_slice(&block_align.to_le_bytes());
     out.extend_from_slice(&16_u16.to_le_bytes()); // bits per sample
     out.extend_from_slice(b"data");
     out.extend_from_slice(&data_len.to_le_bytes());
@@ -105,7 +132,15 @@ pub fn write_all(dir: &Path, tracks: &[Flat]) -> std::io::Result<Vec<String>> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, wav(&samples(&track.path)))?;
+        // A stereo pair is ONE two-channel track, so its media is one
+        // two-channel file — a mono source under a stereo track is a
+        // fixture that cannot tell L from R.
+        let bytes = if track.stereo {
+            wav(&stereo_samples(&track.path), 2)
+        } else {
+            wav(&samples(&track.path), 1)
+        };
+        std::fs::write(&path, bytes)?;
         written.push(file);
     }
     Ok(written)
@@ -113,7 +148,7 @@ pub fn write_all(dir: &Path, tracks: &[Flat]) -> std::io::Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{samples, wav, PEAK, SAMPLE_RATE};
+    use super::{samples, stereo_samples, wav, PEAK, SAMPLE_RATE};
 
     #[test]
     fn media_is_deterministic_and_a_valid_wav() {
@@ -121,10 +156,30 @@ mod tests {
         assert_eq!(a, samples("Drum Kit/Kick/Sum/In"));
         assert_ne!(a, samples("Drum Kit/Kick/Sum/Out"));
         assert_eq!(a.len(), 44_100);
-        let bytes = wav(&a);
+        let bytes = wav(&a, 1);
         assert_eq!(bytes.get(..4), Some(b"RIFF".as_slice()));
         assert_eq!(bytes.get(8..12), Some(b"WAVE".as_slice()));
         assert_eq!(bytes.len(), 44 + 44_100 * 2);
+        assert_eq!(bytes.get(22..24), Some(1_u16.to_le_bytes().as_slice()));
+    }
+
+    /// A stereo pair's file really is two channels, and its two sides
+    /// are different — which is what makes a two-sided folder item
+    /// provable from the fixture rather than assumed.
+    #[test]
+    fn a_stereo_pair_gets_two_different_channels() {
+        let both = stereo_samples("Guitars/Electric/Rhythm");
+        assert_eq!(both.len(), 44_100 * 2);
+        let left: Vec<i16> = both.iter().step_by(2).copied().collect();
+        let right: Vec<i16> = both.iter().skip(1).step_by(2).copied().collect();
+        assert_eq!(left, samples("Guitars/Electric/Rhythm"));
+        assert_ne!(left, right, "the two sides are two performances");
+        let loudest = |c: &[i16]| c.iter().map(|s| i32::from(*s).abs()).max().unwrap_or(0);
+        assert!(loudest(&right) < loudest(&left), "the right side is quieter");
+        let bytes = wav(&both, 2);
+        assert_eq!(bytes.get(22..24), Some(2_u16.to_le_bytes().as_slice()));
+        assert_eq!(bytes.get(32..34), Some(4_u16.to_le_bytes().as_slice()));
+        assert_eq!(bytes.len(), 44 + 44_100 * 4);
     }
 
     #[test]
