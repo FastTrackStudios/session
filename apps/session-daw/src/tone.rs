@@ -8845,10 +8845,10 @@ pub fn is_pair(rows: &[(daw_proto::Track, u32)], index: usize, depth: u32) -> bo
 /// Whether a track is one half of a stereo pair, by name.
 #[must_use]
 pub fn is_pair_half(name: &str) -> bool {
-    matches!(
-        name.trim().to_uppercase().as_str(),
-        "L" | "R" | "LEFT" | "RIGHT"
-    )
+    // The scene engine's own answer: the pair-half invariant is enforced
+    // there, and a strip that disagreed about what a half IS would rail
+    // a track the scene had opened.
+    dynamic_template::scenes::is_pair_half(name)
 }
 
 fn band(index: usize, frequency: f64, gain: f64, q: f64, shape: EqBandShape) -> EqBand {

@@ -1,16 +1,11 @@
-//! Scenes as data: the selector vocabulary.
+//! The selector vocabulary: which tracks a rule is about.
 //!
-//! A scene (spec #48, "Scenes as data") is a table of rules, and a rule
-//! starts with a [`Selector`] — which tracks it is about, said in the
-//! template's own taxonomy rather than by name. The patch list (#56)
+//! A rule starts with a [`Selector`] — which tracks it is about, said in
+//! the template's own taxonomy rather than by name. The patch list (#56)
 //! lowers to the same vocabulary: an entry is a selector paired with an
 //! input role, so the scene engine, the patch applier and the performer
 //! rows all agree on what "Cody's amp A 57" means without a second way
 //! of saying it.
-//!
-//! This module holds the vocabulary only. Matching a selector against a
-//! session, and the `Scene`/`Rule`/`Effect` table around it, land with
-//! the scene engine (#50); the types here are what it adopts.
 
 use facet::Facet;
 

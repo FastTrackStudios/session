@@ -26,7 +26,6 @@ pub mod scenes;
 pub mod song_name;
 mod tempo;
 pub mod track_schema;
-pub mod visibility_rules;
 
 pub use apply::{apply_buses, route_to_bus, AppliedBuses, TemplateTarget};
 pub use buses::{bus_for_path, bus_nodes, bus_nodes_for_paths, buses_for_paths, BusSpec, BUS_TREE};

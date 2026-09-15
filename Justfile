@@ -1291,10 +1291,11 @@ daw-patch-list OUT="apps/session-daw/fixtures/patch-list.png" SIZE="1280x1280":
 #
 # `just daw-scene lead-vocal-fx` renders the vocal template with the
 # Short delay and the Long verb in focus; the drum scenes render the
-# drum template. Scenes are `plan::SCENES`: drum-tracking, drum-mixing,
+# drum template. Scenes are the data table in
+# `dynamic_template::scenes::table`: drum-tracking, drum-mixing,
 # drum-overview, drum-advanced, drum-fx, buses, guitar-fx, lead-vocal,
-# lead-vocal-fx. In the window the number keys 1–9 recall the same
-# scenes, and 0 goes back to the rail's preset.
+# lead-vocal-fx. In the window the number keys recall the scenes of the
+# current DAW mode, and a digit past the end clears the scene.
 daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail

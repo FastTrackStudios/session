@@ -10,6 +10,8 @@ use daw_reaper::track::{
     set_visibility_on_main_thread,
 };
 
+use crate::golden_session::kind::{Kind, TrackExt};
+use crate::scenes as dynamic_template_scenes;
 use crate::{
     default_config, monarchy_sort, track_schema, ItemMetadata, OrganizeIntoTracks, Structure,
 };
@@ -316,52 +318,157 @@ fn set_track_visibility(guid: &str, visible: bool) -> eyre::Result<()> {
         .map_err(|err| eyre::eyre!("failed to set visibility for track {guid}: {err}"))
 }
 
-/// Apply a session mode's rule-based, per-surface visibility to the live
-/// session. Resolves the mode's rules against the current track list (taxonomy
-/// + folder role) and applies arrange/mixer visibility plus folder-collapse.
+/// The live session's tracks, as the scene engine's facts.
 ///
-/// No-op (logged) for modes without a rule set. Fired by the
-/// `FTS_VISIBILITY_MANAGER_MODE_<SLUG>` actions on a mode switch.
-fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
-    use crate::visibility_rules::{self, TrackInput};
+/// Depth comes from REAPER's own `I_FOLDERDEPTH` run, and the taxonomy
+/// from the ext-state the template wrote when it created each track
+/// (`P_EXT:FTS:kind`, `P_EXT:FTS:group`) — the same two keys the golden
+/// session commits, read back here rather than guessed from names.
+fn live_facts() -> Vec<(daw_proto::Track, u32)> {
+    let mut depth: i32 = 0;
+    daw_reaper::Reaper
+        .all(project())
+        .into_iter()
+        .map(|track| {
+            let at = u32::try_from(depth.max(0)).unwrap_or(0);
+            depth = depth.saturating_add(track.folder_depth);
+            (track, at)
+        })
+        .collect()
+}
 
-    let Some(mode) = visibility_rules::mode_visibility_for(slug) else {
-        tracing::info!("[dynamic-template] no visibility rules for mode '{slug}' — left as-is");
+/// What the template wrote about each live track, keyed by GUID.
+fn live_taxonomy(rows: &[(daw_proto::Track, u32)]) -> HashMap<String, TrackExt> {
+    // Reading `P_EXT` is a main-thread call, and this whole applier runs
+    // on a REAPER action. No handle means the extension has not finished
+    // bootstrapping, which is an empty taxonomy rather than an error.
+    let Some(reaper) = daw_reaper::DawMainThread::try_new() else {
+        return HashMap::new();
+    };
+    rows.iter()
+        .filter_map(|(track, _)| {
+            let kind = reaper
+                .track_get_ext_state(&track.guid, "FTS", "kind")
+                .and_then(|value: String| Kind::parse(value.trim()));
+            let group = reaper
+                .track_get_ext_state(&track.guid, "FTS", "group")
+                .map(|value: String| value.trim().to_owned())
+                .filter(|value: &String| !value.is_empty());
+            if kind.is_none() && group.is_none() {
+                return None;
+            }
+            Some((
+                track.guid.clone(),
+                TrackExt {
+                    guid: track.guid.clone(),
+                    name: track.name.clone(),
+                    kind,
+                    group,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Apply a mode's scene to the live session.
+///
+/// The second of the two appliers: the same row list the window renders
+/// is walked here and written onto real tracks — show, fold and size —
+/// so the flows operate on REAPER and on daw-standalone through one
+/// resolve. Header rows are skipped: a performer header is a row of the
+/// view and there is no track to apply it to.
+///
+/// No-op (logged) for modes with no default scene, which is the spec's
+/// own answer: there is no scoring view of a kit, so leave the session
+/// where the engineer left it. Fired by the
+/// `FTS_VISIBILITY_MANAGER_MODE_<SLUG>` actions on a mode switch.
+// r[impl flow.scenes.follow-mode]
+fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
+    use dynamic_template_scenes::{follow, resolve, Audience, Surface, Target};
+
+    let table = dynamic_template_scenes::scenes();
+    let rows = live_facts();
+    let taxonomy = live_taxonomy(&rows);
+    let facts = dynamic_template_scenes::from_tracks(&rows, &taxonomy);
+    // The instrument the session is about, with no window to ask: the
+    // selected track's, else the default.
+    let selected = rows
+        .iter()
+        .find(|(track, _)| track.selected)
+        .and_then(|(track, _)| instrument_of(&facts, &track.guid))
+        .unwrap_or_else(|| follow::DEFAULT_INSTRUMENT.to_owned());
+    let Some(scene) = follow::default_for(table, slug, &selected, Audience::Engineer) else {
+        tracing::info!(
+            scene.mode = slug,
+            scene.instrument = selected,
+            "no default scene for this mode — the session is left as it is"
+        );
         return Ok(());
     };
 
-    let config = default_config();
-    let tracks: Vec<TrackInput> = daw_reaper::Reaper
-        .all(project())
-        .into_iter()
-        .map(|t| TrackInput {
-            guid: t.guid,
-            name: t.name,
-            index: t.index,
-            is_folder: t.is_folder,
-        })
-        .collect();
+    let arrange = resolve(scene, &facts, Surface::Arrange, Some(slug));
+    let mixer = resolve(scene, &facts, Surface::Mixer, Some(slug));
+    let shown_in = |rows: &[dynamic_template_scenes::Row]| -> HashSet<String> {
+        rows.iter()
+            .filter_map(|row| match &row.target {
+                Target::Track(guid) => Some(guid.clone()),
+                Target::PerformerHeader(_) => None,
+            })
+            .collect()
+    };
+    let in_arrange = shown_in(&arrange);
+    let in_mixer = shown_in(&mixer);
 
-    let plans = visibility_rules::resolve(&tracks, &config, &mode);
-    let mut fold_pending = 0usize;
-    for plan in &plans {
-        set_visibility_on_main_thread(&plan.guid, plan.arrange_show, plan.mixer_show)
-            .map_err(|err| eyre::eyre!("set visibility for {}: {err}", plan.guid))?;
-        // Folder-collapse (arrange `I_FOLDERCOMPACT` + mixer `BUSCOMP`) is planned
-        // here but its application is pending `daw_reaper::track::
-        // set_folder_compact_on_main_thread`, which lives in the local daw
-        // checkout and isn't yet published to the git dep this builds against.
-        // Re-enable once that primitive lands. See visibility_rules::TrackPlan.
-        if plan.arrange_fold.is_some() || plan.mixer_fold.is_some() {
-            fold_pending = fold_pending.saturating_add(1);
+    let mut folds = 0usize;
+    for (track, _) in &rows {
+        set_visibility_on_main_thread(
+            &track.guid,
+            in_arrange.contains(&track.guid),
+            in_mixer.contains(&track.guid),
+        )
+        .map_err(|err| eyre::eyre!("set visibility for {}: {err}", track.guid))?;
+    }
+    for row in &arrange {
+        let Target::Track(guid) = &row.target else {
+            continue;
+        };
+        // Folder-collapse (arrange `I_FOLDERCOMPACT` + mixer `BUSCOMP`)
+        // is resolved here but its application is pending
+        // `daw_reaper::track::set_folder_compact_on_main_thread`, which
+        // lives in the local daw checkout and is not yet published to
+        // the git dep this builds against. Re-enable once it lands.
+        if row.fold.compact().is_some_and(|c| c != 0) {
+            let _ = guid;
+            folds = folds.saturating_add(1);
         }
     }
 
     tracing::info!(
-        "[dynamic-template] applied '{slug}' mode visibility to {} tracks ({fold_pending} folder-collapse(s) planned, pending daw-reaper primitive)",
-        plans.len()
+        scene.mode = slug,
+        scene.slug = scene.slug,
+        scene.instrument = selected,
+        scene.arrange_rows = arrange.len(),
+        scene.mixer_rows = mixer.len(),
+        scene.folds_pending = folds,
+        "scene applied"
     );
     Ok(())
+}
+
+/// The instrument a track belongs to, from its resolved taxonomy path.
+fn instrument_of(facts: &[dynamic_template_scenes::Fact], guid: &str) -> Option<String> {
+    let top = facts
+        .iter()
+        .find(|fact| fact.guid == guid)?
+        .path
+        .first()?
+        .name
+        .to_ascii_lowercase();
+    Some(match top.as_str() {
+        "guitars" => "guitar".to_owned(),
+        "vocals" => "vocal".to_owned(),
+        _ => top,
+    })
 }
 
 fn set_track_height(guid: &str, height_pixels: u32) -> eyre::Result<()> {

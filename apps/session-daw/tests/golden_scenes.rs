@@ -141,12 +141,12 @@ fn every_scene_renders_to_its_committed_fixture() -> Result<()> {
     let scenes_dir = fixtures().join("scenes");
     let scratch = tempfile::tempdir()?;
     let mut failures = Vec::new();
-    for scene in &session_daw::plan::SCENES {
+    for scene in dynamic_template::scenes::scenes() {
         let committed_png = scenes_dir.join(format!("{}.png", scene.slug));
         let committed_rows = scenes_dir.join(format!("{}.rows", scene.slug));
         let fresh_png = scratch.path().join(format!("{}.png", scene.slug));
         let fresh_rows = scratch.path().join(format!("{}.rows", scene.slug));
-        render(scene.slug, &fresh_png, &fresh_rows)?;
+        render(&scene.slug, &fresh_png, &fresh_rows)?;
         if update {
             std::fs::copy(&fresh_png, &committed_png)?;
             std::fs::copy(&fresh_rows, &committed_rows)?;
@@ -253,7 +253,7 @@ fn two_scenes_differ_by_more_than_the_tolerances() -> Result<()> {
 /// list with rows in it, and none of the pictures is a blank window.
 #[test]
 fn every_scene_has_a_fixture_with_something_in_it() -> Result<()> {
-    for scene in &session_daw::plan::SCENES {
+    for scene in dynamic_template::scenes::scenes() {
         let dir = fixtures().join("scenes");
         let (w, h, committed) = pixels(&dir.join(format!("{}.png", scene.slug)))?;
         assert_eq!((w, h), (2560, 1440), "{}", scene.slug);

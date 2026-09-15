@@ -205,11 +205,15 @@ struct App {
     /// Which mix phase, which is what the left rail's lower half
     /// selects and what decides how much processing a strip shows.
     phase: session::mix_phases::MixPhase,
-    /// Which visual preset is recalled — which tracks show, and how
-    /// wide. The left rail's upper half.
-    preset: &'static str,
-    /// A scene recalled over the preset, by slug — see `plan::SCENES`.
-    view_scene: Option<&'static str>,
+    /// Which scene is showing, and why — the visibility manager.
+    ///
+    /// `flow.scenes.follow-mode`: entering a mode shows that mode's
+    /// scene for the instrument and audience, the number keys recall
+    /// inside it, and a hand-chosen scene stays until the mode changes.
+    visibility: dynamic_template::scenes::Follow,
+    /// The taxonomy the template wrote into the project this window
+    /// opened — what a scene's selectors match against.
+    kinds: session_daw::plan::Kinds,
     /// The right rail's switches.
     settings: session_daw::settings::Settings,
     /// An open rename, if a name is being edited.
@@ -501,34 +505,19 @@ impl ApplicationHandler for App {
                     self.redraw();
                     return;
                 }
-                // The number keys recall scenes — the visual track
-                // manager's snapshots: `1` is drum tracking, `5` is
-                // editing the vocal's returns. `0` goes back to the
-                // rail's preset.
+                // The number keys recall scenes inside the mode — `1`
+                // is the mode's own scene, and a digit past the end
+                // goes back to no scene at all.
                 if let Some(text) = event.logical_key.to_text()
                     && text.len() == 1
                     && let Some(digit) = text.chars().next().and_then(|c| c.to_digit(10))
                 {
-                    self.view_scene = usize::try_from(digit)
-                        .ok()
-                        .and_then(|d| d.checked_sub(1))
-                        .and_then(|i| session_daw::plan::SCENES.get(i))
-                        .map(|s| s.slug);
-                    tracing::info!(ui.scene = self.view_scene.unwrap_or("none"), "scene");
-                    // The scene's folds become the window's folder
-                    // state, so the strips' fold icons agree with it
-                    // and a click on one carries on from there.
-                    if let Some(scene) = self.view_scene.and_then(session_daw::plan::scene) {
-                        let (all, depths) = daw_ui::components::folders::FolderState::default()
-                            .visible(&self.tracks);
-                        let rows: Vec<(daw_proto::Track, u32)> =
-                            all.into_iter().zip(depths).collect();
-                        self.folders = daw_ui::components::folders::FolderState::default();
-                        for guid in session_daw::plan::collapsed_by(scene, &rows) {
-                            self.folders.toggle(&guid);
-                        }
-                        self.re_record();
-                    }
+                    let shown = self
+                        .visibility
+                        .recall(dynamic_template::scenes::scenes(), digit)
+                        .map(str::to_owned);
+                    tracing::info!(ui.scene = shown.as_deref().unwrap_or("none"), "scene");
+                    self.sync_folds_to_scene();
                     self.mixer = None;
                     self.redraw();
                     return;
@@ -1972,6 +1961,54 @@ impl App {
         self.mixer_scroll = (self.mixer_scroll - by).clamp(0.0, most);
     }
 
+    /// Which instrument the window is looking at.
+    ///
+    /// The selected track's, else the shown scene's, else the default
+    /// — the three-deep fallback the spec asks for, so the question has
+    /// an answer before anything is selected.
+    fn instrument(&self) -> String {
+        let rows = self.session.as_ref().map(|(_, rows)| rows.as_slice());
+        let selected =
+            self.tracks
+                .iter()
+                .find(|t| t.selected)
+                .zip(rows)
+                .and_then(|(track, rows)| {
+                    session_daw::plan::instrument_of(rows, &self.kinds, &track.guid)
+                });
+        dynamic_template::scenes::follow::instrument_for(
+            selected.as_deref(),
+            self.visibility
+                .shown()
+                .and_then(dynamic_template::scenes::scene),
+        )
+    }
+
+    /// Put the window's folder state where the scene says.
+    ///
+    /// A scene folds folders, and the strips' fold icons have to agree
+    /// with it — otherwise a click on one carries on from a state
+    /// nobody is looking at.
+    fn sync_folds_to_scene(&mut self) {
+        let Some(scene) = self
+            .visibility
+            .shown()
+            .and_then(dynamic_template::scenes::scene)
+        else {
+            return;
+        };
+        let (all, depths) =
+            daw_ui::components::folders::FolderState::default().visible(&self.tracks);
+        let rows: Vec<(daw_proto::Track, u32)> = all.into_iter().zip(depths).collect();
+        self.folders = daw_ui::components::folders::FolderState::default();
+        for guid in
+            session_daw::plan::collapsed_by(&rows, &self.kinds, scene, Some(self.mode.slug()))
+        {
+            self.folders.toggle(&guid);
+        }
+        self.re_record();
+    }
+
     fn mixer_for(&mut self, height: f64) -> bool {
         let Some((project, rows)) = self.session.as_ref() else {
             return false;
@@ -1981,25 +2018,25 @@ impl App {
             .as_ref()
             .is_none_or(|m| (m.height - height).abs() > 0.5);
         if stale {
-            // The visual preset decides which strips exist and how wide
-            // each one opens, so it is applied BEFORE the recording —
-            // the mixer records what it is given and has never heard of
-            // a preset.
+            // The scene decides which strips exist and how wide each
+            // one opens, so it is applied BEFORE the recording — the
+            // mixer records what it is given and has never heard of a
+            // scene.
             let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(
-                match self.view_scene.and_then(session_daw::plan::scene) {
+                match self
+                    .visibility
+                    .shown()
+                    .and_then(dynamic_template::scenes::scene)
+                {
                     Some(scene) => session_daw::plan::apply_scene(
                         rows.as_slice(),
+                        &self.kinds,
                         scene,
-                        self.settings,
-                        height,
-                    ),
-                    None => session_daw::plan::apply(
-                        rows.as_slice(),
-                        session_daw::plan::slug(self.preset).unwrap_or(self.preset),
                         session_daw::plan::Surface::Mixer,
-                        self.settings,
+                        Some(self.mode.slug()),
                         height,
                     ),
+                    None => rows.as_slice().to_vec(),
                 },
             ));
             self.tone_settings.seed(planned.as_slice());
@@ -2158,7 +2195,7 @@ impl App {
             session_daw::rails::Surface::Mixer,
             self.mode,
             self.phase,
-            self.preset,
+            self.visibility.shown(),
             self.settings,
         );
         let Self {
@@ -2213,7 +2250,7 @@ impl App {
             session_daw::rails::Surface::Mixer,
             self.mode,
             self.phase,
-            self.preset,
+            self.visibility.shown(),
             self.settings,
         );
         let levels = self.meter_levels();
@@ -2341,7 +2378,7 @@ impl App {
             },
             self.mode,
             self.phase,
-            self.preset,
+            self.visibility.shown(),
             self.settings,
         )
     }
@@ -2399,14 +2436,21 @@ impl App {
     fn act_on_rail(&mut self, action: session_daw::rails::Action) {
         use session_daw::rails::Action as A;
         match action {
-            A::Preset(name) => {
-                if self.preset == name {
+            A::Scene(slug) => {
+                if self.visibility.shown() == Some(slug) {
                     return;
                 }
-                self.preset = name;
-                // A preset chosen on the rail is the view again; a
-                // scene was over it.
-                self.view_scene = None;
+                // A scene chosen on the rail is a hand choice, the same
+                // as one recalled by a number key.
+                let scenes = dynamic_template::scenes::scenes();
+                let digit = dynamic_template::scenes::follow::in_mode(scenes, self.mode.slug())
+                    .iter()
+                    .position(|s| s.slug == slug)
+                    .and_then(|i| u32::try_from(i.saturating_add(1)).ok())
+                    .unwrap_or_default();
+                self.visibility.recall(scenes, digit);
+                self.sync_folds_to_scene();
+                self.mixer = None;
                 self.re_record();
             }
             A::Phase(phase) => {
@@ -2425,6 +2469,16 @@ impl App {
                     return;
                 }
                 self.mode = mode;
+                // Scenes are the visibility manager and the visibility
+                // manager follows the mode: entering Record shows the
+                // instrument's tracking scene without a second choice
+                // being made. `flow.scenes.follow-mode`.
+                let instrument = self.instrument();
+                self.visibility
+                    .enter(dynamic_template::scenes::scenes(), mode.slug(), &instrument);
+                self.sync_folds_to_scene();
+                self.mixer = None;
+                self.re_record();
             }
             A::FocusSelected => {
                 self.settings.focus_selected = !self.settings.focus_selected;
@@ -2640,14 +2694,13 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         let theme = self.theme.clone();
         let layout = self.layout;
-        let preset = session_daw::plan::slug(self.preset)
-            .unwrap_or(self.preset)
-            .to_owned();
-        let settings = self.settings;
+        let shown = self.visibility.shown().map(str::to_owned);
+        let kinds = self.kinds.clone();
+        let mode = self.mode.slug().to_owned();
         if std::thread::Builder::new()
             .name("session-daw-reload".into())
             .spawn(move || {
-                if let Some(loaded) = build_scene(&theme, layout, &preset, settings) {
+                if let Some(loaded) = build_scene(&theme, layout, shown.as_deref(), &kinds, &mode) {
                     let _ = tx.send(loaded);
                 }
             })
@@ -2712,15 +2765,25 @@ impl App {
         let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
             visible.into_iter().zip(depths).collect(),
         ));
-        // Then the preset, which decides which of those rows the
+        // Then the scene, which decides which of those rows the
         // arrangement shows and how tall each one opens.
-        let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(session_daw::plan::apply(
-            rows.as_slice(),
-            session_daw::plan::slug(self.preset).unwrap_or(self.preset),
-            session_daw::plan::Surface::Arrange,
-            self.settings,
-            self.surface_size.1,
-        )));
+        let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(
+            match self
+                .visibility
+                .shown()
+                .and_then(dynamic_template::scenes::scene)
+            {
+                Some(scene) => session_daw::plan::apply_scene(
+                    rows.as_slice(),
+                    &self.kinds,
+                    scene,
+                    session_daw::plan::Surface::Arrange,
+                    Some(self.mode.slug()),
+                    self.surface_size.1,
+                ),
+                None => rows.as_slice().to_vec(),
+            },
+        ));
         self.arrange_map = session_daw::plan::Rows::of(planned.as_slice(), &self.tracks);
         self.scene = Some(Arrangement::build(
             &self.palette,
@@ -2785,7 +2848,7 @@ impl App {
             session_daw::rails::Surface::Arrange,
             self.mode,
             self.phase,
-            self.preset,
+            self.visibility.shown(),
             self.settings,
         );
         let Some(scene) = &self.scene else { return };
@@ -2903,8 +2966,26 @@ fn main() {
         "patch list"
     );
 
+    // The taxonomy the template wrote into this project: read once,
+    // here, because every scene's selectors match against it and it
+    // does not change while the window is open.
+    let kinds = session_daw::plan::Kinds::read(&path);
+    tracing::info!(scene.taxonomy = kinds.len(), "taxonomy");
+
+    // The window opens in Mix, so it opens on Mix's scene — follow-mode
+    // from the first frame rather than from the first mode change.
+    let mut opening =
+        dynamic_template::scenes::Follow::new(dynamic_template::scenes::Audience::Engineer);
+    opening.enter(
+        dynamic_template::scenes::scenes(),
+        session::modes::Mode::Mix.slug(),
+        dynamic_template::scenes::follow::DEFAULT_INSTRUMENT,
+    );
+
     // The window opens now; the project fills in behind it.
     let for_loader = theme.clone();
+    let kinds_for_loader = kinds.clone();
+    let opening_scene = opening.shown().map(str::to_owned);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("session-daw-load".into())
@@ -2925,8 +3006,9 @@ fn main() {
             match build_scene(
                 &for_loader,
                 layout,
-                session_daw::plan::PRESETS[0].1,
-                session_daw::settings::Settings::default(),
+                opening_scene.as_deref(),
+                &kinds_for_loader,
+                session::modes::Mode::Mix.slug(),
             ) {
                 Some(loaded) => {
                     tracing::info!(rows = loaded.arrangement.rows, "session recorded");
@@ -2996,8 +3078,8 @@ fn main() {
         meters: session_daw::engine::Meters::start(),
         mode: session::modes::Mode::Mix,
         phase: session::mix_phases::MixPhase::Tone,
-        preset: session_daw::rails::PRESETS[0],
-        view_scene: None,
+        visibility: opening,
+        kinds,
         settings: session_daw::settings::Settings::default(),
         rename: None,
         last_row_click: None,
@@ -3049,8 +3131,9 @@ fn main() {
 fn build_scene(
     theme: &daw_ui::theming::Theme,
     layout: session_daw::layout::Layout,
-    preset: &str,
-    settings: session_daw::settings::Settings,
+    shown: Option<&str>,
+    kinds: &session_daw::plan::Kinds,
+    mode: &str,
 ) -> Option<Loaded> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -3065,18 +3148,24 @@ fn build_scene(
     ));
     let palette = Palette::from_theme(theme);
     let font = session_daw::text::Font::embedded().ok()?;
-    // The opening preset is applied HERE rather than by the window,
-    // so the first arrangement the window shows is already the one the
-    // preset asks for. Recording it twice — once plain, once planned —
+    // The opening scene is applied HERE rather than by the window, so
+    // the first arrangement the window shows is already the one the
+    // scene asks for. Recording it twice — once plain, once planned —
     // is four milliseconds nobody sees and a frame of the wrong layout
     // that they do.
-    let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(session_daw::plan::apply(
-        rows.as_slice(),
-        preset,
-        session_daw::plan::Surface::Arrange,
-        settings,
-        0.0,
-    )));
+    let planned = daw_ui::studio::RowsRef(std::sync::Arc::new(
+        match shown.and_then(dynamic_template::scenes::scene) {
+            Some(scene) => session_daw::plan::apply_scene(
+                rows.as_slice(),
+                kinds,
+                scene,
+                session_daw::plan::Surface::Arrange,
+                Some(mode),
+                0.0,
+            ),
+            None => rows.as_slice().to_vec(),
+        },
+    ));
     // The project and its rows come back with the arrangement, because
     // the mixer is recorded against the WINDOW's height and that is not
     // known here — see `App::mixer_for`.
