@@ -1198,6 +1198,37 @@ daw-template:
 daw-scenes:
     FTS_UPDATE_GOLDEN=1 cargo test -p session-daw --test golden_scenes
 
+# Re-render the folder-item fixtures from the golden session's own peaks.
+#
+# Both halves, at three zooms, under
+# features/dynamic-template/fixtures/golden/folder-items/ — the fold
+# (`<slug>.fold`, compared byte for byte) and the picture (`<slug>.png`,
+# compared structurally). See `apps/session-daw/tests/folder_items.rs`.
+# Run this after a deliberate change to the fold, the colours or the
+# fixture media, and commit the result.
+daw-folder-items:
+    FTS_UPDATE_GOLDEN=1 cargo test -p session-daw --test folder_items
+
+# One sheet of folder items over a project, by hand — the same render the
+# fixtures come from, so it is the way to LOOK at a fold.
+#
+# `just daw-folder-item-sheet /tmp/fi.png "" 0,16` for eight bars.
+daw-folder-item-sheet OUT="/tmp/fts-folder-items.png" PROJECT="" WINDOW="" SIZE="1280x480":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    project="{{PROJECT}}"
+    if [[ -z "$project" ]]; then
+        project="{{GOLDEN_DIR}}/template.rpp"
+        [[ -f "$project" ]] || just daw-template
+    fi
+    cargo build -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    window="{{WINDOW}}"
+    # No window given means the whole project.
+    export FTS_BENCH_WINDOW="$window"
+    [[ -n "$window" ]] || unset FTS_BENCH_WINDOW
+    FTS_BENCH_FOLDER_ITEMS="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" \
+        ./target/debug/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
 # Benchmark the arrangement HEADLESSLY: no window, no surface, no vsync.
 #
 # Sweeps both axes hard and reports percentiles. This is the number that
@@ -1437,3 +1468,73 @@ daw-shot OUT="/tmp/fts-mixer.png" PROJECT="" SIZE="2560x1440":
     sleep 3
     magick import -window "$id" "{{OUT}}"
     printf 'wrote %s — %s\n' "{{OUT}}" "$(magick identify -format '%wx%h' "{{OUT}}")"
+
+# Everything CI runs, in CI's order, with one command.
+#
+# The workflow (.github/workflows/checks.yml) is the source of truth;
+# this mirrors its steps so a green run here means a green run there.
+# It stops at the first failure, because CI does too and a later step
+# built on a broken one tells you nothing.
+#
+# `just ci` runs the lot. `just ci nextest` starts from that step, for
+# when you have already passed the cheap ones and are iterating on a
+# test. Steps in order: lockfile, fmt, flows, tailwind, check, nextest.
+ci FROM="lockfile":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
+    steps=(lockfile fmt flows tailwind check nextest)
+    start=0
+    for i in "${!steps[@]}"; do
+      [ "${steps[$i]}" = "{{FROM}}" ] && start=$i && break
+    done
+    run_from() { local want="$1"; local at=0
+      for i in "${!steps[@]}"; do [ "${steps[$i]}" = "$want" ] && at=$i; done
+      [ "$at" -ge "$start" ]; }
+
+    if run_from lockfile; then
+      echo "── lockfile ─────────────────────────────────────────"
+      committed="$(mktemp)"; cp Cargo.lock "$committed"
+      cargo metadata --format-version 1 > /dev/null
+      packages() { sed '/^\[\[patch\.unused\]\]/,$d' "$1"; }
+      unused() { awk '/^\[\[patch\.unused\]\]/ { f = 1; next }
+                      f && /^name = /    { n = $3 }
+                      f && /^version = / { print n "@" $3 }' "$1" | sort; }
+      ok=1
+      diff -u <(packages "$committed") <(packages Cargo.lock) || ok=0
+      diff -u <(unused "$committed") <(unused Cargo.lock) || ok=0
+      rm -f "$committed"
+      [ "$ok" = 1 ] || { echo "Cargo.lock is out of date — commit the result of cargo metadata"; exit 1; }
+      echo "ok"
+    fi
+
+    if run_from fmt; then
+      echo "── cargo fmt --check ────────────────────────────────"
+      cargo fmt --all --check
+      echo "ok"
+    fi
+
+    if run_from flows; then
+      echo "── flow verification gate ───────────────────────────"
+      just daw-flows --own-daemon
+    fi
+
+    if run_from tailwind; then
+      echo "── web tailwind sheet ───────────────────────────────"
+      just web-tailwind
+      echo "ok"
+    fi
+
+    if run_from check; then
+      echo "── cargo check --workspace ──────────────────────────"
+      cargo check --workspace
+      echo "ok"
+    fi
+
+    if run_from nextest; then
+      echo "── cargo nextest --workspace ────────────────────────"
+      cargo nextest run --workspace --no-fail-fast
+    fi
+
+    echo
+    echo "every CI step passed locally"
