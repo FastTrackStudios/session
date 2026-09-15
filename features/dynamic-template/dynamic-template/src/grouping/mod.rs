@@ -20,11 +20,13 @@
 //! see [`slots`] for why that matters more than it sounds.
 
 pub mod gangs;
+pub mod language;
 pub mod slots;
 pub mod vca;
 pub mod watch;
 
 pub use gangs::{diff, gangs, Gang, GangKey};
+pub use language::{audible, follow_language, Switched};
 pub use slots::{assign, survives_save, Purpose};
 pub use vca::{leads, VcaLead};
 pub use watch::{follow_arm, Followed};

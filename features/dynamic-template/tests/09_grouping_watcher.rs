@@ -170,3 +170,144 @@ fn the_second_pass_over_the_same_gesture_writes_nothing() -> Result {
     assert_eq!(echo.wrote, 0, "an echo wrote again — the watcher loops");
     Ok(())
 }
+
+// ── the active-language switch ───────────────────────────────────────
+
+use dynamic_template::grouping::follow_language;
+use dynamic_template::scenes::Language;
+
+/// Ron sings all three languages on his Main layer, plus one wordless
+/// `All` part that belongs to every version — and his `Ron` and `Main`
+/// mix tracks carry no language at all.
+struct Vocals {
+    daw: Standalone,
+    project: ProjectContext,
+    facts: Vec<Fact>,
+    guids: HashMap<String, String>,
+}
+
+impl Vocals {
+    fn new() -> Self {
+        let daw = Standalone::new();
+        let guid = daw.seed_project(ProjectInfo {
+            guid: "vocals".into(),
+            name: "vocals".into(),
+            path: String::new(),
+        });
+        let project = ProjectContext::Project(guid);
+        let vox = Segment::named("Vocals").of(Kind::Group);
+        let mut facts = Vec::new();
+        let mut guids = HashMap::new();
+        let mut index = 0;
+
+        let mut push = |name: &str, language: Option<Language>, is_folder: bool| {
+            let guid = Tracks::add(&daw, project.clone(), name, None).expect("a track");
+            let mut fact = if is_folder {
+                Fact::folder(&guid, name, index, 1)
+            } else {
+                Fact::leaf(&guid, name, index, 2).of(Kind::Source)
+            }
+            .at(vec![vox.clone()]);
+            fact.language = language;
+            facts.push(fact);
+            guids.insert(name.to_owned(), guid);
+            index += 1;
+        };
+
+        push("Ron", None, true);
+        push("Main", None, true);
+        push("EN", Some(Language::En), false);
+        push("ES", Some(Language::Es), false);
+        push("PT", Some(Language::Pt), false);
+        push("Hey", Some(Language::All), false);
+
+        Self {
+            daw,
+            project,
+            facts,
+            guids,
+        }
+    }
+
+    fn muted(&self, name: &str) -> bool {
+        let guid = self.guids.get(name).expect("a seeded track").clone();
+        Tracks::get(&self.daw, self.project.clone(), TrackRef::Guid(guid))
+            .is_some_and(|track| track.muted)
+    }
+}
+
+/// `flow.vocals.language.active`: switching is one write, and after it
+/// **nothing of another language is audible**. This is the negative
+/// control the whole rule exists for — "look at the English version"
+/// that leaves a Spanish double under it is worse than not switching,
+/// because the mix sounds wrong and nothing on screen says why.
+///
+/// r[verify flow.vocals.language.active]
+#[test]
+fn switching_leaves_no_other_language_audible() -> Result {
+    let vox = Vocals::new();
+    follow_language(&vox.daw, &vox.project, &vox.facts, Language::En)?;
+
+    assert!(!vox.muted("EN"), "the active language must be heard");
+    assert!(vox.muted("ES"), "a Spanish source stayed audible");
+    assert!(vox.muted("PT"), "a Portuguese source stayed audible");
+    Ok(())
+}
+
+/// A language-free source belongs to every version, so it is never
+/// muted — muting it with a language would thin every render but one.
+///
+/// r[verify flow.vocals.language.active]
+#[test]
+fn a_language_free_source_is_never_muted() -> Result {
+    let vox = Vocals::new();
+    for active in [Language::En, Language::Es, Language::Pt] {
+        follow_language(&vox.daw, &vox.project, &vox.facts, active)?;
+        assert!(!vox.muted("Hey"), "All was muted with {active:?}");
+    }
+    Ok(())
+}
+
+/// The mix tracks above the language dimension carry no language, so
+/// the switch never touches them — which is what keeps one chain
+/// mixing every version.
+///
+/// r[verify flow.vocals.language.active]
+#[test]
+fn the_mix_tracks_are_untouched_by_the_switch() -> Result {
+    let vox = Vocals::new();
+    follow_language(&vox.daw, &vox.project, &vox.facts, Language::Es)?;
+    assert!(!vox.muted("Ron"), "the performer's mix track was muted");
+    assert!(!vox.muted("Main"), "the layer's mix track was muted");
+    Ok(())
+}
+
+/// Switching back restores what it muted: the switch is a projection of
+/// the active language, not a one-way latch.
+///
+/// r[verify flow.vocals.language.active]
+#[test]
+fn switching_back_restores_the_other_language() -> Result {
+    let vox = Vocals::new();
+    follow_language(&vox.daw, &vox.project, &vox.facts, Language::En)?;
+    assert!(vox.muted("ES"));
+    follow_language(&vox.daw, &vox.project, &vox.facts, Language::Es)?;
+    assert!(!vox.muted("ES"), "switching back left it muted");
+    assert!(vox.muted("EN"), "the old language stayed audible");
+    Ok(())
+}
+
+/// The same echo guard: a second pass over an unchanged switch writes
+/// nothing.
+///
+/// r[verify flow.vocals.language.active]
+#[test]
+fn a_second_switch_to_the_same_language_writes_nothing() -> Result {
+    let vox = Vocals::new();
+    let first = follow_language(&vox.daw, &vox.project, &vox.facts, Language::En)?;
+    assert!(first.muted > 0, "nothing was muted");
+    let echo = follow_language(&vox.daw, &vox.project, &vox.facts, Language::En)?;
+    assert_eq!(echo.muted, 0);
+    assert_eq!(echo.unmuted, 0, "an echo rewrote the mutes");
+    Ok(())
+}
