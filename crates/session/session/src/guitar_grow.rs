@@ -138,14 +138,17 @@ impl<D: Tracks + Items + Projects> GuitarGrow<D> {
     /// vocabulary applies ("GTR E ...", "GTR A ...") without carrying a
     /// dimension value of its own, which is exactly the context the
     /// classifier wants.
-    fn group_scope(tree: &TrackTree, guid: &str) -> String {
+    ///
+    /// Returned as the one-element slice the classifier takes, built once
+    /// per walk rather than per name.
+    fn group_scope(tree: &TrackTree, guid: &str) -> [String; 1] {
         let Some(mut node) = tree.get(guid).cloned() else {
-            return String::new();
+            return [String::new()];
         };
         while let Some(parent) = tree.parent_of(&node) {
             node = parent.clone();
         }
-        node.name
+        [node.name]
     }
 
     /// Every channel under `guid`, or `guid` itself when the part has no
@@ -168,7 +171,7 @@ impl<D: Tracks + Items + Projects> GuitarGrow<D> {
     fn collect_dimension(
         tree: &TrackTree,
         guid: &str,
-        scope: &str,
+        scope: &[String; 1],
         dimension: TrackDimension,
         found: &mut Vec<Track>,
     ) {
@@ -405,12 +408,7 @@ impl<D: Tracks + Items + Projects> GuitarGrow<D> {
             return Ok(carried);
         }
         let scope = Self::group_scope(&self.track_tree(), &container.guid);
-        track_schema::next_growth_value(
-            dimension,
-            std::slice::from_ref(&scope),
-            Vec::<String>::new(),
-        )
-        .ok_or_else(|| {
+        track_schema::next_growth_value(dimension, &scope, Vec::<String>::new()).ok_or_else(|| {
             DawError::not_found(&format!("a configured {dimension} name"), &container.name)
         })
     }
@@ -431,20 +429,16 @@ impl<D: Tracks + Items + Projects> GuitarGrow<D> {
             taken.push(first);
         }
         let scope = Self::group_scope(&self.track_tree(), &container.guid);
-        track_schema::next_growth_value(
-            dimension,
-            std::slice::from_ref(&scope),
-            taken.iter().map(String::as_str),
-        )
-        .ok_or_else(|| {
-            DawError::not_found(&format!("a configured {dimension} name"), &container.name)
-        })
+        track_schema::next_growth_value(dimension, &scope, taken.iter().map(String::as_str))
+            .ok_or_else(|| {
+                DawError::not_found(&format!("a configured {dimension} name"), &container.name)
+            })
     }
 
     /// Which dimension `name` reads as, in the context of the scope it
     /// sits under.
-    fn dimension_of(name: &str, scope_name: &str) -> TrackDimension {
-        track_schema::classify_track_dimension(name, std::slice::from_ref(&scope_name.to_string()))
+    fn dimension_of(name: &str, scope: &[String; 1]) -> TrackDimension {
+        track_schema::classify_track_dimension(name, scope)
     }
 }
 
@@ -467,25 +461,20 @@ impl<D: Tracks + Items + Projects> GuitarGrow<D> {
     }
 
     fn apply_channel_defaults(&self, channel: &Track) -> DawResult<()> {
-        let tree = self.track_tree();
-        let scope = Self::group_scope(&tree, &channel.guid);
-        let sources: Vec<Track> = tree
-            .children_of(&channel.guid)
-            .filter(|c| Self::dimension_of(&c.name, &scope) == TrackDimension::MultiMic)
-            .cloned()
-            .collect();
+        let sources = self.members_of(&channel.guid, TrackDimension::MultiMic);
         if sources.is_empty() {
             return Ok(());
         }
 
+        let tree = self.track_tree();
         let described: Vec<Source> = sources
             .iter()
             .map(|source| {
                 Source::with_mics(
                     source.name.clone(),
-                    tree.children_of(&source.guid)
-                        .filter(|m| Self::dimension_of(&m.name, &scope) == TrackDimension::MultiMic)
-                        .map(|m| m.name.clone())
+                    self.members_of(&source.guid, TrackDimension::MultiMic)
+                        .into_iter()
+                        .map(|mic| mic.name)
                         .collect::<Vec<_>>(),
                 )
             })
@@ -495,7 +484,7 @@ impl<D: Tracks + Items + Projects> GuitarGrow<D> {
             let Some(track) = Self::resolve_path(&tree, &channel.guid, &default.path) else {
                 continue;
             };
-            if !Balance::is_untouched(track.pan, track.muted) {
+            if !Balance::of(track.pan, track.muted).is_untouched() {
                 continue;
             }
             let reference = TrackRef::Guid(track.guid.clone());

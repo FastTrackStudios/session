@@ -3,10 +3,13 @@
 //! `flow.guitars.mixing.source-defaults` states the rule as a property of
 //! a *configuration*, not of a gesture: given the sources under one
 //! channel, each one has a pan and a mute it starts at. This module is
-//! that rule as pure data — no DAW, no tracks — so the two places that
-//! create sources apply the same code: the session grow actions
-//! (`session::guitar_grow`) and the golden builder
-//! (`crate::golden_session`).
+//! that rule as pure data — no DAW, no tracks — so every place that
+//! creates sources applies the same code rather than its own copy. Today
+//! that is the session grow actions (`session::guitar_grow`); the golden
+//! builder ([`crate::golden_session`]) is the other one, and calls in
+//! here when its guitar parts gain the sources `flow.guitars.golden`
+//! describes. It lives in this crate, beside the builder, for that
+//! reason.
 //!
 //! # Applied once, at creation
 //!
@@ -49,14 +52,27 @@ impl Balance {
         muted: false,
     };
 
-    /// Has this pan/mute pair never been set?
+    /// Read a track's pan and mute as a balance.
+    #[must_use]
+    pub const fn of(pan: f64, muted: bool) -> Self {
+        Self { pan, muted }
+    }
+
+    /// Has this balance never been set?
     ///
     /// The no-flag test for "the default applies to what has never been
     /// set": centred and unmuted is the state a track is created in, so
     /// a track reading it has not been balanced by anyone.
+    ///
+    /// The cost of having no flag is here and is deliberate: an engineer
+    /// who un-mutes a DI and leaves it centred is indistinguishable from
+    /// one who never touched it, and the next source added to that
+    /// channel will mute it again. Moving it anywhere at all — which is
+    /// what "a source a user has moved keeps its place" says — makes the
+    /// choice legible and it is then left alone.
     #[must_use]
-    pub fn is_untouched(pan: f64, muted: bool) -> bool {
-        !muted && pan.abs() < f64::EPSILON
+    pub fn is_untouched(self) -> bool {
+        !self.muted && self.pan.abs() < f64::EPSILON
     }
 }
 
@@ -294,8 +310,9 @@ mod tests {
 
     #[test]
     fn untouched_is_centred_and_unmuted() {
-        assert!(Balance::is_untouched(0.0, false));
-        assert!(!Balance::is_untouched(0.3, false));
-        assert!(!Balance::is_untouched(0.0, true));
+        assert!(Balance::of(0.0, false).is_untouched());
+        assert!(!Balance::of(0.3, false).is_untouched());
+        assert!(!Balance::of(0.0, true).is_untouched());
+        assert!(Balance::CENTRED.is_untouched());
     }
 }

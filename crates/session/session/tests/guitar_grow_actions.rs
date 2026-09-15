@@ -293,9 +293,15 @@ fn one_di_track_grows_through_all_four_actions() {
         );
     }
 
-    // ── the negative controls: nothing moved an item, nothing touched a
-    // send. The item is still the one item, on the track that took over
-    // carrying the part's content.
+    // ── the negative controls. Still the one item, still the same item,
+    // and on the track that took over carrying the part's content — the
+    // DI of the L channel of the Main layer of the Rhythm arrangement.
+    // That last assertion is the one that matters: "leaves items and
+    // routing where they were" is about the *performance* staying put as
+    // folders grow above it, and the take ends up on the one leaf that
+    // is still a track rather than a folder. Folding what was there into
+    // L, and then into L's DI, is exactly what these gestures are for —
+    // a folder never carries the take its children sum.
     let items_after = items_by_track(&daw);
     assert_eq!(items_before.len(), 1);
     assert_eq!(items_after.len(), 1, "an item was created or lost");
@@ -303,10 +309,57 @@ fn one_di_track_grows_through_all_four_actions() {
         items_before[0].1, items_after[0].1,
         "the item is a different item"
     );
+    let take_holder = track_named(&daw, "GTR E/Rhythm/Main/L/DI");
+    assert_eq!(
+        daw.get_items(ProjectContext::Current, TrackRef::Guid(take_holder.guid))
+            .len(),
+        1,
+        "the part's take is not on the L channel's DI; items are {items_after:#?}"
+    );
     assert_eq!(
         sends_before,
         sends_by_track(&daw),
         "a send was added, removed or repointed"
+    );
+}
+
+/// The boundary of having no flag, asserted rather than left to be
+/// discovered.
+///
+/// `flow.guitars.mixing.source-defaults` says "the default applies to
+/// what has never been set", and without a flag the only reading of
+/// "never been set" is centred and unmuted. So an engineer who un-mutes
+/// a DI and leaves it centred reads as untouched, and the next source
+/// added to that channel mutes it again. Moving it anywhere at all makes
+/// the choice legible — which is the case
+/// `a_user_moved_source_is_untouched_by_a_further_add_source` covers.
+#[test]
+fn an_unmuted_but_still_centred_di_reads_as_never_set() {
+    let (daw, grow) = setup();
+    one_di_track(&daw, "GTR E Rhythm");
+
+    select(&daw, "GTR E Rhythm");
+    as_one_action(&daw, "double", || grow.double()).expect("double");
+    select(&daw, "GTR E Rhythm");
+    as_one_action(&daw, "add source", || grow.add_source()).expect("add_source");
+    assert!(muted(&daw, "GTR E Rhythm/L/DI"));
+
+    let di = track_named(&daw, "GTR E Rhythm/L/DI");
+    Tracks::set_muted(
+        &daw,
+        ProjectContext::Current,
+        TrackRef::Guid(di.guid),
+        false,
+    )
+    .unwrap();
+
+    select(&daw, "GTR E Rhythm");
+    as_one_action(&daw, "add source", || grow.add_source()).expect("add_source");
+
+    assert!(
+        muted(&daw, "GTR E Rhythm/L/DI"),
+        "a centred, unmuted DI is indistinguishable from one nobody has \
+         balanced, so the next source mutes it again — pan it to keep it"
     );
 }
 
