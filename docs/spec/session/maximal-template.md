@@ -2,8 +2,18 @@
 
 A reference session that covers every base the dynamic template has to
 cover, so that a real session — which always has a different shape — can
-be checked against it. `scripts/ui-stress/make-template-rpp.py` writes
-it; `just daw-scene <slug>` renders each scene of it.
+be checked against it. The Rust builder in
+`dynamic_template::golden_session` writes it from the config-derived
+template and a fixture song shape; `just daw-template` regenerates the
+committed project files under `features/dynamic-template/fixtures/golden/`
+and `just daw-scene <slug>` renders each scene of it, with every scene's
+picture committed beside them (`just daw-scenes` re-renders the set).
+
+The checklist below is **regenerated from tests**, never hand-ticked: a
+box is ticked exactly where a check in
+`dynamic_template::golden_session::checklist` walks the built session and
+finds the shape, and a test fails when this file disagrees with the
+checks.
 
 Drums can be made perfect once: a kit is a kit. Guitars take a different
 shape every song, so for them the reference is a checklist rather than a
@@ -117,7 +127,7 @@ fixed tree.
 ### Vocals — `Vocals/`
 
 - [x] Lead (Close, Room, Verb), Doubles, Harmonies → **LEAD VOX BUS**.
-- [ ] BGVs folder → **BGV BUS**; the vocal FX template (`make-vocal-fx-rpp.py`)
+- [ ] BGVs folder → **BGV BUS**; the vocal FX template (`vocal-fx.rpp`)
       folded in.
 - [ ] **Three languages** as source tracks under each layer —
       `Vocals / Ron / Main / {EN, ES, PT}` — with a VCA per language over

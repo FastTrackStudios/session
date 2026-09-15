@@ -515,6 +515,27 @@ fn mixer_shot(
             f64::from(height),
         );
     }
+    // The row list the scene resolved to, as text — `FTS_BENCH_ROWS`.
+    //
+    // The picture is what a scene LOOKS like, and two GPUs disagree
+    // about its last few bits of antialiasing. This is what the scene
+    // MEANS: which rows survived the folds, how deep each sits and how
+    // wide it opens, in project order. It is the same on every machine,
+    // so it is the half of a scene fixture that can be compared byte for
+    // byte (`apps/session-daw/tests/golden_scenes.rs`).
+    if let Ok(out) = std::env::var("FTS_BENCH_ROWS") {
+        let mut text = String::new();
+        for (track, depth) in &planned {
+            text.push_str(&format!(
+                "{depth}\t{}\t{}\n",
+                track.name,
+                track.width.unwrap_or(0)
+            ));
+        }
+        if let Err(e) = std::fs::write(&out, text) {
+            tracing::error!(error = %e, path = out, "could not write the row list");
+        }
+    }
     let tracks: Vec<daw_proto::Track> = planned.iter().map(|(t, _)| t.clone()).collect();
     let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(planned));
 

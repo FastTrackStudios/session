@@ -15,6 +15,7 @@ pub mod daw_module;
 pub mod equipment;
 mod error;
 pub mod golden;
+pub mod golden_session;
 mod groups;
 pub mod icons;
 mod item_metadata;
