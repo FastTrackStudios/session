@@ -91,3 +91,37 @@ fn the_override_round_trips_and_removing_it_returns_the_session_to_the_list() ->
     assert_eq!(apply::get_override(&daw, ctx)?, None);
     Ok(())
 }
+
+#[test]
+fn an_active_override_is_part_of_the_effective_text_and_of_staleness() -> Result {
+    // r[verify flow.patch-list.session-override]
+    //
+    // `effective_text` is what a caller feeds `store_applied`, so an
+    // override changing the effective text is what makes it show up
+    // in `stale` at all — this is the seam the spec's "the album
+    // (with any override layered) or the active profile has moved on"
+    // sentence depends on.
+    let (daw, ctx) = seeded();
+    let album = "performers {\n    cody {guitar {di \"DI 3\"}}\n}";
+    let over = PatchList::from_styx("performers {\n    cody {guitar {di \"DI 9\"}}\n}")?;
+
+    let with_override = apply::effective_text(album, Some(&over))?;
+    assert!(with_override.contains("DI 9"), "{with_override}");
+    assert!(!with_override.contains("DI 3"), "{with_override}");
+
+    apply::store_applied(&daw, ctx.clone(), &with_override, "golden-room")?;
+    // Applied with the override active: not stale while nothing else
+    // has changed underneath it.
+    assert_eq!(
+        stale(&daw, ctx.clone(), &with_override, "golden-room")?,
+        None
+    );
+
+    // Removing the override changes the effective text back to the
+    // album's own — which is exactly what should read as stale now.
+    let without_override = apply::effective_text(album, None)?;
+    let status = stale(&daw, ctx, &without_override, "golden-room")?.ok_or("stale")?;
+    assert!(status.diff.removed.iter().any(|l| l.contains("DI 9")));
+    assert!(status.diff.added.iter().any(|l| l.contains("DI 3")));
+    Ok(())
+}

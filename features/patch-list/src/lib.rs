@@ -13,7 +13,9 @@ pub mod profile;
 pub mod styx;
 pub mod validate;
 
-pub use apply::{Applied, Error as ApplyError, Report, Resolve, apply, selector_matches, stale};
+pub use apply::{
+    Applied, Error as ApplyError, Report, Resolve, apply, effective_text, selector_matches, stale,
+};
 pub use discover::{Studios, WriteError as AlbumWriteError, find_album, write_album};
 pub use layer::{Layered, layer};
 pub use list::{Bus, Entry, Lowered, PatchList, Performer, Rig};

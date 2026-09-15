@@ -165,12 +165,15 @@ where
 
     let unpatched = tracks.len().saturating_sub(matched.len());
 
-    architect_telemetry::wide::set("patch.applied", u64::try_from(applied).unwrap_or(u64::MAX));
+    // `opentelemetry::Value` has no `From<u64>` (only the signed
+    // integer, float, bool and string forms), so the counts go through
+    // `i64` — plenty of range for a track count.
+    architect_telemetry::wide::set("patch.applied", i64::try_from(applied).unwrap_or(i64::MAX));
     architect_telemetry::wide::set(
         "patch.unpatched",
-        u64::try_from(unpatched).unwrap_or(u64::MAX),
+        i64::try_from(unpatched).unwrap_or(i64::MAX),
     );
-    architect_telemetry::wide::set("patch.unused", u64::try_from(unused).unwrap_or(u64::MAX));
+    architect_telemetry::wide::set("patch.unused", i64::try_from(unused).unwrap_or(i64::MAX));
 
     Ok(Report {
         applied,
@@ -219,12 +222,41 @@ impl Applied {
 pub enum Error {
     #[error(transparent)]
     Daw(#[from] daw_proto::DawError),
-    #[error("the session override did not serialize: {0}")]
+    #[error("the list did not serialize back to styx: {0}")]
     Serialize(#[from] crate::styx::WriteError),
-    #[error("the session override does not parse: {0}")]
-    Override(facet_styx::DeserializeError),
+    #[error("the patch list does not parse: {0}")]
+    Parse(facet_styx::DeserializeError),
     #[error("the applied copy is malformed (missing its profile/at header)")]
     Applied,
+}
+
+/// The text apply actually applies: the album's own text, unchanged,
+/// when there is no override — or, when there is one, the album with
+/// it layered on top ([`crate::layer`]) and serialized back to styx.
+///
+/// Byte-fidelity matters here more than it does for [`PatchList`]
+/// generally: this is what [`store_applied`] should be given and what
+/// [`stale`] compares against, and a merge is the only case that has
+/// to go through the serializer at all — with no override, handing
+/// back the album's own source (comments, formatting, and all) is
+/// exact where re-serializing it would not be. An override changes
+/// staleness the same way an album edit does, per `stale`'s own
+/// contract ("the album (with any override layered) or the active
+/// profile has moved on").
+///
+/// # Errors
+///
+/// [`Error::Parse`] when `album_text` is not a patch list;
+/// [`Error::Serialize`] when the layered list cannot be written back
+/// as styx — which a list built from these types cannot fail at.
+// r[impl flow.patch-list.apply]
+// r[impl flow.patch-list.session-override]
+pub fn effective_text(album_text: &str, over: Option<&PatchList>) -> Result<String, Error> {
+    let Some(over) = over else {
+        return Ok(album_text.to_owned());
+    };
+    let album = PatchList::from_styx(album_text).map_err(Error::Parse)?;
+    Ok(crate::layer::layer(&album, Some(over)).list.to_styx()?)
 }
 
 /// Store the applied copy: the text just applied, the profile's name,
@@ -290,7 +322,7 @@ pub fn set_override<D: ExtState + ?Sized>(
 ///
 /// # Errors
 ///
-/// [`Error::Override`] when the stored override does not parse.
+/// [`Error::Parse`] when the stored override does not parse.
 // r[impl flow.patch-list.session-override]
 pub fn get_override<D: ExtState + ?Sized>(
     daw: &D,
@@ -302,7 +334,7 @@ pub fn get_override<D: ExtState + ?Sized>(
     if text.trim().is_empty() {
         return Ok(None);
     }
-    crate::styx::read(&text).map(Some).map_err(Error::Override)
+    crate::styx::read(&text).map(Some).map_err(Error::Parse)
 }
 
 /// Remove the session override — "removing it returns the session to

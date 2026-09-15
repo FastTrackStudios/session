@@ -185,7 +185,9 @@ fn applying_stores_the_effective_text_the_profile_and_a_timestamp() -> Result {
     let reference = build_reference(&daw, &ctx, &list)?;
 
     apply::apply(&daw, &ctx, &plan, &reference)?;
-    apply::store_applied(&daw, ctx.clone(), FIXTURE_ALBUM, FIXTURE_STUDIO_NAME)?;
+    // No override: the effective text is the album's own, unchanged.
+    let text = apply::effective_text(FIXTURE_ALBUM, None)?;
+    apply::store_applied(&daw, ctx.clone(), &text, FIXTURE_STUDIO_NAME)?;
 
     let applied = apply::applied(&daw, ctx)?.ok_or("an applied copy")?;
     assert_eq!(applied.text, FIXTURE_ALBUM);
