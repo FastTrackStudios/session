@@ -1468,3 +1468,73 @@ daw-shot OUT="/tmp/fts-mixer.png" PROJECT="" SIZE="2560x1440":
     sleep 3
     magick import -window "$id" "{{OUT}}"
     printf 'wrote %s — %s\n' "{{OUT}}" "$(magick identify -format '%wx%h' "{{OUT}}")"
+
+# Everything CI runs, in CI's order, with one command.
+#
+# The workflow (.github/workflows/checks.yml) is the source of truth;
+# this mirrors its steps so a green run here means a green run there.
+# It stops at the first failure, because CI does too and a later step
+# built on a broken one tells you nothing.
+#
+# `just ci` runs the lot. `just ci nextest` starts from that step, for
+# when you have already passed the cheap ones and are iterating on a
+# test. Steps in order: lockfile, fmt, flows, tailwind, check, nextest.
+ci FROM="lockfile":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
+    steps=(lockfile fmt flows tailwind check nextest)
+    start=0
+    for i in "${!steps[@]}"; do
+      [ "${steps[$i]}" = "{{FROM}}" ] && start=$i && break
+    done
+    run_from() { local want="$1"; local at=0
+      for i in "${!steps[@]}"; do [ "${steps[$i]}" = "$want" ] && at=$i; done
+      [ "$at" -ge "$start" ]; }
+
+    if run_from lockfile; then
+      echo "── lockfile ─────────────────────────────────────────"
+      committed="$(mktemp)"; cp Cargo.lock "$committed"
+      cargo metadata --format-version 1 > /dev/null
+      packages() { sed '/^\[\[patch\.unused\]\]/,$d' "$1"; }
+      unused() { awk '/^\[\[patch\.unused\]\]/ { f = 1; next }
+                      f && /^name = /    { n = $3 }
+                      f && /^version = / { print n "@" $3 }' "$1" | sort; }
+      ok=1
+      diff -u <(packages "$committed") <(packages Cargo.lock) || ok=0
+      diff -u <(unused "$committed") <(unused Cargo.lock) || ok=0
+      rm -f "$committed"
+      [ "$ok" = 1 ] || { echo "Cargo.lock is out of date — commit the result of cargo metadata"; exit 1; }
+      echo "ok"
+    fi
+
+    if run_from fmt; then
+      echo "── cargo fmt --check ────────────────────────────────"
+      cargo fmt --all --check
+      echo "ok"
+    fi
+
+    if run_from flows; then
+      echo "── flow verification gate ───────────────────────────"
+      just daw-flows --own-daemon
+    fi
+
+    if run_from tailwind; then
+      echo "── web tailwind sheet ───────────────────────────────"
+      just web-tailwind
+      echo "ok"
+    fi
+
+    if run_from check; then
+      echo "── cargo check --workspace ──────────────────────────"
+      cargo check --workspace
+      echo "ok"
+    fi
+
+    if run_from nextest; then
+      echo "── cargo nextest --workspace ────────────────────────"
+      cargo nextest run --workspace --no-fail-fast
+    fi
+
+    echo
+    echo "every CI step passed locally"

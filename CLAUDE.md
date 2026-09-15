@@ -175,6 +175,23 @@ config in `~/.config/signal/rig/*.styx`. Deployed: `just rig-install` →
 ONE binary at `~/.local/lib/fts/fasttrackstudio` behind the
 `signal-engine` systemd user unit.
 
+## Before you push: `just ci`
+
+**Run `just ci` and get a green run before every push.** It runs exactly
+what `.github/workflows/checks.yml` runs, in the same order — lockfile
+drift, `cargo fmt --check`, the flow verification gate, the web tailwind
+sheet, `cargo check --workspace`, `cargo nextest run --workspace` — and
+stops at the first failure, because CI does too and a later step built
+on a broken one tells you nothing.
+
+`just ci <step>` starts from a step when you have already passed the
+cheap ones and are iterating: `lockfile`, `fmt`, `flows`, `tailwind`,
+`check`, `nextest`.
+
+A full run is a few minutes against a warm `target/`. A red CI round
+trip is far longer, and on a shared self-hosted runner it blocks
+everyone else's checks while it fails.
+
 ## Signal domain rules (from the dissolved signal/CLAUDE.md)
 
 Signal is the signal-chain / plugin-management domain: `crates/signal/*`
