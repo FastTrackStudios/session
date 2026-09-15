@@ -2002,6 +2002,7 @@ impl App {
             mode: Some(self.mode.slug()),
             settings: self.settings,
             extent,
+            active_language: None,
         }
     }
 
@@ -3187,6 +3188,7 @@ fn build_scene(
                     mode: Some(mode),
                     settings: session_daw::settings::Settings::default(),
                     extent: 0.0,
+                    active_language: None,
                 },
             ),
             None => rows.as_slice().to_vec(),

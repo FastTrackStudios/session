@@ -409,8 +409,13 @@ fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
         return Ok(());
     };
 
-    let arrange = resolve(scene, &facts, Surface::Arrange, Some(slug));
-    let mixer = resolve(scene, &facts, Surface::Mixer, Some(slug));
+    // `flow.vocals.language.active`: the vocal scenes' prelude hides
+    // every source whose language is neither this nor `All` — read
+    // once here so both surfaces resolve against the same value.
+    let active_language = scenes::get_active_language(&daw_reaper::Reaper, project());
+
+    let arrange = resolve(scene, &facts, Surface::Arrange, Some(slug), active_language);
+    let mixer = resolve(scene, &facts, Surface::Mixer, Some(slug), active_language);
     let shown_in = |rows: &[scenes::Row]| -> HashSet<String> {
         rows.iter()
             .filter_map(|row| match &row.target {

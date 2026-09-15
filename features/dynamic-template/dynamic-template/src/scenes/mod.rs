@@ -24,18 +24,22 @@
 //! writes show, fold and size onto real tracks. That is the whole reason
 //! the output is a row list rather than a pile of per-surface booleans.
 
+pub mod active_language;
 pub mod adapt;
 pub mod facts;
 pub mod follow;
+pub mod language;
 pub mod resolve;
 pub mod selector;
 pub mod surface;
 pub mod table;
 pub mod types;
 
+pub use active_language::{get_active_language, set_active_language};
 pub use adapt::{from_flat, from_tracks, is_pair_half};
 pub use facts::{Fact, Segment};
 pub use follow::{Conflict, Follow};
+pub use language::{classify_language, Language};
 pub use resolve::{resolve, Row, Target};
 pub use selector::{Rank, Role, Selector};
 pub use surface::{Focus, SurfaceTables, TABLES};

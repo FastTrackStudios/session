@@ -539,6 +539,7 @@ fn mixer_shot(
                 mode: None,
                 settings: session_daw::settings::Settings::default(),
                 extent: f64::from(height),
+                active_language: None,
             },
         );
     }

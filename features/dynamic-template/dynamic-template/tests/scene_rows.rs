@@ -29,7 +29,7 @@ fn rows_of(slug: &str) -> String {
     let flats = flatten(&shape);
     let facts = scenes::from_flat(&flats);
     let mut text = String::new();
-    for row in scenes::resolve(scene, &facts, Surface::Mixer, None) {
+    for row in scenes::resolve(scene, &facts, Surface::Mixer, None, None) {
         let Some(guid) = row.guid() else { continue };
         let name = flats
             .iter()
@@ -101,7 +101,7 @@ fn a_scene_resolving_to_no_rows_fails_its_fixture() {
     blind.default = scenes::Effect::hidden();
     blind.rules.clear();
     let facts = scenes::from_flat(&flatten(&maximal()));
-    let rows = scenes::resolve(&blind, &facts, Surface::Mixer, None);
+    let rows = scenes::resolve(&blind, &facts, Surface::Mixer, None, None);
     assert!(
         rows.is_empty(),
         "a scene that hides everything shows nothing"
@@ -114,8 +114,8 @@ fn a_scene_resolving_to_no_rows_fails_its_fixture() {
 fn a_scene_sizes_both_surfaces_from_its_own_table() {
     let facts = scenes::from_flat(&flatten(&maximal()));
     let scene = scenes::scene("drum-mixing").expect("a scene");
-    let mixer = scenes::resolve(scene, &facts, Surface::Mixer, None);
-    let arrange = scenes::resolve(scene, &facts, Surface::Arrange, None);
+    let mixer = scenes::resolve(scene, &facts, Surface::Mixer, None, None);
+    let arrange = scenes::resolve(scene, &facts, Surface::Arrange, None, None);
     assert_eq!(mixer.len(), arrange.len(), "the same rows survive");
     let kick = mixer
         .iter()

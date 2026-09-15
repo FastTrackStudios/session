@@ -15,6 +15,7 @@
 
 use std::sync::OnceLock;
 
+use super::language::Language;
 use super::selector::{Role, Selector};
 use super::types::{Audience, Effect, Fold, GroupBy, Rule, Scene, Size};
 
@@ -53,10 +54,18 @@ pub fn scene(slug: &str) -> Option<&'static Scene> {
 ///
 /// Data and overridable: these are ordinary rules, and they go first, so
 /// a scene about the click can open the Guide folder by saying so.
+///
+/// `active_language` (`flow.vocals.language.active`) adds one hide rule
+/// per sung language that is not the active one: `Selector::language`
+/// needs no negation for this because the vocabulary is closed and
+/// small — "not the active language" is just every *other* language,
+/// enumerated. `None` (no switch has happened yet) adds none, which is
+/// "hide nothing" rather than a guess.
 // r[impl flow.scenes.guide-folder]
 // r[impl flow.scenes.keyflow-folder]
+// r[impl flow.vocals.language.active]
 #[must_use]
-pub fn prelude(mode: Option<&str>) -> Vec<Rule> {
+pub fn prelude(mode: Option<&str>, active_language: Option<Language>) -> Vec<Rule> {
     let collapsed = Effect::at(Size::Compact).folded(Fold::Collapsed);
     let mut rules = vec![
         Rule::new(
@@ -82,6 +91,17 @@ pub fn prelude(mode: Option<&str>) -> Vec<Rule> {
             },
             Effect::default().folded(Fold::Open),
         ));
+    }
+    if let Some(active) = active_language {
+        for language in Language::SUNG.into_iter().filter(|&l| l != active) {
+            rules.push(Rule::new(
+                Selector {
+                    language: Some(language),
+                    ..Selector::default()
+                },
+                Effect::hidden(),
+            ));
+        }
     }
     rules
 }
@@ -720,8 +740,13 @@ mod tests {
     fn every_scene_collapses_the_guide_folder() {
         let facts = with_the_guide();
         for scene in scenes() {
-            let rows =
-                crate::scenes::resolve(scene, &facts, crate::scenes::Surface::Mixer, Some("mix"));
+            let rows = crate::scenes::resolve(
+                scene,
+                &facts,
+                crate::scenes::Surface::Mixer,
+                Some("mix"),
+                None,
+            );
             let guide: Vec<&str> = rows
                 .iter()
                 .filter_map(crate::scenes::Row::guid)
@@ -748,6 +773,7 @@ mod tests {
                 &facts,
                 crate::scenes::Surface::Mixer,
                 Some(mode),
+                None,
             )
             .iter()
             .filter_map(crate::scenes::Row::guid)
@@ -767,10 +793,10 @@ mod tests {
     // r[verify flow.scenes.keyflow-folder]
     #[test]
     fn write_and_produce_open_the_keyflow_folder() {
-        assert_eq!(prelude(None).len(), 2);
-        assert_eq!(prelude(Some("mix")).len(), 2);
+        assert_eq!(prelude(None, None).len(), 2);
+        assert_eq!(prelude(Some("mix"), None).len(), 2);
         for mode in ["write", "produce"] {
-            let rules = prelude(Some(mode));
+            let rules = prelude(Some(mode), None);
             assert_eq!(rules.len(), 3, "{mode}");
             assert_eq!(
                 rules.last().map(|r| r.effect.fold),
