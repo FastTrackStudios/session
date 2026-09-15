@@ -7,57 +7,63 @@
 
 use patch_list::{Error, PatchList, Resolved, StudioProfile, validate};
 
+type Result = std::result::Result<(), Box<dyn std::error::Error>>;
+
 const ALBUM: &str = include_str!("../fixtures/album/patch-list.styx");
 const ROOM: &str = include_str!("../fixtures/studios/golden-room.styx");
 
+/// Two performers on one DI, for the duplicate-role cases.
+const DOUBLE_BOOKED: &str =
+    "performers {\n    cody {guitar {di \"DI 3\"}}\n    john {guitar {di \"DI 3\"}}\n}";
+
 #[test]
-fn the_fixture_album_is_valid_in_the_fixture_room() {
-    let list = PatchList::from_styx(ALBUM).expect("parse");
-    let room = StudioProfile::from_styx(ROOM).expect("parse");
-    let plan = validate(&list, &room).expect("two talkback mics on a shared role are fine");
+fn the_fixture_album_is_valid_in_the_fixture_room() -> Result {
+    let list = PatchList::from_styx(ALBUM)?;
+    let room = StudioProfile::from_styx(ROOM)?;
+    // Two talkback mics name one role; the room shares it.
+    let plan = validate(&list, &room)?;
     assert_eq!(plan.entries.len(), 33);
     assert_eq!(plan.buses.len(), 10);
+    Ok(())
 }
 
 #[test]
-fn a_role_the_room_lacks_is_unresolved_in_the_plan_not_an_error() {
-    let list = PatchList::from_styx(ALBUM).expect("parse");
-    let room = StudioProfile::from_styx(ROOM).expect("parse");
-    let plan = validate(&list, &room).expect("valid");
+fn a_role_the_room_lacks_is_unresolved_in_the_plan_not_an_error() -> Result {
+    let list = PatchList::from_styx(ALBUM)?;
+    let room = StudioProfile::from_styx(ROOM)?;
+    let plan = validate(&list, &room)?;
 
-    let bass_amp = plan
-        .entries
-        .iter()
-        .find(|e| e.lowered.performer == "bassist" && e.lowered.key == "amp")
-        .expect("the bassist's amp mic");
-    assert_eq!(bass_amp.resolved, Resolved::Unresolved);
-    let bass_di = plan
-        .entries
-        .iter()
-        .find(|e| e.lowered.performer == "bassist" && e.lowered.key == "di")
-        .expect("the bassist's DI");
-    assert_eq!(bass_di.resolved, Resolved::Audio { channel: 0 });
+    let bass = |key: &str| {
+        plan.entries
+            .iter()
+            .find(|e| e.lowered.performer == "bassist" && e.lowered.key == key)
+            .map(|e| e.resolved.clone())
+    };
+    assert_eq!(bass("amp"), Some(Resolved::Unresolved));
+    // The negative control, on the same rig.
+    assert_eq!(bass("di"), Some(Resolved::Audio { channel: 0 }));
 
-    let bass_bus = plan
+    let bus = plan
         .buses
         .iter()
         .find(|b| b.name == "bassist")
-        .expect("the bassist's bus");
-    assert_eq!(bass_bus.resolved, Resolved::Unresolved);
+        .ok_or("the bassist's bus")?;
+    assert_eq!(bus.resolved, Resolved::Unresolved);
     assert_eq!(plan.unresolved(), 2);
+    Ok(())
 }
 
 #[test]
-fn a_midi_entry_resolves_by_itself() {
-    let list = PatchList::from_styx(ALBUM).expect("parse");
+fn a_midi_entry_resolves_by_itself() -> Result {
+    let list = PatchList::from_styx(ALBUM)?;
     // A room with no Prophet in it: the entry carries its own device.
-    let room = StudioProfile::from_styx("shared (\"Talkback\")").expect("parse");
-    let plan = validate(&list, &room).expect("valid");
+    let room = StudioProfile::from_styx("shared (\"Talkback\")")?;
+    let plan = validate(&list, &room)?;
     let synth = plan
         .entries
         .iter()
         .find(|e| e.lowered.performer == "john" && e.lowered.key == "synth")
-        .expect("john's synth");
+        .ok_or("john's synth")?;
     assert_eq!(
         synth.resolved,
         Resolved::Midi {
@@ -65,45 +71,44 @@ fn a_midi_entry_resolves_by_itself() {
             channel: Some(1)
         }
     );
+    Ok(())
 }
 
 #[test]
-fn two_entries_on_one_role_is_an_error() {
-    let list = PatchList::from_styx(
-        "performers {\n    cody {guitar {di \"DI 3\"}}\n    john {guitar {di \"DI 3\"}}\n}",
-    )
-    .expect("parse");
-    let err = validate(&list, &StudioProfile::default()).expect_err("double-booked DI 3");
-    match &err {
-        Error::DuplicateRole { role, entries } => {
-            assert_eq!(role, "DI 3");
-            assert_eq!(entries, &["cody/guitar/di", "john/guitar/di"]);
-        }
-    }
+fn two_entries_on_one_role_is_an_error() -> Result {
+    let list = PatchList::from_styx(DOUBLE_BOOKED)?;
+    let Err(err) = validate(&list, &StudioProfile::default()) else {
+        return Err("a double-booked DI 3 validated".into());
+    };
+    let Error::DuplicateRole { role, entries } = &err;
+    assert_eq!(role, "DI 3");
+    assert_eq!(entries, &["cody/guitar/di", "john/guitar/di"]);
     assert!(err.to_string().contains("DI 3"), "{err}");
+    Ok(())
 }
 
 #[test]
-fn a_shared_role_may_carry_two_entries() {
-    let list = PatchList::from_styx(
-        "performers {\n    cody {guitar {di \"DI 3\"}}\n    john {guitar {di \"DI 3\"}}\n}",
-    )
-    .expect("parse");
-    let room = StudioProfile::from_styx("shared (\"DI 3\")").expect("parse");
-    validate(&list, &room).expect("shared, so allowed");
+fn a_shared_role_may_carry_two_entries() -> Result {
+    let list = PatchList::from_styx(DOUBLE_BOOKED)?;
+    let room = StudioProfile::from_styx("shared (\"DI 3\")")?;
+    validate(&list, &room)?;
+    Ok(())
 }
 
 #[test]
-fn two_buses_on_one_output_is_an_error_too() {
+fn two_buses_on_one_output_is_an_error_too() -> Result {
     let list = PatchList::from_styx(
         "headphones {\n    cody {output \"HP 1\", for (cody)}\n    john {output \"HP 1\", for (john)}\n}",
-    )
-    .expect("parse");
-    let err = validate(&list, &StudioProfile::default()).expect_err("double-booked HP 1");
-    assert!(matches!(err, Error::DuplicateRole { ref role, .. } if role == "HP 1"));
+    )?;
+    let Err(Error::DuplicateRole { role, .. }) = validate(&list, &StudioProfile::default()) else {
+        return Err("a double-booked HP 1 validated".into());
+    };
+    assert_eq!(role, "HP 1");
+
     // The negative control: a bus for two people on one output is one
     // entry, not two.
-    let list = PatchList::from_styx("headphones {\n    band {output \"HP 1\", for (cody john)}\n}")
-        .expect("parse");
-    validate(&list, &StudioProfile::default()).expect("one bus, one output");
+    let shared =
+        PatchList::from_styx("headphones {\n    band {output \"HP 1\", for (cody john)}\n}")?;
+    validate(&shared, &StudioProfile::default())?;
+    Ok(())
 }

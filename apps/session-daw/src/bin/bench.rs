@@ -96,6 +96,13 @@ fn main() {
         kit_shot(&palette, &std::path::PathBuf::from(out), width, height);
         return;
     }
+    if let Ok(out) = std::env::var("FTS_BENCH_PATCH_LIST") {
+        // The Patch List view over the fixture album in the fixture
+        // room — no project needed: the plan is the album's, not the
+        // session's, and the picture is its committed fixture.
+        patch_list_shot(&std::path::PathBuf::from(out), width, height);
+        return;
+    }
     if let Ok(out) = std::env::var("FTS_BENCH_EXPRESSION") {
         // The expression editor over the demo drum groove — no project
         // needed, which is the point: the view is exercisable before
@@ -1723,4 +1730,32 @@ fn panel_rows() -> (Vec<(daw_proto::Track, u32)>, Vec<daw_proto::Track>) {
         daw_ui::components::folders::FolderState::default().visible(&project.tracks);
     let tracks = visible.clone();
     (visible.into_iter().zip(depths).collect(), tracks)
+}
+
+/// Write one frame of the Patch List view to a PNG.
+///
+/// `FTS_BENCH_PATCH_LIST=apps/session-daw/fixtures/patch-list.png`, the
+/// fixture album resolved against the fixture room — the picture
+/// `apps/session-daw/tests/patch_list_view.rs` compares byte for byte.
+fn patch_list_shot(out: &std::path::Path, width: u32, height: u32) {
+    let table = match session_daw::patch_list::Table::fixture() {
+        Ok(table) => table,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    };
+    let Some(buffer) = session_daw::patch_list::shot(&table, (width, height)) else {
+        eprintln!("no gpu: the patch list picture needs a real device");
+        std::process::exit(2);
+    };
+    image::save_buffer(out, &buffer, width, height, image::ColorType::Rgba8)
+        .expect("write the frame");
+    println!(
+        "  wrote {} — {} performers, {} buses, {} unresolved",
+        out.display(),
+        table.performers.len(),
+        table.buses.len(),
+        table.unresolved
+    );
 }

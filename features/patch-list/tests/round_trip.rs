@@ -6,11 +6,13 @@
 
 use patch_list::{Entry, PatchList};
 
+type Result = std::result::Result<(), Box<dyn std::error::Error>>;
+
 const ALBUM: &str = include_str!("../fixtures/album/patch-list.styx");
 
 #[test]
-fn the_fixture_album_parses_with_its_shape_intact() {
-    let list = PatchList::from_styx(ALBUM).expect("the fixture album parses");
+fn the_fixture_album_parses_with_its_shape_intact() -> Result {
+    let list = PatchList::from_styx(ALBUM)?;
 
     // Performers in the order the file lists them — the view and the
     // performer rows sort by it.
@@ -23,65 +25,90 @@ fn the_fixture_album_parses_with_its_shape_intact() {
     );
 
     // performer → source kind → channel or mic → input role.
-    let cody = &list.performers["cody"];
-    assert_eq!(cody["guitar"]["di"], Entry::Role("DI 3".into()));
-    assert_eq!(cody["guitar"]["amp-a/57"], Entry::Role("Mic 5".into()));
+    let cody = list.performers.get("cody").ok_or("cody")?;
+    let guitar = cody.get("guitar").ok_or("cody's guitar rig")?;
+    assert_eq!(guitar.get("di"), Some(&Entry::Role("DI 3".into())));
+    assert_eq!(guitar.get("amp-a/57"), Some(&Entry::Role("Mic 5".into())));
 
     // A MIDI source is an entry giving the device and channel.
+    let john_keys = list
+        .performers
+        .get("john")
+        .and_then(|rigs| rigs.get("keys"))
+        .ok_or("john's keys")?;
     assert_eq!(
-        list.performers["john"]["keys"]["synth"],
-        Entry::Midi {
+        john_keys.get("synth"),
+        Some(&Entry::Midi {
             device: "Prophet-6".into(),
             channel: Some(1),
-        }
+        })
     );
 
     // The kit: the drummer's rig of kind drums, keyed piece/mic.
-    let kit = &list.performers["drummer"]["drums"];
+    let kit = list
+        .performers
+        .get("drummer")
+        .and_then(|rigs| rigs.get("drums"))
+        .ok_or("the kit")?;
     assert_eq!(kit.len(), 14);
-    assert_eq!(kit["snare/top"], Entry::Role("Snare Top".into()));
+    assert_eq!(kit.get("snare/top"), Some(&Entry::Role("Snare Top".into())));
 
     // Headphone buses, with who each is for.
-    assert_eq!(list.headphones["cody"].output, "HP 1");
-    assert_eq!(list.headphones["cody"].audience, ["cody"]);
-    assert_eq!(list.headphones["broadcast"].output, "Broadcast");
-    assert_eq!(list.headphones.len(), 10);
-}
-
-#[test]
-fn the_fixture_album_round_trips() {
-    let list = PatchList::from_styx(ALBUM).expect("parse");
-    let text = list.to_styx().expect("serialize");
-    let back = PatchList::from_styx(&text).expect("parse what we wrote");
-    assert_eq!(back, list, "written text was:\n{text}");
-}
-
-#[test]
-fn a_bus_for_several_people_is_one_bus() {
-    let text = "headphones {\n    choir {output \"HP 8\", for (soprano-1 soprano-2 alto)}\n}";
-    let list = PatchList::from_styx(text).expect("parse");
+    let cody_bus = list.headphones.get("cody").ok_or("cody's bus")?;
+    assert_eq!(cody_bus.output, "HP 1");
+    assert_eq!(cody_bus.audience, ["cody"]);
     assert_eq!(
-        list.headphones["choir"].audience,
-        ["soprano-1", "soprano-2", "alto"]
+        list.headphones.get("broadcast").map(|b| b.output.as_str()),
+        Some("Broadcast")
     );
-    assert!(list.performers.is_empty());
+    assert_eq!(list.headphones.len(), 10);
+    Ok(())
 }
 
 #[test]
-fn a_midi_entry_without_a_channel_means_every_channel() {
+fn the_fixture_album_round_trips() -> Result {
+    let list = PatchList::from_styx(ALBUM)?;
+    let text = list.to_styx()?;
+    let back = PatchList::from_styx(&text)?;
+    assert_eq!(back, list, "written text was:\n{text}");
+    Ok(())
+}
+
+#[test]
+fn a_bus_for_several_people_is_one_bus() -> Result {
+    let text = "headphones {\n    choir {output \"HP 8\", for (soprano-1 soprano-2 alto)}\n}";
+    let list = PatchList::from_styx(text)?;
+    let choir = list.headphones.get("choir").ok_or("the choir's bus")?;
+    assert_eq!(choir.audience, ["soprano-1", "soprano-2", "alto"]);
+    assert!(list.performers.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_midi_entry_without_a_channel_means_every_channel() -> Result {
     let text = "performers {\n    ron {keys {nord @midi{device \"Nord Stage 3\"}}}\n}";
-    let list = PatchList::from_styx(text).expect("parse");
+    let list = PatchList::from_styx(text)?;
+    let nord = list
+        .performers
+        .get("ron")
+        .and_then(|rigs| rigs.get("keys"))
+        .and_then(|rig| rig.get("nord"))
+        .ok_or("ron's nord")?;
     assert_eq!(
-        list.performers["ron"]["keys"]["nord"],
-        Entry::Midi {
+        nord,
+        &Entry::Midi {
             device: "Nord Stage 3".into(),
             channel: None,
         }
     );
+    Ok(())
 }
 
 #[test]
-fn a_document_that_is_not_a_patch_list_is_an_error() {
-    let err = PatchList::from_styx("performers (a b c)").expect_err("a sequence is not a map");
+fn a_document_that_is_not_a_patch_list_is_an_error() -> Result {
+    let Err(err) = PatchList::from_styx("performers (a b c)") else {
+        return Err("a sequence parsed as a map of performers".into());
+    };
     assert!(!err.to_string().is_empty());
+    Ok(())
 }

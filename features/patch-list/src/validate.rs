@@ -52,15 +52,17 @@ impl Plan {
     /// How many entries and buses the room could not resolve.
     #[must_use]
     pub fn unresolved(&self) -> usize {
-        self.entries
+        let entries = self
+            .entries
             .iter()
             .filter(|e| e.resolved == Resolved::Unresolved)
-            .count()
-            + self
-                .buses
-                .iter()
-                .filter(|b| b.resolved == Resolved::Unresolved)
-                .count()
+            .count();
+        let buses = self
+            .buses
+            .iter()
+            .filter(|b| b.resolved == Resolved::Unresolved)
+            .count();
+        entries.saturating_add(buses)
     }
 }
 

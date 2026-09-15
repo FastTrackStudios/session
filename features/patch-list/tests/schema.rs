@@ -7,74 +7,74 @@
 
 use facet_styx::SchemaFile;
 
+type Result = std::result::Result<(), Box<dyn std::error::Error>>;
+
 const ALBUM: &str = include_str!("../fixtures/album/patch-list.styx");
 const ALBUM_SCHEMA: &str = include_str!("../schema/patch-list.schema.styx");
 const ROOM: &str = include_str!("../fixtures/studios/golden-room.styx");
 const ROOM_SCHEMA: &str = include_str!("../schema/studio.schema.styx");
 
-fn schema(text: &str) -> SchemaFile {
-    facet_styx::from_str(text).expect("the schema file parses as a schema")
-}
-
-fn errors(schema: &SchemaFile, doc: &str) -> Vec<String> {
-    let doc = styx_tree::parse(doc).expect("the document parses");
-    facet_styx::validate(&doc, schema)
+/// Every schema error a document raises, as `Kind at path`.
+fn errors(schema: &str, doc: &str) -> std::result::Result<Vec<String>, Box<dyn std::error::Error>> {
+    let schema: SchemaFile = facet_styx::from_str(schema)?;
+    let doc = styx_tree::parse(doc)?;
+    Ok(facet_styx::validate(&doc, &schema)
         .errors
         .iter()
         .map(|e| format!("{:?} at {}", e.kind, e.path))
-        .collect()
+        .collect())
 }
 
 #[test]
-fn the_fixture_album_validates_against_the_patch_list_schema() {
-    let schema = schema(ALBUM_SCHEMA);
-    let errors = errors(&schema, ALBUM);
+fn the_fixture_album_validates_against_the_patch_list_schema() -> Result {
+    let errors = errors(ALBUM_SCHEMA, ALBUM)?;
     assert!(errors.is_empty(), "schema errors: {errors:#?}");
+    Ok(())
 }
 
 #[test]
-fn a_bus_without_an_output_fails_the_patch_list_schema() {
-    let schema = schema(ALBUM_SCHEMA);
-    let errors = errors(&schema, "headphones {\n    cody {for (cody)}\n}");
+fn a_bus_without_an_output_fails_the_patch_list_schema() -> Result {
+    let errors = errors(ALBUM_SCHEMA, "headphones {\n    cody {for (cody)}\n}")?;
     assert!(
         errors.iter().any(|e| e.contains("MissingField")),
         "expected a missing-field error, got {errors:#?}"
     );
+    Ok(())
 }
 
 #[test]
-fn the_fixture_profile_validates_against_the_studio_schema() {
-    let schema = schema(ROOM_SCHEMA);
-    let errors = errors(&schema, ROOM);
+fn the_fixture_profile_validates_against_the_studio_schema() -> Result {
+    let errors = errors(ROOM_SCHEMA, ROOM)?;
     assert!(errors.is_empty(), "schema errors: {errors:#?}");
+    Ok(())
 }
 
 #[test]
-fn an_input_with_no_channel_fails_the_studio_schema() {
-    let schema = schema(ROOM_SCHEMA);
-    let errors = errors(&schema, "inputs {\n    \"DI 1\" @audio{}\n}");
+fn an_input_with_no_channel_fails_the_studio_schema() -> Result {
+    let errors = errors(ROOM_SCHEMA, "inputs {\n    \"DI 1\" @audio{}\n}")?;
     assert!(
         errors.iter().any(|e| e.contains("MissingField")),
         "expected a missing-field error, got {errors:#?}"
     );
+    Ok(())
 }
 
 #[test]
-fn an_output_with_one_side_fails_the_studio_schema() {
-    let schema = schema(ROOM_SCHEMA);
-    let errors = errors(&schema, "outputs {\n    \"HP 1\" {left 0}\n}");
+fn an_output_with_one_side_fails_the_studio_schema() -> Result {
+    let errors = errors(ROOM_SCHEMA, "outputs {\n    \"HP 1\" {left 0}\n}")?;
     assert!(
         errors.iter().any(|e| e.contains("MissingField")),
         "expected a missing-field error, got {errors:#?}"
     );
+    Ok(())
 }
 
 #[test]
-fn an_unknown_top_level_key_fails_the_patch_list_schema() {
-    let schema = schema(ALBUM_SCHEMA);
-    let errors = errors(&schema, "performers {}\nkits {}");
+fn an_unknown_top_level_key_fails_the_patch_list_schema() -> Result {
+    let errors = errors(ALBUM_SCHEMA, "performers {}\nkits {}")?;
     assert!(
         errors.iter().any(|e| e.contains("UnknownField")),
         "expected an unknown-field error, got {errors:#?}"
     );
+    Ok(())
 }

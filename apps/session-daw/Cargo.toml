@@ -49,6 +49,10 @@ session = { workspace = true }
 # rule resolved against the session's own taxonomy — not a list of GUIDs
 # this window keeps. See `src/plan.rs`.
 dynamic-template = { workspace = true }
+# The album's plan and the room's profile, behind the Patch List view —
+# see `src/patch_list.rs`. The window reads them; applying one to a
+# session is the session's job, not this window's.
+patch-list = { workspace = true }
 # The mouse-modifier contexts a hit reports, so bindings stay
 # configurable rather than being hard-coded per widget.
 input-config-proto = { workspace = true }

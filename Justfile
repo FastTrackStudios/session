@@ -1258,6 +1258,16 @@ daw-expression OUT="/tmp/fts-expression.png" SIZE="1600x900":
     FTS_BENCH_EXPRESSION="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" \
         ./target/release/bench /dev/null 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
 
+# The Patch List view's render fixture: the fixture album resolved
+# against the fixture room, written where its test reads it. Run it when
+# a deliberate change to the view has moved a pixel, and commit the PNG.
+daw-patch-list OUT="apps/session-daw/fixtures/patch-list.png" SIZE="1280x1280":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
+    FTS_BENCH_PATCH_LIST="{{OUT}}" FTS_BENCH_SIZE="{{SIZE}}" \
+        ./target/release/bench /dev/null 2>&1 | grep -viE 'vulkan|objects:|WARN|Fontconfig'
+
 # One scene of the visual track manager, as a PNG.
 #
 # `just daw-scene lead-vocal-fx` renders the vocal template with the
