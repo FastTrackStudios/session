@@ -3,6 +3,7 @@ take 0
 
 folder Drum Kit
 children 30
+takes 1
 revision acac09187a8e93a7
 mute-mask 0000000000000000
   child In role Kick side None muted false hidden false takes 1
@@ -296,6 +297,7 @@ columns 256
 
 folder Snare
 children 7
+takes 1
 revision 0b7e844039b75375
 mute-mask 0000000000000000
   child Top role Snare side None muted false hidden false takes 1
@@ -566,6 +568,7 @@ columns 256
 
 folder Rhythm
 children 1
+takes 1
 revision ed114ada42afe39e
 mute-mask 0000000000000000
   child Rhythm role Other side None muted false hidden false takes 1

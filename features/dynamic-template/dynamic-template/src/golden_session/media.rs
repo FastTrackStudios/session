@@ -77,7 +77,9 @@ pub fn samples(path: &str) -> Vec<i16> {
 pub fn right_samples(path: &str) -> Vec<i16> {
     samples(&format!("{path}/R"))
         .into_iter()
-        .map(|s| i16::try_from(i32::from(s).saturating_mul(5).checked_div(8).unwrap_or(0)).unwrap_or(0))
+        .map(|s| {
+            i16::try_from(i32::from(s).saturating_mul(5).checked_div(8).unwrap_or(0)).unwrap_or(0)
+        })
         .collect()
 }
 
@@ -86,7 +88,10 @@ pub fn right_samples(path: &str) -> Vec<i16> {
 pub fn stereo_samples(path: &str) -> Vec<i16> {
     let left = samples(path);
     let right = right_samples(path);
-    left.into_iter().zip(right).flat_map(<[i16; 2]>::from).collect()
+    left.into_iter()
+        .zip(right)
+        .flat_map(<[i16; 2]>::from)
+        .collect()
 }
 
 /// A 16-bit PCM WAV file's bytes, `channels` interleaved.
@@ -175,7 +180,10 @@ mod tests {
         assert_eq!(left, samples("Guitars/Electric/Rhythm"));
         assert_ne!(left, right, "the two sides are two performances");
         let loudest = |c: &[i16]| c.iter().map(|s| i32::from(*s).abs()).max().unwrap_or(0);
-        assert!(loudest(&right) < loudest(&left), "the right side is quieter");
+        assert!(
+            loudest(&right) < loudest(&left),
+            "the right side is quieter"
+        );
         let bytes = wav(&both, 2);
         assert_eq!(bytes.get(22..24), Some(2_u16.to_le_bytes().as_slice()));
         assert_eq!(bytes.get(32..34), Some(4_u16.to_le_bytes().as_slice()));

@@ -182,11 +182,7 @@ impl Folder {
         } else {
             1
         };
-        Grid::over(
-            self.start_secs,
-            self.start_secs + self.length_secs,
-            columns,
-        )
+        Grid::over(self.start_secs, self.start_secs + self.length_secs, columns)
     }
 
     /// Everything this folder's picture for `take` on `grid` depends on.

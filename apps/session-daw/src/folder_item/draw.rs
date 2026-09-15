@@ -47,8 +47,7 @@ impl Place {
     /// The transform that takes the recorded unit box to this place.
     #[must_use]
     pub fn transform(self) -> Affine {
-        Affine::translate((self.x0, self.top))
-            * Affine::scale_non_uniform(self.width, self.height)
+        Affine::translate((self.x0, self.top)) * Affine::scale_non_uniform(self.width, self.height)
     }
 }
 
