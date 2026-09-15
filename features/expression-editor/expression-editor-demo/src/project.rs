@@ -222,6 +222,7 @@ fn push_track(doc: &mut DawDocument, name: &str) -> EntityId {
         items: Vec::new(),
         fx_chain: None,
         input_fx_chain: None,
+        comping: Default::default(),
     });
     id
 }
