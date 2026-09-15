@@ -49,8 +49,8 @@ pub const TOP: f64 = 30.0;
 /// one place makes that class of bug unrepresentable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
-    /// Recall a visual preset — which tracks are showing, and how wide.
-    Preset(&'static str),
+    /// Recall a scene by slug — which tracks are showing, and how wide.
+    Scene(&'static str),
     /// Move to a mix phase.
     Phase(session::mix_phases::MixPhase),
     /// Switch DAW mode.
@@ -59,6 +59,10 @@ pub enum Action {
     FocusSelected,
     /// Whether a focused track's width comes OUT of its neighbours.
     TakeFocusWidth,
+    /// Who the window is for — the engineer's full view of a flow, or
+    /// the player's overview of the same one.
+    /// `flow.scenes.two-audiences`.
+    Audience,
 }
 
 /// One button in a rail.
@@ -349,26 +353,32 @@ fn button(
 
 /// What the mixer's rails hold.
 ///
-/// The left rail answers "where am I": which visual preset is showing
-/// and which mix phase it belongs to. The right answers "how does this
-/// behave". Both are lists of one-word buttons until the toolbar icons
+/// The left rail answers "where am I": which scene is showing and which
+/// mix phase it belongs to. The right answers "how does this behave".
+/// Both are lists of one-word buttons until the toolbar icons
 /// `MixPhase::icon` names are ported.
+///
+/// The scenes are the ones the current mode reaches, in the order the
+/// number keys recall them — so the rail and the keyboard are one list
+/// and a button cannot name a scene the keys cannot reach.
 #[must_use]
-pub fn phases_and_presets(
-    preset: &str,
+pub fn phases_and_scenes(
+    shown: Option<&str>,
+    mode: session::modes::Mode,
     current: session::mix_phases::MixPhase,
 ) -> Vec<Item<'static>> {
-    let mut items: Vec<Item<'static>> = PRESETS
-        .iter()
-        .map(|name| Item {
-            label: name,
-            on: *name == preset,
-            act: Action::Preset(name),
-            // The presets have no icons of their own yet — they are
-            // this window's idea, not a REAPER toolbar's.
-            icon: None,
-        })
-        .collect();
+    let mut items: Vec<Item<'static>> =
+        dynamic_template::scenes::follow::in_mode(dynamic_template::scenes::scenes(), mode.slug())
+            .into_iter()
+            .map(|scene| Item {
+                label: scene.short.as_str(),
+                on: shown == Some(scene.slug.as_str()),
+                act: Action::Scene(scene.slug.as_str()),
+                // The scenes have no icons of their own yet — they are
+                // this window's idea, not a REAPER toolbar's.
+                icon: None,
+            })
+            .collect();
     items.extend(session::mix_phases::MixPhase::ALL.iter().map(|phase| Item {
         label: phase.display_name(),
         on: *phase == current,
@@ -377,18 +387,6 @@ pub fn phases_and_presets(
     }));
     items
 }
-
-/// The visual presets, as the rail prints them.
-///
-/// Taken from [`crate::plan::PRESETS`] rather than written out again:
-/// each label is paired there with the `ModeVisibility` slug that says
-/// what it DOES, and a rail that named a preset the rules had never
-/// heard of would be a button that lit up and changed nothing.
-pub const PRESETS: [&str; 3] = [
-    crate::plan::PRESETS[0].0,
-    crate::plan::PRESETS[1].0,
-    crate::plan::PRESETS[2].0,
-];
 
 /// Which panel a set of toolbars belongs to.
 ///
@@ -418,19 +416,20 @@ pub struct Profile {
 #[must_use]
 pub fn profile(
     surface: Surface,
-    _mode: session::modes::Mode,
+    mode: session::modes::Mode,
     phase: session::mix_phases::MixPhase,
-    preset: &str,
+    shown: Option<&str>,
     settings: crate::settings::Settings,
+    audience: dynamic_template::scenes::Audience,
 ) -> Profile {
     // The left rail is the one thing both surfaces share: which layout
     // is showing and which pass it belongs to is a fact about the
     // SESSION, not about the panel you happen to be looking at.
-    let left = phases_and_presets(preset, phase);
+    let left = phases_and_scenes(shown, mode, phase);
     match surface {
         Surface::Mixer => Profile {
             left,
-            right: mixer_right(settings),
+            right: mixer_right(settings, audience),
             top: Vec::new(),
         },
         Surface::Arrange => Profile {
@@ -443,7 +442,10 @@ pub fn profile(
 
 /// The right rail's switches, showing their state.
 #[must_use]
-pub fn mixer_right(settings: crate::settings::Settings) -> Vec<Item<'static>> {
+pub fn mixer_right(
+    settings: crate::settings::Settings,
+    audience: dynamic_template::scenes::Audience,
+) -> Vec<Item<'static>> {
     vec![
         Item {
             label: "Focus",
@@ -455,6 +457,15 @@ pub fn mixer_right(settings: crate::settings::Settings) -> Vec<Item<'static>> {
             label: "Steal",
             on: settings.take_focus_width,
             act: Action::TakeFocusWidth,
+            icon: None,
+        },
+        // Lit when the window is the PLAYER's: the engineer's view is
+        // the default, and a switch that was lit by default would read
+        // as a mode you are always in.
+        Item {
+            label: "Player",
+            on: audience == dynamic_template::scenes::Audience::Player,
+            act: Action::Audience,
             icon: None,
         },
     ]

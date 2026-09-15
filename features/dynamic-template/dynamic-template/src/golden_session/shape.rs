@@ -642,27 +642,32 @@ fn vocals() -> Node {
 /// BUS, with the three electric buses under ELECTRIC BUS, in the bus
 /// list rather than in the folder.
 fn mix_bus() -> Node {
-    bus("MIX BUS", BUS).children(vec![
-        bus("INST BUS", BUS).children(vec![
-            bus("DRUM BUS", DRUMS),
-            bus("BASS BUS", BASS),
-            bus("ELECTRIC BUS", ELECTRIC)
-                .send("Electric")
-                .keep_parent()
-                .group(GroupRole::VcaFollow(1))
-                .children(vec![
-                    bus("GTR RHYTHM", ELECTRIC),
-                    bus("GTR LEAD", ELECTRIC),
-                    bus("GTR SOLO", ELECTRIC),
-                ]),
-            bus("ACOUSTIC BUS", ACOUSTIC)
-                .send("Acoustic")
-                .keep_parent()
-                .group(GroupRole::VcaFollow(2)),
-            bus("KEYS BUS", KEYS),
-        ]),
-        bus("VOX BUS", BUS).children(vec![bus("LEAD VOX BUS", VOX), bus("BGV BUS", VOX)]),
-    ])
+    // The root of the tree is its own kind, so a scene can say "the mix
+    // bus tree, out of the way" in one rule instead of naming every bus
+    // under it. `flow.scenes.reaper-model`.
+    Node::new("MIX BUS", BUS, Kind::MixBus)
+        .fx(BUS_CHAIN)
+        .children(vec![
+            bus("INST BUS", BUS).children(vec![
+                bus("DRUM BUS", DRUMS),
+                bus("BASS BUS", BASS),
+                bus("ELECTRIC BUS", ELECTRIC)
+                    .send("Electric")
+                    .keep_parent()
+                    .group(GroupRole::VcaFollow(1))
+                    .children(vec![
+                        bus("GTR RHYTHM", ELECTRIC),
+                        bus("GTR LEAD", ELECTRIC),
+                        bus("GTR SOLO", ELECTRIC),
+                    ]),
+                bus("ACOUSTIC BUS", ACOUSTIC)
+                    .send("Acoustic")
+                    .keep_parent()
+                    .group(GroupRole::VcaFollow(2)),
+                bus("KEYS BUS", KEYS),
+            ]),
+            bus("VOX BUS", BUS).children(vec![bus("LEAD VOX BUS", VOX), bus("BGV BUS", VOX)]),
+        ])
 }
 
 /// The maximal session: every base the dynamic template has to cover.

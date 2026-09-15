@@ -1,153 +1,190 @@
-//! Which tracks a visual preset shows, and how large.
+//! Which tracks a scene shows, and how large — as this window sees it.
 //!
-//! A preset is not a list of tracks. It is a set of RULES resolved
-//! against the session's own taxonomy — "every instrument bus wide
-//! enough to work on, every microphone as a rail beside it" — which is
-//! what lets the same preset mean the right thing in a five-track demo
-//! and in a sixty-track kit, and survive a track being added.
-//!
-//! That engine already exists: [`dynamic_template::visibility_rules`]
-//! is the one the REAPER-side template uses, and it resolves
-//! `(tracks, config, mode) → Vec<TrackPlan>` with no REAPER calls in
-//! it. This module is the adapter — it hands that engine the session
-//! and turns the plans back into rows the panels can record.
+//! The engine is [`dynamic_template::scenes`]: a table of `Scene` values
+//! resolved by one function into a row list. This module is the adapter.
+//! It hands that engine the window's track list plus the taxonomy the
+//! template wrote into the project, and turns the rows that come back
+//! into the `(Track, depth)` pairs the panels record.
 //!
 //! # Why sizes come back as classes
 //!
-//! A rule says [`Size::Working`], not 133 pixels. The same plan is
-//! applied to two panels with different axes and to screens from 1080p
-//! to a 5120 ultrawide, so a rule that stated pixels would need a
-//! template per monitor. Turning a class into a number is the
-//! SURFACE's job, and it is done here: [`mixer_width`] and
-//! [`row_height`] are the two places it happens.
+//! A rule says [`Size::Working`], not 133 pixels. The same scene is
+//! applied to two panels and to screens from 1080p to a 5120 ultrawide,
+//! so a rule that stated pixels would need a template per monitor.
+//! Turning a class into a number is the SURFACE's job, and the table it
+//! reads is `scenes::TABLES` — [`mixer_width`] and [`row_height`] are
+//! this window's two doors onto it.
+
+use std::collections::HashMap;
 
 use daw_proto::Track;
-use dynamic_template::visibility_rules::{self as rules, Size};
+use dynamic_template::golden_session::{TrackExt, read_kinds};
+use dynamic_template::scenes::{self, Fold, Scene, Size};
 
-/// Which surface a plan is being applied to.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Surface {
-    /// The arrangement's track panel: rows, so heights.
-    Arrange,
-    /// The mixer: strips, so widths.
-    Mixer,
+pub use dynamic_template::scenes::Surface;
+
+/// The taxonomy the template wrote into the project, by GUID.
+///
+/// A scene's selectors match what a track IS — `Process`, `Verb`, a
+/// `Kick` piece — and what it is comes from the ext-state the template
+/// writes when it creates the track, not from its name. This is that,
+/// read once from the project file the window opened.
+///
+/// Empty is a valid answer: a session the template never touched has no
+/// taxonomy, every selector that asks for a kind matches nothing, and a
+/// scene falls back to its default rather than to a wrong guess.
+#[derive(Clone, Debug, Default)]
+pub struct Kinds {
+    by_guid: HashMap<String, TrackExt>,
 }
 
-/// The preset a rail button recalls, and the rule set behind it.
-///
-/// The label is what the rail prints — rails are 38 pixels wide, so it
-/// is three or four letters — and the slug is what
-/// [`rules::mode_visibility_for`] answers to. They are paired here
-/// rather than derived from each other because neither is a good name
-/// for the other: "Over" is not a slug and "overview" does not fit.
-pub const PRESETS: [(&str, &str); 3] = [("Mix", "mix"), ("Rec", "record"), ("Over", "overview")];
+impl Kinds {
+    /// Read a project file's ext-state.
+    #[must_use]
+    pub fn read(path: &std::path::Path) -> Self {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Self::default();
+        };
+        Self {
+            by_guid: read_kinds(&text)
+                .into_iter()
+                .map(|ext| (ext.guid.clone(), ext))
+                .collect(),
+        }
+    }
 
-/// The slug for a rail label, if it names a preset.
-#[must_use]
-pub fn slug(label: &str) -> Option<&'static str> {
-    PRESETS
-        .iter()
-        .find(|(name, _)| *name == label)
-        .map(|(_, slug)| *slug)
+    /// How many tracks it knows about.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.by_guid.len()
+    }
+
+    /// Whether it knows about none, which is the untouched-session case.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_guid.is_empty()
+    }
 }
 
-/// Apply a preset to a track list.
+/// Where a scene is being applied: everything the pixel step needs.
 ///
-/// Returns the tracks that survive it, each carrying the size the
-/// preset gives it — written into `Track::width` and `Track::height`,
-/// which is where both panels already read a size from. Nothing
-/// downstream learns that a preset exists.
+/// One struct rather than four parameters because the four always travel
+/// together — a panel is a surface, in a mode, under a set of switches,
+/// at a size — and three of them are easy to pass in the wrong order.
+#[derive(Clone, Copy, Debug)]
+pub struct Panel<'a> {
+    /// Which of the two panels.
+    pub surface: Surface,
+    /// The DAW mode, which the common prelude reads.
+    pub mode: Option<&'a str>,
+    /// The right rail's switches.
+    pub settings: crate::settings::Settings,
+    /// The panel's own extent in the axis the focus width comes off: the
+    /// mixer's height, or the arrangement's.
+    pub extent: f64,
+}
+
+/// Apply a scene to a track list.
 ///
-/// `panel` is the surface's own extent in the axis being sized: the
-/// mixer's height (a focused strip's width comes off it — see
-/// [`crate::settings::Settings::focus_width`]) or the arrangement's.
-///
-/// An unknown preset returns the tracks unchanged rather than an empty
-/// panel. A window showing everything is a window that has not applied
-/// a rule; a window showing nothing looks broken.
+/// Returns the rows that survive it, each carrying the size the scene
+/// gives it — written into `Track::width` or `Track::height`, which is
+/// where both panels already read a size from. Nothing downstream learns
+/// that a scene exists.
 #[must_use]
-pub fn apply(
+pub fn apply_scene(
     tracks: &[(Track, u32)],
-    preset: &str,
-    surface: Surface,
-    settings: crate::settings::Settings,
-    panel: f64,
+    kinds: &Kinds,
+    scene: &Scene,
+    at: Panel,
 ) -> Vec<(Track, u32)> {
-    let Some(mode) = rules::mode_visibility_for(preset) else {
-        return tracks.to_vec();
-    };
-    let config = dynamic_template::default_config();
-    let inputs: Vec<rules::TrackInput> = tracks
+    let Panel {
+        surface,
+        mode,
+        settings,
+        extent,
+    } = at;
+    let facts = scenes::from_tracks(tracks, &kinds.by_guid);
+    let rows = scenes::resolve(scene, &facts, surface, mode);
+    let by_guid: HashMap<&str, &(Track, u32)> = tracks
         .iter()
-        .map(|(track, _)| rules::TrackInput {
-            guid: track.guid.clone(),
-            name: track.name.clone(),
-            index: track.index,
-            is_folder: track.is_folder,
-        })
+        .map(|row| (row.0.guid.as_str(), row))
         .collect();
-    let plans = rules::resolve(&inputs, &config, &mode);
-
-    tracks
-        .iter()
-        .zip(&plans)
-        .filter(|(_, plan)| match surface {
-            Surface::Arrange => plan.arrange_show,
-            Surface::Mixer => plan.mixer_show,
-        })
-        .map(|((track, depth), plan)| {
-            let mut track = track.clone();
+    rows.iter()
+        .filter_map(|row| {
+            let guid = row.guid()?;
+            let (track, _) = by_guid.get(guid)?;
+            let mut track = (*track).clone();
             match surface {
                 Surface::Mixer => {
-                    if let Some(size) = plan.mixer_width {
-                        track.width = Some(pixels(mixer_width(size, settings, panel)));
-                    }
+                    track.width = Some(pixels(mixer_width(row.size, settings, extent)));
+                    // A focused strip is the selected one: that is what
+                    // the mixer opens to the focus width and reads the
+                    // rack of.
+                    track.selected = row.size == Size::Focus;
                 }
-                Surface::Arrange => {
-                    if let Some(size) = plan.arrange_height {
-                        track.height = Some(pixels(row_height(size)));
-                    }
-                }
+                Surface::Arrange => track.height = Some(pixels(row_height(row.size))),
             }
-            (track, *depth)
+            Some((track, row.depth))
         })
         .collect()
 }
 
-/// How wide a size class is in the mixer.
-///
-/// The four fixed classes are the widths this panel already has names
-/// for; only `Focus` depends on the display, and it depends on the
-/// panel's HEIGHT rather than its width so that a wider screen holds
-/// more focused tracks instead of fatter ones.
+/// The folders a scene folds, as GUIDs — what the window's own folder
+/// state is set to when the scene is recalled, so the strips' fold icons
+/// agree with the scene and a click on one carries on from where the
+/// scene left it.
 #[must_use]
-pub fn mixer_width(size: Size, settings: crate::settings::Settings, panel_h: f64) -> f64 {
-    match size {
-        Size::Minimum => crate::layout::STRIP_NARROW,
-        Size::Compact => crate::layout::STRIP_WIDE,
-        Size::Normal => crate::tone::WORKING,
-        // Wide enough that the rack's curves are readable, which is
-        // what "working on this track" means in a mix pass.
-        Size::Working => crate::tone::WORKING,
-        Size::Focus => settings.focus_width(panel_h),
+pub fn collapsed_by(
+    tracks: &[(Track, u32)],
+    kinds: &Kinds,
+    scene: &Scene,
+    mode: Option<&str>,
+) -> Vec<String> {
+    let facts = scenes::from_tracks(tracks, &kinds.by_guid);
+    scenes::resolve(scene, &facts, Surface::Mixer, mode)
+        .iter()
+        .filter(|row| row.fold == Fold::Collapsed)
+        .filter_map(|row| row.guid())
+        // Only the folders the window can actually fold.
+        .filter(|guid| {
+            tracks
+                .iter()
+                .any(|(track, _)| track.guid == *guid && track.is_folder)
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Which instrument a track belongs to, for follow-mode.
+///
+/// The taxonomy's answer — see `scenes::follow::instrument_of`; this is
+/// only the door onto it from a window that holds tracks rather than
+/// facts.
+#[must_use]
+pub fn instrument_of(tracks: &[(Track, u32)], kinds: &Kinds, guid: &str) -> Option<String> {
+    let facts = scenes::from_tracks(tracks, &kinds.by_guid);
+    scenes::follow::instrument_of(&facts, guid)
+}
+
+/// How wide a size class is in the mixer, for a panel `height` tall.
+///
+/// The scene module's table for the four fixed classes, and this
+/// window's own focus width for the fifth — the right rail's
+/// `focus_fraction` is an override OF the table's parameter, so a track
+/// the scene focused and a track the user selected open to the same
+/// width.
+#[must_use]
+pub fn mixer_width(size: Size, settings: crate::settings::Settings, height: f64) -> f64 {
+    if size == Size::Focus {
+        return settings.focus_width(height);
     }
+    scenes::TABLES.width(size, height)
 }
 
 /// And how tall one is in the arrangement.
-///
-/// No `Focus` case that differs from `Working`: a row's height is what
-/// makes its waveform readable, and past the point where the controls
-/// are all drawn at their authored size, more height buys a bigger
-/// picture of the same thing rather than another control.
 #[must_use]
 pub fn row_height(size: Size) -> f64 {
-    match size {
-        // The band tier: a coloured line that says a track is there.
-        Size::Minimum => crate::layout::NAME_LEGIBLE,
-        Size::Compact => crate::layout::CONTROL_ROW,
-        Size::Normal => crate::layout::CONTROL_ROW * 2.0,
-        Size::Working | Size::Focus => crate::layout::CONTROL_ROW * 3.0,
-    }
+    scenes::TABLES.height(size)
 }
 
 /// A pixel count, for the `u32` the track model stores.
@@ -161,7 +198,18 @@ fn pixels(value: f64) -> u32 {
 mod tests {
     use super::*;
 
-    fn track(guid: &str, name: &str, index: u32, is_folder: bool) -> (Track, u32) {
+    /// The mixer of a 1440p window with the default switches — what
+    /// every committed row list was written at.
+    fn mixer() -> Panel<'static> {
+        Panel {
+            surface: Surface::Mixer,
+            mode: None,
+            settings: crate::settings::Settings::default(),
+            extent: 1440.0,
+        }
+    }
+
+    fn track(guid: &str, name: &str, index: u32, is_folder: bool, depth: u32) -> (Track, u32) {
         (
             Track {
                 guid: guid.to_owned(),
@@ -170,116 +218,141 @@ mod tests {
                 is_folder,
                 ..Track::default()
             },
-            0,
+            depth,
         )
     }
 
-    fn kit() -> Vec<(Track, u32)> {
-        vec![
-            track("kick", "Kick", 0, true),
-            track("kick-in", "Kick In", 1, false),
-            track("kick-out", "Kick Out", 2, false),
-            track("snare", "Snare", 3, true),
-            track("snare-top", "Snare Top", 4, false),
-        ]
+    /// The golden session's own tracks, with the taxonomy the template
+    /// wrote — the same input the fixtures are resolved from, reached
+    /// the way the window reaches it.
+    fn golden() -> (Vec<(Track, u32)>, Kinds) {
+        let dir = dynamic_template::golden_session::fixtures_dir();
+        let kinds = Kinds::read(&dir.join("template.rpp"));
+        let tracks = dynamic_template::golden_session::rpp::flatten(
+            &dynamic_template::golden_session::maximal(),
+        )
+        .iter()
+        .enumerate()
+        .map(|(i, flat)| {
+            track(
+                &flat.guid,
+                &flat.name,
+                u32::try_from(i).unwrap_or(u32::MAX),
+                flat.is_folder,
+                flat.depth,
+            )
+        })
+        .collect();
+        (tracks, kinds)
     }
 
-    /// Mix gives the buses a working width and keeps the mics as a
-    /// rail — the layout the whole preset exists to produce.
+    /// The window reads the taxonomy out of the project file it opened,
+    /// and it finds one — the whole scene table depends on it.
     #[test]
-    fn mix_opens_the_buses_and_rails_the_mics() {
-        let rows = apply(
-            &kit(),
-            "mix",
-            Surface::Mixer,
-            crate::settings::Settings::default(),
-            1440.0,
+    fn the_window_reads_the_templates_taxonomy() {
+        let (_, kinds) = golden();
+        assert!(kinds.len() > 100, "{} tracks carry a kind", kinds.len());
+        assert!(!kinds.is_empty());
+    }
+
+    /// A session the template never touched has no taxonomy, and a
+    /// scene over it falls back to its default rather than to a guess.
+    #[test]
+    fn a_session_with_no_taxonomy_still_resolves() {
+        let tracks = vec![
+            track("a", "Kick", 0, true, 0),
+            track("b", "Kick In", 1, false, 1),
+        ];
+        let scene = scenes::scene("drum-mixing").expect("the scene");
+        let rows = apply_scene(&tracks, &Kinds::default(), scene, mixer());
+        assert_eq!(
+            rows.len(),
+            2,
+            "nothing is hidden by a rule that matched nothing"
         );
-        assert_eq!(rows.len(), 5, "mix hides nothing");
-        let by = |guid: &str| {
+        assert_eq!(rows[0].0.width, Some(86), "the folder takes the default");
+        assert_eq!(rows[1].0.width, Some(30), "the leaf takes the leaf rule");
+    }
+
+    /// Mix opens the pieces and rails the mics — the layout the scene
+    /// exists to produce, through the window's own adapter.
+    #[test]
+    fn drum_mixing_opens_the_pieces_and_rails_the_mics() {
+        let (tracks, kinds) = golden();
+        let scene = scenes::scene("drum-mixing").expect("the scene");
+        let rows = apply_scene(&tracks, &kinds, scene, mixer());
+        let by = |name: &str| {
             rows.iter()
-                .find(|(t, _)| t.guid == guid)
-                .expect("the track")
+                .find(|(t, _)| t.name == name)
+                .unwrap_or_else(|| panic!("no {name}"))
                 .0
                 .width
         };
-        assert_eq!(by("kick"), Some(133));
-        assert_eq!(by("kick-in"), Some(30));
-    }
-
-    /// Overview drops the leaves entirely, which is the one preset that
-    /// changes how many strips there are rather than how wide they are.
-    #[test]
-    fn overview_keeps_only_the_skeleton() {
-        let rows = apply(
-            &kit(),
-            "overview",
-            Surface::Mixer,
-            crate::settings::Settings::default(),
-            1440.0,
-        );
-        assert_eq!(rows.len(), 2, "two buses, no mics");
-        assert!(rows.iter().all(|(t, _)| t.is_folder));
-    }
-
-    /// Record is the inverse of mix, and the assertion is the
-    /// COMPARISON: a mic must be wider in record than in mix, or the
-    /// preset has not done anything you would notice.
-    #[test]
-    fn record_is_wider_for_a_mic_than_mix_is() {
-        let settings = crate::settings::Settings::default();
-        let width = |preset: &str| {
-            apply(&kit(), preset, Surface::Mixer, settings, 1440.0)
-                .into_iter()
-                .find(|(t, _)| t.guid == "kick-in")
-                .expect("the mic")
-                .0
-                .width
-        };
-        assert!(width("record") > width("mix"));
-    }
-
-    /// A preset nobody defined leaves the session alone. Showing
-    /// everything is a view; showing nothing is a bug that looks like a
-    /// crash.
-    #[test]
-    fn an_unknown_preset_changes_nothing() {
-        let rows = apply(
-            &kit(),
-            "nonesuch",
-            Surface::Mixer,
-            crate::settings::Settings::default(),
-            1440.0,
-        );
-        assert_eq!(rows.len(), kit().len());
-        assert!(rows.iter().all(|(t, _)| t.width.is_none()));
-    }
-
-    /// The labels the rail prints and the slugs the rules answer to
-    /// stay paired — a rail button whose label has no slug is a button
-    /// that does nothing.
-    #[test]
-    fn every_rail_label_names_a_real_rule_set() {
-        for (label, _) in PRESETS {
-            let slug = slug(label).expect("a slug for every label");
-            assert!(
-                rules::mode_visibility_for(slug).is_some(),
-                "{label} -> {slug} has no rules"
-            );
-        }
-        assert!(slug("nonesuch").is_none());
+        assert_eq!(by("Kick"), Some(133), "the piece is the instrument");
+        assert_eq!(by("In"), Some(30), "and its mics are a rail");
     }
 
     /// The arrangement sizes by HEIGHT and the mixer by width, and
-    /// applying one surface's plan must not write the other's field.
+    /// applying one surface's scene must not write the other's field.
     #[test]
     fn a_surface_only_sets_its_own_axis() {
-        let settings = crate::settings::Settings::default();
-        let mixer = apply(&kit(), "mix", Surface::Mixer, settings, 1440.0);
-        assert!(mixer.iter().all(|(t, _)| t.height.is_none()));
-        let arrange = apply(&kit(), "mix", Surface::Arrange, settings, 1440.0);
+        let (tracks, kinds) = golden();
+        let scene = scenes::scene("drum-mixing").expect("the scene");
+        let strips = apply_scene(&tracks, &kinds, scene, mixer());
+        assert!(strips.iter().all(|(t, _)| t.height.is_none()));
+        let arrange = apply_scene(
+            &tracks,
+            &kinds,
+            scene,
+            Panel {
+                surface: Surface::Arrange,
+                ..mixer()
+            },
+        );
         assert!(arrange.iter().all(|(t, _)| t.width.is_none()));
         assert!(arrange.iter().all(|(t, _)| t.height.is_some()));
+    }
+
+    /// The overview folds the pieces shut, and the window's folder state
+    /// is told which folders those were so its fold icons agree.
+    #[test]
+    fn the_overview_hands_the_window_its_folds() {
+        let (tracks, kinds) = golden();
+        let scene = scenes::scene("drum-overview").expect("the scene");
+        let folded = collapsed_by(&tracks, &kinds, scene, None);
+        let names: Vec<&str> = folded
+            .iter()
+            .filter_map(|guid| {
+                tracks
+                    .iter()
+                    .find(|(t, _)| t.guid == *guid)
+                    .map(|(t, _)| t.name.as_str())
+            })
+            .collect();
+        assert_eq!(names, ["Kick", "Snare", "Toms", "Cymbals", "Rooms"]);
+    }
+
+    /// The pixel tables are the scenes module's, not this window's: a
+    /// class means the same number wherever it is applied.
+    #[test]
+    fn the_window_reads_the_scene_modules_pixel_tables() {
+        let same = |a: f64, b: f64| (a - b).abs() < f64::EPSILON;
+        let settings = crate::settings::Settings::default();
+        assert!(same(
+            mixer_width(Size::Minimum, settings, 1440.0),
+            crate::layout::STRIP_NARROW
+        ));
+        assert!(same(
+            mixer_width(Size::Compact, settings, 1440.0),
+            crate::layout::STRIP_WIDE
+        ));
+        assert!(same(
+            mixer_width(Size::Working, settings, 1440.0),
+            crate::tone::WORKING
+        ));
+        assert!(same(mixer_width(Size::Focus, settings, 1440.0), 618.0));
+        assert!(same(row_height(Size::Minimum), crate::layout::NAME_LEGIBLE));
+        assert!(same(row_height(Size::Compact), crate::layout::CONTROL_ROW));
     }
 }
 
@@ -427,557 +500,5 @@ mod row_tests {
         for i in 0..all.len() {
             assert_eq!(map.index(i), Some(i));
         }
-    }
-}
-
-// ── Scenes ────────────────────────────────────────────────────────────
-
-/// A scene: a named answer to "which tracks, how large" for one moment
-/// of a session — tracking the drums, mixing their buses, editing the
-/// vocal's returns.
-///
-/// A visual track manager, as a set of rules rather than a list of
-/// GUIDs, so the same scene means the right thing in any project that
-/// uses the template's names. Recalled from the keyboard while mixing,
-/// and rendered by the bench to a PNG so a scene can be looked at
-/// without opening anything.
-#[derive(Clone, Copy)]
-pub struct Scene {
-    pub name: &'static str,
-    pub slug: &'static str,
-    /// The size a track opens at, given its name, whether it is a
-    /// folder, and the folders above it (nearest last). A scene sizes
-    /// and never hides: hiding is the preset's job, and a scene over a
-    /// preset that hid a track would be arguing with it.
-    pub size: fn(&str, bool, &[String]) -> Size,
-    /// What the scene does to a folder and what it holds: shows it,
-    /// collapses it (the folder stays, its rows go), or hides it and
-    /// everything in it.
-    pub fold: fn(&str, bool, &[String]) -> Fold,
-}
-
-/// What a scene does to a folder — see [`Scene::fold`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fold {
-    Show,
-    /// The folder stays as one strip; the rows inside it go.
-    Collapse,
-    /// The folder and everything in it go.
-    Hide,
-}
-
-/// Every scene's default: nothing folded.
-fn show_all(_name: &str, _is_folder: bool, _ancestors: &[String]) -> Fold {
-    Fold::Show
-}
-
-/// The bus tree hidden: a scene about the instruments, not the mix.
-fn hide_buses(name: &str, is_folder: bool, _ancestors: &[String]) -> Fold {
-    if is_folder && is(name, &["MIX BUS"]) {
-        Fold::Hide
-    } else {
-        Fold::Show
-    }
-}
-
-/// Every scene, in the order the number keys recall them.
-pub const SCENES: [Scene; 9] = [
-    Scene {
-        name: "Drum Tracking",
-        slug: "drum-tracking",
-        size: drum_tracking,
-        fold: hide_buses,
-    },
-    Scene {
-        name: "Drum Mixing",
-        slug: "drum-mixing",
-        size: drum_mixing,
-        fold: hide_buses,
-    },
-    Scene {
-        name: "Drum Overview",
-        slug: "drum-overview",
-        size: drum_overview,
-        fold: drum_overview_fold,
-    },
-    Scene {
-        name: "Drum Advanced",
-        slug: "drum-advanced",
-        size: drum_advanced,
-        fold: hide_buses,
-    },
-    Scene {
-        name: "Drum FX",
-        slug: "drum-fx",
-        size: drum_fx,
-        fold: hide_buses,
-    },
-    Scene {
-        name: "Buses",
-        slug: "buses",
-        size: buses,
-        fold: buses_fold,
-    },
-    Scene {
-        name: "Guitar FX",
-        slug: "guitar-fx",
-        size: guitar_fx,
-        fold: guitar_fx_fold,
-    },
-    Scene {
-        name: "Lead Vocal",
-        slug: "lead-vocal",
-        size: lead_vocal,
-        fold: show_all,
-    },
-    Scene {
-        name: "Lead Vocal FX Edit",
-        slug: "lead-vocal-fx",
-        size: lead_vocal_fx,
-        fold: show_all,
-    },
-];
-
-/// The folders a scene collapses, as GUIDs — what the window's own
-/// folder state is set to when the scene is recalled, so the strips'
-/// fold icons agree with the scene and a click on one carries on
-/// from where the scene left it.
-#[must_use]
-pub fn collapsed_by(scene: &Scene, tracks: &[(Track, u32)]) -> Vec<String> {
-    let mut folders: Vec<(u32, String)> = Vec::new();
-    let mut out = Vec::new();
-    for (track, depth) in tracks {
-        folders.retain(|(at, _)| *at < *depth);
-        let ancestors: Vec<String> = folders.iter().map(|(_, n)| n.clone()).collect();
-        if track.is_folder {
-            folders.push((*depth, track.name.clone()));
-            if (scene.fold)(&track.name, true, &ancestors) == Fold::Collapse {
-                out.push(track.guid.clone());
-            }
-        }
-    }
-    out
-}
-
-/// The scene for a slug.
-#[must_use]
-pub fn scene(slug: &str) -> Option<&'static Scene> {
-    SCENES.iter().find(|s| s.slug == slug)
-}
-
-fn is(name: &str, any: &[&str]) -> bool {
-    any.iter().any(|n| name.eq_ignore_ascii_case(n))
-}
-
-fn under(ancestors: &[String], any: &[&str]) -> bool {
-    ancestors.iter().any(|a| is(a, any))
-}
-
-/// The kit's pieces: the folders a drum mix is made on.
-const PIECES: [&str; 5] = ["Kick", "Snare", "Toms", "Cymbals", "Rooms"];
-
-/// Tracking: the core microphones you are getting a sound on, and
-/// nothing else that needs reading.
-// r[impl flow.drums.tracking.full]
-fn drum_tracking(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
-    if parallel(name, ancestors) {
-        Size::Minimum
-    } else if is_folder {
-        Size::Compact
-    } else if is(name, &["In", "Out", "Top", "Bottom"]) && under(ancestors, &["Kick", "Snare"]) {
-        Size::Working
-    } else if under(ancestors, &["Drum Kit"]) {
-        Size::Minimum
-    } else {
-        Size::Compact
-    }
-}
-
-/// The Process folder and everything in it — what the kit is sent
-/// to, which the tracking and advanced scenes only need present.
-fn parallel(name: &str, ancestors: &[String]) -> bool {
-    is(name, &["Process"]) || under(ancestors, &["Process"])
-}
-
-/// Mixing: the buses are the instrument; every mic is a rail.
-// r[impl flow.drums.mixing.scenes]
-fn drum_mixing(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
-    if is_folder && is(name, &PIECES) {
-        Size::Working
-    } else if is_folder {
-        Size::Compact
-    } else {
-        Size::Minimum
-    }
-}
-
-/// Overview: the kit as its pieces — Kick, Snare, Toms, Cymbals,
-/// Rooms — each collapsed to one strip at working width, and the
-/// Process folder hidden. What the kit sounds like, five faders.
-// r[impl flow.drums.mixing.scenes]
-fn drum_overview(name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
-    if is_folder && is(name, &PIECES) {
-        Size::Working
-    } else {
-        Size::Compact
-    }
-}
-
-/// The overview's folds: the pieces shut, the Process folder and the
-/// bus tree gone.
-fn drum_overview_fold(name: &str, is_folder: bool, ancestors: &[String]) -> Fold {
-    if is_folder && is(name, &["Process", "MIX BUS"]) {
-        Fold::Hide
-    } else if is_folder && is(name, &PIECES) && !under(ancestors, &["Process"]) {
-        Fold::Collapse
-    } else {
-        Fold::Show
-    }
-}
-
-/// Advanced: the tracks under the pieces that are not the core mics
-/// — each Sub, Fund and Trig, and every verb the kit carries — open,
-/// the mics and the buses present.
-// r[impl flow.drums.mixing.scenes]
-fn drum_advanced(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
-    let lower = name.to_lowercase();
-    if parallel(name, ancestors) {
-        Size::Minimum
-    } else if is_folder {
-        Size::Compact
-    } else if lower == "fund"
-        || lower == "sub"
-        || lower.ends_with("trig")
-        || lower == "verb"
-        || under(ancestors, &["Verb"])
-    {
-        Size::Working
-    } else if under(ancestors, &["Drum Kit"]) {
-        Size::Minimum
-    } else {
-        Size::Compact
-    }
-}
-
-/// The kit's effects: what it is sent to. The room sim in focus, the
-/// verb banks — the parallel folder's and the snare's — at working
-/// width, the parallel compressors as tight rails (once a compressor
-/// is dialled in it is a volume-balance game, and a rail is a fader),
-/// and the kit itself present as rails.
-fn drum_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
-    let parallel = under(ancestors, &["Process"]);
-    let compression = under(ancestors, &["Compress"]);
-    let snare_verb = under(ancestors, &["Snare"]) && under(ancestors, &["Verb"]);
-    if is_folder {
-        if is(name, &["Process", "FX", "Verb"]) && (parallel || is(name, &["Process"])) {
-            Size::Compact
-        } else {
-            Size::Minimum
-        }
-    } else if is(name, &["Room Sim"]) && parallel {
-        Size::Focus
-    } else if compression {
-        Size::Minimum
-    } else if parallel || snare_verb {
-        Size::Working
-    } else if under(ancestors, &["Drum Kit"]) {
-        Size::Minimum
-    } else {
-        Size::Compact
-    }
-}
-
-/// The instrument bus: the electrics, acoustics, keys and synths at working width with
-/// the Inst FX returns open beside them, the first plate in focus, and
-/// the drums, their process and the vocals out of the way.
-fn guitar_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
-    let fx = under(ancestors, &["Inst FX"]);
-    if is_folder {
-        Size::Compact
-    } else if fx && is(name, &["Fat Plate"]) {
-        Size::Focus
-    } else if fx || under(ancestors, &["Electric", "Acoustic", "Keys", "Synths"]) {
-        Size::Working
-    } else {
-        Size::Minimum
-    }
-}
-
-/// The instrument scene's folds: the kit, its process and the vocals
-/// hidden — they are not what this scene is about.
-fn guitar_fx_fold(name: &str, is_folder: bool, _ancestors: &[String]) -> Fold {
-    if is_folder && is(name, &["Drum Kit", "Process", "Vocals", "MIX BUS"]) {
-        Fold::Hide
-    } else {
-        Fold::Show
-    }
-}
-
-/// The mix: the bus tree and nothing else — every bus at working
-/// width, the stem buses compact, the instruments gone.
-fn buses(_name: &str, is_folder: bool, _ancestors: &[String]) -> Size {
-    if is_folder {
-        Size::Compact
-    } else {
-        Size::Working
-    }
-}
-
-/// The bus scene's folds: every top-level folder but the mix bus is
-/// hidden.
-fn buses_fold(name: &str, is_folder: bool, ancestors: &[String]) -> Fold {
-    if is_folder && ancestors.is_empty() && !is(name, &["MIX BUS"]) {
-        Fold::Hide
-    } else {
-        Fold::Show
-    }
-}
-
-/// The lead vocal open, every return present as a short rail.
-// r[impl flow.vocals.mixing.main]
-fn lead_vocal(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
-    let fx = under(ancestors, &["Vox FX"]);
-    if is_folder {
-        Size::Compact
-    } else if fx {
-        Size::Minimum
-    } else if name.to_lowercase().contains("lead") {
-        // The subject of the scene: its whole chain, top to bottom.
-        Size::Focus
-    } else if under(ancestors, &["Vox Lead"]) {
-        Size::Working
-    } else {
-        Size::Compact
-    }
-}
-
-/// Editing the returns: one delay and one verb in focus, every other
-/// return at the working width with its chain drawn, every folder a
-/// rail. The returns are all live — a slap is a slap whether or not it
-/// is the one being edited — so the scene shows them all working and
-/// opens the two under the hands.
-// r[impl flow.vocals.mixing.fx]
-fn lead_vocal_fx(name: &str, is_folder: bool, ancestors: &[String]) -> Size {
-    let fx = under(ancestors, &["Vox FX"]);
-    if is_folder {
-        Size::Minimum
-    } else if fx
-        && ((is(name, &["Short"]) && under(ancestors, &["Delay"]))
-            || (is(name, &["Long"]) && under(ancestors, &["Verb"])))
-    {
-        Size::Focus
-    } else if fx {
-        Size::Working
-    } else if name.to_lowercase().contains("lead") {
-        // The lead beside its returns, so the chain being fed and the
-        // instances feeding it are all open at once.
-        Size::Focus
-    } else {
-        Size::Working
-    }
-}
-
-/// Apply a scene to a track list — the same contract as [`apply`].
-#[must_use]
-pub fn apply_scene(
-    tracks: &[(Track, u32)],
-    scene: &Scene,
-    settings: crate::settings::Settings,
-    panel: f64,
-) -> Vec<(Track, u32)> {
-    let mut folders: Vec<(u32, String)> = Vec::new();
-    let mut out = Vec::with_capacity(tracks.len());
-    // A folded folder: rows deeper than it are dropped until the walk
-    // comes back up to its level, and a hidden one drops itself too.
-    let mut folded: Option<u32> = None;
-    for (track, depth) in tracks {
-        folders.retain(|(at, _)| *at < *depth);
-        let ancestors: Vec<String> = folders.iter().map(|(_, n)| n.clone()).collect();
-        if track.is_folder {
-            folders.push((*depth, track.name.clone()));
-        }
-        if let Some(at) = folded {
-            if *depth > at {
-                continue;
-            }
-            folded = None;
-        }
-        if track.is_folder {
-            match (scene.fold)(&track.name, true, &ancestors) {
-                Fold::Show => {}
-                Fold::Collapse => folded = Some(*depth),
-                Fold::Hide => {
-                    folded = Some(*depth);
-                    continue;
-                }
-            }
-        }
-        // One half of a stereo pair is a rail whatever the scene says:
-        // the pair's folder carries the processing and the width.
-        let size = if crate::tone::is_pair_half(&track.name) && !track.is_folder {
-            Size::Minimum
-        } else {
-            (scene.size)(&track.name, track.is_folder, &ancestors)
-        };
-        let mut track = track.clone();
-        track.width = Some(pixels(mixer_width(size, settings, panel)));
-        // A focused strip is the selected one: that is what the mixer
-        // opens to the focus width and reads the rack of.
-        track.selected = size == Size::Focus;
-        out.push((track, *depth));
-    }
-    out
-}
-
-#[cfg(test)]
-mod scene_tests {
-    use super::{Size, scene};
-
-    // r[verify flow.vocals.mixing.fx]
-    #[test]
-    fn the_fx_edit_scene_focuses_one_delay_and_one_verb() {
-        let s = scene("lead-vocal-fx").expect("the scene");
-        let delay: Vec<String> = ["Vox Lead", "Vox FX", "Delay"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect();
-        let verb: Vec<String> = ["Vox Lead", "Vox FX", "Verb"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect();
-        assert_eq!((s.size)("Short", false, &delay), Size::Focus);
-        assert_eq!((s.size)("Long", false, &verb), Size::Focus);
-        assert_eq!((s.size)("Short", false, &verb), Size::Working);
-        assert_eq!((s.size)("Delay", true, &delay[..2]), Size::Minimum);
-        assert_eq!((s.size)("Lead Vox", false, &delay[..1]), Size::Focus);
-        assert_eq!((s.size)("Vox Dbl", false, &delay[..1]), Size::Working);
-    }
-
-    /// Lead Vocal: the soloist's mix track in focus with its chain,
-    /// the tracks under the Vox Lead folder working, every return
-    /// under Vox FX a short rail, every folder a rail.
-    // r[verify flow.vocals.mixing.main]
-    #[test]
-    fn the_lead_vocal_scene_opens_the_lead_and_rails_the_returns() {
-        let s = scene("lead-vocal").expect("the scene");
-        let lead: Vec<String> = ["Vox Lead"].iter().map(|s| (*s).to_owned()).collect();
-        let verb: Vec<String> = ["Vox Lead", "Vox FX", "Verb"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect();
-        assert_eq!((s.size)("Lead Vox", false, &lead), Size::Focus);
-        assert_eq!((s.size)("Vox Dbl", false, &lead), Size::Working);
-        assert_eq!((s.size)("Long", false, &verb), Size::Minimum);
-        assert_eq!((s.size)("Vox FX", true, &lead), Size::Compact);
-        assert_eq!((s.size)("Kick", false, &[]), Size::Compact);
-    }
-
-    /// Drum Tracking works the core mics; Drum Mixing rails them and
-    /// works the pieces; Drum Advanced opens the subs and verbs.
-    // r[verify flow.drums.tracking.full]
-    // r[verify flow.drums.mixing.scenes]
-    #[test]
-    fn the_drum_scenes_disagree_about_the_mics() {
-        let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect();
-        assert_eq!(
-            (scene("drum-tracking").unwrap().size)("In", false, &kick),
-            Size::Working
-        );
-        assert_eq!(
-            (scene("drum-mixing").unwrap().size)("In", false, &kick),
-            Size::Minimum
-        );
-        assert_eq!(
-            (scene("drum-mixing").unwrap().size)("Kick", true, &kick[..1]),
-            Size::Working
-        );
-        let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect();
-        assert_eq!(
-            (scene("drum-advanced").unwrap().size)("Nonlin", false, &snare_verb),
-            Size::Working
-        );
-        assert_eq!(
-            (scene("drum-advanced").unwrap().size)("Sub", false, &kick[..2]),
-            Size::Working
-        );
-        assert_eq!(
-            (scene("drum-advanced").unwrap().size)("In", false, &kick),
-            Size::Minimum
-        );
-    }
-
-    // r[verify flow.drums.mixing.scenes]
-    #[test]
-    fn the_fx_scene_opens_what_the_kit_is_sent_to() {
-        let s = scene("drum-fx").expect("the scene");
-        let parallel: Vec<String> = ["Process", "FX"].iter().map(|s| (*s).to_owned()).collect();
-        let comp: Vec<String> = ["Process", "Compress"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect();
-        let snare_verb: Vec<String> = ["Drum Kit", "Snare", "Verb"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect();
-        let kick: Vec<String> = ["Drum Kit", "Kick", "Sum"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect();
-        assert_eq!((s.size)("Room Sim", false, &parallel), Size::Focus);
-        assert_eq!((s.size)("Smash", false, &comp), Size::Minimum);
-        assert_eq!((s.size)("Nonlin", false, &snare_verb), Size::Working);
-        assert_eq!((s.size)("In", false, &kick), Size::Minimum);
-        assert_eq!((s.size)("Kick", true, &kick[..1]), Size::Minimum);
-    }
-
-    /// The overview folds the pieces shut and hides the Process folder:
-    /// applied, the rows are the kit and its five pieces.
-    // r[verify flow.drums.mixing.scenes]
-    #[test]
-    fn the_overview_is_five_pieces() {
-        use daw_proto::Track;
-        let folder = |name: &str, depth: u32| {
-            let mut t = Track {
-                guid: name.to_lowercase(),
-                name: name.to_owned(),
-                ..Track::default()
-            };
-            t.is_folder = true;
-            (t, depth)
-        };
-        let leaf = |name: &str, depth: u32| {
-            (
-                Track {
-                    guid: format!("{}-{depth}", name.to_lowercase()),
-                    name: name.to_owned(),
-                    ..Track::default()
-                },
-                depth,
-            )
-        };
-        let rows = vec![
-            folder("Drum Kit", 0),
-            folder("Kick", 1),
-            leaf("In", 2),
-            leaf("Out", 2),
-            folder("Snare", 1),
-            leaf("Top", 2),
-            folder("Process", 0),
-            folder("Compress", 1),
-            leaf("Dry", 2),
-            folder("Bass", 0),
-            leaf("DI", 1),
-        ];
-        let s = scene("drum-overview").expect("the scene");
-        let out = super::apply_scene(&rows, s, crate::settings::Settings::default(), 1000.0);
-        let names: Vec<&str> = out.iter().map(|(t, _)| t.name.as_str()).collect();
-        assert_eq!(names, ["Drum Kit", "Kick", "Snare", "Bass", "DI"]);
-        assert_eq!(super::collapsed_by(s, &rows), ["kick", "snare"]);
     }
 }

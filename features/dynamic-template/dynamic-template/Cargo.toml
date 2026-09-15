@@ -31,6 +31,9 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+facet-json = { workspace = true }
+
 [features]
 default = []
 

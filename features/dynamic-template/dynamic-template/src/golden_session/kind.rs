@@ -51,11 +51,21 @@ pub enum Kind {
     Part,
     /// A bus: a track with no items, unarmed, in the bus tree.
     Bus,
+    /// The root of the bus tree — the folder every stem sums into.
+    MixBus,
+    /// The Guide folder: the count and the pulse the band tracks to.
+    /// `flow.scenes.guide-folder`.
+    Guide,
+    /// The Keyflow folder: the song's knowledge as MIDI items.
+    /// `flow.scenes.keyflow-folder`.
+    Keyflow,
+    /// A performer's headphone bus. `flow.scenes.performer-headphones`.
+    Headphones,
 }
 
 impl Kind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 18] = [
         Self::Group,
         Self::Piece,
         Self::Sum,
@@ -70,6 +80,10 @@ impl Kind {
         Self::Return,
         Self::Part,
         Self::Bus,
+        Self::MixBus,
+        Self::Guide,
+        Self::Keyflow,
+        Self::Headphones,
     ];
 
     /// The stable string written to ext-state.
@@ -90,6 +104,10 @@ impl Kind {
             Self::Return => "return",
             Self::Part => "part",
             Self::Bus => "bus",
+            Self::MixBus => "mix-bus",
+            Self::Guide => "guide",
+            Self::Keyflow => "keyflow",
+            Self::Headphones => "headphones",
         }
     }
 

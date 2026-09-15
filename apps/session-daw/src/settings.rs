@@ -15,7 +15,8 @@ pub struct Settings {
     /// simply pushed along, which is what you want when their widths
     /// are the thing you are comparing and must not change under you.
     pub take_focus_width: bool,
-    /// How much of a 16:9 screen one focused track takes.
+    /// How much of a 16:9 screen one focused track takes — this
+    /// window's override of `scenes::TABLES.focus.fraction`.
     pub focus_fraction: f64,
     /// Whether folding a phase's container folds it on every track.
     ///
@@ -33,7 +34,7 @@ impl Default for Settings {
         Self {
             focus_selected: true,
             take_focus_width: true,
-            focus_fraction: 0.25,
+            focus_fraction: dynamic_template::scenes::TABLES.focus.fraction,
             fold_phases_together: true,
         }
     }
@@ -42,24 +43,18 @@ impl Default for Settings {
 impl Settings {
     /// How wide a focused track opens, for a panel `height` tall.
     ///
-    /// A quarter of what a 16:9 screen of this height would leave
-    /// between the rails: `(height * 16/9 - rails) / 4`. 618 at 1440p,
-    /// 938 at 4K, 458 at 1080p.
-    ///
-    /// Derived from the HEIGHT rather than the actual width so a wider
-    /// ASPECT gets more tracks instead of wider ones. A quarter of the
-    /// real width would put four on a 32:9 screen too, each enormous,
-    /// when the reason for that screen is that it holds eight. Physical
-    /// size follows the display; how many fit follows its shape.
-    ///
-    /// And the rails come off first, because what has to hold four is
-    /// the panel, not the window. Four of a window-quarter do not fit
-    /// between rails that were never in the sum.
+    /// The scene module's own focus parameters, with this window's
+    /// `focus_fraction` over the top — the switch on the right rail is
+    /// an override of the table, not a second table. See
+    /// `dynamic_template::scenes::surface::Focus` for why the width
+    /// comes off the height.
     #[must_use]
     pub fn focus_width(self, height: f64) -> f64 {
-        let sixteen_by_nine = height * 16.0 / 9.0;
-        let panel = (sixteen_by_nine - crate::rails::SIDE * 2.0).max(0.0);
-        (panel * self.focus_fraction).max(crate::tone::LEGIBLE)
+        dynamic_template::scenes::Focus {
+            fraction: self.focus_fraction,
+            ..dynamic_template::scenes::TABLES.focus
+        }
+        .width(height)
     }
 }
 

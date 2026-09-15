@@ -261,6 +261,7 @@ fn main() {
             &font,
             layout,
             &std::path::PathBuf::from(out),
+            &path,
             width,
             height,
         );
@@ -502,6 +503,7 @@ fn mixer_shot(
     font: &session_daw::text::Font,
     layout: session_daw::layout::Layout,
     out: &std::path::Path,
+    project_file: &std::path::Path,
     width: u32,
     height: u32,
 ) {
@@ -517,17 +519,27 @@ fn mixer_shot(
     let (visible, depths) =
         daw_ui::components::folders::FolderState::default().visible(&project.tracks);
     let mut planned: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
-    // A scene, if one is asked for: the visual track manager's answer
-    // to which strips and how wide — `FTS_BENCH_SCENE=lead-vocal-fx`.
+    // A scene, if one is asked for: the visibility manager's answer to
+    // which strips and how wide — `FTS_BENCH_SCENE=lead-vocal-fx`.
+    //
+    // Its selectors match the taxonomy the template wrote into the
+    // project, so the ext-state is read back from the file the bench
+    // was handed rather than guessed from the track names.
     let scene = std::env::var("FTS_BENCH_SCENE")
         .ok()
-        .and_then(|slug| session_daw::plan::scene(&slug));
+        .and_then(|slug| dynamic_template::scenes::scene(&slug));
     if let Some(scene) = scene {
+        let kinds = session_daw::plan::Kinds::read(project_file);
         planned = session_daw::plan::apply_scene(
             &planned,
+            &kinds,
             scene,
-            session_daw::settings::Settings::default(),
-            f64::from(height),
+            session_daw::plan::Panel {
+                surface: session_daw::plan::Surface::Mixer,
+                mode: None,
+                settings: session_daw::settings::Settings::default(),
+                extent: f64::from(height),
+            },
         );
     }
     // The row list the scene resolved to, as text — `FTS_BENCH_ROWS`.
@@ -723,8 +735,9 @@ fn mixer_shot(
                 session_daw::rails::Surface::Mixer,
                 session::modes::Mode::Mix,
                 session::mix_phases::MixPhase::Tone,
-                "Mix",
+                scene.map(|s| s.slug.as_str()),
                 session_daw::settings::Settings::default(),
+                dynamic_template::scenes::Audience::Engineer,
             );
             session_daw::rails::draw(
                 painter,
@@ -1081,8 +1094,9 @@ fn shot(
                 session_daw::rails::Surface::Arrange,
                 session::modes::Mode::Mix,
                 session::mix_phases::MixPhase::Tone,
-                "Mix",
+                Some("drum-mixing"),
                 session_daw::settings::Settings::default(),
+                dynamic_template::scenes::Audience::Engineer,
             );
             session_daw::rails::draw(
                 painter,
@@ -1479,8 +1493,9 @@ impl AtRest {
                 session_daw::rails::Surface::Arrange,
                 session::modes::Mode::Mix,
                 TONE,
-                "Mix",
+                Some("drum-mixing"),
                 session_daw::settings::Settings::default(),
+                dynamic_template::scenes::Audience::Engineer,
             ),
             icons: session_daw::icons::Icons::none(),
             selected: std::collections::HashSet::new(),
