@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use daw_proto::Track;
 
 use super::facts::{path_of, Fact, Segment};
+use super::language::{classify_language, Language};
 use crate::golden_session::kind::TrackExt;
 use crate::golden_session::rpp::Flat;
 use crate::golden_session::Kind;
@@ -105,11 +106,16 @@ struct Node<'a> {
 }
 
 /// The tree walk both adapters share: it remembers the path of each
-/// open folder so a track's own path is its parent's plus its own step.
+/// open folder so a track's own path is its parent's plus its own step,
+/// and separately the language of each open Language folder so a
+/// source under one inherits it without repeating the name.
 #[derive(Default)]
 struct Walk {
     /// `(depth, path)` for every folder currently open.
     open: Vec<(u32, Vec<Segment>)>,
+    /// `(depth, language)` for every open folder that IS a language —
+    /// `flow.vocals.language`'s folder-inheritance case.
+    language_open: Vec<(u32, Language)>,
 }
 
 impl Walk {
@@ -123,6 +129,7 @@ impl Walk {
             template,
         } = *node;
         self.open.retain(|(at, _)| *at < depth);
+        self.language_open.retain(|(at, _)| *at < depth);
         let parent: Vec<Segment> = self
             .open
             .last()
@@ -136,6 +143,16 @@ impl Walk {
         let path = path_of(&parent, Some(&own), template);
         if is_folder {
             self.open.push((depth, path.clone()));
+        }
+        // The track's own name says a language first; failing that, the
+        // nearest enclosing Language folder does.
+        // r[impl flow.vocals.language]
+        let own_language = classify_language(name);
+        let language = own_language.or_else(|| self.language_open.last().map(|(_, l)| *l));
+        if is_folder {
+            if let Some(own_language) = own_language {
+                self.language_open.push((depth, own_language));
+            }
         }
         Fact {
             guid: guid.to_owned(),
@@ -153,6 +170,7 @@ impl Walk {
             channel: None,
             multi_mic: None,
             arrangement: None,
+            language,
             pair_half: is_pair_half(name),
         }
     }
@@ -205,5 +223,115 @@ mod tests {
             .expect("a Sum");
         let mic = facts.iter().find(|f| f.name == "In").expect("a mic");
         assert_eq!(sum.path, mic.path);
+    }
+
+    /// A source track named for a language classifies to it directly —
+    /// `Vocals / Ron / Main / EN`.
+    #[test]
+    // r[verify flow.vocals.language]
+    fn a_named_source_carries_its_own_language() {
+        use crate::scenes::Language;
+
+        let mut walk = Walk::default();
+        let mut node = |guid: &'static str, name: &'static str, depth: u32, is_folder: bool| {
+            walk.step(
+                0,
+                &Node {
+                    guid,
+                    name,
+                    depth,
+                    is_folder,
+                    kind: None,
+                    template: None,
+                },
+            )
+        };
+        node("vocals", "Vocals", 0, true);
+        node("ron", "Ron", 1, true);
+        node("main", "Main", 2, true);
+        let en = node("en", "EN", 3, false);
+        let es = node("es", "ES", 3, false);
+        assert_eq!(en.language, Some(Language::En));
+        assert_eq!(es.language, Some(Language::Es));
+    }
+
+    /// A Language folder's children inherit it without repeating the
+    /// name — the comp stack under `EN` (`COMP`/`EDIT`/`TUNE`) is
+    /// English because the folder above it is, not because any of them
+    /// is named for a language.
+    #[test]
+    // r[verify flow.vocals.language]
+    fn a_language_folders_children_inherit_it() {
+        use crate::scenes::Language;
+
+        let mut walk = Walk::default();
+        let mut node = |guid: &'static str, name: &'static str, depth: u32, is_folder: bool| {
+            walk.step(
+                0,
+                &Node {
+                    guid,
+                    name,
+                    depth,
+                    is_folder,
+                    kind: None,
+                    template: None,
+                },
+            )
+        };
+        node("vocals", "Vocals", 0, true);
+        node("ron", "Ron", 1, true);
+        node("main", "Main", 2, true);
+        node("en", "EN", 3, true); // a Language folder, not a leaf
+        let comp = node("comp", "COMP", 4, false);
+        let edit = node("edit", "EDIT", 4, false);
+        let tune = node("tune", "TUNE", 4, false);
+        assert_eq!(comp.language, Some(Language::En));
+        assert_eq!(edit.language, Some(Language::En));
+        assert_eq!(tune.language, Some(Language::En));
+    }
+
+    /// Closing a language folder and opening a sibling one stops the
+    /// first's inheritance — a source under `ES` is Spanish, not
+    /// English, even though both sit under the same `Main`.
+    #[test]
+    // r[verify flow.vocals.language]
+    fn closing_a_language_folder_stops_its_inheritance() {
+        let mut walk = Walk::default();
+        let mut node = |guid: &'static str,
+                        name: &'static str,
+                        depth: u32,
+                        is_folder: bool| {
+            walk.step(
+                0,
+                &Node {
+                    guid,
+                    name,
+                    depth,
+                    is_folder,
+                    kind: None,
+                    template: None,
+                },
+            )
+        };
+        node("main", "Main", 0, true);
+        node("en", "EN", 1, true);
+        node("en_comp", "COMP", 2, false);
+        let es_comp = node("es_comp", "COMP", 1, false); // EN closed: depth back to 1
+        assert_eq!(es_comp.language, None, "no language folder is open here");
+    }
+
+    /// The mix tracks above the language dimension — the performer's
+    /// own folder, `Main`, `DBL` — carry no language at all, which is
+    /// what keeps them in view whatever language is active.
+    #[test]
+    // r[verify flow.vocals.language]
+    fn the_mix_tracks_above_the_dimension_carry_no_language() {
+        let facts = from_flat(&flatten(&maximal()));
+        for name in ["Vocals", "Lead", "Doubles", "Harmonies"] {
+            let fact = facts.iter().find(|f| f.name == name);
+            if let Some(fact) = fact {
+                assert_eq!(fact.language, None, "{name} should carry no language");
+            }
+        }
     }
 }

@@ -4,7 +4,7 @@
 //! field, and an absent field stays absent rather than becoming an
 //! empty constraint.
 
-use dynamic_template::scenes::{Rank, Role, Selector};
+use dynamic_template::scenes::{Language, Rank, Role, Selector};
 
 #[test]
 fn selector_round_trips_through_styx() {
@@ -18,6 +18,7 @@ fn selector_round_trips_through_styx() {
         channel: Some("L".into()),
         multi_mic: Some("In".into()),
         arrangement: Some("Rhythm".into()),
+        language: Some(Language::En),
         name: None,
     };
     // `None` is written as the unit `@`, which the parser does not read

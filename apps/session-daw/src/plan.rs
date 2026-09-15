@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use daw_proto::Track;
 use dynamic_template::golden_session::{TrackExt, read_kinds};
-use dynamic_template::scenes::{self, Fold, Scene, Size};
+use dynamic_template::scenes::{self, Fold, Language, Scene, Size};
 
 pub use dynamic_template::scenes::Surface;
 
@@ -82,6 +82,10 @@ pub struct Panel<'a> {
     /// The panel's own extent in the axis the focus width comes off: the
     /// mixer's height, or the arrangement's.
     pub extent: f64,
+    /// The session's active language (`flow.vocals.language.active`),
+    /// which the common prelude reads the same way it reads `mode`.
+    /// `None` hides no vocal source by language.
+    pub active_language: Option<Language>,
 }
 
 /// Apply a scene to a track list.
@@ -102,9 +106,10 @@ pub fn apply_scene(
         mode,
         settings,
         extent,
+        active_language,
     } = at;
     let facts = scenes::from_tracks(tracks, &kinds.by_guid);
-    let rows = scenes::resolve(scene, &facts, surface, mode);
+    let rows = scenes::resolve(scene, &facts, surface, mode, active_language);
     let by_guid: HashMap<&str, &(Track, u32)> = tracks
         .iter()
         .map(|row| (row.0.guid.as_str(), row))
@@ -141,7 +146,7 @@ pub fn collapsed_by(
     mode: Option<&str>,
 ) -> Vec<String> {
     let facts = scenes::from_tracks(tracks, &kinds.by_guid);
-    scenes::resolve(scene, &facts, Surface::Mixer, mode)
+    scenes::resolve(scene, &facts, Surface::Mixer, mode, None)
         .iter()
         .filter(|row| row.fold == Fold::Collapsed)
         .filter_map(|row| row.guid())
@@ -206,6 +211,7 @@ mod tests {
             mode: None,
             settings: crate::settings::Settings::default(),
             extent: 1440.0,
+            active_language: None,
         }
     }
 

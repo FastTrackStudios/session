@@ -101,6 +101,10 @@ pub struct Fact {
     pub multi_mic: Option<String>,
     /// The Arrangement dimension.
     pub arrangement: Option<String>,
+    /// The Language dimension (`flow.vocals.language`): read from the
+    /// track's own name, or inherited from the nearest enclosing
+    /// Language folder — see `super::adapt::Walk`.
+    pub language: Option<super::language::Language>,
     /// One half of a stereo pair — see the engine invariant in
     /// [`super::resolve`].
     pub pair_half: bool,
@@ -139,6 +143,13 @@ impl Fact {
     #[must_use]
     pub fn at(mut self, path: Vec<Segment>) -> Self {
         self.path = path;
+        self
+    }
+
+    /// The same, carrying a language.
+    #[must_use]
+    pub const fn speaking(mut self, language: super::language::Language) -> Self {
+        self.language = Some(language);
         self
     }
 

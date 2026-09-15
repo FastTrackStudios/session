@@ -9,6 +9,8 @@
 
 use facet::Facet;
 
+use super::language::Language;
+
 /// Which tracks a rule is about, in the template's taxonomy.
 ///
 /// Every field is a constraint, and an absent one does not constrain,
@@ -49,6 +51,10 @@ pub struct Selector {
     /// The Arrangement dimension (`Rhythm`, `Lead`, `Solo`).
     #[facet(default)]
     pub arrangement: Option<String>,
+    /// The Language dimension (`flow.vocals.language`): `En`, `Es`,
+    /// `Pt`, or `All` for a language-free source.
+    #[facet(default)]
+    pub language: Option<Language>,
     /// A track name, for a user's own folder only.
     #[facet(default)]
     pub name: Option<String>,

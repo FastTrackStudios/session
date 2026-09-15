@@ -7,6 +7,7 @@
 //! than a pile of per-surface booleans.
 
 use super::facts::Fact;
+use super::language::Language;
 use super::selector::{Rank, Role, Selector};
 use super::types::{Fold, Resolved, Scene, Size, Surface};
 
@@ -70,9 +71,21 @@ impl Row {
 /// - **A fold applies down the tree.** Rules say what happens to a
 ///   folder; what happens to its contents follows from that rather than
 ///   from a second rule nobody would remember to write.
+///
+/// `active_language` (`flow.vocals.language.active`) feeds the common
+/// prelude the same way `mode` does: `None` hides nothing, `Some(lang)`
+/// hides every source whose own language is neither `lang` nor
+/// [`Language::All`] — see `table::prelude`.
+// r[impl flow.vocals.language.active]
 #[must_use]
-pub fn resolve(scene: &Scene, facts: &[Fact], surface: Surface, mode: Option<&str>) -> Vec<Row> {
-    let effects = effects_for(scene, facts, surface, mode);
+pub fn resolve(
+    scene: &Scene,
+    facts: &[Fact],
+    surface: Surface,
+    mode: Option<&str>,
+    active_language: Option<Language>,
+) -> Vec<Row> {
+    let effects = effects_for(scene, facts, surface, mode, active_language);
     let mut out: Vec<Row> = Vec::with_capacity(facts.len());
     // The depth of the shallowest folded folder we are inside, if any.
     let mut folded: Option<u32> = None;
@@ -118,9 +131,10 @@ fn effects_for(
     facts: &[Fact],
     surface: Surface,
     mode: Option<&str>,
+    active_language: Option<Language>,
 ) -> Vec<Resolved> {
     let mut effects = vec![Resolved::from(scene.default); facts.len()];
-    let prelude = super::table::prelude(mode);
+    let prelude = super::table::prelude(mode, active_language);
     for rule in prelude.iter().chain(&scene.rules) {
         let effect = rule.for_surface(surface);
         for i in matching(&rule.selector, facts) {
@@ -163,6 +177,11 @@ fn matches_but_for_rank(selector: &Selector, fact: &Fact) -> bool {
             .kind
             .is_some_and(|k| k.as_str().eq_ignore_ascii_case(kind))
         {
+            return false;
+        }
+    }
+    if let Some(language) = selector.language {
+        if fact.language != Some(language) {
             return false;
         }
     }
@@ -275,7 +294,7 @@ mod tests {
                 ),
             ],
         );
-        let rows = resolve(&scene, &kit(), Surface::Mixer, None);
+        let rows = resolve(&scene, &kit(), Surface::Mixer, None, None);
         let size = |guid: &str| {
             rows.iter()
                 .find(|r| r.guid() == Some(guid))
@@ -300,7 +319,7 @@ mod tests {
                 Effect::at(Size::Working).folded(Fold::Collapsed),
             )],
         );
-        let rows = resolve(&collapsed, &kit(), Surface::Mixer, None);
+        let rows = resolve(&collapsed, &kit(), Surface::Mixer, None, None);
         let guids: Vec<&str> = rows.iter().filter_map(Row::guid).collect();
         assert_eq!(guids, ["kit", "kick"], "the mics went with the fold");
 
@@ -314,7 +333,7 @@ mod tests {
                 Effect::hidden(),
             )],
         );
-        let rows = resolve(&hidden, &kit(), Surface::Mixer, None);
+        let rows = resolve(&hidden, &kit(), Surface::Mixer, None, None);
         let guids: Vec<&str> = rows.iter().filter_map(Row::guid).collect();
         assert_eq!(guids, ["kit"], "the piece went too");
     }
@@ -328,7 +347,7 @@ mod tests {
             fact.pair_half = true;
         }
         let wide = scene(Effect::at(Size::Focus), Vec::new());
-        let rows = resolve(&wide, &facts, Surface::Mixer, None);
+        let rows = resolve(&wide, &facts, Surface::Mixer, None, None);
         let size = |guid: &str| {
             rows.iter()
                 .find(|r| r.guid() == Some(guid))
@@ -363,7 +382,7 @@ mod tests {
                 Effect::at(Size::Minimum),
             )],
         );
-        let rows = resolve(&s, &facts, Surface::Mixer, None);
+        let rows = resolve(&s, &facts, Surface::Mixer, None, None);
         assert!(rows.iter().all(|r| r.size == Size::Minimum), "{rows:?}");
     }
 
@@ -383,8 +402,8 @@ mod tests {
                 mixer: None,
             }],
         );
-        let mixer = resolve(&s, &kit(), Surface::Mixer, None);
-        let arrange = resolve(&s, &kit(), Surface::Arrange, None);
+        let mixer = resolve(&s, &kit(), Surface::Mixer, None, None);
+        let arrange = resolve(&s, &kit(), Surface::Arrange, None, None);
         assert_eq!(mixer[2].size, Size::Minimum);
         assert_eq!(arrange[2].size, Size::Working);
     }
@@ -403,12 +422,120 @@ mod tests {
                 Effect::at(Size::Working),
             )],
         );
-        let rows = resolve(&s, &kit(), Surface::Mixer, None);
+        let rows = resolve(&s, &kit(), Surface::Mixer, None, None);
         let opened: Vec<&str> = rows
             .iter()
             .filter(|r| r.size == Size::Working)
             .filter_map(Row::guid)
             .collect();
         assert_eq!(opened, ["in"], "one mic of the piece, not both");
+    }
+
+    /// `Vocals / Ron / Main / {EN, ES, PT}` and `Ron / DBL / {EN, ES,
+    /// PT}` — a lead's two layers, each with a source per language.
+    fn ron() -> Vec<Fact> {
+        use super::super::language::Language;
+
+        let vocals = Segment::named("Vocals").of(Kind::Group);
+        let ron = Segment::named("Ron");
+        let main = Segment::named("Main");
+        let dbl = Segment::named("DBL");
+        vec![
+            Fact::folder("vocals", "Vocals", 0, 0)
+                .of(Kind::Group)
+                .at(vec![vocals.clone()]),
+            Fact::folder("ron", "Ron", 1, 1).at(vec![vocals.clone(), ron.clone()]),
+            Fact::folder("main", "Main", 2, 2).at(vec![vocals.clone(), ron.clone(), main.clone()]),
+            Fact::leaf("main-en", "EN", 3, 3)
+                .of(Kind::Source)
+                .at(vec![vocals.clone(), ron.clone(), main.clone()])
+                .speaking(Language::En),
+            Fact::leaf("main-es", "ES", 4, 3)
+                .of(Kind::Source)
+                .at(vec![vocals.clone(), ron.clone(), main.clone()])
+                .speaking(Language::Es),
+            Fact::leaf("main-pt", "PT", 5, 3)
+                .of(Kind::Source)
+                .at(vec![vocals.clone(), ron.clone(), main])
+                .speaking(Language::Pt),
+            Fact::folder("dbl", "DBL", 6, 2).at(vec![vocals.clone(), ron.clone(), dbl.clone()]),
+            Fact::leaf("dbl-en", "EN", 7, 3)
+                .of(Kind::Source)
+                .at(vec![vocals.clone(), ron.clone(), dbl.clone()])
+                .speaking(Language::En),
+            Fact::leaf("dbl-es", "ES", 8, 3)
+                .of(Kind::Source)
+                .at(vec![vocals.clone(), ron.clone(), dbl.clone()])
+                .speaking(Language::Es),
+            Fact::leaf("dbl-pt", "PT", 9, 3)
+                .of(Kind::Source)
+                .at(vec![vocals, ron, dbl])
+                .speaking(Language::Pt),
+        ]
+    }
+
+    /// The active language hides every source whose language is neither
+    /// active nor `All`; the mix tracks above them — `Vocals`, `Ron`,
+    /// `Main`, `DBL` — carry no language and stay in view whatever the
+    /// language.
+    // r[verify flow.vocals.language]
+    // r[verify flow.vocals.language.active]
+    #[test]
+    fn the_active_language_hides_the_others_and_keeps_the_mix_tracks() {
+        use super::super::language::Language;
+
+        let s = scene(Effect::at(Size::Compact), Vec::new());
+        let facts = ron();
+        let rows = resolve(&s, &facts, Surface::Mixer, None, Some(Language::En));
+        let shown: Vec<&str> = rows.iter().filter_map(Row::guid).collect();
+        assert_eq!(
+            shown,
+            ["vocals", "ron", "main", "main-en", "dbl", "dbl-en"],
+            "only English sources survive, the mix tracks stay"
+        );
+    }
+
+    /// Switching the language switches which sources it hides, in one
+    /// step — no VCA, no separate switch, just a different value in.
+    #[test]
+    fn switching_the_language_switches_which_sources_show() {
+        use super::super::language::Language;
+
+        let s = scene(Effect::at(Size::Compact), Vec::new());
+        let facts = ron();
+        let rows = resolve(&s, &facts, Surface::Mixer, None, Some(Language::Es));
+        let shown: Vec<&str> = rows.iter().filter_map(Row::guid).collect();
+        assert_eq!(shown, ["vocals", "ron", "main", "main-es", "dbl", "dbl-es"]);
+    }
+
+    /// With no active language set, nothing is hidden — an untouched
+    /// project shows every source rather than guessing which one.
+    #[test]
+    fn with_no_active_language_nothing_is_hidden() {
+        let s = scene(Effect::at(Size::Compact), Vec::new());
+        let facts = ron();
+        let rows = resolve(&s, &facts, Surface::Mixer, None, None);
+        assert_eq!(rows.len(), facts.len(), "nothing hidden");
+    }
+
+    /// A language-free source (`All`) is never hidden, whatever the
+    /// active language is.
+    #[test]
+    fn all_is_never_hidden() {
+        use super::super::language::Language;
+
+        let vocals = Segment::named("Vocals").of(Kind::Group);
+        let hey = Segment::named("Hey");
+        let facts = vec![
+            Fact::folder("hey", "Hey", 0, 0).at(vec![vocals.clone(), hey.clone()]),
+            Fact::leaf("hey-all", "All", 1, 1)
+                .of(Kind::Source)
+                .at(vec![vocals, hey])
+                .speaking(Language::All),
+        ];
+        let s = scene(Effect::at(Size::Compact), Vec::new());
+        let rows = resolve(&s, &facts, Surface::Mixer, None, Some(Language::En));
+        let shown: Vec<&str> = rows.iter().filter_map(Row::guid).collect();
+        assert_eq!(shown, ["hey", "hey-all"]);
     }
 }

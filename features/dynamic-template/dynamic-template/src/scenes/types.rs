@@ -359,6 +359,7 @@ mod tests {
                     channel: Some("L".to_owned()),
                     multi_mic: Some("Amp A 57".to_owned()),
                     arrangement: Some("Rhythm".to_owned()),
+                    language: Some(crate::scenes::Language::En),
                     name: Some("Talkback".to_owned()),
                 },
                 effect: Effect::at(Size::Working).folded(Fold::Collapsed),
