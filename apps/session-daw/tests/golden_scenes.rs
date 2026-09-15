@@ -1,21 +1,27 @@
-//! Every scene renders from the golden session to its committed picture.
+//! Every scene renders from the golden session to its committed fixture.
 //!
 //! `plan::SCENES` is the visual track manager's scene table; each scene
-//! is rendered headless by the bench (`FTS_BENCH_SCENE=<slug>`) from the
-//! golden session under `features/dynamic-template/fixtures/golden/`,
-//! and the picture is committed beside it under `scenes/`. A change to
-//! what a scene shows is a diff in a PR, not a surprise.
+//! is resolved and rendered headless by the bench
+//! (`FTS_BENCH_SCENE=<slug>`) from the golden session under
+//! `features/dynamic-template/fixtures/golden/`, and both halves of what
+//! comes out are committed beside it under `scenes/`:
 //!
-//! The comparison is per pixel with a one-LSB tolerance on a handful of
-//! pixels rather than byte for byte: Vello rasterises on the GPU, and
-//! across two processes the same frame can differ by one unit in one
-//! channel on one or two pixels (measured: the same project rendered
-//! three times gave two hashes, two pixels apart, each off by one).
-//! Anything a scene rule could change — a strip's width, a fold, a
-//! colour — moves thousands of pixels by far more than one.
+//! - **the row list** (`<slug>.rows`) — which rows survived the folds,
+//!   how deep each sits and how wide it opens. This is what the scene
+//!   *means*, it is the same on every machine, and it is compared **byte
+//!   for byte**. A changed rule moves it.
+//! - **the picture** (`<slug>.png`) at 2560x1440 — what the scene *looks
+//!   like*. Compared structurally, with the repo's own threshold
+//!   (`scripts/ui-stress/imagediff.py`: a channel difference over 24 of
+//!   255 is a difference, anything under it is rasterisation). Two GPUs —
+//!   and the same GPU reached through a different driver, which is what
+//!   CI does — disagree about the last few bits of antialiasing:
+//!   measured here, up to 15 of 255 on four per cent of pixels, with no
+//!   structural difference at all. A moved strip, a changed fold or a
+//!   different colour is not that: it is thousands of pixels past the
+//!   threshold, and the negative control below pins that.
 //!
-//! `FTS_UPDATE_GOLDEN=1 cargo test -p session-daw --test golden_scenes`
-//! rewrites the pictures; so does `just daw-scenes`.
+//! `just daw-scenes` rewrites both.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,10 +30,14 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// The size every picture is committed at.
 const SIZE: &str = "2560x1440";
-/// The largest per-channel difference a pixel may show.
-const LSB_TOLERANCE: i16 = 1;
-/// How many pixels may differ at all.
-const PIXEL_TOLERANCE: usize = 16;
+/// A per-channel difference this large or smaller is rasterisation, not
+/// a different picture — `scripts/ui-stress/imagediff.py`'s own default.
+const STRUCTURAL: i16 = 24;
+/// How many pixels may differ structurally: none.
+const STRUCTURAL_TOLERANCE: usize = 0;
+/// Below this many colours, a render is a blank window rather than a
+/// scene.
+const MIN_COLOURS: usize = 64;
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../features/dynamic-template/fixtures/golden")
@@ -44,13 +54,15 @@ fn project_for(slug: &str) -> PathBuf {
     fixtures().join(file)
 }
 
-/// Render one scene through the bench to `out`.
+/// Render one scene through the bench, writing the picture to `png` and
+/// the row list to `rows`.
 // r[impl flow.scenes.render]
-fn render(slug: &str, out: &Path) -> Result<()> {
+fn render(slug: &str, png: &Path, rows: &Path) -> Result<()> {
     let bench = env!("CARGO_BIN_EXE_bench");
     let output = Command::new(bench)
         .arg(project_for(slug))
-        .env("FTS_BENCH_MIXER", out)
+        .env("FTS_BENCH_MIXER", png)
+        .env("FTS_BENCH_ROWS", rows)
         .env("FTS_BENCH_SCENE", slug)
         .env("FTS_BENCH_SIZE", SIZE)
         .output()?;
@@ -62,7 +74,7 @@ fn render(slug: &str, out: &Path) -> Result<()> {
         )
         .into());
     }
-    if !out.is_file() {
+    if !png.is_file() || !rows.is_file() {
         return Err(format!(
             "bench wrote nothing for {slug}: {}",
             String::from_utf8_lossy(&output.stderr)
@@ -79,10 +91,10 @@ fn pixels(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
     Ok((w, h, image.into_raw()))
 }
 
-/// How two renders differ: the count of pixels that differ at all, and
-/// the largest per-channel difference among them.
+/// How two renders differ: the count of pixels past the structural
+/// threshold, and the largest per-channel difference among all of them.
 fn compare(a: &[u8], b: &[u8]) -> (usize, i16) {
-    let mut differing = 0_usize;
+    let mut structural = 0_usize;
     let mut worst = 0_i16;
     for (pa, pb) in a.chunks(4).zip(b.chunks(4)) {
         let delta = pa
@@ -91,12 +103,12 @@ fn compare(a: &[u8], b: &[u8]) -> (usize, i16) {
             .map(|(x, y)| i16::from(*x).saturating_sub(i16::from(*y)).saturating_abs())
             .max()
             .unwrap_or(0);
-        if delta > 0 {
-            differing = differing.saturating_add(1);
-            worst = worst.max(delta);
+        if delta > STRUCTURAL {
+            structural = structural.saturating_add(1);
         }
+        worst = worst.max(delta);
     }
-    (differing, worst)
+    (structural, worst)
 }
 
 /// How many distinct colours a render uses.
@@ -113,19 +125,15 @@ fn colours(pixels: &[u8]) -> usize {
         .len()
 }
 
-/// Below this many colours, a render is a blank window rather than a
-/// scene.
-const MIN_COLOURS: usize = 64;
-
-/// Every scene in the table, against its picture — which is how the
-/// drum scenes are verified: what Drum Tracking shows, and what the
-/// mixing scenes show, is the committed picture.
+/// Every scene in the table, against its row list and its picture —
+/// which is how the drum scenes are verified: what Drum Tracking shows,
+/// and what the mixing scenes show, is the committed fixture.
 ///
 /// r[verify flow.scenes.render]
 /// r[verify flow.drums.tracking.full]
 /// r[verify flow.drums.mixing.scenes]
 #[test]
-fn every_scene_renders_to_its_committed_picture() -> Result<()> {
+fn every_scene_renders_to_its_committed_fixture() -> Result<()> {
     let update = std::env::var_os("FTS_UPDATE_GOLDEN").is_some();
     // The media the projects reference is generated, not committed, so a
     // fresh checkout has projects with nothing to play until this runs.
@@ -134,23 +142,53 @@ fn every_scene_renders_to_its_committed_picture() -> Result<()> {
     let scratch = tempfile::tempdir()?;
     let mut failures = Vec::new();
     for scene in &session_daw::plan::SCENES {
-        let committed = scenes_dir.join(format!("{}.png", scene.slug));
-        let fresh = scratch.path().join(format!("{}.png", scene.slug));
-        render(scene.slug, &fresh)?;
+        let committed_png = scenes_dir.join(format!("{}.png", scene.slug));
+        let committed_rows = scenes_dir.join(format!("{}.rows", scene.slug));
+        let fresh_png = scratch.path().join(format!("{}.png", scene.slug));
+        let fresh_rows = scratch.path().join(format!("{}.rows", scene.slug));
+        render(scene.slug, &fresh_png, &fresh_rows)?;
         if update {
-            std::fs::copy(&fresh, &committed)?;
+            std::fs::copy(&fresh_png, &committed_png)?;
+            std::fs::copy(&fresh_rows, &committed_rows)?;
             continue;
         }
-        if !committed.is_file() {
+        if !committed_png.is_file() || !committed_rows.is_file() {
             failures.push(format!(
-                "{}: no committed picture at {}",
+                "{}: no committed fixture beside {}",
                 scene.slug,
-                committed.display()
+                committed_png.display()
             ));
             continue;
         }
-        let (w, h, a) = pixels(&fresh)?;
-        let (cw, ch, b) = pixels(&committed)?;
+
+        // The row list, byte for byte.
+        let fresh = std::fs::read_to_string(&fresh_rows)?;
+        let committed = std::fs::read_to_string(&committed_rows)?;
+        if fresh != committed {
+            let (n, a, b) = fresh
+                .lines()
+                .zip(committed.lines())
+                .enumerate()
+                .find(|(_, (a, b))| a != b)
+                .map_or((0, "", ""), |(n, (a, b))| (n.saturating_add(1), a, b));
+            failures.push(format!(
+                "{}: the scene resolves to a different row list ({} rows, committed {}); \
+                 first difference at row {n}:\n    resolved:  {a}\n    committed: {b}",
+                scene.slug,
+                fresh.lines().count(),
+                committed.lines().count()
+            ));
+        }
+        if fresh.lines().count() == 0 {
+            failures.push(format!(
+                "{}: the scene resolves to no rows at all",
+                scene.slug
+            ));
+        }
+
+        // And the picture, structurally.
+        let (w, h, a) = pixels(&fresh_png)?;
+        let (cw, ch, b) = pixels(&committed_png)?;
         if (w, h) != (cw, ch) {
             failures.push(format!(
                 "{}: rendered {w}x{h}, committed {cw}x{ch}",
@@ -166,16 +204,17 @@ fn every_scene_renders_to_its_committed_picture() -> Result<()> {
             ));
             continue;
         }
-        let (differing, worst) = compare(&a, &b);
-        if differing > PIXEL_TOLERANCE || worst > LSB_TOLERANCE {
+        let (structural, worst) = compare(&a, &b);
+        if structural > STRUCTURAL_TOLERANCE {
             // Kept where the fixtures are NOT: a failing run must not
             // leave six hundred kilobytes of untracked PNG beside the
             // committed ones, where the next `add -A` would sweep them
             // in.
             let kept = std::env::temp_dir().join(format!("fts-scene-{}.fresh.png", scene.slug));
-            std::fs::copy(&fresh, &kept)?;
+            std::fs::copy(&fresh_png, &kept)?;
             failures.push(format!(
-                "{}: {differing} pixels differ (worst by {worst}); fresh render kept at {}",
+                "{}: {structural} pixels differ structurally (worst channel by {worst} of 255); \
+                 fresh render kept at {}",
                 scene.slug,
                 kept.display()
             ));
@@ -183,39 +222,45 @@ fn every_scene_renders_to_its_committed_picture() -> Result<()> {
     }
     assert!(
         failures.is_empty(),
-        "scene renders drifted from their committed pictures — if the change is intended, \
-         run `just daw-scenes` and commit the pictures:\n{}",
+        "scene fixtures drifted — if the change is intended, run `just daw-scenes` and \
+         commit the result:\n{}",
         failures.join("\n")
     );
     Ok(())
 }
 
 /// The negative control: two scenes of the same project are different
-/// pictures by far more than the tolerance, so the comparison above
-/// could not pass by being lenient.
+/// pictures and different row lists by far more than the tolerances, so
+/// neither comparison above could pass by being lenient.
 #[test]
-fn two_scenes_differ_by_more_than_the_tolerance() -> Result<()> {
+fn two_scenes_differ_by_more_than_the_tolerances() -> Result<()> {
     let scenes_dir = fixtures().join("scenes");
     let (_, _, a) = pixels(&scenes_dir.join("drum-tracking.png"))?;
     let (_, _, b) = pixels(&scenes_dir.join("drum-mixing.png"))?;
-    let (differing, worst) = compare(&a, &b);
-    assert!(differing > PIXEL_TOLERANCE * 1000, "{differing} pixels");
-    assert!(worst > LSB_TOLERANCE, "worst {worst}");
+    let (structural, worst) = compare(&a, &b);
+    assert!(
+        structural > 10_000,
+        "{structural} pixels differ structurally"
+    );
+    assert!(worst > STRUCTURAL, "worst {worst}");
+    let rows_a = std::fs::read_to_string(scenes_dir.join("drum-tracking.rows"))?;
+    let rows_b = std::fs::read_to_string(scenes_dir.join("drum-mixing.rows"))?;
+    assert_ne!(rows_a, rows_b);
     Ok(())
 }
 
-/// Every scene has a committed picture at the committed size, and none
-/// of them is a blank window.
+/// Every scene has a committed picture at the committed size and a row
+/// list with rows in it, and none of the pictures is a blank window.
 #[test]
-fn every_scene_has_a_picture_with_something_in_it() -> Result<()> {
+fn every_scene_has_a_fixture_with_something_in_it() -> Result<()> {
     for scene in &session_daw::plan::SCENES {
-        let path = fixtures()
-            .join("scenes")
-            .join(format!("{}.png", scene.slug));
-        let (w, h, committed) = pixels(&path)?;
+        let dir = fixtures().join("scenes");
+        let (w, h, committed) = pixels(&dir.join(format!("{}.png", scene.slug)))?;
         assert_eq!((w, h), (2560, 1440), "{}", scene.slug);
         let used = colours(&committed);
         assert!(used >= MIN_COLOURS, "{} uses {used} colours", scene.slug);
+        let rows = std::fs::read_to_string(dir.join(format!("{}.rows", scene.slug)))?;
+        assert!(rows.lines().count() > 0, "{} has no rows", scene.slug);
     }
     Ok(())
 }
