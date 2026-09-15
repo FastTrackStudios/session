@@ -47,6 +47,9 @@ pub struct Row {
     /// Whether the session override replaced this entry
     /// (`flow.patch-list.session-override`) — marked, never hidden.
     pub overridden: bool,
+    /// Whether the session has no track for this entry
+    /// (`flow.patch-list.apply`) — a view state, never acted on.
+    pub unused: bool,
 }
 
 /// One performer's rows, under their header.
@@ -144,6 +147,10 @@ impl Table {
                 input: describe(&entry.resolved),
                 mark: mark(&entry.resolved),
                 overridden,
+                // Whether the session has a track for this entry is
+                // session data `build_layered` has no view of — set
+                // afterward via `with_unused`, same as `unpatched`.
+                unused: false,
             };
             match performers
                 .iter_mut()
@@ -194,6 +201,25 @@ impl Table {
         self
     }
 
+    /// Mark every rig entry with no matching track as unused — a view
+    /// state, never acted on (`flow.patch-list.apply`). `keys` are
+    /// `(performer, kind, key)` triples, the same path apply's own
+    /// `Lowered` entries carry.
+    #[must_use]
+    pub fn with_unused(mut self, keys: &[(String, String, String)]) -> Self {
+        for performer in &mut self.performers {
+            for row in &mut performer.rows {
+                if keys
+                    .iter()
+                    .any(|(p, k, key)| *p == performer.name && *k == row.kind && *key == row.key)
+                {
+                    row.unused = true;
+                }
+            }
+        }
+        self
+    }
+
     /// The fixture album in the fixture room — what the render fixture
     /// is a picture of.
     ///
@@ -236,7 +262,12 @@ impl Table {
             .with_stale(Some(
                 "the album's patch list has changed since this session applied it".to_owned(),
             ))
-            .with_unpatched(vec!["Extra Guitar (unpatched)".to_owned()]))
+            .with_unpatched(vec!["Extra Guitar (unpatched)".to_owned()])
+            .with_unused(&[(
+                "producer".to_owned(),
+                "talkback".to_owned(),
+                "mic".to_owned(),
+            )]))
     }
 }
 
@@ -532,6 +563,7 @@ fn performers(
                     mark: row.mark,
                     striped: striped.is_multiple_of(2),
                     overridden: row.overridden,
+                    unused: row.unused,
                 },
                 (x0, y),
                 width,
@@ -563,6 +595,9 @@ fn buses(
                 mark: bus.mark,
                 striped: index.is_multiple_of(2),
                 overridden: bus.overridden,
+                // A headphone bus is never a track's input, so apply
+                // never marks one unused — only rig entries are.
+                unused: false,
             },
             (x0, y),
             width,
@@ -624,6 +659,10 @@ struct Line<'a> {
     /// edge, not a different band, so the resolved/unresolved colour
     /// still reads.
     overridden: bool,
+    /// Whether the session has no track for this row
+    /// (`flow.patch-list.apply`) — a marker on the right edge, the
+    /// override marker's mirror.
+    unused: bool,
 }
 
 /// Draw one row: its band, then its four cells.
@@ -654,6 +693,21 @@ fn line(
             painter,
             palette.accent,
             Rect::new(x0 + PAD, y, x0 + PAD + OVERRIDE_MARKER_W, y + ROW_H),
+        );
+    }
+    if row.unused {
+        // The override marker's mirror, on the right edge: the session
+        // has no track for this entry — a view state, never acted on
+        // by apply (`flow.patch-list.apply`).
+        fill(
+            painter,
+            palette.text_faint,
+            Rect::new(
+                x0 + width - PAD - OVERRIDE_MARKER_W,
+                y,
+                x0 + width - PAD,
+                y + ROW_H,
+            ),
         );
     }
     let baseline = y + ROW_H - 6.0;

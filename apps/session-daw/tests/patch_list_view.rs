@@ -245,6 +245,22 @@ fn a_stale_session_carries_its_banner_and_its_unpatched_track() -> Result {
 }
 
 #[test]
+fn an_entry_with_no_track_is_marked_unused_and_leaves_the_rest_alone() -> Result {
+    // r[verify flow.patch-list.apply]
+    let table = Table::fixture_overridden_stale()?;
+    let producer = performer(&table, "producer").ok_or("producer")?;
+    let mic = row(producer, "mic").ok_or("producer's talkback mic")?;
+    assert!(mic.unused, "the entry with no track is marked unused");
+
+    // The negative control: an entry the same rig does have a track
+    // for is not marked.
+    let engineer = performer(&table, "engineer").ok_or("engineer")?;
+    let engineer_mic = row(engineer, "mic").ok_or("engineer's talkback mic")?;
+    assert!(!engineer_mic.unused);
+    Ok(())
+}
+
+#[test]
 fn the_overridden_stale_view_renders_the_committed_fixture() -> Result {
     // r[verify flow.patch-list.session-override]
     let Some(rendered) = session_daw::patch_list::shot(&Table::fixture_overridden_stale()?, SIZE)
