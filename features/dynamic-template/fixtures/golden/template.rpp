@@ -12491,7 +12491,7 @@
     NCHAN 2
     MAINSEND_NCH 2
     MAINSEND 1 0
-    EXT FTS:kind bus
+    EXT FTS:kind mix-bus
     <FXCHAIN
       SHOW 0
       LASTSEL 0

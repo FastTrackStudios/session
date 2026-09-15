@@ -59,6 +59,10 @@ pub enum Action {
     FocusSelected,
     /// Whether a focused track's width comes OUT of its neighbours.
     TakeFocusWidth,
+    /// Who the window is for — the engineer's full view of a flow, or
+    /// the player's overview of the same one.
+    /// `flow.scenes.two-audiences`.
+    Audience,
 }
 
 /// One button in a rail.
@@ -416,6 +420,7 @@ pub fn profile(
     phase: session::mix_phases::MixPhase,
     shown: Option<&str>,
     settings: crate::settings::Settings,
+    audience: dynamic_template::scenes::Audience,
 ) -> Profile {
     // The left rail is the one thing both surfaces share: which layout
     // is showing and which pass it belongs to is a fact about the
@@ -424,7 +429,7 @@ pub fn profile(
     match surface {
         Surface::Mixer => Profile {
             left,
-            right: mixer_right(settings),
+            right: mixer_right(settings, audience),
             top: Vec::new(),
         },
         Surface::Arrange => Profile {
@@ -437,7 +442,10 @@ pub fn profile(
 
 /// The right rail's switches, showing their state.
 #[must_use]
-pub fn mixer_right(settings: crate::settings::Settings) -> Vec<Item<'static>> {
+pub fn mixer_right(
+    settings: crate::settings::Settings,
+    audience: dynamic_template::scenes::Audience,
+) -> Vec<Item<'static>> {
     vec![
         Item {
             label: "Focus",
@@ -449,6 +457,15 @@ pub fn mixer_right(settings: crate::settings::Settings) -> Vec<Item<'static>> {
             label: "Steal",
             on: settings.take_focus_width,
             act: Action::TakeFocusWidth,
+            icon: None,
+        },
+        // Lit when the window is the PLAYER's: the engineer's view is
+        // the default, and a switch that was lit by default would read
+        // as a mode you are always in.
+        Item {
+            label: "Player",
+            on: audience == dynamic_template::scenes::Audience::Player,
+            act: Action::Audience,
             icon: None,
         },
     ]

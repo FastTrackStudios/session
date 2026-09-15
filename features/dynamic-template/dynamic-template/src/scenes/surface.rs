@@ -58,9 +58,13 @@ impl Focus {
 pub struct SurfaceTables {
     /// Mixer strip width per size class, in [`Size::ALL`] order. The
     /// `Focus` slot is a floor: the real width comes from [`Focus`].
-    pub strip_width: [f64; 5],
+    ///
+    /// Whole pixels, in the type, because that is what they are — and
+    /// because a surface that has to hand REAPER a `u32` should not have
+    /// to round a float back into one.
+    pub strip_width: [u32; 5],
     /// Arrangement row height per size class, same order.
-    pub row_height: [f64; 5],
+    pub row_height: [u32; 5],
     /// What a focused strip costs.
     pub focus: Focus,
 }
@@ -74,8 +78,8 @@ pub struct SurfaceTables {
 /// control.
 pub const TABLES: SurfaceTables = SurfaceTables {
     // minimum, compact, normal, working, focus
-    strip_width: [30.0, 86.0, 133.0, 133.0, 133.0],
-    row_height: [14.0, 32.0, 64.0, 96.0, 96.0],
+    strip_width: [30, 86, 133, 133, 133],
+    row_height: [14, 32, 64, 96, 96],
     focus: Focus {
         fraction: 0.25,
         gutter: 44.0,
@@ -96,12 +100,18 @@ impl SurfaceTables {
         self.strip_width
             .get(size.slot())
             .copied()
-            .unwrap_or(self.focus.legible)
+            .map_or(self.focus.legible, f64::from)
     }
 
     /// And how tall one is in the arrangement.
     #[must_use]
     pub fn height(&self, size: Size) -> f64 {
+        f64::from(self.height_px(size))
+    }
+
+    /// The same, as the whole pixels REAPER's own `TRACKHEIGHT` wants.
+    #[must_use]
+    pub fn height_px(&self, size: Size) -> u32 {
         self.row_height
             .get(size.slot())
             .copied()

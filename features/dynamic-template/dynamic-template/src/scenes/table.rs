@@ -88,10 +88,14 @@ pub fn prelude(mode: Option<&str>) -> Vec<Rule> {
 
 /// The bus tree, out of the way: a scene about the instruments is not
 /// about the mix.
+///
+/// One rule, on the tree's root kind, rather than one per bus: the fold
+/// reaches everything under it, and a session with a bus the template
+/// did not make still loses it with the rest.
 fn hide_the_bus_tree() -> Rule {
     Rule::new(
         Selector {
-            kind: Some("bus".to_owned()),
+            kind: Some("mix-bus".to_owned()),
             ..Selector::default()
         },
         Effect::hidden(),
@@ -148,10 +152,14 @@ fn drum_tracking() -> Scene {
         instrument: "drums".to_owned(),
         modes: vec!["record".to_owned()],
         audience: Audience::Engineer,
-        group_by: GroupBy::Arrangement,
+        // Tracking sorts by performer (`flow.scenes.performer-order`).
+        // The data says so here; emitting the header rows is #51, and
+        // that ticket adds the emitting and nothing else.
+        group_by: GroupBy::Performer,
         spec: vec![
             "flow.drums.tracking.full".to_owned(),
             "flow.scenes.follow-mode".to_owned(),
+            "flow.scenes.render".to_owned(),
         ],
         default: Effect::at(Size::Compact),
         rules: vec![
@@ -228,7 +236,10 @@ fn drum_mixing() -> Scene {
         modes: vec!["mix".to_owned()],
         audience: Audience::Engineer,
         group_by: GroupBy::Arrangement,
-        spec: vec!["flow.drums.mixing.scenes".to_owned()],
+        spec: vec![
+            "flow.drums.mixing.scenes".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
         default: Effect::at(Size::Compact),
         rules,
     }
@@ -260,6 +271,7 @@ fn drum_overview() -> Scene {
         spec: vec![
             "flow.drums.mixing.scenes".to_owned(),
             "flow.scenes.two-audiences".to_owned(),
+            "flow.scenes.render".to_owned(),
         ],
         default: Effect::at(Size::Compact),
         rules,
@@ -310,7 +322,10 @@ fn drum_advanced() -> Scene {
         modes: Vec::new(),
         audience: Audience::Engineer,
         group_by: GroupBy::Arrangement,
-        spec: vec!["flow.drums.mixing.scenes".to_owned()],
+        spec: vec![
+            "flow.drums.mixing.scenes".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
         default: Effect::at(Size::Compact),
         rules,
     }
@@ -330,7 +345,10 @@ fn drum_fx() -> Scene {
         modes: Vec::new(),
         audience: Audience::Engineer,
         group_by: GroupBy::Arrangement,
-        spec: vec!["flow.drums.mixing.scenes".to_owned()],
+        spec: vec![
+            "flow.drums.mixing.scenes".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
         default: Effect::at(Size::Compact),
         rules: vec![
             Rule::new(
@@ -419,7 +437,7 @@ fn buses() -> Scene {
         modes: Vec::new(),
         audience: Audience::Engineer,
         group_by: GroupBy::Arrangement,
-        spec: Vec::new(),
+        spec: vec!["flow.scenes.render".to_owned()],
         default: Effect::at(Size::Working),
         rules: vec![
             Rule::new(
@@ -504,7 +522,7 @@ fn guitar_fx() -> Scene {
         modes: vec!["mix".to_owned()],
         audience: Audience::Engineer,
         group_by: GroupBy::Arrangement,
-        spec: Vec::new(),
+        spec: vec!["flow.scenes.render".to_owned()],
         default: Effect::at(Size::Minimum),
         rules,
     }
@@ -524,7 +542,10 @@ fn lead_vocal() -> Scene {
         modes: vec!["mix".to_owned()],
         audience: Audience::Engineer,
         group_by: GroupBy::Arrangement,
-        spec: vec!["flow.vocals.mixing.main".to_owned()],
+        spec: vec![
+            "flow.vocals.mixing.main".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
         default: Effect::at(Size::Compact),
         rules: vec![
             Rule::new(
@@ -568,7 +589,10 @@ fn lead_vocal_fx() -> Scene {
         modes: vec!["edit".to_owned()],
         audience: Audience::Engineer,
         group_by: GroupBy::Arrangement,
-        spec: vec!["flow.vocals.mixing.fx".to_owned()],
+        spec: vec![
+            "flow.vocals.mixing.fx".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
         default: Effect::at(Size::Working),
         rules: vec![
             Rule::new(

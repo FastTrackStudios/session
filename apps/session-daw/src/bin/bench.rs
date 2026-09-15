@@ -526,9 +526,12 @@ fn mixer_shot(
             &planned,
             &kinds,
             scene,
-            session_daw::plan::Surface::Mixer,
-            None,
-            f64::from(height),
+            session_daw::plan::Panel {
+                surface: session_daw::plan::Surface::Mixer,
+                mode: None,
+                settings: session_daw::settings::Settings::default(),
+                extent: f64::from(height),
+            },
         );
     }
     // The row list the scene resolved to, as text — `FTS_BENCH_ROWS`.
@@ -726,6 +729,7 @@ fn mixer_shot(
                 session::mix_phases::MixPhase::Tone,
                 scene.map(|s| s.slug.as_str()),
                 session_daw::settings::Settings::default(),
+                dynamic_template::scenes::Audience::Engineer,
             );
             session_daw::rails::draw(
                 painter,
@@ -1084,6 +1088,7 @@ fn shot(
                 session::mix_phases::MixPhase::Tone,
                 Some("drum-mixing"),
                 session_daw::settings::Settings::default(),
+                dynamic_template::scenes::Audience::Engineer,
             );
             session_daw::rails::draw(
                 painter,
@@ -1482,6 +1487,7 @@ impl AtRest {
                 TONE,
                 Some("drum-mixing"),
                 session_daw::settings::Settings::default(),
+                dynamic_template::scenes::Audience::Engineer,
             ),
             icons: session_daw::icons::Icons::none(),
             selected: std::collections::HashSet::new(),

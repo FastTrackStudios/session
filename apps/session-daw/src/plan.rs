@@ -66,24 +66,43 @@ impl Kinds {
     }
 }
 
+/// Where a scene is being applied: everything the pixel step needs.
+///
+/// One struct rather than four parameters because the four always travel
+/// together — a panel is a surface, in a mode, under a set of switches,
+/// at a size — and three of them are easy to pass in the wrong order.
+#[derive(Clone, Copy, Debug)]
+pub struct Panel<'a> {
+    /// Which of the two panels.
+    pub surface: Surface,
+    /// The DAW mode, which the common prelude reads.
+    pub mode: Option<&'a str>,
+    /// The right rail's switches.
+    pub settings: crate::settings::Settings,
+    /// The panel's own extent in the axis the focus width comes off: the
+    /// mixer's height, or the arrangement's.
+    pub extent: f64,
+}
+
 /// Apply a scene to a track list.
 ///
 /// Returns the rows that survive it, each carrying the size the scene
 /// gives it — written into `Track::width` or `Track::height`, which is
 /// where both panels already read a size from. Nothing downstream learns
 /// that a scene exists.
-///
-/// `panel` is the surface's own extent in the axis the focus width comes
-/// off: the mixer's height, or the arrangement's.
 #[must_use]
 pub fn apply_scene(
     tracks: &[(Track, u32)],
     kinds: &Kinds,
     scene: &Scene,
-    surface: Surface,
-    mode: Option<&str>,
-    panel: f64,
+    at: Panel,
 ) -> Vec<(Track, u32)> {
+    let Panel {
+        surface,
+        mode,
+        settings,
+        extent,
+    } = at;
     let facts = scenes::from_tracks(tracks, &kinds.by_guid);
     let rows = scenes::resolve(scene, &facts, surface, mode);
     let by_guid: HashMap<&str, &(Track, u32)> = tracks
@@ -97,7 +116,7 @@ pub fn apply_scene(
             let mut track = (*track).clone();
             match surface {
                 Surface::Mixer => {
-                    track.width = Some(pixels(mixer_width(row.size, panel)));
+                    track.width = Some(pixels(mixer_width(row.size, settings, extent)));
                     // A focused strip is the selected one: that is what
                     // the mixer opens to the focus width and reads the
                     // rack of.
@@ -138,32 +157,27 @@ pub fn collapsed_by(
 
 /// Which instrument a track belongs to, for follow-mode.
 ///
-/// The top of its taxonomy path — `Drums/Drum Kit/Kick` is the drums —
-/// normalised to the word a scene's `instrument` uses. `None` for a
-/// track the template never placed, which is what makes follow-mode
-/// fall back to the shown scene's instrument rather than to a guess.
+/// The taxonomy's answer — see `scenes::follow::instrument_of`; this is
+/// only the door onto it from a window that holds tracks rather than
+/// facts.
 #[must_use]
 pub fn instrument_of(tracks: &[(Track, u32)], kinds: &Kinds, guid: &str) -> Option<String> {
     let facts = scenes::from_tracks(tracks, &kinds.by_guid);
-    let top = facts
-        .iter()
-        .find(|fact| fact.guid == guid)?
-        .path
-        .first()?
-        .name
-        .to_ascii_lowercase();
-    // The template's group names are plural collections; a scene names
-    // the instrument. Only the two that differ need saying.
-    Some(match top.as_str() {
-        "guitars" => "guitar".to_owned(),
-        "vocals" => "vocal".to_owned(),
-        _ => top,
-    })
+    scenes::follow::instrument_of(&facts, guid)
 }
 
 /// How wide a size class is in the mixer, for a panel `height` tall.
+///
+/// The scene module's table for the four fixed classes, and this
+/// window's own focus width for the fifth — the right rail's
+/// `focus_fraction` is an override OF the table's parameter, so a track
+/// the scene focused and a track the user selected open to the same
+/// width.
 #[must_use]
-pub fn mixer_width(size: Size, height: f64) -> f64 {
+pub fn mixer_width(size: Size, settings: crate::settings::Settings, height: f64) -> f64 {
+    if size == Size::Focus {
+        return settings.focus_width(height);
+    }
     scenes::TABLES.width(size, height)
 }
 
@@ -183,6 +197,17 @@ fn pixels(value: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The mixer of a 1440p window with the default switches — what
+    /// every committed row list was written at.
+    fn mixer() -> Panel<'static> {
+        Panel {
+            surface: Surface::Mixer,
+            mode: None,
+            settings: crate::settings::Settings::default(),
+            extent: 1440.0,
+        }
+    }
 
     fn track(guid: &str, name: &str, index: u32, is_folder: bool, depth: u32) -> (Track, u32) {
         (
@@ -239,14 +264,7 @@ mod tests {
             track("b", "Kick In", 1, false, 1),
         ];
         let scene = scenes::scene("drum-mixing").expect("the scene");
-        let rows = apply_scene(
-            &tracks,
-            &Kinds::default(),
-            scene,
-            Surface::Mixer,
-            None,
-            1440.0,
-        );
+        let rows = apply_scene(&tracks, &Kinds::default(), scene, mixer());
         assert_eq!(
             rows.len(),
             2,
@@ -262,7 +280,7 @@ mod tests {
     fn drum_mixing_opens_the_pieces_and_rails_the_mics() {
         let (tracks, kinds) = golden();
         let scene = scenes::scene("drum-mixing").expect("the scene");
-        let rows = apply_scene(&tracks, &kinds, scene, Surface::Mixer, None, 1440.0);
+        let rows = apply_scene(&tracks, &kinds, scene, mixer());
         let by = |name: &str| {
             rows.iter()
                 .find(|(t, _)| t.name == name)
@@ -280,9 +298,17 @@ mod tests {
     fn a_surface_only_sets_its_own_axis() {
         let (tracks, kinds) = golden();
         let scene = scenes::scene("drum-mixing").expect("the scene");
-        let mixer = apply_scene(&tracks, &kinds, scene, Surface::Mixer, None, 1440.0);
-        assert!(mixer.iter().all(|(t, _)| t.height.is_none()));
-        let arrange = apply_scene(&tracks, &kinds, scene, Surface::Arrange, None, 1440.0);
+        let strips = apply_scene(&tracks, &kinds, scene, mixer());
+        assert!(strips.iter().all(|(t, _)| t.height.is_none()));
+        let arrange = apply_scene(
+            &tracks,
+            &kinds,
+            scene,
+            Panel {
+                surface: Surface::Arrange,
+                ..mixer()
+            },
+        );
         assert!(arrange.iter().all(|(t, _)| t.width.is_none()));
         assert!(arrange.iter().all(|(t, _)| t.height.is_some()));
     }
@@ -311,19 +337,20 @@ mod tests {
     #[test]
     fn the_window_reads_the_scene_modules_pixel_tables() {
         let same = |a: f64, b: f64| (a - b).abs() < f64::EPSILON;
+        let settings = crate::settings::Settings::default();
         assert!(same(
-            mixer_width(Size::Minimum, 1440.0),
+            mixer_width(Size::Minimum, settings, 1440.0),
             crate::layout::STRIP_NARROW
         ));
         assert!(same(
-            mixer_width(Size::Compact, 1440.0),
+            mixer_width(Size::Compact, settings, 1440.0),
             crate::layout::STRIP_WIDE
         ));
         assert!(same(
-            mixer_width(Size::Working, 1440.0),
+            mixer_width(Size::Working, settings, 1440.0),
             crate::tone::WORKING
         ));
-        assert!(same(mixer_width(Size::Focus, 1440.0), 618.0));
+        assert!(same(mixer_width(Size::Focus, settings, 1440.0), 618.0));
         assert!(same(row_height(Size::Minimum), crate::layout::NAME_LEGIBLE));
         assert!(same(row_height(Size::Compact), crate::layout::CONTROL_ROW));
     }

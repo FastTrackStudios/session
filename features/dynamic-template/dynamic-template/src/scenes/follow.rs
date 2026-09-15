@@ -113,6 +113,35 @@ pub fn instrument_for(selected: Option<&str>, shown: Option<&Scene>) -> String {
         .unwrap_or_else(|| DEFAULT_INSTRUMENT.to_owned())
 }
 
+/// Which instrument a track belongs to, from its resolved taxonomy path.
+///
+/// The top of the path — `Drums/Drum Kit/Kick` is the drums — as the
+/// word a scene's `instrument` uses. `None` for a track the template
+/// never placed, which is what makes [`instrument_for`] fall through to
+/// the shown scene rather than guess.
+///
+/// Here rather than in each caller because there are two of them — the
+/// window and the REAPER applier — and an instrument that meant one
+/// thing in the window and another in REAPER would put the two surfaces
+/// in different scenes.
+#[must_use]
+pub fn instrument_of(facts: &[super::facts::Fact], guid: &str) -> Option<String> {
+    let top = facts
+        .iter()
+        .find(|fact| fact.guid == guid)?
+        .path
+        .first()?
+        .name
+        .to_ascii_lowercase();
+    // The template's group names are plural collections; a scene names
+    // the instrument. Only the two that differ need saying.
+    Some(match top.as_str() {
+        "guitars" => "guitar".to_owned(),
+        "vocals" => "vocal".to_owned(),
+        _ => top,
+    })
+}
+
 /// A window's scene state: which scene is shown, and why.
 ///
 /// Small on purpose — this is the whole of follow-mode's memory, and
@@ -196,15 +225,34 @@ impl Follow {
         let picked = digit
             .checked_sub(1)
             .and_then(|i| usize::try_from(i).ok())
-            .and_then(|i| available.get(i));
-        if let Some(scene) = picked {
-            self.shown = Some(scene.slug.clone());
+            .and_then(|i| available.get(i))
+            .map(|scene| scene.slug.clone());
+        self.by_hand = picked.is_some();
+        self.shown = picked;
+        self.shown()
+    }
+
+    /// Show a named scene by hand — what a rail button does.
+    ///
+    /// The same hand choice a number key makes, said by slug rather than
+    /// by position, because a rail button knows which scene it is and
+    /// asking it to count to its own index is a way to get zero. A slug
+    /// nothing answers to leaves the shown scene alone: a button that
+    /// named a scene the table has never heard of should do nothing, not
+    /// blank the window.
+    // r[impl flow.scenes.follow-mode]
+    pub fn choose(&mut self, scenes: &[Scene], slug: &str) -> Option<&str> {
+        if scenes.iter().any(|scene| scene.slug == slug) {
+            self.shown = Some(slug.to_owned());
             self.by_hand = true;
-        } else {
-            self.shown = None;
-            self.by_hand = false;
         }
         self.shown()
+    }
+
+    /// Stop showing a scene: back to the session as the project has it.
+    pub fn clear(&mut self) {
+        self.shown = None;
+        self.by_hand = false;
     }
 }
 
@@ -340,5 +388,29 @@ mod tests {
         assert_eq!(follow.recall(table(), 3), Some("drum-fx"));
         assert_eq!(follow.recall(table(), 9), None, "past the end clears it");
         assert_eq!(follow.recall(table(), 0), None, "and so does zero");
+    }
+
+    /// A rail button names its scene by slug, so it reaches one the
+    /// current mode does not list rather than counting to zero and
+    /// blanking the window.
+    // r[verify flow.scenes.follow-mode]
+    #[test]
+    fn choosing_by_slug_reaches_a_scene_the_mode_does_not_list() {
+        let mut follow = Follow::new(Audience::Engineer);
+        follow.enter(table(), "record", "drums");
+        assert!(
+            !in_mode(table(), "record")
+                .iter()
+                .any(|s| s.slug == "lead-vocal"),
+            "the case this test is about"
+        );
+        assert_eq!(follow.choose(table(), "lead-vocal"), Some("lead-vocal"));
+        assert_eq!(
+            follow.choose(table(), "nonesuch"),
+            Some("lead-vocal"),
+            "a slug nothing answers to leaves the scene alone"
+        );
+        follow.clear();
+        assert_eq!(follow.shown(), None);
     }
 }

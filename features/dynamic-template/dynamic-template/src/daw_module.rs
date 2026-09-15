@@ -11,7 +11,7 @@ use daw_reaper::track::{
 };
 
 use crate::golden_session::kind::{Kind, TrackExt};
-use crate::scenes as dynamic_template_scenes;
+use crate::scenes;
 use crate::{
     default_config, monarchy_sort, track_schema, ItemMetadata, OrganizeIntoTracks, Structure,
 };
@@ -318,13 +318,12 @@ fn set_track_visibility(guid: &str, visible: bool) -> eyre::Result<()> {
         .map_err(|err| eyre::eyre!("failed to set visibility for track {guid}: {err}"))
 }
 
-/// The live session's tracks, as the scene engine's facts.
+/// The live session's tracks, each with the depth it sits at.
 ///
-/// Depth comes from REAPER's own `I_FOLDERDEPTH` run, and the taxonomy
-/// from the ext-state the template wrote when it created each track
-/// (`P_EXT:FTS:kind`, `P_EXT:FTS:group`) — the same two keys the golden
-/// session commits, read back here rather than guessed from names.
-fn live_facts() -> Vec<(daw_proto::Track, u32)> {
+/// Depth comes from REAPER's own `I_FOLDERDEPTH` run, which is the one
+/// number the scene engine needs and the track list does not carry
+/// directly.
+fn live_rows() -> Vec<(daw_proto::Track, u32)> {
     let mut depth: i32 = 0;
     daw_reaper::Reaper
         .all(project())
@@ -338,6 +337,10 @@ fn live_facts() -> Vec<(daw_proto::Track, u32)> {
 }
 
 /// What the template wrote about each live track, keyed by GUID.
+///
+/// The ext-state it wrote when it created the track (`P_EXT:FTS:kind`,
+/// `P_EXT:FTS:group`) — the same two keys the golden session commits,
+/// read back here rather than guessed from names.
 fn live_taxonomy(rows: &[(daw_proto::Track, u32)]) -> HashMap<String, TrackExt> {
     // Reading `P_EXT` is a main-thread call, and this whole applier runs
     // on a REAPER action. No handle means the extension has not finished
@@ -384,18 +387,18 @@ fn live_taxonomy(rows: &[(daw_proto::Track, u32)]) -> HashMap<String, TrackExt> 
 /// `FTS_VISIBILITY_MANAGER_MODE_<SLUG>` actions on a mode switch.
 // r[impl flow.scenes.follow-mode]
 fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
-    use dynamic_template_scenes::{follow, resolve, Audience, Surface, Target};
+    use scenes::{follow, resolve, Audience, Surface, Target};
 
-    let table = dynamic_template_scenes::scenes();
-    let rows = live_facts();
+    let table = scenes::scenes();
+    let rows = live_rows();
     let taxonomy = live_taxonomy(&rows);
-    let facts = dynamic_template_scenes::from_tracks(&rows, &taxonomy);
+    let facts = scenes::from_tracks(&rows, &taxonomy);
     // The instrument the session is about, with no window to ask: the
     // selected track's, else the default.
     let selected = rows
         .iter()
         .find(|(track, _)| track.selected)
-        .and_then(|(track, _)| instrument_of(&facts, &track.guid))
+        .and_then(|(track, _)| follow::instrument_of(&facts, &track.guid))
         .unwrap_or_else(|| follow::DEFAULT_INSTRUMENT.to_owned());
     let Some(scene) = follow::default_for(table, slug, &selected, Audience::Engineer) else {
         tracing::info!(
@@ -408,7 +411,7 @@ fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
 
     let arrange = resolve(scene, &facts, Surface::Arrange, Some(slug));
     let mixer = resolve(scene, &facts, Surface::Mixer, Some(slug));
-    let shown_in = |rows: &[dynamic_template_scenes::Row]| -> HashSet<String> {
+    let shown_in = |rows: &[scenes::Row]| -> HashSet<String> {
         rows.iter()
             .filter_map(|row| match &row.target {
                 Target::Track(guid) => Some(guid.clone()),
@@ -419,7 +422,6 @@ fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
     let in_arrange = shown_in(&arrange);
     let in_mixer = shown_in(&mixer);
 
-    let mut folds = 0usize;
     for (track, _) in &rows {
         set_visibility_on_main_thread(
             &track.guid,
@@ -428,17 +430,21 @@ fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
         )
         .map_err(|err| eyre::eyre!("set visibility for {}: {err}", track.guid))?;
     }
+    // And the size, from the same table the window reads: a class
+    // becomes a number in exactly one place, so a row that is
+    // `Working` is the same height here and there.
+    let mut folds = 0usize;
     for row in &arrange {
         let Target::Track(guid) = &row.target else {
             continue;
         };
+        set_track_height(guid, scenes::TABLES.height_px(row.size))?;
         // Folder-collapse (arrange `I_FOLDERCOMPACT` + mixer `BUSCOMP`)
         // is resolved here but its application is pending
         // `daw_reaper::track::set_folder_compact_on_main_thread`, which
         // lives in the local daw checkout and is not yet published to
         // the git dep this builds against. Re-enable once it lands.
-        if row.fold.compact().is_some_and(|c| c != 0) {
-            let _ = guid;
+        if row.fold.compact().is_some_and(|compact| compact != 0) {
             folds = folds.saturating_add(1);
         }
     }
@@ -453,22 +459,6 @@ fn apply_mode_visibility(slug: &str) -> eyre::Result<()> {
         "scene applied"
     );
     Ok(())
-}
-
-/// The instrument a track belongs to, from its resolved taxonomy path.
-fn instrument_of(facts: &[dynamic_template_scenes::Fact], guid: &str) -> Option<String> {
-    let top = facts
-        .iter()
-        .find(|fact| fact.guid == guid)?
-        .path
-        .first()?
-        .name
-        .to_ascii_lowercase();
-    Some(match top.as_str() {
-        "guitars" => "guitar".to_owned(),
-        "vocals" => "vocal".to_owned(),
-        _ => top,
-    })
 }
 
 fn set_track_height(guid: &str, height_pixels: u32) -> eyre::Result<()> {
