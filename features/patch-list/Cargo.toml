@@ -1,0 +1,40 @@
+[package]
+name = "patch-list"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+description = "The patch list: an album's inputs by performer, resolved through a studio profile"
+
+# What this is. The patch list (spec #48, decision #29) is a styx file
+# beside an album's sessions naming every input the album records —
+# performer → source kind → channel or mic → input role — and the
+# headphone buses with who each is for. A studio profile, kept per
+# machine in the app config directory, owns the role vocabulary and
+# resolves a role to a device channel. This crate is the data: the
+# types, the files, the lowering to `(selector, role)` entries and the
+# validation. Applying a list to a session (#57) and the view that
+# shows one (`session-daw`) sit on top of it.
+
+[dependencies]
+# `indexmap` so a document keeps its authored order: the Patch List
+# view lists performers the way the list does, and the scene engine
+# orders performer rows by it.
+facet = { workspace = true, features = ["indexmap"] }
+facet-styx = { workspace = true }
+indexmap = { workspace = true }
+# The selector vocabulary an entry lowers into — the scene engine's.
+dynamic-template = { workspace = true }
+dirs = "6"
+gethostname = "1"
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# Parsing a document to a tree for schema validation in the tests —
+# the same rc facet-styx is pinned to.
+styx-tree = "5.0.0-rc.5"
+
+[lints]
+workspace = true

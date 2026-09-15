@@ -32,6 +32,7 @@ pub mod mousemap;
 pub mod num;
 pub mod open;
 pub mod overlay;
+pub mod patch_list;
 pub mod plan;
 pub mod pointer;
 pub mod profile;

@@ -4673,6 +4673,7 @@ dependencies = [
  "daw-proto",
  "dawfile-reaper",
  "dynamic-template",
+ "facet-styx",
  "insta",
  "monarchy",
  "pretty_assertions",
@@ -5250,6 +5251,7 @@ dependencies = [
  "const-fnv1a-hash",
  "iddqd",
  "impls",
+ "indexmap",
  "taxon",
  "uuid",
 ]
@@ -10622,6 +10624,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
+name = "patch-list"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "dynamic-template",
+ "facet",
+ "facet-styx",
+ "gethostname",
+ "indexmap",
+ "styx-tree",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+]
+
+[[package]]
 name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12899,6 +12917,7 @@ dependencies = [
  "input",
  "input-config-proto",
  "input-keybinds",
+ "patch-list",
  "pollster",
  "reverb-dsp",
  "saturate-dsp",
