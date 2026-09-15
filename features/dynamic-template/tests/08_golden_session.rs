@@ -137,7 +137,7 @@ fn every_ticked_shape_holds_in_the_built_tree() {
 fn the_checklist_in_the_doc_is_what_the_checks_regenerate() -> Result<()> {
     let path: PathBuf = checklist::doc_path();
     let doc = std::fs::read_to_string(&path)?;
-    let regenerated = checklist::regenerate(&doc)?;
+    let regenerated = checklist::regenerate(&doc, &Golden::load(&fixtures_dir()))?;
     if regenerated != doc {
         let (n, a, b) = regenerated
             .lines()
@@ -165,6 +165,9 @@ fn a_hand_tick_is_stale() -> Result<()> {
         forged, doc,
         "the Keyflow item is expected unticked in this shape"
     );
-    assert_ne!(checklist::regenerate(&forged)?, forged);
+    assert_ne!(
+        checklist::regenerate(&forged, &Golden::load(&fixtures_dir()))?,
+        forged
+    );
     Ok(())
 }

@@ -11,7 +11,8 @@
 
 use std::path::PathBuf;
 
-use dynamic_template::golden_session::{checklist, write_fixtures};
+use dynamic_template::golden_session::checklist::{self, Golden};
+use dynamic_template::golden_session::write_fixtures;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::args().nth(1).map_or_else(
@@ -42,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let doc = checklist::doc_path();
     let before = std::fs::read_to_string(&doc)?;
-    let after = checklist::regenerate(&before)?;
+    let after = checklist::regenerate(&before, &Golden::load(&dir))?;
     if after == before {
         println!("{} is current", doc.display());
     } else {

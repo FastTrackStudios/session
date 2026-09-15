@@ -16,3 +16,12 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 [[profile.default.overrides]]
 filter = 'test(=fills_land_where_a_drummer_puts_them)'
 slow-timeout = { period = "60s", terminate-after = 5 }
+
+# The golden session's nine scene renders: each is a real GPU frame of a
+# 128-track session drawn through the bench binary, about seven seconds
+# apiece and a minute for the set. Slow because it draws nine pictures,
+# not because it is stuck — and a hang is still caught inside five
+# minutes.
+[[profile.default.overrides]]
+filter = 'test(=every_scene_renders_to_its_committed_picture)'
+slow-timeout = { period = "60s", terminate-after = 5 }

@@ -27,9 +27,6 @@ pub use kind::{read_kinds, Kind, TrackExt, GROUP_KEY, KIND_KEY};
 pub use rpp::{build, Built, Flat};
 pub use shape::{maximal, vocal_fx, Shape};
 
-/// The fixtures directory, relative to the repository root.
-pub const FIXTURES_DIR: &str = "features/dynamic-template/fixtures/golden";
-
 /// The fixtures directory, resolved from this crate's manifest.
 #[must_use]
 pub fn fixtures_dir() -> PathBuf {
@@ -56,6 +53,24 @@ pub struct Written {
     pub projects: Vec<String>,
     /// The media files, relative to the fixtures directory.
     pub media: Vec<String>,
+}
+
+/// Regenerate the synthetic media every fixture references under `dir`.
+///
+/// The media is generated rather than committed, so a checkout has the
+/// project files and nothing to play: a test that opens one calls this
+/// first. Deterministic and cheap — a second of audio a track — so
+/// re-running it is how "make sure it is there" is spelled.
+///
+/// # Errors
+///
+/// When a file cannot be written.
+pub fn write_media(dir: &Path) -> std::io::Result<Vec<String>> {
+    let mut written = Vec::new();
+    for shape in fixtures() {
+        written.extend(media::write_all(dir, &build(&shape).tracks)?);
+    }
+    Ok(written)
 }
 
 /// Regenerate every fixture under `dir`: the project files and the

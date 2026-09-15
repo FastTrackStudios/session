@@ -82,22 +82,40 @@ fn pixels(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
 /// How two renders differ: the count of pixels that differ at all, and
 /// the largest per-channel difference among them.
 fn compare(a: &[u8], b: &[u8]) -> (usize, i16) {
-    let mut differing = 0;
+    let mut differing = 0_usize;
     let mut worst = 0_i16;
     for (pa, pb) in a.chunks(4).zip(b.chunks(4)) {
         let delta = pa
             .iter()
             .zip(pb)
-            .map(|(x, y)| (i16::from(*x) - i16::from(*y)).abs())
+            .map(|(x, y)| i16::from(*x).saturating_sub(i16::from(*y)).saturating_abs())
             .max()
             .unwrap_or(0);
         if delta > 0 {
-            differing += 1;
+            differing = differing.saturating_add(1);
             worst = worst.max(delta);
         }
     }
     (differing, worst)
 }
+
+/// How many distinct colours a render uses.
+///
+/// A scene that resolves to nothing visible renders as the window's
+/// background and little else, and a picture of nothing could be
+/// committed and never looked at again. Counting colours is the cheap
+/// way to tell a window full of strips from an empty one.
+fn colours(pixels: &[u8]) -> usize {
+    pixels
+        .chunks(4)
+        .map(<[u8]>::to_vec)
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
+/// Below this many colours, a render is a blank window rather than a
+/// scene.
+const MIN_COLOURS: usize = 64;
 
 /// Every scene in the table, against its picture — which is how the
 /// drum scenes are verified: what Drum Tracking shows, and what the
@@ -109,6 +127,9 @@ fn compare(a: &[u8], b: &[u8]) -> (usize, i16) {
 #[test]
 fn every_scene_renders_to_its_committed_picture() -> Result<()> {
     let update = std::env::var_os("FTS_UPDATE_GOLDEN").is_some();
+    // The media the projects reference is generated, not committed, so a
+    // fresh checkout has projects with nothing to play until this runs.
+    dynamic_template::golden_session::write_media(&fixtures())?;
     let scenes_dir = fixtures().join("scenes");
     let scratch = tempfile::tempdir()?;
     let mut failures = Vec::new();
@@ -137,9 +158,21 @@ fn every_scene_renders_to_its_committed_picture() -> Result<()> {
             ));
             continue;
         }
+        let used = colours(&a);
+        if used < MIN_COLOURS {
+            failures.push(format!(
+                "{}: rendered {used} colours — a scene that resolves to nothing visible",
+                scene.slug
+            ));
+            continue;
+        }
         let (differing, worst) = compare(&a, &b);
         if differing > PIXEL_TOLERANCE || worst > LSB_TOLERANCE {
-            let kept = scenes_dir.join(format!("{}.fresh.png", scene.slug));
+            // Kept where the fixtures are NOT: a failing run must not
+            // leave six hundred kilobytes of untracked PNG beside the
+            // committed ones, where the next `add -A` would sweep them
+            // in.
+            let kept = std::env::temp_dir().join(format!("fts-scene-{}.fresh.png", scene.slug));
             std::fs::copy(&fresh, &kept)?;
             failures.push(format!(
                 "{}: {differing} pixels differ (worst by {worst}); fresh render kept at {}",
@@ -171,15 +204,27 @@ fn two_scenes_differ_by_more_than_the_tolerance() -> Result<()> {
     Ok(())
 }
 
-/// Every scene has a committed picture at the committed size.
+/// Every scene has a committed picture at the committed size, and none
+/// of them is a blank window.
 #[test]
-fn every_scene_has_a_picture_at_the_committed_size() -> Result<()> {
+fn every_scene_has_a_picture_with_something_in_it() -> Result<()> {
     for scene in &session_daw::plan::SCENES {
         let path = fixtures()
             .join("scenes")
             .join(format!("{}.png", scene.slug));
-        let (w, h, _) = pixels(&path)?;
+        let (w, h, committed) = pixels(&path)?;
         assert_eq!((w, h), (2560, 1440), "{}", scene.slug);
+        let used = colours(&committed);
+        assert!(used >= MIN_COLOURS, "{} uses {used} colours", scene.slug);
     }
     Ok(())
+}
+
+/// The negative control for that: a picture of nothing has one colour,
+/// so the count above could not pass an empty scene.
+#[test]
+fn a_blank_picture_reads_as_blank() {
+    let blank = vec![0_u8; 2560 * 4];
+    assert_eq!(colours(&blank), 1);
+    assert!(colours(&blank) < MIN_COLOURS);
 }

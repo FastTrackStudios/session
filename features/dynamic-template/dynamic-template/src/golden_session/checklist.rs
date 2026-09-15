@@ -789,11 +789,15 @@ pub fn doc_path() -> PathBuf {
 
 /// The doc with its checklist section replaced by [`render`].
 ///
+/// Takes the golden rather than loading one, so a caller regenerating
+/// two documents builds the session once — and so the unit tests below
+/// can hand it a session they have changed on purpose.
+///
 /// # Errors
 ///
 /// When the doc has no `## Checklist` heading, or no `## ` heading after
 /// it to end the section at.
-pub fn regenerate(doc: &str) -> Result<String, String> {
+pub fn regenerate(doc: &str, golden: &Golden) -> Result<String, String> {
     let start = doc
         .find(&format!("{HEADING}\n"))
         .ok_or_else(|| format!("no `{HEADING}` heading in the doc"))?;
@@ -803,10 +807,9 @@ pub fn regenerate(doc: &str) -> Result<String, String> {
         .find("\n## ")
         .map(|i| after.saturating_add(i).saturating_add(1))
         .ok_or_else(|| "no `## ` heading after the checklist".to_string())?;
-    let golden = Golden::load(&super::fixtures_dir());
     let mut out = String::with_capacity(doc.len());
     out.push_str(doc.get(..start).unwrap_or_default());
-    out.push_str(&render(&golden));
+    out.push_str(&render(golden));
     out.push_str(doc.get(end..).unwrap_or_default());
     Ok(out)
 }
@@ -833,7 +836,7 @@ mod tests {
     #[test]
     fn regenerate_only_touches_the_checklist_section() {
         let doc = "# Title\n\nintro\n\n## Checklist\n\nstale\n\n## Routing rules\n\nkept\n";
-        let out = regenerate(doc).unwrap_or_default();
+        let out = regenerate(doc, &golden()).unwrap_or_default();
         assert!(out.starts_with("# Title\n\nintro\n\n## Checklist\n\n### "));
         assert!(out.ends_with("\n## Routing rules\n\nkept\n"));
         assert!(!out.contains("stale"));
@@ -841,6 +844,6 @@ mod tests {
 
     #[test]
     fn regenerate_refuses_a_doc_without_the_section() {
-        assert!(regenerate("# nothing here\n").is_err());
+        assert!(regenerate("# nothing here\n", &golden()).is_err());
     }
 }

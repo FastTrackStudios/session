@@ -224,18 +224,22 @@ pub const fn native_colour(rgb: u32) -> u32 {
     0x0100_0000 | b << 16 | g << 8 | r
 }
 
-/// REAPER's `GROUP_FLAGS` fields, in the order REAPER writes them: seven
-/// lead/follow pairs first — volume, pan, mute, solo, rec-arm, polarity,
-/// automation mode — then the reverse and no-lead flags, width only at
-/// 19/20, VCA at 21/22. Checked against a project REAPER itself saved
-/// (session #41; `07_template_group_flags` pins it).
+/// REAPER's `GROUP_FLAGS` fields, in the order REAPER writes them.
+///
+/// Seven lead/follow pairs first — volume, pan, mute, solo, rec-arm,
+/// polarity, automation mode — then the reverse and no-lead flags, width
+/// only at 19/20, VCA at 21/22. Numbered from one, the way REAPER's own
+/// saved lines read and the way `07_template_group_flags` names them
+/// when it reads this back (session #41); that test keeps its own copy
+/// of the numbers deliberately, as an oracle taken from a project REAPER
+/// itself saved rather than from this table.
 const GROUP_FIELDS: usize = 25;
-const MUTE_LEAD: usize = 4;
-const MUTE_FOLLOW: usize = 5;
-const SOLO_LEAD: usize = 6;
-const SOLO_FOLLOW: usize = 7;
-const VCA_LEAD: usize = 20;
-const VCA_FOLLOW: usize = 21;
+const MUTE_LEAD: usize = 5;
+const MUTE_FOLLOW: usize = 6;
+const SOLO_LEAD: usize = 7;
+const SOLO_FOLLOW: usize = 8;
+const VCA_LEAD: usize = 21;
+const VCA_FOLLOW: usize = 22;
 
 /// The `GROUP_FLAGS` line for a grouping role: the folder is the VCA,
 /// mute and solo lead of its bus, the bus the follower.
@@ -248,7 +252,7 @@ pub fn group_flags(role: GroupRole) -> String {
     };
     let mask = 1_u32 << bit.saturating_sub(1).min(31);
     for slot in slots {
-        if let Some(field) = fields.get_mut(slot) {
+        if let Some(field) = slot.checked_sub(1).and_then(|i| fields.get_mut(i)) {
             *field |= mask;
         }
     }
@@ -335,10 +339,6 @@ pub fn items_for(layout: Layout, path: &str, bars: u32) -> Vec<Placed> {
         bar = bar.saturating_add(length).saturating_add(gap);
     }
     out
-}
-
-fn fade_curve(shape: i32) -> FadeCurveType {
-    FadeCurveType::from(shape)
 }
 
 /// The fixture's fader and pan, spread across the whole travel.
@@ -448,18 +448,18 @@ fn with_markers(
         .guid(guid("region:SONG"))
         .build(),
     );
-    for (name, start, end, colour) in &shape.sections {
+    for section in &shape.sections {
         project = project.add_marker(
             MarkerBuilder::region(
                 next(&mut id),
-                f64::from(*start) * secs_per_bar,
-                f64::from(*end) * secs_per_bar,
-                *name,
+                f64::from(section.start) * secs_per_bar,
+                f64::from(section.end) * secs_per_bar,
+                section.name,
             )
             .locked()
             .lane(2)
-            .color(i32::try_from(native_colour(*colour)).unwrap_or(0))
-            .guid(guid(&format!("region:{name}")))
+            .color(i32::try_from(native_colour(section.colour)).unwrap_or(0))
+            .guid(guid(&format!("region:{}", section.name)))
             .build(),
         );
     }
@@ -495,10 +495,10 @@ fn with_items(mut builder: TrackBuilder, track: &Flat, context: &TrackContext) -
             |mut item| {
                 item = item.name(item_name).guid(guid(&item_path));
                 if let Some((shape, time)) = placed.fade_in {
-                    item = item.fade_in(time, fade_curve(shape));
+                    item = item.fade_in(time, FadeCurveType::from(shape));
                 }
                 if let Some((shape, time)) = placed.fade_out {
-                    item = item.fade_out(time, fade_curve(shape));
+                    item = item.fade_out(time, FadeCurveType::from(shape));
                 }
                 if midi {
                     // One hit a beat, the way a trigger track carries a

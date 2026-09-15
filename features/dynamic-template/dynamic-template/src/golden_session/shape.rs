@@ -202,15 +202,41 @@ pub struct Shape {
     pub bpm: f64,
     /// Song length in bars.
     pub bars: u32,
-    /// The song's sections as `(name, start bar, end bar, colour)`, on
-    /// ruler lane 2; empty for a fixture with no arrangement.
-    pub sections: Vec<(&'static str, u32, u32, u32)>,
+    /// The song's sections, on ruler lane 2; empty for a fixture with
+    /// no arrangement.
+    pub sections: Vec<Section>,
     /// The track that opens selected.
     pub selected: &'static str,
     /// How the mixer lays the fixture out — see [`Layout`].
     pub layout: Layout,
     /// The tree.
     pub roots: Vec<Node>,
+}
+
+/// One section of the song, as a region on the ruler's SECTIONS lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Section {
+    /// What the section is called — `Verse 1`, `Chorus 2`.
+    pub name: &'static str,
+    /// The bar it starts on.
+    pub start: u32,
+    /// The bar it ends on.
+    pub end: u32,
+    /// RGB colour, `0xRRGGBB`.
+    pub colour: u32,
+}
+
+impl Section {
+    /// A section from bar `start` to bar `end`.
+    #[must_use]
+    pub const fn new(name: &'static str, start: u32, end: u32, colour: u32) -> Self {
+        Self {
+            name,
+            start,
+            end,
+            colour,
+        }
+    }
 }
 
 /// The layout rules a fixture was rendered under.
@@ -647,14 +673,14 @@ pub fn maximal() -> Shape {
         bpm: 120.0,
         bars: 64,
         sections: vec![
-            ("Intro", 0, 4, 0x004A_6FA5),
-            ("Verse 1", 4, 12, 0x003F_A9A0),
-            ("Chorus 1", 12, 20, 0x00C9_4540),
-            ("Verse 2", 20, 28, 0x003F_A9A0),
-            ("Chorus 2", 28, 36, 0x00C9_4540),
-            ("Bridge", 36, 44, 0x008C_AA3A),
-            ("Chorus 3", 44, 56, 0x00C9_4540),
-            ("Outro", 56, 64, 0x004A_6FA5),
+            Section::new("Intro", 0, 4, 0x004A_6FA5),
+            Section::new("Verse 1", 4, 12, 0x003F_A9A0),
+            Section::new("Chorus 1", 12, 20, 0x00C9_4540),
+            Section::new("Verse 2", 20, 28, 0x003F_A9A0),
+            Section::new("Chorus 2", 28, 36, 0x00C9_4540),
+            Section::new("Bridge", 36, 44, 0x008C_AA3A),
+            Section::new("Chorus 3", 44, 56, 0x00C9_4540),
+            Section::new("Outro", 56, 64, 0x004A_6FA5),
         ],
         selected: "Kick",
         layout: Layout::Maximal,

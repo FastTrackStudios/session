@@ -1303,13 +1303,17 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
 # buffers byte for byte. Run it after touching the scene index, the
 # viewport maths, or anything that records commands. Exits non-zero on a
 # mismatch, so it belongs in CI beside the bench.
+# Defaults to the GOLDEN SESSION rather than the orchestral fixture:
+# byte-identical culling on the reference session is one of the things
+# the golden is for (#49). The orchestral fixture is one argument away
+# (`just daw-verify /tmp/fts-orchestral.rpp`, or FTS_DAW_FIXTURE).
 daw-verify PROJECT="" SIZE="5120x1440":
     #!/usr/bin/env bash
     set -euo pipefail
     project="{{PROJECT}}"
     if [[ -z "$project" ]]; then
-        project="${FTS_DAW_FIXTURE:-/tmp/fts-orchestral.rpp}"
-        [[ -f "$project" ]] || just daw-fixture
+        project="${FTS_DAW_FIXTURE:-{{DAW_PROJECT}}}"
+        [[ -f "$project" ]] || just daw-template
     fi
     cargo build --release -p session-daw --bin bench 2>&1 | grep -E '^error' -A6 || true
     FTS_BENCH_VERIFY=1 FTS_BENCH_SIZE="{{SIZE}}" ./target/release/bench "$project" 2>&1 \
