@@ -2626,7 +2626,14 @@ impl App {
         // track events at all still has items being dragged in it, and
         // gating it behind the track stream is how it used to be right
         // only by accident.
+        // A hand still on an item is the more recent authority on where
+        // it is going. Re-reading the project mid-drag would replace
+        // the item under the pointer with where the engine last thought
+        // it was, which is an item that jumps backwards while being
+        // dragged. The flag is not cleared, so the read happens the
+        // moment the hand comes off.
         if self.loading.is_none()
+            && !self.editor.dragging()
             && self
                 .refresh
                 .as_ref()
