@@ -346,6 +346,7 @@ fn main() {
                         // straight out of the frame.
                         ruler::grid(painter, &palette, view, bars, &grid, FINEST, (0.0, 0.0));
                         ruler::ruler(painter, &palette, &font, view, bars, (0.0, 0.0));
+                        ruler::tempo(painter, &palette, &font, view, (0.0, 0.0), scene.tempo());
                         drawn.replayed = a.replayed + b.replayed;
                         drawn.submitted = a.submitted + b.submitted;
                     })
@@ -1237,6 +1238,14 @@ fn shot(
                 view,
                 Bars::at(scene.bpm),
                 (rail_x, rail_y),
+            );
+            ruler::tempo(
+                painter,
+                palette,
+                font,
+                view,
+                (rail_x, rail_y),
+                scene.tempo(),
             );
             ruler::lanes(
                 painter,

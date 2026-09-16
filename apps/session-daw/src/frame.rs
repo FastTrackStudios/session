@@ -290,6 +290,7 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
         }
     }
     ruler::ruler(painter, palette, font, view, bars, rail);
+    ruler::tempo(painter, palette, font, view, rail, scene.tempo());
     ruler::lanes(
         painter,
         palette,

@@ -39,6 +39,18 @@ pub struct Section {
     pub lane: u32,
 }
 
+/// A tempo or time-signature change, at a time.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct TempoChange {
+    /// When it takes effect, in seconds.
+    pub at: f64,
+    pub bpm: f64,
+    /// The signature's top number: how many beats to a bar.
+    pub beats_per_bar: u32,
+    /// Its bottom number: which note gets the beat.
+    pub beat_unit: u32,
+}
+
 /// A project marker — the numbered flags under the region lane.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Marker {
@@ -74,6 +86,15 @@ pub struct Project {
     /// one — the shape of this struct is what would change, not the
     /// components that read it.
     pub bpm: f64,
+    /// Where the tempo or the time signature changes, in order, with a
+    /// point at zero however bare the project is.
+    ///
+    /// The ruler counts bars, and a bar is only as long as the tempo
+    /// and the signature at that moment say it is. Counting the whole
+    /// timeline from one nominal tempo puts every bar after the first
+    /// change in the wrong place — and a ruler that is wrong about
+    /// where bar forty is, is a ruler nobody can edit against.
+    pub tempo: Vec<TempoChange>,
     /// End of the last item — how far the timeline has to reach.
     pub length_secs: f64,
     /// How many items the project holds, across every track. Kept
@@ -220,6 +241,49 @@ pub async fn fetch() -> Option<Project> {
         .collect();
 
     let bpm = project.transport().get_tempo().await.unwrap_or(120.0);
+    // Every tempo point, so the ruler can count bars through a change
+    // rather than through one nominal tempo. A project with none still
+    // has a tempo — the seeded point below is what the transport just
+    // said — because a ruler with no grid is not a ruler.
+    let mut tempo: Vec<TempoChange> = project
+        .tempo_map()
+        .points()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|point| {
+            let at = point.position.time.as_ref()?.as_seconds();
+            Some(TempoChange {
+                at,
+                bpm: point.bpm,
+                beats_per_bar: point
+                    .time_signature
+                    .as_ref()
+                    .map_or(4, |sig| sig.numerator.max(1)),
+                beat_unit: point
+                    .time_signature
+                    .as_ref()
+                    .map_or(4, |sig| sig.denominator.max(1)),
+            })
+        })
+        .collect();
+    tempo.sort_by(|a, b| a.at.total_cmp(&b.at));
+    if tempo.first().is_none_or(|first| first.at > 0.0) {
+        let (num, den) = project
+            .tempo_map()
+            .time_signature_at(0.0)
+            .await
+            .unwrap_or((4, 4));
+        tempo.insert(
+            0,
+            TempoChange {
+                at: 0.0,
+                bpm,
+                beats_per_bar: u32::try_from(num.max(1)).unwrap_or(4),
+                beat_unit: u32::try_from(den.max(1)).unwrap_or(4),
+            },
+        );
+    }
 
     Some(Project {
         tracks,
@@ -227,6 +291,7 @@ pub async fn fetch() -> Option<Project> {
         sections,
         markers,
         bpm,
+        tempo,
         // A minute of empty ruler for a project with nothing in it, so
         // the timeline still has somewhere to put its bar numbers.
         length_secs: length.max(60.0),

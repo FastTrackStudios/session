@@ -195,6 +195,8 @@ pub struct Arrangement {
     pub length_secs: f64,
     /// The project tempo, for the ruler's bar lines.
     pub bpm: f64,
+    /// Where the tempo or the signature changes.
+    tempo: Vec<daw_ui::studio::project::TempoChange>,
     /// Every item's title, by row, in seconds — drawn per frame in
     /// pixel space over the lanes, because recorded text would stretch
     /// with the zoom.
@@ -567,6 +569,7 @@ impl Arrangement {
             rows: rows.len(),
             length_secs: project.length_secs,
             bpm: project.bpm,
+            tempo: project.tempo.clone(),
             item_count: project.item_count,
             titles,
             items: boxes,
@@ -645,6 +648,13 @@ impl Arrangement {
     #[must_use]
     pub fn markers(&self) -> &[daw_ui::studio::project::Marker] {
         &self.markers
+    }
+
+    /// Where the tempo and the signature change, for the ruler's strip
+    /// and for the bar grid that has to count through them.
+    #[must_use]
+    pub fn tempo(&self) -> &[daw_ui::studio::project::TempoChange] {
+        &self.tempo
     }
 
     /// The item titles on the rows a viewport shows, with where each

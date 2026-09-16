@@ -48,8 +48,16 @@ pub const LANES: usize = 3;
 /// What the lanes are called, top to bottom.
 pub const LANE_NAMES: [&str; LANES] = ["SONG", "SECTIONS", "MARKS"];
 
+/// How tall the tempo strip is, above the bar numbers.
+///
+/// Its own row rather than a flag among the marks: a tempo change is
+/// not a place in the song, it is a change to what every number below
+/// it MEANS. Putting it in the marks lane would file it with the things
+/// it reinterprets.
+pub const TEMPO_H: f64 = 13.0;
+
 /// The whole top strip: the lanes, then the bars under them.
-pub const RULER_H: f64 = BARS_H + LANE_H * 3.0;
+pub const RULER_H: f64 = BARS_H + TEMPO_H + LANE_H * 3.0;
 
 /// The project's bar grid.
 ///
@@ -66,10 +74,38 @@ impl Bars {
     /// From a tempo, in 4/4.
     #[must_use]
     pub fn at(bpm: f64) -> Self {
+        Self::in_time(bpm, 4)
+    }
+
+    /// From a tempo and a signature's top number.
+    ///
+    /// The top number is what a bar is counted in: three beats to a bar
+    /// in three four, seven in seven eight. A ruler that assumed four
+    /// put every bar line after the first in the wrong place for
+    /// anything else — and a grid that disagrees with the music is one
+    /// you edit against at your peril.
+    #[must_use]
+    pub fn in_time(bpm: f64, beats_per_bar: u32) -> Self {
         Self {
             secs_per_beat: 60.0 / if bpm > 0.0 { bpm } else { 120.0 },
-            beats_per_bar: 4.0,
+            beats_per_bar: f64::from(beats_per_bar.max(1)),
         }
+    }
+
+    /// The bars at a time, from the project's tempo map.
+    ///
+    /// The last change at or before `seconds` wins, which is what a
+    /// tempo map means.
+    #[must_use]
+    pub fn at_time(tempo: &[daw_ui::studio::project::TempoChange], seconds: f64) -> Self {
+        tempo
+            .iter()
+            .take_while(|change| change.at <= seconds + 1e-9)
+            .last()
+            .map_or_else(
+                || Self::at(120.0),
+                |change| Self::in_time(change.bpm, change.beats_per_bar),
+            )
     }
 
     #[must_use]
@@ -157,7 +193,8 @@ pub fn ruler(
         palette.tcp_rule,
         Rect::new(ox, oy + RULER_H - 1.0, ox + view.width, oy + RULER_H),
     );
-    // The bars are the bottom of the strip; the lanes sit over them.
+    // The bars are the bottom of the strip; the tempo sits just above
+    // them and the lanes over that.
     let oy = oy + RULER_H - BARS_H;
 
     let secs_per_bar = bars.secs_per_bar();
@@ -165,27 +202,21 @@ pub fn ruler(
     if bar_px <= 0.0 {
         return;
     }
-    // How many bars between numbers. Halves and quarters first, so
-    // zooming IN keeps saying something new — a ruler that stops at
-    // every bar has nothing left to tell you once a bar is half the
-    // window, and you are left counting beats by eye.
-    //
-    // Then whole bars, then every 4, 8, 16: the numbers must never
-    // collide, and a ruler that drops to "every 5" stops being
-    // countable.
-    let every = STEPS
-        .into_iter()
-        .find(|n| bar_px * n >= 56.0)
-        .unwrap_or(256.0);
+    // Stepped in BEATS, because that is what the numbering counts: a
+    // bar is however many beats the signature says, and a step measured
+    // in bars can never land on beat three of four.
+    let every = step_beats(bar_px, bars.beats_per_bar);
 
     let (from, to) = view.secs();
     // Stepped by an integer count rather than by adding a float to
     // itself: over five hundred bars the accumulated error is visible,
     // and the bar a number sits on has to be the bar its line is on.
-    let first = (from.max(0.0) / secs_per_bar / every).floor().max(0.0);
+    let first = (from.max(0.0) / bars.secs_per_beat / every)
+        .floor()
+        .max(0.0);
     for n in counts(MAX_LABELS) {
-        let bar = (first + n) * every;
-        let t = bar * secs_per_bar;
+        let beat = (first + n) * every;
+        let t = beat * bars.secs_per_beat;
         if t > to {
             break;
         }
@@ -202,8 +233,12 @@ pub fn ruler(
                 palette.ruler_fg,
                 // Bars are counted from one; only the arithmetic starts
                 // at zero.
-                &label(bar + 1.0),
-                ox + x + 4.0,
+                &label(beat, bars.beats_per_bar, every),
+                // Close to its own line, not floating between two.
+                // Four pixels of gap put the number nearer the NEXT
+                // tick than its own at a beat-wide zoom, which is the
+                // one thing a ruler must never be ambiguous about.
+                ox + x + 2.0,
                 oy + 14.0,
                 11.0,
             );
@@ -211,29 +246,82 @@ pub fn ruler(
     }
 }
 
-/// How many bars a ruler will put between two numbers.
+/// How many BEATS a ruler will put between two numbers.
 ///
-/// Fractions first: zooming in has to keep saying something, and once a
-/// bar is half the window a ruler numbering only whole bars has nothing
-/// left to tell you. Then whole bars, then powers of two — the numbers
-/// must never collide, and a ruler that drops to "every 5" stops being
-/// countable.
-const STEPS: [f64; 11] = [
-    0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0,
-];
+/// Beats, not bars, because that is what the numbering counts: a bar is
+/// however many beats the signature says, and a step measured in bars
+/// cannot land on beat three of four. Quarters and halves of a beat
+/// first, so zooming in keeps saying something; then a beat, then whole
+/// bars by way of the signature.
+///
+/// The bar-sized steps are filled in from the signature at use, because
+/// four beats is a bar in four four and three in three four.
+const BEAT_STEPS: [f64; 3] = [0.25, 0.5, 1.0];
 
-/// A bar number as it is written.
-///
-/// Whole bars have no decimal, because "1.0" in a row of bar numbers
-/// reads as a measurement rather than a count. A half or a quarter
-/// keeps just the digits it needs: 1.5, not 1.50.
+/// How many bars between numbers once a beat is too fine to label.
+const BAR_STEPS: [f64; 8] = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0];
+
+/// The step between numbers, in beats, for a bar this wide.
 #[must_use]
-pub fn label(bar: f64) -> String {
-    if (bar - bar.round()).abs() < 1e-9 {
-        return format!("{}", bar.round() as i64);
+pub fn step_beats(bar_px: f64, beats_per_bar: f64) -> f64 {
+    let beat_px = bar_px / beats_per_bar.max(1.0);
+    if let Some(step) = BEAT_STEPS.into_iter().find(|n| beat_px * n >= LABEL_ROOM) {
+        return step;
     }
-    let text = format!("{bar:.2}");
-    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    BAR_STEPS
+        .into_iter()
+        .find(|n| bar_px * n >= LABEL_ROOM)
+        .unwrap_or(256.0)
+        * beats_per_bar
+}
+
+/// How much room a number needs before the next one, in pixels.
+const LABEL_ROOM: f64 = 56.0;
+
+/// A position written the way a DAW writes one: measure.beat.subdivision.
+///
+/// Counted from `beat`, the number of beats from the start of the
+/// project, against a bar of `beats_per_bar`.
+///
+/// How much of it is written is decided by the STEP, not by the
+/// position. A row reading 1, 1.2, 1.3, 1.4, 2 makes you notice that
+/// the first of each bar is written differently from the rest and
+/// wonder what that means; 1.1, 1.2, 1.3, 1.4, 2.1 is one column of
+/// the same thing, which is what a row of beats is.
+///
+/// So: stepping in bars gives bar numbers, "5". Stepping in beats gives
+/// "5.1" for every one of them, downbeat included. Stepping finer
+/// carries the subdivision in THOUSANDTHS of a beat, zero-padded:
+/// "5.2.250" is a quarter of the way through the second beat of the
+/// fifth bar.
+///
+/// Thousandths because that is what a musical position IS here — the
+/// DAW's own `MusicalPosition` carries measure, beat and a subdivision
+/// of 0..999 — so a number read off this ruler is a number you can
+/// type back in.
+#[must_use]
+pub fn label(beat: f64, beats_per_bar: f64, step: f64) -> String {
+    let per_bar = beats_per_bar.max(1.0);
+    let bar = (beat / per_bar).floor();
+    let into_bar = beat - bar * per_bar;
+    let whole_beat = into_bar.floor();
+    let fraction = into_bar - whole_beat;
+
+    let measure = (bar + 1.0).round() as i64;
+    let beat_no = (whole_beat + 1.0).round() as i64;
+    // A whole bar between numbers: bar numbers, nothing else to say.
+    if step >= per_bar - 1e-9 {
+        return format!("{measure}");
+    }
+    // A whole beat or more: every label names its beat, the downbeat
+    // included, so the row is one column of the same thing.
+    if step >= 1.0 - 1e-9 || fraction.abs() < 1e-9 {
+        return format!("{measure}.{beat_no}");
+    }
+    // Thousandths of a beat, zero-padded so the numbers line up in a
+    // row and .050 cannot be misread as .5.
+    let sub = (fraction * 1000.0).round() as i64;
+    format!("{measure}.{beat_no}.{sub:03}")
 }
 
 /// The ruler's lanes: the song, its sections and its marks, over the
@@ -670,7 +758,7 @@ pub const fn lane_of(row: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Bars, STEPS, label};
+    use super::{Bars, label, step_beats};
 
     /// The ruler counts MEASURES, not seconds.
     ///
@@ -687,44 +775,191 @@ mod tests {
             "a bar of four beats at 120 bpm is two seconds, got {}",
             bars.secs_per_bar()
         );
-        // Bar 2 begins two seconds in, not two bars in.
-        assert!((1.0 * bars.secs_per_bar() - 2.0).abs() < 1e-9);
-        // And the tempo actually moves them: at 60 bpm a bar is twice
-        // as long, which a seconds ruler would not notice.
+        // The tempo actually moves them: at 60 a bar is twice as long,
+        // which a seconds ruler would not notice.
         assert!((Bars::at(60.0).secs_per_bar() - 4.0).abs() < 1e-9);
     }
 
-    /// Zooming in keeps saying something new.
+    /// The signature decides how many beats make a bar.
     ///
-    /// The steps run below a whole bar, so a bar wider than the window
-    /// still gets numbered inside. Without the fractions the ruler goes
-    /// quiet exactly when you have zoomed in to read it closely.
+    /// A ruler that assumed four put every bar line after the first in
+    /// the wrong place for anything else, and a grid that disagrees
+    /// with the music is one you edit against at your peril.
     #[test]
-    fn zooming_in_subdivides_the_bar() {
-        let pick = |bar_px: f64| {
-            STEPS
-                .into_iter()
-                .find(|n| bar_px * n >= 56.0)
-                .unwrap_or(256.0)
-        };
-        assert!(pick(400.0) < 1.0, "a wide bar should number inside it");
-        assert_eq!(pick(60.0), 1.0, "a bar just wide enough numbers once");
-        assert!(pick(10.0) > 1.0, "a narrow bar should number less often");
-        // Monotone: zooming in never makes the numbers sparser.
-        let (wide, narrow) = (pick(400.0), pick(100.0));
-        assert!(wide <= narrow, "{wide} should be no coarser than {narrow}");
+    fn the_signature_decides_the_bar() {
+        let three = Bars::in_time(120.0, 3);
+        assert!(
+            (three.secs_per_bar() - 1.5).abs() < 1e-9,
+            "three beats at 120 is a bar and a half second, got {}",
+            three.secs_per_bar()
+        );
+        // And the numbering follows it: the fourth beat of a three-four
+        // project is the first beat of bar two.
+        assert_eq!(label(3.0, 3.0, 3.0), "2");
+        assert_eq!(
+            label(3.0, 4.0, 1.0),
+            "1.4",
+            "four four should still be in bar one"
+        );
     }
 
-    /// A whole bar is written as a count, a fraction as a fraction.
-    ///
-    /// "1.0" in a row of bar numbers reads as a measurement rather than
-    /// a count, and "1.50" reads as a precision nobody asked for.
+    /// Zooming in keeps saying something new, down to the beat.
     #[test]
-    fn a_bar_number_is_written_as_a_number() {
-        assert_eq!(label(1.0), "1");
-        assert_eq!(label(17.0), "17");
-        assert_eq!(label(1.5), "1.5");
-        assert_eq!(label(3.5), "3.5");
-        assert_eq!(label(2.25), "2.25");
+    fn zooming_in_subdivides_the_bar() {
+        // A wide bar numbers inside itself, at a beat or finer.
+        assert!(step_beats(400.0, 4.0) <= 1.0);
+        // A narrow one numbers whole bars or less often.
+        assert!(step_beats(20.0, 4.0) >= 4.0);
+        // Monotone: zooming in never makes the numbers sparser.
+        assert!(step_beats(400.0, 4.0) <= step_beats(100.0, 4.0));
     }
+
+    /// measure.beat.subdivision, and only as much of it as is needed.
+    ///
+    /// A whole bar is a bar number: "5.1.000" in a row of them is noise
+    /// that makes the bar lines harder to pick out, which is the one
+    /// thing the number is there for.
+    #[test]
+    fn a_position_is_written_the_way_a_daw_writes_one() {
+        // Stepping in bars: bar numbers.
+        assert_eq!(label(0.0, 4.0, 4.0), "1");
+        assert_eq!(label(4.0, 4.0, 4.0), "2");
+        // Stepping in beats: every label names its beat, downbeat too.
+        assert_eq!(label(0.0, 4.0, 1.0), "1.1");
+        assert_eq!(label(1.0, 4.0, 1.0), "1.2");
+        assert_eq!(label(2.0, 4.0, 1.0), "1.3");
+        assert_eq!(label(4.0, 4.0, 1.0), "2.1");
+        assert_eq!(label(7.0, 4.0, 1.0), "2.4");
+        // Thousandths of a beat, zero-padded so a column of them lines
+        // up and .050 cannot be misread as .5.
+        assert_eq!(label(0.25, 4.0, 0.25), "1.1.250");
+        assert_eq!(label(0.5, 4.0, 0.25), "1.1.500");
+        assert_eq!(label(0.75, 4.0, 0.25), "1.1.750");
+        assert_eq!(label(4.5, 4.0, 0.25), "2.1.500");
+        // A beat that lands whole still names itself at a fine step.
+        assert_eq!(label(1.0, 4.0, 0.25), "1.2");
+    }
+
+    /// The tempo at a time is the last change at or before it.
+    #[test]
+    fn the_tempo_map_decides_the_bar() {
+        use daw_ui::studio::project::TempoChange;
+        let changes = [
+            TempoChange {
+                at: 0.0,
+                bpm: 120.0,
+                beats_per_bar: 4,
+                beat_unit: 4,
+            },
+            TempoChange {
+                at: 10.0,
+                bpm: 60.0,
+                beats_per_bar: 3,
+                beat_unit: 4,
+            },
+        ];
+        assert!((Bars::at_time(&changes, 0.0).secs_per_bar() - 2.0).abs() < 1e-9);
+        assert!((Bars::at_time(&changes, 9.9).secs_per_bar() - 2.0).abs() < 1e-9);
+        // After the change: 60 bpm, three to a bar — three seconds.
+        assert!((Bars::at_time(&changes, 10.0).secs_per_bar() - 3.0).abs() < 1e-9);
+    }
+}
+
+/// The tempo strip: where the tempo or the signature changes, and to
+/// what.
+///
+/// Drawn between the lanes and the bar numbers, because that is what it
+/// governs. Its own row rather than a flag among the marks: a tempo
+/// change is not a place in the song, it is a change to what every
+/// number below it MEANS, and filing it with the marks would file it
+/// among the things it reinterprets.
+///
+/// The reading is repeated at the left edge when the change that set it
+/// is off screen. A tempo you cannot see is a tempo you will assume,
+/// and the assumption is always whatever the project started at.
+pub fn tempo(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    view: Viewport,
+    origin: (f64, f64),
+    changes: &[daw_ui::studio::project::TempoChange],
+) {
+    const SIZE: f32 = 8.0;
+    let (ox, oy) = origin;
+    let top = oy + RULER_H - BARS_H - TEMPO_H;
+    let left = ox + TCP_WIDTH;
+    let right = ox + view.width;
+    fill(
+        painter,
+        palette.tcp_rule,
+        Rect::new(ox, top + TEMPO_H - 1.0, right, top + TEMPO_H),
+    );
+    crate::tcp::glyphs(
+        painter,
+        font,
+        palette.text_faint,
+        "TEMPO",
+        ox + 8.0,
+        top + TEMPO_H - 3.0,
+        SIZE,
+    );
+
+    let x_of = |t: f64| t.mul_add(view.pps, left - view.scroll_x);
+    let (from, to) = view.secs();
+
+    if let Some(current) = changes
+        .iter()
+        .take_while(|change| change.at <= from + 1e-9)
+        .last()
+        && changes.iter().any(|change| change.at > from)
+    {
+        crate::tcp::glyphs(
+            painter,
+            font,
+            palette.text_faint,
+            &reading(current),
+            left + 4.0,
+            top + TEMPO_H - 3.0,
+            SIZE,
+        );
+    }
+
+    for change in changes {
+        if change.at < from || change.at > to {
+            continue;
+        }
+        let x = x_of(change.at);
+        if x < left - 1.0 || x > right {
+            continue;
+        }
+        fill(
+            painter,
+            palette.accent,
+            Rect::new(x, top + 1.0, x + 1.0, top + TEMPO_H - 1.0),
+        );
+        crate::tcp::glyphs(
+            painter,
+            font,
+            palette.text,
+            &reading(change),
+            x + 4.0,
+            top + TEMPO_H - 3.0,
+            SIZE,
+        );
+    }
+}
+
+/// A tempo change as it reads: "120 4/4".
+///
+/// Both halves always, even when only one of them moved. A strip that
+/// showed the tempo at one change and the signature at the next would
+/// make you look back through the project to answer either question.
+fn reading(change: &daw_ui::studio::project::TempoChange) -> String {
+    let bpm = if (change.bpm - change.bpm.round()).abs() < 0.05 {
+        format!("{}", change.bpm.round() as i64)
+    } else {
+        format!("{:.1}", change.bpm)
+    };
+    format!("{bpm} {}/{}", change.beats_per_bar, change.beat_unit)
 }
