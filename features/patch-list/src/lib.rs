@@ -7,8 +7,10 @@
 
 pub mod apply;
 pub mod discover;
+pub mod headphones;
 pub mod layer;
 pub mod list;
+pub mod performer_row;
 pub mod profile;
 pub mod styx;
 pub mod validate;

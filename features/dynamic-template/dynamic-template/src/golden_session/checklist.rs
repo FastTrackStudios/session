@@ -272,6 +272,18 @@ fn bass_to_bus(g: &Golden) -> bool {
     sends_to(g, "Bass", "BASS BUS")
 }
 
+/// Guitars use no `Sum` folders, and they grow by depth rather than by
+/// the kit's pattern.
+///
+/// The kit gathers a piece's close mics under a `Sum` because they are
+/// one drum heard several ways. A guitar's depth is different in kind:
+/// a double is two *performances*, an octave layer is a third, and each
+/// channel of each is captured on its own sources. Folders, yes — a
+/// `Sum`, never.
+///
+/// This used to assert that no guitar track was a folder at all and
+/// that Rhythm was a stereo leaf, which held only while the fixture's
+/// guitars were flat. `flow.guitars.golden` requires the opposite.
 fn guitars_no_sums(g: &Golden) -> bool {
     let guitar_tracks: Vec<&Flat> = g
         .built
@@ -280,11 +292,28 @@ fn guitars_no_sums(g: &Golden) -> bool {
         .filter(|t| t.path.starts_with("Electric/") || t.path.starts_with("Acoustic/"))
         .collect();
     !guitar_tracks.is_empty()
-        && guitar_tracks
-            .iter()
-            .all(|t| t.kind != Kind::Sum && !t.is_folder)
-        && is_stereo_leaf(g, "Electric/Rhythm")
+        && guitar_tracks.iter().all(|t| t.kind != Kind::Sum)
         && names_eq(g, "Electric", &["Rhythm", "Lead", "Solo"])
+}
+
+/// The three shapes every guitar scene and gesture has to work on.
+///
+/// Rhythm at full depth, Lead as a DI-only double with no folder under
+/// its channels, and Solo as two single tracks. Having all three in one
+/// fixture is what proves `flow.guitars.same-everywhere`: the same
+/// scene renders against a twenty-eight-source part and a one-track one.
+fn guitars_three_shapes(g: &Golden) -> bool {
+    let has = |path: &str| g.built.tracks.iter().any(|t| t.path == path);
+    has("Electric/Rhythm/Main/L/Amp 1/SM57")
+        && has("Electric/Rhythm/Octave/R/Amp 2/Royer")
+        && has("Electric/Lead/L")
+        && !g
+            .built
+            .tracks
+            .iter()
+            .any(|t| t.path.starts_with("Electric/Lead/L/"))
+        && has("Electric/Solo/Main")
+        && has("Electric/Solo/Harmony")
 }
 
 fn guitars_separate(g: &Golden) -> bool {
@@ -335,13 +364,46 @@ fn acoustic(g: &Golden) -> bool {
 }
 
 fn keys(g: &Golden) -> bool {
-    names_eq(g, "Keys", &["Piano", "Rhodes", "Organ"])
+    names_eq(g, "Keys", &["Piano", "Rhodes", "Wurli", "Organ"])
         && is_stereo_leaf(g, "Keys/Piano")
         && sends_to(g, "Keys", "KEYS BUS")
 }
 
+/// A family is the mixing level and a synth the tracking one, so the
+/// families are folders and the synths belonging to none sit beside
+/// them at the top of `Synths/` — reachable without inventing a family
+/// to hold them.
 fn synths(g: &Golden) -> bool {
-    names_eq(g, "Synths", &["Pad", "Lead Synth", "Arp"]) && sends_to(g, "Synths", "KEYS BUS")
+    names_eq(
+        g,
+        "Synths",
+        &[
+            "Sub Bass Synth",
+            "Texture",
+            "SY Arps",
+            "SY Pads",
+            "SY Leads",
+            "SY Chords",
+        ],
+    ) && sends_to(g, "Synths", "KEYS BUS")
+}
+
+/// Percussion is its own folder beside the drums with its own bus: it
+/// is tracked one instrument at a time and comps on the track like a
+/// bass, so the kit's folder comping would be the wrong gesture.
+fn percussion(g: &Golden) -> bool {
+    names_eq(g, "Percussion", &["Shaker", "Tambourine", "Claps"])
+        && sends_to(g, "Percussion", "PERC BUS")
+}
+
+/// The orchestra's golden shape: four sections, each to its own bus.
+/// Only the shape — divisi, seating and spot mics are a later effort.
+fn orchestra(g: &Golden) -> bool {
+    names_eq(
+        g,
+        "Orchestra",
+        &["Winds", "Brass", "Strings", "Orch Percussion"],
+    )
 }
 
 /// Hue in degrees of an `0xRRGGBB` colour.
@@ -410,9 +472,23 @@ fn inst_fx_to_bus(g: &Golden) -> bool {
     sends_to(g, "Inst FX", "INST BUS")
 }
 
+/// Three leads, the BGV parts, a choir and the three language VCAs.
+///
+/// Each lead is a mix track with a Main and a DBL under it, and a
+/// source per language THEY SING — Belen has no Portuguese and Aline
+/// has only Portuguese. Absence is the representation; there is no
+/// empty placeholder to mistake for a part nobody recorded.
 fn vocals(g: &Golden) -> bool {
-    summed(g, "Vocals/Lead", &["Close", "Room"], &["Verb"])
-        && names_eq(g, "Vocals", &["Lead", "Doubles", "Harmonies"])
+    names_eq(
+        g,
+        "Vocals",
+        &[
+            "Ron", "Belen", "Aline", "BGVs", "Choir", "VOX EN", "VOX ES", "VOX PT",
+        ],
+    ) && names_eq(g, "Vocals/Ron", &["Main", "DBL"])
+        && names_eq(g, "Vocals/Ron/Main", &["EN", "ES", "PT"])
+        && names_eq(g, "Vocals/Belen/Main", &["EN", "ES"])
+        && names_eq(g, "Vocals/Aline/Main", &["PT"])
         && sends_to(g, "Vocals", "LEAD VOX BUS")
 }
 
@@ -538,7 +614,7 @@ pub const ITEMS: &[Item] = &[
     Item {
         section: PERCUSSION,
         text: "Shaker, Tambourine, Claps → **PERC BUS** under INST BUS\n(`flow.percussion.folder`).",
-        check: None,
+        check: Some(percussion),
     },
     Item {
         section: BASS,
@@ -562,8 +638,13 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: GUITARS,
-        text: "**No Sum folders**: each part is a track named for the part\n(Rhythm, Lead, Solo, …). A **stereo pair is one stereo track** —\ntwo channels, a stereo input — not a folder over an L and an R:\nits halves are almost never processed apart.",
+        text: "**No Sum folders** anywhere under the guitars: the kit's Sum\ngathers one drum heard several ways, and a guitar's depth is a\ndifferent thing — a double is two performances, an octave layer a\nthird, each channel on its own sources.",
         check: Some(guitars_no_sums),
+    },
+    Item {
+        section: GUITARS,
+        text: "The three shapes in one fixture (`flow.guitars.golden`): **Rhythm**\ndouble-tracked with two octave layers and seven sources a channel,\n**Lead** a DI-only double with no folder under its channels, and\n**Solo** a single track with a Harmony beside it.",
+        check: Some(guitars_three_shapes),
     },
     Item {
         section: GUITARS,
@@ -607,7 +688,7 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: KEYS,
-        text: "Keys: Piano (a stereo track), Rhodes, Organ → **KEYS BUS**.",
+        text: "Keys as parts: Piano (a stereo track), Rhodes, Wurli, Organ → **KEYS BUS**.",
         check: Some(keys),
     },
     Item {
@@ -617,7 +698,7 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: KEYS,
-        text: "Synths: Pad, Lead Synth, Arp → **KEYS BUS**.",
+        text: "Synths by family — SY Arps, SY Pads, SY Leads, SY Chords — with the general synths beside them → **KEYS BUS**.",
         check: Some(synths),
     },
     Item {
@@ -638,7 +719,7 @@ pub const ITEMS: &[Item] = &[
     Item {
         section: ORCHESTRA,
         text: "**Winds/** Flute, Oboe, Clarinet, Bassoon.",
-        check: None,
+        check: Some(orchestra),
     },
     Item {
         section: ORCHESTRA,
@@ -687,7 +768,7 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: VOCALS,
-        text: "Lead (Close, Room, Verb), Doubles, Harmonies → **LEAD VOX BUS**.",
+        text: "Leads Ron (EN/ES/PT), Belen (EN/ES) and Aline (PT), each a mix track with Main and DBL and a source per language; BGV parts; a four-section choir; VOX EN/ES/PT VCAs → **LEAD VOX BUS**.",
         check: Some(vocals),
     },
     Item {

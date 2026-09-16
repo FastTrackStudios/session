@@ -64,9 +64,21 @@ fn committed(slug: &str) -> String {
 /// r[verify flow.vocals.mixing.fx]
 #[test]
 fn every_scene_resolves_to_its_committed_row_list() {
+    // `FTS_UPDATE_GOLDEN=1` rewrites instead of failing, the same way
+    // the picture fixtures do. Folded into the comparison rather than
+    // kept as a test of its own: two tests in one binary, one writing
+    // what the other reads, race each other and pass by luck.
+    let updating = std::env::var_os("FTS_UPDATE_GOLDEN").is_some();
     let mut failures = Vec::new();
     for scene in scenes::scenes() {
         let fresh = rows_of(&scene.slug);
+        if updating {
+            let path = fixtures_dir()
+                .join("scenes")
+                .join(format!("{}.rows", scene.slug));
+            std::fs::write(&path, &fresh).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            continue;
+        }
         let want = committed(&scene.slug);
         if fresh != want {
             let (n, a, b) = fresh
@@ -102,16 +114,34 @@ fn a_scene_resolving_to_no_rows_fails_its_fixture() {
             scene.slug
         );
     }
-    // And the control: a scene whose default hides everything does
-    // resolve to nothing, and this test would catch it.
+    // And the control: a scene whose default hides everything shows
+    // none of the session, and this test would catch it.
+    //
+    // Not *nothing*, though — the common prelude is not one of the
+    // scene's rules and does not go away with them, so the Guide and
+    // Keyflow folders survive, collapsed, exactly as
+    // `flow.scenes.guide-folder` says they must in every scene. That
+    // the two are independent is worth asserting rather than assuming.
     let mut blind = scenes::scene("drum-mixing").expect("a scene").clone();
     blind.default = scenes::Effect::hidden();
     blind.rules.clear();
     let facts = scenes::from_flat(&flatten(&maximal()));
     let rows = scenes::resolve(&blind, &facts, Surface::Mixer, None, None, None);
+    let survived: Vec<&str> = rows
+        .iter()
+        .filter_map(|row| row.guid())
+        .filter_map(|guid| facts.iter().find(|f| f.guid == guid))
+        .map(|fact| fact.name.as_str())
+        .collect();
     assert!(
-        rows.is_empty(),
-        "a scene that hides everything shows nothing"
+        survived
+            .iter()
+            .all(|name| *name == "Guide" || *name == "Keyflow"),
+        "a scene that hides everything still showed the session: {survived:?}"
+    );
+    assert!(
+        !survived.contains(&"Kick"),
+        "the blind scene showed an instrument"
     );
 }
 
@@ -133,9 +163,151 @@ fn a_scene_sizes_both_surfaces_from_its_own_table() {
     assert!((scenes::TABLES.height(kick.1.size) - 96.0).abs() < f64::EPSILON);
 }
 
+/// **Drum Tracking Overview**: the kit as the drummer reads it. One row
+/// per piece, collapsed and big enough to carry an arm and a monitor
+/// lamp, and **no mic rows at all** — at this zoom a mic is a line, and
+/// thirty lines under a kit is the picture the scene exists to remove.
+///
+/// r[verify flow.drums.tracking.overview]
+/// r[verify flow.drums.tracking.arm]
 #[test]
-#[ignore]
-fn tmp_write_fixture() {
-    let path = fixtures_dir().join("scenes").join("drum-tracking.rows");
-    std::fs::write(&path, rows_of("drum-tracking")).unwrap();
+fn the_tracking_overview_is_one_row_per_piece_and_no_mics() {
+    let rows = rows_of("drum-tracking-overview");
+    let named: Vec<&str> = rows
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .collect();
+
+    for piece in ["Kick", "Snare", "Toms", "Cymbals", "Rooms"] {
+        assert!(
+            named.contains(&piece),
+            "the drummer cannot see {piece}: {named:?}"
+        );
+    }
+    for mic in ["In", "Out", "Top", "Bottom", "Trig"] {
+        assert!(
+            !named.contains(&mic),
+            "a mic row ({mic}) reached the overview: {named:?}"
+        );
+    }
+}
+
+/// **Drum Editing**: the same fold as the docked stack, so what is
+/// selected in one is what is edited in the other — and the Process
+/// folder and the bus tree gone, because editing is about takes and a
+/// send has no hits in it.
+///
+/// r[verify flow.drums.editing.scene]
+#[test]
+fn drum_editing_folds_like_the_stack_and_hides_the_sends() {
+    let rows = rows_of("drum-editing");
+    let named: Vec<&str> = rows
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .collect();
+
+    for piece in ["Kick", "Snare", "Toms"] {
+        assert!(named.contains(&piece), "no {piece} row to edit: {named:?}");
+    }
+    for gone in ["Process", "MIX BUS"] {
+        assert!(
+            !named.contains(&gone),
+            "{gone} reached the edit scene: {named:?}"
+        );
+    }
+    assert_eq!(
+        rows_of("drum-editing")
+            .lines()
+            .filter(|l| l.split('\t').nth(1) == Some("In"))
+            .count(),
+        0,
+        "the mics should be folded into their piece"
+    );
+}
+
+/// **Guitar Balance**: the one guitar scene that opens the multi-mic
+/// level, which is exactly what Guitar Mixing hides.
+///
+/// Almost all of a guitar mix happens at the part and its bus, so
+/// Mixing collapses every layer and multi-mic folder. Setting a
+/// configuration's initial balance and panning needs the opposite, and
+/// that is what this scene is for — so the test that matters is that
+/// the two disagree about the sources.
+///
+/// r[verify flow.guitars.mixing.balance-scene]
+#[test]
+fn guitar_balance_opens_what_guitar_mixing_hides() {
+    let sources = |slug: &str| -> usize {
+        rows_of(slug)
+            .lines()
+            .filter(|line| {
+                // A source row is one the mixing scene keeps at its
+                // minimum and the balance scene opens: count the rows
+                // deep enough to be under a channel.
+                line.split('\t')
+                    .next()
+                    .and_then(|depth| depth.parse::<u32>().ok())
+                    .is_some_and(|depth| depth >= 3)
+            })
+            .count()
+    };
+    let balance = sources("guitar-balance");
+    let mixing = sources("guitar-mixing");
+    assert!(
+        balance > mixing,
+        "balance shows {balance} deep rows and mixing {mixing} — \
+         the balance scene is supposed to open what mixing hides"
+    );
+}
+
+/// **Vocal Tracking** keeps the FX returns in view, which looks like a
+/// mixing concern and is not: a singer needs to hear the reverb they
+/// are singing into, and a tracking view that hid the returns would
+/// leave the engineer unable to set what the performer hears.
+///
+/// r[verify flow.vocals.tracking]
+#[test]
+fn vocal_tracking_keeps_the_returns_the_singer_hears() {
+    let rows = rows_of("vocal-tracking");
+    let named: Vec<&str> = rows
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .collect();
+    assert!(
+        named.iter().any(|n| *n == "Ron"),
+        "no lead to track: {named:?}"
+    );
+    assert!(
+        named
+            .iter()
+            .any(|n| n.contains("Verb") || n.contains("Delay")),
+        "the returns the singer hears are missing: {named:?}"
+    );
+    assert!(
+        !named.contains(&"MIX BUS"),
+        "the bus tree reached a tracking view"
+    );
+}
+
+/// **Vocal Comping** opens the parts and their sources — a part comps
+/// on its folder the way a kit does, so a many-layer "Hey!" is comped
+/// once rather than once per layer.
+///
+/// r[verify flow.vocals.comping]
+#[test]
+fn vocal_comping_opens_the_parts_and_their_layers() {
+    let rows = rows_of("vocal-comping");
+    let named: Vec<&str> = rows
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .collect();
+    assert!(named.iter().any(|n| *n == "BGVs"), "{named:?}");
+    assert!(
+        named.iter().any(|n| *n == "Hey"),
+        "the many-layer part is missing: {named:?}"
+    );
+    assert!(
+        named.iter().filter(|n| n.starts_with("All ")).count() > 1,
+        "its layers are not open to comp: {named:?}"
+    );
 }

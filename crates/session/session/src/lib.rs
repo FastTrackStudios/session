@@ -37,6 +37,9 @@ pub use session_proto::{offset_map, ruler_lanes, services, track_structure};
 // blocker, now routed through `daw_proto::main_thread` (inline on
 // non-REAPER backends). See setlist::service::live_daw_sync (native-only —
 // the SynchronizationEngine is REAPER-linked).
+pub mod comping;
+pub mod count_in;
+pub mod hits;
 pub mod section_kinds;
 pub mod setlist;
 pub mod song;
@@ -63,6 +66,8 @@ pub mod keyflow;
 pub mod mix_phases;
 pub mod modes;
 pub mod playback;
+pub mod quantize;
+pub mod trigger;
 // Growing a guitar part over the daw facade. Native-only for the same
 // reason as `track_manager`: it drives `dynamic-template`.
 #[cfg(not(target_arch = "wasm32"))]

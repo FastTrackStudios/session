@@ -132,6 +132,39 @@ fn colours(pixels: &[u8]) -> usize {
 /// r[verify flow.scenes.render]
 /// r[verify flow.drums.tracking.full]
 /// r[verify flow.drums.mixing.scenes]
+
+/// The scenes that get a committed **picture**.
+///
+/// Not every scene, and that is a cost decision made in the open. Each
+/// picture is a real GPU frame of a 233-track session and takes about
+/// nine seconds; the table now holds thirty-two scenes, twenty of which
+/// are generated from one `Set` description and differ from each other
+/// only by a group path. Rendering all of them would add five minutes
+/// to every test run to look at twenty near-identical frames.
+///
+/// So the pictures cover the **hand-written** scenes, where somebody
+/// decided a shape and a picture is the only way to see it. The
+/// generated sets are covered twice over without one: their `.rows`
+/// fixture is byte-exact, and the generator itself is asserted by
+/// shape in `scenes::table`'s own tests. A generated scene that went
+/// wrong would fail there, immediately, rather than in a frame five
+/// minutes later.
+fn pictured() -> Vec<&'static dynamic_template::scenes::Scene> {
+    dynamic_template::scenes::scenes()
+        .iter()
+        .filter(|scene| !GENERATED.iter().any(|tail| scene.slug.ends_with(tail)))
+        .collect()
+}
+
+/// The suffixes a generated scene's slug ends with.
+const GENERATED: [&str; 5] = [
+    "-tracking",
+    "-tracking-overview",
+    "-comping",
+    "-editing",
+    "-mixing",
+];
+
 #[test]
 fn every_scene_renders_to_its_committed_fixture() -> Result<()> {
     let update = std::env::var_os("FTS_UPDATE_GOLDEN").is_some();
@@ -141,7 +174,7 @@ fn every_scene_renders_to_its_committed_fixture() -> Result<()> {
     let scenes_dir = fixtures().join("scenes");
     let scratch = tempfile::tempdir()?;
     let mut failures = Vec::new();
-    for scene in dynamic_template::scenes::scenes() {
+    for scene in pictured() {
         let committed_png = scenes_dir.join(format!("{}.png", scene.slug));
         let committed_rows = scenes_dir.join(format!("{}.rows", scene.slug));
         let fresh_png = scratch.path().join(format!("{}.png", scene.slug));
@@ -253,7 +286,7 @@ fn two_scenes_differ_by_more_than_the_tolerances() -> Result<()> {
 /// list with rows in it, and none of the pictures is a blank window.
 #[test]
 fn every_scene_has_a_fixture_with_something_in_it() -> Result<()> {
-    for scene in dynamic_template::scenes::scenes() {
+    for scene in pictured() {
         let dir = fixtures().join("scenes");
         let (w, h, committed) = pixels(&dir.join(format!("{}.png", scene.slug)))?;
         assert_eq!((w, h), (2560, 1440), "{}", scene.slug);

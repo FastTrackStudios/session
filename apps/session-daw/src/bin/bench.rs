@@ -926,6 +926,8 @@ fn mixer_shot(
                 scene.map(|s| s.slug.as_str()),
                 session_daw::settings::Settings::default(),
                 dynamic_template::scenes::Audience::Engineer,
+                // The bench draws the kit's rails.
+                "drums",
             );
             session_daw::rails::draw(
                 painter,
@@ -1285,6 +1287,8 @@ fn shot(
                 Some("drum-mixing"),
                 session_daw::settings::Settings::default(),
                 dynamic_template::scenes::Audience::Engineer,
+                // The bench draws the kit's rails.
+                "drums",
             );
             session_daw::rails::draw(
                 painter,
@@ -1684,6 +1688,8 @@ impl AtRest {
                 Some("drum-mixing"),
                 session_daw::settings::Settings::default(),
                 dynamic_template::scenes::Audience::Engineer,
+                // The bench draws the kit's rails.
+                "drums",
             ),
             icons: session_daw::icons::Icons::none(),
             selected: std::collections::HashSet::new(),

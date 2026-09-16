@@ -89,16 +89,31 @@ pub fn default_for<'a>(
     })
 }
 
-/// The scenes the number keys reach inside a mode: the ones that declare
-/// it, and the recall-only ones, which belong to no mode and are
+/// The scenes the number keys reach: this instrument's, inside this
+/// mode, plus the recall-only ones — which declare no mode and are
 /// therefore available in all of them.
+///
+/// **Scoped to the instrument**, and that is not an optimisation. With
+/// four instrument sets in the table there are more scenes declaring
+/// "record" than there are number keys, and reaching the bass's
+/// tracking view while working on the kit is not something anyone
+/// wants — the keys are for moving around the instrument in front of
+/// you. Picking an instrument is what the rail and the selection do.
+///
+/// The bus scenes are the exception: the mix tree belongs to no
+/// instrument and is reachable from all of them.
 #[must_use]
-pub fn in_mode<'a>(scenes: &'a [Scene], mode: &str) -> Vec<&'a Scene> {
+pub fn in_mode<'a>(scenes: &'a [Scene], mode: &str, instrument: &str) -> Vec<&'a Scene> {
     scenes
         .iter()
+        .filter(|s| s.instrument == instrument || s.instrument == BUS_INSTRUMENT)
         .filter(|s| s.modes.is_empty() || s.modes.iter().any(|m| m.eq_ignore_ascii_case(mode)))
         .collect()
 }
+
+/// The instrument the bus scenes claim: not an instrument, so they are
+/// reachable whatever one is in front of you.
+const BUS_INSTRUMENT: &str = "bus";
 
 /// Which instrument a window is looking at.
 ///
@@ -220,8 +235,8 @@ impl Follow {
     /// end — clears the scene rather than doing nothing, so there is a
     /// key that means "back to the mode's own answer".
     // r[impl flow.scenes.follow-mode]
-    pub fn recall(&mut self, scenes: &[Scene], digit: u32) -> Option<&str> {
-        let available = in_mode(scenes, self.mode.as_deref().unwrap_or_default());
+    pub fn recall(&mut self, scenes: &[Scene], digit: u32, instrument: &str) -> Option<&str> {
+        let available = in_mode(scenes, self.mode.as_deref().unwrap_or_default(), instrument);
         let picked = digit
             .checked_sub(1)
             .and_then(|i| usize::try_from(i).ok())
@@ -301,9 +316,12 @@ mod tests {
             Some("drum-tracking")
         );
         assert_eq!(follow.enter(table(), "mix", "drums"), Some("drum-mixing"));
+        // Edit on vocals opens Comping, not the FX view: choosing
+        // takes is what Edit mode is for, and dialling a delay in is a
+        // thing you go and do (#38).
         assert_eq!(
             follow.enter(table(), "edit", "vocal"),
-            Some("lead-vocal-fx")
+            Some("vocal-comping")
         );
     }
 
@@ -332,7 +350,7 @@ mod tests {
     fn a_hand_chosen_scene_survives_until_the_mode_changes() {
         let mut follow = Follow::new(Audience::Engineer);
         follow.enter(table(), "mix", "drums");
-        let chosen = follow.recall(table(), 2).map(str::to_owned);
+        let chosen = follow.recall(table(), 2, "drums").map(str::to_owned);
         assert!(chosen.is_some());
         // The same mode, entered again — a reselection, a redraw, a
         // reload — must not undo the choice.
@@ -378,16 +396,35 @@ mod tests {
     fn the_number_keys_recall_inside_a_mode() {
         let mut follow = Follow::new(Audience::Engineer);
         follow.enter(table(), "record", "drums");
-        let available = in_mode(table(), "record");
+        let available = in_mode(table(), "record", "drums");
         let slugs: Vec<&str> = available.iter().map(|s| s.slug.as_str()).collect();
         assert_eq!(
             slugs,
-            ["drum-tracking", "drum-advanced", "drum-fx", "buses"],
-            "the mode's own scene and the recall-only ones"
+            [
+                "drum-tracking",
+                "drum-tracking-overview",
+                "drum-advanced",
+                "drum-fx",
+                "buses"
+            ],
+            "the mode's own scenes and the recall-only ones"
         );
-        assert_eq!(follow.recall(table(), 3), Some("drum-fx"));
-        assert_eq!(follow.recall(table(), 9), None, "past the end clears it");
-        assert_eq!(follow.recall(table(), 0), None, "and so does zero");
+        // The overview is the *player* audience's default, and it is
+        // still on a number key here: audience decides which scene a
+        // mode opens, not which ones a window can reach. An engineer
+        // looking at what the drummer sees is a reasonable thing to
+        // want, and nothing about it is player-only.
+        assert_eq!(
+            follow.recall(table(), 2, "drums"),
+            Some("drum-tracking-overview")
+        );
+        assert_eq!(follow.recall(table(), 4, "drums"), Some("drum-fx"));
+        assert_eq!(
+            follow.recall(table(), 9, "drums"),
+            None,
+            "past the end clears it"
+        );
+        assert_eq!(follow.recall(table(), 0, "drums"), None, "and so does zero");
     }
 
     /// A rail button names its scene by slug, so it reaches one the
@@ -399,7 +436,7 @@ mod tests {
         let mut follow = Follow::new(Audience::Engineer);
         follow.enter(table(), "record", "drums");
         assert!(
-            !in_mode(table(), "record")
+            !in_mode(table(), "record", "drums")
                 .iter()
                 .any(|s| s.slug == "lead-vocal"),
             "the case this test is about"

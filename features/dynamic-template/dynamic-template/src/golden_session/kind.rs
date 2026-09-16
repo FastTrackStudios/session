@@ -61,11 +61,21 @@ pub enum Kind {
     Keyflow,
     /// A performer's headphone bus. `flow.scenes.performer-headphones`.
     Headphones,
+    /// A VCA: a fader that controls other faders and carries no audio
+    /// of its own.
+    ///
+    /// A kind rather than the word "VCA" in the name, because the
+    /// language VCAs are named for what they control (`VOX EN`) and a
+    /// classifier that went by the name would miss them — and because
+    /// a VCA that reaches no bus is FINISHED, while an ordinary track
+    /// that reaches none is work for a human. The two must not look
+    /// alike to the organizer.
+    Vca,
 }
 
 impl Kind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Group,
         Self::Piece,
         Self::Sum,
@@ -84,6 +94,7 @@ impl Kind {
         Self::Guide,
         Self::Keyflow,
         Self::Headphones,
+        Self::Vca,
     ];
 
     /// The stable string written to ext-state.
@@ -108,6 +119,7 @@ impl Kind {
             Self::Guide => "guide",
             Self::Keyflow => "keyflow",
             Self::Headphones => "headphones",
+            Self::Vca => "vca",
         }
     }
 

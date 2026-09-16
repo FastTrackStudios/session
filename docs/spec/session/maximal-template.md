@@ -54,7 +54,7 @@ fixed tree.
 
 ### Percussion — `Percussion/`
 
-- [ ] Shaker, Tambourine, Claps → **PERC BUS** under INST BUS
+- [x] Shaker, Tambourine, Claps → **PERC BUS** under INST BUS
       (`flow.percussion.folder`).
 
 ### Bass — `Bass/`
@@ -66,10 +66,14 @@ fixed tree.
 
 ### Guitars — `Electric/`, `Acoustic/` (a different shape every song)
 
-- [x] **No Sum folders**: each part is a track named for the part
-      (Rhythm, Lead, Solo, …). A **stereo pair is one stereo track** —
-      two channels, a stereo input — not a folder over an L and an R:
-      its halves are almost never processed apart.
+- [x] **No Sum folders** anywhere under the guitars: the kit's Sum
+      gathers one drum heard several ways, and a guitar's depth is a
+      different thing — a double is two performances, an octave layer a
+      third, each channel on its own sources.
+- [x] The three shapes in one fixture (`flow.guitars.golden`): **Rhythm**
+      double-tracked with two octave layers and seven sources a channel,
+      **Lead** a DI-only double with no folder under its channels, and
+      **Solo** a single track with a Harmony beside it.
 - [x] Electrics and acoustics are **separate top-level folders with
       their own buses** — no Guitars folder, no GUITAR BUS.
 - [x] Every electric part goes to exactly one of **GTR RHYTHM, GTR LEAD,
@@ -97,9 +101,9 @@ fixed tree.
 
 ### Keys — `Keys/`, Synths — `Synths/`
 
-- [x] Keys: Piano (a stereo track), Rhodes, Organ → **KEYS BUS**.
+- [x] Keys as parts: Piano (a stereo track), Rhodes, Wurli, Organ → **KEYS BUS**.
 - [ ] Keys: **Wurli** beside the Rhodes (`flow.keys.parts`).
-- [x] Synths: Pad, Lead Synth, Arp → **KEYS BUS**.
+- [x] Synths by family — SY Arps, SY Pads, SY Leads, SY Chords — with the general synths beside them → **KEYS BUS**.
 - [ ] Synths sorted by family — **SY Arps, SY Pads, SY Leads, SY
       Chords** — with two general synth tracks beside them
       (`flow.synths.families`, `flow.synths.golden`).
@@ -109,7 +113,7 @@ fixed tree.
 
 ### Orchestra — `Orchestra/` (expanded in a later spec)
 
-- [ ] **Winds/** Flute, Oboe, Clarinet, Bassoon.
+- [x] **Winds/** Flute, Oboe, Clarinet, Bassoon.
 - [ ] **Brass/** Trumpets, Horns, Trombones, Bass Trombone, Tuba.
 - [ ] **Strings/** Violin 1, Violin 2, Viola, Cello, Bass.
 - [ ] **Orch Percussion/** — present, empty for now.
@@ -126,7 +130,7 @@ fixed tree.
 
 ### Vocals — `Vocals/`
 
-- [x] Lead (Close, Room, Verb), Doubles, Harmonies → **LEAD VOX BUS**.
+- [x] Leads Ron (EN/ES/PT), Belen (EN/ES) and Aline (PT), each a mix track with Main and DBL and a source per language; BGV parts; a four-section choir; VOX EN/ES/PT VCAs → **LEAD VOX BUS**.
 - [ ] BGVs folder → **BGV BUS**; the vocal FX template (`vocal-fx.rpp`)
       folded in.
 - [ ] **Three languages** as source tracks under each layer —

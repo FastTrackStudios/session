@@ -1196,7 +1196,15 @@ daw-template:
 # change to what a scene shows is a diff in a PR. Run this after a
 # deliberate scene or template change and commit the result.
 daw-scenes:
-    FTS_UPDATE_GOLDEN=1 cargo test -p session-daw --test golden_scenes
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Both halves of a scene fixture: the row list (byte-exact, the half
+    # that carries the decision) and the picture (structural, because
+    # the runner and this box disagree about antialiasing). Refreshing
+    # one without the other is how a fixture goes stale.
+    export FTS_UPDATE_GOLDEN=1
+    cargo test -p dynamic-template --test scene_rows
+    cargo test -p session-daw --test golden_scenes
 
 # Re-render the folder-item fixtures from the golden session's own peaks.
 #

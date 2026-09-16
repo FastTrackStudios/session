@@ -146,9 +146,390 @@ fn per_piece(effect: Effect) -> Vec<Rule> {
         .collect()
 }
 
+// ── the instrument scene sets ────────────────────────────────────────
+//
+// One shape, four instruments. Each set is the same four questions —
+// what do you look at while getting a sound, while the band plays,
+// while choosing takes, while editing, while mixing — and the answers
+// differ only in which folder they are asked about. Writing them as
+// data rather than as functions is what makes that visible: the
+// difference between the bass set and the keys set is a group path.
+
+/// Every scene an instrument needs, built from one description.
+struct Set {
+    instrument: &'static str,
+    /// The group path the instrument lives under.
+    group: &'static [&'static str],
+    /// What the overview collapses to one row each — the pieces, the
+    /// parts, the folders a player reads.
+    rows: &'static [&'static str],
+    /// The bus the mixing scene shows.
+    bus: &'static str,
+}
+
+impl Set {
+    /// The selector path to one of this instrument's rows.
+    ///
+    /// The group's own path plus the row, rather than the group's first
+    /// segment plus the row: `Electric` lives under `Guitars`, and a
+    /// selector that started at `Electric` matched nothing at all —
+    /// silently, since a selector that matches nothing is a scene that
+    /// shows nothing rather than an error.
+    fn path_to(&self, row: &'static str) -> Vec<&'static str> {
+        let mut path = self.group.to_vec();
+        path.push(row);
+        path
+    }
+
+    /// The engineer's tracking view: every source of the instrument
+    /// open, with a level to watch and a phase to set, and the rest of
+    /// the session out of the way.
+    fn tracking(&self) -> Scene {
+        Scene {
+            name: format!("{} Tracking", title(self.instrument)),
+            slug: format!("{}-tracking", self.instrument),
+            short: "Trk".to_owned(),
+            instrument: self.instrument.to_owned(),
+            modes: vec!["record".to_owned()],
+            audience: Audience::Engineer,
+            // Tracking sorts by performer: while a take is going in,
+            // what needs doing is about the person playing it.
+            group_by: GroupBy::Performer,
+            spec: vec!["flow.scenes.render".to_owned()],
+            default: Effect::at(Size::Compact),
+            rules: vec![
+                Rule::new(
+                    Selector {
+                        role: Role::Leaf,
+                        ..under(self.group)
+                    },
+                    Effect::at(Size::Working),
+                ),
+                Rule::new(under(&["process"]), Effect::at(Size::Minimum)),
+                hide_the_bus_tree(),
+            ],
+        }
+    }
+
+    /// The player's view: the instrument collapsed to the rows they
+    /// read, and nothing else. The folder-record preview draws the take
+    /// going in on these closed rows, which is what lets an overview
+    /// stay collapsed while tracking.
+    fn overview(&self) -> Scene {
+        let mut rules = vec![Rule::new(
+            Selector {
+                role: Role::Leaf,
+                ..under(self.group)
+            },
+            Effect::hidden(),
+        )];
+        for row in self.rows {
+            rules.push(Rule::new(
+                Selector {
+                    role: Role::Bus,
+                    ..under(&self.path_to(row))
+                },
+                Effect::at(Size::Working).folded(Fold::Collapsed),
+            ));
+        }
+        rules.push(Rule::new(under(&["process"]), Effect::hidden()));
+        rules.push(hide_the_bus_tree());
+        Scene {
+            name: format!("{} Tracking Overview", title(self.instrument)),
+            slug: format!("{}-tracking-overview", self.instrument),
+            short: "Over".to_owned(),
+            instrument: self.instrument.to_owned(),
+            modes: vec!["record".to_owned()],
+            audience: Audience::Player,
+            group_by: GroupBy::Arrangement,
+            spec: vec![
+                "flow.scenes.two-audiences".to_owned(),
+                "flow.scenes.render".to_owned(),
+            ],
+            default: Effect::at(Size::Compact),
+            rules,
+        }
+    }
+
+    /// Choosing takes: the instrument's tracks open with their lanes,
+    /// everything else collapsed. Comping is not a mode — it lives
+    /// inside Record and Edit — so this one is recall-only.
+    fn comping(&self) -> Scene {
+        Scene {
+            name: format!("{} Comping", title(self.instrument)),
+            slug: format!("{}-comping", self.instrument),
+            short: "Comp".to_owned(),
+            instrument: self.instrument.to_owned(),
+            modes: Vec::new(),
+            audience: Audience::Engineer,
+            group_by: GroupBy::Arrangement,
+            spec: vec!["flow.scenes.render".to_owned()],
+            default: Effect::at(Size::Minimum),
+            rules: vec![
+                Rule::new(under(self.group), Effect::at(Size::Working)),
+                hide_the_bus_tree(),
+            ],
+        }
+    }
+
+    /// Editing: one row per part, the sources folded into it, so an
+    /// edit to a row is an edit to everything under it — the same fold
+    /// the docked stack uses.
+    fn editing(&self) -> Scene {
+        let mut rules = vec![Rule::new(
+            Selector {
+                role: Role::Leaf,
+                ..under(self.group)
+            },
+            Effect::hidden(),
+        )];
+        for row in self.rows {
+            rules.push(Rule::new(
+                Selector {
+                    role: Role::Bus,
+                    ..under(&self.path_to(row))
+                },
+                Effect::at(Size::Working).folded(Fold::Collapsed),
+            ));
+        }
+        rules.extend([
+            Rule::new(under(&["process"]), Effect::hidden()),
+            hide_the_bus_tree(),
+        ]);
+        Scene {
+            name: format!("{} Editing", title(self.instrument)),
+            slug: format!("{}-editing", self.instrument),
+            short: "Edit".to_owned(),
+            instrument: self.instrument.to_owned(),
+            modes: vec!["edit".to_owned()],
+            audience: Audience::Engineer,
+            group_by: GroupBy::Arrangement,
+            spec: vec![
+                "flow.scenes.follow-mode".to_owned(),
+                "flow.scenes.render".to_owned(),
+            ],
+            default: Effect::at(Size::Compact),
+            rules,
+        }
+    }
+
+    /// Mixing: the instrument's folders and its bus, the sources as
+    /// rails. Almost all of a mix happens at the part and its bus, so
+    /// that is the level this shows.
+    fn mixing(&self) -> Scene {
+        Scene {
+            name: format!("{} Mixing", title(self.instrument)),
+            slug: format!("{}-mixing", self.instrument),
+            short: "Mix".to_owned(),
+            instrument: self.instrument.to_owned(),
+            modes: vec!["mix".to_owned()],
+            audience: Audience::Engineer,
+            group_by: GroupBy::Arrangement,
+            spec: vec![
+                "flow.scenes.follow-mode".to_owned(),
+                "flow.scenes.render".to_owned(),
+            ],
+            default: Effect::at(Size::Minimum),
+            rules: vec![
+                // The multi-mic level goes. Almost all of a mix happens
+                // at the part and its bus, so that is the level this
+                // shows — and it is what makes Guitar Balance a scene
+                // of its own rather than the same view wider: Balance
+                // exists precisely to open what this hides.
+                Rule::new(
+                    Selector {
+                        role: Role::Leaf,
+                        ..under(self.group)
+                    },
+                    Effect::hidden(),
+                ),
+                Rule::new(
+                    Selector {
+                        role: Role::Bus,
+                        ..under(self.group)
+                    },
+                    Effect::at(Size::Working),
+                ),
+                Rule::new(
+                    Selector {
+                        name: Some(self.bus.to_owned()),
+                        ..Selector::default()
+                    },
+                    Effect::at(Size::Working),
+                ),
+            ],
+        }
+    }
+}
+
+/// Title-case an instrument slug for a scene's display name.
+fn title(instrument: &str) -> String {
+    let mut chars = instrument.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().collect::<String>() + chars.as_str()
+    })
+}
+
+/// The instruments whose sets are generated, and what each collapses to.
+const SETS: [Set; 4] = [
+    Set {
+        instrument: "bass",
+        group: &["Bass"],
+        rows: &[],
+        bus: "BASS BUS",
+    },
+    Set {
+        instrument: "guitar",
+        group: &["Guitars", "Electric"],
+        rows: &["Rhythm", "Lead", "Solo"],
+        bus: "ELECTRIC BUS",
+    },
+    Set {
+        instrument: "keys",
+        group: &["Keys"],
+        rows: &["Piano", "Rhodes", "Wurli", "Organ"],
+        bus: "KEYS BUS",
+    },
+    Set {
+        instrument: "percussion",
+        group: &["Percussion"],
+        rows: &["Shaker", "Tambourine", "Claps"],
+        bus: "PERC BUS",
+    },
+];
+
+/// Every generated instrument scene, in set order.
+fn instrument_sets() -> Vec<Scene> {
+    SETS.iter()
+        .flat_map(|set| {
+            [
+                set.tracking(),
+                set.overview(),
+                set.comping(),
+                set.editing(),
+                set.mixing(),
+            ]
+        })
+        .collect()
+}
+
+/// **Guitar Balance**: what Guitar Mixing hides.
+///
+/// Guitar Mixing collapses every layer and multi-mic folder, because
+/// almost all of a guitar mix happens at the part and its bus. This is
+/// the one scene that opens the multi-mic level — every channel's
+/// sources as strips — so the initial balance and panning of a
+/// configuration can be set. Recall-only: it is a thing you go and do
+/// once, not the view you land in (`flow.guitars.mixing.balance-scene`).
+// r[impl flow.guitars.mixing.balance-scene]
+fn guitar_balance() -> Scene {
+    Scene {
+        name: "Guitar Balance".to_owned(),
+        slug: "guitar-balance".to_owned(),
+        short: "Bal".to_owned(),
+        instrument: "guitar".to_owned(),
+        modes: Vec::new(),
+        audience: Audience::Engineer,
+        group_by: GroupBy::Arrangement,
+        spec: vec![
+            "flow.guitars.mixing.balance-scene".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
+        default: Effect::at(Size::Minimum),
+        rules: vec![
+            Rule::new(
+                Selector {
+                    role: Role::Leaf,
+                    ..under(&["Electric"])
+                },
+                Effect::at(Size::Working),
+            ),
+            Rule::new(
+                Selector {
+                    role: Role::Leaf,
+                    ..under(&["Acoustic"])
+                },
+                Effect::at(Size::Working),
+            ),
+            hide_the_bus_tree(),
+        ],
+    }
+}
+
+/// **Vocal Tracking**: the active language's leads and every part being
+/// recorded, sorted by performer.
+///
+/// The vocal FX returns stay present, which looks like a mixing concern
+/// and is not: a singer needs to hear the reverb they are singing into,
+/// and a tracking view that hid the returns would leave the engineer
+/// unable to set what the performer hears.
+// r[impl flow.vocals.tracking]
+fn vocal_tracking() -> Scene {
+    Scene {
+        name: "Vocal Tracking".to_owned(),
+        slug: "vocal-tracking".to_owned(),
+        short: "Trk".to_owned(),
+        instrument: "vocal".to_owned(),
+        modes: vec!["record".to_owned()],
+        audience: Audience::Engineer,
+        // Ron's tracks together, Belen's together — while a take is
+        // going in, what needs doing is about the person singing.
+        group_by: GroupBy::Performer,
+        spec: vec![
+            "flow.vocals.tracking".to_owned(),
+            "flow.scenes.performer-order".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
+        default: Effect::at(Size::Compact),
+        rules: vec![
+            Rule::new(
+                Selector {
+                    role: Role::Leaf,
+                    ..under(&["Vocals"])
+                },
+                Effect::at(Size::Working),
+            ),
+            // The returns are what the singer hears themselves in.
+            Rule::new(under(&["fx"]), Effect::at(Size::Compact)),
+            hide_the_bus_tree(),
+        ],
+    }
+}
+
+/// **Vocal Comping**: the active language's sources with their lanes,
+/// parts as folders.
+///
+/// The Edit-mode default for vocals. A part comps on its folder the way
+/// a kit does — one lane per take of the whole part — so a fifty-layer
+/// "Hey!" is comped once rather than fifty times.
+// r[impl flow.vocals.comping]
+fn vocal_comping() -> Scene {
+    Scene {
+        name: "Vocal Comping".to_owned(),
+        slug: "vocal-comping".to_owned(),
+        short: "Comp".to_owned(),
+        instrument: "vocal".to_owned(),
+        modes: vec!["edit".to_owned()],
+        audience: Audience::Engineer,
+        group_by: GroupBy::Arrangement,
+        spec: vec![
+            "flow.vocals.comping".to_owned(),
+            "flow.scenes.follow-mode".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
+        default: Effect::at(Size::Minimum),
+        rules: vec![
+            Rule::new(under(&["Vocals"]), Effect::at(Size::Working)),
+            hide_the_bus_tree(),
+        ],
+    }
+}
+
 fn build() -> Vec<Scene> {
     vec![
         drum_tracking(),
+        drum_tracking_overview(),
+        drum_editing(),
         drum_mixing(),
         drum_overview(),
         drum_advanced(),
@@ -157,7 +538,130 @@ fn build() -> Vec<Scene> {
         guitar_fx(),
         lead_vocal(),
         lead_vocal_fx(),
+        guitar_balance(),
+        vocal_tracking(),
+        vocal_comping(),
     ]
+    .into_iter()
+    .chain(instrument_sets())
+    .collect()
+}
+
+/// **Drum Tracking Overview**: the kit as the drummer reads it, one
+/// strip per piece.
+///
+/// This is not the engineer's view with fewer rows. While a sound is
+/// being got, the engineer needs every mic; once tracking is a
+/// whole-band session, everyone else needs to know the kit is going in
+/// and nothing more. So each piece is one collapsed folder carrying its
+/// folder item — the summed waveform in the piece's colour — and a
+/// stereo pair is one strip, because OH is one capture of one thing.
+///
+/// It is the Record-mode default for the **player** audience, which is
+/// what puts it on the drummer's tablet without anyone choosing it.
+// r[impl flow.drums.tracking.overview]
+// r[impl flow.drums.tracking.arm]
+// r[impl flow.scenes.two-audiences]
+fn drum_tracking_overview() -> Scene {
+    let mut rules = vec![
+        // Everything inside a piece folds away: at this zoom a mic is a
+        // line, and thirty lines under a kit is the picture this scene
+        // exists to remove.
+        Rule::new(
+            Selector {
+                role: Role::Leaf,
+                ..under(&KIT)
+            },
+            Effect::hidden(),
+        ),
+    ];
+    // Each piece: one row, collapsed, at a size worth reading — the arm
+    // and the monitor lamp sit on it, which is the half of
+    // `flow.drums.tracking.arm` this scene owns.
+    for piece in PIECES {
+        rules.push(Rule::new(
+            Selector {
+                role: Role::Bus,
+                ..under(&[KIT[0], KIT[1], piece])
+            },
+            Effect::at(Size::Working).folded(Fold::Collapsed),
+        ));
+    }
+    rules.push(Rule::new(under(&["process"]), Effect::hidden()));
+    rules.push(hide_the_bus_tree());
+    Scene {
+        name: "Drum Tracking Overview".to_owned(),
+        slug: "drum-tracking-overview".to_owned(),
+        short: "Kit".to_owned(),
+        instrument: "drums".to_owned(),
+        modes: vec!["record".to_owned()],
+        audience: Audience::Player,
+        // The drummer reads the kit, not the room's personnel.
+        group_by: GroupBy::Arrangement,
+        spec: vec![
+            "flow.drums.tracking.overview".to_owned(),
+            "flow.drums.tracking.arm".to_owned(),
+            "flow.scenes.two-audiences".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
+        default: Effect::at(Size::Compact),
+        rules,
+    }
+}
+
+/// **Drum Editing**: one row per source piece, the mics folded into it.
+///
+/// The arrangement's counterpart of the docked stack's lanes, and
+/// deliberately the same fold: what is selected in one is what is
+/// edited in the other, so an edit made in the stack lands where the
+/// arrangement says it should. The Process folder and the bus tree are
+/// hidden outright — editing is about the takes, and a send has no hits
+/// in it.
+///
+/// This is what Edit mode shows for the kit.
+// r[impl flow.drums.editing.scene]
+// r[impl flow.scenes.follow-mode]
+fn drum_editing() -> Scene {
+    let mut rules = vec![
+        // The mics fold into their piece: an edit to a piece is an edit
+        // to every mic of it at once, so the mic rows are noise here.
+        Rule::new(
+            Selector {
+                role: Role::Leaf,
+                ..under(&KIT)
+            },
+            Effect::hidden(),
+        ),
+    ];
+    for piece in PIECES {
+        rules.push(Rule::new(
+            Selector {
+                role: Role::Bus,
+                ..under(&[KIT[0], KIT[1], piece])
+            },
+            Effect::at(Size::Working).folded(Fold::Collapsed),
+        ));
+    }
+    rules.extend([
+        Rule::new(under(&["process"]), Effect::hidden()),
+        hide_the_bus_tree(),
+    ]);
+    Scene {
+        name: "Drum Editing".to_owned(),
+        slug: "drum-editing".to_owned(),
+        short: "Edit".to_owned(),
+        instrument: "drums".to_owned(),
+        modes: vec!["edit".to_owned()],
+        audience: Audience::Engineer,
+        group_by: GroupBy::Arrangement,
+        spec: vec![
+            "flow.drums.editing.scene".to_owned(),
+            "flow.scenes.follow-mode".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
+        default: Effect::at(Size::Compact),
+        rules,
+    }
 }
 
 /// Tracking: the core microphones you are getting a sound on, and
@@ -539,7 +1043,10 @@ fn guitar_fx() -> Scene {
         slug: "guitar-fx".to_owned(),
         short: "GFX".to_owned(),
         instrument: "guitar".to_owned(),
-        modes: vec!["mix".to_owned()],
+        // Recall-only. Guitar Mixing is what Mix mode opens
+        // (`flow.guitars.mixing`); the FX view is a place you go on
+        // purpose, not the one you land in.
+        modes: Vec::new(),
         audience: Audience::Engineer,
         group_by: GroupBy::Arrangement,
         spec: vec!["flow.scenes.render".to_owned()],
@@ -606,7 +1113,9 @@ fn lead_vocal_fx() -> Scene {
         slug: "lead-vocal-fx".to_owned(),
         short: "VFX".to_owned(),
         instrument: "vocal".to_owned(),
-        modes: vec!["edit".to_owned()],
+        // Recall-only, like Guitar FX. Vocal Comping is what Edit
+        // opens (#38); dialling a delay in is a thing you go and do.
+        modes: Vec::new(),
         audience: Audience::Engineer,
         group_by: GroupBy::Arrangement,
         spec: vec![
@@ -651,10 +1160,12 @@ fn lead_vocal_fx() -> Scene {
 mod tests {
     use super::*;
 
-    /// Nine scenes, every slug distinct and every slug reachable.
+    /// Every slug distinct and every slug reachable. The count is
+    /// asserted so that adding a scene is a deliberate edit here rather
+    /// than something that slips in.
     #[test]
     fn every_scene_is_reachable_by_its_slug() {
-        assert_eq!(scenes().len(), 9);
+        assert_eq!(scenes().len(), 34);
         for s in scenes() {
             assert_eq!(
                 scene(&s.slug).map(|f| f.slug.as_str()),
@@ -683,20 +1194,92 @@ mod tests {
                 )
             })
             .collect();
+
+        // How many scenes at the front of the table are hand-written
+        // rather than generated from a `Set`.
+        const HAND_WRITTEN: usize = 14;
+
+        // The hand-written scenes, spelled out: each one is a shape
+        // somebody decided, and a change to any of them should be a
+        // visible edit here.
         assert_eq!(
-            claimed,
-            vec![
+            &claimed[..HAND_WRITTEN],
+            &[
                 ("drum-tracking", "drums", vec!["record"], Audience::Engineer),
+                (
+                    "drum-tracking-overview",
+                    "drums",
+                    vec!["record"],
+                    Audience::Player,
+                ),
+                ("drum-editing", "drums", vec!["edit"], Audience::Engineer),
                 ("drum-mixing", "drums", vec!["mix"], Audience::Engineer),
                 ("drum-overview", "drums", vec!["mix"], Audience::Player),
                 ("drum-advanced", "drums", vec![], Audience::Engineer),
                 ("drum-fx", "drums", vec![], Audience::Engineer),
                 ("buses", "bus", vec![], Audience::Engineer),
-                ("guitar-fx", "guitar", vec!["mix"], Audience::Engineer),
+                // Recall-only: Guitar Mixing is what Mix mode opens.
+                ("guitar-fx", "guitar", vec![], Audience::Engineer),
                 ("lead-vocal", "vocal", vec!["mix"], Audience::Engineer),
-                ("lead-vocal-fx", "vocal", vec!["edit"], Audience::Engineer),
-            ]
+                ("lead-vocal-fx", "vocal", vec![], Audience::Engineer),
+                // The one guitar scene that opens the multi-mic level:
+                // recall-only, because setting a configuration's
+                // balance is a thing you go and do.
+                ("guitar-balance", "guitar", vec![], Audience::Engineer),
+                (
+                    "vocal-tracking",
+                    "vocal",
+                    vec!["record"],
+                    Audience::Engineer,
+                ),
+                ("vocal-comping", "vocal", vec!["edit"], Audience::Engineer),
+            ][..]
         );
+
+        // The generated sets are checked by SHAPE rather than
+        // transcribed. Spelling out twenty lines that a loop produced
+        // tests the transcription; this tests the generator, which is
+        // the thing that could actually be wrong.
+        for set in &SETS {
+            // Only the generated ones: the hand-written scenes share
+            // an instrument with them (Guitar FX and Guitar Balance are
+            // both "guitar") and are checked above.
+            let mine: Vec<_> = claimed[HAND_WRITTEN..]
+                .iter()
+                .filter(|(_, instrument, ..)| *instrument == set.instrument)
+                .collect();
+            assert_eq!(
+                mine.len(),
+                5,
+                "{} should have five scenes, got {mine:?}",
+                set.instrument
+            );
+            let shape: Vec<(&str, Vec<&str>, Audience)> = mine
+                .iter()
+                .map(|(slug, _, modes, audience)| {
+                    (
+                        slug.rsplit_once('-').map_or(*slug, |(_, tail)| tail),
+                        modes.clone(),
+                        *audience,
+                    )
+                })
+                .collect();
+            assert_eq!(
+                shape,
+                vec![
+                    ("tracking", vec!["record"], Audience::Engineer),
+                    ("overview", vec!["record"], Audience::Player),
+                    // Comping is not a mode: its view lives inside
+                    // Record and Edit, because a part is comped while
+                    // it is still being tracked as often as afterwards.
+                    ("comping", vec![], Audience::Engineer),
+                    ("editing", vec!["edit"], Audience::Engineer),
+                    ("mixing", vec!["mix"], Audience::Engineer),
+                ],
+                "{}",
+                set.instrument
+            );
+        }
     }
 
     /// A scene with no mode is recall-only: the number keys reach it,
@@ -704,12 +1287,30 @@ mod tests {
     // r[verify flow.scenes.follow-mode]
     #[test]
     fn a_scene_with_no_mode_is_recall_only() {
+        // Every instrument's comping scene is recall-only too:
+        // comping is NOT a mode — its view lives inside Record and
+        // Edit, because a kit is comped while it is still being
+        // tracked as often as afterwards (`flow.scenes.follow-mode`).
         let recall_only: Vec<&str> = scenes()
             .iter()
             .filter(|s| s.modes.is_empty())
             .map(|s| s.slug.as_str())
             .collect();
-        assert_eq!(recall_only, ["drum-advanced", "drum-fx", "buses"]);
+        assert_eq!(
+            recall_only,
+            [
+                "drum-advanced",
+                "drum-fx",
+                "buses",
+                "guitar-fx",
+                "lead-vocal-fx",
+                "guitar-balance",
+                "bass-comping",
+                "guitar-comping",
+                "keys-comping",
+                "percussion-comping"
+            ]
+        );
     }
 
     /// A session with the two folders the prelude is about: the Guide
