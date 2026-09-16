@@ -320,6 +320,10 @@ async fn handle_marker_event(setlist: &Project, event: &MarkerEvent, offset: f64
             let _ = setlist.markers().remove(*id).await;
         }
         MarkerEvent::MarkersChanged(_) => {}
+        // REAPER renumbering its own list is not something that
+        // happened to the SONG, so nothing happens to the setlist. The
+        // marker is where it was, called what it was called.
+        MarkerEvent::Renumbered { .. } => {}
     }
 }
 
@@ -350,6 +354,8 @@ async fn handle_region_event(setlist: &Project, event: &RegionEvent, offset: f64
             let _ = setlist.regions().remove(*id).await;
         }
         RegionEvent::RegionsChanged(_) => {}
+        // Same as the marker case: bookkeeping, not an edit.
+        RegionEvent::Renumbered { .. } => {}
     }
 }
 

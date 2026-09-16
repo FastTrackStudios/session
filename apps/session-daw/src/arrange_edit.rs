@@ -109,6 +109,33 @@ pub struct Editor {
     time_drag: Option<f64>,
     item_press: Option<ItemPress>,
     fade_drag: Option<FadeDrag>,
+    /// A press on the ruler, until it becomes a drag or a click.
+    ruler_press: Option<RulerPress>,
+    /// What is selected on the ruler, so a delete knows what to take.
+    pub ruler_selection: Option<crate::ruler::On>,
+    /// The span of the band under the pointer, set by the window when
+    /// it hit-tests, so a drag knows what it is moving from. The hit
+    /// map knows WHICH band; only the window has the list to ask how
+    /// wide it is.
+    pub ruler_span: Option<(f64, f64)>,
+}
+
+/// A press on the ruler, before it has decided what it is.
+///
+/// Holds where it started and what it landed on, and grows a `ghost`
+/// once the pointer has moved far enough to be a drag. Until then it is
+/// a click, and a click on the ruler means what it has always meant:
+/// put the cursor there.
+#[derive(Clone, Copy, Debug)]
+struct RulerPress {
+    on: crate::ruler::On,
+    /// Where the press was, in seconds.
+    from: f64,
+    /// The band or mark as it stood, so a drag is relative to where it
+    /// WAS and not to where the last frame left it.
+    was: (f64, f64),
+    /// Where it would land, once the press has become a drag.
+    ghost: Option<(f64, f64)>,
 }
 
 impl Editor {
@@ -162,7 +189,38 @@ impl Editor {
                     _ => false,
                 }
             }
-            Target::Lane { seconds, .. } | Target::Ruler { seconds } => {
+            Target::Ruler { seconds, on } => {
+                use crate::ruler::On;
+                // What the press took hold of is remembered whatever it
+                // was, because a press on the ruler is not yet a
+                // gesture: it becomes a drag if the pointer moves, and
+                // stays a click if it does not.
+                self.ruler_selection =
+                    matches!(on, On::Marker { .. } | On::Region { .. }).then_some(on);
+                let was = match on {
+                    On::Marker { .. } => (seconds, seconds),
+                    On::Region { .. } => self.ruler_span.unwrap_or((seconds, seconds)),
+                    On::Lane { .. } | On::Bars => (seconds, seconds),
+                };
+                self.ruler_press = Some(RulerPress {
+                    on,
+                    from: seconds,
+                    was,
+                    ghost: None,
+                });
+                // The bars are the timeline, so a press there still
+                // means what a press on a timeline has always meant.
+                // The lanes do not: a press in a lane is the start of
+                // making or moving something, and moving the cursor as
+                // well would seek every time you reached for a band.
+                if matches!(on, On::Bars) {
+                    self.time_drag = Some(seconds);
+                    self.cursor.click(seconds);
+                    effects.push(Effect::Transport(Move::Seek, seconds));
+                }
+                true
+            }
+            Target::Lane { seconds, .. } => {
                 if mousemap::resolve(hit.context, Gesture::Click, keys)
                     != mousemap::Action::SetEditCursor
                 {
@@ -209,6 +267,44 @@ impl Editor {
             });
             return true;
         }
+        if let Some(press) = self.ruler_press.as_mut() {
+            use crate::ruler::{On, Zone};
+            let dx = at - press.from;
+            let moved = press.ghost.is_some() || (dx * pps).abs() > crate::gesture::SLOP;
+            if !moved {
+                return false;
+            }
+            let beat = 60.0 / bpm.max(1.0);
+            // Shift means "exactly here", the same as it does for an
+            // item. A section boundary that is a hair off the bar is
+            // one REAPER will draw a hair off the bar forever.
+            let snap = |t: f64| {
+                if keys.shift {
+                    t.max(0.0)
+                } else {
+                    ((t / beat).round() * beat).max(0.0)
+                }
+            };
+            let (was0, was1) = press.was;
+            press.ghost = Some(match press.on {
+                On::Marker { .. } => {
+                    let to = snap(was0 + dx);
+                    (to, to)
+                }
+                On::Region { zone, .. } => match zone {
+                    Zone::Start => (snap(was0 + dx).min(was1), was1),
+                    Zone::End => (was0, snap(was1 + dx).max(was0)),
+                    Zone::Body => {
+                        let from = snap(was0 + dx);
+                        (from, from + (was1 - was0))
+                    }
+                },
+                // Drawing a new band out of empty lane: from where the
+                // press landed to wherever the pointer is now.
+                On::Lane { .. } | On::Bars => (snap(press.from), snap(at)),
+            });
+            return true;
+        }
         if let Some(drag) = self.fade_drag.as_mut() {
             let span = (drag.x1 - drag.x0).max(0.0);
             match drag.zone {
@@ -233,6 +329,55 @@ impl Editor {
         project: &mut Project,
         effects: &mut Vec<Effect>,
     ) -> bool {
+        if let Some(press) = self.ruler_press.take() {
+            use crate::ruler::{MARKS_ROW, On, Zone, lane_of};
+            match (press.on, press.ghost) {
+                // A drag that never became one. On a mark or a band
+                // that is a selection, which the press already made;
+                // on empty lane it is a request for a new one, at a
+                // single point.
+                (On::Lane { row }, None) => {
+                    let edit = if row == MARKS_ROW {
+                        Edit::AddMarker(String::new(), press.from, lane_of(row))
+                    } else {
+                        // A region needs a length to exist. One bar,
+                        // so a click makes something you can see and
+                        // then drag, rather than something invisible.
+                        let bar = 4.0 * 60.0 / 120.0;
+                        Edit::AddRegion(String::new(), press.from, press.from + bar, lane_of(row))
+                    };
+                    effects.push(Effect::Send(edit));
+                }
+                (On::Lane { row }, Some((from, to))) => {
+                    let edit = if row == MARKS_ROW {
+                        // Dragging in the marks lane still makes one
+                        // mark: a marker is a position, and there is
+                        // no second end for the drag to have set.
+                        Edit::AddMarker(String::new(), from, lane_of(row))
+                    } else {
+                        Edit::AddRegion(String::new(), from, to, lane_of(row))
+                    };
+                    effects.push(Effect::Send(edit));
+                }
+                (On::Marker { id }, Some((to, _))) => {
+                    effects.push(Effect::Send(Edit::MoveMarker(String::new(), id, to)));
+                }
+                (On::Region { id, zone }, Some((from, to))) => {
+                    // Every zone sets both bounds, because REAPER's
+                    // setter takes both — the zone decided which of
+                    // them the drag was allowed to move.
+                    let _ = zone;
+                    effects.push(Effect::Send(Edit::SetRegionBounds(
+                        String::new(),
+                        id,
+                        from,
+                        to,
+                    )));
+                }
+                (On::Marker { .. } | On::Region { .. }, None) | (On::Bars, _) => {}
+            }
+            return true;
+        }
         if let Some(press) = self.item_press.take() {
             match press.ghost {
                 None => self.select(&press.guid, !keys.ctrl, project, effects),
@@ -460,6 +605,23 @@ impl Editor {
             }
             Action::SplitAtCursor => self.split_at(self.cursor.at, project, effects),
             Action::DeleteSelectedItems => {
+                // The ruler first, and exclusively: a mark or a band
+                // taken hold of is what the key means, and deleting
+                // items as well would take away a selection the user
+                // had stopped looking at.
+                if let Some(on) = self.ruler_selection.take() {
+                    use crate::ruler::On;
+                    match on {
+                        On::Marker { id } => {
+                            effects.push(Effect::Send(Edit::RemoveMarker(String::new(), id)));
+                        }
+                        On::Region { id, .. } => {
+                            effects.push(Effect::Send(Edit::RemoveRegion(String::new(), id)));
+                        }
+                        On::Lane { .. } | On::Bars => {}
+                    }
+                    return true;
+                }
                 let doomed: Vec<String> = self.selected.drain().collect();
                 if doomed.is_empty() {
                     return true;
@@ -729,7 +891,7 @@ mod tests {
 
     /// Two tracks, three items: a project small enough to reason about
     /// and big enough to split, move and select across.
-    fn project() -> Project {
+    pub(super) fn project() -> Project {
         let track = |guid: &str, index: u32| Track {
             guid: guid.to_owned(),
             name: guid.to_uppercase(),
@@ -801,7 +963,7 @@ mod tests {
         }
 
         fn hit(&self, x: f64, y: f64) -> Hit {
-            crate::hit::arrangement(&self.scene, self.view(), 0, x, y)
+            crate::hit::arrangement(&self.scene, self.view(), 0, &[], &[], x, y)
         }
 
         fn at(&self, x: f64) -> f64 {
@@ -861,7 +1023,7 @@ mod tests {
         }
     }
 
-    fn record(project: &Project, rows: &[(Track, u32)]) -> Arrangement {
+    pub(super) fn record(project: &Project, rows: &[(Track, u32)]) -> Arrangement {
         let palette = Palette::from_theme(&daw_ui::theming::Theme::dark());
         let font = crate::text::Font::embedded().expect("the embedded font");
         Arrangement::build(
@@ -873,7 +1035,7 @@ mod tests {
         )
     }
 
-    fn sends(effects: &[Effect]) -> Vec<&Edit> {
+    pub(super) fn sends(effects: &[Effect]) -> Vec<&Edit> {
         effects
             .iter()
             .filter_map(|e| match e {
@@ -1104,5 +1266,194 @@ mod tests {
         let mut s = Stage::new();
         let (handled, effects) = s.key(Action::Unbound("40059".into()));
         assert!(!handled && effects.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod ruler_tests {
+    use super::{Edit, Editor, Effect};
+    use crate::mousemap::Mods;
+    use crate::ruler::{MARKS_ROW, On, SECTIONS_ROW, Zone, lane_of};
+
+    /// The press, the drag, the release — the whole gesture, without a
+    /// window.
+    fn gesture(
+        editor: &mut Editor,
+        on: On,
+        from: f64,
+        was: (f64, f64),
+        to: Option<f64>,
+    ) -> Vec<Edit> {
+        use crate::hit::{Hit, Target};
+        use input_config_proto::MouseModifierContext as Context;
+        let mut effects = Vec::new();
+        editor.ruler_span = Some(was);
+        let hit = Hit {
+            target: Target::Ruler { seconds: from, on },
+            context: Context::Ruler,
+        };
+        let project = super::tests::project();
+        let rows: Vec<(super::Track, u32)> =
+            project.tracks.iter().cloned().map(|t| (t, 0)).collect();
+        let scene = super::tests::record(&project, &rows);
+        editor.press(Some(hit), Mods::default(), &scene, &mut effects);
+        if let Some(to) = to {
+            // A pixel scale coarse enough that any move clears the slop.
+            editor.moved(Some(to), 100.0, 120.0, Mods::default());
+        }
+        let mut project = super::tests::project();
+        effects.clear();
+        editor.release(to, Mods::default(), &mut project, &mut effects);
+        super::tests::sends(&effects).into_iter().cloned().collect()
+    }
+
+    /// The lane decides what a press makes. That is the whole reason
+    /// there is no tool to pick: the ruler already says what you meant.
+    #[test]
+    fn the_lane_decides_what_gets_made() {
+        let mut editor = Editor::default();
+        let made = gesture(
+            &mut editor,
+            On::Lane { row: MARKS_ROW },
+            4.0,
+            (4.0, 4.0),
+            None,
+        );
+        assert!(
+            matches!(made.as_slice(), [Edit::AddMarker(_, at, lane)]
+                if (*at - 4.0).abs() < 1e-9 && *lane == lane_of(MARKS_ROW)),
+            "the marks lane should make a marker, got {made:?}"
+        );
+
+        let mut editor = Editor::default();
+        let made = gesture(
+            &mut editor,
+            On::Lane { row: SECTIONS_ROW },
+            4.0,
+            (4.0, 4.0),
+            None,
+        );
+        assert!(
+            matches!(made.as_slice(), [Edit::AddRegion(_, from, to, lane)]
+                if (*from - 4.0).abs() < 1e-9 && *to > *from && *lane == lane_of(SECTIONS_ROW)),
+            "the sections lane should make a region with a length, got {made:?}"
+        );
+    }
+
+    /// Dragging a band's end moves that end and leaves the other.
+    ///
+    /// The negative control is the other end: a resize that moved both
+    /// is a move, and the user asked for a resize.
+    #[test]
+    fn dragging_an_end_leaves_the_other_alone() {
+        let mut editor = Editor::default();
+        let made = gesture(
+            &mut editor,
+            On::Region {
+                id: 7,
+                zone: Zone::End,
+            },
+            16.0,
+            (8.0, 16.0),
+            Some(24.0),
+        );
+        let [Edit::SetRegionBounds(_, id, from, to)] = made.as_slice() else {
+            panic!("expected one bounds edit, got {made:?}");
+        };
+        assert_eq!(*id, 7);
+        assert!((*from - 8.0).abs() < 1e-9, "the start moved to {from}");
+        assert!((*to - 24.0).abs() < 1e-9, "the end went to {to}");
+    }
+
+    /// Dragging a band's body moves both ends and keeps its length.
+    #[test]
+    fn dragging_a_body_keeps_the_length() {
+        let mut editor = Editor::default();
+        let made = gesture(
+            &mut editor,
+            On::Region {
+                id: 7,
+                zone: Zone::Body,
+            },
+            10.0,
+            (8.0, 16.0),
+            Some(18.0),
+        );
+        let [Edit::SetRegionBounds(_, _, from, to)] = made.as_slice() else {
+            panic!("expected one bounds edit, got {made:?}");
+        };
+        assert!(
+            ((to - from) - 8.0).abs() < 1e-9,
+            "the band changed length: {from}..{to}"
+        );
+        assert!(
+            (*from - 16.0).abs() < 1e-9,
+            "it moved by the drag, to {from}"
+        );
+    }
+
+    /// A marker has one end, so a drag moves the only thing it has.
+    #[test]
+    fn dragging_a_marker_moves_it() {
+        let mut editor = Editor::default();
+        let made = gesture(
+            &mut editor,
+            On::Marker { id: 3 },
+            8.0,
+            (8.0, 8.0),
+            Some(12.0),
+        );
+        assert!(
+            matches!(made.as_slice(), [Edit::MoveMarker(_, 3, at)] if (*at - 12.0).abs() < 1e-9),
+            "got {made:?}"
+        );
+    }
+
+    /// A press on a mark or a band that never moved is a selection,
+    /// not an edit. Anything else would mean you could not point at
+    /// something without changing it.
+    #[test]
+    fn a_press_that_never_moved_changes_nothing() {
+        let mut editor = Editor::default();
+        let made = gesture(&mut editor, On::Marker { id: 3 }, 8.0, (8.0, 8.0), None);
+        assert!(made.is_empty(), "a click should not edit: {made:?}");
+        assert_eq!(editor.ruler_selection, Some(On::Marker { id: 3 }));
+    }
+
+    /// Delete takes what the ruler has hold of, and nothing else.
+    #[test]
+    fn delete_takes_the_ruler_selection_first() {
+        let mut editor = Editor::default();
+        editor.ruler_selection = Some(On::Region {
+            id: 9,
+            zone: Zone::Body,
+        });
+        editor.selected.insert("an-item".into());
+        let mut project = super::tests::project();
+        let rows: Vec<(super::Track, u32)> =
+            project.tracks.iter().cloned().map(|t| (t, 0)).collect();
+        let scene = super::tests::record(&project, &rows);
+        let mut tracks: Vec<super::Track> = project.tracks.clone();
+        let row_to_track = crate::plan::Rows::of(&[], &tracks);
+        let mut effects = Vec::new();
+        editor.key(
+            crate::keys::Action::DeleteSelectedItems,
+            &mut project,
+            &scene,
+            &rows,
+            &mut tracks,
+            &row_to_track,
+            120.0,
+            &mut effects,
+        );
+        let made: Vec<&Edit> = super::tests::sends(&effects);
+        assert!(
+            matches!(made.as_slice(), [Edit::RemoveRegion(_, 9)]),
+            "got {made:?}"
+        );
+        assert!(
+            editor.selected.contains("an-item"),
+            "the item selection was taken as well"
+        );
     }
 }

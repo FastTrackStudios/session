@@ -880,6 +880,12 @@ impl ApplicationHandler for App {
                     // through the mouse map, to the editor.
                     if let Some(scene) = self.scene.as_ref() {
                         let hit = self.arrange_hit_at(x, y);
+                        // How wide the band under the pointer is. The
+                        // hit map knows WHICH band; only the window has
+                        // the list to ask how far it runs, and a drag
+                        // has to move it from where it was rather than
+                        // from where the last frame left it.
+                        self.editor.ruler_span = self.ruler_span_of(hit);
                         let mut effects = Vec::new();
                         if self.editor.press(hit, self.keys, scene, &mut effects) {
                             self.run(effects);
@@ -1678,10 +1684,18 @@ impl App {
         }
         let scene = self.scene.as_ref()?;
         let modes = session::modes::Mode::ALL.len();
+        let (sections, markers) = self
+            .session
+            .as_ref()
+            .map_or((&[] as &[_], &[] as &[_]), |(project, _)| {
+                (project.0.sections.as_slice(), project.0.markers.as_slice())
+            });
         Some(session_daw::hit::arrangement(
             scene,
             self.viewport(),
             modes,
+            sections,
+            markers,
             x,
             y,
         ))
@@ -2462,12 +2476,37 @@ impl App {
         .map(|item| item.act)
     }
 
+    /// The span of the band a hit landed on, in seconds.
+    fn ruler_span_of(&self, hit: Option<session_daw::hit::Hit>) -> Option<(f64, f64)> {
+        let session_daw::hit::Target::Ruler { on, .. } = hit?.target else {
+            return None;
+        };
+        let (project, _) = self.session.as_ref()?;
+        match on {
+            session_daw::ruler::On::Region { id, .. } => project
+                .0
+                .sections
+                .iter()
+                .find(|section| section.id == id)
+                .map(|section| (section.start, section.end)),
+            session_daw::ruler::On::Marker { id } => project
+                .0
+                .markers
+                .iter()
+                .find(|marker| marker.idx == id)
+                .map(|marker| (marker.at, marker.at)),
+            session_daw::ruler::On::Lane { .. } | session_daw::ruler::On::Bars => None,
+        }
+    }
+
     /// The mode under a point in the corner above the track panel.
     fn mode_action_at(&self, x: f64, y: f64) -> Option<session_daw::rails::Action> {
         let modes = session::modes::Mode::ALL;
         let scene = self.scene.as_ref()?;
         let view = self.viewport();
-        let hit = session_daw::hit::arrangement(scene, view, modes.len(), x, y);
+        // Only the corner is being asked about, so the ruler's lists
+        // are beside the point here.
+        let hit = session_daw::hit::arrangement(scene, view, modes.len(), &[], &[], x, y);
         match hit.target {
             session_daw::hit::Target::Mode(index) => modes
                 .get(index)
@@ -3489,6 +3528,19 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         | Edit::SetGroupMembership(..)
         | Edit::SetGroupFlags(..)
         | Edit::SetGroupModifier(..) => {}
+        // The ruler's, not a track's. Nothing is predicted: a marker
+        // or a region is drawn from the project snapshot, which the
+        // refresh re-reads the moment the engine has it. A ghost
+        // during the drag is the window's own, and it is drawn by the
+        // ruler rather than patched into the list here.
+        Edit::AddMarker(..)
+        | Edit::MoveMarker(..)
+        | Edit::RenameMarker(..)
+        | Edit::RemoveMarker(..)
+        | Edit::AddRegion(..)
+        | Edit::SetRegionBounds(..)
+        | Edit::RenameRegion(..)
+        | Edit::RemoveRegion(..) => {}
         // An item's, not the track's: applied to the project copy where
         // the drag ends — see `commit_fade`.
         Edit::SetFadeIn(..)

@@ -115,6 +115,38 @@ pub enum Edit {
     /// One of the per-slot modifiers that is not a lead/follow pair:
     /// reversed volume, no-lead-when-follow, and the rest.
     SetGroupModifier(String, u32, daw_proto::track::GroupModifier, bool),
+    // ── The ruler ────────────────────────────────────────────────
+    //
+    // Markers and regions are addressed by REAPER's own number rather
+    // than by a guid, because that is the only identity the live API
+    // offers — there IS a guid in the project file and the live API
+    // never fills it. The number is not stable across REAPER's
+    // renumber action, which is why the event stream reports a
+    // renumbering as one rather than as a deletion: a window holding
+    // one of these can follow it rather than lose it.
+    //
+    // The guid field every other edit carries is empty here. These are
+    // not about a track.
+    /// Put a marker at a time, in a ruler lane.
+    AddMarker(String, f64, u32),
+    /// Move a marker to a time.
+    MoveMarker(String, u32, f64),
+    /// Rename one.
+    RenameMarker(String, u32, String),
+    /// Take it away.
+    RemoveMarker(String, u32),
+    /// Make a region spanning two times, in a ruler lane.
+    ///
+    /// A region in the SECTIONS lane IS a song section — the song
+    /// model reads the arrangement from that lane — so this is how a
+    /// verse comes into being.
+    AddRegion(String, f64, f64, u32),
+    /// Set both of a region's bounds. Both together because REAPER's
+    /// setter takes both, and because dragging one end of a band the
+    /// user can see is a change to the band.
+    SetRegionBounds(String, u32, f64, f64),
+    RenameRegion(String, u32, String),
+    RemoveRegion(String, u32),
     /// An ITEM's fade-in: its length in seconds and its shape. The guid
     /// is the item's, not a track's.
     SetFadeIn(String, f64, daw_proto::item::FadeShape),
@@ -161,6 +193,14 @@ impl Edit {
             | Self::SetGroupMembership(g, ..)
             | Self::SetGroupFlags(g, ..)
             | Self::SetGroupModifier(g, ..)
+            | Self::AddMarker(g, ..)
+            | Self::MoveMarker(g, ..)
+            | Self::RenameMarker(g, ..)
+            | Self::RemoveMarker(g, ..)
+            | Self::AddRegion(g, ..)
+            | Self::SetRegionBounds(g, ..)
+            | Self::RenameRegion(g, ..)
+            | Self::RemoveRegion(g, ..)
             | Self::SetFadeIn(g, ..)
             | Self::SetFadeOut(g, ..)
             | Self::SelectItem(g, _)
@@ -175,6 +215,23 @@ impl Edit {
 
     /// Whether this is about an item rather than a track.
     #[must_use]
+    /// Whether this edit is about the ruler rather than a track or an
+    /// item. Its guid field is empty; it is addressed by number.
+    #[must_use]
+    pub const fn is_ruler(&self) -> bool {
+        matches!(
+            self,
+            Self::AddMarker(..)
+                | Self::MoveMarker(..)
+                | Self::RenameMarker(..)
+                | Self::RemoveMarker(..)
+                | Self::AddRegion(..)
+                | Self::SetRegionBounds(..)
+                | Self::RenameRegion(..)
+                | Self::RemoveRegion(..)
+        )
+    }
+
     pub const fn is_item(&self) -> bool {
         matches!(
             self,
@@ -766,6 +823,41 @@ async fn apply(edit: &Edit) {
         }
         return;
     }
+    if edit.is_ruler() {
+        let markers = project.markers();
+        let regions = project.regions();
+        let outcome = match edit {
+            Edit::AddMarker(_, at, lane) => match markers.add(*at, "").await {
+                // The lane is a second call because REAPER's add takes
+                // no lane. A marker that landed in the wrong lane would
+                // be a mark in the sections row, which is a section
+                // that is not one.
+                Ok(id) => markers.set_lane(id, Some(*lane)).await,
+                Err(error) => Err(error),
+            },
+            Edit::MoveMarker(_, id, at) => markers.move_to(*id, at.max(0.0)).await,
+            Edit::RenameMarker(_, id, name) => markers.rename(*id, name).await,
+            Edit::RemoveMarker(_, id) => markers.remove(*id).await,
+            Edit::AddRegion(_, from, to, lane) => {
+                let (from, to) = ordered(*from, *to);
+                match regions.add(from, to, "").await {
+                    Ok(id) => regions.set_lane(id, Some(*lane)).await,
+                    Err(error) => Err(error),
+                }
+            }
+            Edit::SetRegionBounds(_, id, from, to) => {
+                let (from, to) = ordered(*from, *to);
+                regions.set_bounds(*id, from, to).await
+            }
+            Edit::RenameRegion(_, id, name) => regions.rename(*id, name).await,
+            Edit::RemoveRegion(_, id) => regions.remove(*id).await,
+            _ => Ok(()),
+        };
+        if let Err(error) = outcome {
+            tracing::warn!(error = %error, edit = ?edit, "the engine refused a ruler edit");
+        }
+        return;
+    }
     let Ok(Some(track)) = project.tracks().by_guid(edit.guid()).await else {
         // The track went away between the click and the apply — a
         // project reload, or another client removing it. Nothing to
@@ -807,13 +899,31 @@ async fn apply(edit: &Edit) {
         | Edit::MoveItem(..)
         | Edit::TrimItem(..)
         | Edit::SplitItem(..)
-        | Edit::DeleteItem(_) => Ok(()),
+        | Edit::DeleteItem(_)
+        // Already handled above, where they did not need a track.
+        | Edit::AddMarker(..)
+        | Edit::MoveMarker(..)
+        | Edit::RenameMarker(..)
+        | Edit::RemoveMarker(..)
+        | Edit::AddRegion(..)
+        | Edit::SetRegionBounds(..)
+        | Edit::RenameRegion(..)
+        | Edit::RemoveRegion(..) => Ok(()),
     };
     if let Err(error) = outcome {
         // One line, because a failed edit is a thing the user did that
         // did not happen — silence here is how a mixer starts lying.
         tracing::warn!(error = %error, edit = ?edit, "the engine refused an edit");
     }
+}
+
+/// Two times, in order, with a floor at zero.
+///
+/// A region dragged right to left is the region the user drew; a
+/// region with its end before its start is one REAPER will refuse.
+fn ordered(a: f64, b: f64) -> (f64, f64) {
+    let (from, to) = if a <= b { (a, b) } else { (b, a) };
+    (from.max(0.0), to.max(0.0))
 }
 
 /// The track an item is on, by guid — the facade's item list carries

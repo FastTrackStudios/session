@@ -53,12 +53,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("FTS_REAPER_RESOURCES", &resources_dir);
     }
 
-    // Covers the WHOLE run, not one binary. The default fits a single
-    // test binary and these suites open project tabs.
+    // These tests talk to a REAPER that is already up: a few RPCs and
+    // a poll tick each, seconds for the lot. The timeout is not a
+    // budget, it is what a HUNG run costs before it admits it. Raise it
+    // by name when something genuinely needs longer:
+    // `REAPER_TEST_TIMEOUT_SECS=600 just reaper-test`.
     let timeout_secs: u64 = std::env::var("REAPER_TEST_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(600);
+        .unwrap_or(90);
     let mut runner = TestRunner::new(&resources_dir).with_timeout(timeout_secs);
     if gui {
         runner = runner.with_headless(false);

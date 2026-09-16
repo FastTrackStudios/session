@@ -490,3 +490,150 @@ fn line_every(
         }
     }
 }
+
+// ─── What the pointer is on ─────────────────────────────────────────
+
+/// Which part of a region the pointer is over.
+///
+/// The same three the arrangement uses for an item, and for the same
+/// reason: a band's ends mean "change where it stops" and its middle
+/// means "move the whole thing", and a user expects that everywhere
+/// something has a start and an end.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Zone {
+    Start,
+    Body,
+    End,
+}
+
+/// What a press on the ruler landed on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum On {
+    /// A marker's flag, by REAPER's marker number.
+    Marker { id: u32 },
+    /// A region band, by REAPER's region number.
+    Region { id: u32, zone: Zone },
+    /// A lane with nothing on it at that time. The LANE is what a press
+    /// here will create in: the marks lane makes a marker, a region
+    /// lane makes a region. That is the whole reason there is no tool
+    /// to choose — the ruler already says what you meant.
+    Lane { row: usize },
+    /// The bars, under the lanes: the timeline itself.
+    Bars,
+}
+
+/// How near a region's edge takes hold of the edge rather than the body.
+///
+/// In pixels, not seconds, because it is a question about the pointer
+/// and not about the music — at a far zoom a whole bar can be a pixel,
+/// and a grip measured in time would swallow the band.
+const EDGE_GRIP: f64 = 4.0;
+
+/// The lane a y falls in, or `None` if it is in the bars.
+#[must_use]
+pub fn lane_at(y: f64, top: f64) -> Option<usize> {
+    let row = ((y - top) / LANE_H).floor();
+    if row < 0.0 {
+        return None;
+    }
+    let row = crate::num::index(row);
+    (row < LANES).then_some(row)
+}
+
+/// What is under a point on the ruler.
+///
+/// Takes the same lists the drawing takes, so what you click is what
+/// you see — a second geometry would drift from the first the day
+/// either changed.
+///
+/// A marker is a flag, so it is hit by nearness in PIXELS rather than
+/// by containing the time: it has no width to be inside of.
+#[must_use]
+pub fn on(
+    x: f64,
+    y: f64,
+    top: f64,
+    left: f64,
+    pps: f64,
+    scroll_x: f64,
+    sections: &[daw_ui::studio::project::Section],
+    markers: &[daw_ui::studio::project::Marker],
+) -> On {
+    let Some(row) = lane_at(y, top) else {
+        return On::Bars;
+    };
+    let x_of = |t: f64| t.mul_add(pps, left - scroll_x);
+
+    // Markers first: a flag drawn over a band is a flag you can take
+    // hold of, and the drawing puts them on top.
+    let mut nearest: Option<(f64, u32)> = None;
+    for marker in markers {
+        if lane_row(marker.lane) != row {
+            continue;
+        }
+        let away = (x_of(marker.at) - x).abs();
+        if away <= MARKER_GRIP && nearest.is_none_or(|(best, _)| away < best) {
+            nearest = Some((away, marker.idx));
+        }
+    }
+    if let Some((_, id)) = nearest {
+        return On::Marker { id };
+    }
+
+    for section in sections {
+        if lane_row(section.lane) != row {
+            continue;
+        }
+        let (x0, x1) = (x_of(section.start), x_of(section.end));
+        if x < x0 || x > x1 {
+            continue;
+        }
+        // A band too narrow to have a middle is all body: offering an
+        // edge grip on something four pixels wide means the user can
+        // never move it.
+        let zone = if x1 - x0 < EDGE_GRIP * 3.0 {
+            Zone::Body
+        } else if x - x0 <= EDGE_GRIP {
+            Zone::Start
+        } else if x1 - x <= EDGE_GRIP {
+            Zone::End
+        } else {
+            Zone::Body
+        };
+        return On::Region {
+            id: section.id,
+            zone,
+        };
+    }
+
+    On::Lane { row }
+}
+
+/// How near a marker's flag counts as being on it, in pixels.
+///
+/// Wider than the flag is drawn. A marker is a position, and a position
+/// has no width — asking the user to hit two pixels is asking them to
+/// miss.
+const MARKER_GRIP: f64 = 6.0;
+
+/// Which lane makes markers, by the FTS convention.
+///
+/// The third: SONG, SECTIONS, MARKS. A press in it creates a marker;
+/// a press in either of the others creates a region.
+pub const MARKS_ROW: usize = 2;
+
+/// Which lane makes a song section.
+///
+/// The second. A region here IS a section — that is the rule the song
+/// model reads the arrangement by, so it is the one this file has to
+/// agree with.
+pub const SECTIONS_ROW: usize = 1;
+
+/// The lane number to store for a row.
+///
+/// The inverse of `lane_row`: REAPER counts ruler lanes from one, with
+/// zero meaning the default lane, and the rows here count from zero.
+#[must_use]
+pub const fn lane_of(row: usize) -> u32 {
+    row as u32 + 1
+}

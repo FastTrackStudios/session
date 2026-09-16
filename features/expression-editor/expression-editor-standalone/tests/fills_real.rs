@@ -209,7 +209,20 @@ fn fills_land_where_a_drummer_puts_them() {
         eprintln!("skipping: {BASE} not mounted");
         return;
     }
-    let found: Vec<Found> = SONGS.iter().filter_map(|s| analyse(s)).collect();
+    // Six songs, each a real project opened off disk. Analysed one
+    // after another they were most of this suite's wall clock, and the
+    // six have nothing to say to each other — the only reason they
+    // were sequential is that a `for` loop is what one writes first.
+    let found: Vec<Found> = std::thread::scope(|scope| {
+        let handles: Vec<_> = SONGS
+            .iter()
+            .map(|song| scope.spawn(move || analyse(song)))
+            .collect();
+        handles
+            .into_iter()
+            .filter_map(|handle| handle.join().ok().flatten())
+            .collect()
+    });
     assert!(!found.is_empty(), "no album project loaded as a drum kit");
 
     for f in &found {

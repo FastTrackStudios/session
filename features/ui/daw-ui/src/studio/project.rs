@@ -21,6 +21,14 @@ use daw_proto::{Item, Track};
 /// A song section — REAPER's regions, the coloured bands over the ruler.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Section {
+    /// REAPER's own region number — what addresses it for an edit.
+    ///
+    /// Not the index in this list, and not stable across a renumber:
+    /// markers and regions are one list in REAPER wearing one set of
+    /// numbers, and its renumber action reassigns them. The event
+    /// stream reports that as `Renumbered` rather than as a deletion,
+    /// so a window holding this can follow it.
+    pub id: u32,
     pub start: f64,
     pub end: f64,
     pub name: String,
@@ -155,6 +163,7 @@ pub async fn fetch() -> Option<Project> {
         .unwrap_or_default()
         .iter()
         .map(|r| Section {
+            id: r.id.unwrap_or_default(),
             start: r.time_range.start_seconds(),
             end: r.time_range.end_seconds(),
             name: r.name.clone(),

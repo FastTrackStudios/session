@@ -174,12 +174,47 @@ fn every_scene_renders_to_its_committed_fixture() -> Result<()> {
     let scenes_dir = fixtures().join("scenes");
     let scratch = tempfile::tempdir()?;
     let mut failures = Vec::new();
-    for scene in pictured() {
-        let committed_png = scenes_dir.join(format!("{}.png", scene.slug));
-        let committed_rows = scenes_dir.join(format!("{}.rows", scene.slug));
-        let fresh_png = scratch.path().join(format!("{}.png", scene.slug));
-        let fresh_rows = scratch.path().join(format!("{}.rows", scene.slug));
-        render(&scene.slug, &fresh_png, &fresh_rows)?;
+
+    // Render every scene at once, then compare them.
+    //
+    // Each render is its own process drawing a 2560x1440 frame, and
+    // done one after another the twelve of them were nearly a minute —
+    // most of the whole suite's wall clock, for a test that spends it
+    // waiting. nextest gives a test one process, so the parallelism has
+    // to be asked for here.
+    //
+    // The comparison stays sequential and in scene order, so a failure
+    // reads the same way it always did.
+    let rendered: Vec<(String, PathBuf, PathBuf)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = pictured()
+            .into_iter()
+            .map(|scene| {
+                let fresh_png = scratch.path().join(format!("{}.png", scene.slug));
+                let fresh_rows = scratch.path().join(format!("{}.rows", scene.slug));
+                scope.spawn(move || {
+                    // Stringified here rather than carried out: the
+                    // boxed error a render returns is not `Send`, and
+                    // what a failing render has to say is its message.
+                    render(&scene.slug, &fresh_png, &fresh_rows)
+                        .map(|()| (scene.slug.to_owned(), fresh_png, fresh_rows))
+                        .map_err(|e| format!("{}: {e}", scene.slug))
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| "a scene render panicked".to_owned())?
+            })
+            .collect::<std::result::Result<Vec<_>, String>>()
+    })
+    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+    for (scene, fresh_png, fresh_rows) in rendered {
+        let committed_png = scenes_dir.join(format!("{scene}.png"));
+        let committed_rows = scenes_dir.join(format!("{scene}.rows"));
         if update {
             std::fs::copy(&fresh_png, &committed_png)?;
             std::fs::copy(&fresh_rows, &committed_rows)?;
@@ -188,7 +223,7 @@ fn every_scene_renders_to_its_committed_fixture() -> Result<()> {
         if !committed_png.is_file() || !committed_rows.is_file() {
             failures.push(format!(
                 "{}: no committed fixture beside {}",
-                scene.slug,
+                scene,
                 committed_png.display()
             ));
             continue;
@@ -207,33 +242,27 @@ fn every_scene_renders_to_its_committed_fixture() -> Result<()> {
             failures.push(format!(
                 "{}: the scene resolves to a different row list ({} rows, committed {}); \
                  first difference at row {n}:\n    resolved:  {a}\n    committed: {b}",
-                scene.slug,
+                scene,
                 fresh.lines().count(),
                 committed.lines().count()
             ));
         }
         if fresh.lines().count() == 0 {
-            failures.push(format!(
-                "{}: the scene resolves to no rows at all",
-                scene.slug
-            ));
+            failures.push(format!("{}: the scene resolves to no rows at all", scene));
         }
 
         // And the picture, structurally.
         let (w, h, a) = pixels(&fresh_png)?;
         let (cw, ch, b) = pixels(&committed_png)?;
         if (w, h) != (cw, ch) {
-            failures.push(format!(
-                "{}: rendered {w}x{h}, committed {cw}x{ch}",
-                scene.slug
-            ));
+            failures.push(format!("{}: rendered {w}x{h}, committed {cw}x{ch}", scene));
             continue;
         }
         let used = colours(&a);
         if used < MIN_COLOURS {
             failures.push(format!(
                 "{}: rendered {used} colours — a scene that resolves to nothing visible",
-                scene.slug
+                scene
             ));
             continue;
         }
@@ -243,12 +272,12 @@ fn every_scene_renders_to_its_committed_fixture() -> Result<()> {
             // leave six hundred kilobytes of untracked PNG beside the
             // committed ones, where the next `add -A` would sweep them
             // in.
-            let kept = std::env::temp_dir().join(format!("fts-scene-{}.fresh.png", scene.slug));
+            let kept = std::env::temp_dir().join(format!("fts-scene-{}.fresh.png", scene));
             std::fs::copy(&fresh_png, &kept)?;
             failures.push(format!(
                 "{}: {structural} pixels differ structurally (worst channel by {worst} of 255); \
                  fresh render kept at {}",
-                scene.slug,
+                scene,
                 kept.display()
             ));
         }

@@ -37,8 +37,14 @@ pub enum Target {
     Rail { side: Side, index: usize },
     /// A mode button in the corner above the track panel.
     Mode(usize),
-    /// The timeline ruler, at this many seconds.
-    Ruler { seconds: f64 },
+    /// The timeline ruler, at this many seconds, and what is under the
+    /// pointer there — a mark, a band, an empty lane, or the bars.
+    ///
+    /// The LANE is what a press on empty space creates in: the marks
+    /// lane makes a marker, a region lane makes a region. That is why
+    /// there is no tool to choose — the ruler already says what you
+    /// meant by where you pressed.
+    Ruler { seconds: f64, on: crate::ruler::On },
     /// A track's row in the panel, or its strip in the mixer.
     Track { row: usize },
     /// The lane area of a row, at a time.
@@ -111,6 +117,8 @@ pub fn arrangement(
     scene: &crate::arrangement::Arrangement,
     view: crate::arrangement::Viewport,
     modes: usize,
+    sections: &[daw_ui::studio::project::Section],
+    markers: &[daw_ui::studio::project::Marker],
     x: f64,
     y: f64,
 ) -> Hit {
@@ -130,11 +138,23 @@ pub fn arrangement(
         return Hit::new(Target::Mode(index), Context::Custom("mode"));
     }
 
-    // The ruler: the rest of that band.
+    // The ruler: the rest of that band. Asked what is under the
+    // pointer with the same lists the ruler DRAWS from, so a press
+    // lands on what it looks like it landed on.
     if y >= rail_y && y < rail_y + crate::ruler::RULER_H {
         return Hit::new(
             Target::Ruler {
                 seconds: seconds_at(x - rail_x, view),
+                on: crate::ruler::on(
+                    x,
+                    y,
+                    rail_y,
+                    rail_x + crate::arrangement::TCP_WIDTH,
+                    view.pps,
+                    view.scroll_x,
+                    sections,
+                    markers,
+                ),
             },
             Context::Ruler,
         );
