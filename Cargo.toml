@@ -8,6 +8,7 @@
 resolver = "3"
 
 members = [
+    "apps/session-reaper-xtask",
     "libs/vendor/dioxus-native-dom",
     "features/expression-editor/expression-editor-audio",
     "features/expression-editor/expression-editor-core",
