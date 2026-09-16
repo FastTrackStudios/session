@@ -40,6 +40,12 @@ fn containing<'a>(all: &'a [Gang], guid: &str) -> Vec<&'a Gang> {
 /// how a caller can tell a real gesture from its own reflection without
 /// an origin field on the event.
 ///
+/// # Errors
+///
+/// When a member's arm cannot be written. The caller sees the first
+/// failure rather than a partly-armed gang reported as a success: half
+/// a gang armed is the state this exists to prevent.
+///
 /// r[impl flow.scenes.performer-rig]
 /// r[impl flow.scenes.groups]
 pub fn follow_arm<D: Tracks + ?Sized>(
@@ -56,11 +62,11 @@ pub fn follow_arm<D: Tracks + ?Sized>(
             .is_some_and(|track| track.armed)
     };
 
-    let mut wrote = 0;
+    let mut wrote: usize = 0;
     for gang in &mine {
         for member in diff(gang, armed, &current) {
             daw.set_armed(project.clone(), TrackRef::Guid(member.to_owned()), armed)?;
-            wrote += 1;
+            wrote = wrote.saturating_add(1);
         }
     }
     Ok(Followed {

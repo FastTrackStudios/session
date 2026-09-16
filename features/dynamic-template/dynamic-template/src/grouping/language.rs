@@ -51,14 +51,21 @@ fn sung(fact: &Fact) -> Option<Language> {
 
 /// Whether a source should be heard when `active` is the language.
 #[must_use]
-pub const fn audible(language: Language, active: Language) -> bool {
-    matches!(language, Language::All) || matches!(language, l if l as u8 == active as u8)
+pub fn audible(language: Language, active: Language) -> bool {
+    language == Language::All || language == active
 }
 
 /// Set every vocal source's mute from the active language.
 ///
 /// Writes only what differs, so running it twice writes nothing the
 /// second time — the same echo guard as the gangs, for the same reason.
+///
+/// # Errors
+///
+/// When a mute cannot be written: the caller sees the first failure
+/// rather than a partial switch reported as a success, because a
+/// half-applied language is the one state this must never leave behind
+/// quietly.
 ///
 /// r[impl flow.vocals.language.active]
 pub fn follow_language<D: Tracks + ?Sized>(
@@ -79,9 +86,9 @@ pub fn follow_language<D: Tracks + ?Sized>(
         }
         daw.set_muted(project.clone(), TrackRef::Guid(fact.guid.clone()), wanted)?;
         if wanted {
-            out.muted += 1;
+            out.muted = out.muted.saturating_add(1);
         } else {
-            out.unmuted += 1;
+            out.unmuted = out.unmuted.saturating_add(1);
         }
     }
     Ok(out)

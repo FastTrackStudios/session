@@ -32,7 +32,10 @@ pub struct VcaLead {
 /// folder with at least one such descendant gets a lead over exactly
 /// those descendants — the ones it would otherwise not move.
 #[must_use]
-pub fn leads(facts: &[Fact], parent_send: &HashMap<String, bool>) -> Vec<VcaLead> {
+pub fn leads<S: std::hash::BuildHasher>(
+    facts: &[Fact],
+    parent_send: &HashMap<String, bool, S>,
+) -> Vec<VcaLead> {
     let mut out: Vec<VcaLead> = Vec::new();
     let mut open: Vec<(u32, usize)> = Vec::new();
 
@@ -46,7 +49,10 @@ pub fn leads(facts: &[Fact], parent_send: &HashMap<String, bool>) -> Vec<VcaLead
                 folder_name: fact.name.clone(),
                 members: Vec::new(),
             });
-            open.push((fact.depth, out.len() - 1));
+            // The index of the lead just pushed. `saturating_sub` only
+            // to keep the arithmetic total: `out` is never empty here,
+            // since the push above put something in it.
+            open.push((fact.depth, out.len().saturating_sub(1)));
             continue;
         }
 
@@ -55,7 +61,13 @@ pub fn leads(facts: &[Fact], parent_send: &HashMap<String, bool>) -> Vec<VcaLead
         let bypasses = !parent_send.get(&fact.guid).copied().unwrap_or(true);
         if bypasses {
             for (_, at) in &open {
-                out[*at].members.push(fact.guid.clone());
+                // `get_mut` rather than indexing: every open index came
+                // from a push into this same vec, but saying so with a
+                // lookup costs nothing and cannot panic if that ever
+                // stops being true.
+                if let Some(lead) = out.get_mut(*at) {
+                    lead.members.push(fact.guid.clone());
+                }
             }
         }
     }
