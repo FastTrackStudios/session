@@ -165,10 +165,15 @@ pub fn ruler(
     if bar_px <= 0.0 {
         return;
     }
-    // Number every bar while there is room, then every 4, 8, 16 — the
-    // numbers must never collide, and a ruler that drops to "every 5"
-    // stops being countable.
-    let every = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0]
+    // How many bars between numbers. Halves and quarters first, so
+    // zooming IN keeps saying something new — a ruler that stops at
+    // every bar has nothing left to tell you once a bar is half the
+    // window, and you are left counting beats by eye.
+    //
+    // Then whole bars, then every 4, 8, 16: the numbers must never
+    // collide, and a ruler that drops to "every 5" stops being
+    // countable.
+    let every = STEPS
         .into_iter()
         .find(|n| bar_px * n >= 56.0)
         .unwrap_or(256.0);
@@ -197,13 +202,38 @@ pub fn ruler(
                 palette.ruler_fg,
                 // Bars are counted from one; only the arithmetic starts
                 // at zero.
-                &format!("{}", bar + 1.0),
+                &label(bar + 1.0),
                 ox + x + 4.0,
                 oy + 14.0,
                 11.0,
             );
         }
     }
+}
+
+/// How many bars a ruler will put between two numbers.
+///
+/// Fractions first: zooming in has to keep saying something, and once a
+/// bar is half the window a ruler numbering only whole bars has nothing
+/// left to tell you. Then whole bars, then powers of two — the numbers
+/// must never collide, and a ruler that drops to "every 5" stops being
+/// countable.
+const STEPS: [f64; 11] = [
+    0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0,
+];
+
+/// A bar number as it is written.
+///
+/// Whole bars have no decimal, because "1.0" in a row of bar numbers
+/// reads as a measurement rather than a count. A half or a quarter
+/// keeps just the digits it needs: 1.5, not 1.50.
+#[must_use]
+pub fn label(bar: f64) -> String {
+    if (bar - bar.round()).abs() < 1e-9 {
+        return format!("{}", bar.round() as i64);
+    }
+    let text = format!("{bar:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 /// The ruler's lanes: the song, its sections and its marks, over the
@@ -636,4 +666,65 @@ pub const SECTIONS_ROW: usize = 1;
 #[must_use]
 pub const fn lane_of(row: usize) -> u32 {
     row as u32 + 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Bars, STEPS, label};
+
+    /// The ruler counts MEASURES, not seconds.
+    ///
+    /// Pinned because it is the question you cannot answer by looking:
+    /// at 120 bpm in four four a bar is two seconds, so a ruler
+    /// numbering seconds and one numbering bars both count 1, 2, 3 —
+    /// they differ only in WHERE the numbers sit, and by then you are
+    /// counting pixels.
+    #[test]
+    fn the_numbers_are_bars() {
+        let bars = Bars::at(120.0);
+        assert!(
+            (bars.secs_per_bar() - 2.0).abs() < 1e-9,
+            "a bar of four beats at 120 bpm is two seconds, got {}",
+            bars.secs_per_bar()
+        );
+        // Bar 2 begins two seconds in, not two bars in.
+        assert!((1.0 * bars.secs_per_bar() - 2.0).abs() < 1e-9);
+        // And the tempo actually moves them: at 60 bpm a bar is twice
+        // as long, which a seconds ruler would not notice.
+        assert!((Bars::at(60.0).secs_per_bar() - 4.0).abs() < 1e-9);
+    }
+
+    /// Zooming in keeps saying something new.
+    ///
+    /// The steps run below a whole bar, so a bar wider than the window
+    /// still gets numbered inside. Without the fractions the ruler goes
+    /// quiet exactly when you have zoomed in to read it closely.
+    #[test]
+    fn zooming_in_subdivides_the_bar() {
+        let pick = |bar_px: f64| {
+            STEPS
+                .into_iter()
+                .find(|n| bar_px * n >= 56.0)
+                .unwrap_or(256.0)
+        };
+        assert!(pick(400.0) < 1.0, "a wide bar should number inside it");
+        assert_eq!(pick(60.0), 1.0, "a bar just wide enough numbers once");
+        assert!(pick(10.0) > 1.0, "a narrow bar should number less often");
+        // Monotone: zooming in never makes the numbers sparser.
+        let (wide, narrow) = (pick(400.0), pick(100.0));
+        assert!(wide <= narrow, "{wide} should be no coarser than {narrow}");
+    }
+
+    /// A whole bar is written as a count, a fraction as a fraction.
+    ///
+    /// "1.0" in a row of bar numbers reads as a measurement rather than
+    /// a count, and "1.50" reads as a precision nobody asked for.
+    #[test]
+    fn a_bar_number_is_written_as_a_number() {
+        assert_eq!(label(1.0), "1");
+        assert_eq!(label(17.0), "17");
+        assert_eq!(label(1.5), "1.5");
+        assert_eq!(label(3.5), "3.5");
+        assert_eq!(label(2.25), "2.25");
+    }
 }
