@@ -1546,3 +1546,24 @@ ci FROM="lockfile":
 
     echo
     echo "every CI step passed locally"
+
+# Attach the session window to a REAPER that is already running the FTS
+# extension, instead of opening a `.rpp` this window owns.
+#
+# The extension publishes its whole service surface on a Unix socket
+# (`/tmp/fts-daw-<pid>.sock`); this connects to it and installs it as
+# the facade every panel reads through. Pass a socket when more than one
+# REAPER is up — discovery picks one and does not ask.
+#
+# REAPER owns the audio here. No media is materialised, no meters are
+# built and no engine is attached: standing a second engine up beside
+# REAPER's would be two things playing the same project.
+daw-reaper SOCKET="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "{{SOCKET}}" ] && ! ls /tmp/fts-daw-*.sock >/dev/null 2>&1; then
+      echo "No REAPER socket in /tmp. Is REAPER running with the FTS extension?" >&2
+      echo "Build and install it from ../fts-extensions: just reaper build && just reaper install" >&2
+      exit 1
+    fi
+    cargo run --release -p session-daw --bin vello -- --reaper {{SOCKET}}

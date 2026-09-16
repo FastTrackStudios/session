@@ -55,33 +55,53 @@ fn main() {
         )
         .init();
 
-    let Some(path) = project_path() else {
+    let Some(source) = open::source() else {
         eprintln!(
-            "session-daw needs a project.\n\n  \
+            "session-daw needs a project, or a REAPER to attach to.\n\n  \
              cargo run -p session-daw -- <song.rpp>\n  \
+             cargo run -p session-daw -- --reaper [socket]\n  \
              {PRACTICE_ENV}=<song.rpp> cargo run -p session-daw\n\n\
-             `just daw` prepares the practice staging and passes it for you."
+             `just daw` prepares the practice staging and passes it for you;\n\
+             `just daw-reaper` attaches to a running REAPER."
         );
         std::process::exit(2);
     };
 
-    let label = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "project".into());
+    // The title before anything has loaded. The attached case cannot
+    // know the project's name yet — it is about to ask REAPER — so it
+    // says what it is doing rather than inventing one.
+    let label = match &source {
+        open::Source::Own(path) => path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "project".into()),
+        open::Source::Reaper(_) => "REAPER".to_owned(),
+    };
 
     // The project loads on a worker thread while the window is already
     // up. The UI waits for the facade rather than assuming it — see
     // `daw_ui::studio::project::fetch_when_ready`.
     std::thread::Builder::new()
         .name("session-daw-load".into())
-        .spawn(move || match open::open_and_serve(&path) {
-            Ok(opened) => tracing::info!(
-                project.name = opened.name,
-                project.tracks = opened.track_count,
-                "project open"
-            ),
-            Err(e) => tracing::error!(error = %e, "the project did not open"),
+        .spawn(move || match source {
+            open::Source::Own(path) => match open::open_and_serve(&path) {
+                Ok(opened) => tracing::info!(
+                    project.name = opened.name,
+                    project.tracks = opened.track_count,
+                    project.owned = true,
+                    "project open"
+                ),
+                Err(e) => tracing::error!(error = %e, "the project did not open"),
+            },
+            open::Source::Reaper(socket) => match open::attach_to_reaper(socket) {
+                Ok(live) => tracing::info!(
+                    project.name = live.name,
+                    project.tracks = live.track_count,
+                    project.owned = false,
+                    "attached to REAPER"
+                ),
+                Err(e) => tracing::error!(error = %e, "could not attach to REAPER"),
+            },
         })
         .expect("spawn the project loader");
 

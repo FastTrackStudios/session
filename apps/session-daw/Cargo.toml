@@ -89,7 +89,15 @@ saturate-profiles = { workspace = true }
 # source decoding — what makes a real project openable with no REAPER in
 # the picture. `standalone-bootstrap` = the in-process daw-control client
 # every panel reads through.
-daw = { workspace = true, features = ["standalone-rpp", "standalone-bootstrap"] }
+# `cli` is the CLIENT half: vox over a stream plus socket discovery. It
+# pulls no REAPER — attaching to a live one means talking to the
+# extension's Unix socket, not linking its FFI, which is what lets this
+# window run on a machine that has no REAPER at all.
+daw = { workspace = true, features = [
+    "standalone-rpp",
+    "standalone-bootstrap",
+    "cli",
+] }
 
 # The GPU-accelerated arrangement. `anyrender` is the 2D abstraction
 # (`PaintScene`: fill/stroke/draw_glyphs/draw_image) and the portable

@@ -839,7 +839,35 @@ pub fn continuous_for(event: &daw_proto::track::TrackEvent) -> Option<&str> {
     }
 }
 
-pub fn apply_event(tracks: &mut [daw_proto::Track], event: &daw_proto::track::TrackEvent) {
+/// What an event changed.
+///
+/// Worth distinguishing because the two cost different things. A field
+/// is a poke: the row it belongs to redraws and nothing else moves. The
+/// LIST changing invalidates every row map, every offset and the scene
+/// resolved against it, so the caller has to rebuild — and it needs
+/// telling, because it cannot see inside this function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Applied {
+    /// One track's field. Redraw it.
+    Field,
+    /// The track list itself. Rebuild the rows.
+    Structure,
+    /// Nothing this window keeps. Most often an event for a field the
+    /// window does not draw.
+    Nothing,
+}
+
+/// Apply one event to the window's track list.
+///
+/// Takes the `Vec` rather than a slice, and that is the whole reason
+/// structure events used to be dropped here: a slice cannot grow, so
+/// `Added` had nowhere to go and was quietly ignored. A track created
+/// in REAPER did not appear until the window was restarted, and nothing
+/// said so.
+pub fn apply_event(
+    tracks: &mut Vec<daw_proto::Track>,
+    event: &daw_proto::track::TrackEvent,
+) -> Applied {
     use daw_proto::track::TrackEvent as E;
     let find = |tracks: &mut [daw_proto::Track], guid: &str| -> Option<usize> {
         tracks.iter().position(|t| t.guid == guid)
@@ -900,11 +928,55 @@ pub fn apply_event(tracks: &mut [daw_proto::Track], event: &daw_proto::track::Tr
                 tracks[i].input_fx_count = *input_fx_count;
             }
         }
-        // Added and Removed change the track LIST, not a track — the
-        // rows, the offsets and the recorded scenes all follow from it,
-        // so it is a rebuild rather than a field to poke. Ignored here
-        // and handled by whoever owns the scene.
-        _ => {}
+        // ── the list itself ──────────────────────────────────────
+        E::Added(track) => {
+            // Inserted at the track's own index rather than pushed:
+            // REAPER numbers tracks by position, so a track added in the
+            // middle would otherwise sit at the end and every row below
+            // it would name the wrong track.
+            let at = usize::try_from(track.index).unwrap_or(tracks.len());
+            let at = at.min(tracks.len());
+            tracks.insert(at, track.clone());
+            reindex(tracks);
+            return Applied::Structure;
+        }
+        E::Removed(guid) => {
+            let Some(i) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            tracks.remove(i);
+            reindex(tracks);
+            return Applied::Structure;
+        }
+        E::Moved {
+            guid, new_index, ..
+        } => {
+            let Some(from) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            let to = usize::try_from(*new_index)
+                .unwrap_or(from)
+                .min(tracks.len().saturating_sub(1));
+            let track = tracks.remove(from);
+            tracks.insert(to, track);
+            reindex(tracks);
+            return Applied::Structure;
+        }
+        _ => return Applied::Nothing,
+    }
+    Applied::Field
+}
+
+/// Renumber after the list changed.
+///
+/// The index is a track's position, so every track below an insertion
+/// or a removal has a new one. Leaving them stale is worse than it
+/// sounds: the scene engine resolves rows by index, so one stale number
+/// shows the wrong track at the right place — which reads as a
+/// rendering bug rather than a bookkeeping one.
+fn reindex(tracks: &mut [daw_proto::Track]) {
+    for (at, track) in tracks.iter_mut().enumerate() {
+        track.index = u32::try_from(at).unwrap_or(track.index);
     }
 }
 
@@ -1201,5 +1273,132 @@ mod meter_tests {
     fn silence_is_a_number() {
         assert!(meter_fraction(0.0).is_finite());
         assert!(meter_fraction(f32::MIN_POSITIVE).is_finite());
+    }
+}
+
+#[cfg(test)]
+mod structure_tests {
+    use super::{Applied, apply_event};
+    use daw_proto::Track;
+    use daw_proto::track::TrackEvent as E;
+
+    fn kit() -> Vec<Track> {
+        ["Kick", "Snare", "OH"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                Track::new(
+                    (*name).to_owned(),
+                    u32::try_from(i).unwrap_or(0),
+                    (*name).to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    /// **A track created in REAPER appears.** The applier used to take a
+    /// slice, so `Added` had nowhere to go and was dropped — the window
+    /// only caught up when something else triggered a full re-fetch.
+    #[test]
+    fn a_track_added_in_the_daw_lands_in_the_list() {
+        let mut tracks = kit();
+        let added = Track::new("Room".to_owned(), 3, "Room".to_owned());
+        assert_eq!(
+            apply_event(&mut tracks, &E::Added(added)),
+            Applied::Structure
+        );
+        assert_eq!(tracks.len(), 4);
+        assert_eq!(tracks[3].name, "Room");
+    }
+
+    /// **And at its own position, not the end.** REAPER numbers tracks
+    /// by position, so a track inserted in the middle that got appended
+    /// would leave every row below it naming the wrong track.
+    #[test]
+    fn a_track_added_in_the_middle_lands_in_the_middle() {
+        let mut tracks = kit();
+        let added = Track::new("Sub".to_owned(), 1, "Sub".to_owned());
+        apply_event(&mut tracks, &E::Added(added));
+        let names: Vec<&str> = tracks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Kick", "Sub", "Snare", "OH"]);
+    }
+
+    /// The index is a position, so everything below a change is
+    /// renumbered. A stale index shows the wrong track at the right
+    /// place, which reads as a rendering bug rather than a bookkeeping
+    /// one.
+    #[test]
+    fn the_list_is_renumbered_after_it_changes() {
+        let mut tracks = kit();
+        apply_event(
+            &mut tracks,
+            &E::Added(Track::new("Sub".to_owned(), 1, "Sub".to_owned())),
+        );
+        let indices: Vec<u32> = tracks.iter().map(|t| t.index).collect();
+        assert_eq!(indices, [0, 1, 2, 3]);
+
+        apply_event(&mut tracks, &E::Removed("Kick".to_owned()));
+        let indices: Vec<u32> = tracks.iter().map(|t| t.index).collect();
+        assert_eq!(indices, [0, 1, 2], "removal left a hole in the numbering");
+    }
+
+    /// A track removed in the DAW goes.
+    #[test]
+    fn a_track_removed_in_the_daw_leaves_the_list() {
+        let mut tracks = kit();
+        assert_eq!(
+            apply_event(&mut tracks, &E::Removed("Snare".to_owned())),
+            Applied::Structure
+        );
+        let names: Vec<&str> = tracks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Kick", "OH"]);
+    }
+
+    /// A reorder in the DAW reorders here.
+    #[test]
+    fn a_moved_track_moves() {
+        let mut tracks = kit();
+        apply_event(
+            &mut tracks,
+            &E::Moved {
+                guid: "OH".to_owned(),
+                old_index: 2,
+                new_index: 0,
+            },
+        );
+        let names: Vec<&str> = tracks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["OH", "Kick", "Snare"]);
+    }
+
+    /// **An event for a track this window has never heard of is not an
+    /// error.** Attaching to a REAPER mid-session means the first events
+    /// can name anything, and a window that panicked or resynced on each
+    /// one would be unusable for the first second of every attach.
+    #[test]
+    fn an_event_for_an_unknown_track_is_ignored() {
+        let mut tracks = kit();
+        let before = tracks.len();
+        assert_eq!(
+            apply_event(&mut tracks, &E::Removed("nonesuch".to_owned())),
+            Applied::Nothing
+        );
+        assert_eq!(tracks.len(), before);
+    }
+
+    /// A field change says so, so the window redraws a row instead of
+    /// rebuilding every row map it has.
+    #[test]
+    fn a_field_change_is_not_a_rebuild() {
+        let mut tracks = kit();
+        assert_eq!(
+            apply_event(
+                &mut tracks,
+                &E::MuteChanged {
+                    guid: "Kick".to_owned(),
+                    muted: true,
+                }
+            ),
+            Applied::Field
+        );
     }
 }
