@@ -1500,6 +1500,25 @@ ci FROM="lockfile":
       for i in "${!steps[@]}"; do [ "${steps[$i]}" = "$want" ] && at=$i; done
       [ "$at" -ge "$start" ]; }
 
+    # Before anything: is there room to build?
+    #
+    # A full disk does not fail as a full disk. mold dies with a bus
+    # error and cargo reports `linking with cc failed`, which reads as a
+    # broken toolchain and sends you looking in the wrong place — it
+    # cost an hour once. Checked here because this is the command
+    # everyone runs before pushing, and a run that cannot finish should
+    # say why in the first second rather than the twentieth minute.
+    free_gb=$(df -PBG "$CARGO_TARGET_DIR" 2>/dev/null | awk 'NR==2 {gsub(/G/,"",$4); print $4}')
+    if [ -n "${free_gb:-}" ] && [ "$free_gb" -lt 25 ]; then
+      echo "only ${free_gb}G free on the volume holding $CARGO_TARGET_DIR."
+      echo "A build that runs out of room dies in the LINKER, with a bus"
+      echo "error that looks like a compiler fault. Reclaim first:"
+      echo "  just sweep-incremental   # the big, always-safe win"
+      echo "  just sweep               # artifacts older than 7 days"
+      echo "  just disk                # where it all went"
+      exit 1
+    fi
+
     if run_from lockfile; then
       echo "── lockfile ─────────────────────────────────────────"
       committed="$(mktemp)"; cp Cargo.lock "$committed"
