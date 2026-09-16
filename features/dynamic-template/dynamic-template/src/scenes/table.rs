@@ -456,6 +456,75 @@ fn guitar_balance() -> Scene {
     }
 }
 
+/// **Vocal Tracking**: the active language's leads and every part being
+/// recorded, sorted by performer.
+///
+/// The vocal FX returns stay present, which looks like a mixing concern
+/// and is not: a singer needs to hear the reverb they are singing into,
+/// and a tracking view that hid the returns would leave the engineer
+/// unable to set what the performer hears.
+// r[impl flow.vocals.tracking]
+fn vocal_tracking() -> Scene {
+    Scene {
+        name: "Vocal Tracking".to_owned(),
+        slug: "vocal-tracking".to_owned(),
+        short: "Trk".to_owned(),
+        instrument: "vocal".to_owned(),
+        modes: vec!["record".to_owned()],
+        audience: Audience::Engineer,
+        // Ron's tracks together, Belen's together — while a take is
+        // going in, what needs doing is about the person singing.
+        group_by: GroupBy::Performer,
+        spec: vec![
+            "flow.vocals.tracking".to_owned(),
+            "flow.scenes.performer-order".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
+        default: Effect::at(Size::Compact),
+        rules: vec![
+            Rule::new(
+                Selector {
+                    role: Role::Leaf,
+                    ..under(&["Vocals"])
+                },
+                Effect::at(Size::Working),
+            ),
+            // The returns are what the singer hears themselves in.
+            Rule::new(under(&["fx"]), Effect::at(Size::Compact)),
+            hide_the_bus_tree(),
+        ],
+    }
+}
+
+/// **Vocal Comping**: the active language's sources with their lanes,
+/// parts as folders.
+///
+/// The Edit-mode default for vocals. A part comps on its folder the way
+/// a kit does — one lane per take of the whole part — so a fifty-layer
+/// "Hey!" is comped once rather than fifty times.
+// r[impl flow.vocals.comping]
+fn vocal_comping() -> Scene {
+    Scene {
+        name: "Vocal Comping".to_owned(),
+        slug: "vocal-comping".to_owned(),
+        short: "Comp".to_owned(),
+        instrument: "vocal".to_owned(),
+        modes: vec!["edit".to_owned()],
+        audience: Audience::Engineer,
+        group_by: GroupBy::Arrangement,
+        spec: vec![
+            "flow.vocals.comping".to_owned(),
+            "flow.scenes.follow-mode".to_owned(),
+            "flow.scenes.render".to_owned(),
+        ],
+        default: Effect::at(Size::Minimum),
+        rules: vec![
+            Rule::new(under(&["Vocals"]), Effect::at(Size::Working)),
+            hide_the_bus_tree(),
+        ],
+    }
+}
+
 fn build() -> Vec<Scene> {
     vec![
         drum_tracking(),
@@ -470,6 +539,8 @@ fn build() -> Vec<Scene> {
         lead_vocal(),
         lead_vocal_fx(),
         guitar_balance(),
+        vocal_tracking(),
+        vocal_comping(),
     ]
     .into_iter()
     .chain(instrument_sets())
@@ -1042,7 +1113,9 @@ fn lead_vocal_fx() -> Scene {
         slug: "lead-vocal-fx".to_owned(),
         short: "VFX".to_owned(),
         instrument: "vocal".to_owned(),
-        modes: vec!["edit".to_owned()],
+        // Recall-only, like Guitar FX. Vocal Comping is what Edit
+        // opens (#38); dialling a delay in is a thing you go and do.
+        modes: Vec::new(),
         audience: Audience::Engineer,
         group_by: GroupBy::Arrangement,
         spec: vec![
@@ -1092,7 +1165,7 @@ mod tests {
     /// than something that slips in.
     #[test]
     fn every_scene_is_reachable_by_its_slug() {
-        assert_eq!(scenes().len(), 32);
+        assert_eq!(scenes().len(), 34);
         for s in scenes() {
             assert_eq!(
                 scene(&s.slug).map(|f| f.slug.as_str()),
@@ -1124,7 +1197,7 @@ mod tests {
 
         // How many scenes at the front of the table are hand-written
         // rather than generated from a `Set`.
-        const HAND_WRITTEN: usize = 12;
+        const HAND_WRITTEN: usize = 14;
 
         // The hand-written scenes, spelled out: each one is a shape
         // somebody decided, and a change to any of them should be a
@@ -1148,11 +1221,18 @@ mod tests {
                 // Recall-only: Guitar Mixing is what Mix mode opens.
                 ("guitar-fx", "guitar", vec![], Audience::Engineer),
                 ("lead-vocal", "vocal", vec!["mix"], Audience::Engineer),
-                ("lead-vocal-fx", "vocal", vec!["edit"], Audience::Engineer),
+                ("lead-vocal-fx", "vocal", vec![], Audience::Engineer),
                 // The one guitar scene that opens the multi-mic level:
                 // recall-only, because setting a configuration's
                 // balance is a thing you go and do.
                 ("guitar-balance", "guitar", vec![], Audience::Engineer),
+                (
+                    "vocal-tracking",
+                    "vocal",
+                    vec!["record"],
+                    Audience::Engineer,
+                ),
+                ("vocal-comping", "vocal", vec!["edit"], Audience::Engineer),
             ][..]
         );
 
@@ -1223,6 +1303,7 @@ mod tests {
                 "drum-fx",
                 "buses",
                 "guitar-fx",
+                "lead-vocal-fx",
                 "guitar-balance",
                 "bass-comping",
                 "guitar-comping",

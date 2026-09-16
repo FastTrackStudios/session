@@ -259,3 +259,55 @@ fn guitar_balance_opens_what_guitar_mixing_hides() {
          the balance scene is supposed to open what mixing hides"
     );
 }
+
+/// **Vocal Tracking** keeps the FX returns in view, which looks like a
+/// mixing concern and is not: a singer needs to hear the reverb they
+/// are singing into, and a tracking view that hid the returns would
+/// leave the engineer unable to set what the performer hears.
+///
+/// r[verify flow.vocals.tracking]
+#[test]
+fn vocal_tracking_keeps_the_returns_the_singer_hears() {
+    let rows = rows_of("vocal-tracking");
+    let named: Vec<&str> = rows
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .collect();
+    assert!(
+        named.iter().any(|n| *n == "Ron"),
+        "no lead to track: {named:?}"
+    );
+    assert!(
+        named
+            .iter()
+            .any(|n| n.contains("Verb") || n.contains("Delay")),
+        "the returns the singer hears are missing: {named:?}"
+    );
+    assert!(
+        !named.contains(&"MIX BUS"),
+        "the bus tree reached a tracking view"
+    );
+}
+
+/// **Vocal Comping** opens the parts and their sources — a part comps
+/// on its folder the way a kit does, so a many-layer "Hey!" is comped
+/// once rather than once per layer.
+///
+/// r[verify flow.vocals.comping]
+#[test]
+fn vocal_comping_opens_the_parts_and_their_layers() {
+    let rows = rows_of("vocal-comping");
+    let named: Vec<&str> = rows
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .collect();
+    assert!(named.iter().any(|n| *n == "BGVs"), "{named:?}");
+    assert!(
+        named.iter().any(|n| *n == "Hey"),
+        "the many-layer part is missing: {named:?}"
+    );
+    assert!(
+        named.iter().filter(|n| n.starts_with("All ")).count() > 1,
+        "its layers are not open to comp: {named:?}"
+    );
+}

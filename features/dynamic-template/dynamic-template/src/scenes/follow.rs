@@ -316,9 +316,12 @@ mod tests {
             Some("drum-tracking")
         );
         assert_eq!(follow.enter(table(), "mix", "drums"), Some("drum-mixing"));
+        // Edit on vocals opens Comping, not the FX view: choosing
+        // takes is what Edit mode is for, and dialling a delay in is a
+        // thing you go and do (#38).
         assert_eq!(
             follow.enter(table(), "edit", "vocal"),
-            Some("lead-vocal-fx")
+            Some("vocal-comping")
         );
     }
 
