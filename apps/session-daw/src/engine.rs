@@ -928,6 +928,54 @@ pub fn apply_event(
                 tracks[i].input_fx_count = *input_fx_count;
             }
         }
+        // The fields this window WRITES and then never heard back
+        // about. A prediction that is never confirmed is only right
+        // while nothing rejects it: a parent send refused by the engine,
+        // or toggled by somebody else in REAPER, stayed wrong here for
+        // the life of the window with nothing to say so.
+        E::ParentSendChanged { guid, enabled } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].parent_send = *enabled;
+            }
+        }
+        E::InputMonitorChanged { guid, monitor } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].input_monitor = *monitor;
+            }
+        }
+        E::RecordInputChanged { guid, input } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].record_input = *input;
+            }
+        }
+        E::AutomationModeChanged { guid, mode } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].automation_mode = *mode;
+            }
+        }
+        E::GroupingChanged { guid, grouping } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].grouping = grouping.clone();
+            }
+        }
+        // Visibility is the list as drawn rather than the list as
+        // stored, so it re-derives the rows: hiding a track in REAPER
+        // and leaving its row on screen is the same failure as leaving
+        // a removed one there.
+        E::TcpVisibilityChanged { guid, visible } => {
+            let Some(i) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            tracks[i].visible_in_tcp = *visible;
+            return Applied::Structure;
+        }
+        E::MixerVisibilityChanged { guid, visible } => {
+            let Some(i) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            tracks[i].visible_in_mixer = *visible;
+            return Applied::Structure;
+        }
         // ── the list itself ──────────────────────────────────────
         E::Added(track) => {
             // Inserted at the track's own index rather than pushed:
@@ -961,8 +1009,10 @@ pub fn apply_event(
             tracks.insert(to, track);
             reindex(tracks);
             return Applied::Structure;
-        }
-        _ => return Applied::Nothing,
+        } // Deliberately exhaustive. The catch-all that used to sit here
+          // meant a field added to the event upstream was dropped in
+          // silence, which is exactly how five of the arms above went
+          // missing for months. A new variant should break this build.
     }
     Applied::Field
 }
@@ -992,6 +1042,13 @@ mod watch_tests {
             .map(|g| Track {
                 guid: g.to_owned(),
                 volume: 1.0,
+                // As a track arrives from either backend, not as
+                // `Default` leaves it: a fixture that starts with the
+                // parent send off and the track hidden cannot show that
+                // turning either one off works.
+                parent_send: true,
+                visible_in_tcp: true,
+                visible_in_mixer: true,
                 ..Track::default()
             })
             .collect()
@@ -1082,6 +1139,94 @@ mod watch_tests {
         assert!(t[0].soloed && t[0].armed && t[0].selected);
         assert!((t[0].volume - 0.25).abs() < f64::EPSILON);
         assert!((t[0].pan + 0.5).abs() < f64::EPSILON);
+    }
+
+    /// The fields this window writes and predicts locally.
+    ///
+    /// A prediction is only right until something rejects it, so the
+    /// event that confirms it is what makes the local guess safe. This
+    /// test is the negative control for that: every field here was
+    /// already being written and drawn, and none of them could be
+    /// corrected — a parent send toggled by anybody else stayed wrong
+    /// for the life of the window.
+    #[test]
+    fn a_prediction_this_window_made_can_be_corrected() {
+        use daw_proto::primitives::AutomationMode;
+        use daw_proto::track::{InputMonitoringMode, RecordInput};
+
+        let mut t = tracks();
+        assert!(t[0].parent_send, "the control needs somewhere to fall from");
+
+        apply_event(
+            &mut t,
+            &E::ParentSendChanged {
+                guid: "a".into(),
+                enabled: false,
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::InputMonitorChanged {
+                guid: "a".into(),
+                monitor: InputMonitoringMode::NotWhenPlaying,
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::RecordInputChanged {
+                guid: "a".into(),
+                input: RecordInput::Audio { channel: 7 },
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::AutomationModeChanged {
+                guid: "a".into(),
+                mode: AutomationMode::Latch,
+            },
+        );
+
+        assert!(!t[0].parent_send);
+        assert_eq!(t[0].input_monitor, InputMonitoringMode::NotWhenPlaying);
+        assert_eq!(t[0].record_input, RecordInput::Audio { channel: 7 });
+        assert_eq!(t[0].automation_mode, AutomationMode::Latch);
+        assert!(t[1].parent_send, "the other track was not touched");
+    }
+
+    /// Hiding a track changes the rows, not just a field.
+    ///
+    /// The rows are derived from the list, so a visibility change has to
+    /// say the list changed — otherwise a track hidden in REAPER keeps
+    /// its row on screen, which is the same failure as leaving a removed
+    /// one there.
+    #[test]
+    fn hiding_a_track_redraws_the_rows() {
+        use super::Applied;
+        let mut t = tracks();
+        assert_eq!(
+            apply_event(
+                &mut t,
+                &E::TcpVisibilityChanged {
+                    guid: "a".into(),
+                    visible: false,
+                },
+            ),
+            Applied::Structure
+        );
+        assert!(!t[0].visible_in_tcp);
+
+        // An event for a track this window never heard of changes
+        // nothing and must not ask for a redraw.
+        assert_eq!(
+            apply_event(
+                &mut t,
+                &E::MixerVisibilityChanged {
+                    guid: "nobody".into(),
+                    visible: false,
+                },
+            ),
+            Applied::Nothing
+        );
     }
 
     /// One track's event does not touch another's.
@@ -1400,5 +1545,155 @@ mod structure_tests {
             ),
             Applied::Field
         );
+    }
+}
+
+/// Everything in the project that is not a track.
+///
+/// Items, takes, markers, regions and the tempo map are all read as a
+/// snapshot and drawn from it, and until now nothing told the window
+/// they had moved. An item dragged in REAPER stayed where it used to be
+/// until some unrelated track was added or removed and the resulting
+/// re-read happened to bring it along — which is a mirror that is right
+/// only by accident.
+///
+/// It is a FLAG rather than a queue of events, and that is the whole
+/// design. The window does not keep items, takes, markers or the tempo
+/// map as anything it could patch: they are derived, in one read, from
+/// the project. So the useful thing to know is "the snapshot is old",
+/// and knowing it twice is the same as knowing it once — which is
+/// exactly what a flag says and a queue does not. A drag in REAPER
+/// emits an event per frame and this coalesces every one of them into
+/// a single re-read.
+///
+/// Tracks are the exception and keep their own [`Watch`], because the
+/// window DOES hold them and can correct a single field without paying
+/// for a whole read.
+pub struct Refresh {
+    stale: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Refresh {
+    /// Subscribe. `None` if the facade is not up.
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        use daw_proto::event_bus::BusFilter;
+
+        let runtime = crate::open::runtime()?;
+        let stale = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = std::sync::Arc::clone(&stale);
+        std::thread::Builder::new()
+            .name("session-daw-refresh".into())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    let Some(daw) = daw::rpc::Daw::try_get() else {
+                        return;
+                    };
+                    // Named field by field rather than `all()` minus a
+                    // couple, because every domain switched on here
+                    // costs a whole project read. Tracks are out
+                    // because `Watch` has them and patches them in
+                    // place. The position tick and the play state are
+                    // out because they change constantly and change
+                    // nothing that is drawn from the snapshot. FX and
+                    // routing are out because nothing here draws
+                    // them — an automated parameter would otherwise
+                    // re-read the session at audio rate.
+                    let filter = BusFilter {
+                        items: true,
+                        takes: true,
+                        markers: true,
+                        regions: true,
+                        tempo_map: true,
+                        projects: true,
+                        tracks: false,
+                        fx: false,
+                        routing: false,
+                        transport_state: false,
+                        transport_position: false,
+                        project_guid: None,
+                    };
+                    let Ok(mut stream) = daw.events().subscribe(filter).await else {
+                        return;
+                    };
+                    while let Ok(Some(_)) = stream.recv().await {
+                        writer.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                });
+            })
+            .ok()?;
+        Some(Self { stale })
+    }
+
+    /// Is the snapshot old?
+    ///
+    /// Asking does not clear it. Reading and clearing in one step reads
+    /// better and is wrong here: a caller that cannot act yet — because
+    /// the last read is still in flight — would throw away the news
+    /// that arrived while it was reading, and the last edit of a drag
+    /// is exactly the one that would go missing.
+    #[must_use]
+    pub fn pending(&self) -> bool {
+        self.stale.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Say the snapshot has been re-read. Call this only when a read
+    /// actually started.
+    pub fn settled(&self) {
+        self.stale
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::Refresh;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn refresh() -> (Refresh, Arc<AtomicBool>) {
+        let stale = Arc::new(AtomicBool::new(false));
+        (
+            Refresh {
+                stale: Arc::clone(&stale),
+            },
+            stale,
+        )
+    }
+
+    /// Many events, one read.
+    ///
+    /// A drag in REAPER emits an event per frame, and every one of them
+    /// says the same thing: the snapshot is old. Re-reading the project
+    /// once per event would re-read it sixty times for one gesture.
+    #[test]
+    fn a_burst_of_changes_asks_for_one_read() {
+        let (refresh, stale) = refresh();
+        for _ in 0..60 {
+            stale.store(true, Ordering::Relaxed);
+        }
+        assert!(refresh.pending());
+        refresh.settled();
+        assert!(!refresh.pending(), "one read answered all sixty");
+    }
+
+    /// Asking does not clear.
+    ///
+    /// This is the whole reason `pending` and `settled` are two calls.
+    /// A frame that cannot act — because the last read is still in
+    /// flight — asks and does nothing, and the news has to still be
+    /// there on the next frame. Collapsing them into one read-and-clear
+    /// would lose exactly the change that arrives while the window is
+    /// busy reading, which in a drag is the one that says where the
+    /// item ended up.
+    #[test]
+    fn asking_does_not_clear() {
+        let (refresh, stale) = refresh();
+        stale.store(true, Ordering::Relaxed);
+        assert!(refresh.pending());
+        assert!(refresh.pending(), "a frame that could not act kept it");
+        assert!(refresh.pending());
+        refresh.settled();
+        assert!(!refresh.pending(), "only a read that happened clears it");
     }
 }

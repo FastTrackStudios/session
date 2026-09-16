@@ -198,6 +198,11 @@ struct App {
     row_drag: Option<(usize, session_daw::row::Control)>,
     /// The engine's own account of the tracks, as it changes.
     watch: Option<session_daw::engine::Watch>,
+    /// Whether anything that is NOT a track has changed — items,
+    /// takes, markers, regions, the tempo map. A flag, because all of
+    /// them are drawn from one snapshot and the only useful question
+    /// is whether that snapshot is old.
+    refresh: Option<session_daw::engine::Refresh>,
     /// The engine's live meter levels, latest-wins.
     meters: Option<session_daw::engine::Meters>,
     /// Which DAW mode the window is in — what the corner selects.
@@ -1111,6 +1116,9 @@ impl ApplicationHandler for App {
             }
             if self.watch.is_none() {
                 self.watch = session_daw::engine::Watch::start();
+            }
+            if self.refresh.is_none() {
+                self.refresh = session_daw::engine::Refresh::start();
             }
             if self.meters.is_none() {
                 self.meters = session_daw::engine::Meters::start();
@@ -2556,6 +2564,23 @@ impl App {
     /// truth. A frame that finds no events does nothing, which is most
     /// of them.
     fn reconcile(&mut self) {
+        // Anything that is not a track changed, so the snapshot every
+        // item, marker, region and bar line is drawn from is old. This
+        // is checked first and unconditionally: a project with no
+        // track events at all still has items being dragged in it, and
+        // gating it behind the track stream is how it used to be right
+        // only by accident.
+        if self.loading.is_none()
+            && self
+                .refresh
+                .as_ref()
+                .is_some_and(session_daw::engine::Refresh::pending)
+        {
+            self.reload();
+            if let Some(refresh) = &self.refresh {
+                refresh.settled();
+            }
+        }
         let Some(watch) = &self.watch else { return };
         let events: Vec<_> = watch.drain().collect();
         if events.is_empty() {
@@ -3188,6 +3213,7 @@ fn main() {
         pressed_rail: None,
         row_drag: None,
         watch: session_daw::engine::Watch::start(),
+        refresh: session_daw::engine::Refresh::start(),
         meters: session_daw::engine::Meters::start(),
         mode: session::modes::Mode::Mix,
         phase: session::mix_phases::MixPhase::Tone,
