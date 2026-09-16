@@ -771,6 +771,7 @@ async fn item_track(project: &daw_control::Project, item_guid: &str) -> String {
 /// does not.
 pub struct Watch {
     changes: std::sync::mpsc::Receiver<daw_proto::track::TrackEvent>,
+    alive: Alive,
 }
 
 impl Watch {
@@ -779,10 +780,18 @@ impl Watch {
     pub fn start() -> Option<Self> {
         let runtime = crate::open::runtime()?;
         let (tx, rx) = std::sync::mpsc::channel();
+        let alive = Alive::new();
+        let mine = alive.clone();
         std::thread::Builder::new()
             .name("session-daw-watch".into())
             .spawn(move || {
                 runtime.block_on(async move {
+                    // Every exit from here marks the handle dead,
+                    // including the ones that never got a stream at
+                    // all: a subscribe that failed is a window with no
+                    // corrections coming, which looks exactly like a
+                    // project where nothing is happening.
+                    let _end = scopeguard(move || mine.ended());
                     let Some(daw) = daw::rpc::Daw::try_get() else {
                         return;
                     };
@@ -802,7 +811,7 @@ impl Watch {
                 });
             })
             .ok()?;
-        Some(Self { changes: rx })
+        Some(Self { changes: rx, alive })
     }
 
     /// Everything that has happened since the last frame.
@@ -812,6 +821,12 @@ impl Watch {
     /// nothing to do, which is most of them.
     pub fn drain(&self) -> impl Iterator<Item = daw_proto::track::TrackEvent> + '_ {
         self.changes.try_iter()
+    }
+
+    /// Is this subscription still connected?
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.alive.is_live()
     }
 }
 
@@ -839,7 +854,35 @@ pub fn continuous_for(event: &daw_proto::track::TrackEvent) -> Option<&str> {
     }
 }
 
-pub fn apply_event(tracks: &mut [daw_proto::Track], event: &daw_proto::track::TrackEvent) {
+/// What an event changed.
+///
+/// Worth distinguishing because the two cost different things. A field
+/// is a poke: the row it belongs to redraws and nothing else moves. The
+/// LIST changing invalidates every row map, every offset and the scene
+/// resolved against it, so the caller has to rebuild — and it needs
+/// telling, because it cannot see inside this function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Applied {
+    /// One track's field. Redraw it.
+    Field,
+    /// The track list itself. Rebuild the rows.
+    Structure,
+    /// Nothing this window keeps. Most often an event for a field the
+    /// window does not draw.
+    Nothing,
+}
+
+/// Apply one event to the window's track list.
+///
+/// Takes the `Vec` rather than a slice, and that is the whole reason
+/// structure events used to be dropped here: a slice cannot grow, so
+/// `Added` had nowhere to go and was quietly ignored. A track created
+/// in REAPER did not appear until the window was restarted, and nothing
+/// said so.
+pub fn apply_event(
+    tracks: &mut Vec<daw_proto::Track>,
+    event: &daw_proto::track::TrackEvent,
+) -> Applied {
     use daw_proto::track::TrackEvent as E;
     let find = |tracks: &mut [daw_proto::Track], guid: &str| -> Option<usize> {
         tracks.iter().position(|t| t.guid == guid)
@@ -900,11 +943,105 @@ pub fn apply_event(tracks: &mut [daw_proto::Track], event: &daw_proto::track::Tr
                 tracks[i].input_fx_count = *input_fx_count;
             }
         }
-        // Added and Removed change the track LIST, not a track — the
-        // rows, the offsets and the recorded scenes all follow from it,
-        // so it is a rebuild rather than a field to poke. Ignored here
-        // and handled by whoever owns the scene.
-        _ => {}
+        // The fields this window WRITES and then never heard back
+        // about. A prediction that is never confirmed is only right
+        // while nothing rejects it: a parent send refused by the engine,
+        // or toggled by somebody else in REAPER, stayed wrong here for
+        // the life of the window with nothing to say so.
+        E::ParentSendChanged { guid, enabled } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].parent_send = *enabled;
+            }
+        }
+        E::InputMonitorChanged { guid, monitor } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].input_monitor = *monitor;
+            }
+        }
+        E::RecordInputChanged { guid, input } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].record_input = *input;
+            }
+        }
+        E::AutomationModeChanged { guid, mode } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].automation_mode = *mode;
+            }
+        }
+        E::GroupingChanged { guid, grouping } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].grouping = grouping.clone();
+            }
+        }
+        // Visibility is the list as drawn rather than the list as
+        // stored, so it re-derives the rows: hiding a track in REAPER
+        // and leaving its row on screen is the same failure as leaving
+        // a removed one there.
+        E::TcpVisibilityChanged { guid, visible } => {
+            let Some(i) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            tracks[i].visible_in_tcp = *visible;
+            return Applied::Structure;
+        }
+        E::MixerVisibilityChanged { guid, visible } => {
+            let Some(i) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            tracks[i].visible_in_mixer = *visible;
+            return Applied::Structure;
+        }
+        // ── the list itself ──────────────────────────────────────
+        E::Added(track) => {
+            // Inserted at the track's own index rather than pushed:
+            // REAPER numbers tracks by position, so a track added in the
+            // middle would otherwise sit at the end and every row below
+            // it would name the wrong track.
+            let at = usize::try_from(track.index).unwrap_or(tracks.len());
+            let at = at.min(tracks.len());
+            tracks.insert(at, track.clone());
+            reindex(tracks);
+            return Applied::Structure;
+        }
+        E::Removed(guid) => {
+            let Some(i) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            tracks.remove(i);
+            reindex(tracks);
+            return Applied::Structure;
+        }
+        E::Moved {
+            guid, new_index, ..
+        } => {
+            let Some(from) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            let to = usize::try_from(*new_index)
+                .unwrap_or(from)
+                .min(tracks.len().saturating_sub(1));
+            let track = tracks.remove(from);
+            tracks.insert(to, track);
+            reindex(tracks);
+            return Applied::Structure;
+        } // Deliberately exhaustive. The catch-all that used to sit here
+          // meant a field added to the event upstream was dropped in
+          // silence, which is exactly how five of the arms above went
+          // missing for months. A new variant should break this build.
+    }
+    Applied::Field
+}
+
+/// Renumber after the list changed.
+///
+/// The index is a track's position, so every track below an insertion
+/// or a removal has a new one. Leaving them stale is worse than it
+/// sounds: the scene engine resolves rows by index, so one stale number
+/// shows the wrong track at the right place — which reads as a
+/// rendering bug rather than a bookkeeping one.
+fn reindex(tracks: &mut [daw_proto::Track]) {
+    for (at, track) in tracks.iter_mut().enumerate() {
+        track.index = u32::try_from(at).unwrap_or(track.index);
     }
 }
 
@@ -920,6 +1057,13 @@ mod watch_tests {
             .map(|g| Track {
                 guid: g.to_owned(),
                 volume: 1.0,
+                // As a track arrives from either backend, not as
+                // `Default` leaves it: a fixture that starts with the
+                // parent send off and the track hidden cannot show that
+                // turning either one off works.
+                parent_send: true,
+                visible_in_tcp: true,
+                visible_in_mixer: true,
                 ..Track::default()
             })
             .collect()
@@ -1012,6 +1156,94 @@ mod watch_tests {
         assert!((t[0].pan + 0.5).abs() < f64::EPSILON);
     }
 
+    /// The fields this window writes and predicts locally.
+    ///
+    /// A prediction is only right until something rejects it, so the
+    /// event that confirms it is what makes the local guess safe. This
+    /// test is the negative control for that: every field here was
+    /// already being written and drawn, and none of them could be
+    /// corrected — a parent send toggled by anybody else stayed wrong
+    /// for the life of the window.
+    #[test]
+    fn a_prediction_this_window_made_can_be_corrected() {
+        use daw_proto::primitives::AutomationMode;
+        use daw_proto::track::{InputMonitoringMode, RecordInput};
+
+        let mut t = tracks();
+        assert!(t[0].parent_send, "the control needs somewhere to fall from");
+
+        apply_event(
+            &mut t,
+            &E::ParentSendChanged {
+                guid: "a".into(),
+                enabled: false,
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::InputMonitorChanged {
+                guid: "a".into(),
+                monitor: InputMonitoringMode::NotWhenPlaying,
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::RecordInputChanged {
+                guid: "a".into(),
+                input: RecordInput::Audio { channel: 7 },
+            },
+        );
+        apply_event(
+            &mut t,
+            &E::AutomationModeChanged {
+                guid: "a".into(),
+                mode: AutomationMode::Latch,
+            },
+        );
+
+        assert!(!t[0].parent_send);
+        assert_eq!(t[0].input_monitor, InputMonitoringMode::NotWhenPlaying);
+        assert_eq!(t[0].record_input, RecordInput::Audio { channel: 7 });
+        assert_eq!(t[0].automation_mode, AutomationMode::Latch);
+        assert!(t[1].parent_send, "the other track was not touched");
+    }
+
+    /// Hiding a track changes the rows, not just a field.
+    ///
+    /// The rows are derived from the list, so a visibility change has to
+    /// say the list changed — otherwise a track hidden in REAPER keeps
+    /// its row on screen, which is the same failure as leaving a removed
+    /// one there.
+    #[test]
+    fn hiding_a_track_redraws_the_rows() {
+        use super::Applied;
+        let mut t = tracks();
+        assert_eq!(
+            apply_event(
+                &mut t,
+                &E::TcpVisibilityChanged {
+                    guid: "a".into(),
+                    visible: false,
+                },
+            ),
+            Applied::Structure
+        );
+        assert!(!t[0].visible_in_tcp);
+
+        // An event for a track this window never heard of changes
+        // nothing and must not ask for a redraw.
+        assert_eq!(
+            apply_event(
+                &mut t,
+                &E::MixerVisibilityChanged {
+                    guid: "nobody".into(),
+                    visible: false,
+                },
+            ),
+            Applied::Nothing
+        );
+    }
+
     /// One track's event does not touch another's.
     #[test]
     fn events_do_not_leak_between_tracks() {
@@ -1088,6 +1320,7 @@ mod continuous_tests {
 /// policy is the reason they are not one type.
 pub struct Meters {
     latest: std::sync::Arc<std::sync::Mutex<Vec<daw_proto::TrackLevels>>>,
+    alive: Alive,
 }
 
 impl Meters {
@@ -1098,10 +1331,13 @@ impl Meters {
         let runtime = crate::open::runtime()?;
         let latest = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let into_thread = std::sync::Arc::clone(&latest);
+        let alive = Alive::new();
+        let mine = alive.clone();
         std::thread::Builder::new()
             .name("session-daw-meters".into())
             .spawn(move || {
                 runtime.block_on(async move {
+                    let _end = scopeguard(move || mine.ended());
                     let Some(daw) = daw::rpc::Daw::try_get() else {
                         return;
                     };
@@ -1122,7 +1358,13 @@ impl Meters {
                 });
             })
             .ok()?;
-        Some(Self { latest })
+        Some(Self { latest, alive })
+    }
+
+    /// Is this subscription still connected?
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.alive.is_live()
     }
 
     /// The most recent frame, copied out for this redraw.
@@ -1201,5 +1443,365 @@ mod meter_tests {
     fn silence_is_a_number() {
         assert!(meter_fraction(0.0).is_finite());
         assert!(meter_fraction(f32::MIN_POSITIVE).is_finite());
+    }
+}
+
+#[cfg(test)]
+mod structure_tests {
+    use super::{Applied, apply_event};
+    use daw_proto::Track;
+    use daw_proto::track::TrackEvent as E;
+
+    fn kit() -> Vec<Track> {
+        ["Kick", "Snare", "OH"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                Track::new(
+                    (*name).to_owned(),
+                    u32::try_from(i).unwrap_or(0),
+                    (*name).to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    /// **A track created in REAPER appears.** The applier used to take a
+    /// slice, so `Added` had nowhere to go and was dropped — the window
+    /// only caught up when something else triggered a full re-fetch.
+    #[test]
+    fn a_track_added_in_the_daw_lands_in_the_list() {
+        let mut tracks = kit();
+        let added = Track::new("Room".to_owned(), 3, "Room".to_owned());
+        assert_eq!(
+            apply_event(&mut tracks, &E::Added(added)),
+            Applied::Structure
+        );
+        assert_eq!(tracks.len(), 4);
+        assert_eq!(tracks[3].name, "Room");
+    }
+
+    /// **And at its own position, not the end.** REAPER numbers tracks
+    /// by position, so a track inserted in the middle that got appended
+    /// would leave every row below it naming the wrong track.
+    #[test]
+    fn a_track_added_in_the_middle_lands_in_the_middle() {
+        let mut tracks = kit();
+        let added = Track::new("Sub".to_owned(), 1, "Sub".to_owned());
+        apply_event(&mut tracks, &E::Added(added));
+        let names: Vec<&str> = tracks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Kick", "Sub", "Snare", "OH"]);
+    }
+
+    /// The index is a position, so everything below a change is
+    /// renumbered. A stale index shows the wrong track at the right
+    /// place, which reads as a rendering bug rather than a bookkeeping
+    /// one.
+    #[test]
+    fn the_list_is_renumbered_after_it_changes() {
+        let mut tracks = kit();
+        apply_event(
+            &mut tracks,
+            &E::Added(Track::new("Sub".to_owned(), 1, "Sub".to_owned())),
+        );
+        let indices: Vec<u32> = tracks.iter().map(|t| t.index).collect();
+        assert_eq!(indices, [0, 1, 2, 3]);
+
+        apply_event(&mut tracks, &E::Removed("Kick".to_owned()));
+        let indices: Vec<u32> = tracks.iter().map(|t| t.index).collect();
+        assert_eq!(indices, [0, 1, 2], "removal left a hole in the numbering");
+    }
+
+    /// A track removed in the DAW goes.
+    #[test]
+    fn a_track_removed_in_the_daw_leaves_the_list() {
+        let mut tracks = kit();
+        assert_eq!(
+            apply_event(&mut tracks, &E::Removed("Snare".to_owned())),
+            Applied::Structure
+        );
+        let names: Vec<&str> = tracks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Kick", "OH"]);
+    }
+
+    /// A reorder in the DAW reorders here.
+    #[test]
+    fn a_moved_track_moves() {
+        let mut tracks = kit();
+        apply_event(
+            &mut tracks,
+            &E::Moved {
+                guid: "OH".to_owned(),
+                old_index: 2,
+                new_index: 0,
+            },
+        );
+        let names: Vec<&str> = tracks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["OH", "Kick", "Snare"]);
+    }
+
+    /// **An event for a track this window has never heard of is not an
+    /// error.** Attaching to a REAPER mid-session means the first events
+    /// can name anything, and a window that panicked or resynced on each
+    /// one would be unusable for the first second of every attach.
+    #[test]
+    fn an_event_for_an_unknown_track_is_ignored() {
+        let mut tracks = kit();
+        let before = tracks.len();
+        assert_eq!(
+            apply_event(&mut tracks, &E::Removed("nonesuch".to_owned())),
+            Applied::Nothing
+        );
+        assert_eq!(tracks.len(), before);
+    }
+
+    /// A field change says so, so the window redraws a row instead of
+    /// rebuilding every row map it has.
+    #[test]
+    fn a_field_change_is_not_a_rebuild() {
+        let mut tracks = kit();
+        assert_eq!(
+            apply_event(
+                &mut tracks,
+                &E::MuteChanged {
+                    guid: "Kick".to_owned(),
+                    muted: true,
+                }
+            ),
+            Applied::Field
+        );
+    }
+}
+
+/// Run a closure when the scope ends, however it ends.
+///
+/// Every stream loop here has several ways out — no facade, no project,
+/// a refused subscribe, a closed stream — and each of them has to mark
+/// the handle dead. Writing that at four exits is writing it at three
+/// and forgetting the fourth, which in this file means a window that
+/// believes it is connected.
+fn scopeguard<F: FnOnce()>(f: F) -> impl Drop {
+    struct Guard<F: FnOnce()>(Option<F>);
+    impl<F: FnOnce()> Drop for Guard<F> {
+        fn drop(&mut self) {
+            if let Some(f) = self.0.take() {
+                f();
+            }
+        }
+    }
+    Guard(Some(f))
+}
+
+/// Whether a subscription is still connected.
+///
+/// Every stream in this file ends the same way: REAPER quits, the
+/// socket closes, `recv` returns `None` and the thread falls out of its
+/// loop. Nothing used to notice. The window kept its handle, the
+/// handle's restart check only fires when the handle is *missing*, and
+/// so a REAPER quit and reopened left a window drawing the last thing
+/// it heard — connected in appearance and dead in fact, which is the
+/// failure a mirror must never have.
+///
+/// Shared rather than returned, because the thread is the only one that
+/// knows and the window is the only one that can act.
+#[derive(Clone)]
+pub struct Alive(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Alive {
+    fn new() -> Self {
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            true,
+        )))
+    }
+
+    fn ended(&self) {
+        self.0.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Is the stream behind this handle still delivering?
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// Everything in the project that is not a track.
+///
+/// Items, takes, markers, regions and the tempo map are all read as a
+/// snapshot and drawn from it, and until now nothing told the window
+/// they had moved. An item dragged in REAPER stayed where it used to be
+/// until some unrelated track was added or removed and the resulting
+/// re-read happened to bring it along — which is a mirror that is right
+/// only by accident.
+///
+/// It is a FLAG rather than a queue of events, and that is the whole
+/// design. The window does not keep items, takes, markers or the tempo
+/// map as anything it could patch: they are derived, in one read, from
+/// the project. So the useful thing to know is "the snapshot is old",
+/// and knowing it twice is the same as knowing it once — which is
+/// exactly what a flag says and a queue does not. A drag in REAPER
+/// emits an event per frame and this coalesces every one of them into
+/// a single re-read.
+///
+/// Tracks are the exception and keep their own [`Watch`], because the
+/// window DOES hold them and can correct a single field without paying
+/// for a whole read.
+pub struct Refresh {
+    stale: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    alive: Alive,
+}
+
+impl Refresh {
+    /// Subscribe. `None` if the facade is not up.
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        use daw_proto::event_bus::BusFilter;
+
+        let runtime = crate::open::runtime()?;
+        let stale = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = std::sync::Arc::clone(&stale);
+        let alive = Alive::new();
+        let mine = alive.clone();
+        std::thread::Builder::new()
+            .name("session-daw-refresh".into())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    let _end = scopeguard(move || mine.ended());
+                    let Some(daw) = daw::rpc::Daw::try_get() else {
+                        return;
+                    };
+                    // Named field by field rather than `all()` minus a
+                    // couple, because every domain switched on here
+                    // costs a whole project read. Tracks are out
+                    // because `Watch` has them and patches them in
+                    // place. The position tick and the play state are
+                    // out because they change constantly and change
+                    // nothing that is drawn from the snapshot. FX and
+                    // routing are out because nothing here draws
+                    // them — an automated parameter would otherwise
+                    // re-read the session at audio rate.
+                    let filter = BusFilter {
+                        items: true,
+                        takes: true,
+                        markers: true,
+                        regions: true,
+                        tempo_map: true,
+                        projects: true,
+                        tracks: false,
+                        fx: false,
+                        routing: false,
+                        transport_state: false,
+                        transport_position: false,
+                        project_guid: None,
+                    };
+                    let Ok(mut stream) = daw.events().subscribe(filter).await else {
+                        return;
+                    };
+                    while let Ok(Some(_)) = stream.recv().await {
+                        writer.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                });
+            })
+            .ok()?;
+        Some(Self { stale, alive })
+    }
+
+    /// Is this subscription still connected?
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.alive.is_live()
+    }
+
+    /// Is the snapshot old?
+    ///
+    /// Asking does not clear it. Reading and clearing in one step reads
+    /// better and is wrong here: a caller that cannot act yet — because
+    /// the last read is still in flight — would throw away the news
+    /// that arrived while it was reading, and the last edit of a drag
+    /// is exactly the one that would go missing.
+    #[must_use]
+    pub fn pending(&self) -> bool {
+        self.stale.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Say the snapshot has been re-read. Call this only when a read
+    /// actually started.
+    pub fn settled(&self) {
+        self.stale
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::Refresh;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn refresh() -> (Refresh, Arc<AtomicBool>) {
+        let stale = Arc::new(AtomicBool::new(false));
+        (
+            Refresh {
+                stale: Arc::clone(&stale),
+                alive: super::Alive::new(),
+            },
+            stale,
+        )
+    }
+
+    /// Many events, one read.
+    ///
+    /// A drag in REAPER emits an event per frame, and every one of them
+    /// says the same thing: the snapshot is old. Re-reading the project
+    /// once per event would re-read it sixty times for one gesture.
+    #[test]
+    fn a_burst_of_changes_asks_for_one_read() {
+        let (refresh, stale) = refresh();
+        for _ in 0..60 {
+            stale.store(true, Ordering::Relaxed);
+        }
+        assert!(refresh.pending());
+        refresh.settled();
+        assert!(!refresh.pending(), "one read answered all sixty");
+    }
+
+    /// A handle whose stream ended reads as dead.
+    ///
+    /// This is the whole of the REAPER-went-away detection. The guard
+    /// fires however the thread leaves — no facade, no project, a
+    /// refused subscribe, a closed stream — because writing the same
+    /// line at four exits is writing it at three.
+    #[test]
+    fn a_stream_that_ends_marks_its_handle_dead() {
+        let alive = super::Alive::new();
+        assert!(alive.is_live());
+
+        let seen = alive.clone();
+        {
+            let mine = alive.clone();
+            let _end = super::scopeguard(move || mine.ended());
+            assert!(seen.is_live(), "still connected inside the loop");
+        }
+        assert!(!seen.is_live(), "the window can see the connection go");
+    }
+
+    /// Asking does not clear.
+    ///
+    /// This is the whole reason `pending` and `settled` are two calls.
+    /// A frame that cannot act — because the last read is still in
+    /// flight — asks and does nothing, and the news has to still be
+    /// there on the next frame. Collapsing them into one read-and-clear
+    /// would lose exactly the change that arrives while the window is
+    /// busy reading, which in a drag is the one that says where the
+    /// item ended up.
+    #[test]
+    fn asking_does_not_clear() {
+        let (refresh, stale) = refresh();
+        stale.store(true, Ordering::Relaxed);
+        assert!(refresh.pending());
+        assert!(refresh.pending(), "a frame that could not act kept it");
+        assert!(refresh.pending());
+        refresh.settled();
+        assert!(!refresh.pending(), "only a read that happened clears it");
     }
 }

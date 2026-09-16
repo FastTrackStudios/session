@@ -198,6 +198,14 @@ struct App {
     row_drag: Option<(usize, session_daw::row::Control)>,
     /// The engine's own account of the tracks, as it changes.
     watch: Option<session_daw::engine::Watch>,
+    /// When the window last tried to find a REAPER again. A dial a
+    /// frame would spend the whole of REAPER's startup failing.
+    last_dial: Option<std::time::Instant>,
+    /// Whether anything that is NOT a track has changed — items,
+    /// takes, markers, regions, the tempo map. A flag, because all of
+    /// them are drawn from one snapshot and the only useful question
+    /// is whether that snapshot is old.
+    refresh: Option<session_daw::engine::Refresh>,
     /// The engine's live meter levels, latest-wins.
     meters: Option<session_daw::engine::Meters>,
     /// Which DAW mode the window is in — what the corner selects.
@@ -1074,6 +1082,24 @@ impl ApplicationHandler for App {
         if let Some(rx) = &self.loading
             && let Ok(loaded) = rx.try_recv()
         {
+            // An attached window learns its project's location only
+            // after connecting, so the two things read from the file —
+            // the taxonomy and the album's patch list — arrive with the
+            // first load rather than before the window opened. Taken
+            // once; after that the window's own copies are the ones
+            // being edited.
+            if let Some(kinds) = LIVE_KINDS.get()
+                && self.kinds.is_empty()
+            {
+                self.kinds = kinds.clone();
+            }
+            if let Some(panel) = LIVE_PATCH_LIST.get()
+                && matches!(self.patch_list, session_daw::patch_list::Panel::Absent)
+            {
+                self.patch_list = panel.clone();
+                self.redraw_patch_list();
+            }
+
             self.scene = Some(loaded.arrangement);
             // EVERY track, not the visible ones: folding changes which
             // rows exist, and live values kept only for what is on
@@ -1093,6 +1119,9 @@ impl ApplicationHandler for App {
             }
             if self.watch.is_none() {
                 self.watch = session_daw::engine::Watch::start();
+            }
+            if self.refresh.is_none() {
+                self.refresh = session_daw::engine::Refresh::start();
             }
             if self.meters.is_none() {
                 self.meters = session_daw::engine::Meters::start();
@@ -2537,7 +2566,84 @@ impl App {
     /// round trip; this is where the prediction is replaced by the
     /// truth. A frame that finds no events does nothing, which is most
     /// of them.
+    /// Notice a REAPER that has gone, and find the one that replaced it.
+    ///
+    /// A quit REAPER ends every stream at once, and nothing used to
+    /// notice: the handles stayed, the restart check only fires when a
+    /// handle is MISSING, and the window went on drawing the last thing
+    /// it heard. Connected in appearance and dead in fact is the one
+    /// state a mirror must not be able to reach.
+    ///
+    /// Tried once a second rather than once a frame. REAPER takes a
+    /// while to come back, and a window that dials on every frame
+    /// spends the whole wait spawning threads that immediately fail.
+    fn reconnect(&mut self) {
+        if !session_daw::open::is_attached() {
+            return;
+        }
+        let dead = self.watch.as_ref().is_none_or(|w| !w.is_live())
+            || self.refresh.as_ref().is_none_or(|r| !r.is_live())
+            || self.meters.as_ref().is_none_or(|m| !m.is_live());
+        if !dead {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self
+            .last_dial
+            .is_some_and(|last| now.duration_since(last) < std::time::Duration::from_secs(1))
+        {
+            return;
+        }
+        self.last_dial = Some(now);
+        match session_daw::open::reattach() {
+            Ok(attached) => {
+                tracing::info!(
+                    project = %attached.name,
+                    tracks = attached.track_count,
+                    "attached again"
+                );
+                // Dropped so the load path's restart check re-makes
+                // them against the new connection, and the reload is
+                // what re-reads a project that may not be the same one.
+                self.watch = None;
+                self.refresh = None;
+                self.meters = None;
+                self.reload();
+            }
+            Err(error) => {
+                // Expected while REAPER is starting: one line, not a
+                // line a second — the rate limit is above.
+                tracing::debug!(error = %error, "nothing to attach to yet");
+            }
+        }
+    }
+
     fn reconcile(&mut self) {
+        self.reconnect();
+        // Anything that is not a track changed, so the snapshot every
+        // item, marker, region and bar line is drawn from is old. This
+        // is checked first and unconditionally: a project with no
+        // track events at all still has items being dragged in it, and
+        // gating it behind the track stream is how it used to be right
+        // only by accident.
+        // A hand still on an item is the more recent authority on where
+        // it is going. Re-reading the project mid-drag would replace
+        // the item under the pointer with where the engine last thought
+        // it was, which is an item that jumps backwards while being
+        // dragged. The flag is not cleared, so the read happens the
+        // moment the hand comes off.
+        if self.loading.is_none()
+            && !self.editor.dragging()
+            && self
+                .refresh
+                .as_ref()
+                .is_some_and(session_daw::engine::Refresh::pending)
+        {
+            self.reload();
+            if let Some(refresh) = &self.refresh {
+                refresh.settled();
+            }
+        }
         let Some(watch) = &self.watch else { return };
         let events: Vec<_> = watch.drain().collect();
         if events.is_empty() {
@@ -2570,13 +2676,12 @@ impl App {
                 daw_proto::track::TrackEvent::Renamed { .. }
                     | daw_proto::track::TrackEvent::SelectionChanged { .. }
             );
-            listed |= matches!(
-                event,
-                daw_proto::track::TrackEvent::Added(_)
-                    | daw_proto::track::TrackEvent::Removed(_)
-                    | daw_proto::track::TrackEvent::Moved { .. }
-            );
-            session_daw::engine::apply_event(&mut self.tracks, event);
+            // The applier says whether the LIST changed; asking it
+            // beats re-matching the variants here, which is a second
+            // list of which events are structural and would drift from
+            // the first the day one is added.
+            listed |= session_daw::engine::apply_event(&mut self.tracks, event)
+                == session_daw::engine::Applied::Structure;
         }
         // A changed LIST outranks a changed name: the reload rebuilds
         // the names too, and doing both would record the panel twice.
@@ -2966,6 +3071,23 @@ impl App {
     }
 }
 
+/// The patch list for an attached project.
+///
+/// Filled on the loader thread once REAPER has told us where its
+/// project lives. A `OnceLock` rather than a field because the window is
+/// already built by the time the answer exists, and the alternative —
+/// blocking the window on a connection — is the blank screen the loader
+/// thread exists to avoid.
+static LIVE_PATCH_LIST: std::sync::OnceLock<session_daw::patch_list::Panel> =
+    std::sync::OnceLock::new();
+
+/// The taxonomy for an attached project, filled beside the patch list.
+///
+/// Read from REAPER's project file rather than through ext-state calls:
+/// one file read answers for every track at once, where the service
+/// would be a round trip per track on a link that is not free.
+static LIVE_KINDS: std::sync::OnceLock<session_daw::plan::Kinds> = std::sync::OnceLock::new();
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -2974,13 +3096,12 @@ fn main() {
         )
         .init();
 
-    let Some(path) = std::env::args()
-        .nth(1)
-        .or_else(|| std::env::var("SESSION_DAW_PROJECT").ok())
-        .map(std::path::PathBuf::from)
-        .filter(|p| p.exists())
-    else {
-        eprintln!("session-daw vello needs a project: cargo run --bin vello -- <song.rpp>");
+    let Some(source) = open::source() else {
+        eprintln!(
+            "session-daw vello needs a project, or a REAPER to attach to:\n  \
+             cargo run --bin vello -- <song.rpp>\n  \
+             cargo run --bin vello -- --reaper [socket]"
+        );
         std::process::exit(2);
     };
 
@@ -2992,7 +3113,15 @@ fn main() {
     // against this machine's studio profile. Read here rather than on
     // the loader thread because it is neither the project nor the
     // facade — a few file reads that cannot fail the window.
-    let patch_list = session_daw::patch_list::Panel::for_project(&path);
+    // When this window owns the project the album is beside it on disk,
+    // so the panel is read here and cannot fail the window. When it is
+    // attached, the project lives wherever REAPER has it — which we
+    // only learn after connecting, so that case fills the panel on the
+    // loader thread instead.
+    let patch_list = match &source {
+        open::Source::Own(path) => session_daw::patch_list::Panel::for_project(path),
+        open::Source::Reaper(_) => session_daw::patch_list::Panel::Absent,
+    };
     tracing::info!(
         patch.present = patch_list.table().is_some(),
         patch.studio = patch_list.table().map_or("", |t| t.studio.as_str()),
@@ -3003,7 +3132,14 @@ fn main() {
     // The taxonomy the template wrote into this project: read once,
     // here, because every scene's selectors match against it and it
     // does not change while the window is open.
-    let kinds = session_daw::plan::Kinds::read(&path);
+    // Owned: the file is right here. Attached: REAPER holds the
+    // project, and the kinds come from the same file once it has told
+    // us where that is — read on the loader thread with the patch list,
+    // for the same reason.
+    let kinds = match &source {
+        open::Source::Own(path) => session_daw::plan::Kinds::read(path),
+        open::Source::Reaper(_) => session_daw::plan::Kinds::default(),
+    };
     tracing::info!(scene.taxonomy = kinds.len(), "taxonomy");
 
     // The window opens in Mix, so it opens on Mix's scene — follow-mode
@@ -3025,16 +3161,47 @@ fn main() {
         .name("session-daw-load".into())
         .spawn(move || {
             tracing::info!("loader thread started");
-            match open::open_and_serve(&path) {
-                Ok(opened) => tracing::info!(
-                    project.name = opened.name,
-                    project.tracks = opened.track_count,
-                    "project open"
-                ),
-                Err(e) => {
-                    tracing::error!(error = %e, "the project did not open");
-                    return;
-                }
+            match source {
+                open::Source::Own(path) => match open::open_and_serve(&path) {
+                    Ok(opened) => tracing::info!(
+                        project.name = opened.name,
+                        project.tracks = opened.track_count,
+                        project.owned = true,
+                        "project open"
+                    ),
+                    Err(e) => {
+                        tracing::error!(error = %e, "the project did not open");
+                        return;
+                    }
+                },
+                open::Source::Reaper(socket) => match open::attach_to_reaper(socket) {
+                    Ok(live) => {
+                        tracing::info!(
+                            project.name = live.name,
+                            project.tracks = live.track_count,
+                            project.owned = false,
+                            project.path =
+                                live.path.as_ref().map_or("", |p| p.to_str().unwrap_or("")),
+                            "attached to REAPER"
+                        );
+                        // The album is beside REAPER's project, which we
+                        // could not know until now.
+                        if let Some(path) = live.path.as_deref() {
+                            let _ = LIVE_PATCH_LIST
+                                .set(session_daw::patch_list::Panel::for_project(path));
+                            let kinds = session_daw::plan::Kinds::read(path);
+                            tracing::info!(
+                                scene.taxonomy = kinds.len(),
+                                "taxonomy read from the live project"
+                            );
+                            let _ = LIVE_KINDS.set(kinds);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "could not attach to REAPER");
+                        return;
+                    }
+                },
             }
             // The facade is up; read it and record the scene.
             match build_scene(
@@ -3109,6 +3276,8 @@ fn main() {
         pressed_rail: None,
         row_drag: None,
         watch: session_daw::engine::Watch::start(),
+        refresh: session_daw::engine::Refresh::start(),
+        last_dial: None,
         meters: session_daw::engine::Meters::start(),
         mode: session::modes::Mode::Mix,
         phase: session::mix_phases::MixPhase::Tone,
