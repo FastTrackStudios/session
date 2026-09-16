@@ -515,10 +515,79 @@ fn electric() -> Node {
         .template(&["Guitars", "Electric"])
         .dead_end()
         .group(GroupRole::VcaLead(1))
+        .children(vec![rhythm(), lead_part(), solo()])
+}
+
+/// The seven sources one channel of a rhythm guitar is captured on.
+///
+/// A DI, a pedalboard, and two amps each with a 57 and a 121 — before
+/// the part is even doubled. This is the level `Guitar Mixing` hides
+/// and `Guitar Balance` exists to open.
+///
+/// The mics are `SM57` and `Royer` rather than `57` and `R121`, and
+/// that is not a preference: a bare `57` also matches the mic named
+/// inside a capture's own file name (`18.EG2 (57).wav`), and `R121`
+/// reads as the **R channel**. The names have to survive the classifier
+/// they will be read back through.
+fn seven_sources(channel: &str) -> Node {
+    Node::new(channel, ELECTRIC, Kind::Group).children(vec![
+        Node::new("DI", ELECTRIC, Kind::Source),
+        Node::new("Pedalboard", ELECTRIC, Kind::Source),
+        Node::new("Amp 1", ELECTRIC, Kind::Group).children(vec![
+            Node::new("SM57", ELECTRIC, Kind::Source),
+            Node::new("Royer", ELECTRIC, Kind::Source),
+        ]),
+        Node::new("Amp 2", ELECTRIC, Kind::Group).children(vec![
+            Node::new("SM57", ELECTRIC, Kind::Source),
+            Node::new("Royer", ELECTRIC, Kind::Source),
+        ]),
+    ])
+}
+
+/// **Rhythm**: the maximal guitar shape.
+///
+/// An arrangement over two layers (Main and Octave doing the same part
+/// an octave apart), each over L and R channels, each channel over its
+/// seven sources. Four channels, twenty-eight source tracks, one part —
+/// which is the depth every guitar scene and gesture has to work at
+/// without knowing it is deep.
+fn rhythm() -> Node {
+    Node::new("Rhythm", ELECTRIC, Kind::Group)
+        .send("GTR RHYTHM")
         .children(vec![
-            pair("Rhythm", ELECTRIC).send("GTR RHYTHM"),
-            part("Lead", ELECTRIC).send("GTR LEAD"),
-            part("Solo", ELECTRIC).send("GTR SOLO"),
+            Node::new("Main", ELECTRIC, Kind::Group)
+                .children(vec![seven_sources("L"), seven_sources("R")]),
+            Node::new("Octave", ELECTRIC, Kind::Group)
+                .children(vec![seven_sources("L"), seven_sources("R")]),
+        ])
+}
+
+/// **Lead**: a double-tracked DI-only part.
+///
+/// L and R carry items themselves, with **no folder under them** — a
+/// level is a folder only when it has more than one member, and a
+/// channel captured one way has nothing to hold. The same scenes and
+/// gestures must work here as on Rhythm, which is the point of having
+/// both in the fixture.
+fn lead_part() -> Node {
+    Node::new("Lead", ELECTRIC, Kind::Group)
+        .send("GTR LEAD")
+        .children(vec![
+            Node::new("L", ELECTRIC, Kind::Source),
+            Node::new("R", ELECTRIC, Kind::Source),
+        ])
+}
+
+/// **Solo**: the smallest shape — one DI track, and a harmony beside it.
+///
+/// An arrangement with a Main layer and a Harmony layer of one track
+/// each. No channel level at all, because neither layer is doubled.
+fn solo() -> Node {
+    Node::new("Solo", ELECTRIC, Kind::Group)
+        .send("GTR SOLO")
+        .children(vec![
+            Node::new("Main", ELECTRIC, Kind::Source),
+            Node::new("Harmony", ELECTRIC, Kind::Source),
         ])
 }
 

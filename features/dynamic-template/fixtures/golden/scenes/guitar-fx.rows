@@ -13,9 +13,51 @@
 2	Sub	30
 2	Synth	30
 0	Electric	86
-1	Rhythm	133
-1	Lead	133
-1	Solo	133
+1	Rhythm	86
+2	Main	86
+3	L	86
+4	DI	133
+4	Pedalboard	133
+4	Amp 1	86
+5	SM57	133
+5	Royer	133
+4	Amp 2	86
+5	SM57	133
+5	Royer	133
+3	R	86
+4	DI	133
+4	Pedalboard	133
+4	Amp 1	86
+5	SM57	133
+5	Royer	133
+4	Amp 2	86
+5	SM57	133
+5	Royer	133
+2	Octave	86
+3	L	86
+4	DI	133
+4	Pedalboard	133
+4	Amp 1	86
+5	SM57	133
+5	Royer	133
+4	Amp 2	86
+5	SM57	133
+5	Royer	133
+3	R	86
+4	DI	133
+4	Pedalboard	133
+4	Amp 1	86
+5	SM57	133
+5	Royer	133
+4	Amp 2	86
+5	SM57	133
+5	Royer	133
+1	Lead	86
+2	L	30
+2	R	30
+1	Solo	86
+2	Main	133
+2	Harmony	133
 0	Acoustic	86
 1	Steel	133
 1	Nylon	133

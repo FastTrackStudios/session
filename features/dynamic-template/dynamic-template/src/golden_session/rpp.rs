@@ -717,7 +717,7 @@ mod tests {
         // tripwire for a shape appearing or vanishing by accident, and
         // the per-rule `flow.*.golden` tests are what say the shapes
         // are RIGHT.
-        assert_eq!(tracks.len(), 233);
+        assert_eq!(tracks.len(), 275);
     }
 
     #[test]

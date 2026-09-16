@@ -272,6 +272,18 @@ fn bass_to_bus(g: &Golden) -> bool {
     sends_to(g, "Bass", "BASS BUS")
 }
 
+/// Guitars use no `Sum` folders, and they grow by depth rather than by
+/// the kit's pattern.
+///
+/// The kit gathers a piece's close mics under a `Sum` because they are
+/// one drum heard several ways. A guitar's depth is different in kind:
+/// a double is two *performances*, an octave layer is a third, and each
+/// channel of each is captured on its own sources. Folders, yes — a
+/// `Sum`, never.
+///
+/// This used to assert that no guitar track was a folder at all and
+/// that Rhythm was a stereo leaf, which held only while the fixture's
+/// guitars were flat. `flow.guitars.golden` requires the opposite.
 fn guitars_no_sums(g: &Golden) -> bool {
     let guitar_tracks: Vec<&Flat> = g
         .built
@@ -280,11 +292,28 @@ fn guitars_no_sums(g: &Golden) -> bool {
         .filter(|t| t.path.starts_with("Electric/") || t.path.starts_with("Acoustic/"))
         .collect();
     !guitar_tracks.is_empty()
-        && guitar_tracks
-            .iter()
-            .all(|t| t.kind != Kind::Sum && !t.is_folder)
-        && is_stereo_leaf(g, "Electric/Rhythm")
+        && guitar_tracks.iter().all(|t| t.kind != Kind::Sum)
         && names_eq(g, "Electric", &["Rhythm", "Lead", "Solo"])
+}
+
+/// The three shapes every guitar scene and gesture has to work on.
+///
+/// Rhythm at full depth, Lead as a DI-only double with no folder under
+/// its channels, and Solo as two single tracks. Having all three in one
+/// fixture is what proves `flow.guitars.same-everywhere`: the same
+/// scene renders against a twenty-eight-source part and a one-track one.
+fn guitars_three_shapes(g: &Golden) -> bool {
+    let has = |path: &str| g.built.tracks.iter().any(|t| t.path == path);
+    has("Electric/Rhythm/Main/L/Amp 1/SM57")
+        && has("Electric/Rhythm/Octave/R/Amp 2/Royer")
+        && has("Electric/Lead/L")
+        && !g
+            .built
+            .tracks
+            .iter()
+            .any(|t| t.path.starts_with("Electric/Lead/L/"))
+        && has("Electric/Solo/Main")
+        && has("Electric/Solo/Harmony")
 }
 
 fn guitars_separate(g: &Golden) -> bool {
@@ -609,8 +638,13 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: GUITARS,
-        text: "**No Sum folders**: each part is a track named for the part\n(Rhythm, Lead, Solo, …). A **stereo pair is one stereo track** —\ntwo channels, a stereo input — not a folder over an L and an R:\nits halves are almost never processed apart.",
+        text: "**No Sum folders** anywhere under the guitars: the kit's Sum\ngathers one drum heard several ways, and a guitar's depth is a\ndifferent thing — a double is two performances, an octave layer a\nthird, each channel on its own sources.",
         check: Some(guitars_no_sums),
+    },
+    Item {
+        section: GUITARS,
+        text: "The three shapes in one fixture (`flow.guitars.golden`): **Rhythm**\ndouble-tracked with two octave layers and seven sources a channel,\n**Lead** a DI-only double with no folder under its channels, and\n**Solo** a single track with a Harmony beside it.",
+        check: Some(guitars_three_shapes),
     },
     Item {
         section: GUITARS,

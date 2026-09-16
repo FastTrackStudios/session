@@ -358,27 +358,35 @@ fn button(
 /// Both are lists of one-word buttons until the toolbar icons
 /// `MixPhase::icon` names are ported.
 ///
-/// The scenes are the ones the current mode reaches, in the order the
-/// number keys recall them — so the rail and the keyboard are one list
-/// and a button cannot name a scene the keys cannot reach.
+/// The scenes are the ones the current mode reaches **for the
+/// instrument in front of you**, in the order the number keys recall
+/// them — so the rail and the keyboard are one list and a button cannot
+/// name a scene the keys cannot reach. Scoping to the instrument is
+/// what keeps the rail readable now that every instrument has a set:
+/// unscoped, Record mode alone would print more buttons than the rail
+/// has room for.
 #[must_use]
 pub fn phases_and_scenes(
     shown: Option<&str>,
     mode: session::modes::Mode,
     current: session::mix_phases::MixPhase,
+    instrument: &str,
 ) -> Vec<Item<'static>> {
-    let mut items: Vec<Item<'static>> =
-        dynamic_template::scenes::follow::in_mode(dynamic_template::scenes::scenes(), mode.slug())
-            .into_iter()
-            .map(|scene| Item {
-                label: scene.short.as_str(),
-                on: shown == Some(scene.slug.as_str()),
-                act: Action::Scene(scene.slug.as_str()),
-                // The scenes have no icons of their own yet — they are
-                // this window's idea, not a REAPER toolbar's.
-                icon: None,
-            })
-            .collect();
+    let mut items: Vec<Item<'static>> = dynamic_template::scenes::follow::in_mode(
+        dynamic_template::scenes::scenes(),
+        mode.slug(),
+        instrument,
+    )
+    .into_iter()
+    .map(|scene| Item {
+        label: scene.short.as_str(),
+        on: shown == Some(scene.slug.as_str()),
+        act: Action::Scene(scene.slug.as_str()),
+        // The scenes have no icons of their own yet — they are
+        // this window's idea, not a REAPER toolbar's.
+        icon: None,
+    })
+    .collect();
     items.extend(session::mix_phases::MixPhase::ALL.iter().map(|phase| Item {
         label: phase.display_name(),
         on: *phase == current,
@@ -421,11 +429,12 @@ pub fn profile(
     shown: Option<&str>,
     settings: crate::settings::Settings,
     audience: dynamic_template::scenes::Audience,
+    instrument: &str,
 ) -> Profile {
     // The left rail is the one thing both surfaces share: which layout
     // is showing and which pass it belongs to is a fact about the
     // SESSION, not about the panel you happen to be looking at.
-    let left = phases_and_scenes(shown, mode, phase);
+    let left = phases_and_scenes(shown, mode, phase, instrument);
     match surface {
         Surface::Mixer => Profile {
             left,

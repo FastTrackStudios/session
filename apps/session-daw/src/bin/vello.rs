@@ -512,9 +512,15 @@ impl ApplicationHandler for App {
                     && text.len() == 1
                     && let Some(digit) = text.chars().next().and_then(|c| c.to_digit(10))
                 {
+                    // The keys reach this instrument's scenes, not
+                    // every instrument's: with four sets in the table
+                    // there are more scenes in Record than there are
+                    // digits, and the keys are for moving around what
+                    // is in front of you.
+                    let instrument = self.instrument();
                     let shown = self
                         .visibility
-                        .recall(dynamic_template::scenes::scenes(), digit)
+                        .recall(dynamic_template::scenes::scenes(), digit, &instrument)
                         .map(str::to_owned);
                     tracing::info!(ui.scene = shown.as_deref().unwrap_or("none"), "scene");
                     self.sync_folds_to_scene();
@@ -2208,6 +2214,7 @@ impl App {
             self.visibility.shown(),
             self.settings,
             self.visibility.audience(),
+            &self.instrument(),
         );
         let Self {
             renderer,
@@ -2264,6 +2271,7 @@ impl App {
             self.visibility.shown(),
             self.settings,
             self.visibility.audience(),
+            &self.instrument(),
         );
         let levels = self.meter_levels();
         let levels = levels.as_slice();
@@ -2393,6 +2401,7 @@ impl App {
             self.visibility.shown(),
             self.settings,
             self.visibility.audience(),
+            &self.instrument(),
         )
     }
 
@@ -2874,6 +2883,7 @@ impl App {
             self.visibility.shown(),
             self.settings,
             self.visibility.audience(),
+            &self.instrument(),
         );
         let Some(scene) = &self.scene else { return };
         let bars = Bars::at(scene.bpm);

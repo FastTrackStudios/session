@@ -4,46 +4,46 @@
 1	Unassigned	86
 2	Kick	86
 3	Sum	86
-4	In	133
-4	Out	133
-4	Trig	30
-3	Sub	30
-3	Verb	30
+4	In	86
+4	Out	86
+4	Trig	86
+3	Sub	86
+3	Verb	86
 2	Snare	86
 3	Sum	86
-4	Top	133
-4	Bottom	133
-4	Trig	30
-4	Fund	30
+4	Top	86
+4	Bottom	86
+4	Trig	86
+4	Fund	86
 3	Verb	86
-4	Short	30
-4	Long	30
-4	Nonlin	30
+4	Short	86
+4	Long	86
+4	Nonlin	86
 2	Toms	86
 3	Tom 1	86
-4	T1	30
-4	T1 Trig	30
-4	Fund	30
+4	T1	86
+4	T1 Trig	86
+4	Fund	86
 3	Tom 2	86
-4	T2	30
-4	T2 Trig	30
-4	Fund	30
+4	T2	86
+4	T2 Trig	86
+4	Fund	86
 3	Tom 3	86
-4	T3	30
-4	T3 Trig	30
-4	Fund	30
+4	T3	86
+4	T3 Trig	86
+4	Fund	86
 3	Tom 4	86
-4	T4	30
-4	T4 Trig	30
-4	Fund	30
-3	Verb	30
+4	T4	86
+4	T4 Trig	86
+4	Fund	86
+3	Verb	86
 2	Cymbals	86
-3	OH	30
-3	Hi-Hat	30
-3	Ride	30
+3	OH	86
+3	Hi-Hat	86
+3	Ride	86
 2	Rooms	86
-3	Rooms	30
-3	Rooms Far	30
+3	Rooms	86
+3	Rooms Far	86
 0	Percussion	86
 1	Unassigned	86
 2	Shaker	86
@@ -69,11 +69,11 @@
 1	Unassigned	86
 2	Guitar	86
 3	Sum	86
-4	DI	86
-4	Amp	86
+4	DI	133
+4	Amp	133
 2	Synth	86
-3	Sub	86
-3	Synth	86
+3	Sub	133
+3	Synth	133
 0	Electric	86
 1	Unassigned	86
 2	Rhythm	86

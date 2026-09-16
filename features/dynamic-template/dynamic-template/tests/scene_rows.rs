@@ -224,3 +224,38 @@ fn drum_editing_folds_like_the_stack_and_hides_the_sends() {
         "the mics should be folded into their piece"
     );
 }
+
+/// **Guitar Balance**: the one guitar scene that opens the multi-mic
+/// level, which is exactly what Guitar Mixing hides.
+///
+/// Almost all of a guitar mix happens at the part and its bus, so
+/// Mixing collapses every layer and multi-mic folder. Setting a
+/// configuration's initial balance and panning needs the opposite, and
+/// that is what this scene is for — so the test that matters is that
+/// the two disagree about the sources.
+///
+/// r[verify flow.guitars.mixing.balance-scene]
+#[test]
+fn guitar_balance_opens_what_guitar_mixing_hides() {
+    let sources = |slug: &str| -> usize {
+        rows_of(slug)
+            .lines()
+            .filter(|line| {
+                // A source row is one the mixing scene keeps at its
+                // minimum and the balance scene opens: count the rows
+                // deep enough to be under a channel.
+                line.split('\t')
+                    .next()
+                    .and_then(|depth| depth.parse::<u32>().ok())
+                    .is_some_and(|depth| depth >= 3)
+            })
+            .count()
+    };
+    let balance = sources("guitar-balance");
+    let mixing = sources("guitar-mixing");
+    assert!(
+        balance > mixing,
+        "balance shows {balance} deep rows and mixing {mixing} — \
+         the balance scene is supposed to open what mixing hides"
+    );
+}

@@ -66,10 +66,14 @@ fixed tree.
 
 ### Guitars — `Electric/`, `Acoustic/` (a different shape every song)
 
-- [x] **No Sum folders**: each part is a track named for the part
-      (Rhythm, Lead, Solo, …). A **stereo pair is one stereo track** —
-      two channels, a stereo input — not a folder over an L and an R:
-      its halves are almost never processed apart.
+- [x] **No Sum folders** anywhere under the guitars: the kit's Sum
+      gathers one drum heard several ways, and a guitar's depth is a
+      different thing — a double is two performances, an octave layer a
+      third, each channel on its own sources.
+- [x] The three shapes in one fixture (`flow.guitars.golden`): **Rhythm**
+      double-tracked with two octave layers and seven sources a channel,
+      **Lead** a DI-only double with no folder under its channels, and
+      **Solo** a single track with a Harmony beside it.
 - [x] Electrics and acoustics are **separate top-level folders with
       their own buses** — no Guitars folder, no GUITAR BUS.
 - [x] Every electric part goes to exactly one of **GTR RHYTHM, GTR LEAD,

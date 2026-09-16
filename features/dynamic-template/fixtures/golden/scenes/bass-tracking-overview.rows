@@ -3,74 +3,54 @@
 0	Drum Kit	86
 1	Kick	86
 2	Sum	86
-3	In	30
-3	Out	30
-3	Trig	133
-2	Sub	133
-2	Verb	133
+3	In	86
+3	Out	86
+3	Trig	86
+2	Sub	86
+2	Verb	86
 1	Snare	86
 2	Sum	86
-3	Top	30
-3	Bottom	30
-3	Trig	133
-3	Fund	133
+3	Top	86
+3	Bottom	86
+3	Trig	86
+3	Fund	86
 2	Verb	86
-3	Short	133
-3	Long	133
-3	Nonlin	133
+3	Short	86
+3	Long	86
+3	Nonlin	86
 1	Toms	86
 2	Tom 1	86
-3	T1	30
-3	T1 Trig	133
-3	Fund	133
+3	T1	86
+3	T1 Trig	86
+3	Fund	86
 2	Tom 2	86
-3	T2	30
-3	T2 Trig	133
-3	Fund	133
+3	T2	86
+3	T2 Trig	86
+3	Fund	86
 2	Tom 3	86
-3	T3	30
-3	T3 Trig	133
-3	Fund	133
+3	T3	86
+3	T3 Trig	86
+3	Fund	86
 2	Tom 4	86
-3	T4	30
-3	T4 Trig	133
-3	Fund	133
-2	Verb	133
+3	T4	86
+3	T4 Trig	86
+3	Fund	86
+2	Verb	86
 1	Cymbals	86
-2	OH	30
-2	Hi-Hat	30
-2	Ride	30
+2	OH	86
+2	Hi-Hat	86
+2	Ride	86
 1	Rooms	86
-2	Rooms	30
-2	Rooms Far	30
+2	Rooms	86
+2	Rooms Far	86
 0	Percussion	86
 1	Shaker	86
 1	Tambourine	86
 1	Claps	86
-0	Process	30
-1	Compress	30
-2	Dry	30
-2	Tight	30
-2	Punch	30
-2	Smash	30
-2	Crunch	30
-1	FX	30
-2	Room Sim	30
-2	Verb	30
-3	Wood Room	30
-3	Music Club	30
-3	Stadium	30
-3	RMX 16	30
-3	Nonlin	30
-3	Brick Wall	30
 0	Bass	86
 1	Guitar	86
 2	Sum	86
-3	DI	86
-3	Amp	86
 1	Synth	86
-2	Sub	133
-2	Synth	86
 0	Electric	86
 1	Rhythm	86
 2	Main	86
