@@ -1007,6 +1007,16 @@ pub fn apply_event(
                 tracks[i].phase_inverted = *inverted;
             }
         }
+        E::RouteCountsChanged {
+            guid,
+            send_count,
+            receive_count,
+        } => {
+            if let Some(i) = find(tracks, guid) {
+                tracks[i].send_count = *send_count;
+                tracks[i].receive_count = *receive_count;
+            }
+        }
         E::FxCountChanged {
             guid,
             fx_count,

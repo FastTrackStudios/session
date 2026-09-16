@@ -25,16 +25,21 @@ use crate::text::Font;
 
 /// The routing widget's state, from the track.
 ///
-/// Sends and receives are not on `Track` — they live in the routing
-/// model this window has not read yet — so they draw as the unlit slots
-/// they are rather than as a guess. `parent_send` is real, is a live
-/// value, and has its own event on the track stream.
+/// All three lanes are real now. Sends and receives used to draw as
+/// unlit slots whatever the session did, because the counts were not on
+/// `Track` and a strip cannot afford to ask the routing service per
+/// track — so a session full of sends showed none, which is a lane
+/// saying the opposite of the truth rather than saying nothing.
+///
+/// The widget wants to know WHETHER, not how many: it lights a lane. A
+/// strip that drew the number would be drawing a thing that changes
+/// under it for reasons it has no other way to see.
 #[must_use]
 pub const fn routes(track: &Track) -> art::Routing {
     art::Routing {
         parent_send: track.parent_send,
-        sends: false,
-        receives: false,
+        sends: track.send_count > 0,
+        receives: track.receive_count > 0,
     }
 }
 
