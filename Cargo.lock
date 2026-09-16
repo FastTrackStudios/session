@@ -17862,12 +17862,9 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "baseview"
-version = "0.3.3"
-
-[[patch.unused]]
-name = "dsp-golden"
-version = "0.1.0"
+name = "phon"
+version = "0.2.0-rc.5"
+source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
 
 [[patch.unused]]
 name = "audio-controls"
@@ -17974,6 +17971,9 @@ name = "reaper-kbd"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "phon"
-version = "0.2.0-rc.5"
-source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
+name = "baseview"
+version = "0.3.3"
+
+[[patch.unused]]
+name = "dsp-golden"
+version = "0.1.0"

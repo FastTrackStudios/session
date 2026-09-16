@@ -184,6 +184,12 @@ sheet, `cargo check --workspace`, `cargo nextest run --workspace` — and
 stops at the first failure, because CI does too and a later step built
 on a broken one tells you nothing.
 
+It refuses to start with less than 25 GB free, because a build that runs
+out of room does not fail as a full disk: mold dies with a bus error and
+cargo reports `linking with cc failed`, which reads as a broken
+toolchain. `just sweep-incremental` is the always-safe reclaim,
+`just disk` says where it went.
+
 `just ci <step>` starts from a step when you have already passed the
 cheap ones and are iterating: `lockfile`, `fmt`, `flows`, `tailwind`,
 `check`, `nextest`.
