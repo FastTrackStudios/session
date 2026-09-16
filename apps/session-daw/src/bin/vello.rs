@@ -198,6 +198,9 @@ struct App {
     row_drag: Option<(usize, session_daw::row::Control)>,
     /// The engine's own account of the tracks, as it changes.
     watch: Option<session_daw::engine::Watch>,
+    /// When the window last tried to find a REAPER again. A dial a
+    /// frame would spend the whole of REAPER's startup failing.
+    last_dial: Option<std::time::Instant>,
     /// Whether anything that is NOT a track has changed — items,
     /// takes, markers, regions, the tempo map. A flag, because all of
     /// them are drawn from one snapshot and the only useful question
@@ -2563,7 +2566,60 @@ impl App {
     /// round trip; this is where the prediction is replaced by the
     /// truth. A frame that finds no events does nothing, which is most
     /// of them.
+    /// Notice a REAPER that has gone, and find the one that replaced it.
+    ///
+    /// A quit REAPER ends every stream at once, and nothing used to
+    /// notice: the handles stayed, the restart check only fires when a
+    /// handle is MISSING, and the window went on drawing the last thing
+    /// it heard. Connected in appearance and dead in fact is the one
+    /// state a mirror must not be able to reach.
+    ///
+    /// Tried once a second rather than once a frame. REAPER takes a
+    /// while to come back, and a window that dials on every frame
+    /// spends the whole wait spawning threads that immediately fail.
+    fn reconnect(&mut self) {
+        if !session_daw::open::is_attached() {
+            return;
+        }
+        let dead = self.watch.as_ref().is_none_or(|w| !w.is_live())
+            || self.refresh.as_ref().is_none_or(|r| !r.is_live())
+            || self.meters.as_ref().is_none_or(|m| !m.is_live());
+        if !dead {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self
+            .last_dial
+            .is_some_and(|last| now.duration_since(last) < std::time::Duration::from_secs(1))
+        {
+            return;
+        }
+        self.last_dial = Some(now);
+        match session_daw::open::reattach() {
+            Ok(attached) => {
+                tracing::info!(
+                    project = %attached.name,
+                    tracks = attached.track_count,
+                    "attached again"
+                );
+                // Dropped so the load path's restart check re-makes
+                // them against the new connection, and the reload is
+                // what re-reads a project that may not be the same one.
+                self.watch = None;
+                self.refresh = None;
+                self.meters = None;
+                self.reload();
+            }
+            Err(error) => {
+                // Expected while REAPER is starting: one line, not a
+                // line a second — the rate limit is above.
+                tracing::debug!(error = %error, "nothing to attach to yet");
+            }
+        }
+    }
+
     fn reconcile(&mut self) {
+        self.reconnect();
         // Anything that is not a track changed, so the snapshot every
         // item, marker, region and bar line is drawn from is old. This
         // is checked first and unconditionally: a project with no
@@ -3214,6 +3270,7 @@ fn main() {
         row_drag: None,
         watch: session_daw::engine::Watch::start(),
         refresh: session_daw::engine::Refresh::start(),
+        last_dial: None,
         meters: session_daw::engine::Meters::start(),
         mode: session::modes::Mode::Mix,
         phase: session::mix_phases::MixPhase::Tone,

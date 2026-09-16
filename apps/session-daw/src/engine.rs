@@ -771,6 +771,7 @@ async fn item_track(project: &daw_control::Project, item_guid: &str) -> String {
 /// does not.
 pub struct Watch {
     changes: std::sync::mpsc::Receiver<daw_proto::track::TrackEvent>,
+    alive: Alive,
 }
 
 impl Watch {
@@ -779,10 +780,18 @@ impl Watch {
     pub fn start() -> Option<Self> {
         let runtime = crate::open::runtime()?;
         let (tx, rx) = std::sync::mpsc::channel();
+        let alive = Alive::new();
+        let mine = alive.clone();
         std::thread::Builder::new()
             .name("session-daw-watch".into())
             .spawn(move || {
                 runtime.block_on(async move {
+                    // Every exit from here marks the handle dead,
+                    // including the ones that never got a stream at
+                    // all: a subscribe that failed is a window with no
+                    // corrections coming, which looks exactly like a
+                    // project where nothing is happening.
+                    let _end = scopeguard(move || mine.ended());
                     let Some(daw) = daw::rpc::Daw::try_get() else {
                         return;
                     };
@@ -802,7 +811,7 @@ impl Watch {
                 });
             })
             .ok()?;
-        Some(Self { changes: rx })
+        Some(Self { changes: rx, alive })
     }
 
     /// Everything that has happened since the last frame.
@@ -812,6 +821,12 @@ impl Watch {
     /// nothing to do, which is most of them.
     pub fn drain(&self) -> impl Iterator<Item = daw_proto::track::TrackEvent> + '_ {
         self.changes.try_iter()
+    }
+
+    /// Is this subscription still connected?
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.alive.is_live()
     }
 }
 
@@ -1305,6 +1320,7 @@ mod continuous_tests {
 /// policy is the reason they are not one type.
 pub struct Meters {
     latest: std::sync::Arc<std::sync::Mutex<Vec<daw_proto::TrackLevels>>>,
+    alive: Alive,
 }
 
 impl Meters {
@@ -1315,10 +1331,13 @@ impl Meters {
         let runtime = crate::open::runtime()?;
         let latest = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let into_thread = std::sync::Arc::clone(&latest);
+        let alive = Alive::new();
+        let mine = alive.clone();
         std::thread::Builder::new()
             .name("session-daw-meters".into())
             .spawn(move || {
                 runtime.block_on(async move {
+                    let _end = scopeguard(move || mine.ended());
                     let Some(daw) = daw::rpc::Daw::try_get() else {
                         return;
                     };
@@ -1339,7 +1358,13 @@ impl Meters {
                 });
             })
             .ok()?;
-        Some(Self { latest })
+        Some(Self { latest, alive })
+    }
+
+    /// Is this subscription still connected?
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.alive.is_live()
     }
 
     /// The most recent frame, copied out for this redraw.
@@ -1548,6 +1573,58 @@ mod structure_tests {
     }
 }
 
+/// Run a closure when the scope ends, however it ends.
+///
+/// Every stream loop here has several ways out — no facade, no project,
+/// a refused subscribe, a closed stream — and each of them has to mark
+/// the handle dead. Writing that at four exits is writing it at three
+/// and forgetting the fourth, which in this file means a window that
+/// believes it is connected.
+fn scopeguard<F: FnOnce()>(f: F) -> impl Drop {
+    struct Guard<F: FnOnce()>(Option<F>);
+    impl<F: FnOnce()> Drop for Guard<F> {
+        fn drop(&mut self) {
+            if let Some(f) = self.0.take() {
+                f();
+            }
+        }
+    }
+    Guard(Some(f))
+}
+
+/// Whether a subscription is still connected.
+///
+/// Every stream in this file ends the same way: REAPER quits, the
+/// socket closes, `recv` returns `None` and the thread falls out of its
+/// loop. Nothing used to notice. The window kept its handle, the
+/// handle's restart check only fires when the handle is *missing*, and
+/// so a REAPER quit and reopened left a window drawing the last thing
+/// it heard — connected in appearance and dead in fact, which is the
+/// failure a mirror must never have.
+///
+/// Shared rather than returned, because the thread is the only one that
+/// knows and the window is the only one that can act.
+#[derive(Clone)]
+pub struct Alive(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Alive {
+    fn new() -> Self {
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            true,
+        )))
+    }
+
+    fn ended(&self) {
+        self.0.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Is the stream behind this handle still delivering?
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// Everything in the project that is not a track.
 ///
 /// Items, takes, markers, regions and the tempo map are all read as a
@@ -1571,6 +1648,7 @@ mod structure_tests {
 /// for a whole read.
 pub struct Refresh {
     stale: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    alive: Alive,
 }
 
 impl Refresh {
@@ -1582,10 +1660,13 @@ impl Refresh {
         let runtime = crate::open::runtime()?;
         let stale = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let writer = std::sync::Arc::clone(&stale);
+        let alive = Alive::new();
+        let mine = alive.clone();
         std::thread::Builder::new()
             .name("session-daw-refresh".into())
             .spawn(move || {
                 runtime.block_on(async move {
+                    let _end = scopeguard(move || mine.ended());
                     let Some(daw) = daw::rpc::Daw::try_get() else {
                         return;
                     };
@@ -1622,7 +1703,13 @@ impl Refresh {
                 });
             })
             .ok()?;
-        Some(Self { stale })
+        Some(Self { stale, alive })
+    }
+
+    /// Is this subscription still connected?
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.alive.is_live()
     }
 
     /// Is the snapshot old?
@@ -1656,6 +1743,7 @@ mod refresh_tests {
         (
             Refresh {
                 stale: Arc::clone(&stale),
+                alive: super::Alive::new(),
             },
             stale,
         )
@@ -1675,6 +1763,26 @@ mod refresh_tests {
         assert!(refresh.pending());
         refresh.settled();
         assert!(!refresh.pending(), "one read answered all sixty");
+    }
+
+    /// A handle whose stream ended reads as dead.
+    ///
+    /// This is the whole of the REAPER-went-away detection. The guard
+    /// fires however the thread leaves — no facade, no project, a
+    /// refused subscribe, a closed stream — because writing the same
+    /// line at four exits is writing it at three.
+    #[test]
+    fn a_stream_that_ends_marks_its_handle_dead() {
+        let alive = super::Alive::new();
+        assert!(alive.is_live());
+
+        let seen = alive.clone();
+        {
+            let mine = alive.clone();
+            let _end = super::scopeguard(move || mine.ended());
+            assert!(seen.is_live(), "still connected inside the loop");
+        }
+        assert!(!seen.is_live(), "the window can see the connection go");
     }
 
     /// Asking does not clear.

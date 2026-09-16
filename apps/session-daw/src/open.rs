@@ -216,7 +216,28 @@ pub struct Attached {
 /// handle owns the lanes, so dropping it disconnects every panel at
 /// once — and because the panels read through a global facade rather
 /// than through this value, nothing would name the cause.
-static CONNECTION: OnceLock<daw::cli::DawConnection> = OnceLock::new();
+/// The live connection, replaceable.
+///
+/// A `OnceLock` here was the same mistake `daw_control`'s global made
+/// and fixed: a window attaches to one REAPER for its life only if that
+/// REAPER lives as long as the window. Quit REAPER and reopen it and
+/// the pid changes, so the socket changes, so the connection has to be
+/// re-made — and a cell that can only be written once left every panel
+/// holding a dead link with no way to re-point it, and nothing on
+/// screen to say so.
+///
+/// The old connection is dropped when a new one replaces it, which is
+/// what actually closes the dead socket.
+static CONNECTION: std::sync::RwLock<Option<daw::cli::DawConnection>> =
+    std::sync::RwLock::new(None);
+
+/// The socket the last attach used, so a re-attach can repeat it.
+///
+/// `None` means discovery, which is the common case and the one that
+/// must be repeated rather than remembered: the pid in the path is the
+/// very thing that changed.
+static ATTACHED_TO: std::sync::RwLock<Option<Option<std::path::PathBuf>>> =
+    std::sync::RwLock::new(None);
 
 /// Attach to a REAPER that is already running the FTS extension.
 ///
@@ -243,6 +264,7 @@ pub fn attach_to_reaper(socket: Option<std::path::PathBuf>) -> eyre::Result<Atta
         eyre::bail!("this window already owns a project; it cannot also attach to REAPER");
     }
     let rt = engine_runtime()?;
+    let socket_for_retry = socket.clone();
     let connection = rt
         .block_on(daw::cli::connect(socket))
         .map_err(|e| eyre::eyre!("could not attach to REAPER: {e}"))?;
@@ -253,9 +275,14 @@ pub fn attach_to_reaper(socket: Option<std::path::PathBuf>) -> eyre::Result<Atta
             .build()?,
     );
     daw::init_from_parts(connection.daw.clone(), block_on_rt);
-    CONNECTION
-        .set(connection)
-        .map_err(|_| eyre::eyre!("already attached to a REAPER"))?;
+    if let Ok(mut slot) = CONNECTION.write() {
+        // Assigning drops whatever was there, which is what closes a
+        // socket to a REAPER that has gone.
+        *slot = Some(connection);
+    }
+    if let Ok(mut slot) = ATTACHED_TO.write() {
+        *slot = Some(socket_for_retry);
+    }
 
     // Read the project back rather than reporting what we hoped for. A
     // window that prints the project it asked for, instead of the one it
@@ -328,3 +355,31 @@ pub fn source() -> Option<Source> {
 pub const REAPER_ENV: &str = "SESSION_DAW_REAPER";
 /// Which REAPER, when more than one is running.
 pub const SOCKET_ENV: &str = "FTS_SOCKET";
+
+/// Attach again, to whatever REAPER is there now.
+///
+/// Called when the window notices its subscriptions have ended, which
+/// is what a quit REAPER looks like from this side. It repeats the
+/// discovery rather than the path it found last time, because the pid
+/// in that path is exactly what changed.
+///
+/// # Errors
+///
+/// When this window owns a project rather than attaching to one, when
+/// no REAPER was ever attached to, or when nothing answers — the last
+/// of which is the ordinary case while REAPER is starting up, and is a
+/// reason to try again rather than a reason to stop.
+pub fn reattach() -> eyre::Result<Attached> {
+    let socket = ATTACHED_TO
+        .read()
+        .ok()
+        .and_then(|slot| slot.clone())
+        .ok_or_else(|| eyre::eyre!("this window never attached to a REAPER"))?;
+    attach_to_reaper(socket)
+}
+
+/// Is this window attached to a REAPER rather than owning a file?
+#[must_use]
+pub fn is_attached() -> bool {
+    ATTACHED_TO.read().is_ok_and(|slot| slot.is_some())
+}
