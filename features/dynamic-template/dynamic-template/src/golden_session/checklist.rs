@@ -335,13 +335,46 @@ fn acoustic(g: &Golden) -> bool {
 }
 
 fn keys(g: &Golden) -> bool {
-    names_eq(g, "Keys", &["Piano", "Rhodes", "Organ"])
+    names_eq(g, "Keys", &["Piano", "Rhodes", "Wurli", "Organ"])
         && is_stereo_leaf(g, "Keys/Piano")
         && sends_to(g, "Keys", "KEYS BUS")
 }
 
+/// A family is the mixing level and a synth the tracking one, so the
+/// families are folders and the synths belonging to none sit beside
+/// them at the top of `Synths/` — reachable without inventing a family
+/// to hold them.
 fn synths(g: &Golden) -> bool {
-    names_eq(g, "Synths", &["Pad", "Lead Synth", "Arp"]) && sends_to(g, "Synths", "KEYS BUS")
+    names_eq(
+        g,
+        "Synths",
+        &[
+            "Sub Bass Synth",
+            "Texture",
+            "SY Arps",
+            "SY Pads",
+            "SY Leads",
+            "SY Chords",
+        ],
+    ) && sends_to(g, "Synths", "KEYS BUS")
+}
+
+/// Percussion is its own folder beside the drums with its own bus: it
+/// is tracked one instrument at a time and comps on the track like a
+/// bass, so the kit's folder comping would be the wrong gesture.
+fn percussion(g: &Golden) -> bool {
+    names_eq(g, "Percussion", &["Shaker", "Tambourine", "Claps"])
+        && sends_to(g, "Percussion", "PERC BUS")
+}
+
+/// The orchestra's golden shape: four sections, each to its own bus.
+/// Only the shape — divisi, seating and spot mics are a later effort.
+fn orchestra(g: &Golden) -> bool {
+    names_eq(
+        g,
+        "Orchestra",
+        &["Winds", "Brass", "Strings", "Orch Percussion"],
+    )
 }
 
 /// Hue in degrees of an `0xRRGGBB` colour.
@@ -410,9 +443,23 @@ fn inst_fx_to_bus(g: &Golden) -> bool {
     sends_to(g, "Inst FX", "INST BUS")
 }
 
+/// Three leads, the BGV parts, a choir and the three language VCAs.
+///
+/// Each lead is a mix track with a Main and a DBL under it, and a
+/// source per language THEY SING — Belen has no Portuguese and Aline
+/// has only Portuguese. Absence is the representation; there is no
+/// empty placeholder to mistake for a part nobody recorded.
 fn vocals(g: &Golden) -> bool {
-    summed(g, "Vocals/Lead", &["Close", "Room"], &["Verb"])
-        && names_eq(g, "Vocals", &["Lead", "Doubles", "Harmonies"])
+    names_eq(
+        g,
+        "Vocals",
+        &[
+            "Ron", "Belen", "Aline", "BGVs", "Choir", "VOX EN", "VOX ES", "VOX PT",
+        ],
+    ) && names_eq(g, "Vocals/Ron", &["Main", "DBL"])
+        && names_eq(g, "Vocals/Ron/Main", &["EN", "ES", "PT"])
+        && names_eq(g, "Vocals/Belen/Main", &["EN", "ES"])
+        && names_eq(g, "Vocals/Aline/Main", &["PT"])
         && sends_to(g, "Vocals", "LEAD VOX BUS")
 }
 
@@ -538,7 +585,7 @@ pub const ITEMS: &[Item] = &[
     Item {
         section: PERCUSSION,
         text: "Shaker, Tambourine, Claps → **PERC BUS** under INST BUS\n(`flow.percussion.folder`).",
-        check: None,
+        check: Some(percussion),
     },
     Item {
         section: BASS,
@@ -607,7 +654,7 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: KEYS,
-        text: "Keys: Piano (a stereo track), Rhodes, Organ → **KEYS BUS**.",
+        text: "Keys as parts: Piano (a stereo track), Rhodes, Wurli, Organ → **KEYS BUS**.",
         check: Some(keys),
     },
     Item {
@@ -617,7 +664,7 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: KEYS,
-        text: "Synths: Pad, Lead Synth, Arp → **KEYS BUS**.",
+        text: "Synths by family — SY Arps, SY Pads, SY Leads, SY Chords — with the general synths beside them → **KEYS BUS**.",
         check: Some(synths),
     },
     Item {
@@ -638,7 +685,7 @@ pub const ITEMS: &[Item] = &[
     Item {
         section: ORCHESTRA,
         text: "**Winds/** Flute, Oboe, Clarinet, Bassoon.",
-        check: None,
+        check: Some(orchestra),
     },
     Item {
         section: ORCHESTRA,
@@ -687,7 +734,7 @@ pub const ITEMS: &[Item] = &[
     },
     Item {
         section: VOCALS,
-        text: "Lead (Close, Room, Verb), Doubles, Harmonies → **LEAD VOX BUS**.",
+        text: "Leads Ron (EN/ES/PT), Belen (EN/ES) and Aline (PT), each a mix track with Main and DBL and a source per language; BGV parts; a four-section choir; VOX EN/ES/PT VCAs → **LEAD VOX BUS**.",
         check: Some(vocals),
     },
     Item {

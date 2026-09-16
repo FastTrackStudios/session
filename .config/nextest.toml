@@ -17,11 +17,17 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 filter = 'test(=fills_land_where_a_drummer_puts_them)'
 slow-timeout = { period = "60s", terminate-after = 5 }
 
-# The golden session's nine scene renders: each is a real GPU frame of a
-# 128-track session drawn through the bench binary, about seven seconds
-# apiece and a minute for the set. Slow because it draws nine pictures,
-# not because it is stuck — and a hang is still caught inside five
-# minutes.
+# The golden session's eleven scene renders: each is a real GPU frame of
+# a 233-track session drawn through the bench binary — about ninety
+# seconds for the set, and it grows every time the golden session gains
+# a shape. Slow because it draws eleven pictures, not because it is
+# stuck; a hang is still caught inside ten minutes.
+#
+# The period is deliberately well above the measured time rather than
+# just above it: on a loaded box this test and the fill detector run
+# alongside a full workspace build, and a timeout that only just fits
+# on an idle machine goes red under load, which teaches everyone to
+# rerun a red suite instead of reading it.
 [[profile.default.overrides]]
 filter = 'test(=every_scene_renders_to_its_committed_fixture)'
-slow-timeout = { period = "60s", terminate-after = 5 }
+slow-timeout = { period = "60s", terminate-after = 10 }

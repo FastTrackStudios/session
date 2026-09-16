@@ -551,8 +551,12 @@ fn keys() -> Node {
         .template(&["Keys"])
         .send("KEYS BUS")
         .children(vec![
+            // Piano is a stereo TRACK, not a folder over an L and an
+            // R: two mics on one instrument are one capture of one
+            // thing (`flow.scenes.reaper-model`).
             pair("Piano", KEYS).template(&["Keys", "Piano"]),
             part("Rhodes", KEYS).template(&["Keys", "Electric", "Rhodes"]),
+            part("Wurli", KEYS).template(&["Keys", "Electric", "Wurlitzer"]),
             part("Organ", KEYS).template(&["Keys", "Organ"]),
         ])
 }
@@ -567,9 +571,77 @@ fn synths() -> Node {
         .template(&["Synths"])
         .send("KEYS BUS")
         .children(vec![
-            part("Pad", SYNTHS),
-            part("Lead Synth", SYNTHS),
-            part("Arp", SYNTHS),
+            // A family is the MIXING level, a synth the tracking and
+            // editing one — so the families are folders and the synths
+            // that belong to no family sit beside them at the top,
+            // where they are still reachable without inventing a
+            // family to hold them (`flow.synths.families`).
+            part("Sub Bass Synth", SYNTHS),
+            part("Texture", SYNTHS),
+            Node::new("SY Arps", SYNTHS, Kind::Group).children(vec![part("Arp", SYNTHS)]),
+            Node::new("SY Pads", SYNTHS, Kind::Group).children(vec![part("Pad", SYNTHS)]),
+            Node::new("SY Leads", SYNTHS, Kind::Group).children(vec![part("Lead Synth", SYNTHS)]),
+            Node::new("SY Chords", SYNTHS, Kind::Group).children(vec![part("Chord", SYNTHS)]),
+        ])
+}
+
+/// Percussion: its own folder beside the drums, its own bus.
+///
+/// Beside rather than inside, because percussion is tracked one
+/// instrument at a time and comps on the track like a bass — the kit's
+/// folder comping would be the wrong gesture for a shaker
+/// (`flow.percussion.folder`).
+fn percussion() -> Node {
+    Node::new("Percussion", TOMS, Kind::Group)
+        .template(&["Percussion"])
+        .send("PERC BUS")
+        .children(vec![
+            part("Shaker", TOMS),
+            part("Tambourine", TOMS),
+            part("Claps", TOMS),
+        ])
+}
+
+/// The orchestra's golden shape: four sections, one bus each.
+///
+/// Only the SHAPE is in scope here. Divisi, seating, spot mics and
+/// scoring to picture are an effort of their own; what the golden
+/// session owes is a tree every orchestra scene can be rendered
+/// against (`flow.orchestra.golden`).
+fn orchestra() -> Node {
+    Node::new("Orchestra", ACOUSTIC, Kind::Group)
+        .template(&["Orchestra"])
+        .children(vec![
+            Node::new("Winds", ACOUSTIC, Kind::Group)
+                .send("WINDS BUS")
+                .children(vec![
+                    part("Flute", ACOUSTIC),
+                    part("Oboe", ACOUSTIC),
+                    part("Clarinet", ACOUSTIC),
+                    part("Bassoon", ACOUSTIC),
+                ]),
+            Node::new("Brass", ACOUSTIC, Kind::Group)
+                .send("BRASS BUS")
+                .children(vec![
+                    part("Trumpets", ACOUSTIC),
+                    part("Horns", ACOUSTIC),
+                    part("Trombones", ACOUSTIC),
+                    part("Tuba", ACOUSTIC),
+                ]),
+            Node::new("Strings", ACOUSTIC, Kind::Group)
+                .send("STRINGS BUS")
+                .children(vec![
+                    part("Violin 1", ACOUSTIC),
+                    part("Violin 2", ACOUSTIC),
+                    part("Viola", ACOUSTIC),
+                    part("Cello", ACOUSTIC),
+                    part("Bass", ACOUSTIC),
+                ]),
+            // Present and empty: the section exists in the shape so a
+            // scene can render it, and a session fills it or does not.
+            Node::new("Orch Percussion", ACOUSTIC, Kind::Group)
+                .send("ORCH PERC BUS")
+                .children(vec![part("Timpani", ACOUSTIC)]),
         ])
 }
 
@@ -621,20 +693,87 @@ fn inst_fx() -> Node {
 /// The bus tree — the dynamic template's canonical one without GUITAR
 /// BUS, with the three electric buses under ELECTRIC BUS, in the bus
 /// list rather than in the folder.
+/// The three languages every vocal source is sung in, plus the
+/// language-free `All`.
+///
+/// `All` is not a fourth language: it is a wordless part — a "Hey!", a
+/// hummed pad — that belongs to every version, and it is what the
+/// switch must never mute (`flow.vocals.language`).
+const LANGUAGES: [&str; 3] = ["EN", "ES", "PT"];
+
+/// One performer's layer: a mix track with a source per language under
+/// it.
+///
+/// The LAYER carries the chain and the sends; the language tracks under
+/// it are sources only. That is what makes the English and the Spanish
+/// vocal come out the same, and it is most of the CPU — one chain per
+/// performer instead of one per language.
+fn layer(name: &str, languages: &[&str]) -> Node {
+    Node::new(name, VOX, Kind::Group).children(
+        languages
+            .iter()
+            .map(|code| Node::new(*code, VOX, Kind::Source))
+            .collect(),
+    )
+}
+
+/// A lead: a performer's mix track, a Main and a DBL under it, each
+/// with a source per language they actually sing.
+///
+/// A performer who does not sing a language simply has no source track
+/// in it — Aline sings only the Portuguese version. Absence is the
+/// representation; there is no empty placeholder to mistake for one.
+fn lead(name: &str, languages: &[&str]) -> Node {
+    Node::new(name, VOX, Kind::Group)
+        .template(&["Vocals", "Lead"])
+        .children(vec![layer("Main", languages), layer("DBL", languages)])
+}
+
 fn vocals() -> Node {
     Node::new("Vocals", VOX, Kind::Group)
         .template(&["Vocals"])
         .send("LEAD VOX BUS")
         .children(vec![
-            summed(
-                "Lead",
-                VOX,
-                vec![mic("Close", VOX), mic("Room", VOX)],
-                vec![verb("Verb", VOX)],
-            )
-            .template(&["Vocals", "Lead"]),
-            part("Doubles", VOX),
-            part("Harmonies", VOX),
+            lead("Ron", &LANGUAGES),
+            lead("Belen", &["EN", "ES"]),
+            lead("Aline", &["PT"]),
+            // Background vocals are arranged by PART, and a part may
+            // carry as many layers as it needs — nothing in the scenes,
+            // the comp or the edit assumes a count, which is why one of
+            // them is deliberately many (`flow.vocals.bgvs`).
+            Node::new("BGVs", VOX, Kind::Group)
+                .send("BGV BUS")
+                .children(vec![
+                    layer("Octave Up", &LANGUAGES),
+                    layer("Octave Down", &LANGUAGES),
+                    layer("Higher Harmony", &LANGUAGES),
+                    layer("Lower Harmony", &LANGUAGES),
+                    // The fifty-layer "Hey!", in `All`: language-free,
+                    // so it is in every version and the switch leaves
+                    // it alone. Eight here rather than fifty, which is
+                    // enough to prove nothing counts them.
+                    Node::new("Hey", VOX, Kind::Group).children(
+                        (1..=8)
+                            .map(|n| Node::new(&format!("All {n}"), VOX, Kind::Source))
+                            .collect(),
+                    ),
+                ]),
+            // A four-section choir per language, on the language VCAs
+            // like everything else.
+            Node::new("Choir", VOX, Kind::Group)
+                .send("BGV BUS")
+                .children(
+                    ["Soprano", "Alto", "Tenor", "Bass"]
+                        .into_iter()
+                        .map(|section| layer(section, &LANGUAGES))
+                        .collect(),
+                ),
+            // The VCAs: control tracks, no audio, deliberately routed
+            // nowhere. One per language, over every source of that
+            // language across every performer, part and choir section.
+            Node::new("VOX EN", VOX, Kind::Vca).dead_end(),
+            Node::new("VOX ES", VOX, Kind::Vca).dead_end(),
+            Node::new("VOX PT", VOX, Kind::Vca).dead_end(),
         ])
 }
 
@@ -767,6 +906,7 @@ pub fn maximal() -> Shape {
             guide(),
             keyflow(),
             drum_kit(),
+            percussion(),
             process(),
             bass(),
             electric(),
@@ -775,6 +915,7 @@ pub fn maximal() -> Shape {
             synths(),
             inst_fx(),
             vocals(),
+            orchestra(),
             mix_bus(),
             // Beside MIX BUS, never under it.
             monitor_buses(),

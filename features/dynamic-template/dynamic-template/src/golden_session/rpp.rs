@@ -707,10 +707,17 @@ mod tests {
         assert!(by_path("Process/FX/Room Sim").is_some_and(|t| !t.piece));
         assert!(by_path("Drum Kit/Snare/Verb").is_some_and(|t| t.auxiliary() && t.is_folder));
         assert!(by_path("Inst FX/Ambience/Short Room").is_some_and(|t| t.piece));
-        // 128 instrument-side tracks, plus the fourteen the monitor
-        // side adds: the Guide and Keyflow folders with three tracks
-        // each, the four headphone buses and the talkback pair.
-        assert_eq!(tracks.len(), 142);
+        // The maximal session, all of it: the instruments, the monitor
+        // side (Guide, Keyflow, the headphone buses, talkback), the
+        // three vocal languages across every lead, BGV part and choir
+        // section with their VCAs, the synth families, percussion and
+        // the orchestra's four sections.
+        //
+        // A number rather than a shape, on purpose: this test is the
+        // tripwire for a shape appearing or vanishing by accident, and
+        // the per-rule `flow.*.golden` tests are what say the shapes
+        // are RIGHT.
+        assert_eq!(tracks.len(), 233);
     }
 
     #[test]
