@@ -13,7 +13,7 @@
 //! and looking that up by scanning is `O(tracks × items)` on every
 //! render. Grouping once at fetch time makes drawing a lane an index.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use daw_proto::{Item, Track};
@@ -84,11 +84,26 @@ pub struct Project {
     /// An item carries no name of its own; the take does, and the
     /// arrangement writes it on the item.
     pub names: HashMap<String, String>,
+    /// Which items hold MIDI rather than audio, by item guid.
+    ///
+    /// A set and not a flag on `Item`, because `Item` is the daw's own
+    /// type and MIDI-ness lives on the TAKE — an item can hold several,
+    /// and which one is playing is the item's business. This is the
+    /// active take's answer, which is the one being drawn.
+    pub midi: HashSet<String>,
 }
 
 impl Project {
     /// What an item is called: its active take's name, else its label,
     /// else nothing.
+    /// Does this item hold MIDI rather than audio?
+    ///
+    /// The active take's answer, which is the one being drawn.
+    #[must_use]
+    pub fn is_midi(&self, guid: &str) -> bool {
+        self.midi.contains(guid)
+    }
+
     pub fn title<'a>(&'a self, item: &'a Item) -> Option<&'a str> {
         self.names
             .get(&item.guid)
@@ -122,15 +137,27 @@ pub async fn fetch() -> Option<Project> {
     let item_count = all_items.len();
     let mut items: HashMap<String, Vec<Item>> = HashMap::new();
     let mut names: HashMap<String, String> = HashMap::with_capacity(item_count);
+    let mut midi: HashSet<String> = HashSet::new();
     for item in all_items {
         length = length.max(item.position.as_seconds() + item.length.as_seconds());
         // The title is the active take's name — two calls per item,
         // in-process, once per open.
-        if let Ok(Some(handle)) = project.items().by_guid(&item.guid).await
-            && let Ok(name) = handle.active_take().name().await
-            && !name.is_empty()
-        {
-            names.insert(item.guid.clone(), name);
+        if let Ok(Some(handle)) = project.items().by_guid(&item.guid).await {
+            let take = handle.active_take();
+            if let Ok(name) = take.name().await
+                && !name.is_empty()
+            {
+                names.insert(item.guid.clone(), name);
+            }
+            // Whether it is MIDI, from the same take the name came
+            // from. The call was already being paid for and the answer
+            // thrown away — and without it an item drawn from its
+            // content has no way to know WHICH content it has.
+            if let Ok(info) = take.info().await
+                && info.is_midi
+            {
+                midi.insert(item.guid.clone());
+            }
         }
         items.entry(item.track_guid.clone()).or_default().push(item);
     }
@@ -205,6 +232,7 @@ pub async fn fetch() -> Option<Project> {
         length_secs: length.max(60.0),
         item_count,
         names,
+        midi,
     })
 }
 

@@ -1032,6 +1032,7 @@ mod tests {
             &ProjectRef(std::sync::Arc::new(project.clone())),
             &RowsRef(std::sync::Arc::new(rows.to_vec())),
             crate::layout::Layout::default(),
+            &crate::midi::Previews::default(),
         )
     }
 

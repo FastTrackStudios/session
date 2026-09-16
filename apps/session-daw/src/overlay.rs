@@ -1672,6 +1672,7 @@ mod panel_tests {
             &project,
             &rows,
             crate::layout::Layout::default(),
+            &crate::midi::Previews::default(),
         );
         (scene, palette, font, tracks, rows)
     }

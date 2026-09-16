@@ -1365,12 +1365,26 @@ fn build_scene(palette: &Palette, layout: session_daw::layout::Layout) -> Option
     let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(
         visible.into_iter().zip(depths).collect(),
     ));
+    // Read the notes before recording, not after: a renderer draws one
+    // frame and exits, so there is no later for them to arrive in.
+    let previews = session_daw::midi::Previews::default();
+    previews.fill_blocking(
+        project
+            .0
+            .items
+            .values()
+            .flatten()
+            .filter(|item| project.0.is_midi(&item.guid))
+            .map(|item| (item.guid.clone(), item.length.as_seconds()))
+            .collect(),
+    );
     Some(Arrangement::build(
         palette,
         &session_daw::text::Font::embedded().ok()?,
         &project,
         &rows,
         layout,
+        &previews,
     ))
 }
 

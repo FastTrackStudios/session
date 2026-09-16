@@ -184,6 +184,13 @@ sheet, `cargo check --workspace`, `cargo nextest run --workspace` — and
 stops at the first failure, because CI does too and a later step built
 on a broken one tells you nothing.
 
+It mirrors **`checks.yml` and nothing else.** The other two workflows —
+`session-ios` (Xcode, signing, TestFlight) and `deploy` — need a Mac,
+signing keys and upload credentials, so they are not a pre-push check
+and must not be added to one. A green `just ci` says the CODE is good;
+it says nothing about those two, which have their own reasons to be red
+and at the time of writing both are.
+
 It refuses to start with less than 25 GB free, because a build that runs
 out of room does not fail as a full disk: mold dies with a bus error and
 cargo reports `linking with cc failed`, which reads as a broken

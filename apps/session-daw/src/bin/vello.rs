@@ -201,6 +201,10 @@ struct App {
     /// When the window last tried to find a REAPER again. A dial a
     /// frame would spend the whole of REAPER's startup failing.
     last_dial: Option<std::time::Instant>,
+    /// The notes of the MIDI items, as they are read. An item is drawn
+    /// from what it CONTAINS, and the notes arrive after the window is
+    /// already standing.
+    midi: session_daw::midi::Previews,
     /// Whether anything that is NOT a track has changed — items,
     /// takes, markers, regions, the tempo map. A flag, because all of
     /// them are drawn from one snapshot and the only useful question
@@ -1132,6 +1136,10 @@ impl ApplicationHandler for App {
             if self.meters.is_none() {
                 self.meters = session_daw::engine::Meters::start();
             }
+            // Ask for the notes of every MIDI item this project has.
+            // Skipped for anything already read, so a reload after a
+            // track change costs nothing for what is already known.
+            self.request_midi();
             // The mixer was recorded against the old track list; the
             // next mixer frame records it against this one.
             self.mixer = None;
@@ -2657,7 +2665,29 @@ impl App {
         }
     }
 
+    /// Ask for the notes of the MIDI items that have not been read.
+    fn request_midi(&mut self) {
+        let Some((project, _)) = self.session.as_ref() else {
+            return;
+        };
+        let wanted: Vec<(String, f64)> = project
+            .0
+            .items
+            .values()
+            .flatten()
+            .filter(|item| project.0.is_midi(&item.guid))
+            .map(|item| (item.guid.clone(), item.length.as_seconds()))
+            .collect();
+        self.midi.fetch(wanted);
+    }
+
     fn reconcile(&mut self) {
+        // Notes that have landed since the last frame. A re-record is
+        // the cheap half of a reload — it redraws from what the window
+        // already holds and asks the engine for nothing.
+        if self.midi.take_fresh() {
+            self.re_record();
+        }
         self.reconnect();
         // Anything that is not a track changed, so the snapshot every
         // item, marker, region and bar line is drawn from is old. This
@@ -2967,6 +2997,7 @@ impl App {
             &project,
             &planned,
             self.layout,
+            &self.midi,
         ));
         self.arrange_rows = planned;
         // The mixer is recorded lazily against the window's height, so
@@ -3316,6 +3347,7 @@ fn main() {
         row_drag: None,
         watch: session_daw::engine::Watch::start(),
         refresh: session_daw::engine::Refresh::start(),
+        midi: session_daw::midi::Previews::default(),
         last_dial: None,
         meters: session_daw::engine::Meters::start(),
         mode: session::modes::Mode::Mix,
@@ -3416,7 +3448,17 @@ fn build_scene(
     // the mixer is recorded against the WINDOW's height and that is not
     // known here — see `App::mixer_for`.
     Some(Loaded {
-        arrangement: Arrangement::build(&palette, &font, &project, &planned, layout),
+        // The loader thread has no cache to consult — the notes are
+        // read after the window is up, and the first recording draws
+        // MIDI items plain until they land.
+        arrangement: Arrangement::build(
+            &palette,
+            &font,
+            &project,
+            &planned,
+            layout,
+            &session_daw::midi::Previews::default(),
+        ),
         project,
         rows,
         planned,

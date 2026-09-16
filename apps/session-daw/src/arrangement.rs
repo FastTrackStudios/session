@@ -364,6 +364,7 @@ impl Arrangement {
         project: &ProjectRef,
         rows: &RowsRef,
         layout: crate::layout::Layout,
+        previews: &crate::midi::Previews,
     ) -> Self {
         let mut lanes = Scene::new();
         let mut panel = Scene::new();
@@ -493,9 +494,29 @@ impl Arrangement {
                 index.x.push((x0, x1));
                 let top = y + inset;
                 let bottom = y + body - inset;
-                if let Some(wave) = waveform(track_index, x0, x1, top, bottom) {
-                    lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &wave);
-                    index.x.push((x0, x1));
+                // What the item CONTAINS: notes if it holds MIDI, the
+                // envelope otherwise. An item drawn from a waveform it
+                // does not have is why a chord track looked like a
+                // shaker.
+                //
+                // Notes only once they have been read. Until then the
+                // block is drawn plain rather than filled with a fake
+                // shape, because a wrong picture that later corrects
+                // itself is worse than an honest empty one.
+                match previews.get(&item.guid) {
+                    Some(notes) => {
+                        if let Some(roll) = midi_preview(&notes, x0, x1, top, bottom) {
+                            lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &roll);
+                            index.x.push((x0, x1));
+                        }
+                    }
+                    None if !project.is_midi(&item.guid) => {
+                        if let Some(wave) = waveform(track_index, x0, x1, top, bottom) {
+                            lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &wave);
+                            index.x.push((x0, x1));
+                        }
+                    }
+                    None => {}
                 }
                 // The fades, as the part of the item they take away:
                 // the region over the gain curve, darkened, from each
@@ -902,6 +923,60 @@ pub struct Title {
     pub x0: f64,
     pub x1: f64,
     pub name: String,
+}
+
+/// An item's notes as one path: a block per note, stacked by pitch.
+///
+/// A piano roll squeezed into a lane. The pitch range is the item's
+/// own rather than the full 0..127, so a bass part fills its block
+/// instead of hugging the floor of a scale it never plays in — what a
+/// preview is for is the SHAPE of the part, and a shape pressed into
+/// the bottom eighth of the block has none.
+///
+/// One path for every note, because a lane of a hundred notes is a
+/// hundred fills otherwise, and the index has to carry an extent per
+/// command.
+fn midi_preview(
+    notes: &[crate::midi::Note],
+    x0: f64,
+    x1: f64,
+    top: f64,
+    bottom: f64,
+) -> Option<BezPath> {
+    if notes.is_empty() || bottom - top < 2.0 {
+        return None;
+    }
+    let (low, high) = notes.iter().fold((u8::MAX, u8::MIN), |(lo, hi), note| {
+        (lo.min(note.pitch), hi.max(note.pitch))
+    });
+    // A part on one pitch has no range to spread over, so it is drawn
+    // down the middle rather than divided by zero.
+    let span = f64::from(high.saturating_sub(low)).max(1.0);
+    let width = x1 - x0;
+    let height = bottom - top;
+    // Tall enough to see, short enough that neighbouring pitches do not
+    // merge into a block.
+    let note_h = (height / span.min(24.0)).clamp(1.0, height / 3.0);
+
+    let mut path = BezPath::new();
+    for note in notes {
+        let at = x0 + width * f64::from(note.at);
+        // Every note gets a width, however short: a preview of a
+        // sixteenth-note part at this zoom is otherwise nothing at all.
+        let len = (width * f64::from(note.len)).max(width * 0.004);
+        let from_top = f64::from(high.saturating_sub(note.pitch)) / span;
+        let y = (height - note_h).mul_add(from_top, top);
+        // Written out rather than built from a Rect: one path holding
+        // every note keeps this to a single fill, and the index carries
+        // one extent per command.
+        let (x_from, x_to) = (at, (at + len).min(x1));
+        path.move_to((x_from, y));
+        path.line_to((x_to, y));
+        path.line_to((x_to, y + note_h));
+        path.line_to((x_from, y + note_h));
+        path.close_path();
+    }
+    Some(path)
 }
 
 /// How many points a second a recorded waveform has.

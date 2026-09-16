@@ -1503,6 +1503,12 @@ reaper-test FILTER="":
 reaper-test-gui FILTER="":
     cargo run -p session-reaper-xtask -- --gui --keep-open {{FILTER}}
 
+# Runs exactly what `.github/workflows/checks.yml` runs, in the same
+# order. NOT the other two workflows: `session-ios` and `deploy` need a
+# Mac, signing keys and upload credentials, which is why they are not a
+# thing you run before pushing — and why a green run here says nothing
+# about whether either of them is healthy.
+
 ci FROM="lockfile":
     #!/usr/bin/env bash
     set -euo pipefail
