@@ -185,32 +185,45 @@ fn every_scene_renders_to_its_committed_fixture() -> Result<()> {
     //
     // The comparison stays sequential and in scene order, so a failure
     // reads the same way it always did.
-    let rendered: Vec<(String, PathBuf, PathBuf)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = pictured()
-            .into_iter()
-            .map(|scene| {
-                let fresh_png = scratch.path().join(format!("{}.png", scene.slug));
-                let fresh_rows = scratch.path().join(format!("{}.rows", scene.slug));
-                scope.spawn(move || {
-                    // Stringified here rather than carried out: the
-                    // boxed error a render returns is not `Send`, and
-                    // what a failing render has to say is its message.
-                    render(&scene.slug, &fresh_png, &fresh_rows)
-                        .map(|()| (scene.slug.to_owned(), fresh_png, fresh_rows))
-                        .map_err(|e| format!("{}: {e}", scene.slug))
+    // Four at a time, not twelve. Each render is a process drawing a
+    // 2560x1440 frame, and nextest is already running other tests
+    // beside this one. Firing all twelve at once made THIS test fast
+    // and everything sharing the box slow, which surfaced as unrelated
+    // tests timing out — a speed-up that moves the cost onto its
+    // neighbours has not saved anything. Four keeps nearly all of it
+    // and leaves the machine to the rest of the suite.
+    const AT_ONCE: usize = 4;
+    let mut rendered: Vec<(String, PathBuf, PathBuf)> = Vec::new();
+    for batch in pictured().chunks(AT_ONCE) {
+        let done: Vec<(String, PathBuf, PathBuf)> = std::thread::scope(|scope| {
+            let handles: Vec<_> = batch
+                .iter()
+                .map(|scene| {
+                    let fresh_png = scratch.path().join(format!("{}.png", scene.slug));
+                    let fresh_rows = scratch.path().join(format!("{}.rows", scene.slug));
+                    scope.spawn(move || {
+                        // Stringified here rather than carried out: the
+                        // boxed error a render returns is not `Send`,
+                        // and what a failing render has to say is its
+                        // message.
+                        render(&scene.slug, &fresh_png, &fresh_rows)
+                            .map(|()| (scene.slug.to_owned(), fresh_png, fresh_rows))
+                            .map_err(|e| format!("{}: {e}", scene.slug))
+                    })
                 })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .map_err(|_| "a scene render panicked".to_owned())?
-            })
-            .collect::<std::result::Result<Vec<_>, String>>()
-    })
-    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| "a scene render panicked".to_owned())?
+                })
+                .collect::<std::result::Result<Vec<_>, String>>()
+        })
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        rendered.extend(done);
+    }
 
     for (scene, fresh_png, fresh_rows) in rendered {
         let committed_png = scenes_dir.join(format!("{scene}.png"));

@@ -45,6 +45,10 @@ pub struct Flat {
     pub guid: String,
     /// Where the audio goes.
     pub routing: Routing,
+    /// No items at all — a lane that is real and waiting.
+    pub no_items: bool,
+    /// The items hold notes rather than audio.
+    pub midi: bool,
     /// Track grouping.
     pub group: Option<GroupRole>,
     /// A stereo pair.
@@ -69,14 +73,14 @@ impl Flat {
     /// Whether the track carries audio items: a leaf that is not a bus.
     #[must_use]
     pub fn has_items(&self) -> bool {
-        !self.is_folder && !self.is_bus()
+        !self.is_folder && !self.is_bus() && !self.no_items
     }
 
     /// Whether the track's items are MIDI — the triggers, which are
     /// spikes for a sampler rather than recorded audio.
     #[must_use]
     pub fn is_midi(&self) -> bool {
-        self.has_items() && self.kind == Kind::Trigger
+        self.has_items() && (self.kind == Kind::Trigger || self.midi)
     }
 
     /// The media file this track's items play, relative to the project.
@@ -178,6 +182,8 @@ fn flatten_node(node: &Node, path: &mut Vec<String>, parent_is_piece: bool, out:
         is_folder: node.is_folder(),
         piece,
         routing: node.routing,
+        no_items: node.no_items,
+        midi: node.midi,
         group: node.group,
         stereo: node.stereo,
         fx: node.fx.clone(),
@@ -501,15 +507,12 @@ fn with_items(mut builder: TrackBuilder, track: &Flat, context: &TrackContext) -
                     item = item.fade_out(time, FadeCurveType::from(shape));
                 }
                 if midi {
-                    // One hit a beat, the way a trigger track carries a
-                    // piece's hit list.
-                    item = item.midi(|m| {
-                        let mut m = m.ticks_per_qn(960);
-                        for _ in 0..length_beats {
-                            m = m.note(0, 0, 36, 100, 240).advance(960);
-                        }
-                        m
-                    });
+                    // Each of these reads as the thing it is. A fixture
+                    // whose MIDI tracks all held the same spike would
+                    // pass every count and show nothing — and the point
+                    // of a golden session is to be LOOKED at.
+                    let pattern = MidiPattern::of(&track.name, track.kind);
+                    item = item.midi(|m| pattern.write(m, length_beats));
                 } else if let Some(file) = media {
                     item = item.source_wave(file);
                 }
@@ -518,6 +521,113 @@ fn with_items(mut builder: TrackBuilder, track: &Flat, context: &TrackContext) -
         );
     }
     builder
+}
+
+/// What a MIDI track's items hold.
+///
+/// The golden session is a fixture to look at as much as to count, so
+/// its MIDI has to read as what it is: a click is not a chord and a
+/// chord is not a trigger. None of this is musical content — it is the
+/// SHAPE the real generators produce, at the density they produce it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MidiPattern {
+    /// One spike a beat: a trigger's hit list.
+    Trigger,
+    /// One a beat, the downbeat higher — a click.
+    Click,
+    /// Four at the top of the bar and nothing after: a count-in.
+    Count,
+    /// Sparse, one a bar: a spoken cue.
+    Cue,
+    /// One long note a bar, low: the key, held.
+    Key,
+    /// A triad a bar, held: the chords.
+    Chord,
+}
+
+impl MidiPattern {
+    fn of(name: &str, kind: Kind) -> Self {
+        match name {
+            "Click" => Self::Click,
+            "Count" => Self::Count,
+            "Guide" => Self::Cue,
+            "KEY" => Self::Key,
+            "CHORD" => Self::Chord,
+            _ if kind == Kind::Trigger => Self::Trigger,
+            _ => Self::Trigger,
+        }
+    }
+
+    /// Write `beats` worth of this pattern.
+    fn write(
+        self,
+        m: dawfile_reaper::builder::MidiSourceBuilder,
+        beats: u32,
+    ) -> dawfile_reaper::builder::MidiSourceBuilder {
+        const QN: u32 = 960;
+        match self {
+            Self::Trigger => {
+                let mut m = m.ticks_per_qn(QN);
+                for _ in 0..beats {
+                    m = m.note(0, 0, 36, 100, 240).advance(QN);
+                }
+                m
+            }
+            Self::Click => {
+                let mut m = m.ticks_per_qn(QN);
+                for beat in 0..beats {
+                    // The downbeat is a different note, which is how a
+                    // click says where the bar is.
+                    let (pitch, velocity) = if beat % 4 == 0 { (76, 110) } else { (77, 80) };
+                    m = m.note(0, 0, pitch, velocity, 120).advance(QN);
+                }
+                m
+            }
+            Self::Count => {
+                let mut m = m.ticks_per_qn(QN);
+                // Four in, then silence: a count-in counts once.
+                for beat in 0..beats.min(4) {
+                    m = m.note(0, 0, 60 + beat as u8, 100, 240).advance(QN);
+                }
+                m
+            }
+            Self::Cue => {
+                // ONE cue, where the item starts. A guide speaks at a
+                // section — "chorus in two" — and a voice that said
+                // something every bar would be a voice you turn off.
+                // Each item here is a section's worth, so its start IS
+                // the transition.
+                m.ticks_per_qn(QN).note(0, 0, 72, 90, QN)
+            }
+            Self::Key => {
+                // ONE note, held for the whole item. A key is a state,
+                // not an event: it is written where it CHANGES and it
+                // holds until it changes again. Restating it every bar
+                // would say something happened when nothing did.
+                m.ticks_per_qn(QN)
+                    .note(0, 0, 36, 70, (QN * beats.max(1)).max(QN))
+            }
+            Self::Chord => {
+                let mut m = m.ticks_per_qn(QN);
+                let mut beat = 0;
+                while beat < beats {
+                    // A triad sounded together and held UNTIL THE NEXT
+                    // CHORD — which is what a chord on a chart means.
+                    // A chord that stopped early would leave a hole
+                    // where the harmony is still sounding, and the
+                    // analyser reading this track back would see one.
+                    let bar = QN * 4;
+                    let held = bar.min(QN * (beats - beat));
+                    for pitch in [60u8, 64, 67] {
+                        m = m.note(0, 0, pitch, 85, held);
+                    }
+                    m = m.advance(held);
+                    beat += 4;
+                }
+                m
+            }
+        }
+    }
 }
 
 /// One track of the project: the node's own settings, its routing, its
@@ -717,7 +827,14 @@ mod tests {
         // tripwire for a shape appearing or vanishing by accident, and
         // the per-rule `flow.*.golden` tests are what say the shapes
         // are RIGHT.
-        assert_eq!(tracks.len(), 275);
+        // 277 since the Keyflow folder became KEY, CHORD, LINES and
+        // HITS — four where it had three. The names disagreed across
+        // three places before that: the scaffold built KEY/CHORD/
+        // MELODY/SCALE while this built CHORDS/LINES/HITS, so a project
+        // scaffolded from a chart could not pass the checklist meant to
+        // check it — and the Guide folder gained Count, which the guide
+        // engine has always stamped and this had no track for.
+        assert_eq!(tracks.len(), 277);
     }
 
     #[test]

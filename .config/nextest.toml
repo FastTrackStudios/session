@@ -17,6 +17,16 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 filter = 'test(=fills_land_where_a_drummer_puts_them)'
 slow-timeout = { period = "60s", terminate-after = 5 }
 
+# Its sibling, which opens one album session and runs the same detector
+# over it. Thirteen seconds alone and thirty-one beside the test above,
+# because that one now analyses its six songs at once and the two of
+# them compete for the same cores. It did fit in the default thirty
+# until then — so this override is the cost of that speed-up, and it is
+# worth saying so rather than leaving a number that looks arbitrary.
+[[profile.default.overrides]]
+filter = 'test(=protecting_fills_keeps_them_out_of_the_quantize)'
+slow-timeout = { period = "60s", terminate-after = 5 }
+
 # The golden session's eleven scene renders: each is a real GPU frame of
 # a 233-track session drawn through the bench binary — about ninety
 # seconds for the set, and it grows every time the golden session gains
@@ -30,4 +40,18 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 # rerun a red suite instead of reading it.
 [[profile.default.overrides]]
 filter = 'test(=every_scene_renders_to_its_committed_fixture)'
+slow-timeout = { period = "60s", terminate-after = 10 }
+
+# The folder-item zoom renders: real GPU frames through the bench, like
+# the scenes above and slow for the same reason. It fitted the default
+# thirty seconds on an idle box and does not on a busy one — measured at
+# 3s idle and 30s while this machine was carrying an unrelated CUDA
+# build at load 82 on 32 cores.
+#
+# Raised on the principle the block above states rather than to make a
+# red run green: a timeout that only just fits when nothing else is
+# running teaches everyone to rerun a red suite instead of reading it.
+# Ten minutes still catches a hang.
+[[profile.default.overrides]]
+filter = 'test(=every_zoom_renders_to_its_committed_fixture)'
 slow-timeout = { period = "60s", terminate-after = 10 }

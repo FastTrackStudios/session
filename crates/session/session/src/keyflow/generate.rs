@@ -7,7 +7,7 @@
 //!
 //! The scaffold's own header has promised "chords as items, and melody
 //! MIDI" as a later phase since it was written. This is that phase for
-//! the two tracks that have a source: MELODY and HITS are created and
+//! the two tracks that have a source: LINES and HITS are created and
 //! left empty, because nothing in the chart says what belongs in them.
 //!
 //! **Where the content comes from.** The chart — `song.parsed_chart` —
@@ -38,7 +38,13 @@ pub struct Voicing {
     pub measure: usize,
     /// How far into that measure, in beats.
     pub beat: f64,
-    /// How long, in beats.
+    /// How long, in beats — up to the next chord.
+    ///
+    /// A chord holds until another one replaces it. That is what a
+    /// chart means by writing one: the harmony is sounding until it
+    /// says otherwise, and a chord that stopped early would leave a
+    /// hole where the music has none — which the analyser reading this
+    /// track back would then report as a gap in the progression.
     pub beats: f64,
     /// The pitches to sound, lowest first.
     pub pitches: Vec<u8>,
@@ -111,6 +117,10 @@ pub fn voicings(chart: &Chart, octave: i32) -> Vec<Voicing> {
                 let written: f64 = bar.chords.iter().map(|c| beats_of(c, chart)).sum();
                 let even = beats_per_bar / bar.chords.len().max(1) as f64;
                 let mut beat = 0.0;
+                let Some(last) = bar.chords.last() else {
+                    measure = measure.saturating_add(1);
+                    continue;
+                };
                 for chord in &bar.chords {
                     let beats = if written > 0.0 {
                         beats_of(chord, chart).max(0.0)
@@ -118,6 +128,15 @@ pub fn voicings(chart: &Chart, octave: i32) -> Vec<Voicing> {
                         even
                     };
                     let beats = if beats > 0.0 { beats } else { even };
+                    // The last chord in a bar holds to the bar line
+                    // rather than to its written length: what a chart
+                    // writes is where a chord STARTS, and the harmony
+                    // sounds until the next one.
+                    let beats = if std::ptr::eq(chord, last) {
+                        (beats_per_bar - beat).max(beats)
+                    } else {
+                        beats
+                    };
                     if let Some(pitches) = voice(chord, key.as_ref(), octave) {
                         out.push(Voicing {
                             measure,
@@ -295,5 +314,49 @@ mod tests {
         for (a, b) in low[0].pitches.iter().zip(&high[0].pitches) {
             assert_eq!(u32::from(*b) - u32::from(*a), 12, "an octave is twelve");
         }
+    }
+}
+
+#[cfg(test)]
+mod holding_tests {
+    use super::{key_spans, voicings};
+    use keyflow::text::chart::parse_chart;
+
+    fn chart(text: &str) -> keyflow::Chart {
+        parse_chart(text).expect("the test chart should parse")
+    }
+
+    /// A chord holds until the next one, and the last holds to the bar.
+    ///
+    /// The hole this prevents: a chord written short would stop
+    /// sounding while the harmony is still going, and the analyser
+    /// reading this track back would report a gap in a progression
+    /// that has none.
+    #[test]
+    fn a_chord_holds_until_the_next() {
+        let voiced = voicings(&chart("My Song\n4/4 #C\n\nVS 1: | C | F |\n"), 3);
+        assert_eq!(voiced.len(), 2, "two chords: {voiced:?}");
+        for chord in &voiced {
+            assert!(
+                (chord.beats - 4.0).abs() < 1e-6,
+                "a chord alone in its bar should fill it, got {} beats",
+                chord.beats
+            );
+        }
+    }
+
+    /// One key, one item — however many bars it covers.
+    ///
+    /// A key is a state, not an event: it is written where it CHANGES
+    /// and holds until it changes again. Restating it every bar would
+    /// say something happened when nothing did.
+    #[test]
+    fn a_key_is_written_once_and_held() {
+        let spans = key_spans(&chart("My Song\n4/4 #C\n\nVS 1: | C | F | G | C |\n"));
+        assert_eq!(spans.len(), 1, "one key should be one span: {spans:?}");
+        assert!(
+            spans[0].to_measure - spans[0].from_measure >= 4,
+            "the span does not cover the bars it holds for: {spans:?}"
+        );
     }
 }
