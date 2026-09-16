@@ -113,20 +113,21 @@ fn settle(watch: &Watch, tracks: &mut Vec<daw_proto::Track>, guid: &str) -> eyre
     Ok(())
 }
 
-/// The window, driving a REAPER it did not start.
+/// The window, attached to a REAPER it did not start.
 ///
-/// **One test, not three**, and that is a finding rather than a style
-/// choice: a second subscription to the same service on the same
-/// connection is silently refused. The subscriber count on the host
-/// stays at one however many `Watch`es are started, and every watch
-/// after the first sits there receiving nothing. A window makes exactly
-/// one and never notices; a test file with three tests makes three, and
-/// two of them are testing a dead stream.
+/// **One test, several scenarios**, and that is a finding rather than a
+/// style choice: a second subscription to the same service on the same
+/// connection is silently refused. The host's subscriber count stays at
+/// one however many `Watch`es are started, and every one after the
+/// first sits there receiving nothing. A window makes exactly one and
+/// never notices. A file with one test per scenario makes one each, and
+/// every scenario after the first watches a dead stream — which passes
+/// or fails for reasons that have nothing to do with its subject.
 ///
-/// So this is one window, watching once, doing three things in the
-/// order a session does them.
+/// So this is one window: it attaches once, watches once, edits through
+/// one applier, and the scenarios run in the order a session does them.
 #[reaper_test(isolated)]
-async fn the_window_drives_reaper_and_hears_it_back(
+async fn the_window_is_a_control_surface_over_reaper(
     _ctx: &daw::test::ReaperTestContext,
 ) -> eyre::Result<()> {
     attach()?;
@@ -139,7 +140,31 @@ async fn the_window_drives_reaper_and_hears_it_back(
     // published again.
     let mut tracks: Vec<daw_proto::Track> = project.tracks().all().await?;
     let watch = Watch::start().ok_or_else(|| eyre::eyre!("the window could not watch"))?;
+    let applier = Applier::start().ok_or_else(|| eyre::eyre!("the window could not edit"))?;
 
+    drives_and_hears_back(&project, &watch, &applier, &mut tracks).await?;
+    every_parameter_round_trips(&project, &watch, &applier, &mut tracks).await?;
+    Ok(())
+}
+
+/// The window, driving a REAPER it did not start.
+///
+/// **One test, not three**, and that is a finding rather than a style
+/// choice: a second subscription to the same service on the same
+/// connection is silently refused. The subscriber count on the host
+/// stays at one however many `Watch`es are started, and every watch
+/// after the first sits there receiving nothing. A window makes exactly
+/// one and never notices; a test file with three tests makes three, and
+/// two of them are testing a dead stream.
+///
+/// So this is one window, watching once, doing three things in the
+/// order a session does them.
+async fn drives_and_hears_back(
+    project: &daw::rpc::Project,
+    watch: &Watch,
+    applier: &Applier,
+    tracks: &mut Vec<daw_proto::Track>,
+) -> eyre::Result<()> {
     // ── A track appearing in REAPER changes the window's LIST ────────
     //
     // The distinction is load-bearing: a field event repaints one row,
@@ -154,7 +179,7 @@ async fn the_window_drives_reaper_and_hears_it_back(
     let mut structural = false;
     while std::time::Instant::now() < deadline && !structural {
         for event in watch.drain() {
-            if apply_event(&mut tracks, &event) == Applied::Structure
+            if apply_event(tracks, &event) == Applied::Structure
                 && matches!(&event, TrackEvent::Added(track) if track.guid == guid)
             {
                 structural = true;
@@ -169,9 +194,8 @@ async fn the_window_drives_reaper_and_hears_it_back(
     //
     // Through the window's own applier — the queue, the worker thread,
     // the coalescing — exactly as a click does.
-    let applier = Applier::start().ok_or_else(|| eyre::eyre!("the window could not edit"))?;
     applier.send(Edit::ToggleMute(guid.clone()));
-    let seen = watch_for(&watch, &mut tracks, |event| {
+    let seen = watch_for(watch, tracks, |event| {
         matches!(event, TrackEvent::MuteChanged { muted: true, .. })
     })?;
     let TrackEvent::MuteChanged { guid: muted, .. } = &seen else {
@@ -202,7 +226,7 @@ async fn the_window_drives_reaper_and_hears_it_back(
     kick.set_volume(0.25).await?;
     watch_for(
         &watch,
-        &mut tracks,
+        tracks,
         |event| matches!(event, TrackEvent::VolumeChanged { volume, .. } if (volume - 0.25).abs() < 1e-6),
     )?;
     let shown = tracks
@@ -213,6 +237,180 @@ async fn the_window_drives_reaper_and_hears_it_back(
     assert!(
         (shown - 0.25).abs() < 1e-6,
         "the window is drawing {shown}, REAPER is at 0.25"
+    );
+
+    Ok(())
+}
+
+/// Every track parameter the window can set, set through the window.
+///
+/// One test again, for the subscription reason above. It walks the
+/// whole surface rather than sampling it, because "most parameters
+/// sync" is the state this work started in and the state that is
+/// indistinguishable, from the outside, from all of them syncing.
+///
+/// Each one is asserted twice: the event says what happened, and the
+/// DAW is asked afterwards. The event alone would pass if the window
+/// were talking to itself; the read alone would pass if nothing were
+/// ever announced and the window redrew from a poll.
+async fn every_parameter_round_trips(
+    project: &daw::rpc::Project,
+    watch: &Watch,
+    applier: &Applier,
+    tracks: &mut Vec<daw_proto::Track>,
+) -> eyre::Result<()> {
+    use daw_proto::primitives::AutomationMode;
+    use daw_proto::track::{GroupFamily, GroupRole, InputMonitoringMode, RecordInput};
+
+    let track = project.tracks().add("Every Parameter", None).await?;
+    let guid = track.guid().to_owned();
+    settle(watch, tracks, &guid)?;
+
+    // Levels and the name — the ones that always worked, here as the
+    // control: if these fail, the harness is wrong rather than the
+    // parameter.
+    applier.send(Edit::Rename(guid.clone(), "Renamed By Window".into()));
+    watch_for(
+        &watch,
+        tracks,
+        |e| matches!(e, TrackEvent::Renamed { name, .. } if name == "Renamed By Window"),
+    )?;
+    applier.send(Edit::SetVolume(guid.clone(), 0.5));
+    watch_for(
+        &watch,
+        tracks,
+        |e| matches!(e, TrackEvent::VolumeChanged { volume, .. } if (volume - 0.5).abs() < 1e-6),
+    )?;
+    applier.send(Edit::SetPan(guid.clone(), -0.5));
+    watch_for(
+        &watch,
+        tracks,
+        |e| matches!(e, TrackEvent::PanChanged { pan, .. } if (pan + 0.5).abs() < 1e-6),
+    )?;
+
+    // The toggles.
+    applier.send(Edit::ToggleSolo(guid.clone()));
+    watch_for(watch, tracks, |e| {
+        matches!(e, TrackEvent::SoloChanged { soloed: true, .. })
+    })?;
+    applier.send(Edit::ToggleArm(guid.clone()));
+    watch_for(watch, tracks, |e| {
+        matches!(e, TrackEvent::ArmChanged { armed: true, .. })
+    })?;
+
+    // The signal-path ones: polarity changes what the track SOUNDS
+    // like without changing a level, and monitoring changes what the
+    // performer hears.
+    applier.send(Edit::SetPhase(guid.clone(), true));
+    watch_for(watch, tracks, |e| {
+        matches!(e, TrackEvent::PhaseInvertedChanged { inverted: true, .. })
+    })?;
+    applier.send(Edit::SetInputMonitor(
+        guid.clone(),
+        InputMonitoringMode::NotWhenPlaying,
+    ));
+    watch_for(watch, tracks, |e| {
+        matches!(
+            e,
+            TrackEvent::InputMonitorChanged {
+                monitor: InputMonitoringMode::NotWhenPlaying,
+                ..
+            }
+        )
+    })?;
+    applier.send(Edit::SetRecordInput(
+        guid.clone(),
+        RecordInput::Audio { channel: 3 },
+    ));
+    watch_for(watch, tracks, |e| {
+        matches!(
+            e,
+            TrackEvent::RecordInputChanged {
+                input: RecordInput::Audio { channel: 3 },
+                ..
+            }
+        )
+    })?;
+    applier.send(Edit::SetParentSend(guid.clone(), false));
+    watch_for(watch, tracks, |e| {
+        matches!(e, TrackEvent::ParentSendChanged { enabled: false, .. })
+    })?;
+    applier.send(Edit::SetAutomationMode(guid.clone(), AutomationMode::Latch));
+    watch_for(watch, tracks, |e| {
+        matches!(
+            e,
+            TrackEvent::AutomationModeChanged {
+                mode: AutomationMode::Latch,
+                ..
+            }
+        )
+    })?;
+
+    // The view ones, which live in the PROJECT and so are everybody's.
+    applier.send(Edit::SetColor(guid.clone(), 0x00_44_88));
+    watch_for(
+        &watch,
+        tracks,
+        |e| matches!(e, TrackEvent::ColorChanged { color: Some(c), .. } if *c == 0x00_44_88),
+    )?;
+    applier.send(Edit::SetHeight(guid.clone(), 96));
+    watch_for(watch, tracks, |e| {
+        matches!(
+            e,
+            TrackEvent::HeightChanged {
+                height: Some(96),
+                ..
+            }
+        )
+    })?;
+
+    // Grouping: what a VCA actually is.
+    applier.send(Edit::SetGroupFlags(
+        guid.clone(),
+        128,
+        GroupFamily::Vca,
+        GroupRole::Lead,
+    ));
+    watch_for(watch, tracks, |e| {
+        matches!(e, TrackEvent::GroupingChanged { grouping, .. }
+            if grouping.role(GroupFamily::Vca, 128) == GroupRole::Lead)
+    })?;
+
+    // Now ask the DAW, rather than believing the events. Every
+    // assertion above could pass on a window talking to itself.
+    let info = track.info().await?;
+    assert_eq!(info.name, "Renamed By Window");
+    assert!((info.volume - 0.5).abs() < 1e-6, "volume: {}", info.volume);
+    assert!((info.pan + 0.5).abs() < 1e-6, "pan: {}", info.pan);
+    assert!(info.soloed && info.armed, "the toggles did not take");
+    assert!(info.phase_inverted, "polarity did not take");
+    assert_eq!(info.input_monitor, InputMonitoringMode::NotWhenPlaying);
+    assert_eq!(info.record_input, RecordInput::Audio { channel: 3 });
+    assert!(!info.parent_send, "parent send did not take");
+    assert_eq!(info.automation_mode, AutomationMode::Latch);
+    assert_eq!(info.color, Some(0x00_44_88));
+    assert_eq!(
+        track.group_flags().await?.role(GroupFamily::Vca, 128),
+        GroupRole::Lead
+    );
+
+    // And the window's own list, which is what it DRAWS from. An event
+    // applied to the wrong track, or not applied at all, shows here and
+    // nowhere else.
+    let drawn = tracks
+        .iter()
+        .find(|t| t.guid == guid)
+        .ok_or_else(|| eyre::eyre!("the window lost the track"))?;
+    assert_eq!(drawn.name, "Renamed By Window");
+    assert!(drawn.soloed && drawn.armed && drawn.phase_inverted);
+    assert_eq!(drawn.record_input, RecordInput::Audio { channel: 3 });
+    assert_eq!(drawn.automation_mode, AutomationMode::Latch);
+    assert_eq!(drawn.color, Some(0x00_44_88));
+    assert_eq!(drawn.height, Some(96));
+    assert_eq!(
+        drawn.grouping.role(GroupFamily::Vca, 128),
+        GroupRole::Lead,
+        "the window is not drawing the VCA it just made"
     );
 
     Ok(())
