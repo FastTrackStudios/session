@@ -125,6 +125,13 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+[features]
+# The `#[reaper_test]` suites, which need a REAPER to talk to. Behind a
+# feature so an ordinary `cargo nextest run --workspace` does not try to
+# reach one that is not running — `just reaper-test` turns it on, via
+# session-reaper-xtask, which starts the REAPER first.
+reaper-tests = ["daw/test-harness"]
+
 [dev-dependencies]
 # Temp project trees for the Patch List view's discovery tests, and the
 # scratch directory the golden scene renders (`tests/golden_scenes.rs`)

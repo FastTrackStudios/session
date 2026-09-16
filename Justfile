@@ -1487,6 +1487,22 @@ daw-shot OUT="/tmp/fts-mixer.png" PROJECT="" SIZE="2560x1440":
 # `just ci` runs the lot. `just ci nextest` starts from that step, for
 # when you have already passed the cheap ones and are iterating on a
 # test. Steps in order: lockfile, fmt, flows, tailwind, check, nextest.
+# Filter matches TEST NAMES, not file names, and a filter matching
+# nothing exits zero having run nothing — check the count.
+#
+# Stands up an isolated REAPER under target/fts-reaper-test with only
+# daw-bridge in its UserPlugins (built from the sibling ../daw), then
+# runs the suites that attach the window to it. Not part of `just ci`:
+# it needs a licensed REAPER, which the runner does not have.
+
+# Run the REAPER integration suites against a real REAPER
+reaper-test FILTER="":
+    cargo run -p session-reaper-xtask -- {{FILTER}}
+
+# The same with REAPER's window shown, held open afterwards
+reaper-test-gui FILTER="":
+    cargo run -p session-reaper-xtask -- --gui --keep-open {{FILTER}}
+
 ci FROM="lockfile":
     #!/usr/bin/env bash
     set -euo pipefail
