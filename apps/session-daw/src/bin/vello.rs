@@ -3471,6 +3471,24 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         Edit::SetPhase(_, inverted) => track.phase_inverted = *inverted,
         Edit::SetInputMonitor(_, mode) => track.input_monitor = *mode,
         Edit::SetParentSend(_, enabled) => track.parent_send = *enabled,
+        Edit::SetColor(_, color) => track.color = Some(*color),
+        Edit::SetAutomationMode(_, mode) => track.automation_mode = *mode,
+        Edit::SetRecordInput(_, input) => track.record_input = *input,
+        Edit::SetVisibility(_, tcp, mixer) => {
+            track.visible_in_tcp = *tcp;
+            track.visible_in_mixer = *mixer;
+        }
+        Edit::SetHeight(_, pixels) => track.height = Some(*pixels),
+        // Not predicted. Folder depth moves every track BELOW this one
+        // between levels, and grouping is a matrix the engine resolves
+        // — REAPER decides what a lead in one family does to the rest.
+        // Predicting either means predicting the engine's whole answer,
+        // and being wrong about the shape of the session looks far
+        // worse than one frame of waiting for the right one.
+        Edit::SetFolderDepth(..)
+        | Edit::SetGroupMembership(..)
+        | Edit::SetGroupFlags(..)
+        | Edit::SetGroupModifier(..) => {}
         // An item's, not the track's: applied to the project copy where
         // the drag ends — see `commit_fade`.
         Edit::SetFadeIn(..)

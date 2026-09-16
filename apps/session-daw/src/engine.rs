@@ -65,6 +65,56 @@ pub enum Edit {
     /// is heard only through its own sends, which is how a parallel
     /// path is built. The routing widget's first lane says which.
     SetParentSend(String, bool),
+    /// The track's colour, as REAPER stores it (0xRRGGBB).
+    ///
+    /// Carries the value rather than cycling, because a colour is
+    /// chosen and not stepped through, and the window is the thing
+    /// holding the palette the user picked from.
+    SetColor(String, u32),
+    /// Trim, read, touch, write, latch, latch-preview.
+    ///
+    /// Governs whether moving a control writes envelope points while
+    /// the transport runs, so it changes what every OTHER edit on this
+    /// track means. That is why it is a value and not a toggle: there
+    /// is no safe "next" mode to guess at.
+    SetAutomationMode(String, daw_proto::primitives::AutomationMode),
+    /// What the track records from — a hardware channel, or a MIDI
+    /// device and channel.
+    ///
+    /// The one an engineer changes while tracking, which is exactly
+    /// when a second screen showing the old answer is worst.
+    SetRecordInput(String, daw_proto::track::RecordInput),
+    /// Whether the track is drawn in the arrange panel, the mixer, or
+    /// both. Both flags travel together because REAPER sets them
+    /// together, and sending one would silently re-assert the other.
+    SetVisibility(String, bool, bool),
+    /// How tall the track's panel is drawn, in pixels.
+    ///
+    /// A view concern that lives in the project, so a height set here
+    /// is a height REAPER opens with — which is the whole point of a
+    /// scene that arranges the session rather than only this window.
+    SetHeight(String, u32),
+    /// Folder depth: positive opens a folder, negative closes one or
+    /// more levels, zero is an ordinary track.
+    ///
+    /// The one edit that changes the SHAPE of the session rather than a
+    /// value in it, so a window applying it has to re-read rather than
+    /// patch — every depth below it moves.
+    SetFolderDepth(String, i32),
+    /// Join or leave one of REAPER's 128 group slots, in every family
+    /// at once.
+    SetGroupMembership(String, u32, bool),
+    /// The track's role — lead, follow, neither — in ONE family of one
+    /// slot. What a VCA actually is.
+    SetGroupFlags(
+        String,
+        u32,
+        daw_proto::track::GroupFamily,
+        daw_proto::track::GroupRole,
+    ),
+    /// One of the per-slot modifiers that is not a lead/follow pair:
+    /// reversed volume, no-lead-when-follow, and the rest.
+    SetGroupModifier(String, u32, daw_proto::track::GroupModifier, bool),
     /// An ITEM's fade-in: its length in seconds and its shape. The guid
     /// is the item's, not a track's.
     SetFadeIn(String, f64, daw_proto::item::FadeShape),
@@ -102,6 +152,15 @@ impl Edit {
             | Self::SetPhase(g, _)
             | Self::SetInputMonitor(g, _)
             | Self::SetParentSend(g, _)
+            | Self::SetColor(g, _)
+            | Self::SetAutomationMode(g, _)
+            | Self::SetRecordInput(g, _)
+            | Self::SetVisibility(g, ..)
+            | Self::SetHeight(g, _)
+            | Self::SetFolderDepth(g, _)
+            | Self::SetGroupMembership(g, ..)
+            | Self::SetGroupFlags(g, ..)
+            | Self::SetGroupModifier(g, ..)
             | Self::SetFadeIn(g, ..)
             | Self::SetFadeOut(g, ..)
             | Self::SelectItem(g, _)
@@ -725,6 +784,21 @@ async fn apply(edit: &Edit) {
         Edit::SetPhase(_, inverted) => track.set_phase_inverted(*inverted).await,
         Edit::SetInputMonitor(_, mode) => track.set_input_monitor(*mode).await,
         Edit::SetParentSend(_, enabled) => track.set_parent_send(*enabled).await,
+        Edit::SetColor(_, color) => track.set_color(*color).await,
+        Edit::SetAutomationMode(_, mode) => track.set_automation_mode(*mode).await,
+        Edit::SetRecordInput(_, input) => track.set_record_input(*input).await,
+        Edit::SetVisibility(_, tcp, mixer) => track.set_visibility(*tcp, *mixer).await,
+        Edit::SetHeight(_, pixels) => track.set_tcp_height(*pixels).await,
+        Edit::SetFolderDepth(_, depth) => track.set_folder_depth(*depth).await,
+        Edit::SetGroupMembership(_, slot, member) => {
+            track.set_group_membership(*slot, *member).await
+        }
+        Edit::SetGroupFlags(_, slot, family, role) => {
+            track.set_group_flags(*slot, *family, *role).await
+        }
+        Edit::SetGroupModifier(_, slot, modifier, on) => {
+            track.set_group_modifier(*slot, *modifier, *on).await
+        }
         Edit::SetFadeIn(..)
         | Edit::SetFadeOut(..)
         | Edit::SelectItem(..)
@@ -972,6 +1046,49 @@ pub fn apply_event(
             if let Some(i) = find(tracks, guid) {
                 tracks[i].grouping = grouping.clone();
             }
+        }
+        E::HeightChanged { guid, height } => {
+            let Some(i) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            tracks[i].height = *height;
+            // A row's height is the LAYOUT, so every row below it moves
+            // — the same reason a track appearing is structural. A
+            // window that repainted only this row would leave every
+            // other one drawn at its old offset.
+            return Applied::Structure;
+        }
+        E::LanesChanged {
+            guid,
+            lane_count,
+            lane_play_mask,
+            lane_names,
+            lane_display,
+        } => {
+            let Some(i) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            let track = &mut tracks[i];
+            track.lane_count = *lane_count;
+            track.lane_play_mask = *lane_play_mask;
+            track.lane_names.clone_from(lane_names);
+            track.lane_display = *lane_display;
+            // Lanes are rows too: turning them on gives a track three
+            // times the height it had.
+            return Applied::Structure;
+        }
+        E::FolderDepthChanged { guid, folder_depth } => {
+            let Some(i) = find(tracks, guid) else {
+                return Applied::Nothing;
+            };
+            tracks[i].folder_depth = *folder_depth;
+            tracks[i].is_folder = *folder_depth > 0;
+            // Depth is RELATIVE, so this one track's change re-parents
+            // every track below it, and the parent guids this window
+            // holds are now wrong for tracks it was told nothing about.
+            // Only a re-read can fix that, which is what Structure asks
+            // for — patching the tree from here would be guessing.
+            return Applied::Structure;
         }
         // Visibility is the list as drawn rather than the list as
         // stored, so it re-derives the rows: hiding a track in REAPER
