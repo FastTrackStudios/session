@@ -250,3 +250,62 @@ fn only_the_top_of_the_stack_is_editable() {
         "COMP derives from the take lanes"
     );
 }
+
+// ── tuning: the third stage ──────────────────────────────────────────
+
+/// **TUNE is a stage of its own, and that is the decision.**
+///
+/// Alignment is a retime, so it lives on EDIT as stretch markers and
+/// the audio underneath never changes. Tuning is not: a retuned vocal
+/// is *new audio*, and putting it on EDIT would overwrite the thing the
+/// alignment was done to. So it gets a stage above, and EDIT stays the
+/// way back.
+///
+/// r[verify flow.vocals.tuning]
+#[test]
+fn tuning_lands_above_edit_and_leaves_it_alone() -> Result {
+    let kit = kit();
+    let track = kit.tracks[0].clone();
+    let built = establish(&kit.daw, &kit.project, &track, Stage::Tune)?;
+
+    assert_eq!(
+        built.iter().map(|(s, _)| *s).collect::<Vec<_>>(),
+        [Stage::Comp, Stage::Edit, Stage::Tune],
+        "TUNE is derived from EDIT, which is derived from COMP"
+    );
+
+    let comps = kit.daw.comps(kit.project.clone(), track.clone())?;
+    let active: Vec<&str> = comps
+        .iter()
+        .filter(|c| c.is_active)
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(active, ["TUNE"], "the top of the stack is what is edited");
+
+    // EDIT is still there, below it, untouched — which is what makes a
+    // retune recoverable.
+    assert!(
+        comps.iter().any(|c| c.name == "EDIT"),
+        "tuning consumed the stage it was derived from: {comps:?}"
+    );
+    assert!(!Stage::Edit.is_editable(Stage::Tune));
+    Ok(())
+}
+
+/// A vocal that is only comped and edited has no TUNE stage: the stack
+/// grows to what a take actually needs, so an instrument that is never
+/// tuned does not carry an empty stage pretending it might be.
+///
+/// r[verify flow.vocals.tuning]
+#[test]
+fn a_take_that_was_never_tuned_has_no_tune_stage() -> Result {
+    let kit = kit();
+    let track = kit.tracks[0].clone();
+    establish(&kit.daw, &kit.project, &track, Stage::Edit)?;
+    let comps = kit.daw.comps(kit.project.clone(), track)?;
+    assert!(
+        !comps.iter().any(|c| c.name == "TUNE"),
+        "an untuned take grew a TUNE stage: {comps:?}"
+    );
+    Ok(())
+}

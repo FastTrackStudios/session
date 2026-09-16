@@ -45,6 +45,16 @@ pub enum Stage {
     /// Derived from COMP. Every edit lands here.
     Edit,
     /// Derived from EDIT, vocals only. Retuned audio.
+    ///
+    /// A stage of its own rather than an edit on EDIT, and the
+    /// difference is what the two do to the audio. Alignment is a
+    /// *retime*: it moves stretch markers and the samples underneath
+    /// are the ones that were recorded. A retune is **new audio**, so
+    /// writing it onto EDIT would overwrite the very thing the
+    /// alignment was done to, and there would be no way back to the
+    /// untuned performance short of re-comping.
+    ///
+    /// r[impl flow.vocals.tuning]
     Tune,
 }
 
