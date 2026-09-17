@@ -252,7 +252,8 @@ async fn sends_reach_reaper_and_come_back(
         "the receive does not name the track feeding it"
     );
 
-    applier.send(Edit::SetSendVolume(source.clone(), number, 0.5));
+    let send = session_daw::routes::At::new(daw_proto::routing::RouteType::Send, number);
+    applier.send(Edit::SetRouteVolume(source.clone(), send, 0.5));
     settle(
         &|routes| {
             routes
@@ -263,7 +264,7 @@ async fn sends_reach_reaper_and_come_back(
     )
     .await?;
 
-    applier.send(Edit::SetSendMute(source.clone(), number, true));
+    applier.send(Edit::SetRouteMute(source.clone(), send, true));
     settle(
         &|routes| {
             routes
@@ -289,7 +290,7 @@ async fn sends_reach_reaper_and_come_back(
     )
     .await?;
 
-    applier.send(Edit::RemoveSend(source.clone(), number));
+    applier.send(Edit::RemoveRoute(source.clone(), send));
     settle(
         &|routes| {
             !routes

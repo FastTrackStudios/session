@@ -249,9 +249,9 @@ struct App {
     /// The routing panel, if one is open: whose, and where it was
     /// opened from.
     routing: Option<(String, (f64, f64))>,
-    /// A send being dragged in the panel: the track, the send's number
-    /// and which of its two continuous controls.
-    send_drag: Option<(String, u32, session_daw::routing::Part)>,
+    /// A route being dragged in the panel: the track, where the route
+    /// is, and which of its two continuous controls.
+    send_drag: Option<(String, session_daw::routes::At, session_daw::routing::Part)>,
     /// What every track visible in the panel sends to and receives
     /// from. Read per track, on demand — see `session_daw::routes`.
     routes: session_daw::routes::Routes,
@@ -2879,19 +2879,16 @@ impl App {
     /// The panel's box, if one is open.
     fn routing_box(&self) -> Option<vello::kurbo::Rect> {
         let (guid, at) = self.routing.as_ref()?;
-        let (sends, receives) = self.routing_counts(guid);
         Some(session_daw::routing::anchored(
             *at,
             self.surface_size,
-            session_daw::routing::lines(sends, receives).len(),
+            session_daw::routing::lines(self.routing_counts(guid)).len(),
         ))
     }
 
-    /// How many sends and receives the open panel is showing.
-    fn routing_counts(&self, guid: &str) -> (usize, usize) {
-        self.routes
-            .get(guid)
-            .map_or((0, 0), |wiring| (wiring.sends.len(), wiring.receives.len()))
+    /// How many of each the open panel is showing.
+    fn routing_counts(&self, guid: &str) -> session_daw::routing::Counts {
+        session_daw::routing::Counts::of_wiring(self.routes.get(guid).as_ref())
     }
 
     /// The tracks this one could send to, in session order.
@@ -2985,8 +2982,8 @@ impl App {
         let (Some((guid, _)), Some(panel)) = (self.routing.clone(), self.routing_box()) else {
             return false;
         };
-        let (sends, receives) = self.routing_counts(&guid);
-        let Some(spot) = session_daw::routing::spot_at(panel, sends, receives, x, y) else {
+        let counts = self.routing_counts(&guid);
+        let Some(spot) = session_daw::routing::spot_at(panel, counts, x, y) else {
             // Outside: the press closes the panel and does nothing
             // else. A click that both closed a panel and moved a fader
             // under it would be a click nobody could take back.
@@ -3019,32 +3016,35 @@ impl App {
                 }
                 self.re_record();
             }
-            Spot::Send { index, part } => {
-                let Some(route) = wiring.sends.get(index) else {
+            Spot::Route { kind, at, part } => {
+                let Some(route) = wiring.list(kind).get(at) else {
                     return true;
                 };
-                let number = route.index;
+                let at = session_daw::routes::At::new(kind, route.index);
                 match part {
                     Part::Mute => {
                         let muted = !route.muted;
-                        self.routes.predict(&guid, number, |r| r.muted = muted);
-                        self.send(session_daw::engine::Edit::SetSendMute(
+                        self.routes.predict(&guid, at, |r| r.muted = muted);
+                        self.send(session_daw::engine::Edit::SetRouteMute(
                             guid.clone(),
-                            number,
+                            at,
                             muted,
                         ));
                     }
+                    // A send's, and only a send's — `Part::on` keeps a
+                    // click off the others, and this is the arm it
+                    // would have landed in.
                     Part::Mode => {
                         let mode = session_daw::routing::next_mode(route.send_mode);
-                        self.routes.predict(&guid, number, |r| r.send_mode = mode);
+                        self.routes.predict(&guid, at, |r| r.send_mode = mode);
                         self.send(session_daw::engine::Edit::SetSendMode(
                             guid.clone(),
-                            number,
+                            at.index,
                             mode,
                         ));
                     }
                     Part::Remove => {
-                        self.send(session_daw::engine::Edit::RemoveSend(guid.clone(), number));
+                        self.send(session_daw::engine::Edit::RemoveRoute(guid.clone(), at));
                         // Read again rather than dropping the row: what
                         // the numbering becomes is the engine's answer,
                         // not a guess made here.
@@ -3054,15 +3054,13 @@ impl App {
                     // The two continuous ones take hold; the value
                     // follows the pointer from here.
                     Part::Level | Part::Pan => {
-                        self.send_drag = Some((guid.clone(), number, part));
+                        self.send_drag = Some((guid.clone(), at, part));
                         self.drag_send(x);
                     }
                     Part::Name => {}
                 }
             }
-            // Shown, not touched: a receive is the far end of somebody
-            // else's send, and that send is the thing that owns it.
-            Spot::Receive { .. } | Spot::Nowhere => {}
+            Spot::Nowhere => {}
         }
         self.redraw();
         true
@@ -3071,35 +3069,45 @@ impl App {
     /// A send's level or pan, following the pointer.
     fn drag_send(&mut self, x: f64) {
         use session_daw::routing::Part;
-        let (Some((guid, number, part)), Some(panel)) =
-            (self.send_drag.clone(), self.routing_box())
+        let (Some((guid, at, part)), Some(panel)) = (self.send_drag.clone(), self.routing_box())
         else {
             return;
         };
         let Some(wiring) = self.routes.get(&guid) else {
             return;
         };
-        let Some(at) = wiring.sends.iter().position(|r| r.index == number) else {
+        // Where the row IS now, not where it was when the drag began:
+        // another client can remove a route mid-gesture, and a cell
+        // read from a stale line number is a level going to the wrong
+        // place.
+        let Some(place) = wiring
+            .list(at.kind)
+            .iter()
+            .position(|r| r.index == at.index)
+        else {
             return;
         };
-        let lines = session_daw::routing::lines(wiring.sends.len(), wiring.receives.len());
-        let Some(line) = lines
-            .iter()
-            .position(|l| *l == session_daw::routing::Line::Send(at))
-        else {
+        let lines =
+            session_daw::routing::lines(session_daw::routing::Counts::of_wiring(Some(&wiring)));
+        let Some(line) = lines.iter().position(|l| {
+            *l == session_daw::routing::Line::Route {
+                kind: at.kind,
+                at: place,
+            }
+        }) else {
             return;
         };
         let cell = session_daw::routing::column(session_daw::routing::row(panel, line), part);
         let edit = match part {
             Part::Level => {
                 let volume = session_daw::routing::level_at(cell, x);
-                self.routes.predict(&guid, number, |r| r.volume = volume);
-                session_daw::engine::Edit::SetSendVolume(guid.clone(), number, volume)
+                self.routes.predict(&guid, at, |r| r.volume = volume);
+                session_daw::engine::Edit::SetRouteVolume(guid.clone(), at, volume)
             }
             Part::Pan => {
                 let pan = session_daw::routing::pan_at(cell, x);
-                self.routes.predict(&guid, number, |r| r.pan = pan);
-                session_daw::engine::Edit::SetSendPan(guid.clone(), number, pan)
+                self.routes.predict(&guid, at, |r| r.pan = pan);
+                session_daw::engine::Edit::SetRoutePan(guid.clone(), at, pan)
             }
             _ => return,
         };
@@ -4367,10 +4375,10 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         // see `Routes::predict`, called at the gesture rather than
         // here, because only the gesture knows which send it is on.
         Edit::AddSend(..)
-        | Edit::RemoveSend(..)
-        | Edit::SetSendVolume(..)
-        | Edit::SetSendPan(..)
-        | Edit::SetSendMute(..)
+        | Edit::RemoveRoute(..)
+        | Edit::SetRouteVolume(..)
+        | Edit::SetRoutePan(..)
+        | Edit::SetRouteMute(..)
         | Edit::SetSendMode(..) => {}
         Edit::SetFolderDepth(..)
         | Edit::SetGroupMembership(..)

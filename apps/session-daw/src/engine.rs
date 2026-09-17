@@ -73,25 +73,32 @@ pub enum Edit {
     /// window does not guess it — the read that follows says what it
     /// was.
     AddSend(String, String),
-    /// Take one of this track's sends away, by its index.
+    /// Take one of this track's routes away.
     ///
-    /// Removing renumbers every send after it, which is why nothing
-    /// here patches a list after one: the panel forgets the track and
-    /// reads it again.
-    RemoveSend(String, u32),
-    /// How much of the track goes down one of its sends.
+    /// Removing renumbers every route after it in the same list, which
+    /// is why nothing here patches a list after one: the panel forgets
+    /// the track and reads it again.
+    RemoveRoute(String, crate::routes::At),
+    /// How much goes down one of the track's routes.
     ///
-    /// A gain, the way the track's own volume is: 1.0 is unity.
-    SetSendVolume(String, u32, f64),
-    /// Where the send sits, -1.0 to 1.0.
-    SetSendPan(String, u32, f64),
-    /// Whether the send passes anything at all.
-    SetSendMute(String, u32, bool),
-    /// Where the send is tapped from: post-fader, pre-FX, post-FX.
+    /// A gain, the way the track's own volume is: 1.0 is unity. Works
+    /// on all three kinds — a receive is the same object as the send
+    /// feeding it, so turning one down turns the other down, and a
+    /// hardware output is how loud the track leaves the box.
+    SetRouteVolume(String, crate::routes::At, f64),
+    /// Where the route sits, -1.0 to 1.0.
+    SetRoutePan(String, crate::routes::At, f64),
+    /// Whether the route passes anything at all.
+    SetRouteMute(String, crate::routes::At, bool),
+    /// Where a SEND is tapped from: post-fader, pre-FX, post-FX.
     ///
     /// The difference between a reverb that follows the fader and one
     /// that does not, which is the first thing anybody changes about a
     /// send and the thing REAPER hides in a menu.
+    ///
+    /// Sends only, because that is what the service takes: a receive's
+    /// mode is the mode of the send feeding it, set on the track that
+    /// owns that send.
     SetSendMode(String, u32, daw_proto::routing::SendMode),
     /// The track's colour, as REAPER stores it (0xRRGGBB).
     ///
@@ -219,10 +226,10 @@ impl Edit {
             | Self::SetInputMonitor(g, _)
             | Self::SetParentSend(g, _)
             | Self::AddSend(g, _)
-            | Self::RemoveSend(g, _)
-            | Self::SetSendVolume(g, ..)
-            | Self::SetSendPan(g, ..)
-            | Self::SetSendMute(g, ..)
+            | Self::RemoveRoute(g, _)
+            | Self::SetRouteVolume(g, ..)
+            | Self::SetRoutePan(g, ..)
+            | Self::SetRouteMute(g, ..)
             | Self::SetSendMode(g, ..)
             | Self::SetColor(g, _)
             | Self::SetAutomationMode(g, _)
@@ -301,8 +308,8 @@ impl Edit {
             self,
             Self::SetVolume(..)
                 | Self::SetPan(..)
-                | Self::SetSendVolume(..)
-                | Self::SetSendPan(..)
+                | Self::SetRouteVolume(..)
+                | Self::SetRoutePan(..)
                 | Self::SetFadeIn(..)
                 | Self::SetFadeOut(..)
                 | Self::MoveItem(..)
@@ -323,15 +330,18 @@ impl Edit {
             && self.route() == other.route()
     }
 
-    /// Which of the track's sends this edit is about, if any.
+    /// Which of the track's routes this edit is about, if any.
     #[must_use]
-    const fn route(&self) -> Option<u32> {
+    const fn route(&self) -> Option<crate::routes::At> {
         match self {
-            Self::RemoveSend(_, index)
-            | Self::SetSendVolume(_, index, _)
-            | Self::SetSendPan(_, index, _)
-            | Self::SetSendMute(_, index, _)
-            | Self::SetSendMode(_, index, _) => Some(*index),
+            Self::RemoveRoute(_, at)
+            | Self::SetRouteVolume(_, at, _)
+            | Self::SetRoutePan(_, at, _)
+            | Self::SetRouteMute(_, at, _) => Some(*at),
+            Self::SetSendMode(_, index, _) => Some(crate::routes::At::new(
+                daw_proto::routing::RouteType::Send,
+                *index,
+            )),
             _ => None,
         }
     }
@@ -646,13 +656,32 @@ mod tests {
     #[test]
     fn coalescing_does_not_cross_sends() {
         let mut q = Queue::default();
-        q.push(Edit::SetSendVolume("kick".into(), 0, 0.5));
-        q.push(Edit::SetSendVolume("kick".into(), 1, 0.5));
+        let send = |index| crate::routes::At::new(daw_proto::routing::RouteType::Send, index);
+        q.push(Edit::SetRouteVolume("kick".into(), send(0), 0.5));
+        q.push(Edit::SetRouteVolume("kick".into(), send(1), 0.5));
         assert_eq!(q.len(), 2);
-        q.push(Edit::SetSendVolume("kick".into(), 0, 0.9));
+        q.push(Edit::SetRouteVolume("kick".into(), send(0), 0.9));
         assert_eq!(q.len(), 2, "send 0 should have been replaced");
-        assert_eq!(q.pop(), Some(Edit::SetSendVolume("kick".into(), 0, 0.9)));
-        assert_eq!(q.pop(), Some(Edit::SetSendVolume("kick".into(), 1, 0.5)));
+        assert_eq!(
+            q.pop(),
+            Some(Edit::SetRouteVolume("kick".into(), send(0), 0.9))
+        );
+        assert_eq!(
+            q.pop(),
+            Some(Edit::SetRouteVolume("kick".into(), send(1), 0.5))
+        );
+
+        // And a receive numbered the same as a send is not that send:
+        // one track has send 0, receive 0 and output 0 at once, and
+        // three different things they are.
+        let mut q = Queue::default();
+        q.push(Edit::SetRouteVolume("kick".into(), send(0), 0.5));
+        q.push(Edit::SetRouteVolume(
+            "kick".into(),
+            crate::routes::At::new(daw_proto::routing::RouteType::Receive, 0),
+            0.5,
+        ));
+        assert_eq!(q.len(), 2, "a receive collapsed into a send");
     }
 
     /// Taking a send away is a click, not a drag: two removes are two
@@ -661,8 +690,9 @@ mod tests {
     #[test]
     fn removing_a_send_never_collapses() {
         let mut q = Queue::default();
-        q.push(Edit::RemoveSend("kick".into(), 0));
-        q.push(Edit::RemoveSend("kick".into(), 0));
+        let send = crate::routes::At::new(daw_proto::routing::RouteType::Send, 0);
+        q.push(Edit::RemoveRoute("kick".into(), send));
+        q.push(Edit::RemoveRoute("kick".into(), send));
         assert_eq!(q.len(), 2);
     }
 
@@ -973,30 +1003,31 @@ async fn apply(edit: &Edit) {
         // the alternative is writing a level into whatever now holds
         // that number after somebody removed the one before it.
         Edit::AddSend(_, dest) => track.sends().add_to(dest).await.map(|_| ()),
-        Edit::RemoveSend(_, index) => {
-            on_send(&track, *index, |route| async move { route.remove().await }).await
+        Edit::RemoveRoute(_, at) => {
+            on_route(&track, *at, |route| async move { route.remove().await }).await
         }
-        Edit::SetSendVolume(_, index, v) => {
+        Edit::SetRouteVolume(_, at, v) => {
             let v = *v;
-            on_send(&track, *index, move |route| async move {
+            on_route(&track, *at, move |route| async move {
                 route.set_volume(v).await
             })
             .await
         }
-        Edit::SetSendPan(_, index, p) => {
+        Edit::SetRoutePan(_, at, p) => {
             let p = *p;
-            on_send(&track, *index, move |route| async move { route.set_pan(p).await }).await
+            on_route(&track, *at, move |route| async move { route.set_pan(p).await }).await
         }
-        Edit::SetSendMute(_, index, muted) => {
+        Edit::SetRouteMute(_, at, muted) => {
             let muted = *muted;
-            on_send(&track, *index, move |route| async move {
+            on_route(&track, *at, move |route| async move {
                 if muted { route.mute().await } else { route.unmute().await }
             })
             .await
         }
         Edit::SetSendMode(_, index, mode) => {
             let mode = *mode;
-            on_send(&track, *index, move |route| async move {
+            let at = crate::routes::At::new(daw_proto::routing::RouteType::Send, *index);
+            on_route(&track, at, move |route| async move {
                 route.set_send_mode(mode).await
             })
             .await
@@ -1093,27 +1124,37 @@ async fn item_track(project: &daw_control::Project, item_guid: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Do something to one of a track's sends.
+/// Do something to one of a track's routes.
 ///
-/// The resolve is half the cost of a send edit — `by_index` reads the
+/// The resolve is half the cost of a route edit — `by_index` reads the
 /// route to prove it exists before handing back a handle — so it is in
-/// one place rather than repeated per arm, and a send that has gone is
+/// one place rather than repeated per arm, and a route that has gone is
 /// a warning rather than a silent nothing: a level written into a
 /// number nobody holds any more is exactly the bug that would otherwise
 /// look like the panel not working.
-async fn on_send<F, Fut>(
+async fn on_route<F, Fut>(
     track: &daw_control::TrackHandle,
-    index: u32,
+    at: crate::routes::At,
     act: F,
 ) -> daw_control::Result<()>
 where
     F: FnOnce(daw_control::RouteHandle) -> Fut,
     Fut: std::future::Future<Output = daw_control::Result<()>>,
 {
-    match track.sends().by_index(index).await {
+    use daw_proto::routing::RouteType;
+    let found = match at.kind {
+        RouteType::Send => track.sends().by_index(at.index).await,
+        RouteType::Receive => track.receives().by_index(at.index).await,
+        RouteType::HardwareOutput => track.hardware_outputs().by_index(at.index).await,
+    };
+    match found {
         Ok(Some(route)) => act(route).await,
         Ok(None) => {
-            tracing::warn!(route.index = index, "the send this edit names is gone");
+            tracing::warn!(
+                route.index = at.index,
+                route.kind = ?at.kind,
+                "the route this edit names is gone"
+            );
             Ok(())
         }
         Err(error) => Err(error),
