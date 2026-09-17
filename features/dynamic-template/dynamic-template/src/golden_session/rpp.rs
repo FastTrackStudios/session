@@ -617,23 +617,18 @@ impl MidiPattern {
                     // where the harmony is still sounding, and the
                     // analyser reading this track back would see one.
                     let bar = QN * 4;
-                    // One tick short of the next chord, deliberately.
-                    //
-                    // Held exactly to the bar line, the note-offs land
-                    // on the same tick as the next chord's note-ons —
-                    // and the builder sorts note-ons first there, so a
-                    // reader pairing by pitch hands the SECOND chord
-                    // the first one's note-off and calls it zero long.
-                    // Every other chord then has no length. A tick of
-                    // daylight is inaudible and unambiguous.
+                    // Held exactly to where the next one begins, with
+                    // no tick of daylight. That used to be unsafe: the
+                    // builder sorted note-ons first at a shared tick,
+                    // so a reader pairing by pitch handed the SECOND
+                    // chord the first one's note-off and called it zero
+                    // long. Fixed in the builder (daw#28) — offs sort
+                    // before ons — so the generator can write what it
+                    // means again.
                     let step = bar.min(QN * (beats - beat));
-                    let held = step.saturating_sub(1).max(1);
                     for pitch in [60u8, 64, 67] {
-                        m = m.note(0, 0, pitch, 85, held);
+                        m = m.note(0, 0, pitch, 85, step);
                     }
-                    // Advance the FULL bar, not the shortened note: the
-                    // tick of daylight is at the end of the chord, not
-                    // taken out of the bar.
                     m = m.advance(step);
                     beat += 4;
                 }
