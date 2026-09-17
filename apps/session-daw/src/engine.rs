@@ -65,6 +65,34 @@ pub enum Edit {
     /// is heard only through its own sends, which is how a parallel
     /// path is built. The routing widget's first lane says which.
     SetParentSend(String, bool),
+    /// Send this track to that one.
+    ///
+    /// Two guids, because a send is a relation and not a property: the
+    /// source owns it and the destination is a track the engine has to
+    /// resolve. The index it comes back with is REAPER's, and the
+    /// window does not guess it — the read that follows says what it
+    /// was.
+    AddSend(String, String),
+    /// Take one of this track's sends away, by its index.
+    ///
+    /// Removing renumbers every send after it, which is why nothing
+    /// here patches a list after one: the panel forgets the track and
+    /// reads it again.
+    RemoveSend(String, u32),
+    /// How much of the track goes down one of its sends.
+    ///
+    /// A gain, the way the track's own volume is: 1.0 is unity.
+    SetSendVolume(String, u32, f64),
+    /// Where the send sits, -1.0 to 1.0.
+    SetSendPan(String, u32, f64),
+    /// Whether the send passes anything at all.
+    SetSendMute(String, u32, bool),
+    /// Where the send is tapped from: post-fader, pre-FX, post-FX.
+    ///
+    /// The difference between a reverb that follows the fader and one
+    /// that does not, which is the first thing anybody changes about a
+    /// send and the thing REAPER hides in a menu.
+    SetSendMode(String, u32, daw_proto::routing::SendMode),
     /// The track's colour, as REAPER stores it (0xRRGGBB).
     ///
     /// Carries the value rather than cycling, because a colour is
@@ -190,6 +218,12 @@ impl Edit {
             | Self::SetPhase(g, _)
             | Self::SetInputMonitor(g, _)
             | Self::SetParentSend(g, _)
+            | Self::AddSend(g, _)
+            | Self::RemoveSend(g, _)
+            | Self::SetSendVolume(g, ..)
+            | Self::SetSendPan(g, ..)
+            | Self::SetSendMute(g, ..)
+            | Self::SetSendMode(g, ..)
             | Self::SetColor(g, _)
             | Self::SetAutomationMode(g, _)
             | Self::SetRecordInput(g, _)
@@ -267,6 +301,8 @@ impl Edit {
             self,
             Self::SetVolume(..)
                 | Self::SetPan(..)
+                | Self::SetSendVolume(..)
+                | Self::SetSendPan(..)
                 | Self::SetFadeIn(..)
                 | Self::SetFadeOut(..)
                 | Self::MoveItem(..)
@@ -275,9 +311,29 @@ impl Edit {
     }
 
     /// Whether `other` is the same control on the same track.
+    ///
+    /// A send's number is part of its identity here. Without it two
+    /// sends on one track are one control, and dragging the reverb
+    /// send would eat the delay send's last position out of the queue
+    /// — a coalescing bug that looks like a routing bug.
     #[must_use]
     fn same_control_as(&self, other: &Self) -> bool {
-        self.guid() == other.guid() && std::mem::discriminant(self) == std::mem::discriminant(other)
+        self.guid() == other.guid()
+            && std::mem::discriminant(self) == std::mem::discriminant(other)
+            && self.route() == other.route()
+    }
+
+    /// Which of the track's sends this edit is about, if any.
+    #[must_use]
+    const fn route(&self) -> Option<u32> {
+        match self {
+            Self::RemoveSend(_, index)
+            | Self::SetSendVolume(_, index, _)
+            | Self::SetSendPan(_, index, _)
+            | Self::SetSendMute(_, index, _)
+            | Self::SetSendMode(_, index, _) => Some(*index),
+            _ => None,
+        }
     }
 }
 
@@ -577,6 +633,33 @@ mod tests {
         assert_eq!(q.len(), 3);
         q.push(Edit::SetVolume("kick".into(), 0.9));
         assert_eq!(q.len(), 3, "the kick's volume should have been replaced");
+    }
+
+    /// And per SEND. Two sends on one track are two controls: without
+    /// the number in the identity, dragging the reverb send would eat
+    /// the delay send's last position out of the queue, and the delay
+    /// would end up wherever the reverb was left.
+    #[test]
+    fn coalescing_does_not_cross_sends() {
+        let mut q = Queue::default();
+        q.push(Edit::SetSendVolume("kick".into(), 0, 0.5));
+        q.push(Edit::SetSendVolume("kick".into(), 1, 0.5));
+        assert_eq!(q.len(), 2);
+        q.push(Edit::SetSendVolume("kick".into(), 0, 0.9));
+        assert_eq!(q.len(), 2, "send 0 should have been replaced");
+        assert_eq!(q.pop(), Some(Edit::SetSendVolume("kick".into(), 0, 0.9)));
+        assert_eq!(q.pop(), Some(Edit::SetSendVolume("kick".into(), 1, 0.5)));
+    }
+
+    /// Taking a send away is a click, not a drag: two removes are two
+    /// removes, because the second one is about a different send —
+    /// removing renumbers everything after it.
+    #[test]
+    fn removing_a_send_never_collapses() {
+        let mut q = Queue::default();
+        q.push(Edit::RemoveSend("kick".into(), 0));
+        q.push(Edit::RemoveSend("kick".into(), 0));
+        assert_eq!(q.len(), 2);
     }
 
     /// Order is kept for everything that did not coalesce — a mute
@@ -885,6 +968,40 @@ async fn apply(edit: &Edit) {
         Edit::SetPhase(_, inverted) => track.set_phase_inverted(*inverted).await,
         Edit::SetInputMonitor(_, mode) => track.set_input_monitor(*mode).await,
         Edit::SetParentSend(_, enabled) => track.set_parent_send(*enabled).await,
+        // A send is addressed through the track that owns it, by the
+        // number REAPER gave it. `by_index` costs a round trip of its
+        // own to prove the route is still there — worth it, because
+        // the alternative is writing a level into whatever now holds
+        // that number after somebody removed the one before it.
+        Edit::AddSend(_, dest) => track.sends().add_to(dest).await.map(|_| ()),
+        Edit::RemoveSend(_, index) => {
+            on_send(&track, *index, |route| async move { route.remove().await }).await
+        }
+        Edit::SetSendVolume(_, index, v) => {
+            let v = *v;
+            on_send(&track, *index, move |route| async move {
+                route.set_volume(v).await
+            })
+            .await
+        }
+        Edit::SetSendPan(_, index, p) => {
+            let p = *p;
+            on_send(&track, *index, move |route| async move { route.set_pan(p).await }).await
+        }
+        Edit::SetSendMute(_, index, muted) => {
+            let muted = *muted;
+            on_send(&track, *index, move |route| async move {
+                if muted { route.mute().await } else { route.unmute().await }
+            })
+            .await
+        }
+        Edit::SetSendMode(_, index, mode) => {
+            let mode = *mode;
+            on_send(&track, *index, move |route| async move {
+                route.set_send_mode(mode).await
+            })
+            .await
+        }
         Edit::SetColor(_, color) => track.set_color(*color).await,
         Edit::SetAutomationMode(_, mode) => track.set_automation_mode(*mode).await,
         Edit::SetRecordInput(_, input) => track.set_record_input(*input).await,
@@ -975,6 +1092,99 @@ async fn item_track(project: &daw_control::Project, item_guid: &str) -> String {
         .and_then(|items| items.into_iter().find(|i| i.guid == item_guid))
         .map(|i| i.track_guid)
         .unwrap_or_default()
+}
+
+/// Do something to one of a track's sends.
+///
+/// The resolve is half the cost of a send edit — `by_index` reads the
+/// route to prove it exists before handing back a handle — so it is in
+/// one place rather than repeated per arm, and a send that has gone is
+/// a warning rather than a silent nothing: a level written into a
+/// number nobody holds any more is exactly the bug that would otherwise
+/// look like the panel not working.
+async fn on_send<F, Fut>(
+    track: &daw_control::TrackHandle,
+    index: u32,
+    act: F,
+) -> daw_control::Result<()>
+where
+    F: FnOnce(daw_control::RouteHandle) -> Fut,
+    Fut: std::future::Future<Output = daw_control::Result<()>>,
+{
+    match track.sends().by_index(index).await {
+        Ok(Some(route)) => act(route).await,
+        Ok(None) => {
+            tracing::warn!(route.index = index, "the send this edit names is gone");
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// The engine's account of the ROUTING, as it changes.
+///
+/// A second subscription, and it has to be: what a send is doing —
+/// its level, its pan, its mute — travels on the routing stream, and
+/// the track stream carries only how MANY there are. A strip that
+/// draws a lane does not need the first; a panel that draws the sends
+/// needs nothing else.
+///
+/// Taken from the cross-domain bus rather than a routing stream of its
+/// own, because there is no routing stream client: the bus is the only
+/// client-side path to a [`RoutingEvent`]. One filter, one domain — the
+/// rest are dropped before they reach this channel.
+pub struct Bus {
+    changes: std::sync::mpsc::Receiver<daw_proto::routing::RoutingEvent>,
+    alive: Alive,
+}
+
+impl Bus {
+    /// Subscribe. `None` if the facade is not up.
+    #[must_use]
+    pub fn start() -> Option<Self> {
+        let runtime = crate::open::runtime()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let alive = Alive::new();
+        let mine = alive.clone();
+        std::thread::Builder::new()
+            .name("session-daw-routing".into())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    let _end = scopeguard(move || mine.ended());
+                    let Some(daw) = daw::rpc::Daw::try_get() else {
+                        return;
+                    };
+                    let filter = daw_proto::event_bus::BusFilter {
+                        routing: true,
+                        ..daw_proto::event_bus::BusFilter::default()
+                    };
+                    let Ok(mut stream) = daw.events().subscribe(filter).await else {
+                        return;
+                    };
+                    while let Ok(Some(event)) = stream.recv().await {
+                        let daw_proto::event_bus::DawEvent::Routing(routing) = event.get() else {
+                            continue;
+                        };
+                        if tx.send(routing.clone()).is_err() {
+                            break;
+                        }
+                    }
+                });
+            })
+            .ok()?;
+        Some(Self { changes: rx, alive })
+    }
+
+    /// Everything that has happened since the last frame.
+    pub fn drain(&self) -> impl Iterator<Item = daw_proto::routing::RoutingEvent> + '_ {
+        self.changes.try_iter()
+    }
+
+    /// Is this subscription still connected?
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.alive.is_live()
+    }
 }
 
 /// The engine's own account of the tracks, as it changes.

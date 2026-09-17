@@ -598,13 +598,6 @@ fn css_hex(css: &str) -> Option<Color> {
     ))
 }
 
-/// How many bar numbers a ruler will ever print.
-///
-/// The spacing rule keeps them 56px apart, so a 5120-wide screen holds
-/// about ninety. This is the guard against a degenerate tempo or zoom
-/// turning the loop into a hang, not a layout decision.
-const MAX_LABELS: usize = 512;
-
 /// `0.0, 1.0, 2.0, …`, up to `max`.
 ///
 /// A float counter compared against a float bound is how a grid loop

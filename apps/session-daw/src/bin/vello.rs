@@ -3904,6 +3904,17 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         // Predicting either means predicting the engine's whole answer,
         // and being wrong about the shape of the session looks far
         // worse than one frame of waiting for the right one.
+        // A send's own fields are not the track's, so there is
+        // nothing on `track` to patch. The prediction for those goes
+        // into the routes cache instead, where the panel reads them —
+        // see `Routes::predict`, called at the gesture rather than
+        // here, because only the gesture knows which send it is on.
+        Edit::AddSend(..)
+        | Edit::RemoveSend(..)
+        | Edit::SetSendVolume(..)
+        | Edit::SetSendPan(..)
+        | Edit::SetSendMute(..)
+        | Edit::SetSendMode(..) => {}
         Edit::SetFolderDepth(..)
         | Edit::SetGroupMembership(..)
         | Edit::SetGroupFlags(..)
