@@ -28,6 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let filter = args.iter().skip(1).find(|a| !a.starts_with("--")).cloned();
     let gui = args.iter().any(|a| a == "--gui");
+    let virtual_display = args.iter().any(|a| a == "--virtual");
     let keep_open = args.iter().any(|a| a == "--keep-open");
 
     // This crate sits at apps/session-reaper-xtask; the repo root is two
@@ -66,6 +67,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if gui {
         runner = runner.with_headless(false);
         println!("  Mode:      GUI (visible REAPER window)");
+    }
+    if virtual_display {
+        runner = runner.with_virtual_display()?;
+        println!("  Mode:      virtual display (dialogs get dismissed)");
     }
     if keep_open {
         runner.keep_open = true;

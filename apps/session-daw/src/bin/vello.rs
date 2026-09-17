@@ -246,6 +246,20 @@ struct App {
     /// When the last click on a mark in the ruler was, and on which —
     /// for spotting the double that opens its name.
     last_ruler_click: Option<(session_daw::ruler::On, std::time::Instant)>,
+    /// The routing panel, if one is open: whose, and where it was
+    /// opened from.
+    routing: Option<(String, (f64, f64))>,
+    /// A send being dragged in the panel: the track, the send's number
+    /// and which of its two continuous controls.
+    send_drag: Option<(String, u32, session_daw::routing::Part)>,
+    /// What every track visible in the panel sends to and receives
+    /// from. Read per track, on demand — see `session_daw::routes`.
+    routes: session_daw::routes::Routes,
+    /// The routing bus, for the levels the track stream does not carry.
+    bus: Option<session_daw::engine::Bus>,
+    /// The list of somewhere to send to, while it is open, and how far
+    /// down it has been scrolled.
+    picking: Option<usize>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
     /// When the last rack grip was clicked, for spotting a double.
@@ -372,6 +386,18 @@ impl ApplicationHandler for App {
                 self.redraw();
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                // A list of somewhere to send to takes the wheel while
+                // it is open: it is the only thing on screen that is
+                // longer than its box, and scrolling the mixer behind
+                // it would move the thing the list is anchored to.
+                if self.picking.is_some() {
+                    let by = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => f64::from(y),
+                        MouseScrollDelta::PixelDelta(p) => p.y,
+                    };
+                    self.scroll_picker(by);
+                    return;
+                }
                 // The expression editor takes the wheel in notches —
                 // one line of a mouse wheel — which is what its zoom
                 // and pan gains are tuned for.
@@ -697,6 +723,12 @@ impl ApplicationHandler for App {
                 // knobs did not turn.
                 let last = self.cursor;
                 self.cursor = (position.x, position.y);
+                // A send taken hold of in the panel keeps the pointer
+                // until it is let go, the same way a fader does.
+                if self.send_drag.is_some() {
+                    self.drag_send(position.x);
+                    return;
+                }
                 // The dock's edge, being dragged: the dock follows the
                 // pointer and the arrangement gives way above it.
                 if self.dock_drag {
@@ -899,9 +931,16 @@ impl ApplicationHandler for App {
                 self.cursor = (position.x, position.y);
                 let (x, y) = self.cursor;
                 if state.is_pressed() {
-                    // The rails are drawn over everything, so they are
-                    // asked first: a click on a phase button must not
-                    // also move the edit cursor behind it.
+                    // The routing panel is drawn over everything,
+                    // including the rails, so it is asked before them —
+                    // and it takes a press that landed outside it too,
+                    // to close.
+                    if self.press_picker(x, y) || self.press_routing(x, y) {
+                        return;
+                    }
+                    // The rails are drawn over everything else, so they
+                    // are asked next: a click on a phase button must
+                    // not also move the edit cursor behind it.
                     self.pressed_rail = self.rail_action_at(x, y);
                     if self.pressed_rail.is_some() {
                         self.redraw();
@@ -1013,6 +1052,10 @@ impl ApplicationHandler for App {
                         self.gestures.press(hit, x, y);
                     }
                 } else {
+                    if self.send_drag.take().is_some() {
+                        self.redraw();
+                        return;
+                    }
                     if self.editor.zoom.is_some() {
                         let view = self.viewport();
                         let lanes = self.lanes_origin();
@@ -1198,6 +1241,9 @@ impl ApplicationHandler for App {
             }
             if self.watch.is_none() {
                 self.watch = session_daw::engine::Watch::start();
+            }
+            if self.bus.is_none() {
+                self.bus = session_daw::engine::Bus::start();
             }
             if self.refresh.is_none() {
                 self.refresh = session_daw::engine::Refresh::start();
@@ -2104,10 +2150,15 @@ impl App {
                 guid,
                 !track.phase_inverted,
             )),
-            C::Routing => Some(session_daw::engine::Edit::SetParentSend(
-                guid,
-                !track.parent_send,
-            )),
+            // The routing widget opens the panel now, and the parent
+            // send is its first row. It used to BE the parent-send
+            // toggle, which was the one thing about routing this
+            // window could say.
+            C::Routing => {
+                let at = self.cursor;
+                self.open_routing(guid, at);
+                return;
+            }
             // Folding is an edit to the VIEW, not to the track, so it
             // is handled before this — see `act_on_row`'s caller. The
             // FX button waits for a chain; `bin/chain-probe` says why.
@@ -2250,6 +2301,12 @@ impl App {
                 session_daw::rename::What::Track(guid),
                 &track.name,
             ));
+            return;
+        }
+
+        if spot.control == session_daw::mcp::Control::Routing && drag.is_none() {
+            let at = self.cursor;
+            self.open_routing(guid, at);
             return;
         }
 
@@ -2598,6 +2655,11 @@ impl App {
             .as_ref()
             .filter(|r| r.surface == session_daw::rename::Surface::Mixer);
         let panels = self.rack_panels();
+        // Gathered before the renderer is borrowed, and owned, so the
+        // paint can read it while the frame holds the renderer.
+        let routing = self.routing_open();
+        let picker = self.picker_open();
+        let names = self.track_names();
         // A rack is drawn live when it MOVES — when the pointer is on
         // one of its grips, or when the track has a spectrum. Both are
         // rare enough that the rest of the mixer stays replayed.
@@ -2683,7 +2745,8 @@ impl App {
             }
             drawn.replayed = a.replayed + b.replayed;
             drawn.submitted = a.submitted + b.submitted;
-            // The rails last, over everything that scrolled under them.
+            // The rails next, over everything that scrolled under
+            // them.
             session_daw::rails::draw(
                 painter,
                 palette,
@@ -2695,6 +2758,29 @@ impl App {
                 &profile.right,
                 &profile.top,
             );
+            // And the routing panel over even those: it is a thing the
+            // pointer is in the middle of using, and the rails are
+            // furniture.
+            if let Some((box_of, guid, name, parent_send, wiring)) = &routing {
+                session_daw::routing::paint(
+                    painter,
+                    palette,
+                    font,
+                    session_daw::routing::Open {
+                        guid,
+                        name,
+                        parent_send: *parent_send,
+                        wiring: wiring.as_ref(),
+                        names: &|guid| names.get(guid).cloned(),
+                    },
+                    *box_of,
+                );
+            }
+            if let Some((box_of, candidates, scroll)) = &picker {
+                session_daw::routing::paint_picker(
+                    painter, palette, font, candidates, *scroll, *box_of,
+                );
+            }
         });
         self.after_frame(drawn);
     }
@@ -2748,6 +2834,339 @@ impl App {
             Side::Top => profile.top.get(index),
         }
         .map(|item| item.act)
+    }
+
+    /// Everything the routing bus has said since the last frame.
+    ///
+    /// Field changes land in the cache and redraw. A route that
+    /// appeared or went away is not patched at all — it renumbers every
+    /// send after it, at both ends — so the tracks on screen are read
+    /// again instead.
+    fn drain_routing(&mut self) {
+        let Some(bus) = &self.bus else { return };
+        let events: Vec<_> = bus.drain().collect();
+        if events.is_empty() {
+            return;
+        }
+        let mut structural = false;
+        for event in &events {
+            structural |= self.routes.apply(event) == session_daw::routes::Applied::Structure;
+        }
+        if structural {
+            // Only the panel's own track is held, so this is one read
+            // and not a walk of the session.
+            if let Some((guid, _)) = self.routing.clone() {
+                self.routes.forget(&guid);
+                self.routes.fetch(vec![guid]);
+            }
+        }
+        if self.routes.take_fresh() {
+            self.redraw();
+        }
+    }
+
+    /// Open the routing panel on a track.
+    ///
+    /// The read is asked for here rather than when the panel is drawn,
+    /// because a panel that asked while drawing would ask sixty times a
+    /// second for an answer that arrives once.
+    fn open_routing(&mut self, guid: String, at: (f64, f64)) {
+        self.routes.fetch(vec![guid.clone()]);
+        self.routing = Some((guid, at));
+        self.redraw();
+    }
+
+    /// The panel's box, if one is open.
+    fn routing_box(&self) -> Option<vello::kurbo::Rect> {
+        let (guid, at) = self.routing.as_ref()?;
+        let (sends, receives) = self.routing_counts(guid);
+        Some(session_daw::routing::anchored(
+            *at,
+            self.surface_size,
+            session_daw::routing::lines(sends, receives).len(),
+        ))
+    }
+
+    /// How many sends and receives the open panel is showing.
+    fn routing_counts(&self, guid: &str) -> (usize, usize) {
+        self.routes
+            .get(guid)
+            .map_or((0, 0), |wiring| (wiring.sends.len(), wiring.receives.len()))
+    }
+
+    /// The tracks this one could send to, in session order.
+    ///
+    /// Everything but itself and the tracks it already sends to: a
+    /// second send to the same destination is a thing REAPER will make
+    /// and nobody wants, and offering it is offering a mistake.
+    fn send_candidates(&self, guid: &str) -> Vec<(String, String)> {
+        let already: Vec<String> = self
+            .routes
+            .get(guid)
+            .map(|wiring| {
+                wiring
+                    .sends
+                    .iter()
+                    .filter_map(|route| route.dest_track_guid.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.tracks
+            .iter()
+            .filter(|track| track.guid != guid && !already.contains(&track.guid))
+            .map(|track| (track.guid.clone(), track.name.clone()))
+            .collect()
+    }
+
+    /// A press in the list of somewhere to send to.
+    fn press_picker(&mut self, x: f64, y: f64) -> bool {
+        use session_daw::routing::Pick;
+        let (Some((guid, at)), Some(scroll)) = (self.routing.clone(), self.picking) else {
+            return false;
+        };
+        let candidates = self.send_candidates(&guid);
+        let panel = session_daw::routing::anchored(
+            at,
+            self.surface_size,
+            session_daw::routing::picker_lines(candidates.len()),
+        );
+        let Some(pick) = session_daw::routing::pick_at(panel, candidates.len(), scroll, x, y)
+        else {
+            // Outside goes back to the panel rather than closing
+            // everything: the list was opened FROM it, and landing back
+            // where you came from is what a cancel means here.
+            self.picking = None;
+            self.redraw();
+            return true;
+        };
+        match pick {
+            Pick::Close => self.picking = None,
+            Pick::Track(index) => {
+                if let Some((dest, _)) = candidates.get(index) {
+                    self.send(session_daw::engine::Edit::AddSend(
+                        guid.clone(),
+                        dest.clone(),
+                    ));
+                    // The number the new send gets is REAPER's to
+                    // choose, so the panel reads the track again rather
+                    // than inventing a row at the end of the list.
+                    self.routes.forget(&guid);
+                    self.routes.fetch(vec![guid]);
+                    self.picking = None;
+                }
+            }
+            Pick::Nowhere => {}
+        }
+        self.redraw();
+        true
+    }
+
+    /// Move down the list of somewhere to send to.
+    fn scroll_picker(&mut self, by: f64) -> bool {
+        let (Some((guid, _)), Some(scroll)) = (self.routing.clone(), self.picking) else {
+            return false;
+        };
+        let most = session_daw::routing::most_scroll(self.send_candidates(&guid).len());
+        let step = if by > 0.0 { -1 } else { 1 };
+        let next = i64::try_from(scroll).unwrap_or(0) + step;
+        self.picking = Some(
+            next.clamp(0, i64::try_from(most).unwrap_or(0))
+                .unsigned_abs() as usize,
+        );
+        self.redraw();
+        true
+    }
+
+    /// A press in the panel. `true` if the panel took it — including a
+    /// press on nothing, which must not fall through to the mixer the
+    /// panel is drawn over.
+    fn press_routing(&mut self, x: f64, y: f64) -> bool {
+        use session_daw::routing::{Part, Spot};
+        let (Some((guid, _)), Some(panel)) = (self.routing.clone(), self.routing_box()) else {
+            return false;
+        };
+        let (sends, receives) = self.routing_counts(&guid);
+        let Some(spot) = session_daw::routing::spot_at(panel, sends, receives, x, y) else {
+            // Outside: the press closes the panel and does nothing
+            // else. A click that both closed a panel and moved a fader
+            // under it would be a click nobody could take back.
+            self.routing = None;
+            self.send_drag = None;
+            self.redraw();
+            return true;
+        };
+        let Some(wiring) = self.routes.get(&guid) else {
+            return true;
+        };
+        match spot {
+            Spot::Close => {
+                self.routing = None;
+                self.picking = None;
+            }
+            Spot::AddSend => self.picking = Some(0),
+            Spot::Parent => {
+                let parent = self
+                    .tracks
+                    .iter()
+                    .find(|t| t.guid == guid)
+                    .is_some_and(|t| t.parent_send);
+                self.send(session_daw::engine::Edit::SetParentSend(
+                    guid.clone(),
+                    !parent,
+                ));
+                if let Some(track) = self.tracks.iter_mut().find(|t| t.guid == guid) {
+                    track.parent_send = !parent;
+                }
+                self.re_record();
+            }
+            Spot::Send { index, part } => {
+                let Some(route) = wiring.sends.get(index) else {
+                    return true;
+                };
+                let number = route.index;
+                match part {
+                    Part::Mute => {
+                        let muted = !route.muted;
+                        self.routes.predict(&guid, number, |r| r.muted = muted);
+                        self.send(session_daw::engine::Edit::SetSendMute(
+                            guid.clone(),
+                            number,
+                            muted,
+                        ));
+                    }
+                    Part::Mode => {
+                        let mode = session_daw::routing::next_mode(route.send_mode);
+                        self.routes.predict(&guid, number, |r| r.send_mode = mode);
+                        self.send(session_daw::engine::Edit::SetSendMode(
+                            guid.clone(),
+                            number,
+                            mode,
+                        ));
+                    }
+                    Part::Remove => {
+                        self.send(session_daw::engine::Edit::RemoveSend(guid.clone(), number));
+                        // Read again rather than dropping the row: what
+                        // the numbering becomes is the engine's answer,
+                        // not a guess made here.
+                        self.routes.forget(&guid);
+                        self.routes.fetch(vec![guid.clone()]);
+                    }
+                    // The two continuous ones take hold; the value
+                    // follows the pointer from here.
+                    Part::Level | Part::Pan => {
+                        self.send_drag = Some((guid.clone(), number, part));
+                        self.drag_send(x);
+                    }
+                    Part::Name => {}
+                }
+            }
+            // Shown, not touched: a receive is the far end of somebody
+            // else's send, and that send is the thing that owns it.
+            Spot::Receive { .. } | Spot::Nowhere => {}
+        }
+        self.redraw();
+        true
+    }
+
+    /// A send's level or pan, following the pointer.
+    fn drag_send(&mut self, x: f64) {
+        use session_daw::routing::Part;
+        let (Some((guid, number, part)), Some(panel)) =
+            (self.send_drag.clone(), self.routing_box())
+        else {
+            return;
+        };
+        let Some(wiring) = self.routes.get(&guid) else {
+            return;
+        };
+        let Some(at) = wiring.sends.iter().position(|r| r.index == number) else {
+            return;
+        };
+        let lines = session_daw::routing::lines(wiring.sends.len(), wiring.receives.len());
+        let Some(line) = lines
+            .iter()
+            .position(|l| *l == session_daw::routing::Line::Send(at))
+        else {
+            return;
+        };
+        let cell = session_daw::routing::column(session_daw::routing::row(panel, line), part);
+        let edit = match part {
+            Part::Level => {
+                let volume = session_daw::routing::level_at(cell, x);
+                self.routes.predict(&guid, number, |r| r.volume = volume);
+                session_daw::engine::Edit::SetSendVolume(guid.clone(), number, volume)
+            }
+            Part::Pan => {
+                let pan = session_daw::routing::pan_at(cell, x);
+                self.routes.predict(&guid, number, |r| r.pan = pan);
+                session_daw::engine::Edit::SetSendPan(guid.clone(), number, pan)
+            }
+            _ => return,
+        };
+        self.send(edit);
+        self.redraw();
+    }
+
+    /// What the panel draws, owned, so the frame can borrow the
+    /// renderer mutably while it paints.
+    /// The list of somewhere to send to, if it is open: where it goes,
+    /// what is in it, and how far down it has been scrolled.
+    fn picker_open(&self) -> Option<(vello::kurbo::Rect, Vec<String>, usize)> {
+        let (guid, at) = self.routing.as_ref()?;
+        let scroll = self.picking?;
+        let candidates: Vec<String> = self
+            .send_candidates(guid)
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        let panel = session_daw::routing::anchored(
+            *at,
+            self.surface_size,
+            session_daw::routing::picker_lines(candidates.len()),
+        );
+        Some((panel, candidates, scroll))
+    }
+
+    fn routing_open(
+        &self,
+    ) -> Option<(
+        vello::kurbo::Rect,
+        String,
+        String,
+        bool,
+        Option<session_daw::routes::Wiring>,
+    )> {
+        // The list is drawn INSTEAD of the panel, in the same place: it
+        // was opened from a row of it, and two boxes over each other
+        // would be two things to dismiss.
+        if self.picking.is_some() {
+            return None;
+        }
+        let (guid, _) = self.routing.as_ref()?;
+        let panel = self.routing_box()?;
+        let track = self.tracks.iter().find(|t| &t.guid == guid);
+        Some((
+            panel,
+            guid.clone(),
+            track.map_or_else(|| "track".to_owned(), |t| t.name.clone()),
+            track.is_some_and(|t| t.parent_send),
+            self.routes.get(guid),
+        ))
+    }
+
+    /// Every track's name by guid, for naming the far end of a route.
+    ///
+    /// Built only while the panel is open, and only then: a map of two
+    /// hundred names per frame for a panel nobody opened is a cost the
+    /// window should not pay to draw nothing.
+    fn track_names(&self) -> std::collections::HashMap<String, String> {
+        if self.routing.is_none() {
+            return std::collections::HashMap::new();
+        }
+        self.tracks
+            .iter()
+            .map(|track| (track.guid.clone(), track.name.clone()))
+            .collect()
     }
 
     /// A click on a mark in the ruler: the second one opens its name.
@@ -2987,8 +3406,13 @@ impl App {
                 // them against the new connection, and the reload is
                 // what re-reads a project that may not be the same one.
                 self.watch = None;
+                self.bus = None;
                 self.refresh = None;
                 self.meters = None;
+                // The routes were read from the connection that went
+                // away: keeping them would draw the last project's
+                // sends on this one's tracks.
+                self.routes = session_daw::routes::Routes::default();
                 self.reload();
             }
             Err(error) => {
@@ -3047,6 +3471,7 @@ impl App {
                 refresh.settled();
             }
         }
+        self.drain_routing();
         let Some(watch) = &self.watch else { return };
         let events: Vec<_> = watch.drain().collect();
         if events.is_empty() {
@@ -3398,6 +3823,9 @@ impl App {
         let bars = Bars::at(scene.bpm);
         // One painter for the frame, shared with the bench and every
         // shot — see `session_daw::frame`.
+        let routing = self.routing_open();
+        let picker = self.picker_open();
+        let names = self.track_names();
         let arrange = session_daw::frame::Arrange {
             scene,
             palette: &self.palette,
@@ -3432,8 +3860,32 @@ impl App {
             zoom_box: self.editor.zoom_marquee(),
         };
         let mut drawn = session_daw::profile::Counts::default();
+        let palette = &self.palette;
+        let font = &self.font;
         self.renderer.render(|painter| {
             drawn = arrange.paint(painter);
+            // Over the frame and its rails, for the same reason it is
+            // over the mixer's.
+            if let Some((box_of, guid, name, parent_send, wiring)) = &routing {
+                session_daw::routing::paint(
+                    painter,
+                    palette,
+                    font,
+                    session_daw::routing::Open {
+                        guid,
+                        name,
+                        parent_send: *parent_send,
+                        wiring: wiring.as_ref(),
+                        names: &|guid| names.get(guid).cloned(),
+                    },
+                    *box_of,
+                );
+            }
+            if let Some((box_of, candidates, scroll)) = &picker {
+                session_daw::routing::paint_picker(
+                    painter, palette, font, candidates, *scroll, *box_of,
+                );
+            }
         });
         self.after_frame(drawn);
     }
@@ -3694,6 +4146,11 @@ fn main() {
         settings: session_daw::settings::Settings::default(),
         rename: None,
         last_ruler_click: None,
+        routing: None,
+        picking: None,
+        send_drag: None,
+        routes: session_daw::routes::Routes::default(),
+        bus: None,
         last_row_click: None,
         session: None,
         mixer: None,
@@ -3904,6 +4361,17 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         // Predicting either means predicting the engine's whole answer,
         // and being wrong about the shape of the session looks far
         // worse than one frame of waiting for the right one.
+        // A send's own fields are not the track's, so there is
+        // nothing on `track` to patch. The prediction for those goes
+        // into the routes cache instead, where the panel reads them —
+        // see `Routes::predict`, called at the gesture rather than
+        // here, because only the gesture knows which send it is on.
+        Edit::AddSend(..)
+        | Edit::RemoveSend(..)
+        | Edit::SetSendVolume(..)
+        | Edit::SetSendPan(..)
+        | Edit::SetSendMute(..)
+        | Edit::SetSendMode(..) => {}
         Edit::SetFolderDepth(..)
         | Edit::SetGroupMembership(..)
         | Edit::SetGroupFlags(..)
