@@ -846,19 +846,13 @@ fn PerformanceMainContent() -> Element {
                 // measurements are gaps between siblings, and what is below
                 // is free.
                 div {
-                    class: "flex flex-col h-full px-6 pt-5 gap-4",
-
-                    // Song title
-                    div {
-                        class: "flex-none",
-                        if let Some(ref song) = *current_song.read() {
-                            SongTitle {
-                                song_name: song.name.clone(),
-                            }
-                        }
-                    }
+                    class: "flex flex-col h-full gap-3 pt-2",
 
                     // Main Song Progress Bar
+                    //
+                    // Edge to edge: it is a map of the song and every
+                    // pixel of it is a place you can be, so a margin
+                    // either side is two places you cannot.
                     div {
                         key: "{song_key.clone().unwrap_or_else(|| \"none\".to_string())}",
                         class: "flex-none w-full",
@@ -951,153 +945,22 @@ fn PerformanceMainContent() -> Element {
                         }
                     }
 
-                    // ── The take just played ───────────────────
+                    // ── The song, and where the transport is ───
                     //
-                    // The space the head stopped taking. Present only
-                    // when there IS a pass to review — a panel showing
-                    // an invented take would be worse than no panel.
-                    if let Some(pass) = crate::signals::TAKE_UNDER_REVIEW() {
-                        div { class: "flex-none pt-2",
-                            crate::components::TakeReview {
-                                pass,
-                                peaks: crate::signals::TAKE_PEAKS(),
-                                performer: crate::signals::PERFORMER(),
-                                performers: crate::signals::PERFORMERS(),
-                                on_performer: move |name: String| {
-                                    *crate::signals::PERFORMER.write() =
-                                        (!name.is_empty()).then_some(name);
-                                },
-                                on_mark: move |mark: session_proto::review::Mark| {
-                                    // To the service, which keeps it with
-                                    // the song and tells the other
-                                    // tablets. It comes back through
-                                    // `TakeMarked` — including to this
-                                    // one, so what is on screen is what
-                                    // the room has rather than what this
-                                    // device hopes it has.
-                                    let pass = crate::signals::TAKE_UNDER_REVIEW()
-                                        .map(|pass| pass.number);
-                                    let song = ACTIVE_INDICES.read().song_index;
-                                    if let (Some(pass), Some(song)) = (pass, song) {
-                                        spawn(async move {
-                                            if let Err(error) = Session::get()
-                                                .setlist()
-                                                .mark_take(song, pass, mark)
-                                                .await
-                                            {
-                                                tracing::warn!(
-                                                    error = ?error,
-                                                    "the mark did not reach the session"
-                                                );
-                                            }
-                                        });
-                                    }
-                                },
-                            }
-                        }
-                    }
-
-                    // Detail badges and next song
+                    // The title used to be the largest thing on the
+                    // screen, centred above everything. It is a label:
+                    // you know what song you are playing, and it earns
+                    // a corner rather than a third of the view. Left,
+                    // under the bars, with the readouts opposite — so
+                    // everything below this line is space for the work.
                     div {
-                        class: "flex-none",
-                        div {
-                            class: "flex flex-col items-center gap-4",
-
-                            // Transport info badges
-                            if let Some(ref transport) = transport_state {
-                                {
-                                    // Get time position from transport Position struct
-                                    let position_seconds = transport.position.time.map_or(0.0, |t| t.as_seconds());
-                                    let minutes = clamped_i32((position_seconds / 60.0).floor().max(0.0));
-                                    let seconds = clamped_i32((position_seconds % 60.0).floor().max(0.0));
-                                    let millis = clamped_i32(((position_seconds % 1.0) * 1000.0).floor().max(0.0));
-                                    let time_str = format!("{minutes}:{seconds:02}.{millis:03}");
-
-                                    // Get musical position from transport Position struct
-                                    // This comes from REAPER's TimeMap2_timeToBeats and properly handles tempo changes
-                                    let musical_str = transport.position.musical.as_ref().map_or_else(
-                                        || "1.1.000".to_string(),
-                                        |musical| format!("{}.{}.{:03}", musical.measure, musical.beat, musical.subdivision),
-                                    );
-
-                                    rsx! {
-                                        div {
-                                            class: "flex flex-wrap gap-3 justify-center",
-
-                                            // Musical position badge (Measure.Beat.Subdivision)
-                                            div {
-                                                class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium flex items-center gap-2",
-                                                // Ruler icon
-                                                svg {
-                                                    width: "18",
-                                                    height: "18",
-                                                    view_box: "0 0 24 24",
-                                                    fill: "none",
-                                                    stroke: "currentColor",
-                                                    stroke_width: "2",
-                                                    stroke_linecap: "round",
-                                                    stroke_linejoin: "round",
-                                                    // Simple ruler icon
-                                                    line { x1: "3", y1: "12", x2: "21", y2: "12" }
-                                                    line { x1: "3", y1: "8", x2: "3", y2: "16" }
-                                                    line { x1: "7", y1: "10", x2: "7", y2: "14" }
-                                                    line { x1: "11", y1: "8", x2: "11", y2: "16" }
-                                                    line { x1: "15", y1: "10", x2: "15", y2: "14" }
-                                                    line { x1: "19", y1: "8", x2: "19", y2: "16" }
-                                                    line { x1: "21", y1: "8", x2: "21", y2: "16" }
-                                                }
-                                                span {
-                                                    class: "font-mono tabular-nums",
-                                                    "{musical_str}"
-                                                }
-                                            }
-
-                                            // Time position badge (MM:SS.mmm)
-                                            div {
-                                                class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium flex items-center gap-2",
-                                                // Clock icon
-                                                svg {
-                                                    width: "18",
-                                                    height: "18",
-                                                    view_box: "0 0 24 24",
-                                                    fill: "none",
-                                                    stroke: "currentColor",
-                                                    stroke_width: "2",
-                                                    stroke_linecap: "round",
-                                                    stroke_linejoin: "round",
-                                                    circle { cx: "12", cy: "12", r: "10" }
-                                                    polyline { points: "12 6 12 12 16 14" }
-                                                }
-                                                span {
-                                                    class: "font-mono tabular-nums",
-                                                    "{time_str}"
-                                                }
-                                            }
-
-                                            // BPM badge
-                                            div {
-                                                class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium",
-                                                "{transport.bpm:.0} BPM"
-                                            }
-
-                                            // Time signature badge
-                                            div {
-                                                class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium",
-                                                "{transport.time_sig_num}/{transport.time_sig_denom}"
-                                            }
-
-                                            // Loop indicator badge
-                                            if transport.is_looping {
-                                                div {
-                                                    class: "px-4 py-2 rounded-full bg-yellow-500/20 text-yellow-500 text-base font-medium",
-                                                    "Loop ON"
-                                                }
-                                            }
-                                        }
-                                    }
+                        class: "flex-none flex items-start justify-between gap-6 px-4",
+                        div { class: "flex flex-col gap-0.5 min-w-0",
+                            if let Some(ref song) = *current_song.read() {
+                                SongTitle {
+                                    song_name: song.name.clone(),
                                 }
                             }
-
                             // Next song (faded)
                             if let Some((next_name, next_color)) = next_song_info {
                                 FadedSongTitle {
@@ -1106,6 +969,164 @@ fn PerformanceMainContent() -> Element {
                                 }
                             }
                         }
+                        div { class: "flex flex-col items-end gap-2 flex-none",
+                            // Transport info badges
+                        if let Some(ref transport) = transport_state {
+                            {
+                                // Get time position from transport Position struct
+                                let position_seconds = transport.position.time.map_or(0.0, |t| t.as_seconds());
+                                let minutes = clamped_i32((position_seconds / 60.0).floor().max(0.0));
+                                let seconds = clamped_i32((position_seconds % 60.0).floor().max(0.0));
+                                let millis = clamped_i32(((position_seconds % 1.0) * 1000.0).floor().max(0.0));
+                                let time_str = format!("{minutes}:{seconds:02}.{millis:03}");
+
+                                // Get musical position from transport Position struct
+                                // This comes from REAPER's TimeMap2_timeToBeats and properly handles tempo changes
+                                let musical_str = transport.position.musical.as_ref().map_or_else(
+                                    || "1.1.000".to_string(),
+                                    |musical| format!("{}.{}.{:03}", musical.measure, musical.beat, musical.subdivision),
+                                );
+
+                                rsx! {
+                                    div {
+                                        class: "flex flex-wrap gap-3 justify-center",
+
+                                        // Musical position badge (Measure.Beat.Subdivision)
+                                        div {
+                                            class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium flex items-center gap-2",
+                                            // Ruler icon
+                                            svg {
+                                                width: "18",
+                                                height: "18",
+                                                view_box: "0 0 24 24",
+                                                fill: "none",
+                                                stroke: "currentColor",
+                                                stroke_width: "2",
+                                                stroke_linecap: "round",
+                                                stroke_linejoin: "round",
+                                                // Simple ruler icon
+                                                line { x1: "3", y1: "12", x2: "21", y2: "12" }
+                                                line { x1: "3", y1: "8", x2: "3", y2: "16" }
+                                                line { x1: "7", y1: "10", x2: "7", y2: "14" }
+                                                line { x1: "11", y1: "8", x2: "11", y2: "16" }
+                                                line { x1: "15", y1: "10", x2: "15", y2: "14" }
+                                                line { x1: "19", y1: "8", x2: "19", y2: "16" }
+                                                line { x1: "21", y1: "8", x2: "21", y2: "16" }
+                                            }
+                                            span {
+                                                class: "font-mono tabular-nums",
+                                                "{musical_str}"
+                                            }
+                                        }
+
+                                        // Time position badge (MM:SS.mmm)
+                                        div {
+                                            class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium flex items-center gap-2",
+                                            // Clock icon
+                                            svg {
+                                                width: "18",
+                                                height: "18",
+                                                view_box: "0 0 24 24",
+                                                fill: "none",
+                                                stroke: "currentColor",
+                                                stroke_width: "2",
+                                                stroke_linecap: "round",
+                                                stroke_linejoin: "round",
+                                                circle { cx: "12", cy: "12", r: "10" }
+                                                polyline { points: "12 6 12 12 16 14" }
+                                            }
+                                            span {
+                                                class: "font-mono tabular-nums",
+                                                "{time_str}"
+                                            }
+                                        }
+
+                                        // BPM badge
+                                        div {
+                                            class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium",
+                                            "{transport.bpm:.0} BPM"
+                                        }
+
+                                        // Time signature badge
+                                        div {
+                                            class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium",
+                                            "{transport.time_sig_num}/{transport.time_sig_denom}"
+                                        }
+
+                                        // Loop indicator badge
+                                        if transport.is_looping {
+                                            div {
+                                                class: "px-4 py-2 rounded-full bg-yellow-500/20 text-yellow-500 text-base font-medium",
+                                                "Loop ON"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        }
+                    }
+
+                    // ── The work ───────────────────────────────────
+                    //
+                    // Everything the head is not: the take being
+                    // reviewed now, the chart beside it when that
+                    // lands, whatever else the room needs. It takes
+                    // all the height that is left, which is why the
+                    // head above is as short as it can be.
+                    div {
+                        class: "flex-1 min-h-0 flex flex-row gap-4 px-4 pb-4",
+                    // ── The take just played ───────────────────
+                        //
+                        // The space the head stopped taking. Present only
+                        // when there IS a pass to review — a panel showing
+                        // an invented take would be worse than no panel.
+                        if let Some(pass) = crate::signals::TAKE_UNDER_REVIEW() {
+                            // Takes its share of the row and all of the
+                            // height: a tablet turned over to one take
+                            // should show the take at the size of the
+                            // screen.
+                            div { class: "flex-1 min-w-0 min-h-0",
+                                crate::components::TakeReview {
+                                    pass,
+                                    peaks: crate::signals::TAKE_PEAKS(),
+                                    performer: crate::signals::PERFORMER(),
+                                    performers: crate::signals::PERFORMERS(),
+                                    on_performer: move |name: String| {
+                                        *crate::signals::PERFORMER.write() =
+                                            (!name.is_empty()).then_some(name);
+                                    },
+                                    on_mark: move |mark: session_proto::review::Mark| {
+                                        // To the service, which keeps it with
+                                        // the song and tells the other
+                                        // tablets. It comes back through
+                                        // `TakeMarked` — including to this
+                                        // one, so what is on screen is what
+                                        // the room has rather than what this
+                                        // device hopes it has.
+                                        let pass = crate::signals::TAKE_UNDER_REVIEW()
+                                            .map(|pass| pass.number);
+                                        let song = ACTIVE_INDICES.read().song_index;
+                                        if let (Some(pass), Some(song)) = (pass, song) {
+                                            spawn(async move {
+                                                if let Err(error) = Session::get()
+                                                    .setlist()
+                                                    .mark_take(song, pass, mark)
+                                                    .await
+                                                {
+                                                    tracing::warn!(
+                                                        error = ?error,
+                                                        "the mark did not reach the session"
+                                                    );
+                                                }
+                                            });
+                                        }
+                                    },
+                                }
+                            }
+                        }
+
                     }
                 }
             }

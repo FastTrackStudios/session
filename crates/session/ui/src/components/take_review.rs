@@ -24,11 +24,13 @@ use session_proto::review::{Mark, Pass, Span, Verdict};
 
 use crate::prelude::*;
 
-/// How tall the waveform is drawn.
+/// The shortest the waveform is ever drawn.
 ///
-/// Big enough to drag across accurately with a thumb, on a tablet
-/// propped at arm's length — which is the posture this is used in.
-const WAVE_H: f64 = 132.0;
+/// It takes whatever height the panel has — the point of a tablet
+/// turned over to one take is that the take is the size of the screen —
+/// but never less than this, which is what a thumb needs to drag across
+/// accurately at arm's length.
+const WAVE_MIN_H: f64 = 132.0;
 
 /// The consolidated envelope of a pass: one magnitude per column,
 /// `0.0..=1.0`.
@@ -74,7 +76,9 @@ pub fn TakeReview(
     let length = pass.length();
     let Some(who) = performer.clone() else {
         return rsx! {
-            WhoAreYou { performers, on_performer }
+            div { class: "h-full w-full",
+                WhoAreYou { performers, on_performer }
+            }
         };
     };
 
@@ -90,7 +94,7 @@ pub fn TakeReview(
     };
 
     rsx! {
-        div { class: "flex flex-col gap-3 select-none",
+        div { class: "flex flex-col gap-3 select-none h-full min-h-0 w-full",
 
             // ── Who, and what the band thinks so far ───────────────
             div { class: "flex items-center gap-3",
@@ -114,8 +118,8 @@ pub fn TakeReview(
 
             // ── The pass ───────────────────────────────────────────
             div {
-                class: "relative rounded-xl bg-card border border-border overflow-hidden touch-none",
-                style: "height: {WAVE_H}px;",
+                class: "relative flex-1 min-h-0 rounded-xl bg-card border border-border overflow-hidden touch-none",
+                style: "min-height: {WAVE_MIN_H}px;",
                 onmounted: move |event| async move {
                     if let Ok(rect) = event.data().get_client_rect().await {
                         wave_width.set(rect.size.width);
@@ -208,7 +212,7 @@ fn WhoAreYou(performers: Vec<String>, on_performer: EventHandler<String>) -> Ele
                     "No performers on this session yet — they come from the tracks."
                 }
             }
-            div { class: "grid grid-cols-3 gap-3",
+            div { class: "grid grid-cols-3 gap-3 w-full max-w-3xl",
                 for name in performers {
                     button {
                         class: "h-16 rounded-xl bg-secondary text-secondary-foreground text-lg font-semibold active:brightness-125",
