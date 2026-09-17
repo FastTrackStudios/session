@@ -89,12 +89,6 @@ fn Player(reference: Signal<Option<Reference>>) -> Element {
         };
     };
 
-    // Where the session is. A stand-in until this page is wired to a
-    // transport: the sync loop below is the part worth building, and it
-    // does not care where the number comes from.
-    let session_at = use_signal(|| 0.0_f64);
-    let rolling = use_signal(|| false);
-
     // The player's own position, as of the last tick. Kept because the
     // marking gesture needs it: "that, there, is this, here" is asked
     // about where the video IS, and asking the player again at the
@@ -132,8 +126,14 @@ fn Player(reference: Signal<Option<Reference>>) -> Element {
                 None => continue,
             };
             player_at.set(at);
-            let Some(current) = reference() else { continue };
-            let command = next_command(&current, session_at(), rolling(), at, playing);
+            let (Some(current), Some((session_at, rolling))) = (reference(), session_now()) else {
+                // Nothing to follow is not the same as stopped: with no
+                // session on this page the player is the person's to
+                // drive, which is how they find the moment they are
+                // about to mark.
+                continue;
+            };
+            let command = next_command(&current, session_at, rolling, at, playing);
             let js = match command {
                 Command::Seek(to) => format!("window.ftsReference?.seekTo({to}, true);"),
                 Command::Play => "window.ftsReference?.playVideo();".to_owned(),
@@ -171,7 +171,8 @@ fn Player(reference: Signal<Option<Reference>>) -> Element {
                 button {
                     onclick: move |_| {
                         let Some(current) = reference() else { return };
-                        let (lined, next) = mark(&current, pending(), (session_at(), player_at()));
+                        let at = session_now().map_or(0.0, |(at, _)| at);
+                        let (lined, next) = mark(&current, pending(), (at, player_at()));
                         reference.set(Some(lined));
                         pending.set(next);
                     },
@@ -183,9 +184,29 @@ fn Player(reference: Signal<Option<Reference>>) -> Element {
                         "at {reference.rate:.4}×."
                     }
                 }
+                if session_now().is_none() {
+                    p { class: "unfollowed",
+                        "No song is playing, so the video is yours to \
+                         drive — find the moment, then mark it."
+                    }
+                }
             }
         }
     }
+}
+
+/// Where the session is, and whether it is rolling.
+///
+/// `None` when there is no song to follow — this page opened on its
+/// own, before any setlist. The distinction matters: a missing session
+/// read as "stopped at zero" would pause the video every tenth of a
+/// second and there would be no way to scrub it to the moment you were
+/// about to mark.
+fn session_now() -> Option<(f64, bool)> {
+    let song = session_ui::ACTIVE_INDICES().song_index?;
+    let transport = session_ui::SONG_TRANSPORT().get(&song).cloned()?;
+    let at = transport.position.time.map_or(0.0, |t| t.as_seconds());
+    Some((at, transport.is_playing))
 }
 
 /// Fold a marked moment into the reference.
