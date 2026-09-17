@@ -18,7 +18,8 @@ use crate::components::{
     SongItemData, SongItemPropsBuilder_Optional, SongProgressBar,
     SongProgressBarPropsBuilder_Optional, SongTitle, SongTitlePropsBuilder_Optional,
     TempoCardPropsBuilder_Optional, TempoMarkerData, TimeSignatureCardPropsBuilder_Optional,
-    TransportControlBar, TransportControlBarPropsBuilder_Optional,
+    TransportControlBar, TransportControlBarPropsBuilder_Optional, TransportStats,
+    TransportStatsPropsBuilder_Optional,
 };
 use crate::prelude::*;
 use crate::signals::{
@@ -969,102 +970,17 @@ fn PerformanceMainContent() -> Element {
                                 }
                             }
                         }
-                        div { class: "flex flex-col items-end gap-2 flex-none",
-                            // Transport info badges
-                        if let Some(ref transport) = transport_state {
-                            {
-                                // Get time position from transport Position struct
-                                let position_seconds = transport.position.time.map_or(0.0, |t| t.as_seconds());
-                                let minutes = clamped_i32((position_seconds / 60.0).floor().max(0.0));
-                                let seconds = clamped_i32((position_seconds % 60.0).floor().max(0.0));
-                                let millis = clamped_i32(((position_seconds % 1.0) * 1000.0).floor().max(0.0));
-                                let time_str = format!("{minutes}:{seconds:02}.{millis:03}");
-
-                                // Get musical position from transport Position struct
-                                // This comes from REAPER's TimeMap2_timeToBeats and properly handles tempo changes
-                                let musical_str = transport.position.musical.as_ref().map_or_else(
-                                    || "1.1.000".to_string(),
-                                    |musical| format!("{}.{}.{:03}", musical.measure, musical.beat, musical.subdivision),
-                                );
-
-                                rsx! {
-                                    div {
-                                        class: "flex flex-wrap gap-3 justify-center",
-
-                                        // Musical position badge (Measure.Beat.Subdivision)
-                                        div {
-                                            class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium flex items-center gap-2",
-                                            // Ruler icon
-                                            svg {
-                                                width: "18",
-                                                height: "18",
-                                                view_box: "0 0 24 24",
-                                                fill: "none",
-                                                stroke: "currentColor",
-                                                stroke_width: "2",
-                                                stroke_linecap: "round",
-                                                stroke_linejoin: "round",
-                                                // Simple ruler icon
-                                                line { x1: "3", y1: "12", x2: "21", y2: "12" }
-                                                line { x1: "3", y1: "8", x2: "3", y2: "16" }
-                                                line { x1: "7", y1: "10", x2: "7", y2: "14" }
-                                                line { x1: "11", y1: "8", x2: "11", y2: "16" }
-                                                line { x1: "15", y1: "10", x2: "15", y2: "14" }
-                                                line { x1: "19", y1: "8", x2: "19", y2: "16" }
-                                                line { x1: "21", y1: "8", x2: "21", y2: "16" }
-                                            }
-                                            span {
-                                                class: "font-mono tabular-nums",
-                                                "{musical_str}"
-                                            }
-                                        }
-
-                                        // Time position badge (MM:SS.mmm)
-                                        div {
-                                            class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium flex items-center gap-2",
-                                            // Clock icon
-                                            svg {
-                                                width: "18",
-                                                height: "18",
-                                                view_box: "0 0 24 24",
-                                                fill: "none",
-                                                stroke: "currentColor",
-                                                stroke_width: "2",
-                                                stroke_linecap: "round",
-                                                stroke_linejoin: "round",
-                                                circle { cx: "12", cy: "12", r: "10" }
-                                                polyline { points: "12 6 12 12 16 14" }
-                                            }
-                                            span {
-                                                class: "font-mono tabular-nums",
-                                                "{time_str}"
-                                            }
-                                        }
-
-                                        // BPM badge
-                                        div {
-                                            class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium",
-                                            "{transport.bpm:.0} BPM"
-                                        }
-
-                                        // Time signature badge
-                                        div {
-                                            class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-medium",
-                                            "{transport.time_sig_num}/{transport.time_sig_denom}"
-                                        }
-
-                                        // Loop indicator badge
-                                        if transport.is_looping {
-                                            div {
-                                                class: "px-4 py-2 rounded-full bg-yellow-500/20 text-yellow-500 text-base font-medium",
-                                                "Loop ON"
-                                            }
-                                        }
-                                    }
+                        div { class: "flex items-center flex-none",
+                            if let Some(ref transport) = transport_state {
+                                TransportStats {
+                                    musical: transport.position.musical,
+                                    seconds: transport.position.time.map_or(0.0, |t| t.as_seconds()),
+                                    bpm: transport.bpm,
+                                    beats_per_bar: transport.time_sig_num,
+                                    beat_unit: transport.time_sig_denom,
+                                    looping: transport.is_looping,
                                 }
                             }
-                        }
-
                         }
                     }
 
