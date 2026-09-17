@@ -401,7 +401,11 @@ pub fn click(
         } else {
             Edit::Select(guid)
         }),
-        crate::mcp::Control::Routing => Some(Edit::SetParentSend(guid, !from.parent_send)),
+        // The routing widget opens the panel, which is the window's
+        // and not an edit at all — see `crate::routing`. The parent
+        // send it used to toggle is the panel's first row, where it
+        // sits beside the sends it shares a button with.
+        crate::mcp::Control::Routing => None,
         // The FX button opens a chain window, and there is no chain and
         // no window — see `tone::placeholder` and `bin/chain-probe`.
         // Binding it to something else would be a button that does the
@@ -747,22 +751,17 @@ mod tests {
         assert!(drag(Control::Mute, "k", &track(1.0, 0.0), 0.5).is_none());
     }
 
-    /// Routing toggles the parent send, and carries the value it is
-    /// toggling TO rather than asking the engine to invert — so the
-    /// click and the control the click landed on cannot disagree.
+    /// Routing is not an edit: it opens the panel, and the parent send
+    /// it used to toggle is a row in there. A click that both opened a
+    /// panel and changed the routing would change something you had
+    /// not read yet.
     #[test]
-    fn routing_toggles_the_parent_send() {
+    fn routing_opens_the_panel_rather_than_editing() {
         let mut sending = track(1.0, 0.0);
         sending.parent_send = true;
-        assert_eq!(
-            click(Control::Routing, "k", &sending, false),
-            Some(Edit::SetParentSend("k".into(), false))
-        );
+        assert_eq!(click(Control::Routing, "k", &sending, false), None);
         sending.parent_send = false;
-        assert_eq!(
-            click(Control::Routing, "k", &sending, false),
-            Some(Edit::SetParentSend("k".into(), true))
-        );
+        assert_eq!(click(Control::Routing, "k", &sending, false), None);
     }
 
     /// Clicking a name selects; renaming is a different gesture.

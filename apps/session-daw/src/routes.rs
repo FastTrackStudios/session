@@ -42,6 +42,34 @@ pub struct Wiring {
     pub receives: Vec<TrackRoute>,
 }
 
+/// Who is at the far end of a route, from the point of view of one
+/// track.
+///
+/// Needed because the two backends disagree about which field holds
+/// which end of a RECEIVE. REAPER stores the partner — the track that
+/// is feeding you — in `dest_track_guid`, the same field a send uses
+/// for its destination. daw-standalone mirrors a send into a receive
+/// and leaves both ends as they were, so the "destination" of a receive
+/// is the track you are already looking at.
+///
+/// Asking "which of these two is not me" is right on both, and stays
+/// right whichever way that is settled — see daw#30.
+#[must_use]
+pub fn partner<'a>(route: &'a TrackRoute, mine: &str) -> Option<&'a str> {
+    for end in [
+        route.dest_track_guid.as_deref(),
+        Some(route.source_track_guid.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if end != mine {
+            return Some(end);
+        }
+    }
+    None
+}
+
 /// What a routing event did to the cache.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Applied {
@@ -365,6 +393,26 @@ mod tests {
             },
         );
         assert_eq!(applied, Applied::Nothing);
+    }
+
+    /// The far end is whichever end is not you, whichever field the
+    /// backend put it in.
+    #[test]
+    fn the_far_end_is_the_one_that_is_not_you() {
+        // REAPER's shape: the partner is in the destination.
+        let mut receive = send(0, "verb");
+        receive.route_type = RouteType::Receive;
+        receive.source_track_guid = "me".into();
+        assert_eq!(super::partner(&receive, "me"), Some("verb"));
+        // The standalone's: the mirror left both ends as they were, so
+        // the "destination" is the track doing the looking.
+        let mirrored = TrackRoute {
+            route_type: RouteType::Receive,
+            source_track_guid: "verb".into(),
+            dest_track_guid: Some("me".into()),
+            ..TrackRoute::default()
+        };
+        assert_eq!(super::partner(&mirrored, "me"), Some("verb"));
     }
 
     /// Not read yet and read-with-nothing are different answers.

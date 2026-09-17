@@ -42,6 +42,7 @@ pub mod rails;
 pub mod rename;
 pub mod repeat;
 pub mod routes;
+pub mod routing;
 pub mod row;
 pub mod ruler;
 pub mod scrollbar;
