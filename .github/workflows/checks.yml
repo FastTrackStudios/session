@@ -25,9 +25,13 @@
 # public, so the default GITHUB_TOKEN can clone them.
 #
 # The sibling refs are pinned to the shas the local siblings were on when
-# this was wired up (daw: the mouse-contexts-for-the-vello-surfaces branch,
-# 2 ahead of main; processor: main == v0.2.1). Bump them here when the
-# local siblings move — that is the CI half of "edit ../daw directly".
+# this was wired up (processor: main == v0.2.1; daw now tracks its tags —
+# 55837adc is v0.0.23). Bump them here when the local siblings move —
+# that is the CI half of "edit ../daw directly", and the thing to do at
+# the same moment as the tag in `[workspace.dependencies]`: the tag is
+# what a consumer WITHOUT the sibling patch would take, and this sha is
+# what CI actually builds. A bump that moves one and not the other
+# passes locally and fails here, which is how it announced itself.
 # See issue #40.
 
 name: checks
@@ -61,7 +65,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: FastTrackStudios/daw
-          ref: aee6d18d65ceec33a69c3bd8cd29729507198caa
+          ref: 55837adc544fe5ccb04e181bbbd83df5615be938
           path: daw
       - name: Sibling checkout — processor
         uses: actions/checkout@v4
