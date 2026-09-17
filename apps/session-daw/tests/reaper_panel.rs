@@ -264,6 +264,23 @@ async fn sends_reach_reaper_and_come_back(
     )
     .await?;
 
+    // A receive is the SAME object as the send feeding it, so editing
+    // it on the destination moves the send on the source. That is the
+    // claim the panel makes by letting a receive be dragged at all, and
+    // it is only true because REAPER keeps one route and lists it at
+    // both ends — a mock would let it be false.
+    let receive = session_daw::routes::At::new(daw_proto::routing::RouteType::Receive, 0);
+    applier.send(Edit::SetRouteVolume(dest.clone(), receive, 0.25));
+    settle(
+        &|routes| {
+            routes
+                .iter()
+                .any(|route| route.index == number && (route.volume - 0.25).abs() < 0.001)
+        },
+        "moved the send from its receive",
+    )
+    .await?;
+
     applier.send(Edit::SetRouteMute(source.clone(), send, true));
     settle(
         &|routes| {
