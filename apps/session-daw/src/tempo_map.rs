@@ -126,6 +126,31 @@ fn sane(bpm: f64) -> Option<f64> {
     (bpm.is_finite() && (FLOOR..=CEILING).contains(&bpm)).then_some(bpm)
 }
 
+/// The Nth transient at or after a time.
+///
+/// `times` counts from one: the first transient after the line is
+/// `1`, which is what `t` does, and `4t` takes the fourth. Counting
+/// from the line rather than from the pointer is what makes the count
+/// repeatable — a tune that lands a downbeat every fourth hit is `4t`
+/// and then a dot for the rest of the song, and the answer must not
+/// depend on where the mouse happened to be resting.
+#[must_use]
+pub fn nth_transient(transients: &[f64], after: f64, times: u32) -> Option<f64> {
+    transients
+        .iter()
+        .copied()
+        .filter(|at| *at > after + SAME_MOMENT)
+        .nth(times.max(1) as usize - 1)
+}
+
+/// How close two times are before they are the same moment.
+///
+/// A transient sitting exactly on the bar line is the one you are
+/// already on, not the one you are looking for — without this, `t` on
+/// an already-aligned line finds the line itself and does nothing,
+/// which reads as the key not working.
+const SAME_MOMENT: f64 = 0.002;
+
 /// The bar line nearest a time, from a walked timeline.
 ///
 /// Nearest rather than previous: you click where the downbeat IS, and
@@ -309,5 +334,55 @@ mod tests {
             "a null move changed the tempo to {}",
             sets[0].bpm
         );
+    }
+}
+
+#[cfg(test)]
+mod transient_tests {
+    use super::nth_transient;
+
+    /// `t` takes the next one; `4t` takes the fourth.
+    #[test]
+    fn a_count_picks_the_nth_transient() {
+        let hits = [1.0, 1.5, 2.0, 2.5, 3.0];
+        assert_eq!(nth_transient(&hits, 0.0, 1), Some(1.0));
+        assert_eq!(nth_transient(&hits, 0.0, 4), Some(2.5));
+        // Counted from the LINE, not from the pointer — which is what
+        // makes a count repeatable down a song.
+        assert_eq!(nth_transient(&hits, 1.6, 1), Some(2.0));
+    }
+
+    /// A transient on the line is the one you are already on.
+    ///
+    /// Without this, `t` on an already-aligned bar finds the line
+    /// itself and does nothing — which reads as the key not working
+    /// rather than as there being nothing to do.
+    #[test]
+    fn the_transient_you_are_standing_on_is_not_the_next_one() {
+        let hits = [2.0, 2.4];
+        assert_eq!(nth_transient(&hits, 2.0, 1), Some(2.4));
+        // And a hair off it is still standing on it.
+        assert_eq!(nth_transient(&hits, 2.0005, 1), Some(2.4));
+    }
+
+    /// Asking past the end finds nothing rather than the last one.
+    ///
+    /// Returning the last would silently drag a bar line to the end of
+    /// the song when a count overshot.
+    #[test]
+    fn running_out_of_transients_finds_nothing() {
+        let hits = [1.0, 2.0];
+        assert_eq!(nth_transient(&hits, 0.0, 9), None);
+        assert_eq!(nth_transient(&hits, 5.0, 1), None);
+        assert_eq!(nth_transient(&[], 0.0, 1), None);
+    }
+
+    /// A count of zero is a count of one.
+    ///
+    /// Nothing can type it — the count machine refuses a leading zero —
+    /// but a caller computing one should not get an empty answer.
+    #[test]
+    fn a_count_of_zero_is_one() {
+        assert_eq!(nth_transient(&[1.0, 2.0], 0.0, 0), Some(1.0));
     }
 }
