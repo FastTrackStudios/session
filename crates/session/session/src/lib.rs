@@ -40,6 +40,7 @@ pub use session_proto::{offset_map, ruler_lanes, services, track_structure};
 pub mod comping;
 pub mod count_in;
 pub mod hits;
+pub mod reference;
 pub mod section_kinds;
 pub mod setlist;
 pub mod song;

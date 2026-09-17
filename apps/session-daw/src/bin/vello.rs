@@ -1822,7 +1822,7 @@ impl App {
     /// tune that puts a downbeat every fourth hit is `4t` once and a
     /// dot for the rest of the song.
     fn snap_to_transient(&mut self, times: u32) {
-        use session_daw::tempo_map::{Anchor, Move, Set, nth_transient};
+        use session_daw::tempo_map::{Move, Set, nth_transient};
         // Read before the scene is borrowed: the read needs `self` and
         // the walk below holds a reference into it.
         if self.transients.is_empty() {
