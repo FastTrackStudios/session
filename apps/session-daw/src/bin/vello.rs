@@ -87,6 +87,17 @@ struct App {
     zoom_y: f64,
     /// `z` is down: the next press on the lanes is the zoom tool.
     zoom_held: bool,
+    /// Whether `g` is down — the tempo-mapping tool, where a click
+    /// moves the nearest bar line to the pointer and the tempo is
+    /// whatever makes that true.
+    grid_held: bool,
+    /// Counts and the dot: `4t`, then `.` over and over.
+    repeat: session_daw::repeat::Repeat,
+    /// The transients of the track being mapped, read once and kept
+    /// until the track or the view changes. Reading a minute of audio
+    /// per keypress would make `.` feel like a round trip, which is the
+    /// one thing it must not.
+    transients: Vec<f64>,
     /// The surface size, tracked so the draw can cull to it. Culling is
     /// the difference between encoding 30,000 commands a frame and 367;
     /// it needs to know how much fits on screen, and the surface is the
@@ -201,6 +212,10 @@ struct App {
     /// When the window last tried to find a REAPER again. A dial a
     /// frame would spend the whole of REAPER's startup failing.
     last_dial: Option<std::time::Instant>,
+    /// The notes of the MIDI items, as they are read. An item is drawn
+    /// from what it CONTAINS, and the notes arrive after the window is
+    /// already standing.
+    midi: session_daw::midi::Previews,
     /// Whether anything that is NOT a track has changed — items,
     /// takes, markers, regions, the tempo map. A flag, because all of
     /// them are drawn from one snapshot and the only useful question
@@ -439,6 +454,37 @@ impl ApplicationHandler for App {
                     self.zoom_held = true;
                     return;
                 }
+                // The tempo-mapping keys: `t` snaps the nearest bar
+                // line to the next transient, a count in front of it
+                // takes the Nth, and `.` does the same thing again. In
+                // the arrangement only, and not while the dock has the
+                // keyboard — `t` is a letter everywhere else.
+                if self.view == View::Arrangement
+                    && !(self.dock_focus && self.dock.is_some())
+                    && !self.keys.ctrl
+                    && !self.keys.alt
+                    && let Some(key) = event.logical_key.to_text().and_then(|t| t.chars().next())
+                    && let session_daw::repeat::Press::Run { command, times } =
+                        self.repeat.press(key, &['t'])
+                {
+                    if command == 't' {
+                        self.snap_to_transient(times);
+                        self.redraw();
+                    }
+                    return;
+                }
+                // `g` held is the tempo-mapping tool: a click while it
+                // is down puts the nearest bar line where you clicked.
+                // Held rather than a mode, because mapping a song is a
+                // hundred clicks and a mode you have to leave between
+                // them is a mode you forget you are in.
+                if event.logical_key.to_text() == Some("g")
+                    && !self.keys.ctrl
+                    && !(self.dock_focus && self.dock.is_some())
+                {
+                    self.grid_held = true;
+                    return;
+                }
                 // `e` docks the expression editor under the arrangement
                 // on the selected item, and closes the dock again.
                 // Before the editor sees the key, or there would be no
@@ -605,6 +651,9 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.logical_key.to_text() == Some("z") {
                     self.zoom_held = false;
+                }
+                if event.logical_key.to_text() == Some("g") {
+                    self.grid_held = false;
                 }
                 // A release. The editor's keymap has to hear it, or a
                 // held prefix repeats its way down the sequence tree;
@@ -852,6 +901,16 @@ impl ApplicationHandler for App {
                     // also move the edit cursor behind it.
                     self.pressed_rail = self.rail_action_at(x, y);
                     if self.pressed_rail.is_some() {
+                        self.redraw();
+                        return;
+                    }
+                    // The tempo-mapping tool, while `g` is held: the
+                    // click is where a downbeat IS, and the nearest bar
+                    // line is moved there. Asked before the zoom tool
+                    // and before the arrangement, because a click meant
+                    // for the grid must not also seek or select.
+                    if self.grid_held && self.view == View::Arrangement {
+                        self.map_tempo_at(x);
                         self.redraw();
                         return;
                     }
@@ -1132,6 +1191,10 @@ impl ApplicationHandler for App {
             if self.meters.is_none() {
                 self.meters = session_daw::engine::Meters::start();
             }
+            // Ask for the notes of every MIDI item this project has.
+            // Skipped for anything already read, so a reload after a
+            // track change costs nothing for what is already known.
+            self.request_midi();
             // The mixer was recorded against the old track list; the
             // next mixer frame records it against this one.
             self.mixer = None;
@@ -1701,19 +1764,195 @@ impl App {
         ))
     }
 
-    /// The time under a point, if it is on the ruler.
-    fn ruler_time(&self, x: f64, y: f64) -> Option<f64> {
-        if self.view != View::Arrangement {
-            return None;
+    /// Read the selected track's audio and find its transients.
+    ///
+    /// Once, not per keypress: `.` has to feel like a key, and a round
+    /// trip per press would make mapping a song feel like waiting for
+    /// one.
+    ///
+    /// Real samples through the audio accessor rather than peaks. A
+    /// peak is the loudest value across a block, so a transient read
+    /// off peaks is located to the nearest block — and that edge is the
+    /// one measurement a tempo map is made of.
+    fn read_transients(&mut self) {
+        use expression_editor_audio::detect::{DetectConfig, transients};
+        let Some(track) = self
+            .tracks
+            .iter()
+            .find(|t| t.selected)
+            .map(|t| t.guid.clone())
+        else {
+            self.transients.clear();
+            return;
+        };
+        let Some(runtime) = session_daw::open::runtime() else {
+            return;
+        };
+        let length = self.scene.as_ref().map_or(0.0, |s| s.length_secs);
+        const RATE: f64 = 48_000.0;
+        let samples = runtime.block_on(async {
+            let daw = daw::rpc::Daw::try_get()?;
+            let project = daw.current_project().await.ok()?;
+            daw.audio()
+                .mono(
+                    project.guid(),
+                    daw_proto::TrackRef::Guid(track),
+                    0.0,
+                    length,
+                    RATE,
+                )
+                .await
+                .ok()
+        });
+        let Some(samples) = samples else {
+            self.transients.clear();
+            return;
+        };
+        self.transients = transients(&samples, RATE, DetectConfig::default())
+            .into_iter()
+            .map(|hit| hit.at)
+            .collect();
+        tracing::debug!(found = self.transients.len(), "transients read");
+    }
+
+    /// Snap the nearest bar line to the Nth transient after it.
+    ///
+    /// The half of tempo mapping that does the work: rather than
+    /// clicking each downbeat, you let the audio say where it is. A
+    /// tune that puts a downbeat every fourth hit is `4t` once and a
+    /// dot for the rest of the song.
+    fn snap_to_transient(&mut self, times: u32) {
+        use session_daw::tempo_map::{Move, Set, nth_transient};
+        // Read before the scene is borrowed: the read needs `self` and
+        // the walk below holds a reference into it.
+        if self.transients.is_empty() {
+            self.read_transients();
         }
-        let top = session_daw::rails::TOP;
-        // The corner above the track panel is the mode selector, not
-        // the ruler — the ruler measures the timeline, and the timeline
-        // starts where the lanes do.
-        let left = session_daw::rails::SIDE + session_daw::arrangement::TCP_WIDTH;
-        (y >= top && y < top + session_daw::ruler::RULER_H && x >= left)
-            .then(|| self.time_at(x))
-            .flatten()
+        let Some(scene) = self.scene.as_ref() else {
+            return;
+        };
+        let changes = scene.tempo();
+        let at = self.editor.cursor.at;
+        let beats = session_daw::ruler::Timeline::new(changes).beats(at + 600.0, 100_000);
+        let lines: Vec<&session_daw::ruler::Beat> =
+            beats.iter().filter(|b| b.is_downbeat()).collect();
+        // The line being mapped is the one at the EDIT CURSOR: tempo
+        // mapping walks forward through a song and the cursor is where
+        // you have got to. Using the pointer would mean holding the
+        // mouse still while typing a count.
+        let Some(index) = lines
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| (a.at - at).abs().total_cmp(&(b.at - at).abs()))
+            .map(|(i, _)| i)
+        else {
+            return;
+        };
+        if index == 0 {
+            return;
+        }
+        let line = lines[index];
+        let Some(to) = nth_transient(&self.transients, line.at, times) else {
+            tracing::debug!(after = line.at, times, "no transient there to snap to");
+            return;
+        };
+        let Some(marker) = changes
+            .iter()
+            .take_while(|c| c.at <= lines[index - 1].at + 1e-9)
+            .last()
+        else {
+            return;
+        };
+        let moved = Move {
+            line: line.at,
+            to,
+            previous_line: lines[index - 1].at,
+            next_line: lines.get(index + 1).map(|b| b.at),
+            marker: Set {
+                at: marker.at,
+                bpm: marker.bpm,
+            },
+        };
+        self.write_tempo(moved);
+        // Forward to the line just placed, so a dot maps the NEXT bar
+        // rather than the same one again. Tempo mapping is a walk.
+        self.editor.cursor.click(to);
+    }
+
+    /// Put the nearest bar line where the pointer is, and write the
+    /// tempo that makes it true.
+    ///
+    /// You hear a downbeat, you click on it, and the bar line comes to
+    /// you. What holds still while it moves is the modifier's to say.
+    fn map_tempo_at(&mut self, x: f64) {
+        use session_daw::tempo_map::{Move, Set};
+        let Some(to) = self.time_at(x) else { return };
+        let Some(scene) = self.scene.as_ref() else {
+            return;
+        };
+        let changes = scene.tempo();
+        let beats = session_daw::ruler::Timeline::new(changes).beats(to + 600.0, 100_000);
+        let lines: Vec<&session_daw::ruler::Beat> =
+            beats.iter().filter(|b| b.is_downbeat()).collect();
+        let Some(index) = lines
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| (a.at - to).abs().total_cmp(&(b.at - to).abs()))
+            .map(|(i, _)| i)
+        else {
+            return;
+        };
+        // The first bar line has nothing before it to stretch.
+        if index == 0 {
+            return;
+        }
+        let Some(marker) = changes
+            .iter()
+            .take_while(|c| c.at <= lines[index - 1].at + 1e-9)
+            .last()
+        else {
+            return;
+        };
+        let moved = Move {
+            line: lines[index].at,
+            to,
+            previous_line: lines[index - 1].at,
+            next_line: lines.get(index + 1).map(|b| b.at),
+            marker: Set {
+                at: marker.at,
+                bpm: marker.bpm,
+            },
+        };
+        self.write_tempo(moved);
+    }
+
+    /// Work out the tempos a move needs and send them.
+    ///
+    /// Shared by the click and the transient snap because they differ
+    /// only in how they choose the target — the anchoring, the
+    /// arithmetic and the refusal are the same question either way.
+    fn write_tempo(&self, moved: session_daw::tempo_map::Move) {
+        use session_daw::tempo_map::{Anchor, align};
+        let anchor = if self.keys.alt {
+            Anchor::BothSides
+        } else if self.keys.shift {
+            Anchor::MeasureBefore
+        } else {
+            Anchor::Nothing
+        };
+        let Some(sets) = align(moved, anchor) else {
+            // Refused rather than clamped: a clamped tempo puts the
+            // line somewhere other than where you asked, silently.
+            tracing::debug!(?moved, "that tempo would not be one");
+            return;
+        };
+        for set in sets {
+            self.send(session_daw::engine::Edit::SetTempo(
+                String::new(),
+                set.at,
+                set.bpm,
+            ));
+        }
     }
 
     /// The time under an x, wherever the pointer is vertically — for
@@ -2657,7 +2896,29 @@ impl App {
         }
     }
 
+    /// Ask for the notes of the MIDI items that have not been read.
+    fn request_midi(&mut self) {
+        let Some((project, _)) = self.session.as_ref() else {
+            return;
+        };
+        let wanted: Vec<(String, f64)> = project
+            .0
+            .items
+            .values()
+            .flatten()
+            .filter(|item| project.0.is_midi(&item.guid))
+            .map(|item| (item.guid.clone(), item.length.as_seconds()))
+            .collect();
+        self.midi.fetch(wanted);
+    }
+
     fn reconcile(&mut self) {
+        // Notes that have landed since the last frame. A re-record is
+        // the cheap half of a reload — it redraws from what the window
+        // already holds and asks the engine for nothing.
+        if self.midi.take_fresh() {
+            self.re_record();
+        }
         self.reconnect();
         // Anything that is not a track changed, so the snapshot every
         // item, marker, region and bar line is drawn from is old. This
@@ -2967,6 +3228,7 @@ impl App {
             &project,
             &planned,
             self.layout,
+            &self.midi,
         ));
         self.arrange_rows = planned;
         // The mixer is recorded lazily against the window's height, so
@@ -3275,6 +3537,9 @@ fn main() {
         pps: DEFAULT_PPS,
         zoom_y: 1.0,
         zoom_held: false,
+        grid_held: false,
+        repeat: session_daw::repeat::Repeat::default(),
+        transients: Vec::new(),
         // Replaced the moment the surface exists; until then it culls to
         // nothing, which is correct — there is no surface to draw on.
         surface_size: (0.0, 0.0),
@@ -3316,6 +3581,7 @@ fn main() {
         row_drag: None,
         watch: session_daw::engine::Watch::start(),
         refresh: session_daw::engine::Refresh::start(),
+        midi: session_daw::midi::Previews::default(),
         last_dial: None,
         meters: session_daw::engine::Meters::start(),
         mode: session::modes::Mode::Mix,
@@ -3416,7 +3682,17 @@ fn build_scene(
     // the mixer is recorded against the WINDOW's height and that is not
     // known here — see `App::mixer_for`.
     Some(Loaded {
-        arrangement: Arrangement::build(&palette, &font, &project, &planned, layout),
+        // The loader thread has no cache to consult — the notes are
+        // read after the window is up, and the first recording draws
+        // MIDI items plain until they land.
+        arrangement: Arrangement::build(
+            &palette,
+            &font,
+            &project,
+            &planned,
+            layout,
+            &session_daw::midi::Previews::default(),
+        ),
         project,
         rows,
         planned,
@@ -3540,7 +3816,10 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         | Edit::AddRegion(..)
         | Edit::SetRegionBounds(..)
         | Edit::RenameRegion(..)
-        | Edit::RemoveRegion(..) => {}
+        | Edit::RemoveRegion(..)
+        // The tempo is the project's, and the ruler redraws from the
+        // snapshot the refresh brings back.
+        | Edit::SetTempo(..) => {}
         // An item's, not the track's: applied to the project copy where
         // the drag ends — see `commit_fade`.
         Edit::SetFadeIn(..)

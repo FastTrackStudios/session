@@ -103,6 +103,15 @@ pub struct Node {
     pub stereo: bool,
     /// The FX chain, by name.
     pub fx: Vec<Fx>,
+    /// No items at all — a lane that is real and waiting.
+    pub no_items: bool,
+    /// Whether this track's items hold MIDI.
+    ///
+    /// Not derivable from `Kind`: a trigger is always MIDI, but the
+    /// Guide and Keyflow tracks are `Source` like a close mic and hold
+    /// notes rather than audio. The checklist has asserted they do
+    /// since it was written, and nothing made it true.
+    pub midi: bool,
 }
 
 impl Node {
@@ -119,6 +128,8 @@ impl Node {
             group: None,
             stereo: false,
             fx: Vec::new(),
+            no_items: false,
+            midi: false,
         }
     }
 
@@ -156,6 +167,25 @@ impl Node {
     #[must_use]
     pub const fn dead_end(mut self) -> Self {
         self.routing = Routing::DeadEnd;
+        self
+    }
+
+    /// This track's items are notes, not audio.
+    #[must_use]
+    pub const fn midi(mut self) -> Self {
+        self.midi = true;
+        self
+    }
+
+    /// This track has no items at all.
+    ///
+    /// For a lane that is real and waiting: LINES and HITS exist so a
+    /// person has somewhere to put a line or a hit, and a generator
+    /// filling them would be composing.
+    #[must_use]
+    pub const fn empty(mut self) -> Self {
+        self.routing = Routing::DeadEnd;
+        self.no_items = true;
         self
     }
 
@@ -868,23 +898,40 @@ fn vocals() -> Node {
 /// cue send instead.
 fn guide() -> Node {
     Node::new("Guide", GUIDE, Kind::Guide).children(vec![
-        Node::new("Click", GUIDE, Kind::Source).dead_end(),
-        Node::new("Guide", GUIDE, Kind::Source).dead_end(),
+        // Click, Count and Guide are what the guide engine STAMPS, and
+        // it stamps notes — `session::guide` writes MIDI items through
+        // `create_midi_item` and `add_notes`. They were audio here,
+        // which meant the fixture disagreed with the only code that
+        // produces them.
+        Node::new("Click", GUIDE, Kind::Source).dead_end().midi(),
+        Node::new("Count", GUIDE, Kind::Source).dead_end().midi(),
+        Node::new("Guide", GUIDE, Kind::Source).dead_end().midi(),
+        // The shaker is a played part, not a stamped one.
         Node::new("Shaker", GUIDE, Kind::Source).dead_end(),
     ])
 }
 
 /// The **Keyflow** folder: the song's knowledge as MIDI.
 ///
-/// CHORDS, LINES and HITS are read by the guide, by the expression
+/// KEY, CHORD, LINES and HITS are read by the guide, by the expression
 /// editor's key and chord tools, and by the click's count. They are
 /// knowledge, not audio — so they are dead ends too, and every scene
 /// keeps them collapsed until Write or Produce opens them.
+///
+/// KEY and CHORD are what a chart knows and the generator writes; LINES
+/// and HITS are what a person puts there. The four names are the same
+/// four in the scaffold and in the generator, which they were not
+/// before — the scaffold built KEY/CHORD/MELODY/SCALE while this said
+/// CHORDS/LINES/HITS, so a project scaffolded from a chart failed the
+/// checklist that was meant to check it.
 fn keyflow() -> Node {
     Node::new("Keyflow", KEYFLOW, Kind::Keyflow).children(vec![
-        Node::new("CHORDS", KEYFLOW, Kind::Source).dead_end(),
-        Node::new("LINES", KEYFLOW, Kind::Source).dead_end(),
-        Node::new("HITS", KEYFLOW, Kind::Source).dead_end(),
+        Node::new("KEY", KEYFLOW, Kind::Source).dead_end().midi(),
+        Node::new("CHORD", KEYFLOW, Kind::Source).dead_end().midi(),
+        // Empty on purpose. The chart says nothing about what belongs
+        // in them, and a generator filling them would be composing.
+        Node::new("LINES", KEYFLOW, Kind::Source).empty(),
+        Node::new("HITS", KEYFLOW, Kind::Source).empty(),
     ])
 }
 

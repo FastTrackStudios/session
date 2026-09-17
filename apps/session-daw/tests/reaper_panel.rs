@@ -144,6 +144,70 @@ async fn the_window_is_a_control_surface_over_reaper(
 
     drives_and_hears_back(&project, &watch, &applier, &mut tracks).await?;
     every_parameter_round_trips(&project, &watch, &applier, &mut tracks).await?;
+    tempo_mapping_moves_a_bar_line(&project, &applier).await?;
+    Ok(())
+}
+
+/// Tempo mapping, end to end against a real REAPER.
+///
+/// The arithmetic is tested on its own; this is the half that cannot
+/// be: that the tempo the window writes is the tempo REAPER ends up
+/// with, and that the bar line therefore lands where the click was.
+///
+/// Checked by asking REAPER where the bar is afterwards rather than by
+/// trusting the number we sent. A tempo write that silently landed on
+/// the wrong marker would pass every test that only reads back the
+/// tempo.
+async fn tempo_mapping_moves_a_bar_line(
+    project: &daw::rpc::Project,
+    applier: &Applier,
+) -> eyre::Result<()> {
+    let map = project.tempo_map();
+    let before = map.points().await?.len();
+
+    // Halve the tempo at the start: bar two should move from two
+    // seconds to four.
+    applier.send(Edit::SetTempo(String::new(), 0.0, 60.0));
+
+    let deadline = std::time::Instant::now() + PATIENCE;
+    let mut tempo = 0.0;
+    while std::time::Instant::now() < deadline {
+        tempo = map.tempo_at(1.0).await.unwrap_or(0.0);
+        if (tempo - 60.0).abs() < 1e-6 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        (tempo - 60.0).abs() < 1e-6,
+        "REAPER is at {tempo}, not the 60 the window wrote"
+    );
+
+    // And where the bar line actually is, which is the point of the
+    // whole exercise.
+    let bar_two = map.musical_to_time(2, 1, 0.0).await?;
+    assert!(
+        (bar_two - 4.0).abs() < 0.01,
+        "bar two is at {}s; at 60 bpm in four four it should be 4",
+        bar_two
+    );
+
+    // Writing the same point again corrects it rather than adding a
+    // second marker beside it — a bar with two tempos is a bar with
+    // none, and tempo mapping is a hundred small corrections.
+    applier.send(Edit::SetTempo(String::new(), 0.0, 90.0));
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while std::time::Instant::now() < deadline {
+        if (map.tempo_at(1.0).await.unwrap_or(0.0) - 90.0).abs() < 1e-6 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(
+        map.points().await?.len(),
+        before.max(1),
+        "correcting a tempo added a marker instead of moving one"
+    );
     Ok(())
 }
 

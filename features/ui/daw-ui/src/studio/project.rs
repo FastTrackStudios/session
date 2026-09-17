@@ -13,7 +13,7 @@
 //! and looking that up by scanning is `O(tracks × items)` on every
 //! render. Grouping once at fetch time makes drawing a lane an index.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use daw_proto::{Item, Track};
@@ -37,6 +37,18 @@ pub struct Section {
     pub color: Option<String>,
     /// The ruler lane it sits on (REAPER 7.62+); 0 is the default lane.
     pub lane: u32,
+}
+
+/// A tempo or time-signature change, at a time.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct TempoChange {
+    /// When it takes effect, in seconds.
+    pub at: f64,
+    pub bpm: f64,
+    /// The signature's top number: how many beats to a bar.
+    pub beats_per_bar: u32,
+    /// Its bottom number: which note gets the beat.
+    pub beat_unit: u32,
 }
 
 /// A project marker — the numbered flags under the region lane.
@@ -74,6 +86,15 @@ pub struct Project {
     /// one — the shape of this struct is what would change, not the
     /// components that read it.
     pub bpm: f64,
+    /// Where the tempo or the time signature changes, in order, with a
+    /// point at zero however bare the project is.
+    ///
+    /// The ruler counts bars, and a bar is only as long as the tempo
+    /// and the signature at that moment say it is. Counting the whole
+    /// timeline from one nominal tempo puts every bar after the first
+    /// change in the wrong place — and a ruler that is wrong about
+    /// where bar forty is, is a ruler nobody can edit against.
+    pub tempo: Vec<TempoChange>,
     /// End of the last item — how far the timeline has to reach.
     pub length_secs: f64,
     /// How many items the project holds, across every track. Kept
@@ -84,11 +105,26 @@ pub struct Project {
     /// An item carries no name of its own; the take does, and the
     /// arrangement writes it on the item.
     pub names: HashMap<String, String>,
+    /// Which items hold MIDI rather than audio, by item guid.
+    ///
+    /// A set and not a flag on `Item`, because `Item` is the daw's own
+    /// type and MIDI-ness lives on the TAKE — an item can hold several,
+    /// and which one is playing is the item's business. This is the
+    /// active take's answer, which is the one being drawn.
+    pub midi: HashSet<String>,
 }
 
 impl Project {
     /// What an item is called: its active take's name, else its label,
     /// else nothing.
+    /// Does this item hold MIDI rather than audio?
+    ///
+    /// The active take's answer, which is the one being drawn.
+    #[must_use]
+    pub fn is_midi(&self, guid: &str) -> bool {
+        self.midi.contains(guid)
+    }
+
     pub fn title<'a>(&'a self, item: &'a Item) -> Option<&'a str> {
         self.names
             .get(&item.guid)
@@ -122,15 +158,27 @@ pub async fn fetch() -> Option<Project> {
     let item_count = all_items.len();
     let mut items: HashMap<String, Vec<Item>> = HashMap::new();
     let mut names: HashMap<String, String> = HashMap::with_capacity(item_count);
+    let mut midi: HashSet<String> = HashSet::new();
     for item in all_items {
         length = length.max(item.position.as_seconds() + item.length.as_seconds());
         // The title is the active take's name — two calls per item,
         // in-process, once per open.
-        if let Ok(Some(handle)) = project.items().by_guid(&item.guid).await
-            && let Ok(name) = handle.active_take().name().await
-            && !name.is_empty()
-        {
-            names.insert(item.guid.clone(), name);
+        if let Ok(Some(handle)) = project.items().by_guid(&item.guid).await {
+            let take = handle.active_take();
+            if let Ok(name) = take.name().await
+                && !name.is_empty()
+            {
+                names.insert(item.guid.clone(), name);
+            }
+            // Whether it is MIDI, from the same take the name came
+            // from. The call was already being paid for and the answer
+            // thrown away — and without it an item drawn from its
+            // content has no way to know WHICH content it has.
+            if let Ok(info) = take.info().await
+                && info.is_midi
+            {
+                midi.insert(item.guid.clone());
+            }
         }
         items.entry(item.track_guid.clone()).or_default().push(item);
     }
@@ -193,6 +241,49 @@ pub async fn fetch() -> Option<Project> {
         .collect();
 
     let bpm = project.transport().get_tempo().await.unwrap_or(120.0);
+    // Every tempo point, so the ruler can count bars through a change
+    // rather than through one nominal tempo. A project with none still
+    // has a tempo — the seeded point below is what the transport just
+    // said — because a ruler with no grid is not a ruler.
+    let mut tempo: Vec<TempoChange> = project
+        .tempo_map()
+        .points()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|point| {
+            let at = point.position.time.as_ref()?.as_seconds();
+            Some(TempoChange {
+                at,
+                bpm: point.bpm,
+                beats_per_bar: point
+                    .time_signature
+                    .as_ref()
+                    .map_or(4, |sig| sig.numerator.max(1)),
+                beat_unit: point
+                    .time_signature
+                    .as_ref()
+                    .map_or(4, |sig| sig.denominator.max(1)),
+            })
+        })
+        .collect();
+    tempo.sort_by(|a, b| a.at.total_cmp(&b.at));
+    if tempo.first().is_none_or(|first| first.at > 0.0) {
+        let (num, den) = project
+            .tempo_map()
+            .time_signature_at(0.0)
+            .await
+            .unwrap_or((4, 4));
+        tempo.insert(
+            0,
+            TempoChange {
+                at: 0.0,
+                bpm,
+                beats_per_bar: u32::try_from(num.max(1)).unwrap_or(4),
+                beat_unit: u32::try_from(den.max(1)).unwrap_or(4),
+            },
+        );
+    }
 
     Some(Project {
         tracks,
@@ -200,11 +291,13 @@ pub async fn fetch() -> Option<Project> {
         sections,
         markers,
         bpm,
+        tempo,
         // A minute of empty ruler for a project with nothing in it, so
         // the timeline still has somewhere to put its bar numbers.
         length_secs: length.max(60.0),
         item_count,
         names,
+        midi,
     })
 }
 

@@ -62,6 +62,7 @@ daw-theme = { workspace = true }
 
 # The expression editor: its engine, its painter and gestures (no
 # dioxus), and the take-to-document conversion.
+expression-editor-audio = { workspace = true }
 expression-editor-core = { workspace = true }
 expression-editor-paint = { workspace = true }
 expression-editor-daw = { workspace = true }

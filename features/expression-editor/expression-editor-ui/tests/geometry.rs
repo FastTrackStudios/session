@@ -420,7 +420,13 @@ fn the_frame_meter_counts_painted_frames() {
     // window does, so the roll widget's `paint` — and its counter — run
     // exactly as they do on screen.
     let shot = std::env::temp_dir().join("expression-editor-frame-meter.png");
-    for _ in 0..3 {
+    // Six rather than the two an interval needs. The meter throws away
+    // gaps over half a second — the first frame after a pause is the
+    // start of a burst, not a 2 fps frame — and the FIRST render here
+    // carries the whole warm-up, which on a loaded box is over that on
+    // its own. The later ones are warm and close together, which is
+    // what the meter is being asked about.
+    for _ in 0..6 {
         doc.render_png(&shot);
     }
 

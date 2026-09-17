@@ -1,7 +1,7 @@
 //! Scaffold a REAPER project from keyflow chart text.
 //!
 //! Prompts for keyflow text, then builds the **Keyflow folder**
-//! (`KEY` / `CHORD` / `MELODY` / `SCALE` child tracks) and lays every song
+//! (`KEY` / `CHORD` / `LINES` / `HITS` child tracks) and lays every song
 //! section out as a coloured region — a one-shot "paste a chart, get the
 //! arrangement" scaffold.
 //!
@@ -64,7 +64,13 @@ fn scaffold<D: ScaffoldDaw>(daw: &D, text: &str) -> eyre::Result<()> {
     Ok(())
 }
 
-/// Create the Keyflow folder with KEY / CHORD / MELODY / SCALE child tracks.
+/// Create the Keyflow folder with KEY / CHORD / LINES / HITS child tracks.
+///
+/// The same four the golden session's shape names and the generator
+/// writes into. They disagreed until now — this built MELODY and SCALE
+/// while the shape expected CHORDS, LINES and HITS — so a project
+/// scaffolded from a chart could not pass the checklist meant to check
+/// it, and nothing noticed because nothing ran both.
 ///
 /// Bound to `Tracks` alone so `daw.add(..)` resolves unambiguously to
 /// `Tracks::add` (both `Tracks` and `Regions` expose an `add`).
@@ -74,9 +80,9 @@ fn build_keyflow_folder<D: Tracks>(daw: &D, project: &ProjectContext) -> eyre::R
 
     daw.add(project.clone(), "KEY", None)?;
     daw.add(project.clone(), "CHORD", None)?;
-    daw.add(project.clone(), "MELODY", None)?;
-    let scale = daw.add(project.clone(), "SCALE", None)?;
-    daw.set_folder_depth(project.clone(), TrackRef::Guid(scale), -1)?; // last child closes folder
+    daw.add(project.clone(), "LINES", None)?;
+    let hits = daw.add(project.clone(), "HITS", None)?;
+    daw.set_folder_depth(project.clone(), TrackRef::Guid(hits), -1)?; // last child closes folder
     Ok(())
 }
 

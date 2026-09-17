@@ -147,6 +147,12 @@ pub enum Edit {
     SetRegionBounds(String, u32, f64, f64),
     RenameRegion(String, u32, String),
     RemoveRegion(String, u32),
+    /// Set the tempo of the stretch starting at a time, adding a tempo
+    /// marker there if there is not one.
+    ///
+    /// What tempo mapping writes. The guid is empty: a tempo belongs to
+    /// the project, not to a track.
+    SetTempo(String, f64, f64),
     /// An ITEM's fade-in: its length in seconds and its shape. The guid
     /// is the item's, not a track's.
     SetFadeIn(String, f64, daw_proto::item::FadeShape),
@@ -201,6 +207,7 @@ impl Edit {
             | Self::SetRegionBounds(g, ..)
             | Self::RenameRegion(g, ..)
             | Self::RemoveRegion(g, ..)
+            | Self::SetTempo(g, ..)
             | Self::SetFadeIn(g, ..)
             | Self::SetFadeOut(g, ..)
             | Self::SelectItem(g, _)
@@ -221,7 +228,8 @@ impl Edit {
     pub const fn is_ruler(&self) -> bool {
         matches!(
             self,
-            Self::AddMarker(..)
+            Self::SetTempo(..)
+                | Self::AddMarker(..)
                 | Self::MoveMarker(..)
                 | Self::RenameMarker(..)
                 | Self::RemoveMarker(..)
@@ -851,6 +859,7 @@ async fn apply(edit: &Edit) {
             }
             Edit::RenameRegion(_, id, name) => regions.rename(*id, name).await,
             Edit::RemoveRegion(_, id) => regions.remove(*id).await,
+            Edit::SetTempo(_, at, bpm) => set_tempo(&project, *at, *bpm).await,
             _ => Ok(()),
         };
         if let Err(error) = outcome {
@@ -908,12 +917,41 @@ async fn apply(edit: &Edit) {
         | Edit::AddRegion(..)
         | Edit::SetRegionBounds(..)
         | Edit::RenameRegion(..)
-        | Edit::RemoveRegion(..) => Ok(()),
+        | Edit::RemoveRegion(..)
+        | Edit::SetTempo(..) => Ok(()),
     };
     if let Err(error) = outcome {
         // One line, because a failed edit is a thing the user did that
         // did not happen — silence here is how a mixer starts lying.
         tracing::warn!(error = %error, edit = ?edit, "the engine refused an edit");
+    }
+}
+
+/// Write a tempo at a time, moving the marker there if one is close
+/// enough to be the same one.
+///
+/// "Close enough" is a millisecond. Tempo mapping puts a marker on a
+/// bar line and then corrects it, and a correction that added a second
+/// marker a thousandth of a second from the first would leave a tempo
+/// map full of pairs — and pairs mean a bar that is two tempos, which
+/// is a bar with no tempo at all.
+async fn set_tempo(project: &daw_control::Project, at: f64, bpm: f64) -> daw_control::Result<()> {
+    const SAME_POINT: f64 = 0.001;
+    let map = project.tempo_map();
+    let existing = map.points().await.unwrap_or_default();
+    let found = existing.iter().position(|point| {
+        point
+            .position
+            .time
+            .as_ref()
+            .is_some_and(|t| (t.as_seconds() - at).abs() < SAME_POINT)
+    });
+    match found {
+        Some(index) => {
+            map.set_tempo_at(u32::try_from(index).unwrap_or(0), bpm)
+                .await
+        }
+        None => map.add_point(at.max(0.0), bpm).await.map(|_| ()),
     }
 }
 

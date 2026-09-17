@@ -213,16 +213,25 @@ fn fills_land_where_a_drummer_puts_them() {
     // after another they were most of this suite's wall clock, and the
     // six have nothing to say to each other — the only reason they
     // were sequential is that a `for` loop is what one writes first.
-    let found: Vec<Found> = std::thread::scope(|scope| {
-        let handles: Vec<_> = SONGS
-            .iter()
-            .map(|song| scope.spawn(move || analyse(song)))
-            .collect();
-        handles
-            .into_iter()
-            .filter_map(|handle| handle.join().ok().flatten())
-            .collect()
-    });
+    // Three at a time, not six. Each song is a real project decoded off
+    // disk, and nextest is running other tests beside this one — all
+    // six at once made this test fast and its neighbours slow enough to
+    // time out, which is not a saving. Three keeps most of it.
+    const AT_ONCE: usize = 3;
+    let mut found: Vec<Found> = Vec::new();
+    for batch in SONGS.chunks(AT_ONCE) {
+        let done: Vec<Found> = std::thread::scope(|scope| {
+            let handles: Vec<_> = batch
+                .iter()
+                .map(|song| scope.spawn(move || analyse(song)))
+                .collect();
+            handles
+                .into_iter()
+                .filter_map(|handle| handle.join().ok().flatten())
+                .collect()
+        });
+        found.extend(done);
+    }
     assert!(!found.is_empty(), "no album project loaded as a drum kit");
 
     for f in &found {
