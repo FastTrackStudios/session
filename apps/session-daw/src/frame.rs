@@ -300,6 +300,25 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
         scene.sections(),
         scene.markers(),
     );
+    // A mark's name being typed, over the lane it is in. After the
+    // lanes so it is not painted under the band it renames, and before
+    // the cursors, which belong over everything.
+    if let Some(open) = rename.filter(|r| r.surface == crate::rename::Surface::Ruler) {
+        use crate::rename::What;
+        let at = match &open.what {
+            What::Marker(id) => scene.markers().iter().find(|m| m.idx == *id).map(|m| m.at),
+            What::Region(id) => scene
+                .sections()
+                .iter()
+                .find(|s| s.id == *id)
+                .map(|s| s.start),
+            What::Track(_) => None,
+        };
+        if let Some(at) = at {
+            let field = ruler::field(view, rail, open.row, at);
+            crate::rename::paint(painter, palette, font, open, field, Affine::IDENTITY);
+        }
+    }
     let top = rail.1 + RULER_H;
     let bottom = rail.1 + view.height;
     ruler::lane_lines(

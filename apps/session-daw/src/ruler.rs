@@ -562,7 +562,8 @@ pub fn lane_lines(
 /// Which lane row a REAPER lane index lands on: lanes are numbered from
 /// one, the default lane is the first, and anything past the last row
 /// is drawn on it rather than off the strip.
-fn lane_row(lane: u32) -> usize {
+#[must_use]
+pub fn lane_row(lane: u32) -> usize {
     usize::try_from(lane.saturating_sub(1))
         .unwrap_or(0)
         .min(LANES.saturating_sub(1))
@@ -692,6 +693,27 @@ pub enum On {
 /// and not about the music — at a far zoom a whole bar can be a pixel,
 /// and a grip measured in time would swallow the band.
 const EDGE_GRIP: f64 = 4.0;
+
+/// The box an inline rename occupies for a mark at `at` in lane `row`.
+///
+/// Placed where the mark is drawn, not in a dialog: the name you are
+/// typing has to be next to the thing it names, or two marks a bar
+/// apart are indistinguishable while you rename one of them.
+///
+/// Clamped to the visible timeline at both ends, so a band starting off
+/// screen is still renamed somewhere you can see.
+#[must_use]
+pub fn field(view: Viewport, origin: (f64, f64), row: usize, at: f64) -> Rect {
+    const WIDTH: f64 = 140.0;
+    let (ox, oy) = origin;
+    let left = ox + TCP_WIDTH;
+    let right = ox + view.width;
+    let top = LANE_H.mul_add(crate::num::coord(row), oy);
+    let x0 = at
+        .mul_add(view.pps, left - view.scroll_x)
+        .clamp(left, (right - WIDTH).max(left));
+    Rect::new(x0, top + 1.0, (x0 + WIDTH).min(right), top + LANE_H - 1.0)
+}
 
 /// The lane a y falls in, or `None` if it is in the bars.
 #[must_use]
@@ -1037,6 +1059,40 @@ mod tests {
             beats_per_bar: per_bar,
             beat_unit: 4,
         }
+    }
+
+    fn view() -> crate::arrangement::Viewport {
+        crate::arrangement::Viewport {
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            pps: 20.0,
+            zoom_y: 1.0,
+            width: 1000.0,
+            height: 600.0,
+        }
+    }
+
+    /// The name field opens on the mark, in the mark's own lane.
+    #[test]
+    fn a_name_opens_where_the_mark_is() {
+        let field = super::field(view(), (0.0, 100.0), super::SECTIONS_ROW, 10.0);
+        let expected = 10.0f64.mul_add(20.0, crate::arrangement::TCP_WIDTH);
+        assert!((field.x0 - expected).abs() < 1e-9, "at {}", field.x0);
+        let top = 100.0 + super::LANE_H;
+        assert!(field.y0 >= top && field.y1 <= top + super::LANE_H);
+    }
+
+    /// A band that starts off the left of the view is still renamed
+    /// somewhere you can see, and one near the right edge does not open
+    /// its field off the end of the window.
+    #[test]
+    fn a_name_field_stays_on_screen() {
+        let view = view();
+        let left = crate::arrangement::TCP_WIDTH;
+        let offscreen = super::field(view, (0.0, 0.0), 0, -30.0);
+        assert!((offscreen.x0 - left).abs() < 1e-9, "at {}", offscreen.x0);
+        let far = super::field(view, (0.0, 0.0), 0, 480.0);
+        assert!(far.x1 <= view.width + 1e-9, "ran to {}", far.x1);
     }
 
     /// The ruler counts MEASURES, not seconds.
