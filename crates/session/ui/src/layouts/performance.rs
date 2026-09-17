@@ -951,6 +951,34 @@ fn PerformanceMainContent() -> Element {
                         }
                     }
 
+                    // ── The take just played ───────────────────
+                    //
+                    // The space the head stopped taking. Present only
+                    // when there IS a pass to review — a panel showing
+                    // an invented take would be worse than no panel.
+                    if let Some(pass) = crate::signals::TAKE_UNDER_REVIEW() {
+                        div { class: "flex-none pt-2",
+                            crate::components::TakeReview {
+                                pass,
+                                peaks: crate::signals::TAKE_PEAKS(),
+                                performer: crate::signals::PERFORMER(),
+                                performers: crate::signals::PERFORMERS(),
+                                on_performer: move |name: String| {
+                                    *crate::signals::PERFORMER.write() =
+                                        (!name.is_empty()).then_some(name);
+                                },
+                                on_mark: move |mark: session_proto::review::Mark| {
+                                    // Into the pass on screen now; the
+                                    // service that shares it with the
+                                    // other tablets is the next wire.
+                                    if let Some(pass) = crate::signals::TAKE_UNDER_REVIEW.write().as_mut() {
+                                        pass.mark(mark);
+                                    }
+                                },
+                            }
+                        }
+                    }
+
                     // Detail badges and next song
                     div {
                         class: "flex-none",

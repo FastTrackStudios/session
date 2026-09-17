@@ -98,6 +98,25 @@ pub fn Demo() -> Element {
         };
     }
 
+    // A take to review, so the demo shows the review panel the way the
+    // room will see it. Seeded HERE and not in the component, because
+    // in the product a pass comes from a recording that just stopped —
+    // a panel that invented one would be showing a take nobody played.
+    use_hook(|| {
+        use session::review::{Mark, Pass, Span, Verdict};
+        let mut pass = Pass::new(4, 0.0, 182.0);
+        pass.mark(Mark::whole("Joshua", 182.0, Verdict::VeryGood));
+        pass.mark(
+            Mark::part("Joshua", Span::new(96.0, 108.0), Verdict::Mistake).noted("came in early"),
+        );
+        *session_ui::TAKE_UNDER_REVIEW.write() = Some(pass);
+        *session_ui::PERFORMERS.write() = ["Cody", "Joshua", "Sarah", "Drew"]
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect();
+        *session_ui::TAKE_PEAKS.write() = demo_peaks();
+    });
+
     rsx! {
         div { class: "h-screen w-screen flex flex-row bg-zinc-950 text-zinc-100",
             // No navigator: the demo shows what the desktop app shows,
@@ -110,4 +129,28 @@ pub fn Demo() -> Element {
             }
         }
     }
+}
+
+/// A plausible envelope for the demo's take.
+///
+/// Shaped rather than random: a count-in, verses that breathe and
+/// choruses that do not, so the panel is shown doing the thing it is
+/// for — finding a place in a performance by looking at it.
+fn demo_peaks() -> Vec<f32> {
+    (0..600)
+        .map(|i| {
+            let t = f64::from(i) / 600.0;
+            let section = (t * 6.0).floor() as i32;
+            let base = match section {
+                0 => 0.18,
+                1 | 3 => 0.45,
+                2 | 4 => 0.85,
+                _ => 0.6,
+            };
+            // A little motion, so it reads as a performance rather than
+            // a bar chart of six numbers.
+            let wobble = ((f64::from(i) * 0.7).sin() * 0.12).abs();
+            ((base + wobble) as f32).clamp(0.0, 1.0)
+        })
+        .collect()
 }

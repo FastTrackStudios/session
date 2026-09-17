@@ -41,6 +41,7 @@ pub mod mode;
 pub mod navigation_actions;
 pub mod offset_map;
 pub mod playback;
+pub mod review;
 pub mod routing_project;
 pub mod ruler_lanes;
 pub mod services;

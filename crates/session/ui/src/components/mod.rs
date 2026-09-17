@@ -9,6 +9,7 @@ pub mod progress;
 pub mod section_progress;
 pub mod sidebar_items;
 pub mod song;
+pub mod take_review;
 pub mod transport_controls;
 
 pub use lyric_sync::*;
@@ -17,4 +18,5 @@ pub use progress::*;
 pub use section_progress::*;
 pub use sidebar_items::*;
 pub use song::*;
+pub use take_review::*;
 pub use transport_controls::*;
