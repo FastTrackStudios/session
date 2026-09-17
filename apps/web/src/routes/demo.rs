@@ -8,7 +8,7 @@
 //! transport bar.
 
 use dioxus::prelude::*;
-use session_ui::{PerformanceLayout, PerformanceSidebar, TransportPanel};
+use session_ui::{PerformanceLayout, TransportPanel};
 
 use crate::demo_backend;
 
@@ -100,9 +100,8 @@ pub fn Demo() -> Element {
 
     rsx! {
         div { class: "h-screen w-screen flex flex-row bg-zinc-950 text-zinc-100",
-            div { class: "w-[280px] flex-none min-h-0 border-r border-zinc-800 flex",
-                PerformanceSidebar {}
-            }
+            // No navigator: the demo shows what the desktop app shows,
+            // and that is the point of it being the real component.
             div { class: "flex-1 min-w-0 min-h-0 flex flex-col",
                 div { class: "relative flex-1 min-h-0 flex", PerformanceLayout {} }
                 div { class: "h-[92px] flex-none border-t border-zinc-800",

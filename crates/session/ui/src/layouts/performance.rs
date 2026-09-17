@@ -835,13 +835,22 @@ fn PerformanceMainContent() -> Element {
             // Scrollable content area
             div {
                 class: "flex-1 overflow-y-auto",
+                // The head of the view, top-anchored.
+                //
+                // This used to be a centred stack: the song bar sat in the
+                // middle and everything else hung off it by `calc(50% ±
+                // …rem)`. That put the thing you read most in the middle of
+                // whatever space there happened to be, and it left no room
+                // that belonged to anything else — every addition had to
+                // push off the centre too. Anchored at the top, the
+                // measurements are gaps between siblings, and what is below
+                // is free.
                 div {
-                    class: "p-6 relative flex items-center justify-center h-full",
+                    class: "flex flex-col h-full px-6 pt-5 gap-4",
 
-                    // Song Title (positioned above progress bar)
+                    // Song title
                     div {
-                        class: "absolute left-0 right-0",
-                        style: "bottom: calc(50% + 4rem);",
+                        class: "flex-none",
                         if let Some(ref song) = *current_song.read() {
                             SongTitle {
                                 song_name: song.name.clone(),
@@ -849,10 +858,10 @@ fn PerformanceMainContent() -> Element {
                         }
                     }
 
-                    // Main Song Progress Bar (centered)
+                    // Main Song Progress Bar
                     div {
                         key: "{song_key.clone().unwrap_or_else(|| \"none\".to_string())}",
-                        class: "w-full px-4",
+                        class: "flex-none w-full",
                         if !progress_sections.read().is_empty() {
                             SongProgressBar {
                                 progress: song_progress,
@@ -890,12 +899,11 @@ fn PerformanceMainContent() -> Element {
                         }
                     }
 
-                    // Section Progress Bar (positioned below song progress bar)
+                    // Section Progress Bar
                     div {
-                        class: "absolute left-0 right-0",
-                        style: "top: calc(50% + 6.5rem);",
+                        class: "flex-none",
                         div {
-                            class: "w-full px-4",
+                            class: "w-full",
                             SectionProgressBar {
                                 progress: section_progress,
                                 sections: progress_sections.read().clone(),
@@ -943,10 +951,9 @@ fn PerformanceMainContent() -> Element {
                         }
                     }
 
-                    // Detail badges and next song (positioned below section progress bar)
+                    // Detail badges and next song
                     div {
-                        class: "absolute left-0 right-0",
-                        style: "top: calc(50% + 10.5rem);",
+                        class: "flex-none",
                         div {
                             class: "flex flex-col items-center gap-4",
 
