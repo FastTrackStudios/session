@@ -1143,13 +1143,30 @@ fn shot(
     // mixer — the panel has to know what it has or it draws rows under
     // the right rail and pays for every one.
     let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
-    let view = Viewport {
-        scroll_x,
-        scroll_y,
-        pps: PPS * zoom_x,
-        zoom_y,
-        width: frame.content_width(),
-        height: frame.content_height(),
+    // `FTS_BENCH_SECTION=<n>` frames the review's window on that
+    // section instead — the arrangement scrolled and zoomed to one
+    // section with its run-up and tail, which is what a tablet shows
+    // while a take is being judged. Same renderer, one viewport apart.
+    let view = match std::env::var("FTS_BENCH_SECTION")
+        .ok()
+        .and_then(|n| n.trim().parse::<usize>().ok())
+        .and_then(|n| scene.sections().get(n).cloned())
+    {
+        Some(section) => session_daw::take_window::viewport(
+            (section.start, section.end),
+            scene.tempo(),
+            frame.content_width(),
+            frame.content_height(),
+            zoom_y,
+        ),
+        None => Viewport {
+            scroll_x,
+            scroll_y,
+            pps: PPS * zoom_x,
+            zoom_y,
+            width: frame.content_width(),
+            height: frame.content_height(),
+        },
     };
     let rail_x = session_daw::rails::SIDE;
     let rail_y = session_daw::rails::TOP;

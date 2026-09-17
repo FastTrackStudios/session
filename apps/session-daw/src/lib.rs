@@ -49,6 +49,7 @@ pub mod scrollbar;
 pub mod settings;
 pub mod simulate;
 pub mod strip;
+pub mod take_window;
 pub mod tcp;
 pub mod tempo_map;
 pub mod text;
