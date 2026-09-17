@@ -21,7 +21,7 @@ fn marked() -> &'static Mutex<Vec<Mark>> {
 }
 
 /// Who the tablet belongs to, once somebody says.
-fn performer() -> &'static Mutex<Option<String>> {
+fn role() -> &'static Mutex<Option<String>> {
     static WHO: OnceLock<Mutex<Option<String>>> = OnceLock::new();
     WHO.get_or_init(|| Mutex::new(None))
 }
@@ -30,10 +30,10 @@ const LENGTH: f64 = 182.0;
 
 #[component]
 fn Harness() -> Element {
-    let mut who = use_signal(|| performer().lock().expect("who").clone());
+    let mut who = use_signal(|| role().lock().expect("who").clone());
     let mut pass = use_signal(|| {
         let mut pass = Pass::new(4, 0.0, LENGTH);
-        pass.mark(Mark::whole("Joshua", LENGTH, Verdict::VeryGood));
+        pass.mark(Mark::whole("Drums", LENGTH, Verdict::VeryGood));
         pass
     });
 
@@ -43,16 +43,20 @@ fn Harness() -> Element {
         div {
             "data-testid": "debug",
             "data-marks": "{pass().marks.len()}",
-            "data-mine": "{pass().verdict_of(\"Cody\").map_or(String::new(), |v| v.token().to_owned())}",
+            "data-mine": "{pass().verdict_of(\"Guitar 1\").map_or(String::new(), |v| v.token().to_owned())}",
             "data-band": "{pass().consensus().map_or(String::new(), |v| v.token().to_owned())}",
         }
         session_ui::components::TakeReview {
             pass: pass(),
-            performer: who(),
-            performers: vec!["Cody".to_string(), "Joshua".to_string(), "Sarah".to_string()],
-            on_performer: move |name: String| {
-                let chosen = (!name.is_empty()).then_some(name);
-                *performer().lock().expect("who") = chosen.clone();
+            role: who(),
+            roles: vec![
+                "Guitar 1".to_string(),
+                "Drums".to_string(),
+                "Vocalist 1".to_string(),
+            ],
+            on_role: move |picked: String| {
+                let chosen = (!picked.is_empty()).then_some(picked);
+                *role().lock().expect("who") = chosen.clone();
                 who.set(chosen);
             },
             on_mark: move |mark: Mark| {
@@ -77,7 +81,7 @@ async fn attribute(tester: &dioxus_test::DocumentTester, name: &str) -> String {
 /// use.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_unclaimed_tablet_asks_who_is_holding_it() {
-    *performer().lock().expect("who") = None;
+    *role().lock().expect("who") = None;
     marked().lock().expect("marks").clear();
 
     let tester = render(Harness).build();
@@ -94,11 +98,11 @@ async fn an_unclaimed_tablet_asks_who_is_holding_it() {
             .is_err(),
         "it showed the take before anybody said who they were"
     );
-    for name in ["Cody", "Joshua", "Sarah"] {
+    for role in ["Guitar 1", "Drums", "Vocalist 1"] {
         tester
-            .query(by_testid(format!("performer-{name}")))
+            .query(by_testid(format!("role-{role}")))
             .await
-            .unwrap_or_else(|_| panic!("{name} was not offered"));
+            .unwrap_or_else(|_| panic!("{role} was not offered"));
     }
 }
 
@@ -106,7 +110,7 @@ async fn an_unclaimed_tablet_asks_who_is_holding_it() {
 /// pressing one reports that verdict on the WHOLE take.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pressing_a_star_rates_the_whole_take() {
-    *performer().lock().expect("who") = Some("Cody".to_string());
+    *role().lock().expect("who") = Some("Guitar 1".to_string());
     marked().lock().expect("marks").clear();
 
     let tester = render(Harness).build();
@@ -133,7 +137,7 @@ async fn pressing_a_star_rates_the_whole_take() {
 
     let marks = marked().lock().expect("marks").clone();
     assert_eq!(marks.len(), 1, "{marks:?}");
-    assert_eq!(marks[0].by, "Cody");
+    assert_eq!(marks[0].role, "Guitar 1");
     assert_eq!(marks[0].verdict, Verdict::Amazing);
     assert!(
         marks[0].span.is_whole(LENGTH),
@@ -148,7 +152,7 @@ async fn pressing_a_star_rates_the_whole_take() {
 /// The X is a verdict like the others, and it outvotes them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_x_is_a_verdict_and_it_wins() {
-    *performer().lock().expect("who") = Some("Cody".to_string());
+    *role().lock().expect("who") = Some("Guitar 1".to_string());
     marked().lock().expect("marks").clear();
 
     let tester = render(Harness).build();
@@ -171,7 +175,7 @@ async fn the_x_is_a_verdict_and_it_wins() {
 /// three.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rating_twice_leaves_one_rating() {
-    *performer().lock().expect("who") = Some("Cody".to_string());
+    *role().lock().expect("who") = Some("Guitar 1".to_string());
     marked().lock().expect("marks").clear();
 
     let tester = render(Harness).build();
@@ -183,7 +187,7 @@ async fn rating_twice_leaves_one_rating() {
             .click();
         tester.pump().await.ok();
     }
-    // Joshua's plus Cody's one, not Cody's two.
+    // The drummer's plus this one, not this one twice.
     assert_eq!(attribute(&tester, "data-marks").await, "2");
     assert_eq!(attribute(&tester, "data-mine").await, "3");
 }

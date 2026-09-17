@@ -20,7 +20,7 @@
 //! is what a [`Pass`] is, and it is why a rating is not a property of
 //! an item.
 //!
-//! # Why every performer rates separately
+//! # Why every role rates separately
 //!
 //! Because they disagree, and the disagreement is the useful part. The
 //! drummer's "amazing" and the singer's "mistake" on the same pass is
@@ -156,9 +156,14 @@ impl Span {
 /// One person's judgement on one stretch of one pass.
 #[derive(Clone, PartialEq, Debug, facet::Facet)]
 pub struct Mark {
-    /// Who made it — the performer name the tracks are tagged with, so
-    /// a mark and the audio it is about agree about whose it is.
-    pub by: String,
+    /// Which ROLE made it — "Guitar 1", "Vocalist 2", "Drums".
+    ///
+    /// A role and not a person, because a role is what the session is
+    /// actually made of: the tracks are grouped by it, the tablet on
+    /// the drum riser is the drummer's whoever is sitting there, and a
+    /// dep playing tonight is still Guitar 1. Marks keyed by name would
+    /// scatter the moment somebody covered.
+    pub role: String,
     pub span: Span,
     pub verdict: Verdict,
     /// What they said about it, if anything. Optional because the
@@ -170,9 +175,9 @@ pub struct Mark {
 impl Mark {
     /// A verdict on a whole pass.
     #[must_use]
-    pub fn whole(by: impl Into<String>, length: f64, verdict: Verdict) -> Self {
+    pub fn whole(role: impl Into<String>, length: f64, verdict: Verdict) -> Self {
         Self {
-            by: by.into(),
+            role: role.into(),
             span: Span::whole(length),
             verdict,
             note: None,
@@ -181,9 +186,9 @@ impl Mark {
 
     /// A verdict on part of one.
     #[must_use]
-    pub fn part(by: impl Into<String>, span: Span, verdict: Verdict) -> Self {
+    pub fn part(role: impl Into<String>, span: Span, verdict: Verdict) -> Self {
         Self {
-            by: by.into(),
+            role: role.into(),
             span,
             verdict,
             note: None,
@@ -229,8 +234,7 @@ impl Pass {
         (self.to - self.from).max(0.0)
     }
 
-    /// Add a mark, replacing that performer's verdict on the SAME
-    /// stretch.
+    /// Add a mark, replacing that role's verdict on the SAME stretch.
     ///
     /// Re-rating is the common correction — you hit two stars and meant
     /// three — and it must not leave both. A mark on a different
@@ -238,7 +242,7 @@ impl Pass {
     /// take was good, the second chorus was not" is two.
     pub fn mark(&mut self, mark: Mark) {
         let same = |existing: &Mark| {
-            existing.by == mark.by
+            existing.role == mark.role
                 && (existing.span.from - mark.span.from).abs() < 0.001
                 && (existing.span.to - mark.span.to).abs() < 0.001
         };
@@ -249,21 +253,21 @@ impl Pass {
     }
 
     /// Take back a mark — the same gesture again, on the same stretch.
-    pub fn unmark(&mut self, by: &str, span: Span) {
+    pub fn unmark(&mut self, role: &str, span: Span) {
         self.marks.retain(|mark| {
-            mark.by != by
+            mark.role != role
                 || (mark.span.from - span.from).abs() >= 0.001
                 || (mark.span.to - span.to).abs() >= 0.001
         });
     }
 
-    /// One performer's verdict on the take as a whole, if they gave one.
+    /// One role's verdict on the take as a whole, if it gave one.
     #[must_use]
-    pub fn verdict_of(&self, by: &str) -> Option<Verdict> {
+    pub fn verdict_of(&self, role: &str) -> Option<Verdict> {
         let length = self.length();
         self.marks
             .iter()
-            .find(|mark| mark.by == by && mark.span.is_whole(length))
+            .find(|mark| mark.role == role && mark.span.is_whole(length))
             .map(|mark| mark.verdict)
     }
 
@@ -301,7 +305,7 @@ impl Pass {
             .marks
             .iter()
             .filter(|mark| mark.span.is_whole(length))
-            .map(|mark| mark.by.as_str())
+            .map(|mark| mark.role.as_str())
             .collect();
         who.sort_unstable();
         who.dedup();
@@ -467,7 +471,7 @@ impl Review {
                 lines.push(format!(
                     "m|{}|{}|{}|{}|{}|{}",
                     pass.number,
-                    mark.by,
+                    mark.role,
                     mark.span.from,
                     mark.span.to,
                     mark.verdict.token(),
@@ -510,24 +514,24 @@ impl Review {
                     // The note is whatever is left, pipes and all.
                     let mut parts = line.splitn(7, '|').skip(1);
                     let number = parts.next().and_then(|n| n.parse::<u32>().ok());
-                    let by = parts.next().map(str::to_owned);
+                    let role = parts.next().map(str::to_owned);
                     let from = parts.next().and_then(|n| n.parse::<f64>().ok());
                     let to = parts.next().and_then(|n| n.parse::<f64>().ok());
                     let verdict = parts.next().and_then(Verdict::parse);
                     let note = parts.next().unwrap_or("");
-                    let (Some(number), Some(by), Some(from), Some(to), Some(verdict)) =
-                        (number, by, from, to, verdict)
+                    let (Some(number), Some(role), Some(from), Some(to), Some(verdict)) =
+                        (number, role, from, to, verdict)
                     else {
                         continue;
                     };
-                    if by.is_empty() || !from.is_finite() || !to.is_finite() {
+                    if role.is_empty() || !from.is_finite() || !to.is_finite() {
                         continue;
                     }
                     let Some(pass) = review.passes.get_mut(&number) else {
                         continue;
                     };
                     pass.mark(Mark {
-                        by,
+                        role,
                         span: Span::new(from, to),
                         verdict,
                         note: (!note.is_empty()).then(|| note.to_owned()),
@@ -553,9 +557,13 @@ mod tests {
     #[test]
     fn a_verdict_is_a_mark_over_the_whole_take() {
         let mut pass = pass();
-        pass.mark(Mark::whole("Cody", pass.length(), Verdict::Amazing));
-        pass.mark(Mark::part("Cody", Span::new(40.0, 52.0), Verdict::Mistake));
-        assert_eq!(pass.verdict_of("Cody"), Some(Verdict::Amazing));
+        pass.mark(Mark::whole("Guitar 1", pass.length(), Verdict::Amazing));
+        pass.mark(Mark::part(
+            "Guitar 1",
+            Span::new(40.0, 52.0),
+            Verdict::Mistake,
+        ));
+        assert_eq!(pass.verdict_of("Guitar 1"), Some(Verdict::Amazing));
         assert_eq!(pass.parts().len(), 1, "the whole-take mark leaked in");
         assert_eq!(pass.parts()[0].verdict, Verdict::Mistake);
     }
@@ -565,10 +573,10 @@ mod tests {
     #[test]
     fn rating_again_replaces_the_rating() {
         let mut pass = pass();
-        pass.mark(Mark::whole("Cody", pass.length(), Verdict::VeryGood));
-        pass.mark(Mark::whole("Cody", pass.length(), Verdict::Amazing));
+        pass.mark(Mark::whole("Guitar 1", pass.length(), Verdict::VeryGood));
+        pass.mark(Mark::whole("Guitar 1", pass.length(), Verdict::Amazing));
         assert_eq!(pass.marks.len(), 1);
-        assert_eq!(pass.verdict_of("Cody"), Some(Verdict::Amazing));
+        assert_eq!(pass.verdict_of("Guitar 1"), Some(Verdict::Amazing));
     }
 
     /// But a mark on a different stretch is a different mark, even
@@ -577,8 +585,12 @@ mod tests {
     #[test]
     fn a_different_stretch_is_a_different_mark() {
         let mut pass = pass();
-        pass.mark(Mark::part("Cody", Span::new(10.0, 20.0), Verdict::Good));
-        pass.mark(Mark::part("Cody", Span::new(60.0, 70.0), Verdict::Mistake));
+        pass.mark(Mark::part("Guitar 1", Span::new(10.0, 20.0), Verdict::Good));
+        pass.mark(Mark::part(
+            "Guitar 1",
+            Span::new(60.0, 70.0),
+            Verdict::Mistake,
+        ));
         assert_eq!(pass.marks.len(), 2);
     }
 
@@ -589,11 +601,11 @@ mod tests {
     fn one_mistake_outvotes_three_raves() {
         let mut pass = pass();
         let length = pass.length();
-        pass.mark(Mark::whole("Cody", length, Verdict::Amazing));
-        pass.mark(Mark::whole("Joshua", length, Verdict::Amazing));
-        pass.mark(Mark::whole("Sarah", length, Verdict::VeryGood));
+        pass.mark(Mark::whole("Guitar 1", length, Verdict::Amazing));
+        pass.mark(Mark::whole("Drums", length, Verdict::Amazing));
+        pass.mark(Mark::whole("Vocalist 1", length, Verdict::VeryGood));
         assert_eq!(pass.consensus(), Some(Verdict::VeryGood));
-        pass.mark(Mark::whole("Drew", length, Verdict::Mistake));
+        pass.mark(Mark::whole("Bass", length, Verdict::Mistake));
         assert_eq!(pass.consensus(), Some(Verdict::Mistake));
         assert_eq!(pass.voices(), 4);
     }
@@ -620,9 +632,9 @@ mod tests {
         review
             .pass_mut(1)
             .unwrap()
-            .mark(Mark::whole("Cody", length, Verdict::Amazing));
+            .mark(Mark::whole("Guitar 1", length, Verdict::Amazing));
         // Take 2: three-star, three voices — the winner.
-        for who in ["Cody", "Joshua", "Sarah"] {
+        for who in ["Guitar 1", "Drums", "Vocalist 1"] {
             review
                 .pass_mut(2)
                 .unwrap()
@@ -632,7 +644,7 @@ mod tests {
         review
             .pass_mut(3)
             .unwrap()
-            .mark(Mark::whole("Drew", length, Verdict::Mistake));
+            .mark(Mark::whole("Bass", length, Verdict::Mistake));
         // Take 4: unrated.
 
         let best: Vec<u32> = review.best().iter().map(|pass| pass.number).collect();
@@ -645,9 +657,9 @@ mod tests {
     fn a_bad_take_still_offers_its_good_moments() {
         let mut review = Review::default();
         let pass = review.begin(0.0, 120.0);
-        pass.mark(Mark::whole("Cody", 120.0, Verdict::Mistake));
+        pass.mark(Mark::whole("Guitar 1", 120.0, Verdict::Mistake));
         pass.mark(
-            Mark::part("Cody", Span::new(64.0, 72.0), Verdict::Amazing)
+            Mark::part("Guitar 1", Span::new(64.0, 72.0), Verdict::Amazing)
                 .noted("fill into the bridge"),
         );
         let highlights = review.highlights();
@@ -694,18 +706,18 @@ mod tests {
     fn a_mark_can_be_taken_back() {
         let mut pass = pass();
         let span = Span::new(10.0, 20.0);
-        pass.mark(Mark::part("Cody", span, Verdict::Good));
-        pass.mark(Mark::part("Joshua", span, Verdict::Good));
-        pass.unmark("Cody", span);
+        pass.mark(Mark::part("Guitar 1", span, Verdict::Good));
+        pass.mark(Mark::part("Drums", span, Verdict::Good));
+        pass.unmark("Guitar 1", span);
         assert_eq!(pass.marks.len(), 1);
-        assert_eq!(pass.marks[0].by, "Joshua");
+        assert_eq!(pass.marks[0].role, "Drums");
     }
 
     /// An empty note is no note: a tablet keyboard opened and closed
     /// should not leave an annotation.
     #[test]
     fn an_empty_note_is_no_note() {
-        let mark = Mark::whole("Cody", 10.0, Verdict::Good).noted("   ");
+        let mark = Mark::whole("Guitar 1", 10.0, Verdict::Good).noted("   ");
         assert_eq!(mark.note, None);
     }
 
@@ -719,15 +731,15 @@ mod tests {
         review
             .pass_mut(1)
             .unwrap()
-            .mark(Mark::whole("Cody", length, Verdict::Mistake));
+            .mark(Mark::whole("Guitar 1", length, Verdict::Mistake));
         review.pass_mut(1).unwrap().mark(
-            Mark::part("Cody", Span::new(64.0, 72.0), Verdict::Amazing)
+            Mark::part("Guitar 1", Span::new(64.0, 72.0), Verdict::Amazing)
                 .noted("fill into the bridge"),
         );
         review
             .pass_mut(2)
             .unwrap()
-            .mark(Mark::whole("Joshua", 177.5, Verdict::VeryGood));
+            .mark(Mark::whole("Drums", 177.5, Verdict::VeryGood));
 
         let stored = review.stored();
         let back = Review::from_stored(&stored);
@@ -742,7 +754,7 @@ mod tests {
         let mut review = Review::default();
         review
             .begin(0.0, 60.0)
-            .mark(Mark::whole("Cody", 60.0, Verdict::Good).noted("great | except the end"));
+            .mark(Mark::whole("Guitar 1", 60.0, Verdict::Good).noted("great | except the end"));
         let back = Review::from_stored(&review.stored());
         assert_eq!(
             back.pass(1).unwrap().marks[0].note.as_deref(),
@@ -754,13 +766,13 @@ mod tests {
     #[test]
     fn a_note_cannot_forge_a_line() {
         let mut review = Review::default();
-        review
-            .begin(0.0, 60.0)
-            .mark(Mark::whole("Cody", 60.0, Verdict::Good).noted("one\nm|1|Ghost|0|60|3|forged"));
+        review.begin(0.0, 60.0).mark(
+            Mark::whole("Guitar 1", 60.0, Verdict::Good).noted("one\nm|1|Ghost|0|60|3|forged"),
+        );
         let back = Review::from_stored(&review.stored());
         let marks = &back.pass(1).unwrap().marks;
         assert_eq!(marks.len(), 1, "a note wrote a mark: {marks:?}");
-        assert_eq!(marks[0].by, "Cody");
+        assert_eq!(marks[0].role, "Guitar 1");
     }
 
     /// One bad line costs one mark, not the evening.

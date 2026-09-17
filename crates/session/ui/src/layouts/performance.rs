@@ -877,7 +877,22 @@ fn PerformanceMainContent() -> Element {
                                 }
                             }
                         }
-                        div { class: "flex items-center flex-none",
+                        div { class: "flex items-center gap-4 flex-none",
+                            // Which tablet this is. In the header rather
+                            // than in the panel, because it is true of
+                            // the DEVICE and not of the take: it stays
+                            // put when the take changes, and tapping it
+                            // is how you hand the tablet to somebody
+                            // else.
+                            if let Some(role) = crate::signals::ROLE() {
+                                button {
+                                    class: "flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground",
+                                    "data-testid": "role-indicator",
+                                    onclick: move |_| *crate::signals::ROLE.write() = None,
+                                    span { class: "h-2 w-2 rounded-full bg-primary" }
+                                    span { class: "text-sm font-semibold", "{role}" }
+                                }
+                            }
                             if let Some(ref transport) = transport_state {
                                 TransportStats {
                                     musical: transport.position.musical,
@@ -1011,11 +1026,11 @@ fn PerformanceMainContent() -> Element {
                                 crate::components::TakeReview {
                                     pass,
                                     peaks: crate::signals::TAKE_PEAKS(),
-                                    performer: crate::signals::PERFORMER(),
-                                    performers: crate::signals::PERFORMERS(),
-                                    on_performer: move |name: String| {
-                                        *crate::signals::PERFORMER.write() =
-                                            (!name.is_empty()).then_some(name);
+                                    role: crate::signals::ROLE(),
+                                    roles: crate::signals::ROLES(),
+                                    on_role: move |role: String| {
+                                        *crate::signals::ROLE.write() =
+                                            (!role.is_empty()).then_some(role);
                                     },
                                     on_mark: move |mark: session_proto::review::Mark| {
                                         // To the service, which keeps it with

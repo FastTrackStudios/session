@@ -110,10 +110,20 @@ pub fn Demo() -> Element {
             Mark::part("Joshua", Span::new(96.0, 108.0), Verdict::Mistake).noted("came in early"),
         );
         *session_ui::TAKE_UNDER_REVIEW.write() = Some(pass);
-        *session_ui::PERFORMERS.write() = ["Cody", "Joshua", "Sarah", "Drew"]
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect();
+        // Roles, not names: what the session is made of, and what the
+        // tracks are grouped by.
+        *session_ui::ROLES.write() = [
+            "Vocalist 1",
+            "Vocalist 2",
+            "Guitar 1",
+            "Guitar 2",
+            "Bass",
+            "Keys 1",
+            "Drums",
+        ]
+        .iter()
+        .map(|role| (*role).to_string())
+        .collect();
         *session_ui::TAKE_PEAKS.write() = demo_peaks();
     });
 

@@ -45,20 +45,21 @@ pub type Envelope = Vec<f32>;
 pub fn TakeReview(
     /// The pass being reviewed — normally the one that just ended.
     pass: Pass,
-    /// The consolidated peaks of THIS performer's tracks over the pass.
+    /// The consolidated peaks of THIS role's tracks over the pass.
     /// Empty while they are still being read: the panel draws a line
     /// and stays usable, because a rating does not need a picture.
     #[props(default)]
     peaks: Envelope,
-    /// Who is holding this tablet. `None` until somebody says.
+    /// Which ROLE this tablet is for — "Guitar 1", "Drums". `None`
+    /// until somebody says.
     #[props(default)]
-    performer: Option<String>,
-    /// Everyone who could be holding it.
+    role: Option<String>,
+    /// The roles on this session.
     #[props(default)]
-    performers: Vec<String>,
-    /// Somebody said who they are. An empty name means "not me" — the
-    /// way back to the picker.
-    on_performer: EventHandler<String>,
+    roles: Vec<String>,
+    /// Somebody picked a role. An empty string means "not me" — the way
+    /// back to the picker.
+    on_role: EventHandler<String>,
     /// A verdict was given, on the whole take or on a stretch of it.
     on_mark: EventHandler<Mark>,
 ) -> Element {
@@ -74,10 +75,10 @@ pub fn TakeReview(
     let mut wave_width = use_signal(|| 0.0_f64);
 
     let length = pass.length();
-    let Some(who) = performer.clone() else {
+    let Some(who) = role.clone() else {
         return rsx! {
             div { class: "h-full w-full",
-                WhoAreYou { performers, on_performer }
+                WhichOneAreYou { roles, on_role }
             }
         };
     };
@@ -106,13 +107,11 @@ pub fn TakeReview(
                 if let Some(band) = band {
                     VerdictChip { verdict: band, label: "band".to_string() }
                 }
-                div { class: "ml-auto flex items-center gap-2",
-                    span { class: "text-sm text-muted-foreground", "you are" }
-                    button {
-                        class: "px-4 py-2 rounded-full bg-secondary text-secondary-foreground text-base font-semibold",
-                        onclick: move |_| on_performer.call(String::new()),
-                        "{who}"
-                    }
+                // Your own verdict, beside the band's, so you can see
+                // whether you have said anything yet without hunting
+                // for a lit button.
+                if let Some(mine) = mine {
+                    VerdictChip { verdict: mine, label: who.clone() }
                 }
             }
 
@@ -203,25 +202,29 @@ pub fn TakeReview(
 
 /// The first thing a tablet shows: whose is it?
 #[component]
-fn WhoAreYou(performers: Vec<String>, on_performer: EventHandler<String>) -> Element {
+fn WhichOneAreYou(roles: Vec<String>, on_role: EventHandler<String>) -> Element {
     rsx! {
         div { class: "flex flex-col gap-4",
-            div { class: "text-xl font-semibold", "data-testid": "who-are-you", "Who is this one for?" }
-            if performers.is_empty() {
+            div {
+                class: "text-xl font-semibold",
+                "data-testid": "who-are-you",
+                "Which one is this?"
+            }
+            if roles.is_empty() {
                 p { class: "text-sm text-muted-foreground",
-                    "No performers on this session yet — they come from the tracks."
+                    "No roles on this session yet — they come from the tracks."
                 }
             }
             div { class: "grid grid-cols-3 gap-3 w-full max-w-3xl",
-                for name in performers {
+                for role in roles {
                     button {
                         class: "h-16 rounded-xl bg-secondary text-secondary-foreground text-lg font-semibold active:brightness-125",
-                        "data-testid": "performer-{name}",
+                        "data-testid": "role-{role}",
                         onclick: {
-                            let name = name.clone();
-                            move |_| on_performer.call(name.clone())
+                            let role = role.clone();
+                            move |_| on_role.call(role.clone())
                         },
-                        "{name}"
+                        "{role}"
                     }
                 }
             }
