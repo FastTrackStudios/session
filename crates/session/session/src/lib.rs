@@ -44,6 +44,7 @@ pub mod reference;
 pub mod section_kinds;
 pub mod setlist;
 pub mod song;
+pub mod strip_width;
 
 // REAPER-hotkey action domains driving the `daw::reaper` backend directly.
 // Not needed by the browser setlist engine — native-only. `track_manager`

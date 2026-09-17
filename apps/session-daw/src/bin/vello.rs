@@ -249,9 +249,9 @@ struct App {
     /// The routing panel, if one is open: whose, and where it was
     /// opened from.
     routing: Option<(String, (f64, f64))>,
-    /// A send being dragged in the panel: the track, the send's number
-    /// and which of its two continuous controls.
-    send_drag: Option<(String, u32, session_daw::routing::Part)>,
+    /// A route being dragged in the panel: the track, where the route
+    /// is, and which of its two continuous controls.
+    send_drag: Option<(String, session_daw::routes::At, session_daw::routing::Part)>,
     /// What every track visible in the panel sends to and receives
     /// from. Read per track, on demand — see `session_daw::routes`.
     routes: session_daw::routes::Routes,
@@ -260,6 +260,16 @@ struct App {
     /// The list of somewhere to send to, while it is open, and how far
     /// down it has been scrolled.
     picking: Option<usize>,
+    /// When the last click on a strip edge was, for spotting the
+    /// double that puts it back to the default.
+    last_width_click: Option<(usize, std::time::Instant)>,
+    /// A strip edge being dragged: the track, where the pointer took
+    /// hold, and how wide the strip was then.
+    ///
+    /// Measured from where the drag STARTED rather than from the last
+    /// frame, so a width cannot accumulate rounding — drag out and back
+    /// and the strip is the width it was.
+    width_drag: Option<(String, f64, f64)>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
     /// When the last rack grip was clicked, for spotting a double.
@@ -729,6 +739,10 @@ impl ApplicationHandler for App {
                     self.drag_send(position.x);
                     return;
                 }
+                if self.width_drag.is_some() {
+                    self.drag_width(position.x);
+                    return;
+                }
                 // The dock's edge, being dragged: the dock follows the
                 // pointer and the arrangement gives way above it.
                 if self.dock_drag {
@@ -938,6 +952,13 @@ impl ApplicationHandler for App {
                     if self.press_picker(x, y) || self.press_routing(x, y) {
                         return;
                     }
+                    // A strip's edge, before the strip: the grip is
+                    // drawn over the last control's end and a press
+                    // there means the edge.
+                    if self.press_width(x, y) {
+                        self.redraw();
+                        return;
+                    }
                     // The rails are drawn over everything else, so they
                     // are asked next: a click on a phase button must
                     // not also move the edit cursor behind it.
@@ -1053,6 +1074,11 @@ impl ApplicationHandler for App {
                     }
                 } else {
                     if self.send_drag.take().is_some() {
+                        self.redraw();
+                        return;
+                    }
+                    if self.width_drag.take().is_some() {
+                        self.store_widths();
                         self.redraw();
                         return;
                     }
@@ -1991,7 +2017,7 @@ impl App {
     /// Shared by the click and the transient snap because they differ
     /// only in how they choose the target — the anchoring, the
     /// arithmetic and the refusal are the same question either way.
-    fn write_tempo(&self, moved: session_daw::tempo_map::Move) {
+    fn write_tempo(&mut self, moved: session_daw::tempo_map::Move) {
         use session_daw::tempo_map::{Anchor, align};
         let anchor = if self.keys.alt {
             Anchor::BothSides
@@ -2006,12 +2032,29 @@ impl App {
             tracing::debug!(?moved, "that tempo would not be one");
             return;
         };
-        for set in sets {
+        for set in &sets {
             self.send(session_daw::engine::Edit::SetTempo(
                 String::new(),
                 set.at,
                 set.bpm,
             ));
+        }
+        // And into the window's own copy, so the bar line lands under
+        // the mouse this frame. The reload the tempo-map event brings
+        // is the correction; without this the line waits for it, and
+        // tempo mapping is a hundred small corrections made by eye.
+        let moved = {
+            let Some((project, _)) = self.session.as_mut() else {
+                return;
+            };
+            let project = std::sync::Arc::make_mut(&mut project.0);
+            for set in &sets {
+                session_daw::tempo_map::put(&mut project.tempo, set.at, set.bpm);
+            }
+            true
+        };
+        if moved {
+            self.re_record();
         }
     }
 
@@ -2879,19 +2922,150 @@ impl App {
     /// The panel's box, if one is open.
     fn routing_box(&self) -> Option<vello::kurbo::Rect> {
         let (guid, at) = self.routing.as_ref()?;
-        let (sends, receives) = self.routing_counts(guid);
         Some(session_daw::routing::anchored(
             *at,
             self.surface_size,
-            session_daw::routing::lines(sends, receives).len(),
+            session_daw::routing::lines(self.routing_counts(guid)).len(),
         ))
     }
 
-    /// How many sends and receives the open panel is showing.
-    fn routing_counts(&self, guid: &str) -> (usize, usize) {
-        self.routes
-            .get(guid)
-            .map_or((0, 0), |wiring| (wiring.sends.len(), wiring.receives.len()))
+    /// How many of each the open panel is showing.
+    fn routing_counts(&self, guid: &str) -> session_daw::routing::Counts {
+        session_daw::routing::Counts::of_wiring(self.routes.get(guid).as_ref())
+    }
+
+    /// The strip edge under a point, if the pointer is on one.
+    ///
+    /// The edge is the strip's right-hand end, which is where every
+    /// resize handle in every mixer is. Six pixels: a boundary you can
+    /// hit without aiming, and not so wide that it swallows the last
+    /// control on the strip.
+    fn width_grip_at(&self, x: f64, y: f64) -> Option<usize> {
+        const GRIP: f64 = 6.0;
+        if self.view != View::Mixer || y < session_daw::rails::TOP {
+            return None;
+        }
+        let mixer = self.mixer.as_ref()?;
+        let content = x - session_daw::rails::SIDE + self.mixer_scroll;
+        // The strip the pointer is in, and the one before it: an edge
+        // belongs to the strip on its left, and the pointer may be a
+        // pixel either side of it.
+        let row = mixer.strip_at(content)?;
+        for row in [row, row.checked_sub(1).unwrap_or(row)] {
+            let (left, width, height) = mixer.strip_box(row)?;
+            if y - session_daw::rails::TOP > height {
+                continue;
+            }
+            if (content - (left + width)).abs() <= GRIP {
+                return Some(row);
+            }
+        }
+        None
+    }
+
+    /// Take hold of a strip's edge.
+    fn press_width(&mut self, x: f64, y: f64) -> bool {
+        let Some(row) = self.width_grip_at(x, y) else {
+            return false;
+        };
+        let Some((guid, width)) = self
+            .mixer_map
+            .index(row)
+            .and_then(|i| self.tracks.get(i))
+            .map(|track| (track.guid.clone(), self.layout.width_of(track.width)))
+        else {
+            return false;
+        };
+        // A double-click on the edge puts the strip back to the
+        // default. The way back has to be a gesture: a width nobody can
+        // undo is a width nobody will try.
+        let now = std::time::Instant::now();
+        let again = self.last_width_click.is_some_and(|(last, when)| {
+            last == row && now.saturating_duration_since(when) <= session_daw::gesture::DOUBLE
+        });
+        if again {
+            self.last_width_click = None;
+            self.set_width(&guid, None);
+            self.store_widths();
+            return true;
+        }
+        self.last_width_click = Some((row, now));
+        self.width_drag = Some((guid, x, width));
+        true
+    }
+
+    /// The edge, following the pointer.
+    fn drag_width(&mut self, x: f64) {
+        let Some((guid, from, width)) = self.width_drag.clone() else {
+            return;
+        };
+        let wanted = (width + (x - from)).round().max(0.0);
+        let wanted = u32::try_from(wanted as i64).unwrap_or(session::strip_width::NARROWEST);
+        self.set_width(
+            &guid,
+            Some(wanted.clamp(
+                session::strip_width::NARROWEST,
+                session::strip_width::WIDEST,
+            )),
+        );
+    }
+
+    /// Put a width on a track and rebuild the mixer around it.
+    fn set_width(&mut self, guid: &str, width: Option<u32>) {
+        let Some(track) = self.tracks.iter_mut().find(|t| t.guid == guid) else {
+            return;
+        };
+        if track.width == width {
+            return;
+        }
+        track.width = width;
+        // The mixer's offsets come from the widths, so this is a
+        // re-record and not a redraw: every strip after this one moved.
+        self.mixer = None;
+        self.redraw();
+    }
+
+    /// Keep the widths with the project.
+    ///
+    /// On release rather than per frame: a drag is a hundred widths and
+    /// one of them is the answer, and ext state is the project file.
+    fn store_widths(&self) {
+        let Some(runtime) = session_daw::open::runtime() else {
+            return;
+        };
+        let mut widths = session::strip_width::Widths::default();
+        for track in &self.tracks {
+            match track.width {
+                Some(width) => widths.set(&track.guid, width),
+                None => widths.clear(&track.guid),
+            }
+        }
+        let stored = widths.stored();
+        std::thread::Builder::new()
+            .name("session-daw-widths".into())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    let Some(daw) = daw::rpc::Daw::try_get() else {
+                        return;
+                    };
+                    let Ok(project) = daw.current_project().await else {
+                        return;
+                    };
+                    if let Err(error) = project
+                        .ext_state()
+                        .set_project(
+                            daw_proto::ProjectContext::Current,
+                            session::strip_width::SECTION,
+                            session::strip_width::KEY,
+                            &stored,
+                        )
+                        .await
+                    {
+                        tracing::warn!(error = %error, "the widths did not save");
+                    }
+                });
+            })
+            .ok();
     }
 
     /// The tracks this one could send to, in session order.
@@ -2985,8 +3159,8 @@ impl App {
         let (Some((guid, _)), Some(panel)) = (self.routing.clone(), self.routing_box()) else {
             return false;
         };
-        let (sends, receives) = self.routing_counts(&guid);
-        let Some(spot) = session_daw::routing::spot_at(panel, sends, receives, x, y) else {
+        let counts = self.routing_counts(&guid);
+        let Some(spot) = session_daw::routing::spot_at(panel, counts, x, y) else {
             // Outside: the press closes the panel and does nothing
             // else. A click that both closed a panel and moved a fader
             // under it would be a click nobody could take back.
@@ -3019,32 +3193,35 @@ impl App {
                 }
                 self.re_record();
             }
-            Spot::Send { index, part } => {
-                let Some(route) = wiring.sends.get(index) else {
+            Spot::Route { kind, at, part } => {
+                let Some(route) = wiring.list(kind).get(at) else {
                     return true;
                 };
-                let number = route.index;
+                let at = session_daw::routes::At::new(kind, route.index);
                 match part {
                     Part::Mute => {
                         let muted = !route.muted;
-                        self.routes.predict(&guid, number, |r| r.muted = muted);
-                        self.send(session_daw::engine::Edit::SetSendMute(
+                        self.routes.predict(&guid, at, |r| r.muted = muted);
+                        self.send(session_daw::engine::Edit::SetRouteMute(
                             guid.clone(),
-                            number,
+                            at,
                             muted,
                         ));
                     }
+                    // A send's, and only a send's — `Part::on` keeps a
+                    // click off the others, and this is the arm it
+                    // would have landed in.
                     Part::Mode => {
                         let mode = session_daw::routing::next_mode(route.send_mode);
-                        self.routes.predict(&guid, number, |r| r.send_mode = mode);
+                        self.routes.predict(&guid, at, |r| r.send_mode = mode);
                         self.send(session_daw::engine::Edit::SetSendMode(
                             guid.clone(),
-                            number,
+                            at.index,
                             mode,
                         ));
                     }
                     Part::Remove => {
-                        self.send(session_daw::engine::Edit::RemoveSend(guid.clone(), number));
+                        self.send(session_daw::engine::Edit::RemoveRoute(guid.clone(), at));
                         // Read again rather than dropping the row: what
                         // the numbering becomes is the engine's answer,
                         // not a guess made here.
@@ -3054,15 +3231,13 @@ impl App {
                     // The two continuous ones take hold; the value
                     // follows the pointer from here.
                     Part::Level | Part::Pan => {
-                        self.send_drag = Some((guid.clone(), number, part));
+                        self.send_drag = Some((guid.clone(), at, part));
                         self.drag_send(x);
                     }
                     Part::Name => {}
                 }
             }
-            // Shown, not touched: a receive is the far end of somebody
-            // else's send, and that send is the thing that owns it.
-            Spot::Receive { .. } | Spot::Nowhere => {}
+            Spot::Nowhere => {}
         }
         self.redraw();
         true
@@ -3071,35 +3246,45 @@ impl App {
     /// A send's level or pan, following the pointer.
     fn drag_send(&mut self, x: f64) {
         use session_daw::routing::Part;
-        let (Some((guid, number, part)), Some(panel)) =
-            (self.send_drag.clone(), self.routing_box())
+        let (Some((guid, at, part)), Some(panel)) = (self.send_drag.clone(), self.routing_box())
         else {
             return;
         };
         let Some(wiring) = self.routes.get(&guid) else {
             return;
         };
-        let Some(at) = wiring.sends.iter().position(|r| r.index == number) else {
+        // Where the row IS now, not where it was when the drag began:
+        // another client can remove a route mid-gesture, and a cell
+        // read from a stale line number is a level going to the wrong
+        // place.
+        let Some(place) = wiring
+            .list(at.kind)
+            .iter()
+            .position(|r| r.index == at.index)
+        else {
             return;
         };
-        let lines = session_daw::routing::lines(wiring.sends.len(), wiring.receives.len());
-        let Some(line) = lines
-            .iter()
-            .position(|l| *l == session_daw::routing::Line::Send(at))
-        else {
+        let lines =
+            session_daw::routing::lines(session_daw::routing::Counts::of_wiring(Some(&wiring)));
+        let Some(line) = lines.iter().position(|l| {
+            *l == session_daw::routing::Line::Route {
+                kind: at.kind,
+                at: place,
+            }
+        }) else {
             return;
         };
         let cell = session_daw::routing::column(session_daw::routing::row(panel, line), part);
         let edit = match part {
             Part::Level => {
                 let volume = session_daw::routing::level_at(cell, x);
-                self.routes.predict(&guid, number, |r| r.volume = volume);
-                session_daw::engine::Edit::SetSendVolume(guid.clone(), number, volume)
+                self.routes.predict(&guid, at, |r| r.volume = volume);
+                session_daw::engine::Edit::SetRouteVolume(guid.clone(), at, volume)
             }
             Part::Pan => {
                 let pan = session_daw::routing::pan_at(cell, x);
-                self.routes.predict(&guid, number, |r| r.pan = pan);
-                session_daw::engine::Edit::SetSendPan(guid.clone(), number, pan)
+                self.routes.predict(&guid, at, |r| r.pan = pan);
+                session_daw::engine::Edit::SetRoutePan(guid.clone(), at, pan)
             }
             _ => return,
         };
@@ -4148,6 +4333,8 @@ fn main() {
         last_ruler_click: None,
         routing: None,
         picking: None,
+        width_drag: None,
+        last_width_click: None,
         send_drag: None,
         routes: session_daw::routes::Routes::default(),
         bus: None,
@@ -4197,6 +4384,39 @@ fn main() {
 }
 
 /// Read the project through the facade and record it.
+/// Put the project's stored strip widths onto its tracks.
+///
+/// Quietly does nothing when there are none, which is every project
+/// nobody has widened a strip in — the common case, and one read.
+async fn wear_widths(tracks: &mut [daw_proto::Track]) {
+    let Some(daw) = daw::rpc::Daw::try_get() else {
+        return;
+    };
+    let Ok(project) = daw.current_project().await else {
+        return;
+    };
+    let stored = project
+        .ext_state()
+        .get_project(
+            daw_proto::ProjectContext::Current,
+            session::strip_width::SECTION,
+            session::strip_width::KEY,
+        )
+        .await
+        .ok()
+        .flatten();
+    let Some(stored) = stored else { return };
+    let widths = session::strip_width::Widths::from_stored(&stored);
+    if widths.is_empty() {
+        return;
+    }
+    for track in tracks {
+        if let Some(width) = widths.get(&track.guid) {
+            track.width = Some(width);
+        }
+    }
+}
+
 fn build_scene(
     theme: &daw_ui::theming::Theme,
     layout: session_daw::layout::Layout,
@@ -4208,7 +4428,14 @@ fn build_scene(
         .enable_all()
         .build()
         .ok()?;
-    let project = rt.block_on(daw_ui::studio::project::fetch())?;
+    let mut project = rt.block_on(daw_ui::studio::project::fetch())?;
+    // The widths FTS keeps for this project, applied before the mixer
+    // is laid out: REAPER has no strip width, so `Track::width` arrives
+    // empty and this is where it stops being empty. Applied here rather
+    // than by the window so the first frame is already the right shape
+    // — a mixer that re-laid itself one frame in is a mixer that jumps
+    // every time the session opens.
+    rt.block_on(wear_widths(&mut project.tracks));
     let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(project));
     let (visible, depths) =
         daw_ui::components::folders::FolderState::default().visible(&project.tracks);
@@ -4367,10 +4594,10 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         // see `Routes::predict`, called at the gesture rather than
         // here, because only the gesture knows which send it is on.
         Edit::AddSend(..)
-        | Edit::RemoveSend(..)
-        | Edit::SetSendVolume(..)
-        | Edit::SetSendPan(..)
-        | Edit::SetSendMute(..)
+        | Edit::RemoveRoute(..)
+        | Edit::SetRouteVolume(..)
+        | Edit::SetRoutePan(..)
+        | Edit::SetRouteMute(..)
         | Edit::SetSendMode(..) => {}
         Edit::SetFolderDepth(..)
         | Edit::SetGroupMembership(..)

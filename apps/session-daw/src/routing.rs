@@ -23,6 +23,7 @@
 //! [`lines`] is asked once by each, so a click cannot land on a row the
 //! paint drew somewhere else.
 
+use daw_proto::routing::RouteType;
 use vello::kurbo::Rect;
 
 /// How wide the panel is.
@@ -46,16 +47,12 @@ pub enum Line {
     Title,
     /// Whether the track feeds its parent at all.
     Parent,
-    /// The `SENDS` heading.
-    SendsLabel,
-    /// One send, by its position in the list.
-    Send(usize),
-    /// The way to make another one.
+    /// One route, by its kind and its position in that kind's list.
+    Route { kind: RouteType, at: usize },
+    /// The way to make another send.
     AddSend,
-    /// The `RECEIVES` heading.
-    ReceivesLabel,
-    /// One receive, by its position in the list.
-    Receive(usize),
+    /// The heading over one of the lists.
+    Label(RouteType),
     /// Said where a list would be if it had anything in it.
     ///
     /// A heading with nothing under it reads as a panel that failed to
@@ -89,11 +86,12 @@ pub enum Spot {
     Parent,
     /// The row that opens the list of somewhere to send to.
     AddSend,
-    /// A part of one of the sends.
-    Send { index: usize, part: Part },
-    /// A receive — nothing to press yet, but a press on one must not
-    /// fall through to the window behind the panel.
-    Receive { index: usize },
+    /// A part of one of the routes.
+    Route {
+        kind: RouteType,
+        at: usize,
+        part: Part,
+    },
     /// Inside the panel, on nothing in particular.
     Nowhere,
 }
@@ -104,19 +102,59 @@ pub enum Spot {
 /// what makes "you clicked what you saw" true by construction rather
 /// than by two lists being kept in step.
 #[must_use]
-pub fn lines(sends: usize, receives: usize) -> Vec<Line> {
-    let mut lines = vec![Line::Title, Line::Parent, Line::SendsLabel];
-    if sends == 0 {
-        lines.push(Line::Nothing);
+pub fn lines(counts: Counts) -> Vec<Line> {
+    let mut lines = vec![Line::Title, Line::Parent];
+    // Sends, then where the track leaves the box, then what comes in.
+    // Signal order: what this track feeds, then what feeds it.
+    for kind in [
+        RouteType::Send,
+        RouteType::HardwareOutput,
+        RouteType::Receive,
+    ] {
+        lines.push(Line::Label(kind));
+        let count = counts.of(kind);
+        if count == 0 {
+            lines.push(Line::Nothing);
+        }
+        lines.extend((0..count).map(|at| Line::Route { kind, at }));
+        if kind == RouteType::Send {
+            lines.push(Line::AddSend);
+        }
     }
-    lines.extend((0..sends).map(Line::Send));
-    lines.push(Line::AddSend);
-    lines.push(Line::ReceivesLabel);
-    if receives == 0 {
-        lines.push(Line::Nothing);
-    }
-    lines.extend((0..receives).map(Line::Receive));
     lines
+}
+
+/// How many of each a track has.
+///
+/// One argument rather than three loose numbers, because three `usize`s
+/// in a row is three chances to pass them in the wrong order — and the
+/// wrong order here draws a receive where a send is and edits it there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Counts {
+    pub sends: usize,
+    pub hardware: usize,
+    pub receives: usize,
+}
+
+impl Counts {
+    /// What a wiring holds, or nothing at all while the read is out.
+    #[must_use]
+    pub fn of_wiring(wiring: Option<&crate::routes::Wiring>) -> Self {
+        wiring.map_or_else(Self::default, |w| Self {
+            sends: w.sends.len(),
+            hardware: w.hardware.len(),
+            receives: w.receives.len(),
+        })
+    }
+
+    #[must_use]
+    pub const fn of(self, kind: RouteType) -> usize {
+        match kind {
+            RouteType::Send => self.sends,
+            RouteType::Receive => self.receives,
+            RouteType::HardwareOutput => self.hardware,
+        }
+    }
 }
 
 /// How tall a panel with this many lines is.
@@ -169,11 +207,11 @@ pub fn column(row: Rect, part: Part) -> Rect {
 /// `None` outside it — which is how a press elsewhere closes it rather
 /// than being swallowed.
 #[must_use]
-pub fn spot_at(panel: Rect, sends: usize, receives: usize, x: f64, y: f64) -> Option<Spot> {
+pub fn spot_at(panel: Rect, counts: Counts, x: f64, y: f64) -> Option<Spot> {
     if x < panel.x0 || x >= panel.x1 || y < panel.y0 || y >= panel.y1 {
         return None;
     }
-    let lines = lines(sends, receives);
+    let lines = lines(counts);
     let index = ((y - panel.y0 - PAD) / ROW_H).floor();
     if index < 0.0 {
         return Some(Spot::Nowhere);
@@ -194,13 +232,29 @@ pub fn spot_at(panel: Rect, sends: usize, receives: usize, x: f64, y: f64) -> Op
         }
         Line::Parent => Spot::Parent,
         Line::AddSend => Spot::AddSend,
-        Line::Send(index) => match part_at(row, x) {
-            Some(part) => Spot::Send { index, part },
+        Line::Route { kind, at } => match part_at(row, x).filter(|part| part.on(kind)) {
+            Some(part) => Spot::Route { kind, at, part },
             None => Spot::Nowhere,
         },
-        Line::Receive(index) => Spot::Receive { index },
-        Line::SendsLabel | Line::ReceivesLabel | Line::Nothing => Spot::Nowhere,
+        Line::Label(_) | Line::Nothing => Spot::Nowhere,
     })
+}
+
+impl Part {
+    /// Whether this part is a control on that kind of route.
+    ///
+    /// The mode is a send's: the service sets it on the track that owns
+    /// the send, so a receive's mode is the far track's to change and a
+    /// hardware output has none. It is still DRAWN on a receive — what
+    /// it is tapped from is worth knowing where you are reading it —
+    /// and simply does not answer to a click.
+    #[must_use]
+    pub const fn on(self, kind: RouteType) -> bool {
+        match self {
+            Self::Mode => matches!(kind, RouteType::Send),
+            _ => true,
+        }
+    }
 }
 
 /// Which column of a send row an x is in.
@@ -301,9 +355,7 @@ pub fn paint(
         wiring,
         names,
     } = open;
-    let (sends, receives) = wiring.map_or((&[][..], &[][..]), |w| {
-        (w.sends.as_slice(), w.receives.as_slice())
-    });
+    let counts = Counts::of_wiring(wiring);
 
     fill(painter, palette.surface, panel);
     fill(
@@ -312,7 +364,7 @@ pub fn paint(
         Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + 2.0),
     );
 
-    for (index, line) in lines(sends.len(), receives.len()).iter().enumerate() {
+    for (index, line) in lines(counts).iter().enumerate() {
         let row = row(panel, index);
         let text_y = row.y0 + ROW_H / 2.0 + f64::from(SIZE) / 3.0;
         match *line {
@@ -358,17 +410,12 @@ pub fn paint(
                 text_y,
                 SIZE,
             ),
-            Line::SendsLabel | Line::ReceivesLabel => {
-                let label = if *line == Line::SendsLabel {
-                    "SENDS"
-                } else {
-                    "RECEIVES"
-                };
+            Line::Label(kind) => {
                 crate::tcp::glyphs(
                     painter,
                     font,
                     palette.text_faint,
-                    label,
+                    label(kind),
                     row.x0,
                     text_y,
                     8.0,
@@ -389,8 +436,8 @@ pub fn paint(
                 text_y,
                 SIZE,
             ),
-            Line::Send(index) => {
-                let Some(route) = sends.get(index) else {
+            Line::Route { kind, at } => {
+                let Some(route) = wiring.and_then(|w| w.list(kind).get(at)) else {
                     continue;
                 };
                 let ink = if route.muted {
@@ -398,16 +445,31 @@ pub fn paint(
                 } else {
                     palette.text
                 };
-                let to = far_end(route, guid, names);
-                cell_text(painter, font, ink, column(row, Part::Name), &to, SIZE);
                 cell_text(
                     painter,
                     font,
-                    palette.text_dim,
-                    column(row, Part::Mode),
-                    mode_name(route.send_mode),
-                    8.0,
+                    ink,
+                    column(row, Part::Name),
+                    &far_end(route, guid, names),
+                    SIZE,
                 );
+                // Drawn on every kind, clickable on a send: what a
+                // route is tapped from is worth knowing wherever you
+                // are reading it — see `Part::on`.
+                if kind != RouteType::HardwareOutput {
+                    cell_text(
+                        painter,
+                        font,
+                        if Part::Mode.on(kind) {
+                            palette.text_dim
+                        } else {
+                            palette.text_faint
+                        },
+                        column(row, Part::Mode),
+                        mode_name(route.send_mode),
+                        8.0,
+                    );
+                }
                 let mute = column(row, Part::Mute);
                 fill(
                     painter,
@@ -424,7 +486,14 @@ pub fn paint(
                     palette,
                     column(row, Part::Level),
                     level_fraction(route.volume),
-                    palette.accent,
+                    // Each list in its own ink, so which of three
+                    // identical-looking rows you are on is answered by
+                    // the row and not by counting headings.
+                    match kind {
+                        RouteType::Send => palette.accent,
+                        RouteType::Receive => palette.meter_danger,
+                        RouteType::HardwareOutput => palette.meter_warn,
+                    },
                 );
                 marker(
                     painter,
@@ -439,30 +508,6 @@ pub fn paint(
                     column(row, Part::Remove),
                     "×",
                     10.0,
-                );
-            }
-            // A receive is the far end of somebody else's send, so it
-            // is shown and not touched: the thing that owns it is that
-            // send, on that track.
-            Line::Receive(index) => {
-                let Some(route) = receives.get(index) else {
-                    continue;
-                };
-                let from = far_end(route, guid, names);
-                cell_text(
-                    painter,
-                    font,
-                    palette.text_dim,
-                    column(row, Part::Name),
-                    &from,
-                    SIZE,
-                );
-                bar(
-                    painter,
-                    palette,
-                    column(row, Part::Level),
-                    level_fraction(route.volume),
-                    palette.text_faint,
                 );
             }
         }
@@ -649,6 +694,16 @@ pub struct Open<'a> {
     pub names: &'a dyn Fn(&str) -> Option<String>,
 }
 
+/// What a list of routes is called.
+#[must_use]
+pub const fn label(kind: RouteType) -> &'static str {
+    match kind {
+        RouteType::Send => "SENDS",
+        RouteType::Receive => "RECEIVES",
+        RouteType::HardwareOutput => "OUTPUTS",
+    }
+}
+
 /// What to call the other end of a route.
 ///
 /// The guid that is not this track's, resolved to a name — falling back
@@ -659,10 +714,18 @@ fn far_end(
     mine: &str,
     names: &dyn Fn(&str) -> Option<String>,
 ) -> String {
+    if route.route_type == daw_proto::routing::RouteType::HardwareOutput {
+        // No track at the far end — an output pair on the interface,
+        // which REAPER names itself.
+        return route
+            .hw_output_name
+            .clone()
+            .or_else(|| route.hw_output_index.map(|index| format!("output {index}")))
+            .unwrap_or_else(|| "—".to_owned());
+    }
     crate::routes::partner(route, mine)
         .and_then(names)
         .or_else(|| route.dest_track_name.clone())
-        .or_else(|| route.hw_output_name.clone())
         .unwrap_or_else(|| "—".to_owned())
 }
 
@@ -753,24 +816,35 @@ fn marker(
 #[cfg(test)]
 mod tests {
     use super::{
-        Line, MOST_VISIBLE, Part, Pick, Spot, anchored, column, height, level_at, lines,
-        most_scroll, next_mode, pick_at, picker_lines, spot_at,
+        Counts, Line, MOST_VISIBLE, Part, Pick, RouteType, Spot, anchored, column, height,
+        level_at, lines, most_scroll, next_mode, pick_at, picker_lines, spot_at,
     };
+
+    /// A track with this many of each.
+    const fn counts(sends: usize, hardware: usize, receives: usize) -> Counts {
+        Counts {
+            sends,
+            hardware,
+            receives,
+        }
+    }
 
     /// The lines are the panel: a heading with nothing under it says
     /// so, rather than leaving a gap that reads as a failed load.
     #[test]
     fn an_empty_list_says_nothing_rather_than_showing_nothing() {
-        let lines = lines(0, 0);
+        let lines = lines(counts(0, 0, 0));
         assert_eq!(
             lines,
             vec![
                 Line::Title,
                 Line::Parent,
-                Line::SendsLabel,
+                Line::Label(RouteType::Send),
                 Line::Nothing,
                 Line::AddSend,
-                Line::ReceivesLabel,
+                Line::Label(RouteType::HardwareOutput),
+                Line::Nothing,
+                Line::Label(RouteType::Receive),
                 Line::Nothing,
             ]
         );
@@ -780,20 +854,25 @@ mod tests {
     /// list — a receive is not "send 3".
     #[test]
     fn each_list_is_numbered_from_its_own_top() {
-        let lines = lines(2, 1);
-        assert_eq!(lines[3], Line::Send(0));
-        assert_eq!(lines[4], Line::Send(1));
+        let lines = lines(counts(2, 1, 1));
+        let route = |kind, at| Line::Route { kind, at };
+        assert_eq!(lines[3], route(RouteType::Send, 0));
+        assert_eq!(lines[4], route(RouteType::Send, 1));
         // The way to make another comes after the ones there are, and
-        // before the receives — it is part of the sends.
+        // before the next list — it is part of the sends.
         assert_eq!(lines[5], Line::AddSend);
-        assert_eq!(lines[7], Line::Receive(0));
+        assert_eq!(lines[6], Line::Label(RouteType::HardwareOutput));
+        assert_eq!(lines[7], route(RouteType::HardwareOutput, 0));
+        assert_eq!(lines[8], Line::Label(RouteType::Receive));
+        assert_eq!(lines[9], route(RouteType::Receive, 0));
     }
 
     /// Every part of a send row is hit where it is drawn. The whole
     /// point of one column table read by both.
     #[test]
     fn a_send_control_is_hit_where_it_is_drawn() {
-        let panel = anchored((0.0, 0.0), (1920.0, 1080.0), lines(1, 0).len());
+        let counts = counts(1, 0, 0);
+        let panel = anchored((0.0, 0.0), (1920.0, 1080.0), lines(counts).len());
         let row = super::row(panel, 3);
         for part in [
             Part::Name,
@@ -804,10 +883,14 @@ mod tests {
             Part::Remove,
         ] {
             let cell = column(row, part);
-            let hit = spot_at(panel, 1, 0, cell.x0 + 1.0, cell.y0 + 1.0);
+            let hit = spot_at(panel, counts, cell.x0 + 1.0, cell.y0 + 1.0);
             assert_eq!(
                 hit,
-                Some(Spot::Send { index: 0, part }),
+                Some(Spot::Route {
+                    kind: RouteType::Send,
+                    at: 0,
+                    part
+                }),
                 "{part:?} was not hit in its own cell"
             );
         }
@@ -817,11 +900,12 @@ mod tests {
     #[test]
     fn outside_is_nobodys() {
         let panel = anchored((100.0, 100.0), (1920.0, 1080.0), 6);
-        assert_eq!(spot_at(panel, 0, 0, 99.0, 150.0), None);
-        assert_eq!(spot_at(panel, 0, 0, 150.0, 99.0), None);
+        let empty = counts(0, 0, 0);
+        assert_eq!(spot_at(panel, empty, 99.0, 150.0), None);
+        assert_eq!(spot_at(panel, empty, 150.0, 99.0), None);
         // But a press on a heading inside it IS the panel's, or it
         // would fall through and close the thing it landed on.
-        assert_eq!(spot_at(panel, 0, 0, 150.0, 150.0), Some(Spot::Nowhere));
+        assert_eq!(spot_at(panel, empty, 150.0, 150.0), Some(Spot::Nowhere));
     }
 
     /// Opened near an edge, the panel comes back inside it. The
@@ -845,7 +929,7 @@ mod tests {
     /// re-bless.
     #[test]
     fn a_panel_with_sends_in_it_draws_more_than_an_empty_one() {
-        use daw_proto::routing::{RouteType, TrackRoute};
+        use daw_proto::routing::TrackRoute;
 
         let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
         let font = crate::text::Font::embedded().expect("the embedded font");
@@ -858,11 +942,17 @@ mod tests {
         let wiring = crate::routes::Wiring {
             sends: vec![send("VERB"), send("DELAY")],
             receives: vec![send("BUS")],
+            hardware: vec![TrackRoute {
+                route_type: RouteType::HardwareOutput,
+                hw_output_index: Some(2),
+                hw_output_name: Some("Out 3/4".to_owned()),
+                ..TrackRoute::default()
+            }],
         };
 
         let drawn = |wiring: Option<&crate::routes::Wiring>| {
-            let (sends, receives) = wiring.map_or((0, 0), |w| (w.sends.len(), w.receives.len()));
-            let panel = anchored((40.0, 40.0), (1920.0, 1080.0), lines(sends, receives).len());
+            let counts = Counts::of_wiring(wiring);
+            let panel = anchored((40.0, 40.0), (1920.0, 1080.0), lines(counts).len());
             let mut scene = anyrender::Scene::new();
             super::paint(
                 &mut scene,
@@ -916,6 +1006,72 @@ mod tests {
         assert_eq!(most_scroll(MOST_VISIBLE + 5), 5);
     }
 
+    /// A receive is editable, and its mode is not: the service sets a
+    /// mode on the track that owns the send, so a receive's belongs to
+    /// the far end. It is drawn all the same — what a route is tapped
+    /// from is worth knowing where you are reading it.
+    #[test]
+    fn a_receive_takes_every_control_but_the_mode() {
+        let counts = counts(0, 0, 1);
+        let panel = anchored((0.0, 0.0), (1920.0, 1080.0), lines(counts).len());
+        let line = lines(counts)
+            .iter()
+            .position(|l| {
+                *l == Line::Route {
+                    kind: RouteType::Receive,
+                    at: 0,
+                }
+            })
+            .expect("a receive row");
+        let row = super::row(panel, line);
+        for part in [Part::Mute, Part::Level, Part::Pan, Part::Remove] {
+            let cell = column(row, part);
+            assert_eq!(
+                spot_at(panel, counts, cell.x0 + 1.0, cell.y0 + 1.0),
+                Some(Spot::Route {
+                    kind: RouteType::Receive,
+                    at: 0,
+                    part
+                }),
+                "{part:?} did not answer on a receive"
+            );
+        }
+        let mode = column(row, Part::Mode);
+        assert_eq!(
+            spot_at(panel, counts, mode.x0 + 1.0, mode.y0 + 1.0),
+            Some(Spot::Nowhere),
+            "a receive's mode answered a click"
+        );
+    }
+
+    /// Three lists, three numberings: send 0, output 0 and receive 0
+    /// are three different routes, and a hit says which.
+    #[test]
+    fn each_list_is_hit_as_its_own_kind() {
+        let counts = counts(1, 1, 1);
+        let panel = anchored((0.0, 0.0), (1920.0, 1080.0), lines(counts).len());
+        for kind in [
+            RouteType::Send,
+            RouteType::HardwareOutput,
+            RouteType::Receive,
+        ] {
+            let line = lines(counts)
+                .iter()
+                .position(|l| *l == Line::Route { kind, at: 0 })
+                .expect("a row for every kind");
+            let cell = column(super::row(panel, line), Part::Level);
+            assert_eq!(
+                spot_at(panel, counts, cell.x0 + 1.0, cell.y0 + 1.0),
+                Some(Spot::Route {
+                    kind,
+                    at: 0,
+                    part: Part::Level
+                }),
+                "{kind:?} was hit as something else"
+            );
+        }
+    }
+
     /// The modes cycle, and they come back.
     #[test]
     fn the_modes_are_a_ring() {
@@ -927,7 +1083,7 @@ mod tests {
     /// A level drag is the fader's scale, and it stops at both ends.
     #[test]
     fn a_level_drag_stays_between_silence_and_the_top() {
-        let panel = anchored((0.0, 0.0), (1920.0, 1080.0), lines(1, 0).len());
+        let panel = anchored((0.0, 0.0), (1920.0, 1080.0), lines(counts(1, 0, 0)).len());
         let cell = column(super::row(panel, 3), Part::Level);
         let quiet = level_at(cell, cell.x0 - 500.0);
         let loud = level_at(cell, cell.x1 + 500.0);

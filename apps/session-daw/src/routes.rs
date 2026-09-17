@@ -26,6 +26,25 @@ use std::sync::{Arc, Mutex};
 
 use daw_proto::routing::{RouteType, RoutingEvent, TrackRoute};
 
+/// Where a route is: which of a track's three lists, and where in it.
+///
+/// The number is REAPER's, and it is only unique WITHIN its list — a
+/// track can have send 0, receive 0 and hardware output 0 at once, and
+/// three different things they are. Carrying the kind beside the number
+/// is what stops an edit landing on the wrong one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct At {
+    pub kind: RouteType,
+    pub index: u32,
+}
+
+impl At {
+    #[must_use]
+    pub const fn new(kind: RouteType, index: u32) -> Self {
+        Self { kind, index }
+    }
+}
+
 /// One track's routing, as the panel draws it.
 ///
 /// No `PartialEq`: `TrackRoute` has none, and comparing two wirings is
@@ -35,11 +54,38 @@ use daw_proto::routing::{RouteType, RoutingEvent, TrackRoute};
 pub struct Wiring {
     /// Where this track sends, in REAPER's own order.
     pub sends: Vec<TrackRoute>,
-    /// What sends to this track. Not editable from here: a receive is
-    /// the far end of somebody else's send, and the thing that owns it
-    /// is that send. Shown because "who is feeding this?" is the
-    /// question you have when a track is louder than it should be.
+    /// What sends to this track.
+    ///
+    /// Editable here, and it is the same route the far track's send
+    /// is: REAPER keeps one object and lists it at both ends, so
+    /// turning a receive down turns that send down. Worth knowing, and
+    /// worth having — "this is too loud coming in" is answered where
+    /// you noticed it rather than by going to find the track it came
+    /// from.
     pub receives: Vec<TrackRoute>,
+    /// Where the track leaves the box: an output pair on the interface.
+    ///
+    /// A cue mix is one of these on a headphone bus, so a panel that
+    /// showed sends and not these could describe half a cue system.
+    pub hardware: Vec<TrackRoute>,
+}
+
+impl Wiring {
+    /// The list a kind of route lives in.
+    #[must_use]
+    pub fn list(&self, kind: RouteType) -> &[TrackRoute] {
+        match kind {
+            RouteType::Send => &self.sends,
+            RouteType::Receive => &self.receives,
+            RouteType::HardwareOutput => &self.hardware,
+        }
+    }
+
+    /// One route, by where it is.
+    #[must_use]
+    pub fn at(&self, at: At) -> Option<&TrackRoute> {
+        self.list(at.kind).iter().find(|r| r.index == at.index)
+    }
 }
 
 /// Who is at the far end of a route, from the point of view of one
@@ -135,14 +181,18 @@ impl Routes {
     /// trip is a fader that lags, and the correction is coming either
     /// way. `None` if that send is not held — nothing to predict into,
     /// and the read that lands will be right.
-    pub fn predict(&self, guid: &str, index: u32, change: impl FnOnce(&mut TrackRoute)) {
+    pub fn predict(&self, guid: &str, at: At, change: impl FnOnce(&mut TrackRoute)) {
         let Ok(mut known) = self.known.lock() else {
             return;
         };
-        if let Some(route) = known
-            .get_mut(guid)
-            .and_then(|wiring| wiring.sends.iter_mut().find(|r| r.index == index))
-        {
+        if let Some(route) = known.get_mut(guid).and_then(|wiring| {
+            let list = match at.kind {
+                RouteType::Send => &mut wiring.sends,
+                RouteType::Receive => &mut wiring.receives,
+                RouteType::HardwareOutput => &mut wiring.hardware,
+            };
+            list.iter_mut().find(|r| r.index == at.index)
+        }) {
             change(route);
             self.fresh.store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -276,11 +326,7 @@ fn field(
     let list = match route_type {
         RouteType::Send => &mut wiring.sends,
         RouteType::Receive => &mut wiring.receives,
-        // Hardware outputs are real routing, and nothing here draws
-        // them yet. Reported as nothing rather than held, so the day
-        // something does draw them it is a change to this line and not
-        // a silent list that was being kept all along.
-        RouteType::HardwareOutput => return Applied::Nothing,
+        RouteType::HardwareOutput => &mut wiring.hardware,
     };
     match list.iter_mut().find(|r| r.index == index) {
         Some(route) => {
@@ -302,6 +348,7 @@ async fn read(project: &daw_control::Project, guid: &str) -> Wiring {
     Wiring {
         sends: track.sends().all().await.unwrap_or_default(),
         receives: track.receives().all().await.unwrap_or_default(),
+        hardware: track.hardware_outputs().all().await.unwrap_or_default(),
     }
 }
 
@@ -329,6 +376,7 @@ mod tests {
             Wiring {
                 sends: vec![send(0, "verb"), send(1, "delay")],
                 receives: Vec::new(),
+                hardware: Vec::new(),
             },
         );
         known
@@ -422,7 +470,7 @@ mod tests {
         assert!(routes.get("quiet").is_none());
         routes.put("quiet", Wiring::default());
         let read = routes.get("quiet").expect("read, and it has none");
-        assert!(read.sends.is_empty() && read.receives.is_empty());
+        assert!(read.sends.is_empty() && read.receives.is_empty() && read.hardware.is_empty());
     }
 
     /// A prediction moves the send the gesture is on, and marks the
@@ -435,10 +483,13 @@ mod tests {
             Wiring {
                 sends: vec![send(0, "verb"), send(1, "delay")],
                 receives: Vec::new(),
+                hardware: Vec::new(),
             },
         );
         assert!(routes.take_fresh());
-        routes.predict("src", 1, |route| route.volume = 0.25);
+        routes.predict("src", super::At::new(RouteType::Send, 1), |route| {
+            route.volume = 0.25
+        });
         assert!(routes.take_fresh(), "the frame was not told to redraw");
         let wiring = routes.get("src").expect("held");
         assert!((wiring.sends[1].volume - 0.25).abs() < 1e-9);
@@ -450,7 +501,9 @@ mod tests {
     #[test]
     fn a_prediction_into_nothing_is_nothing() {
         let routes = Routes::default();
-        routes.predict("absent", 0, |route| route.volume = 0.25);
+        routes.predict("absent", super::At::new(RouteType::Send, 0), |route| {
+            route.volume = 0.25
+        });
         assert!(!routes.take_fresh());
         assert!(routes.get("absent").is_none());
     }
