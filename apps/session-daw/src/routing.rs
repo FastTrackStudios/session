@@ -50,6 +50,8 @@ pub enum Line {
     SendsLabel,
     /// One send, by its position in the list.
     Send(usize),
+    /// The way to make another one.
+    AddSend,
     /// The `RECEIVES` heading.
     ReceivesLabel,
     /// One receive, by its position in the list.
@@ -85,6 +87,8 @@ pub enum Spot {
     Close,
     /// The parent-send toggle.
     Parent,
+    /// The row that opens the list of somewhere to send to.
+    AddSend,
     /// A part of one of the sends.
     Send { index: usize, part: Part },
     /// A receive — nothing to press yet, but a press on one must not
@@ -106,6 +110,7 @@ pub fn lines(sends: usize, receives: usize) -> Vec<Line> {
         lines.push(Line::Nothing);
     }
     lines.extend((0..sends).map(Line::Send));
+    lines.push(Line::AddSend);
     lines.push(Line::ReceivesLabel);
     if receives == 0 {
         lines.push(Line::Nothing);
@@ -188,6 +193,7 @@ pub fn spot_at(panel: Rect, sends: usize, receives: usize, x: f64, y: f64) -> Op
             }
         }
         Line::Parent => Spot::Parent,
+        Line::AddSend => Spot::AddSend,
         Line::Send(index) => match part_at(row, x) {
             Some(part) => Spot::Send { index, part },
             None => Spot::Nowhere,
@@ -343,6 +349,15 @@ pub fn paint(
                     SIZE,
                 );
             }
+            Line::AddSend => crate::tcp::glyphs(
+                painter,
+                font,
+                palette.accent,
+                "+ send to…",
+                row.x0 + 8.0,
+                text_y,
+                SIZE,
+            ),
             Line::SendsLabel | Line::ReceivesLabel => {
                 let label = if *line == Line::SendsLabel {
                     "SENDS"
@@ -470,6 +485,150 @@ pub fn paint(
     }
 }
 
+// ─── Somewhere to send to ───────────────────────────────────────────
+
+/// How many tracks the picker shows at once.
+///
+/// A session has hundreds and a list of hundreds is not a list, it is a
+/// scroll. Twelve is what fits on a laptop screen under a panel opened
+/// halfway down it — past that the picker would have to be placed
+/// against the window rather than against the thing that opened it.
+pub const MOST_VISIBLE: usize = 12;
+
+/// What the pointer is on in the picker.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pick {
+    /// One of the tracks shown, by its place in the candidate list —
+    /// the scroll is already counted in.
+    Track(usize),
+    /// Back to the panel without picking anything.
+    Close,
+    /// Inside it, on nothing.
+    Nowhere,
+}
+
+/// How many lines a picker over this many candidates has.
+///
+/// The title, then the tracks it can show.
+#[must_use]
+pub fn picker_lines(candidates: usize) -> usize {
+    1 + candidates.min(MOST_VISIBLE).max(1)
+}
+
+/// What is under a point in the picker.
+#[must_use]
+pub fn pick_at(panel: Rect, candidates: usize, scroll: usize, x: f64, y: f64) -> Option<Pick> {
+    if x < panel.x0 || x >= panel.x1 || y < panel.y0 || y >= panel.y1 {
+        return None;
+    }
+    let index = ((y - panel.y0 - PAD) / ROW_H).floor();
+    if index < 0.0 {
+        return Some(Pick::Nowhere);
+    }
+    let line = crate::num::index(index);
+    if line == 0 {
+        let row = row(panel, 0);
+        return Some(if x >= row.x1 - ROW_H {
+            Pick::Close
+        } else {
+            Pick::Nowhere
+        });
+    }
+    let at = scroll + line - 1;
+    Some(if at < candidates && line <= MOST_VISIBLE {
+        Pick::Track(at)
+    } else {
+        Pick::Nowhere
+    })
+}
+
+/// How far a picker can be scrolled down.
+#[must_use]
+pub const fn most_scroll(candidates: usize) -> usize {
+    candidates.saturating_sub(MOST_VISIBLE)
+}
+
+/// Draw the list of somewhere to send to.
+pub fn paint_picker(
+    painter: &mut impl anyrender::PaintScene,
+    palette: &crate::arrangement::Palette,
+    font: &crate::text::Font,
+    candidates: &[String],
+    scroll: usize,
+    panel: Rect,
+) {
+    const SIZE: f32 = 9.0;
+    fill(painter, palette.surface, panel);
+    fill(
+        painter,
+        palette.accent,
+        Rect::new(panel.x0, panel.y0, panel.x1, panel.y0 + 2.0),
+    );
+    let title = row(panel, 0);
+    let text_y = title.y0 + ROW_H / 2.0 + f64::from(SIZE) / 3.0;
+    crate::tcp::glyphs(
+        painter,
+        font,
+        palette.text,
+        "SEND TO",
+        title.x0,
+        text_y,
+        10.0,
+    );
+    crate::tcp::glyphs(
+        painter,
+        font,
+        palette.text_dim,
+        "×",
+        title.x1 - ROW_H / 2.0,
+        text_y,
+        11.0,
+    );
+    if candidates.is_empty() {
+        let row = row(panel, 1);
+        crate::tcp::glyphs(
+            painter,
+            font,
+            palette.text_faint,
+            "nowhere left to send",
+            row.x0 + 8.0,
+            row.y0 + ROW_H / 2.0 + f64::from(SIZE) / 3.0,
+            SIZE,
+        );
+        return;
+    }
+    for (line, name) in candidates
+        .iter()
+        .skip(scroll)
+        .take(MOST_VISIBLE)
+        .enumerate()
+    {
+        let row = row(panel, line + 1);
+        cell_text(
+            painter,
+            font,
+            palette.text,
+            Rect::new(row.x0 + 8.0, row.y0, row.x1, row.y1),
+            name,
+            SIZE,
+        );
+    }
+    // Said, not implied: a list showing twelve of forty with no sign of
+    // it is a list that looks complete and is not.
+    if candidates.len() > MOST_VISIBLE {
+        let last = row(panel, MOST_VISIBLE);
+        crate::tcp::glyphs(
+            painter,
+            font,
+            palette.text_faint,
+            &format!("{} of {}", scroll + MOST_VISIBLE, candidates.len()),
+            last.x1 - 52.0,
+            last.y1 - 2.0,
+            7.0,
+        );
+    }
+}
+
 /// Everything the panel draws, gathered by the caller.
 ///
 /// A borrow rather than the track itself: the panel is about ONE
@@ -593,7 +752,10 @@ fn marker(
 
 #[cfg(test)]
 mod tests {
-    use super::{Line, Part, Spot, anchored, column, height, level_at, lines, next_mode, spot_at};
+    use super::{
+        Line, MOST_VISIBLE, Part, Pick, Spot, anchored, column, height, level_at, lines,
+        most_scroll, next_mode, pick_at, picker_lines, spot_at,
+    };
 
     /// The lines are the panel: a heading with nothing under it says
     /// so, rather than leaving a gap that reads as a failed load.
@@ -607,6 +769,7 @@ mod tests {
                 Line::Parent,
                 Line::SendsLabel,
                 Line::Nothing,
+                Line::AddSend,
                 Line::ReceivesLabel,
                 Line::Nothing,
             ]
@@ -620,7 +783,10 @@ mod tests {
         let lines = lines(2, 1);
         assert_eq!(lines[3], Line::Send(0));
         assert_eq!(lines[4], Line::Send(1));
-        assert_eq!(lines[6], Line::Receive(0));
+        // The way to make another comes after the ones there are, and
+        // before the receives — it is part of the sends.
+        assert_eq!(lines[5], Line::AddSend);
+        assert_eq!(lines[7], Line::Receive(0));
     }
 
     /// Every part of a send row is hit where it is drawn. The whole
@@ -720,6 +886,34 @@ mod tests {
             drawn(Some(&wiring)) > empty,
             "two sends and a receive drew no more than an empty panel"
         );
+    }
+
+    /// The picker shows what it can and says how much it is not
+    /// showing; a click lands on the track it drew, scroll included.
+    #[test]
+    fn the_picker_counts_the_scroll_into_what_was_clicked() {
+        let panel = anchored((0.0, 0.0), (1920.0, 1080.0), picker_lines(40));
+        // The first row under the title, scrolled down by ten.
+        let row = super::row(panel, 1);
+        assert_eq!(
+            pick_at(panel, 40, 10, row.x0 + 4.0, row.y0 + 4.0),
+            Some(Pick::Track(10))
+        );
+        // Past the last one it drew is nothing, not the next track.
+        let past = super::row(panel, MOST_VISIBLE + 1);
+        assert!(matches!(
+            pick_at(panel, 40, 10, past.x0 + 4.0, past.y0 + 4.0),
+            Some(Pick::Nowhere) | None
+        ));
+    }
+
+    /// A short list does not scroll, and a long one stops with its last
+    /// track on screen rather than scrolling into empty space.
+    #[test]
+    fn a_picker_stops_scrolling_at_its_last_track() {
+        assert_eq!(most_scroll(3), 0);
+        assert_eq!(most_scroll(MOST_VISIBLE), 0);
+        assert_eq!(most_scroll(MOST_VISIBLE + 5), 5);
     }
 
     /// The modes cycle, and they come back.
