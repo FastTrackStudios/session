@@ -72,20 +72,18 @@ pub fn ReferencePage() -> Element {
                 }
             }
 
-            if let Some(reference) = reference() {
+            if reference().is_some() {
                 Player { reference }
             }
         }
     }
 }
 
-/// The player, and the loop that keeps it in step.
+/// The player, the loop that keeps it in step, and the two marks that
+/// line it up.
 #[component]
-fn Player(reference: Reference) -> Element {
-    // The id is copied out rather than borrowed: the sync loop below
-    // owns the reference for as long as the component lives, and a
-    // borrow held across that would outlive the frame it was taken in.
-    let Source::Youtube(id) = reference.source.clone() else {
+fn Player(reference: Signal<Option<Reference>>) -> Element {
+    let Some(Source::Youtube(id)) = reference().map(|r| r.source) else {
         return rsx! {
             p { "Only YouTube is wired up so far." }
         };
@@ -96,6 +94,15 @@ fn Player(reference: Reference) -> Element {
     // does not care where the number comes from.
     let session_at = use_signal(|| 0.0_f64);
     let rolling = use_signal(|| false);
+
+    // The player's own position, as of the last tick. Kept because the
+    // marking gesture needs it: "that, there, is this, here" is asked
+    // about where the video IS, and asking the player again at the
+    // moment of the click would answer a tenth of a second later than
+    // the thing the person was pointing at.
+    let mut player_at = use_signal(|| 0.0_f64);
+    // The first of two marks, waiting for its pair.
+    let mut pending = use_signal(|| None::<(f64, f64)>);
 
     // Hand the player to the API once the frame exists. The API calls
     // back a global when it has loaded, which may be before or after
@@ -109,34 +116,33 @@ fn Player(reference: Reference) -> Element {
     // asked across a frame boundary and the tolerance is eighty
     // milliseconds, so a faster loop would ask more often than the
     // answer can change.
-    use_future(move || {
-        let reference = reference.clone();
-        async move {
-            loop {
-                // The wasm-cfg-split seam: browser timers here, tokio
-                // on native, so this loop is the same code either way.
-                architect::platform::sleep(std::time::Duration::from_millis(100)).await;
-                let Ok(state) = dioxus::document::eval(READ).await else {
-                    continue;
-                };
-                let (at, playing) = match state.as_str() {
-                    Some(text) => match text.split_once('|') {
-                        Some((at, playing)) => (at.parse::<f64>().unwrap_or(0.0), playing == "1"),
-                        None => continue,
-                    },
+    use_future(move || async move {
+        loop {
+            // The wasm-cfg-split seam: browser timers here, tokio
+            // on native, so this loop is the same code either way.
+            architect::platform::sleep(std::time::Duration::from_millis(100)).await;
+            let Ok(state) = dioxus::document::eval(READ).await else {
+                continue;
+            };
+            let (at, playing) = match state.as_str() {
+                Some(text) => match text.split_once('|') {
+                    Some((at, playing)) => (at.parse::<f64>().unwrap_or(0.0), playing == "1"),
                     None => continue,
-                };
-                let command = next_command(&reference, session_at(), rolling(), at, playing);
-                let js = match command {
-                    Command::Seek(to) => format!("window.ftsReference?.seekTo({to}, true);"),
-                    Command::Play => "window.ftsReference?.playVideo();".to_owned(),
-                    Command::Pause => "window.ftsReference?.pauseVideo();".to_owned(),
-                    // The common case, and it must cost nothing: a
-                    // player nudged every tick stutters.
-                    Command::Nothing => continue,
-                };
-                let _ = dioxus::document::eval(&js);
-            }
+                },
+                None => continue,
+            };
+            player_at.set(at);
+            let Some(current) = reference() else { continue };
+            let command = next_command(&current, session_at(), rolling(), at, playing);
+            let js = match command {
+                Command::Seek(to) => format!("window.ftsReference?.seekTo({to}, true);"),
+                Command::Play => "window.ftsReference?.playVideo();".to_owned(),
+                Command::Pause => "window.ftsReference?.pauseVideo();".to_owned(),
+                // The common case, and it must cost nothing: a
+                // player nudged every tick stutters.
+                Command::Nothing => continue,
+            };
+            let _ = dioxus::document::eval(&js);
         }
     });
 
@@ -155,7 +161,50 @@ fn Player(reference: Reference) -> Element {
                 allow: "accelerometer; encrypted-media; picture-in-picture",
                 title: "Reference recording",
             }
+
+            // Two marks, one button. The first says where the recording
+            // starts against the session; the second says how fast it
+            // runs. Two buttons would imply an order you have to
+            // remember, and the order is the only thing about this
+            // gesture that matters.
+            div { class: "marks",
+                button {
+                    onclick: move |_| {
+                        let Some(current) = reference() else { return };
+                        let (lined, next) = mark(&current, pending(), (session_at(), player_at()));
+                        reference.set(Some(lined));
+                        pending.set(next);
+                    },
+                    if pending().is_some() { "Mark the second moment" } else { "Mark this moment" }
+                }
+                if let Some(reference) = reference() {
+                    p { class: "lined-up",
+                        "Session {reference.anchor:.3}s is {reference.from:.3}s in, "
+                        "at {reference.rate:.4}×."
+                    }
+                }
+            }
         }
+    }
+}
+
+/// Fold a marked moment into the reference.
+///
+/// The first mark lines the recording up on that moment. The second
+/// gives it a rate and finishes the pair, so the next mark starts a new
+/// one — which is what makes a wrong mark cost one more click rather
+/// than a reset button nobody would find.
+///
+/// Each moment is `(session, recording)`.
+#[must_use]
+pub fn mark(
+    reference: &Reference,
+    pending: Option<(f64, f64)>,
+    moment: (f64, f64),
+) -> (Reference, Option<(f64, f64)>) {
+    match pending {
+        Some(first) => (reference.lined_up(first, moment), None),
+        None => (reference.aligned(moment.0, moment.1), Some(moment)),
     }
 }
 
@@ -216,7 +265,7 @@ pub fn next_command(
 
 #[cfg(test)]
 mod tests {
-    use super::next_command;
+    use super::{mark, next_command};
     use session::reference::{Command, Reference, Source};
 
     fn video() -> Reference {
@@ -239,5 +288,40 @@ mod tests {
         assert_eq!(next_command(&r, 4.0, true, 30.0, true), Command::Nothing);
         // Session stopped: stop first, whatever else is true.
         assert_eq!(next_command(&r, 4.0, false, 999.0, true), Command::Pause);
+    }
+
+    /// One mark lines the recording up on that moment and waits for its
+    /// pair; the pair gives the rate and finishes.
+    #[test]
+    fn two_marks_line_the_recording_up_and_set_its_rate() {
+        let first = Reference::new(Source::Youtube("dQw4w9WgXcQ".into()));
+        let (lined, pending) = mark(&first, None, (0.0, 10.0));
+        assert_eq!(pending, Some((0.0, 10.0)));
+        assert_eq!(
+            next_command(&lined, 0.0, true, 0.0, false),
+            Command::Seek(10.0)
+        );
+
+        let (lined, pending) = mark(&lined, pending, (100.0, 210.0));
+        assert_eq!(pending, None, "the pair is finished");
+        assert!((lined.rate - 2.0).abs() < 1e-9, "rate was {}", lined.rate);
+        // Halfway through the session is halfway through the span.
+        assert_eq!(
+            next_command(&lined, 50.0, true, 0.0, false),
+            Command::Seek(110.0)
+        );
+    }
+
+    /// A third mark starts a new pair rather than adding to the old
+    /// one, which is how a mark in the wrong place is undone.
+    #[test]
+    fn a_third_mark_starts_over() {
+        let r = video();
+        let (_, pending) = mark(&r, None, (0.0, 10.0));
+        let (r, pending) = mark(&r, pending, (100.0, 210.0));
+        let (r, pending) = mark(&r, pending, (8.0, 60.0));
+        assert_eq!(pending, Some((8.0, 60.0)));
+        assert!((r.anchor - 8.0).abs() < 1e-9);
+        assert!((r.from - 60.0).abs() < 1e-9);
     }
 }

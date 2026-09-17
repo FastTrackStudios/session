@@ -128,6 +128,32 @@ impl Reference {
         (reference - self.from) / rate + self.anchor
     }
 
+    /// Line the recording up from two moments, taking the rate from
+    /// the distance between them.
+    ///
+    /// One point says where the recording starts; two say how fast it
+    /// runs. It is the same gesture twice — "that, there, is this,
+    /// here" — and it is how a reference recorded a few percent off, or
+    /// one somebody re-recorded at a different tempo, is made to hold
+    /// for a whole song instead of drifting out by the last chorus.
+    ///
+    /// Each point is `(session, recording)`. Two points that give no
+    /// usable rate — the same moment twice, or one that runs backwards
+    /// — keep the rate there was and anchor on the first, which is
+    /// exactly [`Self::aligned`] on that point. A rate of zero would
+    /// park the recording forever and a negative one would run it
+    /// backwards, and neither is a thing anybody meant to ask for.
+    #[must_use]
+    pub fn lined_up(&self, first: (f64, f64), second: (f64, f64)) -> Self {
+        let (session, recording) = (second.0 - first.0, second.1 - first.1);
+        let rate = recording / session;
+        let usable = session.abs() > f64::EPSILON && rate.is_finite() && rate > 0.0;
+        Self {
+            rate: if usable { rate } else { self.rate },
+            ..self.aligned(first.0, first.1)
+        }
+    }
+
     /// Line the recording up so `session` and `reference` are the same
     /// moment, keeping the rate.
     ///
@@ -494,10 +520,206 @@ mod storage_tests {
         }
     }
 
+    /// Two points give a rate, and the rate is what makes the second
+    /// point land where it was put — not just the first.
+    #[test]
+    fn two_moments_give_the_recording_a_rate() {
+        let r = Reference::new(Source::Youtube("dQw4w9WgXcQ".into()))
+            .lined_up((0.0, 10.0), (100.0, 210.0));
+        assert!((r.rate - 2.0).abs() < 1e-9, "rate was {}", r.rate);
+        assert!((r.at(0.0) - 10.0).abs() < 1e-9);
+        assert!((r.at(100.0) - 210.0).abs() < 1e-9);
+        // And halfway through the session is halfway through the span.
+        assert!((r.at(50.0) - 110.0).abs() < 1e-9);
+    }
+
+    /// The same moment marked twice is one point, not a division by
+    /// zero: it anchors and keeps the rate it had.
+    #[test]
+    fn a_second_point_on_top_of_the_first_is_just_the_first() {
+        let original = Reference::new(Source::Youtube("dQw4w9WgXcQ".into()));
+        let r = original.lined_up((4.0, 30.0), (4.0, 30.0));
+        assert!((r.rate - original.rate).abs() < 1e-9);
+        assert_eq!(r, original.aligned(4.0, 30.0));
+    }
+
+    /// A second point EARLIER in the recording than the first would run
+    /// it backwards. It is refused the same way.
+    #[test]
+    fn a_backwards_pair_keeps_the_rate_it_had() {
+        let r = Reference::new(Source::Youtube("dQw4w9WgXcQ".into()))
+            .lined_up((10.0, 60.0), (20.0, 30.0));
+        assert!((r.rate - 1.0).abs() < 1e-9, "rate was {}", r.rate);
+        assert!((r.at(10.0) - 60.0).abs() < 1e-9);
+    }
+
     /// A stored rate of zero reads as one rather than dividing by it.
     #[test]
     fn a_stored_rate_of_zero_is_one() {
         let r = Reference::from_stored("youtube|abc12345678|0|0|0").expect("readable");
         assert!((r.rate - 1.0).abs() < 1e-9);
+    }
+}
+
+/// The project's reference, if it has one.
+///
+/// Anything unreadable comes back as `None` — the same answer as "no
+/// reference". A project written by a later version, or hand-edited,
+/// should open with no reference rather than one pointing somewhere
+/// nobody chose.
+#[must_use]
+pub fn read<E: daw::service::ExtState>(
+    ext: &E,
+    project: daw::service::ProjectContext,
+) -> Option<Reference> {
+    ext.get_project(project, SECTION, KEY)
+        .as_deref()
+        .and_then(Reference::from_stored)
+}
+
+/// Keep this reference with the project: one write.
+///
+/// # Errors
+///
+/// Whatever the backend's `set_project` returns — a project that no
+/// longer resolves, most likely.
+pub fn write<E: daw::service::ExtState>(
+    ext: &E,
+    project: daw::service::ProjectContext,
+    reference: &Reference,
+) -> daw_proto::DawResult<()> {
+    ext.set_project(project, SECTION, KEY, &reference.stored())
+}
+
+/// Drop it.
+///
+/// A separate call rather than writing an empty value, because an empty
+/// value is a stored reference that reads as `None` — and the next
+/// person to look at the `.RPP` cannot tell the two apart.
+///
+/// # Errors
+///
+/// Whatever the backend's `delete_project` returns.
+pub fn forget<E: daw::service::ExtState>(
+    ext: &E,
+    project: daw::service::ProjectContext,
+) -> daw_proto::DawResult<()> {
+    ext.delete_project(project, SECTION, KEY)
+}
+
+#[cfg(test)]
+mod stored_in_the_project {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    use daw::service::{ExtState, ProjectContext};
+    use daw_proto::DawResult;
+
+    use super::{Reference, Source, forget, read, write};
+
+    /// Project-scoped keys only, which is all a reference ever touches.
+    #[derive(Default)]
+    struct Fake {
+        project: Mutex<HashMap<(String, String), String>>,
+    }
+
+    impl ExtState for Fake {
+        fn get(&self, _section: &str, _key: &str) -> Option<String> {
+            None
+        }
+        fn set(&self, _section: &str, _key: &str, _value: &str, _persist: bool) -> DawResult<()> {
+            Ok(())
+        }
+        fn delete(&self, _section: &str, _key: &str, _persist: bool) -> DawResult<()> {
+            Ok(())
+        }
+        fn has(&self, _section: &str, _key: &str) -> bool {
+            false
+        }
+        fn get_project(
+            &self,
+            _project: ProjectContext,
+            section: &str,
+            key: &str,
+        ) -> Option<String> {
+            self.project
+                .lock()
+                .expect("lock")
+                .get(&(section.to_owned(), key.to_owned()))
+                .cloned()
+        }
+        fn set_project(
+            &self,
+            _project: ProjectContext,
+            section: &str,
+            key: &str,
+            value: &str,
+        ) -> DawResult<()> {
+            self.project
+                .lock()
+                .expect("lock")
+                .insert((section.to_owned(), key.to_owned()), value.to_owned());
+            Ok(())
+        }
+        fn delete_project(
+            &self,
+            _project: ProjectContext,
+            section: &str,
+            key: &str,
+        ) -> DawResult<()> {
+            self.project
+                .lock()
+                .expect("lock")
+                .remove(&(section.to_owned(), key.to_owned()));
+            Ok(())
+        }
+        fn has_project(&self, _project: ProjectContext, section: &str, key: &str) -> bool {
+            self.project
+                .lock()
+                .expect("lock")
+                .contains_key(&(section.to_owned(), key.to_owned()))
+        }
+    }
+
+    fn lined_up() -> Reference {
+        Reference::new(Source::Youtube("dQw4w9WgXcQ".into())).aligned(4.0, 30.0)
+    }
+
+    /// A project nobody has put a reference on has none.
+    #[test]
+    fn an_untouched_project_has_no_reference() {
+        assert_eq!(read(&Fake::default(), ProjectContext::Current), None);
+    }
+
+    /// The alignment survives the round trip, which is the whole point:
+    /// a reference that came back pointing at the start of the video
+    /// would have to be lined up again every time the session opened.
+    #[test]
+    fn what_goes_in_comes_back_lined_up() {
+        let ext = Fake::default();
+        let original = lined_up();
+        write(&ext, ProjectContext::Current, &original).expect("written");
+        assert_eq!(read(&ext, ProjectContext::Current), Some(original));
+    }
+
+    /// Nonsense in the project reads as no reference, not as a
+    /// reference to nowhere.
+    #[test]
+    fn something_unreadable_is_no_reference() {
+        let ext = Fake::default();
+        ext.set_project(ProjectContext::Current, super::SECTION, super::KEY, "junk")
+            .expect("written");
+        assert_eq!(read(&ext, ProjectContext::Current), None);
+    }
+
+    /// Forgetting removes the key rather than blanking it, so the file
+    /// says "no reference" and not "a reference that reads as none".
+    #[test]
+    fn forgetting_removes_the_key() {
+        let ext = Fake::default();
+        write(&ext, ProjectContext::Current, &lined_up()).expect("written");
+        forget(&ext, ProjectContext::Current).expect("forgotten");
+        assert!(!ext.has_project(ProjectContext::Current, super::SECTION, super::KEY));
+        assert_eq!(read(&ext, ProjectContext::Current), None);
     }
 }
