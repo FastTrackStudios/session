@@ -53,12 +53,35 @@ pub struct Opened {
 /// Parse the project, stand up its backend, install the facade, and
 /// start audio. Returns once the panels have something to read.
 pub fn open_and_serve(path: &Path) -> eyre::Result<Opened> {
+    open_with_audio(path, true)
+}
+
+/// The same, without opening an audio device.
+///
+/// For anything that draws a project and exits — a renderer, a
+/// screenshot, a fixture. It has nothing to play and no transport to
+/// run, and standing up an engine costs it a dependency on a working
+/// sound server that it does not otherwise have.
+///
+/// That is not hypothetical. `attach_audio` is written to treat failure
+/// as harmless, and it is — but cpal does not always FAIL when a host
+/// is unavailable; sometimes it enumerates, and enumeration can block
+/// for minutes on a busy machine. Three render tests timed out at ten
+/// minutes each on a box whose audio was working fine and merely busy,
+/// which is a long way to travel from "the picture is wrong".
+pub fn open_silent(path: &Path) -> eyre::Result<Opened> {
+    open_with_audio(path, false)
+}
+
+fn open_with_audio(path: &Path, audio: bool) -> eyre::Result<Opened> {
     let opened = parse(path)?;
     bootstrap(&opened.daw)?;
     opened
         .daw
         .set_meters(daw::standalone::metering::Meters::new(opened.track_count));
-    attach_audio(&opened);
+    if audio {
+        attach_audio(&opened);
+    }
     Ok(opened)
 }
 

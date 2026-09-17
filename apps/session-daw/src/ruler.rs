@@ -176,7 +176,7 @@ pub fn ruler(
     palette: &Palette,
     font: &Font,
     view: Viewport,
-    bars: Bars,
+    tempo: &[daw_ui::studio::project::TempoChange],
     origin: (f64, f64),
 ) {
     // The rails frame the view, so the ruler starts where they leave
@@ -197,31 +197,72 @@ pub fn ruler(
     // them and the lanes over that.
     let oy = oy + RULER_H - BARS_H;
 
-    let secs_per_bar = bars.secs_per_bar();
-    let bar_px = secs_per_bar * view.pps;
-    if bar_px <= 0.0 {
+    let (from, to) = view.secs();
+    // Every beat up to the right edge, counted through the tempo map
+    // rather than multiplied from one tempo. A number has to sit on the
+    // bar line it names, and after a tempo change a multiplied grid
+    // does not.
+    // How wide a bar is where the view starts. Asked BEFORE the walk,
+    // because a zoom far enough out makes a bar narrower than a pixel
+    // and there is then nothing to draw — and `view.secs()` at that
+    // zoom asks for a range measured in centuries, which is a walk
+    // that never returns.
+    let start = Bars::at_time(tempo, from.max(0.0));
+    let bar_px = start.secs_per_bar() * view.pps;
+    if bar_px < 2.0 {
         return;
     }
-    // Stepped in BEATS, because that is what the numbering counts: a
-    // bar is however many beats the signature says, and a step measured
-    // in bars can never land on beat three of four.
-    let every = step_beats(bar_px, bars.beats_per_bar);
+    let beats = Timeline::new(tempo).beats(to, MAX_BEATS);
+    let Some(first) = beats.first() else {
+        return;
+    };
+    // Measured at the start rather than averaged: a ruler whose
+    // spacing changed mid-screen would be harder to read than one
+    // slightly too dense at one end.
+    let every = step_beats(bar_px, f64::from(first.per_bar));
 
-    let (from, to) = view.secs();
-    // Stepped by an integer count rather than by adding a float to
-    // itself: over five hundred bars the accumulated error is visible,
-    // and the bar a number sits on has to be the bar its line is on.
-    let first = (from.max(0.0) / bars.secs_per_beat / every)
-        .floor()
-        .max(0.0);
-    for n in counts(MAX_LABELS) {
-        let beat = (first + n) * every;
-        let t = beat * bars.secs_per_beat;
-        if t > to {
-            break;
+    // Which beats get a number. Counted in beats from the start so the
+    // step lands on the same beats however far you scroll.
+    let mut since = 0.0_f64;
+    for (index, beat) in beats.iter().enumerate() {
+        if index > 0 {
+            since += 1.0;
         }
-        let x = t.mul_add(view.pps, TCP_WIDTH - view.scroll_x);
-        if x >= TCP_WIDTH - 1.0 && x <= view.width {
+        // A downbeat is always written when whole bars are the step;
+        // otherwise every `every` beats. Fractional steps subdivide
+        // between the beats, which the sub-beat loop below handles.
+        let on_step = if every >= 1.0 {
+            (since % every).abs() < 1e-6 || (since % every - every).abs() < 1e-6
+        } else {
+            true
+        };
+        if !on_step {
+            continue;
+        }
+        let ticks: Vec<(f64, f64)> = if every < 1.0 {
+            // Inside the beat: the beat itself and the fractions of it
+            // that fit, each measured with THIS beat's length.
+            let mut out = Vec::new();
+            let mut fraction = 0.0_f64;
+            while fraction < 1.0 - 1e-9 {
+                out.push((
+                    fraction.mul_add(beat.secs_per_beat, beat.at),
+                    f64::from(beat.beat - 1) + fraction,
+                ));
+                fraction += every;
+            }
+            out
+        } else {
+            vec![(beat.at, f64::from(beat.beat - 1))]
+        };
+        for (t, into_bar) in ticks {
+            if t < from || t > to {
+                continue;
+            }
+            let x = t.mul_add(view.pps, TCP_WIDTH - view.scroll_x);
+            if x < TCP_WIDTH - 1.0 || x > view.width {
+                continue;
+            }
             fill(
                 painter,
                 palette.grid,
@@ -231,13 +272,11 @@ pub fn ruler(
                 painter,
                 font,
                 palette.ruler_fg,
-                // Bars are counted from one; only the arithmetic starts
-                // at zero.
-                &label(beat, bars.beats_per_bar, every),
-                // Close to its own line, not floating between two.
-                // Four pixels of gap put the number nearer the NEXT
-                // tick than its own at a beat-wide zoom, which is the
-                // one thing a ruler must never be ambiguous about.
+                &written(beat.measure, into_bar, f64::from(beat.per_bar), every),
+                // Close to its own line, not floating between two. Four
+                // pixels put the number nearer the NEXT tick than its
+                // own at a beat-wide zoom, which is the one thing a
+                // ruler must never be ambiguous about.
                 ox + x + 2.0,
                 oy + 14.0,
                 11.0,
@@ -245,6 +284,17 @@ pub fn ruler(
         }
     }
 }
+
+/// How many beats a ruler will count before it gives up.
+///
+/// A tempo map cannot be trusted to be sane — a zero or a negative bpm
+/// would make the walk stand still — and a ruler is not the place to
+/// find that out by hanging.
+///
+/// Well above any real session: an hour of sixteenth notes at 200 bpm
+/// is under fifty thousand. The guard above is what keeps an absurd
+/// zoom from asking for them at all.
+const MAX_BEATS: usize = 100_000;
 
 /// How many BEATS a ruler will put between two numbers.
 ///
@@ -280,8 +330,9 @@ const LABEL_ROOM: f64 = 56.0;
 
 /// A position written the way a DAW writes one: measure.beat.subdivision.
 ///
-/// Counted from `beat`, the number of beats from the start of the
-/// project, against a bar of `beats_per_bar`.
+/// Takes the measure it is IN rather than working it out, because after
+/// a signature change the measure is no longer a division of the beat
+/// count — the walk that produced it is the only thing that knows.
 ///
 /// How much of it is written is decided by the STEP, not by the
 /// position. A row reading 1, 1.2, 1.3, 1.4, 2 makes you notice that
@@ -289,37 +340,32 @@ const LABEL_ROOM: f64 = 56.0;
 /// wonder what that means; 1.1, 1.2, 1.3, 1.4, 2.1 is one column of
 /// the same thing, which is what a row of beats is.
 ///
-/// So: stepping in bars gives bar numbers, "5". Stepping in beats gives
-/// "5.1" for every one of them, downbeat included. Stepping finer
+/// So: stepping in whole bars gives bar numbers, "5". Stepping in beats
+/// gives "5.1" for every one of them, downbeat included. Stepping finer
 /// carries the subdivision in THOUSANDTHS of a beat, zero-padded:
-/// "5.2.250" is a quarter of the way through the second beat of the
-/// fifth bar.
+/// "5.2.250" is a quarter of the way through the second beat.
 ///
 /// Thousandths because that is what a musical position IS here — the
 /// DAW's own `MusicalPosition` carries measure, beat and a subdivision
-/// of 0..999 — so a number read off this ruler is a number you can
-/// type back in.
+/// of 0..999 — so a number read off this ruler is one you can type
+/// back in.
 #[must_use]
-pub fn label(beat: f64, beats_per_bar: f64, step: f64) -> String {
-    let per_bar = beats_per_bar.max(1.0);
-    let bar = (beat / per_bar).floor();
-    let into_bar = beat - bar * per_bar;
+pub fn written(measure: u32, into_bar: f64, per_bar: f64, step: f64) -> String {
     let whole_beat = into_bar.floor();
     let fraction = into_bar - whole_beat;
-
-    let measure = (bar + 1.0).round() as i64;
     let beat_no = (whole_beat + 1.0).round() as i64;
+
     // A whole bar between numbers: bar numbers, nothing else to say.
-    if step >= per_bar - 1e-9 {
+    if step >= per_bar.max(1.0) - 1e-9 {
         return format!("{measure}");
     }
-    // A whole beat or more: every label names its beat, the downbeat
+    // A whole beat or more: every label names its beat, downbeat
     // included, so the row is one column of the same thing.
     if step >= 1.0 - 1e-9 || fraction.abs() < 1e-9 {
         return format!("{measure}.{beat_no}");
     }
-    // Thousandths of a beat, zero-padded so the numbers line up in a
-    // row and .050 cannot be misread as .5.
+    // Thousandths of a beat, zero-padded so a column of them lines up
+    // and .050 cannot be misread as .5.
     let sub = (fraction * 1000.0).round() as i64;
     format!("{measure}.{beat_no}.{sub:03}")
 }
@@ -756,127 +802,142 @@ pub const fn lane_of(row: usize) -> u32 {
     row as u32 + 1
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Bars, label, step_beats};
+// ─── Counting through tempo and signature changes ───────────────────
 
-    /// The ruler counts MEASURES, not seconds.
+/// One beat of the project, and where it falls.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Beat {
+    /// When it sounds, in seconds.
+    pub at: f64,
+    /// Which measure it is in, counted from one.
+    pub measure: u32,
+    /// Which beat of that measure, counted from one.
+    pub beat: u32,
+    /// How many beats this measure has — the signature in force.
+    pub per_bar: u32,
+    /// How long a beat lasts here, in seconds. A grid subdividing the
+    /// beat needs this; multiplying one project tempo would put every
+    /// line after a change in the wrong place.
+    pub secs_per_beat: f64,
+}
+
+impl Beat {
+    /// The first beat of a measure.
+    #[must_use]
+    pub const fn is_downbeat(self) -> bool {
+        self.beat == 1
+    }
+}
+
+/// The project's beat grid, walked through its tempo map.
+///
+/// Every bar line is where the tempo and the signature BEFORE it put
+/// it. Counting the whole timeline by multiplying one nominal tempo
+/// puts every bar after the first change somewhere it is not, and a
+/// ruler that is wrong about where bar forty is, is a ruler nobody can
+/// edit against.
+///
+/// Two rules, and they are the ones that matter:
+///
+/// - A **tempo** change alters how long the following beats take. The
+///   count carries on through it: beat three is still beat three.
+/// - A **signature** change starts a NEW MEASURE at that point, because
+///   a bar of four and a bar of three cannot share a bar line. Anything
+///   else would leave a measure that is part one signature and part
+///   another, which is not a measure.
+#[derive(Clone, Copy)]
+pub struct Timeline<'a> {
+    changes: &'a [daw_ui::studio::project::TempoChange],
+}
+
+impl<'a> Timeline<'a> {
+    #[must_use]
+    pub const fn new(changes: &'a [daw_ui::studio::project::TempoChange]) -> Self {
+        Self { changes }
+    }
+
+    /// Every beat from the start of the project up to `to`, in order.
     ///
-    /// Pinned because it is the question you cannot answer by looking:
-    /// at 120 bpm in four four a bar is two seconds, so a ruler
-    /// numbering seconds and one numbering bars both count 1, 2, 3 —
-    /// they differ only in WHERE the numbers sit, and by then you are
-    /// counting pixels.
-    #[test]
-    fn the_numbers_are_bars() {
-        let bars = Bars::at(120.0);
-        assert!(
-            (bars.secs_per_bar() - 2.0).abs() < 1e-9,
-            "a bar of four beats at 120 bpm is two seconds, got {}",
-            bars.secs_per_bar()
-        );
-        // The tempo actually moves them: at 60 a bar is twice as long,
-        // which a seconds ruler would not notice.
-        assert!((Bars::at(60.0).secs_per_bar() - 4.0).abs() < 1e-9);
-    }
+    /// From the start rather than from the visible left edge, because a
+    /// measure number is a COUNT from the beginning — there is no way
+    /// to know what bar you are looking at without having counted the
+    /// ones before it. Stopped by `to`, and by `limit` so a corrupt
+    /// tempo map cannot spin.
+    #[must_use]
+    pub fn beats(self, to: f64, limit: usize) -> Vec<Beat> {
+        let mut out = Vec::new();
+        let Some(first) = self.changes.first() else {
+            return out;
+        };
+        let mut at = first.at;
+        let mut measure = 1u32;
+        let mut beat = 1u32;
+        let mut index = 0usize;
 
-    /// The signature decides how many beats make a bar.
-    ///
-    /// A ruler that assumed four put every bar line after the first in
-    /// the wrong place for anything else, and a grid that disagrees
-    /// with the music is one you edit against at your peril.
-    #[test]
-    fn the_signature_decides_the_bar() {
-        let three = Bars::in_time(120.0, 3);
-        assert!(
-            (three.secs_per_bar() - 1.5).abs() < 1e-9,
-            "three beats at 120 is a bar and a half second, got {}",
-            three.secs_per_bar()
-        );
-        // And the numbering follows it: the fourth beat of a three-four
-        // project is the first beat of bar two.
-        assert_eq!(label(3.0, 3.0, 3.0), "2");
-        assert_eq!(
-            label(3.0, 4.0, 1.0),
-            "1.4",
-            "four four should still be in bar one"
-        );
-    }
+        while at <= to && out.len() < limit {
+            let change = &self.changes[index];
+            let per_bar = change.beats_per_bar.max(1);
+            let secs_per_beat = 60.0 / if change.bpm > 0.0 { change.bpm } else { 120.0 };
+            out.push(Beat {
+                at,
+                measure,
+                beat,
+                per_bar,
+                secs_per_beat,
+            });
 
-    /// Zooming in keeps saying something new, down to the beat.
-    #[test]
-    fn zooming_in_subdivides_the_bar() {
-        // A wide bar numbers inside itself, at a beat or finer.
-        assert!(step_beats(400.0, 4.0) <= 1.0);
-        // A narrow one numbers whole bars or less often.
-        assert!(step_beats(20.0, 4.0) >= 4.0);
-        // Monotone: zooming in never makes the numbers sparser.
-        assert!(step_beats(400.0, 4.0) <= step_beats(100.0, 4.0));
+            let next_at = at + secs_per_beat;
+            // Does a change fall inside the beat just laid down? If it
+            // does, the grid restarts there rather than carrying the
+            // old beat length across it.
+            let upcoming = self
+                .changes
+                .iter()
+                .enumerate()
+                .skip(index + 1)
+                .find(|(_, c)| c.at > at + 1e-9);
+            match upcoming {
+                Some((i, c)) if c.at <= next_at + 1e-9 => {
+                    let signature_moved = c.beats_per_bar != change.beats_per_bar;
+                    index = i;
+                    at = c.at;
+                    if signature_moved {
+                        measure = measure.saturating_add(1);
+                        beat = 1;
+                    } else {
+                        (measure, beat) = step(measure, beat, per_bar);
+                    }
+                }
+                _ => {
+                    at = next_at;
+                    (measure, beat) = step(measure, beat, per_bar);
+                }
+            }
+        }
+        out
     }
+}
 
-    /// measure.beat.subdivision, and only as much of it as is needed.
-    ///
-    /// A whole bar is a bar number: "5.1.000" in a row of them is noise
-    /// that makes the bar lines harder to pick out, which is the one
-    /// thing the number is there for.
-    #[test]
-    fn a_position_is_written_the_way_a_daw_writes_one() {
-        // Stepping in bars: bar numbers.
-        assert_eq!(label(0.0, 4.0, 4.0), "1");
-        assert_eq!(label(4.0, 4.0, 4.0), "2");
-        // Stepping in beats: every label names its beat, downbeat too.
-        assert_eq!(label(0.0, 4.0, 1.0), "1.1");
-        assert_eq!(label(1.0, 4.0, 1.0), "1.2");
-        assert_eq!(label(2.0, 4.0, 1.0), "1.3");
-        assert_eq!(label(4.0, 4.0, 1.0), "2.1");
-        assert_eq!(label(7.0, 4.0, 1.0), "2.4");
-        // Thousandths of a beat, zero-padded so a column of them lines
-        // up and .050 cannot be misread as .5.
-        assert_eq!(label(0.25, 4.0, 0.25), "1.1.250");
-        assert_eq!(label(0.5, 4.0, 0.25), "1.1.500");
-        assert_eq!(label(0.75, 4.0, 0.25), "1.1.750");
-        assert_eq!(label(4.5, 4.0, 0.25), "2.1.500");
-        // A beat that lands whole still names itself at a fine step.
-        assert_eq!(label(1.0, 4.0, 0.25), "1.2");
-    }
-
-    /// The tempo at a time is the last change at or before it.
-    #[test]
-    fn the_tempo_map_decides_the_bar() {
-        use daw_ui::studio::project::TempoChange;
-        let changes = [
-            TempoChange {
-                at: 0.0,
-                bpm: 120.0,
-                beats_per_bar: 4,
-                beat_unit: 4,
-            },
-            TempoChange {
-                at: 10.0,
-                bpm: 60.0,
-                beats_per_bar: 3,
-                beat_unit: 4,
-            },
-        ];
-        assert!((Bars::at_time(&changes, 0.0).secs_per_bar() - 2.0).abs() < 1e-9);
-        assert!((Bars::at_time(&changes, 9.9).secs_per_bar() - 2.0).abs() < 1e-9);
-        // After the change: 60 bpm, three to a bar — three seconds.
-        assert!((Bars::at_time(&changes, 10.0).secs_per_bar() - 3.0).abs() < 1e-9);
+/// The next measure and beat after one of `per_bar` beats.
+const fn step(measure: u32, beat: u32, per_bar: u32) -> (u32, u32) {
+    if beat >= per_bar {
+        (measure.saturating_add(1), 1)
+    } else {
+        (measure, beat + 1)
     }
 }
 
 /// The tempo strip: where the tempo or the signature changes, and to
 /// what.
 ///
-/// Drawn between the lanes and the bar numbers, because that is what it
-/// governs. Its own row rather than a flag among the marks: a tempo
-/// change is not a place in the song, it is a change to what every
-/// number below it MEANS, and filing it with the marks would file it
-/// among the things it reinterprets.
+/// Its own row rather than a flag among the marks: a tempo change is
+/// not a place in the song, it is a change to what every number below
+/// it MEANS, and filing it with the marks would file it among the
+/// things it reinterprets.
 ///
-/// The reading is repeated at the left edge when the change that set it
-/// is off screen. A tempo you cannot see is a tempo you will assume,
-/// and the assumption is always whatever the project started at.
+/// The reading repeats at the left edge when the change that set it is
+/// off screen. A tempo you cannot see is a tempo you will assume, and
+/// the assumption is always whatever the project started at.
 pub fn tempo(
     painter: &mut impl PaintScene,
     palette: &Palette,
@@ -962,4 +1023,151 @@ fn reading(change: &daw_ui::studio::project::TempoChange) -> String {
         format!("{:.1}", change.bpm)
     };
     format!("{bpm} {}/{}", change.beats_per_bar, change.beat_unit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Bars, Timeline, step_beats, written};
+    use daw_ui::studio::project::TempoChange;
+
+    fn at(at: f64, bpm: f64, per_bar: u32) -> TempoChange {
+        TempoChange {
+            at,
+            bpm,
+            beats_per_bar: per_bar,
+            beat_unit: 4,
+        }
+    }
+
+    /// The ruler counts MEASURES, not seconds.
+    ///
+    /// Pinned because it is the question you cannot answer by looking:
+    /// at 120 bpm in four four a bar is two seconds, so a ruler
+    /// numbering seconds and one numbering bars both count 1, 2, 3.
+    #[test]
+    fn the_numbers_are_bars() {
+        let beats = Timeline::new(&[at(0.0, 120.0, 4)]).beats(8.0, 100);
+        let downbeats: Vec<&super::Beat> = beats.iter().filter(|b| b.is_downbeat()).collect();
+        assert!(
+            (downbeats[1].at - 2.0).abs() < 1e-9,
+            "bar 2 is at two seconds"
+        );
+        assert_eq!(downbeats[1].measure, 2);
+        // The tempo moves them, which a seconds ruler would not notice.
+        let slow = Timeline::new(&[at(0.0, 60.0, 4)]).beats(8.0, 100);
+        let bar2 = slow.iter().find(|b| b.measure == 2 && b.is_downbeat());
+        assert!(
+            (bar2.unwrap().at - 4.0).abs() < 1e-9,
+            "at 60 a bar is four seconds"
+        );
+    }
+
+    /// The signature decides how many beats make a bar.
+    #[test]
+    fn the_signature_decides_the_bar() {
+        let beats = Timeline::new(&[at(0.0, 120.0, 3)]).beats(6.0, 100);
+        let bar2 = beats.iter().find(|b| b.measure == 2 && b.is_downbeat());
+        assert!(
+            (bar2.unwrap().at - 1.5).abs() < 1e-9,
+            "three beats at 120 is a bar and a half second"
+        );
+        assert_eq!(beats[2].beat, 3, "a three-four bar has a third beat");
+        assert_eq!(beats[3].measure, 2, "and no fourth");
+    }
+
+    /// A tempo change moves every bar line AFTER it.
+    ///
+    /// The thing a multiplied grid gets wrong. Four bars at 120 take
+    /// eight seconds; halve the tempo at eight and the next bar takes
+    /// four, not two.
+    #[test]
+    fn a_tempo_change_moves_the_bars_after_it() {
+        let map = [at(0.0, 120.0, 4), at(8.0, 60.0, 4)];
+        let beats = Timeline::new(&map).beats(20.0, 200);
+        let downs: Vec<f64> = beats
+            .iter()
+            .filter(|b| b.is_downbeat())
+            .map(|b| b.at)
+            .collect();
+        assert!((downs[0] - 0.0).abs() < 1e-9);
+        assert!((downs[1] - 2.0).abs() < 1e-9);
+        assert!(
+            (downs[4] - 8.0).abs() < 1e-9,
+            "the change lands on a bar line"
+        );
+        assert!(
+            (downs[5] - 12.0).abs() < 1e-9,
+            "after the change a bar takes four seconds, got {}",
+            downs[5]
+        );
+    }
+
+    /// A signature change starts a new measure.
+    ///
+    /// A bar of four and a bar of three cannot share a bar line, and a
+    /// measure that is part one signature and part another is not a
+    /// measure.
+    #[test]
+    fn a_signature_change_starts_a_measure() {
+        // Change mid-bar, two beats into the second bar.
+        let map = [at(0.0, 120.0, 4), at(3.0, 120.0, 3)];
+        let beats = Timeline::new(&map).beats(9.0, 200);
+        let change = beats
+            .iter()
+            .find(|b| (b.at - 3.0).abs() < 1e-9)
+            .expect("a beat at the change");
+        assert_eq!(change.beat, 1, "the new signature starts on beat one");
+        assert_eq!(change.per_bar, 3, "and counts in three from there");
+        assert_eq!(change.measure, 3, "in a new measure, not the middle of one");
+    }
+
+    /// Zooming in keeps saying something new, down to the beat.
+    #[test]
+    fn zooming_in_subdivides_the_bar() {
+        assert!(step_beats(400.0, 4.0) <= 1.0);
+        assert!(step_beats(20.0, 4.0) >= 4.0);
+        assert!(step_beats(400.0, 4.0) <= step_beats(100.0, 4.0));
+    }
+
+    /// measure.beat.subdivision, and only as much as the step needs.
+    #[test]
+    fn a_position_is_written_the_way_a_daw_writes_one() {
+        // Stepping in bars: bar numbers.
+        assert_eq!(written(1, 0.0, 4.0, 4.0), "1");
+        assert_eq!(written(2, 0.0, 4.0, 4.0), "2");
+        // Stepping in beats: every label names its beat, downbeat too.
+        assert_eq!(written(1, 0.0, 4.0, 1.0), "1.1");
+        assert_eq!(written(1, 1.0, 4.0, 1.0), "1.2");
+        assert_eq!(written(2, 3.0, 4.0, 1.0), "2.4");
+        // Thousandths of a beat, zero-padded.
+        assert_eq!(written(1, 0.25, 4.0, 0.25), "1.1.250");
+        assert_eq!(written(1, 0.5, 4.0, 0.25), "1.1.500");
+        assert_eq!(written(1, 0.75, 4.0, 0.25), "1.1.750");
+        assert_eq!(written(2, 0.5, 4.0, 0.25), "2.1.500");
+        // A beat that lands whole still names itself at a fine step.
+        assert_eq!(written(1, 1.0, 4.0, 0.25), "1.2");
+    }
+
+    /// A sane fallback when the project has no tempo at all.
+    #[test]
+    fn no_tempo_map_counts_nothing_rather_than_forever() {
+        assert!(Timeline::new(&[]).beats(60.0, 100).is_empty());
+        // And a nonsense tempo cannot spin the walk.
+        let mad = [at(0.0, 0.0, 4)];
+        let beats = Timeline::new(&mad).beats(60.0, 100);
+        assert!(
+            !beats.is_empty(),
+            "a zero tempo should fall back, not stall"
+        );
+        assert!(beats.len() <= 100, "the limit holds");
+    }
+
+    /// `Bars` still answers for a single tempo, which the grid uses.
+    #[test]
+    fn bars_reads_the_map_at_a_time() {
+        let map = [at(0.0, 120.0, 4), at(10.0, 60.0, 3)];
+        assert!((Bars::at_time(&map, 0.0).secs_per_bar() - 2.0).abs() < 1e-9);
+        assert!((Bars::at_time(&map, 9.9).secs_per_bar() - 2.0).abs() < 1e-9);
+        assert!((Bars::at_time(&map, 10.0).secs_per_bar() - 3.0).abs() < 1e-9);
+    }
 }

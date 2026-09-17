@@ -119,7 +119,11 @@ fn main() {
         return;
     }
 
-    let opened = session_daw::open::open_and_serve(&path).expect("open project");
+    // Silent: this draws a project and exits. It has nothing to play,
+    // and an audio engine it never uses costs it a dependency on a
+    // working sound server — which is how three render tests came to
+    // time out at ten minutes each on a box whose audio was fine.
+    let opened = session_daw::open::open_silent(&path).expect("open project");
     let scene = build_scene(&palette, layout).expect("read project back");
     if let Ok(out) = std::env::var("FTS_BENCH_FOLDER_ITEMS") {
         // The folder items of the open session, folded from the
@@ -345,7 +349,7 @@ fn main() {
                         // backgrounds are opaque and painted the grid
                         // straight out of the frame.
                         ruler::grid(painter, &palette, view, bars, &grid, FINEST, (0.0, 0.0));
-                        ruler::ruler(painter, &palette, &font, view, bars, (0.0, 0.0));
+                        ruler::ruler(painter, &palette, &font, view, scene.tempo(), (0.0, 0.0));
                         ruler::tempo(painter, &palette, &font, view, (0.0, 0.0), scene.tempo());
                         drawn.replayed = a.replayed + b.replayed;
                         drawn.submitted = a.submitted + b.submitted;
@@ -1236,7 +1240,7 @@ fn shot(
                 palette,
                 font,
                 view,
-                Bars::at(scene.bpm),
+                scene.tempo(),
                 (rail_x, rail_y),
             );
             ruler::tempo(
