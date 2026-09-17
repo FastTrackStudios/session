@@ -14,6 +14,16 @@
 //! the window can find a DAW it did not start.
 //!
 //! Run with: `just reaper-test` (see `session-reaper-xtask`).
+//!
+//! # What the runner says afterwards
+//!
+//! The scenarios take about four seconds; the run is then killed at the
+//! timeout and reported as "Some tests failed", and neither of those is
+//! about the tests. The harness's teardown calls `close_project`, and
+//! that never returns while this window holds its subscriptions open —
+//! daw#31. Read the `test result:` line and the per-scenario timings
+//! below it; they are the ones that mean something until that is
+//! fixed.
 
 #![cfg(feature = "reaper-tests")]
 
@@ -142,9 +152,153 @@ async fn the_window_is_a_control_surface_over_reaper(
     let watch = Watch::start().ok_or_else(|| eyre::eyre!("the window could not watch"))?;
     let applier = Applier::start().ok_or_else(|| eyre::eyre!("the window could not edit"))?;
 
+    // Timed, and printed: this suite shares one REAPER and one
+    // timeout, so a scenario that quietly grows into thirty seconds
+    // takes the whole file over the edge — and the failure it causes
+    // lands on whichever scenario happened to be last.
+    let mut at = std::time::Instant::now();
+    let mut lap = |what: &str, at: &mut std::time::Instant| {
+        println!("  [{what}] {:?}", at.elapsed());
+        *at = std::time::Instant::now();
+    };
     drives_and_hears_back(&project, &watch, &applier, &mut tracks).await?;
+    lap("drives and hears back", &mut at);
     every_parameter_round_trips(&project, &watch, &applier, &mut tracks).await?;
+    lap("every parameter", &mut at);
     tempo_mapping_moves_a_bar_line(&project, &applier).await?;
+    lap("tempo mapping", &mut at);
+    sends_reach_reaper_and_come_back(&project, &applier).await?;
+    lap("sends", &mut at);
+    Ok(())
+}
+
+/// A send, made and changed and taken away by the window.
+///
+/// The panel's arithmetic is tested on its own; this is the half that
+/// cannot be — that the send the window asks for is a send REAPER
+/// makes, that the number it then addresses is the one REAPER gave it,
+/// and that the far end sees a receive. All four are things a panel
+/// gets silently wrong against a mock.
+async fn sends_reach_reaper_and_come_back(
+    project: &daw::rpc::Project,
+    applier: &Applier,
+) -> eyre::Result<()> {
+    let tracks = project.tracks().all().await?;
+    let (Some(from), Some(to)) = (tracks.first(), tracks.get(1)) else {
+        eyre::bail!(
+            "a send needs two tracks and this project has {}",
+            tracks.len()
+        );
+    };
+    let (source, dest) = (from.guid.clone(), to.guid.clone());
+
+    // Waits on REAPER's answer rather than on a sleep: the applier's
+    // worker and the host's tick are both asynchronous to this thread.
+    let sends = async |guid: &str| -> eyre::Result<Vec<daw_proto::routing::TrackRoute>> {
+        let Some(track) = project.tracks().by_guid(guid).await? else {
+            return Ok(Vec::new());
+        };
+        Ok(track.sends().all().await?)
+    };
+    let settle = async |want: &dyn Fn(&[daw_proto::routing::TrackRoute]) -> bool,
+                        what: &str|
+           -> eyre::Result<Vec<daw_proto::routing::TrackRoute>> {
+        let deadline = std::time::Instant::now() + PATIENCE;
+        loop {
+            let routes = sends(&source).await?;
+            if want(&routes) {
+                return Ok(routes);
+            }
+            if std::time::Instant::now() > deadline {
+                eyre::bail!("REAPER never {what} within {PATIENCE:?}: {routes:?}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+
+    applier.send(Edit::AddSend(source.clone(), dest.clone()));
+    let made = settle(
+        &|routes| {
+            routes
+                .iter()
+                .any(|route| route.dest_track_guid.as_deref() == Some(dest.as_str()))
+        },
+        "made the send",
+    )
+    .await?;
+    // The number REAPER gave it — not one the window chose, which is
+    // the whole reason the panel reads the list back after adding.
+    let number = made
+        .iter()
+        .find(|route| route.dest_track_guid.as_deref() == Some(dest.as_str()))
+        .map(|route| route.index)
+        .ok_or_else(|| eyre::eyre!("the send went missing between two reads"))?;
+
+    // The far end has a receive, and the panel can name who is feeding
+    // it whichever field this backend put the partner in.
+    let Some(far) = project.tracks().by_guid(&dest).await? else {
+        eyre::bail!("the destination went away");
+    };
+    let receives = far.receives().all().await?;
+    assert!(
+        !receives.is_empty(),
+        "the destination has no receive for a send that exists"
+    );
+    assert_eq!(
+        receives
+            .first()
+            .and_then(|route| session_daw::routes::partner(route, &dest)),
+        Some(source.as_str()),
+        "the receive does not name the track feeding it"
+    );
+
+    applier.send(Edit::SetSendVolume(source.clone(), number, 0.5));
+    settle(
+        &|routes| {
+            routes
+                .iter()
+                .any(|route| route.index == number && (route.volume - 0.5).abs() < 0.001)
+        },
+        "took the level",
+    )
+    .await?;
+
+    applier.send(Edit::SetSendMute(source.clone(), number, true));
+    settle(
+        &|routes| {
+            routes
+                .iter()
+                .any(|route| route.index == number && route.muted)
+        },
+        "took the mute",
+    )
+    .await?;
+
+    applier.send(Edit::SetSendMode(
+        source.clone(),
+        number,
+        daw_proto::routing::SendMode::PreFx,
+    ));
+    settle(
+        &|routes| {
+            routes.iter().any(|route| {
+                route.index == number && route.send_mode == daw_proto::routing::SendMode::PreFx
+            })
+        },
+        "took the mode",
+    )
+    .await?;
+
+    applier.send(Edit::RemoveSend(source.clone(), number));
+    settle(
+        &|routes| {
+            !routes
+                .iter()
+                .any(|route| route.dest_track_guid.as_deref() == Some(dest.as_str()))
+        },
+        "removed the send",
+    )
+    .await?;
     Ok(())
 }
 
