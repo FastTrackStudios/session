@@ -87,6 +87,10 @@ struct App {
     zoom_y: f64,
     /// `z` is down: the next press on the lanes is the zoom tool.
     zoom_held: bool,
+    /// Whether `g` is down — the tempo-mapping tool, where a click
+    /// moves the nearest bar line to the pointer and the tempo is
+    /// whatever makes that true.
+    grid_held: bool,
     /// The surface size, tracked so the draw can cull to it. Culling is
     /// the difference between encoding 30,000 commands a frame and 367;
     /// it needs to know how much fits on screen, and the surface is the
@@ -443,6 +447,18 @@ impl ApplicationHandler for App {
                     self.zoom_held = true;
                     return;
                 }
+                // `g` held is the tempo-mapping tool: a click while it
+                // is down puts the nearest bar line where you clicked.
+                // Held rather than a mode, because mapping a song is a
+                // hundred clicks and a mode you have to leave between
+                // them is a mode you forget you are in.
+                if event.logical_key.to_text() == Some("g")
+                    && !self.keys.ctrl
+                    && !(self.dock_focus && self.dock.is_some())
+                {
+                    self.grid_held = true;
+                    return;
+                }
                 // `e` docks the expression editor under the arrangement
                 // on the selected item, and closes the dock again.
                 // Before the editor sees the key, or there would be no
@@ -609,6 +625,9 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.logical_key.to_text() == Some("z") {
                     self.zoom_held = false;
+                }
+                if event.logical_key.to_text() == Some("g") {
+                    self.grid_held = false;
                 }
                 // A release. The editor's keymap has to hear it, or a
                 // held prefix repeats its way down the sequence tree;
@@ -856,6 +875,16 @@ impl ApplicationHandler for App {
                     // also move the edit cursor behind it.
                     self.pressed_rail = self.rail_action_at(x, y);
                     if self.pressed_rail.is_some() {
+                        self.redraw();
+                        return;
+                    }
+                    // The tempo-mapping tool, while `g` is held: the
+                    // click is where a downbeat IS, and the nearest bar
+                    // line is moved there. Asked before the zoom tool
+                    // and before the arrangement, because a click meant
+                    // for the grid must not also seek or select.
+                    if self.grid_held && self.view == View::Arrangement {
+                        self.map_tempo_at(x);
                         self.redraw();
                         return;
                     }
@@ -1722,6 +1751,77 @@ impl App {
         (y >= top && y < top + session_daw::ruler::RULER_H && x >= left)
             .then(|| self.time_at(x))
             .flatten()
+    }
+
+    /// Put the nearest bar line where the pointer is, and write the
+    /// tempo that makes it true.
+    ///
+    /// The heart of tempo mapping: you hear a downbeat, you click on
+    /// it, and the bar line comes to you. What holds still while it
+    /// moves is chosen by the modifier — nothing, the bar before, or
+    /// both sides — which is the same three the REAPER overlay binds to
+    /// `g`, `Shift+g` and `Alt+g`.
+    fn map_tempo_at(&mut self, x: f64) {
+        use session_daw::tempo_map::{Anchor, Move, Set};
+        let Some(to) = self.time_at(x) else { return };
+        let Some(scene) = self.scene.as_ref() else {
+            return;
+        };
+        let changes = scene.tempo();
+        // Walk far enough past the click to have the line after it,
+        // which the fully-constrained anchor needs.
+        let beats = session_daw::ruler::Timeline::new(changes).beats(to + 600.0, 100_000);
+        let lines: Vec<&session_daw::ruler::Beat> =
+            beats.iter().filter(|b| b.is_downbeat()).collect();
+        let Some(index) = lines
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| (a.at - to).abs().total_cmp(&(b.at - to).abs()))
+            .map(|(i, _)| i)
+        else {
+            return;
+        };
+        // The first bar line has nothing before it to stretch.
+        if index == 0 {
+            return;
+        }
+        let line = lines[index];
+        let marker = changes
+            .iter()
+            .take_while(|c| c.at <= lines[index - 1].at + 1e-9)
+            .last();
+        let Some(marker) = marker else { return };
+
+        let anchor = if self.keys.alt {
+            Anchor::BothSides
+        } else if self.keys.shift {
+            Anchor::MeasureBefore
+        } else {
+            Anchor::Nothing
+        };
+        let moved = Move {
+            line: line.at,
+            to,
+            previous_line: lines[index - 1].at,
+            next_line: lines.get(index + 1).map(|b| b.at),
+            marker: Set {
+                at: marker.at,
+                bpm: marker.bpm,
+            },
+        };
+        let Some(sets) = session_daw::tempo_map::align(moved, anchor) else {
+            // Refused rather than clamped: a clamped tempo puts the
+            // line somewhere other than where you asked, silently.
+            tracing::debug!(to, line = line.at, "that tempo would not be one");
+            return;
+        };
+        for set in sets {
+            self.send(session_daw::engine::Edit::SetTempo(
+                String::new(),
+                set.at,
+                set.bpm,
+            ));
+        }
     }
 
     /// The time under an x, wherever the pointer is vertically — for
@@ -3306,6 +3406,7 @@ fn main() {
         pps: DEFAULT_PPS,
         zoom_y: 1.0,
         zoom_held: false,
+        grid_held: false,
         // Replaced the moment the surface exists; until then it culls to
         // nothing, which is correct — there is no surface to draw on.
         surface_size: (0.0, 0.0),
@@ -3582,7 +3683,10 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         | Edit::AddRegion(..)
         | Edit::SetRegionBounds(..)
         | Edit::RenameRegion(..)
-        | Edit::RemoveRegion(..) => {}
+        | Edit::RemoveRegion(..)
+        // The tempo is the project's, and the ruler redraws from the
+        // snapshot the refresh brings back.
+        | Edit::SetTempo(..) => {}
         // An item's, not the track's: applied to the project copy where
         // the drag ends — see `commit_fade`.
         Edit::SetFadeIn(..)

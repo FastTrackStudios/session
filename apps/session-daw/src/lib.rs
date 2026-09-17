@@ -47,6 +47,7 @@ pub mod settings;
 pub mod simulate;
 pub mod strip;
 pub mod tcp;
+pub mod tempo_map;
 pub mod text;
 pub mod theme;
 pub mod tone;
