@@ -119,6 +119,16 @@ const ITEMS: usize = 1112;
 /// screen and the rest simply are not rendered — so this sweeps the
 /// count to find out whether that lever is worth pulling.
 thread_local! {
+    /// Whether an item carries its waveform.
+    ///
+    /// An item is read by its waveform, so a lane of flat rectangles is
+    /// not the arrangement — it is the arrangement's boxes. As a
+    /// component that shape has to be an inline `<svg>`, which Blitz
+    /// renders by serialising the subtree and handing it to usvg. That
+    /// is a real cost and it is the one that decides whether the
+    /// content of a lane can be components at all, so it is measured
+    /// rather than assumed.
+    static WAVES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static SHOWN: std::cell::Cell<usize> = const { std::cell::Cell::new(ITEMS) };
     /// The same, for tracks. A 1440px window at a 24px row pitch shows
     /// sixty of them; the other two hundred are a panel nobody can see
@@ -170,6 +180,29 @@ fn main() {
         SHOWN.with(|s| s.set(shown));
         measure(&format!("{shown} on screen"), width, height, Drive::Scoped);
     }
+
+    println!();
+    println!("  With the waveform in the item, as an inline <svg> path");
+    println!();
+    println!(
+        "  {:<20} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9}",
+        "tracks x items", "mean", "p99", "diff", "style+lay", "paint", "fps(p99)"
+    );
+    println!("  {}", "-".repeat(82));
+    WAVES.with(|w| w.set(true));
+    SHOWN_TRACKS.with(|s| s.set(60));
+    for shown in [150, 60] {
+        SHOWN.with(|s| s.set(shown));
+        measure(
+            &format!("60 x {shown}, waves"),
+            width,
+            height,
+            Drive::Scoped,
+        );
+    }
+    WAVES.with(|w| w.set(false));
+    SHOWN.with(|s| s.set(ITEMS));
+    SHOWN_TRACKS.with(|s| s.set(TRACKS));
 
     println!();
     println!("  What is actually on a 2560x1440 screen: 60 rows at a 24px pitch");
@@ -446,12 +479,60 @@ fn Item(row: usize, start: f64, length: f64, offset: f64, by_property: bool) -> 
     } else {
         format!("{}px", start.mul_add(PPS, -offset))
     };
+    let waves = WAVES.with(std::cell::Cell::get);
     rsx! {
         div {
             style: "position:absolute; top:{top}px; left:{left}; width:{width}px; \
                     height:{height}px; background:#7a2a2a; border:1px solid #9a3a3a;",
+            if waves {
+                svg {
+                    width: "100%",
+                    height: "100%",
+                    view_box: "0 0 100 100",
+                    preserve_aspect_ratio: "none",
+                    path { d: "{envelope(row)}", fill: "#d05050" }
+                }
+            }
         }
     }
+}
+
+/// A waveform's outline, the shape the recorded scene draws.
+///
+/// Deterministic per row, and built once per row rather than per item,
+/// because what is being measured is what it costs Blitz to RENDER the
+/// path — not what it costs us to make one up.
+fn envelope(row: usize) -> String {
+    use std::fmt::Write as _;
+    const POINTS: usize = 40;
+    let mut top = String::from("M0 50");
+    let mut bottom = String::new();
+    for i in 0..=POINTS {
+        #[expect(
+            clippy::cast_precision_loss,
+            clippy::as_conversions,
+            reason = "a point index under a hundred"
+        )]
+        let x = i as f64 / POINTS as f64 * 100.0;
+        #[expect(
+            clippy::cast_precision_loss,
+            clippy::as_conversions,
+            reason = "a row index under a thousand"
+        )]
+        let phase = (i as f64).mul_add(0.7, row as f64);
+        let amp = 45.0 * (phase.sin() * phase.mul_add(0.31, 1.0).cos()).abs();
+        let _ = write!(top, " L{x:.1} {:.1}", 50.0 - amp);
+        let _ = write!(bottom, " L{x:.1} {:.1}", 50.0 + amp);
+    }
+    // Back along the bottom, so the two halves close into one shape.
+    let mut path = top;
+    let mut back: Vec<&str> = bottom.split(" L").filter(|s| !s.is_empty()).collect();
+    back.reverse();
+    for point in back {
+        let _ = write!(path, " L{point}");
+    }
+    path.push('Z');
+    path
 }
 
 /// The golden session's items, spread over its tracks.
