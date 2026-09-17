@@ -836,18 +836,60 @@ fn PerformanceMainContent() -> Element {
             // Scrollable content area
             div {
                 class: "flex-1 overflow-y-auto",
-                // The head of the view, top-anchored.
+                // Header, then the map, then the work.
                 //
                 // This used to be a centred stack: the song bar sat in the
                 // middle and everything else hung off it by `calc(50% ±
                 // …rem)`. That put the thing you read most in the middle of
                 // whatever space there happened to be, and it left no room
                 // that belonged to anything else — every addition had to
-                // push off the centre too. Anchored at the top, the
-                // measurements are gaps between siblings, and what is below
+                // push off the centre too. Top-anchored, the measurements
+                // are gaps between siblings, and everything under the bars
                 // is free.
                 div {
-                    class: "flex flex-col h-full gap-3 pt-2",
+                    class: "flex flex-col h-full gap-3",
+
+                    // ── The header: what song, and where in it ──────
+                    //
+                    // Everything you ask ABOUT the song, in one band
+                    // across the top: what it is, what is next, where
+                    // the transport is. The bars go under it because
+                    // they are the song itself rather than facts about
+                    // it — you read the header, then you read the map.
+                    //
+                    // The title used to be the largest thing on the
+                    // screen, centred above everything. It is a label,
+                    // and it was spending a third of the view saying
+                    // what you already knew you were playing.
+                    div {
+                        class: "flex-none flex items-center justify-between gap-6 px-4 py-2 border-b border-border bg-card/40",
+                        div { class: "flex flex-col gap-0.5 min-w-0",
+                            if let Some(ref song) = *current_song.read() {
+                                SongTitle {
+                                    song_name: song.name.clone(),
+                                }
+                            }
+                            // Next song (faded)
+                            if let Some((next_name, next_color)) = next_song_info {
+                                FadedSongTitle {
+                                    song_name: next_name,
+                                    color: next_color,
+                                }
+                            }
+                        }
+                        div { class: "flex items-center flex-none",
+                            if let Some(ref transport) = transport_state {
+                                TransportStats {
+                                    musical: transport.position.musical,
+                                    seconds: transport.position.time.map_or(0.0, |t| t.as_seconds()),
+                                    bpm: transport.bpm,
+                                    beats_per_bar: transport.time_sig_num,
+                                    beat_unit: transport.time_sig_denom,
+                                    looping: transport.is_looping,
+                                }
+                            }
+                        }
+                    }
 
                     // Main Song Progress Bar
                     //
@@ -942,44 +984,6 @@ fn PerformanceMainContent() -> Element {
                                     }
                                 })),
                                 queued_target: queued_target,
-                            }
-                        }
-                    }
-
-                    // ── The song, and where the transport is ───
-                    //
-                    // The title used to be the largest thing on the
-                    // screen, centred above everything. It is a label:
-                    // you know what song you are playing, and it earns
-                    // a corner rather than a third of the view. Left,
-                    // under the bars, with the readouts opposite — so
-                    // everything below this line is space for the work.
-                    div {
-                        class: "flex-none flex items-start justify-between gap-6 px-4",
-                        div { class: "flex flex-col gap-0.5 min-w-0",
-                            if let Some(ref song) = *current_song.read() {
-                                SongTitle {
-                                    song_name: song.name.clone(),
-                                }
-                            }
-                            // Next song (faded)
-                            if let Some((next_name, next_color)) = next_song_info {
-                                FadedSongTitle {
-                                    song_name: next_name,
-                                    color: next_color,
-                                }
-                            }
-                        }
-                        div { class: "flex items-center flex-none",
-                            if let Some(ref transport) = transport_state {
-                                TransportStats {
-                                    musical: transport.position.musical,
-                                    seconds: transport.position.time.map_or(0.0, |t| t.as_seconds()),
-                                    bpm: transport.bpm,
-                                    beats_per_bar: transport.time_sig_num,
-                                    beat_unit: transport.time_sig_denom,
-                                    looping: transport.is_looping,
-                                }
                             }
                         }
                     }
