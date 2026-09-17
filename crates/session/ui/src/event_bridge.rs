@@ -9,7 +9,7 @@ use session_proto::{ActiveIndices, SetlistEvent, SongTransportState};
 
 use crate::signals::{
     TransportState, ACTIVE_INDICES, ACTIVE_PLAYBACK_IS_PLAYING, ACTIVE_PLAYBACK_MUSICAL,
-    PLAYBACK_STATE, SETLIST_STRUCTURE, SONG_CHARTS, SONG_TRANSPORT,
+    PLAYBACK_STATE, SETLIST_STRUCTURE, SONG_CHARTS, SONG_TRANSPORT, TAKE_PEAKS, TAKE_UNDER_REVIEW,
 };
 
 /// Apply an active-song/section cursor update to the global UI signals.
@@ -76,6 +76,29 @@ pub fn apply_setlist_event(event: &SetlistEvent) {
 
         SetlistEvent::TransportUpdate(transports) => {
             apply_transport_update(transports);
+        }
+
+        // A take just ended. Every tablet in the room shows it, which
+        // is the whole point — the thirty seconds after a pass is when
+        // everybody still knows what they think of it.
+        SetlistEvent::TakeRecorded { pass, .. } => {
+            *TAKE_UNDER_REVIEW.write() = Some(pass.clone());
+            // The peaks are read separately and arrive later; until
+            // then the panel draws a line rather than the last take's
+            // shape under this take's number.
+            TAKE_PEAKS.write().clear();
+        }
+
+        // Somebody rated it. Applied even when it is this device's own
+        // mark coming back: the service is the authority on what the
+        // room thinks, and a local guess that disagreed would be a
+        // rating that changed under somebody's hand.
+        SetlistEvent::TakeMarked { pass, mark, .. } => {
+            if let Some(under_review) = TAKE_UNDER_REVIEW.write().as_mut() {
+                if under_review.number == *pass {
+                    under_review.mark(mark.clone());
+                }
+            }
         }
 
         SetlistEvent::SongEntered { .. }

@@ -968,11 +968,29 @@ fn PerformanceMainContent() -> Element {
                                         (!name.is_empty()).then_some(name);
                                 },
                                 on_mark: move |mark: session_proto::review::Mark| {
-                                    // Into the pass on screen now; the
-                                    // service that shares it with the
-                                    // other tablets is the next wire.
-                                    if let Some(pass) = crate::signals::TAKE_UNDER_REVIEW.write().as_mut() {
-                                        pass.mark(mark);
+                                    // To the service, which keeps it with
+                                    // the song and tells the other
+                                    // tablets. It comes back through
+                                    // `TakeMarked` — including to this
+                                    // one, so what is on screen is what
+                                    // the room has rather than what this
+                                    // device hopes it has.
+                                    let pass = crate::signals::TAKE_UNDER_REVIEW()
+                                        .map(|pass| pass.number);
+                                    let song = ACTIVE_INDICES.read().song_index;
+                                    if let (Some(pass), Some(song)) = (pass, song) {
+                                        spawn(async move {
+                                            if let Err(error) = Session::get()
+                                                .setlist()
+                                                .mark_take(song, pass, mark)
+                                                .await
+                                            {
+                                                tracing::warn!(
+                                                    error = ?error,
+                                                    "the mark did not reach the session"
+                                                );
+                                            }
+                                        });
                                     }
                                 },
                             }

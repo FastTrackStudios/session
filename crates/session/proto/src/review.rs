@@ -34,7 +34,8 @@ use std::collections::BTreeMap;
 /// Four, deliberately: three levels of good and one of broken. A
 /// ten-point scale invites deliberation, and this is a judgement made
 /// in the seconds between passes with sticks still in hand.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, facet::Facet)]
 pub enum Verdict {
     /// Something went wrong here. The X.
     Mistake,
@@ -94,7 +95,7 @@ impl Verdict {
 /// thing on the screen: the waveform drawn is the pass, a drag across
 /// it is a fraction of it, and a mark that stored project time would
 /// have to be re-based every time it was drawn.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, facet::Facet)]
 pub struct Span {
     pub from: f64,
     pub to: f64,
@@ -153,7 +154,7 @@ impl Span {
 }
 
 /// One person's judgement on one stretch of one pass.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, facet::Facet)]
 pub struct Mark {
     /// Who made it — the performer name the tracks are tagged with, so
     /// a mark and the audio it is about agree about whose it is.
@@ -198,7 +199,7 @@ impl Mark {
 }
 
 /// One run at a song, and what everybody thought of it.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, facet::Facet)]
 pub struct Pass {
     /// Which pass this is, counted from one within the song. What the
     /// room calls it out loud — "take four" — so it is what the screen
@@ -334,6 +335,18 @@ impl Review {
         self.passes
             .entry(number)
             .or_insert_with(|| Pass::new(number, from, to))
+    }
+
+    /// A review from passes that came over the wire.
+    ///
+    /// The wire carries the passes; the map is the index this side
+    /// builds over them, and rebuilding it here is cheaper than
+    /// teaching the wire about a `BTreeMap`.
+    #[must_use]
+    pub fn from_passes(passes: impl IntoIterator<Item = Pass>) -> Self {
+        Self {
+            passes: passes.into_iter().map(|pass| (pass.number, pass)).collect(),
+        }
     }
 
     /// The number the next pass gets: one past the highest, so a

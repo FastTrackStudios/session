@@ -31,11 +31,13 @@ mod playback;
 mod polling;
 pub mod position_sync;
 mod record;
+mod review;
 
 use crate::cache::Cache;
 use crate::event_bus::{EventBus, WatchBus};
 use architect::platform::Instant;
 use session_proto::{ActiveIndices, QueuedTarget, Setlist, Song, SongChartHydration};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
@@ -105,6 +107,17 @@ pub struct SetlistServiceImpl<D = ()> {
     /// Bidirectional position sync between song tabs and setlist tab.
     /// None until a combined setlist is generated.
     pub(crate) position_sync: Arc<RwLock<Option<PositionSyncBridge>>>,
+    /// Every song's takes and what the room thought of them, by project
+    /// guid. Loaded from the song's ext state on demand and written
+    /// back on every mark, so it survives the evening.
+    pub(crate) reviews: Arc<RwLock<HashMap<String, session_proto::review::Review>>>,
+    /// Where the take being recorded started, in the song's own
+    /// seconds, and in which project.
+    ///
+    /// Held only between record and stop: a pass exists once it has
+    /// both ends, and a recording that is still running is not a take
+    /// anybody can rate.
+    pub(crate) recording_from: Arc<RwLock<Option<(String, f64)>>>,
 }
 
 impl<D> Clone for SetlistServiceImpl<D>
@@ -130,6 +143,8 @@ where
             last_chart_refresh_attempt: self.last_chart_refresh_attempt.clone(),
             build_generation: self.build_generation.clone(),
             position_sync: self.position_sync.clone(),
+            reviews: self.reviews.clone(),
+            recording_from: self.recording_from.clone(),
         }
     }
 }
@@ -158,6 +173,8 @@ impl<D> SetlistServiceImpl<D> {
             last_chart_refresh_attempt: Cache::named("session.setlist.chart_refresh_attempts"),
             build_generation: Arc::new(AtomicU64::new(0)),
             position_sync: Arc::new(RwLock::new(None)),
+            reviews: Arc::new(RwLock::new(HashMap::new())),
+            recording_from: Arc::new(RwLock::new(None)),
         }
     }
 }

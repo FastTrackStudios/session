@@ -1976,6 +1976,22 @@ where
         self.toggle_recording_impl().await
     }
 
+    async fn song_review(
+        &self,
+        song_index: usize,
+    ) -> Result<Vec<session_proto::review::Pass>, SessionServiceError> {
+        self.song_review_impl(song_index).await
+    }
+
+    async fn mark_take(
+        &self,
+        song_index: usize,
+        pass: u32,
+        mark: session_proto::review::Mark,
+    ) -> Result<(), SessionServiceError> {
+        self.mark_take_impl(song_index, pass, mark).await
+    }
+
     async fn set_song_record_arm(&self, armed: bool) -> Result<(), SessionServiceError> {
         self.set_song_record_arm_impl(armed).await
     }
