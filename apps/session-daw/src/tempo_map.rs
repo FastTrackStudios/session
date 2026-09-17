@@ -165,6 +165,47 @@ pub fn nearest_line(beats: &[crate::ruler::Beat], at: f64) -> Option<crate::rule
         .copied()
 }
 
+/// Put a tempo point into a map the window is holding.
+///
+/// The prediction half of a tempo write, and the same rule the engine
+/// applies: a point within a millisecond of an existing one IS that
+/// one, so mapping a bar twice moves its marker rather than stacking a
+/// second on top — a bar with two tempos is a bar with none.
+///
+/// Predicted rather than waited for because tempo mapping is a hundred
+/// small corrections: a bar line that moves when the round trip lands
+/// is a bar line that lags the mouse by a frame or ten, which is the
+/// one thing this gesture cannot afford.
+pub fn put(map: &mut Vec<daw_ui::studio::project::TempoChange>, at: f64, bpm: f64) {
+    const SAME_POINT: f64 = 0.001;
+    let at = at.max(0.0);
+    match map
+        .iter_mut()
+        .find(|point| (point.at - at).abs() < SAME_POINT)
+    {
+        Some(point) => point.bpm = bpm,
+        None => {
+            // The signature carries from the point before: a tempo
+            // change does not change the meter, and a new point that
+            // reset it to 4/4 would silently re-bar the rest of a song
+            // in five.
+            let before = map
+                .iter()
+                .filter(|point| point.at <= at)
+                .max_by(|a, b| a.at.total_cmp(&b.at));
+            let (beats_per_bar, beat_unit) =
+                before.map_or((4, 4), |point| (point.beats_per_bar, point.beat_unit));
+            map.push(daw_ui::studio::project::TempoChange {
+                at,
+                bpm,
+                beats_per_bar,
+                beat_unit,
+            });
+            map.sort_by(|a, b| a.at.total_cmp(&b.at));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Anchor, Move, Set, align};
@@ -384,5 +425,54 @@ mod transient_tests {
     #[test]
     fn a_count_of_zero_is_one() {
         assert_eq!(nth_transient(&[1.0, 2.0], 0.0, 0), Some(1.0));
+    }
+
+    /// A second write to the same bar moves its marker rather than
+    /// stacking another on it: a bar with two tempos is a bar with
+    /// none, and tempo mapping is a hundred small corrections.
+    #[test]
+    fn writing_the_same_point_twice_moves_it() {
+        let mut map = vec![daw_ui::studio::project::TempoChange {
+            at: 0.0,
+            bpm: 120.0,
+            beats_per_bar: 4,
+            beat_unit: 4,
+        }];
+        super::put(&mut map, 0.0, 90.0);
+        assert_eq!(map.len(), 1);
+        assert!((map[0].bpm - 90.0).abs() < 1e-9);
+        // A millisecond away is the same point; ten is not.
+        super::put(&mut map, 0.0005, 100.0);
+        assert_eq!(map.len(), 1);
+        super::put(&mut map, 4.0, 140.0);
+        assert_eq!(map.len(), 2);
+        assert!((map[1].at - 4.0).abs() < 1e-9);
+    }
+
+    /// A new point keeps the meter it lands in. A tempo change does not
+    /// change the signature, and one that reset it to four four would
+    /// silently re-bar the rest of a song in five.
+    #[test]
+    fn a_new_point_keeps_the_meter_it_lands_in() {
+        let mut map = vec![daw_ui::studio::project::TempoChange {
+            at: 0.0,
+            bpm: 120.0,
+            beats_per_bar: 5,
+            beat_unit: 8,
+        }];
+        super::put(&mut map, 10.0, 100.0);
+        assert_eq!(map[1].beats_per_bar, 5);
+        assert_eq!(map[1].beat_unit, 8);
+    }
+
+    /// And the map stays in order, because everything that walks it
+    /// assumes that.
+    #[test]
+    fn the_map_stays_in_order() {
+        let mut map = Vec::new();
+        for at in [8.0, 2.0, 16.0, 4.0] {
+            super::put(&mut map, at, 120.0);
+        }
+        assert!(map.windows(2).all(|pair| pair[0].at <= pair[1].at));
     }
 }
