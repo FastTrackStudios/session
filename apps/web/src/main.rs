@@ -17,6 +17,8 @@ use dioxus::prelude::*;
 pub enum Route {
     #[route("/")]
     Home {},
+    #[route("/reference")]
+    ReferencePage {},
     #[route("/demo")]
     Demo {},
     #[route("/guide")]
@@ -27,7 +29,7 @@ pub enum Route {
     NotFound { segments: Vec<String> },
 }
 
-use routes::{Demo, GuideIndex, GuidePage, Home, NotFound};
+use routes::{Demo, GuideIndex, GuidePage, Home, NotFound, ReferencePage};
 
 fn main() {
     #[cfg(target_arch = "wasm32")]
