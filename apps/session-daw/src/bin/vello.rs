@@ -243,6 +243,9 @@ struct App {
     rename: Option<session_daw::rename::Rename>,
     /// When the last panel click was, for spotting a double.
     last_row_click: Option<(usize, std::time::Instant)>,
+    /// When the last click on a mark in the ruler was, and on which —
+    /// for spotting the double that opens its name.
+    last_ruler_click: Option<(session_daw::ruler::On, std::time::Instant)>,
     /// The row layout, kept for that re-record.
     layout: session_daw::layout::Layout,
     /// When the last rack grip was clicked, for spotting a double.
@@ -1024,6 +1027,13 @@ impl ApplicationHandler for App {
                         return;
                     }
                     {
+                        // A second click on the same mark opens its
+                        // name. Asked BEFORE the release so the move
+                        // that click would otherwise be — to the place
+                        // it is already in — is dropped rather than
+                        // sent: a rename should not also nudge the
+                        // thing being renamed.
+                        let naming = self.ruler_double_click(x, y);
                         let at = self.ruler_time_unclamped(x);
                         let mut effects = Vec::new();
                         let released = match self.session.as_mut() {
@@ -1033,6 +1043,10 @@ impl ApplicationHandler for App {
                             }
                             None => false,
                         };
+                        if naming {
+                            self.redraw();
+                            return;
+                        }
                         if released {
                             self.run(effects);
                             self.redraw();
@@ -1081,7 +1095,7 @@ impl ApplicationHandler for App {
                                     self.rename = Some(session_daw::rename::Rename::new(
                                         session_daw::rename::Surface::Arrange,
                                         row,
-                                        track.guid.clone(),
+                                        session_daw::rename::What::Track(track.guid.clone()),
                                         &track.name,
                                     ));
                                 }
@@ -2003,17 +2017,38 @@ impl App {
                     // with no way to tell why Enter did nothing.
                     return;
                 };
-                let edit = session_daw::engine::Edit::Rename(rename.guid, name);
-                let map = match rename.surface {
-                    session_daw::rename::Surface::Arrange => &self.arrange_map,
-                    session_daw::rename::Surface::Mixer => &self.mixer_map,
+                use session_daw::rename::What;
+                let edit = match rename.what {
+                    What::Track(guid) => {
+                        let edit = session_daw::engine::Edit::Rename(guid, name);
+                        let map = match rename.surface {
+                            session_daw::rename::Surface::Mixer => &self.mixer_map,
+                            // The ruler renames no track, so its rows
+                            // are not in either map; it never reaches
+                            // here with a track anyway.
+                            session_daw::rename::Surface::Arrange
+                            | session_daw::rename::Surface::Ruler => &self.arrange_map,
+                        };
+                        if let Some(index) = map.index(rename.row) {
+                            apply_locally(&mut self.tracks, index, &edit);
+                        }
+                        // The name is recorded chrome, not a live
+                        // value, so the prediction only shows once the
+                        // panel is re-recorded.
+                        self.re_record();
+                        edit
+                    }
+                    // A mark's name is drawn from the project snapshot,
+                    // which the refresh re-reads as soon as the engine
+                    // has it — so there is nothing to predict here and
+                    // nothing to re-record.
+                    What::Marker(id) => {
+                        session_daw::engine::Edit::RenameMarker(String::new(), id, name)
+                    }
+                    What::Region(id) => {
+                        session_daw::engine::Edit::RenameRegion(String::new(), id, name)
+                    }
                 };
-                if let Some(index) = map.index(rename.row) {
-                    apply_locally(&mut self.tracks, index, &edit);
-                }
-                // The name is recorded chrome, not a live value, so the
-                // prediction only shows once the panel is re-recorded.
-                self.re_record();
                 if let Some(applier) = &self.applier {
                     applier.send(edit);
                 }
@@ -2212,7 +2247,7 @@ impl App {
             self.rename = Some(session_daw::rename::Rename::new(
                 session_daw::rename::Surface::Mixer,
                 row,
-                guid,
+                session_daw::rename::What::Track(guid),
                 &track.name,
             ));
             return;
@@ -2713,6 +2748,74 @@ impl App {
             Side::Top => profile.top.get(index),
         }
         .map(|item| item.act)
+    }
+
+    /// A click on a mark in the ruler: the second one opens its name.
+    ///
+    /// Returns whether this click was that second one. Everything else
+    /// — a click on empty lane, on the bars, anywhere but the ruler —
+    /// only forgets whatever was remembered, so a double has to be two
+    /// clicks on the SAME mark and nothing in between.
+    fn ruler_double_click(&mut self, x: f64, y: f64) -> bool {
+        use session_daw::ruler::On;
+        let now = std::time::Instant::now();
+        let on = match self.arrange_hit_at(x, y).map(|hit| hit.target) {
+            Some(session_daw::hit::Target::Ruler { on, .. })
+                if matches!(on, On::Marker { .. } | On::Region { .. }) =>
+            {
+                on
+            }
+            _ => {
+                self.last_ruler_click = None;
+                return false;
+            }
+        };
+        let again = self.last_ruler_click.is_some_and(|(last, when)| {
+            // A region's zone is where in the band the pointer was —
+            // an edge or the body — and two clicks on one band are two
+            // clicks on one band wherever they land in it.
+            same_mark(last, on)
+                && now.saturating_duration_since(when) <= session_daw::gesture::DOUBLE
+        });
+        if !again {
+            self.last_ruler_click = Some((on, now));
+            return false;
+        }
+        self.last_ruler_click = None;
+        self.open_ruler_rename(on)
+    }
+
+    /// Open the name of a mark in the ruler, if it is still there.
+    fn open_ruler_rename(&mut self, on: session_daw::ruler::On) -> bool {
+        use session_daw::rename::{Rename, Surface, What};
+        use session_daw::ruler::On;
+        let Some((project, _)) = self.session.as_ref() else {
+            return false;
+        };
+        let open = match on {
+            On::Marker { id } => project.0.markers.iter().find(|m| m.idx == id).map(|m| {
+                Rename::new(
+                    Surface::Ruler,
+                    session_daw::ruler::lane_row(m.lane),
+                    What::Marker(id),
+                    &m.name,
+                )
+            }),
+            On::Region { id, .. } => project.0.sections.iter().find(|s| s.id == id).map(|s| {
+                Rename::new(
+                    Surface::Ruler,
+                    session_daw::ruler::lane_row(s.lane),
+                    What::Region(id),
+                    &s.name,
+                )
+            }),
+            On::Lane { .. } | On::Bars => None,
+        };
+        let opened = open.is_some();
+        if opened {
+            self.rename = open;
+        }
+        opened
     }
 
     /// The span of the band a hit landed on, in seconds.
@@ -3590,6 +3693,7 @@ fn main() {
         kinds,
         settings: session_daw::settings::Settings::default(),
         rename: None,
+        last_ruler_click: None,
         last_row_click: None,
         session: None,
         mixer: None,
@@ -3860,5 +3964,20 @@ fn window_size() -> (f64, f64) {
         // A size the window could not show anything in is a typo, not
         // an instruction.
         _ => DEFAULT,
+    }
+}
+
+/// Whether two ruler hits are the same mark.
+///
+/// A region is the same band wherever in it the pointer landed: the
+/// zone says edge or body, and a double-click that started on the body
+/// and finished a pixel into the edge is still a double-click on that
+/// band.
+const fn same_mark(a: session_daw::ruler::On, b: session_daw::ruler::On) -> bool {
+    use session_daw::ruler::On;
+    match (a, b) {
+        (On::Marker { id: one }, On::Marker { id: two })
+        | (On::Region { id: one, .. }, On::Region { id: two, .. }) => one == two,
+        _ => false,
     }
 }

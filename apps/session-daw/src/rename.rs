@@ -27,9 +27,11 @@ pub struct Rename {
     pub surface: Surface,
     /// Which row or strip is being renamed.
     pub row: usize,
-    /// The track it belongs to, so the edit survives the rows being
-    /// rebuilt underneath it.
-    pub guid: String,
+    /// What is being renamed, so the edit survives the rows being
+    /// rebuilt underneath it — and so a mark in the ruler can be
+    /// renamed by the same machine as a track, which is the whole
+    /// reason this is a state machine and not a widget.
+    pub what: What,
     text: String,
     /// The caret, as a byte offset into `text`.
     ///
@@ -47,6 +49,23 @@ pub enum Surface {
     Arrange,
     /// A strip in the mixer.
     Mixer,
+    /// A mark or a band in the ruler's lanes.
+    Ruler,
+}
+
+/// What a rename is renaming.
+///
+/// A track is addressed by its guid, which survives anything. A marker
+/// or a region is addressed by REAPER's own number, which does not — a
+/// renumber reassigns it — so a rename left open across one commits to
+/// whatever now holds that number. That is the same risk every REAPER
+/// action on a marker carries, and the alternative is refusing to
+/// rename the thing the user is looking at.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum What {
+    Track(String),
+    Marker(u32),
+    Region(u32),
 }
 
 impl Rename {
@@ -57,11 +76,11 @@ impl Rename {
     /// name to CHANGE it, so the common case is typing a new one, and
     /// the rarer case — fixing a typo — is one End key away.
     #[must_use]
-    pub fn new(surface: Surface, row: usize, guid: String, from: &str) -> Self {
+    pub fn new(surface: Surface, row: usize, what: What, from: &str) -> Self {
         Self {
             surface,
             row,
-            guid,
+            what,
             text: from.to_owned(),
             caret: from.len(),
         }
@@ -143,10 +162,10 @@ impl Rename {
 
 #[cfg(test)]
 mod tests {
-    use super::{Rename, Surface};
+    use super::{Rename, Surface, What};
 
     fn open(name: &str) -> Rename {
-        Rename::new(Surface::Arrange, 3, "kick".into(), name)
+        Rename::new(Surface::Arrange, 3, What::Track("kick".into()), name)
     }
 
     #[test]
