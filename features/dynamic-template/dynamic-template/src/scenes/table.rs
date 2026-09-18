@@ -122,6 +122,43 @@ fn hide_the_bus_tree() -> Rule {
     )
 }
 
+/// Sub, Verb and Fundamental keep their strips and give up their rows.
+///
+/// They are parallel colour, not the kit. Nothing is recorded on one and
+/// nothing is edited on one — a Verb bank has no takes to trim and a Sub
+/// has no transient to nudge — so what they need is a fader, and a fader
+/// is the mixer. In the panel they are rows between a drum and the next
+/// drum, and on a kit that is five pieces deep they are the reason the
+/// whole kit does not fit on screen.
+///
+/// This is the first scene rule to use the per-surface override at all,
+/// and it is what it was for: `arrange` says hidden, `mixer` says
+/// nothing, so the mixer keeps whatever an earlier rule already decided.
+///
+/// They come back when there is something to draw on them, which is
+/// automation — but automation is a property of every phase from
+/// `Rescue` onward rather than a phase of its own (see
+/// `session::mix_phases`), and nothing in the scene engine reads a phase
+/// yet. So this is a default, not a mode: the scene that wants them
+/// visible is a scene, and it does not exist yet.
+fn parallel_colour_out_of_the_panel() -> Vec<Rule> {
+    ["sub", "verb", "fundamental"]
+        .into_iter()
+        .map(|kind| Rule {
+            selector: Selector {
+                kind: Some(kind.to_owned()),
+                ..Selector::default()
+            },
+            // Nothing, deliberately: an empty effect leaves what an
+            // earlier rule decided alone, and the mixer's widths are
+            // already right.
+            effect: Effect::default(),
+            arrange: Some(Effect::hidden()),
+            mixer: None,
+        })
+        .collect()
+}
+
 /// The five pieces a drum mix is made on — matched by the template
 /// groups they stand for, so a kit with a sixth piece needs a line here
 /// and a renamed one needs nothing.
@@ -752,6 +789,7 @@ fn drum_mixing() -> Scene {
         Effect::at(Size::Compact),
     ));
     rules.push(hide_the_bus_tree());
+    rules.extend(parallel_colour_out_of_the_panel());
     Scene {
         name: "Drum Mixing".to_owned(),
         slug: "drum-mixing".to_owned(),
@@ -1332,6 +1370,70 @@ mod tests {
             Fact::leaf("chords", "CHORDS", 4, 1).at(vec![keyflow.clone()]),
             Fact::leaf("lines", "LINES", 5, 1).at(vec![keyflow]),
         ]
+    }
+
+    /// A kick with the parallel colour hung off it: a Sub, a Verb bank
+    /// with two returns inside it, and a Fundamental.
+    fn with_the_colour() -> Vec<crate::scenes::Fact> {
+        use crate::golden_session::Kind;
+        use crate::scenes::{Fact, Segment};
+        let kit = Segment::named("Drum Kit").of(Kind::Group);
+        let kick = Segment::named("Kick").of(Kind::Piece);
+        let under = vec![kit.clone(), kick.clone()];
+        let verb = Segment::named("Verb").of(Kind::Verb);
+        let inside = vec![kit, kick, verb];
+        vec![
+            Fact::folder("kick", "Kick", 0, 0)
+                .of(Kind::Piece)
+                .at(under.clone()),
+            Fact::leaf("in", "In", 1, 1)
+                .of(Kind::Source)
+                .at(under.clone()),
+            Fact::leaf("sub", "Sub", 2, 1)
+                .of(Kind::Sub)
+                .at(under.clone()),
+            Fact::leaf("fund", "Fund", 3, 1)
+                .of(Kind::Fundamental)
+                .at(under.clone()),
+            Fact::folder("verb", "Verb", 4, 1).of(Kind::Verb).at(under),
+            Fact::leaf("short", "Short", 5, 2)
+                .of(Kind::Return)
+                .at(inside.clone()),
+            Fact::leaf("long", "Long", 6, 2).of(Kind::Return).at(inside),
+        ]
+    }
+
+    /// The parallel colour keeps its strips and gives up its rows.
+    ///
+    /// Nothing is recorded on a Sub and nothing is edited on a Verb, so
+    /// in the panel they are rows between one drum and the next — and on
+    /// a kit five pieces deep they are why the kit does not fit. In the
+    /// mixer they are faders, which is the whole point of them.
+    ///
+    /// A Verb is a FOLDER, so hiding it has to take its returns with it;
+    /// a rule that left two orphaned returns behind would be worse than
+    /// no rule at all.
+    #[test]
+    fn drum_mixing_shows_the_parallel_colour_only_in_the_mixer() {
+        let facts = with_the_colour();
+        let scene = scene("drum-mixing").expect("the drum mixing scene");
+        let rows = |surface| -> Vec<String> {
+            crate::scenes::resolve(scene, &facts, surface, Some("mix"), None, None)
+                .iter()
+                .filter_map(crate::scenes::Row::guid)
+                .map(str::to_owned)
+                .collect()
+        };
+        assert_eq!(
+            rows(crate::scenes::Surface::Arrange),
+            ["kick", "in"],
+            "the panel is still showing colour it cannot edit"
+        );
+        assert_eq!(
+            rows(crate::scenes::Surface::Mixer),
+            ["kick", "in", "sub", "fund", "verb", "short", "long"],
+            "the mixer lost a fader it needs"
+        );
     }
 
     /// Every scene shows the Guide folder collapsed to one row, and no
