@@ -369,62 +369,56 @@ pub struct Grid {
 /// Over rather than under, the way the recorded scene draws it: a bar
 /// line you cannot see across an item is a bar line that stops existing
 /// exactly where the session is densest.
+///
+/// # One element, not three hundred
+///
+/// A grid is the same line repeated, which is what a repeating gradient
+/// IS — so it is a background rather than a node per line. Two screens of
+/// beats and bars is around two hundred and seventy divs, and style and
+/// layout cost what the tree costs.
+///
+/// This is the move that was wrong in the WebView and is right here, for
+/// a reason worth keeping: there, a gradient across a 24,000px element
+/// was repainted by WebKit on every scroll frame and cost the window
+/// nine tenths of its frames. Here the element is two screens wide, and
+/// Vello re-encodes the whole scene every frame regardless — so a
+/// gradient is one brush in that encoding rather than an extra repaint.
+/// The same technique, opposite verdicts, because the renderers are not
+/// the same renderer. Measured both ways.
 #[component]
-fn Lines(grid: Grid, view: View, colors: Colors) -> Element {
-    let pps = view.pps.max(1e-9);
-    let from = (view.scroll_x / pps).max(0.0);
-    let to = (view.scroll_x + view.width) / pps;
+fn Lines(grid: Grid, view: View, colors: Colors, from: f64) -> Element {
+    // Where the window's left edge falls inside a bar, so the first line
+    // lands on a bar line and not wherever the window happened to start.
+    let phase = |step: f64| -(from % (step * view.pps).max(1e-9));
+    let mut images = Vec::new();
+    let mut positions = Vec::new();
+    // Beats first, so a bar line painted over the same pixel wins.
+    if let Some(beat) = grid.beat.filter(|b| *b > 0.0) {
+        let step = (beat * view.pps).max(1.0);
+        images.push(format!(
+            "repeating-linear-gradient(90deg, {} 0 1px, transparent 1px {step:.3}px)",
+            colors.grid_beat
+        ));
+        positions.push(format!("{:.3}px 0", phase(beat)));
+    }
+    if grid.bar > 0.0 {
+        let step = (grid.bar * view.pps).max(1.0);
+        images.push(format!(
+            "repeating-linear-gradient(90deg, {} 0 1px, transparent 1px {step:.3}px)",
+            colors.grid
+        ));
+        positions.push(format!("{:.3}px 0", phase(grid.bar)));
+    }
+    if images.is_empty() {
+        return rsx! {};
+    }
+    let (images, positions) = (images.join(", "), positions.join(", "));
     rsx! {
         div {
-            style: "position:absolute; inset:0; pointer-events:none;",
-            // Beats first, so a bar line drawn at the same x wins.
-            if let Some(beat) = grid.beat.filter(|b| *b > 0.0) {
-                for x in every(beat, from, to, view) {
-                    div {
-                        style: "position:absolute; top:0; bottom:0; left:{x:.1}px; \
-                                width:1px; background:{colors.grid_beat};",
-                    }
-                }
-            }
-            if grid.bar > 0.0 {
-                for x in every(grid.bar, from, to, view) {
-                    div {
-                        style: "position:absolute; top:0; bottom:0; left:{x:.1}px; \
-                                width:1px; background:{colors.grid};",
-                    }
-                }
-            }
+            style: "position:absolute; inset:0; pointer-events:none; \
+                    background-image:{images}; background-position:{positions};",
         }
     }
-}
-
-/// Where a line lands on screen, every `step` seconds across the view.
-///
-/// Capped, because a zoom far enough out asks for a line a pixel — and
-/// a grid denser than the screen is a flat wash that costs a node for
-/// every stripe in it.
-fn every(step: f64, from: f64, to: f64, view: View) -> Vec<f64> {
-    /// The most lines worth drawing across one screen.
-    const MOST: usize = 400;
-    if step <= 0.0 || to <= from {
-        return Vec::new();
-    }
-    let first = (from / step).floor().max(0.0);
-    let count = ((to - from) / step).ceil().max(0.0);
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions,
-        reason = "a count of lines across one screen, clamped below"
-    )]
-    let count = (count as usize).min(MOST);
-    (0..=count)
-        .map(|i| {
-            let at = (first + f64::from(u32::try_from(i).unwrap_or(0))) * step;
-            at.mul_add(view.pps, -view.scroll_x)
-        })
-        .filter(|x| *x >= 0.0 && *x <= view.width)
-        .collect()
 }
 
 /// How far the lanes are built past each edge of the screen, in screens.
@@ -614,7 +608,7 @@ fn Content(
                     }
                 }
             }
-            Lines { grid, view, colors: colors.clone() }
+            Lines { grid, view, colors: colors.clone(), from: built.from }
         }
     }
 }
@@ -651,14 +645,62 @@ fn Lane(
     let inset = (body * 0.05).clamp(0.0, 2.0);
     let colour = track_color(&colors, &track);
 
+    // The lane's shapes, in the lane's own pixels. Built here rather than
+    // inside each item because they share one `<svg>`.
+    let shape_h = (body - inset * 2.0).max(0.5);
+    let paths: Vec<(String, String)> = project
+        .lane(&track.guid)
+        .iter()
+        .filter_map(|item| {
+            let x0 = item.position.as_seconds();
+            let x1 = x0 + item.length.as_seconds().max(0.001);
+            if x1 < from || x0 > to {
+                return None;
+            }
+            let left = x0.mul_add(view.pps, -view.scroll_x);
+            let width = ((x1 - x0) * view.pps).max(1.0);
+            let fill = item.color.map_or_else(
+                || colour.clone(),
+                |rgb| rgb24(rgb, if item.muted { 0.4 } else { 1.0 }),
+            );
+            let d = shapes.get(&item.guid)?.path(left, width, inset, shape_h)?;
+            Some((d, fill))
+        })
+        .collect();
+
     rsx! {
         div {
-            style: "position:absolute; left:0; top:{top}px; width:100%; height:{height}px;",
-            // The stripe and the divider under it. Two rectangles, flat.
-            div { style: "position:absolute; inset:0 0 {DIVIDER}px 0; background:{stripe};" }
-            div {
-                style: "position:absolute; left:0; right:0; bottom:0; height:{DIVIDER}px; \
-                        background:{colors.divider};",
+            // The stripe and the divider are the lane itself: its own
+            // background and its own bottom border, rather than two
+            // rectangles inside it. Three nodes a row became one, and
+            // style and layout cost what the tree costs.
+            //
+            // `border-box` so the row still occupies exactly its height
+            // with the divider inside it — a divider added to the height
+            // drifts the session a pixel a row. Absolutely positioned
+            // children measure from the padding box, which the border
+            // does not move, so every item stays where it was.
+            style: "position:absolute; left:0; top:{top}px; width:100%; \
+                    height:{height}px; box-sizing:border-box; background:{stripe}; \
+                    border-bottom:{DIVIDER}px solid {colors.divider};",
+            // Every shape on this lane, in ONE `<svg>`.
+            //
+            // A waveform was an `<svg>` and a `<path>` inside each item's
+            // box: three nodes an item, two of which said nothing the
+            // lane could not say once. Collapsed, an item costs one node
+            // and its shape costs one — and the shapes of a lane move
+            // together anyway, because they are on the same lane.
+            if !paths.is_empty() {
+                svg {
+                    width: "{view.width:.0}",
+                    height: "{body.max(1.0):.0}",
+                    style: "position:absolute; left:0; top:0; pointer-events:none;",
+                    view_box: "0 0 {view.width:.0} {body.max(1.0):.0}",
+                    preserve_aspect_ratio: "none",
+                    for (d, fill) in paths {
+                        path { d: "{d}", fill: "{fill}" }
+                    }
+                }
             }
             for item in project.lane(&track.guid) {
                 {
@@ -679,6 +721,7 @@ fn Lane(
                         || colour.clone(),
                         |rgb| rgb24(rgb, if item.muted { 0.4 } else { 1.0 }),
                     );
+                    let _ = (seen_from, seen_to);
                     rsx! {
                         Item {
                             key: "{item.guid}",
@@ -689,10 +732,6 @@ fn Lane(
                             height: (body - inset * 2.0).max(0.5),
                             colour,
                             title: project.title(item).map(str::to_owned),
-                            clipped: shapes
-                                .get(&item.guid)
-                                .map(|shape| shape.clip(seen_from, seen_to)),
-                            item_width: width,
                             row_height: height,
                             fade_in: item.fade_in_length.as_seconds().max(0.0) * view.pps,
                             fade_out: item.fade_out_length.as_seconds().max(0.0) * view.pps,
@@ -757,11 +796,6 @@ fn Item(
     height: f64,
     colour: String,
     title: Option<String>,
-    /// The part of the shape that is on screen, and the part of the item
-    /// it covers.
-    clipped: Option<Clipped>,
-    /// How wide the whole item is, which is what those fractions are of.
-    item_width: f64,
     /// How tall the ROW is, which is what decides whether a name fits.
     row_height: f64,
     fade_in: f64,
@@ -776,37 +810,24 @@ fn Item(
     let named =
         title.filter(|_| row_height >= TITLE_MIN_H && width - TITLE_PAD * 2.0 >= TITLE_MIN_W);
 
+    // The name is the item's OWN text rather than a box inside it: the
+    // line box it needs is the same one either way, and a node per
+    // titled item is a node per titled item.
+    let ink = named.as_ref().map_or_else(String::new, |_| {
+        format!(
+            "padding-left:{TITLE_PAD}px; font-size:{TITLE_SIZE}px; \
+             line-height:{TITLE_LINE}px; color:{text}; white-space:nowrap;"
+        )
+    });
     rsx! {
         div {
             style: "position:absolute; left:{left}px; top:{top}px; width:{width}px; \
-                    height:{height}px; background:{body}; overflow:hidden;",
+                    height:{height}px; background:{body}; overflow:hidden; {ink}",
             "data-item": "{guid}",
-            // What the item CONTAINS. One node, drawn once: a path is
-            // the only shape a waveform can be without a div per peak.
-            if let Some((d, left, wide)) = clipped.as_ref().and_then(|clipped| {
-                let d = clipped.shape.path(height)?;
-                let left = clipped.from * item_width;
-                Some((d, left, (clipped.to - clipped.from) * item_width))
-            }) {
-                svg {
-                    // Sized by ATTRIBUTE as well as by style: Blitz
-                    // renders an inline `<svg>` by handing its markup to
-                    // usvg, and usvg reads the root element's own
-                    // width/height. Sized only in CSS it parses to
-                    // nothing and draws nothing.
-                    // Whole pixels, because that is what Blitz lays the
-                    // element out at: a fractional attribute sizes the
-                    // usvg tree to one box and the layout to another, and
-                    // the shape is then scaled by the difference. Tried
-                    // both and measured it — fractional is worse.
-                    width: "{wide.max(1.0):.0}",
-                    height: "{height.max(1.0):.0}",
-                    style: "position:absolute; left:{left:.1}px; top:0;",
-                    view_box: "0 0 1000 100",
-                    preserve_aspect_ratio: "none",
-                    path { d: "{d}", fill: "{colour}" }
-                }
-            }
+            // What the item contains is drawn by its LANE — every shape
+            // on a lane is one `<svg>` up there, because they share a
+            // height and a transform and an element each said nothing
+            // the lane could not say once.
             // The fades, as the part of the item they take away. Two
             // triangles, which `clip-path` draws with no node of their
             // own beyond the box they are in.
@@ -825,12 +846,7 @@ fn Item(
                 }
             }
             if let Some(name) = named {
-                div {
-                    style: "position:absolute; left:{TITLE_PAD}px; top:0; \
-                            font-size:{TITLE_SIZE}px; line-height:{TITLE_LINE}px; \
-                            color:{text}; white-space:nowrap; pointer-events:none;",
-                    "{name}"
-                }
+                "{name}"
             }
         }
     }
@@ -941,20 +957,27 @@ impl Shape {
         }
     }
 
-    /// The shape as one path, in a 1000x100 box, or nothing if the item
-    /// is too short to show one.
+    /// The shape as one path, in the LANE's own pixels.
     ///
     /// One path rather than one node per peak or per note: a waveform is
     /// fifty amplitudes and a bar of sixteenths is sixteen blocks, and
     /// either as elements is thousands of nodes on a screen — which is
     /// the one thing the lanes may not spend.
+    ///
+    /// Lane pixels rather than a box of its own, because every shape on
+    /// a lane shares one `<svg>`: they move together, they are the same
+    /// height, and an element each said nothing the lane could not say
+    /// once. It also takes the scaling out of the renderer — the
+    /// amplitudes below are the pixels the recorded scene draws, rather
+    /// than a fraction that a viewBox has to turn back into pixels.
     #[must_use]
-    pub fn path(&self, height: f64) -> Option<String> {
+    pub fn path(&self, left: f64, width: f64, top: f64, height: f64) -> Option<String> {
         match self {
-            Self::Wave(peaks) => {
-                (!peaks.is_empty() && height >= 4.0).then(|| envelope(peaks, height))
+            Self::Wave(peaks) => (!peaks.is_empty() && height >= 4.0)
+                .then(|| envelope(peaks, left, width, top, height)),
+            Self::Notes(notes) => {
+                (!notes.is_empty() && height >= 2.0).then(|| roll(notes, left, width, top, height))
             }
-            Self::Notes(notes) => (!notes.is_empty() && height >= 2.0).then(|| roll(notes)),
         }
     }
 }
@@ -978,25 +1001,18 @@ pub struct Clipped {
 /// of the part, which is why the pitch range is the item's own rather
 /// than the full 0..127 — a bass part pressed into the bottom eighth of
 /// a scale it never plays in has no shape at all.
-fn roll(notes: &[Note]) -> String {
+fn roll(notes: &[Note], left: f64, width: f64, top: f64, height: f64) -> String {
     let mut path = String::with_capacity(notes.len() * 40);
     for note in notes {
-        // Not clamped to the box: a clipped shape has notes that begin
-        // before its left edge and end past its right, and cutting them
-        // to the edge would redraw every one of them as a block starting
-        // exactly there.
-        let x0 = f64::from(note.at) * 1000.0;
+        let x0 = f64::from(note.at).mul_add(width, left);
         // Every note gets a width, however short: a preview of a
         // sixteenth-note part at this zoom is otherwise nothing at all.
-        let x1 = f64::from(note.len.max(0.004)).mul_add(1000.0, x0);
-        if x1 < 0.0 || x0 > 1000.0 {
-            continue;
-        }
-        let h = f64::from(note.height.clamp(0.01, 1.0)) * 100.0;
-        let y = (100.0 - h) * f64::from(note.from_top.clamp(0.0, 1.0));
+        let x1 = f64::from(note.len.max(0.004)).mul_add(width, x0);
+        let h = f64::from(note.height.clamp(0.01, 1.0)) * height;
+        let y = (height - h).mul_add(f64::from(note.from_top.clamp(0.0, 1.0)), top);
         let _ = write!(
             path,
-            "M{x0:.1} {y:.1}L{x1:.1} {y:.1}L{x1:.1} {:.1}L{x0:.1} {:.1}Z",
+            "M{x0:.2} {y:.2}L{x1:.2} {y:.2}L{x1:.2} {:.2}L{x0:.2} {:.2}Z",
             y + h,
             y + h
         );
@@ -1004,48 +1020,44 @@ fn roll(notes: &[Note]) -> String {
     path
 }
 
-/// A set of peaks as one closed path, in a 1000x100 box.
+/// A set of peaks as one closed path, in the lane's pixels.
 ///
-/// Mirrored about the middle, the way a waveform is drawn: the top edge
-/// out and the bottom edge back. A viewBox so the item's own width does
-/// the horizontal scaling and the path survives a horizontal zoom
-/// unchanged.
+/// Mirrored about the item's middle, the way a waveform is drawn: the
+/// top edge out and the bottom edge back.
 ///
-/// The VERTICAL scaling is not left to the box, because the two parts of
-/// it do not scale together. A waveform fills its lane bar a pixel of
-/// margin, and it keeps a hair of amplitude at silence so that a quiet
-/// item still has a line down its middle and reads as audio rather than
-/// as a gap — and that hair is a PIXEL, not a fraction of the row. Left
-/// to the viewBox it shrinks with the row and a quiet item on a short
-/// lane disappears. So the row's height comes in here and the two are
-/// converted into the box's units separately.
-fn envelope(peaks: &[f32], height: f64) -> String {
+/// In pixels rather than in a box of its own units, because the two
+/// parts of a waveform's height do not scale together. It fills its item
+/// bar a pixel of margin, and it keeps a hair of amplitude at silence so
+/// that a quiet item still has a line down its middle and reads as audio
+/// rather than as a gap — and that hair is a PIXEL, not a fraction of
+/// the row. Expressed as a fraction it shrinks with the row and a quiet
+/// item on a short lane disappears.
+fn envelope(peaks: &[f32], left: f64, width: f64, top: f64, height: f64) -> String {
     /// The margin left at full amplitude, in pixels.
     const MARGIN: f64 = 1.0;
     /// The amplitude silence still draws with, in pixels.
     const FLOOR: f64 = 0.6;
     let height = height.max(1.0);
-    // A pixel is this much of the box.
-    let per_px = 100.0 / height;
-    let scale = MARGIN.mul_add(-per_px, 50.0);
-    let floor = FLOOR * per_px;
+    let middle = height.mul_add(0.5, top);
+    let scale = height.mul_add(0.5, -MARGIN);
     let count = peaks.len().max(2);
-    let step = 1000.0 / f64::from(u32::try_from(count.saturating_sub(1)).unwrap_or(1)).max(1.0);
-    let amp = |p: f32| f64::from(p).clamp(0.0, 1.0).mul_add(scale, floor);
+    let last = f64::from(u32::try_from(count.saturating_sub(1)).unwrap_or(1)).max(1.0);
+    let step = width / last;
+    let amp = |p: f32| f64::from(p).clamp(0.0, 1.0).mul_add(scale, FLOOR);
 
-    let mut path = String::with_capacity(count * 16);
+    let mut path = String::with_capacity(count * 20);
     for (i, peak) in peaks.iter().enumerate() {
-        let x = f64::from(u32::try_from(i).unwrap_or(0)) * step;
+        let x = f64::from(u32::try_from(i).unwrap_or(0)).mul_add(step, left);
         let _ = write!(
             path,
-            "{}{x:.1} {:.1}",
+            "{}{x:.2} {:.2}",
             if i == 0 { "M" } else { " L" },
-            50.0 - amp(*peak)
+            middle - amp(*peak)
         );
     }
     for (i, peak) in peaks.iter().enumerate().rev() {
-        let x = f64::from(u32::try_from(i).unwrap_or(0)) * step;
-        let _ = write!(path, " L{x:.1} {:.1}", 50.0 + amp(*peak));
+        let x = f64::from(u32::try_from(i).unwrap_or(0)).mul_add(step, left);
+        let _ = write!(path, " L{x:.2} {:.2}", middle + amp(*peak));
     }
     path.push('Z');
     path
@@ -1126,21 +1138,27 @@ mod tests {
     /// The path closes, spans the box, and is mirrored about the middle.
     #[test]
     fn an_envelope_is_a_closed_mirrored_shape() {
-        // At a hundred pixels tall a box unit IS a pixel, which is what
-        // makes these numbers readable: a full peak comes within the
-        // one-pixel margin of each edge, and silence keeps six tenths of
-        // a pixel either side of the middle.
-        let path = envelope(&[0.0, 1.0, 0.5], 100.0);
+        // An item 200 wide and 100 tall, starting at x=40. A full peak
+        // comes within the one-pixel margin of each edge, and silence
+        // keeps six tenths of a pixel either side of the middle.
+        let path = envelope(&[0.0, 1.0, 0.5], 40.0, 200.0, 0.0, 100.0);
         assert!(path.starts_with('M'), "{path}");
         assert!(path.ends_with('Z'), "{path}");
         assert!(
-            path.contains("1000.0"),
-            "it did not reach the right edge: {path}"
+            path.contains("40.00"),
+            "it did not start at the item: {path}"
         );
-        assert!(path.contains("0.4"), "a full peak fell short: {path}");
-        assert!(path.contains("99.6"), "no bottom half: {path}");
-        assert!(path.contains("49.4"), "silence lost its floor: {path}");
-        assert!(path.contains("50.6"), "silence has one side only: {path}");
+        assert!(
+            path.contains("240.00"),
+            "it did not reach the item's right edge: {path}"
+        );
+        // A full peak reaches (height/2 - 1) + 0.6 of amplitude, which
+        // on a hundred-pixel item is 49.6 either side of the middle —
+        // the same number the recorded scene draws.
+        assert!(path.contains("0.40"), "a full peak fell short: {path}");
+        assert!(path.contains("99.60"), "no bottom half: {path}");
+        assert!(path.contains("49.40"), "silence lost its floor: {path}");
+        assert!(path.contains("50.60"), "silence has one side only: {path}");
     }
 
     /// The floor and the margin are PIXELS, so a short row keeps both
@@ -1149,29 +1167,41 @@ mod tests {
     #[test]
     fn the_floor_is_a_pixel_at_any_row_height() {
         for height in [8.0, 24.0, 96.0] {
-            let path = envelope(&[0.0], height);
-            let middle = 50.0;
-            // The first y in the path, as the box has it.
+            let path = envelope(&[0.0], 0.0, 100.0, 0.0, height);
             let y: f64 = path
                 .trim_start_matches('M')
                 .split(' ')
                 .nth(1)
                 .and_then(|y| y.trim_end_matches('Z').parse().ok())
                 .expect("a y");
-            // Back into pixels: the floor is six tenths of one, whatever
-            // the row does.
-            let pixels = (middle - y) * height / 100.0;
+            let pixels = height / 2.0 - y;
             assert!(
-                (pixels - 0.6).abs() < 0.05,
+                (pixels - 0.6).abs() < 0.01,
                 "at {height}px the floor was {pixels} pixels"
             );
         }
     }
 
+    /// A shape is drawn where its item is, not at the lane's origin.
+    ///
+    /// The whole point of lane pixels: a hundred items share one `<svg>`
+    /// and each has to land on its own box.
+    #[test]
+    fn a_shape_is_drawn_where_its_item_is() {
+        let at_left = envelope(&[0.5, 0.5], 0.0, 50.0, 0.0, 20.0);
+        let further = envelope(&[0.5, 0.5], 300.0, 50.0, 0.0, 20.0);
+        assert!(at_left.contains("M0.00"), "{at_left}");
+        assert!(further.contains("M300.00"), "{further}");
+        assert!(
+            further.contains("350.00"),
+            "it did not end at its item: {further}"
+        );
+    }
+
     /// One peak is still a shape rather than a division by zero.
     #[test]
     fn a_single_peak_does_not_divide_by_zero() {
-        let path = envelope(&[0.7], 24.0);
+        let path = envelope(&[0.7], 0.0, 10.0, 0.0, 24.0);
         assert!(path.ends_with('Z'));
         assert!(!path.contains("NaN"), "{path}");
         assert!(!path.contains("inf"), "{path}");

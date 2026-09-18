@@ -271,8 +271,14 @@ fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
         println!("  nothing measured");
         return;
     };
-    println!("\n  The component lanes, panning the golden session\n");
+    // How many nodes are in the tree, because that is the unit the cost
+    // is in: style and layout scale with what is THERE, not with what
+    // changed. An optimisation that does not move this number is an
+    // optimisation of something else.
+    let nodes = document.inner().tree().len();
+    println!("\n  The component window, panning the golden session\n");
     println!("  surface       {width}x{height}");
+    println!("  tree          {nodes} nodes");
     println!(
         "  {:<12} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9}",
         "", "mean", "p99", "worst", "style+lay", "paint", "fps(p99)"

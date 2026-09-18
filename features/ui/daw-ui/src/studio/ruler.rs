@@ -204,17 +204,15 @@ fn Named(
         };
     let line = line_box(SIZE, baseline);
     rsx! {
+        // The row's rule is its own bottom border and its name is its own
+        // text: one node where there were three.
         div {
-            style: "position:absolute; left:0; top:{top}px; width:100%; height:{height}px;",
-            div {
-                style: "position:absolute; left:0; right:0; bottom:0; height:1px; \
-                        background:{rule};",
-            }
-            div {
-                style: "position:absolute; left:8px; top:0; font-size:{SIZE}px; \
-                        line-height:{line}px; color:{faint}; white-space:nowrap;",
-                "{name}"
-            }
+            style: "position:absolute; left:0; top:{top}px; width:100%; \
+                    height:{height}px; box-sizing:border-box; \
+                    border-bottom:1px solid {rule}; padding-left:8px; \
+                    font-size:{SIZE}px; line-height:{line}px; color:{faint}; \
+                    white-space:nowrap;",
+            "{name}"
         }
     }
 }
@@ -339,23 +337,18 @@ fn OnTheLine(
                     }
                     let x = x_of(reading.at);
                     rsx! {
-                        // The mark and its reading under one key. A
-                        // wrapper at the origin rather than two keyed
-                        // siblings, because rsx keys the first node in a
-                        // block and the second would go unkeyed — and an
-                        // unkeyed node beside a keyed one is how a list
-                        // reorders into the wrong places.
+                        // The reading lives INSIDE its mark rather than
+                        // beside it: one node fewer, one key, and the
+                        // text is free to overflow a one-pixel parent
+                        // because nothing here clips.
                         div {
                             key: "{reading.at}",
-                            style: "position:absolute; left:0; top:0;",
+                            style: "position:absolute; left:{x}px; \
+                                    top:{tempo_top + 1.0}px; width:1px; \
+                                    height:{TEMPO_H - 2.0}px; background:{colors.accent};",
                             div {
-                                style: "position:absolute; left:{x}px; \
-                                        top:{tempo_top + 1.0}px; width:1px; \
-                                        height:{TEMPO_H - 2.0}px; background:{colors.accent};",
-                            }
-                            div {
-                                style: "position:absolute; left:{x + 4.0}px; \
-                                        top:{tempo_top}px; font-size:{SIZE}px; \
+                                style: "position:absolute; left:4px; top:-1px; \
+                                        font-size:{SIZE}px; \
                                         line-height:{line_box(SIZE, TEMPO_H - 3.0)}px; \
                                         color:{colors.text}; white-space:nowrap;",
                                 "{reading.text}"
@@ -373,17 +366,15 @@ fn OnTheLine(
                     }
                     let x = x_of(tick.at);
                     rsx! {
+                        // Likewise the bar number, inside its own tick.
                         div {
                             key: "{tick.at}",
-                            style: "position:absolute; left:0; top:0;",
+                            style: "position:absolute; left:{x}px; \
+                                    top:{bars_top + BARS_H - 9.0}px; width:1px; \
+                                    height:9px; background:{colors.grid};",
                             div {
-                                style: "position:absolute; left:{x}px; \
-                                        top:{bars_top + BARS_H - 9.0}px; width:1px; \
-                                        height:9px; background:{colors.grid};",
-                            }
-                            div {
-                                style: "position:absolute; left:{x + 2.0}px; \
-                                        top:{bars_top}px; font-size:{BARS_SIZE}px; \
+                                style: "position:absolute; left:2px; \
+                                        top:{9.0 - BARS_H}px; font-size:{BARS_SIZE}px; \
                                         line-height:{line_box(BARS_SIZE, 14.0)}px; \
                                         color:{colors.ruler_fg}; white-space:nowrap;",
                                 "{tick.label}"
