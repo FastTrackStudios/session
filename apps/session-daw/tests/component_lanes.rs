@@ -64,6 +64,16 @@ const LANES_TOLERANCE: f64 = 0.5;
 /// comparison was written after finding measured over 8%.
 const RULER_TOLERANCE: f64 = 1.0;
 
+/// And how much of the PANEL, which is looser again.
+///
+/// Forty names, forty numbers and four hundred vector shapes in one
+/// column: the densest strip in the window in exactly the things two
+/// renderers cannot agree on, because Vello fills the art's paths
+/// directly where the components hand the same paths to usvg as an
+/// image. Measured at 1.27%, falling to 0.31% once the threshold clears
+/// an edge — which is antialiasing, not a shape in the wrong place.
+const PANEL_TOLERANCE: f64 = 1.75;
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -419,25 +429,28 @@ fn the_whole_window_composes() -> Result<()> {
     Ok(())
 }
 
-/// The two renderers draw the same track panel — as far as it goes.
+/// The two renderers draw the same track panel — all of it.
 ///
-/// Only the RAIL: the column holding each row's folder band, its folder
-/// mark and its number. That is the part of the panel the components
-/// draw in full.
+/// This began as the rail alone, because the rest of the row was under
+/// live controls the components did not draw. They do now: the record
+/// arm, the volume knob, the pan knob, mute and solo, from the same
+/// `daw_theme_art` drawings the painted panel uses, turned into SVG. So
+/// the comparison is the whole column.
 ///
-/// The rest of the row is under the live controls — the record arm, the
-/// volume, the pan, mute and solo — which are not components yet, so
-/// comparing the band they sit in would be comparing this against a
-/// picture with things in it that this does not claim to draw. When they
-/// land, the comparison widens to the row.
+/// Held looser than the lanes and about the same as the ruler, for the
+/// reason that keeps recurring: this strip is dense with things two
+/// renderers letter and antialias differently — forty names, forty
+/// numbers, and four hundred vector shapes whose edges Vello fills
+/// directly and usvg rasterises through an image. Measured at 1.27%, and
+/// it falls to 0.31% as soon as the threshold clears an edge, which is
+/// the signature of antialiasing rather than of a shape in the wrong
+/// place.
 ///
-/// The rail is held to a tighter figure than anything else here, and can
-/// be: it is geometry and two glyphs rather than a strip of names, and
-/// it measures ZERO differing pixels once the threshold clears glyph
-/// antialiasing.
+/// The RAIL inside it is still checked separately and tightly, because
+/// it is geometry and two glyphs: it measures zero differing pixels.
 #[test]
 #[ignore = "renders the golden session through two renderers; run with --ignored"]
-fn the_components_draw_the_panel_rail() -> Result<()> {
+fn the_components_draw_the_panel() -> Result<()> {
     let dir = scratch()?;
     let whole = dir.join("whole.png");
     if !whole.exists() {
@@ -457,18 +470,34 @@ fn the_components_draw_the_panel_rail() -> Result<()> {
         session_daw::rails::SIDE as u32,
         daw_ui::studio::panel::NAME_FIELD_X as u32,
     );
-    let (a, b) = (dir.join("rail-vello.png"), dir.join("rail-components.png"));
-    crop_true(&whole, &a, &format!("{rail}x{lane_h}+{side}+{lane_y}"))?;
-    crop_true(&drawn, &b, &format!("{rail}x{lane_h}+0+0"))?;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions,
+        reason = "the panel's width, which is a small positive integer"
+    )]
+    let panel = daw_ui::studio::panel::ROW_W as u32;
 
-    let difference = differs(&a, &b)?;
-    assert!(
-        difference <= LANES_TOLERANCE,
-        "the component panel's rail is not the recorded one: {difference:.3}% \
-         differs (allowed {LANES_TOLERANCE}%).\n  {}\n  {}",
-        a.display(),
-        b.display()
-    );
+    for (name, width, allowed) in [
+        ("rail", rail, LANES_TOLERANCE),
+        ("panel", panel, PANEL_TOLERANCE),
+    ] {
+        let (a, b) = (
+            dir.join(format!("{name}-vello.png")),
+            dir.join(format!("{name}-components.png")),
+        );
+        crop_true(&whole, &a, &format!("{width}x{lane_h}+{side}+{lane_y}"))?;
+        crop_true(&drawn, &b, &format!("{width}x{lane_h}+0+0"))?;
+
+        let difference = differs(&a, &b)?;
+        assert!(
+            difference <= allowed,
+            "the component {name} is not the recorded one: {difference:.3}% \
+             differs (allowed {allowed}%).\n  {}\n  {}",
+            a.display(),
+            b.display()
+        );
+    }
     Ok(())
 }
 

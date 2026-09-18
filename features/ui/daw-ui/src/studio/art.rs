@@ -43,6 +43,65 @@ use std::fmt::Write as _;
 use daw_theme::Color;
 use daw_theme_art::paint::{Align, Brush, Drawing, Op, Shape, Stroke};
 
+/// The palette the art prints in, off the window's theme.
+///
+/// Started from the art's own defaults and overridden rather than built
+/// field by field: `Chrome` carries relationships that were measured
+/// together — a hardware face, its edge and its mark — and a palette
+/// assembled from scratch would silently lose the ones this theme has
+/// nothing to say about.
+#[must_use]
+pub fn chrome(theme: &crate::theming::Theme) -> daw_theme::Chrome {
+    let c = |col: crate::theming::Color| daw_theme::Color {
+        r: col.r,
+        g: col.g,
+        b: col.b,
+        a: col.a,
+    };
+    daw_theme::Chrome {
+        surface: c(theme.tokens.surface),
+        surface_raised: c(theme.tokens.surface_raised),
+        surface_sunken: c(theme.tokens.surface_sunken),
+        border: c(theme.tokens.border),
+        text: c(theme.tokens.text),
+        text_dim: c(theme.tokens.text_dim),
+        text_faint: c(theme.tokens.text_faint),
+        accent: c(theme.tokens.accent),
+        // A control's face, its edge and the ink on it. The buttons read
+        // as part of the panel when these come off the same ladder the
+        // panel does, and as borrowed art when they do not.
+        hardware: c(theme.tokens.surface_raised),
+        hardware_edge: c(theme.tokens.border),
+        // The art prints on this and rings with it — the record arm's
+        // unlit ring is a control FACE, not a label, and mapped to
+        // `text_dim` alone it came out dark enough to vanish against its
+        // own housing.
+        hardware_mark: c(theme.tokens.text_dim).mix(c(theme.tokens.text), 0.5),
+        ..daw_theme::Theme::default().chrome
+    }
+}
+
+/// The colours the ported controls light up in.
+///
+/// One place, so a control cannot pick a different blue from the one
+/// beside it — and so that changing the theme changes the controls,
+/// which was the whole reason the art stopped carrying its own hex.
+#[must_use]
+pub fn lit(theme: &crate::theming::Theme) -> daw_theme_art::paint::tcp::Lit {
+    let c = |col: crate::theming::Color| daw_theme::Color {
+        r: col.r,
+        g: col.g,
+        b: col.b,
+        a: col.a,
+    };
+    daw_theme_art::paint::tcp::Lit {
+        volume: c(theme.tokens.accent),
+        pan: c(theme.tokens.route_send),
+        rec: c(theme.tokens.rec),
+        bypass: c(theme.tokens.mute),
+    }
+}
+
 /// A label the caller has to write, because the sheet will not.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Label {
@@ -124,6 +183,30 @@ impl Sheet {
         }
     }
 
+    /// The sheet as a whole SVG document, in a `data:` URI.
+    ///
+    /// Handed to an `<img>` rather than written as an inline `<svg>`,
+    /// for a reason that cost an afternoon: Blitz renders an inline
+    /// `<svg>` by walking its DOM subtree back into markup, so the
+    /// shapes have to BE nodes. Setting them as raw inner HTML leaves
+    /// the subtree empty and the sheet draws nothing at all — which
+    /// looks exactly like a sheet that was never built, because
+    /// everything visible in it was a label rendered separately.
+    ///
+    /// Making them real nodes would work and would cost a node per
+    /// shape, which is the one thing this whole effort has been
+    /// avoiding. A data URI is one node whatever the sheet holds, and an
+    /// `<img>` with an SVG source is the most portable thing in this
+    /// entire migration — every target has drawn one for twenty years.
+    #[must_use]
+    pub fn data_uri(&self, width: f64, height: f64) -> String {
+        let document = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width:.0}\"              height=\"{height:.0}\" viewBox=\"0 0 {width:.0} {height:.0}\">{}</svg>",
+            self.markup()
+        );
+        format!("data:image/svg+xml,{}", escape(&document))
+    }
+
     /// The labels the caller has to write itself.
     #[must_use]
     pub fn labels(&self) -> &[Label] {
@@ -179,6 +262,28 @@ impl Sheet {
         self.gradients = self.gradients.saturating_add(1);
         format!("g{}", self.gradients)
     }
+}
+
+/// Percent-encode the few characters a `data:` URI cannot carry.
+///
+/// Not a general encoder: the sheet's own alphabet is known — tags,
+/// attributes, numbers and `rgba(...)` colours — so this is the short
+/// list that actually appears, and `#` is on it because a URI would take
+/// everything after one as a fragment.
+fn escape(svg: &str) -> String {
+    let mut out = String::with_capacity(svg.len() + svg.len() / 8);
+    for c in svg.chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            '#' => out.push_str("%23"),
+            '<' => out.push_str("%3C"),
+            '>' => out.push_str("%3E"),
+            '"' => out.push_str("%22"),
+            '\n' | '\r' => out.push_str("%20"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 fn stops_of(stops: &[(f32, Color)]) -> String {
@@ -403,6 +508,35 @@ mod tests {
         assert!((label.x - 18.0).abs() < 1e-9, "{}", label.x);
         assert!((label.baseline - 36.0).abs() < 1e-9, "{}", label.baseline);
         assert!((label.size - 14.0).abs() < 1e-9, "{}", label.size);
+    }
+
+    /// A data URI carries the whole sheet and escapes what it must.
+    #[test]
+    fn a_data_uri_is_a_whole_document() {
+        let mut drawing = Drawing::new(4.0, 4.0);
+        drawing.fill(
+            Shape::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 4.0,
+                h: 4.0,
+                r: 0.0,
+            },
+            Color::rgb(1, 2, 3),
+        );
+        let mut sheet = Sheet::new();
+        sheet.place(&drawing, 0.0, 0.0, 1.0);
+        let uri = sheet.data_uri(100.0, 50.0);
+        assert!(uri.starts_with("data:image/svg+xml,"), "{uri}");
+        // The characters a URI cannot carry are gone.
+        assert!(
+            !uri.contains('<') && !uri.contains('>') && !uri.contains('"'),
+            "{uri}"
+        );
+        // And the document is complete: a namespace, a viewBox, a shape.
+        assert!(uri.contains("xmlns"), "{uri}");
+        assert!(uri.contains("viewBox"), "{uri}");
+        assert!(uri.contains("rect"), "{uri}");
     }
 
     /// A gradient becomes a def with an id, and the id is unique across

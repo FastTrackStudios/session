@@ -29,8 +29,40 @@
 
 use crate::prelude::*;
 
+use daw_theme_art::paint::tcp as art;
+use daw_theme_art::vector_controls::Interaction;
+
+use super::art::{Label, Sheet};
 use super::lanes::{Colors, DIVIDER, FONT, Offsets, Rows, View, ink_on};
 use super::{ProjectRef, RowsRef};
+
+/// What a track's live controls are showing.
+///
+/// Passed in rather than read here: a volume is a value that changes
+/// while the window is open, and where it comes from — a store, a meter
+/// feed, a fixture — is the host's business, not the panel's.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Live {
+    pub volume: f64,
+    pub pan: f64,
+    pub muted: bool,
+    pub soloed: bool,
+    pub armed: bool,
+}
+
+impl Default for Live {
+    fn default() -> Self {
+        Self {
+            // Unity, centred, and nothing switched on — what a track
+            // reads as before anything has been done to it.
+            volume: 1.0,
+            pan: 0.0,
+            muted: false,
+            soloed: false,
+            armed: false,
+        }
+    }
+}
 
 /// How wide the panel is.
 pub const ROW_W: f64 = 343.0;
@@ -68,6 +100,27 @@ pub const ROW_ONE: f64 = 6.0;
 
 /// And the height above which a row shows everything REAPER's does.
 pub const FULL_ABOVE: f64 = 58.0;
+
+/// Mute and solo, at the one size they are drawn at everywhere.
+///
+/// That size on EVERY track, which is why the shortest settable row is
+/// what it is: the row holds the controls rather than the controls
+/// shrinking to fit the row. A control that is a different shape on
+/// every track cannot be built on — no shared hit target, no drag down a
+/// column, no "the mute column" for anything else to address.
+pub const BUTTON: (f64, f64) = (21.0, 20.0);
+
+/// Between the two, so they read as two controls.
+pub const BUTTON_GAP: f64 = 1.0;
+
+/// Below this tall, volume and pan stop being knobs.
+pub const KNOB_LEGIBLE: f64 = 20.0;
+
+/// Where the pan knob sits.
+pub const PAN_KNOB_X: f64 = 184.0;
+
+/// Where the gutter's buttons start, past the tint.
+pub const GUTTER_BUTTON_X: f64 = 21.0;
 
 /// What fits in a row this tall.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -166,6 +219,91 @@ fn mix(base: &(u8, u8, u8), rgb: u32, t: f32) -> String {
     )
 }
 
+/// Where a row's controls sit, in the row's own coordinates.
+///
+/// The same arithmetic the painted panel lays out from, so a control is
+/// in one place rather than in two places that agree today.
+#[derive(Clone, Copy, PartialEq)]
+pub struct Band {
+    pub top: f64,
+    pub height: f64,
+    pub indent: f64,
+    pub density: Density,
+}
+
+impl Band {
+    /// The control band of a row this tall, at this depth.
+    #[must_use]
+    pub fn of(height: f64, depth: usize) -> Self {
+        let density = Density::at(height);
+        let (top, band) = if density == Density::Full {
+            (ROW_ONE, AUTHORED)
+        } else {
+            (1.0, (height - 2.0).max(1.0))
+        };
+        Self {
+            top,
+            height: band,
+            indent: (f64::from(u32::try_from(depth).unwrap_or(0)) * INDENT).min(MAX_INDENT),
+            density,
+        }
+    }
+
+    /// Whether volume and pan are knobs, or flattened bars.
+    #[must_use]
+    pub fn knobs(self) -> bool {
+        self.height >= KNOB_LEGIBLE
+    }
+
+    /// The record arm, on rows tall enough to read one.
+    #[must_use]
+    pub fn rec_arm(self) -> Option<(f64, f64, f64)> {
+        self.knobs().then(|| {
+            (
+                NAME_FIELD_X + self.indent + 3.0,
+                self.height.mul_add(0.5, self.top) - 10.0,
+                20.0,
+            )
+        })
+    }
+
+    /// The volume knob: centred on the name field's right edge, and
+    /// scaled to the band it straddles.
+    #[must_use]
+    pub fn volume(self) -> (f64, f64, f64) {
+        let scale = if self.knobs() {
+            self.height / 22.0
+        } else {
+            1.0
+        };
+        let w = 24.0 * scale;
+        (NAME_FIELD_X + NAME_FIELD_W - w / 2.0, self.top, scale)
+    }
+
+    /// The pan knob.
+    ///
+    /// Authored at twenty-five rather than the volume knob's twenty-two,
+    /// and never drawn larger than authored — a knob scaled past its own
+    /// art is a blur where every other control is crisp.
+    #[must_use]
+    pub fn pan(self) -> (f64, f64, f64) {
+        (PAN_KNOB_X, self.top, (self.height / 25.0).min(1.0))
+    }
+
+    /// Mute and solo, in the gutter past the tint.
+    #[must_use]
+    pub fn gutter(self, solo: bool) -> (f64, f64) {
+        let x = TINT_W + 2.0 + if solo { BUTTON.0 + BUTTON_GAP } else { 0.0 };
+        let top = if self.density == Density::Full {
+            ROW_ONE + (AUTHORED - BUTTON.1) / 2.0
+        } else {
+            let h = self.height.min(BUTTON.1);
+            self.top + (self.height - h) / 2.0
+        };
+        (x, top)
+    }
+}
+
 /// The panel: a row per visible track.
 #[component]
 pub fn Panel(
@@ -173,7 +311,17 @@ pub fn Panel(
     rows: RowsRef,
     view: View,
     colors: Colors,
+    /// The theme the controls are drawn from. Separate from [`Colors`]
+    /// because the art takes a `Chrome` and the boxes take CSS strings,
+    /// and resolving one from the other per frame would be work for
+    /// nothing.
+    theme: crate::theming::Theme,
     #[props(default)] sizing: Rows,
+    /// What each track's controls are showing, by guid. A track with no
+    /// entry gets [`Live::default`], which is what an unread track looks
+    /// like rather than a silent one.
+    #[props(default)]
+    live: std::collections::HashMap<String, Live>,
 ) -> Element {
     let _ = project;
     let offsets = use_memo({
@@ -194,6 +342,31 @@ pub fn Panel(
         lineage.push(folder_band(&colors, track));
     }
 
+    // Every control on screen, in one sheet. Built here rather than per
+    // row because that is the whole point of a sheet: a panel is forty
+    // rows of controls, and an `<svg>` each is forty elements and forty
+    // usvg parses where one will do.
+    let mut sheet = Sheet::new();
+    let chrome = super::art::chrome(&theme);
+    let lit = super::art::lit(&theme);
+    for row in visible.clone() {
+        let (Some((top, height)), Some((track, depth))) = (offsets.row(row), rows.get(row)) else {
+            continue;
+        };
+        let top = top.mul_add(view.zoom_y, -view.scroll_y);
+        let height = height * view.zoom_y;
+        let body = (height - DIVIDER).max(0.5);
+        if Density::at(height) == Density::Bar {
+            continue;
+        }
+        let band = Band::of(height, usize::try_from(*depth).unwrap_or(0));
+        let state = live.get(&track.guid).copied().unwrap_or_default();
+        controls(&mut sheet, &chrome, &lit, band, state, top);
+        let _ = body;
+    }
+    let art = (!sheet.is_empty()).then(|| sheet.data_uri(ROW_W, view.height));
+    let labels = sheet.labels().to_vec();
+
     rsx! {
         div {
             style: "position:relative; width:{ROW_W}px; height:{view.height}px; \
@@ -207,7 +380,7 @@ pub fn Panel(
                 style: "position:absolute; left:{ROW_W - 2.0}px; top:0; width:1px; \
                         bottom:0; background:{colors.rule}; z-index:1;",
             }
-            for row in visible {
+            for row in visible.clone() {
                 if let (Some((top, height)), Some((track, depth))) =
                     (offsets.row(row), rows.get(row))
                 {
@@ -230,7 +403,134 @@ pub fn Panel(
                     }
                 }
             }
+
+            // The controls, over every row at once.
+            if let Some(art) = art {
+                Art { source: art, width: ROW_W, height: view.height }
+            }
+            for (index, label) in labels.into_iter().enumerate() {
+                Word { key: "{index}", label }
+            }
         }
+    }
+}
+
+/// The control sheet: every control on screen, in one image.
+///
+/// An `<img>` over an inline `<svg>` because Blitz renders an inline one
+/// by walking its DOM subtree back into markup — the shapes would have
+/// to BE nodes, which is a node per shape and the one thing this effort
+/// has spent itself avoiding. An image is one node whatever the sheet
+/// holds, and every target has drawn an SVG image for twenty years.
+#[component]
+fn Art(source: String, width: f64, height: f64) -> Element {
+    rsx! {
+        img {
+            src: "{source}",
+            width: "{width:.0}",
+            height: "{height:.0}",
+            style: "position:absolute; left:0; top:0; pointer-events:none;",
+        }
+    }
+}
+
+/// One of the sheet's labels, written as an element.
+///
+/// Not as `<text>` inside the sheet: there it would be lettered by
+/// usvg's own font stack on Blitz and by the page's on the web, which is
+/// two different pictures of the same word.
+#[component]
+fn Word(label: Label) -> Element {
+    let line = super::ruler::line_box(label.size, label.size);
+    let (left, shift) = if label.centred {
+        (label.x, "transform:translateX(-50%);")
+    } else {
+        (label.x, "")
+    };
+    rsx! {
+        div {
+            style: "position:absolute; left:{left}px; top:{label.baseline - label.size}px; \
+                    font-size:{label.size}px; line-height:{line}px; color:{label.color}; \
+                    white-space:nowrap; pointer-events:none; {shift}",
+            "{label.body}"
+        }
+    }
+}
+
+/// Put one row's controls into the sheet.
+///
+/// The art's own drawings, placed at the measured rects and scaled to
+/// the band — so the shapes are the theme's rather than this module's,
+/// and the two renderers cannot drift apart by anyone's judgement.
+fn controls(
+    sheet: &mut Sheet,
+    chrome: &daw_theme::Chrome,
+    lit: &art::Lit,
+    band: Band,
+    live: Live,
+    row_top: f64,
+) {
+    let at = Interaction::Normal;
+    if let Some((x, y, _)) = band.rec_arm() {
+        sheet.place(
+            &art::record_arm(
+                chrome,
+                lit.rec,
+                live.armed,
+                at,
+                art::Arm::Panel,
+                chrome.surface_sunken,
+            ),
+            x,
+            row_top + y,
+            1.0,
+        );
+    }
+    // Volume and pan, in whichever form the row is showing — a knob
+    // where there is room to turn one, a flattened bar where there is
+    // not. Both are the same VALUE; only the shape changes.
+    let (vx, vy, scale) = band.volume();
+    if band.knobs() {
+        sheet.place(
+            &art::volume_knob(chrome, lit.volume, live.volume, at, band.height),
+            vx,
+            row_top + vy,
+            scale,
+        );
+    } else {
+        sheet.place(
+            &art::volume_fader(chrome, lit.volume, live.volume),
+            vx,
+            row_top + vy,
+            1.0,
+        );
+    }
+    let (px, py, pscale) = band.pan();
+    if band.knobs() {
+        sheet.place(
+            // Pan's own colour, not the mark's: it is yellow so that it
+            // is never mistaken for volume's blue in the column beside
+            // it.
+            &art::pan_knob(chrome, live.pan.clamp(-1.0, 1.0), lit.pan, at),
+            px,
+            row_top + py,
+            pscale,
+        );
+    }
+    for (solo, on) in [(false, live.muted), (true, live.soloed)] {
+        let (x, y) = band.gutter(solo);
+        sheet.place(
+            &art::gutter_button(
+                chrome,
+                if solo { "S" } else { "M" },
+                on,
+                if solo { chrome.accent } else { lit.bypass },
+                at,
+            ),
+            x,
+            row_top + y,
+            1.0,
+        );
     }
 }
 

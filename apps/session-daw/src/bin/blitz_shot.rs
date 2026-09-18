@@ -125,6 +125,7 @@ fn main() {
         min: layout.height_of(Some(1)),
     };
     let grid = grid_of(&project, view);
+    let project_for_live = project.clone();
     let marks = marks_of(&project);
     let sections = project.sections.clone().into();
     let markers = project.markers.clone().into();
@@ -146,6 +147,8 @@ fn main() {
             rails,
             all,
             panel,
+            theme: theme.clone(),
+            live: live_of(&project_for_live),
             rail_items: rail_items(),
             modes: modes(),
         },
@@ -161,6 +164,12 @@ fn main() {
         vdom,
         DocumentConfig {
             viewport: Some(Viewport::new(w, h, 1.0, ColorScheme::Dark)),
+            // Without a provider the document's default one is a no-op
+            // that never answers, so every image in the page stays in
+            // flight forever — which looks exactly like art that was
+            // never built. The panel's controls are one `data:` image,
+            // so the shot needs a provider that answers for those.
+            net_provider: Some(std::sync::Arc::new(DataUris)),
             ..Default::default()
         },
     );
@@ -170,15 +179,18 @@ fn main() {
     // second. A picture taken between the two is a picture of a UI
     // mid-construction, which is how a renderer gets accused of dropping
     // content it simply had not been given yet.
-    document.poll(None);
-    {
-        let mut inner = document.inner_mut();
-        inner.resolve(0.0);
-    }
-    document.poll(None);
-    {
-        let mut inner = document.inner_mut();
-        inner.resolve(0.0);
+    // Several times, with a moment between: a `data:` image is fetched
+    // through the document's resource provider, which answers on another
+    // thread. A picture taken before it answers is a picture of the UI
+    // with its art still in flight — which looks exactly like art that
+    // was never built.
+    for _ in 0..12 {
+        document.poll(None);
+        {
+            let mut inner = document.inner_mut();
+            inner.resolve(0.0);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 
     // `FTS_BLITZ_FRAMES=240` measures a pan instead of taking a
@@ -309,6 +321,52 @@ fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
         "\n  reconciling {:.2}ms a frame — the pan re-renders nothing",
         diff.mean
     );
+}
+
+/// A resource provider that answers `data:` URIs and nothing else.
+///
+/// Blitz ships a real one in `blitz-net`, which fetches over HTTP and
+/// off the filesystem and is asynchronous. A renderer that draws one
+/// frame and exits wants neither: it wants the image it just built,
+/// now, on the thread that asked. So this decodes the URI and answers
+/// inline, and anything else is left unanswered on purpose — a shot
+/// that quietly reached the network would be a shot whose picture
+/// depended on this machine.
+struct DataUris;
+
+impl blitz_traits::net::NetProvider for DataUris {
+    fn fetch(
+        &self,
+        _doc: usize,
+        request: blitz_traits::net::Request,
+        handler: Box<dyn blitz_traits::net::NetHandler>,
+    ) {
+        let url = request.url.as_str();
+        let Some(payload) = url.strip_prefix("data:") else {
+            return;
+        };
+        let Some((_, body)) = payload.split_once(',') else {
+            return;
+        };
+        handler.bytes(url.to_owned(), unescape(body).into());
+    }
+}
+
+/// Undo the percent-encoding a `data:` URI carries.
+fn unescape(body: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(body.len());
+    let mut bytes = body.as_bytes().iter().copied();
+    while let Some(byte) = bytes.next() {
+        if byte == b'%' {
+            let hex: String = bytes.by_ref().take(2).map(char::from).collect();
+            if let Ok(decoded) = u8::from_str_radix(&hex, 16) {
+                out.push(decoded);
+                continue;
+            }
+        }
+        out.push(byte);
+    }
+    out
 }
 
 /// The surface, which is the window the reference was shot at.
@@ -500,6 +558,8 @@ struct ShotProps {
     panel: bool,
     rail_items: (Vec<Item>, Vec<Item>, Vec<Item>),
     modes: Vec<Item>,
+    theme: daw_ui::theming::Theme,
+    live: HashMap<String, daw_ui::studio::panel::Live>,
 }
 
 thread_local! {
@@ -528,7 +588,9 @@ fn Shot(props: ShotProps) -> Element {
                 rows: props.rows,
                 view: props.view,
                 colors: props.colors,
+                theme: props.theme,
                 sizing: props.sizing,
+                live: props.live,
             }
         } else if props.all {
             Window { ..props.clone() }
@@ -679,7 +741,9 @@ fn Window(props: ShotProps) -> Element {
                     rows: props.rows.clone(),
                     view: lanes,
                     colors: props.colors.clone(),
+                    theme: props.theme.clone(),
                     sizing: props.sizing,
+                    live: props.live.clone(),
                 }
             }
             Rails {
@@ -698,6 +762,31 @@ fn Window(props: ShotProps) -> Element {
             }
         }
     }
+}
+
+/// What each track's controls are showing.
+///
+/// Read off the project rather than invented, so the picture is the
+/// session's and the comparison means something: a knob at whatever
+/// value the file says is a knob the recorded renderer draws at the same
+/// angle.
+fn live_of(project: &ProjectRef) -> HashMap<String, daw_ui::studio::panel::Live> {
+    project
+        .tracks
+        .iter()
+        .map(|track| {
+            (
+                track.guid.clone(),
+                daw_ui::studio::panel::Live {
+                    volume: daw_theme_art::paint::tcp::gain_norm(track.volume),
+                    pan: track.pan,
+                    muted: track.muted,
+                    soloed: track.soloed,
+                    armed: track.armed,
+                },
+            )
+        })
+        .collect()
 }
 
 /// The modes, abbreviated and fitted the way the corner draws them.
