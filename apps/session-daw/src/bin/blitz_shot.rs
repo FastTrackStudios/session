@@ -675,9 +675,6 @@ struct ShotProps {
 }
 
 thread_local! {
-    /// How many times the window has re-rendered, so the frame timer can
-    /// report it beside the frames it presented.
-    static RENDERS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// The scroll, reachable from outside the runtime so the benchmark
     /// can drive it the way a scrollbar would.
     static SCROLL: std::cell::RefCell<Option<Signal<f64>>> =
@@ -836,7 +833,6 @@ fn WindowSize(
     rate: Signal<f64>,
     animate: bool,
     span_x: f64,
-    preview: Signal<(f64, f64)>,
     /// How far the view may travel, across and down.
     extent: (f64, f64),
     scroll: Signal<f64>,
@@ -869,25 +865,23 @@ fn WindowSize(
             size.set((f64::from(px.width.max(1)), f64::from(px.height.max(1))));
         }
     });
-    // Frames as the window actually presented them, counted off
-    // `RedrawRequested` — not the rate a driver ticked at, which is what
-    // a loop can tell you about itself and is not the same thing.
+    // What a frame COST, not how often one happened.
     //
-    // Counted in a cell and published twice a second: a signal written
-    // every frame would re-render to show a number that changed because
-    // it re-rendered.
-    // Frame TIMES, not a frame count.
+    // Two earlier readouts were both wrong, in opposite directions.
+    // Counting redraws over wall-clock says four per second when nothing
+    // is moving, because Blitz only redraws when something changed and an
+    // idle window changed nothing — that reads as "this is slow" when it
+    // means "nothing was asked of it". Timing the interval BETWEEN
+    // redraws is no better during a gesture: a burst of discrete wheel
+    // events makes the gaps the input's cadence, not the renderer's.
     //
-    // Counting redraws over wall-clock says four when nothing is moving,
-    // because Blitz redraws when something changes and an idle window
-    // changes nothing. That reads as "this is slow" when it means
-    // "nothing was asked of it" — and the two are the opposite of each
-    // other.
-    //
-    // So this keeps the interval between consecutive redraws and reports
-    // the middle one of the recent ones, ignoring any gap long enough to
-    // be the window sitting still. What it says is what a frame COSTS
-    // while the window is working.
+    // So the number comes from the shell, which is the only place that
+    // knows: `blitz-shell` writes how long resolve + encode + present
+    // took into `LAST_FRAME_MICROS` at the end of its own `redraw()`, and
+    // this reads it. Kept in a cell and published only when the median of
+    // the recent ones actually moves, because a signal written every
+    // frame would re-render to show a number that changed because it
+    // re-rendered.
     // What the pointer and the keyboard are doing.
     //
     // Handled at the WINIT level rather than as DOM events, because
@@ -897,22 +891,13 @@ fn WindowSize(
     // cannot be a handler on an element; it has to be here, where the
     // wheel arrives before anything has decided what it means.
     let input = use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(Input::default())));
-    let counted = use_hook(|| {
-        std::rc::Rc::new(std::cell::RefCell::new((
-            std::time::Instant::now(),
-            Vec::<f64>::with_capacity(RECENT),
-            0_u64,
-        )))
-    });
+    let counted =
+        use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(Vec::<f64>::with_capacity(RECENT))));
     let started = use_hook(std::time::Instant::now);
-    // Where the zoom is anchored: where the drag began, or where the
-    // pointer was for a wheel.
-    let at_settle = use_hook(|| std::rc::Rc::new(std::cell::Cell::new((0.0_f64, 0.0_f64))));
     let mut scroll = scroll;
     let mut down = down;
     let mut zoom = zoom;
     let mut gesture = gesture;
-    let mut preview = preview;
     let driving = input.clone();
     dioxus_native::use_window_event(move |event, _| match event {
         // `z` is a spring: hold it and the wheel and the drag become the
@@ -943,14 +928,11 @@ fn WindowSize(
                 // And the zoom tool: sideways for time, up and down for
                 // rows, both at once if the hand moves both ways.
                 Some(Drag::Zoom) => {
-                    // The preview, not the layout: a scale on one node
-                    // rather than a re-layout of everything under it.
-                    let (px, py) = preview();
-                    preview.set((
-                        (px * factor(moved.0)).clamp(0.05, 20.0),
-                        (py * factor(-moved.1)).clamp(0.05, 20.0),
+                    let (zx, zy) = zoom();
+                    zoom.set((
+                        (zx * factor(moved.0)).clamp(ZOOM_X.0, ZOOM_X.1),
+                        (zy * factor(-moved.1)).clamp(ZOOM_Y.0, ZOOM_Y.1),
                     ));
-                    input.previewing = Some(std::time::Instant::now());
                 }
                 None => {}
             }
@@ -962,10 +944,6 @@ fn WindowSize(
                 winit::event::ButtonSource::Mouse(button) => *button,
                 _ => winit::event::MouseButton::Left,
             };
-            if pressed {
-                input.from = input.pointer;
-                at_settle.set(input.pointer);
-            }
             input.drag = match (pressed, which) {
                 (true, winit::event::MouseButton::Middle) => Some(Drag::Pan),
                 (true, winit::event::MouseButton::Left) if input.zooming => Some(Drag::Zoom),
@@ -983,15 +961,14 @@ fn WindowSize(
             let input = driving.borrow();
             if input.zooming {
                 // Held `z` zooms the rows; with shift it zooms time.
-                at_settle.set(input.pointer);
-                let (px, py) = preview();
-                preview.set(if input.shift {
-                    ((px * factor(dy * 2.0)).clamp(0.05, 20.0), py)
+                // Two axes, one key, and shift picks which — the same
+                // split the scrollbars use.
+                let (zx, zy) = zoom();
+                if input.shift {
+                    zoom.set(((zx * factor(dy * 2.0)).clamp(ZOOM_X.0, ZOOM_X.1), zy));
                 } else {
-                    (px, (py * factor(dy * 2.0)).clamp(0.05, 20.0))
-                });
-                drop(input);
-                driving.borrow_mut().previewing = Some(std::time::Instant::now());
+                    zoom.set((zx, (zy * factor(dy * 2.0)).clamp(ZOOM_Y.0, ZOOM_Y.1)));
+                }
             } else if input.shift {
                 scroll.set((scroll() - dx - dy).clamp(0.0, extent.0));
             } else {
@@ -1004,38 +981,6 @@ fn WindowSize(
             size.set((f64::from(px.width.max(1)), f64::from(px.height.max(1))));
         }
         winit::event::WindowEvent::RedrawRequested => {
-            // A zoom in flight is a scale on one node. When the hand
-            // stops, it becomes a layout — once, rather than per frame.
-            //
-            // Settling is measured rather than signalled because a wheel
-            // has no end: it is a burst of notches with gaps in it, and
-            // the gap IS the end. While one is in flight the next frame
-            // is asked for, so there is something to settle ON.
-            {
-                let mut input = driving.borrow_mut();
-                if let Some(last) = input.previewing {
-                    let still = input.drag != Some(Drag::Zoom)
-                        && last.elapsed() > std::time::Duration::from_millis(SETTLE_MS);
-                    if still {
-                        input.previewing = None;
-                        drop(input);
-                        let (px, py) = preview();
-                        let was = zoom();
-                        let now = (
-                            (was.0 * px).clamp(ZOOM_X.0, ZOOM_X.1),
-                            (was.1 * py).clamp(ZOOM_Y.0, ZOOM_Y.1),
-                        );
-                        let held = anchored(at_settle.get(), was, now, (scroll(), down()));
-                        zoom.set(now);
-                        preview.set((1.0, 1.0));
-                        scroll.set(held.0.max(0.0));
-                        down.set(held.1.max(0.0));
-                    } else if let Some(handle) = redraw.as_ref() {
-                        drop(input);
-                        handle.request_redraw();
-                    }
-                }
-            }
             // The gestures are driven from the window's own clock rather
             // than from a timer. `use_future` with a sleep never ticks
             // here — nothing polls the task runtime unless the document
@@ -1062,34 +1007,34 @@ fn WindowSize(
                 }
             }
 
-            let now = std::time::Instant::now();
+            // What the frame the shell just drew actually cost.
+            let cost = f64::from(
+                u32::try_from(
+                    blitz_traits::LAST_FRAME_MICROS.load(std::sync::atomic::Ordering::Relaxed),
+                )
+                .unwrap_or(u32::MAX),
+            ) / 1000.0;
             let mut state = counted.borrow_mut();
-            let gap = now.duration_since(state.0).as_secs_f64() * 1000.0;
-            state.0 = now;
-            // A gap this long is the window waiting for something to do,
-            // not a frame that took this long to draw.
+            let gap = cost.max(0.01);
+            // This long is the shell having done something other than
+            // draw this window, not a frame that took this long.
             const IDLE: f64 = 200.0;
             if gap < IDLE {
-                if state.1.len() == RECENT {
-                    state.1.remove(0);
+                if state.len() == RECENT {
+                    state.remove(0);
                 }
-                state.1.push(gap);
+                state.push(gap);
             }
-            if state.1.len() >= 8 {
-                let mut recent = state.1.clone();
+            if state.len() >= 8 {
+                let mut recent = state.clone();
                 recent.sort_by(f64::total_cmp);
                 let middle = recent[recent.len() / 2];
                 let worst = recent.last().copied().unwrap_or(middle);
                 if (middle - rate()).abs() > 0.5 {
                     rate.set(middle);
-                    let renders = RENDERS.with(std::cell::Cell::get);
-                    let since = state.2;
-                    state.2 = renders;
                     tracing::info!(
                         frame_ms = format!("{middle:.1}"),
                         worst_ms = format!("{worst:.1}"),
-                        renders = renders.saturating_sub(since),
-                        frames = state.1.len(),
                         "presented"
                     );
                 }
@@ -1156,13 +1101,6 @@ const WHEEL_LINE: f64 = 40.0;
 const ZOOM_X: (f64, f64) = (0.02, 32.0);
 const ZOOM_Y: (f64, f64) = (0.06, 6.0);
 
-/// How long after the last zoom movement the layout catches up.
-///
-/// Long enough that a wheel's burst of notches is one gesture rather
-/// than a dozen re-layouts, short enough that the stretched preview is
-/// not what you are left looking at.
-const SETTLE_MS: u64 = 90;
-
 /// How much a pixel of movement zooms by.
 ///
 /// Exponential, so the gesture feels the same at every scale: dragging
@@ -1171,12 +1109,6 @@ const SETTLE_MS: u64 = 90;
 fn factor(pixels: f64) -> f64 {
     (pixels / 260.0).exp()
 }
-
-/// How far past the last track the view may scroll.
-///
-/// Enough that the bottom track is not stuck against the frame, and not
-/// so much that the session can be scrolled out of sight.
-const TAIL: f64 = 120.0;
 
 /// How thick a scrollbar is.
 const BAR: f64 = 12.0;
@@ -1256,29 +1188,6 @@ fn Bar(
     }
 }
 
-/// Hold a point still while the zoom changes around it.
-///
-/// A zoom with nothing anchored slides the session under the pointer:
-/// every row is suddenly a different height, so the same scroll offset
-/// shows different music and the gesture reads as a scroll you did not
-/// ask for. Anchoring is what makes a zoom feel like a zoom — the thing
-/// under your hand stays under your hand.
-///
-/// Anchored at the pointer for a wheel, and at where the DRAG BEGAN for
-/// a drag, because a drag's pointer is the thing that is moving and
-/// anchoring to it would chase itself.
-fn anchored(at: (f64, f64), was: (f64, f64), now: (f64, f64), scroll: (f64, f64)) -> (f64, f64) {
-    // Where the pointer is over the session, before the zoom.
-    let lane = (at.0 - lane_x(), at.1 - lane_y());
-    let across = (scroll.0 + lane.0) / was.0.max(1e-6);
-    let down = (scroll.1 + lane.1) / was.1.max(1e-6);
-    // And where it has to be after it, for that point to stay put.
-    (
-        across.mul_add(now.0, -lane.0).max(0.0),
-        down.mul_add(now.1, -lane.1).max(0.0),
-    )
-}
-
 /// What the pointer and the keyboard are doing to the view.
 #[derive(Default)]
 struct Input {
@@ -1287,10 +1196,6 @@ struct Input {
     shift: bool,
     pointer: (f64, f64),
     drag: Option<Drag>,
-    /// Where a zoom drag began, which is the point it holds still.
-    from: (f64, f64),
-    /// When the zoom last moved, if one is in flight.
-    previewing: Option<std::time::Instant>,
 }
 
 /// A drag in flight.
@@ -1325,12 +1230,8 @@ fn Window(props: ShotProps) -> Element {
     // item is, which is a layout, which is the honest cost of the
     // gesture rather than a failure to optimise it.
     let mut down = use_signal(|| props.view.scroll_y);
-    let mut zoom = use_signal(|| (1.0_f64, props.view.zoom_y));
-    // The zoom in flight, as a multiplier on what is laid out. While a
-    // gesture is running this is what changes; the layout catches up
-    // once, when the hand stops.
-    let preview = use_signal(|| (1.0_f64, 1.0_f64));
-    let mut gesture = use_signal(|| (GESTURES[0].0, 0.0_f64));
+    let zoom = use_signal(|| (1.0_f64, props.view.zoom_y));
+    let gesture = use_signal(|| (GESTURES[0].0, 0.0_f64));
 
     // How far the session runs across, for the gestures and the
     // scroller's extent alike.
@@ -1341,17 +1242,12 @@ fn Window(props: ShotProps) -> Element {
     // which is why it is worked out here rather than once at the start.
     let travel = (
         span_x * zoom_x,
-        // The session's height less the window, plus a little air: a
-        // DAW lets you scroll a bit past the last track so it is not
-        // pinned to the bottom edge, and no further — scrolling into
-        // nothing is not a feature.
         (props
             .rows
             .iter()
             .map(|(track, _)| props.sizing.height_of(track.height))
             .sum::<f64>()
             * zoom_y
-            + TAIL
             - frame_height(height))
         .max(1.0),
     );
@@ -1364,7 +1260,6 @@ fn Window(props: ShotProps) -> Element {
                 rate,
                 animate: props.animate,
                 span_x,
-                preview,
                 extent: travel,
                 scroll,
                 down,
@@ -1375,14 +1270,6 @@ fn Window(props: ShotProps) -> Element {
     } else {
         rsx! {}
     };
-    // How many times this component has re-rendered, against how many
-    // frames were presented. A window that re-renders four times per
-    // frame is doing four times the work the frame needed, and the frame
-    // timer cannot tell you that — it only sees what arrived.
-    let renders = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(0_u64)));
-    renders.set(renders.get().saturating_add(1));
-    RENDERS.with(|slot| slot.set(renders.get()));
-
     // What the controls are showing, held here so a press can change it.
     let mut live = use_signal(|| props.live.clone());
     let (zoom_x, zoom_y) = zoom();
@@ -1415,14 +1302,6 @@ fn Window(props: ShotProps) -> Element {
         width: width - session_daw::rails::SIDE * 2.0,
         ..moved
     };
-    // How far down the session goes, for the scroller's extent.
-    let content_height = props
-        .rows
-        .iter()
-        .map(|(track, _)| props.sizing.height_of(track.height))
-        .sum::<f64>()
-        .mul_add(zoom_y, 0.0)
-        .max(1.0);
     let panel_view = View {
         height: frame_height(height),
         ..moved
@@ -1461,7 +1340,6 @@ fn Window(props: ShotProps) -> Element {
                     rows: props.rows.clone(),
                     view: lanes,
                     scroll: ReadSignal::from(scroll),
-                    preview,
                     scroll_y: ReadSignal::from(down),
                     colors: props.colors.clone(),
                     shapes: props.shapes.clone(),
@@ -1475,7 +1353,6 @@ fn Window(props: ShotProps) -> Element {
                     project: props.project.clone(),
                     rows: props.rows.clone(),
                     view: panel_view,
-                    preview,
                     scroll_y: ReadSignal::from(down),
                     colors: props.colors.clone(),
                     theme: props.theme.clone(),

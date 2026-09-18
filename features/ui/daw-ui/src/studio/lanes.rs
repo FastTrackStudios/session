@@ -509,9 +509,6 @@ pub fn Lanes(
     #[props(default)] shapes: Shapes,
     #[props(default)] sizing: Rows,
     #[props(default)] grid: Grid,
-    /// A zoom in flight — see [`Panner`].
-    #[props(default = default_preview())]
-    preview: ReadSignal<(f64, f64)>,
 ) -> Element {
     // Which window of the session is built, across and down. Memos, so
     // this component re-renders when a window MOVES and not when the
@@ -528,7 +525,6 @@ pub fn Lanes(
             Panner {
                 scroll,
                 scroll_y,
-                preview,
                 built: built(),
                 built_down: built_down(),
                 children: rsx! {
@@ -603,40 +599,17 @@ fn Panner(
     scroll_y: ReadSignal<f64>,
     built: Built,
     built_down: Built,
-    /// A zoom in flight, as a multiplier on what is laid out.
-    ///
-    /// Zooming changes the size of everything, so it is a LAYOUT, and a
-    /// layout is the one thing a scroll was carefully built not to do:
-    /// measured at fifteen milliseconds of tree construction and
-    /// thirteen of restyle, against three for a scroll. A gesture cannot
-    /// pay that per frame.
-    ///
-    /// So a zoom in flight is a scale on this node — the same node the
-    /// pan already moves, costing the same nothing — and the real layout
-    /// happens once, when the gesture settles. Text stretches for the
-    /// length of the drag, which is the price, and it is a price paid
-    /// only while the hand is moving.
-    #[props(default = default_preview())]
-    preview: ReadSignal<(f64, f64)>,
     children: Element,
 ) -> Element {
     let across = scroll() - built.from;
     let down = scroll_y() - built_down.from;
-    let (sx, sy) = preview();
     rsx! {
         div {
             style: "position:absolute; left:0; top:0; width:100%; height:100%; \
-                    transform-origin: 0 0; \
-                    transform: translate({-across}px, {-down}px) scale({sx}, {sy});",
+                    transform: translate({-across}px, {-down}px);",
             {children}
         }
     }
-}
-
-/// A zoom that is not in flight: everything at the size it is laid out.
-#[must_use]
-pub fn default_preview() -> ReadSignal<(f64, f64)> {
-    ReadSignal::new(Signal::new((1.0, 1.0)))
 }
 
 /// Everything inside the window, positioned relative to its left edge.
