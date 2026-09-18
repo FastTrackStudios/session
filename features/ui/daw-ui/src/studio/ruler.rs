@@ -339,19 +339,27 @@ fn OnTheLine(
                     }
                     let x = x_of(reading.at);
                     rsx! {
+                        // The mark and its reading under one key. A
+                        // wrapper at the origin rather than two keyed
+                        // siblings, because rsx keys the first node in a
+                        // block and the second would go unkeyed — and an
+                        // unkeyed node beside a keyed one is how a list
+                        // reorders into the wrong places.
                         div {
                             key: "{reading.at}",
-                            style: "position:absolute; left:{x}px; top:{tempo_top + 1.0}px; \
-                                    width:1px; height:{TEMPO_H - 2.0}px; \
-                                    background:{colors.accent};",
-                        }
-                        div {
-                            key: "{reading.at}-text",
-                            style: "position:absolute; left:{x + 4.0}px; top:{tempo_top}px; \
-                                    font-size:{SIZE}px; \
-                                    line-height:{line_box(SIZE, TEMPO_H - 3.0)}px; \
-                                    color:{colors.text}; white-space:nowrap;",
-                            "{reading.text}"
+                            style: "position:absolute; left:0; top:0;",
+                            div {
+                                style: "position:absolute; left:{x}px; \
+                                        top:{tempo_top + 1.0}px; width:1px; \
+                                        height:{TEMPO_H - 2.0}px; background:{colors.accent};",
+                            }
+                            div {
+                                style: "position:absolute; left:{x + 4.0}px; \
+                                        top:{tempo_top}px; font-size:{SIZE}px; \
+                                        line-height:{line_box(SIZE, TEMPO_H - 3.0)}px; \
+                                        color:{colors.text}; white-space:nowrap;",
+                                "{reading.text}"
+                            }
                         }
                     }
                 }
@@ -367,17 +375,19 @@ fn OnTheLine(
                     rsx! {
                         div {
                             key: "{tick.at}",
-                            style: "position:absolute; left:{x}px; \
-                                    top:{bars_top + BARS_H - 9.0}px; width:1px; \
-                                    height:9px; background:{colors.grid};",
-                        }
-                        div {
-                            key: "{tick.at}-n",
-                            style: "position:absolute; left:{x + 2.0}px; top:{bars_top}px; \
-                                    font-size:{BARS_SIZE}px; \
-                                    line-height:{line_box(BARS_SIZE, 14.0)}px; \
-                                    color:{colors.ruler_fg}; white-space:nowrap;",
-                            "{tick.label}"
+                            style: "position:absolute; left:0; top:0;",
+                            div {
+                                style: "position:absolute; left:{x}px; \
+                                        top:{bars_top + BARS_H - 9.0}px; width:1px; \
+                                        height:9px; background:{colors.grid};",
+                            }
+                            div {
+                                style: "position:absolute; left:{x + 2.0}px; \
+                                        top:{bars_top}px; font-size:{BARS_SIZE}px; \
+                                        line-height:{line_box(BARS_SIZE, 14.0)}px; \
+                                        color:{colors.ruler_fg}; white-space:nowrap;",
+                                "{tick.label}"
+                            }
                         }
                     }
                 }

@@ -29,6 +29,7 @@ use dioxus::prelude::*;
 use dioxus_native_dom::DioxusDocument;
 
 use daw_ui::studio::lanes::{Colors, Grid, Lanes, Note, Rows, Shape, Shapes, View};
+use daw_ui::studio::rails::{Item, ModeBar, Rails};
 use daw_ui::studio::ruler::{Marks, Reading, Ruler, Tick};
 use daw_ui::studio::{ProjectRef, RowsRef};
 
@@ -75,12 +76,17 @@ fn main() {
     // renderer draws only this, because this is the part that was in
     // question — the panel beside it is already components.
     let ruler = part == "ruler";
-    let lane_w = if ruler {
+    let rails = part == "rails";
+    let lane_w = if rails {
+        width
+    } else if ruler {
         (width - session_daw::rails::SIDE * 2.0).max(1.0)
     } else {
         frame_width(width)
     };
-    let lane_h = if ruler {
+    let lane_h = if rails {
+        height
+    } else if ruler {
         session_daw::ruler::RULER_H
     } else {
         frame_height(height)
@@ -127,6 +133,9 @@ fn main() {
             sections,
             markers,
             ruler,
+            rails,
+            rail_items: rail_items(),
+            modes: modes(),
         },
     );
     #[expect(
@@ -468,6 +477,9 @@ struct ShotProps {
     sections: std::sync::Arc<[daw_ui::studio::project::Section]>,
     markers: std::sync::Arc<[daw_ui::studio::project::Marker]>,
     ruler: bool,
+    rails: bool,
+    rail_items: (Vec<Item>, Vec<Item>, Vec<Item>),
+    modes: Vec<Item>,
 }
 
 thread_local! {
@@ -490,7 +502,22 @@ fn Shot(props: ShotProps) -> Element {
         // bottom of the window and every row eight pixels from where the
         // reference draws it. A window is not a document.
         style { "html, body {{ margin: 0; padding: 0; }}" }
-        if props.ruler {
+        if props.rails {
+            Rails {
+                width: props.view.width,
+                height: props.view.height,
+                colors: props.colors.clone(),
+                top: props.rail_items.2.into(),
+                left: props.rail_items.0.into(),
+                right: props.rail_items.1.into(),
+            }
+            ModeBar {
+                width: session_daw::arrangement::TCP_WIDTH,
+                height: session_daw::ruler::RULER_H,
+                colors: props.colors,
+                modes: props.modes.into(),
+            }
+        } else if props.ruler {
             Ruler {
                 view: props.view,
                 colors: props.colors,
@@ -512,6 +539,78 @@ fn Shot(props: ShotProps) -> Element {
         }
         }
     }
+}
+
+/// The rails the reference shot draws: the same profile, at rest.
+///
+/// Sized here rather than in the component, for the reason the rail
+/// says: measuring a word in a face is the host's job, and the painted
+/// window shrinks a label half a point at a time until it fits its
+/// plate. A component that guessed would guess differently on every
+/// renderer.
+fn rail_items() -> (Vec<Item>, Vec<Item>, Vec<Item>) {
+    let profile = session_daw::rails::profile(
+        session_daw::rails::Surface::Arrange,
+        session::modes::Mode::Mix,
+        session::mix_phases::MixPhase::Tone,
+        Some("drum-mixing"),
+        session_daw::settings::Settings::default(),
+        dynamic_template::scenes::Audience::Engineer,
+        "drums",
+    );
+    let font = session_daw::text::Font::embedded().expect("the embedded font");
+    let fit = |items: &[session_daw::rails::Item<'_>], room: f64| {
+        items
+            .iter()
+            .map(|item| {
+                let (label, size) = font.fit(item.label, 10.0, 6.0, room - 4.0);
+                // A word that still needs an ellipsis is not drawn at
+                // all: a clipped word in a 38-pixel button is a smear,
+                // and the plate's lit state already says which is
+                // current.
+                let label = if label.contains('…') {
+                    String::new()
+                } else {
+                    label
+                };
+                Item {
+                    label,
+                    on: item.on,
+                    size: Some(f64::from(size)),
+                }
+            })
+            .collect()
+    };
+    (
+        fit(&profile.left, session_daw::rails::SIDE - 6.0),
+        fit(&profile.right, session_daw::rails::SIDE - 6.0),
+        fit(&profile.top, session_daw::rails::TOP_ITEM_W - 3.0),
+    )
+}
+
+/// The modes, abbreviated and fitted the way the corner draws them.
+fn modes() -> Vec<Item> {
+    let all = session::modes::Mode::ALL;
+    let each =
+        session_daw::arrangement::TCP_WIDTH / f64::from(u32::try_from(all.len()).unwrap_or(1));
+    let font = session_daw::text::Font::embedded().expect("the embedded font");
+    all.iter()
+        .map(|mode| {
+            // Three letters is what fits a tenth of the corner. A
+            // placeholder for an icon, not a naming decision.
+            let name = mode.display_name();
+            let short = name
+                .char_indices()
+                .nth(3)
+                .map_or(name, |(byte, _)| &name[..byte]);
+            let (label, size) = font.fit(short, 10.0, 6.0, each - 2.0 - 4.0);
+            Item {
+                label,
+                on: *mode == session::modes::Mode::Mix,
+                size: Some(f64::from(size)),
+            }
+        })
+        .collect()
 }
 
 /// The bar numbers and tempo readings of the open session.

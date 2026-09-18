@@ -200,8 +200,20 @@ pub struct Colors {
     pub rule: String,
     /// What a row's own name is written in, beside its contents.
     pub faint: String,
-    /// The accent, which a tempo change is marked with.
+    /// The accent, which a tempo change is marked with — and which a
+    /// lit rail button takes as its face.
     pub accent: String,
+    /// Ink that reads on the accent, which is black or near-white
+    /// depending on how light the accent is. Resolved once here rather
+    /// than guessed per control, because a theme with a pale accent and
+    /// a theme with a deep one want opposite answers.
+    pub ink_on_accent: String,
+    /// The rails' own ground, which is the window's gutter.
+    pub tcp_gutter: String,
+    /// An unlit control's face.
+    pub button: String,
+    /// And the ink on it.
+    pub text_dim: String,
 }
 
 impl Colors {
@@ -222,6 +234,10 @@ impl Colors {
             rule: c(theme.tokens.border),
             faint: c(theme.tokens.text_faint),
             accent: c(theme.tokens.accent),
+            ink_on_accent: ink_on(theme.tokens.accent),
+            tcp_gutter: c(theme.tokens.surface),
+            button: c(theme.tokens.surface),
+            text_dim: c(theme.tokens.text_dim),
             // The recorded scene's own fade shade, as CSS.
             fade: rgba(0, 0, 0, 0.45),
             text: c(theme.tokens.text),
@@ -232,6 +248,32 @@ impl Colors {
 impl Default for Colors {
     fn default() -> Self {
         Self::from_theme(&crate::theming::Theme::default())
+    }
+}
+
+/// Ink that reads on a background.
+///
+/// Black on anything light, near-white on anything dark, by relative
+/// luminance. The floor is the one the painted window uses, so a lit
+/// control letters the same way in both.
+#[must_use]
+pub fn ink_on(background: crate::theming::Color) -> String {
+    /// Above this the background is light enough for black ink.
+    ///
+    /// Low, and deliberately so: these are saturated mid-tones and black
+    /// on them reads as a number stamped on a colour, where a light ink
+    /// reads as a second label floating over it. The painted window uses
+    /// the same floor, so a lit control letters the same way in both.
+    const FLOOR: f32 = 0.179;
+    let at = |v: u8| f32::from(v) / 255.0;
+    let luminance = 0.2126_f32.mul_add(
+        at(background.r),
+        0.7152_f32.mul_add(at(background.g), 0.0722 * at(background.b)),
+    );
+    if luminance > FLOOR {
+        rgba(0, 0, 0, 1.0)
+    } else {
+        rgba(0xe8, 0xe8, 0xea, 1.0)
     }
 }
 

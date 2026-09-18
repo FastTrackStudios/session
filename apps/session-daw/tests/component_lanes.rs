@@ -162,6 +162,23 @@ fn ruler_rect() -> (u32, u32, u32, u32) {
     rect
 }
 
+/// Crop, forcing truecolour output.
+///
+/// A region with few colours is written as a palette PNG, which the
+/// comparator cannot read — it reads pixels, not palettes. The rails are
+/// exactly that kind of region: a ground, a rule and one accent.
+fn crop_true(from: &Path, to: &Path, geometry: &str) -> Result<()> {
+    let status = Command::new("magick")
+        .arg(from)
+        .args(["-crop", geometry, "+repage"])
+        .arg(format!("PNG24:{}", to.display()))
+        .status()?;
+    if !status.success() {
+        return Err(format!("could not crop {}", from.display()).into());
+    }
+    Ok(())
+}
+
 fn crop(from: &Path, to: &Path, geometry: &str) -> Result<()> {
     let status = Command::new("magick")
         .arg(from)
@@ -262,6 +279,72 @@ fn the_components_draw_the_ruler() -> Result<()> {
         vello.display(),
         blitz.display()
     );
+    Ok(())
+}
+
+/// The two renderers draw the same frame: three rails and the mode bar.
+///
+/// Region by region rather than as one picture, because the rails and
+/// the panel between them are drawn by different things and a single
+/// figure over the whole window would let one hide inside the other.
+#[test]
+#[ignore = "renders the golden session through two renderers; run with --ignored"]
+fn the_components_draw_the_rails() -> Result<()> {
+    let dir = scratch()?;
+    let whole = dir.join("whole.png");
+    if !whole.exists() {
+        reference(&dir.join("vello.png"))?;
+    }
+    let drawn = dir.join("rails-drawn.png");
+    components("rails", &drawn)?;
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions,
+        reason = "window geometry, which is small positive integers"
+    )]
+    let (side, top, panel, ruler) = (
+        session_daw::rails::SIDE as u32,
+        session_daw::rails::TOP as u32,
+        session_daw::arrangement::TCP_WIDTH as u32,
+        session_daw::ruler::RULER_H as u32,
+    );
+    // Each region, and what it is allowed. The rails that hold words get
+    // the lettering allowance; the ones that are frame and nothing else
+    // are held to zero, because there is nothing in them for two text
+    // stacks to disagree about.
+    let regions: [(&str, String, f64); 4] = [
+        ("left rail", format!("{side}x1440+0+0"), RULER_TOLERANCE),
+        ("right rail", format!("{side}x1440+{}+0", 2560 - side), 0.0),
+        ("top rail", format!("2560x{top}+0+0"), 0.0),
+        (
+            "mode bar",
+            format!("{panel}x{ruler}+{side}+{top}"),
+            RULER_TOLERANCE,
+        ),
+    ];
+
+    for (name, geometry, allowed) in regions {
+        let slug = name.replace(' ', "-");
+        let (a, b) = (
+            dir.join(format!("{slug}-vello.png")),
+            dir.join(format!("{slug}-components.png")),
+        );
+        // Forced to truecolour: a region with few colours comes back
+        // palettised, and the comparator reads pixels rather than a
+        // palette.
+        crop_true(&whole, &a, &geometry)?;
+        crop_true(&drawn, &b, &geometry)?;
+        let difference = differs(&a, &b)?;
+        assert!(
+            difference <= allowed,
+            "the component {name} is not the recorded one: {difference:.3}% differs \
+             (allowed {allowed}%).\n  {}\n  {}",
+            a.display(),
+            b.display()
+        );
+    }
     Ok(())
 }
 
