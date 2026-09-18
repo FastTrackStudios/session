@@ -57,6 +57,7 @@ pub mod clock;
 pub mod css;
 pub mod fps;
 pub mod lanes;
+pub mod panel;
 pub mod probe;
 pub mod project;
 pub mod rails;

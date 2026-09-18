@@ -29,6 +29,7 @@ use dioxus::prelude::*;
 use dioxus_native_dom::DioxusDocument;
 
 use daw_ui::studio::lanes::{Colors, Grid, Lanes, Note, Rows, Shape, Shapes, View};
+use daw_ui::studio::panel::Panel;
 use daw_ui::studio::rails::{Item, ModeBar, Rails};
 use daw_ui::studio::ruler::{Marks, Reading, Ruler, Tick};
 use daw_ui::studio::{ProjectRef, RowsRef};
@@ -81,14 +82,19 @@ fn main() {
     // point of this one is not any single picture — it is that the
     // pieces compose: one tree, one document, one paint.
     let all = part == "all";
-    let lane_w = if rails || all {
+    let panel = part == "panel";
+    let lane_w = if panel {
+        daw_ui::studio::panel::ROW_W
+    } else if rails || all {
         width
     } else if ruler {
         (width - session_daw::rails::SIDE * 2.0).max(1.0)
     } else {
         frame_width(width)
     };
-    let lane_h = if rails || all {
+    let lane_h = if panel {
+        frame_height(height)
+    } else if rails || all {
         height
     } else if ruler {
         session_daw::ruler::RULER_H
@@ -139,6 +145,7 @@ fn main() {
             ruler,
             rails,
             all,
+            panel,
             rail_items: rail_items(),
             modes: modes(),
         },
@@ -490,6 +497,7 @@ struct ShotProps {
     ruler: bool,
     rails: bool,
     all: bool,
+    panel: bool,
     rail_items: (Vec<Item>, Vec<Item>, Vec<Item>),
     modes: Vec<Item>,
 }
@@ -514,7 +522,15 @@ fn Shot(props: ShotProps) -> Element {
         // bottom of the window and every row eight pixels from where the
         // reference draws it. A window is not a document.
         style { "html, body {{ margin: 0; padding: 0; }}" }
-        if props.all {
+        if props.panel {
+            Panel {
+                project: props.project,
+                rows: props.rows,
+                view: props.view,
+                colors: props.colors,
+                sizing: props.sizing,
+            }
+        } else if props.all {
             Window { ..props.clone() }
         } else if props.rails {
             Rails {
@@ -654,6 +670,16 @@ fn Window(props: ShotProps) -> Element {
                     shapes: props.shapes.clone(),
                     sizing: props.sizing,
                     grid: props.grid,
+                }
+            }
+            div {
+                style: "position:absolute; left:{session_daw::rails::SIDE}px; top:{lanes_y}px;",
+                Panel {
+                    project: props.project.clone(),
+                    rows: props.rows.clone(),
+                    view: lanes,
+                    colors: props.colors.clone(),
+                    sizing: props.sizing,
                 }
             }
             Rails {

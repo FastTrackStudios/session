@@ -419,6 +419,59 @@ fn the_whole_window_composes() -> Result<()> {
     Ok(())
 }
 
+/// The two renderers draw the same track panel — as far as it goes.
+///
+/// Only the RAIL: the column holding each row's folder band, its folder
+/// mark and its number. That is the part of the panel the components
+/// draw in full.
+///
+/// The rest of the row is under the live controls — the record arm, the
+/// volume, the pan, mute and solo — which are not components yet, so
+/// comparing the band they sit in would be comparing this against a
+/// picture with things in it that this does not claim to draw. When they
+/// land, the comparison widens to the row.
+///
+/// The rail is held to a tighter figure than anything else here, and can
+/// be: it is geometry and two glyphs rather than a strip of names, and
+/// it measures ZERO differing pixels once the threshold clears glyph
+/// antialiasing.
+#[test]
+#[ignore = "renders the golden session through two renderers; run with --ignored"]
+fn the_components_draw_the_panel_rail() -> Result<()> {
+    let dir = scratch()?;
+    let whole = dir.join("whole.png");
+    if !whole.exists() {
+        reference(&dir.join("vello.png"))?;
+    }
+    let drawn = dir.join("panel.png");
+    components("panel", &drawn)?;
+
+    let (_, lane_y, _, lane_h) = lane_rect();
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions,
+        reason = "window geometry, which is small positive integers"
+    )]
+    let (side, rail) = (
+        session_daw::rails::SIDE as u32,
+        daw_ui::studio::panel::NAME_FIELD_X as u32,
+    );
+    let (a, b) = (dir.join("rail-vello.png"), dir.join("rail-components.png"));
+    crop_true(&whole, &a, &format!("{rail}x{lane_h}+{side}+{lane_y}"))?;
+    crop_true(&drawn, &b, &format!("{rail}x{lane_h}+0+0"))?;
+
+    let difference = differs(&a, &b)?;
+    assert!(
+        difference <= LANES_TOLERANCE,
+        "the component panel's rail is not the recorded one: {difference:.3}% \
+         differs (allowed {LANES_TOLERANCE}%).\n  {}\n  {}",
+        a.display(),
+        b.display()
+    );
+    Ok(())
+}
+
 /// The negative control: a picture moved four pixels fails.
 ///
 /// Without this the test above says only that something was rendered

@@ -212,6 +212,15 @@ pub struct Colors {
     pub tcp_gutter: String,
     /// An unlit control's face.
     pub button: String,
+    /// The panel's row tint before a track's colour is mixed into it,
+    /// and the same as channels so a mix does not have to parse it back.
+    pub tcp_tint: String,
+    pub tcp_tint_rgb: (u8, u8, u8),
+    /// The panel's left column, its field, and how strongly a track's
+    /// colour tints its row.
+    pub tcp_column: String,
+    pub tcp_field: String,
+    pub track_tint: f32,
     /// And the ink on it.
     pub text_dim: String,
 }
@@ -236,6 +245,15 @@ impl Colors {
             accent: c(theme.tokens.accent),
             ink_on_accent: ink_on(theme.tokens.accent),
             tcp_gutter: c(theme.tokens.surface),
+            tcp_tint: c(theme.tokens.surface_raised),
+            tcp_tint_rgb: (
+                theme.tokens.surface_raised.r,
+                theme.tokens.surface_raised.g,
+                theme.tokens.surface_raised.b,
+            ),
+            tcp_column: c(theme.tokens.surface_sunken),
+            tcp_field: c(theme.tokens.surface_sunken),
+            track_tint: theme.metrics.track_tint,
             button: c(theme.tokens.surface),
             text_dim: c(theme.tokens.text_dim),
             // The recorded scene's own fade shade, as CSS.
