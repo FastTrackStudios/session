@@ -29,6 +29,7 @@ use dioxus::prelude::*;
 use dioxus_native_dom::DioxusDocument;
 
 use daw_ui::studio::lanes::{Colors, Grid, Lanes, Note, Rows, Shape, Shapes, View};
+use daw_ui::studio::ruler::{Marks, Reading, Ruler, Tick};
 use daw_ui::studio::{ProjectRef, RowsRef};
 
 /// Pixels per second, the reference shot's own.
@@ -64,13 +65,26 @@ fn main() {
     let scroll_x = args.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
     let scroll_y = args.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
 
+    // Which part of the window is being drawn. Each is compared against
+    // the same part of the reference shot, so they are converted — and
+    // proven — one at a time rather than all at once.
+    let part = std::env::var("FTS_BLITZ_PART").unwrap_or_else(|_| "lanes".to_owned());
     let (width, height) = size();
     // The lane rect: what is left of the frame once the rails and the
     // track panel and the ruler have taken theirs. The component
     // renderer draws only this, because this is the part that was in
     // question — the panel beside it is already components.
-    let lane_w = frame_width(width);
-    let lane_h = frame_height(height);
+    let ruler = part == "ruler";
+    let lane_w = if ruler {
+        (width - session_daw::rails::SIDE * 2.0).max(1.0)
+    } else {
+        frame_width(width)
+    };
+    let lane_h = if ruler {
+        session_daw::ruler::RULER_H
+    } else {
+        frame_height(height)
+    };
 
     session_daw::open::open_silent(std::path::Path::new(&project_path)).expect("open project");
     let (project, rows) = read_back().expect("read the project back");
@@ -95,6 +109,9 @@ fn main() {
         min: layout.height_of(Some(1)),
     };
     let grid = grid_of(&project, view);
+    let marks = marks_of(&project);
+    let sections = project.sections.clone().into();
+    let markers = project.markers.clone().into();
 
     let vdom = VirtualDom::new_with_props(
         Shot,
@@ -106,6 +123,10 @@ fn main() {
             shapes,
             sizing,
             grid,
+            marks,
+            sections,
+            markers,
+            ruler,
         },
     );
     #[expect(
@@ -443,6 +464,10 @@ struct ShotProps {
     shapes: Shapes,
     sizing: Rows,
     grid: Grid,
+    marks: Marks,
+    sections: std::sync::Arc<[daw_ui::studio::project::Section]>,
+    markers: std::sync::Arc<[daw_ui::studio::project::Marker]>,
+    ruler: bool,
 }
 
 thread_local! {
@@ -465,15 +490,105 @@ fn Shot(props: ShotProps) -> Element {
         // bottom of the window and every row eight pixels from where the
         // reference draws it. A window is not a document.
         style { "html, body {{ margin: 0; padding: 0; }}" }
+        if props.ruler {
+            Ruler {
+                view: props.view,
+                colors: props.colors,
+                marks: props.marks,
+                sections: props.sections,
+                markers: props.markers,
+                scroll: ReadSignal::from(scroll),
+            }
+        } else {
         Lanes {
             project: props.project,
             rows: props.rows,
             view: props.view,
-            scroll: ReadOnlySignal::from(scroll),
+            scroll: ReadSignal::from(scroll),
             colors: props.colors,
             shapes: props.shapes,
             sizing: props.sizing,
             grid: props.grid,
         }
+        }
+    }
+}
+
+/// The bar numbers and tempo readings of the open session.
+///
+/// Walked through the tempo map here rather than in the component, for
+/// the reason the component says: a bar is however many beats the
+/// signature says it is, and only whoever owns the map can count them.
+fn marks_of(project: &ProjectRef) -> Marks {
+    let view = session_daw::arrangement::Viewport {
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        pps: PPS,
+        zoom_y: 1.0,
+        width: f64::MAX / 4.0,
+        height: 0.0,
+    };
+    let bars = session_daw::ruler::Bars::at(project.bpm);
+    let step = session_daw::ruler::step_beats(
+        bars.secs_per_bar() * PPS,
+        f64::from(project.tempo.first().map_or(4, |t| t.beats_per_bar)),
+    );
+    let beats = session_daw::ruler::Timeline::new(&project.tempo)
+        .beats(project.length_secs.max(1.0), 100_000);
+    let _ = view;
+
+    let mut ticks = Vec::new();
+    let mut since = 0.0_f64;
+    for (index, beat) in beats.iter().enumerate() {
+        if index > 0 {
+            since += 1.0;
+        }
+        let on_step = if step >= 1.0 {
+            (since % step).abs() < 1e-6 || (since % step - step).abs() < 1e-6
+        } else {
+            true
+        };
+        if !on_step {
+            continue;
+        }
+        if step < 1.0 {
+            let mut fraction = 0.0_f64;
+            while fraction < 1.0 - 1e-9 {
+                ticks.push(Tick {
+                    at: fraction.mul_add(beat.secs_per_beat, beat.at),
+                    label: session_daw::ruler::written(
+                        beat.measure,
+                        f64::from(beat.beat - 1) + fraction,
+                        f64::from(beat.per_bar),
+                        step,
+                    ),
+                });
+                fraction += step;
+            }
+        } else {
+            ticks.push(Tick {
+                at: beat.at,
+                label: session_daw::ruler::written(
+                    beat.measure,
+                    f64::from(beat.beat - 1),
+                    f64::from(beat.per_bar),
+                    step,
+                ),
+            });
+        }
+    }
+
+    Marks {
+        ticks: ticks.into(),
+        tempo: project
+            .tempo
+            .iter()
+            .map(|change| Reading {
+                at: change.at,
+                text: session_daw::ruler::reading(change),
+            })
+            .collect::<Vec<_>>()
+            .into(),
+        tempo_before: None,
     }
 }

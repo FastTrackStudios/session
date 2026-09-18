@@ -44,12 +44,25 @@ const SIZE: &str = "2560x1440";
 /// Past this, a difference is not an antialiased edge.
 const THRESHOLD: &str = "96";
 
-/// How much of the picture may still differ at that threshold.
+/// How much of the LANES may still differ at that threshold.
 ///
 /// Not zero: text is lettered by two different stacks and no threshold
-/// makes a glyph edge agree with a different glyph edge. Two thirds of
-/// what is left at this threshold is the titles.
-const TOLERANCE: f64 = 0.5;
+/// makes a glyph edge agree with a different glyph edge. Measured at
+/// 0.31%, essentially all of it the item titles.
+const LANES_TOLERANCE: f64 = 0.5;
+
+/// And how much of the RULER, which is allowed more.
+///
+/// Not because it is held to a lower standard — because of what it is.
+/// A lane is mostly picture with a name on it; a ruler is mostly
+/// lettering, so the share of it that two text stacks cannot agree on is
+/// larger for the same quality of match. Measured at 0.50%, and every
+/// pixel of that is a glyph: the bands, the flags, the ticks and the
+/// rules are identical.
+///
+/// Neither number is close to a real defect. The missing waveform this
+/// comparison was written after finding measured over 8%.
+const RULER_TOLERANCE: f64 = 1.0;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -108,18 +121,45 @@ fn reference(out: &Path) -> Result<()> {
     crop(&whole, out, &format!("{w}x{h}+{x}+{y}"))
 }
 
-/// The component renderer, which draws the lane rect and nothing else.
-fn components(out: &Path) -> Result<()> {
+/// The component renderer, which draws one part of the window.
+fn components(part: &str, out: &Path) -> Result<()> {
     let status = Command::new(built("blitz_shot")?)
         .current_dir(root())
         .arg(fixture())
         .arg(out)
         .env("FTS_BLITZ_SIZE", SIZE)
+        .env("FTS_BLITZ_PART", part)
         .status()?;
     if !status.success() {
-        return Err("the component renderer failed".into());
+        return Err(format!("the component renderer failed drawing the {part}").into());
     }
     Ok(())
+}
+
+/// Where the ruler sits, and how much of it can be compared.
+///
+/// The strip runs the full width between the rails, but its left column
+/// — where the rows are named — cannot be compared: the reference draws
+/// the window's rails OVER it, so that part of the picture is the rails'
+/// and not the ruler's. What is compared is the timeline, which is the
+/// part the ruler actually owns.
+fn ruler_rect() -> (u32, u32, u32, u32) {
+    let x = session_daw::rails::SIDE + session_daw::arrangement::TCP_WIDTH;
+    let y = session_daw::rails::TOP;
+    let w = 2560.0 - x - session_daw::rails::SIDE;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions,
+        reason = "a rectangle inside a 2560x1440 window"
+    )]
+    let rect = (
+        x as u32,
+        y as u32,
+        w as u32,
+        session_daw::ruler::RULER_H as u32,
+    );
+    rect
 }
 
 fn crop(from: &Path, to: &Path, geometry: &str) -> Result<()> {
@@ -170,14 +210,55 @@ fn the_components_draw_the_recorded_scene() -> Result<()> {
     let dir = scratch()?;
     let (vello, blitz) = (dir.join("vello.png"), dir.join("components.png"));
     reference(&vello)?;
-    components(&blitz)?;
+    components("lanes", &blitz)?;
 
     let difference = differs(&vello, &blitz)?;
     assert!(
-        difference <= TOLERANCE,
+        difference <= LANES_TOLERANCE,
         "the component lanes are not the recorded scene: {difference:.3}% of the \
          picture differs past a threshold antialiasing cannot reach (allowed \
-         {TOLERANCE}%).\n  {}\n  {}",
+         {LANES_TOLERANCE}%).\n  {}\n  {}",
+        vello.display(),
+        blitz.display()
+    );
+    Ok(())
+}
+
+/// The two renderers draw the same ruler.
+///
+/// Compared over the timeline alone — see [`ruler_rect`] for why the
+/// column of row names is not the ruler's to be judged on.
+#[test]
+#[ignore = "renders the golden session through two renderers; run with --ignored"]
+fn the_components_draw_the_ruler() -> Result<()> {
+    let dir = scratch()?;
+    let whole = dir.join("whole.png");
+    if !whole.exists() {
+        reference(&dir.join("vello.png"))?;
+    }
+    let (x, y, w, h) = ruler_rect();
+    let vello = dir.join("ruler-vello.png");
+    crop(&whole, &vello, &format!("{w}x{h}+{x}+{y}"))?;
+
+    // The component ruler draws the whole strip, rails' column and all,
+    // so it is cut to the same timeline the reference was cut to.
+    let drawn = dir.join("ruler-drawn.png");
+    components("ruler", &drawn)?;
+    let blitz = dir.join("ruler-components.png");
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions,
+        reason = "the panel's width, which is a small positive integer"
+    )]
+    let names = session_daw::arrangement::TCP_WIDTH as u32;
+    crop(&drawn, &blitz, &format!("{w}x{h}+{names}+0"))?;
+
+    let difference = differs(&vello, &blitz)?;
+    assert!(
+        difference <= RULER_TOLERANCE,
+        "the component ruler is not the recorded one: {difference:.3}% differs \
+         (allowed {RULER_TOLERANCE}%).\n  {}\n  {}",
         vello.display(),
         blitz.display()
     );
@@ -209,10 +290,10 @@ fn a_moved_picture_fails() -> Result<()> {
 
     let difference = differs(&cut, &moved)?;
     assert!(
-        difference > TOLERANCE,
+        difference > RULER_TOLERANCE,
         "the comparison cannot tell a moved picture from a matching one: \
          four pixels of shift read as {difference:.3}% different, inside the \
-         {TOLERANCE}% the real test allows"
+         {RULER_TOLERANCE}% the loosest real test allows"
     );
     Ok(())
 }

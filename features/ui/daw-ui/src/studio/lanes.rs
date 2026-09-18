@@ -193,6 +193,15 @@ pub struct Colors {
     /// The shade a fade lays over the part of an item it takes away.
     pub fade: String,
     pub text: String,
+    /// The ruler's ground, and the ink its numbers are written in.
+    pub ruler_bg: String,
+    pub ruler_fg: String,
+    /// The hairline under each of the ruler's rows.
+    pub rule: String,
+    /// What a row's own name is written in, beside its contents.
+    pub faint: String,
+    /// The accent, which a tempo change is marked with.
+    pub accent: String,
 }
 
 impl Colors {
@@ -208,6 +217,11 @@ impl Colors {
             grid: c(theme.arrange.grid_measure),
             grid_beat: c(theme.arrange.grid_beat),
             uncoloured: c(theme.tokens.text_faint),
+            ruler_bg: c(theme.arrange.ruler_bg),
+            ruler_fg: c(theme.arrange.ruler_fg),
+            rule: c(theme.tokens.border),
+            faint: c(theme.tokens.text_faint),
+            accent: c(theme.tokens.accent),
             // The recorded scene's own fade shade, as CSS.
             fade: rgba(0, 0, 0, 0.45),
             text: c(theme.tokens.text),
@@ -414,7 +428,7 @@ pub fn Lanes(
     rows: RowsRef,
     view: View,
     colors: Colors,
-    scroll: ReadOnlySignal<f64>,
+    scroll: ReadSignal<f64>,
     #[props(default)] shapes: Shapes,
     #[props(default)] sizing: Rows,
     #[props(default)] grid: Grid,
@@ -482,7 +496,7 @@ impl Built {
 /// scroll — so a pan re-runs exactly this function and hands the same
 /// item vnodes straight back.
 #[component]
-fn Panner(scroll: ReadOnlySignal<f64>, built: Built, children: Element) -> Element {
+fn Panner(scroll: ReadSignal<f64>, built: Built, children: Element) -> Element {
     let offset = scroll() - built.from;
     rsx! {
         div {

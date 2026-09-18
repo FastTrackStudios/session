@@ -59,6 +59,7 @@ pub mod fps;
 pub mod lanes;
 pub mod probe;
 pub mod project;
+pub mod ruler;
 pub mod tcp;
 pub mod theme;
 pub mod transport;
