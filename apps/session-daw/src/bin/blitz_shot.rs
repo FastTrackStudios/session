@@ -19,6 +19,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use std::time::Instant;
+
 use anyrender::ImageRenderer as _;
 use anyrender_vello::VelloImageRenderer;
 use blitz_dom::{Document as _, DocumentConfig};
@@ -137,6 +139,17 @@ fn main() {
         inner.resolve(0.0);
     }
 
+    // `FTS_BLITZ_FRAMES=240` measures a pan instead of taking a
+    // picture. The same tree, the same data and the same window — so the
+    // number is the real UI's, not a model of it.
+    if let Some(frames) = std::env::var("FTS_BLITZ_FRAMES")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+    {
+        pan(&mut document, w, h, frames);
+        return;
+    }
+
     let mut image = VelloImageRenderer::new(w, h);
     let mut buffer = Vec::new();
     image.render_to_vec(
@@ -153,6 +166,101 @@ fn main() {
     };
     image.save(&out).expect("write the picture");
     println!("wrote {out} — {w}x{h}, scroll ({scroll_x}, {scroll_y})");
+}
+
+/// Pan across the session, and say what a frame of it costs.
+///
+/// Split the same way the other benchmarks split it, because a frame
+/// time says a pan is slow and only the split says which pass is: Dioxus
+/// reconciling the tree, then Stylo and Taffy solving what came out, then
+/// the scene being encoded for the GPU.
+fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
+    let mut renderer =
+        session_daw::headless::Headless::new(width, height).expect("a headless renderer");
+    let mut stages = session_daw::profile::Stages::with_capacity(frames);
+    let mut diff = session_daw::profile::Samples::with_capacity(frames);
+    let mut solve = session_daw::profile::Samples::with_capacity(frames);
+    let batch = session_daw::headless::BATCH;
+
+    for chunk in 0..frames / batch {
+        let started = Instant::now();
+        let mut painted = 0.0;
+        for step in 0..batch {
+            let frame = chunk * batch + step;
+            #[expect(
+                clippy::cast_precision_loss,
+                clippy::as_conversions,
+                reason = "a frame index over a few hundred"
+            )]
+            let t = frame as f64 / frames as f64;
+            // A minute of session under the playhead, which moves every
+            // item on screen and changes which ones are there at all.
+            SCROLL.with(|scroll| {
+                if let Some(mut scroll) = *scroll.borrow() {
+                    document.vdom.in_runtime(|| scroll.set(t * 60.0 * PPS));
+                }
+            });
+            let at = Instant::now();
+            document.poll(None);
+            diff.push_ms(at.elapsed().as_secs_f64() * 1000.0);
+            let at = Instant::now();
+            {
+                let mut inner = document.inner_mut();
+                inner.resolve(0.0);
+            }
+            solve.push_ms(at.elapsed().as_secs_f64() * 1000.0);
+            painted += renderer
+                .frame(|painter| {
+                    let mut inner = document.inner_mut();
+                    blitz_paint::paint_scene(painter, &mut inner, 1.0, width, height, 0, 0);
+                })
+                .expect("render a frame");
+        }
+        renderer.wait().expect("the gpu to finish the batch");
+        #[expect(
+            clippy::cast_precision_loss,
+            clippy::as_conversions,
+            reason = "a batch size of thirty"
+        )]
+        let per_frame = started.elapsed().as_secs_f64() * 1000.0 / batch as f64;
+        stages.frame.push_ms(per_frame);
+        stages.paint.push_ms(painted / batch as f64);
+    }
+
+    let (Some(frame), Some(paint), Some(diff), Some(solve)) = (
+        stages.frame.summary(),
+        stages.paint.summary(),
+        diff.summary(),
+        solve.summary(),
+    ) else {
+        println!("  nothing measured");
+        return;
+    };
+    println!("\n  The component lanes, panning the golden session\n");
+    println!("  surface       {width}x{height}");
+    println!(
+        "  {:<12} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9}",
+        "", "mean", "p99", "worst", "style+lay", "paint", "fps(p99)"
+    );
+    println!("  {}", "-".repeat(74));
+    // The worst frame rather than the diff pass, because the diff is the
+    // part this design made free and the worst frame is the part it did
+    // not: a window boundary rebuilds the items, and that frame is the
+    // one a fling would show a hitch on if it were slow.
+    println!(
+        "  {:<12} {:>7.2}ms {:>7.2}ms {:>7.2}ms {:>7.2}ms {:>7.2}ms {:>9.0}",
+        "pan",
+        frame.mean,
+        frame.p99,
+        frame.worst,
+        solve.mean,
+        paint.mean,
+        1000.0 / frame.p99.max(0.001)
+    );
+    println!(
+        "\n  reconciling {:.2}ms a frame — the pan re-renders nothing",
+        diff.mean
+    );
 }
 
 /// The surface, which is the window the reference was shot at.
@@ -337,8 +445,20 @@ struct ShotProps {
     grid: Grid,
 }
 
+thread_local! {
+    /// The scroll, reachable from outside the runtime so the benchmark
+    /// can drive it the way a scrollbar would.
+    static SCROLL: std::cell::RefCell<Option<Signal<f64>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 #[component]
 fn Shot(props: ShotProps) -> Element {
+    let scroll = use_signal(|| props.view.scroll_x);
+    use_hook(|| {
+        SCROLL.with(|slot| *slot.borrow_mut() = Some(scroll));
+    });
+
     rsx! {
         // The user-agent stylesheet gives the body an eight-pixel
         // margin, which is eight pixels of the session pushed off the
@@ -349,6 +469,7 @@ fn Shot(props: ShotProps) -> Element {
             project: props.project,
             rows: props.rows,
             view: props.view,
+            scroll: ReadOnlySignal::from(scroll),
             colors: props.colors,
             shapes: props.shapes,
             sizing: props.sizing,

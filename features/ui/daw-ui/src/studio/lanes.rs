@@ -371,21 +371,152 @@ fn every(step: f64, from: f64, to: f64, view: View) -> Vec<f64> {
         .collect()
 }
 
+/// How far the lanes are built past each edge of the screen, in screens.
+///
+/// The reason a pan is cheap. Items are built for a window WIDER than the
+/// window they are seen through, and the scroll moves them inside it with
+/// a transform — so panning re-renders nothing at all until the view
+/// reaches the edge of what was built, and only then is a new window
+/// built.
+///
+/// How much wider is a straight trade, and both ends of it were
+/// measured on the golden session at 2129x1324:
+///
+/// | bleed | window | frame p99 | fps |
+/// |---|---|---|---|
+/// | 1.0 | 3 screens | 5.36 ms | 187 |
+/// | 0.5 | 2 screens | 4.65 ms | 215 |
+/// | 0.25 | 1.5 screens | 4.12 ms | 243 |
+///
+/// because style and layout cost what the tree costs, and a wider window
+/// is a bigger tree. The cost of a NARROWER one is not in this table: it
+/// is the margin a fast fling has before it reaches unbuilt session and
+/// shows nothing. Half a screen is a thousand pixels of that, which is
+/// tens of frames at any speed a hand can move; a quarter is one or two,
+/// for a seventh more frames a second. So a half.
+const BLEED: f64 = 0.5;
+
 /// The lanes, and the items on them.
 ///
 /// Renders the rows [`View`] can see, and on each of those the items
-/// whose span reaches the screen. Everything else is not in the tree —
-/// see rule 1.
+/// whose span reaches the built window. Everything else is not in the
+/// tree — see rule 1.
+///
+/// `scroll` is a signal rather than a number because of rule 3: read as a
+/// prop, every pan would rebuild every item's vnode, which measured at
+/// 4.7 ms a frame against 0.2 ms. Nothing in this component reads it —
+/// only [`Panner`] below does, and only [`Built`] reads how far the view
+/// has travelled, through a memo that changes once a window rather than
+/// once a frame.
 #[component]
 pub fn Lanes(
     project: ProjectRef,
     rows: RowsRef,
     view: View,
     colors: Colors,
+    scroll: ReadOnlySignal<f64>,
     #[props(default)] shapes: Shapes,
     #[props(default)] sizing: Rows,
     #[props(default)] grid: Grid,
 ) -> Element {
+    // Which window of the session is built. A memo, so this component
+    // re-renders when the window moves and not when the scroll does.
+    let built = use_memo(move || Built::around(scroll(), view));
+    let surface = colors.surface.clone();
+
+    rsx! {
+        div {
+            style: "position:relative; width:{view.width}px; height:{view.height}px; \
+                    overflow:hidden; background:{surface}; font-family:{FONT};",
+            "data-testid": "studio-lanes",
+            Panner {
+                scroll,
+                built: built(),
+                children: rsx! {
+                    Content {
+                        project,
+                        rows,
+                        view,
+                        colors,
+                        shapes,
+                        sizing,
+                        grid,
+                        built: built(),
+                    }
+                },
+            }
+        }
+    }
+}
+
+/// The window of the session that is currently built, in pixels of
+/// content.
+#[derive(Clone, Copy, PartialEq)]
+pub struct Built {
+    pub from: f64,
+    pub to: f64,
+}
+
+impl Built {
+    /// The window around a scroll position.
+    ///
+    /// Snapped to whole windows rather than centred on the scroll, so
+    /// that panning back and forth across one boundary does not rebuild
+    /// on every frame it crosses — the window is the same window until
+    /// the view leaves it entirely.
+    #[must_use]
+    pub fn around(scroll: f64, view: View) -> Self {
+        let step = (view.width * BLEED).max(1.0);
+        let index = (scroll / step).floor();
+        let from = (index - BLEED) * step;
+        Self {
+            from: from.max(0.0),
+            to: index.mul_add(step, view.width) + step * BLEED,
+        }
+    }
+}
+
+/// The node that moves.
+///
+/// Its children are built by the component above, which does not read the
+/// scroll — so a pan re-runs exactly this function and hands the same
+/// item vnodes straight back.
+#[component]
+fn Panner(scroll: ReadOnlySignal<f64>, built: Built, children: Element) -> Element {
+    let offset = scroll() - built.from;
+    rsx! {
+        div {
+            style: "position:absolute; left:0; top:0; width:100%; height:100%; \
+                    transform: translateX({-offset}px);",
+            {children}
+        }
+    }
+}
+
+/// Everything inside the window, positioned relative to its left edge.
+#[component]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the lanes' own inputs, one level down so that a pan does               not re-render them"
+)]
+fn Content(
+    project: ProjectRef,
+    rows: RowsRef,
+    view: View,
+    colors: Colors,
+    shapes: Shapes,
+    sizing: Rows,
+    grid: Grid,
+    built: Built,
+) -> Element {
+    // Inside the window, the view is the window: everything is laid out
+    // from its left edge, and the transform above puts that edge where
+    // the scroll says it goes.
+    let view = View {
+        scroll_x: built.from,
+        width: built.to - built.from,
+        ..view
+    };
     // The cumulative offsets are a function of the row list alone, so
     // they are computed when THAT changes rather than on every render —
     // a fold is a discrete act, a pan is not.
@@ -406,9 +537,8 @@ pub fn Lanes(
 
     rsx! {
         div {
-            style: "position:relative; width:{view.width}px; height:{view.height}px; \
-                    overflow:hidden; background:{colors.surface}; font-family:{FONT};",
-            "data-testid": "studio-lanes",
+            style: "position:absolute; left:0; top:0; width:{view.width}px; \
+                    height:{view.height}px;",
             for row in visible {
                 if let Some((top, height)) = offsets.row(row) {
                     if let Some((track, _)) = rows.get(row) {
