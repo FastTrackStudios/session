@@ -71,6 +71,17 @@ impl Headless {
             eyre!("no wgpu adapter ({e}): this benchmark needs a real GPU to mean anything")
         })?;
 
+        // Which device the numbers came off. A benchmark that quietly
+        // fell back to a software rasteriser reports the same shape of
+        // table as one that did not, and the difference is two orders of
+        // magnitude — so the adapter is stated rather than assumed.
+        let info = adapter.get_info();
+        tracing::info!(
+            gpu.name = %info.name,
+            gpu.backend = ?info.backend,
+            gpu.kind = ?info.device_type,
+            "rendering on"
+        );
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("session-daw headless"),
             required_features: wgpu::Features::empty(),

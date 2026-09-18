@@ -50,6 +50,7 @@
 //! must never be reported as this one.
 
 pub mod arrange;
+pub mod art;
 pub mod autoscroll;
 pub mod canvas;
 pub mod census;
