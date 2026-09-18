@@ -470,9 +470,18 @@ fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
         paint.mean,
         1000.0 / frame.p99.max(0.001)
     );
+    // The middle frame and the worst one, not the mean of the two. A
+    // snapped zoom is cheap between two steps and rebuilds when it
+    // crosses one, so the mean is a blend of two costs that never
+    // actually happen — and whether a gesture feels smooth is decided by
+    // how far apart they are.
     println!(
-        "\n  reconciling {:.2}ms a frame — the pan re-renders nothing",
-        diff.mean
+        "\n  reconciling   p50 {:>6.2}ms   p99 {:>6.2}ms   worst {:>6.2}ms",
+        diff.p50, diff.p99, diff.worst
+    );
+    println!(
+        "  style+layout  p50 {:>6.2}ms   p99 {:>6.2}ms   worst {:>6.2}ms",
+        solve.p50, solve.p99, solve.worst
     );
 }
 
