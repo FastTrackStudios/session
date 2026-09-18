@@ -52,12 +52,40 @@ const PEAKS_PER_SECOND: f64 = 12.0;
 const HOLD: usize = 4;
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "warn,blitz=info,usvg=error".into()),
+    // A window writes to a LOG rather than to a terminal it does not
+    // have. `FTS_BLITZ_LOG` names the file; a window defaults to one, so
+    // that what the run did can be read afterwards instead of watched
+    // live — which is the only way to know what a window did on somebody
+    // else's screen.
+    let log = std::env::var("FTS_BLITZ_LOG")
+        .ok()
+        .or_else(|| std::env::var_os("FTS_BLITZ_WINDOW").map(|_| "/tmp/fts-studio.log".to_owned()));
+    let filter = || {
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(
+            |_| // `blitz_shot` and not `session_daw`: a binary's tracing target is
+            // the BINARY's crate name, so a filter naming the library it
+            // lives beside silently drops everything this file says.
+            "warn,blitz=info,usvg=error,session_daw=info,blitz_shot=info".into(),
         )
-        .init();
+    };
+    if let Some(path) = log.as_deref() {
+        match std::fs::File::create(path) {
+            Ok(file) => {
+                tracing_subscriber::fmt()
+                    .with_env_filter(filter())
+                    .with_ansi(false)
+                    .with_writer(std::sync::Mutex::new(file))
+                    .init();
+                println!("logging to {path}");
+            }
+            Err(error) => {
+                tracing_subscriber::fmt().with_env_filter(filter()).init();
+                tracing::warn!(%error, path, "could not open the log; using stderr");
+            }
+        }
+    } else {
+        tracing_subscriber::fmt().with_env_filter(filter()).init();
+    }
 
     let mut args = std::env::args().skip(1);
     let (Some(project_path), Some(out)) = (args.next(), args.next()) else {
@@ -743,24 +771,69 @@ fn rail_items() -> (Vec<Item>, Vec<Item>, Vec<Item>) {
 /// leaves. The track panel's own column is the one thing missing, and it
 /// is left as the window's ground rather than faked — a picture with a
 /// wrong panel in it would be worse than one with none.
-/// Keeps `size` in step with the window.
+/// Keeps `size` and `rate` in step with the window.
+///
+/// Named for what it tracks rather than `Surface`, which this file
+/// already uses for the rails' own enum — two `Surface`s in one file is
+/// a name that resolves to whichever one the reader is not thinking of.
 ///
 /// A component rather than a few hooks in `Window`, because the hooks it
 /// needs only exist when a winit window does — and a hook cannot be
 /// called conditionally, while a component can be mounted conditionally.
 /// It draws nothing; it exists to hold three hooks.
 #[component]
-fn Surface(size: Signal<(f64, f64)>) -> Element {
-    let handle = dioxus_native::use_window();
-    let mut size = size;
-    use_hook(move || {
-        let px = handle.surface_size();
-        size.set((f64::from(px.width.max(1)), f64::from(px.height.max(1))));
+fn WindowSize(size: Signal<(f64, f64)>, rate: Signal<f64>) -> Element {
+    // Asked for rather than demanded: `use_window` consumes the context
+    // and PANICS when it is missing, which a component swallows — the
+    // window goes on drawing at whatever size it started with and
+    // nothing says why. Every symptom of that looks like a resize that
+    // did not arrive.
+    let handle = use_hook(|| {
+        let found: Option<std::sync::Arc<dyn winit::window::Window>> = try_consume_context();
+        if found.is_none() {
+            // Worth a warning rather than a panic: without it the window
+            // draws for ever at the size it started with, and every
+            // symptom of that looks like a resize that never arrived.
+            tracing::warn!("no winit window in context; the studio cannot follow its surface");
+        }
+        found
     });
-    dioxus_native::use_window_event(move |event, _| {
-        if let winit::event::WindowEvent::SurfaceResized(px) = event {
+    let mut size = size;
+    let mut rate = rate;
+    use_hook(move || {
+        if let Some(handle) = handle.as_ref() {
+            let px = handle.surface_size();
+            tracing::info!(width = px.width, height = px.height, "opened at");
             size.set((f64::from(px.width.max(1)), f64::from(px.height.max(1))));
         }
+    });
+    // Frames as the window actually presented them, counted off
+    // `RedrawRequested` — not the rate a driver ticked at, which is what
+    // a loop can tell you about itself and is not the same thing.
+    //
+    // Counted in a cell and published twice a second: a signal written
+    // every frame would re-render to show a number that changed because
+    // it re-rendered.
+    let counted =
+        use_hook(|| std::rc::Rc::new(std::cell::Cell::new((0_u32, std::time::Instant::now()))));
+    dioxus_native::use_window_event(move |event, _| match event {
+        winit::event::WindowEvent::SurfaceResized(px) => {
+            tracing::info!(width = px.width, height = px.height, "resized to");
+            size.set((f64::from(px.width.max(1)), f64::from(px.height.max(1))));
+        }
+        winit::event::WindowEvent::RedrawRequested => {
+            let (frames, since) = counted.get();
+            let frames = frames.saturating_add(1);
+            let elapsed = since.elapsed().as_secs_f64();
+            if elapsed >= 0.5 {
+                let fps = f64::from(frames) / elapsed;
+                rate.set(fps);
+                counted.set((0, std::time::Instant::now()));
+            } else {
+                counted.set((frames, since));
+            }
+        }
+        _ => {}
     });
     rsx! {}
 }
@@ -820,6 +893,15 @@ fn Window(props: ShotProps) -> Element {
     // the surface is a document the shell scrolls, and once the shell is
     // scrolling nothing inside it can decide what stays put.
     let size = use_signal(|| (props.view.width, props.view.height));
+    let rate = use_signal(|| 0.0_f64);
+
+    // Mounted only when there IS a window: the same tree renders
+    // headless for the comparisons, where there is no winit to ask.
+    let tracking = if props.windowed {
+        rsx! { WindowSize { size, rate } }
+    } else {
+        rsx! {}
+    };
     let (width, height) = size();
 
     let mut scroll = use_signal(|| props.view.scroll_x);
@@ -914,9 +996,14 @@ fn Window(props: ShotProps) -> Element {
     };
     rsx! {
         div {
-            style: "position:relative; width:{props.view.width}px; \
-                    height:{props.view.height}px; overflow:hidden; \
-                    background:{props.colors.surface};",
+            // The surface itself, filled rather than declared: `100%` of
+            // a window is whatever the window is, where a pixel count is
+            // whatever it was when the program started. That number is
+            // why a resize changed nothing and why fullscreen showed a
+            // 2560-wide studio in a 5120-wide window.
+            style: "position:relative; width:100%; height:100%; \
+                    overflow:hidden; background:{props.colors.surface};",
+            {tracking}
             div {
                 style: "position:absolute; left:{session_daw::rails::SIDE}px; \
                         top:{session_daw::rails::TOP}px;",
@@ -1022,21 +1109,25 @@ fn Window(props: ShotProps) -> Element {
                 }
             }
 
-            // What it is doing and how fast, on the window rather than in
-            // a terminal behind it: the point of running the gestures
-            // here is to watch them, and a rate you have to look away to
-            // read is a rate you cannot match to what you just saw.
-            if props.animate {
+            // How fast it is actually drawing, on the window rather than
+            // in a terminal behind it — a rate you have to look away to
+            // read is a rate you cannot match to what you just saw. In
+            // every mode, because "this feels slow" is a thing you notice
+            // while driving it by hand, which is exactly when there is no
+            // benchmark running to ask.
+            if props.windowed {
                 {
-                    let (name, fps) = gesture();
+                    let (name, _) = gesture();
+                    let fps = rate();
+                    let what = if props.animate { name } else { "window" };
                     rsx! {
                         div {
-                            style: "position:absolute; right:56px; bottom:12px; \
+                            style: "position:absolute; right:56px; top:{session_daw::rails::TOP + 8.0}px; \
                                     padding:6px 10px; background:rgba(0,0,0,0.72); \
                                     color:#e8e8ea; font-size:12px; \
                                     font-family:{daw_ui::studio::lanes::FONT}; \
-                                    white-space:nowrap;",
-                            "{name} — {fps:.0} fps"
+                                    white-space:nowrap; pointer-events:none;",
+                            "{what} — {fps:.0} fps — {width:.0}x{height:.0}"
                         }
                     }
                 }
