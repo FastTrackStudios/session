@@ -70,7 +70,18 @@ fn main() {
     // Which part of the window is being drawn. Each is compared against
     // the same part of the reference shot, so they are converted — and
     // proven — one at a time rather than all at once.
-    let part = std::env::var("FTS_BLITZ_PART").unwrap_or_else(|_| "lanes".to_owned());
+    // A window is the WHOLE window unless something asks otherwise. The
+    // single-surface modes exist so each one can be compared against the
+    // reference on its own; opening one of those as a window and calling
+    // it the studio is how you end up looking at an arrangement with no
+    // panel beside it and no ruler over it.
+    let part = std::env::var("FTS_BLITZ_PART").unwrap_or_else(|_| {
+        if std::env::var_os("FTS_BLITZ_WINDOW").is_some() {
+            "all".to_owned()
+        } else {
+            "lanes".to_owned()
+        }
+    });
     let (width, height) = size();
     // The lane rect: what is left of the frame once the rails and the
     // track panel and the ruler have taken theirs. The component
@@ -130,29 +141,54 @@ fn main() {
     let sections = project.sections.clone().into();
     let markers = project.markers.clone().into();
 
-    let vdom = VirtualDom::new_with_props(
-        Shot,
-        ShotProps {
-            project,
-            rows,
-            view,
-            colors,
-            shapes,
-            sizing,
-            grid,
-            marks,
-            sections,
-            markers,
-            ruler,
-            rails,
-            all,
-            panel,
-            theme: theme.clone(),
-            live: live_of(&project_for_live),
-            rail_items: rail_items(),
-            modes: modes(),
-        },
-    );
+    let props = ShotProps {
+        project,
+        rows,
+        view,
+        colors,
+        shapes,
+        sizing,
+        grid,
+        marks,
+        sections,
+        markers,
+        ruler,
+        rails,
+        all,
+        panel,
+        theme: theme.clone(),
+        live: live_of(&project_for_live),
+        rail_items: rail_items(),
+        modes: modes(),
+        animate: false,
+    };
+
+    // `FTS_BLITZ_WINDOW=1` opens the studio in a real window instead of
+    // rendering one frame of it. Everything above is the same — the same
+    // project, the same components, the same props — so what this adds
+    // is the half a headless renderer cannot reach: a surface that
+    // resizes, a pointer, a keyboard, and a frame after the first one.
+    if let Some(mode) = std::env::var_os("FTS_BLITZ_WINDOW") {
+        // `animate` runs the benchmark's own gestures on screen, so the
+        // numbers in the table and what the window feels like are the
+        // same thing measured twice. Anything else is a window you drive
+        // yourself — the wheel scrolls, shift makes it sideways, and
+        // control zooms.
+        let mut props = props;
+        props.animate = mode.to_string_lossy() == "animate";
+        println!(
+            "opening the studio{} — close the window to exit",
+            if props.animate {
+                ", running the benchmark's gestures"
+            } else {
+                "; wheel to scroll, shift for sideways, control to zoom"
+            }
+        );
+        dioxus_native::launch_cfg_with_props(Shot, props, Vec::new(), Vec::new());
+        return;
+    }
+
+    let vdom = VirtualDom::new_with_props(Shot, props);
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -560,6 +596,8 @@ struct ShotProps {
     modes: Vec<Item>,
     theme: daw_ui::theming::Theme,
     live: HashMap<String, daw_ui::studio::panel::Live>,
+    /// Whether the window drives itself through the benchmark's gestures.
+    animate: bool,
 }
 
 thread_local! {
@@ -571,7 +609,7 @@ thread_local! {
 
 #[component]
 fn Shot(props: ShotProps) -> Element {
-    let scroll = use_signal(|| props.view.scroll_x);
+    let mut scroll = use_signal(|| props.view.scroll_x);
     use_hook(|| {
         SCROLL.with(|slot| *slot.borrow_mut() = Some(scroll));
     });
@@ -687,22 +725,124 @@ fn rail_items() -> (Vec<Item>, Vec<Item>, Vec<Item>) {
 /// leaves. The track panel's own column is the one thing missing, and it
 /// is left as the window's ground rather than faked — a picture with a
 /// wrong panel in it would be worse than one with none.
+/// The benchmark's gestures, as the window runs them.
+///
+/// The same seven the table measures, in the same order and at the same
+/// rates — so "260 fps in the table" and "this is what it feels like"
+/// are the same thing said twice. A gesture returns where the view
+/// should be at `t`, which runs 0..1 across it.
+const GESTURES: [(&str, fn(f64) -> (f64, f64, f64, f64)); 7] = [
+    ("scroll down/up", |t| (0.0, tri(t), 1.0, 1.0)),
+    ("scroll right/left", |t| (tri(t), 0.0, 1.0, 1.0)),
+    ("scroll both", |t| (tri(t), tri((t * 1.7) % 1.0), 1.0, 1.0)),
+    ("zoom vertical", |t| (0.0, 0.3, 1.0, 0.25 + slow(t) * 3.75)),
+    ("zoom horizontal", |t| {
+        (0.0, 0.3, 0.25 + slow(t) * 7.75, 1.0)
+    }),
+    ("zoom both", |t| {
+        (0.0, 0.3, 0.25 + slow(t) * 7.75, 0.25 + slow(t) * 3.75)
+    }),
+    ("fit whole session", |t| {
+        (0.0, 0.0, 1.0, 0.08 + slow(t) * 0.4)
+    }),
+];
+
+/// How many full traversals a scrolling gesture makes.
+///
+/// Deliberately brutal: someone grabbing the scrollbar and throwing it
+/// from one end to the other, not a gentle sweep. That is the case that
+/// matters, and it is the worst case for anything cached or culled,
+/// because consecutive frames share almost nothing.
+const LAPS: f64 = 14.0;
+
+/// A triangle wave: out to the far end and all the way back.
+fn tri(t: f64) -> f64 {
+    let t = (t * LAPS) % 1.0;
+    if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 }
+}
+
+/// The zoom's sweep — three passes over the range, not fourteen. A zoom
+/// is a wheel or a pinch, not a yank.
+fn slow(t: f64) -> f64 {
+    let t = (t * 3.0) % 1.0;
+    if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 }
+}
+
+/// How long each gesture runs before the next.
+const GESTURE_SECS: f64 = 6.0;
+
 #[component]
 fn Window(props: ShotProps) -> Element {
-    let scroll = use_signal(|| props.view.scroll_x);
+    let mut scroll = use_signal(|| props.view.scroll_x);
     use_hook(|| {
         SCROLL.with(|slot| *slot.borrow_mut() = Some(scroll));
     });
+    // What the gestures move that the scroll signal does not: down the
+    // session, and both zooms. A pan is free because only one node reads
+    // the scroll; a ZOOM is not, and cannot be — it changes where every
+    // item is, which is a layout, which is the honest cost of the
+    // gesture rather than a failure to optimise it.
+    let mut down = use_signal(|| props.view.scroll_y);
+    let mut zoom = use_signal(|| (1.0_f64, props.view.zoom_y));
+    let mut gesture = use_signal(|| (GESTURES[0].0, 0.0_f64));
+
+    // The two numbers the driver needs, taken out of the props before it
+    // captures them — a closure that owned the project would own it
+    // instead of the tree below.
+    let span_x = (props.project.length_secs * PPS - props.view.width).max(1.0);
+    if props.animate {
+        use_future(move || async move {
+            let started = std::time::Instant::now();
+            let mut frames = 0u32;
+            let mut last = started;
+            loop {
+                // Sixty times a second, which is what a window is asked
+                // for. Anything the frame cannot finish in shows up as a
+                // rate below it rather than as a faster loop.
+                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+                let now = std::time::Instant::now();
+                let elapsed = started.elapsed().as_secs_f64();
+                let index = ((elapsed / GESTURE_SECS) as usize) % GESTURES.len();
+                let (name, at) = GESTURES[index];
+                let t = (elapsed % GESTURE_SECS) / GESTURE_SECS;
+                let (x, y, zx, zy) = at(t);
+
+                // How far down a session this deep goes. Fixed rather
+                // than measured because the point is a brutal gesture,
+                // not a correct one.
+                let span_y = 40_000.0_f64;
+                scroll.set(x * span_x);
+                down.set(y * span_y);
+                zoom.set((zx, zy));
+
+                frames = frames.saturating_add(1);
+                if now.duration_since(last).as_secs_f64() >= 0.5 {
+                    let fps = f64::from(frames) / now.duration_since(last).as_secs_f64();
+                    gesture.set((name, fps));
+                    frames = 0;
+                    last = now;
+                }
+            }
+        });
+    }
+
+    let (zoom_x, zoom_y) = zoom();
     let lanes_x = lane_x();
     let lanes_y = lane_y();
+    let moved = View {
+        scroll_y: down(),
+        pps: PPS * zoom_x,
+        zoom_y,
+        ..props.view
+    };
     let lanes = View {
         width: frame_width(props.view.width),
         height: frame_height(props.view.height),
-        ..props.view
+        ..moved
     };
     let ruler = View {
         width: props.view.width - session_daw::rails::SIDE * 2.0,
-        ..props.view
+        ..moved
     };
     rsx! {
         div {
@@ -759,6 +899,26 @@ fn Window(props: ShotProps) -> Element {
                 height: session_daw::ruler::RULER_H,
                 colors: props.colors.clone(),
                 modes: props.modes.clone().into(),
+            }
+
+            // What it is doing and how fast, on the window rather than in
+            // a terminal behind it: the point of running the gestures
+            // here is to watch them, and a rate you have to look away to
+            // read is a rate you cannot match to what you just saw.
+            if props.animate {
+                {
+                    let (name, fps) = gesture();
+                    rsx! {
+                        div {
+                            style: "position:absolute; right:56px; bottom:12px; \
+                                    padding:6px 10px; background:rgba(0,0,0,0.72); \
+                                    color:#e8e8ea; font-size:12px; \
+                                    font-family:{daw_ui::studio::lanes::FONT}; \
+                                    white-space:nowrap;",
+                            "{name} — {fps:.0} fps"
+                        }
+                    }
+                }
             }
         }
     }

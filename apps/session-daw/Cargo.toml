@@ -40,6 +40,11 @@ blitz-dom = { workspace = true }
 blitz-paint = { workspace = true }
 blitz-traits = { workspace = true }
 dioxus-native-dom = { workspace = true }
+# The window itself, not just its document: `blitz_shot`'s `window` mode
+# opens the studio on a wgpu surface rather than rendering one frame to a
+# PNG. Same component tree, same data — the difference between proving
+# the picture and proving the program.
+dioxus-native = { workspace = true }
 daw-control = { workspace = true }
 daw-proto = { workspace = true }
 daw-theme-art = { workspace = true }
