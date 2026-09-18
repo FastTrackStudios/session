@@ -623,7 +623,21 @@ fn Shot(props: ShotProps) -> Element {
         // margin, which is eight pixels of the session pushed off the
         // bottom of the window and every row eight pixels from where the
         // reference draws it. A window is not a document.
-        style { "html, body {{ margin: 0; padding: 0; }}" }
+        // A window, not a document.
+        //
+        // The margin is the user-agent's eight pixels. The HEIGHT is the
+        // one that matters: `height: 100%` on the studio below resolves
+        // against its parent, and a parent with no height of its own
+        // gives it none — so the studio grew to its content instead, the
+        // body ended up taller than the surface, and the SHELL scrolled
+        // the whole page. Rails, ruler and all, which is exactly what it
+        // looked like. Giving the chain a height makes `100%` mean the
+        // window, and `overflow: hidden` leaves nothing for the shell to
+        // scroll, so a wheel event reaches the arrangement.
+        style {
+            "html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; \
+             overflow: hidden; }}"
+        }
         if props.panel {
             Panel {
                 project: props.project,
@@ -886,6 +900,14 @@ fn Window(props: ShotProps) -> Element {
         width: width - session_daw::rails::SIDE * 2.0,
         ..moved
     };
+    // How far down the session goes, for the scroller's extent.
+    let content_height = props
+        .rows
+        .iter()
+        .map(|(track, _)| props.sizing.height_of(track.height))
+        .sum::<f64>()
+        .mul_add(zoom_y, 0.0)
+        .max(1.0);
     let panel_view = View {
         height: frame_height(height),
         ..moved
@@ -955,6 +977,49 @@ fn Window(props: ShotProps) -> Element {
                 height: session_daw::ruler::RULER_H,
                 colors: props.colors.clone(),
                 modes: props.modes.clone().into(),
+            }
+
+            // The thing the wheel actually turns.
+            //
+            // Blitz never dispatches a `wheel` event to the DOM: its
+            // handler calls `scroll_by` on whatever the pointer is over
+            // and redraws only if something moved. So an `onwheel`
+            // handler can never fire, and a window with nothing
+            // scrollable in it does not merely refuse to scroll — it
+            // stops repainting, because no scroll means no redraw. That
+            // is what "frozen" was.
+            //
+            // So there is a real scroller, and it is the input device:
+            // an element the size of the lane rect holding a spacer the
+            // size of the session, which Blitz scrolls natively. Its
+            // offsets come back as a `Scroll` event and become the
+            // numbers everything else is drawn from.
+            //
+            // The content is drawn UNDER it rather than inside it,
+            // because Blitz has no `position: sticky` and a panel and a
+            // ruler inside a scroller would scroll away with the
+            // session. And it is LAST, so the pointer finds it — it
+            // covers the lane rect and nothing else, which is why the
+            // panel's buttons are still clickable: they are to the left
+            // of it.
+            if props.windowed {
+                div {
+                    style: "position:absolute; left:{lane_x()}px; top:{lane_y()}px; \
+                            width:{frame_width(width)}px; height:{frame_height(height)}px; \
+                            overflow:auto;",
+                    onscroll: move |event| {
+                        let data = event.data();
+                        scroll.set(f64::from(data.scroll_left()).max(0.0));
+                        down.set(f64::from(data.scroll_top()).max(0.0));
+                    },
+                    // The session's extent, and nothing else: what makes
+                    // the scroller scrollable and tells its bars how far
+                    // there is to go.
+                    div {
+                        style: "width:{(props.project.length_secs * PPS * zoom_x).max(1.0)}px; \
+                                height:{content_height}px;",
+                    }
+                }
             }
 
             // What it is doing and how fast, on the window rather than in

@@ -102,6 +102,24 @@ pub fn lit(theme: &crate::theming::Theme) -> daw_theme_art::paint::tcp::Lit {
     }
 }
 
+/// What mute and solo light in.
+///
+/// Not part of the art's `Lit`, which carries the four a control DRAWS
+/// itself from — these two are the theme's own, passed to the same
+/// button art to say which of the two it is. They sit next to each other
+/// and mean opposite things, so a lit one has to be identifiable without
+/// being read.
+#[must_use]
+pub fn buttons(theme: &crate::theming::Theme) -> (daw_theme::Color, daw_theme::Color) {
+    let c = |col: crate::theming::Color| daw_theme::Color {
+        r: col.r,
+        g: col.g,
+        b: col.b,
+        a: col.a,
+    };
+    (c(theme.tokens.mute), c(theme.tokens.solo))
+}
+
 /// The colours the routing lanes light in.
 ///
 /// The source art's own choices: the output lane is the accent, sends

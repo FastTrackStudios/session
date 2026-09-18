@@ -433,6 +433,7 @@ pub fn Panel(
     let chrome = super::art::chrome(&theme);
     let lit = super::art::lit(&theme);
     let ink = super::art::route_ink(&theme);
+    let buttons = super::art::buttons(&theme);
     for row in visible.clone() {
         let (Some((top, height)), Some((track, depth))) = (offsets.row(row), rows.get(row)) else {
             continue;
@@ -445,7 +446,9 @@ pub fn Panel(
         }
         let band = Band::of(height, usize::try_from(*depth).unwrap_or(0));
         let state = live.get(&track.guid).copied().unwrap_or_default();
-        controls(&mut sheet, &chrome, &lit, &ink, band, state, top, body);
+        controls(
+            &mut sheet, &chrome, &lit, &ink, buttons, band, state, top, body,
+        );
     }
     let art = (!sheet.is_empty()).then(|| sheet.data_uri(ROW_W, view.height));
     let labels = sheet.labels().to_vec();
@@ -557,6 +560,7 @@ fn controls(
     chrome: &daw_theme::Chrome,
     lit: &art::Lit,
     ink: &art::RouteInk,
+    buttons: (daw_theme::Color, daw_theme::Color),
     band: Band,
     live: Live,
     row_top: f64,
@@ -673,7 +677,11 @@ fn controls(
                 chrome,
                 if solo { "S" } else { "M" },
                 on,
-                if solo { chrome.accent } else { lit.bypass },
+                // Each lights in its OWN colour: solo yellow, mute the
+                // bypass shade. They sit next to each other and mean
+                // opposite things, so a lit one has to say which it is
+                // without being read.
+                if solo { buttons.1 } else { buttons.0 },
                 at,
             ),
             x,
