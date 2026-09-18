@@ -733,9 +733,6 @@ fn Lane(
                             colour,
                             title: project.title(item).map(str::to_owned),
                             row_height: height,
-                            fade_in: item.fade_in_length.as_seconds().max(0.0) * view.pps,
-                            fade_out: item.fade_out_length.as_seconds().max(0.0) * view.pps,
-                            fade: colors.fade.clone(),
                             text: colors.text.clone(),
                         }
                     }
@@ -798,9 +795,6 @@ fn Item(
     title: Option<String>,
     /// How tall the ROW is, which is what decides whether a name fits.
     row_height: f64,
-    fade_in: f64,
-    fade_out: f64,
-    fade: String,
     text: String,
 ) -> Element {
     // The body dimmed and the shape over it in full colour: an item is
@@ -828,23 +822,6 @@ fn Item(
             // on a lane is one `<svg>` up there, because they share a
             // height and a transform and an element each said nothing
             // the lane could not say once.
-            // The fades, as the part of the item they take away. Two
-            // triangles, which `clip-path` draws with no node of their
-            // own beyond the box they are in.
-            if fade_in > 0.5 {
-                div {
-                    style: "position:absolute; left:0; top:0; height:100%; \
-                            width:{fade_in.min(width)}px; background:{fade}; \
-                            clip-path: polygon(0 0, 100% 0, 0 100%);",
-                }
-            }
-            if fade_out > 0.5 {
-                div {
-                    style: "position:absolute; right:0; top:0; height:100%; \
-                            width:{fade_out.min(width)}px; background:{fade}; \
-                            clip-path: polygon(100% 0, 100% 100%, 0 0);",
-                }
-            }
             if let Some(name) = named {
                 "{name}"
             }
