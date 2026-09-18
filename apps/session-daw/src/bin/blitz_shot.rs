@@ -161,6 +161,7 @@ fn main() {
         rail_items: rail_items(),
         modes: modes(),
         animate: false,
+        windowed: false,
     };
 
     // `FTS_BLITZ_WINDOW=1` opens the studio in a real window instead of
@@ -176,6 +177,7 @@ fn main() {
         // control zooms.
         let mut props = props;
         props.animate = mode.to_string_lossy() == "animate";
+        props.windowed = true;
         println!(
             "opening the studio{} — close the window to exit",
             if props.animate {
@@ -598,6 +600,8 @@ struct ShotProps {
     live: HashMap<String, daw_ui::studio::panel::Live>,
     /// Whether the window drives itself through the benchmark's gestures.
     animate: bool,
+    /// Whether there is a real window to ask about its size.
+    windowed: bool,
 }
 
 thread_local! {
@@ -725,6 +729,28 @@ fn rail_items() -> (Vec<Item>, Vec<Item>, Vec<Item>) {
 /// leaves. The track panel's own column is the one thing missing, and it
 /// is left as the window's ground rather than faked — a picture with a
 /// wrong panel in it would be worse than one with none.
+/// Keeps `size` in step with the window.
+///
+/// A component rather than a few hooks in `Window`, because the hooks it
+/// needs only exist when a winit window does — and a hook cannot be
+/// called conditionally, while a component can be mounted conditionally.
+/// It draws nothing; it exists to hold three hooks.
+#[component]
+fn Surface(size: Signal<(f64, f64)>) -> Element {
+    let handle = dioxus_native::use_window();
+    let mut size = size;
+    use_hook(move || {
+        let px = handle.surface_size();
+        size.set((f64::from(px.width.max(1)), f64::from(px.height.max(1))));
+    });
+    dioxus_native::use_window_event(move |event, _| {
+        if let winit::event::WindowEvent::SurfaceResized(px) = event {
+            size.set((f64::from(px.width.max(1)), f64::from(px.height.max(1))));
+        }
+    });
+    rsx! {}
+}
+
 /// The benchmark's gestures, as the window runs them.
 ///
 /// The same seven the table measures, in the same order and at the same
@@ -773,6 +799,15 @@ const GESTURE_SECS: f64 = 6.0;
 
 #[component]
 fn Window(props: ShotProps) -> Element {
+    // The window's ACTUAL size, not the one the shot was configured
+    // with. Laying out at a fixed number is what made the window ignore
+    // a resize, show its left third in fullscreen, and scroll the rails
+    // and the ruler along with the arrangement: a document larger than
+    // the surface is a document the shell scrolls, and once the shell is
+    // scrolling nothing inside it can decide what stays put.
+    let size = use_signal(|| (props.view.width, props.view.height));
+    let (width, height) = size();
+
     let mut scroll = use_signal(|| props.view.scroll_x);
     use_hook(|| {
         SCROLL.with(|slot| *slot.borrow_mut() = Some(scroll));
@@ -826,6 +861,11 @@ fn Window(props: ShotProps) -> Element {
         });
     }
 
+    // What the controls are showing, held here so a press can change it.
+    // The panel hands back which track and which control; deciding what
+    // mute MEANS is the session's business, and in a demo window the
+    // session is this.
+    let mut live = use_signal(|| props.live.clone());
     let (zoom_x, zoom_y) = zoom();
     let lanes_x = lane_x();
     let lanes_y = lane_y();
@@ -833,15 +873,21 @@ fn Window(props: ShotProps) -> Element {
         scroll_y: down(),
         pps: PPS * zoom_x,
         zoom_y,
+        width,
+        height,
         ..props.view
     };
     let lanes = View {
-        width: frame_width(props.view.width),
-        height: frame_height(props.view.height),
+        width: frame_width(width),
+        height: frame_height(height),
         ..moved
     };
     let ruler = View {
-        width: props.view.width - session_daw::rails::SIDE * 2.0,
+        width: width - session_daw::rails::SIDE * 2.0,
+        ..moved
+    };
+    let panel_view = View {
+        height: frame_height(height),
         ..moved
     };
     rsx! {
@@ -879,16 +925,26 @@ fn Window(props: ShotProps) -> Element {
                 Panel {
                     project: props.project.clone(),
                     rows: props.rows.clone(),
-                    view: lanes,
+                    view: panel_view,
                     colors: props.colors.clone(),
                     theme: props.theme.clone(),
                     sizing: props.sizing,
-                    live: props.live.clone(),
+                    live: live(),
+                    on_press: move |(guid, control): (String, daw_ui::studio::panel::Control)| {
+                        use daw_ui::studio::panel::Control;
+                        let mut all = live.write();
+                        let state = all.entry(guid).or_default();
+                        match control {
+                            Control::Mute => state.muted = !state.muted,
+                            Control::Solo => state.soloed = !state.soloed,
+                            Control::RecArm => state.armed = !state.armed,
+                        }
+                    },
                 }
             }
             Rails {
-                width: props.view.width,
-                height: props.view.height,
+                width,
+                height,
                 colors: props.colors.clone(),
                 top: props.rail_items.2.clone().into(),
                 left: props.rail_items.0.clone().into(),

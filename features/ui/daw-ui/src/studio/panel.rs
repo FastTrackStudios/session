@@ -36,6 +36,22 @@ use super::art::{Label, Sheet};
 use super::lanes::{Colors, DIVIDER, FONT, Offsets, Rows, View, ink_on};
 use super::{ProjectRef, RowsRef};
 
+/// A control a row can be pressed on.
+///
+/// Only the ones that ARE pressable. The sheet draws every control, but
+/// a picture cannot be clicked: an `<img>` is one node and one node has
+/// one hit box, which is the price of drawing four hundred shapes
+/// without spending four hundred nodes. So the controls that do
+/// something get a real element over the art — an invisible one, the
+/// size of the control, which is a node per interactive control rather
+/// than a node per shape.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Control {
+    Mute,
+    Solo,
+    RecArm,
+}
+
 /// What a track's live controls are showing.
 ///
 /// Passed in rather than read here: a volume is a value that changes
@@ -383,6 +399,12 @@ pub fn Panel(
     /// like rather than a silent one.
     #[props(default)]
     live: std::collections::HashMap<String, Live>,
+    /// A control was pressed on a track.
+    ///
+    /// The panel does not know what mute MEANS — it hands back which
+    /// track and which control, and whoever owns the session decides.
+    #[props(default)]
+    on_press: EventHandler<(String, Control)>,
 ) -> Element {
     let _ = project;
     let offsets = use_memo({
@@ -459,6 +481,8 @@ pub fn Panel(
                                 top: top.mul_add(view.zoom_y, -view.scroll_y),
                                 height: height * view.zoom_y,
                                 colors: colors.clone(),
+                                state: live.get(&track.guid).copied().unwrap_or_default(),
+                                on_press,
                             }
                         }
                     }
@@ -671,6 +695,10 @@ fn caret(ink: daw_theme::Color) -> daw_theme_art::paint::Drawing {
 
 /// One row of the panel.
 #[component]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a row is its track, its place, its palette and its state"
+)]
 fn Row(
     track: daw_proto::Track,
     depth: usize,
@@ -678,6 +706,8 @@ fn Row(
     top: f64,
     height: f64,
     colors: Colors,
+    state: Live,
+    on_press: EventHandler<(String, Control)>,
 ) -> Element {
     let body = (height - DIVIDER).max(0.5);
     // The tier is decided by the ROW, not by the row less its divider:
@@ -714,6 +744,10 @@ fn Row(
         // controls are not flush against the dividers.
         (height - 2.0).max(1.0)
     };
+    // Where this row's controls sit — the same arithmetic the sheet
+    // placed the art with, so a hit target lands on the control it is
+    // for rather than near it.
+    let controls = Band::of(height, depth);
     let name_size = name_size(field_h);
     let shows_number = body - mark_h >= 11.0;
     // A rail with nothing above the number can carry it itself.
@@ -861,6 +895,51 @@ fn Row(
                         overflow:hidden;",
                 "{track.name}"
             }
+            // The hit targets, over the art. Invisible, because the
+            // sheet already drew the control — these exist to be
+            // pressed, to take focus, and to say what they are to
+            // anything that asks.
+            for (control, label, on) in [
+                (Control::Mute, "Mute", state.muted),
+                (Control::Solo, "Solo", state.soloed),
+            ] {
+                {
+                    let (x, y) = controls.gutter(control == Control::Solo);
+                    let guid = track.guid.clone();
+                    let name = track.name.clone();
+                    let tall = controls.height.min(BUTTON.1);
+                    rsx! {
+                        button {
+                            key: "{label}",
+                            style: "position:absolute; left:{x}px; top:{y}px; \
+                                    width:{BUTTON.0}px; height:{tall}px; \
+                                    background:transparent; border:0; padding:0; \
+                                    margin:0; cursor:pointer;",
+                            "aria-pressed": "{on}",
+                            "aria-label": "{label} {name}",
+                            onclick: move |_| on_press.call((guid.clone(), control)),
+                        }
+                    }
+                }
+            }
+            if let Some((x, y, size)) = controls.rec_arm() {
+                {
+                    let guid = track.guid.clone();
+                    let name = track.name.clone();
+                    rsx! {
+                        button {
+                            style: "position:absolute; left:{x}px; top:{y}px; \
+                                    width:{size}px; height:{size}px; \
+                                    background:transparent; border:0; padding:0; \
+                                    margin:0; cursor:pointer;",
+                            "aria-pressed": "{state.armed}",
+                            "aria-label": "Record arm {name}",
+                            onclick: move |_| on_press.call((guid.clone(), Control::RecArm)),
+                        }
+                    }
+                }
+            }
+
             // The second row: the input FX slot and the record-input
             // combo. They belong to RECORDING, so they appear when the
             // track is armed and not before — on a two-thousand-track
