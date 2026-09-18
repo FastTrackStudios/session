@@ -963,6 +963,12 @@ fn Window(props: ShotProps) -> Element {
     // session is this.
     let mut live = use_signal(|| props.live.clone());
     let (zoom_x, zoom_y) = zoom();
+    // The placeholders, and a ground for them to sit on.
+    let (top_rail, right_rail) = use_hook(placeholders);
+    let rail_colors = daw_ui::studio::lanes::Colors {
+        tcp_gutter: props.colors.tcp_tint.clone(),
+        ..props.colors.clone()
+    };
     let lanes_x = lane_x();
     let lanes_y = lane_y();
     let moved = View {
@@ -996,12 +1002,17 @@ fn Window(props: ShotProps) -> Element {
     };
     rsx! {
         div {
-            // The surface itself, filled rather than declared: `100%` of
-            // a window is whatever the window is, where a pixel count is
-            // whatever it was when the program started. That number is
-            // why a resize changed nothing and why fullscreen showed a
-            // 2560-wide studio in a 5120-wide window.
-            style: "position:relative; width:100%; height:100%; \
+            // Sized from the surface the window reports, which is the
+            // configured size when there is no window to ask — so the
+            // same tree fills a resized window and still renders the
+            // comparison shots at the size they are compared at.
+            //
+            // Not `100%`: a percentage needs a parent with a height to
+            // resolve against, and in the headless document there is
+            // none, so the studio collapsed to nothing and the composed
+            // comparison rendered a blank page. A number the window
+            // keeps up to date is the thing that works in both.
+            style: "position:relative; width:{width}px; height:{height}px; \
                     overflow:hidden; background:{props.colors.surface};",
             {tracking}
             div {
@@ -1054,10 +1065,16 @@ fn Window(props: ShotProps) -> Element {
             Rails {
                 width,
                 height,
-                colors: props.colors.clone(),
-                top: props.rail_items.2.clone().into(),
+                // The rails lift off the window's ground so they read as
+                // chrome around the session rather than as more of it —
+                // a frame the same colour as what it frames is not a
+                // frame. The mode bar keeps the painted window's own
+                // colours, because that one IS in REAPER and matching it
+                // is the point.
+                colors: rail_colors,
+                top: top_rail.into(),
                 left: props.rail_items.0.clone().into(),
-                right: props.rail_items.1.clone().into(),
+                right: right_rail.into(),
             }
             ModeBar {
                 width: session_daw::arrangement::TCP_WIDTH,
@@ -1164,6 +1181,44 @@ fn live_of(project: &ProjectRef) -> HashMap<String, daw_ui::studio::panel::Live>
             )
         })
         .collect()
+}
+
+/// What the empty rails hold until the real things exist.
+///
+/// The top rail is where the TRANSPORT goes — that is what the painted
+/// window's own note says it is waiting for, and why its buttons are 74
+/// wide "because the modes are named things". The right rail is for the
+/// arrangement's own settings. Neither exists yet, so these are labelled
+/// plates that do nothing, and they are here rather than in the shared
+/// component on purpose: the components still draw what the painted
+/// renderer draws, and the comparison that proves it still measures zero
+/// differing pixels. A window is allowed to show more than a reference
+/// does; a component is not.
+fn placeholders() -> (Vec<Item>, Vec<Item>) {
+    let font = session_daw::text::Font::embedded().expect("the embedded font");
+    let fit = |labels: &[&str], room: f64| -> Vec<Item> {
+        labels
+            .iter()
+            .map(|label| {
+                let (label, size) = font.fit(label, 10.0, 6.0, room - 4.0);
+                Item {
+                    label,
+                    on: false,
+                    size: Some(f64::from(size)),
+                }
+            })
+            .collect()
+    };
+    (
+        fit(
+            &["Play", "Stop", "Rec", "Loop", "Click", "Tempo"],
+            session_daw::rails::TOP_ITEM_W - 3.0,
+        ),
+        fit(
+            &["Grid", "Snap", "Fit", "Zoom"],
+            session_daw::rails::SIDE - 6.0,
+        ),
+    )
 }
 
 /// The modes, abbreviated and fitted the way the corner draws them.
