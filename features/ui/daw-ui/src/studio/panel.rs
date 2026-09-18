@@ -48,6 +48,16 @@ pub struct Live {
     pub muted: bool,
     pub soloed: bool,
     pub armed: bool,
+    /// Whether the track feeds its folder, and whether anything else
+    /// feeds it or is fed by it. Three lights on one control, because
+    /// "where does this go" is one question.
+    pub parent_send: bool,
+    pub sends: bool,
+    pub receives: bool,
+    /// Whether the chain has anything in it.
+    pub effects: bool,
+    /// Whether polarity is flipped.
+    pub phase_inverted: bool,
 }
 
 impl Default for Live {
@@ -60,6 +70,11 @@ impl Default for Live {
             muted: false,
             soloed: false,
             armed: false,
+            parent_send: true,
+            sends: false,
+            receives: false,
+            effects: false,
+            phase_inverted: false,
         }
     }
 }
@@ -118,6 +133,27 @@ pub const KNOB_LEGIBLE: f64 = 20.0;
 
 /// Where the pan knob sits.
 pub const PAN_KNOB_X: f64 = 184.0;
+
+/// Where the second row sits, and how tall its fields are.
+pub const ROW_TWO: f64 = 34.0;
+pub const FIELD_H: f64 = 20.0;
+
+/// Where routing sits, and the FX pill after it.
+pub const ROUTING_X: f64 = 214.0;
+pub const FX_IN_X: f64 = 248.0;
+
+/// How far up from the row's floor polarity sits.
+pub const PHASE_FROM_FLOOR: f64 = 24.0;
+
+/// And the height below which it is not drawn at all.
+///
+/// The theme's own formula rather than a number chosen here: the row's
+/// shape must not depend on its height.
+pub const PHASE_HIDE_H: f64 = 12.0 + 20.0 + 17.0 + 20.0 + 17.0;
+
+/// The polarity glyph's width — one measurement shared by both panels,
+/// because it is the same art in the strip and in the row.
+pub const PHASE_W: f64 = 16.0;
 
 /// Where the gutter's buttons start, past the tint.
 pub const GUTTER_BUTTON_X: f64 = 21.0;
@@ -290,6 +326,31 @@ impl Band {
         (PAN_KNOB_X, self.top, (self.height / 25.0).min(1.0))
     }
 
+    /// Routing, on rows with room for the whole band.
+    #[must_use]
+    pub fn routing(self) -> Option<(f64, f64)> {
+        (self.density == Density::Full).then_some((ROUTING_X, self.top))
+    }
+
+    /// The FX pill, likewise.
+    #[must_use]
+    pub fn fx(self) -> Option<(f64, f64)> {
+        (self.density == Density::Full).then_some((FX_IN_X, self.top))
+    }
+
+    /// Polarity, in the corner below routing — measured from the row's
+    /// FLOOR rather than from the control band, because that is where
+    /// the theme puts it.
+    #[must_use]
+    pub fn phase(self, row_height: f64) -> Option<(f64, f64)> {
+        (row_height >= PHASE_HIDE_H).then(|| {
+            (
+                TINT_W + GUTTER_BUTTON_X + 3.0,
+                row_height - PHASE_FROM_FLOOR,
+            )
+        })
+    }
+
     /// Mute and solo, in the gutter past the tint.
     #[must_use]
     pub fn gutter(self, solo: bool) -> (f64, f64) {
@@ -349,6 +410,7 @@ pub fn Panel(
     let mut sheet = Sheet::new();
     let chrome = super::art::chrome(&theme);
     let lit = super::art::lit(&theme);
+    let ink = super::art::route_ink(&theme);
     for row in visible.clone() {
         let (Some((top, height)), Some((track, depth))) = (offsets.row(row), rows.get(row)) else {
             continue;
@@ -361,8 +423,7 @@ pub fn Panel(
         }
         let band = Band::of(height, usize::try_from(*depth).unwrap_or(0));
         let state = live.get(&track.guid).copied().unwrap_or_default();
-        controls(&mut sheet, &chrome, &lit, band, state, top);
-        let _ = body;
+        controls(&mut sheet, &chrome, &lit, &ink, band, state, top, body);
     }
     let art = (!sheet.is_empty()).then(|| sheet.data_uri(ROW_W, view.height));
     let labels = sheet.labels().to_vec();
@@ -462,13 +523,20 @@ fn Word(label: Label) -> Element {
 /// The art's own drawings, placed at the measured rects and scaled to
 /// the band — so the shapes are the theme's rather than this module's,
 /// and the two renderers cannot drift apart by anyone's judgement.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a row's controls are its geometry, its values and its \
+              palette, and every one of them is needed to place one"
+)]
 fn controls(
     sheet: &mut Sheet,
     chrome: &daw_theme::Chrome,
     lit: &art::Lit,
+    ink: &art::RouteInk,
     band: Band,
     live: Live,
     row_top: f64,
+    row_height: f64,
 ) {
     let at = Interaction::Normal;
     if let Some((x, y, _)) = band.rec_arm() {
@@ -517,6 +585,63 @@ fn controls(
             pscale,
         );
     }
+    // Routing, and polarity in the corner below it. Both are live
+    // values with their own events — a row that recorded them was right
+    // until the first time anything changed one.
+    if let Some((x, y)) = band.routing() {
+        sheet.place(
+            &art::routing(
+                chrome,
+                art::Axis::Horizontal,
+                art::Routing {
+                    parent_send: live.parent_send,
+                    sends: live.sends,
+                    receives: live.receives,
+                },
+                *ink,
+                at,
+            ),
+            x,
+            row_top + y,
+            1.0,
+        );
+    }
+    if let Some((x, y)) = band.fx() {
+        sheet.place(
+            &art::fx_pill(
+                chrome,
+                *lit,
+                if live.effects {
+                    art::Chain::Active
+                } else {
+                    art::Chain::Empty
+                },
+                at,
+            ),
+            x,
+            row_top + y,
+            1.0,
+        );
+    }
+    if let Some((x, y)) = band.phase(row_height) {
+        sheet.place(
+            &art::phase(chrome, live.phase_inverted, at),
+            x,
+            row_top + y,
+            1.0,
+        );
+    }
+    // The combo's caret — a triangle, which is a shape, so it goes where
+    // the shapes go rather than becoming a `clip-path` of its own.
+    if band.density == Density::Full && live.armed {
+        sheet.place(
+            &caret(chrome.text_faint),
+            91.0 + 181.0,
+            row_top + ROW_TWO + 8.0,
+            1.0,
+        );
+    }
+
     for (solo, on) in [(false, live.muted), (true, live.soloed)] {
         let (x, y) = band.gutter(solo);
         sheet.place(
@@ -532,6 +657,16 @@ fn controls(
             1.0,
         );
     }
+}
+
+/// The combo's caret: the shared triangle, not a glyph.
+fn caret(ink: daw_theme::Color) -> daw_theme_art::paint::Drawing {
+    let mut drawing = daw_theme_art::paint::Drawing::new(7.0, 4.0);
+    drawing.fill(
+        daw_theme_art::paint::Shape::Poly(vec![(0.0, 0.0), (7.0, 0.0), (3.5, 4.0)]),
+        ink,
+    );
+    drawing
 }
 
 /// One row of the panel.
@@ -726,6 +861,38 @@ fn Row(
                         overflow:hidden;",
                 "{track.name}"
             }
+            // The second row: the input FX slot and the record-input
+            // combo. They belong to RECORDING, so they appear when the
+            // track is armed and not before — on a two-thousand-track
+            // orchestral template almost nothing is armed, and an input
+            // selector reading "None" on every row fills the panel with
+            // the one thing none of those tracks are doing.
+            if density == Density::Full && track.armed {
+                {
+                    let two = ROW_TWO;
+                    let name = crate::controls::record_input_name(&track);
+                    rsx! {
+                        div {
+                            style: "position:absolute; left:56px; top:{two}px; \
+                                    width:34px; height:{FIELD_H}px; \
+                                    background:{colors.tcp_field}; text-align:center; \
+                                    line-height:{super::ruler::line_box(10.0, 14.0)}px; \
+                                    font-size:10px; color:{colors.faint};",
+                            "FX"
+                        }
+                        div {
+                            style: "position:absolute; left:91px; top:{two}px; \
+                                    width:195px; height:{FIELD_H}px; \
+                                    background:{colors.tcp_combo}; text-align:center; \
+                                    line-height:{super::ruler::line_box(11.0, 14.0)}px; \
+                                    font-size:11px; color:{colors.text_dim}; \
+                                    white-space:nowrap; overflow:hidden;",
+                            "{name}"
+                        }
+                    }
+                }
+            }
+
 
         }
     }

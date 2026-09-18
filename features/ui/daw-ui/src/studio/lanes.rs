@@ -220,6 +220,8 @@ pub struct Colors {
     /// colour tints its row.
     pub tcp_column: String,
     pub tcp_field: String,
+    /// A combo box's well, which is sunk further than a field.
+    pub tcp_combo: String,
     pub track_tint: f32,
     /// And the ink on it.
     pub text_dim: String,
@@ -253,6 +255,7 @@ impl Colors {
             ),
             tcp_column: c(theme.tokens.surface_sunken),
             tcp_field: c(theme.tokens.surface_sunken),
+            tcp_combo: c(theme.tokens.surface_sunken),
             track_tint: theme.metrics.track_tint,
             button: c(theme.tokens.surface),
             text_dim: c(theme.tokens.text_dim),

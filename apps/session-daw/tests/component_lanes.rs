@@ -44,6 +44,10 @@ const SIZE: &str = "2560x1440";
 /// Past this, a difference is not an antialiased edge.
 const THRESHOLD: &str = "96";
 
+/// And the threshold that sees everything, including a dim control on a
+/// dim ground — which the one above does not.
+const FAINT: &str = "24";
+
 /// How much of the LANES may still differ at that threshold.
 ///
 /// Not zero: text is lettered by two different stacks and no threshold
@@ -73,6 +77,19 @@ const RULER_TOLERANCE: f64 = 1.0;
 /// image. Measured at 1.27%, falling to 0.31% once the threshold clears
 /// an edge — which is antialiasing, not a shape in the wrong place.
 const PANEL_TOLERANCE: f64 = 1.75;
+
+/// What each surface may differ by at the FAINT threshold — where a
+/// missing control shows even though a missing control is dim.
+///
+/// Measured: lanes 4.8%, ruler 1.1%, rails under 1%, panel 5.3%. These
+/// are larger numbers than the structural ones and mean something
+/// different: at this threshold every antialiased edge in the picture
+/// counts, so a dense surface has a large figure while matching
+/// perfectly. What they bound is something being ABSENT.
+const LANES_OVERALL: f64 = 6.0;
+const RULER_OVERALL: f64 = 2.0;
+const RAILS_OVERALL: f64 = 2.0;
+const PANEL_OVERALL: f64 = 7.0;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -201,14 +218,14 @@ fn crop(from: &Path, to: &Path, geometry: &str) -> Result<()> {
     Ok(())
 }
 
-/// How much of one picture differs from the other, as a percentage.
-fn differs(a: &Path, b: &Path) -> Result<f64> {
+/// How much of one picture differs from the other, at a threshold.
+fn differs_at(a: &Path, b: &Path, threshold: &str) -> Result<f64> {
     let out = Command::new("python3")
         .current_dir(root())
         .arg("scripts/ui-stress/imagediff.py")
         .arg(a)
         .arg(b)
-        .arg(THRESHOLD)
+        .arg(threshold)
         .output()?;
     let text = String::from_utf8_lossy(&out.stdout);
     let percent = text
@@ -220,6 +237,35 @@ fn differs(a: &Path, b: &Path) -> Result<f64> {
         })
         .ok_or_else(|| format!("could not read a difference out of:\n{text}"))?;
     Ok(percent)
+}
+
+/// Two pictures match, judged at BOTH thresholds.
+///
+/// Two, because one is not enough, and finding that out cost a whole
+/// second row of controls. The high threshold asks "is anything
+/// structurally different" and ignores an antialiased edge — but it also
+/// ignores a dim control against a dim ground, and the panel's input
+/// slot and record-input combo are exactly that. A panel missing both of
+/// them measured 0.2% at the high threshold and 11% at the low one.
+///
+/// So the high threshold bounds what is structurally wrong, and the low
+/// one bounds how much of the picture differs AT ALL. Something that is
+/// simply absent moves the second even when it cannot move the first.
+fn matches(name: &str, a: &Path, b: &Path, structural: f64, overall: f64) -> Result<()> {
+    for (threshold, allowed, what) in [
+        (THRESHOLD, structural, "structurally"),
+        (FAINT, overall, "in total"),
+    ] {
+        let difference = differs_at(a, b, threshold)?;
+        assert!(
+            difference <= allowed,
+            "the component {name} is not the recorded one: {difference:.3}% differs \
+             {what} at a threshold of {threshold} (allowed {allowed}%).\n  {}\n  {}",
+            a.display(),
+            b.display()
+        );
+    }
+    Ok(())
 }
 
 /// A scratch directory that survives a failure, so the pictures can be
@@ -239,15 +285,7 @@ fn the_components_draw_the_recorded_scene() -> Result<()> {
     reference(&vello)?;
     components("lanes", &blitz)?;
 
-    let difference = differs(&vello, &blitz)?;
-    assert!(
-        difference <= LANES_TOLERANCE,
-        "the component lanes are not the recorded scene: {difference:.3}% of the \
-         picture differs past a threshold antialiasing cannot reach (allowed \
-         {LANES_TOLERANCE}%).\n  {}\n  {}",
-        vello.display(),
-        blitz.display()
-    );
+    matches("lanes", &vello, &blitz, LANES_TOLERANCE, LANES_OVERALL)?;
     Ok(())
 }
 
@@ -281,14 +319,7 @@ fn the_components_draw_the_ruler() -> Result<()> {
     let names = session_daw::arrangement::TCP_WIDTH as u32;
     crop(&drawn, &blitz, &format!("{w}x{h}+{names}+0"))?;
 
-    let difference = differs(&vello, &blitz)?;
-    assert!(
-        difference <= RULER_TOLERANCE,
-        "the component ruler is not the recorded one: {difference:.3}% differs \
-         (allowed {RULER_TOLERANCE}%).\n  {}\n  {}",
-        vello.display(),
-        blitz.display()
-    );
+    matches("ruler", &vello, &blitz, RULER_TOLERANCE, RULER_OVERALL)?;
     Ok(())
 }
 
@@ -346,14 +377,7 @@ fn the_components_draw_the_rails() -> Result<()> {
         // palette.
         crop_true(&whole, &a, &geometry)?;
         crop_true(&drawn, &b, &geometry)?;
-        let difference = differs(&a, &b)?;
-        assert!(
-            difference <= allowed,
-            "the component {name} is not the recorded one: {difference:.3}% differs \
-             (allowed {allowed}%).\n  {}\n  {}",
-            a.display(),
-            b.display()
-        );
+        matches(name, &a, &b, allowed, allowed.max(RAILS_OVERALL))?;
     }
     Ok(())
 }
@@ -390,8 +414,17 @@ fn the_whole_window_composes() -> Result<()> {
         session_daw::ruler::RULER_H as u32,
     );
     let (lx, ly, lw, lh) = lane_rect();
-    let regions: [(&str, String, f64); 4] = [
-        ("lanes", format!("{lw}x{lh}+{lx}+{ly}"), LANES_TOLERANCE),
+    // Each region with BOTH of its figures, rather than one derived
+    // from the other: they measure different things, and a multiplier
+    // between them is a guess that fails the moment a surface is denser
+    // than the one it was guessed from.
+    let regions: [(&str, String, f64, f64); 4] = [
+        (
+            "lanes",
+            format!("{lw}x{lh}+{lx}+{ly}"),
+            LANES_TOLERANCE,
+            LANES_OVERALL,
+        ),
         (
             "ruler",
             format!(
@@ -400,16 +433,23 @@ fn the_whole_window_composes() -> Result<()> {
                 side + panel
             ),
             RULER_TOLERANCE,
+            RULER_OVERALL,
         ),
-        ("left rail", format!("{side}x1440+0+0"), RULER_TOLERANCE),
+        (
+            "left rail",
+            format!("{side}x1440+0+0"),
+            RULER_TOLERANCE,
+            RAILS_OVERALL,
+        ),
         (
             "mode bar",
             format!("{panel}x{ruler_h}+{side}+{top}"),
             RULER_TOLERANCE,
+            RAILS_OVERALL,
         ),
     ];
 
-    for (name, geometry, allowed) in regions {
+    for (name, geometry, allowed, overall) in regions {
         let slug = name.replace(' ', "-");
         let (a, b) = (
             dir.join(format!("win-{slug}-vello.png")),
@@ -417,14 +457,7 @@ fn the_whole_window_composes() -> Result<()> {
         );
         crop_true(&whole, &a, &geometry)?;
         crop_true(&drawn, &b, &geometry)?;
-        let difference = differs(&a, &b)?;
-        assert!(
-            difference <= allowed,
-            "composed, the {name} stopped matching: {difference:.3}% differs \
-             (allowed {allowed}%).\n  {}\n  {}",
-            a.display(),
-            b.display()
-        );
+        matches(&format!("composed {name}"), &a, &b, allowed, overall)?;
     }
     Ok(())
 }
@@ -488,15 +521,7 @@ fn the_components_draw_the_panel() -> Result<()> {
         );
         crop_true(&whole, &a, &format!("{width}x{lane_h}+{side}+{lane_y}"))?;
         crop_true(&drawn, &b, &format!("{width}x{lane_h}+0+0"))?;
-
-        let difference = differs(&a, &b)?;
-        assert!(
-            difference <= allowed,
-            "the component {name} is not the recorded one: {difference:.3}% \
-             differs (allowed {allowed}%).\n  {}\n  {}",
-            a.display(),
-            b.display()
-        );
+        matches(name, &a, &b, allowed, PANEL_OVERALL)?;
     }
     Ok(())
 }
@@ -524,7 +549,7 @@ fn a_moved_picture_fails() -> Result<()> {
     let cut = dir.join("cut.png");
     crop(&vello, &cut, &format!("{}x{}+0+0", w, h.saturating_sub(4)))?;
 
-    let difference = differs(&cut, &moved)?;
+    let difference = differs_at(&cut, &moved, THRESHOLD)?;
     assert!(
         difference > RULER_TOLERANCE,
         "the comparison cannot tell a moved picture from a matching one: \

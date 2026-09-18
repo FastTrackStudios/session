@@ -783,6 +783,11 @@ fn live_of(project: &ProjectRef) -> HashMap<String, daw_ui::studio::panel::Live>
                     muted: track.muted,
                     soloed: track.soloed,
                     armed: track.armed,
+                    parent_send: track.parent_send,
+                    sends: track.send_count > 0,
+                    receives: track.receive_count > 0,
+                    effects: track.fx_count > 0,
+                    phase_inverted: track.phase_inverted,
                 },
             )
         })

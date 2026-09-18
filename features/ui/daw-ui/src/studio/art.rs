@@ -102,6 +102,27 @@ pub fn lit(theme: &crate::theming::Theme) -> daw_theme_art::paint::tcp::Lit {
     }
 }
 
+/// The colours the routing lanes light in.
+///
+/// The source art's own choices: the output lane is the accent, sends
+/// the warn amber, receives the danger red — so "where does this go" is
+/// answered by three colours that mean the same thing everywhere else
+/// in the window.
+#[must_use]
+pub fn route_ink(theme: &crate::theming::Theme) -> daw_theme_art::paint::tcp::RouteInk {
+    let c = |col: crate::theming::Color| daw_theme::Color {
+        r: col.r,
+        g: col.g,
+        b: col.b,
+        a: col.a,
+    };
+    daw_theme_art::paint::tcp::RouteInk {
+        out: c(theme.tokens.accent),
+        send: c(theme.tokens.meter_warn),
+        recv: c(theme.tokens.meter_danger),
+    }
+}
+
 /// A label the caller has to write, because the sheet will not.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Label {
