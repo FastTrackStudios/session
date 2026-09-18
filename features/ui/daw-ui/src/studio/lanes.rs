@@ -467,6 +467,17 @@ fn Lines(grid: Grid, view: View, colors: Colors, from: f64) -> Element {
 /// for a seventh more frames a second. So a half.
 const BLEED: f64 = 0.5;
 
+/// And how far DOWN, which is more.
+///
+/// Because a fling down a session is faster than a drag across one: a
+/// wheel throws hundreds of pixels a notch and a session is thousands of
+/// pixels tall, so the view leaves what was built for it in a frame or
+/// two and the rows it wants have not been made yet — which looks like
+/// the bottom of the window going black until it catches up. Rows are
+/// also the cheaper axis to spend on, being a few nodes each where a
+/// screen of items is hundreds.
+const BLEED_DOWN: f64 = 2.0;
+
 /// The lanes, and the items on them.
 ///
 /// Renders the rows [`View`] can see, and on each of those the items
@@ -503,15 +514,7 @@ pub fn Lanes(
     // this component re-renders when a window MOVES and not when the
     // scroll does.
     let built = use_memo(move || Built::around(scroll(), view));
-    let built_down = use_memo(move || {
-        Built::around(
-            scroll_y(),
-            View {
-                width: view.height,
-                ..view
-            },
-        )
-    });
+    let built_down = use_memo(move || Built::down(scroll_y(), view.height));
     let surface = colors.surface.clone();
 
     rsx! {
@@ -559,12 +562,28 @@ impl Built {
     /// the view leaves it entirely.
     #[must_use]
     pub fn around(scroll: f64, view: View) -> Self {
-        let step = (view.width * BLEED).max(1.0);
+        Self::with_bleed(scroll, view.width, BLEED)
+    }
+
+    /// The same, down the session, where the bleed is larger.
+    #[must_use]
+    pub fn down(scroll: f64, height: f64) -> Self {
+        Self::with_bleed(scroll, height, BLEED_DOWN)
+    }
+
+    /// The window around a scroll position, at a given bleed.
+    #[must_use]
+    pub fn with_bleed(scroll: f64, extent: f64, bleed: f64) -> Self {
+        let view = View {
+            width: extent,
+            ..View::default()
+        };
+        let step = (view.width * bleed).max(1.0);
         let index = (scroll / step).floor();
-        let from = (index - BLEED) * step;
+        let from = (index - bleed) * step;
         Self {
             from: from.max(0.0),
-            to: index.mul_add(step, view.width) + step * BLEED,
+            to: index.mul_add(step, extent) + step * bleed,
         }
     }
 }

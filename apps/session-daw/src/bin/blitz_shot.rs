@@ -142,7 +142,14 @@ fn main() {
     };
 
     session_daw::open::open_silent(std::path::Path::new(&project_path)).expect("open project");
-    let (project, rows) = read_back().expect("read the project back");
+    // A window opens the session the way the visual track manager lays
+    // it out; a comparison shot does not, because the reference it is
+    // compared against does not either.
+    let scene = std::env::var("FTS_BLITZ_SCENE")
+        .ok()
+        .or_else(|| std::env::var_os("FTS_BLITZ_WINDOW").map(|_| "drum-mixing".to_owned()));
+    let (project, rows) = read_back(scene.as_deref(), std::path::Path::new(&project_path))
+        .expect("read the project back");
     let shapes = shapes_of(&project);
 
     let view = View {
@@ -481,7 +488,7 @@ fn frame_height(height: f64) -> f64 {
 }
 
 /// The open project, as the studio's own refs.
-fn read_back() -> Option<(ProjectRef, RowsRef)> {
+fn read_back(scene: Option<&str>, project_path: &std::path::Path) -> Option<(ProjectRef, RowsRef)> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -490,7 +497,28 @@ fn read_back() -> Option<(ProjectRef, RowsRef)> {
     let project = ProjectRef(Arc::new(project));
     let (visible, depths) =
         daw_ui::components::folders::FolderState::default().visible(&project.tracks);
-    let rows = RowsRef(Arc::new(visible.into_iter().zip(depths).collect()));
+    let mut planned: Vec<(daw_proto::Track, u32)> = visible.into_iter().zip(depths).collect();
+    // A SCENE, if one is asked for: the visual track manager's answer to
+    // which rows show and how tall each opens. Without it every track is
+    // the same height, because the session file carries no per-track
+    // height — the heights are a layout the scene decides, not a fact
+    // the file records.
+    if let Some(slug) = scene.and_then(dynamic_template::scenes::scene) {
+        let kinds = session_daw::plan::Kinds::read(project_path);
+        planned = session_daw::plan::apply_scene(
+            &planned,
+            &kinds,
+            slug,
+            session_daw::plan::Panel {
+                surface: session_daw::plan::Surface::Arrange,
+                mode: None,
+                settings: session_daw::settings::Settings::default(),
+                extent: 1440.0,
+                active_language: None,
+            },
+        );
+    }
+    let rows = RowsRef(Arc::new(planned));
     Some((project, rows))
 }
 

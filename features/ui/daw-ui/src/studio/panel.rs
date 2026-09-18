@@ -423,15 +423,7 @@ pub fn Panel(
     let offsets = offsets();
     // The band of session that is BUILT, which moves a screen at a time
     // rather than a pixel at a time.
-    let built = use_memo(move || {
-        Built::around(
-            scroll_y(),
-            View {
-                width: view.height,
-                ..view
-            },
-        )
-    });
+    let built = use_memo(move || Built::down(scroll_y(), view.height));
     let built = built();
     let visible = offsets.visible(View {
         scroll_y: built.from,
