@@ -348,6 +348,77 @@ fn the_components_draw_the_rails() -> Result<()> {
     Ok(())
 }
 
+/// Every converted surface at once, in one tree, still matches.
+///
+/// The parts are proven one at a time above. This is the question those
+/// cannot answer: that they still draw the same thing when they are
+/// composed — one document, one layout, one paint — rather than each
+/// being right alone and wrong together. A stray margin, an inherited
+/// font, a positioned ancestor moving the origin: all of them show up
+/// here and nowhere else.
+#[test]
+#[ignore = "renders the golden session through two renderers; run with --ignored"]
+fn the_whole_window_composes() -> Result<()> {
+    let dir = scratch()?;
+    let whole = dir.join("whole.png");
+    if !whole.exists() {
+        reference(&dir.join("vello.png"))?;
+    }
+    let drawn = dir.join("window.png");
+    components("all", &drawn)?;
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions,
+        reason = "window geometry, which is small positive integers"
+    )]
+    let (side, top, panel, ruler_h) = (
+        session_daw::rails::SIDE as u32,
+        session_daw::rails::TOP as u32,
+        session_daw::arrangement::TCP_WIDTH as u32,
+        session_daw::ruler::RULER_H as u32,
+    );
+    let (lx, ly, lw, lh) = lane_rect();
+    let regions: [(&str, String, f64); 4] = [
+        ("lanes", format!("{lw}x{lh}+{lx}+{ly}"), LANES_TOLERANCE),
+        (
+            "ruler",
+            format!(
+                "{}x{ruler_h}+{}+{top}",
+                2560 - side - panel - side,
+                side + panel
+            ),
+            RULER_TOLERANCE,
+        ),
+        ("left rail", format!("{side}x1440+0+0"), RULER_TOLERANCE),
+        (
+            "mode bar",
+            format!("{panel}x{ruler_h}+{side}+{top}"),
+            RULER_TOLERANCE,
+        ),
+    ];
+
+    for (name, geometry, allowed) in regions {
+        let slug = name.replace(' ', "-");
+        let (a, b) = (
+            dir.join(format!("win-{slug}-vello.png")),
+            dir.join(format!("win-{slug}-components.png")),
+        );
+        crop_true(&whole, &a, &geometry)?;
+        crop_true(&drawn, &b, &geometry)?;
+        let difference = differs(&a, &b)?;
+        assert!(
+            difference <= allowed,
+            "composed, the {name} stopped matching: {difference:.3}% differs \
+             (allowed {allowed}%).\n  {}\n  {}",
+            a.display(),
+            b.display()
+        );
+    }
+    Ok(())
+}
+
 /// The negative control: a picture moved four pixels fails.
 ///
 /// Without this the test above says only that something was rendered

@@ -77,14 +77,18 @@ fn main() {
     // question — the panel beside it is already components.
     let ruler = part == "ruler";
     let rails = part == "rails";
-    let lane_w = if rails {
+    // The whole window, with every converted surface in its place. The
+    // point of this one is not any single picture — it is that the
+    // pieces compose: one tree, one document, one paint.
+    let all = part == "all";
+    let lane_w = if rails || all {
         width
     } else if ruler {
         (width - session_daw::rails::SIDE * 2.0).max(1.0)
     } else {
         frame_width(width)
     };
-    let lane_h = if rails {
+    let lane_h = if rails || all {
         height
     } else if ruler {
         session_daw::ruler::RULER_H
@@ -134,6 +138,7 @@ fn main() {
             markers,
             ruler,
             rails,
+            all,
             rail_items: rail_items(),
             modes: modes(),
         },
@@ -478,6 +483,7 @@ struct ShotProps {
     markers: std::sync::Arc<[daw_ui::studio::project::Marker]>,
     ruler: bool,
     rails: bool,
+    all: bool,
     rail_items: (Vec<Item>, Vec<Item>, Vec<Item>),
     modes: Vec<Item>,
 }
@@ -502,7 +508,9 @@ fn Shot(props: ShotProps) -> Element {
         // bottom of the window and every row eight pixels from where the
         // reference draws it. A window is not a document.
         style { "html, body {{ margin: 0; padding: 0; }}" }
-        if props.rails {
+        if props.all {
+            Window { ..props.clone() }
+        } else if props.rails {
             Rails {
                 width: props.view.width,
                 height: props.view.height,
@@ -586,6 +594,78 @@ fn rail_items() -> (Vec<Item>, Vec<Item>, Vec<Item>) {
         fit(&profile.right, session_daw::rails::SIDE - 6.0),
         fit(&profile.top, session_daw::rails::TOP_ITEM_W - 3.0),
     )
+}
+
+/// Every converted surface, in its place in the window.
+///
+/// The lanes sit past the panel and under the ruler, the ruler past the
+/// panel, the rails over both, and the mode bar in the corner the ruler
+/// leaves. The track panel's own column is the one thing missing, and it
+/// is left as the window's ground rather than faked — a picture with a
+/// wrong panel in it would be worse than one with none.
+#[component]
+fn Window(props: ShotProps) -> Element {
+    let scroll = use_signal(|| props.view.scroll_x);
+    use_hook(|| {
+        SCROLL.with(|slot| *slot.borrow_mut() = Some(scroll));
+    });
+    let lanes_x = lane_x();
+    let lanes_y = lane_y();
+    let lanes = View {
+        width: frame_width(props.view.width),
+        height: frame_height(props.view.height),
+        ..props.view
+    };
+    let ruler = View {
+        width: props.view.width - session_daw::rails::SIDE * 2.0,
+        ..props.view
+    };
+    rsx! {
+        div {
+            style: "position:relative; width:{props.view.width}px; \
+                    height:{props.view.height}px; overflow:hidden; \
+                    background:{props.colors.surface};",
+            div {
+                style: "position:absolute; left:{session_daw::rails::SIDE}px; \
+                        top:{session_daw::rails::TOP}px;",
+                Ruler {
+                    view: ruler,
+                    colors: props.colors.clone(),
+                    marks: props.marks.clone(),
+                    sections: props.sections.clone(),
+                    markers: props.markers.clone(),
+                    scroll: ReadSignal::from(scroll),
+                }
+            }
+            div {
+                style: "position:absolute; left:{lanes_x}px; top:{lanes_y}px;",
+                Lanes {
+                    project: props.project.clone(),
+                    rows: props.rows.clone(),
+                    view: lanes,
+                    scroll: ReadSignal::from(scroll),
+                    colors: props.colors.clone(),
+                    shapes: props.shapes.clone(),
+                    sizing: props.sizing,
+                    grid: props.grid,
+                }
+            }
+            Rails {
+                width: props.view.width,
+                height: props.view.height,
+                colors: props.colors.clone(),
+                top: props.rail_items.2.clone().into(),
+                left: props.rail_items.0.clone().into(),
+                right: props.rail_items.1.clone().into(),
+            }
+            ModeBar {
+                width: session_daw::arrangement::TCP_WIDTH,
+                height: session_daw::ruler::RULER_H,
+                colors: props.colors.clone(),
+                modes: props.modes.clone().into(),
+            }
+        }
+    }
 }
 
 /// The modes, abbreviated and fitted the way the corner draws them.
