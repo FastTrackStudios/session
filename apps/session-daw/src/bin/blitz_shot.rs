@@ -940,9 +940,16 @@ fn WindowSize(
     size: Signal<(f64, f64)>,
     rate: Signal<f64>,
     animate: bool,
+    /// How far the session runs across and down in its own pixels,
+    /// before any zoom, and the size of the frame it is seen through.
+    ///
+    /// The travel is worked out from these HERE rather than handed down
+    /// ready-made, because a ready-made one would have to be computed by
+    /// whoever reads the zoom — and the window may not be the one that
+    /// does. See the note where this is mounted.
     span_x: f64,
-    /// How far the view may travel, across and down.
-    extent: (f64, f64),
+    span_y: f64,
+    frame: (f64, f64),
     scroll: Signal<f64>,
     down: Signal<f64>,
     zoom: Signal<(f64, f64)>,
@@ -1002,6 +1009,15 @@ fn WindowSize(
     let counted =
         use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(Vec::<f64>::with_capacity(RECENT))));
     let started = use_hook(std::time::Instant::now);
+    // How far the view may travel, at whatever the zoom is when a
+    // gesture asks. A closure rather than a value because reading the
+    // zoom to make a value would subscribe this component to it, and a
+    // component that re-renders on every frame of a zoom is the thing
+    // this file has spent itself getting rid of.
+    let extent = move || {
+        let (zx, zy) = zoom.peek().to_owned();
+        ((span_x * zx).max(1.0), (span_y * zy - frame.1).max(1.0))
+    };
     let mut scroll = scroll;
     let mut down = down;
     let mut zoom = zoom;
@@ -1030,8 +1046,8 @@ fn WindowSize(
                 // pointer, which is the one navigation gesture every DAW
                 // agrees on.
                 Some(Drag::Pan) => {
-                    scroll.set((scroll() - moved.0).clamp(0.0, extent.0));
-                    down.set((down() - moved.1).clamp(0.0, extent.1));
+                    scroll.set((scroll() - moved.0).clamp(0.0, extent().0));
+                    down.set((down() - moved.1).clamp(0.0, extent().1));
                 }
                 // And the zoom tool: sideways for time, up and down for
                 // rows, both at once if the hand moves both ways.
@@ -1078,10 +1094,10 @@ fn WindowSize(
                     zoom.set((zx, (zy * factor(dy * 2.0)).clamp(ZOOM_Y.0, ZOOM_Y.1)));
                 }
             } else if input.shift {
-                scroll.set((scroll() - dx - dy).clamp(0.0, extent.0));
+                scroll.set((scroll() - dx - dy).clamp(0.0, extent().0));
             } else {
-                scroll.set((scroll() - dx).clamp(0.0, extent.0));
-                down.set((down() - dy).clamp(0.0, extent.1));
+                scroll.set((scroll() - dx).clamp(0.0, extent().0));
+                down.set((down() - dy).clamp(0.0, extent().1));
             }
         }
         winit::event::WindowEvent::SurfaceResized(px) => {
@@ -1328,7 +1344,7 @@ fn Window(props: ShotProps) -> Element {
 
     let (width, height) = size();
 
-    let mut scroll = use_signal(|| props.view.scroll_x);
+    let scroll = use_signal(|| props.view.scroll_x);
     use_hook(|| {
         SCROLL.with(|slot| *slot.borrow_mut() = Some(scroll));
     });
@@ -1337,31 +1353,29 @@ fn Window(props: ShotProps) -> Element {
     // the scroll; a ZOOM is not, and cannot be — it changes where every
     // item is, which is a layout, which is the honest cost of the
     // gesture rather than a failure to optimise it.
-    let mut down = use_signal(|| props.view.scroll_y);
+    let down = use_signal(|| props.view.scroll_y);
     let zoom = use_signal(|| (initial_zoom().0, initial_zoom().1 * props.view.zoom_y));
     use_hook(|| {
         ZOOM.with(|slot| *slot.borrow_mut() = Some(zoom));
     });
     let gesture = use_signal(|| (GESTURES[0].0, 0.0_f64));
 
-    // How far the session runs across, for the gestures and the
-    // scroller's extent alike.
+    // How far the session runs across and down, in its OWN pixels — no
+    // zoom in either, because this component may not read one.
+    //
+    // That is the rule the window kept breaking. Reading a signal here
+    // re-renders this component, and this component builds the props for
+    // every surface under it; measured at 5120x1440 that cost 11 ms a
+    // frame on its own, on top of whatever actually changed. So the
+    // scroll, the zoom, the frame rate and the gesture are read by the
+    // three leaves that show them and by nothing else, and what travels
+    // down from here is only ever a number that does not move.
     let span_x = (props.project.length_secs * PPS - props.view.width).max(1.0);
-    let (zoom_x, zoom_y) = zoom();
-    // How far the view may travel, across and down: the session's own
-    // extent less the window it is seen through. A zoom changes it,
-    // which is why it is worked out here rather than once at the start.
-    let travel = (
-        span_x * zoom_x,
-        (props
-            .rows
-            .iter()
-            .map(|(track, _)| props.sizing.height_of(track.height))
-            .sum::<f64>()
-            * zoom_y
-            - frame_height(height))
-        .max(1.0),
-    );
+    let span_y = props
+        .rows
+        .iter()
+        .map(|(track, _)| props.sizing.height_of(track.height))
+        .sum::<f64>();
     // Mounted only when there IS a window: the same tree renders
     // headless for the comparisons, where there is no winit to ask.
     let tracking = if props.windowed {
@@ -1371,7 +1385,8 @@ fn Window(props: ShotProps) -> Element {
                 rate,
                 animate: props.animate,
                 span_x,
-                extent: travel,
+                span_y,
+                frame: (frame_width(width), frame_height(height)),
                 scroll,
                 down,
                 zoom,
@@ -1390,7 +1405,6 @@ fn Window(props: ShotProps) -> Element {
         let (x, y) = zoom();
         daw_ui::studio::lanes::Zoom { x, y }
     });
-    let (zoom_x, zoom_y) = zoom();
     // The placeholders, and a ground for them to sit on.
     let (top_rail, right_rail) = use_hook(placeholders);
     let rail_colors = daw_ui::studio::lanes::Colors {
@@ -1405,8 +1419,7 @@ fn Window(props: ShotProps) -> Element {
     // signal to the two components that move, and nothing between them
     // and it ever reads it.
     let moved = View {
-        pps: PPS * zoom_x,
-        zoom_y,
+        pps: PPS,
         width,
         height,
         ..props.view
@@ -1418,12 +1431,15 @@ fn Window(props: ShotProps) -> Element {
     // and the zoom as a signal, and decide for themselves how much of it
     // is worth rebuilding for.
     let lanes = View {
-        pps: PPS,
-        zoom_y: props.view.zoom_y,
         width: frame_width(width),
         height: frame_height(height),
         ..moved
     };
+    // Neither of these carries the axis it does not use, and that is
+    // not tidiness: a view is a prop, a changed prop re-renders the
+    // component, and a ruler that carried the vertical zoom re-rendered
+    // every mark in it every time a row got taller. The ruler has no
+    // rows and the panel has no timeline.
     let ruler = View {
         width: width - session_daw::rails::SIDE * 2.0,
         ..moved
@@ -1457,6 +1473,7 @@ fn Window(props: ShotProps) -> Element {
                     sections: props.sections.clone(),
                     markers: props.markers.clone(),
                     scroll: ReadSignal::from(scroll),
+                    zoom: ReadSignal::from(magnified),
                 }
             }
             div {
@@ -1484,6 +1501,7 @@ fn Window(props: ShotProps) -> Element {
                     colors: props.colors.clone(),
                     theme: props.theme.clone(),
                     sizing: props.sizing,
+                    zoom: ReadSignal::from(magnified),
                     live: live(),
                     on_press: move |(guid, control): (String, daw_ui::studio::panel::Control)| {
                         use daw_ui::studio::panel::Control;
@@ -1525,27 +1543,15 @@ fn Window(props: ShotProps) -> Element {
             // gesture that was meant to zoom — and because a DAW's bars
             // are a control, not a decoration.
             if props.windowed {
-                Bar {
-                    across: true,
-                    at: scroll(),
-                    travel: travel.0,
-                    window: frame_width(width),
-                    left: lane_x(),
-                    top: height - session_daw::rails::SIDE - BAR,
-                    length: frame_width(width),
+                Scrollbars {
+                    scroll,
+                    down,
+                    zoom,
+                    span_x,
+                    span_y,
+                    width,
+                    height,
                     colors: props.colors.clone(),
-                    on_move: move |to: f64| scroll.set(to.clamp(0.0, travel.0)),
-                }
-                Bar {
-                    across: false,
-                    at: down(),
-                    travel: travel.1,
-                    window: frame_height(height),
-                    left: width - session_daw::rails::SIDE - BAR,
-                    top: lane_y(),
-                    length: frame_height(height),
-                    colors: props.colors.clone(),
-                    on_move: move |to: f64| down.set(to.clamp(0.0, travel.1)),
                 }
             }
 
@@ -1556,31 +1562,105 @@ fn Window(props: ShotProps) -> Element {
             // while driving it by hand, which is exactly when there is no
             // benchmark running to ask.
             if props.windowed {
-                {
-                    let (name, _) = gesture();
-                    let frame_ms = rate();
-                    // Both, because they answer different questions: the
-                    // milliseconds are what a frame cost, the rate is
-                    // what that would sustain. A window with nothing to
-                    // do has neither, and says so rather than reporting
-                    // a very slow one.
-                    let fps = if frame_ms > 0.01 { 1000.0 / frame_ms } else { 0.0 };
-                    let what = if props.animate { name } else { "window" };
-                    rsx! {
-                        div {
-                            style: "position:absolute; right:56px; top:{session_daw::rails::TOP + 8.0}px; \
-                                    padding:6px 10px; background:rgba(0,0,0,0.72); \
-                                    color:#e8e8ea; font-size:12px; \
-                                    font-family:{daw_ui::studio::lanes::FONT}; \
-                                    white-space:nowrap; pointer-events:none;",
-                            if frame_ms > 0.01 {
-                                "{what} — {frame_ms:.1}ms/frame — {fps:.0} fps — {width:.0}x{height:.0}"
-                            } else {
-                                "{what} — idle — {width:.0}x{height:.0}"
-                            }
-                        }
-                    }
-                }
+                Readout { rate, gesture, animate: props.animate, width, height }
+            }
+        }
+    }
+}
+
+/// The two scrollbars, and the only thing that works out how far the
+/// view may travel.
+///
+/// A leaf on purpose. The extent depends on the zoom, the thumbs depend
+/// on the scroll, and both of those change every frame of a gesture — so
+/// whoever reads them re-renders every frame, and that has to be two
+/// nodes rather than the window.
+#[component]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the two bars' signals and the frame they sit in"
+)]
+fn Scrollbars(
+    mut scroll: Signal<f64>,
+    mut down: Signal<f64>,
+    zoom: Signal<(f64, f64)>,
+    /// How far the session runs across and down in its own pixels,
+    /// before any zoom.
+    span_x: f64,
+    span_y: f64,
+    width: f64,
+    height: f64,
+    colors: daw_ui::studio::lanes::Colors,
+) -> Element {
+    let (zoom_x, zoom_y) = zoom();
+    // The session's own extent less the window it is seen through.
+    let travel = (
+        (span_x * zoom_x).max(1.0),
+        (span_y * zoom_y - frame_height(height)).max(1.0),
+    );
+    rsx! {
+        Bar {
+            across: true,
+            at: scroll(),
+            travel: travel.0,
+            window: frame_width(width),
+            left: lane_x(),
+            top: height - session_daw::rails::SIDE - BAR,
+            length: frame_width(width),
+            colors: colors.clone(),
+            on_move: move |to: f64| scroll.set(to.clamp(0.0, travel.0)),
+        }
+        Bar {
+            across: false,
+            at: down(),
+            travel: travel.1,
+            window: frame_height(height),
+            left: width - session_daw::rails::SIDE - BAR,
+            top: lane_y(),
+            length: frame_height(height),
+            colors,
+            on_move: move |to: f64| down.set(to.clamp(0.0, travel.1)),
+        }
+    }
+}
+
+/// How fast it is actually drawing, on the window rather than in a
+/// terminal behind it.
+///
+/// A rate you have to look away to read is a rate you cannot match to
+/// what you just saw. Its own component for the reason the scrollbars
+/// are: it changes every frame, and the window must not.
+#[component]
+fn Readout(
+    rate: Signal<f64>,
+    gesture: Signal<(&'static str, f64)>,
+    animate: bool,
+    width: f64,
+    height: f64,
+) -> Element {
+    let (name, _) = gesture();
+    let frame_ms = rate();
+    // Both, because they answer different questions: the milliseconds
+    // are what a frame cost, the rate is what that would sustain. A
+    // window with nothing to do has neither, and says so rather than
+    // reporting a very slow one.
+    let fps = if frame_ms > 0.01 {
+        1000.0 / frame_ms
+    } else {
+        0.0
+    };
+    let what = if animate { name } else { "window" };
+    rsx! {
+        div {
+            style: "position:absolute; right:56px; top:{session_daw::rails::TOP + 8.0}px; \
+                    padding:6px 10px; background:rgba(0,0,0,0.72); \
+                    color:#e8e8ea; font-size:12px; \
+                    font-family:{daw_ui::studio::lanes::FONT}; \
+                    white-space:nowrap; pointer-events:none;",
+            if frame_ms > 0.01 {
+                "{what} — {frame_ms:.1}ms/frame — {fps:.0} fps — {width:.0}x{height:.0}"
+            } else {
+                "{what} — idle — {width:.0}x{height:.0}"
             }
         }
     }

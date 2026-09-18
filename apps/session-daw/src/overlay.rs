@@ -1544,7 +1544,10 @@ pub fn panel_controls(
         if let Some(r) = row.rect(C::Volume) {
             let field_h = r.height();
             if knob {
-                let scale = field_h / 22.0;
+                // Never past the size it was authored — the same rule
+                // the rect above measures it by, so the picture and the
+                // hit target stay the same shape.
+                let scale = (field_h / 22.0).min(1.0);
                 crate::art::scaled(
                     &mut out,
                     &art::volume_knob(

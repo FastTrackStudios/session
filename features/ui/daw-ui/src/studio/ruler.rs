@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use crate::prelude::*;
 
-use super::lanes::{Built, Colors, View};
+use super::lanes::{Built, Colors, View, Zoom};
 use super::project::{Marker, Section};
 
 /// How tall the bar-number row is.
@@ -137,8 +137,27 @@ pub fn Ruler(
     sections: Arc<[Section]>,
     markers: Arc<[Marker]>,
     scroll: ReadSignal<f64>,
+    /// How far in the timeline is magnified — a signal, for the reason
+    /// [`super::lanes::Lanes`] gives at length: read as a prop, a zoom
+    /// re-rendered every bar number, every section band and every mark
+    /// on every frame of the gesture. The strip is built at a snapped
+    /// zoom and the leftover rides on `--sx`.
+    #[props(default)]
+    zoom: ReadSignal<Zoom>,
 ) -> Element {
-    let built = use_memo(move || Built::around(scroll(), view));
+    let (sx, _) = zoom().residual();
+    let built_view = View {
+        pps: view.pps * zoom().quantised().x,
+        ..view
+    };
+    let built = use_memo(move || {
+        let (sx, _) = zoom().residual();
+        let view = View {
+            pps: view.pps * zoom().quantised().x,
+            ..view
+        };
+        Built::around((scroll() - NAMES_W).max(0.0) / sx, view)
+    });
     let ground = colors.ruler_bg.clone();
     let rule = colors.rule.clone();
     let faint = colors.faint.clone();
@@ -147,7 +166,7 @@ pub fn Ruler(
         div {
             style: "position:relative; width:{view.width}px; height:{RULER_H}px; \
                     overflow:hidden; background:{ground}; \
-                    font-family:{super::lanes::FONT};",
+                    font-family:{super::lanes::FONT}; --sx:{sx:.6};",
             "data-testid": "studio-ruler",
 
             // The rows' own grounds and names, which do not move with
@@ -167,7 +186,8 @@ pub fn Ruler(
             RulerPan {
                 scroll,
                 built,
-                view,
+                zoom,
+                view: built_view,
                 colors: colors.clone(),
                 marks,
                 sections,
@@ -227,6 +247,7 @@ fn row_index(row: usize) -> f64 {
 fn RulerPan(
     scroll: ReadSignal<f64>,
     built: Memo<Built>,
+    zoom: ReadSignal<Zoom>,
     view: View,
     colors: Colors,
     marks: Marks,
@@ -234,7 +255,13 @@ fn RulerPan(
     markers: Arc<[Marker]>,
 ) -> Element {
     let window = built();
-    let offset = scroll() - window.from;
+    // The column of row names is not on the timeline — the names label
+    // the strip, not the session — so the offset it puts under everything
+    // lives HERE, on the node that moves, rather than inside every
+    // coordinate below. Otherwise it would be scaled by the zoom along
+    // with them, and the ruler would start somewhere new at every zoom.
+    let (sx, _) = zoom().residual();
+    let offset = scroll() - window.from.mul_add(sx, NAMES_W);
     rsx! {
         div {
             style: "position:absolute; left:0; top:0; width:100%; height:100%; \
@@ -262,10 +289,12 @@ fn OnTheLine(
     built: Built,
 ) -> Element {
     let pps = view.pps.max(1e-9);
-    // Where a moment lands, measured from the built window's left edge —
-    // the timeline starts past the column of row names.
-    let x_of = move |at: f64| at.mul_add(pps, NAMES_W - built.from);
-    let (from, to) = ((built.from - NAMES_W) / pps, (built.to - NAMES_W) / pps);
+    // Where a moment lands, measured from the built window's left edge,
+    // in the pixels the SNAPPED zoom makes. The names column's width is
+    // not in here any more: it is a fixed offset on the node that pans,
+    // because it does not zoom.
+    let x_of = move |at: f64| at.mul_add(pps, -built.from);
+    let (from, to) = (built.from / pps, built.to / pps);
 
     let tempo_top = RULER_H - BARS_H - TEMPO_H;
     let bars_top = RULER_H - BARS_H;
@@ -323,7 +352,8 @@ fn OnTheLine(
             // the change that set it is off to the left.
             if let Some(before) = marks.tempo_before.as_ref() {
                 div {
-                    style: "position:absolute; left:{x_of(from.max(0.0)) + 4.0}px; \
+                    style: "position:absolute; \
+                            left:calc({x_of(from.max(0.0))}px * var(--sx, 1) + 4px); \
                             top:{tempo_top}px; font-size:{SIZE}px; \
                             line-height:{line_box(SIZE, TEMPO_H - 3.0)}px; \
                             color:{colors.faint}; white-space:nowrap;",
@@ -343,7 +373,8 @@ fn OnTheLine(
                         // because nothing here clips.
                         div {
                             key: "{reading.at}",
-                            style: "position:absolute; left:{x}px; \
+                            style: "position:absolute; \
+                                    left:calc({x}px * var(--sx, 1)); \
                                     top:{tempo_top + 1.0}px; width:1px; \
                                     height:{TEMPO_H - 2.0}px; background:{colors.accent};",
                             div {
@@ -369,7 +400,8 @@ fn OnTheLine(
                         // Likewise the bar number, inside its own tick.
                         div {
                             key: "{tick.at}",
-                            style: "position:absolute; left:{x}px; \
+                            style: "position:absolute; \
+                                    left:calc({x}px * var(--sx, 1)); \
                                     top:{bars_top + BARS_H - 9.0}px; width:1px; \
                                     height:9px; background:{colors.grid};",
                             div {
@@ -395,19 +427,23 @@ fn Band(left: f64, width: f64, top: f64, tint: String, name: String, text: Strin
     let height = LANE_H - 4.0;
     rsx! {
         div {
-            style: "position:absolute; left:{left}px; top:{top}px; width:{width}px; \
+            style: "position:absolute; left:calc({left}px * var(--sx, 1)); top:{top}px; \
+                    width:calc({width}px * var(--sx, 1)); \
                     height:{height}px; background:{tint}; opacity:0.45; overflow:hidden;",
         }
         // The leading edge at full strength, so a band's START is
-        // findable when the band itself is a wash.
+        // findable when the band itself is a wash. Two pixels at any
+        // zoom, because it is an edge rather than a span.
         div {
-            style: "position:absolute; left:{left}px; top:{top}px; \
+            style: "position:absolute; left:calc({left}px * var(--sx, 1)); top:{top}px; \
                     width:{width.min(2.0)}px; height:{height}px; background:{tint};",
         }
         if width > ROOM {
             div {
-                style: "position:absolute; left:{left + 5.0}px; top:{top}px; \
-                        width:{width - 8.0}px; height:{height}px; font-size:{SIZE}px; \
+                style: "position:absolute; \
+                        left:calc({left}px * var(--sx, 1) + 5px); top:{top}px; \
+                        width:calc({width}px * var(--sx, 1) - 8px); \
+                        height:{height}px; font-size:{SIZE}px; \
                         line-height:{line_box(SIZE, LANE_H - 6.0)}px; color:{text}; \
                         white-space:nowrap; overflow:hidden;",
                 "{name}"
@@ -420,17 +456,20 @@ fn Band(left: f64, width: f64, top: f64, tint: String, name: String, text: Strin
 #[component]
 fn Flag(left: f64, top: f64, tint: String, name: String, text: String) -> Element {
     let height = LANE_H - 4.0;
+    // A flag is a POSITION, not a span: its staff, its pennant and its
+    // name keep their size at every zoom and only their place moves.
     rsx! {
         div {
-            style: "position:absolute; left:{left}px; top:{top}px; width:2px; \
-                    height:{height}px; background:{tint};",
+            style: "position:absolute; left:calc({left}px * var(--sx, 1)); top:{top}px; \
+                    width:2px; height:{height}px; background:{tint};",
         }
         div {
-            style: "position:absolute; left:{left}px; top:{top}px; width:8px; \
-                    height:4px; background:{tint};",
+            style: "position:absolute; left:calc({left}px * var(--sx, 1)); top:{top}px; \
+                    width:8px; height:4px; background:{tint};",
         }
         div {
-            style: "position:absolute; left:{left + 5.0}px; top:{top}px; \
+            style: "position:absolute; left:calc({left}px * var(--sx, 1) + 5px); \
+                    top:{top}px; \
                     font-size:{SIZE}px; line-height:{line_box(SIZE, LANE_H - 6.0)}px; \
                     color:{text}; white-space:nowrap;",
             "{name}"

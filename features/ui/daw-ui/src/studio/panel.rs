@@ -33,7 +33,7 @@ use daw_theme_art::paint::tcp as art;
 use daw_theme_art::vector_controls::Interaction;
 
 use super::art::{Label, Sheet};
-use super::lanes::{Built, Colors, DIVIDER, FONT, Offsets, Rows, View, ink_on};
+use super::lanes::{Built, Colors, DIVIDER, FONT, Offsets, Rows, View, Zoom, ink_on};
 use super::{ProjectRef, RowsRef};
 
 /// A control a row can be pressed on.
@@ -320,11 +320,20 @@ impl Band {
     }
 
     /// The volume knob: centred on the name field's right edge, and
-    /// scaled to the band it straddles.
+    /// scaled DOWN to the band it straddles when there is not room for
+    /// it at the size it was drawn.
+    ///
+    /// Never up. A control is the size it was authored and a taller
+    /// track is a taller lane with the same knob at the top of it —
+    /// which is what REAPER does, what the pan knob beside it already
+    /// did, and what makes every full-height row in a session produce
+    /// the same art however far the view is zoomed. A knob that grew
+    /// with its row would be a new image on every frame of a zoom, and
+    /// a blur where everything around it is crisp.
     #[must_use]
     pub fn volume(self) -> (f64, f64, f64) {
         let scale = if self.knobs() {
-            self.height / 22.0
+            (self.height / 22.0).min(1.0)
         } else {
             1.0
         };
@@ -414,8 +423,86 @@ pub fn Panel(
     /// track and which control, and whoever owns the session decides.
     #[props(default)]
     on_press: EventHandler<(String, Control)>,
+    /// How far down the session is magnified — a signal, for the reason
+    /// [`super::lanes::Lanes`] gives: a zoom read as a prop re-rendered
+    /// every row and rebuilt every control on screen, every frame.
+    #[props(default)]
+    zoom: ReadSignal<Zoom>,
 ) -> Element {
     let _ = project;
+    // The only two things this component does with the zoom: publish the
+    // leftover for the boxes below, and tell [`Stack`] which zoom to
+    // BUILD at. Everything else about a row — its controls, its art, its
+    // labels — is worked out one level down, where the props are the
+    // snapped zoom and therefore do not change between two steps of it.
+    //
+    // Doing it here instead cost 18 ms a frame: reading a signal
+    // subscribes, so the whole panel re-rendered every frame of a zoom
+    // and rebuilt forty rows of control art to do it.
+    let (_, sy) = zoom().residual();
+    let built_zoom = zoom().quantised().y;
+    rsx! {
+        div {
+            // `--sy` is the leftover between the zoom the rows were
+            // BUILT at and the one being drawn — see
+            // [`super::lanes::Zoom`]. It has to be published here rather
+            // than inherited from the window, because the panel is a
+            // sibling of the lanes, not a child of them.
+            style: "position:relative; width:{ROW_W}px; height:{view.height}px; \
+                    overflow:hidden; background:{colors.tcp_gutter}; font-family:{FONT}; \
+                    --sy:{sy:.6};",
+            "data-testid": "studio-panel",
+            // The panel's own right edge — the boundary with the arrange
+            // view, and OUTSIDE the sliding part because an edge that
+            // scrolled with the session would not be an edge. One rule
+            // down the whole column rather than a fragment of one per
+            // row: it is the PANEL's edge, and every row was drawing the
+            // same pixel.
+            div {
+                style: "position:absolute; left:{ROW_W - 2.0}px; top:0; width:1px; \
+                        bottom:0; background:{colors.rule}; z-index:1;",
+            }
+            Stack {
+                rows,
+                colors: colors.clone(),
+                view: View {
+                    zoom_y: view.zoom_y * built_zoom,
+                    ..view
+                },
+                scroll_y,
+                theme,
+                sizing,
+                live,
+                on_press,
+                zoom,
+            }
+        }
+    }
+}
+
+/// The rows themselves, built for the snapped zoom.
+///
+/// Split from [`Panel`] so that nothing which costs anything is in a
+/// component that reads the zoom. Its props are all either fixed or
+/// snapped, so between two steps Dioxus compares them, finds them equal,
+/// and does not run this function at all.
+#[component]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the panel's own inputs, one level down so that a zoom does \
+              not rebuild every row's controls"
+)]
+fn Stack(
+    rows: RowsRef,
+    view: View,
+    colors: Colors,
+    scroll_y: ReadSignal<f64>,
+    theme: crate::theming::Theme,
+    sizing: Rows,
+    live: std::collections::HashMap<String, Live>,
+    on_press: EventHandler<(String, Control)>,
+    zoom: ReadSignal<Zoom>,
+) -> Element {
     let offsets = use_memo({
         let rows = rows.clone();
         move || Offsets::of(&rows, sizing)
@@ -423,7 +510,11 @@ pub fn Panel(
     let offsets = offsets();
     // The band of session that is BUILT, which moves a screen at a time
     // rather than a pixel at a time.
-    let built = use_memo(move || Built::down(scroll_y(), view.height));
+    // In BUILT pixels, so the band does not move when the leftover does.
+    let built = use_memo(move || {
+        let (_, sy) = zoom().residual();
+        Built::down(scroll_y() / sy, view.height)
+    });
     let built = built();
     let visible = offsets.visible(View {
         scroll_y: built.from,
@@ -442,76 +533,59 @@ pub fn Panel(
         lineage.push(folder_band(&colors, track));
     }
 
-    // Every control on screen, in one sheet. Built here rather than per
-    // row because that is the whole point of a sheet: a panel is forty
-    // rows of controls, and an `<svg>` each is forty elements and forty
-    // usvg parses where one will do.
-    // Anchored to the first visible row's own top, so what the sheet
-    // says does not change while the view moves over it.
+    // Every row's controls, as that row's OWN image.
     //
-    // This is the difference between a window that scrolls and one that
-    // crawls. The sheet is a `data:` image, and its URI is its CONTENT:
-    // put the rows where the scroll has left them and the string differs
-    // every frame, which makes it a new resource for Blitz to fetch and
-    // hand to usvg — several hundred shapes re-parsed per frame. Built
-    // where the SESSION says the rows are, the string is the same string
-    // until a new row scrolls in, and the scroll is a transform.
+    // This used to be one sheet across the whole visible band, because a
+    // panel is forty rows and an `<svg>` each looked like forty elements
+    // and forty usvg parses where one would do. What that reasoning
+    // missed is what happens to a sheet when the rows MOVE: the sheet is
+    // a `data:` URI and the URI is its content, so a vertical zoom wrote
+    // a new string every frame and Blitz re-parsed several hundred
+    // shapes to draw it.
+    //
+    // Per row, none of that happens — because a row's controls do not
+    // change size with the row. They are drawn at the size they were
+    // authored and shrink only when the row gets too short to hold them,
+    // exactly as REAPER's do, so every full-height row in the session
+    // produces the SAME string whatever the zoom. The tree carries the
+    // row's box, which scales; the image inside it does not.
     let anchor = built.from;
-    let mut sheet = Sheet::new();
     let chrome = super::art::chrome(&theme);
     let lit = super::art::lit(&theme);
     let ink = super::art::route_ink(&theme);
     let buttons = super::art::buttons(&theme);
-    for row in visible.clone() {
-        let (Some((top, height)), Some((track, depth))) = (offsets.row(row), rows.get(row)) else {
-            continue;
-        };
-        let top = top.mul_add(view.zoom_y, -anchor);
-        let height = height * view.zoom_y;
-        let body = (height - DIVIDER).max(0.5);
+    let art_for = |height: f64, depth: usize, state: Live| -> Option<(String, Vec<Label>, f64)> {
         if Density::at(height) == Density::Bar {
-            continue;
+            return None;
         }
-        let band = Band::of(height, usize::try_from(*depth).unwrap_or(0));
-        let state = live.get(&track.guid).copied().unwrap_or_default();
+        let body = (height - DIVIDER).max(0.5);
+        let band = Band::of(height, depth);
+        let mut sheet = Sheet::new();
         controls(
-            &mut sheet, &chrome, &lit, &ink, buttons, band, state, top, body,
+            &mut sheet, &chrome, &lit, &ink, buttons, band, state, 0.0, body,
         );
-    }
-    // Timed, because this is the one thing in the panel that is not
-    // cheap: several hundred shapes written out as markup, percent
-    // encoded, and handed to a parser as a NEW resource. If a scroll
-    // rebuilds it, a scroll costs that — and this is how to find out
-    // rather than assume.
-    // As tall as the rows it holds, which reach past the window at both
-    // ends by the bleed the visible range carries.
-    let sheet_h = offsets
-        .row(visible.end.saturating_sub(1))
-        .map_or(view.height, |(top, height)| {
-            (top + height).mul_add(view.zoom_y, -anchor)
-        })
-        .max(view.height);
-    let art = (!sheet.is_empty()).then(|| sheet.data_uri(ROW_W, sheet_h));
-    let labels = sheet.labels().to_vec();
+        if sheet.is_empty() {
+            return None;
+        }
+        // As tall as the ROW, not as tall as the control band. Two
+        // things the sheet draws sit below the band — the polarity
+        // control, which only appears on rows tall enough for it, and
+        // the record-input combo's caret — and an image cut to the band
+        // clipped both straight out of the picture.
+        //
+        // Sizing it to the row does not put back what per-row art was
+        // for: the height here is the SNAPPED one, so it is the same
+        // number until the zoom crosses a step, and every row of the
+        // same height in the session still writes the same string.
+        let art_h = body.max(1.0);
+        let labels = sheet.labels().to_vec();
+        Some((sheet.data_uri(ROW_W, art_h), labels, art_h))
+    };
 
     rsx! {
-        div {
-            style: "position:relative; width:{ROW_W}px; height:{view.height}px; \
-                    overflow:hidden; background:{colors.tcp_gutter}; font-family:{FONT};",
-            "data-testid": "studio-panel",
-            // The panel's own right edge — the boundary with the arrange
-            // view, and OUTSIDE the sliding part because an edge that
-            // scrolled with the session would not be an edge. One rule
-            // down the whole column rather than a fragment of one per
-            // row: it is the PANEL's edge, and every row was drawing the
-            // same pixel.
-            div {
-                style: "position:absolute; left:{ROW_W - 2.0}px; top:0; width:1px; \
-                        bottom:0; background:{colors.rule}; z-index:1;",
-            }
-            // Everything that moves with the session, under one node so
-            // that a scroll writes one transform.
-            Sliding { scroll_y, anchor, children: rsx! {
+        // Everything that moves with the session, under one node so that
+        // a scroll writes one transform.
+        Sliding { scroll_y, anchor, zoom, children: rsx! {
             for row in visible.clone() {
                 if let (Some((top, height)), Some((track, depth))) =
                     (offsets.row(row), rows.get(row))
@@ -521,6 +595,8 @@ pub fn Panel(
                         lineage.truncate(level);
                         let ancestors = lineage.clone();
                         lineage.push(folder_band(&colors, track));
+                        let height = height * view.zoom_y;
+                        let state = live.get(&track.guid).copied().unwrap_or_default();
                         rsx! {
                             Row {
                                 key: "{track.guid}",
@@ -528,30 +604,17 @@ pub fn Panel(
                                 depth: level,
                                 ancestors,
                                 top: top.mul_add(view.zoom_y, -anchor),
-                                height: height * view.zoom_y,
+                                height,
                                 colors: colors.clone(),
-                                state: live.get(&track.guid).copied().unwrap_or_default(),
+                                state,
+                                art: art_for(height, level, state),
                                 on_press,
                             }
                         }
                     }
                 }
             }
-
-            // The controls and their labels, moved as one by the scroll
-            // rather than rebuilt by it.
-            div {
-                style: "position:absolute; left:0; top:0; \
-                        width:{ROW_W}px; height:{sheet_h}px; pointer-events:none;",
-                if let Some(art) = art {
-                    Art { source: art, width: ROW_W, height: sheet_h }
-                }
-                for (index, label) in labels.into_iter().enumerate() {
-                    Word { key: "{index}", label }
-                }
-            }
-            } }
-        }
+        } }
     }
 }
 
@@ -764,8 +827,18 @@ fn caret(ink: daw_theme::Color) -> daw_theme_art::paint::Drawing {
 /// One node between the scroll and everything in it, so a scroll writes
 /// one transform instead of rebuilding forty rows of controls.
 #[component]
-fn Sliding(scroll_y: ReadSignal<f64>, anchor: f64, children: Element) -> Element {
-    let offset = scroll_y() - anchor;
+fn Sliding(
+    scroll_y: ReadSignal<f64>,
+    anchor: f64,
+    zoom: ReadSignal<Zoom>,
+    children: Element,
+) -> Element {
+    // The anchor is where the built band starts in BUILT pixels; the
+    // scroll is in the window's own. One has to be converted before they
+    // can be subtracted — done here, on the node that moves, because a
+    // node that moves may read whatever it likes.
+    let (_, sy) = zoom().residual();
+    let offset = scroll_y() - anchor * sy;
     rsx! {
         div {
             style: "position:absolute; left:0; top:0; width:100%; height:100%; \
@@ -789,6 +862,14 @@ fn Row(
     height: f64,
     colors: Colors,
     state: Live,
+    /// This row's controls as one image, the labels that go over them,
+    /// and how tall the two of them reach.
+    ///
+    /// Built by the panel rather than here so that a row is still only
+    /// its own geometry — and drawn at the size it was authored, never
+    /// stretched to the row, which is what lets the same string serve
+    /// every full-height row in the session.
+    art: Option<(String, Vec<Label>, f64)>,
     on_press: EventHandler<(String, Control)>,
 ) -> Element {
     let body = (height - DIVIDER).max(0.5);
@@ -808,8 +889,9 @@ fn Row(
     if density == Density::Bar {
         return rsx! {
             div {
-                style: "position:absolute; left:0; top:{top}px; width:{TINT_W}px; \
-                        height:{height}px; box-sizing:border-box; background:{tint}; \
+                style: "position:absolute; left:0; top:calc({top}px * var(--sy, 1)); \
+                        width:{TINT_W}px; height:calc({height}px * var(--sy, 1)); \
+                        box-sizing:border-box; background:{tint}; \
                         border-bottom:{DIVIDER}px solid {colors.divider};",
             }
         };
@@ -852,8 +934,13 @@ fn Row(
 
     rsx! {
         div {
-            style: "position:absolute; left:0; top:{top}px; width:{ROW_W}px; \
-                    height:{height}px; box-sizing:border-box; background:{tint}; \
+            // The row's BOX takes the zoom; what is inside it does not.
+            // A taller track is a taller lane with the same controls at
+            // the top of it, which is what REAPER does and what the
+            // panel did before it was asked to scale anything.
+            style: "position:absolute; left:0; top:calc({top}px * var(--sy, 1)); \
+                    width:{ROW_W}px; height:calc({height}px * var(--sy, 1)); \
+                    box-sizing:border-box; background:{tint}; \
                     border-bottom:{DIVIDER}px solid {colors.divider};",
             "data-track": "{track.guid}",
 
@@ -1054,7 +1141,20 @@ fn Row(
                 }
             }
 
-
+            // This row's controls, and the words over them. Inside the
+            // row and top-anchored, at the size they were authored —
+            // never scaled up by the zoom, and shrunk only by `Band` when
+            // the row itself is too short to hold them.
+            if let Some((source, labels, art_h)) = art {
+                div {
+                    style: "position:absolute; left:0; top:0; width:{ROW_W}px; \
+                            height:{art_h}px; pointer-events:none;",
+                    Art { source, width: ROW_W, height: art_h }
+                    for (index, label) in labels.into_iter().enumerate() {
+                        Word { key: "{index}", label }
+                    }
+                }
+            }
         }
     }
 }
