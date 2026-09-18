@@ -833,6 +833,8 @@ fn WindowSize(
     rate: Signal<f64>,
     animate: bool,
     span_x: f64,
+    /// How far the view may travel, across and down.
+    extent: (f64, f64),
     scroll: Signal<f64>,
     down: Signal<f64>,
     zoom: Signal<(f64, f64)>,
@@ -882,6 +884,15 @@ fn WindowSize(
     // the middle one of the recent ones, ignoring any gap long enough to
     // be the window sitting still. What it says is what a frame COSTS
     // while the window is working.
+    // What the pointer and the keyboard are doing.
+    //
+    // Handled at the WINIT level rather than as DOM events, because
+    // Blitz does not dispatch a wheel event to the DOM at all — it
+    // scrolls whatever is under the pointer and redraws if something
+    // moved. A modifier that turns the wheel into a zoom therefore
+    // cannot be a handler on an element; it has to be here, where the
+    // wheel arrives before anything has decided what it means.
+    let input = use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(Input::default())));
     let counted = use_hook(|| {
         std::rc::Rc::new(std::cell::RefCell::new((
             std::time::Instant::now(),
@@ -893,7 +904,84 @@ fn WindowSize(
     let mut down = down;
     let mut zoom = zoom;
     let mut gesture = gesture;
+    let driving = input.clone();
     dioxus_native::use_window_event(move |event, _| match event {
+        // `z` is a spring: hold it and the wheel and the drag become the
+        // zoom tool for the length of the hold, which is the gesture the
+        // expression editor already uses and the one the hands here
+        // already know.
+        winit::event::WindowEvent::KeyboardInput { event, .. } => {
+            if event.logical_key == winit::keyboard::Key::Character("z".into()) {
+                driving.borrow_mut().zooming = event.state.is_pressed();
+            }
+        }
+        winit::event::WindowEvent::ModifiersChanged(state) => {
+            driving.borrow_mut().shift = state.state().shift_key();
+        }
+        winit::event::WindowEvent::PointerMoved { position, .. } => {
+            let at = (position.x, position.y);
+            let mut input = driving.borrow_mut();
+            let moved = (at.0 - input.pointer.0, at.1 - input.pointer.1);
+            input.pointer = at;
+            match input.drag {
+                // The hand: middle-drag moves the session under the
+                // pointer, which is the one navigation gesture every DAW
+                // agrees on.
+                Some(Drag::Pan) => {
+                    scroll.set((scroll() - moved.0).clamp(0.0, extent.0));
+                    down.set((down() - moved.1).clamp(0.0, extent.1));
+                }
+                // And the zoom tool: sideways for time, up and down for
+                // rows, both at once if the hand moves both ways.
+                Some(Drag::Zoom) => {
+                    let (zx, zy) = zoom();
+                    zoom.set((
+                        (zx * factor(moved.0)).clamp(ZOOM_X.0, ZOOM_X.1),
+                        (zy * factor(-moved.1)).clamp(ZOOM_Y.0, ZOOM_Y.1),
+                    ));
+                }
+                None => {}
+            }
+        }
+        winit::event::WindowEvent::PointerButton { state, button, .. } => {
+            let mut input = driving.borrow_mut();
+            let pressed = state.is_pressed();
+            let which = match button {
+                winit::event::ButtonSource::Mouse(button) => *button,
+                _ => winit::event::MouseButton::Left,
+            };
+            input.drag = match (pressed, which) {
+                (true, winit::event::MouseButton::Middle) => Some(Drag::Pan),
+                (true, winit::event::MouseButton::Left) if input.zooming => Some(Drag::Zoom),
+                (true, _) => None,
+                (false, _) => None,
+            };
+        }
+        winit::event::WindowEvent::MouseWheel { delta, .. } => {
+            let (dx, dy) = match delta {
+                winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                    (f64::from(*x) * WHEEL_LINE, f64::from(*y) * WHEEL_LINE)
+                }
+                winit::event::MouseScrollDelta::PixelDelta(at) => (at.x, at.y),
+            };
+            let input = driving.borrow();
+            if input.zooming {
+                // Held `z` zooms the rows; with shift it zooms time.
+                // Two axes, one key, and shift picks which — the same
+                // split the scrollbars use.
+                let (zx, zy) = zoom();
+                if input.shift {
+                    zoom.set(((zx * factor(dy * 2.0)).clamp(ZOOM_X.0, ZOOM_X.1), zy));
+                } else {
+                    zoom.set((zx, (zy * factor(dy * 2.0)).clamp(ZOOM_Y.0, ZOOM_Y.1)));
+                }
+            } else if input.shift {
+                scroll.set((scroll() - dx - dy).clamp(0.0, extent.0));
+            } else {
+                scroll.set((scroll() - dx).clamp(0.0, extent.0));
+                down.set((down() - dy).clamp(0.0, extent.1));
+            }
+        }
         winit::event::WindowEvent::SurfaceResized(px) => {
             tracing::info!(width = px.width, height = px.height, "resized to");
             size.set((f64::from(px.width.max(1)), f64::from(px.height.max(1))));
@@ -1007,6 +1095,119 @@ const GESTURE_SECS: f64 = 6.0;
 /// How many recent frames the readout averages over.
 const RECENT: usize = 32;
 
+/// How far a wheel notch moves the session.
+const WHEEL_LINE: f64 = 40.0;
+
+/// How far a zoom may go, across and down.
+const ZOOM_X: (f64, f64) = (0.02, 32.0);
+const ZOOM_Y: (f64, f64) = (0.06, 6.0);
+
+/// How much a pixel of movement zooms by.
+///
+/// Exponential, so the gesture feels the same at every scale: dragging
+/// an inch doubles it whether you were far out or close in, where a
+/// linear step crawls at one end and jumps at the other.
+fn factor(pixels: f64) -> f64 {
+    (pixels / 260.0).exp()
+}
+
+/// How thick a scrollbar is.
+const BAR: f64 = 12.0;
+
+/// One scrollbar: a track, and a thumb saying where in the session the
+/// window is and how much of it is on screen.
+///
+/// Dragged rather than clicked-through, which is the gesture a DAW's
+/// bars actually get: the thumb IS the view, and moving it is moving
+/// the view.
+#[component]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a bar is its place, its extent and where the view is in it"
+)]
+fn Bar(
+    across: bool,
+    at: f64,
+    travel: f64,
+    window: f64,
+    left: f64,
+    top: f64,
+    length: f64,
+    colors: daw_ui::studio::lanes::Colors,
+    on_move: EventHandler<f64>,
+) -> Element {
+    let whole = (travel + window).max(1.0);
+    // Never smaller than a thumb you can hit, however long the session.
+    let thumb = (window / whole * length).max(24.0);
+    let along = (at / travel.max(1.0)) * (length - thumb);
+    let dragging = use_signal(|| Option::<f64>::None);
+    let mut held = dragging;
+
+    let (size, place) = if across {
+        (
+            format!("left:{left}px; top:{top}px; width:{length}px; height:{BAR}px;"),
+            format!(
+                "left:{along:.1}px; top:2px; width:{thumb:.1}px; height:{}px;",
+                BAR - 4.0
+            ),
+        )
+    } else {
+        (
+            format!("left:{left}px; top:{top}px; width:{BAR}px; height:{length}px;"),
+            format!(
+                "left:2px; top:{along:.1}px; width:{}px; height:{thumb:.1}px;",
+                BAR - 4.0
+            ),
+        )
+    };
+
+    rsx! {
+        div {
+            style: "position:absolute; {size} background:{colors.tcp_column};",
+            onmousedown: move |event| {
+                let at = event.data().element_coordinates();
+                held.set(Some(if across { at.x } else { at.y }));
+            },
+            onmouseup: move |_| held.set(None),
+            onmouseleave: move |_| held.set(None),
+            onmousemove: move |event| {
+                if dragging().is_none() {
+                    return;
+                }
+                let at = event.data().element_coordinates();
+                let along = if across { at.x } else { at.y };
+                // Where the thumb's middle would put the view.
+                let room = (length - thumb).max(1.0);
+                let fraction = ((along - thumb / 2.0) / room).clamp(0.0, 1.0);
+                on_move.call(fraction * travel.max(0.0));
+            },
+            div {
+                style: "position:absolute; {place} background:{colors.text_dim}; \
+                        border-radius:2px;",
+            }
+        }
+    }
+}
+
+/// What the pointer and the keyboard are doing to the view.
+#[derive(Default)]
+struct Input {
+    /// Whether the zoom spring is held.
+    zooming: bool,
+    shift: bool,
+    pointer: (f64, f64),
+    drag: Option<Drag>,
+}
+
+/// A drag in flight.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Drag {
+    /// The hand: the session moves under the pointer.
+    Pan,
+    /// The zoom tool, sprung from a held `z`.
+    Zoom,
+}
+
 #[component]
 fn Window(props: ShotProps) -> Element {
     // The window's ACTUAL size, not the one the shot was configured
@@ -1018,8 +1219,6 @@ fn Window(props: ShotProps) -> Element {
     let size = use_signal(|| (props.view.width, props.view.height));
     let rate = use_signal(|| 0.0_f64);
 
-    // Mounted only when there IS a window: the same tree renders
-    // headless for the comparisons, where there is no winit to ask.
     let (width, height) = size();
 
     let mut scroll = use_signal(|| props.view.scroll_x);
@@ -1038,6 +1237,21 @@ fn Window(props: ShotProps) -> Element {
     // How far the session runs across, for the gestures and the
     // scroller's extent alike.
     let span_x = (props.project.length_secs * PPS - props.view.width).max(1.0);
+    let (zoom_x, zoom_y) = zoom();
+    // How far the view may travel, across and down: the session's own
+    // extent less the window it is seen through. A zoom changes it,
+    // which is why it is worked out here rather than once at the start.
+    let travel = (
+        span_x * zoom_x,
+        (props
+            .rows
+            .iter()
+            .map(|(track, _)| props.sizing.height_of(track.height))
+            .sum::<f64>()
+            * zoom_y
+            - frame_height(height))
+        .max(1.0),
+    );
     // Mounted only when there IS a window: the same tree renders
     // headless for the comparisons, where there is no winit to ask.
     let tracking = if props.windowed {
@@ -1047,6 +1261,7 @@ fn Window(props: ShotProps) -> Element {
                 rate,
                 animate: props.animate,
                 span_x,
+                extent: travel,
                 scroll,
                 down,
                 zoom,
@@ -1185,46 +1400,34 @@ fn Window(props: ShotProps) -> Element {
                 modes: props.modes.clone().into(),
             }
 
-            // The thing the wheel actually turns.
-            //
-            // Blitz never dispatches a `wheel` event to the DOM: its
-            // handler calls `scroll_by` on whatever the pointer is over
-            // and redraws only if something moved. So an `onwheel`
-            // handler can never fire, and a window with nothing
-            // scrollable in it does not merely refuse to scroll — it
-            // stops repainting, because no scroll means no redraw. That
-            // is what "frozen" was.
-            //
-            // So there is a real scroller, and it is the input device:
-            // an element the size of the lane rect holding a spacer the
-            // size of the session, which Blitz scrolls natively. Its
-            // offsets come back as a `Scroll` event and become the
-            // numbers everything else is drawn from.
-            //
-            // The content is drawn UNDER it rather than inside it,
-            // because Blitz has no `position: sticky` and a panel and a
-            // ruler inside a scroller would scroll away with the
-            // session. And it is LAST, so the pointer finds it — it
-            // covers the lane rect and nothing else, which is why the
-            // panel's buttons are still clickable: they are to the left
-            // of it.
+            // The scrollbars: where you are, how much there is, and
+            // the other way to move. Ours rather than the shell's,
+            // because the wheel is handled above at the winit level —
+            // Blitz would otherwise scroll a container underneath every
+            // gesture that was meant to zoom — and because a DAW's bars
+            // are a control, not a decoration.
             if props.windowed {
-                div {
-                    style: "position:absolute; left:{lane_x()}px; top:{lane_y()}px; \
-                            width:{frame_width(width)}px; height:{frame_height(height)}px; \
-                            overflow:auto;",
-                    onscroll: move |event| {
-                        let data = event.data();
-                        scroll.set(f64::from(data.scroll_left()).max(0.0));
-                        down.set(f64::from(data.scroll_top()).max(0.0));
-                    },
-                    // The session's extent, and nothing else: what makes
-                    // the scroller scrollable and tells its bars how far
-                    // there is to go.
-                    div {
-                        style: "width:{(props.project.length_secs * PPS * zoom_x).max(1.0)}px; \
-                                height:{content_height}px;",
-                    }
+                Bar {
+                    across: true,
+                    at: scroll(),
+                    travel: travel.0,
+                    window: frame_width(width),
+                    left: lane_x(),
+                    top: height - session_daw::rails::SIDE - BAR,
+                    length: frame_width(width),
+                    colors: props.colors.clone(),
+                    on_move: move |to: f64| scroll.set(to.clamp(0.0, travel.0)),
+                }
+                Bar {
+                    across: false,
+                    at: down(),
+                    travel: travel.1,
+                    window: frame_height(height),
+                    left: width - session_daw::rails::SIDE - BAR,
+                    top: lane_y(),
+                    length: frame_height(height),
+                    colors: props.colors.clone(),
+                    on_move: move |to: f64| down.set(to.clamp(0.0, travel.1)),
                 }
             }
 
