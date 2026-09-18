@@ -486,13 +486,32 @@ pub fn Lanes(
     view: View,
     colors: Colors,
     scroll: ReadSignal<f64>,
+    /// How far DOWN the session the view is, for the same reason
+    /// `scroll` is a signal and not a number: read as a prop, a vertical
+    /// scroll re-renders every row and every item on it, which measured
+    /// at forty milliseconds a frame in a window where the horizontal
+    /// one costs nothing. Both axes move the same way now — the rows are
+    /// built for a window taller than the screen and a transform slides
+    /// them inside it.
+    #[props(default)]
+    scroll_y: ReadSignal<f64>,
     #[props(default)] shapes: Shapes,
     #[props(default)] sizing: Rows,
     #[props(default)] grid: Grid,
 ) -> Element {
-    // Which window of the session is built. A memo, so this component
-    // re-renders when the window moves and not when the scroll does.
+    // Which window of the session is built, across and down. Memos, so
+    // this component re-renders when a window MOVES and not when the
+    // scroll does.
     let built = use_memo(move || Built::around(scroll(), view));
+    let built_down = use_memo(move || {
+        Built::around(
+            scroll_y(),
+            View {
+                width: view.height,
+                ..view
+            },
+        )
+    });
     let surface = colors.surface.clone();
 
     rsx! {
@@ -502,7 +521,9 @@ pub fn Lanes(
             "data-testid": "studio-lanes",
             Panner {
                 scroll,
+                scroll_y,
                 built: built(),
+                built_down: built_down(),
                 children: rsx! {
                     Content {
                         project,
@@ -511,6 +532,7 @@ pub fn Lanes(
                         colors,
                         shapes,
                         sizing,
+                        down: built_down(),
                         grid,
                         built: built(),
                     }
@@ -553,12 +575,19 @@ impl Built {
 /// scroll — so a pan re-runs exactly this function and hands the same
 /// item vnodes straight back.
 #[component]
-fn Panner(scroll: ReadSignal<f64>, built: Built, children: Element) -> Element {
-    let offset = scroll() - built.from;
+fn Panner(
+    scroll: ReadSignal<f64>,
+    scroll_y: ReadSignal<f64>,
+    built: Built,
+    built_down: Built,
+    children: Element,
+) -> Element {
+    let across = scroll() - built.from;
+    let down = scroll_y() - built_down.from;
     rsx! {
         div {
             style: "position:absolute; left:0; top:0; width:100%; height:100%; \
-                    transform: translateX({-offset}px);",
+                    transform: translate({-across}px, {-down}px);",
             {children}
         }
     }
@@ -579,13 +608,16 @@ fn Content(
     sizing: Rows,
     grid: Grid,
     built: Built,
+    down: Built,
 ) -> Element {
-    // Inside the window, the view is the window: everything is laid out
-    // from its left edge, and the transform above puts that edge where
-    // the scroll says it goes.
+    // Inside the window, the view IS the window: everything is laid out
+    // from its top left corner, and the transform above puts that corner
+    // where the scroll says it goes.
     let view = View {
         scroll_x: built.from,
         width: built.to - built.from,
+        scroll_y: down.from,
+        height: down.to - down.from,
         ..view
     };
     // The cumulative offsets are a function of the row list alone, so

@@ -65,7 +65,7 @@ fn main() {
             |_| // `blitz_shot` and not `session_daw`: a binary's tracing target is
             // the BINARY's crate name, so a filter naming the library it
             // lives beside silently drops everything this file says.
-            "warn,blitz=info,usvg=error,session_daw=info,blitz_shot=info".into(),
+            "warn,blitz=info,usvg=error,session_daw=info,blitz_shot=info,daw_ui=info".into(),
         )
     };
     if let Some(path) = log.as_deref() {
@@ -214,7 +214,21 @@ fn main() {
                 "; wheel to scroll, shift for sideways, control to zoom"
             }
         );
-        dioxus_native::launch_cfg_with_props(Shot, props, Vec::new(), Vec::new());
+        // Opened at the size the rest of this program is measured at,
+        // rather than winit's 800x600 default — a window that opens at a
+        // size nobody benchmarks is a window whose frame rate cannot be
+        // compared to anything.
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::as_conversions,
+            reason = "a window size, which is small positive integers"
+        )]
+        let wanted = winit::dpi::PhysicalSize::new(width as u32, height as u32);
+        let attributes = winit::window::WindowAttributes::default()
+            .with_title("FastTrackStudio — studio")
+            .with_surface_size(wanted);
+        dioxus_native::launch_cfg_with_props(Shot, props, Vec::new(), vec![Box::new(attributes)]);
         return;
     }
 
@@ -782,7 +796,20 @@ fn rail_items() -> (Vec<Item>, Vec<Item>, Vec<Item>) {
 /// called conditionally, while a component can be mounted conditionally.
 /// It draws nothing; it exists to hold three hooks.
 #[component]
-fn WindowSize(size: Signal<(f64, f64)>, rate: Signal<f64>) -> Element {
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the window's clock drives every signal a gesture moves"
+)]
+fn WindowSize(
+    size: Signal<(f64, f64)>,
+    rate: Signal<f64>,
+    animate: bool,
+    span_x: f64,
+    scroll: Signal<f64>,
+    down: Signal<f64>,
+    zoom: Signal<(f64, f64)>,
+    gesture: Signal<(&'static str, f64)>,
+) -> Element {
     // Asked for rather than demanded: `use_window` consumes the context
     // and PANICS when it is missing, which a component swallows — the
     // window goes on drawing at whatever size it started with and
@@ -800,6 +827,7 @@ fn WindowSize(size: Signal<(f64, f64)>, rate: Signal<f64>) -> Element {
     });
     let mut size = size;
     let mut rate = rate;
+    let redraw = handle.clone();
     use_hook(move || {
         if let Some(handle) = handle.as_ref() {
             let px = handle.surface_size();
@@ -814,23 +842,87 @@ fn WindowSize(size: Signal<(f64, f64)>, rate: Signal<f64>) -> Element {
     // Counted in a cell and published twice a second: a signal written
     // every frame would re-render to show a number that changed because
     // it re-rendered.
-    let counted =
-        use_hook(|| std::rc::Rc::new(std::cell::Cell::new((0_u32, std::time::Instant::now()))));
+    // Frame TIMES, not a frame count.
+    //
+    // Counting redraws over wall-clock says four when nothing is moving,
+    // because Blitz redraws when something changes and an idle window
+    // changes nothing. That reads as "this is slow" when it means
+    // "nothing was asked of it" — and the two are the opposite of each
+    // other.
+    //
+    // So this keeps the interval between consecutive redraws and reports
+    // the middle one of the recent ones, ignoring any gap long enough to
+    // be the window sitting still. What it says is what a frame COSTS
+    // while the window is working.
+    let counted = use_hook(|| {
+        std::rc::Rc::new(std::cell::RefCell::new((
+            std::time::Instant::now(),
+            Vec::<f64>::with_capacity(RECENT),
+        )))
+    });
+    let started = use_hook(std::time::Instant::now);
+    let mut scroll = scroll;
+    let mut down = down;
+    let mut zoom = zoom;
+    let mut gesture = gesture;
     dioxus_native::use_window_event(move |event, _| match event {
         winit::event::WindowEvent::SurfaceResized(px) => {
             tracing::info!(width = px.width, height = px.height, "resized to");
             size.set((f64::from(px.width.max(1)), f64::from(px.height.max(1))));
         }
         winit::event::WindowEvent::RedrawRequested => {
-            let (frames, since) = counted.get();
-            let frames = frames.saturating_add(1);
-            let elapsed = since.elapsed().as_secs_f64();
-            if elapsed >= 0.5 {
-                let fps = f64::from(frames) / elapsed;
-                rate.set(fps);
-                counted.set((0, std::time::Instant::now()));
-            } else {
-                counted.set((frames, since));
+            // The gestures are driven from the window's own clock rather
+            // than from a timer. `use_future` with a sleep never ticks
+            // here — nothing polls the task runtime unless the document
+            // already has work — so the thing that IS guaranteed to
+            // happen every frame is the frame, and asking for the next
+            // one from inside it is an animation loop at whatever rate
+            // the window can actually present.
+            if animate {
+                let elapsed = started.elapsed().as_secs_f64();
+                let index =
+                    usize::try_from((elapsed / GESTURE_SECS) as u64).unwrap_or(0) % GESTURES.len();
+                let (name, at) = GESTURES[index];
+                let t = (elapsed % GESTURE_SECS) / GESTURE_SECS;
+                let (x, y, zx, zy) = at(t);
+                scroll.set(x * span_x);
+                // How far down a session this deep goes. Fixed rather
+                // than measured: the point is a brutal gesture, not a
+                // correct one.
+                down.set(y * 40_000.0);
+                zoom.set((zx, zy));
+                gesture.set((name, 0.0));
+                if let Some(handle) = redraw.as_ref() {
+                    handle.request_redraw();
+                }
+            }
+
+            let now = std::time::Instant::now();
+            let mut state = counted.borrow_mut();
+            let gap = now.duration_since(state.0).as_secs_f64() * 1000.0;
+            state.0 = now;
+            // A gap this long is the window waiting for something to do,
+            // not a frame that took this long to draw.
+            const IDLE: f64 = 200.0;
+            if gap < IDLE {
+                if state.1.len() == RECENT {
+                    state.1.remove(0);
+                }
+                state.1.push(gap);
+            }
+            if state.1.len() >= 8 {
+                let mut recent = state.1.clone();
+                recent.sort_by(f64::total_cmp);
+                let middle = recent[recent.len() / 2];
+                let worst = recent.last().copied().unwrap_or(middle);
+                if (middle - rate()).abs() > 0.5 {
+                    rate.set(middle);
+                    tracing::info!(
+                        frame_ms = format!("{middle:.1}"),
+                        worst_ms = format!("{worst:.1}"),
+                        "presented"
+                    );
+                }
             }
         }
         _ => {}
@@ -884,6 +976,9 @@ fn slow(t: f64) -> f64 {
 /// How long each gesture runs before the next.
 const GESTURE_SECS: f64 = 6.0;
 
+/// How many recent frames the readout averages over.
+const RECENT: usize = 32;
+
 #[component]
 fn Window(props: ShotProps) -> Element {
     // The window's ACTUAL size, not the one the shot was configured
@@ -897,11 +992,6 @@ fn Window(props: ShotProps) -> Element {
 
     // Mounted only when there IS a window: the same tree renders
     // headless for the comparisons, where there is no winit to ask.
-    let tracking = if props.windowed {
-        rsx! { WindowSize { size, rate } }
-    } else {
-        rsx! {}
-    };
     let (width, height) = size();
 
     let mut scroll = use_signal(|| props.view.scroll_x);
@@ -917,50 +1007,28 @@ fn Window(props: ShotProps) -> Element {
     let mut zoom = use_signal(|| (1.0_f64, props.view.zoom_y));
     let mut gesture = use_signal(|| (GESTURES[0].0, 0.0_f64));
 
-    // The two numbers the driver needs, taken out of the props before it
-    // captures them — a closure that owned the project would own it
-    // instead of the tree below.
+    // How far the session runs across, for the gestures and the
+    // scroller's extent alike.
     let span_x = (props.project.length_secs * PPS - props.view.width).max(1.0);
-    if props.animate {
-        use_future(move || async move {
-            let started = std::time::Instant::now();
-            let mut frames = 0u32;
-            let mut last = started;
-            loop {
-                // Sixty times a second, which is what a window is asked
-                // for. Anything the frame cannot finish in shows up as a
-                // rate below it rather than as a faster loop.
-                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
-                let now = std::time::Instant::now();
-                let elapsed = started.elapsed().as_secs_f64();
-                let index = ((elapsed / GESTURE_SECS) as usize) % GESTURES.len();
-                let (name, at) = GESTURES[index];
-                let t = (elapsed % GESTURE_SECS) / GESTURE_SECS;
-                let (x, y, zx, zy) = at(t);
-
-                // How far down a session this deep goes. Fixed rather
-                // than measured because the point is a brutal gesture,
-                // not a correct one.
-                let span_y = 40_000.0_f64;
-                scroll.set(x * span_x);
-                down.set(y * span_y);
-                zoom.set((zx, zy));
-
-                frames = frames.saturating_add(1);
-                if now.duration_since(last).as_secs_f64() >= 0.5 {
-                    let fps = f64::from(frames) / now.duration_since(last).as_secs_f64();
-                    gesture.set((name, fps));
-                    frames = 0;
-                    last = now;
-                }
+    // Mounted only when there IS a window: the same tree renders
+    // headless for the comparisons, where there is no winit to ask.
+    let tracking = if props.windowed {
+        rsx! {
+            WindowSize {
+                size,
+                rate,
+                animate: props.animate,
+                span_x,
+                scroll,
+                down,
+                zoom,
+                gesture,
             }
-        });
-    }
-
+        }
+    } else {
+        rsx! {}
+    };
     // What the controls are showing, held here so a press can change it.
-    // The panel hands back which track and which control; deciding what
-    // mute MEANS is the session's business, and in a demo window the
-    // session is this.
     let mut live = use_signal(|| props.live.clone());
     let (zoom_x, zoom_y) = zoom();
     // The placeholders, and a ground for them to sit on.
@@ -971,8 +1039,12 @@ fn Window(props: ShotProps) -> Element {
     };
     let lanes_x = lane_x();
     let lanes_y = lane_y();
+    // Deliberately WITHOUT the vertical scroll: reading it here would
+    // re-render this component, and with it every row, item and control
+    // below — which is the forty-millisecond frame. It travels as a
+    // signal to the two components that move, and nothing between them
+    // and it ever reads it.
     let moved = View {
-        scroll_y: down(),
         pps: PPS * zoom_x,
         zoom_y,
         width,
@@ -1034,6 +1106,7 @@ fn Window(props: ShotProps) -> Element {
                     rows: props.rows.clone(),
                     view: lanes,
                     scroll: ReadSignal::from(scroll),
+                    scroll_y: ReadSignal::from(down),
                     colors: props.colors.clone(),
                     shapes: props.shapes.clone(),
                     sizing: props.sizing,
@@ -1046,6 +1119,7 @@ fn Window(props: ShotProps) -> Element {
                     project: props.project.clone(),
                     rows: props.rows.clone(),
                     view: panel_view,
+                    scroll_y: ReadSignal::from(down),
                     colors: props.colors.clone(),
                     theme: props.theme.clone(),
                     sizing: props.sizing,
@@ -1135,7 +1209,13 @@ fn Window(props: ShotProps) -> Element {
             if props.windowed {
                 {
                     let (name, _) = gesture();
-                    let fps = rate();
+                    let frame_ms = rate();
+                    // Both, because they answer different questions: the
+                    // milliseconds are what a frame cost, the rate is
+                    // what that would sustain. A window with nothing to
+                    // do has neither, and says so rather than reporting
+                    // a very slow one.
+                    let fps = if frame_ms > 0.01 { 1000.0 / frame_ms } else { 0.0 };
                     let what = if props.animate { name } else { "window" };
                     rsx! {
                         div {
@@ -1144,7 +1224,11 @@ fn Window(props: ShotProps) -> Element {
                                     color:#e8e8ea; font-size:12px; \
                                     font-family:{daw_ui::studio::lanes::FONT}; \
                                     white-space:nowrap; pointer-events:none;",
-                            "{what} — {fps:.0} fps — {width:.0}x{height:.0}"
+                            if frame_ms > 0.01 {
+                                "{what} — {frame_ms:.1}ms/frame — {fps:.0} fps — {width:.0}x{height:.0}"
+                            } else {
+                                "{what} — idle — {width:.0}x{height:.0}"
+                            }
                         }
                     }
                 }

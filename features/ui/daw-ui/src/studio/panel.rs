@@ -33,7 +33,7 @@ use daw_theme_art::paint::tcp as art;
 use daw_theme_art::vector_controls::Interaction;
 
 use super::art::{Label, Sheet};
-use super::lanes::{Colors, DIVIDER, FONT, Offsets, Rows, View, ink_on};
+use super::lanes::{Built, Colors, DIVIDER, FONT, Offsets, Rows, View, ink_on};
 use super::{ProjectRef, RowsRef};
 
 /// A control a row can be pressed on.
@@ -388,6 +388,15 @@ pub fn Panel(
     rows: RowsRef,
     view: View,
     colors: Colors,
+    /// How far DOWN the session the view is.
+    ///
+    /// A signal and not a number in the view, for the reason the lanes
+    /// give: read as a prop, a vertical scroll re-renders every row, its
+    /// controls and its hit targets — forty milliseconds a frame in a
+    /// window where a horizontal scroll costs nothing. The rows are built
+    /// for a window taller than the screen and a transform slides them.
+    #[props(default)]
+    scroll_y: ReadSignal<f64>,
     /// The theme the controls are drawn from. Separate from [`Colors`]
     /// because the art takes a `Chrome` and the boxes take CSS strings,
     /// and resolving one from the other per frame would be work for
@@ -412,7 +421,23 @@ pub fn Panel(
         move || Offsets::of(&rows, sizing)
     });
     let offsets = offsets();
-    let visible = offsets.visible(view);
+    // The band of session that is BUILT, which moves a screen at a time
+    // rather than a pixel at a time.
+    let built = use_memo(move || {
+        Built::around(
+            scroll_y(),
+            View {
+                width: view.height,
+                ..view
+            },
+        )
+    });
+    let built = built();
+    let visible = offsets.visible(View {
+        scroll_y: built.from,
+        height: built.to - built.from,
+        ..view
+    });
 
     // The colour of the folder open at each depth, so a row can draw the
     // folders it sits inside down its own left edge. Walked from the top
@@ -429,6 +454,17 @@ pub fn Panel(
     // row because that is the whole point of a sheet: a panel is forty
     // rows of controls, and an `<svg>` each is forty elements and forty
     // usvg parses where one will do.
+    // Anchored to the first visible row's own top, so what the sheet
+    // says does not change while the view moves over it.
+    //
+    // This is the difference between a window that scrolls and one that
+    // crawls. The sheet is a `data:` image, and its URI is its CONTENT:
+    // put the rows where the scroll has left them and the string differs
+    // every frame, which makes it a new resource for Blitz to fetch and
+    // hand to usvg — several hundred shapes re-parsed per frame. Built
+    // where the SESSION says the rows are, the string is the same string
+    // until a new row scrolls in, and the scroll is a transform.
+    let anchor = built.from;
     let mut sheet = Sheet::new();
     let chrome = super::art::chrome(&theme);
     let lit = super::art::lit(&theme);
@@ -438,7 +474,7 @@ pub fn Panel(
         let (Some((top, height)), Some((track, depth))) = (offsets.row(row), rows.get(row)) else {
             continue;
         };
-        let top = top.mul_add(view.zoom_y, -view.scroll_y);
+        let top = top.mul_add(view.zoom_y, -anchor);
         let height = height * view.zoom_y;
         let body = (height - DIVIDER).max(0.5);
         if Density::at(height) == Density::Bar {
@@ -450,7 +486,20 @@ pub fn Panel(
             &mut sheet, &chrome, &lit, &ink, buttons, band, state, top, body,
         );
     }
-    let art = (!sheet.is_empty()).then(|| sheet.data_uri(ROW_W, view.height));
+    // Timed, because this is the one thing in the panel that is not
+    // cheap: several hundred shapes written out as markup, percent
+    // encoded, and handed to a parser as a NEW resource. If a scroll
+    // rebuilds it, a scroll costs that — and this is how to find out
+    // rather than assume.
+    // As tall as the rows it holds, which reach past the window at both
+    // ends by the bleed the visible range carries.
+    let sheet_h = offsets
+        .row(visible.end.saturating_sub(1))
+        .map_or(view.height, |(top, height)| {
+            (top + height).mul_add(view.zoom_y, -anchor)
+        })
+        .max(view.height);
+    let art = (!sheet.is_empty()).then(|| sheet.data_uri(ROW_W, sheet_h));
     let labels = sheet.labels().to_vec();
 
     rsx! {
@@ -459,13 +508,18 @@ pub fn Panel(
                     overflow:hidden; background:{colors.tcp_gutter}; font-family:{FONT};",
             "data-testid": "studio-panel",
             // The panel's own right edge — the boundary with the arrange
-            // view. One rule down the whole column rather than a
-            // fragment of one per row: it is the PANEL's edge, and every
-            // row was drawing the same pixel.
+            // view, and OUTSIDE the sliding part because an edge that
+            // scrolled with the session would not be an edge. One rule
+            // down the whole column rather than a fragment of one per
+            // row: it is the PANEL's edge, and every row was drawing the
+            // same pixel.
             div {
                 style: "position:absolute; left:{ROW_W - 2.0}px; top:0; width:1px; \
                         bottom:0; background:{colors.rule}; z-index:1;",
             }
+            // Everything that moves with the session, under one node so
+            // that a scroll writes one transform.
+            Sliding { scroll_y, anchor, children: rsx! {
             for row in visible.clone() {
                 if let (Some((top, height)), Some((track, depth))) =
                     (offsets.row(row), rows.get(row))
@@ -481,7 +535,7 @@ pub fn Panel(
                                 track: track.clone(),
                                 depth: level,
                                 ancestors,
-                                top: top.mul_add(view.zoom_y, -view.scroll_y),
+                                top: top.mul_add(view.zoom_y, -anchor),
                                 height: height * view.zoom_y,
                                 colors: colors.clone(),
                                 state: live.get(&track.guid).copied().unwrap_or_default(),
@@ -492,13 +546,19 @@ pub fn Panel(
                 }
             }
 
-            // The controls, over every row at once.
-            if let Some(art) = art {
-                Art { source: art, width: ROW_W, height: view.height }
+            // The controls and their labels, moved as one by the scroll
+            // rather than rebuilt by it.
+            div {
+                style: "position:absolute; left:0; top:0; \
+                        width:{ROW_W}px; height:{sheet_h}px; pointer-events:none;",
+                if let Some(art) = art {
+                    Art { source: art, width: ROW_W, height: sheet_h }
+                }
+                for (index, label) in labels.into_iter().enumerate() {
+                    Word { key: "{index}", label }
+                }
             }
-            for (index, label) in labels.into_iter().enumerate() {
-                Word { key: "{index}", label }
-            }
+            } }
         }
     }
 }
@@ -517,7 +577,13 @@ fn Art(source: String, width: f64, height: f64) -> Element {
             src: "{source}",
             width: "{width:.0}",
             height: "{height:.0}",
-            style: "position:absolute; left:0; top:0; pointer-events:none;",
+            // Sized in CSS as well as by attribute: an SVG image scales
+            // to whatever box it is given, so a parent that constrains
+            // it does not clip it — it SQUASHES it, and every control
+            // drifts further from its row the further down the panel it
+            // is. Stating the size twice is what stops that.
+            style: "position:absolute; left:0; top:0; width:{width:.0}px; \
+                    height:{height:.0}px; max-width:none; pointer-events:none;",
         }
     }
 }
@@ -699,6 +765,22 @@ fn caret(ink: daw_theme::Color) -> daw_theme_art::paint::Drawing {
         ink,
     );
     drawing
+}
+
+/// The part of the panel that moves with the session.
+///
+/// One node between the scroll and everything in it, so a scroll writes
+/// one transform instead of rebuilding forty rows of controls.
+#[component]
+fn Sliding(scroll_y: ReadSignal<f64>, anchor: f64, children: Element) -> Element {
+    let offset = scroll_y() - anchor;
+    rsx! {
+        div {
+            style: "position:absolute; left:0; top:0; width:100%; height:100%; \
+                    transform: translateY({-offset}px);",
+            {children}
+        }
+    }
 }
 
 /// One row of the panel.
