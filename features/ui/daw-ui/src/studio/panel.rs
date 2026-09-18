@@ -403,6 +403,9 @@ pub fn Panel(
     /// nothing.
     theme: crate::theming::Theme,
     #[props(default)] sizing: Rows,
+    /// A zoom in flight — see [`super::lanes::Panner`].
+    #[props(default = super::lanes::default_preview())]
+    preview: ReadSignal<(f64, f64)>,
     /// What each track's controls are showing, by guid. A track with no
     /// entry gets [`Live::default`], which is what an unread track looks
     /// like rather than a silent one.
@@ -511,7 +514,7 @@ pub fn Panel(
             }
             // Everything that moves with the session, under one node so
             // that a scroll writes one transform.
-            Sliding { scroll_y, anchor, children: rsx! {
+            Sliding { scroll_y, anchor, preview, children: rsx! {
             for row in visible.clone() {
                 if let (Some((top, height)), Some((track, depth))) =
                     (offsets.row(row), rows.get(row))
@@ -764,12 +767,21 @@ fn caret(ink: daw_theme::Color) -> daw_theme_art::paint::Drawing {
 /// One node between the scroll and everything in it, so a scroll writes
 /// one transform instead of rebuilding forty rows of controls.
 #[component]
-fn Sliding(scroll_y: ReadSignal<f64>, anchor: f64, children: Element) -> Element {
+fn Sliding(
+    scroll_y: ReadSignal<f64>,
+    anchor: f64,
+    preview: ReadSignal<(f64, f64)>,
+    children: Element,
+) -> Element {
     let offset = scroll_y() - anchor;
+    // Only the vertical half of the zoom: a panel is a fixed width and
+    // stretching it sideways would slide the arrangement off its edge.
+    let (_, sy) = preview();
     rsx! {
         div {
             style: "position:absolute; left:0; top:0; width:100%; height:100%; \
-                    transform: translateY({-offset}px);",
+                    transform-origin: 0 0; \
+                    transform: translateY({-offset}px) scaleY({sy});",
             {children}
         }
     }
