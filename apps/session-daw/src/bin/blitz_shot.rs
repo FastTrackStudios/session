@@ -150,7 +150,15 @@ fn main() {
         .or_else(|| std::env::var_os("FTS_BLITZ_WINDOW").map(|_| "drum-mixing".to_owned()));
     let (project, rows) = read_back(scene.as_deref(), std::path::Path::new(&project_path))
         .expect("read the project back");
-    let shapes = shapes_of(&project);
+    // `FTS_BLITZ_SHAPES=0` draws the lanes without waveforms or notes.
+    // Not a mode anyone wants to look at — it is the control that says
+    // how much of a frame the shapes are, which is the only way to know
+    // whether an optimisation aimed at them is aimed at anything.
+    let shapes = if std::env::var("FTS_BLITZ_SHAPES").as_deref() == Ok("0") {
+        Shapes::default()
+    } else {
+        shapes_of(&project)
+    };
 
     let view = View {
         scroll_x,
@@ -315,7 +323,68 @@ fn main() {
 /// time says a pan is slow and only the split says which pass is: Dioxus
 /// reconciling the tree, then Stylo and Taffy solving what came out, then
 /// the scene being encoded for the GPU.
+/// Put the view where the gesture says it is, `t` of the way through.
+///
+/// Writing the signals from outside the runtime rather than simulating
+/// input, because what is being measured is what the tree costs at a
+/// given view — not what winit costs to deliver a wheel notch.
+fn drive(document: &mut DioxusDocument, gesture: Gesture, t: f64) {
+    match gesture {
+        Gesture::Pan => {
+            // A minute of session under the playhead, which moves every
+            // item on screen and changes which ones are there at all.
+            SCROLL.with(|scroll| {
+                if let Some(mut scroll) = *scroll.borrow() {
+                    document.vdom.in_runtime(|| scroll.set(t * 60.0 * PPS));
+                }
+            });
+        }
+        Gesture::ZoomX | Gesture::ZoomY => {
+            // In and back out again, over the range a hand actually
+            // covers in one gesture. Exponential because a zoom is
+            // multiplicative — a linear sweep spends most of its frames
+            // at the far end and measures the wrong thing.
+            let swing = (t * std::f64::consts::TAU).sin();
+            let scale = ZOOM_SWING.powf(swing);
+            ZOOM.with(|zoom| {
+                if let Some(mut zoom) = *zoom.borrow() {
+                    document.vdom.in_runtime(|| {
+                        if gesture == Gesture::ZoomX {
+                            zoom.set((scale.clamp(ZOOM_X.0, ZOOM_X.1), 1.0));
+                        } else {
+                            zoom.set((1.0, scale.clamp(ZOOM_Y.0, ZOOM_Y.1)));
+                        }
+                    });
+                }
+            });
+        }
+    }
+}
+
+/// The zoom a still is taken at, from `FTS_BLITZ_ZOOM=x,y`.
+///
+/// So that a picture can be taken BETWEEN two of the steps the tree is
+/// built at — which is the only place the residual scaling does any
+/// work, and therefore the only place a mistake in it would show.
+fn initial_zoom() -> (f64, f64) {
+    std::env::var("FTS_BLITZ_ZOOM")
+        .ok()
+        .and_then(|v| {
+            let (x, y) = v.split_once(',')?;
+            Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+        })
+        .unwrap_or((1.0, 1.0))
+}
+
+/// How far either way a benchmarked zoom travels.
+///
+/// Four times in and four times out is a gesture a hand makes in about a
+/// second; anything wider stops being a gesture and starts being a
+/// different session.
+const ZOOM_SWING: f64 = 4.0;
+
 fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
+    let gesture = Gesture::from_env();
     let mut renderer =
         session_daw::headless::Headless::new(width, height).expect("a headless renderer");
     let mut stages = session_daw::profile::Stages::with_capacity(frames);
@@ -334,13 +403,7 @@ fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
                 reason = "a frame index over a few hundred"
             )]
             let t = frame as f64 / frames as f64;
-            // A minute of session under the playhead, which moves every
-            // item on screen and changes which ones are there at all.
-            SCROLL.with(|scroll| {
-                if let Some(mut scroll) = *scroll.borrow() {
-                    document.vdom.in_runtime(|| scroll.set(t * 60.0 * PPS));
-                }
-            });
+            drive(document, gesture, t);
             let at = Instant::now();
             document.poll(None);
             diff.push_ms(at.elapsed().as_secs_f64() * 1000.0);
@@ -382,7 +445,10 @@ fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
     // changed. An optimisation that does not move this number is an
     // optimisation of something else.
     let nodes = document.inner().tree().len();
-    println!("\n  The component window, panning the golden session\n");
+    println!(
+        "\n  The component window, {} across the golden session\n",
+        gesture.name()
+    );
     println!("  surface       {width}x{height}");
     println!("  tree          {nodes} nodes");
     println!(
@@ -396,7 +462,7 @@ fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
     // one a fling would show a hitch on if it were slow.
     println!(
         "  {:<12} {:>7.2}ms {:>7.2}ms {:>7.2}ms {:>7.2}ms {:>7.2}ms {:>9.0}",
-        "pan",
+        gesture.name(),
         frame.mean,
         frame.p99,
         frame.worst,
@@ -679,6 +745,48 @@ thread_local! {
     /// can drive it the way a scrollbar would.
     static SCROLL: std::cell::RefCell<Option<Signal<f64>>> =
         const { std::cell::RefCell::new(None) };
+    /// And both zooms, for the same reason.
+    ///
+    /// A separate slot rather than a field on the same one because only
+    /// the composed window has a zoom to drive — the lanes on their own
+    /// take a fixed `pps` as a prop, which is what makes them comparable
+    /// against the reference shot.
+    static ZOOM: std::cell::RefCell<Option<Signal<(f64, f64)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Which gesture the headless benchmark runs.
+///
+/// A pan and a zoom are not the same measurement and never were: a pan
+/// moves one transform, a zoom changes where every item is. Reporting
+/// one number for "the window" hid that for weeks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Gesture {
+    /// Across the session, which is what `pan` always did.
+    Pan,
+    /// In and out horizontally, around the middle of the travel.
+    ZoomX,
+    /// And vertically.
+    ZoomY,
+}
+
+impl Gesture {
+    /// The gesture named by `FTS_BLITZ_GESTURE`, defaulting to the pan.
+    fn from_env() -> Self {
+        match std::env::var("FTS_BLITZ_GESTURE").as_deref() {
+            Ok("zoom-x" | "zoomx") => Self::ZoomX,
+            Ok("zoom-y" | "zoomy") => Self::ZoomY,
+            _ => Self::Pan,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Pan => "pan",
+            Self::ZoomX => "zoom-x",
+            Self::ZoomY => "zoom-y",
+        }
+    }
 }
 
 #[component]
@@ -1230,7 +1338,10 @@ fn Window(props: ShotProps) -> Element {
     // item is, which is a layout, which is the honest cost of the
     // gesture rather than a failure to optimise it.
     let mut down = use_signal(|| props.view.scroll_y);
-    let zoom = use_signal(|| (1.0_f64, props.view.zoom_y));
+    let zoom = use_signal(|| (initial_zoom().0, initial_zoom().1 * props.view.zoom_y));
+    use_hook(|| {
+        ZOOM.with(|slot| *slot.borrow_mut() = Some(zoom));
+    });
     let gesture = use_signal(|| (GESTURES[0].0, 0.0_f64));
 
     // How far the session runs across, for the gestures and the
@@ -1272,6 +1383,13 @@ fn Window(props: ShotProps) -> Element {
     };
     // What the controls are showing, held here so a press can change it.
     let mut live = use_signal(|| props.live.clone());
+    // The same two numbers, as the lanes want them. A memo rather than a
+    // prop so that reading it is subscribing to it: the one node that
+    // has to move on every frame of a zoom does, and nothing else does.
+    let magnified = use_memo(move || {
+        let (x, y) = zoom();
+        daw_ui::studio::lanes::Zoom { x, y }
+    });
     let (zoom_x, zoom_y) = zoom();
     // The placeholders, and a ground for them to sit on.
     let (top_rail, right_rail) = use_hook(placeholders);
@@ -1293,7 +1411,15 @@ fn Window(props: ShotProps) -> Element {
         height,
         ..props.view
     };
+    // The lanes do NOT get the zoom folded into their view, and that is
+    // the point of the whole exercise: a view that carried it changed
+    // every frame of a gesture, and a changed view prop re-rendered every
+    // row, every item and every lane's `<svg>`. They take the base view
+    // and the zoom as a signal, and decide for themselves how much of it
+    // is worth rebuilding for.
     let lanes = View {
+        pps: PPS,
+        zoom_y: props.view.zoom_y,
         width: frame_width(width),
         height: frame_height(height),
         ..moved
@@ -1345,6 +1471,7 @@ fn Window(props: ShotProps) -> Element {
                     shapes: props.shapes.clone(),
                     sizing: props.sizing,
                     grid: props.grid,
+                    zoom: ReadSignal::from(magnified),
                 }
             }
             div {

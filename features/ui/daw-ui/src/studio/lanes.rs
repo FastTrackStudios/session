@@ -144,6 +144,88 @@ impl Default for View {
     }
 }
 
+/// How far in the view is magnified, across and down.
+///
+/// Held apart from [`View`] and delivered as a signal, because a zoom
+/// must not re-render the session. See [`Zoom::quantised`].
+#[derive(Clone, Copy, PartialEq)]
+pub struct Zoom {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl Default for Zoom {
+    fn default() -> Self {
+        Self { x: 1.0, y: 1.0 }
+    }
+}
+
+/// How coarsely the tree is BUILT, against how finely it is drawn.
+///
+/// A zoom used to re-render everything, and it was the most expensive
+/// thing the window did: 124 ms a frame at 5120x1440, of which 80 ms was
+/// the per-lane `<svg>` being serialised back to markup and re-parsed by
+/// usvg because its path data had moved a fraction of a pixel.
+///
+/// So the tree is built at a zoom SNAPPED to a step of this ratio, and
+/// the difference between that and the real zoom is carried in two CSS
+/// custom properties the boxes multiply themselves by. Between two steps
+/// nothing is rebuilt, restyled from scratch or re-parsed — one number
+/// changes on one element and the layout falls out of it.
+///
+/// This is not the transform preview that was tried and thrown away. A
+/// transform scales the PICTURE, so text stretches and the gesture lands
+/// somewhere other than where it looked; a `calc()` scales the BOX, so
+/// the type stays 8px and the layout at any ratio is the layout you get
+/// when you stop.
+///
+/// A root of two is the widest step that keeps the error invisible: a
+/// waveform at most a fifth wider than it was built, an inset at most a
+/// fifth of a pixel out, and a title crossing the width it needs a fifth
+/// early. Narrower steps buy accuracy nobody can see and pay for it in
+/// rebuilds — ten octaves of zoom crosses twenty of these and eighty of
+/// a quarter-octave one.
+const ZOOM_STEP: f64 = std::f64::consts::SQRT_2;
+
+impl Zoom {
+    /// The zoom the tree is built at: this one, snapped to a step.
+    #[must_use]
+    pub fn quantised(self) -> Self {
+        Self {
+            x: snap(self.x),
+            y: snap(self.y),
+        }
+    }
+
+    /// What the built tree has to be multiplied by to be this one.
+    ///
+    /// Always within a step of 1, which is what makes it cheap: it is a
+    /// number, not a tree.
+    #[must_use]
+    pub fn residual(self) -> (f64, f64) {
+        let built = self.quantised();
+        (ratio(self.x, built.x), ratio(self.y, built.y))
+    }
+}
+
+/// A scale snapped to the nearest [`ZOOM_STEP`], with 1.0 on a step.
+fn snap(scale: f64) -> f64 {
+    if !scale.is_finite() || scale <= 0.0 {
+        return 1.0;
+    }
+    let step = ZOOM_STEP.ln();
+    (scale.ln() / step).round().mul_add(step, 0.0).exp()
+}
+
+/// `a / b`, or one when the division would not mean anything.
+fn ratio(a: f64, b: f64) -> f64 {
+    if b.is_finite() && b > 0.0 && a.is_finite() && a > 0.0 {
+        a / b
+    } else {
+        1.0
+    }
+}
+
 /// How tall a row is drawn, from what the project stored.
 ///
 /// Anything at or below zero is unset: a stored height of nought is not
@@ -407,15 +489,29 @@ pub struct Grid {
 /// The same technique, opposite verdicts, because the renderers are not
 /// the same renderer. Measured both ways.
 #[component]
-fn Lines(grid: Grid, view: View, colors: Colors, from: f64) -> Element {
+fn Lines(
+    grid: Grid,
+    view: View,
+    colors: Colors,
+    from: f64,
+    #[props(default)] zoom: ReadSignal<Zoom>,
+) -> Element {
+    // The one thing under the lanes that is not a box: a gradient's
+    // stops are not lengths a `calc()` can be threaded through the way
+    // `left` and `width` can. So this reads the zoom itself and works in
+    // the window's own pixels — which costs nothing, because the grid is
+    // ONE element and re-rendering it is re-rendering one element.
+    let (sx, _) = zoom().residual();
+    let pps = view.pps * sx;
+    let from = from * sx;
     // Where the window's left edge falls inside a bar, so the first line
     // lands on a bar line and not wherever the window happened to start.
-    let phase = |step: f64| -(from % (step * view.pps).max(1e-9));
+    let phase = |step: f64| -(from % (step * pps).max(1e-9));
     let mut images = Vec::new();
     let mut positions = Vec::new();
     // Beats first, so a bar line painted over the same pixel wins.
     if let Some(beat) = grid.beat.filter(|b| *b > 0.0) {
-        let step = (beat * view.pps).max(1.0);
+        let step = (beat * pps).max(1.0);
         images.push(format!(
             "repeating-linear-gradient(90deg, {} 0 1px, transparent 1px {step:.3}px)",
             colors.grid_beat
@@ -423,7 +519,7 @@ fn Lines(grid: Grid, view: View, colors: Colors, from: f64) -> Element {
         positions.push(format!("{:.3}px 0", phase(beat)));
     }
     if grid.bar > 0.0 {
-        let step = (grid.bar * view.pps).max(1.0);
+        let step = (grid.bar * pps).max(1.0);
         images.push(format!(
             "repeating-linear-gradient(90deg, {} 0 1px, transparent 1px {step:.3}px)",
             colors.grid
@@ -509,35 +605,84 @@ pub fn Lanes(
     #[props(default)] shapes: Shapes,
     #[props(default)] sizing: Rows,
     #[props(default)] grid: Grid,
+    /// How far in the view is magnified — a signal, and for a harder
+    /// reason than the scroll is one.
+    ///
+    /// A zoom read as a prop re-rendered every row, every item and every
+    /// lane's `<svg>`, and the SVG is the expensive part: Blitz keeps an
+    /// inline one as a parsed usvg tree, so a path whose numbers moved is
+    /// the whole element serialised back to markup and parsed again.
+    /// Measured at 5120x1440 that was 124 ms a frame, 80 ms of it the
+    /// shapes alone.
+    ///
+    /// So the zoom arrives here and stops here. This component snaps it
+    /// to a [`ZOOM_STEP`], builds the tree for THAT, and publishes the
+    /// leftover as `--sx` and `--sy` for the boxes below to multiply
+    /// themselves by. Between two steps nothing under this node
+    /// re-renders at all.
+    #[props(default)]
+    zoom: ReadSignal<Zoom>,
 ) -> Element {
+    // What the tree is built at, and what it has to be stretched by to
+    // be what was asked for.
+    let (sx, sy) = zoom().residual();
+    let built_zoom = zoom().quantised();
+    // The view the tree BELOW is laid out in: the same window, measured
+    // in the pixels the built zoom makes rather than the ones on screen.
+    // Its width and height stay the real window's, which is a window
+    // between a fifth too wide and a sixth too narrow — a rounding the
+    // bleed already covers twice over.
+    let built_view = View {
+        pps: view.pps * built_zoom.x,
+        zoom_y: view.zoom_y * built_zoom.y,
+        ..view
+    };
     // Which window of the session is built, across and down. Memos, so
     // this component re-renders when a window MOVES and not when the
-    // scroll does.
-    let built = use_memo(move || Built::around(scroll(), view));
-    let built_down = use_memo(move || Built::down(scroll_y(), view.height));
+    // scroll does — and, now, not when the zoom does either: the scroll
+    // is divided back into built pixels before it is asked.
+    let built = use_memo(move || {
+        let (sx, _) = zoom().residual();
+        let view = View {
+            pps: view.pps * zoom().quantised().x,
+            ..view
+        };
+        Built::around(scroll() / sx, view)
+    });
+    let built_down = use_memo(move || {
+        let (_, sy) = zoom().residual();
+        Built::down(scroll_y() / sy, view.height)
+    });
     let surface = colors.surface.clone();
 
     rsx! {
         div {
+            // `--sx` and `--sy` are the whole trick. They inherit, so
+            // every box below can be written as the size it was built at
+            // times the leftover, and a zoom is one property written on
+            // one element rather than a tree rebuilt.
             style: "position:relative; width:{view.width}px; height:{view.height}px; \
-                    overflow:hidden; background:{surface}; font-family:{FONT};",
+                    overflow:hidden; background:{surface}; font-family:{FONT}; \
+                    --sx:{sx:.6}; --sy:{sy:.6};",
             "data-testid": "studio-lanes",
             Panner {
                 scroll,
                 scroll_y,
+                zoom,
                 built: built(),
                 built_down: built_down(),
                 children: rsx! {
                     Content {
                         project,
                         rows,
-                        view,
+                        view: built_view,
                         colors,
                         shapes,
                         sizing,
                         down: built_down(),
                         grid,
                         built: built(),
+                        zoom,
                     }
                 },
             }
@@ -597,12 +742,19 @@ impl Built {
 fn Panner(
     scroll: ReadSignal<f64>,
     scroll_y: ReadSignal<f64>,
+    zoom: ReadSignal<Zoom>,
     built: Built,
     built_down: Built,
     children: Element,
 ) -> Element {
-    let across = scroll() - built.from;
-    let down = scroll_y() - built_down.from;
+    // The built window's left edge is in built pixels and the scroll is
+    // in the window's own, so one has to be converted into the other
+    // before they can be subtracted. Done here, where it is two
+    // multiplications on one node, rather than pushed down as a variable
+    // — the node that moves is allowed to read whatever it likes.
+    let (sx, sy) = zoom().residual();
+    let across = scroll() - built.from * sx;
+    let down = scroll_y() - built_down.from * sy;
     rsx! {
         div {
             style: "position:absolute; left:0; top:0; width:100%; height:100%; \
@@ -628,6 +780,9 @@ fn Content(
     grid: Grid,
     built: Built,
     down: Built,
+    /// Passed straight through to the grid, which is the one thing down
+    /// here that cannot be written as a multiplication.
+    zoom: ReadSignal<Zoom>,
 ) -> Element {
     // Inside the window, the view IS the window: everything is laid out
     // from its top left corner, and the transform above puts that corner
@@ -659,8 +814,9 @@ fn Content(
 
     rsx! {
         div {
-            style: "position:absolute; left:0; top:0; width:{view.width}px; \
-                    height:{view.height}px;",
+            style: "position:absolute; left:0; top:0; \
+                    width:calc({view.width}px * var(--sx, 1)); \
+                    height:calc({view.height}px * var(--sy, 1));",
             for row in visible {
                 if let Some((top, height)) = offsets.row(row) {
                     if let Some((track, _)) = rows.get(row) {
@@ -680,7 +836,7 @@ fn Content(
                     }
                 }
             }
-            Lines { grid, view, colors: colors.clone(), from: built.from }
+            Lines { grid, view, colors: colors.clone(), from: built.from, zoom }
         }
     }
 }
@@ -752,8 +908,9 @@ fn Lane(
             // drifts the session a pixel a row. Absolutely positioned
             // children measure from the padding box, which the border
             // does not move, so every item stays where it was.
-            style: "position:absolute; left:0; top:{top}px; width:100%; \
-                    height:{height}px; box-sizing:border-box; background:{stripe}; \
+            style: "position:absolute; left:0; top:calc({top}px * var(--sy, 1)); \
+                    width:100%; height:calc({height}px * var(--sy, 1)); \
+                    box-sizing:border-box; background:{stripe}; \
                     border-bottom:{DIVIDER}px solid {colors.divider};",
             // Every shape on this lane, in ONE `<svg>`.
             //
@@ -764,9 +921,18 @@ fn Lane(
             // together anyway, because they are on the same lane.
             if !paths.is_empty() {
                 svg {
-                    width: "{view.width:.0}",
-                    height: "{body.max(1.0):.0}",
-                    style: "position:absolute; left:0; top:0; pointer-events:none;",
+                    // No width or height ATTRIBUTE, which is the point.
+                    // An attribute is part of the markup, and Blitz
+                    // re-parses an inline `<svg>` through usvg whenever
+                    // its markup changes — so an attribute that tracked
+                    // the zoom would put the 80 ms straight back. The
+                    // box is CSS, the drawing inside it is built at the
+                    // snapped zoom, and `object-fit: fill` stretches the
+                    // one to the other. Nothing here is type, so a fifth
+                    // of a stretch on a waveform is a waveform.
+                    style: "position:absolute; left:0; top:0; pointer-events:none; \
+                            width:calc({view.width}px * var(--sx, 1)); height:100%; \
+                            object-fit:fill;",
                     view_box: "0 0 {view.width:.0} {body.max(1.0):.0}",
                     preserve_aspect_ratio: "none",
                     for (d, fill) in paths {
@@ -887,8 +1053,16 @@ fn Item(
     });
     rsx! {
         div {
-            style: "position:absolute; left:{left}px; top:{top}px; width:{width}px; \
-                    height:{height}px; background:{body}; overflow:hidden; {ink}",
+            // Built at the snapped zoom and multiplied back out here, so
+            // the box is exact at any zoom while the NAME inside it stays
+            // eight pixels tall. That is the whole difference between
+            // this and scaling the picture with a transform, which was
+            // tried and thrown away for stretching the type.
+            style: "position:absolute; left:calc({left}px * var(--sx, 1)); \
+                    top:calc({top}px * var(--sy, 1)); \
+                    width:calc({width}px * var(--sx, 1)); \
+                    height:calc({height}px * var(--sy, 1)); \
+                    background:{body}; overflow:hidden; {ink}",
             "data-item": "{guid}",
             // What the item contains is drawn by its LANE — every shape
             // on a lane is one `<svg>` up there, because they share a
@@ -1114,7 +1288,61 @@ fn envelope(peaks: &[f32], left: f64, width: f64, top: f64, height: f64) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{Offsets, Rows, View, dim, envelope};
+    use super::{Offsets, Rows, View, ZOOM_STEP, Zoom, dim, envelope};
+
+    /// A tree built at the snapped zoom and stretched by the leftover is
+    /// the tree at the zoom that was asked for. If this drifts, every box
+    /// in the arrangement lands in the wrong place.
+    #[test]
+    fn the_built_zoom_and_the_leftover_multiply_back() {
+        for scale in [0.02, 0.5, 0.99, 1.0, 1.01, 1.4, 2.0, 7.3, 32.0] {
+            let zoom = Zoom { x: scale, y: scale };
+            let built = zoom.quantised();
+            let (sx, sy) = zoom.residual();
+            assert!(
+                (built.x * sx - scale).abs() < 1e-9,
+                "{scale} rebuilt as {built:?} x {sx}",
+                built = built.x
+            );
+            assert!((built.y * sy - scale).abs() < 1e-9);
+        }
+    }
+
+    /// And the leftover is never more than a step, which is what bounds
+    /// how far a waveform is stretched and how early a title appears.
+    #[test]
+    fn the_leftover_is_never_more_than_a_step() {
+        let mut scale = 0.02;
+        while scale < 32.0 {
+            let (sx, _) = Zoom { x: scale, y: 1.0 }.residual();
+            assert!(
+                sx >= 1.0 / ZOOM_STEP.sqrt() - 1e-9 && sx <= ZOOM_STEP.sqrt() + 1e-9,
+                "{scale} left {sx} over, which is more than a step"
+            );
+            scale *= 1.013;
+        }
+    }
+
+    /// Unit zoom is ON a step, so the comparison shots — which are all
+    /// taken at it — render the tree exactly as it is built, with nothing
+    /// stretched at all.
+    #[test]
+    fn unit_zoom_builds_exactly_what_it_draws() {
+        let (sx, sy) = Zoom::default().residual();
+        assert!((sx - 1.0).abs() < f64::EPSILON, "{sx}");
+        assert!((sy - 1.0).abs() < f64::EPSILON, "{sy}");
+        let built = Zoom::default().quantised();
+        assert!((built.x - 1.0).abs() < f64::EPSILON);
+    }
+
+    /// A zoom of nought is a bug upstream, not a division to perform.
+    #[test]
+    fn a_zoom_of_nothing_does_not_divide_by_it() {
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let (sx, _) = Zoom { x: bad, y: 1.0 }.residual();
+            assert!(sx.is_finite() && sx > 0.0, "{bad} gave {sx}");
+        }
+    }
 
     /// The offsets are cumulative and every row has a `..end`.
     #[test]
