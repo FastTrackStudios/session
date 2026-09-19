@@ -503,6 +503,13 @@ fn Lines(
     // ONE element and re-rendering it is re-rendering one element.
     let (sx, _) = zoom().residual();
     let pps = view.pps * sx;
+    // The window this covers, in the window's own pixels. Sized to the
+    // built window rather than stretched across the session: a
+    // repeating gradient is rasterised over the box it is given, and a
+    // box twenty-four thousand pixels wide is a different rasterisation
+    // of the same grid. One node re-rendering when the window moves is
+    // nothing; a grid that lands a fraction off every line is not.
+    let (left, span) = (from * sx, view.width * (1.0 + BLEED * 2.0));
     let from = from * sx;
     // Where the window's left edge falls inside a bar, so the first line
     // lands on a bar line and not wherever the window happened to start.
@@ -532,7 +539,8 @@ fn Lines(
     let (images, positions) = (images.join(", "), positions.join(", "));
     rsx! {
         div {
-            style: "position:absolute; inset:0; pointer-events:none; \
+            style: "position:absolute; left:{left}px; top:0; width:{span}px; \
+                    height:100%; pointer-events:none; \
                     background-image:{images}; background-position:{positions};",
         }
     }
@@ -562,6 +570,27 @@ fn Lines(
 /// tens of frames at any speed a hand can move; a quarter is one or two,
 /// for a seventh more frames a second. So a half.
 const BLEED: f64 = 0.5;
+
+/// And how far past each edge a LANE builds its ITEMS, which is more
+/// still.
+///
+/// The rows and the items are two virtualisations and they want opposite
+/// settings. A row is a dozen nodes and a session is thousands of
+/// tracks, so rows are culled tightly. An item is one node, a lane holds
+/// a handful, and culling them tightly costs something that does not
+/// show up in a steady frame at all: the moment the window moves, every
+/// lane's item list is a different list, so every lane re-renders and
+/// every item with it. Measured at 5120x1440 that was an eighty-
+/// millisecond hitch on the frame a new window was built — which is
+/// exactly the fling that goes black at the bottom.
+///
+/// Eight screens either side means a lane's items survive sixteen
+/// screens of panning before anything re-renders, and the hitch went to
+/// under a millisecond. What it costs is items built off screen, which
+/// are nodes that style and lay out — so this is a real trade and not a
+/// free one. It is worth it because the thing it buys is the worst
+/// frame, and the thing it costs is spread across every frame.
+const BLEED_ITEMS: f64 = 4.0;
 
 /// And how far DOWN, which is more.
 ///
@@ -747,14 +776,18 @@ fn Panner(
     built_down: Built,
     children: Element,
 ) -> Element {
-    // The built window's left edge is in built pixels and the scroll is
-    // in the window's own, so one has to be converted into the other
-    // before they can be subtracted. Done here, where it is two
-    // multiplications on one node, rather than pushed down as a variable
-    // — the node that moves is allowed to read whatever it likes.
-    let (sx, sy) = zoom().residual();
-    let across = scroll() - built.from * sx;
-    let down = scroll_y() - built_down.from * sy;
+    // The whole scroll, because everything below is laid out in the
+    // SESSION's coordinates rather than the built window's.
+    //
+    // That is what makes a window move cheap. Laid out against the
+    // window, every item's `left` changed the moment the window did, so
+    // building a new one rewrote two thousand style attributes and cost
+    // ninety milliseconds. Laid out against the session, a new window
+    // changes only WHICH items exist — the ones already there keep the
+    // strings they had, and this transform is the only thing that moves.
+    let _ = (built, built_down);
+    let across = scroll();
+    let down = scroll_y();
     rsx! {
         div {
             style: "position:absolute; left:0; top:0; width:100%; height:100%; \
@@ -784,10 +817,9 @@ fn Content(
     /// here that cannot be written as a multiplication.
     zoom: ReadSignal<Zoom>,
 ) -> Element {
-    // Inside the window, the view IS the window: everything is laid out
-    // from its top left corner, and the transform above puts that corner
-    // where the scroll says it goes.
-    let view = View {
+    // What the built window can see, for deciding which rows and items
+    // exist. Only that: nothing below is POSITIONED against it any more.
+    let window = View {
         scroll_x: built.from,
         width: built.to - built.from,
         scroll_y: down.from,
@@ -802,28 +834,36 @@ fn Content(
         move || Offsets::of(&rows, sizing)
     });
     let offsets = offsets();
-    let visible = offsets.visible(view);
-    // Which slice of the timeline is on screen, with a screen of bleed
-    // either side for the same reason the rows get one.
+    let visible = offsets.visible(window);
+    // Which slice of the timeline a LANE builds, on its own much wider
+    // window — see `BLEED_ITEMS`. Snapped the way every built window is,
+    // so it is the same range until the view leaves it entirely and a
+    // lane's items are the same list across a pan.
     let (from, to) = {
         let pps = view.pps.max(1e-9);
-        let left = view.scroll_x / pps;
-        let right = (view.scroll_x + view.width) / pps;
-        (left - 1.0, right + 1.0)
+        let items = Built::with_bleed(window.scroll_x, view.width, BLEED_ITEMS);
+        (items.from / pps, items.to / pps)
     };
+    // How far the session runs, which is what the rows are laid out
+    // across now that they are not laid out across the window.
+    let span = (project.length_secs * view.pps).max(view.width);
+    let deep = offsets.content_height() * view.zoom_y;
 
     rsx! {
         div {
+            // As wide and as deep as the SESSION, not as the window. The
+            // rows are stripes and the stripes have to reach wherever an
+            // item does.
             style: "position:absolute; left:0; top:0; \
-                    width:calc({view.width}px * var(--sx, 1)); \
-                    height:calc({view.height}px * var(--sy, 1));",
+                    width:calc({span}px * var(--sx, 1)); \
+                    height:calc({deep}px * var(--sy, 1));",
             for row in visible {
                 if let Some((top, height)) = offsets.row(row) {
                     if let Some((track, _)) = rows.get(row) {
                         Lane {
                             key: "{track.guid}",
                             row,
-                            top: top.mul_add(view.zoom_y, -view.scroll_y),
+                            top: top * view.zoom_y,
                             height: height * view.zoom_y,
                             track: track.clone(),
                             project: project.clone(),
@@ -873,29 +913,7 @@ fn Lane(
     let inset = (body * 0.05).clamp(0.0, 2.0);
     let colour = track_color(&colors, &track);
 
-    // The lane's shapes, in the lane's own pixels. Built here rather than
-    // inside each item because they share one `<svg>`.
     let shape_h = (body - inset * 2.0).max(0.5);
-    let paths: Vec<(String, String)> = project
-        .lane(&track.guid)
-        .iter()
-        .filter_map(|item| {
-            let x0 = item.position.as_seconds();
-            let x1 = x0 + item.length.as_seconds().max(0.001);
-            if x1 < from || x0 > to {
-                return None;
-            }
-            let left = x0.mul_add(view.pps, -view.scroll_x);
-            let width = ((x1 - x0) * view.pps).max(1.0);
-            let fill = item.color.map_or_else(
-                || colour.clone(),
-                |rgb| rgb24(rgb, if item.muted { 0.4 } else { 1.0 }),
-            );
-            let d = shapes.get(&item.guid)?.path(left, width, inset, shape_h)?;
-            Some((d, fill))
-        })
-        .collect();
-
     rsx! {
         div {
             // The stripe and the divider are the lane itself: its own
@@ -912,34 +930,6 @@ fn Lane(
                     width:100%; height:calc({height}px * var(--sy, 1)); \
                     box-sizing:border-box; background:{stripe}; \
                     border-bottom:{DIVIDER}px solid {colors.divider};",
-            // Every shape on this lane, in ONE `<svg>`.
-            //
-            // A waveform was an `<svg>` and a `<path>` inside each item's
-            // box: three nodes an item, two of which said nothing the
-            // lane could not say once. Collapsed, an item costs one node
-            // and its shape costs one — and the shapes of a lane move
-            // together anyway, because they are on the same lane.
-            if !paths.is_empty() {
-                svg {
-                    // No width or height ATTRIBUTE, which is the point.
-                    // An attribute is part of the markup, and Blitz
-                    // re-parses an inline `<svg>` through usvg whenever
-                    // its markup changes — so an attribute that tracked
-                    // the zoom would put the 80 ms straight back. The
-                    // box is CSS, the drawing inside it is built at the
-                    // snapped zoom, and `object-fit: fill` stretches the
-                    // one to the other. Nothing here is type, so a fifth
-                    // of a stretch on a waveform is a waveform.
-                    style: "position:absolute; left:0; top:0; pointer-events:none; \
-                            width:calc({view.width}px * var(--sx, 1)); height:100%; \
-                            object-fit:fill;",
-                    view_box: "0 0 {view.width:.0} {body.max(1.0):.0}",
-                    preserve_aspect_ratio: "none",
-                    for (d, fill) in paths {
-                        path { d: "{d}", fill: "{fill}" }
-                    }
-                }
-            }
             for item in project.lane(&track.guid) {
                 {
                     let x0 = item.position.as_seconds();
@@ -948,7 +938,7 @@ fn Lane(
                     if x1 < from || x0 > to {
                         return rsx! {};
                     }
-                    let left = x0.mul_add(view.pps, -view.scroll_x);
+                    let left = x0 * view.pps;
                     let width = ((x1 - x0) * view.pps).max(1.0);
                     // Where the screen cuts this item, as fractions of
                     // it — the shape and the box it is drawn in are both
@@ -960,6 +950,14 @@ fn Lane(
                         |rgb| rgb24(rgb, if item.muted { 0.4 } else { 1.0 }),
                     );
                     let _ = (seen_from, seen_to);
+                    // The shape as a PATH, in the reference box every
+                    // shape is drawn in — see `Item`. A string that does
+                    // not mention the view, so it is the same string on
+                    // every frame and Blitz parses it once.
+                    let shape = shapes
+                        .get(&item.guid)
+                        .filter(|_| shape_h >= 2.0)
+                        .and_then(|shape| shape.path(0.0, REF_W, 0.0, REF_H));
                     rsx! {
                         Item {
                             key: "{item.guid}",
@@ -967,8 +965,9 @@ fn Lane(
                             left,
                             top: inset,
                             width,
-                            height: (body - inset * 2.0).max(0.5),
+                            height: shape_h,
                             colour,
+                            shape,
                             title: project.title(item).map(str::to_owned),
                             row_height: height,
                             text: colors.text.clone(),
@@ -979,6 +978,17 @@ fn Lane(
         }
     }
 }
+
+/// The box every shape is drawn in, whatever size it ends up.
+///
+/// A shape's markup must not mention the view, or Blitz re-parses it
+/// every time the view moves — so it is drawn once at a reference size
+/// and stretched to the item by CSS. The numbers are arbitrary and only
+/// their ratio to a real item matters; a thousand across gives a
+/// fifty-point waveform twenty units a peak, which is more resolution
+/// than the peaks have.
+const REF_W: f64 = 1000.0;
+const REF_H: f64 = 100.0;
 
 /// How tall a ROW has to be before a title is worth writing on it.
 ///
@@ -1030,6 +1040,18 @@ fn Item(
     width: f64,
     height: f64,
     colour: String,
+    /// What the item CONTAINS, as a path in the reference box.
+    ///
+    /// A string that mentions neither the scroll nor the zoom, which is
+    /// the whole reason it is drawn here rather than by the lane. Blitz
+    /// keeps an inline `<svg>` as a parsed usvg tree and re-parses it
+    /// whenever its markup changes; a lane's shared `<svg>` held every
+    /// item at its place in the built window, so every pan that built a
+    /// new window re-parsed every waveform on screen. Measured, that was
+    /// 85% of a 95 ms hitch. Per item and in a fixed box, the markup is
+    /// the same markup for the life of the item.
+    #[props(default)]
+    shape: Option<String>,
     title: Option<String>,
     /// How tall the ROW is, which is what decides whether a name fits.
     row_height: f64,
@@ -1042,15 +1064,18 @@ fn Item(
     let named =
         title.filter(|_| row_height >= TITLE_MIN_H && width - TITLE_PAD * 2.0 >= TITLE_MIN_W);
 
-    // The name is the item's OWN text rather than a box inside it: the
-    // line box it needs is the same one either way, and a node per
-    // titled item is a node per titled item.
-    let ink = named.as_ref().map_or_else(String::new, |_| {
-        format!(
-            "padding-left:{TITLE_PAD}px; font-size:{TITLE_SIZE}px; \
-             line-height:{TITLE_LINE}px; color:{text}; white-space:nowrap;"
-        )
-    });
+    // The name used to be the item's own text, which cost no node at
+    // all. It cannot be, now that the shape is a positioned child: a
+    // positioned element paints above its parent's inline content
+    // whatever the document order says, so the waveform simply covered
+    // every title. Two positioned siblings DO paint in order, so the
+    // name becomes one — a node, and only on an item wide enough and a
+    // row tall enough to have asked for one.
+    let ink = format!(
+        "position:absolute; left:{TITLE_PAD}px; top:0; font-size:{TITLE_SIZE}px; \
+         line-height:{TITLE_LINE}px; color:{text}; white-space:nowrap; \
+         pointer-events:none;"
+    );
     rsx! {
         div {
             // Built at the snapped zoom and multiplied back out here, so
@@ -1062,14 +1087,23 @@ fn Item(
                     top:calc({top}px * var(--sy, 1)); \
                     width:calc({width}px * var(--sx, 1)); \
                     height:calc({height}px * var(--sy, 1)); \
-                    background:{body}; overflow:hidden; {ink}",
+                    background:{body}; overflow:hidden;",
             "data-item": "{guid}",
-            // What the item contains is drawn by its LANE — every shape
-            // on a lane is one `<svg>` up there, because they share a
-            // height and a transform and an element each said nothing
-            // the lane could not say once.
+            // The shape, drawn in a box of its own that CSS then
+            // stretches to the item. No width or height attribute: an
+            // attribute is markup, and markup that tracked the item's
+            // size would be re-parsed on every zoom.
+            if let Some(d) = shape {
+                svg {
+                    style: "position:absolute; left:0; top:0; width:100%; height:100%; \
+                            object-fit:fill; pointer-events:none;",
+                    view_box: "0 0 {REF_W:.0} {REF_H:.0}",
+                    preserve_aspect_ratio: "none",
+                    path { d: "{d}", fill: "{colour}" }
+                }
+            }
             if let Some(name) = named {
-                "{name}"
+                div { style: "{ink}", "{name}" }
             }
         }
     }
