@@ -27,6 +27,18 @@ use super::shape::{
 pub struct Flat {
     /// The node path, `/`-joined, e.g. `Drum Kit/Kick/Sum/In`.
     pub path: String,
+    /// Which RECORDING this track's items belong to.
+    ///
+    /// The mics of one drum are one performance: the same punches, the
+    /// same comp, the same edits. So they share an item layout, and the
+    /// key they share is the piece they are mics of — `In`, `Out` and
+    /// `Trig` all say `Drum Kit/Kick/Sum`.
+    ///
+    /// Parallel colour does not: a Sub, a Verb bank and a Fundamental
+    /// are fed from the take rather than being it, and giving them the
+    /// take's own boundaries would say something about them that is not
+    /// true.
+    pub take: String,
     /// Track name.
     pub name: String,
     /// RGB colour.
@@ -162,18 +174,46 @@ pub fn is_piece(node: &Node, parent_is_piece: bool) -> bool {
 pub fn flatten(shape: &Shape) -> Vec<Flat> {
     let mut out = Vec::new();
     for root in &shape.roots {
-        flatten_node(root, &mut Vec::new(), false, &mut out);
+        flatten_node(root, &mut Vec::new(), false, None, &mut out);
     }
     out
 }
 
-fn flatten_node(node: &Node, path: &mut Vec<String>, parent_is_piece: bool, out: &mut Vec<Flat>) {
+/// Whether a track's items are its own rather than the take's.
+///
+/// Parallel colour: fed from the performance rather than being it. A
+/// Verb bank's returns come and go with the reverb, not with the punch.
+fn has_its_own_comp(name: &str) -> bool {
+    matches!(name, "Sub" | "Verb" | "Fund")
+}
+
+/// `enclosing` is the nearest enclosing piece's path — the recording
+/// everything inside it is a microphone on.
+fn flatten_node(
+    node: &Node,
+    path: &mut Vec<String>,
+    parent_is_piece: bool,
+    enclosing: Option<&str>,
+    out: &mut Vec<Flat>,
+) {
     path.push(node.name.clone());
     let joined = path.join("/");
     let piece = is_piece(node, parent_is_piece);
+    let take = match enclosing {
+        Some(piece_path) if parent_is_piece && !has_its_own_comp(&node.name) => {
+            piece_path.to_owned()
+        }
+        _ => joined.clone(),
+    };
+    let inside = if piece {
+        joined.clone()
+    } else {
+        enclosing.unwrap_or(&joined).to_owned()
+    };
     out.push(Flat {
         guid: guid(&format!("track:{joined}")),
         path: joined,
+        take,
         name: node.name.clone(),
         colour: node.colour,
         kind: node.kind,
@@ -189,7 +229,7 @@ fn flatten_node(node: &Node, path: &mut Vec<String>, parent_is_piece: bool, out:
         fx: node.fx.clone(),
     });
     for child in &node.children {
-        flatten_node(child, path, piece, out);
+        flatten_node(child, path, piece, Some(&inside), out);
     }
     path.pop();
 }
@@ -487,7 +527,11 @@ fn with_items(mut builder: TrackBuilder, track: &Flat, context: &TrackContext) -
     let name = track.name.clone();
     let media = track.media_file();
     let midi = track.is_midi();
-    for (n, placed) in items_for(context.layout, &track.path, context.bars)
+    // Seeded by the TAKE, not by the track: the mics of one drum were
+    // recorded together and comped together, so their items land in the
+    // same places. Seeding per track gave a snare top and a snare bottom
+    // different punches, which is not a session anyone has ever had.
+    for (n, placed) in items_for(context.layout, &track.take, context.bars)
         .into_iter()
         .enumerate()
     {
