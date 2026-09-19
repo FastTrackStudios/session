@@ -1382,6 +1382,19 @@ studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
     FTS_BLITZ_LOG=/tmp/fts-studio.log \
     ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png
 
+# The studio driving itself: the golden session, with the benchmark's own
+# gestures running on screen.
+#
+# The same tree, the same session and the same numbers as
+# `just studio-bench` — so what the table says and what the window feels
+# like are one thing measured twice, which is the only way to tell a
+# frame time that is real from one that is a model of itself. The corner
+# reads out what each frame cost.
+#
+# `just studio` is the same window with your hands on it instead.
+studio-demo SIZE="5120x1440":
+    @just studio animate "{{SIZE}}"
+
 # Drive one gesture headlessly and say what a frame of it costs.
 #
 #   just studio-bench pan          across the session
