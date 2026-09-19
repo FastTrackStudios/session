@@ -93,25 +93,63 @@ pub enum Shape {
 /// this size deep-compared on every render would cost more than the
 /// thing it is memoising.
 #[derive(Clone)]
-pub struct Shapes(pub Arc<HashMap<String, Shape>>);
+pub struct Shapes {
+    by_guid: Arc<HashMap<String, Shape>>,
+    /// Each shape already written out as the path it draws as.
+    ///
+    /// Done once, at the point the shapes arrive, because the answer
+    /// depends only on the shape: every item draws into the same
+    /// reference box, so there is nothing about the view to wait for.
+    ///
+    /// Behind an `Arc<str>` each, which is the part that matters. A
+    /// lane hands its items their paths on every render, and a snap
+    /// step re-renders every lane — with `String` that was three
+    /// thousand copies of a path and three thousand comparisons of one,
+    /// which is most of a ninety-millisecond frame. An `Arc<str>` copies
+    /// a refcount, and comparing two that are the same allocation is a
+    /// pointer test.
+    paths: Arc<HashMap<String, Arc<str>>>,
+}
 
 impl PartialEq for Shapes {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.by_guid, &other.by_guid)
     }
 }
 
 impl Default for Shapes {
     fn default() -> Self {
-        Self(Arc::new(HashMap::new()))
+        Self::new(HashMap::new())
     }
 }
 
 impl Shapes {
+    /// Every item's shape, with its path written out.
+    #[must_use]
+    pub fn new(by_guid: HashMap<String, Shape>) -> Self {
+        let paths = by_guid
+            .iter()
+            .filter_map(|(guid, shape)| {
+                let d = shape.path(0.0, REF_W, 0.0, REF_H)?;
+                Some((guid.clone(), Arc::from(d.as_str())))
+            })
+            .collect();
+        Self {
+            by_guid: Arc::new(by_guid),
+            paths: Arc::new(paths),
+        }
+    }
+
     /// The shape of an item, if it has been read.
     #[must_use]
     pub fn get(&self, guid: &str) -> Option<&Shape> {
-        self.0.get(guid)
+        self.by_guid.get(guid)
+    }
+
+    /// And the path it draws as, in the reference box.
+    #[must_use]
+    pub fn path(&self, guid: &str) -> Option<Arc<str>> {
+        self.paths.get(guid).map(Arc::clone)
     }
 }
 
@@ -185,7 +223,7 @@ impl Default for Zoom {
 /// early. Narrower steps buy accuracy nobody can see and pay for it in
 /// rebuilds — ten octaves of zoom crosses twenty of these and eighty of
 /// a quarter-octave one.
-const ZOOM_STEP: f64 = std::f64::consts::SQRT_2;
+const ZOOM_STEP: f64 = 4.0;
 
 impl Zoom {
     /// The zoom the tree is built at: this one, snapped to a step.
@@ -501,23 +539,39 @@ fn Lines(
     // `left` and `width` can. So this reads the zoom itself and works in
     // the window's own pixels — which costs nothing, because the grid is
     // ONE element and re-rendering it is re-rendering one element.
-    let (sx, _) = zoom().residual();
-    let pps = view.pps * sx;
-    // The window this covers, in the window's own pixels. Sized to the
-    // built window rather than stretched across the session: a
-    // repeating gradient is rasterised over the box it is given, and a
-    // box twenty-four thousand pixels wide is a different rasterisation
-    // of the same grid. One node re-rendering when the window moves is
-    // nothing; a grid that lands a fraction off every line is not.
-    let (left, span) = (from * sx, view.width * (1.0 + BLEED * 2.0));
-    let from = from * sx;
+    // The view arrives carrying the SNAPPED scale, because that is what
+    // the decisions above it were made at; the leftover turns it into
+    // the live one. Multiplying by the whole zoom here would apply it
+    // twice, which drew the grid at a quarter pitch and filled every
+    // lane with a hatch.
+    let pps = view.pps * zoom().residual().0;
+    // `from` arrives in seconds, like everything else laid out down
+    // here; this is the one place it becomes pixels, because a
+    // gradient's stops are not lengths a `calc()` can be threaded
+    // through. Re-rendering costs nothing: the grid is ONE element.
+    //
+    // Sized to the built window rather than stretched across the
+    // session, because a repeating gradient is rasterised over the box
+    // it is given and a twenty-four-thousand pixel one is a different
+    // rasterisation of the same lines.
+    let left = from * pps;
+    let span = view.width * (1.0 + BLEED * 2.0);
+    let from = left;
     // Where the window's left edge falls inside a bar, so the first line
     // lands on a bar line and not wherever the window happened to start.
     let phase = |step: f64| -(from % (step * pps).max(1e-9));
     let mut images = Vec::new();
     let mut positions = Vec::new();
-    // Beats first, so a bar line painted over the same pixel wins.
-    if let Some(beat) = grid.beat.filter(|b| *b > 0.0) {
+    // Beats first, so a bar line painted over the same pixel wins —
+    // and only while there is room to tell one from the next. A
+    // subdivision at six pixels is not a grid, it is a hatch, and it
+    // hides the material it is supposed to be measuring.
+    //
+    // Decided here rather than by whoever built the `Grid`, because
+    // this is where the live zoom is known: a division chosen once when
+    // the session opened is a division that is wrong the moment anybody
+    // zooms.
+    if let Some(beat) = grid.beat.filter(|b| *b > 0.0 && *b * pps >= BEAT_LEGIBLE) {
         let step = (beat * pps).max(1.0);
         images.push(format!(
             "repeating-linear-gradient(90deg, {} 0 1px, transparent 1px {step:.3}px)",
@@ -525,7 +579,7 @@ fn Lines(
         ));
         positions.push(format!("{:.3}px 0", phase(beat)));
     }
-    if grid.bar > 0.0 {
+    if grid.bar > 0.0 && grid.bar * pps >= BAR_LEGIBLE {
         let step = (grid.bar * pps).max(1.0);
         images.push(format!(
             "repeating-linear-gradient(90deg, {} 0 1px, transparent 1px {step:.3}px)",
@@ -545,6 +599,18 @@ fn Lines(
         }
     }
 }
+
+/// How close together a beat line may be drawn before it stops being a
+/// grid, in pixels.
+///
+/// Below this the subdivision is a hatch over the material rather than a
+/// measure of it — and at a zoom showing a whole song, sixteen lines a
+/// bar is a grey wash where the waveform should be.
+const BEAT_LEGIBLE: f64 = 12.0;
+
+/// And the same for the bar lines, which survive much further out
+/// because a bar is what a song is counted in.
+const BAR_LEGIBLE: f64 = 4.0;
 
 /// How far the lanes are built past each edge of the screen, in screens.
 ///
@@ -652,9 +718,9 @@ pub fn Lanes(
     #[props(default)]
     zoom: ReadSignal<Zoom>,
 ) -> Element {
-    // What the tree is built at, and what it has to be stretched by to
-    // be what was asked for.
-    let (sx, sy) = zoom().residual();
+    // What is DRAWN, and what the tree is built for.
+    let live_px = view.pps * zoom().x;
+    let live_zy = view.zoom_y * zoom().y;
     let built_zoom = zoom().quantised();
     // The view the tree BELOW is laid out in: the same window, measured
     // in the pixels the built zoom makes rather than the ones on screen.
@@ -670,29 +736,50 @@ pub fn Lanes(
     // this component re-renders when a window MOVES and not when the
     // scroll does — and, now, not when the zoom does either: the scroll
     // is divided back into built pixels before it is asked.
+    // In the SESSION's units — seconds across, unzoomed row pixels down
+    // — because that is what everything below is laid out in and a
+    // window in screen pixels would name a different stretch of session
+    // at every zoom.
+    //
+    // Divided by the SNAPPED scale rather than the live one, which is
+    // the whole remaining job of the snap: it makes the window's size a
+    // number that holds still, so the window itself only moves when the
+    // view leaves it.
     let built = use_memo(move || {
-        let (sx, _) = zoom().residual();
-        let view = View {
-            pps: view.pps * zoom().quantised().x,
-            ..view
-        };
-        Built::around(scroll() / sx, view)
+        let across = (view.pps * zoom().quantised().x).max(1e-9);
+        Built::around(
+            scroll() / across,
+            View {
+                width: view.width / across,
+                ..view
+            },
+        )
     });
     let built_down = use_memo(move || {
-        let (_, sy) = zoom().residual();
-        Built::down(scroll_y() / sy, view.height)
+        let down = (view.zoom_y * zoom().quantised().y).max(1e-9);
+        Built::down(scroll_y() / down, view.height / down)
     });
     let surface = colors.surface.clone();
 
     rsx! {
         div {
-            // `--sx` and `--sy` are the whole trick. They inherit, so
-            // every box below can be written as the size it was built at
-            // times the leftover, and a zoom is one property written on
-            // one element rather than a tree rebuilt.
+            // `--px` and `--zy` are the whole trick: pixels per second,
+            // and how far down the rows are stretched. They inherit, so
+            // every box below is written in the session's OWN units —
+            // seconds across, unzoomed row pixels down — and multiplied
+            // into place here. A zoom is then one property written on one
+            // element, and not one string rewritten per box.
+            //
+            // The residual scheme this replaced published the leftover
+            // between a snapped zoom and the real one, which meant the
+            // snapped zoom was still in every string: crossing a snap
+            // step rewrote the whole tree and cost a tenth of a second.
+            // The snap survives, but only for the decisions that are
+            // genuinely discrete — which rows and items exist, and
+            // whether a title fits.
             style: "position:relative; width:{view.width}px; height:{view.height}px; \
                     overflow:hidden; background:{surface}; font-family:{FONT}; \
-                    --sx:{sx:.6}; --sy:{sy:.6};",
+                    --px:{live_px:.5}; --zy:{live_zy:.5};",
             "data-testid": "studio-lanes",
             Panner {
                 scroll,
@@ -785,7 +872,7 @@ fn Panner(
     // ninety milliseconds. Laid out against the session, a new window
     // changes only WHICH items exist — the ones already there keep the
     // strings they had, and this transform is the only thing that moves.
-    let _ = (built, built_down);
+    let _ = (built, built_down, zoom);
     let across = scroll();
     let down = scroll_y();
     rsx! {
@@ -817,13 +904,17 @@ fn Content(
     /// here that cannot be written as a multiplication.
     zoom: ReadSignal<Zoom>,
 ) -> Element {
-    // What the built window can see, for deciding which rows and items
-    // exist. Only that: nothing below is POSITIONED against it any more.
+    // What the built window can see, in the session's own units: which
+    // rows and items exist, and nothing else. Nothing below is
+    // POSITIONED against it any more.
     let window = View {
         scroll_x: built.from,
         width: built.to - built.from,
         scroll_y: down.from,
         height: down.to - down.from,
+        // The rows are measured unzoomed now, so the range that picks
+        // them must be too.
+        zoom_y: 1.0,
         ..view
     };
     // The cumulative offsets are a function of the row list alone, so
@@ -840,14 +931,17 @@ fn Content(
     // so it is the same range until the view leaves it entirely and a
     // lane's items are the same list across a pan.
     let (from, to) = {
-        let pps = view.pps.max(1e-9);
-        let items = Built::with_bleed(window.scroll_x, view.width, BLEED_ITEMS);
-        (items.from / pps, items.to / pps)
+        let seconds = view.width / view.pps.max(1e-9);
+        let items = Built::with_bleed(window.scroll_x, seconds, BLEED_ITEMS);
+        (items.from, items.to)
     };
-    // How far the session runs, which is what the rows are laid out
-    // across now that they are not laid out across the window.
-    let span = (project.length_secs * view.pps).max(view.width);
-    let deep = offsets.content_height() * view.zoom_y;
+    // How far the session runs, in its own units: seconds across and
+    // unzoomed row pixels down. Multiplied into place by `--px` and
+    // `--zy`, so neither number here moves when the zoom does.
+    let span = project.length_secs.max(view.width / view.pps.max(1e-9));
+    let deep = offsets
+        .content_height()
+        .max(view.height / view.zoom_y.max(1e-9));
 
     rsx! {
         div {
@@ -855,16 +949,22 @@ fn Content(
             // rows are stripes and the stripes have to reach wherever an
             // item does.
             style: "position:absolute; left:0; top:0; \
-                    width:calc({span}px * var(--sx, 1)); \
-                    height:calc({deep}px * var(--sy, 1));",
+                    width:calc({span:.4}px * var(--px, 1)); \
+                    height:calc({deep:.3}px * var(--zy, 1));",
             for row in visible {
                 if let Some((top, height)) = offsets.row(row) {
                     if let Some((track, _)) = rows.get(row) {
                         Lane {
                             key: "{track.guid}",
                             row,
-                            top: top * view.zoom_y,
-                            height: height * view.zoom_y,
+                            // In the session's units. The DRAWN height
+                            // travels beside them, because whether a
+                            // title or a waveform fits is a question
+                            // about pixels and is answered at the
+                            // snapped zoom.
+                            top,
+                            height,
+                            drawn: height * view.zoom_y,
                             track: track.clone(),
                             project: project.clone(),
                             view,
@@ -890,8 +990,16 @@ fn Content(
 )]
 fn Lane(
     row: usize,
+    /// Where the row starts and how tall it is, in UNZOOMED row pixels —
+    /// the session's own units, multiplied into place by `--zy`.
     top: f64,
     height: f64,
+    /// And how tall it is actually drawn, at the snapped zoom.
+    ///
+    /// Only for the questions that are about pixels: whether a title
+    /// fits, whether there is room for a waveform. Those are discrete,
+    /// so they are allowed to be a frame behind; the geometry is not.
+    drawn: f64,
     track: daw_proto::Track,
     project: ProjectRef,
     view: View,
@@ -900,7 +1008,7 @@ fn Lane(
     from: f64,
     to: f64,
 ) -> Element {
-    let body = (height - DIVIDER).max(0.5);
+    let body = (drawn - DIVIDER).max(0.5);
     let stripe = if row % 2 == 0 {
         &colors.row_a
     } else {
@@ -910,7 +1018,13 @@ fn Lane(
     // three-pixel row leaves nothing to see — so it scales down as the
     // row does, and a collapsed session still shows its items as bands
     // rather than as empty lanes.
+    //
+    // Written as CSS rather than worked out here, because it has to
+    // follow the LIVE zoom and everything else in this function follows
+    // the snapped one. `clamp` says exactly what the line below says.
     let inset = (body * 0.05).clamp(0.0, 2.0);
+    let inset_css =
+        format!("clamp(0px, calc(({height}px * var(--zy, 1) - {DIVIDER}px) * 0.05), 2px)");
     let colour = track_color(&colors, &track);
 
     let shape_h = (body - inset * 2.0).max(0.5);
@@ -926,8 +1040,8 @@ fn Lane(
             // drifts the session a pixel a row. Absolutely positioned
             // children measure from the padding box, which the border
             // does not move, so every item stays where it was.
-            style: "position:absolute; left:0; top:calc({top}px * var(--sy, 1)); \
-                    width:100%; height:calc({height}px * var(--sy, 1)); \
+            style: "position:absolute; left:0; top:calc({top:.3}px * var(--zy, 1)); \
+                    width:100%; height:calc({height:.3}px * var(--zy, 1)); \
                     box-sizing:border-box; background:{stripe}; \
                     border-bottom:{DIVIDER}px solid {colors.divider};",
             for item in project.lane(&track.guid) {
@@ -938,38 +1052,46 @@ fn Lane(
                     if x1 < from || x0 > to {
                         return rsx! {};
                     }
-                    let left = x0 * view.pps;
-                    let width = ((x1 - x0) * view.pps).max(1.0);
-                    // Where the screen cuts this item, as fractions of
-                    // it — the shape and the box it is drawn in are both
-                    // cut to this.
-                    let seen_from = ((-left) / width).clamp(0.0, 1.0);
-                    let seen_to = ((view.width - left) / width).clamp(0.0, 1.0);
+                    // In SECONDS. `--px` turns them into pixels, so a
+                    // zoom never touches this string.
+                    let left = x0;
+                    let width = (x1 - x0).max(1e-6);
+                    // Whether there is room to write a name on it —
+                    // the one question here that is about pixels, and
+                    // therefore the one answered at the snapped zoom.
+                    let named = body >= TITLE_MIN_H
+                        && (width * view.pps) - TITLE_PAD * 2.0 >= TITLE_MIN_W;
                     let colour = item.color.map_or_else(
                         || colour.clone(),
                         |rgb| rgb24(rgb, if item.muted { 0.4 } else { 1.0 }),
                     );
-                    let _ = (seen_from, seen_to);
                     // The shape as a PATH, in the reference box every
                     // shape is drawn in — see `Item`. A string that does
                     // not mention the view, so it is the same string on
                     // every frame and Blitz parses it once.
-                    let shape = shapes
-                        .get(&item.guid)
-                        .filter(|_| shape_h >= 2.0)
-                        .and_then(|shape| shape.path(0.0, REF_W, 0.0, REF_H));
+                    let shape = (shape_h >= 2.0)
+                        .then(|| shapes.path(&item.guid))
+                        .flatten();
                     rsx! {
                         Item {
                             key: "{item.guid}",
                             guid: item.guid.clone(),
                             left,
-                            top: inset,
+                            inset: inset_css.clone(),
                             width,
-                            height: shape_h,
                             colour,
                             shape,
-                            title: project.title(item).map(str::to_owned),
-                            row_height: height,
+                            // The DECISION, not the numbers behind it.
+                            // A snap step changes the numbers for every
+                            // item on screen and the decision for almost
+                            // none of them, so passing the numbers made
+                            // every item re-render and passing this
+                            // makes only the handful that actually
+                            // gained or lost a name.
+                            title: project
+                                .title(item)
+                                .map(str::to_owned)
+                                .filter(|_| named),
                             text: colors.text.clone(),
                         }
                     }
@@ -1035,10 +1157,13 @@ pub const FONT: &str = "'DejaVu Sans', 'Bitstream Vera Sans', sans-serif";
 )]
 fn Item(
     guid: String,
+    /// Where it starts and how long it lasts, in SECONDS. `--px` turns
+    /// them into pixels, so a zoom never rewrites this box.
     left: f64,
-    top: f64,
     width: f64,
-    height: f64,
+    /// The gap between the lane's edge and the item's, as the CSS that
+    /// computes it from the live zoom.
+    inset: String,
     colour: String,
     /// What the item CONTAINS, as a path in the reference box.
     ///
@@ -1051,18 +1176,16 @@ fn Item(
     /// 85% of a 95 ms hitch. Per item and in a fixed box, the markup is
     /// the same markup for the life of the item.
     #[props(default)]
-    shape: Option<String>,
+    shape: Option<Arc<str>>,
+    /// Its name, already filtered by whether there is room for one.
     title: Option<String>,
-    /// How tall the ROW is, which is what decides whether a name fits.
-    row_height: f64,
     text: String,
 ) -> Element {
     // The body dimmed and the shape over it in full colour: an item is
     // read by its waveform, and a solid block of colour is a waveform
     // you cannot see through.
     let body = dim(&colour, 0.42);
-    let named =
-        title.filter(|_| row_height >= TITLE_MIN_H && width - TITLE_PAD * 2.0 >= TITLE_MIN_W);
+    let named = title;
 
     // The name used to be the item's own text, which cost no node at
     // all. It cannot be, now that the shape is a positioned child: a
@@ -1083,10 +1206,19 @@ fn Item(
             // eight pixels tall. That is the whole difference between
             // this and scaling the picture with a transform, which was
             // tried and thrown away for stretching the type.
-            style: "position:absolute; left:calc({left}px * var(--sx, 1)); \
-                    top:calc({top}px * var(--sy, 1)); \
-                    width:calc({width}px * var(--sx, 1)); \
-                    height:calc({height}px * var(--sy, 1)); \
+            // Top and BOTTOM rather than top and height: the inset is
+            // the same at both ends, so saying it twice is exact at any
+            // zoom and needs no second `calc` to subtract it from the
+            // row.
+            //
+            // The divider is not subtracted here. It is the lane's own
+            // bottom border and an absolutely positioned child measures
+            // from the padding box, which the border has already come
+            // out of — taking it off again put every item a pixel short,
+            // which is what the faint-threshold gate caught.
+            style: "position:absolute; left:calc({left:.4}px * var(--px, 1)); \
+                    width:calc({width:.4}px * var(--px, 1)); \
+                    top:{inset}; bottom:{inset}; \
                     background:{body}; overflow:hidden;",
             "data-item": "{guid}",
             // The shape, drawn in a box of its own that CSS then

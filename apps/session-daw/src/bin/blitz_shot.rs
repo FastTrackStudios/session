@@ -700,7 +700,7 @@ fn shapes_of(project: &ProjectRef) -> Shapes {
             );
         }
     }
-    Shapes(Arc::new(shapes))
+    Shapes::new(shapes)
 }
 
 /// The notes of one item, as fractions of it.
