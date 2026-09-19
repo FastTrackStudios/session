@@ -607,24 +607,13 @@ fn read_back(scene: Option<&str>, project_path: &std::path::Path) -> Option<(Pro
     // other respect — its name, its fader and its colour are what the
     // panel beside it shows, because the mix happens on the folder.
     let mut project = project;
-    if settings.folded_takes {
-        let inner = Arc::make_mut(&mut project.0);
-        let tracks = inner.tracks.clone();
+    {
         let shown: Vec<daw_proto::Track> = planned.iter().map(|(t, _)| t.clone()).collect();
-        for folder in daw_ui::studio::folded::shut(&tracks, &shown) {
-            let lanes: Vec<&[daw_proto::Item]> =
-                daw_ui::studio::folded::under(&tracks, &folder.guid)
-                    .iter()
-                    .map(|child| inner.lane(&child.guid))
-                    .collect();
-            let spans = daw_ui::studio::folded::spans(&lanes);
-            if spans.is_empty() {
-                continue;
-            }
-            let items = daw_ui::studio::folded::lane(folder, &spans);
-            inner.folds.insert(folder.guid.clone(), spans);
-            inner.items.insert(folder.guid.clone(), items);
-        }
+        daw_ui::studio::folded::refold(
+            Arc::make_mut(&mut project.0),
+            &shown,
+            settings.folded_takes,
+        );
     }
     let rows = RowsRef(Arc::new(planned));
     Some((project, rows))
@@ -674,8 +663,8 @@ fn shapes_of(project: &ProjectRef) -> Shapes {
     // carries no audio, and what the row is showing is the mics under
     // it. Done after, because a child's shape has to exist before it can
     // be folded.
-    for (folder, spans) in &project.0.folds {
-        for (index, span) in spans.iter().enumerate() {
+    for (folder, fold) in &project.0.folds {
+        for (index, span) in fold.spans.iter().enumerate() {
             let guid = daw_ui::studio::folded::guid_of(folder, index);
             let waves: Vec<&[f32]> = span
                 .from

@@ -355,9 +355,19 @@ fn the_components_draw_the_rails() -> Result<()> {
     // the lettering allowance; the ones that are frame and nothing else
     // are held to zero, because there is nothing in them for two text
     // stacks to disagree about.
+    //
+    // The arrangement's right rail was one of those until it got a
+    // switch of its own — the one that says what a shut folder shows —
+    // and a rail with a word on it is a rail two text stacks can centre
+    // a pixel apart. It takes the lettering allowance now, for the same
+    // reason the left one always did.
     let regions: [(&str, String, f64); 4] = [
         ("left rail", format!("{side}x1440+0+0"), RULER_TOLERANCE),
-        ("right rail", format!("{side}x1440+{}+0", 2560 - side), 0.0),
+        (
+            "right rail",
+            format!("{side}x1440+{}+0", 2560 - side),
+            RULER_TOLERANCE,
+        ),
         ("top rail", format!("2560x{top}+0+0"), 0.0),
         (
             "mode bar",

@@ -1796,6 +1796,11 @@ impl App {
                 Effect::ReRecord => self.re_record(),
                 Effect::Transport(command, at) => session_daw::engine::transport(command, at),
                 Effect::Playhead(at) => self.playhead.report(at, 1.0, std::time::Instant::now()),
+                // Logged rather than shown, because the window has
+                // nowhere to show it. A refused edit that says nothing
+                // anywhere is a window that looks broken, so at minimum
+                // it lands where a run can be read back.
+                Effect::Refused(why) => tracing::warn!(reason = why, "the edit was refused"),
             }
         }
     }
@@ -3942,6 +3947,23 @@ impl App {
             None => rows.as_slice().to_vec(),
         }));
         self.arrange_map = session_daw::plan::Rows::of(planned.as_slice(), &self.tracks);
+        // What a folder the scene shut has on its row. REAPER draws
+        // nothing there, which means folding a kit away folds its audio
+        // away with it; this puts the children's takes on the folder,
+        // where the panel beside it is already the folder's. Derived
+        // here rather than kept, for the reason the rows above are:
+        // a fold follows from the session and the view, and a stale one
+        // would draw a take the session no longer has.
+        let mut project = project;
+        {
+            let shown: Vec<daw_proto::Track> =
+                planned.as_slice().iter().map(|(t, _)| t.clone()).collect();
+            daw_ui::studio::folded::refold(
+                std::sync::Arc::make_mut(&mut project.0),
+                &shown,
+                self.settings.folded_takes,
+            );
+        }
         self.scene = Some(Arrangement::build(
             &self.palette,
             &self.font,

@@ -220,6 +220,42 @@ pub fn parse_guid(guid: &str) -> Option<(&str, usize)> {
     Some((folder, index.parse().ok()?))
 }
 
+/// Work out every shut folder's fold and put it on the project.
+///
+/// The one place a window does this, so the painted arrangement and the
+/// component tree cannot disagree about what a shut folder shows.
+///
+/// `shown` is the row list the scene left — a folder is shut when it is
+/// on screen and nothing under it is. `on` is
+/// `Settings::folded_takes`: off, the folds are cleared and a shut
+/// folder is an empty row, which is what REAPER draws.
+///
+/// Replaces rather than merges: a fold is derived from the session and
+/// the view, and keeping a stale one would draw a take where the session
+/// no longer has one.
+pub fn refold(project: &mut super::project::Project, shown: &[daw_proto::Track], on: bool) {
+    project.folds.clear();
+    if !on {
+        return;
+    }
+    let tracks = std::mem::take(&mut project.tracks);
+    for folder in shut(&tracks, shown) {
+        let lanes: Vec<&[Item]> = under(&tracks, &folder.guid)
+            .iter()
+            .map(|child| project.lane(&child.guid))
+            .collect();
+        let spans = spans(&lanes);
+        if spans.is_empty() {
+            continue;
+        }
+        let items = lane(folder, &spans);
+        project
+            .folds
+            .insert(folder.guid.clone(), Fold { items, spans });
+    }
+    project.tracks = tracks;
+}
+
 /// Every collapsed folder's folded lane, by folder guid.
 ///
 /// `descendants` answers which tracks are under a folder — the caller's
@@ -239,6 +275,77 @@ pub fn lanes<'a>(
             (!spans.is_empty()).then(|| (folder.guid.clone(), lane(folder, &spans)))
         })
         .collect()
+}
+
+/// One folded row: the boxes it shows, and what they were folded from.
+///
+/// Held together because they are two views of one answer and a window
+/// that had one without the other would either draw items it could not
+/// resolve or resolve items it did not draw.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct Fold {
+    /// What the row shows — real [`Item`]s, so everything that draws a
+    /// lane draws these the same way.
+    pub items: Vec<Item>,
+    /// What each of them was folded from, in the same order.
+    pub spans: Vec<Span>,
+}
+
+/// What an edit aimed at an item on a folded row really is.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Spread {
+    /// Not a folded item at all. The edit means what it says.
+    Direct,
+    /// A folded item. The edit belongs to these real items instead —
+    /// every one of them, as one step, because on screen they are one
+    /// thing and a half-applied edit would be a lie about the take.
+    Children(Vec<String>),
+    /// A folded item the edit cannot honestly be applied to, and why.
+    Refused(&'static str),
+}
+
+/// Where an edit aimed at `guid` should actually land.
+///
+/// `destructive` is whether the edit CHANGES the items — a move, a trim,
+/// a split, a delete — as against merely selecting them. The distinction
+/// is the whole of the ragged case: selecting every mic under a fragment
+/// is unambiguous and harmless, and moving them is neither.
+///
+/// # Why a fragment is refused
+///
+/// A span with [`Span::whole`] false exists because the children
+/// disagree — one mic was punched in, or a trigger lane was trimmed on
+/// its own. Its edges are not any child's edges. Dragging it would have
+/// to mean one of three things and there is no way to tell which:
+/// move every child (which moves audio outside the fragment the hand
+/// took hold of), move only the children that start there (which tears
+/// the take apart), or move nothing and pretend.
+///
+/// So it is refused, with a sentence saying so. A fragment is EVIDENCE
+/// of an edit somebody already made, and the honest answer is to open
+/// the folder and work on the mic that disagrees.
+#[must_use]
+pub fn spread(
+    folds: &std::collections::HashMap<String, Fold>,
+    guid: &str,
+    destructive: bool,
+) -> Spread {
+    let Some((folder, index)) = parse_guid(guid) else {
+        return Spread::Direct;
+    };
+    let Some(span) = folds.get(folder).and_then(|fold| fold.spans.get(index)) else {
+        // A folded guid whose fold is gone: the view changed under the
+        // gesture. Refusing beats guessing — the alternative is writing
+        // an edit addressed to nothing.
+        return Spread::Refused("that row was re-folded while you were working on it");
+    };
+    if destructive && !span.whole {
+        return Spread::Refused(
+            "the takes under this row do not line up here, so there is no one edit to make — \
+             open the folder and work on the track that differs",
+        );
+    }
+    Spread::Children(span.from.clone())
 }
 
 /// Every track under `folder`, however deep.
@@ -443,6 +550,92 @@ mod tests {
     fn nothing_folds_to_nothing() {
         assert!(super::wave(&[]).is_empty());
         assert!(super::wave(&[&[][..]]).is_empty());
+    }
+
+    fn folds() -> std::collections::HashMap<String, super::Fold> {
+        let spans = vec![
+            Span {
+                start: 0.0,
+                end: 4.0,
+                from: vec!["in".to_owned(), "out".to_owned()],
+                whole: true,
+            },
+            Span {
+                start: 4.0,
+                end: 6.0,
+                from: vec!["out".to_owned()],
+                whole: false,
+            },
+        ];
+        let folder = daw_proto::Track {
+            guid: "kick".to_owned(),
+            name: "Kick".to_owned(),
+            ..daw_proto::Track::default()
+        };
+        let mut out = std::collections::HashMap::new();
+        out.insert(
+            "kick".to_owned(),
+            super::Fold {
+                items: lane(&folder, &spans),
+                spans,
+            },
+        );
+        out
+    }
+
+    /// The ordinary case: an edit on the row is an edit on every mic
+    /// under it, which is the whole reason the row is worth having.
+    #[test]
+    fn an_edit_on_a_clean_take_reaches_every_mic() {
+        assert_eq!(
+            super::spread(&folds(), &super::guid_of("kick", 0), true),
+            super::Spread::Children(vec!["in".to_owned(), "out".to_owned()])
+        );
+    }
+
+    /// An item that is not folded is an item, and nothing happens to it.
+    #[test]
+    fn a_real_item_passes_straight_through() {
+        assert_eq!(
+            super::spread(&folds(), "some-real-guid", true),
+            super::Spread::Direct
+        );
+    }
+
+    /// A fragment has no edges of its own, so there is no one edit to
+    /// make on it. Refused rather than guessed at.
+    #[test]
+    fn a_fragment_refuses_an_edit_that_would_change_it() {
+        let at = super::guid_of("kick", 1);
+        assert!(matches!(
+            super::spread(&folds(), &at, true),
+            super::Spread::Refused(_)
+        ));
+    }
+
+    /// But selecting one is unambiguous — every mic sounding there —
+    /// so it is allowed. Refusing a click would make the row feel
+    /// broken rather than careful.
+    #[test]
+    fn a_fragment_can_still_be_selected() {
+        assert_eq!(
+            super::spread(&folds(), &super::guid_of("kick", 1), false),
+            super::Spread::Children(vec!["out".to_owned()])
+        );
+    }
+
+    /// A fold that went away under the gesture is refused rather than
+    /// applied to whatever is at that index now.
+    #[test]
+    fn a_stale_fold_is_refused_not_guessed() {
+        assert!(matches!(
+            super::spread(&folds(), &super::guid_of("kick", 9), false),
+            super::Spread::Refused(_)
+        ));
+        assert!(matches!(
+            super::spread(&folds(), &super::guid_of("gone", 0), false),
+            super::Spread::Refused(_)
+        ));
     }
 
     /// The guid a folded item gets leads back to the fold it came from,

@@ -78,18 +78,18 @@ pub struct Project {
     pub tracks: Vec<Track>,
     /// Items keyed by their track's guid, in time order within a track.
     ///
-    /// A folder the view has shut gets an entry here too, holding items
-    /// that are not in the session — its children's, folded. See
-    /// [`super::folded`]: everything that draws a lane draws those the
-    /// same way it draws any other, which is the point of making them
-    /// items rather than a second kind of thing.
+    /// **Real items only.** A folded row's items live in [`Self::folds`]
+    /// and deliberately not here: every edit in the window walks this
+    /// map, and a synthetic item in it would be one an edit could delete,
+    /// split or address to the backend. Keeping them apart makes that
+    /// impossible rather than merely discouraged.
     pub items: HashMap<String, Vec<Item>>,
-    /// What each of those folded lanes was folded FROM, by folder guid.
+    /// The rows the view has folded shut, by folder guid.
     ///
-    /// The items above say where the row's boxes are; this says which
-    /// real items are under each one, which is what an edit on a folded
-    /// row needs and what tells a clean take from a fragment.
-    pub folds: HashMap<String, Vec<super::folded::Span>>,
+    /// Read through [`Self::lane`], which is the one seam every renderer
+    /// already goes through — so a folded row draws, labels and
+    /// hit-tests like any other without anything being taught about it.
+    pub folds: HashMap<String, super::folded::Fold>,
     pub sections: Vec<Section>,
     pub markers: Vec<Marker>,
     /// The project tempo. One number, for now: the ruler's bar lines
@@ -147,8 +147,26 @@ impl Project {
 
     /// This track's items, or an empty slice. Never allocates: a lane
     /// renders every frame it is on screen.
+    ///
+    /// A folder the view has shut answers with its children's items,
+    /// folded — see [`super::folded`]. This is the only place that
+    /// substitution happens, which is what lets every renderer stay
+    /// ignorant of it and every editor stay safe from it.
+    #[must_use]
     pub fn lane(&self, track_guid: &str) -> &[Item] {
+        if let Some(fold) = self.folds.get(track_guid) {
+            return &fold.items;
+        }
         self.items.get(track_guid).map_or(&[], Vec::as_slice)
+    }
+
+    /// Where an edit aimed at `guid` should actually land.
+    ///
+    /// `destructive` is whether it changes the items rather than merely
+    /// selecting them. See [`super::folded::spread`].
+    #[must_use]
+    pub fn spread(&self, guid: &str, destructive: bool) -> super::folded::Spread {
+        super::folded::spread(&self.folds, guid, destructive)
     }
 }
 

@@ -1308,8 +1308,8 @@ fn shot(
             // The arrangement's left rail carries the same visual
             // presets the mixer's does — they are layouts of the
             // SESSION, not of one panel, so switching one switches
-            // both. Its right rail is empty until the arrangement has
-            // settings of its own worth switching.
+            // both. Its right rail carries the settings that ARE the
+            // arrangement's own: so far, what a shut folder shows.
             let profile = session_daw::rails::profile(
                 session_daw::rails::Surface::Arrange,
                 session::modes::Mode::Mix,
