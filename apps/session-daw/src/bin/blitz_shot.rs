@@ -295,7 +295,14 @@ fn main() {
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
     {
+        // `FTS_BLITZ_PROFILE=/tmp/frame.svg` writes a flame graph of the
+        // run. Reading a renderer's source to work out where a frame
+        // goes is how two days disappear into a phase that turns out not
+        // to be the one; this says which function, and it costs a
+        // feature flag.
+        let profiler = profiler();
         pan(&mut document, w, h, frames);
+        report(profiler);
         return;
     }
 
@@ -323,6 +330,54 @@ fn main() {
 /// time says a pan is slow and only the split says which pass is: Dioxus
 /// reconciling the tree, then Stylo and Taffy solving what came out, then
 /// the scene being encoded for the GPU.
+/// A sampling profiler over the benchmark, when one is asked for.
+///
+/// `pprof` samples on a SIGPROF timer rather than through `perf`, which
+/// matters because this box has no `perf` and
+/// `kernel.perf_event_paranoid` would not allow it anyway.
+#[cfg(feature = "profile")]
+fn profiler() -> Option<(pprof::ProfilerGuard<'static>, String)> {
+    let out = std::env::var("FTS_BLITZ_PROFILE").ok()?;
+    let guard = pprof::ProfilerGuardBuilder::default()
+        .frequency(2000)
+        // The frames are short and the interesting work is deep, so the
+        // default blocklist matters: without it every sample lands in
+        // libc and the graph says nothing.
+        .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+        .build()
+        .ok()?;
+    Some((guard, out))
+}
+
+#[cfg(not(feature = "profile"))]
+const fn profiler() -> Option<()> {
+    None
+}
+
+/// Write the flame graph out, if one was being collected.
+#[cfg(feature = "profile")]
+fn report(profiler: Option<(pprof::ProfilerGuard<'static>, String)>) {
+    let Some((guard, out)) = profiler else {
+        return;
+    };
+    match guard.report().build() {
+        Ok(report) => match std::fs::File::create(&out) {
+            Ok(file) => {
+                if let Err(error) = report.flamegraph(file) {
+                    eprintln!("could not write {out}: {error}");
+                } else {
+                    println!("  flame graph: {out}");
+                }
+            }
+            Err(error) => eprintln!("could not open {out}: {error}"),
+        },
+        Err(error) => eprintln!("the profiler reported nothing: {error}"),
+    }
+}
+
+#[cfg(not(feature = "profile"))]
+const fn report(_profiler: Option<()>) {}
+
 /// Put the view where the gesture says it is, `t` of the way through.
 ///
 /// Writing the signals from outside the runtime rather than simulating

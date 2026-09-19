@@ -131,12 +131,25 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# A sampling profiler for the headless benchmarks, behind the `profile`
+# feature — see below.
+pprof = { version = "0.15", features = ["flamegraph"], optional = true }
+
 [features]
 # The `#[reaper_test]` suites, which need a REAPER to talk to. Behind a
 # feature so an ordinary `cargo nextest run --workspace` does not try to
 # reach one that is not running — `just reaper-test` turns it on, via
 # session-reaper-xtask, which starts the REAPER first.
 reaper-tests = ["daw/test-harness"]
+# A sampling profiler on the headless benchmarks. Behind a feature so an
+# ordinary build never links a signal handler: `pprof` installs a SIGPROF
+# timer, which is exactly what you want while measuring and nothing you
+# want in a window somebody is using.
+#
+#   cargo run --release -p session-daw --bin blitz_shot --features profile
+#
+# with `FTS_BLITZ_PROFILE=/tmp/frame.svg`.
+profile = ["dep:pprof"]
 
 [dev-dependencies]
 # Temp project trees for the Patch List view's discovery tests, and the
