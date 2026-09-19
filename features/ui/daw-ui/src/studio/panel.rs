@@ -582,10 +582,30 @@ fn Stack(
         Some((sheet.data_uri(ROW_W, art_h), labels, art_h))
     };
 
+    // How far the built band reaches below its own anchor, so the node
+    // that holds the rows is as tall as the rows it holds.
+    //
+    // This is not tidiness. The rows are absolutely positioned, which
+    // means they contribute nothing to their parent's content size — so
+    // `Sliding`, sized to the panel, was a 784-pixel box being moved a
+    // few thousand pixels up, and once it left the panel's clip
+    // everything inside it went with it. The arrangement never had the
+    // fault because its own content div spans the session and keeps the
+    // moving node overlapping the window. Scroll down eight hundred
+    // pixels and the track panel simply vanished.
+    let reach = offsets
+        .content_height()
+        .mul_add(view.zoom_y, -anchor)
+        .max(view.height);
+
     rsx! {
         // Everything that moves with the session, under one node so that
         // a scroll writes one transform.
         Sliding { scroll_y, anchor, zoom, children: rsx! {
+            div {
+                style: "position:absolute; left:0; top:0; width:100%; \
+                        height:calc({reach:.1}px * var(--sy, 1));",
+            }
             for row in visible.clone() {
                 if let (Some((top, height)), Some((track, depth))) =
                     (offsets.row(row), rows.get(row))

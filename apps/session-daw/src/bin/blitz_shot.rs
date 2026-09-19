@@ -378,6 +378,22 @@ fn report(profiler: Option<(pprof::ProfilerGuard<'static>, String)>) {
 #[cfg(not(feature = "profile"))]
 const fn report(_profiler: Option<()>) {}
 
+/// Write one frame of a gesture out as a picture.
+fn shot_frame(document: &mut DioxusDocument, dir: &str, frame: usize, width: u32, height: u32) {
+    let mut image = VelloImageRenderer::new(width, height);
+    let mut buffer = Vec::new();
+    image.render_to_vec(
+        |painter| {
+            let mut inner = document.inner_mut();
+            blitz_paint::paint_scene(painter, &mut inner, 1.0, width, height, 0, 0);
+        },
+        &mut buffer,
+    );
+    if let Some(image) = image::RgbaImage::from_raw(width, height, buffer) {
+        let _ = image.save(format!("{dir}/{frame:04}.png"));
+    }
+}
+
 /// Put the view where the gesture says it is, `t` of the way through.
 ///
 /// Writing the signals from outside the runtime rather than simulating
@@ -391,6 +407,13 @@ fn drive(document: &mut DioxusDocument, gesture: Gesture, t: f64) {
             SCROLL.with(|scroll| {
                 if let Some(mut scroll) = *scroll.borrow() {
                     document.vdom.in_runtime(|| scroll.set(t * 60.0 * PPS));
+                }
+            });
+        }
+        Gesture::Down => {
+            DOWN.with(|down| {
+                if let Some(mut down) = *down.borrow() {
+                    document.vdom.in_runtime(|| down.set(t * DOWN_TRAVEL));
                 }
             });
         }
@@ -431,6 +454,13 @@ fn initial_zoom() -> (f64, f64) {
         .unwrap_or((1.0, 1.0))
 }
 
+/// How far down a benchmarked vertical scroll travels.
+///
+/// Past the end of most sessions on purpose: the interesting frames are
+/// the ones where a band of rows is built and thrown away, and the last
+/// of those is at the bottom.
+const DOWN_TRAVEL: f64 = 6000.0;
+
 /// How far either way a benchmarked zoom travels.
 ///
 /// Four times in and four times out is a gesture a hand makes in about a
@@ -440,6 +470,10 @@ const ZOOM_SWING: f64 = 4.0;
 
 fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
     let gesture = Gesture::from_env();
+    let dump = std::env::var("FTS_BLITZ_DUMP").ok();
+    if let Some(dir) = dump.as_deref() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     let mut renderer =
         session_daw::headless::Headless::new(width, height).expect("a headless renderer");
     let mut stages = session_daw::profile::Stages::with_capacity(frames);
@@ -474,6 +508,14 @@ fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
                     blitz_paint::paint_scene(painter, &mut inner, 1.0, width, height, 0, 0);
                 })
                 .expect("render a frame");
+            // `FTS_BLITZ_DUMP=/tmp/frames` writes every frame out. A
+            // fault that only exists while something is moving cannot be
+            // found by rendering a still at the same place — the state
+            // that is wrong is the state left over from the frame
+            // before.
+            if let Some(dir) = dump.as_deref() {
+                shot_frame(document, dir, frame, width, height);
+            }
         }
         renderer.wait().expect("the gpu to finish the batch");
         #[expect(
@@ -882,6 +924,13 @@ thread_local! {
     /// against the reference shot.
     static ZOOM: std::cell::RefCell<Option<Signal<(f64, f64)>>> =
         const { std::cell::RefCell::new(None) };
+    /// And how far DOWN, so a vertical scroll can be driven the way the
+    /// horizontal one is. The two are not the same measurement: the
+    /// panel travels with the lanes down the session and does not
+    /// travel with them across it, so a fault in one axis says nothing
+    /// about the other.
+    static DOWN: std::cell::RefCell<Option<Signal<f64>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Which gesture the headless benchmark runs.
@@ -893,6 +942,8 @@ thread_local! {
 enum Gesture {
     /// Across the session, which is what `pan` always did.
     Pan,
+    /// And down it, which is the axis the track panel shares.
+    Down,
     /// In and out horizontally, around the middle of the travel.
     ZoomX,
     /// And vertically.
@@ -903,6 +954,7 @@ impl Gesture {
     /// The gesture named by `FTS_BLITZ_GESTURE`, defaulting to the pan.
     fn from_env() -> Self {
         match std::env::var("FTS_BLITZ_GESTURE").as_deref() {
+            Ok("down") => Self::Down,
             Ok("zoom-x" | "zoomx") => Self::ZoomX,
             Ok("zoom-y" | "zoomy") => Self::ZoomY,
             _ => Self::Pan,
@@ -912,6 +964,7 @@ impl Gesture {
     fn name(self) -> &'static str {
         match self {
             Self::Pan => "pan",
+            Self::Down => "down",
             Self::ZoomX => "zoom-x",
             Self::ZoomY => "zoom-y",
         }
@@ -1483,6 +1536,9 @@ fn Window(props: ShotProps) -> Element {
     // item is, which is a layout, which is the honest cost of the
     // gesture rather than a failure to optimise it.
     let down = use_signal(|| props.view.scroll_y);
+    use_hook(|| {
+        DOWN.with(|slot| *slot.borrow_mut() = Some(down));
+    });
     let zoom = use_signal(|| (initial_zoom().0, initial_zoom().1 * props.view.zoom_y));
     use_hook(|| {
         ZOOM.with(|slot| *slot.borrow_mut() = Some(zoom));
