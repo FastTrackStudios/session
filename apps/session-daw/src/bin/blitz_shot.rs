@@ -578,6 +578,13 @@ fn read_back(scene: Option<&str>, project_path: &std::path::Path) -> Option<(Pro
     // the same height, because the session file carries no per-track
     // height — the heights are a layout the scene decides, not a fact
     // the file records.
+    // `FTS_BLITZ_FOLDED_TAKES=0` draws a shut folder the way REAPER
+    // does, which is empty — the switch on the arrangement's right rail,
+    // reachable from here so both pictures can be taken.
+    let settings = session_daw::settings::Settings {
+        folded_takes: std::env::var("FTS_BLITZ_FOLDED_TAKES").as_deref() != Ok("0"),
+        ..session_daw::settings::Settings::default()
+    };
     if let Some(slug) = scene.and_then(dynamic_template::scenes::scene) {
         let kinds = session_daw::plan::Kinds::read(project_path);
         planned = session_daw::plan::apply_scene(
@@ -587,11 +594,37 @@ fn read_back(scene: Option<&str>, project_path: &std::path::Path) -> Option<(Pro
             session_daw::plan::Panel {
                 surface: session_daw::plan::Surface::Arrange,
                 mode: None,
-                settings: session_daw::settings::Settings::default(),
+                settings,
                 extent: 1440.0,
                 active_language: None,
             },
         );
+    }
+    // A folder the scene shut keeps its row and loses its audio, which
+    // is REAPER's behaviour and is the wrong one here: fold the kit away
+    // and you have folded the take away with it. So the row gets its
+    // children's items, folded, and goes on being the folder in every
+    // other respect — its name, its fader and its colour are what the
+    // panel beside it shows, because the mix happens on the folder.
+    let mut project = project;
+    if settings.folded_takes {
+        let inner = Arc::make_mut(&mut project.0);
+        let tracks = inner.tracks.clone();
+        let shown: Vec<daw_proto::Track> = planned.iter().map(|(t, _)| t.clone()).collect();
+        for folder in daw_ui::studio::folded::shut(&tracks, &shown) {
+            let lanes: Vec<&[daw_proto::Item]> =
+                daw_ui::studio::folded::under(&tracks, &folder.guid)
+                    .iter()
+                    .map(|child| inner.lane(&child.guid))
+                    .collect();
+            let spans = daw_ui::studio::folded::spans(&lanes);
+            if spans.is_empty() {
+                continue;
+            }
+            let items = daw_ui::studio::folded::lane(folder, &spans);
+            inner.folds.insert(folder.guid.clone(), spans);
+            inner.items.insert(folder.guid.clone(), items);
+        }
     }
     let rows = RowsRef(Arc::new(planned));
     Some((project, rows))
@@ -633,6 +666,49 @@ fn shapes_of(project: &ProjectRef) -> Shapes {
                 }
             };
             shapes.insert(item.guid.clone(), shape);
+        }
+    }
+    // A folded row's shape is its children's, not its own. The loop
+    // above gave each folded item the waveform the FOLDER's index
+    // generates, which is a plausible picture of nothing: the folder
+    // carries no audio, and what the row is showing is the mics under
+    // it. Done after, because a child's shape has to exist before it can
+    // be folded.
+    for (folder, spans) in &project.0.folds {
+        for (index, span) in spans.iter().enumerate() {
+            let guid = daw_ui::studio::folded::guid_of(folder, index);
+            let waves: Vec<&[f32]> = span
+                .from
+                .iter()
+                .filter_map(|child| match shapes.get(child) {
+                    Some(Shape::Wave(peaks)) => Some(&**peaks),
+                    _ => None,
+                })
+                .collect();
+            if waves.is_empty() {
+                // Every child a trigger lane: a folded row of MIDI is
+                // still MIDI, and drawing a flat waveform over it would
+                // say the drum was miked when it was sampled.
+                let notes: Vec<Note> = span
+                    .from
+                    .iter()
+                    .filter_map(|child| match shapes.get(child) {
+                        Some(Shape::Notes(notes)) => Some(notes.iter().copied()),
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
+                if notes.is_empty() {
+                    shapes.remove(&guid);
+                } else {
+                    shapes.insert(guid, Shape::Notes(notes.into()));
+                }
+                continue;
+            }
+            shapes.insert(
+                guid,
+                Shape::Wave(daw_ui::studio::folded::wave(&waves).into()),
+            );
         }
     }
     Shapes(Arc::new(shapes))

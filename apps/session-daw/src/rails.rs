@@ -63,6 +63,8 @@ pub enum Action {
     /// the player's overview of the same one.
     /// `flow.scenes.two-audiences`.
     Audience,
+    /// Whether a shut folder shows its children's takes on its own row.
+    FoldedTakes,
 }
 
 /// One button in a rail.
@@ -443,10 +445,25 @@ pub fn profile(
         },
         Surface::Arrange => Profile {
             left,
-            right: Vec::new(),
+            right: arrange_right(settings),
             top: Vec::new(),
         },
     }
+}
+
+/// The arrangement's own switches.
+///
+/// One, so far, and it is the one that decides what a folded kit looks
+/// like — which is the difference between an arrangement you can read
+/// and thirty rows of microphone.
+#[must_use]
+pub fn arrange_right(settings: crate::settings::Settings) -> Vec<Item<'static>> {
+    vec![Item {
+        label: "Takes",
+        on: settings.folded_takes,
+        act: Action::FoldedTakes,
+        icon: None,
+    }]
 }
 
 /// The right rail's switches, showing their state.

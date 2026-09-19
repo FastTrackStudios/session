@@ -56,6 +56,7 @@ pub mod canvas;
 pub mod census;
 pub mod clock;
 pub mod css;
+pub mod folded;
 pub mod fps;
 pub mod lanes;
 pub mod panel;

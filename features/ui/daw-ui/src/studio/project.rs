@@ -77,7 +77,19 @@ pub struct Project {
     /// collapse is applied.
     pub tracks: Vec<Track>,
     /// Items keyed by their track's guid, in time order within a track.
+    ///
+    /// A folder the view has shut gets an entry here too, holding items
+    /// that are not in the session — its children's, folded. See
+    /// [`super::folded`]: everything that draws a lane draws those the
+    /// same way it draws any other, which is the point of making them
+    /// items rather than a second kind of thing.
     pub items: HashMap<String, Vec<Item>>,
+    /// What each of those folded lanes was folded FROM, by folder guid.
+    ///
+    /// The items above say where the row's boxes are; this says which
+    /// real items are under each one, which is what an edit on a folded
+    /// row needs and what tells a clean take from a fragment.
+    pub folds: HashMap<String, Vec<super::folded::Span>>,
     pub sections: Vec<Section>,
     pub markers: Vec<Marker>,
     /// The project tempo. One number, for now: the ruler's bar lines
@@ -288,6 +300,9 @@ pub async fn fetch() -> Option<Project> {
     Some(Project {
         tracks,
         items,
+        // Filled by whoever knows what the view has shut, which is not
+        // the fetch: a fold is a view state, not a fact about the file.
+        folds: HashMap::new(),
         sections,
         markers,
         bpm,

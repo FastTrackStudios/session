@@ -3542,6 +3542,13 @@ impl App {
                 self.settings.take_focus_width = !self.settings.take_focus_width;
                 self.mixer = None;
             }
+            A::FoldedTakes => {
+                // What a shut folder shows. A change to it changes which
+                // items are on which row, so the arrangement has to be
+                // recorded again — this is not a width.
+                self.settings.folded_takes = !self.settings.folded_takes;
+                self.re_record();
+            }
         }
     }
 

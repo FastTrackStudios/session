@@ -159,6 +159,52 @@ fn parallel_colour_out_of_the_panel() -> Vec<Rule> {
         .collect()
 }
 
+/// Each drum is one row in the panel, with its take on it.
+///
+/// A kit is a folder tree because that is how the audio is routed — a
+/// kick is a Sum with three mics under it, a tom is its mic and its
+/// trigger. Routing is a mix concern, and the panel is not where mixing
+/// happens. While you are editing, a kick is one thing: the mics were
+/// recorded together and comped together, so what belongs on screen is
+/// one row per drum, with the take on it and the mics a fold away.
+///
+/// Collapsed rather than hidden, and in the ARRANGEMENT only. A
+/// collapsed folder keeps its row, which is the row the take is drawn
+/// on; the mixer keeps every strip, because the mics are exactly what
+/// you reach for there.
+///
+/// The Toms group stays open — its toms are five separate drums and
+/// reading them as one row would be reading a fill as a hit. Cymbals and
+/// Rooms do collapse: they are arrays of one sound, and the overheads
+/// are not five decisions.
+///
+/// What fills the row is `daw_ui::studio::folded`, which is where the
+/// rule for folding several children's items into one row's lives.
+fn one_row_per_drum() -> Vec<Rule> {
+    let shut = |selector| Rule {
+        selector,
+        effect: Effect::default(),
+        arrange: Some(Effect::default().folded(Fold::Collapsed)),
+        mixer: None,
+    };
+    let mut rules: Vec<Rule> = ["Kick", "Snare", "Cymbals", "Rooms"]
+        .into_iter()
+        .map(|piece| {
+            shut(Selector {
+                role: Role::Bus,
+                ..under(&[KIT[0], KIT[1], piece])
+            })
+        })
+        .collect();
+    // And each tom inside the group, which stays open around them.
+    rules.push(shut(Selector {
+        kind: Some("piece".to_owned()),
+        role: Role::Bus,
+        ..under(&[KIT[0], KIT[1], "Toms"])
+    }));
+    rules
+}
+
 /// The five pieces a drum mix is made on — matched by the template
 /// groups they stand for, so a kit with a sixth piece needs a line here
 /// and a renamed one needs nothing.
@@ -790,6 +836,7 @@ fn drum_mixing() -> Scene {
     ));
     rules.push(hide_the_bus_tree());
     rules.extend(parallel_colour_out_of_the_panel());
+    rules.extend(one_row_per_drum());
     Scene {
         name: "Drum Mixing".to_owned(),
         slug: "drum-mixing".to_owned(),
