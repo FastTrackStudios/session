@@ -44,6 +44,32 @@
 //! gaps between takes. These are real items, so the row hit-tests,
 //! labels and selects like every other row, and an edit has somewhere to
 //! land.
+//!
+//! # Editing, which is the point and is not built yet
+//!
+//! **An edit on a folded item is an edit on every child item under it.**
+//! Drag the kick's take and its three mics move together; trim its edge
+//! and they all trim to the same boundary; delete it and they all go.
+//! That is the whole reason this row is worth having — a view you can
+//! read but not work in is a view you stop using — and it is decided,
+//! not speculative. It is simply not written yet.
+//!
+//! Everything it needs is here. A folded item's guid carries the folder
+//! and the span ([`guid_of`], [`parse_guid`]), and the span carries the
+//! real items ([`Span::from`]). So the path is: the hit test lands on a
+//! folded guid, [`parse_guid`] says which fold, [`Span::from`] says which
+//! items, and the edit is applied to all of them as ONE undo step.
+//!
+//! What is genuinely undecided is the ragged case — what trimming the
+//! edge of a span where [`Span::whole`] is false should do, when only
+//! some of the children start there. That, the undo grouping, and what
+//! take lanes mean on a row that has no takes of its own are written up
+//! on issue #114.
+//!
+//! Until then, one invariant holds absolutely: a `folded:` guid names
+//! nothing in the session and must never reach the backend. It is a view
+//! coordinate, and writing one would address an item that does not
+//! exist.
 
 use std::collections::HashMap;
 
@@ -57,9 +83,11 @@ pub struct Span {
     /// The child items sounding across it.
     ///
     /// Kept rather than counted because this is the only record of what
-    /// a folded item actually IS, and an edit on the folder's row has to
-    /// reach them. In project order, so the list is stable between
-    /// renders and two equal folds compare equal.
+    /// a folded item actually IS. It is also the list an edit works
+    /// through: moving, trimming or deleting the folded item means doing
+    /// the same to every guid in here, in one undo step — see the module
+    /// doc. In project order, so the list is stable between renders and
+    /// two equal folds compare equal.
     pub from: Vec<String>,
     /// Whether every child sounding here starts and ends exactly here.
     ///
