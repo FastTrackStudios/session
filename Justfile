@@ -1358,6 +1358,53 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
     FTS_BENCH_MIXER="$out" FTS_BENCH_SCENE="{{SCENE}}" FTS_BENCH_SIZE="{{SIZE}}" \
         ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN'
 
+# Open the studio — the arrangement as a Dioxus component tree, in a real
+# window on dioxus-native.
+#
+#   just studio                    the golden session, drivable by hand
+#   just studio animate            running the benchmark's own gestures
+#   just studio "" 2560x1440       at another size
+#
+# Wheel scrolls; shift makes it sideways. Hold `z` and scroll to zoom the
+# rows, shift-`z` for time; `z` and drag is the zoom tool. Middle-drag is
+# the hand. The corner says what a frame cost — the shell's own
+# resolve-encode-present, not the gap between redraws.
+#
+# Logs to /tmp/fts-studio.log rather than to the terminal, because a
+# window has no terminal and what a run did has to be readable afterwards.
+studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p session-daw --bin blitz_shot
+    FTS_BLITZ_WINDOW="{{MODE}}" \
+    FTS_BLITZ_SIZE="{{SIZE}}" \
+    FTS_BLITZ_SCENE="{{SCENE}}" \
+    FTS_BLITZ_LOG=/tmp/fts-studio.log \
+    ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png
+
+# Drive one gesture headlessly and say what a frame of it costs.
+#
+#   just studio-bench pan          across the session
+#   just studio-bench down         down it — the axis the panel shares
+#   just studio-bench zoom-x       in and out, horizontally
+#   just studio-bench zoom-y       and vertically
+#
+# `DUMP=/tmp/frames` writes every frame as a picture, which is the only
+# way to see a fault that exists only while something is moving: a still
+# rendered at the same place is correct, because what is wrong is the
+# state left over from the frame before.
+studio-bench GESTURE="pan" SIZE="5120x1440" FRAMES="120" DUMP="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p session-daw --bin blitz_shot
+    FTS_BLITZ_PART=all \
+    FTS_BLITZ_SCENE=drum-mixing \
+    FTS_BLITZ_SIZE="{{SIZE}}" \
+    FTS_BLITZ_GESTURE="{{GESTURE}}" \
+    FTS_BLITZ_FRAMES="{{FRAMES}}" \
+    ${DUMP:+FTS_BLITZ_DUMP="{{DUMP}}"} \
+    ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png 2>/dev/null
+
 # Prove the culling draws the same frame as drawing everything.
 #
 # The bench's headline number comes from NOT drawing what is off screen,
