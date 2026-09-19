@@ -1382,18 +1382,25 @@ studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
     FTS_BLITZ_LOG=/tmp/fts-studio.log \
     ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png
 
-# The studio driving itself: the golden session, with the benchmark's own
-# gestures running on screen.
+# The studio, on the golden session.
 #
-# The same tree, the same session and the same numbers as
-# `just studio-bench` — so what the table says and what the window feels
-# like are one thing measured twice, which is the only way to tell a
-# frame time that is real from one that is a model of itself. The corner
-# reads out what each frame cost.
+#   just studio-demo               your hands on it
+#   just studio-demo --animate     driving itself
 #
-# `just studio` is the same window with your hands on it instead.
-studio-demo SIZE="5120x1440":
-    @just studio animate "{{SIZE}}"
+# Hands-on by default, because that is what opening it is usually for.
+# `--animate` runs the benchmark's own gestures on screen: the same tree,
+# the same session and the same numbers as `just studio-bench`, so what
+# the table says and what the window feels like are one thing measured
+# twice. The corner reads out what each frame cost either way.
+studio-demo ANIMATE="" SIZE="5120x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{ANIMATE}}" in
+      ""|hands|manual) mode=1 ;;
+      --animate|animate) mode=animate ;;
+      *) echo "usage: just studio-demo [--animate] [SIZE]" >&2; exit 2 ;;
+    esac
+    just studio "$mode" "{{SIZE}}"
 
 # Drive one gesture headlessly and say what a frame of it costs.
 #

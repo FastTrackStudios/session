@@ -973,7 +973,7 @@ impl Gesture {
 
 #[component]
 fn Shot(props: ShotProps) -> Element {
-    let mut scroll = use_signal(|| props.view.scroll_x);
+    let scroll = use_signal(|| props.view.scroll_x);
     use_hook(|| {
         SCROLL.with(|slot| *slot.borrow_mut() = Some(scroll));
     });
@@ -1196,9 +1196,49 @@ fn WindowSize(
     // zoom to make a value would subscribe this component to it, and a
     // component that re-renders on every frame of a zoom is the thing
     // this file has spent itself getting rid of.
+    // How far out a zoom may go: far enough to see all of it, and no
+    // further.
+    //
+    // Derived, not declared. The floor used to be a constant — two
+    // hundredths across and six across down — and a constant cannot be
+    // right, because how far out is worth going is a fact about the
+    // SESSION. Two hundredths put this song in a fifth of the window
+    // and left four fifths of empty timeline to scroll around in; on a
+    // session ten times longer the same constant would stop while there
+    // was still more to see.
+    //
+    // What the floor actually is: the zoom at which the content exactly
+    // fills the frame. Past that you are not looking at more of the
+    // session, because there is no more of it — and that number changes
+    // when the window resizes, when a scene shows or hides tracks, and
+    // when a row's height changes, all of which it now follows on its
+    // own.
+    //
+    // Never above one, though. A session shorter than the window would
+    // otherwise be unable to reach its own natural scale, which is a
+    // stranger thing than a little empty space after the last bar.
+    let floor = move |frame: f64, span: f64| {
+        if span > 0.0 && frame > 0.0 {
+            (frame / span).min(1.0)
+        } else {
+            1.0
+        }
+    };
+    let limits = move || {
+        (
+            (floor(frame.0, span_x), ZOOM_X.1),
+            (floor(frame.1, span_y), ZOOM_Y.1),
+        )
+    };
     let extent = move || {
         let (zx, zy) = zoom.peek().to_owned();
-        ((span_x * zx).max(1.0), (span_y * zy - frame.1).max(1.0))
+        // Zoom FIRST, then take off the window: how far you may travel
+        // is how much session there is at this zoom, less what is
+        // already on screen. Nothing left over means nothing to scroll.
+        (
+            (span_x * zx - frame.0).max(0.0),
+            (span_y * zy - frame.1).max(0.0),
+        )
     };
     let mut scroll = scroll;
     let mut down = down;
@@ -1236,8 +1276,8 @@ fn WindowSize(
                 Some(Drag::Zoom) => {
                     let (zx, zy) = zoom();
                     zoom.set((
-                        (zx * factor(moved.0)).clamp(ZOOM_X.0, ZOOM_X.1),
-                        (zy * factor(-moved.1)).clamp(ZOOM_Y.0, ZOOM_Y.1),
+                        (zx * factor(moved.0)).clamp(limits().0.0, limits().0.1),
+                        (zy * factor(-moved.1)).clamp(limits().1.0, limits().1.1),
                     ));
                 }
                 None => {}
@@ -1271,9 +1311,15 @@ fn WindowSize(
                 // split the scrollbars use.
                 let (zx, zy) = zoom();
                 if input.shift {
-                    zoom.set(((zx * factor(dy * 2.0)).clamp(ZOOM_X.0, ZOOM_X.1), zy));
+                    zoom.set((
+                        (zx * factor(dy * 2.0)).clamp(limits().0.0, limits().0.1),
+                        zy,
+                    ));
                 } else {
-                    zoom.set((zx, (zy * factor(dy * 2.0)).clamp(ZOOM_Y.0, ZOOM_Y.1)));
+                    zoom.set((
+                        zx,
+                        (zy * factor(dy * 2.0)).clamp(limits().1.0, limits().1.1),
+                    ));
                 }
             } else if input.shift {
                 scroll.set((scroll() - dx - dy).clamp(0.0, extent().0));
@@ -1301,12 +1347,19 @@ fn WindowSize(
                 let (name, at) = GESTURES[index];
                 let t = (elapsed % GESTURE_SECS) / GESTURE_SECS;
                 let (x, y, zx, zy) = at(t);
-                scroll.set(x * span_x);
-                // How far down a session this deep goes. Fixed rather
-                // than measured: the point is a brutal gesture, not a
-                // correct one.
-                down.set(y * 40_000.0);
+                // Set the zoom BEFORE reading how far the view may
+                // travel, or the gesture spends the frame somewhere the
+                // previous zoom allowed and this one does not.
                 zoom.set((zx, zy));
+                // Across the session and down it, as fractions of what
+                // there actually is to travel. It used to be a fixed
+                // forty thousand pixels down, which on a session with
+                // less than that in it spent most of the gesture below
+                // the last track looking at nothing — and a benchmark
+                // that measures an empty screen is measuring nothing.
+                let (across, deep) = extent();
+                scroll.set(x * across);
+                down.set(y * deep);
                 gesture.set((name, 0.0));
                 if let Some(handle) = redraw.as_ref() {
                     handle.request_redraw();
@@ -1404,6 +1457,13 @@ const RECENT: usize = 32;
 const WHEEL_LINE: f64 = 40.0;
 
 /// How far a zoom may go, across and down.
+/// The nominal zoom range, which is the BENCHMARK's sweep and not the
+/// window's limits.
+///
+/// What a window lets you zoom out to is worked out from the session and
+/// the frame — see `limits` in `WindowSize`. These two numbers survive
+/// because a stress test wants a fixed range to sweep, not one that
+/// changes with the content it is stressing.
 const ZOOM_X: (f64, f64) = (0.02, 32.0);
 const ZOOM_Y: (f64, f64) = (0.06, 6.0);
 
@@ -1555,7 +1615,16 @@ fn Window(props: ShotProps) -> Element {
     // scroll, the zoom, the frame rate and the gesture are read by the
     // three leaves that show them and by nothing else, and what travels
     // down from here is only ever a number that does not move.
-    let span_x = (props.project.length_secs * PPS - props.view.width).max(1.0);
+    // How far the session runs, in its OWN pixels — the whole length at
+    // the base zoom, with nothing subtracted.
+    //
+    // It used to have the window's width taken off before the zoom was
+    // applied, which is the wrong order and made the travel wrong at
+    // every zoom but one. Zoomed out far enough to see the whole song
+    // you could still scroll a third of a screen past the end of it,
+    // because the subtraction had happened while the session was still
+    // notionally twenty-four thousand pixels wide.
+    let span_x = (props.project.length_secs * PPS).max(1.0);
     let span_y = props
         .rows
         .iter()
@@ -1780,8 +1849,8 @@ fn Scrollbars(
     let (zoom_x, zoom_y) = zoom();
     // The session's own extent less the window it is seen through.
     let travel = (
-        (span_x * zoom_x).max(1.0),
-        (span_y * zoom_y - frame_height(height)).max(1.0),
+        (span_x * zoom_x - frame_width(width)).max(0.0),
+        (span_y * zoom_y - frame_height(height)).max(0.0),
     );
     rsx! {
         Bar {
