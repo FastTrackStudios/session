@@ -189,16 +189,6 @@ fn main() {
     let sections = project.sections.clone().into();
     let markers = project.markers.clone().into();
 
-    // The arrangement as ONE node, which is how this window runs.
-    //
-    // `FTS_BLITZ_WIDGET=0` builds it as a tree instead. Everything above
-    // is the same — the same project, the same rows, the same scene — so
-    // the two are the same window drawn two ways, which is what
-    // `tests/component_lanes.rs` compares and what the numbers in
-    // `session_daw::widget` were measured from. The tree is kept for
-    // exactly that: it is the thing the widget is checked against, not
-    // a mode anybody is meant to run.
-    let widget = std::env::var("FTS_BLITZ_WIDGET").as_deref() != Ok("0");
     // The frame-time graph. On in a window and off in a shot, because a
     // shot is compared pixel for pixel against the painted renderer and
     // an overlay is a difference. `FTS_BLITZ_FPS=0` turns it off in a
@@ -209,17 +199,15 @@ fn main() {
         Ok(_) => true,
         Err(_) => std::env::var_os("FTS_BLITZ_WINDOW").is_some(),
     };
-    // What this run actually resolved to, on the record. Three switches
-    // decide what you are looking at and none of them is visible in the
-    // picture; "the readout is missing" and "the readout is off" look
+    // What this run actually resolved to, on the record. Neither switch
+    // is visible in the picture; "the readout is missing" and "the readout is off" look
     // identical on screen and take a log line to tell apart.
     tracing::info!(
-        widget,
         readout,
         present = std::env::var("FTS_PRESENT").unwrap_or_else(|_| "vsync".to_owned()),
         "drawing"
     );
-    let arrangement = widget.then(|| {
+    let arrangement = Some({
         let shared: session_daw::widget::Shared =
             std::rc::Rc::new(std::cell::RefCell::new(session_daw::widget::View {
                 scroll_x,
@@ -281,7 +269,6 @@ fn main() {
         modes: modes(),
         animate: false,
         windowed: false,
-        widget,
         arrangement,
     };
 
@@ -1047,9 +1034,6 @@ struct ShotProps {
     animate: bool,
     /// Whether there is a real window to ask about its size.
     windowed: bool,
-    /// Whether the arrangement is painted as one node rather than built
-    /// as a tree — see [`session_daw::widget`].
-    widget: bool,
     /// The widget itself, when it is. Write-once: the first render hands
     /// it to the document and every later one finds the slot empty,
     /// which is what makes it safe to carry in props that get cloned.
@@ -1835,57 +1819,11 @@ fn Window(props: ShotProps) -> Element {
     } else {
         rsx! {}
     };
-    // What the controls are showing, held here so a press can change it.
-    let mut live = use_signal(|| props.live.clone());
-    // The same two numbers, as the lanes want them. A memo rather than a
-    // prop so that reading it is subscribing to it: the one node that
-    // has to move on every frame of a zoom does, and nothing else does.
-    let magnified = use_memo(move || {
-        let (x, y) = zoom();
-        daw_ui::studio::lanes::Zoom { x, y }
-    });
     // The placeholders, and a ground for them to sit on.
     let (top_rail, right_rail) = use_hook(placeholders);
     let rail_colors = daw_ui::studio::lanes::Colors {
         tcp_gutter: props.colors.tcp_tint.clone(),
         ..props.colors.clone()
-    };
-    let lanes_x = lane_x();
-    let lanes_y = lane_y();
-    // Deliberately WITHOUT the vertical scroll: reading it here would
-    // re-render this component, and with it every row, item and control
-    // below — which is the forty-millisecond frame. It travels as a
-    // signal to the two components that move, and nothing between them
-    // and it ever reads it.
-    let moved = View {
-        pps: PPS,
-        width,
-        height,
-        ..props.view
-    };
-    // The lanes do NOT get the zoom folded into their view, and that is
-    // the point of the whole exercise: a view that carried it changed
-    // every frame of a gesture, and a changed view prop re-rendered every
-    // row, every item and every lane's `<svg>`. They take the base view
-    // and the zoom as a signal, and decide for themselves how much of it
-    // is worth rebuilding for.
-    let lanes = View {
-        width: frame_width(width),
-        height: frame_height(height),
-        ..moved
-    };
-    // Neither of these carries the axis it does not use, and that is
-    // not tidiness: a view is a prop, a changed prop re-renders the
-    // component, and a ruler that carried the vertical zoom re-rendered
-    // every mark in it every time a row got taller. The ruler has no
-    // rows and the panel has no timeline.
-    let ruler = View {
-        width: width - session_daw::rails::SIDE * 2.0,
-        ..moved
-    };
-    let panel_view = View {
-        height: frame_height(height),
-        ..moved
     };
     rsx! {
         div {
@@ -1902,94 +1840,34 @@ fn Window(props: ShotProps) -> Element {
             style: "position:relative; width:{width}px; height:{height}px; \
                     overflow:hidden; background:{props.colors.surface};",
             {tracking}
-            // The arrangement, as ONE node or as ten thousand.
-            //
-            // `FTS_BLITZ_WIDGET=0` paints the ruler, the panel and the
-            // lanes as components instead of through
-            // `session_daw::widget` — see that module for the
-            // measurement that justifies the default. The switch exists
-            // so the same window can be run both ways on the same
-            // session and compared, which is a thing a commit message
-            // cannot do.
-            if props.widget {
-                {
-                    let w = frame_width(width) + session_daw::arrangement::TCP_WIDTH;
-                    let h = height - session_daw::rails::TOP - session_daw::rails::SIDE;
-                    rsx! {
-                        object {
-                            style: "position:absolute; left:{session_daw::rails::SIDE}px; \
-                                    top:{session_daw::rails::TOP}px; \
-                                    width:{w}px; height:{h}px;",
-                            // The arrangement takes the keyboard — a
-                            // rename is a text field inside it.
-                            //
-                            // Spelled out rather than relied on: the
-                            // HTML default tabindex for `<object>` is
-                            // 0, and Blitz's own comment says so, but
-                            // its list of default-focusable elements
-                            // leaves `object` out. Without this the
-                            // node never focuses, key events go
-                            // somewhere else, and a rename field opens
-                            // that nothing can type into — which is
-                            // exactly what happened.
-                            tabindex: "0",
-                            data: props.arrangement.clone(),
-                        }
+            // The arrangement: the ruler, the track panel and the
+            // lanes, painted as ONE node. See `session_daw::widget`
+            // for the measurement that put it here, and for what it
+            // costs — hit testing and accessibility inside this
+            // rectangle are ours to write, and are written.
+            {
+                let w = frame_width(width) + session_daw::arrangement::TCP_WIDTH;
+                let h = height - session_daw::rails::TOP - session_daw::rails::SIDE;
+                rsx! {
+                    object {
+                        style: "position:absolute; left:{session_daw::rails::SIDE}px; \
+                                top:{session_daw::rails::TOP}px; \
+                                width:{w}px; height:{h}px;",
+                        // The arrangement takes the keyboard — a rename
+                        // is a text field inside it.
+                        //
+                        // Spelled out rather than relied on: the HTML
+                        // default tabindex for `<object>` is 0, and
+                        // Blitz's own comment says so, but its list of
+                        // default-focusable elements leaves `object`
+                        // out. Without this the node never focuses, key
+                        // events go somewhere else, and a rename field
+                        // opens that nothing can type into — which is
+                        // exactly what happened.
+                        tabindex: "0",
+                        data: props.arrangement.clone(),
                     }
                 }
-            } else {
-            div {
-                style: "position:absolute; left:{session_daw::rails::SIDE}px; \
-                        top:{session_daw::rails::TOP}px;",
-                Ruler {
-                    view: ruler,
-                    colors: props.colors.clone(),
-                    marks: props.marks.clone(),
-                    sections: props.sections.clone(),
-                    markers: props.markers.clone(),
-                    scroll: ReadSignal::from(scroll),
-                    zoom: ReadSignal::from(magnified),
-                }
-            }
-            div {
-                style: "position:absolute; left:{lanes_x}px; top:{lanes_y}px;",
-                Lanes {
-                    project: props.project.clone(),
-                    rows: props.rows.clone(),
-                    view: lanes,
-                    scroll: ReadSignal::from(scroll),
-                    scroll_y: ReadSignal::from(down),
-                    colors: props.colors.clone(),
-                    shapes: props.shapes.clone(),
-                    sizing: props.sizing,
-                    grid: props.grid,
-                    zoom: ReadSignal::from(magnified),
-                }
-            }
-            div {
-                style: "position:absolute; left:{session_daw::rails::SIDE}px; top:{lanes_y}px;",
-                Panel {
-                    project: props.project.clone(),
-                    rows: props.rows.clone(),
-                    view: panel_view,
-                    scroll_y: ReadSignal::from(down),
-                    colors: props.colors.clone(),
-                    theme: props.theme.clone(),
-                    sizing: props.sizing,
-                    zoom: ReadSignal::from(magnified),
-                    live: live(),
-                    on_press: move |(guid, control): (String, daw_ui::studio::panel::Control)| {
-                        use daw_ui::studio::panel::Control;
-                        let mut all = live.write();
-                        let state = all.entry(guid).or_default();
-                        match control {
-                            Control::Mute => state.muted = !state.muted,
-                            Control::Solo => state.soloed = !state.soloed,
-                            Control::RecArm => state.armed = !state.armed,
-                        }
-                    },
-                }
-            }
             }
             Rails {
                 width,

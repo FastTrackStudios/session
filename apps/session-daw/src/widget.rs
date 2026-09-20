@@ -1133,6 +1133,7 @@ mod tests {
             scroll_y: 0.0,
             zoom_x: 1.0,
             zoom_y: 1.0,
+            play_at: 0.0,
         }));
         let mut widget = ArrangementWidget::new(
             scene,

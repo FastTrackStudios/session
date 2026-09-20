@@ -48,36 +48,6 @@ const THRESHOLD: &str = "96";
 /// dim ground — which the one above does not.
 const FAINT: &str = "24";
 
-/// How much of the LANES may still differ at that threshold.
-///
-/// Not zero: text is lettered by two different stacks and no threshold
-/// makes a glyph edge agree with a different glyph edge. Measured at
-/// 0.31%, essentially all of it the item titles.
-const LANES_TOLERANCE: f64 = 0.5;
-
-/// And how much of the RULER, which is allowed more.
-///
-/// Not because it is held to a lower standard — because of what it is.
-/// A lane is mostly picture with a name on it; a ruler is mostly
-/// lettering, so the share of it that two text stacks cannot agree on is
-/// larger for the same quality of match. Measured at 0.50%, and every
-/// pixel of that is a glyph: the bands, the flags, the ticks and the
-/// rules are identical.
-///
-/// Neither number is close to a real defect. The missing waveform this
-/// comparison was written after finding measured over 8%.
-const RULER_TOLERANCE: f64 = 1.0;
-
-/// And how much of the PANEL, which is looser again.
-///
-/// Forty names, forty numbers and four hundred vector shapes in one
-/// column: the densest strip in the window in exactly the things two
-/// renderers cannot agree on, because Vello fills the art's paths
-/// directly where the components hand the same paths to usvg as an
-/// image. Measured at 1.27%, falling to 0.31% once the threshold clears
-/// an edge — which is antialiasing, not a shape in the wrong place.
-const PANEL_TOLERANCE: f64 = 1.75;
-
 /// What each surface may differ by at the FAINT threshold — where a
 /// missing control shows even though a missing control is dim.
 ///
@@ -86,9 +56,6 @@ const PANEL_TOLERANCE: f64 = 1.75;
 /// different: at this threshold every antialiased edge in the picture
 /// counts, so a dense surface has a large figure while matching
 /// perfectly. What they bound is something being ABSENT.
-const LANES_OVERALL: f64 = 6.0;
-const RULER_OVERALL: f64 = 2.0;
-const RAILS_OVERALL: f64 = 2.0;
 
 /// What the widget is allowed to differ from the renderer it is made of.
 ///
@@ -105,7 +72,6 @@ const RAILS_OVERALL: f64 = 2.0;
 /// every trigger row came out blank.
 const WIDGET_TOLERANCE: f64 = 0.05;
 const WIDGET_OVERALL: f64 = 0.05;
-const PANEL_OVERALL: f64 = 7.0;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -182,52 +148,6 @@ fn reference(out: &Path) -> Result<()> {
     }
     let (x, y, w, h) = lane_rect();
     crop(&whole, out, &format!("{w}x{h}+{x}+{y}"))
-}
-
-/// The component renderer, which draws one part of the window.
-///
-/// `FTS_BLITZ_WIDGET=0` explicitly: the window paints the arrangement
-/// as one node now, and these tests are the reason the tree it replaced
-/// is still there. Asking for it by name is the point of the call.
-fn components(part: &str, out: &Path) -> Result<()> {
-    let status = Command::new(built("blitz_shot")?)
-        .current_dir(root())
-        .arg(fixture())
-        .arg(out)
-        .env("FTS_BLITZ_SIZE", SIZE)
-        .env("FTS_BLITZ_PART", part)
-        .env("FTS_BLITZ_WIDGET", "0")
-        .status()?;
-    if !status.success() {
-        return Err(format!("the component renderer failed drawing the {part}").into());
-    }
-    Ok(())
-}
-
-/// Where the ruler sits, and how much of it can be compared.
-///
-/// The strip runs the full width between the rails, but its left column
-/// — where the rows are named — cannot be compared: the reference draws
-/// the window's rails OVER it, so that part of the picture is the rails'
-/// and not the ruler's. What is compared is the timeline, which is the
-/// part the ruler actually owns.
-fn ruler_rect() -> (u32, u32, u32, u32) {
-    let x = session_daw::rails::SIDE + session_daw::arrangement::TCP_WIDTH;
-    let y = session_daw::rails::TOP;
-    let w = 2560.0 - x - session_daw::rails::SIDE;
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions,
-        reason = "a rectangle inside a 2560x1440 window"
-    )]
-    let rect = (
-        x as u32,
-        y as u32,
-        w as u32,
-        session_daw::ruler::RULER_H as u32,
-    );
-    rect
 }
 
 /// Crop, forcing truecolour output.
@@ -375,266 +295,6 @@ fn the_widget_draws_the_painted_window() -> Result<()> {
     Ok(())
 }
 
-/// The two renderers draw the same lanes.
-#[test]
-#[ignore = "renders the golden session through two renderers; run with --ignored"]
-fn the_components_draw_the_recorded_scene() -> Result<()> {
-    let dir = scratch()?;
-    let (vello, blitz) = (dir.join("vello.png"), dir.join("components.png"));
-    reference(&vello)?;
-    components("lanes", &blitz)?;
-
-    matches("lanes", &vello, &blitz, LANES_TOLERANCE, LANES_OVERALL)?;
-    Ok(())
-}
-
-/// The two renderers draw the same ruler.
-///
-/// Compared over the timeline alone — see [`ruler_rect`] for why the
-/// column of row names is not the ruler's to be judged on.
-#[test]
-#[ignore = "renders the golden session through two renderers; run with --ignored"]
-fn the_components_draw_the_ruler() -> Result<()> {
-    let dir = scratch()?;
-    let whole = dir.join("whole.png");
-    if !whole.exists() {
-        reference(&dir.join("vello.png"))?;
-    }
-    let (x, y, w, h) = ruler_rect();
-    let vello = dir.join("ruler-vello.png");
-    crop(&whole, &vello, &format!("{w}x{h}+{x}+{y}"))?;
-
-    // The component ruler draws the whole strip, rails' column and all,
-    // so it is cut to the same timeline the reference was cut to.
-    let drawn = dir.join("ruler-drawn.png");
-    components("ruler", &drawn)?;
-    let blitz = dir.join("ruler-components.png");
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions,
-        reason = "the panel's width, which is a small positive integer"
-    )]
-    let names = session_daw::arrangement::TCP_WIDTH as u32;
-    crop(&drawn, &blitz, &format!("{w}x{h}+{names}+0"))?;
-
-    matches("ruler", &vello, &blitz, RULER_TOLERANCE, RULER_OVERALL)?;
-    Ok(())
-}
-
-/// The two renderers draw the same frame: three rails and the mode bar.
-///
-/// Region by region rather than as one picture, because the rails and
-/// the panel between them are drawn by different things and a single
-/// figure over the whole window would let one hide inside the other.
-#[test]
-#[ignore = "renders the golden session through two renderers; run with --ignored"]
-fn the_components_draw_the_rails() -> Result<()> {
-    let dir = scratch()?;
-    let whole = dir.join("whole.png");
-    if !whole.exists() {
-        reference(&dir.join("vello.png"))?;
-    }
-    let drawn = dir.join("rails-drawn.png");
-    components("rails", &drawn)?;
-
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions,
-        reason = "window geometry, which is small positive integers"
-    )]
-    let (side, top, panel, ruler) = (
-        session_daw::rails::SIDE as u32,
-        session_daw::rails::TOP as u32,
-        session_daw::arrangement::TCP_WIDTH as u32,
-        session_daw::ruler::RULER_H as u32,
-    );
-    // Each region, and what it is allowed. The rails that hold words get
-    // the lettering allowance; the ones that are frame and nothing else
-    // are held to zero, because there is nothing in them for two text
-    // stacks to disagree about.
-    //
-    // The arrangement's right rail was one of those until it got a
-    // switch of its own — the one that says what a shut folder shows —
-    // and a rail with a word on it is a rail two text stacks can centre
-    // a pixel apart. It takes the lettering allowance now, for the same
-    // reason the left one always did.
-    let regions: [(&str, String, f64); 4] = [
-        ("left rail", format!("{side}x1440+0+0"), RULER_TOLERANCE),
-        (
-            "right rail",
-            format!("{side}x1440+{}+0", 2560 - side),
-            RULER_TOLERANCE,
-        ),
-        ("top rail", format!("2560x{top}+0+0"), 0.0),
-        (
-            "mode bar",
-            format!("{panel}x{ruler}+{side}+{top}"),
-            RULER_TOLERANCE,
-        ),
-    ];
-
-    for (name, geometry, allowed) in regions {
-        let slug = name.replace(' ', "-");
-        let (a, b) = (
-            dir.join(format!("{slug}-vello.png")),
-            dir.join(format!("{slug}-components.png")),
-        );
-        // Forced to truecolour: a region with few colours comes back
-        // palettised, and the comparator reads pixels rather than a
-        // palette.
-        crop_true(&whole, &a, &geometry)?;
-        crop_true(&drawn, &b, &geometry)?;
-        matches(name, &a, &b, allowed, allowed.max(RAILS_OVERALL))?;
-    }
-    Ok(())
-}
-
-/// Every converted surface at once, in one tree, still matches.
-///
-/// The parts are proven one at a time above. This is the question those
-/// cannot answer: that they still draw the same thing when they are
-/// composed — one document, one layout, one paint — rather than each
-/// being right alone and wrong together. A stray margin, an inherited
-/// font, a positioned ancestor moving the origin: all of them show up
-/// here and nowhere else.
-#[test]
-#[ignore = "renders the golden session through two renderers; run with --ignored"]
-fn the_whole_window_composes() -> Result<()> {
-    let dir = scratch()?;
-    let whole = dir.join("whole.png");
-    if !whole.exists() {
-        reference(&dir.join("vello.png"))?;
-    }
-    let drawn = dir.join("window.png");
-    components("all", &drawn)?;
-
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions,
-        reason = "window geometry, which is small positive integers"
-    )]
-    let (side, top, panel, ruler_h) = (
-        session_daw::rails::SIDE as u32,
-        session_daw::rails::TOP as u32,
-        session_daw::arrangement::TCP_WIDTH as u32,
-        session_daw::ruler::RULER_H as u32,
-    );
-    let (lx, ly, lw, lh) = lane_rect();
-    // Each region with BOTH of its figures, rather than one derived
-    // from the other: they measure different things, and a multiplier
-    // between them is a guess that fails the moment a surface is denser
-    // than the one it was guessed from.
-    let regions: [(&str, String, f64, f64); 4] = [
-        (
-            "lanes",
-            format!("{lw}x{lh}+{lx}+{ly}"),
-            LANES_TOLERANCE,
-            LANES_OVERALL,
-        ),
-        (
-            "ruler",
-            format!(
-                "{}x{ruler_h}+{}+{top}",
-                2560 - side - panel - side,
-                side + panel
-            ),
-            RULER_TOLERANCE,
-            RULER_OVERALL,
-        ),
-        (
-            "left rail",
-            format!("{side}x1440+0+0"),
-            RULER_TOLERANCE,
-            RAILS_OVERALL,
-        ),
-        (
-            "mode bar",
-            format!("{panel}x{ruler_h}+{side}+{top}"),
-            RULER_TOLERANCE,
-            RAILS_OVERALL,
-        ),
-    ];
-
-    for (name, geometry, allowed, overall) in regions {
-        let slug = name.replace(' ', "-");
-        let (a, b) = (
-            dir.join(format!("win-{slug}-vello.png")),
-            dir.join(format!("win-{slug}-components.png")),
-        );
-        crop_true(&whole, &a, &geometry)?;
-        crop_true(&drawn, &b, &geometry)?;
-        matches(&format!("composed {name}"), &a, &b, allowed, overall)?;
-    }
-    Ok(())
-}
-
-/// The two renderers draw the same track panel — all of it.
-///
-/// This began as the rail alone, because the rest of the row was under
-/// live controls the components did not draw. They do now: the record
-/// arm, the volume knob, the pan knob, mute and solo, from the same
-/// `daw_theme_art` drawings the painted panel uses, turned into SVG. So
-/// the comparison is the whole column.
-///
-/// Held looser than the lanes and about the same as the ruler, for the
-/// reason that keeps recurring: this strip is dense with things two
-/// renderers letter and antialias differently — forty names, forty
-/// numbers, and four hundred vector shapes whose edges Vello fills
-/// directly and usvg rasterises through an image. Measured at 1.27%, and
-/// it falls to 0.31% as soon as the threshold clears an edge, which is
-/// the signature of antialiasing rather than of a shape in the wrong
-/// place.
-///
-/// The RAIL inside it is still checked separately and tightly, because
-/// it is geometry and two glyphs: it measures zero differing pixels.
-#[test]
-#[ignore = "renders the golden session through two renderers; run with --ignored"]
-fn the_components_draw_the_panel() -> Result<()> {
-    let dir = scratch()?;
-    let whole = dir.join("whole.png");
-    if !whole.exists() {
-        reference(&dir.join("vello.png"))?;
-    }
-    let drawn = dir.join("panel.png");
-    components("panel", &drawn)?;
-
-    let (_, lane_y, _, lane_h) = lane_rect();
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions,
-        reason = "window geometry, which is small positive integers"
-    )]
-    let (side, rail) = (
-        session_daw::rails::SIDE as u32,
-        daw_ui::studio::panel::NAME_FIELD_X as u32,
-    );
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions,
-        reason = "the panel's width, which is a small positive integer"
-    )]
-    let panel = daw_ui::studio::panel::ROW_W as u32;
-
-    for (name, width, allowed) in [
-        ("rail", rail, LANES_TOLERANCE),
-        ("panel", panel, PANEL_TOLERANCE),
-    ] {
-        let (a, b) = (
-            dir.join(format!("{name}-vello.png")),
-            dir.join(format!("{name}-components.png")),
-        );
-        crop_true(&whole, &a, &format!("{width}x{lane_h}+{side}+{lane_y}"))?;
-        crop_true(&drawn, &b, &format!("{width}x{lane_h}+0+0"))?;
-        matches(name, &a, &b, allowed, PANEL_OVERALL)?;
-    }
-    Ok(())
-}
-
 /// The negative control: a picture moved four pixels fails.
 ///
 /// Without this the test above says only that something was rendered
@@ -660,10 +320,10 @@ fn a_moved_picture_fails() -> Result<()> {
 
     let difference = differs_at(&cut, &moved, THRESHOLD)?;
     assert!(
-        difference > RULER_TOLERANCE,
+        difference > WIDGET_TOLERANCE,
         "the comparison cannot tell a moved picture from a matching one: \
          four pixels of shift read as {difference:.3}% different, inside the \
-         {RULER_TOLERANCE}% the loosest real test allows"
+         {WIDGET_TOLERANCE}% the gate above allows"
     );
     Ok(())
 }

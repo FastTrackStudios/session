@@ -1365,7 +1365,6 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
 #   just studio animate            running the benchmark's own gestures
 #   just studio "" 2560x1440       at another size
 #   FPS=1 just studio              with the frame-time graph over it
-#   TREE=1 just studio             as a component tree, the old way
 #
 # Wheel scrolls; shift makes it sideways. Hold `z` and scroll to zoom the
 # rows, shift-`z` for time; `z` and drag is the zoom tool. Middle-drag is
@@ -1375,10 +1374,7 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
 # `FPS=1` puts a hundred-frame bar graph in the bottom right, with the
 # 4.17 ms budget drawn across it, so a hitch is visible as a hitch rather
 # than averaged into a number that looks fine.
-#
-# `TREE=1` is the arrangement as ten thousand DOM nodes, which is what
-# this used to be and what the widget is gated against. Fifteen to thirty
-# times slower — see `session_daw::widget` for the table.
+
 #
 # Presented WITHOUT vsync, and `VSYNC=1` puts it back. Not a default
 # chosen for speed: measured on the golden session at 5120x1440, the
@@ -1398,7 +1394,7 @@ studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
     # an assignment BEFORE it expands anything, so `${FPS:+FTS_BLITZ_FPS=1}`
     # in that position becomes a command name and the recipe dies with
     # "command not found".
-    env ${FPS:+FTS_BLITZ_FPS=1} ${TREE:+FTS_BLITZ_WIDGET=0} \
+    env ${FPS:+FTS_BLITZ_FPS=1} \
     FTS_PRESENT="${VSYNC:+vsync}${VSYNC:-immediate}" \
     FTS_BLITZ_WINDOW="{{MODE}}" \
     FTS_BLITZ_SIZE="{{SIZE}}" \
@@ -1441,7 +1437,7 @@ studio-bench GESTURE="pan" SIZE="5120x1440" FRAMES="120" DUMP="":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p session-daw --bin blitz_shot
-    env ${DUMP:+FTS_BLITZ_DUMP="{{DUMP}}"} ${FPS:+FTS_BLITZ_FPS=1} ${TREE:+FTS_BLITZ_WIDGET=0} \
+    env ${DUMP:+FTS_BLITZ_DUMP="{{DUMP}}"} ${FPS:+FTS_BLITZ_FPS=1} \
     FTS_BLITZ_PART=all \
     FTS_BLITZ_SCENE=drum-mixing \
     FTS_BLITZ_SIZE="{{SIZE}}" \
