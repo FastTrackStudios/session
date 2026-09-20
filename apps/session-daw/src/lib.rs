@@ -55,3 +55,4 @@ pub mod tempo_map;
 pub mod text;
 pub mod theme;
 pub mod tone;
+pub mod widget;

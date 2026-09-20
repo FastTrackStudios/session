@@ -184,6 +184,39 @@ fn main() {
     let sections = project.sections.clone().into();
     let markers = project.markers.clone().into();
 
+    // `FTS_BLITZ_WIDGET=1` paints the arrangement as one node instead of
+    // building it as a tree. Everything above is the same — the same
+    // project, the same rows, the same scene — so the two are the same
+    // window drawn two ways, which is the only comparison worth having.
+    let widget = std::env::var_os("FTS_BLITZ_WIDGET").is_some();
+    let arrangement = widget.then(|| {
+        let shared: session_daw::widget::Shared =
+            std::rc::Rc::new(std::cell::RefCell::new(session_daw::widget::View {
+                scroll_x,
+                scroll_y,
+                zoom_x: 1.0,
+                zoom_y: 1.0,
+            }));
+        WIDGET_VIEW.with(|slot| *slot.borrow_mut() = Some(std::rc::Rc::clone(&shared)));
+        let recorded = session_daw::arrangement::Arrangement::build(
+            &session_daw::arrangement::Palette::from_theme(&theme),
+            &session_daw::text::Font::embedded().expect("the embedded font"),
+            &project,
+            &rows,
+            layout,
+            &session_daw::midi::Previews::default(),
+        );
+        let bpm = recorded.bpm;
+        dioxus_native_dom::CustomWidgetAttr::new(session_daw::widget::ArrangementWidget::new(
+            recorded,
+            session_daw::arrangement::Palette::from_theme(&theme),
+            session_daw::text::Font::embedded().expect("the embedded font"),
+            bpm,
+            PPS,
+            shared,
+        ))
+    });
+
     let props = ShotProps {
         project,
         rows,
@@ -205,6 +238,8 @@ fn main() {
         modes: modes(),
         animate: false,
         windowed: false,
+        widget,
+        arrangement,
     };
 
     // `FTS_BLITZ_WINDOW=1` opens the studio in a real window instead of
@@ -330,6 +365,25 @@ fn main() {
 /// time says a pan is slow and only the split says which pass is: Dioxus
 /// reconciling the tree, then Stylo and Taffy solving what came out, then
 /// the scene being encoded for the GPU.
+/// Tell the painted arrangement where the view is.
+///
+/// The bridge between the two worlds: the window keeps the view in
+/// signals because that is how a component tree hears about a change,
+/// and the widget reads a plain cell because its paint runs outside the
+/// Dioxus runtime. One copy a frame, of four numbers.
+fn tell_the_widget(scroll: f64, down: f64, zoom: (f64, f64)) {
+    WIDGET_VIEW.with(|slot| {
+        if let Some(shared) = slot.borrow().as_ref() {
+            *shared.borrow_mut() = session_daw::widget::View {
+                scroll_x: scroll,
+                scroll_y: down,
+                zoom_x: zoom.0,
+                zoom_y: zoom.1,
+            };
+        }
+    });
+}
+
 /// A sampling profiler over the benchmark, when one is asked for.
 ///
 /// `pprof` samples on a SIGPROF timer rather than through `perf`, which
@@ -493,6 +547,19 @@ fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
             )]
             let t = frame as f64 / frames as f64;
             drive(document, gesture, t);
+            SCROLL.with(|s| {
+                DOWN.with(|d| {
+                    ZOOM.with(|z| {
+                        let at = |sig: &std::cell::RefCell<Option<Signal<f64>>>| {
+                            sig.borrow().map_or(0.0, |s| s.peek().to_owned())
+                        };
+                        let zoom = z
+                            .borrow()
+                            .map_or((1.0, 1.0), |z: Signal<(f64, f64)>| z.peek().to_owned());
+                        tell_the_widget(at(s), at(d), zoom);
+                    });
+                });
+            });
             let at = Instant::now();
             document.poll(None);
             diff.push_ms(at.elapsed().as_secs_f64() * 1000.0);
@@ -909,6 +976,13 @@ struct ShotProps {
     animate: bool,
     /// Whether there is a real window to ask about its size.
     windowed: bool,
+    /// Whether the arrangement is painted as one node rather than built
+    /// as a tree — see [`session_daw::widget`].
+    widget: bool,
+    /// The widget itself, when it is. Write-once: the first render hands
+    /// it to the document and every later one finds the slot empty,
+    /// which is what makes it safe to carry in props that get cloned.
+    arrangement: Option<dioxus_native_dom::CustomWidgetAttr>,
 }
 
 thread_local! {
@@ -930,6 +1004,13 @@ thread_local! {
     /// travel with them across it, so a fault in one axis says nothing
     /// about the other.
     static DOWN: std::cell::RefCell<Option<Signal<f64>>> =
+        const { std::cell::RefCell::new(None) };
+    /// Where the painted arrangement thinks the view is.
+    ///
+    /// A cell rather than a prop for the reason the others are: the
+    /// widget's paint happens inside Blitz's traversal, which is not the
+    /// Dioxus runtime, so what it reads cannot be a signal.
+    static WIDGET_VIEW: std::cell::RefCell<Option<session_daw::widget::Shared>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -1366,6 +1447,12 @@ fn WindowSize(
                 }
             }
 
+            // Where the painted arrangement should be looking, if there
+            // is one. Written every frame rather than on change: it is
+            // four numbers, and a missed write is a frame drawn at the
+            // wrong place.
+            tell_the_widget(scroll(), down(), zoom());
+
             // What the frame the shell just drew actually cost.
             let cost = f64::from(
                 u32::try_from(
@@ -1717,6 +1804,29 @@ fn Window(props: ShotProps) -> Element {
             style: "position:relative; width:{width}px; height:{height}px; \
                     overflow:hidden; background:{props.colors.surface};",
             {tracking}
+            // The arrangement, as ONE node or as ten thousand.
+            //
+            // `FTS_BLITZ_WIDGET=1` paints the ruler, the panel and the
+            // lanes through `session_daw::widget` instead of building
+            // them as components — see that module for the measurement
+            // that justifies it. Behind a switch because the whole point
+            // is to be able to run the same window both ways on the same
+            // session and compare, which is a thing a commit message
+            // cannot do.
+            if props.widget {
+                {
+                    let w = frame_width(width) + session_daw::arrangement::TCP_WIDTH;
+                    let h = height - session_daw::rails::TOP - session_daw::rails::SIDE;
+                    rsx! {
+                        object {
+                            style: "position:absolute; left:{session_daw::rails::SIDE}px; \
+                                    top:{session_daw::rails::TOP}px; \
+                                    width:{w}px; height:{h}px;",
+                            data: props.arrangement.clone(),
+                        }
+                    }
+                }
+            } else {
             div {
                 style: "position:absolute; left:{session_daw::rails::SIDE}px; \
                         top:{session_daw::rails::TOP}px;",
@@ -1768,6 +1878,7 @@ fn Window(props: ShotProps) -> Element {
                         }
                     },
                 }
+            }
             }
             Rails {
                 width,
