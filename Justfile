@@ -1380,6 +1380,14 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
 # this used to be and what the widget is gated against. Fifteen to thirty
 # times slower — see `session_daw::widget` for the table.
 #
+# Presented WITHOUT vsync, and `VSYNC=1` puts it back. Not a default
+# chosen for speed: measured on the golden session at 5120x1440, the
+# animated gestures went p50 10.1ms with vsync and 6.8ms without, which
+# is not the frame getting cheaper — it is the frame having missed a
+# deadline and waiting for the next one. A window that waits is a window
+# whose readout reports the wait, and the number this is being tuned
+# against has to be what a frame COST.
+#
 # Logs to /tmp/fts-studio.log rather than to the terminal, because a
 # window has no terminal and what a run did has to be readable afterwards.
 studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
@@ -1391,6 +1399,7 @@ studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
     # in that position becomes a command name and the recipe dies with
     # "command not found".
     env ${FPS:+FTS_BLITZ_FPS=1} ${TREE:+FTS_BLITZ_WIDGET=0} \
+    FTS_PRESENT="${VSYNC:+vsync}${VSYNC:-immediate}" \
     FTS_BLITZ_WINDOW="{{MODE}}" \
     FTS_BLITZ_SIZE="{{SIZE}}" \
     FTS_BLITZ_SCENE="{{SCENE}}" \

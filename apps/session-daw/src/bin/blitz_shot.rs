@@ -209,6 +209,16 @@ fn main() {
         Ok(_) => true,
         Err(_) => std::env::var_os("FTS_BLITZ_WINDOW").is_some(),
     };
+    // What this run actually resolved to, on the record. Three switches
+    // decide what you are looking at and none of them is visible in the
+    // picture; "the readout is missing" and "the readout is off" look
+    // identical on screen and take a log line to tell apart.
+    tracing::info!(
+        widget,
+        readout,
+        present = std::env::var("FTS_PRESENT").unwrap_or_else(|_| "vsync".to_owned()),
+        "drawing"
+    );
     let arrangement = widget.then(|| {
         let shared: session_daw::widget::Shared =
             std::rc::Rc::new(std::cell::RefCell::new(session_daw::widget::View {
