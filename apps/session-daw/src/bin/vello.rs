@@ -87,6 +87,9 @@ struct App {
     zoom_y: f64,
     /// `z` is down: the next press on the lanes is the zoom tool.
     zoom_held: bool,
+    /// The last refused edit, until it has had its say. See
+    /// `session_daw::notice`.
+    notice: Option<session_daw::notice::Notice>,
     /// Whether `g` is down — the tempo-mapping tool, where a click
     /// moves the nearest bar line to the pointer and the tempo is
     /// whatever makes that true.
@@ -1796,11 +1799,13 @@ impl App {
                 Effect::ReRecord => self.re_record(),
                 Effect::Transport(command, at) => session_daw::engine::transport(command, at),
                 Effect::Playhead(at) => self.playhead.report(at, 1.0, std::time::Instant::now()),
-                // Logged rather than shown, because the window has
-                // nowhere to show it. A refused edit that says nothing
-                // anywhere is a window that looks broken, so at minimum
-                // it lands where a run can be read back.
-                Effect::Refused(why) => tracing::warn!(reason = why, "the edit was refused"),
+                // Both: the warn line is what a run gets read back
+                // from, and the notice is what the person at the window
+                // sees. Neither substitutes for the other.
+                Effect::Refused { why, row } => {
+                    tracing::warn!(reason = why, "the edit was refused");
+                    self.notice = Some(session_daw::notice::Notice::new(why, row));
+                }
             }
         }
     }
@@ -4072,6 +4077,7 @@ impl App {
             bar_held,
             dock: self.expression.as_mut().filter(|_| frame.dock > 0.0),
             zoom_box: self.editor.zoom_marquee(),
+            notice: self.notice.as_ref().filter(|n| n.alive()),
         };
         let mut drawn = session_daw::profile::Counts::default();
         let palette = &self.palette;
@@ -4306,6 +4312,7 @@ fn main() {
         pps: DEFAULT_PPS,
         zoom_y: 1.0,
         zoom_held: false,
+        notice: None,
         grid_held: false,
         repeat: session_daw::repeat::Repeat::default(),
         transients: Vec::new(),

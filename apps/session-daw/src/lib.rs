@@ -32,6 +32,7 @@ pub mod live;
 pub mod mcp;
 pub mod midi;
 pub mod mousemap;
+pub mod notice;
 pub mod num;
 pub mod open;
 pub mod overlay;

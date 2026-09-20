@@ -1793,6 +1793,9 @@ impl AtRest {
             bar_held: None,
             dock,
             zoom_box: None,
+            // The bench measures the picture, and a notice is a reply
+            // to a gesture it never makes.
+            notice: None,
         }
     }
 }

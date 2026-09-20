@@ -75,9 +75,16 @@ pub enum Effect {
     /// whose takes do not line up under the hand — see
     /// [`daw_ui::studio::folded::spread`].
     ///
-    /// The window has nowhere to SHOW one yet; it logs it. A notice
-    /// channel is its own piece of work.
-    Refused(&'static str),
+    /// `row` is the folded folder the refusal is about, by track guid,
+    /// so the window can put the sentence on the row it belongs to
+    /// rather than in a corner the reader has to carry it back from.
+    /// `None` where the refusal was not about a folded row — nothing
+    /// produces one today, and the window falls back to the top of the
+    /// lanes rather than dropping the message.
+    Refused {
+        why: &'static str,
+        row: Option<String>,
+    },
 }
 
 /// An item taken hold of by its body or an edge.
@@ -138,6 +145,58 @@ pub struct Editor {
     /// map knows WHICH band; only the window has the list to ask how
     /// wide it is.
     pub ruler_span: Option<(f64, f64)>,
+    /// A refused drag on its way back to where it started.
+    snapback: Option<Snapback>,
+}
+
+/// The ghost of a refused drag, returning.
+///
+/// A refused edit used to end by the ghost blinking out, which from the
+/// hand is indistinguishable from the press never having been taken —
+/// and a window that appears to ignore the mouse is the thing the
+/// notice exists to stop. So the ghost travels back to where the item
+/// actually is: the gesture was seen, considered, and undone, and all
+/// three are legible in one movement.
+///
+/// Short on purpose. This is punctuation on a gesture, not an
+/// animation to watch; anything slower would be in the way of the next
+/// attempt, which is usually immediate.
+#[derive(Clone, Copy, Debug)]
+struct Snapback {
+    index: usize,
+    /// Where the drag was refused.
+    from: (f64, f64),
+    /// And where the item has been all along.
+    to: (f64, f64),
+    started: std::time::Instant,
+}
+
+/// How long a refused ghost takes to get back.
+const SNAPBACK: f64 = 0.16;
+
+impl Snapback {
+    /// How far back it has come, 0..1, or `None` once it is home.
+    fn progress(&self) -> Option<f64> {
+        let t = self.started.elapsed().as_secs_f64() / SNAPBACK;
+        (t < 1.0).then(|| {
+            // Eased out: fast away from the refusal, settling into the
+            // place it is going, which is the shape a thing springing
+            // back has.
+            let left = 1.0 - t;
+            1.0 - left * left
+        })
+    }
+
+    /// The span to draw, on the way.
+    fn span(&self) -> Option<(usize, f64, f64)> {
+        let t = self.progress()?;
+        let lerp = |a: f64, b: f64| (b - a).mul_add(t, a);
+        Some((
+            self.index,
+            lerp(self.from.0, self.to.0),
+            lerp(self.from.1, self.to.1),
+        ))
+    }
 }
 
 /// A press on the ruler, before it has decided what it is.
@@ -171,6 +230,9 @@ impl Editor {
         scene: &Arrangement,
         effects: &mut Vec<Effect>,
     ) -> bool {
+        // A new press ends any refused ghost still travelling: `ghost`
+        // answers for one drag, and the one being started now is it.
+        self.snapback = None;
         let Some(hit) = hit else { return false };
         match hit.target {
             Target::Item {
@@ -448,6 +510,18 @@ impl Editor {
                             item.length = daw_proto::primitives::Duration::from_seconds(x1 - x0);
                         },
                     );
+                    // Refused: the ghost goes back where the item is,
+                    // rather than blinking out as if the press had
+                    // never been taken. The notice says why; this says
+                    // that something was attempted at all.
+                    if !made {
+                        self.snapback = Some(Snapback {
+                            index: press.index,
+                            from: (x0, x1),
+                            to: (press.x0, press.x1),
+                            started: std::time::Instant::now(),
+                        });
+                    }
                     // And every edge that was sitting on the one just
                     // moved goes with it, or a trim opens a gap where
                     // two items were butted together.
@@ -647,11 +721,27 @@ impl Editor {
     }
 
     /// The ghost of an item being moved or trimmed: its index and span.
+    ///
+    /// Also the ghost of a refused one going home — the press is gone by
+    /// then, so a caller asking "what is in flight" would otherwise be
+    /// told nothing while something is still moving on screen.
     #[must_use]
     pub fn ghost(&self) -> Option<(usize, f64, f64)> {
+        if let Some(back) = self.snapback.as_ref().and_then(Snapback::span) {
+            return Some(back);
+        }
         self.item_press
             .as_ref()
             .and_then(|p| p.ghost.map(|(x0, x1)| (p.index, x0, x1)))
+    }
+
+    /// Whether a refused ghost is still travelling, so the window knows
+    /// to keep asking for frames.
+    #[must_use]
+    pub fn settling(&self) -> bool {
+        self.snapback
+            .as_ref()
+            .is_some_and(|back| back.progress().is_some())
     }
 
     /// The fade in flight: its item and where the fades are now.
@@ -862,7 +952,7 @@ impl Editor {
                 // A ragged row cannot be split on this row's edges, and
                 // the reason travels the way every other refusal does.
                 daw_ui::studio::folded::Spread::Refused(why) => {
-                    effects.push(Effect::Refused(why));
+                    effects.push(refused(guid, why));
                     None
                 }
                 daw_ui::studio::folded::Spread::Direct => None,
@@ -924,6 +1014,18 @@ impl Editor {
 /// which is an invariant rather than a discipline: this is the only
 /// place a target is chosen.
 ///
+/// A refusal, addressed to the row it is about.
+///
+/// The folded guid carries its folder in it, which is exactly the row
+/// the message wants to sit on — so the address is derived here rather
+/// than threaded down from whatever gesture started this.
+fn refused(guid: &str, why: &'static str) -> Effect {
+    Effect::Refused {
+        why,
+        row: daw_ui::studio::folded::parse_guid(guid).map(|(folder, _)| folder.to_owned()),
+    }
+}
+
 /// `None` means the edit was refused and the reason has been pushed.
 fn targets(
     project: &Project,
@@ -936,7 +1038,7 @@ fn targets(
         Spread::Direct => Some(vec![guid.to_owned()]),
         Spread::Children(items) => Some(items),
         Spread::Refused(why) => {
-            effects.push(Effect::Refused(why));
+            effects.push(refused(guid, why));
             None
         }
     }
@@ -1461,10 +1563,69 @@ mod tests {
         s.drag_to(x + 1.3 * PPS, Mods::default());
         let effects = s.release(x + 1.3 * PPS, Mods::default());
         assert!(sends(&effects).is_empty(), "a fragment was dragged anyway");
+        let (why, row) = effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::Refused { why, row } => Some((*why, row.clone())),
+                _ => None,
+            })
+            .expect("it refused without saying why");
+        // The sentence, not a generic failure: the reason is the only
+        // part of a refusal worth reading, and it names what to do
+        // instead.
         assert!(
-            effects.iter().any(|e| matches!(e, Effect::Refused(_))),
-            "it refused without saying why: {effects:?}"
+            why.contains("do not line up") && why.contains("open the folder"),
+            "the refusal lost its reason: {why}"
         );
+        // And the row it is about, so the window can put it there
+        // rather than in a corner the reader has to carry it back from.
+        assert_eq!(
+            row.as_deref(),
+            Some(folder.guid.as_str()),
+            "the refusal did not say which row it was about"
+        );
+    }
+
+    /// A refused drag sends the ghost back to the item rather than
+    /// letting it blink out, which from the hand is indistinguishable
+    /// from the press never having been taken.
+    #[test]
+    fn a_refused_drag_sends_its_ghost_home() {
+        let mut s = Stage::folded();
+        s.project.items.get_mut("out").expect("the out mic")[0].position =
+            PositionInSeconds::from_seconds(3.0);
+        let folder = s.project.tracks[0].clone();
+        let lanes: Vec<&[daw_proto::Item]> =
+            vec![&s.project.items["in"][..], &s.project.items["out"][..]];
+        let spans = daw_ui::studio::folded::spans(&lanes);
+        let items = daw_ui::studio::folded::lane(&folder, &spans);
+        s.project.folds.insert(
+            folder.guid.clone(),
+            daw_ui::studio::folded::Fold { items, spans },
+        );
+        s.scene = record(&s.project, &s.rows);
+
+        let (x, y) = s.point(0, 2.5, 15.0);
+        s.press(x, y, Mods::default());
+        s.drag_to(x + 1.3 * PPS, Mods::default());
+        let dragged = s.editor.ghost().expect("a drag draws a ghost");
+        s.release(x + 1.3 * PPS, Mods::default());
+
+        assert!(
+            s.editor.settling(),
+            "the refused ghost vanished instead of going back"
+        );
+        let (index, x0, _) = s.editor.ghost().expect("the ghost is still travelling");
+        assert_eq!(index, dragged.0, "it came back as a different item");
+        assert!(
+            x0 < dragged.1,
+            "it should be on its way back, not still out at {x0}"
+        );
+
+        // A new press is a new gesture, and takes the ghost with it.
+        let (x2, y2) = s.point(0, 2.5, 15.0);
+        s.press(x2, y2, Mods::default());
+        assert!(!s.editor.settling(), "a press left the old ghost in flight");
     }
 
     /// A click on an item's body selects it, alone; with Ctrl it is
