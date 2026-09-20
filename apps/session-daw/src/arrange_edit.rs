@@ -256,7 +256,7 @@ impl Snapback {
 /// once the pointer has moved far enough to be a drag. Until then it is
 /// a click, and a click on the ruler means what it has always meant:
 /// put the cursor there.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct RulerPress {
     on: crate::ruler::On,
     /// Where the press was, in seconds.
@@ -269,6 +269,15 @@ struct RulerPress {
     /// Whether it lands on the grid, as the mouse map resolved it when
     /// the press landed — see `ItemPress::snap`.
     snap: bool,
+    /// The other region edges and markers that were sitting exactly
+    /// where this one was.
+    ///
+    /// Worked out at PRESS for the reason the item side works its own
+    /// out then: by release the edge has moved and nothing is sitting
+    /// there any more. Empty for a BODY drag — a region moved bodily
+    /// takes its neighbours' boundaries nowhere, and one that dragged
+    /// them would make a timeline impossible to rearrange.
+    joined: Vec<crate::ruler::MarkEdge>,
 }
 
 impl Editor {
@@ -345,7 +354,7 @@ impl Editor {
                 }
             }
             Target::Ruler { seconds, on } => {
-                use crate::ruler::On;
+                use crate::ruler::{On, Zone};
                 // What the press took hold of is remembered whatever it
                 // was, because a press on the ruler is not yet a
                 // gesture: it becomes a drag if the pointer moves, and
@@ -357,12 +366,33 @@ impl Editor {
                     On::Region { .. } => self.ruler_span.unwrap_or((seconds, seconds)),
                     On::Lane { .. } | On::Bars => (seconds, seconds),
                 };
+                // What else is on this moment. A boundary is shared:
+                // the region that ends here, the one that starts here,
+                // and any marker written on it are one thing as far as
+                // the hand is concerned.
+                let joined = match on {
+                    On::Region {
+                        zone: Zone::Body, ..
+                    }
+                    | On::Lane { .. }
+                    | On::Bars => Vec::new(),
+                    On::Region { zone, .. } => {
+                        let edge = match zone {
+                            Zone::Start => was.0,
+                            // `Body` is unreachable — matched above.
+                            Zone::Body | Zone::End => was.1,
+                        };
+                        scene.marks_at(edge, Some(on))
+                    }
+                    On::Marker { .. } => scene.marks_at(seconds, Some(on)),
+                };
                 self.ruler_press = Some(RulerPress {
                     on,
                     from: seconds,
                     was,
                     ghost: None,
                     snap: mousemap::resolve(hit.context, Gesture::Drag, keys).snap,
+                    joined,
                 });
                 // The bars are the timeline, so a press there still
                 // means what a press on a timeline has always meant.
@@ -392,6 +422,27 @@ impl Editor {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Write the edit each joined mark needs to land on `to`.
+    ///
+    /// A region takes both bounds whatever moved, so the bound that did
+    /// not move is the one captured at the press — see
+    /// [`crate::ruler::MarkEdge`].
+    fn carry_joined(joined: &[crate::ruler::MarkEdge], to: f64, effects: &mut Vec<Effect>) {
+        use crate::ruler::MarkEdge;
+        for edge in joined {
+            let edit = match *edge {
+                MarkEdge::RegionStart { id, end } => {
+                    Edit::SetRegionBounds(String::new(), id, to, end)
+                }
+                MarkEdge::RegionEnd { id, start } => {
+                    Edit::SetRegionBounds(String::new(), id, start, to)
+                }
+                MarkEdge::Marker { id } => Edit::MoveMarker(String::new(), id, to),
+            };
+            effects.push(Effect::Send(edit));
         }
     }
 
@@ -691,18 +742,27 @@ impl Editor {
                 }
                 (On::Marker { id }, Some((to, _))) => {
                     effects.push(Effect::Send(Edit::MoveMarker(String::new(), id, to)));
+                    Self::carry_joined(&press.joined, to, effects);
                 }
                 (On::Region { id, zone }, Some((from, to))) => {
                     // Every zone sets both bounds, because REAPER's
                     // setter takes both — the zone decided which of
                     // them the drag was allowed to move.
-                    let _ = zone;
                     effects.push(Effect::Send(Edit::SetRegionBounds(
                         String::new(),
                         id,
                         from,
                         to,
                     )));
+                    // And the boundary goes as one thing. Which end
+                    // moved is which end the neighbours follow; a body
+                    // drag has no neighbours to follow it, and
+                    // `joined` is empty there.
+                    let moved = match zone {
+                        Zone::Start => from,
+                        Zone::Body | Zone::End => to,
+                    };
+                    Self::carry_joined(&press.joined, moved, effects);
                 }
                 (On::Marker { .. } | On::Region { .. }, None) | (On::Bars, _) => {}
             }
@@ -2480,6 +2540,20 @@ mod ruler_tests {
         was: (f64, f64),
         to: Option<f64>,
     ) -> Vec<Edit> {
+        gesture_on(&super::tests::project(), editor, on, from, was, to)
+    }
+
+    /// The same, over a project the caller has furnished — with regions
+    /// and markers on it, for the gestures that are about what else is
+    /// at the same moment.
+    fn gesture_on(
+        project: &super::Project,
+        editor: &mut Editor,
+        on: On,
+        from: f64,
+        was: (f64, f64),
+        to: Option<f64>,
+    ) -> Vec<Edit> {
         use crate::hit::{Hit, Target};
         use input_config_proto::MouseModifierContext as Context;
         let mut effects = Vec::new();
@@ -2488,19 +2562,56 @@ mod ruler_tests {
             target: Target::Ruler { seconds: from, on },
             context: Context::Ruler,
         };
-        let project = super::tests::project();
         let rows: Vec<(super::Track, u32)> =
             project.tracks.iter().cloned().map(|t| (t, 0)).collect();
-        let scene = super::tests::record(&project, &rows);
+        let scene = super::tests::record(project, &rows);
         editor.press(Some(hit), Mods::default(), &scene, &mut effects);
         if let Some(to) = to {
             // A pixel scale coarse enough that any move clears the slop.
             editor.moved(Some(to), 100.0, 120.0, Mods::default());
         }
-        let mut project = super::tests::project();
+        let mut project = project.clone();
         effects.clear();
         editor.release(to, Mods::default(), &mut project, &mut effects);
         super::tests::sends(&effects).into_iter().cloned().collect()
+    }
+
+    /// Two regions written to be contiguous — the verse ends exactly
+    /// where the chorus begins — with a marker on the boundary, and a
+    /// third region nowhere near it.
+    fn abutting() -> super::Project {
+        use daw_ui::studio::project::{Marker, Section};
+        let band = |id: u32, name: &str, start: f64, end: f64| Section {
+            id,
+            start,
+            end,
+            name: name.to_owned(),
+            color: None,
+            lane: 0,
+        };
+        let mut project = super::tests::project();
+        project.sections = vec![
+            band(1, "Verse", 0.0, 8.0),
+            band(2, "Chorus", 8.0, 16.0),
+            band(3, "Outro", 24.0, 32.0),
+        ];
+        project.markers = vec![
+            Marker {
+                at: 8.0,
+                name: "drop".to_owned(),
+                color: None,
+                idx: 7,
+                lane: 0,
+            },
+            Marker {
+                at: 20.0,
+                name: "elsewhere".to_owned(),
+                color: None,
+                idx: 8,
+                lane: 0,
+            },
+        ];
+        project
     }
 
     /// The lane decides what a press makes. That is the whole reason
@@ -2533,6 +2644,149 @@ mod ruler_tests {
             matches!(made.as_slice(), [Edit::AddRegion(_, from, to, lane)]
                 if (*from - 4.0).abs() < 1e-9 && *to > *from && *lane == lane_of(SECTIONS_ROW)),
             "the sections lane should make a region with a length, got {made:?}"
+        );
+    }
+
+    /// A boundary is one thing. Dragging the verse's end takes the
+    /// chorus's start and the marker written on it along.
+    #[test]
+    fn a_shared_boundary_moves_as_one() {
+        let project = abutting();
+        let mut editor = Editor::default();
+        let made = gesture_on(
+            &project,
+            &mut editor,
+            On::Region {
+                id: 1,
+                zone: Zone::End,
+            },
+            8.0,
+            (0.0, 8.0),
+            Some(10.0),
+        );
+        // The verse itself.
+        assert!(
+            made.iter()
+                .any(|e| matches!(e, Edit::SetRegionBounds(_, 1, from, to)
+                if from.abs() < 1e-9 && (*to - 10.0).abs() < 1e-9)),
+            "the dragged end did not move: {made:?}"
+        );
+        // The chorus's start, keeping its own end.
+        assert!(
+            made.iter()
+                .any(|e| matches!(e, Edit::SetRegionBounds(_, 2, from, to)
+                if (*from - 10.0).abs() < 1e-9 && (*to - 16.0).abs() < 1e-9)),
+            "the abutting region was left behind, opening a gap: {made:?}"
+        );
+        // And the marker on the boundary.
+        assert!(
+            made.iter().any(|e| matches!(e, Edit::MoveMarker(_, 7, at)
+                if (*at - 10.0).abs() < 1e-9)),
+            "the marker on the boundary stayed put: {made:?}"
+        );
+        // Nothing else moved. The outro and the far marker are not on
+        // this moment and must not have heard about it.
+        assert!(
+            !made.iter().any(|e| matches!(
+                e,
+                Edit::SetRegionBounds(_, 3, ..) | Edit::MoveMarker(_, 8, _)
+            )),
+            "a mark nowhere near the boundary was dragged: {made:?}"
+        );
+    }
+
+    /// The same from the other side: dragging the chorus's START takes
+    /// the verse's end with it.
+    #[test]
+    fn the_boundary_carries_from_either_side() {
+        let project = abutting();
+        let mut editor = Editor::default();
+        let made = gesture_on(
+            &project,
+            &mut editor,
+            On::Region {
+                id: 2,
+                zone: Zone::Start,
+            },
+            8.0,
+            (8.0, 16.0),
+            Some(6.0),
+        );
+        assert!(
+            made.iter()
+                .any(|e| matches!(e, Edit::SetRegionBounds(_, 1, from, to)
+                if from.abs() < 1e-9 && (*to - 6.0).abs() < 1e-9)),
+            "the region ending on the boundary did not follow: {made:?}"
+        );
+        assert!(
+            made.iter().any(|e| matches!(e, Edit::MoveMarker(_, 7, at)
+                if (*at - 6.0).abs() < 1e-9)),
+            "the marker did not follow: {made:?}"
+        );
+    }
+
+    /// Dragging the MARKER carries the boundary too — it is the same
+    /// moment whichever of the things on it the hand took hold of.
+    #[test]
+    fn dragging_the_marker_carries_the_boundary() {
+        let project = abutting();
+        let mut editor = Editor::default();
+        let made = gesture_on(
+            &project,
+            &mut editor,
+            On::Marker { id: 7 },
+            8.0,
+            (8.0, 8.0),
+            Some(12.0),
+        );
+        assert!(
+            made.iter().any(|e| matches!(e, Edit::MoveMarker(_, 7, at)
+                if (*at - 12.0).abs() < 1e-9)),
+            "the marker did not move: {made:?}"
+        );
+        assert!(
+            made.iter()
+                .any(|e| matches!(e, Edit::SetRegionBounds(_, 1, _, to)
+                if (*to - 12.0).abs() < 1e-9)),
+            "the verse's end stayed behind: {made:?}"
+        );
+        assert!(
+            made.iter()
+                .any(|e| matches!(e, Edit::SetRegionBounds(_, 2, from, _)
+                if (*from - 12.0).abs() < 1e-9)),
+            "the chorus's start stayed behind: {made:?}"
+        );
+    }
+
+    /// The negative one, and the one that catches this being written
+    /// too broadly: a region moved BODILY takes nothing with it.
+    ///
+    /// A body drag that dragged its neighbours' boundaries would make a
+    /// timeline impossible to rearrange — every move would smear the
+    /// sections either side of it into the gap.
+    #[test]
+    fn a_body_drag_moves_only_its_own_region() {
+        let project = abutting();
+        let mut editor = Editor::default();
+        let made = gesture_on(
+            &project,
+            &mut editor,
+            On::Region {
+                id: 1,
+                zone: Zone::Body,
+            },
+            4.0,
+            (0.0, 8.0),
+            Some(6.0),
+        );
+        assert_eq!(
+            made.len(),
+            1,
+            "a body drag touched something other than its own region: {made:?}"
+        );
+        assert!(
+            matches!(made.as_slice(), [Edit::SetRegionBounds(_, 1, ..)]),
+            "{made:?}"
         );
     }
 

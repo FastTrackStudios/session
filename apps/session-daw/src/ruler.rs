@@ -664,6 +664,28 @@ pub enum Zone {
     End,
 }
 
+/// A ruler mark's edge sitting at a time.
+///
+/// The ruler's answer to [`crate::arrangement::ItemZone`] in
+/// `edges_at`: what else is at this moment, and which of its own ends
+/// it is, so a drag can carry all of them and still write each one the
+/// edit it needs.
+///
+/// Each variant carries the bound that is NOT moving, captured at the
+/// press. A region edit sets both bounds whatever the drag touched —
+/// REAPER's setter takes both — and by release the edge has moved, so
+/// reading the other bound then would be reading it off a region that
+/// has already changed underneath.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum MarkEdge {
+    /// A region whose start sits here, and where it ends.
+    RegionStart { id: u32, end: f64 },
+    /// A region whose end sits here, and where it starts.
+    RegionEnd { id: u32, start: f64 },
+    /// A marker, which is a position and has no other bound.
+    Marker { id: u32 },
+}
+
 /// What a press on the ruler landed on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum On {
