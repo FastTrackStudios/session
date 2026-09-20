@@ -212,6 +212,13 @@ pub struct ArrangementWidget {
     /// the focused node, and a pointer-down on a widget focuses it, so
     /// the double-click that opens this has already done the focusing.
     renaming: Option<crate::rename::Rename>,
+    /// The last refused edit, until it has had its say.
+    ///
+    /// One at a time and the newest wins: refusals arrive in answer to
+    /// a gesture, and the gesture in front of you is the one you are
+    /// asking about. A queue would show you the reply to a drag you had
+    /// already given up on.
+    notice: Option<crate::notice::Notice>,
     /// When and where the last click on a NAME landed, so the next one
     /// can tell whether it is the second half of a double.
     last_name: Option<(usize, std::time::Instant)>,
@@ -325,6 +332,7 @@ impl ArrangementWidget {
             project,
             previews,
             renaming: None,
+            notice: None,
             last_name: None,
             turning: None,
             edits: Rc::new(RefCell::new(Vec::new())),
@@ -498,7 +506,13 @@ impl ArrangementWidget {
                 // The transport and the playhead are the window's, and
                 // a notice has nowhere to go yet — see `Effect`.
                 Effect::Transport(..) | Effect::Playhead(_) => {}
-                Effect::Refused(why) => tracing::warn!(why, "the edit was refused"),
+                // The warn line stays: a refusal is alertable, and the
+                // log is where a session nobody was watching gets read
+                // back. The notice is for the person who IS watching.
+                Effect::Refused { why, row } => {
+                    tracing::warn!(why, "the edit was refused");
+                    self.notice = Some(crate::notice::Notice::new(why, row));
+                }
             }
         }
         if recut {
@@ -660,7 +674,15 @@ impl Widget for ArrangementWidget {
     /// Most moves do not: a pointer crossing the panel raises an event
     /// per pixel and changes which control it is on perhaps twice.
     fn needs_redraw(&self) -> bool {
+        // A notice fading and a refused ghost going home both change the
+        // picture with no event behind them, so neither can wait on
+        // `dirty` — nothing is going to set it.
         self.dirty.get()
+            || self
+                .notice
+                .as_ref()
+                .is_some_and(crate::notice::Notice::alive)
+            || self.editor.settling()
     }
 
     fn handle_event(&mut self, event: &UiEvent) {
@@ -1053,6 +1075,28 @@ impl ArrangementWidget {
             if let Some(field) = shape.rect(crate::row::Control::Name) {
                 crate::rename::paint(&mut out, &self.palette, &self.font, rename, field, at);
             }
+        }
+        // A refused edit, saying why, on the row it was refused on.
+        //
+        // Over every other pass because it is a reply and not part of
+        // the picture: it has to be legible against whatever was
+        // already there, including an open rename.
+        let showing = self.notice.as_ref().and_then(|notice| {
+            let alpha = notice.alpha()?;
+            Some((
+                notice.why,
+                crate::notice::area(&self.font, &self.scene, &self.rows, notice, view),
+                alpha,
+            ))
+        });
+        match showing {
+            Some((why, area, alpha)) => {
+                crate::notice::paint(&mut out, &self.palette, &self.font, why, area, alpha, at);
+            }
+            // Dropped on the first frame after its time rather than on a
+            // timer, so `needs_redraw` and the paint agree about when it
+            // is gone.
+            None => self.notice = None,
         }
         spent.controls = since(&mut mark);
         let _ = controls;

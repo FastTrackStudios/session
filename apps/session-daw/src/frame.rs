@@ -67,6 +67,9 @@ pub struct Arrange<'a> {
     pub dock: Option<&'a mut Expression>,
     /// The zoom tool's Alt sweep, in window pixels, while one is drawn.
     pub zoom_box: Option<((f64, f64), (f64, f64))>,
+    /// A refused edit still saying why. Drawn last, over everything,
+    /// because it is a reply rather than part of the picture.
+    pub notice: Option<&'a crate::notice::Notice>,
 }
 
 impl Arrange<'_> {
@@ -99,6 +102,7 @@ impl Arrange<'_> {
             bar_held,
             dock,
             zoom_box,
+            notice,
         } = self;
         let (sx, sy, pps) = (view.scroll_x, view.scroll_y, view.pps);
         let zoom_y = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
@@ -184,6 +188,21 @@ impl Arrange<'_> {
             &profile.top,
         );
         rails::main_toolbar(painter, palette, font, icons, rail_at, mode);
+        // Last of all: a refusal has to be legible over the rails and
+        // an open rename alike, and it is the newest thing on screen.
+        if let Some(notice) = notice
+            && let Some(alpha) = notice.alpha()
+        {
+            crate::notice::paint(
+                painter,
+                palette,
+                font,
+                notice.why,
+                crate::notice::area(font, scene, rows, notice, view),
+                alpha,
+                panel_at,
+            );
+        }
         drawn.replayed = a
             .replayed
             .saturating_add(b.replayed)
