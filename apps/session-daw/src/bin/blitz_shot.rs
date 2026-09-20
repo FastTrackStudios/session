@@ -189,11 +189,16 @@ fn main() {
     let sections = project.sections.clone().into();
     let markers = project.markers.clone().into();
 
-    // `FTS_BLITZ_WIDGET=1` paints the arrangement as one node instead of
-    // building it as a tree. Everything above is the same — the same
-    // project, the same rows, the same scene — so the two are the same
-    // window drawn two ways, which is the only comparison worth having.
-    let widget = std::env::var_os("FTS_BLITZ_WIDGET").is_some();
+    // The arrangement as ONE node, which is how this window runs.
+    //
+    // `FTS_BLITZ_WIDGET=0` builds it as a tree instead. Everything above
+    // is the same — the same project, the same rows, the same scene — so
+    // the two are the same window drawn two ways, which is what
+    // `tests/component_lanes.rs` compares and what the numbers in
+    // `session_daw::widget` were measured from. The tree is kept for
+    // exactly that: it is the thing the widget is checked against, not
+    // a mode anybody is meant to run.
+    let widget = std::env::var("FTS_BLITZ_WIDGET").as_deref() != Ok("0");
     let arrangement = widget.then(|| {
         let shared: session_daw::widget::Shared =
             std::rc::Rc::new(std::cell::RefCell::new(session_daw::widget::View {
@@ -1815,12 +1820,12 @@ fn Window(props: ShotProps) -> Element {
             {tracking}
             // The arrangement, as ONE node or as ten thousand.
             //
-            // `FTS_BLITZ_WIDGET=1` paints the ruler, the panel and the
-            // lanes through `session_daw::widget` instead of building
-            // them as components — see that module for the measurement
-            // that justifies it. Behind a switch because the whole point
-            // is to be able to run the same window both ways on the same
-            // session and compare, which is a thing a commit message
+            // `FTS_BLITZ_WIDGET=0` paints the ruler, the panel and the
+            // lanes as components instead of through
+            // `session_daw::widget` — see that module for the
+            // measurement that justifies the default. The switch exists
+            // so the same window can be run both ways on the same
+            // session and compared, which is a thing a commit message
             // cannot do.
             if props.widget {
                 {

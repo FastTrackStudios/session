@@ -185,6 +185,10 @@ fn reference(out: &Path) -> Result<()> {
 }
 
 /// The component renderer, which draws one part of the window.
+///
+/// `FTS_BLITZ_WIDGET=0` explicitly: the window paints the arrangement
+/// as one node now, and these tests are the reason the tree it replaced
+/// is still there. Asking for it by name is the point of the call.
 fn components(part: &str, out: &Path) -> Result<()> {
     let status = Command::new(built("blitz_shot")?)
         .current_dir(root())
@@ -192,6 +196,7 @@ fn components(part: &str, out: &Path) -> Result<()> {
         .arg(out)
         .env("FTS_BLITZ_SIZE", SIZE)
         .env("FTS_BLITZ_PART", part)
+        .env("FTS_BLITZ_WIDGET", "0")
         .status()?;
     if !status.success() {
         return Err(format!("the component renderer failed drawing the {part}").into());

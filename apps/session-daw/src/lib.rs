@@ -19,6 +19,7 @@ pub mod cursor;
 pub mod engine;
 pub mod expression;
 pub mod folder_item;
+pub mod fps;
 pub mod frame;
 pub mod frame_rate;
 pub mod gesture;

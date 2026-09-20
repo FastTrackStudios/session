@@ -112,6 +112,14 @@ pub struct ArrangementWidget {
     map: crate::plan::Rows,
     view: Shared,
     drawn: Rc<RefCell<Drawn>>,
+    /// The frame-time graph, when it is asked for.
+    ///
+    /// Off unless `FTS_BLITZ_FPS` is set, and off is the default for a
+    /// reason beyond taste: `tests/component_lanes.rs` holds this
+    /// widget to the painted window pixel for pixel, and an overlay is
+    /// a difference. A readout that made the gate looser would be
+    /// measuring the thing it broke.
+    stats: Option<crate::fps::Stats>,
 }
 
 impl ArrangementWidget {
@@ -144,6 +152,7 @@ impl ArrangementWidget {
             map,
             view,
             drawn: Rc::new(RefCell::new(Drawn::default())),
+            stats: std::env::var_os("FTS_BLITZ_FPS").map(|_| crate::fps::Stats::new()),
         }
     }
 
@@ -163,6 +172,7 @@ impl Widget for ArrangementWidget {
         height: u32,
         _scale: f64,
     ) -> Scene {
+        let began = std::time::Instant::now();
         let at = *self.view.borrow();
         let view = Viewport {
             scroll_x: at.scroll_x,
@@ -271,7 +281,41 @@ impl Widget for ArrangementWidget {
             replayed: a.replayed.saturating_add(b.replayed),
             submitted: a.submitted.saturating_add(b.submitted),
         };
-        *self.drawn.borrow_mut() = total(lanes, panel);
+        let drawn = total(lanes, panel);
+        *self.drawn.borrow_mut() = drawn;
+
+        // Last, so it is over the picture rather than under it. The
+        // sample is the PREVIOUS frame — this one is not finished, and
+        // will not be until the shell has encoded and presented what
+        // this call returns — which is the only honest number a paint
+        // can read about itself.
+        if let Some(stats) = self.stats.as_mut() {
+            // The shell's number when there is a shell. The headless
+            // renderer draws frames and presents none, so there it
+            // never writes one — and a graph that stays empty in the
+            // one mode that can dump a PNG of itself is a graph nobody
+            // can look at. So fall back to what this paint cost, and
+            // say which is being shown rather than letting the two be
+            // mistaken for each other.
+            let shell = blitz_traits::LAST_FRAME_MICROS.load(core::sync::atomic::Ordering::Relaxed);
+            let source = if shell > 0 { "frame" } else { "paint" };
+            let micros = if shell > 0 {
+                shell
+            } else {
+                u64::try_from(began.elapsed().as_micros()).unwrap_or(u64::MAX)
+            };
+            stats.add(micros);
+            crate::fps::draw(
+                &mut out,
+                &self.font,
+                stats,
+                (view.width, view.height),
+                &[
+                    format!("{} of {} commands", drawn.submitted, drawn.replayed),
+                    format!("measuring: {source}"),
+                ],
+            );
+        }
         out
     }
 }

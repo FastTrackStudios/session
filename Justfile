@@ -1358,17 +1358,27 @@ daw-scene SCENE="lead-vocal-fx" OUT="" SIZE="2560x1440":
     FTS_BENCH_MIXER="$out" FTS_BENCH_SCENE="{{SCENE}}" FTS_BENCH_SIZE="{{SIZE}}" \
         ./target/release/bench "$project" 2>&1 | grep -viE 'vulkan|objects:|WARN'
 
-# Open the studio — the arrangement as a Dioxus component tree, in a real
-# window on dioxus-native.
+# Open the studio — the ruler, the panel and the arrangement painted as
+# ONE node, in a real window on dioxus-native.
 #
 #   just studio                    the golden session, drivable by hand
 #   just studio animate            running the benchmark's own gestures
 #   just studio "" 2560x1440       at another size
+#   FPS=1 just studio              with the frame-time graph over it
+#   TREE=1 just studio             as a component tree, the old way
 #
 # Wheel scrolls; shift makes it sideways. Hold `z` and scroll to zoom the
 # rows, shift-`z` for time; `z` and drag is the zoom tool. Middle-drag is
 # the hand. The corner says what a frame cost — the shell's own
 # resolve-encode-present, not the gap between redraws.
+#
+# `FPS=1` puts a hundred-frame bar graph in the bottom right, with the
+# 4.17 ms budget drawn across it, so a hitch is visible as a hitch rather
+# than averaged into a number that looks fine.
+#
+# `TREE=1` is the arrangement as ten thousand DOM nodes, which is what
+# this used to be and what the widget is gated against. Fifteen to thirty
+# times slower — see `session_daw::widget` for the table.
 #
 # Logs to /tmp/fts-studio.log rather than to the terminal, because a
 # window has no terminal and what a run did has to be readable afterwards.
@@ -1379,6 +1389,8 @@ studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
     FTS_BLITZ_WINDOW="{{MODE}}" \
     FTS_BLITZ_SIZE="{{SIZE}}" \
     FTS_BLITZ_SCENE="{{SCENE}}" \
+    ${FPS:+FTS_BLITZ_FPS=1} \
+    ${TREE:+FTS_BLITZ_WIDGET=0} \
     FTS_BLITZ_LOG=/tmp/fts-studio.log \
     ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png
 
@@ -1423,6 +1435,8 @@ studio-bench GESTURE="pan" SIZE="5120x1440" FRAMES="120" DUMP="":
     FTS_BLITZ_GESTURE="{{GESTURE}}" \
     FTS_BLITZ_FRAMES="{{FRAMES}}" \
     ${DUMP:+FTS_BLITZ_DUMP="{{DUMP}}"} \
+    ${FPS:+FTS_BLITZ_FPS=1} \
+    ${TREE:+FTS_BLITZ_WIDGET=0} \
     ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png 2>/dev/null
 
 # Prove the culling draws the same frame as drawing everything.
