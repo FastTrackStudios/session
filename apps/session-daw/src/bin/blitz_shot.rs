@@ -213,6 +213,7 @@ fn main() {
             session_daw::text::Font::embedded().expect("the embedded font"),
             bpm,
             PPS,
+            rows.as_slice().to_vec(),
             shared,
         ))
     });

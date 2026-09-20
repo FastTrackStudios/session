@@ -100,6 +100,16 @@ pub struct ArrangementWidget {
     grid: adaptive_grid::Adaptive,
     /// Pixels per second before the zoom — the base the view scales.
     pps: f64,
+    /// What the panel's live controls are drawn from.
+    ///
+    /// They are NOT in the recording, and cannot be: a knob shows a
+    /// value, and a value changes without the session changing. The
+    /// recording holds the row — its tint, its rail, its number, its
+    /// name — and the controls go over it every frame, which is what
+    /// the painted window has always done.
+    rows: Vec<(daw_proto::Track, u32)>,
+    tracks: Vec<daw_proto::Track>,
+    map: crate::plan::Rows,
     view: Shared,
     drawn: Rc<RefCell<Drawn>>,
 }
@@ -117,8 +127,11 @@ impl ArrangementWidget {
         font: crate::text::Font,
         bpm: f64,
         pps: f64,
+        rows: Vec<(daw_proto::Track, u32)>,
         view: Shared,
     ) -> Self {
+        let tracks: Vec<daw_proto::Track> = rows.iter().map(|(t, _)| t.clone()).collect();
+        let map = crate::plan::Rows::of(&rows, &tracks);
         Self {
             scene,
             palette,
@@ -126,6 +139,9 @@ impl ArrangementWidget {
             bars: Bars::at(bpm),
             grid: adaptive_grid::Adaptive::default(),
             pps,
+            rows,
+            tracks,
+            map,
             view,
             drawn: Rc::new(RefCell::new(Drawn::default())),
         }
@@ -162,16 +178,31 @@ impl Widget for ArrangementWidget {
         // — including the ruler AFTER the lanes, because the lane
         // backgrounds are opaque and would paint the grid straight out
         // of the frame.
+        // Everything under the ruler starts below it. The recording is
+        // in session coordinates and knows nothing about the strip over
+        // the top of it, so the offset belongs in every transform that
+        // places recorded content — which is what the painted window has
+        // always done, and leaving it out of one of them is how the
+        // controls ended up half a row above their own names.
+        let below = ruler::RULER_H - view.scroll_y;
         let lanes = self.scene.replay_lanes(
             &mut out,
             view,
-            Affine::translate((TCP_WIDTH - view.scroll_x, -view.scroll_y))
+            Affine::translate((TCP_WIDTH - view.scroll_x, below))
                 * Affine::scale_non_uniform(view.pps, view.zoom_y),
+        );
+        crate::arrangement::titles(
+            &mut out,
+            &self.palette,
+            &self.font,
+            &self.scene,
+            view,
+            (TCP_WIDTH - view.scroll_x, below),
         );
         let panel = self.scene.replay_panel(
             &mut out,
             view,
-            Affine::translate((0.0, -view.scroll_y)) * Affine::scale_non_uniform(1.0, view.zoom_y),
+            Affine::translate((0.0, below)) * Affine::scale_non_uniform(1.0, view.zoom_y),
         );
         ruler::grid(
             &mut out,
@@ -198,6 +229,43 @@ impl Widget for ArrangementWidget {
             (0.0, 0.0),
             self.scene.tempo(),
         );
+        // The song's own shape over the timeline: the section bands and
+        // the marker flags, and the lines they drop through the lanes.
+        ruler::lanes(
+            &mut out,
+            &self.palette,
+            &self.font,
+            view,
+            (0.0, 0.0),
+            self.scene.sections(),
+            self.scene.markers(),
+        );
+        ruler::lane_lines(
+            &mut out,
+            &self.palette,
+            view,
+            (0.0, 0.0),
+            self.scene.sections(),
+            self.scene.markers(),
+            ruler::RULER_H,
+            view.height,
+        );
+        // And the controls, live, over the recorded rows.
+        let controls = crate::overlay::panel_controls(
+            &mut out,
+            &self.palette,
+            &self.font,
+            &self.scene,
+            &self.rows,
+            &self.tracks,
+            &self.map,
+            view,
+            // At rest. A hover belongs to the window's pointer state,
+            // which this does not have yet.
+            &crate::pointer::Pointer::default(),
+            Affine::translate((0.0, below)),
+        );
+        let _ = controls;
 
         let total = |a: Counts, b: Counts| Drawn {
             replayed: a.replayed.saturating_add(b.replayed),
