@@ -112,14 +112,35 @@ pub struct ArrangementWidget {
     map: crate::plan::Rows,
     view: Shared,
     drawn: Rc<RefCell<Drawn>>,
-    /// The frame-time graph, when it is asked for.
+    /// The frame-time graph, when the window asked for one.
     ///
-    /// Off unless `FTS_BLITZ_FPS` is set, and off is the default for a
-    /// reason beyond taste: `tests/component_lanes.rs` holds this
-    /// widget to the painted window pixel for pixel, and an overlay is
-    /// a difference. A readout that made the gate looser would be
-    /// measuring the thing it broke.
+    /// A window asks; a comparison shot does not, and that is not a
+    /// taste: `tests/component_lanes.rs` holds this widget to the
+    /// painted window pixel for pixel, and an overlay is a difference.
+    /// A readout that made the gate looser would be measuring the thing
+    /// it broke.
     stats: Option<crate::fps::Stats>,
+    /// What the last paint's passes cost, in microseconds.
+    ///
+    /// Kept across frames so the readout has something to say on the
+    /// frame it is drawn on, rather than reporting the pass timings of
+    /// a frame that has not finished yet.
+    spent: Passes,
+}
+
+/// What one paint spent, pass by pass.
+///
+/// The frame graph says a frame costs ten milliseconds; this says which
+/// part of the widget it went to. Without it the only honest thing to
+/// do about a slow frame is guess, and a guess costs a whole build to
+/// disprove.
+#[derive(Clone, Copy, Debug, Default)]
+struct Passes {
+    lanes: u128,
+    titles: u128,
+    panel: u128,
+    ruler: u128,
+    controls: u128,
 }
 
 impl ArrangementWidget {
@@ -137,6 +158,7 @@ impl ArrangementWidget {
         pps: f64,
         rows: Vec<(daw_proto::Track, u32)>,
         view: Shared,
+        readout: bool,
     ) -> Self {
         let tracks: Vec<daw_proto::Track> = rows.iter().map(|(t, _)| t.clone()).collect();
         let map = crate::plan::Rows::of(&rows, &tracks);
@@ -152,7 +174,8 @@ impl ArrangementWidget {
             map,
             view,
             drawn: Rc::new(RefCell::new(Drawn::default())),
-            stats: std::env::var_os("FTS_BLITZ_FPS").map(|_| crate::fps::Stats::new()),
+            stats: readout.then(crate::fps::Stats::new),
+            spent: Passes::default(),
         }
     }
 
@@ -195,12 +218,26 @@ impl Widget for ArrangementWidget {
         // always done, and leaving it out of one of them is how the
         // controls ended up half a row above their own names.
         let below = ruler::RULER_H - view.scroll_y;
+        // Timed pass by pass, by a mark between each. Inline rather
+        // than wrapped in a closure because every pass wants `&mut out`
+        // and a closure that also holds it is a borrow fight for no
+        // gain — five `mark()` calls say the same thing and read as the
+        // list of passes they are measuring.
+        let mut spent = Passes::default();
+        let mut mark = std::time::Instant::now();
+        let since = |mark: &mut std::time::Instant| {
+            let spent = mark.elapsed().as_micros();
+            *mark = std::time::Instant::now();
+            spent
+        };
+
         let lanes = self.scene.replay_lanes(
             &mut out,
             view,
             Affine::translate((TCP_WIDTH - view.scroll_x, below))
                 * Affine::scale_non_uniform(view.pps, view.zoom_y),
         );
+        spent.lanes = since(&mut mark);
         crate::arrangement::titles(
             &mut out,
             &self.palette,
@@ -209,11 +246,13 @@ impl Widget for ArrangementWidget {
             view,
             (TCP_WIDTH - view.scroll_x, below),
         );
+        spent.titles = since(&mut mark);
         let panel = self.scene.replay_panel(
             &mut out,
             view,
             Affine::translate((0.0, below)) * Affine::scale_non_uniform(1.0, view.zoom_y),
         );
+        spent.panel = since(&mut mark);
         ruler::grid(
             &mut out,
             &self.palette,
@@ -260,6 +299,7 @@ impl Widget for ArrangementWidget {
             ruler::RULER_H,
             view.height,
         );
+        spent.ruler = since(&mut mark);
         // And the controls, live, over the recorded rows.
         let controls = crate::overlay::panel_controls(
             &mut out,
@@ -275,7 +315,9 @@ impl Widget for ArrangementWidget {
             &crate::pointer::Pointer::default(),
             Affine::translate((0.0, below)),
         );
+        spent.controls = since(&mut mark);
         let _ = controls;
+        self.spent = spent;
 
         let total = |a: Counts, b: Counts| Drawn {
             replayed: a.replayed.saturating_add(b.replayed),
@@ -312,10 +354,25 @@ impl Widget for ArrangementWidget {
                 (view.width, view.height),
                 &[
                     format!("{} of {} commands", drawn.submitted, drawn.replayed),
-                    format!("measuring: {source}"),
+                    format!(
+                        "lanes {:.1}  panel {:.1}  ruler {:.1}",
+                        ms(spent.lanes),
+                        ms(spent.panel),
+                        ms(spent.ruler)
+                    ),
+                    format!(
+                        "titles {:.1}  controls {:.1}  ({source})",
+                        ms(spent.titles),
+                        ms(spent.controls)
+                    ),
                 ],
             );
         }
         out
     }
+}
+
+/// Microseconds as milliseconds, for the readout's lines.
+fn ms(micros: u128) -> f64 {
+    u32::try_from(micros).map_or(f64::from(u32::MAX), f64::from) / 1000.0
 }

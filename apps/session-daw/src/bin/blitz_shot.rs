@@ -199,6 +199,16 @@ fn main() {
     // exactly that: it is the thing the widget is checked against, not
     // a mode anybody is meant to run.
     let widget = std::env::var("FTS_BLITZ_WIDGET").as_deref() != Ok("0");
+    // The frame-time graph. On in a window and off in a shot, because a
+    // shot is compared pixel for pixel against the painted renderer and
+    // an overlay is a difference. `FTS_BLITZ_FPS=0` turns it off in a
+    // window too; `=1` forces it on in a shot, which is the only way to
+    // get a picture of the readout itself.
+    let readout = match std::env::var("FTS_BLITZ_FPS").as_deref() {
+        Ok("0") => false,
+        Ok(_) => true,
+        Err(_) => std::env::var_os("FTS_BLITZ_WINDOW").is_some(),
+    };
     let arrangement = widget.then(|| {
         let shared: session_daw::widget::Shared =
             std::rc::Rc::new(std::cell::RefCell::new(session_daw::widget::View {
@@ -225,6 +235,7 @@ fn main() {
             PPS,
             rows.as_slice().to_vec(),
             shared,
+            readout,
         ))
     });
 
@@ -1198,7 +1209,7 @@ fn rail_items() -> (Vec<Item>, Vec<Item>, Vec<Item>) {
 /// leaves. The track panel's own column is the one thing missing, and it
 /// is left as the window's ground rather than faked — a picture with a
 /// wrong panel in it would be worse than one with none.
-/// Keeps `size` and `rate` in step with the window.
+/// Keeps `size` in step with the window, and drives the gestures.
 ///
 /// Named for what it tracks rather than `Surface`, which this file
 /// already uses for the rails' own enum — two `Surface`s in one file is
@@ -1215,7 +1226,6 @@ fn rail_items() -> (Vec<Item>, Vec<Item>, Vec<Item>) {
 )]
 fn WindowSize(
     size: Signal<(f64, f64)>,
-    rate: Signal<f64>,
     animate: bool,
     /// How far the session runs across and down in its own pixels,
     /// before any zoom, and the size of the frame it is seen through.
@@ -1248,7 +1258,11 @@ fn WindowSize(
         found
     });
     let mut size = size;
-    let mut rate = rate;
+    // What was last written to the log, so the same number is not
+    // written twice. A plain cell and not a signal: nothing renders
+    // from it, and a signal written every frame would re-render the
+    // window to report that the window re-rendered.
+    let last = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(0.0_f64)));
     let redraw = handle.clone();
     use_hook(move || {
         if let Some(handle) = handle.as_ref() {
@@ -1490,8 +1504,13 @@ fn WindowSize(
                 recent.sort_by(f64::total_cmp);
                 let middle = recent[recent.len() / 2];
                 let worst = recent.last().copied().unwrap_or(middle);
-                if (middle - rate()).abs() > 0.5 {
-                    rate.set(middle);
+                // To the log only. What the WINDOW shows is the
+                // widget's own graph; this is for reading a run back
+                // afterwards, which a graph on a closed window cannot
+                // do. Rate-limited the same way — a line per frame is
+                // a log nobody reads.
+                if (middle - last.get()).abs() > 0.5 {
+                    last.set(middle);
                     tracing::info!(
                         frame_ms = format!("{middle:.1}"),
                         worst_ms = format!("{worst:.1}"),
@@ -1683,7 +1702,6 @@ fn Window(props: ShotProps) -> Element {
     // the surface is a document the shell scrolls, and once the shell is
     // scrolling nothing inside it can decide what stays put.
     let size = use_signal(|| (props.view.width, props.view.height));
-    let rate = use_signal(|| 0.0_f64);
 
     let (width, height) = size();
 
@@ -1737,7 +1755,6 @@ fn Window(props: ShotProps) -> Element {
         rsx! {
             WindowSize {
                 size,
-                rate,
                 animate: props.animate,
                 span_x,
                 span_y,
@@ -1934,15 +1951,11 @@ fn Window(props: ShotProps) -> Element {
                 }
             }
 
-            // How fast it is actually drawing, on the window rather than
-            // in a terminal behind it — a rate you have to look away to
-            // read is a rate you cannot match to what you just saw. In
-            // every mode, because "this feels slow" is a thing you notice
-            // while driving it by hand, which is exactly when there is no
-            // benchmark running to ask.
-            if props.windowed {
-                Readout { rate, gesture, animate: props.animate, width, height }
-            }
+            // What a frame costs is drawn by the widget itself now —
+            // see `session_daw::fps`. A hundred bars with the budget
+            // ruled across them says everything the element that used
+            // to be here said, and the thing it could not: whether a
+            // slow window is slow or is fast with a hitch in it.
         }
     }
 }
@@ -1999,48 +2012,6 @@ fn Scrollbars(
             length: frame_height(height),
             colors,
             on_move: move |to: f64| down.set(to.clamp(0.0, travel.1)),
-        }
-    }
-}
-
-/// How fast it is actually drawing, on the window rather than in a
-/// terminal behind it.
-///
-/// A rate you have to look away to read is a rate you cannot match to
-/// what you just saw. Its own component for the reason the scrollbars
-/// are: it changes every frame, and the window must not.
-#[component]
-fn Readout(
-    rate: Signal<f64>,
-    gesture: Signal<(&'static str, f64)>,
-    animate: bool,
-    width: f64,
-    height: f64,
-) -> Element {
-    let (name, _) = gesture();
-    let frame_ms = rate();
-    // Both, because they answer different questions: the milliseconds
-    // are what a frame cost, the rate is what that would sustain. A
-    // window with nothing to do has neither, and says so rather than
-    // reporting a very slow one.
-    let fps = if frame_ms > 0.01 {
-        1000.0 / frame_ms
-    } else {
-        0.0
-    };
-    let what = if animate { name } else { "window" };
-    rsx! {
-        div {
-            style: "position:absolute; right:56px; top:{session_daw::rails::TOP + 8.0}px; \
-                    padding:6px 10px; background:rgba(0,0,0,0.72); \
-                    color:#e8e8ea; font-size:12px; \
-                    font-family:{daw_ui::studio::lanes::FONT}; \
-                    white-space:nowrap; pointer-events:none;",
-            if frame_ms > 0.01 {
-                "{what} — {frame_ms:.1}ms/frame — {fps:.0} fps — {width:.0}x{height:.0}"
-            } else {
-                "{what} — idle — {width:.0}x{height:.0}"
-            }
         }
     }
 }
