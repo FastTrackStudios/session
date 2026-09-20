@@ -349,6 +349,39 @@ impl Arrangement {
         self.row_at(screen_y / zoom)
     }
 
+    /// The panel row and control under a point, in the SCREEN
+    /// coordinates the lanes start from.
+    ///
+    /// `x` is measured from the left of the panel and `y` from the top
+    /// of the lanes, which is the frame every caller already has to put
+    /// the panel in. Lives here rather than in a window because the
+    /// answer has to come from the same geometry the row was DRAWN
+    /// from, and two windows working it out separately is two chances
+    /// to disagree about which button the pointer is on.
+    #[must_use]
+    pub fn row_spot_at(
+        &self,
+        view: Viewport,
+        rows: &[(daw_proto::Track, u32)],
+        x: f64,
+        y: f64,
+    ) -> Option<(usize, crate::row::Control)> {
+        if x < 0.0 || x >= TCP_WIDTH {
+            return None;
+        }
+        let index = self.row_at_screen(y, view)?;
+        let (top, height) = self.row_band(index, view)?;
+        let (track, depth) = rows.get(index)?;
+        let row = crate::row::Row::new(
+            top,
+            height,
+            i32::try_from(*depth).unwrap_or(0),
+            track.is_folder,
+        );
+        // In the band's own frame, which is what `Row` measures from.
+        Some((index, row.control_at(x, y)?))
+    }
+
     /// The rows that intersect `view`, clamped to what exists.
     ///
     /// A binary search over [`Arrangement::offsets`] rather than a

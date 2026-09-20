@@ -122,6 +122,29 @@ pub struct ArrangementWidget {
     /// A readout that made the gate looser would be measuring the thing
     /// it broke.
     stats: Option<crate::fps::Stats>,
+    /// The live controls, recorded, and the zoom they were cut at.
+    ///
+    /// The single most expensive thing the paint used to do: forty rows
+    /// of vector art — arms, knobs, meters, buttons, names — generated
+    /// from scratch every frame, while a pan or a scroll changes none
+    /// of it. Recorded per row like the panel is, so a scroll replays a
+    /// different span rather than rebuilding anything.
+    ///
+    /// Re-cut when the vertical zoom moves, because that is what
+    /// decides which tier of controls a row shows. A value changing —
+    /// somebody turning a knob — needs the same, and the hook for that
+    /// is [`ArrangementWidget::values_changed`].
+    controls: Option<(crate::overlay::Controls, f64)>,
+    /// Last frame's vertical zoom, so this one can tell whether a
+    /// gesture is still in flight.
+    ///
+    /// Seeded from the view rather than left empty, so the FIRST frame
+    /// counts as settled and takes the cut. Otherwise a window that is
+    /// never touched draws live forever, and — worse — the one frame a
+    /// comparison shot renders is the one frame that does not use the
+    /// cache, so the gates would be checking a path the window does not
+    /// take.
+    was: f64,
     /// What the last paint's passes cost, in microseconds.
     ///
     /// Kept across frames so the readout has something to say on the
@@ -164,6 +187,7 @@ impl ArrangementWidget {
         readout: bool,
     ) -> Self {
         let tracks: Vec<daw_proto::Track> = rows.iter().map(|(t, _)| t.clone()).collect();
+        let at_rest = view.borrow().zoom_y;
         let map = crate::plan::Rows::of(&rows, &tracks);
         Self {
             scene,
@@ -178,9 +202,22 @@ impl ArrangementWidget {
             layout,
             view,
             drawn: Rc::new(RefCell::new(Drawn::default())),
+            controls: None,
+            was: at_rest,
             stats: readout.then(crate::fps::Stats::new),
             spent: Passes::default(),
         }
+    }
+
+    /// Throw the recorded controls away, because a value they draw has
+    /// changed.
+    ///
+    /// Not worked out from the data: finding the one knob that moved
+    /// would mean diffing forty tracks every frame, which costs more
+    /// than the redraw it saves. Whoever changed the value knows, and
+    /// says so.
+    pub fn values_changed(&mut self) {
+        self.controls = None;
     }
 
     /// What the last frame replayed and submitted.
@@ -314,21 +351,56 @@ impl Widget for ArrangementWidget {
             view.height,
         );
         spent.ruler = since(&mut mark);
-        // And the controls, live, over the recorded rows.
-        let controls = crate::overlay::panel_controls(
-            &mut out,
-            &self.palette,
-            &self.font,
-            &self.scene,
-            &self.rows,
-            &self.tracks,
-            &self.map,
-            view,
-            // At rest. A hover belongs to the window's pointer state,
-            // which this does not have yet.
-            &crate::pointer::Pointer::default(),
-            Affine::translate((0.0, below)),
-        );
+        // And the controls over the recorded rows.
+        //
+        // Recorded for every row, which is what makes a scroll free —
+        // it replays a different span of the same cut. The cost of that
+        // is that a cut is the whole panel, so while the zoom is MOVING
+        // the cache would be rebuilt every frame for rows that are
+        // about to change again. Measured: it took zoom-y from 5.1ms to
+        // 8.5.
+        //
+        // So the cut is taken only once the zoom has settled — the
+        // frame after it stopped moving. While it moves, the controls
+        // are drawn live, exactly as they were before there was a
+        // cache. A gesture is no worse and everything after it is free.
+        let at = Affine::translate((0.0, below));
+        let settled = (self.was - view.zoom_y).abs() < f64::EPSILON;
+        self.was = view.zoom_y;
+        if !settled {
+            self.controls = None;
+        }
+        let stale = self
+            .controls
+            .as_ref()
+            .is_none_or(|(_, zoom)| (zoom - view.zoom_y).abs() >= f64::EPSILON);
+        if settled && stale {
+            let recorded = crate::overlay::record_controls(
+                &self.palette,
+                &self.font,
+                &self.scene,
+                &self.rows,
+                &self.tracks,
+                &self.map,
+                view,
+            );
+            self.controls = Some((recorded, view.zoom_y));
+        }
+        let controls = match self.controls.as_ref() {
+            Some((controls, _)) => controls.replay(&mut out, &self.scene, view, at),
+            None => crate::overlay::panel_controls(
+                &mut out,
+                &self.palette,
+                &self.font,
+                &self.scene,
+                &self.rows,
+                &self.tracks,
+                &self.map,
+                view,
+                &crate::pointer::Pointer::default(),
+                at,
+            ),
+        };
         spent.controls = since(&mut mark);
         let _ = controls;
         self.spent = spent;

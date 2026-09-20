@@ -1423,214 +1423,12 @@ pub fn panel_controls(
     pointer: &crate::pointer::Pointer<crate::pointer::RowSpot>,
     transform: Affine,
 ) -> crate::profile::Counts {
-    use crate::pointer::RowSpot;
-    use crate::row::{Control as C, Indicator, Row};
-    use daw_theme_art::geometry::tcp as gt;
-
     let mut counts = crate::profile::Counts::default();
     let mut out = anyrender::Scene::new();
     for index in scene.visible_rows(view) {
-        let (Some((track, depth)), Some(live)) = (rows.get(index), map.live(tracks, index)) else {
-            continue;
-        };
-        // The band on SCREEN, not in the session: these are drawn
-        // under a translate so that the art keeps its own size, which
-        // leaves the placing to `row_band`. See it for why.
-        let Some((top, height)) = scene.row_band(index, view) else {
-            continue;
-        };
-        let row = Row::new(
-            top,
-            height,
-            i32::try_from(*depth).unwrap_or(0),
-            track.is_folder,
+        control_row(
+            &mut out, palette, font, scene, rows, tracks, map, view, pointer, index,
         );
-        if row.density == crate::tcp::Density::Bar {
-            continue;
-        }
-        // The pointer's verdict on this row's controls. The panel is a
-        // recorded scene like the mixer is, so a hover cannot repaint
-        // the row — it repaints the ONE control, here, in the same pass
-        // that already redraws every live value.
-        let look = |control| {
-            pointer.state(RowSpot {
-                row: index,
-                control,
-            })
-        };
-
-        // Mute and solo.
-        for (control, label, on, lit) in [
-            (C::Mute, "M", live.muted, crate::tcp::mute_lit(palette)),
-            (C::Solo, "S", live.soloed, crate::tcp::solo_lit(palette)),
-        ] {
-            let Some(r) = row.rect(control) else { continue };
-            // Flattened to the rect on a row too short for the full
-            // button — the row's shape says how tall, not the art.
-            crate::art::squashed(
-                &mut out,
-                &art::gutter_button(&palette.chrome, label, on, lit, look(control)),
-                font,
-                r.x0,
-                r.y0,
-                1.0,
-                (r.height() / crate::tcp::BUTTON.1).min(1.0),
-            );
-        }
-
-        // The FX button, from the chain the track actually has.
-        if let Some(r) = row.rect(C::Fx) {
-            crate::art::place(
-                &mut out,
-                &art::fx_pill(
-                    &palette.chrome,
-                    crate::tcp::lit(palette),
-                    chain(live),
-                    look(C::Fx),
-                ),
-                font,
-                r.x0,
-                r.y0,
-            );
-        }
-
-        // Routing, and polarity in the corner below it. Both are live
-        // values with their own events — a strip that recorded them was
-        // right until the first time anything changed one.
-        if let Some(r) = row.rect(C::Routing) {
-            crate::art::place(
-                &mut out,
-                &art::routing(
-                    &palette.chrome,
-                    art::Axis::Horizontal,
-                    routes(live),
-                    route_ink(palette),
-                    look(C::Routing),
-                ),
-                font,
-                r.x0,
-                r.y0,
-            );
-        }
-        if let Some(r) = row.rect(C::Phase) {
-            crate::art::place(
-                &mut out,
-                &art::phase(&palette.chrome, live.phase_inverted, look(C::Phase)),
-                font,
-                r.x0,
-                r.y0,
-            );
-        }
-
-        // The record arm, on rows tall enough to read one.
-        if let Some(r) = row.rect(C::RecArm) {
-            crate::art::place(
-                &mut out,
-                &art::record_arm(
-                    &palette.chrome,
-                    crate::tcp::lit(palette).rec,
-                    live.armed,
-                    look(C::RecArm),
-                    art::Arm::Panel,
-                    crate::tcp::to_theme(palette.tcp_field),
-                ),
-                font,
-                r.x0,
-                r.y0,
-            );
-        }
-
-        // Volume and pan, in whichever form the row is showing — a knob
-        // where there is room to turn one, a flattened bar where there
-        // is not. Both are the same VALUE; only the shape changes.
-        let knob = row.indicator() == Indicator::Knob;
-        if let Some(r) = row.rect(C::Volume) {
-            let field_h = r.height();
-            if knob {
-                // Never past the size it was authored — the same rule
-                // the rect above measures it by, so the picture and the
-                // hit target stay the same shape.
-                let scale = (field_h / 22.0).min(1.0);
-                crate::art::scaled(
-                    &mut out,
-                    &art::volume_knob(
-                        &palette.chrome,
-                        crate::tcp::lit(palette).volume,
-                        crate::tcp::volume_fraction(live.volume),
-                        look(C::Volume),
-                        field_h,
-                    ),
-                    font,
-                    r.x0,
-                    r.y0,
-                    scale,
-                );
-            } else {
-                crate::art::squashed(
-                    &mut out,
-                    &art::volume_fader(
-                        &palette.chrome,
-                        crate::tcp::lit(palette).volume,
-                        crate::tcp::volume_fraction(live.volume),
-                    ),
-                    font,
-                    r.x0,
-                    r.y0,
-                    1.0,
-                    field_h / 24.0,
-                );
-            }
-        }
-        // The name plate has no hover cell in the traced art — REAPER
-        // does not light one either — but in this window it is what you
-        // double-click to rename, and a control that opens an editor
-        // has to say so before you commit to the second click. One rule
-        // under the name, in the accent, is the least that reads.
-        if look(C::Name) != Interaction::Normal {
-            if let Some(r) = row.rect(C::Name) {
-                out.fill(
-                    vello::peniko::Fill::NonZero,
-                    Affine::IDENTITY,
-                    palette.accent,
-                    None,
-                    &vello::kurbo::Rect::new(r.x0, r.y1 - 1.0, r.x1, r.y1),
-                );
-            }
-        }
-
-        if let Some(r) = row.rect(C::Pan) {
-            let field_h = r.height();
-            if knob {
-                let scale = (field_h / 25.0).min(1.0);
-                crate::art::scaled(
-                    &mut out,
-                    &art::pan_knob(
-                        &palette.chrome,
-                        live.pan.clamp(-1.0, 1.0),
-                        crate::tcp::to_theme(palette.pan),
-                        look(C::Pan),
-                    ),
-                    font,
-                    f64::from(gt::PAN_KNOB_X),
-                    r.y0 + 25.0_f64.mul_add(-scale, field_h) / 2.0,
-                    scale,
-                );
-            } else {
-                crate::art::squashed(
-                    &mut out,
-                    &art::pan_line(
-                        &palette.chrome,
-                        live.pan.clamp(-1.0, 1.0),
-                        crate::tcp::to_theme(palette.pan),
-                    ),
-                    font,
-                    f64::from(gt::PAN_KNOB_X),
-                    r.y0,
-                    1.0,
-                    field_h / 24.0,
-                );
-            }
-        }
     }
     for command in &out.commands {
         counts.replayed = counts.replayed.saturating_add(1);
@@ -1639,6 +1437,305 @@ pub fn panel_controls(
         }
     }
     counts
+}
+
+/// Every row's live controls, recorded once with a command range per
+/// row.
+///
+/// Recorded for ALL rows rather than the visible ones, which is the
+/// whole point: a recording keyed to what is on screen is thrown away
+/// by a scroll, and scrolling is when a window can least afford to
+/// rebuild forty rows of vector art. Keyed per row instead, a scroll
+/// replays a different span of the same recording.
+///
+/// What it is NOT keyed by is the pointer. Hover is one control drawn
+/// again on top — see `crate::pointer` — so a recording taken at rest
+/// stays good while the mouse moves across it.
+#[must_use]
+pub fn record_controls(
+    palette: &Palette,
+    font: &Font,
+    scene: &crate::arrangement::Arrangement,
+    rows: &[(Track, u32)],
+    tracks: &[Track],
+    map: &crate::plan::Rows,
+    view: crate::arrangement::Viewport,
+) -> Controls {
+    let mut out = anyrender::Scene::new();
+    let mut spans = Vec::with_capacity(rows.len());
+    let at_rest = crate::pointer::Pointer::default();
+    for index in 0..rows.len() {
+        let from = command_index(&out);
+        control_row(
+            &mut out, palette, font, scene, rows, tracks, map, view, &at_rest, index,
+        );
+        spans.push(from..command_index(&out));
+    }
+    Controls { scene: out, spans }
+}
+
+/// One cut of the live controls.
+pub struct Controls {
+    scene: anyrender::Scene,
+    spans: Vec<core::ops::Range<u32>>,
+}
+
+impl Controls {
+    /// Replay the rows a viewport can see.
+    pub fn replay(
+        &self,
+        painter: &mut impl PaintScene,
+        scene: &crate::arrangement::Arrangement,
+        view: crate::arrangement::Viewport,
+        transform: Affine,
+    ) -> crate::profile::Counts {
+        let mut counts = crate::profile::Counts::default();
+        for row in scene.visible_rows(view) {
+            let Some(span) = self.spans.get(row) else {
+                continue;
+            };
+            let (from, to) = (span.start as usize, span.end as usize);
+            let Some(commands) = self.scene.commands.get(from..to) else {
+                continue;
+            };
+            for command in commands {
+                counts.replayed = counts.replayed.saturating_add(1);
+                if crate::arrangement::submit_command(painter, command, transform) {
+                    counts.submitted = counts.submitted.saturating_add(1);
+                }
+            }
+        }
+        counts
+    }
+}
+
+/// How many commands a scene holds, as the index of the next one.
+fn command_index(scene: &anyrender::Scene) -> u32 {
+    u32::try_from(scene.commands.len()).unwrap_or(u32::MAX)
+}
+
+/// One row's controls, into `out`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the loop body of `panel_controls`, lifted out so a row that draws nothing can return"
+)]
+fn control_row(
+    out: &mut anyrender::Scene,
+    palette: &Palette,
+    font: &Font,
+    scene: &crate::arrangement::Arrangement,
+    rows: &[(Track, u32)],
+    tracks: &[Track],
+    map: &crate::plan::Rows,
+    view: crate::arrangement::Viewport,
+    pointer: &crate::pointer::Pointer<crate::pointer::RowSpot>,
+    index: usize,
+) {
+    use crate::pointer::RowSpot;
+    use crate::row::{Control as C, Indicator, Row};
+    use daw_theme_art::geometry::tcp as gt;
+
+    let (Some((track, depth)), Some(live)) = (rows.get(index), map.live(tracks, index)) else {
+        return;
+    };
+    // The band on SCREEN, not in the session: these are drawn
+    // under a translate so that the art keeps its own size, which
+    // leaves the placing to `row_band`. See it for why.
+    let Some((top, height)) = scene.row_band(index, view) else {
+        return;
+    };
+    let row = Row::new(
+        top,
+        height,
+        i32::try_from(*depth).unwrap_or(0),
+        track.is_folder,
+    );
+    if row.density == crate::tcp::Density::Bar {
+        return;
+    }
+    // The pointer's verdict on this row's controls. The panel is a
+    // recorded scene like the mixer is, so a hover cannot repaint
+    // the row — it repaints the ONE control, here, in the same pass
+    // that already redraws every live value.
+    let look = |control| {
+        pointer.state(RowSpot {
+            row: index,
+            control,
+        })
+    };
+
+    // Mute and solo.
+    for (control, label, on, lit) in [
+        (C::Mute, "M", live.muted, crate::tcp::mute_lit(palette)),
+        (C::Solo, "S", live.soloed, crate::tcp::solo_lit(palette)),
+    ] {
+        let Some(r) = row.rect(control) else { continue };
+        // Flattened to the rect on a row too short for the full
+        // button — the row's shape says how tall, not the art.
+        crate::art::squashed(
+            &mut *out,
+            &art::gutter_button(&palette.chrome, label, on, lit, look(control)),
+            font,
+            r.x0,
+            r.y0,
+            1.0,
+            (r.height() / crate::tcp::BUTTON.1).min(1.0),
+        );
+    }
+
+    // The FX button, from the chain the track actually has.
+    if let Some(r) = row.rect(C::Fx) {
+        crate::art::place(
+            &mut *out,
+            &art::fx_pill(
+                &palette.chrome,
+                crate::tcp::lit(palette),
+                chain(live),
+                look(C::Fx),
+            ),
+            font,
+            r.x0,
+            r.y0,
+        );
+    }
+
+    // Routing, and polarity in the corner below it. Both are live
+    // values with their own events — a strip that recorded them was
+    // right until the first time anything changed one.
+    if let Some(r) = row.rect(C::Routing) {
+        crate::art::place(
+            &mut *out,
+            &art::routing(
+                &palette.chrome,
+                art::Axis::Horizontal,
+                routes(live),
+                route_ink(palette),
+                look(C::Routing),
+            ),
+            font,
+            r.x0,
+            r.y0,
+        );
+    }
+    if let Some(r) = row.rect(C::Phase) {
+        crate::art::place(
+            &mut *out,
+            &art::phase(&palette.chrome, live.phase_inverted, look(C::Phase)),
+            font,
+            r.x0,
+            r.y0,
+        );
+    }
+
+    // The record arm, on rows tall enough to read one.
+    if let Some(r) = row.rect(C::RecArm) {
+        crate::art::place(
+            &mut *out,
+            &art::record_arm(
+                &palette.chrome,
+                crate::tcp::lit(palette).rec,
+                live.armed,
+                look(C::RecArm),
+                art::Arm::Panel,
+                crate::tcp::to_theme(palette.tcp_field),
+            ),
+            font,
+            r.x0,
+            r.y0,
+        );
+    }
+
+    // Volume and pan, in whichever form the row is showing — a knob
+    // where there is room to turn one, a flattened bar where there
+    // is not. Both are the same VALUE; only the shape changes.
+    let knob = row.indicator() == Indicator::Knob;
+    if let Some(r) = row.rect(C::Volume) {
+        let field_h = r.height();
+        if knob {
+            // Never past the size it was authored — the same rule
+            // the rect above measures it by, so the picture and the
+            // hit target stay the same shape.
+            let scale = (field_h / 22.0).min(1.0);
+            crate::art::scaled(
+                &mut *out,
+                &art::volume_knob(
+                    &palette.chrome,
+                    crate::tcp::lit(palette).volume,
+                    crate::tcp::volume_fraction(live.volume),
+                    look(C::Volume),
+                    field_h,
+                ),
+                font,
+                r.x0,
+                r.y0,
+                scale,
+            );
+        } else {
+            crate::art::squashed(
+                &mut *out,
+                &art::volume_fader(
+                    &palette.chrome,
+                    crate::tcp::lit(palette).volume,
+                    crate::tcp::volume_fraction(live.volume),
+                ),
+                font,
+                r.x0,
+                r.y0,
+                1.0,
+                field_h / 24.0,
+            );
+        }
+    }
+    // The name plate has no hover cell in the traced art — REAPER
+    // does not light one either — but in this window it is what you
+    // double-click to rename, and a control that opens an editor
+    // has to say so before you commit to the second click. One rule
+    // under the name, in the accent, is the least that reads.
+    if look(C::Name) != Interaction::Normal {
+        if let Some(r) = row.rect(C::Name) {
+            out.fill(
+                vello::peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                palette.accent,
+                None,
+                &vello::kurbo::Rect::new(r.x0, r.y1 - 1.0, r.x1, r.y1),
+            );
+        }
+    }
+
+    if let Some(r) = row.rect(C::Pan) {
+        let field_h = r.height();
+        if knob {
+            let scale = (field_h / 25.0).min(1.0);
+            crate::art::scaled(
+                &mut *out,
+                &art::pan_knob(
+                    &palette.chrome,
+                    live.pan.clamp(-1.0, 1.0),
+                    crate::tcp::to_theme(palette.pan),
+                    look(C::Pan),
+                ),
+                font,
+                f64::from(gt::PAN_KNOB_X),
+                r.y0 + 25.0_f64.mul_add(-scale, field_h) / 2.0,
+                scale,
+            );
+        } else {
+            crate::art::squashed(
+                &mut *out,
+                &art::pan_line(
+                    &palette.chrome,
+                    live.pan.clamp(-1.0, 1.0),
+                    crate::tcp::to_theme(palette.pan),
+                ),
+                font,
+                f64::from(gt::PAN_KNOB_X),
+                r.y0,
+                1.0,
+                field_h / 24.0,
+            );
+        }
+    }
 }
 
 #[cfg(test)]
