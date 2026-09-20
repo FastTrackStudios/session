@@ -154,10 +154,15 @@ fn main() {
     // Not a mode anyone wants to look at — it is the control that says
     // how much of a frame the shapes are, which is the only way to know
     // whether an optimisation aimed at them is aimed at anything.
+    // Read once, used twice: the component tree turns these into
+    // `Shapes` and the widget's recording draws them directly. Building
+    // the widget from an empty set is how its trigger rows came out
+    // blank while every waveform beside them was right.
+    let previews = previews_of(&project);
     let shapes = if std::env::var("FTS_BLITZ_SHAPES").as_deref() == Ok("0") {
         Shapes::default()
     } else {
-        shapes_of(&project)
+        shapes_of(&project, &previews)
     };
 
     let view = View {
@@ -204,7 +209,7 @@ fn main() {
             &project,
             &rows,
             layout,
-            &session_daw::midi::Previews::default(),
+            &previews,
         );
         let bpm = recorded.bpm;
         dioxus_native_dom::CustomWidgetAttr::new(session_daw::widget::ArrangementWidget::new(
@@ -790,7 +795,7 @@ fn read_back(scene: Option<&str>, project_path: &std::path::Path) -> Option<(Pro
 /// draws one frame and exits, so there is no later for them to arrive
 /// in — and an item drawn from a waveform it does not have is why a
 /// chord track once looked like a shaker.
-fn shapes_of(project: &ProjectRef) -> Shapes {
+fn previews_of(project: &ProjectRef) -> session_daw::midi::Previews {
     let previews = session_daw::midi::Previews::default();
     previews.fill_blocking(
         project
@@ -802,7 +807,10 @@ fn shapes_of(project: &ProjectRef) -> Shapes {
             .map(|item| (item.guid.clone(), item.length.as_seconds()))
             .collect(),
     );
+    previews
+}
 
+fn shapes_of(project: &ProjectRef, previews: &session_daw::midi::Previews) -> Shapes {
     let mut shapes: HashMap<String, Shape> = HashMap::new();
     for (row, track) in project.tracks.iter().enumerate() {
         let index = usize::try_from(track.index).unwrap_or(row);

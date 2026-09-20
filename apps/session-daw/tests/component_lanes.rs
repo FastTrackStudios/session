@@ -89,6 +89,22 @@ const PANEL_TOLERANCE: f64 = 1.75;
 const LANES_OVERALL: f64 = 6.0;
 const RULER_OVERALL: f64 = 2.0;
 const RAILS_OVERALL: f64 = 2.0;
+
+/// What the widget is allowed to differ from the renderer it is made of.
+///
+/// Near zero, and not by luck: unlike every other comparison here this
+/// is not two renderers being asked to agree, it is ONE renderer asked
+/// whether going through a DOM node changes what it draws. Same
+/// recording, same passes, same font, same Vello. Measured at 0.000% at
+/// both thresholds — the pictures are identical — so the allowance is a
+/// hair for a different GPU and nothing else.
+///
+/// Three real defects have already shown up here rather than as a
+/// panic: a transform missing the ruler's height, the live controls not
+/// being drawn at all, and the recording built with no MIDI previews so
+/// every trigger row came out blank.
+const WIDGET_TOLERANCE: f64 = 0.05;
+const WIDGET_OVERALL: f64 = 0.05;
 const PANEL_OVERALL: f64 = 7.0;
 
 fn root() -> PathBuf {
@@ -118,6 +134,26 @@ fn lane_rect() -> (u32, u32, u32, u32) {
     )]
     let rect = (x as u32, y as u32, w as u32, h as u32);
     rect
+}
+
+/// The part of the lane rect the widget answers for.
+///
+/// Off the right goes the vertical scrollbar and off the bottom the
+/// horizontal one together with the strip the widget's node stops short
+/// of — it is laid out inside the rails, so the bottom rail's height is
+/// the window's and not the arrangement's.
+fn widget_inset(w: u32, h: u32) -> (u32, u32) {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions,
+        reason = "small positive constants"
+    )]
+    let (bar, rail) = (
+        session_daw::scrollbar::THICK as u32,
+        session_daw::rails::SIDE as u32,
+    );
+    (w.saturating_sub(bar), h.saturating_sub(rail.max(bar)))
 }
 
 /// Build a binary once and hand back its path.
@@ -274,6 +310,64 @@ fn scratch() -> Result<PathBuf> {
     let dir = std::env::temp_dir().join("fts-component-lanes");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+/// The WIDGET draws the same window as the renderer it is made of.
+///
+/// A different question from the ones below, and a stricter one. Those
+/// ask whether a component tree can reproduce a painted picture, and
+/// allow for two text stacks disagreeing about a pixel. This asks
+/// whether the arrangement painted through one DOM node is the
+/// arrangement painted through no DOM at all — the same recording, the
+/// same five passes, the same font — so the only honest answer is
+/// "almost exactly", and what is left is the chrome around it that the
+/// widget does not draw and the reference does.
+///
+/// It is the gate that matters now. The widget is what the window will
+/// use, and it is put together by hand: three passes that are not in
+/// the recording — the live controls, the section bands, the item
+/// titles — and a transform that has to carry the ruler's height. Every
+/// one of those was missing or wrong at some point, and each showed up
+/// as a picture rather than as a panic.
+#[test]
+#[ignore = "renders the golden session through two renderers; run with --ignored"]
+fn the_widget_draws_the_painted_window() -> Result<()> {
+    let dir = scratch()?;
+    let (painted, widget) = (dir.join("painted.png"), dir.join("widget.png"));
+    reference(&painted)?;
+    let status = Command::new(built("blitz_shot")?)
+        .current_dir(root())
+        .arg(fixture())
+        .arg(&widget)
+        .env("FTS_BLITZ_SIZE", SIZE)
+        .env("FTS_BLITZ_PART", "all")
+        .env("FTS_BLITZ_WIDGET", "1")
+        .status()?;
+    if !status.success() {
+        return Err("the widget renderer failed".into());
+    }
+    // `reference` already hands back the lane rect, so only the
+    // widget's whole-window shot needs cutting — to the same rectangle,
+    // because outside it the reference paints rails and a mode bar the
+    // widget leaves to components.
+    //
+    // Then both are cut again, by [`widget_inset`], to the part of that
+    // rectangle the widget is actually responsible for. Two strips are
+    // not: the scrollbars, which the reference paints itself and the
+    // window builds as components, and the band under the widget's
+    // node, which is where the bottom rail goes. Comparing those would
+    // be comparing a picture against a picture of something else.
+    let (x, y, w, h) = lane_rect();
+    let cropped = dir.join("w-widget.png");
+    crop_true(&widget, &cropped, &format!("{w}x{h}+{x}+{y}"))?;
+
+    let (w, h) = widget_inset(w, h);
+    let (a, b) = (dir.join("w-vello-in.png"), dir.join("w-widget-in.png"));
+    let inset = format!("{w}x{h}+0+0");
+    crop_true(&painted, &a, &inset)?;
+    crop_true(&cropped, &b, &inset)?;
+    matches("widget", &a, &b, WIDGET_TOLERANCE, WIDGET_OVERALL)?;
+    Ok(())
 }
 
 /// The two renderers draw the same lanes.
