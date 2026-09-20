@@ -339,12 +339,10 @@ fn main() {
                             Affine::translate((TCP_WIDTH - scroll_x, -scroll_y))
                                 * Affine::scale_non_uniform(PPS * zx, zy),
                         );
-                        let b = scene.replay_panel(
-                            painter,
-                            view,
-                            Affine::translate((0.0, -scroll_y))
-                                * Affine::scale_non_uniform(1.0, zy),
-                        );
+                        // Translate only: the cut already carries the
+                        // zoom — see `Arrangement::repanel`.
+                        let b =
+                            scene.replay_panel(painter, view, Affine::translate((0.0, -scroll_y)));
                         // After the lanes, not before: the lane
                         // backgrounds are opaque and painted the grid
                         // straight out of the frame.
@@ -1018,7 +1016,7 @@ fn verify(
             };
             let lanes = Affine::translate((TCP_WIDTH - scroll_x, -scroll_y))
                 * Affine::scale_non_uniform(PPS * zx, zy);
-            let panel = Affine::translate((0.0, -scroll_y)) * Affine::scale_non_uniform(1.0, zy);
+            let panel = Affine::translate((0.0, -scroll_y));
 
             let mut counts = Counts::default();
             renderer.render_to_vec(
@@ -1225,8 +1223,7 @@ fn shot(
             let b = scene.replay_panel(
                 painter,
                 view,
-                Affine::translate((rail_x, rail_y + RULER_H - scroll_y))
-                    * Affine::scale_non_uniform(1.0, zoom_y),
+                Affine::translate((rail_x, rail_y + RULER_H - scroll_y)),
             );
             ruler::grid(
                 painter,

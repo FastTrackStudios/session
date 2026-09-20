@@ -110,6 +110,8 @@ pub struct ArrangementWidget {
     rows: Vec<(daw_proto::Track, u32)>,
     tracks: Vec<daw_proto::Track>,
     map: crate::plan::Rows,
+    /// What row heights come from, for re-cutting the panel.
+    layout: crate::layout::Layout,
     view: Shared,
     drawn: Rc<RefCell<Drawn>>,
     /// The frame-time graph, when the window asked for one.
@@ -157,6 +159,7 @@ impl ArrangementWidget {
         bpm: f64,
         pps: f64,
         rows: Vec<(daw_proto::Track, u32)>,
+        layout: crate::layout::Layout,
         view: Shared,
         readout: bool,
     ) -> Self {
@@ -172,6 +175,7 @@ impl ArrangementWidget {
             rows,
             tracks,
             map,
+            layout,
             view,
             drawn: Rc::new(RefCell::new(Drawn::default())),
             stats: readout.then(crate::fps::Stats::new),
@@ -205,6 +209,18 @@ impl Widget for ArrangementWidget {
             width: f64::from(width),
             height: f64::from(height),
         };
+
+        // The panel is cut at a zoom, not scaled to one. Asking every
+        // frame is free when the zoom has not moved, and on the frame
+        // it has, re-cutting is the difference between a taller row and
+        // a row with the lettering pulled out of shape.
+        self.scene.repanel(
+            &self.palette,
+            &self.font,
+            &self.rows,
+            self.layout,
+            view.zoom_y,
+        );
 
         let mut out = Scene::new();
         // The same five calls, in the same order, as the painted window
@@ -247,11 +263,9 @@ impl Widget for ArrangementWidget {
             (TCP_WIDTH - view.scroll_x, below),
         );
         spent.titles = since(&mut mark);
-        let panel = self.scene.replay_panel(
-            &mut out,
-            view,
-            Affine::translate((0.0, below)) * Affine::scale_non_uniform(1.0, view.zoom_y),
-        );
+        let panel = self
+            .scene
+            .replay_panel(&mut out, view, Affine::translate((0.0, below)));
         spent.panel = since(&mut mark);
         ruler::grid(
             &mut out,

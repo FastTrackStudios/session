@@ -234,6 +234,7 @@ fn main() {
             bpm,
             PPS,
             rows.as_slice().to_vec(),
+            layout,
             shared,
             readout,
         ))
