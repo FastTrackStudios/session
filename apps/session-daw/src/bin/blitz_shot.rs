@@ -226,6 +226,7 @@ fn main() {
                 scroll_y,
                 zoom_x: 1.0,
                 zoom_y: 1.0,
+                play_at: 0.0,
             }));
         WIDGET_VIEW.with(|slot| *slot.borrow_mut() = Some(std::rc::Rc::clone(&shared)));
         let recorded = session_daw::arrangement::Arrangement::build(
@@ -435,7 +436,7 @@ fn drain_edits(applier: Option<&session_daw::engine::Applier>) {
     });
 }
 
-fn tell_the_widget(scroll: f64, down: f64, zoom: (f64, f64)) {
+fn tell_the_widget(scroll: f64, down: f64, zoom: (f64, f64), play_at: f64) {
     WIDGET_VIEW.with(|slot| {
         if let Some(shared) = slot.borrow().as_ref() {
             *shared.borrow_mut() = session_daw::widget::View {
@@ -443,6 +444,7 @@ fn tell_the_widget(scroll: f64, down: f64, zoom: (f64, f64)) {
                 scroll_y: down,
                 zoom_x: zoom.0,
                 zoom_y: zoom.1,
+                play_at,
             };
         }
     });
@@ -620,7 +622,9 @@ fn pan(document: &mut DioxusDocument, width: u32, height: u32, frames: usize) {
                         let zoom = z
                             .borrow()
                             .map_or((1.0, 1.0), |z: Signal<(f64, f64)>| z.peek().to_owned());
-                        tell_the_widget(at(s), at(d), zoom);
+                        // No transport in a headless shot: nothing is
+                        // playing, so the playhead is at the start.
+                        tell_the_widget(at(s), at(d), zoom, 0.0);
                     });
                 });
             });
@@ -1350,6 +1354,10 @@ fn WindowSize(
     // which is what opening a `.rpp` from disk with no engine running
     // actually is.
     let applier = use_hook(|| std::rc::Rc::new(session_daw::engine::Applier::start()));
+    // Where the transport is, polled rather than subscribed to: a
+    // position is a LEVEL, and a subscription would deliver a backlog
+    // after a stall, which is the one thing a playhead must not replay.
+    let transport = use_hook(|| std::rc::Rc::new(session_daw::engine::Transport::start()));
     let counted =
         use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(Vec::<f64>::with_capacity(RECENT))));
     let started = use_hook(std::time::Instant::now);
@@ -1532,7 +1540,8 @@ fn WindowSize(
             // is one. Written every frame rather than on change: it is
             // four numbers, and a missed write is a frame drawn at the
             // wrong place.
-            tell_the_widget(scroll(), down(), zoom());
+            let play_at = transport.as_ref().as_ref().map_or(0.0, |t| t.read().0);
+            tell_the_widget(scroll(), down(), zoom(), play_at);
             // And whatever it wants done to the session, carried out.
             // Drained here, on the window's thread, because that is
             // where the engine's sender is — the widget is a painter

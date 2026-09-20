@@ -1449,6 +1449,105 @@ studio-bench GESTURE="pan" SIZE="5120x1440" FRAMES="120" DUMP="":
     FTS_BLITZ_FRAMES="{{FRAMES}}" \
     ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png 2>/dev/null
 
+# ── Driving the studio from a script ──────────────────────────────────
+#
+#   just drive                     open it on :99
+#   just drive-shot /tmp/now.png   photograph that display
+#   just drive-stop                close it
+#
+# Why this exists: on Wayland a session cannot move the pointer or type
+# into a window, so the only way to find out whether a click does what
+# you think is to ask a person. Three bugs in the panel's input went
+# unnoticed exactly that way — a rename field that opened and could not
+# be typed into, a name that reverted on Enter, a control that lit on
+# the wrong row. All three showed up in the first minute of driving it.
+#
+# Xvfb has no GPU, so this renders through llvmpipe at some tens of
+# milliseconds a frame. It is for finding out what the window DOES, and
+# says nothing whatever about what it costs — measure with
+# `just studio-bench`.
+#
+# Notes that cost an hour each, so they are written down:
+#
+#   * `setsid`, or the window dies with the shell that started it.
+#   * Wait for the WINDOW, not for a number of seconds. `xdotool search`
+#     returning an id is the only honest ready signal; the process
+#     exists long before it has mapped anything.
+#   * There is no window manager on :99, so nothing gives a window the
+#     keyboard. `xdotool windowfocus` it first and send keys with
+#     `key --window $W`, or every keystroke goes nowhere — which looks
+#     exactly like a bug in whatever you are testing.
+#
+#   W=$(DISPLAY=:99 xdotool search --name FastTrackStudio | head -1)
+#   DISPLAY=:99 xdotool windowfocus $W
+#   DISPLAY=:99 xdotool mousemove 375 230 click 1
+#   DISPLAY=:99 xdotool key --window $W Return
+
+# Open the studio on a nested display a script can drive.
+drive SIZE="2560x1440" SCENE="drum-mixing" DISPLAY_NUM="99":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p session-daw --bin blitz_shot
+    just drive-stop "{{DISPLAY_NUM}}"
+    # A killed Xvfb leaves its lock behind and the next one refuses to
+    # start — silently, as far as anything asking the display is
+    # concerned: every xdotool call just says "failed creating new xdo
+    # instance". So wait for the old one to actually go, then clear
+    # what it left.
+    until ! pgrep -f "Xvfb :{{DISPLAY_NUM}} " >/dev/null 2>&1; do sleep 1; done
+    rm -f /tmp/.X{{DISPLAY_NUM}}-lock /tmp/.X11-unix/X{{DISPLAY_NUM}}
+    setsid Xvfb :{{DISPLAY_NUM}} -screen 0 {{SIZE}}x24 > /tmp/fts-xvfb.log 2>&1 < /dev/null &
+    disown || true
+    for _ in $(seq 30); do
+        DISPLAY=:{{DISPLAY_NUM}} xdotool getdisplaygeometry >/dev/null 2>&1 && break
+        sleep 1
+    done
+    if ! DISPLAY=:{{DISPLAY_NUM}} xdotool getdisplaygeometry >/dev/null 2>&1; then
+        echo "Xvfb :{{DISPLAY_NUM}} did not come up — see /tmp/fts-xvfb.log" >&2
+        tail -5 /tmp/fts-xvfb.log >&2 || true
+        exit 1
+    fi
+    echo "display :{{DISPLAY_NUM}} up at {{SIZE}}"
+    setsid env -u WAYLAND_DISPLAY DISPLAY=:{{DISPLAY_NUM}} \
+        FTS_BLITZ_WINDOW=1 \
+        FTS_BLITZ_SIZE="{{SIZE}}" \
+        FTS_BLITZ_SCENE="{{SCENE}}" \
+        FTS_BLITZ_FPS=0 \
+        FTS_PRESENT=immediate \
+        FTS_BLITZ_LOG=/tmp/fts-drive.log \
+        ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-drive.png \
+        > /tmp/fts-drive.out 2>&1 < /dev/null &
+    disown || true
+    # Software rendering opens slowly; a minute is generous and a hang
+    # is better reported than waited on forever.
+    for _ in $(seq 60); do
+        W=$(DISPLAY=:{{DISPLAY_NUM}} xdotool search --name FastTrackStudio 2>/dev/null | head -1 || true)
+        [ -n "${W:-}" ] && break
+        sleep 1
+    done
+    if [ -z "${W:-}" ]; then
+        echo "no window after 60s — see /tmp/fts-drive.out" >&2
+        tail -5 /tmp/fts-drive.out >&2 || true
+        exit 1
+    fi
+    DISPLAY=:{{DISPLAY_NUM}} xdotool windowfocus "$W" || true
+    echo "window $W on :{{DISPLAY_NUM}} — logs /tmp/fts-drive.log, stdout /tmp/fts-drive.out"
+
+# Photograph the nested display.
+drive-shot OUT="/tmp/fts-drive-shot.png" DISPLAY_NUM="99":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DISPLAY=:{{DISPLAY_NUM}} import -window root "{{OUT}}"
+    echo "{{OUT}}"
+
+# Close the nested display and whatever was on it.
+drive-stop DISPLAY_NUM="99":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    pkill -f "release/blitz_shot .*template.rpp /tmp/fts-drive.png" || true
+    pkill -f "Xvfb :{{DISPLAY_NUM}} " || true
+    exit 0
+
 # Prove the culling draws the same frame as drawing everything.
 #
 # The bench's headline number comes from NOT drawing what is off screen,

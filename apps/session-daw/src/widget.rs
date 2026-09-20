@@ -80,6 +80,13 @@ pub struct View {
     pub scroll_y: f64,
     pub zoom_x: f64,
     pub zoom_y: f64,
+    /// Where the transport is, in seconds.
+    ///
+    /// The window's to know and the widget's to draw. A position is a
+    /// LEVEL and not an event — see `engine::Transport` — so it is
+    /// written every frame like the scroll rather than sent as a
+    /// change, and a missed one is covered by the next.
+    pub play_at: f64,
 }
 
 /// Blitz's modifier set, as the mouse map's.
@@ -183,6 +190,17 @@ pub struct ArrangementWidget {
     /// `Widget::needs_redraw`. A `Cell` because that question is asked
     /// through `&self`.
     dirty: std::cell::Cell<bool>,
+    /// Whether the editor took the last press and has not been let go
+    /// of yet.
+    ///
+    /// Tracked here rather than asked of the editor, because
+    /// `Editor::dragging` answers a different question: it is false
+    /// until a ghost exists, and the ghost is created INSIDE `moved`.
+    /// Gating the moves on it means the first move never arrives, so
+    /// the ghost is never made and nothing can be dragged at all — and
+    /// a press on the ruler is not in its answer under any
+    /// circumstances.
+    holding: bool,
     /// The item under the pointer, so its fade handles are drawn —
     /// REAPER puts them in the top corners and only shows them on the
     /// item you are over.
@@ -300,6 +318,7 @@ impl ArrangementWidget {
             pointer: crate::pointer::Pointer::default(),
             editor: crate::arrange_edit::Editor::default(),
             hovered_item: None,
+            holding: false,
             dirty: std::cell::Cell::new(false),
             sections: project.sections.clone(),
             markers: project.markers.clone(),
@@ -660,7 +679,7 @@ impl ArrangementWidget {
                 // The editor owns the gesture once it has taken a
                 // press: an item being dragged follows the pointer off
                 // the lane it started on, which is what dragging is.
-                if self.editor.dragging() || self.editor.zoom.is_some() {
+                if self.holding {
                     let view = self.viewport(self.size.0, self.size.1);
                     let seconds = self.seconds_at(x, view);
                     let bpm = self.scene.bpm;
@@ -696,6 +715,7 @@ impl ArrangementWidget {
                         .press(hit, mods(e.mods), &self.scene, &mut effects);
                     self.settle(effects);
                     if took {
+                        self.holding = true;
                         return true;
                     }
                 }
@@ -727,7 +747,8 @@ impl ArrangementWidget {
                     self.pointer.hover(self.spot_at(x, y));
                     return true;
                 }
-                if self.editor.dragging() || self.editor.zoom.is_some() {
+                if self.holding {
+                    self.holding = false;
                     let view = self.viewport(self.size.0, self.size.1);
                     let seconds = self.seconds_at(x, view);
                     let mut effects = Vec::new();
@@ -754,6 +775,7 @@ impl ArrangementWidget {
             }
             UiEvent::KeyDown(e) => self.typed(e),
             UiEvent::PointerCancel(_) => {
+                self.holding = false;
                 self.turning = None;
                 self.pointer.release();
                 true
@@ -771,6 +793,7 @@ impl ArrangementWidget {
         _scale: f64,
     ) -> Scene {
         let began = std::time::Instant::now();
+        let at_now = *self.view.borrow();
         let view = self.viewport(f64::from(width), f64::from(height));
         self.size = (view.width, view.height);
 
@@ -969,6 +992,29 @@ impl ArrangementWidget {
                 at,
             ),
         };
+        // The edit cursor and the time selection, over the lanes and
+        // up through the ruler. Drawn from the editor's own state,
+        // which is what a click on the ruler moves.
+        crate::cursor::paint_edit(
+            &mut out,
+            &self.palette,
+            &self.editor.cursor,
+            view,
+            (0.0, 0.0),
+            0.0,
+            view.height,
+        );
+        // And the play cursor over it, which is the transport's and not
+        // the editor's — the window polls it and writes it into the
+        // view like the scroll.
+        crate::cursor::paint(
+            &mut out,
+            crate::cursor::Look::default(),
+            at_now.play_at.mul_add(view.pps, TCP_WIDTH - view.scroll_x),
+            0.0,
+            view.height,
+            TCP_WIDTH,
+        );
         // An open rename, over the name it replaces. Last of the panel
         // passes, because it is a field ON one and has to cover it.
         if let Some(rename) = self.renaming.as_ref()

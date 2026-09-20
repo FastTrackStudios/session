@@ -1284,6 +1284,27 @@ fn shot(
                 rail_y + RULER_H,
                 rail_y + view.height,
             );
+            // The edit cursor and the playhead, as the window draws
+            // them. At rest — time zero, no selection — which is where
+            // a freshly opened session has them, and the only place a
+            // reference shot can honestly put them.
+            session_daw::cursor::paint_edit(
+                painter,
+                palette,
+                &session_daw::cursor::Edit::default(),
+                view,
+                (rail_x, rail_y),
+                rail_y,
+                rail_y + view.height,
+            );
+            session_daw::cursor::paint(
+                painter,
+                session_daw::cursor::Look::default(),
+                rail_x + TCP_WIDTH - scroll_x,
+                rail_y,
+                rail_y + view.height,
+                rail_x + TCP_WIDTH,
+            );
             // The scrollbars, as the window draws them: the shot is
             // compared to the screen.
             let lanes = vello::kurbo::Rect::new(
