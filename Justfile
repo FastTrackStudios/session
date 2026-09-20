@@ -1386,11 +1386,14 @@ studio MODE="1" SIZE="5120x1440" SCENE="drum-mixing":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p session-daw --bin blitz_shot
+    # Through `env`, not as a bare `VAR=x` prefix: bash decides what is
+    # an assignment BEFORE it expands anything, so `${FPS:+FTS_BLITZ_FPS=1}`
+    # in that position becomes a command name and the recipe dies with
+    # "command not found".
+    env ${FPS:+FTS_BLITZ_FPS=1} ${TREE:+FTS_BLITZ_WIDGET=0} \
     FTS_BLITZ_WINDOW="{{MODE}}" \
     FTS_BLITZ_SIZE="{{SIZE}}" \
     FTS_BLITZ_SCENE="{{SCENE}}" \
-    ${FPS:+FTS_BLITZ_FPS=1} \
-    ${TREE:+FTS_BLITZ_WIDGET=0} \
     FTS_BLITZ_LOG=/tmp/fts-studio.log \
     ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png
 
@@ -1429,14 +1432,12 @@ studio-bench GESTURE="pan" SIZE="5120x1440" FRAMES="120" DUMP="":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p session-daw --bin blitz_shot
+    env ${DUMP:+FTS_BLITZ_DUMP="{{DUMP}}"} ${FPS:+FTS_BLITZ_FPS=1} ${TREE:+FTS_BLITZ_WIDGET=0} \
     FTS_BLITZ_PART=all \
     FTS_BLITZ_SCENE=drum-mixing \
     FTS_BLITZ_SIZE="{{SIZE}}" \
     FTS_BLITZ_GESTURE="{{GESTURE}}" \
     FTS_BLITZ_FRAMES="{{FRAMES}}" \
-    ${DUMP:+FTS_BLITZ_DUMP="{{DUMP}}"} \
-    ${FPS:+FTS_BLITZ_FPS=1} \
-    ${TREE:+FTS_BLITZ_WIDGET=0} \
     ./target/release/blitz_shot "{{GOLDEN_DIR}}/template.rpp" /tmp/fts-studio.png 2>/dev/null
 
 # Prove the culling draws the same frame as drawing everything.
