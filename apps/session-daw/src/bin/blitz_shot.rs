@@ -237,7 +237,7 @@ fn main() {
             &previews,
         );
         let bpm = recorded.bpm;
-        dioxus_native_dom::CustomWidgetAttr::new(session_daw::widget::ArrangementWidget::new(
+        let built = session_daw::widget::ArrangementWidget::new(
             recorded,
             session_daw::arrangement::Palette::from_theme(&theme),
             session_daw::text::Font::embedded().expect("the embedded font"),
@@ -247,7 +247,12 @@ fn main() {
             layout,
             shared,
             readout,
-        ))
+        );
+        // What the widget wants done to the session. It queues an
+        // `Edit`; the window owns the connection that can carry one
+        // out. See `session_daw::widget::ArrangementWidget::act`.
+        WIDGET_EDITS.with(|slot| *slot.borrow_mut() = Some(built.edits()));
+        dioxus_native_dom::CustomWidgetAttr::new(built)
     });
 
     let props = ShotProps {
@@ -404,6 +409,28 @@ fn main() {
 /// signals because that is how a component tree hears about a change,
 /// and the widget reads a plain cell because its paint runs outside the
 /// Dioxus runtime. One copy a frame, of four numbers.
+/// Hand whatever the widget has asked for to the engine.
+///
+/// The widget has already moved its own copy of the state, so the
+/// picture is right whether or not this reaches anything — see
+/// `ArrangementWidget::assume`. With no engine (a session opened from a
+/// file, with no facade up) the window is a viewer that looks live,
+/// which is better than one whose buttons do nothing visible.
+fn drain_edits(applier: Option<&session_daw::engine::Applier>) {
+    WIDGET_EDITS.with(|slot| {
+        let Some(queue) = slot.borrow().as_ref().map(std::rc::Rc::clone) else {
+            return;
+        };
+        let pending: Vec<_> = queue.borrow_mut().drain(..).collect();
+        for edit in pending {
+            match applier {
+                Some(applier) => applier.send(edit),
+                None => tracing::debug!(?edit, "no engine to carry out the edit"),
+            }
+        }
+    });
+}
+
 fn tell_the_widget(scroll: f64, down: f64, zoom: (f64, f64)) {
     WIDGET_VIEW.with(|slot| {
         if let Some(shared) = slot.borrow().as_ref() {
@@ -1046,6 +1073,12 @@ thread_local! {
     /// A cell rather than a prop for the reason the others are: the
     /// widget's paint happens inside Blitz's traversal, which is not the
     /// Dioxus runtime, so what it reads cannot be a signal.
+    /// What the arrangement widget has asked for and nobody has done
+    /// yet. Drained on the window's own thread, which is where the
+    /// engine's sender lives.
+    static WIDGET_EDITS: std::cell::RefCell<
+        Option<std::rc::Rc<std::cell::RefCell<Vec<session_daw::engine::Edit>>>>,
+    > = const { std::cell::RefCell::new(None) };
     static WIDGET_VIEW: std::cell::RefCell<Option<session_daw::widget::Shared>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -1308,6 +1341,11 @@ fn WindowSize(
     // cannot be a handler on an element; it has to be here, where the
     // wheel arrives before anything has decided what it means.
     let input = use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(Input::default())));
+    // The one thing in this window that can change the session. `None`
+    // when no facade is up, in which case the window is a viewer —
+    // which is what opening a `.rpp` from disk with no engine running
+    // actually is.
+    let applier = use_hook(|| std::rc::Rc::new(session_daw::engine::Applier::start()));
     let counted =
         use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(Vec::<f64>::with_capacity(RECENT))));
     let started = use_hook(std::time::Instant::now);
@@ -1491,6 +1529,11 @@ fn WindowSize(
             // four numbers, and a missed write is a frame drawn at the
             // wrong place.
             tell_the_widget(scroll(), down(), zoom());
+            // And whatever it wants done to the session, carried out.
+            // Drained here, on the window's thread, because that is
+            // where the engine's sender is — the widget is a painter
+            // and holds no connection to anything.
+            drain_edits((*applier).as_ref());
 
             // What the frame the shell just drew actually cost.
             let cost = f64::from(

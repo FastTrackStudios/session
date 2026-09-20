@@ -1514,6 +1514,43 @@ fn command_index(scene: &anyrender::Scene) -> u32 {
     u32::try_from(scene.commands.len()).unwrap_or(u32::MAX)
 }
 
+/// One row's controls again, over the recording, so the control under
+/// the pointer can show it.
+///
+/// The recording is taken at rest — see [`record_controls`] — which is
+/// what lets it survive a mouse move. The cost of that is that a hover
+/// has to be painted on top, and this is it: the whole row, redrawn,
+/// with the pointer's verdict applied. One row of forty, on the frames
+/// where the pointer is on one at all.
+pub fn hovered_row(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    font: &Font,
+    scene: &crate::arrangement::Arrangement,
+    rows: &[(Track, u32)],
+    tracks: &[Track],
+    map: &crate::plan::Rows,
+    view: crate::arrangement::Viewport,
+    pointer: &crate::pointer::Pointer<crate::pointer::RowSpot>,
+    transform: Affine,
+) -> crate::profile::Counts {
+    let mut counts = crate::profile::Counts::default();
+    let Some(row) = pointer.active().map(|(spot, _)| spot.row) else {
+        return counts;
+    };
+    let mut out = anyrender::Scene::new();
+    control_row(
+        &mut out, palette, font, scene, rows, tracks, map, view, pointer, row,
+    );
+    for command in &out.commands {
+        counts.replayed = counts.replayed.saturating_add(1);
+        if crate::arrangement::submit_command(painter, command, transform) {
+            counts.submitted = counts.submitted.saturating_add(1);
+        }
+    }
+    counts
+}
+
 /// One row's controls, into `out`.
 #[expect(
     clippy::too_many_arguments,

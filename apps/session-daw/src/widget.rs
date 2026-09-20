@@ -56,6 +56,7 @@ use std::rc::Rc;
 
 use anyrender::{RenderContext, Scene};
 use blitz_dom::node::{ComputedStyles, Widget};
+use blitz_traits::events::UiEvent;
 
 use vello::kurbo::Affine;
 
@@ -122,6 +123,26 @@ pub struct ArrangementWidget {
     /// A readout that made the gate looser would be measuring the thing
     /// it broke.
     stats: Option<crate::fps::Stats>,
+    /// The size the last paint was given, so a hit arriving between
+    /// two paints is measured against the frame the picture was drawn
+    /// in and not against whatever the window has become since.
+    size: (f64, f64),
+    /// What the pointer is on, and what it is doing to it.
+    ///
+    /// Cheap precisely because the panel is a recording: a control
+    /// cannot change appearance without re-cutting the row, and it does
+    /// not have to. The one control under the pointer is drawn AGAIN,
+    /// over the recording, in its hover cell — one control a frame
+    /// instead of a panel a mouse move.
+    pointer: crate::pointer::Pointer<crate::pointer::RowSpot>,
+    /// What the widget wants done to the session, for the window to
+    /// pick up and hand to the engine.
+    ///
+    /// A queue rather than a call, because a widget is a painter: it
+    /// knows a click landed on the mute button of row 12, and it must
+    /// not know what a mute is, how to reach the engine, or whether
+    /// doing it is allowed. See `crate::engine::Edit`.
+    edits: Rc<RefCell<Vec<crate::engine::Edit>>>,
     /// The live controls, recorded, and the zoom they were cut at.
     ///
     /// The single most expensive thing the paint used to do: forty rows
@@ -202,11 +223,20 @@ impl ArrangementWidget {
             layout,
             view,
             drawn: Rc::new(RefCell::new(Drawn::default())),
+            size: (0.0, 0.0),
+            pointer: crate::pointer::Pointer::default(),
+            edits: Rc::new(RefCell::new(Vec::new())),
             controls: None,
             was: at_rest,
             stats: readout.then(crate::fps::Stats::new),
             spent: Passes::default(),
         }
+    }
+
+    /// What the widget wants done, for the window to drain.
+    #[must_use]
+    pub fn edits(&self) -> Rc<RefCell<Vec<crate::engine::Edit>>> {
+        Rc::clone(&self.edits)
     }
 
     /// Throw the recorded controls away, because a value they draw has
@@ -227,7 +257,165 @@ impl ArrangementWidget {
     }
 }
 
+impl ArrangementWidget {
+    /// The viewport the widget is showing, at a size.
+    ///
+    /// The same four numbers `paint` works from, so a hit and a draw
+    /// cannot disagree about where anything is.
+    fn viewport(&self, width: f64, height: f64) -> Viewport {
+        let at = *self.view.borrow();
+        Viewport {
+            scroll_x: at.scroll_x,
+            scroll_y: at.scroll_y,
+            pps: self.pps * at.zoom_x,
+            zoom_y: at.zoom_y,
+            width,
+            height,
+        }
+    }
+
+    /// The panel control under a point in the widget's own coordinates.
+    ///
+    /// The panel starts at the widget's left edge and the lanes below
+    /// the ruler, so the only conversion is the ruler's height — the
+    /// same offset `paint` puts in its transforms.
+    fn spot_at(&self, x: f64, y: f64) -> Option<crate::pointer::RowSpot> {
+        let view = self.viewport(self.size.0, self.size.1);
+        let below = y - ruler::RULER_H;
+        if below < 0.0 {
+            return None;
+        }
+        self.scene
+            .row_spot_at(view, &self.rows, x, below + view.scroll_y)
+            .map(|(row, control)| crate::pointer::RowSpot { row, control })
+    }
+
+    /// What a click on a control means, as an edit to the session.
+    ///
+    /// The widget knows a click landed on the mute button of row 12. It
+    /// deliberately does not know what a mute IS — the queue goes to
+    /// the window, which owns the engine.
+    fn act(&mut self, spot: crate::pointer::RowSpot) {
+        use crate::engine::Edit;
+        use crate::row::Control as C;
+        let Some((track, _)) = self.rows.get(spot.row) else {
+            return;
+        };
+        let guid = track.guid.clone();
+        let edit = match spot.control {
+            C::Mute => Edit::ToggleMute(guid),
+            C::Solo => Edit::ToggleSolo(guid),
+            C::RecArm => Edit::ToggleArm(guid),
+            C::Phase => Edit::SetPhase(guid, !track.phase_inverted),
+            C::Name => Edit::Select(guid),
+            // A fold is an edit to the VIEW and not to a track, and the
+            // rack and the routing panel are surfaces this widget does
+            // not own yet. Left alone rather than guessed at.
+            C::Folder | C::Fx | C::Routing | C::Volume | C::Pan => return,
+        };
+        // Shown before it is true.
+        //
+        // The engine is a channel and a worker thread, and the state
+        // comes back through a subscription some frames later. Waiting
+        // for that would make every button feel broken — a mute that
+        // lights up two frames after the click reads as a missed click,
+        // and the second click un-does the first. So the widget moves
+        // its own copy now and the engine makes it so; when the real
+        // event arrives it agrees, and if the engine refuses, the next
+        // update corrects it.
+        self.assume(&edit);
+        self.edits.borrow_mut().push(edit);
+    }
+
+    /// Apply an edit to the widget's own copy of the tracks.
+    ///
+    /// Only the ones a control can make, and only the fields a control
+    /// DRAWS. This is a picture being kept honest, not a second source
+    /// of truth — see [`ArrangementWidget::act`].
+    fn assume(&mut self, edit: &crate::engine::Edit) {
+        use crate::engine::Edit;
+        let (guid, change): (&str, fn(&mut daw_proto::Track)) = match edit {
+            Edit::ToggleMute(guid) => (guid, |t| t.muted = !t.muted),
+            Edit::ToggleSolo(guid) => (guid, |t| t.soloed = !t.soloed),
+            Edit::ToggleArm(guid) => (guid, |t| t.armed = !t.armed),
+            _ => return,
+        };
+        for track in self
+            .tracks
+            .iter_mut()
+            .chain(self.rows.iter_mut().map(|(track, _)| track))
+            .filter(|track| track.guid == guid)
+        {
+            change(track);
+        }
+        // Polarity carries its value rather than toggling, so it cannot
+        // share the closure above.
+        if let Edit::SetPhase(guid, on) = edit {
+            for track in self
+                .tracks
+                .iter_mut()
+                .chain(self.rows.iter_mut().map(|(track, _)| track))
+                .filter(|track| track.guid == *guid)
+            {
+                track.phase_inverted = *on;
+            }
+        }
+        self.values_changed();
+    }
+}
+
 impl Widget for ArrangementWidget {
+    /// Pointer events, already in the widget's own coordinates.
+    ///
+    /// Blitz makes them relative to the node before handing them over,
+    /// which is what lets this be a hit test against the arrangement
+    /// rather than against the window: nothing here has to know where
+    /// in the window the arrangement was put.
+    ///
+    /// The answer is whether the picture changed. Most moves do not: a
+    /// pointer crossing the panel raises an event per pixel and changes
+    /// which control it is on perhaps twice.
+    fn handle_event(&mut self, event: &UiEvent) -> bool {
+        let at = |e: &blitz_traits::events::BlitzPointerEvent| {
+            (f64::from(e.coords.client_x), f64::from(e.coords.client_y))
+        };
+        match event {
+            UiEvent::PointerMove(e) => {
+                let (x, y) = at(e);
+                let spot = self.spot_at(x, y);
+                self.pointer.hover(spot)
+            }
+            UiEvent::PointerDown(e) => {
+                let (x, y) = at(e);
+                let spot = self.spot_at(x, y);
+                self.pointer.hover(spot);
+                self.pointer.press();
+                true
+            }
+            UiEvent::PointerUp(e) => {
+                let (x, y) = at(e);
+                // Acted on only if the release lands on the control the
+                // press did. Dragging off a button and letting go is
+                // how every toolkit says "no, cancel that", and the
+                // pressed look is already drawn to promise it.
+                let up = self.spot_at(x, y);
+                if let Some(spot) = self.pointer.active().map(|(spot, _)| spot)
+                    && up == Some(spot)
+                {
+                    self.act(spot);
+                }
+                self.pointer.release();
+                self.pointer.hover(up);
+                true
+            }
+            UiEvent::PointerCancel(_) => {
+                self.pointer.release();
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn paint(
         &mut self,
         _render_ctx: &mut dyn RenderContext,
@@ -237,15 +425,8 @@ impl Widget for ArrangementWidget {
         _scale: f64,
     ) -> Scene {
         let began = std::time::Instant::now();
-        let at = *self.view.borrow();
-        let view = Viewport {
-            scroll_x: at.scroll_x,
-            scroll_y: at.scroll_y,
-            pps: self.pps * at.zoom_x,
-            zoom_y: at.zoom_y,
-            width: f64::from(width),
-            height: f64::from(height),
-        };
+        let view = self.viewport(f64::from(width), f64::from(height));
+        self.size = (view.width, view.height);
 
         // The panel is cut at a zoom, not scaled to one. Asking every
         // frame is free when the zoom has not moved, and on the frame
@@ -387,7 +568,25 @@ impl Widget for ArrangementWidget {
             self.controls = Some((recorded, view.zoom_y));
         }
         let controls = match self.controls.as_ref() {
-            Some((controls, _)) => controls.replay(&mut out, &self.scene, view, at),
+            Some((controls, _)) => {
+                let counts = controls.replay(&mut out, &self.scene, view, at);
+                // The recording is at rest, so the row the pointer is
+                // on is drawn again over it. One row of forty, and only
+                // while the pointer is on one.
+                crate::overlay::hovered_row(
+                    &mut out,
+                    &self.palette,
+                    &self.font,
+                    &self.scene,
+                    &self.rows,
+                    &self.tracks,
+                    &self.map,
+                    view,
+                    &self.pointer,
+                    at,
+                );
+                counts
+            }
             None => crate::overlay::panel_controls(
                 &mut out,
                 &self.palette,
@@ -397,7 +596,7 @@ impl Widget for ArrangementWidget {
                 &self.tracks,
                 &self.map,
                 view,
-                &crate::pointer::Pointer::default(),
+                &self.pointer,
                 at,
             ),
         };
@@ -461,4 +660,168 @@ impl Widget for ArrangementWidget {
 /// Microseconds as milliseconds, for the readout's lines.
 fn ms(micros: u128) -> f64 {
     u32::try_from(micros).map_or(f64::from(u32::MAX), f64::from) / 1000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ArrangementWidget, Shared, View};
+    use crate::engine::Edit;
+    use crate::row::Control as C;
+    use blitz_dom::node::Widget as _;
+    use blitz_traits::events::UiEvent;
+
+    /// Four rows tall enough that every control has somewhere to be.
+    /// The narrow tiers drop mute and solo on purpose, and a test that
+    /// used them would be asserting they are missing.
+    fn widget() -> ArrangementWidget {
+        let palette = crate::arrangement::Palette::from_theme(&daw_ui::theming::Theme::dark());
+        let font = crate::text::Font::embedded().expect("the embedded font");
+        let tracks: Vec<daw_proto::Track> = (0..4)
+            .map(|i| daw_proto::Track {
+                guid: format!("t{i}"),
+                name: format!("Track {i}"),
+                height: Some(90),
+                ..daw_proto::Track::default()
+            })
+            .collect();
+        let rows: Vec<(daw_proto::Track, u32)> = tracks.iter().cloned().map(|t| (t, 0)).collect();
+        let refs = daw_ui::studio::RowsRef(std::sync::Arc::new(rows.clone()));
+        let project =
+            daw_ui::studio::ProjectRef(std::sync::Arc::new(daw_ui::studio::Project::default()));
+        let layout = crate::layout::Layout::default();
+        let scene = crate::arrangement::Arrangement::build(
+            &palette,
+            &font,
+            &project,
+            &refs,
+            layout,
+            &crate::midi::Previews::default(),
+        );
+        let view: Shared = std::rc::Rc::new(std::cell::RefCell::new(View {
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            zoom_x: 1.0,
+            zoom_y: 1.0,
+        }));
+        let mut widget = ArrangementWidget::new(
+            scene, palette, font, 120.0, 100.0, rows, layout, view, false,
+        );
+        widget.size = (1600.0, 900.0);
+        widget
+    }
+
+    /// Where a control is, in the widget's own coordinates — which is
+    /// what an event arrives in.
+    fn at(widget: &ArrangementWidget, row: usize, control: C) -> (f64, f64) {
+        let view = widget.viewport(widget.size.0, widget.size.1);
+        let (top, height) = widget.scene.row_band(row, view).expect("a row");
+        let (track, depth) = &widget.rows[row];
+        let shape = crate::row::Row::new(
+            top,
+            height,
+            i32::try_from(*depth).unwrap_or(0),
+            track.is_folder,
+        );
+        let r = shape.rect(control).expect("a control with somewhere to be");
+        (
+            r.x0 + r.width() / 2.0,
+            r.y0 + r.height() / 2.0 + crate::ruler::RULER_H,
+        )
+    }
+
+    /// A mouse at a point, with nothing else going on — which is what
+    /// the widget reads: the coordinates and nothing more.
+    fn pointer(x: f64, y: f64) -> blitz_traits::events::BlitzPointerEvent {
+        use blitz_traits::events::{
+            BlitzPointerEvent, BlitzPointerId, Modifiers, MouseEventButton, MouseEventButtons,
+            Point, PointerCoords, PointerDetails,
+        };
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a coordinate inside a test window"
+        )]
+        let (x, y) = (x as f32, y as f32);
+        BlitzPointerEvent {
+            id: BlitzPointerId::Mouse,
+            is_primary: true,
+            coords: PointerCoords {
+                page_x: x,
+                page_y: y,
+                screen_x: x,
+                screen_y: y,
+                client_x: x,
+                client_y: y,
+            },
+            button: MouseEventButton::Main,
+            buttons: MouseEventButtons::Primary,
+            mods: Modifiers::default(),
+            details: PointerDetails::default(),
+            element: Point { x, y },
+            active_pointers: std::sync::Arc::default(),
+        }
+    }
+
+    #[test]
+    fn a_move_finds_the_control_under_it() {
+        let mut widget = widget();
+        let (x, y) = at(&widget, 2, C::Mute);
+        assert!(
+            widget.handle_event(&UiEvent::PointerMove(pointer(x, y))),
+            "moving onto a control is a change worth redrawing"
+        );
+        assert_eq!(
+            widget
+                .pointer
+                .hovered()
+                .map(|spot| (spot.row, spot.control)),
+            Some((2, C::Mute))
+        );
+        // And the second move onto the SAME control is not: a pointer
+        // crossing a panel raises an event per pixel, and redrawing for
+        // each of them is the thing hover state exists to avoid.
+        assert!(
+            !widget.handle_event(&UiEvent::PointerMove(pointer(x + 1.0, y))),
+            "staying on one control changes nothing"
+        );
+    }
+
+    #[test]
+    fn a_click_on_mute_asks_for_a_mute() {
+        let mut widget = widget();
+        let (x, y) = at(&widget, 1, C::Mute);
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        widget.handle_event(&UiEvent::PointerUp(pointer(x, y)));
+        let queued = widget.edits.borrow().clone();
+        assert!(
+            matches!(queued.as_slice(), [Edit::ToggleMute(guid)] if guid == "t1"),
+            "{queued:?}"
+        );
+        // And the widget shows it without waiting for the engine.
+        assert!(widget.rows[1].0.muted, "the row it drew from");
+        assert!(widget.tracks[1].muted, "the track the controls read");
+    }
+
+    #[test]
+    fn dragging_off_a_button_cancels_it() {
+        let mut widget = widget();
+        let (x, y) = at(&widget, 1, C::Solo);
+        let (ax, ay) = at(&widget, 3, C::Mute);
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        widget.handle_event(&UiEvent::PointerUp(pointer(ax, ay)));
+        assert!(
+            widget.edits.borrow().is_empty(),
+            "releasing somewhere else is how every toolkit says 'no'"
+        );
+        assert!(!widget.rows[1].0.soloed);
+    }
+
+    #[test]
+    fn a_click_outside_the_panel_asks_for_nothing() {
+        let mut widget = widget();
+        let past = crate::arrangement::TCP_WIDTH + 200.0;
+        widget.handle_event(&UiEvent::PointerDown(pointer(past, 300.0)));
+        widget.handle_event(&UiEvent::PointerUp(pointer(past, 300.0)));
+        assert!(widget.edits.borrow().is_empty());
+        assert_eq!(widget.pointer.hovered(), None);
+    }
 }
