@@ -155,8 +155,13 @@ impl Row {
                 Some(Rect::new(x, top, x + 20.0, top + 20.0))
             })?,
             Control::Volume => {
+                // Scaled DOWN to a field too short to hold the knob,
+                // never up past the size it was drawn at. A control is
+                // the size it was authored: a taller track is a taller
+                // lane with the same knob on it, which is what REAPER
+                // does and what the pan knob beside it always did.
                 let w = if self.indicator() == Indicator::Knob {
-                    24.0 * (self.field_h / 22.0)
+                    24.0 * (self.field_h / 22.0).min(1.0)
                 } else {
                     24.0
                 };

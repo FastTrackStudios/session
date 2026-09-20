@@ -1031,7 +1031,7 @@ pub fn tempo(
 /// Both halves always, even when only one of them moved. A strip that
 /// showed the tempo at one change and the signature at the next would
 /// make you look back through the project to answer either question.
-fn reading(change: &daw_ui::studio::project::TempoChange) -> String {
+pub fn reading(change: &daw_ui::studio::project::TempoChange) -> String {
     let bpm = if (change.bpm - change.bpm.round()).abs() < 0.05 {
         format!("{}", change.bpm.round() as i64)
     } else {

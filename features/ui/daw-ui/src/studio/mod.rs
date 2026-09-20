@@ -50,14 +50,20 @@
 //! must never be reported as this one.
 
 pub mod arrange;
+pub mod art;
 pub mod autoscroll;
 pub mod canvas;
 pub mod census;
 pub mod clock;
 pub mod css;
+pub mod folded;
 pub mod fps;
+pub mod lanes;
+pub mod panel;
 pub mod probe;
 pub mod project;
+pub mod rails;
+pub mod ruler;
 pub mod tcp;
 pub mod theme;
 pub mod transport;

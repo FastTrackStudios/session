@@ -27,6 +27,22 @@ pub struct Settings {
     /// than comparing them, and the other strips' chains are just in
     /// the way.
     pub fold_phases_together: bool,
+    /// Whether a folder the view has shut shows its children's takes on
+    /// its own row.
+    ///
+    /// On, a kit reads as one row per drum: the kick's three mics are
+    /// one item in the kick's colour, under the kick's fader, and the
+    /// mics are a fold away when you want them. That is what an
+    /// arrangement is for — the routing that makes a drum a folder is a
+    /// mix concern, and mixing happens on the strip.
+    ///
+    /// Off, a shut folder is empty, which is what REAPER draws. Worth
+    /// keeping as a switch rather than a decision: the fold is a claim
+    /// that the children are one performance, and on a folder where
+    /// they are not — a bus with a bass and a vocal under it — the row
+    /// says something true but useless, and you want to see the tree
+    /// instead.
+    pub folded_takes: bool,
 }
 
 impl Default for Settings {
@@ -36,6 +52,7 @@ impl Default for Settings {
             take_focus_width: true,
             focus_fraction: dynamic_template::scenes::TABLES.focus.fraction,
             fold_phases_together: true,
+            folded_takes: true,
         }
     }
 }

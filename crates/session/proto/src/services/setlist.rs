@@ -119,6 +119,27 @@ pub enum SetlistEvent {
         seconds: f64,
         indices: ActiveIndices,
     },
+    /// A take was recorded and is waiting to be judged.
+    ///
+    /// What puts the review panel on every tablet in the room at the
+    /// same moment — which is the moment it is useful, and about
+    /// thirty seconds long.
+    TakeRecorded {
+        song_id: SongId,
+        index: usize,
+        pass: crate::review::Pass,
+    },
+    /// Somebody rated a take, or marked a stretch of one.
+    ///
+    /// Carried to every other tablet so consensus forms where people
+    /// can see it — the drummer's ✕ on the take the guitarist just
+    /// called perfect is the useful part, and it is useful immediately.
+    TakeMarked {
+        song_id: SongId,
+        index: usize,
+        pass: u32,
+        mark: crate::review::Mark,
+    },
 }
 
 /// Service for building and retrieving song information
@@ -341,6 +362,35 @@ pub mod setlist_service {
         /// recording. (Selected, not all — arming every track would capture
         /// silence onto click/guide/reference tracks.)
         async fn set_song_record_arm(&self, armed: bool) -> Result<(), SessionServiceError>;
+
+        // =========================================================================
+        // Take review
+        // =========================================================================
+
+        /// Every pass at a song, and what everyone thought of them.
+        ///
+        /// Read on arrival: a tablet that joins halfway through the
+        /// evening should show the takes already rated, not an empty
+        /// list that fills in as new ones happen.
+        /// A list rather than a `Review`, which is the index the
+        /// caller builds over it — `Review::from_passes` puts one back
+        /// together on the other side.
+        async fn song_review(
+            &self,
+            song_index: usize,
+        ) -> Result<Vec<crate::review::Pass>, SessionServiceError>;
+
+        /// Rate a take, or mark a stretch of one.
+        ///
+        /// The mark carries who made it, so the service does not have
+        /// to know which tablet asked — and two people rating at once
+        /// are two marks rather than a race.
+        async fn mark_take(
+            &self,
+            song_index: usize,
+            pass: u32,
+            mark: crate::review::Mark,
+        ) -> Result<(), SessionServiceError>;
 
         // =========================================================================
         // Build/Refresh

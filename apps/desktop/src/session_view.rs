@@ -7,7 +7,7 @@
 //! daw-standalone transport underneath.
 
 use dioxus::prelude::*;
-use session_ui::{PerformanceLayout, PerformanceSidebar, TransportPanel};
+use session_ui::{PerformanceLayout, TransportPanel};
 
 use crate::{active_engine, reaper_engine};
 
@@ -369,11 +369,11 @@ pub fn SessionWorkspace() -> Element {
 
     rsx! {
         div { style: "display: flex; flex-direction: row; height: 100%; width: 100%; min-height: 0;",
-            // ── Navigator sidebar (left) ───────────────────────────
-            div { style: "width: 280px; flex: none; min-height: 0; border-right: 1px solid #27272a; display: flex;",
-                PerformanceSidebar {}
-            }
-            // ── Performance display + transport (right column) ─────
+            // ── Performance display + transport ────────────────────
+            //
+            // Full width: the navigator that used to take 280px down
+            // the left is gone. Songs are changed from the transport
+            // bar and the arrow keys, and the space is the view's.
             div { style: "flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column;",
                 // Main performance view + floating guide-settings gear.
                 div { style: "position: relative; flex: 1; min-height: 0; display: flex;",

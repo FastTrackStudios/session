@@ -1752,30 +1752,30 @@
     MAINSEND 1 0
     EXT FTS:kind source
     <ITEM
-      POSITION 6
+      POSITION 8
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.5 0 1 0 0 0
-      FADEOUT 1 0.1 0 1 0 0 0
+      FADEIN 1 0.02 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
       IGUID {7901B911-9256-ECC1-C78D-BFEB1EB386C8}
-      NAME "In 1"
+      NAME "In 2"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-kick-sum-in.wav"
       >
     >
     <ITEM
-      POSITION 22
+      POSITION 16
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 1 0.05 0 1 0 0 0
+      FADEOUT 2 0.1 0 1 0 0 0
       IGUID {7901B811-9256-EB0E-629D-908730114C08}
       NAME "In 3"
       CHANMODE 0
@@ -1784,64 +1784,80 @@
       >
     >
     <ITEM
-      POSITION 38
+      POSITION 24
       SNAPOFFS 0
       LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
+      IGUID {7901B711-9256-E95B-F861-A85BF91A4A90}
+      NAME "In 4"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-kick-sum-in.wav"
+      >
+    >
+    <ITEM
+      POSITION 56
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 0 1 0 1 0 0 0
+      IGUID {7901B611-9256-E7A8-FDC7-A1C5153EFC70}
+      NAME "In 8"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-kick-sum-in.wav"
+      >
+    >
+    <ITEM
+      POSITION 72
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 0 0.1 0 1 0 0 0
+      IGUID {7901BD11-9256-F38D-2861-AAEE0C712D00}
+      NAME "In 10"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-kick-sum-in.wav"
+      >
+    >
+    <ITEM
+      POSITION 88
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.25 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
+      IGUID {7901BC11-9256-F1DA-5565-AA76E7687C20}
+      NAME "In 12"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-kick-sum-in.wav"
+      >
+    >
+    <ITEM
+      POSITION 104
+      SNAPOFFS 0
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 5 0.05 0 1 0 0 0
-      FADEOUT 2 0.5 0 1 0 0 0
-      IGUID {7901B711-9256-E95B-F861-A85BF91A4A90}
-      NAME "In 5"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/drum-kit-kick-sum-in.wav"
-      >
-    >
-    <ITEM
-      POSITION 70
-      SNAPOFFS 0
-      LENGTH 32
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
-      IGUID {7901B611-9256-E7A8-FDC7-A1C5153EFC70}
-      NAME "In 9"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/drum-kit-kick-sum-in.wav"
-      >
-    >
-    <ITEM
-      POSITION 102
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 5 0.25 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
-      IGUID {7901BD11-9256-F38D-2861-AAEE0C712D00}
-      NAME "In 13"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/drum-kit-kick-sum-in.wav"
-      >
-    >
-    <ITEM
-      POSITION 118
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 1 0.1 0 1 0 0 0
-      IGUID {7901BC11-9256-F1DA-5565-AA76E7687C20}
-      NAME "In 15"
+      FADEOUT 0 2 0 1 0 0 0
+      IGUID {7901BB11-9256-F027-A98B-DB67B75D85B8}
+      NAME "In 14"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-kick-sum-in.wav"
@@ -1861,96 +1877,112 @@
     MAINSEND 1 0
     EXT FTS:kind source
     <ITEM
-      POSITION 0
-      SNAPOFFS 0
-      LENGTH 32
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
-      IGUID {9FB22F86-2F73-7298-0029-9BED1082E250}
-      NAME "Out 1"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/drum-kit-kick-sum-out.wav"
-      >
-    >
-    <ITEM
-      POSITION 32
+      POSITION 8
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
-      IGUID {9FB23086-2F73-744B-134A-478D56C6D2EA}
-      NAME "Out 5"
+      FADEIN 1 0.02 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
+      IGUID {9FB22F86-2F73-7298-0029-9BED1082E250}
+      NAME "Out 2"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-kick-sum-out.wav"
       >
     >
     <ITEM
-      POSITION 48
+      POSITION 16
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 1 0.05 0 1 0 0 0
+      FADEOUT 2 0.1 0 1 0 0 0
+      IGUID {9FB23086-2F73-744B-134A-478D56C6D2EA}
+      NAME "Out 3"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-kick-sum-out.wav"
+      >
+    >
+    <ITEM
+      POSITION 24
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.05 0 1 0 0 0
-      FADEOUT 5 0.5 0 1 0 0 0
-      IGUID {9FB23186-2F73-75FE-78B1-9A8E079FBC50}
-      NAME "Out 7"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/drum-kit-kick-sum-out.wav"
-      >
-    >
-    <ITEM
-      POSITION 80
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 2 0.02 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
-      IGUID {9FB23286-2F73-77B1-5832-7F037BD6299E}
-      NAME "Out 11"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/drum-kit-kick-sum-out.wav"
-      >
-    >
-    <ITEM
-      POSITION 96
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
       FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 1 2 0 1 0 0 0
-      IGUID {9FB23386-2F73-7964-1B5E-91E2B1C330C0}
-      NAME "Out 13"
+      FADEOUT 5 2 0 1 0 0 0
+      IGUID {9FB23186-2F73-75FE-78B1-9A8E079FBC50}
+      NAME "Out 4"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-kick-sum-out.wav"
       >
     >
     <ITEM
-      POSITION 112
+      POSITION 56
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 0 1 0 1 0 0 0
+      IGUID {9FB23286-2F73-77B1-5832-7F037BD6299E}
+      NAME "Out 8"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-kick-sum-out.wav"
+      >
+    >
+    <ITEM
+      POSITION 72
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 0 0.1 0 1 0 0 0
+      IGUID {9FB23386-2F73-7964-1B5E-91E2B1C330C0}
+      NAME "Out 10"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-kick-sum-out.wav"
+      >
+    >
+    <ITEM
+      POSITION 88
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.25 0 1 0 0 0
       FADEOUT 0 2 0 1 0 0 0
       IGUID {9FB23486-2F73-7B17-0EE8-769D31338342}
-      NAME "Out 15"
+      NAME "Out 12"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-kick-sum-out.wav"
+      >
+    >
+    <ITEM
+      POSITION 104
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
+      IGUID {9FB23586-2F73-7CCA-66C4-DA01DEC469F0}
+      NAME "Out 14"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-kick-sum-out.wav"
@@ -1972,63 +2004,15 @@
     MAINSEND 1 0
     EXT FTS:kind trigger
     <ITEM
-      POSITION 0
+      POSITION 8
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.05 0 1 0 0 0
-      FADEOUT 1 0.5 0 1 0 0 0
+      FADEIN 1 0.02 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
       IGUID {6FC7FE7C-8009-45AC-99A4-1746943E5918}
-      NAME "Trig 1"
-      CHANMODE 0
-      <SOURCE MIDI
-        HASDATA 1 960 QN
-        E 0 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-      >
-    >
-    <ITEM
-      POSITION 8
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 5 0.05 0 1 0 0 0
-      FADEOUT 1 0.5 0 1 0 0 0
-      IGUID {6FC7FF7C-8009-475F-02A8-64503F0AB150}
       NAME "Trig 2"
       CHANMODE 0
       <SOURCE MIDI
@@ -2065,7 +2049,23 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
-        E 720 90 24 64
+      >
+    >
+    <ITEM
+      POSITION 16
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 1 0.05 0 1 0 0 0
+      FADEOUT 2 0.1 0 1 0 0 0
+      IGUID {6FC7FF7C-8009-475F-02A8-64503F0AB150}
+      NAME "Trig 3"
+      CHANMODE 0
+      <SOURCE MIDI
+        HASDATA 1 960 QN
+        E 0 90 24 64
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
@@ -2102,12 +2102,12 @@
     <ITEM
       POSITION 24
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.02 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
       IGUID {6FC8007C-8009-4912-EE1A-4CC0BD6D5500}
       NAME "Trig 4"
       CHANMODE 0
@@ -2177,19 +2177,83 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
       >
     >
     <ITEM
-      POSITION 48
+      POSITION 56
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 5 0.5 0 1 0 0 0
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 0 1 0 1 0 0 0
       IGUID {6FC8017C-8009-4AC5-3804-9F4D1A5990C0}
-      NAME "Trig 7"
+      NAME "Trig 8"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -2260,52 +2324,20 @@
       >
     >
     <ITEM
-      POSITION 64
+      POSITION 72
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.02 0 1 0 0 0
-      FADEOUT 1 0.1 0 1 0 0 0
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 0 0.1 0 1 0 0 0
       IGUID {6FC7FA7C-8009-3EE0-8941-DCB85D37F380}
-      NAME "Trig 9"
+      NAME "Trig 10"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
         E 0 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
@@ -2342,12 +2374,12 @@
     <ITEM
       POSITION 88
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.05 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
+      FADEIN 2 0.25 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
       IGUID {6FC7FB7C-8009-4093-8359-2AE00666D168}
       NAME "Trig 12"
       CHANMODE 0
@@ -2385,119 +2417,55 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
       >
     >
     <ITEM
-      POSITION 120
+      POSITION 104
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
       IGUID {6FC7FC7C-8009-4246-47FC-58D057089508}
-      NAME "Trig 16"
+      NAME "Trig 14"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
         E 0 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
@@ -2827,12 +2795,12 @@
     <ITEM
       POSITION 4
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 2 0.5 0 1 0 0 0
+      FADEIN 2 0.5 0 1 0 0 0
+      FADEOUT 2 1 0 1 0 0 0
       IGUID {4CC97862-B05D-F534-5EFE-159ADB910A38}
       NAME "Top 1"
       CHANMODE 0
@@ -2841,31 +2809,15 @@
       >
     >
     <ITEM
-      POSITION 20
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 5 0.5 0 1 0 0 0
-      FADEOUT 5 2 0 1 0 0 0
-      IGUID {4CC97962-B05D-F6E7-49F4-6F5217423640}
-      NAME "Top 3"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/drum-kit-snare-sum-top.wav"
-      >
-    >
-    <ITEM
       POSITION 36
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.05 0 1 0 0 0
-      FADEOUT 5 0.5 0 1 0 0 0
-      IGUID {4CC97A62-B05D-F89A-58D6-8BAE1E822664}
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 1 0.1 0 1 0 0 0
+      IGUID {4CC97962-B05D-F6E7-49F4-6F5217423640}
       NAME "Top 5"
       CHANMODE 0
       <SOURCE WAVE
@@ -2873,16 +2825,32 @@
       >
     >
     <ITEM
-      POSITION 52
+      POSITION 44
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
+      IGUID {4CC97A62-B05D-F89A-58D6-8BAE1E822664}
+      NAME "Top 6"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-snare-sum-top.wav"
+      >
+    >
+    <ITEM
+      POSITION 76
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
       FADEIN 2 0.02 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
+      FADEOUT 1 1 0 1 0 0 0
       IGUID {4CC97B62-B05D-FA4D-B3BE-6EE6A8B4A634}
-      NAME "Top 7"
+      NAME "Top 10"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-snare-sum-top.wav"
@@ -2895,8 +2863,8 @@
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 5 1 0 1 0 0 0
       IGUID {4CC97462-B05D-EE68-6AFB-8B45F49F0960}
       NAME "Top 12"
       CHANMODE 0
@@ -2907,12 +2875,12 @@
     <ITEM
       POSITION 108
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
+      FADEIN 5 0.25 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
       IGUID {4CC97562-B05D-F01B-5DFC-DF811BBE9F78}
       NAME "Top 14"
       CHANMODE 0
@@ -2921,16 +2889,16 @@
       >
     >
     <ITEM
-      POSITION 116
+      POSITION 124
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.25 0 1 0 0 0
-      FADEOUT 1 0.5 0 1 0 0 0
+      FADEIN 2 0.5 0 1 0 0 0
+      FADEOUT 5 1 0 1 0 0 0
       IGUID {4CC97662-B05D-F1CE-BDFF-A92AAFB79BB4}
-      NAME "Top 15"
+      NAME "Top 16"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-snare-sum-top.wav"
@@ -2950,30 +2918,30 @@
     MAINSEND 1 0
     EXT FTS:kind source
     <ITEM
-      POSITION 14
+      POSITION 4
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 5 1 0 1 0 0 0
+      FADEIN 2 0.5 0 1 0 0 0
+      FADEOUT 2 1 0 1 0 0 0
       IGUID {1BDD8BCB-4407-F06C-7F09-FE9B6F2CEB88}
-      NAME "Bottom 2"
+      NAME "Bottom 1"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-snare-sum-bottom.wav"
       >
     >
     <ITEM
-      POSITION 38
+      POSITION 36
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.02 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 1 0.1 0 1 0 0 0
       IGUID {1BDD8CCB-4407-F21F-5394-6072C1E29CCA}
       NAME "Bottom 5"
       CHANMODE 0
@@ -2982,61 +2950,61 @@
       >
     >
     <ITEM
-      POSITION 54
-      SNAPOFFS 0
-      LENGTH 8
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 2 0.5 0 1 0 0 0
-      FADEOUT 1 1 0 1 0 0 0
-      IGUID {1BDD8DCB-4407-F3D2-1180-1BE03B92FA90}
-      NAME "Bottom 7"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/drum-kit-snare-sum-bottom.wav"
-      >
-    >
-    <ITEM
-      POSITION 70
+      POSITION 44
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 5 1 0 1 0 0 0
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
+      IGUID {1BDD8DCB-4407-F3D2-1180-1BE03B92FA90}
+      NAME "Bottom 6"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-snare-sum-bottom.wav"
+      >
+    >
+    <ITEM
+      POSITION 76
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.02 0 1 0 0 0
+      FADEOUT 1 1 0 1 0 0 0
       IGUID {1BDD8ECB-4407-F585-DFA6-0A6DC068D056}
-      NAME "Bottom 9"
+      NAME "Bottom 10"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-snare-sum-bottom.wav"
       >
     >
     <ITEM
-      POSITION 102
+      POSITION 92
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.25 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 5 1 0 1 0 0 0
       IGUID {1BDD87CB-4407-E9A0-E374-CC58728B7800}
-      NAME "Bottom 13"
+      NAME "Bottom 12"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-snare-sum-bottom.wav"
       >
     >
     <ITEM
-      POSITION 110
+      POSITION 108
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.25 0 1 0 0 0
+      FADEIN 5 0.25 0 1 0 0 0
       FADEOUT 5 2 0 1 0 0 0
       IGUID {1BDD88CB-4407-EB53-BAA7-D0B87F477AFA}
       NAME "Bottom 14"
@@ -3046,16 +3014,16 @@
       >
     >
     <ITEM
-      POSITION 118
+      POSITION 124
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 2 2 0 1 0 0 0
+      FADEIN 2 0.5 0 1 0 0 0
+      FADEOUT 5 1 0 1 0 0 0
       IGUID {1BDD89CB-4407-ED06-AFF5-FE67D5C142A8}
-      NAME "Bottom 15"
+      NAME "Bottom 16"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-snare-sum-bottom.wav"
@@ -3076,14 +3044,14 @@
     MAINSEND 1 0
     EXT FTS:kind trigger
     <ITEM
-      POSITION 2
+      POSITION 4
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 1 0.1 0 1 0 0 0
+      FADEIN 2 0.5 0 1 0 0 0
+      FADEOUT 2 1 0 1 0 0 0
       IGUID {88C7FD90-2A44-2C7D-2B07-A5A9A8A27626}
       NAME "Trig 1"
       CHANMODE 0
@@ -3220,14 +3188,14 @@
       >
     >
     <ITEM
-      POSITION 34
+      POSITION 36
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.5 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 1 0.1 0 1 0 0 0
       IGUID {88C7FC90-2A44-2ACA-FB9D-DC2F33671C00}
       NAME "Trig 5"
       CHANMODE 0
@@ -3268,16 +3236,16 @@
       >
     >
     <ITEM
-      POSITION 50
+      POSITION 44
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.25 0 1 0 0 0
+      FADEIN 5 0.5 0 1 0 0 0
       FADEOUT 5 2 0 1 0 0 0
       IGUID {88C7FB90-2A44-2917-7350-82CA590404C2}
-      NAME "Trig 7"
+      NAME "Trig 6"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -3313,19 +3281,115 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
       >
     >
     <ITEM
-      POSITION 66
+      POSITION 76
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
+      FADEIN 2 0.02 0 1 0 0 0
+      FADEOUT 1 1 0 1 0 0 0
       IGUID {88C7FA90-2A44-2764-7345-256C782AB3B0}
-      NAME "Trig 9"
+      NAME "Trig 10"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -3396,13 +3460,13 @@
       >
     >
     <ITEM
-      POSITION 90
+      POSITION 92
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
       FADEOUT 5 1 0 1 0 0 0
       IGUID {88C7F990-2A44-25B1-0A06-B6389D168EE6}
       NAME "Trig 12"
@@ -3441,17 +3505,49 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
       >
     >
     <ITEM
-      POSITION 106
+      POSITION 108
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 1 1 0 1 0 0 0
+      FADEIN 5 0.25 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
       IGUID {88C7F890-2A44-23FE-F43A-8D7624FB1C30}
       NAME "Trig 14"
       CHANMODE 0
@@ -3524,52 +3620,20 @@
       >
     >
     <ITEM
-      POSITION 122
+      POSITION 124
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 2 0.5 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
+      FADEOUT 5 1 0 1 0 0 0
       IGUID {88C7F790-2A44-224B-1D8D-E68CA079487A}
       NAME "Trig 16"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
         E 0 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
@@ -4146,63 +4210,47 @@
     MAINSEND 1 0
     EXT FTS:kind source
     <ITEM
-      POSITION 2
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 1 2 0 1 0 0 0
-      IGUID {4329733F-E1E0-8B0C-C80B-A4D2D0D50020}
-      NAME "T1 1"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/drum-kit-toms-tom-1-t1.wav"
-      >
-    >
-    <ITEM
-      POSITION 18
+      POSITION 8
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
-      IGUID {4329743F-E1E0-8CBF-CEB5-A5407DBAA1CC}
-      NAME "T1 3"
+      FADEOUT 5 0.1 0 1 0 0 0
+      IGUID {4329733F-E1E0-8B0C-C80B-A4D2D0D50020}
+      NAME "T1 2"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-1-t1.wav"
       >
     >
     <ITEM
-      POSITION 42
+      POSITION 32
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.02 0 1 0 0 0
-      FADEOUT 2 2 0 1 0 0 0
-      IGUID {4329753F-E1E0-8E72-A1DB-58229FEB9D14}
-      NAME "T1 6"
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 5 0.1 0 1 0 0 0
+      IGUID {4329743F-E1E0-8CBF-CEB5-A5407DBAA1CC}
+      NAME "T1 5"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-1-t1.wav"
       >
     >
     <ITEM
-      POSITION 50
+      POSITION 48
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
-      IGUID {4329763F-E1E0-9025-7ABF-A8EB3346B168}
+      FADEIN 1 0.02 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
+      IGUID {4329753F-E1E0-8E72-A1DB-58229FEB9D14}
       NAME "T1 7"
       CHANMODE 0
       <SOURCE WAVE
@@ -4210,15 +4258,15 @@
       >
     >
     <ITEM
-      POSITION 66
+      POSITION 64
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
-      IGUID {43296F3F-E1E0-8440-1B91-16A6BF02C0C0}
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 5 0.5 0 1 0 0 0
+      IGUID {4329763F-E1E0-9025-7ABF-A8EB3346B168}
       NAME "T1 9"
       CHANMODE 0
       <SOURCE WAVE
@@ -4226,31 +4274,31 @@
       >
     >
     <ITEM
-      POSITION 106
+      POSITION 80
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 0 2 0 1 0 0 0
-      IGUID {4329703F-E1E0-85F3-178D-CCE758D78C54}
-      NAME "T1 14"
+      FADEOUT 2 0.5 0 1 0 0 0
+      IGUID {43296F3F-E1E0-8440-1B91-16A6BF02C0C0}
+      NAME "T1 11"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-1-t1.wav"
       >
     >
     <ITEM
-      POSITION 114
+      POSITION 112
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 1 0.1 0 1 0 0 0
-      IGUID {4329713F-E1E0-87A6-19BA-DE4A798F94DC}
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 2 2 0 1 0 0 0
+      IGUID {4329703F-E1E0-85F3-178D-CCE758D78C54}
       NAME "T1 15"
       CHANMODE 0
       <SOURCE WAVE
@@ -4272,64 +4320,16 @@
     MAINSEND 1 0
     EXT FTS:kind trigger
     <ITEM
-      POSITION 4
-      SNAPOFFS 0
-      LENGTH 8
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 5 0.05 0 1 0 0 0
-      FADEOUT 2 2 0 1 0 0 0
-      IGUID {18009BEA-BAE9-7F90-F22F-0AF3379BBD80}
-      NAME "T1 Trig 1"
-      CHANMODE 0
-      <SOURCE MIDI
-        HASDATA 1 960 QN
-        E 0 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-      >
-    >
-    <ITEM
-      POSITION 20
+      POSITION 8
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.02 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
-      IGUID {18009CEA-BAE9-8143-B9E6-B8598625AF66}
-      NAME "T1 Trig 3"
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 5 0.1 0 1 0 0 0
+      IGUID {18009BEA-BAE9-7F90-F22F-0AF3379BBD80}
+      NAME "T1 Trig 2"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -4400,15 +4400,15 @@
       >
     >
     <ITEM
-      POSITION 36
+      POSITION 32
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 5 1 0 1 0 0 0
-      IGUID {18009DEA-BAE9-82F6-BAE8-1B030EA7A318}
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 5 0.1 0 1 0 0 0
+      IGUID {18009CEA-BAE9-8143-B9E6-B8598625AF66}
       NAME "T1 Trig 5"
       CHANMODE 0
       <SOURCE MIDI
@@ -4445,71 +4445,23 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
+      >
+    >
+    <ITEM
+      POSITION 48
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 1 0.02 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
+      IGUID {18009DEA-BAE9-82F6-BAE8-1B030EA7A318}
+      NAME "T1 Trig 7"
+      CHANMODE 0
+      <SOURCE MIDI
+        HASDATA 1 960 QN
+        E 0 90 24 64
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
@@ -4544,14 +4496,14 @@
       >
     >
     <ITEM
-      POSITION 68
+      POSITION 64
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.25 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 5 0.5 0 1 0 0 0
       IGUID {18009EEA-BAE9-84A9-03B7-CEB452BFC3CA}
       NAME "T1 Trig 9"
       CHANMODE 0
@@ -4624,14 +4576,14 @@
       >
     >
     <ITEM
-      POSITION 84
+      POSITION 80
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 5 2 0 1 0 0 0
+      FADEIN 0 0.25 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
       IGUID {18009FEA-BAE9-865C-52C0-4119AE7F11B0}
       NAME "T1 Trig 11"
       CHANMODE 0
@@ -4701,19 +4653,83 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
       >
     >
     <ITEM
-      POSITION 108
+      POSITION 112
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 2 0.5 0 1 0 0 0
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 2 2 0 1 0 0 0
       IGUID {1800A0EA-BAE9-880F-07A3-446C0E2E9CE6}
-      NAME "T1 Trig 14"
+      NAME "T1 Trig 15"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -5000,14 +5016,14 @@
     MAINSEND 1 0
     EXT FTS:kind source
     <ITEM
-      POSITION 4
+      POSITION 6
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.5 0 1 0 0 0
-      FADEOUT 5 2 0 1 0 0 0
+      FADEIN 1 0.02 0 1 0 0 0
+      FADEOUT 0 1 0 1 0 0 0
       IGUID {DA62B575-039B-3DD2-87F8-A15E4BEC7628}
       NAME "T2 1"
       CHANMODE 0
@@ -5016,30 +5032,30 @@
       >
     >
     <ITEM
-      POSITION 36
+      POSITION 22
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
       IGUID {DA62B675-039B-3F85-D24D-355A82DC841C}
-      NAME "T2 5"
+      NAME "T2 3"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-2-t2.wav"
       >
     >
     <ITEM
-      POSITION 44
+      POSITION 46
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.02 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 0 0.25 0 1 0 0 0
+      FADEOUT 2 1 0 1 0 0 0
       IGUID {DA62B375-039B-3A6C-96CA-CE8F42FC05D0}
       NAME "T2 6"
       CHANMODE 0
@@ -5048,14 +5064,14 @@
       >
     >
     <ITEM
-      POSITION 68
+      POSITION 70
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 5 0.1 0 1 0 0 0
       IGUID {DA62B475-039B-3C1F-D189-7685B63E6B04}
       NAME "T2 9"
       CHANMODE 0
@@ -5064,48 +5080,48 @@
       >
     >
     <ITEM
-      POSITION 100
+      POSITION 94
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 0 2 0 1 0 0 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
       IGUID {DA62B175-039B-3706-E51A-EB3EE4F87708}
-      NAME "T2 13"
+      NAME "T2 12"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-2-t2.wav"
       >
     >
     <ITEM
-      POSITION 108
+      POSITION 118
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.5 0 1 0 0 0
-      FADEOUT 5 0.5 0 1 0 0 0
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
       IGUID {DA62B275-039B-38B9-CC82-B153CD2D3E74}
-      NAME "T2 14"
+      NAME "T2 15"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-2-t2.wav"
       >
     >
     <ITEM
-      POSITION 116
+      POSITION 126
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.5 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 2 0.1 0 1 0 0 0
       IGUID {DA62AF75-039B-33A0-EE1D-DD3DB8768A80}
-      NAME "T2 15"
+      NAME "T2 16"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-2-t2.wav"
@@ -5126,14 +5142,14 @@
     MAINSEND 1 0
     EXT FTS:kind trigger
     <ITEM
-      POSITION 0
+      POSITION 6
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 5 1 0 1 0 0 0
+      FADEIN 1 0.02 0 1 0 0 0
+      FADEOUT 0 1 0 1 0 0 0
       IGUID {13F99A72-CF0C-2862-3CF0-9DBBD0F50984}
       NAME "T2 Trig 1"
       CHANMODE 0
@@ -5206,14 +5222,14 @@
       >
     >
     <ITEM
-      POSITION 16
+      POSITION 22
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 2 2 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
       IGUID {13F99B72-CF0C-2A15-5278-2B40D28A61A2}
       NAME "T2 Trig 3"
       CHANMODE 0
@@ -5286,16 +5302,16 @@
       >
     >
     <ITEM
-      POSITION 32
+      POSITION 46
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 1 0.5 0 1 0 0 0
+      FADEIN 0 0.25 0 1 0 0 0
+      FADEOUT 2 1 0 1 0 0 0
       IGUID {13F99872-CF0C-24FC-12F6-34A7E1618D58}
-      NAME "T2 Trig 5"
+      NAME "T2 Trig 6"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -5363,81 +5379,17 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
       >
     >
     <ITEM
-      POSITION 64
+      POSITION 70
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.5 0 1 0 0 0
-      FADEOUT 0 2 0 1 0 0 0
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 5 0.1 0 1 0 0 0
       IGUID {13F99972-CF0C-26AF-D9EB-4F77914C388A}
       NAME "T2 Trig 9"
       CHANMODE 0
@@ -5507,74 +5459,10 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
       >
     >
     <ITEM
-      POSITION 104
+      POSITION 94
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
@@ -5583,7 +5471,7 @@
       FADEIN 0 0.02 0 1 0 0 0
       FADEOUT 2 0.5 0 1 0 0 0
       IGUID {13F99672-CF0C-2196-D1A7-549A433CC334}
-      NAME "T2 Trig 14"
+      NAME "T2 Trig 12"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -5654,20 +5542,100 @@
       >
     >
     <ITEM
-      POSITION 120
+      POSITION 118
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.05 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
       IGUID {13F99772-CF0C-2349-F7EE-0CF46A944512}
+      NAME "T2 Trig 15"
+      CHANMODE 0
+      <SOURCE MIDI
+        HASDATA 1 960 QN
+        E 0 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+      >
+    >
+    <ITEM
+      POSITION 126
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 2 0.1 0 1 0 0 0
+      IGUID {13F99472-CF0C-1E30-1FF9-AA3FE838A800}
       NAME "T2 Trig 16"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
         E 0 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
@@ -5860,8 +5828,8 @@
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.25 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 0 0.1 0 1 0 0 0
       IGUID {51274DA8-F332-48EC-B55E-F7E00C5F7F90}
       NAME "T3 2"
       CHANMODE 0
@@ -5877,7 +5845,7 @@
       ALLTAKES 0
       SEL 0
       FADEIN 1 0.25 0 1 0 0 0
-      FADEOUT 1 0.5 0 1 0 0 0
+      FADEOUT 5 0.5 0 1 0 0 0
       IGUID {51274EA8-F332-4A9F-1786-9DE3ED72FFC8}
       NAME "T3 4"
       CHANMODE 0
@@ -5886,16 +5854,32 @@
       >
     >
     <ITEM
-      POSITION 42
+      POSITION 50
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 5 1 0 1 0 0 0
+      FADEIN 5 0.25 0 1 0 0 0
+      FADEOUT 1 2 0 1 0 0 0
       IGUID {51274FA8-F332-4C52-0975-0CA09F26EAA4}
-      NAME "T3 6"
+      NAME "T3 7"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-toms-tom-3-t3.wav"
+      >
+    >
+    <ITEM
+      POSITION 66
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
+      IGUID {512750A8-F332-4E05-47B2-58466EB34DDC}
+      NAME "T3 9"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-3-t3.wav"
@@ -5904,30 +5888,14 @@
     <ITEM
       POSITION 74
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.5 0 1 0 0 0
-      FADEOUT 2 2 0 1 0 0 0
-      IGUID {512750A8-F332-4E05-47B2-58466EB34DDC}
-      NAME "T3 10"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/drum-kit-toms-tom-3-t3.wav"
-      >
-    >
-    <ITEM
-      POSITION 82
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
       IGUID {512749A8-F332-4220-FA85-3D021EEBAE80}
-      NAME "T3 11"
+      NAME "T3 10"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-3-t3.wav"
@@ -5936,12 +5904,12 @@
     <ITEM
       POSITION 106
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.25 0 1 0 0 0
-      FADEOUT 5 1 0 1 0 0 0
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
       IGUID {51274AA8-F332-43D3-A60D-7D56A12E7FA8}
       NAME "T3 14"
       CHANMODE 0
@@ -5950,16 +5918,16 @@
       >
     >
     <ITEM
-      POSITION 114
+      POSITION 122
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.25 0 1 0 0 0
-      FADEOUT 2 0.5 0 1 0 0 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 0 0.5 0 1 0 0 0
       IGUID {51274BA8-F332-4586-633E-7703727FD15C}
-      NAME "T3 15"
+      NAME "T3 16"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-3-t3.wav"
@@ -5980,14 +5948,14 @@
     MAINSEND 1 0
     EXT FTS:kind trigger
     <ITEM
-      POSITION 12
+      POSITION 10
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.25 0 1 0 0 0
-      FADEOUT 5 2 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 0 0.1 0 1 0 0 0
       IGUID {115F6D78-DEAB-22B0-8130-B38A2F496FC0}
       NAME "T3 Trig 2"
       CHANMODE 0
@@ -6025,403 +5993,483 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
       >
     >
     <ITEM
-      POSITION 20
+      POSITION 26
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 1 0.25 0 1 0 0 0
+      FADEOUT 5 0.5 0 1 0 0 0
+      IGUID {115F6E78-DEAB-2463-1611-DB249B1F1D1A}
+      NAME "T3 Trig 4"
+      CHANMODE 0
+      <SOURCE MIDI
+        HASDATA 1 960 QN
+        E 0 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+      >
+    >
+    <ITEM
+      POSITION 50
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 5 0.25 0 1 0 0 0
+      FADEOUT 1 2 0 1 0 0 0
+      IGUID {115F6F78-DEAB-2616-6426-E8F113CA5F98}
+      NAME "T3 Trig 7"
+      CHANMODE 0
+      <SOURCE MIDI
+        HASDATA 1 960 QN
+        E 0 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+      >
+    >
+    <ITEM
+      POSITION 66
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
+      IGUID {115F7078-DEAB-27C9-BF4D-990ED8453B76}
+      NAME "T3 Trig 9"
+      CHANMODE 0
+      <SOURCE MIDI
+        HASDATA 1 960 QN
+        E 0 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+      >
+    >
+    <ITEM
+      POSITION 74
+      SNAPOFFS 0
+      LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
+      IGUID {115F7178-DEAB-297C-D2FB-185FAE191AC0}
+      NAME "T3 Trig 10"
+      CHANMODE 0
+      <SOURCE MIDI
+        HASDATA 1 960 QN
+        E 0 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+      >
+    >
+    <ITEM
+      POSITION 106
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
-      IGUID {115F6E78-DEAB-2463-1611-DB249B1F1D1A}
-      NAME "T3 Trig 3"
-      CHANMODE 0
-      <SOURCE MIDI
-        HASDATA 1 960 QN
-        E 0 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-      >
-    >
-    <ITEM
-      POSITION 36
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 0 2 0 1 0 0 0
-      IGUID {115F6F78-DEAB-2616-6426-E8F113CA5F98}
-      NAME "T3 Trig 5"
-      CHANMODE 0
-      <SOURCE MIDI
-        HASDATA 1 960 QN
-        E 0 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-      >
-    >
-    <ITEM
-      POSITION 60
-      SNAPOFFS 0
-      LENGTH 32
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
-      IGUID {115F7078-DEAB-27C9-BF4D-990ED8453B76}
-      NAME "T3 Trig 8"
-      CHANMODE 0
-      <SOURCE MIDI
-        HASDATA 1 960 QN
-        E 0 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-      >
-    >
-    <ITEM
-      POSITION 92
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 5 0.5 0 1 0 0 0
-      FADEOUT 1 1 0 1 0 0 0
-      IGUID {115F7178-DEAB-297C-D2FB-185FAE191AC0}
-      NAME "T3 Trig 12"
-      CHANMODE 0
-      <SOURCE MIDI
-        HASDATA 1 960 QN
-        E 0 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-      >
-    >
-    <ITEM
-      POSITION 116
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 5 0.02 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
       IGUID {115F7278-DEAB-2B2F-BA68-21E9EA95DAB2}
-      NAME "T3 Trig 15"
+      NAME "T3 Trig 14"
+      CHANMODE 0
+      <SOURCE MIDI
+        HASDATA 1 960 QN
+        E 0 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+        E 720 90 24 64
+        E 240 80 24 00
+      >
+    >
+    <ITEM
+      POSITION 122
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 0 0.5 0 1 0 0 0
+      IGUID {115F7378-DEAB-2CE2-97F7-402109578CD8}
+      NAME "T3 Trig 16"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -6628,14 +6676,14 @@
     MAINSEND 1 0
     EXT FTS:kind source
     <ITEM
-      POSITION 14
+      POSITION 8
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 1 0.1 0 1 0 0 0
+      FADEIN 1 0.25 0 1 0 0 0
+      FADEOUT 1 2 0 1 0 0 0
       IGUID {DD53B81F-116A-B326-512D-25274A8F61E8}
       NAME "T4 2"
       CHANMODE 0
@@ -6644,30 +6692,30 @@
       >
     >
     <ITEM
-      POSITION 38
+      POSITION 24
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 0 2 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 1 0.1 0 1 0 0 0
       IGUID {DD53B91F-116A-B4D9-8E5C-BED4759D9FB0}
-      NAME "T4 5"
+      NAME "T4 4"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-4-t4.wav"
       >
     >
     <ITEM
-      POSITION 46
+      POSITION 40
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.05 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 0 0.25 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
       IGUID {DD53B61F-116A-AFC0-8353-17FAAC373CC0}
       NAME "T4 6"
       CHANMODE 0
@@ -6676,32 +6724,64 @@
       >
     >
     <ITEM
-      POSITION 62
+      POSITION 64
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 1 2 0 1 0 0 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 5 1 0 1 0 0 0
       IGUID {DD53B71F-116A-B173-D341-B7A7F75E27E8}
-      NAME "T4 8"
+      NAME "T4 9"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-4-t4.wav"
       >
     >
     <ITEM
-      POSITION 102
+      POSITION 80
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.05 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
+      FADEIN 1 0.02 0 1 0 0 0
+      FADEOUT 1 0.1 0 1 0 0 0
       IGUID {DD53BC1F-116A-B9F2-D13E-3EEDAD866EC0}
+      NAME "T4 11"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-toms-tom-4-t4.wav"
+      >
+    >
+    <ITEM
+      POSITION 96
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 5 0.25 0 1 0 0 0
+      FADEOUT 2 2 0 1 0 0 0
+      IGUID {DD53BD1F-116A-BBA5-1C51-90D71A399218}
       NAME "T4 13"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/drum-kit-toms-tom-4-t4.wav"
+      >
+    >
+    <ITEM
+      POSITION 112
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.5 0 1 0 0 0
+      FADEOUT 1 0.5 0 1 0 0 0
+      IGUID {DD53BA1F-116A-B68C-D647-788ABE261DD8}
+      NAME "T4 15"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/drum-kit-toms-tom-4-t4.wav"
@@ -6722,16 +6802,16 @@
     MAINSEND 1 0
     EXT FTS:kind trigger
     <ITEM
-      POSITION 2
+      POSITION 8
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.05 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
+      FADEIN 1 0.25 0 1 0 0 0
+      FADEOUT 1 2 0 1 0 0 0
       IGUID {0A219E8D-CA8B-C35E-7349-559345C719EC}
-      NAME "T4 Trig 1"
+      NAME "T4 Trig 2"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -6802,16 +6882,16 @@
       >
     >
     <ITEM
-      POSITION 18
+      POSITION 24
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.02 0 1 0 0 0
-      FADEOUT 5 1 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 1 0.1 0 1 0 0 0
       IGUID {0A219F8D-CA8B-C511-7032-CB10A5F8AED6}
-      NAME "T4 Trig 3"
+      NAME "T4 Trig 4"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -6847,49 +6927,17 @@
         E 240 80 24 00
         E 720 90 24 64
         E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
-        E 720 90 24 64
-        E 240 80 24 00
       >
     >
     <ITEM
-      POSITION 42
+      POSITION 40
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 0 0.25 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
       IGUID {0A219C8D-CA8B-BFF8-099B-5BCCAC502090}
       NAME "T4 Trig 6"
       CHANMODE 0
@@ -6962,16 +7010,16 @@
       >
     >
     <ITEM
-      POSITION 58
+      POSITION 64
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 1 0.1 0 1 0 0 0
+      FADEOUT 5 1 0 1 0 0 0
       IGUID {0A219D8D-CA8B-C1AB-9384-33D2AB4394DE}
-      NAME "T4 Trig 8"
+      NAME "T4 Trig 9"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -7042,16 +7090,16 @@
       >
     >
     <ITEM
-      POSITION 74
+      POSITION 80
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 5 2 0 1 0 0 0
+      FADEIN 1 0.02 0 1 0 0 0
+      FADEOUT 1 0.1 0 1 0 0 0
       IGUID {0A21A28D-CA8B-CA2A-0254-EF3E1393F174}
-      NAME "T4 Trig 10"
+      NAME "T4 Trig 11"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -7090,16 +7138,16 @@
       >
     >
     <ITEM
-      POSITION 90
+      POSITION 96
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
+      FADEIN 5 0.25 0 1 0 0 0
       FADEOUT 2 2 0 1 0 0 0
       IGUID {0A21A38D-CA8B-CBDD-2D25-8ABBEA3B4026}
-      NAME "T4 Trig 12"
+      NAME "T4 Trig 13"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -7138,16 +7186,16 @@
       >
     >
     <ITEM
-      POSITION 106
+      POSITION 112
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
+      FADEIN 2 0.5 0 1 0 0 0
+      FADEOUT 1 0.5 0 1 0 0 0
       IGUID {0A21A08D-CA8B-C6C4-F4CE-FD853CE191A0}
-      NAME "T4 Trig 14"
+      NAME "T4 Trig 15"
       CHANMODE 0
       <SOURCE MIDI
         HASDATA 1 960 QN
@@ -9093,8 +9141,8 @@
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 0 0.1 0 1 0 0 0
       IGUID {E1859852-5DCD-96F1-C9EF-64091FBB39D2}
       NAME "Room Sim 1"
       CHANMODE 0
@@ -9105,12 +9153,12 @@
     <ITEM
       POSITION 22
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 0 0.1 0 1 0 0 0
       IGUID {E1859752-5DCD-953E-2097-B43E235227CC}
       NAME "Room Sim 3"
       CHANMODE 0
@@ -9119,32 +9167,32 @@
       >
     >
     <ITEM
-      POSITION 38
+      POSITION 46
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.02 0 1 0 0 0
-      FADEOUT 5 0.1 0 1 0 0 0
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 2 0.1 0 1 0 0 0
       IGUID {E1859652-5DCD-938B-D112-2E387E2B0F42}
-      NAME "Room Sim 5"
+      NAME "Room Sim 6"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/process-fx-room-sim.wav"
       >
     >
     <ITEM
-      POSITION 54
+      POSITION 62
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
       IGUID {E1859552-5DCD-91D8-73C3-3AC918DB4210}
-      NAME "Room Sim 7"
+      NAME "Room Sim 8"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/process-fx-room-sim.wav"
@@ -9153,12 +9201,12 @@
     <ITEM
       POSITION 70
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.02 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 1 0.5 0 1 0 0 0
       IGUID {E1859C52-5DCD-9DBD-1110-89A9A1518492}
       NAME "Room Sim 9"
       CHANMODE 0
@@ -9167,48 +9215,32 @@
       >
     >
     <ITEM
-      POSITION 102
+      POSITION 86
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.05 0 1 0 0 0
-      FADEOUT 5 1 0 1 0 0 0
+      FADEIN 1 0.05 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
       IGUID {E1859B52-5DCD-9C0A-DC6D-999A0BF4EC1C}
-      NAME "Room Sim 13"
+      NAME "Room Sim 11"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/process-fx-room-sim.wav"
       >
     >
     <ITEM
-      POSITION 118
+      POSITION 102
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 2 2 0 1 0 0 0
+      FADEOUT 1 0.1 0 1 0 0 0
       IGUID {E1859A52-5DCD-9A57-079E-88223D379DF2}
-      NAME "Room Sim 15"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/process-fx-room-sim.wav"
-      >
-    >
-    <ITEM
-      POSITION 126
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 1 0.02 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
-      IGUID {E1859952-5DCD-98A4-3DE7-684118713E58}
-      NAME "Room Sim 16"
+      NAME "Room Sim 13"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/process-fx-room-sim.wav"
@@ -10022,14 +10054,14 @@
     MAINSEND 1 0
     EXT FTS:kind source
     <ITEM
-      POSITION 0
+      POSITION 2
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 5 0.1 0 1 0 0 0
+      FADEIN 0 0.25 0 1 0 0 0
+      FADEOUT 1 2 0 1 0 0 0
       IGUID {6FD3B27B-0267-9A16-13D9-91A3DA05E77C}
       NAME "DI 1"
       CHANMODE 0
@@ -10038,96 +10070,48 @@
       >
     >
     <ITEM
-      POSITION 8
-      SNAPOFFS 0
-      LENGTH 32
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
-      IGUID {6FD3B37B-0267-9BC9-61E7-E8ED46411A18}
-      NAME "DI 2"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/bass-guitar-sum-di.wav"
-      >
-    >
-    <ITEM
-      POSITION 48
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 5 0.25 0 1 0 0 0
-      FADEOUT 2 2 0 1 0 0 0
-      IGUID {6FD3B07B-0267-96B0-B008-79F435C13B20}
-      NAME "DI 7"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/bass-guitar-sum-di.wav"
-      >
-    >
-    <ITEM
-      POSITION 64
-      SNAPOFFS 0
-      LENGTH 8
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
-      IGUID {6FD3B17B-0267-9863-F1B4-3C0C0E5E0814}
-      NAME "DI 9"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/bass-guitar-sum-di.wav"
-      >
-    >
-    <ITEM
-      POSITION 72
+      POSITION 34
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
-      IGUID {6FD3B67B-0267-A0E2-10F3-D3B1EDB28734}
-      NAME "DI 10"
+      FADEOUT 0 2 0 1 0 0 0
+      IGUID {6FD3B37B-0267-9BC9-61E7-E8ED46411A18}
+      NAME "DI 5"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/bass-guitar-sum-di.wav"
       >
     >
     <ITEM
-      POSITION 88
+      POSITION 58
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
-      IGUID {6FD3B77B-0267-A295-1DF1-D7C6BFA6C888}
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 1 2 0 1 0 0 0
+      IGUID {6FD3B07B-0267-96B0-B008-79F435C13B20}
+      NAME "DI 8"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/bass-guitar-sum-di.wav"
+      >
+    >
+    <ITEM
+      POSITION 90
+      SNAPOFFS 0
+      LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 5 0.1 0 1 0 0 0
+      IGUID {6FD3B17B-0267-9863-F1B4-3C0C0E5E0814}
       NAME "DI 12"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/bass-guitar-sum-di.wav"
-      >
-    >
-    <ITEM
-      POSITION 112
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 1 0.25 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
-      IGUID {6FD3B47B-0267-9D7C-22BC-A00A939B01B0}
-      NAME "DI 15"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/bass-guitar-sum-di.wav"
@@ -10148,32 +10132,16 @@
     MAINSEND 1 0
     EXT FTS:kind source
     <ITEM
-      POSITION 10
+      POSITION 2
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.02 0 1 0 0 0
-      FADEOUT 1 1 0 1 0 0 0
+      FADEIN 0 0.25 0 1 0 0 0
+      FADEOUT 1 2 0 1 0 0 0
       IGUID {EAC5A824-FB44-18CB-FD83-62A5B198E0DA}
-      NAME "Amp 2"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/bass-guitar-sum-amp.wav"
-      >
-    >
-    <ITEM
-      POSITION 26
-      SNAPOFFS 0
-      LENGTH 8
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 2 0.05 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
-      IGUID {EAC5A724-FB44-1718-A264-9A1678CA23E0}
-      NAME "Amp 4"
+      NAME "Amp 1"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/bass-guitar-sum-amp.wav"
@@ -10186,9 +10154,9 @@
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.5 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
-      IGUID {EAC5AA24-FB44-1C31-52C8-D495018D7F52}
+      FADEIN 0 0.25 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
+      IGUID {EAC5A724-FB44-1718-A264-9A1678CA23E0}
       NAME "Amp 5"
       CHANMODE 0
       <SOURCE WAVE
@@ -10196,16 +10164,16 @@
       >
     >
     <ITEM
-      POSITION 50
+      POSITION 58
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 1 1 0 1 0 0 0
-      IGUID {EAC5A924-FB44-1A7E-5925-B366A02DD38C}
-      NAME "Amp 7"
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 1 2 0 1 0 0 0
+      IGUID {EAC5AA24-FB44-1C31-52C8-D495018D7F52}
+      NAME "Amp 8"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/bass-guitar-sum-amp.wav"
@@ -10218,26 +10186,10 @@
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 2 2 0 1 0 0 0
-      IGUID {EAC5AC24-FB44-1F97-11F5-790F2EB7E4AA}
-      NAME "Amp 12"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/bass-guitar-sum-amp.wav"
-      >
-    >
-    <ITEM
-      POSITION 122
-      SNAPOFFS 0
-      LENGTH 8
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 2 0.05 0 1 0 0 0
+      FADEIN 0 0.5 0 1 0 0 0
       FADEOUT 5 0.1 0 1 0 0 0
-      IGUID {EAC5AB24-FB44-1DE4-CD28-7EB219BF8728}
-      NAME "Amp 16"
+      IGUID {EAC5A924-FB44-1A7E-5925-B366A02DD38C}
+      NAME "Amp 12"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/bass-guitar-sum-amp.wav"
@@ -10397,79 +10349,95 @@
     MAINSEND 1 0
     EXT FTS:kind part
     <ITEM
-      POSITION 14
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 5 0.1 0 1 0 0 0
-      IGUID {7A90A10A-FA2D-618D-01A2-2148C91E8054}
-      NAME "Synth 2"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/bass-synth-synth.wav"
-      >
-    >
-    <ITEM
-      POSITION 30
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 5 0.5 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
-      IGUID {7A90A00A-FA2D-5FDA-0EF7-4B5A719B4BE4}
-      NAME "Synth 4"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/bass-synth-synth.wav"
-      >
-    >
-    <ITEM
-      POSITION 54
+      POSITION 4
       SNAPOFFS 0
       LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.25 0 1 0 0 0
+      FADEOUT 2 0.1 0 1 0 0 0
+      IGUID {7A90A10A-FA2D-618D-01A2-2148C91E8054}
+      NAME "Synth 1"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/bass-synth-synth.wav"
+      >
+    >
+    <ITEM
+      POSITION 44
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 1 0.05 0 1 0 0 0
+      FADEOUT 0 0.5 0 1 0 0 0
+      IGUID {7A90A00A-FA2D-5FDA-0EF7-4B5A719B4BE4}
+      NAME "Synth 6"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/bass-synth-synth.wav"
+      >
+    >
+    <ITEM
+      POSITION 60
+      SNAPOFFS 0
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 5 0.02 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEOUT 2 0.5 0 1 0 0 0
       IGUID {7A909F0A-FA2D-5E27-8F40-81D040D343B8}
-      NAME "Synth 7"
+      NAME "Synth 8"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/bass-synth-synth.wav"
       >
     >
     <ITEM
-      POSITION 94
+      POSITION 76
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.25 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
       IGUID {7A909E0A-FA2D-5C74-BF3E-DA3AF7E7B300}
-      NAME "Synth 12"
+      NAME "Synth 10"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/bass-synth-synth.wav"
       >
     >
     <ITEM
-      POSITION 126
+      POSITION 108
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 1 0.5 0 1 0 0 0
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
       IGUID {7A909D0A-FA2D-5AC1-7D35-D98718EE409C}
+      NAME "Synth 14"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/bass-synth-synth.wav"
+      >
+    >
+    <ITEM
+      POSITION 124
+      SNAPOFFS 0
+      LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.25 0 1 0 0 0
+      FADEOUT 0 0.1 0 1 0 0 0
+      IGUID {7A909C0A-FA2D-590E-9C07-D807E1A67C3C}
       NAME "Synth 16"
       CHANMODE 0
       <SOURCE WAVE
@@ -15048,46 +15016,46 @@
     MAINSEND 1 0
     EXT FTS:kind part
     <ITEM
-      POSITION 4
+      POSITION 10
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.02 0 1 0 0 0
-      FADEOUT 0 2 0 1 0 0 0
+      FADEIN 1 0.05 0 1 0 0 0
+      FADEOUT 0 0.5 0 1 0 0 0
       IGUID {083858E5-17F4-BCB6-BC63-A1C675DA4884}
-      NAME "Arp 1"
+      NAME "Arp 2"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/synths-sy-arps-arp.wav"
       >
     >
     <ITEM
-      POSITION 20
+      POSITION 26
+      SNAPOFFS 0
+      LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 2 2 0 1 0 0 0
+      IGUID {083859E5-17F4-BE69-9142-E8F5EC216EC0}
+      NAME "Arp 4"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/synths-sy-arps-arp.wav"
+      >
+    >
+    <ITEM
+      POSITION 42
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 5 0.02 0 1 0 0 0
-      FADEOUT 2 0.5 0 1 0 0 0
-      IGUID {083859E5-17F4-BE69-9142-E8F5EC216EC0}
-      NAME "Arp 3"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/synths-sy-arps-arp.wav"
-      >
-    >
-    <ITEM
-      POSITION 44
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 1 1 0 1 0 0 0
+      FADEOUT 5 0.5 0 1 0 0 0
       IGUID {083856E5-17F4-B950-7817-E0FB998FE6E0}
       NAME "Arp 6"
       CHANMODE 0
@@ -15096,14 +15064,14 @@
       >
     >
     <ITEM
-      POSITION 60
+      POSITION 58
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 5 0.5 0 1 0 0 0
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
       IGUID {083857E5-17F4-BB03-9D59-891CC630E2B4}
       NAME "Arp 8"
       CHANMODE 0
@@ -15112,30 +15080,30 @@
       >
     >
     <ITEM
-      POSITION 68
+      POSITION 74
       SNAPOFFS 0
       LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 5 0.05 0 1 0 0 0
+      FADEOUT 2 0.1 0 1 0 0 0
       IGUID {08385CE5-17F4-C382-F846-08F042CFF9C4}
-      NAME "Arp 9"
+      NAME "Arp 10"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/synths-sy-arps-arp.wav"
       >
     >
     <ITEM
-      POSITION 84
+      POSITION 82
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.25 0 1 0 0 0
-      FADEOUT 0 2 0 1 0 0 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 1 0.5 0 1 0 0 0
       IGUID {08385DE5-17F4-C535-7FE2-8AF34CD65C58}
       NAME "Arp 11"
       CHANMODE 0
@@ -15144,14 +15112,14 @@
       >
     >
     <ITEM
-      POSITION 116
+      POSITION 114
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 1 0.25 0 1 0 0 0
-      FADEOUT 1 2 0 1 0 0 0
+      FADEOUT 5 1 0 1 0 0 0
       IGUID {08385AE5-17F4-C01C-4478-19E4D492F958}
       NAME "Arp 15"
       CHANMODE 0
@@ -15188,14 +15156,14 @@
     MAINSEND 1 0
     EXT FTS:kind part
     <ITEM
-      POSITION 4
+      POSITION 0
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.02 0 1 0 0 0
-      FADEOUT 2 0.5 0 1 0 0 0
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 1 0.5 0 1 0 0 0
       IGUID {76340BD3-2A85-B106-B258-F2A228B1054C}
       NAME "Pad 1"
       CHANMODE 0
@@ -15204,45 +15172,45 @@
       >
     >
     <ITEM
-      POSITION 28
-      SNAPOFFS 0
-      LENGTH 8
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 2 0.02 0 1 0 0 0
-      FADEOUT 5 0.5 0 1 0 0 0
-      IGUID {76340CD3-2A85-B2B9-D176-8E35103F1CBC}
-      NAME "Pad 4"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/synths-sy-pads-pad.wav"
-      >
-    >
-    <ITEM
-      POSITION 36
+      POSITION 16
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
-      IGUID {763409D3-2A85-ADA0-CCEC-CA5B436A0900}
-      NAME "Pad 5"
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
+      IGUID {76340CD3-2A85-B2B9-D176-8E35103F1CBC}
+      NAME "Pad 3"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/synths-sy-pads-pad.wav"
       >
     >
     <ITEM
-      POSITION 68
+      POSITION 48
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.05 0 1 0 0 0
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 2 1 0 1 0 0 0
+      IGUID {763409D3-2A85-ADA0-CCEC-CA5B436A0900}
+      NAME "Pad 7"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/synths-sy-pads-pad.wav"
+      >
+    >
+    <ITEM
+      POSITION 64
+      SNAPOFFS 0
+      LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.02 0 1 0 0 0
       FADEOUT 0 0.5 0 1 0 0 0
       IGUID {76340AD3-2A85-AF53-6562-C0A49D62F948}
       NAME "Pad 9"
@@ -15252,32 +15220,32 @@
       >
     >
     <ITEM
-      POSITION 84
+      POSITION 96
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 5 0.5 0 1 0 0 0
-      FADEOUT 0 2 0 1 0 0 0
+      FADEOUT 0 0.1 0 1 0 0 0
       IGUID {76340FD3-2A85-B7D2-D8DC-7E5D484E2D7C}
-      NAME "Pad 11"
+      NAME "Pad 13"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/synths-sy-pads-pad.wav"
       >
     >
     <ITEM
-      POSITION 116
+      POSITION 120
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.02 0 1 0 0 0
-      FADEOUT 5 0.1 0 1 0 0 0
+      FADEIN 2 0.25 0 1 0 0 0
+      FADEOUT 1 0.5 0 1 0 0 0
       IGUID {763410D3-2A85-B985-7379-4E7A96834F8C}
-      NAME "Pad 15"
+      NAME "Pad 16"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/synths-sy-pads-pad.wav"
@@ -15312,14 +15280,14 @@
     MAINSEND 1 0
     EXT FTS:kind part
     <ITEM
-      POSITION 8
+      POSITION 14
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.25 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
+      FADEIN 1 0.05 0 1 0 0 0
+      FADEOUT 5 0.1 0 1 0 0 0
       IGUID {210CEEB4-3386-9EA2-7FF6-C7F82F960064}
       NAME "Lead Synth 2"
       CHANMODE 0
@@ -15328,14 +15296,14 @@
       >
     >
     <ITEM
-      POSITION 24
+      POSITION 30
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 0 2 0 1 0 0 0
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 0 0.5 0 1 0 0 0
       IGUID {210CEFB4-3386-A055-5953-D09E9F100A3C}
       NAME "Lead Synth 4"
       CHANMODE 0
@@ -15344,64 +15312,64 @@
       >
     >
     <ITEM
-      POSITION 40
-      SNAPOFFS 0
-      LENGTH 32
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 1 0.25 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
-      IGUID {210CECB4-3386-9B3C-D0BB-BE6DA19357E0}
-      NAME "Lead Synth 6"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/synths-sy-leads-lead-synth.wav"
-      >
-    >
-    <ITEM
-      POSITION 80
+      POSITION 54
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
-      IGUID {210CEDB4-3386-9CEF-10CA-D404304E3D18}
-      NAME "Lead Synth 11"
+      FADEIN 1 0.02 0 1 0 0 0
+      FADEOUT 2 2 0 1 0 0 0
+      IGUID {210CECB4-3386-9B3C-D0BB-BE6DA19357E0}
+      NAME "Lead Synth 7"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/synths-sy-leads-lead-synth.wav"
       >
     >
     <ITEM
-      POSITION 96
+      POSITION 70
       SNAPOFFS 0
       LENGTH 8
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.25 0 1 0 0 0
+      FADEOUT 0 1 0 1 0 0 0
+      IGUID {210CEDB4-3386-9CEF-10CA-D404304E3D18}
+      NAME "Lead Synth 9"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/synths-sy-leads-lead-synth.wav"
+      >
+    >
+    <ITEM
+      POSITION 78
+      SNAPOFFS 0
+      LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.02 0 1 0 0 0
+      FADEOUT 0 0.5 0 1 0 0 0
+      IGUID {210CEAB4-3386-97D6-EEC4-2F6A219F736C}
+      NAME "Lead Synth 10"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/synths-sy-leads-lead-synth.wav"
+      >
+    >
+    <ITEM
+      POSITION 110
+      SNAPOFFS 0
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 5 0.02 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
-      IGUID {210CEAB4-3386-97D6-EEC4-2F6A219F736C}
-      NAME "Lead Synth 13"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/synths-sy-leads-lead-synth.wav"
-      >
-    >
-    <ITEM
-      POSITION 112
-      SNAPOFFS 0
-      LENGTH 8
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 1 0.1 0 1 0 0 0
+      FADEOUT 1 0.5 0 1 0 0 0
       IGUID {210CEBB4-3386-9989-761A-CE55A2F7EF84}
-      NAME "Lead Synth 15"
+      NAME "Lead Synth 14"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/synths-sy-leads-lead-synth.wav"
@@ -15436,16 +15404,16 @@
     MAINSEND 1 0
     EXT FTS:kind part
     <ITEM
-      POSITION 0
+      POSITION 8
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 5 0.5 0 1 0 0 0
+      FADEIN 1 0.25 0 1 0 0 0
+      FADEOUT 1 1 0 1 0 0 0
       IGUID {CDD56305-9DA0-36C8-6DBD-9252CEED19B0}
-      NAME "Chord 1"
+      NAME "Chord 2"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/synths-sy-chords-chord.wav"
@@ -15458,8 +15426,8 @@
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.25 0 1 0 0 0
-      FADEOUT 1 0.5 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 2 2 0 1 0 0 0
       IGUID {CDD56405-9DA0-387B-7C78-1331EEAA6B00}
       NAME "Chord 4"
       CHANMODE 0
@@ -15474,8 +15442,8 @@
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.25 0 1 0 0 0
-      FADEOUT 1 1 0 1 0 0 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 1 0.1 0 1 0 0 0
       IGUID {CDD56505-9DA0-3A2E-BB75-1C50B4314590}
       NAME "Chord 6"
       CHANMODE 0
@@ -15486,12 +15454,12 @@
     <ITEM
       POSITION 72
       SNAPOFFS 0
-      LENGTH 16
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.02 0 1 0 0 0
-      FADEOUT 5 0.5 0 1 0 0 0
+      FADEIN 5 0.25 0 1 0 0 0
+      FADEOUT 2 1 0 1 0 0 0
       IGUID {CDD56605-9DA0-3BE1-F216-9B73EFCA7C18}
       NAME "Chord 10"
       CHANMODE 0
@@ -15500,32 +15468,32 @@
       >
     >
     <ITEM
-      POSITION 88
+      POSITION 104
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 0 0.1 0 1 0 0 0
+      FADEIN 5 0.25 0 1 0 0 0
+      FADEOUT 1 0.5 0 1 0 0 0
       IGUID {CDD56705-9DA0-3D94-C88F-AE46B51AC218}
-      NAME "Chord 12"
+      NAME "Chord 14"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/synths-sy-chords-chord.wav"
       >
     >
     <ITEM
-      POSITION 96
+      POSITION 120
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 1 0.1 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 1 0.5 0 1 0 0 0
       IGUID {CDD56805-9DA0-3F47-6522-0FC34032FF88}
-      NAME "Chord 13"
+      NAME "Chord 16"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/synths-sy-chords-chord.wav"
@@ -18839,30 +18807,30 @@
     MAINSEND 1 0
     EXT FTS:kind source
     <ITEM
-      POSITION 4
+      POSITION 10
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.02 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
       IGUID {EA25B414-F2BA-8C5B-38B1-D8921C5F24E4}
-      NAME "PT 1"
+      NAME "PT 2"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/vocals-aline-main-pt.wav"
       >
     >
     <ITEM
-      POSITION 28
+      POSITION 26
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.05 0 1 0 0 0
-      FADEOUT 2 2 0 1 0 0 0
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
       IGUID {EA25B314-F2BA-8AA8-8534-7C29E3197020}
       NAME "PT 4"
       CHANMODE 0
@@ -18871,31 +18839,47 @@
       >
     >
     <ITEM
-      POSITION 60
+      POSITION 34
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.25 0 1 0 0 0
-      FADEOUT 2 2 0 1 0 0 0
+      FADEIN 1 0.05 0 1 0 0 0
+      FADEOUT 1 0.1 0 1 0 0 0
       IGUID {EA25B614-F2BA-8FC1-0689-8F0412A248BC}
-      NAME "PT 8"
+      NAME "PT 5"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/vocals-aline-main-pt.wav"
       >
     >
     <ITEM
-      POSITION 92
+      POSITION 50
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.05 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 2 2 0 1 0 0 0
       IGUID {EA25B514-F2BA-8E0E-1367-FFF650A0F8A8}
+      NAME "PT 7"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/vocals-aline-main-pt.wav"
+      >
+    >
+    <ITEM
+      POSITION 90
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.5 0 1 0 0 0
+      FADEOUT 0 0.5 0 1 0 0 0
+      IGUID {EA25B814-F2BA-9327-6E4D-EBD7EA7F8D84}
       NAME "PT 12"
       CHANMODE 0
       <SOURCE WAVE
@@ -18903,32 +18887,16 @@
       >
     >
     <ITEM
-      POSITION 100
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
-      IGUID {EA25B814-F2BA-9327-6E4D-EBD7EA7F8D84}
-      NAME "PT 13"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/vocals-aline-main-pt.wav"
-      >
-    >
-    <ITEM
-      POSITION 124
+      POSITION 106
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
+      FADEIN 1 0.25 0 1 0 0 0
+      FADEOUT 0 1 0 1 0 0 0
       IGUID {EA25B714-F2BA-9174-EF21-936C442E5E08}
-      NAME "PT 16"
+      NAME "PT 14"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/vocals-aline-main-pt.wav"
@@ -18969,8 +18937,8 @@
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.5 0 1 0 0 0
-      FADEOUT 5 0.1 0 1 0 0 0
+      FADEIN 0 0.05 0 1 0 0 0
+      FADEOUT 0 1 0 1 0 0 0
       IGUID {0B7D63A3-D813-94A6-1C6B-EAC521EA4D68}
       NAME "PT 2"
       CHANMODE 0
@@ -18985,8 +18953,8 @@
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.02 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 1 2 0 1 0 0 0
       IGUID {0B7D64A3-D813-9659-B356-9C8F26EC81F6}
       NAME "PT 4"
       CHANMODE 0
@@ -18995,48 +18963,32 @@
       >
     >
     <ITEM
-      POSITION 64
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 5 0.05 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
-      IGUID {0B7D61A3-D813-9140-1AEA-F7B6B118F7C0}
-      NAME "PT 9"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/vocals-aline-dbl-pt.wav"
-      >
-    >
-    <ITEM
-      POSITION 88
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 1 0.02 0 1 0 0 0
-      FADEOUT 5 1 0 1 0 0 0
-      IGUID {0B7D62A3-D813-92F3-88ED-46F6879325AA}
-      NAME "PT 12"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/vocals-aline-dbl-pt.wav"
-      >
-    >
-    <ITEM
-      POSITION 104
+      POSITION 56
       SNAPOFFS 0
       LENGTH 32
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.25 0 1 0 0 0
-      FADEOUT 1 1 0 1 0 0 0
-      IGUID {0B7D67A3-D813-9B72-38EC-194E4F8D2C28}
-      NAME "PT 14"
+      FADEIN 0 0.25 0 1 0 0 0
+      FADEOUT 5 0.1 0 1 0 0 0
+      IGUID {0B7D61A3-D813-9140-1AEA-F7B6B118F7C0}
+      NAME "PT 8"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/vocals-aline-dbl-pt.wav"
+      >
+    >
+    <ITEM
+      POSITION 96
+      SNAPOFFS 0
+      LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 0 0.5 0 1 0 0 0
+      IGUID {0B7D62A3-D813-92F3-88ED-46F6879325AA}
+      NAME "PT 13"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/vocals-aline-dbl-pt.wav"
@@ -24817,12 +24769,12 @@
     <ITEM
       POSITION 0
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 8
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 1 0.5 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
+      FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 5 0.5 0 1 0 0 0
       IGUID {601A74DF-8169-00B8-892D-3770CAFB75B0}
       NAME "Timpani 1"
       CHANMODE 0
@@ -24831,32 +24783,48 @@
       >
     >
     <ITEM
-      POSITION 40
+      POSITION 8
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.25 0 1 0 0 0
-      FADEOUT 0 1 0 1 0 0 0
+      FADEIN 2 0.25 0 1 0 0 0
+      FADEOUT 2 2 0 1 0 0 0
       IGUID {601A75DF-8169-026B-F5EC-A5E030000712}
-      NAME "Timpani 6"
+      NAME "Timpani 2"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/orchestra-orch-percussion-timpani.wav"
       >
     >
     <ITEM
-      POSITION 56
+      POSITION 24
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 5 0.05 0 1 0 0 0
-      FADEOUT 0 2 0 1 0 0 0
+      FADEIN 1 0.5 0 1 0 0 0
+      FADEOUT 1 2 0 1 0 0 0
       IGUID {601A76DF-8169-041E-8D69-4C3B9CAB4D6C}
-      NAME "Timpani 8"
+      NAME "Timpani 4"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/orchestra-orch-percussion-timpani.wav"
+      >
+    >
+    <ITEM
+      POSITION 48
+      SNAPOFFS 0
+      LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 1 0.25 0 1 0 0 0
+      FADEOUT 5 2 0 1 0 0 0
+      IGUID {601A77DF-8169-05D1-BC56-500A2C4B134A}
+      NAME "Timpani 7"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/orchestra-orch-percussion-timpani.wav"
@@ -24865,13 +24833,13 @@
     <ITEM
       POSITION 80
       SNAPOFFS 0
-      LENGTH 8
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
-      IGUID {601A77DF-8169-05D1-BC56-500A2C4B134A}
+      FADEIN 1 0.25 0 1 0 0 0
+      FADEOUT 5 0.5 0 1 0 0 0
+      IGUID {601A78DF-8169-0784-5741-514459DA3F98}
       NAME "Timpani 11"
       CHANMODE 0
       <SOURCE WAVE
@@ -24879,16 +24847,32 @@
       >
     >
     <ITEM
-      POSITION 88
+      POSITION 96
       SNAPOFFS 0
-      LENGTH 32
+      LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
-      FADEIN 2 0.02 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
-      IGUID {601A78DF-8169-0784-5741-514459DA3F98}
-      NAME "Timpani 12"
+      FADEIN 5 0.5 0 1 0 0 0
+      FADEOUT 1 1 0 1 0 0 0
+      IGUID {601A79DF-8169-0937-3B35-BB0B4528DD92}
+      NAME "Timpani 13"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/orchestra-orch-percussion-timpani.wav"
+      >
+    >
+    <ITEM
+      POSITION 112
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.25 0 1 0 0 0
+      FADEOUT 0 1 0 1 0 0 0
+      IGUID {601A7ADF-8169-0AEA-5931-E8C5396EFF3C}
+      NAME "Timpani 15"
       CHANMODE 0
       <SOURCE WAVE
         FILE "media/orchestra-orch-percussion-timpani.wav"
@@ -25368,78 +25352,78 @@
     MAINSEND 0 0
     EXT FTS:kind source
     <ITEM
-      POSITION 14
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.25 0 1 0 0 0
-      FADEOUT 2 1 0 1 0 0 0
-      IGUID {8D7E6622-98B8-32F7-91AF-4554CA6B9EB0}
-      NAME "TB Engineer 2"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/talkback-tb-engineer.wav"
-      >
-    >
-    <ITEM
-      POSITION 38
-      SNAPOFFS 0
-      LENGTH 16
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 0 0.5 0 1 0 0 0
-      IGUID {8D7E6522-98B8-3144-DAA7-BD31A482D3F0}
-      NAME "TB Engineer 5"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/talkback-tb-engineer.wav"
-      >
-    >
-    <ITEM
-      POSITION 54
-      SNAPOFFS 0
-      LENGTH 32
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 2 0.02 0 1 0 0 0
-      FADEOUT 2 0.1 0 1 0 0 0
-      IGUID {8D7E6822-98B8-365D-C8C3-2D151D05541C}
-      NAME "TB Engineer 7"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/talkback-tb-engineer.wav"
-      >
-    >
-    <ITEM
-      POSITION 86
-      SNAPOFFS 0
-      LENGTH 32
-      LOOP 0
-      ALLTAKES 0
-      SEL 0
-      FADEIN 0 0.05 0 1 0 0 0
-      FADEOUT 1 1 0 1 0 0 0
-      IGUID {8D7E6722-98B8-34AA-8EFE-8CBEDC228BDC}
-      NAME "TB Engineer 11"
-      CHANMODE 0
-      <SOURCE WAVE
-        FILE "media/talkback-tb-engineer.wav"
-      >
-    >
-    <ITEM
-      POSITION 118
+      POSITION 0
       SNAPOFFS 0
       LENGTH 16
       LOOP 0
       ALLTAKES 0
       SEL 0
       FADEIN 0 0.5 0 1 0 0 0
+      FADEOUT 2 2 0 1 0 0 0
+      IGUID {8D7E6622-98B8-32F7-91AF-4554CA6B9EB0}
+      NAME "TB Engineer 1"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/talkback-tb-engineer.wav"
+      >
+    >
+    <ITEM
+      POSITION 16
+      SNAPOFFS 0
+      LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.02 0 1 0 0 0
+      FADEOUT 5 0.5 0 1 0 0 0
+      IGUID {8D7E6522-98B8-3144-DAA7-BD31A482D3F0}
+      NAME "TB Engineer 3"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/talkback-tb-engineer.wav"
+      >
+    >
+    <ITEM
+      POSITION 56
+      SNAPOFFS 0
+      LENGTH 32
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.25 0 1 0 0 0
+      FADEOUT 5 1 0 1 0 0 0
+      IGUID {8D7E6822-98B8-365D-C8C3-2D151D05541C}
+      NAME "TB Engineer 8"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/talkback-tb-engineer.wav"
+      >
+    >
+    <ITEM
+      POSITION 88
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 0 0.02 0 1 0 0 0
       FADEOUT 2 0.1 0 1 0 0 0
+      IGUID {8D7E6722-98B8-34AA-8EFE-8CBEDC228BDC}
+      NAME "TB Engineer 12"
+      CHANMODE 0
+      <SOURCE WAVE
+        FILE "media/talkback-tb-engineer.wav"
+      >
+    >
+    <ITEM
+      POSITION 112
+      SNAPOFFS 0
+      LENGTH 16
+      LOOP 0
+      ALLTAKES 0
+      SEL 0
+      FADEIN 2 0.25 0 1 0 0 0
+      FADEOUT 0 2 0 1 0 0 0
       IGUID {8D7E6222-98B8-2C2B-BB78-119719C29C60}
       NAME "TB Engineer 15"
       CHANMODE 0

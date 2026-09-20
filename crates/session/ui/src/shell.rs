@@ -1,7 +1,7 @@
 //! Session Shell
 //!
 //! The complete session UI shell: top bar with branding and connection badge,
-//! dock layout with Navigator | Performance + Transport panels, and
+//! dock layout with Performance over Transport, and
 //! connection state screens (connecting / disconnected).
 //!
 //! Both the standalone session apps and the full `FastTrackStudio` app use this
@@ -33,16 +33,17 @@ pub fn SessionShell(
 
     // Initialize dock layout once
     use_hook(|| {
-        let layout = B::horizontal()
-            .left(B::tile(PanelId::Navigator))
-            .right(
-                B::vertical()
-                    .top(B::tile(PanelId::Performance))
-                    .bottom(B::tile(PanelId::Transport))
-                    .ratio(80.0)
-                    .build_node(),
-            )
-            .ratio(20.0)
+        // Performance over transport, full width.
+        //
+        // The navigator used to take the left fifth. It is gone from
+        // the performance surfaces — the view is a stage now, and a
+        // list of songs down the side is not what belongs on it. The
+        // panel itself still exists and is still registered, so a host
+        // that wants one can dock it.
+        let layout = B::vertical()
+            .top(B::tile(PanelId::Performance))
+            .bottom(B::tile(PanelId::Transport))
+            .ratio(80.0)
             .build();
 
         let mut registry = PanelRegistry::new();

@@ -301,6 +301,33 @@ impl SongView {
 /// layer only — never persisted to the song file.
 pub static SONG_VIEWS: GlobalSignal<HashMap<String, SongView>> = Signal::global(HashMap::new);
 
+/// The pass being reviewed, if there is one.
+///
+/// Set when a take ends and cleared when the next one starts. The
+/// review panel draws whatever is here, so what feeds it — a
+/// recording that just stopped, a take picked out of the list — is the
+/// caller's business and not the panel's.
+pub static TAKE_UNDER_REVIEW: GlobalSignal<Option<session_proto::review::Pass>> =
+    Signal::global(|| None);
+
+/// The consolidated peaks of the reviewed pass, for the performer this
+/// device belongs to. Empty means "not read yet", and the panel draws a
+/// line rather than a shape it made up.
+pub static TAKE_PEAKS: GlobalSignal<Vec<f32>> = Signal::global(Vec::new);
+
+/// Which ROLE this device is for — "Guitar 1", "Vocalist 2", "Drums".
+///
+/// A role and not a person: the tablet on the drum riser is the
+/// drummer's whoever is sitting there, the tracks are grouped by role
+/// already, and a dep playing tonight is still Guitar 1.
+///
+/// Per device and not per session — six tablets around a room are six
+/// answers.
+pub static ROLE: GlobalSignal<Option<String>> = Signal::global(|| None);
+
+/// The roles on this session, for the picker.
+pub static ROLES: GlobalSignal<Vec<String>> = Signal::global(Vec::new);
+
 /// Global playback state
 /// Updates when play/pause/stop state changes
 pub static PLAYBACK_STATE: GlobalSignal<PlayState> = Signal::global(|| PlayState::Stopped);

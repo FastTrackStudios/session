@@ -55,3 +55,16 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 [[profile.default.overrides]]
 filter = 'test(=every_zoom_renders_to_its_committed_fixture)'
 slow-timeout = { period = "60s", terminate-after = 10 }
+
+# The folder-item picture: one more real GPU frame through the bench,
+# and the last of that family without a raised timeout — it fitted the
+# default thirty seconds until a loaded box (load 107 on 32 cores) took
+# it to 30.04. Six seconds idle.
+#
+# Same principle as its siblings above: a timeout that only just fits on
+# an idle machine goes red under load, and a suite that goes red for
+# reasons unrelated to the code teaches everyone to rerun it instead of
+# reading it.
+[[profile.default.overrides]]
+filter = 'test(=a_hidden_child_replays_the_picture_and_a_muted_one_changes_it)'
+slow-timeout = { period = "60s", terminate-after = 10 }

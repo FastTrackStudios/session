@@ -26,6 +26,11 @@ facet = { workspace = true }
 # the wasm build nothing, and shared with the arrange view so both agree
 # on what "wide" means.
 adaptive-grid = { workspace = true }
+# The razor's rectangle and the set algebra over it, shared with the
+# arrangement so the two surfaces cannot disagree about what an area
+# IS. Dependency-free, so it costs the wasm build nothing — the same
+# bargain `adaptive-grid` makes.
+razor = { workspace = true }
 # The editor's commands are `#[architect::actions]` traits — see
 # `actions.rs`. `architect`'s `default = []` and its `action` module is
 # ungated, so this is metadata and a derive, not the RPC stack: no vox,

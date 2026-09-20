@@ -420,6 +420,28 @@ impl session::SetlistService for ReaperLanProxy {
         self.client.stop_recording().await.map_err(map_vox_err)
     }
 
+    async fn song_review(
+        &self,
+        song_index: usize,
+    ) -> Result<Vec<session_proto::review::Pass>, SessionServiceError> {
+        self.client
+            .song_review(song_index)
+            .await
+            .map_err(map_vox_err)
+    }
+
+    async fn mark_take(
+        &self,
+        song_index: usize,
+        pass: u32,
+        mark: session_proto::review::Mark,
+    ) -> Result<(), SessionServiceError> {
+        self.client
+            .mark_take(song_index, pass, mark)
+            .await
+            .map_err(map_vox_err)
+    }
+
     async fn toggle_recording(&self) -> Result<(), SessionServiceError> {
         self.client.toggle_recording().await.map_err(map_vox_err)
     }

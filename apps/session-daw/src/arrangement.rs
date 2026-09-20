@@ -178,6 +178,13 @@ pub struct Arrangement {
     /// horizontally — it is replayed under a transform that carries only
     /// the vertical scroll.
     pub panel: Scene,
+    /// What vertical zoom [`Self::panel`] was cut at.
+    ///
+    /// Read by the window to know whether the cut it is about to replay
+    /// is still the right one. Not a `Cell` the replay checks itself,
+    /// because re-cutting needs the rows and the theme and the replay
+    /// has neither — the decision belongs to whoever is drawing.
+    pub panel_zoom: f64,
     /// The same panel as bands: two rectangles a row, no controls.
     ///
     /// The detail a row deserves depends on how tall it is ON SCREEN,
@@ -281,7 +288,36 @@ impl Arrangement {
         Some((top, (bottom - top - DIVIDER).max(0.5)))
     }
 
+    /// A row's band ON SCREEN: where [`Self::row_box`] puts it, after
+    /// the vertical zoom.
+    ///
+    /// The difference matters to everything drawn OVER the panel
+    /// rather than recorded into it. The recording is replayed under a
+    /// transform that already carries `zoom_y`, so session coordinates
+    /// are all it needs. The live controls — the knob, the arm, the
+    /// name, mute and solo — are drawn fresh every frame under a plain
+    /// translate, because they must not stretch when the rows get
+    /// taller. That leaves them to do the placing themselves, and not
+    /// doing it is why they walked off their own rows the moment
+    /// anybody zoomed.
+    ///
+    /// The height is scaled too, and deliberately: it is what decides
+    /// which tier of controls a row shows, and the answer has to be
+    /// about the row on screen rather than the row in the session.
+    /// What does NOT scale is the art inside the band — see
+    /// `crate::art::squashed`, which clamps at 1.
+    #[must_use]
+    pub fn row_band(&self, row: usize, view: Viewport) -> Option<(f64, f64)> {
+        let (top, height) = self.row_box(row)?;
+        let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+        Some((top * zoom, height * zoom))
+    }
+
     /// Which row is at a content y, if any.
+    ///
+    /// `content_y` is in SESSION units — divide a screen offset by the
+    /// vertical zoom before asking, or use [`Self::row_at_screen`],
+    /// which does it for you.
     ///
     /// The same binary search `visible_rows` uses, over the same
     /// cumulative offsets — so a hit and a draw cannot disagree about
@@ -297,6 +333,53 @@ impl Arrangement {
             .partition_point(|&y| y <= content_y)
             .checked_sub(1)?;
         (row < self.rows).then_some(row)
+    }
+
+    /// Which row is under a y measured in SCREEN pixels from the top
+    /// of the lanes.
+    ///
+    /// The pair to [`Self::row_band`], and the reason both exist: a
+    /// hit arrives in screen pixels and the offsets are in session
+    /// units, so something has to divide — and for a while nothing
+    /// did, which meant that at any zoom but 1 the pointer reported a
+    /// row it was not over.
+    #[must_use]
+    pub fn row_at_screen(&self, screen_y: f64, view: Viewport) -> Option<usize> {
+        let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+        self.row_at(screen_y / zoom)
+    }
+
+    /// The panel row and control under a point, in the SCREEN
+    /// coordinates the lanes start from.
+    ///
+    /// `x` is measured from the left of the panel and `y` from the top
+    /// of the lanes, which is the frame every caller already has to put
+    /// the panel in. Lives here rather than in a window because the
+    /// answer has to come from the same geometry the row was DRAWN
+    /// from, and two windows working it out separately is two chances
+    /// to disagree about which button the pointer is on.
+    #[must_use]
+    pub fn row_spot_at(
+        &self,
+        view: Viewport,
+        rows: &[(daw_proto::Track, u32)],
+        x: f64,
+        y: f64,
+    ) -> Option<(usize, crate::row::Control)> {
+        if x < 0.0 || x >= TCP_WIDTH {
+            return None;
+        }
+        let index = self.row_at_screen(y, view)?;
+        let (top, height) = self.row_band(index, view)?;
+        let (track, depth) = rows.get(index)?;
+        let row = crate::row::Row::new(
+            top,
+            height,
+            i32::try_from(*depth).unwrap_or(0),
+            track.is_folder,
+        );
+        // In the band's own frame, which is what `Row` measures from.
+        Some((index, row.control_at(x, y)?))
     }
 
     /// The rows that intersect `view`, clamped to what exists.
@@ -357,6 +440,101 @@ impl Viewport {
     }
 }
 
+/// The track panel, recorded at a vertical zoom.
+///
+/// Its own function, and re-runnable, because the panel is the one
+/// surface that must NOT be scaled into place. The lanes can be: a
+/// waveform stretched twice as tall is a waveform twice as tall, which
+/// is what zooming a lane means. A track panel stretched twice as tall
+/// is a name plate with the lettering pulled out of shape and a knob
+/// turned into an ellipse — every one of which was on screen the
+/// moment anybody zoomed.
+///
+/// So the row art is cut fresh at the heights it will be seen at, and
+/// replayed under a translate. What does not scale with it is
+/// [`DIVIDER`]: a hairline between rows is a hairline at every zoom,
+/// and multiplying it was the other half of the same bug.
+fn record_panel(
+    palette: &Palette,
+    font: &crate::text::Font,
+    rows: &[(daw_proto::Track, u32)],
+    layout: crate::layout::Layout,
+    zoom: f64,
+) -> Panels {
+    let mut panel = Scene::new();
+    let mut bar = Scene::new();
+    let mut spans = Vec::with_capacity(rows.len());
+    let mut bar_spans = Vec::with_capacity(rows.len());
+    let mut lineage: Vec<Color> = Vec::new();
+    let mut y = 0.0_f64;
+    for (track, depth) in rows {
+        let level = usize::try_from(*depth).unwrap_or(0);
+        lineage.truncate(level);
+        let ancestors = lineage.clone();
+        lineage.push(crate::tcp::folder_band(palette, track));
+
+        let from = command_index(&panel);
+        let bar_from = command_index(&bar);
+        let h = layout.height_of(track.height) * zoom;
+        let body = (h - DIVIDER).max(0.5);
+
+        crate::tcp::draw_row(
+            &mut panel,
+            palette,
+            font,
+            track,
+            i32::try_from(*depth).unwrap_or(0),
+            y,
+            body,
+            &ancestors,
+        );
+        panel.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            palette.divider,
+            None,
+            &Rect::new(0.0, y + body, TCP_WIDTH, y + h),
+        );
+
+        // The same row as a band, for when it is too short on screen to
+        // be worth more. Its tint and its gutter and nothing else.
+        bar.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            crate::tcp::row_tint(palette, track),
+            None,
+            &Rect::new(0.0, y, TCP_WIDTH, y + body),
+        );
+        bar.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            palette.divider,
+            None,
+            &Rect::new(0.0, y + body, TCP_WIDTH, y + h),
+        );
+
+        spans.push(from..command_index(&panel));
+        bar_spans.push(bar_from..command_index(&bar));
+        y += h;
+    }
+    Panels {
+        panel,
+        bar,
+        spans,
+        bar_spans,
+        zoom,
+    }
+}
+
+/// One cut of the panel, at one zoom.
+struct Panels {
+    panel: Scene,
+    bar: Scene,
+    spans: Vec<std::ops::Range<u32>>,
+    bar_spans: Vec<std::ops::Range<u32>>,
+    zoom: f64,
+}
+
 impl Arrangement {
     /// Record the whole project, once.
     #[must_use]
@@ -369,31 +547,19 @@ impl Arrangement {
         previews: &crate::midi::Previews,
     ) -> Self {
         let mut lanes = Scene::new();
-        let mut panel = Scene::new();
-        let mut panel_bar = Scene::new();
         let mut index = Index::default();
         let mut titles = Vec::with_capacity(project.item_count);
         let mut boxes = Vec::with_capacity(project.item_count);
         let mut offsets = Vec::with_capacity(rows.len().saturating_add(1));
-        // The colour of the folder open at each depth, so a row can
-        // paint the folders it sits inside down its own left edge.
-        let mut lineage: Vec<Color> = Vec::new();
-
         let mut y = 0.0_f64;
         for (row, (track, depth)) in rows.iter().enumerate() {
             // A folder closes simply by the next row being shallower,
             // so the truncate IS the close.
-            let level = usize::try_from(*depth).unwrap_or(0);
-            lineage.truncate(level);
-            let ancestors = lineage.clone();
-            lineage.push(crate::tcp::folder_band(palette, track));
             // Command indices are `u32`: two per row plus one per item,
             // so four billion of them is a project nothing could open.
             // Saturating rather than wrapping, because a wrapped index
             // would cull the wrong rows rather than fail.
             let lanes_from = command_index(&lanes);
-            let panel_from = command_index(&panel);
-            let bar_from = command_index(&panel_bar);
             offsets.push(y);
             // The track's own height, or the user's default, floored at
             // something far below REAPER's minimum — see `layout`. The
@@ -426,44 +592,9 @@ impl Arrangement {
             );
             index.x.push((f64::MIN, f64::MAX));
 
-            // The panel row — the whole REAPER-matched control panel, at
-            // the geometry the DOM row uses. See `crate::tcp`.
-            crate::tcp::draw_row(
-                &mut panel,
-                palette,
-                font,
-                track,
-                i32::try_from(*depth).unwrap_or(0),
-                y,
-                body,
-                &ancestors,
-            );
-            // The same row as a band, for when it is too short on
-            // screen to be worth more. Its tint and its gutter and
-            // nothing else — see `Arrangement::panel_bar`.
-            panel_bar.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                crate::tcp::row_tint(palette, track),
-                None,
-                &Rect::new(0.0, y, TCP_WIDTH, y + body),
-            );
-            panel_bar.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                palette.divider,
-                None,
-                &Rect::new(0.0, y + body, TCP_WIDTH, y + h),
-            );
-
-            // The divider under it, matching the lane's.
-            panel.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                palette.divider,
-                None,
-                &Rect::new(0.0, y + body, TCP_WIDTH, y + h),
-            );
+            // The panel row is NOT recorded here — see `record_panel`,
+            // which cuts it fresh at whatever height the zoom asks for
+            // rather than letting a transform stretch it.
 
             // The items on this lane. An item with no colour of its own
             // takes its TRACK's, which is what makes a session read by
@@ -547,8 +678,6 @@ impl Arrangement {
             }
 
             index.lanes.push(lanes_from..command_index(&lanes));
-            index.panel.push(panel_from..command_index(&panel));
-            index.panel_bar.push(bar_from..command_index(&panel_bar));
             y += h;
         }
         // The bottom of the last row, so every row has a `..end`.
@@ -560,10 +689,17 @@ impl Arrangement {
             "one x extent per lane command"
         );
 
+        // The panel, cut at zoom 1 to start with. `repanel` re-cuts it
+        // whenever the vertical zoom moves.
+        let cut = record_panel(palette, font, rows.as_slice(), layout, 1.0);
+        index.panel = cut.spans;
+        index.panel_bar = cut.bar_spans;
+
         Self {
             lanes,
-            panel,
-            panel_bar,
+            panel: cut.panel,
+            panel_bar: cut.bar,
+            panel_zoom: cut.zoom,
             index,
             offsets,
             rows: rows.len(),
@@ -630,6 +766,38 @@ impl Arrangement {
     #[must_use]
     pub fn item(&self, index: usize) -> Option<&ItemBox> {
         self.items.get(index)
+    }
+
+    /// Every other edge sitting at `at` on the same row.
+    ///
+    /// Two items butted together share a boundary: one ends where the
+    /// next begins. Grabbing it and moving only one of them opens a gap
+    /// or an overlap, which is never what was meant — what the hand is
+    /// on is the SEAM, and a seam moves as one thing.
+    ///
+    /// Answered in seconds with a tolerance, because the times came
+    /// from a file and two edges written to be equal are equal to
+    /// within a rounding. Returns each neighbour's guid and which of
+    /// its own edges is the one that touches.
+    #[must_use]
+    pub fn edges_at(&self, row: usize, at: f64, except: &str) -> Vec<(String, ItemZone)> {
+        /// A millisecond. Below a millisecond two edges are the same
+        /// edge however they were written down, and above it they are
+        /// two edges somebody meant to put near each other.
+        const SAME: f64 = 0.001;
+        self.items
+            .iter()
+            .filter(|item| item.row == row && item.guid != except)
+            .filter_map(|item| {
+                if (item.x0 - at).abs() <= SAME {
+                    Some((item.guid.clone(), ItemZone::LeftEdge))
+                } else if (item.x1 - at).abs() <= SAME {
+                    Some((item.guid.clone(), ItemZone::RightEdge))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// An item's box, by its guid.
@@ -1130,8 +1298,55 @@ impl Arrangement {
         counts
     }
 
+    /// Cut the panel again, for a new vertical zoom.
+    ///
+    /// Cheap enough to do while a zoom is in flight — it is forty rows
+    /// of vector art, not the whole session — and the only way to zoom
+    /// a panel without deforming it. See [`record_panel`].
+    ///
+    /// A no-op when the zoom has not moved, so the caller can ask every
+    /// frame and pay only on the frames that changed.
+    pub fn repanel(
+        &mut self,
+        palette: &Palette,
+        font: &crate::text::Font,
+        rows: &[(daw_proto::Track, u32)],
+        layout: crate::layout::Layout,
+        zoom: f64,
+    ) -> bool {
+        let zoom = if zoom > 0.0 { zoom } else { 1.0 };
+        if (zoom - self.panel_zoom).abs() < f64::EPSILON {
+            return false;
+        }
+        let cut = record_panel(palette, font, rows, layout, zoom);
+        self.panel = cut.panel;
+        self.panel_bar = cut.bar;
+        self.index.panel = cut.spans;
+        self.index.panel_bar = cut.bar_spans;
+        self.panel_zoom = cut.zoom;
+        true
+    }
+
+    /// Forget which zoom the panel was cut at, so the next
+    /// [`Self::repanel`] re-cuts whatever the zoom is doing.
+    ///
+    /// For the things a cut BAKES IN that are not the zoom — the track
+    /// name above all. A name is recorded chrome, not a live value, so
+    /// renaming a track changes nothing on screen until the row it is
+    /// written into is drawn again.
+    pub fn forget_panel(&mut self) {
+        // NaN, because every comparison against it is false — which is
+        // exactly "this cut matches nothing".
+        self.panel_zoom = f64::NAN;
+    }
+
     /// The same for the track panel, which scrolls vertically only and
     /// therefore needs no horizontal test.
+    ///
+    /// `transform` must be a TRANSLATE. The cut being replayed was made
+    /// at `panel_zoom` and already carries the vertical zoom in its own
+    /// geometry, so scaling it here would apply the zoom twice — and
+    /// deform it, which is the thing [`Self::repanel`] exists to stop.
     pub fn replay_panel(
         &self,
         painter: &mut impl PaintScene,

@@ -147,20 +147,60 @@ fn a_scene_resolving_to_no_rows_fails_its_fixture() {
 
 /// The two surfaces are two tables: the same scene gives a strip a width
 /// and a row a height, and neither number is the other.
+///
+/// Matched by guid rather than by position. The two row lists used to be
+/// the same length and this test zipped them, which stopped being true
+/// the moment a scene used `Rule::arrange` to drop the parallel colour
+/// out of the panel — the surfaces are allowed to disagree about WHICH
+/// rows there are, and what is being asserted here is only that a row
+/// present on both gets each table's own number.
 #[test]
 fn a_scene_sizes_both_surfaces_from_its_own_table() {
     let facts = scenes::from_flat(&flatten(&maximal()));
     let scene = scenes::scene("drum-mixing").expect("a scene");
     let mixer = scenes::resolve(scene, &facts, Surface::Mixer, None, None, None);
     let arrange = scenes::resolve(scene, &facts, Surface::Arrange, None, None, None);
-    assert_eq!(mixer.len(), arrange.len(), "the same rows survive");
-    let kick = mixer
+    let worked = mixer
         .iter()
-        .zip(&arrange)
-        .find(|(m, _)| m.size == Size::Working)
+        .find(|row| row.size == Size::Working)
         .expect("something is worked on");
-    assert!((scenes::TABLES.width(kick.0.size, PANEL) - 133.0).abs() < f64::EPSILON);
-    assert!((scenes::TABLES.height(kick.1.size) - 96.0).abs() < f64::EPSILON);
+    let guid = worked.guid().expect("a worked row is a track");
+    let same = arrange
+        .iter()
+        .find(|row| row.guid() == Some(guid))
+        .expect("the panel dropped a track the mixer works on");
+    assert!((scenes::TABLES.width(worked.size, PANEL) - 133.0).abs() < f64::EPSILON);
+    assert!((scenes::TABLES.height(same.size) - 96.0).abs() < f64::EPSILON);
+}
+
+/// The panel may show FEWER rows than the mixer, never more.
+///
+/// A scene can take a row out of the arrangement and leave the strip —
+/// that is what `Rule::arrange` is for, and Drum Mixing uses it for the
+/// parallel colour. The other direction has no meaning: a track you can
+/// edit and cannot mix is not a state any flow wants, and a rule that
+/// produced one would be a mistake rather than a choice.
+#[test]
+fn the_panel_never_shows_a_row_the_mixer_hides() {
+    let facts = scenes::from_flat(&flatten(&maximal()));
+    for scene in scenes::scenes() {
+        let of = |surface| -> std::collections::HashSet<String> {
+            scenes::resolve(scene, &facts, surface, None, None, None)
+                .iter()
+                .filter_map(|row| row.guid())
+                .map(str::to_owned)
+                .collect()
+        };
+        let extra: Vec<String> = of(Surface::Arrange)
+            .difference(&of(Surface::Mixer))
+            .cloned()
+            .collect();
+        assert!(
+            extra.is_empty(),
+            "{} shows rows in the panel that its mixer hides: {extra:?}",
+            scene.slug
+        );
+    }
 }
 
 /// **Drum Tracking Overview**: the kit as the drummer reads it. One row

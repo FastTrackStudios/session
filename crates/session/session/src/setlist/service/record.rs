@@ -6,12 +6,13 @@ use super::SetlistServiceImpl;
 use daw::service::ProjectContext;
 use daw::service::Tracks;
 use daw::service::transport::service::Transport;
+use daw::service::{ExtState, Projects};
 use session_proto::SessionServiceError;
 use tracing::{debug, warn};
 
 impl<D> SetlistServiceImpl<D>
 where
-    D: Transport + Tracks + architect::MaybeSendSync,
+    D: Transport + Tracks + Projects + ExtState + Clone + architect::MaybeSendSync + 'static,
 {
     pub(crate) async fn record_impl(&self) -> Result<(), SessionServiceError>
     where
@@ -20,12 +21,17 @@ where
         debug!("record");
         if let Some(song) = self.get_cached_active_song().await {
             let daw = self.daw.clone();
-            let result = daw_proto::main_thread::query(move || {
-                daw.record(ProjectContext::Project(song.project_guid))
+            let guid = song.project_guid.clone();
+            let result = daw_proto::main_thread::query({
+                let guid = guid.clone();
+                move || daw.record(ProjectContext::Project(guid))
             })
             .await;
-            if let Some(Err(e)) = result {
-                warn!("Failed to record: {}", e);
+            match result {
+                Some(Err(e)) => warn!("Failed to record: {}", e),
+                // A take begins. Where it began is held until it has an
+                // end — see `review::take_started`.
+                _ => self.take_started(&guid).await,
             }
         } else {
             warn!("No active song to record into (navigate to a song first)");
@@ -47,6 +53,10 @@ where
             if let Some(Err(e)) = result {
                 warn!("Failed to stop recording: {}", e);
             }
+            // The take is over, so it is a take: a pass with both ends,
+            // on every tablet in the room.
+            let index = self.get_cached_indices().await.song_index;
+            self.take_finished(index).await;
         } else {
             warn!("No active song to stop recording (navigate to a song first)");
         }

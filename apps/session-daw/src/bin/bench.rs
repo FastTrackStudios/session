@@ -339,12 +339,10 @@ fn main() {
                             Affine::translate((TCP_WIDTH - scroll_x, -scroll_y))
                                 * Affine::scale_non_uniform(PPS * zx, zy),
                         );
-                        let b = scene.replay_panel(
-                            painter,
-                            view,
-                            Affine::translate((0.0, -scroll_y))
-                                * Affine::scale_non_uniform(1.0, zy),
-                        );
+                        // Translate only: the cut already carries the
+                        // zoom — see `Arrangement::repanel`.
+                        let b =
+                            scene.replay_panel(painter, view, Affine::translate((0.0, -scroll_y)));
                         // After the lanes, not before: the lane
                         // backgrounds are opaque and painted the grid
                         // straight out of the frame.
@@ -1018,7 +1016,7 @@ fn verify(
             };
             let lanes = Affine::translate((TCP_WIDTH - scroll_x, -scroll_y))
                 * Affine::scale_non_uniform(PPS * zx, zy);
-            let panel = Affine::translate((0.0, -scroll_y)) * Affine::scale_non_uniform(1.0, zy);
+            let panel = Affine::translate((0.0, -scroll_y));
 
             let mut counts = Counts::default();
             renderer.render_to_vec(
@@ -1143,13 +1141,30 @@ fn shot(
     // mixer — the panel has to know what it has or it draws rows under
     // the right rail and pays for every one.
     let frame = session_daw::rails::Frame::new(f64::from(width), f64::from(height));
-    let view = Viewport {
-        scroll_x,
-        scroll_y,
-        pps: PPS * zoom_x,
-        zoom_y,
-        width: frame.content_width(),
-        height: frame.content_height(),
+    // `FTS_BENCH_SECTION=<n>` frames the review's window on that
+    // section instead — the arrangement scrolled and zoomed to one
+    // section with its run-up and tail, which is what a tablet shows
+    // while a take is being judged. Same renderer, one viewport apart.
+    let view = match std::env::var("FTS_BENCH_SECTION")
+        .ok()
+        .and_then(|n| n.trim().parse::<usize>().ok())
+        .and_then(|n| scene.sections().get(n).cloned())
+    {
+        Some(section) => session_daw::take_window::viewport(
+            (section.start, section.end),
+            scene.tempo(),
+            frame.content_width(),
+            frame.content_height(),
+            zoom_y,
+        ),
+        None => Viewport {
+            scroll_x,
+            scroll_y,
+            pps: PPS * zoom_x,
+            zoom_y,
+            width: frame.content_width(),
+            height: frame.content_height(),
+        },
     };
     let rail_x = session_daw::rails::SIDE;
     let rail_y = session_daw::rails::TOP;
@@ -1208,8 +1223,7 @@ fn shot(
             let b = scene.replay_panel(
                 painter,
                 view,
-                Affine::translate((rail_x, rail_y + RULER_H - scroll_y))
-                    * Affine::scale_non_uniform(1.0, zoom_y),
+                Affine::translate((rail_x, rail_y + RULER_H - scroll_y)),
             );
             ruler::grid(
                 painter,
@@ -1270,6 +1284,27 @@ fn shot(
                 rail_y + RULER_H,
                 rail_y + view.height,
             );
+            // The edit cursor and the playhead, as the window draws
+            // them. At rest — time zero, no selection — which is where
+            // a freshly opened session has them, and the only place a
+            // reference shot can honestly put them.
+            session_daw::cursor::paint_edit(
+                painter,
+                palette,
+                &session_daw::cursor::Edit::default(),
+                view,
+                (rail_x, rail_y),
+                rail_y,
+                rail_y + view.height,
+            );
+            session_daw::cursor::paint(
+                painter,
+                session_daw::cursor::Look::default(),
+                rail_x + TCP_WIDTH - scroll_x,
+                rail_y,
+                rail_y + view.height,
+                rail_x + TCP_WIDTH,
+            );
             // The scrollbars, as the window draws them: the shot is
             // compared to the screen.
             let lanes = vello::kurbo::Rect::new(
@@ -1291,8 +1326,8 @@ fn shot(
             // The arrangement's left rail carries the same visual
             // presets the mixer's does — they are layouts of the
             // SESSION, not of one panel, so switching one switches
-            // both. Its right rail is empty until the arrangement has
-            // settings of its own worth switching.
+            // both. Its right rail carries the settings that ARE the
+            // arrangement's own: so far, what a shut folder shows.
             let profile = session_daw::rails::profile(
                 session_daw::rails::Surface::Arrange,
                 session::modes::Mode::Mix,

@@ -68,6 +68,16 @@ pub enum Effect {
     Transport(Move, f64),
     /// The window's playhead, told where the transport went.
     Playhead(f64),
+    /// The edit could not honestly be made, and this is why.
+    ///
+    /// Carried rather than swallowed: an edit that silently does nothing
+    /// reads as a broken window. The only case so far is a folded row
+    /// whose takes do not line up under the hand — see
+    /// [`daw_ui::studio::folded::spread`].
+    ///
+    /// The window has nowhere to SHOW one yet; it logs it. A notice
+    /// channel is its own piece of work.
+    Refused(&'static str),
 }
 
 /// An item taken hold of by its body or an edge.
@@ -83,6 +93,16 @@ pub struct ItemPress {
     pub from: f64,
     /// Where it would land, once the press has become a drag.
     pub ghost: Option<(f64, f64)>,
+    /// Whether the drop lands on the grid, as the mouse map resolved
+    /// it when the press landed.
+    pub snap: bool,
+    /// The other edges that were sitting exactly where this one was,
+    /// and which of their own edges it is.
+    ///
+    /// Worked out at PRESS and not at release, because by release the
+    /// edge has moved and nothing is sitting there any more. See
+    /// [`Arrangement::edges_at`] for why a seam moves as one thing.
+    pub joined: Vec<(String, ItemZone)>,
 }
 
 /// A fade taken hold of by its handle.
@@ -136,6 +156,9 @@ struct RulerPress {
     was: (f64, f64),
     /// Where it would land, once the press has become a drag.
     ghost: Option<(f64, f64)>,
+    /// Whether it lands on the grid, as the mouse map resolved it when
+    /// the press landed — see `ItemPress::snap`.
+    snap: bool,
 }
 
 impl Editor {
@@ -156,7 +179,8 @@ impl Editor {
                 seconds,
                 ..
             } => {
-                let action = mousemap::resolve(hit.context, Gesture::Drag, keys);
+                let bound = mousemap::resolve(hit.context, Gesture::Drag, keys);
+                let action = bound.action;
                 let Some(item) = scene.item(index) else {
                     return false;
                 };
@@ -175,6 +199,14 @@ impl Editor {
                     mousemap::Action::MoveItem
                     | mousemap::Action::TrimLeft
                     | mousemap::Action::TrimRight => {
+                        // A trim takes the seam with it; a move does
+                        // not — sliding an item along its lane is
+                        // meant to leave its neighbours alone.
+                        let joined = match zone {
+                            ItemZone::LeftEdge => scene.edges_at(item.row, item.x0, &item.guid),
+                            ItemZone::RightEdge => scene.edges_at(item.row, item.x1, &item.guid),
+                            _ => Vec::new(),
+                        };
                         self.item_press = Some(ItemPress {
                             index,
                             guid: item.guid.clone(),
@@ -183,6 +215,13 @@ impl Editor {
                             x1: item.x1,
                             from: seconds,
                             ghost: None,
+                            joined,
+                            // Resolved at the PRESS and obeyed for the
+                            // rest of the gesture. A modifier let go of
+                            // halfway through a drag must not change
+                            // what the drag is — you would be holding
+                            // one thing and dropping another.
+                            snap: bound.snap,
                         });
                         true
                     }
@@ -207,6 +246,7 @@ impl Editor {
                     from: seconds,
                     was,
                     ghost: None,
+                    snap: mousemap::resolve(hit.context, Gesture::Drag, keys).snap,
                 });
                 // The bars are the timeline, so a press there still
                 // means what a press on a timeline has always meant.
@@ -221,7 +261,7 @@ impl Editor {
                 true
             }
             Target::Lane { seconds, .. } => {
-                if mousemap::resolve(hit.context, Gesture::Click, keys)
+                if mousemap::resolve(hit.context, Gesture::Click, keys).action
                     != mousemap::Action::SetEditCursor
                 {
                     return false;
@@ -250,11 +290,12 @@ impl Editor {
                 return false;
             }
             let beat = 60.0 / bpm.max(1.0);
+            let on_grid = press.snap;
             let snap = |t: f64| {
-                if keys.shift {
-                    t
-                } else {
+                if on_grid {
                     (t / beat).round() * beat
+                } else {
+                    t
                 }
             };
             press.ghost = Some(match press.zone {
@@ -275,14 +316,16 @@ impl Editor {
                 return false;
             }
             let beat = 60.0 / bpm.max(1.0);
-            // Shift means "exactly here", the same as it does for an
-            // item. A section boundary that is a hair off the bar is
-            // one REAPER will draw a hair off the bar forever.
+            // Off the grid means "exactly here", the same as it does
+            // for an item, and it is the map that says so. A section
+            // boundary that is a hair off the bar is one REAPER will
+            // draw a hair off the bar forever.
+            let on_grid = press.snap;
             let snap = |t: f64| {
-                if keys.shift {
-                    t.max(0.0)
-                } else {
+                if on_grid {
                     ((t / beat).round() * beat).max(0.0)
+                } else {
+                    t.max(0.0)
                 }
             };
             let (was0, was1) = press.was;
@@ -382,18 +425,77 @@ impl Editor {
             match press.ghost {
                 None => self.select(&press.guid, !keys.ctrl, project, effects),
                 Some((x0, x1)) => {
-                    let edit = match press.zone {
-                        ItemZone::LeftEdge | ItemZone::RightEdge => {
-                            Edit::TrimItem(press.guid.clone(), x0, x1 - x0)
+                    // On a folded row this lands on every mic under the
+                    // item, because on screen they are one item. The
+                    // span carries the same position and length as each
+                    // of them — that is what `Span::whole` guarantees
+                    // and why a ragged one is refused instead.
+                    let trimming = matches!(press.zone, ItemZone::LeftEdge | ItemZone::RightEdge);
+                    let made = spread_item_edit(
+                        project,
+                        &press.guid,
+                        effects,
+                        |guid| {
+                            if trimming {
+                                Edit::TrimItem(guid.to_owned(), x0, x1 - x0)
+                            } else {
+                                Edit::MoveItem(guid.to_owned(), x0)
+                            }
+                        },
+                        |item| {
+                            item.position =
+                                daw_proto::primitives::PositionInSeconds::from_seconds(x0);
+                            item.length = daw_proto::primitives::Duration::from_seconds(x1 - x0);
+                        },
+                    );
+                    // And every edge that was sitting on the one just
+                    // moved goes with it, or a trim opens a gap where
+                    // two items were butted together.
+                    let mut moved_any = made;
+                    if trimming {
+                        let to = if matches!(press.zone, ItemZone::LeftEdge) {
+                            x0
+                        } else {
+                            x1
+                        };
+                        for (guid, edge) in &press.joined {
+                            let start = matches!(edge, ItemZone::LeftEdge);
+                            // Read the span before the walk, because
+                            // the walk holds `project.items` mutably
+                            // and the edit has to name the whole span:
+                            // there is no "move this edge" edit, only
+                            // "this item is now here, this long".
+                            let Some((was0, was1)) = project
+                                .items
+                                .values()
+                                .flatten()
+                                .find(|item| item.guid == *guid)
+                                .map(|item| {
+                                    let at = item.position.as_seconds();
+                                    (at, at + item.length.as_seconds())
+                                })
+                            else {
+                                continue;
+                            };
+                            let (a, b) = if start { (to, was1) } else { (was0, to) };
+                            let (a, b) = (a.min(b), a.max(b));
+                            moved_any |= spread_item_edit(
+                                project,
+                                guid,
+                                effects,
+                                |guid| Edit::TrimItem(guid.to_owned(), a, b - a),
+                                |item| {
+                                    item.position =
+                                        daw_proto::primitives::PositionInSeconds::from_seconds(a);
+                                    item.length =
+                                        daw_proto::primitives::Duration::from_seconds(b - a);
+                                },
+                            );
                         }
-                        _ => Edit::MoveItem(press.guid.clone(), x0),
-                    };
-                    edit_item(project, &press.guid, |item| {
-                        item.position = daw_proto::primitives::PositionInSeconds::from_seconds(x0);
-                        item.length = daw_proto::primitives::Duration::from_seconds(x1 - x0);
-                    });
-                    effects.push(Effect::Send(edit));
-                    effects.push(Effect::ReRecord);
+                    }
+                    if moved_any {
+                        effects.push(Effect::ReRecord);
+                    }
                 }
             }
             return true;
@@ -569,12 +671,25 @@ impl Editor {
         if exclusive {
             self.selected.clear();
         }
+        // The folded guid is what the window holds — it is what a later
+        // delete or drag will be aimed at, and what the row draws as
+        // selected. The ENGINE is told about the mics, because those are
+        // the items it has. Selecting a fragment is allowed: every mic
+        // sounding under it is unambiguous, and refusing a click would
+        // make the row feel broken rather than careful.
+        let real = targets(project, guid, false, effects).unwrap_or_default();
         self.selected.insert(guid.to_owned());
         let selected = &self.selected;
         for item in project.items.values_mut().flatten() {
-            item.selected = selected.contains(&item.guid);
+            item.selected = selected.contains(&item.guid) || real.contains(&item.guid);
         }
-        effects.push(Effect::Send(Edit::SelectItem(guid.to_owned(), exclusive)));
+        let mut first = exclusive;
+        for target in real {
+            effects.push(Effect::Send(Edit::SelectItem(target, first)));
+            // Only the first replaces the selection; the rest join it,
+            // or the row would end up with one mic selected.
+            first = false;
+        }
     }
 
     /// A bound key. `false` when this cannot do it, so the key falls
@@ -626,11 +741,25 @@ impl Editor {
                 if doomed.is_empty() {
                     return true;
                 }
+                // A folded item is a view of the mics under it, so
+                // deleting one deletes them. Resolved before anything is
+                // removed, so a refusal leaves the selection's real
+                // items alone rather than half-deleting the row.
+                let mut real: Vec<String> = Vec::with_capacity(doomed.len());
+                for guid in doomed {
+                    let Some(targets) = targets(project, &guid, true, effects) else {
+                        continue;
+                    };
+                    real.extend(targets);
+                }
+                if real.is_empty() {
+                    return true;
+                }
                 for lane in project.items.values_mut() {
-                    lane.retain(|i| !doomed.contains(&i.guid));
+                    lane.retain(|i| !real.contains(&i.guid));
                 }
                 project.item_count = project.items.values().map(Vec::len).sum();
-                for guid in doomed {
+                for guid in real {
                     effects.push(Effect::Send(Edit::DeleteItem(guid)));
                 }
                 effects.push(Effect::ReRecord);
@@ -722,13 +851,36 @@ impl Editor {
     /// item that does when nothing is selected — REAPER's rule for the
     /// split key. Each becomes two here, and the engine is told.
     pub fn split_at(&mut self, at: f64, project: &mut Project, effects: &mut Vec<Effect>) {
+        // Which real items the selection's folded rows stand for. Worked
+        // out before the walk, because the walk holds `project.items`
+        // mutably and the folds are read from the same project.
+        let folded: HashSet<String> = self
+            .selected
+            .iter()
+            .filter_map(|guid| match project.spread(guid, true) {
+                daw_ui::studio::folded::Spread::Children(items) => Some(items),
+                // A ragged row cannot be split on this row's edges, and
+                // the reason travels the way every other refusal does.
+                daw_ui::studio::folded::Spread::Refused(why) => {
+                    effects.push(Effect::Refused(why));
+                    None
+                }
+                daw_ui::studio::folded::Spread::Direct => None,
+            })
+            .flatten()
+            .collect();
         let mut splits = Vec::new();
         for lane in project.items.values_mut() {
             let mut halves = Vec::new();
             for item in lane.iter_mut() {
                 let start = item.position.as_seconds();
                 let end = start + item.length.as_seconds();
-                let mine = self.selected.is_empty() || self.selected.contains(&item.guid);
+                // A mic is "mine" when it is selected itself or when the
+                // folded row over it is — splitting a folded item splits
+                // every mic under it, which is what the row says it is.
+                let mine = self.selected.is_empty()
+                    || self.selected.contains(&item.guid)
+                    || folded.contains(&item.guid);
                 if !mine || at <= start + 1e-3 || at >= end - 1e-3 {
                     continue;
                 }
@@ -761,6 +913,57 @@ impl Editor {
         }
         effects.push(Effect::ReRecord);
     }
+}
+
+/// Which real items an edit aimed at `guid` has to be made on.
+///
+/// The one gate between a gesture and the session. An item on a folded
+/// row is not an item the session has — it is a view of the mics under
+/// it — so every edit passes through here and comes out addressed to
+/// things that exist. A `folded:` guid can then never reach the engine,
+/// which is an invariant rather than a discipline: this is the only
+/// place a target is chosen.
+///
+/// `None` means the edit was refused and the reason has been pushed.
+fn targets(
+    project: &Project,
+    guid: &str,
+    destructive: bool,
+    effects: &mut Vec<Effect>,
+) -> Option<Vec<String>> {
+    use daw_ui::studio::folded::Spread;
+    match project.spread(guid, destructive) {
+        Spread::Direct => Some(vec![guid.to_owned()]),
+        Spread::Children(items) => Some(items),
+        Spread::Refused(why) => {
+            effects.push(Effect::Refused(why));
+            None
+        }
+    }
+}
+
+/// Make one item edit, on every item it really belongs to.
+///
+/// Predicts locally and sends, in that order and for the same targets,
+/// so the window and the session cannot disagree about what a drag did.
+/// Every target in one call is one gesture; grouping them into one undo
+/// step is the engine's to do and it has no verb for it yet — noted on
+/// issue #114 rather than faked here.
+fn spread_item_edit(
+    project: &mut Project,
+    guid: &str,
+    effects: &mut Vec<Effect>,
+    make: impl Fn(&str) -> Edit,
+    change: impl Fn(&mut daw_proto::Item),
+) -> bool {
+    let Some(targets) = targets(project, guid, true, effects) else {
+        return false;
+    };
+    for target in targets {
+        edit_item(project, &target, &change);
+        effects.push(Effect::Send(make(&target)));
+    }
+    true
 }
 
 /// Change one item in the window's copy of the project.
@@ -923,6 +1126,45 @@ mod tests {
         }
     }
 
+    /// The same project with the kick shut: its two mics fold onto its
+    /// own row, and the mics' rows are gone.
+    ///
+    /// The mics agree, because they are one performance — which is the
+    /// case the fold exists for and the one a drag has to get right.
+    fn folded_project() -> Project {
+        let mut project = project();
+        let mic = |guid: &str, at: f64, len: f64| daw_proto::Item {
+            guid: guid.to_owned(),
+            track_guid: "in".to_owned(),
+            position: PositionInSeconds::from_seconds(at),
+            length: Duration::from_seconds(len),
+            ..daw_proto::Item::default()
+        };
+        // Two mics under the kick, landing on the same bars.
+        project.items.insert(
+            "in".to_owned(),
+            vec![mic("in1", 2.0, 4.0), mic("in2", 10.0, 4.0)],
+        );
+        let mut out1 = mic("out1", 2.0, 4.0);
+        let mut out2 = mic("out2", 10.0, 4.0);
+        out1.track_guid = "out".to_owned();
+        out2.track_guid = "out".to_owned();
+        project.items.insert("out".to_owned(), vec![out1, out2]);
+        // And nothing of the kick's own, so its row is only the fold.
+        project.items.insert("kick".to_owned(), Vec::new());
+        let folder = project.tracks[0].clone();
+        let lanes: Vec<&[daw_proto::Item]> =
+            vec![&project.items["in"][..], &project.items["out"][..]];
+        let spans = daw_ui::studio::folded::spans(&lanes);
+        let items = daw_ui::studio::folded::lane(&folder, &spans);
+        project.folds.insert(
+            folder.guid.clone(),
+            daw_ui::studio::folded::Fold { items, spans },
+        );
+        project.item_count = project.items.values().map(Vec::len).sum();
+        project
+    }
+
     struct Stage {
         editor: Editor,
         project: Project,
@@ -931,6 +1173,17 @@ mod tests {
     }
 
     impl Stage {
+        fn folded() -> Self {
+            let project = folded_project();
+            let rows: Vec<(Track, u32)> = project.tracks.iter().cloned().map(|t| (t, 0)).collect();
+            Self {
+                scene: record(&project, &rows),
+                editor: Editor::default(),
+                project,
+                rows,
+            }
+        }
+
         fn new() -> Self {
             let project = project();
             let rows: Vec<(Track, u32)> = project.tracks.iter().cloned().map(|t| (t, 0)).collect();
@@ -1044,6 +1297,174 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Two items butted together share a boundary, and it moves as one
+    /// thing.
+    ///
+    /// Grabbing the seam and moving only one of them opens a gap or an
+    /// overlap, which is never what the hand meant — what it is on is
+    /// the join.
+    #[test]
+    fn trimming_a_seam_moves_both_items() {
+        let mut rig = Stage::new();
+        // Butt the kick's second item up against the first: k1 runs
+        // 2..6, so k2 starts where it ends.
+        for item in rig.project.items.get_mut("kick").expect("the lane") {
+            if item.guid == "k2" {
+                item.position = PositionInSeconds::from_seconds(6.0);
+            }
+        }
+        rig.rerecord();
+
+        // Take hold of k1's right edge, which is the seam, and pull it
+        // left by a second.
+        let (x, y) = rig.point(0, 6.0, 20.0);
+        let (taken, _) = rig.press(x, y, Mods::default());
+        assert!(taken, "the seam is a hit");
+        let to = crate::rails::SIDE + TCP_WIDTH + 5.0 * PPS;
+        rig.drag_to(to, Mods::default());
+        rig.release(to, Mods::default());
+
+        let k1 = rig.item("k1");
+        let k2 = rig.item("k2");
+        let end = k1.position.as_seconds() + k1.length.as_seconds();
+        assert!((end - 5.0).abs() < 0.01, "k1 ends at {end}");
+        assert!(
+            (k2.position.as_seconds() - 5.0).abs() < 0.01,
+            "k2 starts at {}",
+            k2.position.as_seconds()
+        );
+        // And they are still touching, which is the whole point.
+        assert!((k2.position.as_seconds() - end).abs() < 0.01);
+    }
+
+    /// A MOVE is not a trim: sliding an item along its lane leaves its
+    /// neighbours where they were.
+    #[test]
+    fn moving_an_item_leaves_the_one_it_touches_alone() {
+        let mut rig = Stage::new();
+        for item in rig.project.items.get_mut("kick").expect("the lane") {
+            if item.guid == "k2" {
+                item.position = PositionInSeconds::from_seconds(6.0);
+            }
+        }
+        rig.rerecord();
+
+        // The middle of k1, well inside its body.
+        let (x, y) = rig.point(0, 4.0, 20.0);
+        rig.press(x, y, Mods::default());
+        let to = crate::rails::SIDE + TCP_WIDTH + 3.0 * PPS;
+        rig.drag_to(to, Mods::default());
+        rig.release(to, Mods::default());
+
+        assert!(
+            (rig.item("k2").position.as_seconds() - 6.0).abs() < 0.01,
+            "k2 moved when only k1 was dragged"
+        );
+    }
+
+    /// The point of the whole thing: a drag on a folded row moves every
+    /// mic under it, and the engine is never told about the row.
+    #[test]
+    fn a_drag_on_a_folded_row_moves_every_mic() {
+        let mut s = Stage::folded();
+        let (x, y) = s.point(0, 3.0, 15.0);
+        assert!(
+            s.press(x, y, Mods::default()).0,
+            "the folded item is takeable"
+        );
+        assert!(s.drag_to(x + 1.3 * PPS, Mods::default()));
+        let effects = s.release(x + 1.3 * PPS, Mods::default());
+        let sent = sends(&effects);
+        assert_eq!(
+            sent,
+            vec![
+                &Edit::MoveItem("in1".into(), 3.5),
+                &Edit::MoveItem("out1".into(), 3.5),
+            ],
+            "the mics did not both move"
+        );
+        assert!(
+            sent.iter().all(|e| !e.guid().starts_with("folded:")),
+            "a view coordinate was sent to the engine: {sent:?}"
+        );
+        // And the window's own copy agrees, so the next fold lands where
+        // the drag left it rather than snapping back.
+        assert!((s.item("in1").position.as_seconds() - 3.5).abs() < 1e-9);
+        assert!((s.item("out1").position.as_seconds() - 3.5).abs() < 1e-9);
+        assert!(effects.contains(&Effect::ReRecord));
+    }
+
+    /// Trimming a folded row's edge trims every mic to the same
+    /// boundary — which is the only reading that leaves the take intact.
+    #[test]
+    fn a_trim_on_a_folded_row_trims_every_mic() {
+        let mut s = Stage::folded();
+        // The right edge of the first folded item, which spans 2..6.
+        let (x, y) = s.point(0, 6.0, 15.0);
+        s.press(x - 2.0, y, Mods::default());
+        s.drag_to(x - 2.0 + 1.0 * PPS, Mods::default());
+        let effects = s.release(x - 2.0 + 1.0 * PPS, Mods::default());
+        let sent = sends(&effects);
+        assert_eq!(sent.len(), 2, "{sent:?}");
+        assert!(
+            sent.iter()
+                .all(|e| matches!(e, Edit::TrimItem(g, ..) if g == "in1" || g == "out1")),
+            "{sent:?}"
+        );
+    }
+
+    /// Deleting a folded item deletes the mics under it, and the row
+    /// goes with them because there is nothing left to fold.
+    #[test]
+    fn deleting_a_folded_item_deletes_its_mics() {
+        let mut s = Stage::folded();
+        let (x, y) = s.point(0, 3.0, 15.0);
+        s.press(x, y, Mods::default());
+        s.release(x, Mods::default());
+        let (_, effects) = s.key(Action::DeleteSelectedItems);
+        let sent = sends(&effects);
+        assert_eq!(
+            sent,
+            vec![
+                &Edit::DeleteItem("in1".into()),
+                &Edit::DeleteItem("out1".into()),
+            ],
+            "{sent:?}"
+        );
+        assert!(!s.project.items["in"].iter().any(|i| i.guid == "in1"));
+        assert!(!s.project.items["out"].iter().any(|i| i.guid == "out1"));
+    }
+
+    /// A ragged row refuses an edit that would change it, and says why
+    /// rather than doing nothing quietly.
+    #[test]
+    fn a_ragged_folded_row_refuses_a_drag() {
+        let mut s = Stage::folded();
+        // Punch one mic in, so the fold gains a fragment at the front.
+        s.project.items.get_mut("out").expect("the out mic")[0].position =
+            PositionInSeconds::from_seconds(3.0);
+        let folder = s.project.tracks[0].clone();
+        let lanes: Vec<&[daw_proto::Item]> =
+            vec![&s.project.items["in"][..], &s.project.items["out"][..]];
+        let spans = daw_ui::studio::folded::spans(&lanes);
+        let items = daw_ui::studio::folded::lane(&folder, &spans);
+        s.project.folds.insert(
+            folder.guid.clone(),
+            daw_ui::studio::folded::Fold { items, spans },
+        );
+        s.scene = record(&s.project, &s.rows);
+
+        let (x, y) = s.point(0, 2.5, 15.0);
+        s.press(x, y, Mods::default());
+        s.drag_to(x + 1.3 * PPS, Mods::default());
+        let effects = s.release(x + 1.3 * PPS, Mods::default());
+        assert!(sends(&effects).is_empty(), "a fragment was dragged anyway");
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::Refused(_))),
+            "it refused without saying why: {effects:?}"
+        );
     }
 
     /// A click on an item's body selects it, alone; with Ctrl it is

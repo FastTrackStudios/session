@@ -40,6 +40,11 @@ blitz-dom = { workspace = true }
 blitz-paint = { workspace = true }
 blitz-traits = { workspace = true }
 dioxus-native-dom = { workspace = true }
+# The window itself, not just its document: `blitz_shot`'s `window` mode
+# opens the studio on a wgpu surface rather than rendering one frame to a
+# PNG. Same component tree, same data — the difference between proving
+# the picture and proving the program.
+dioxus-native = { workspace = true }
 daw-control = { workspace = true }
 daw-proto = { workspace = true }
 daw-theme-art = { workspace = true }
@@ -119,6 +124,10 @@ image = { workspace = true }
 dirs = "6"
 skrifa = "0.42"
 adaptive-grid = { workspace = true }
+# Razor areas, the same ones the expression editor uses — see the
+# `razor` crate for why the rectangle is shared and the operations on
+# its contents are not.
+razor = { workspace = true }
 winit = "0.31.0-beta.2"
 
 eyre = { workspace = true }
@@ -126,12 +135,25 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# A sampling profiler for the headless benchmarks, behind the `profile`
+# feature — see below.
+pprof = { version = "0.15", features = ["flamegraph"], optional = true }
+
 [features]
 # The `#[reaper_test]` suites, which need a REAPER to talk to. Behind a
 # feature so an ordinary `cargo nextest run --workspace` does not try to
 # reach one that is not running — `just reaper-test` turns it on, via
 # session-reaper-xtask, which starts the REAPER first.
 reaper-tests = ["daw/test-harness"]
+# A sampling profiler on the headless benchmarks. Behind a feature so an
+# ordinary build never links a signal handler: `pprof` installs a SIGPROF
+# timer, which is exactly what you want while measuring and nothing you
+# want in a window somebody is using.
+#
+#   cargo run --release -p session-daw --bin blitz_shot --features profile
+#
+# with `FTS_BLITZ_PROFILE=/tmp/frame.svg`.
+profile = ["dep:pprof"]
 
 [dev-dependencies]
 # Temp project trees for the Patch List view's discovery tests, and the

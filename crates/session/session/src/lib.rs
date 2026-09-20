@@ -41,6 +41,7 @@ pub mod comping;
 pub mod count_in;
 pub mod hits;
 pub mod reference;
+pub mod review;
 pub mod section_kinds;
 pub mod setlist;
 pub mod song;
