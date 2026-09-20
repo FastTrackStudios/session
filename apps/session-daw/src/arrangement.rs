@@ -1295,6 +1295,19 @@ impl Arrangement {
         true
     }
 
+    /// Forget which zoom the panel was cut at, so the next
+    /// [`Self::repanel`] re-cuts whatever the zoom is doing.
+    ///
+    /// For the things a cut BAKES IN that are not the zoom — the track
+    /// name above all. A name is recorded chrome, not a live value, so
+    /// renaming a track changes nothing on screen until the row it is
+    /// written into is drawn again.
+    pub fn forget_panel(&mut self) {
+        // NaN, because every comparison against it is false — which is
+        // exactly "this cut matches nothing".
+        self.panel_zoom = f64::NAN;
+    }
+
     /// The same for the track panel, which scrolls vertically only and
     /// therefore needs no horizontal test.
     ///

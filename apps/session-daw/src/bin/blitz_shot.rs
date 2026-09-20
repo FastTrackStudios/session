@@ -1907,6 +1907,19 @@ fn Window(props: ShotProps) -> Element {
                             style: "position:absolute; left:{session_daw::rails::SIDE}px; \
                                     top:{session_daw::rails::TOP}px; \
                                     width:{w}px; height:{h}px;",
+                            // The arrangement takes the keyboard — a
+                            // rename is a text field inside it.
+                            //
+                            // Spelled out rather than relied on: the
+                            // HTML default tabindex for `<object>` is
+                            // 0, and Blitz's own comment says so, but
+                            // its list of default-focusable elements
+                            // leaves `object` out. Without this the
+                            // node never focuses, key events go
+                            // somewhere else, and a rename field opens
+                            // that nothing can type into — which is
+                            // exactly what happened.
+                            tabindex: "0",
                             data: props.arrangement.clone(),
                         }
                     }

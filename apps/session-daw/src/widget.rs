@@ -56,7 +56,7 @@ use std::rc::Rc;
 
 use anyrender::{RenderContext, Scene};
 use blitz_dom::node::{ComputedStyles, Widget};
-use blitz_traits::events::UiEvent;
+use blitz_traits::events::{Modifiers, UiEvent};
 
 use vello::kurbo::Affine;
 
@@ -81,6 +81,21 @@ pub struct View {
     pub zoom_x: f64,
     pub zoom_y: f64,
 }
+
+/// A knob under the pointer, mid-turn.
+struct Turn {
+    spot: crate::pointer::RowSpot,
+    /// Where the press landed, in the widget's own coordinates.
+    from: f64,
+    /// The track as it was when the press landed.
+    was: daw_proto::Track,
+}
+
+/// How far a knob turns through its whole range, in pixels.
+///
+/// REAPER's own, so a full sweep takes about the same movement here as
+/// it does there.
+const KNOB_TRAVEL: f64 = 150.0;
 
 /// A handle on that, for the window to write and the widget to read.
 pub type Shared = Rc<RefCell<View>>;
@@ -135,6 +150,25 @@ pub struct ArrangementWidget {
     /// over the recording, in its hover cell — one control a frame
     /// instead of a panel a mouse move.
     pointer: crate::pointer::Pointer<crate::pointer::RowSpot>,
+    /// An open rename, and the row it belongs to.
+    ///
+    /// The field draws over the name it replaces and takes the keyboard
+    /// until it is committed or abandoned. Blitz sends key events to
+    /// the focused node, and a pointer-down on a widget focuses it, so
+    /// the double-click that opens this has already done the focusing.
+    renaming: Option<crate::rename::Rename>,
+    /// When and where the last click on a NAME landed, so the next one
+    /// can tell whether it is the second half of a double.
+    last_name: Option<(usize, std::time::Instant)>,
+    /// A knob being turned: where the press landed, and the track as it
+    /// was at that moment.
+    ///
+    /// The value at PRESS, not the value now. A drag is an absolute
+    /// gesture — this far up from where you grabbed it is this much
+    /// louder — and reading the current value each move would compound
+    /// the deltas, so a slow drag and a fast one over the same distance
+    /// would land somewhere different.
+    turning: Option<Turn>,
     /// What the widget wants done to the session, for the window to
     /// pick up and hand to the engine.
     ///
@@ -225,6 +259,9 @@ impl ArrangementWidget {
             drawn: Rc::new(RefCell::new(Drawn::default())),
             size: (0.0, 0.0),
             pointer: crate::pointer::Pointer::default(),
+            renaming: None,
+            last_name: None,
+            turning: None,
             edits: Rc::new(RefCell::new(Vec::new())),
             controls: None,
             was: at_rest,
@@ -302,6 +339,26 @@ impl ArrangementWidget {
             return;
         };
         let guid = track.guid.clone();
+        // A double-click on a name edits it. The single click that
+        // preceded it selected the track, which is what you wanted on
+        // the way here anyway.
+        if spot.control == C::Name {
+            let now = std::time::Instant::now();
+            let again = self.last_name.is_some_and(|(row, when)| {
+                row == spot.row && now.saturating_duration_since(when) <= crate::gesture::DOUBLE
+            });
+            if again {
+                self.last_name = None;
+                self.renaming = Some(crate::rename::Rename::new(
+                    crate::rename::Surface::Arrange,
+                    spot.row,
+                    crate::rename::What::Track(guid),
+                    &track.name,
+                ));
+                return;
+            }
+            self.last_name = Some((spot.row, now));
+        }
         let edit = match spot.control {
             C::Mute => Edit::ToggleMute(guid),
             C::Solo => Edit::ToggleSolo(guid),
@@ -327,6 +384,83 @@ impl ArrangementWidget {
         self.edits.borrow_mut().push(edit);
     }
 
+    /// One key, into an open rename.
+    ///
+    /// `false` when there is no rename open, which is how a key that is
+    /// not for the field falls through to whatever else the window does
+    /// with it.
+    fn typed(&mut self, event: &blitz_traits::events::BlitzKeyEvent) -> bool {
+        // Blitz is on `keyboard_types` 0.7, whose `Key` is flat — the
+        // named keys are variants of it rather than of a `NamedKey`
+        // beside it.
+        use blitz_traits::events::Key;
+        let Some(rename) = self.renaming.as_mut() else {
+            return false;
+        };
+        match &event.key {
+            Key::Enter => {
+                let Some(rename) = self.renaming.take() else {
+                    return false;
+                };
+                // An empty name is refused, and refusing it by closing
+                // the field is kinder than leaving it open with no way
+                // to tell why Enter did nothing.
+                let Some(name) = rename.commit().map(str::to_owned) else {
+                    return true;
+                };
+                if let crate::rename::What::Track(guid) = rename.what {
+                    let edit = crate::engine::Edit::Rename(guid, name);
+                    self.assume(&edit);
+                    // A name is RECORDED chrome and not a live value,
+                    // so moving the track is not enough — the row it is
+                    // written into has to be cut again or the field
+                    // closes on the old name.
+                    self.scene.forget_panel();
+                    self.edits.borrow_mut().push(edit);
+                }
+            }
+            Key::Escape => self.renaming = None,
+            Key::Backspace => rename.backspace(),
+            Key::Delete => rename.delete(),
+            Key::ArrowLeft => rename.left(),
+            Key::ArrowRight => rename.right(),
+            Key::Home => rename.home(),
+            Key::End => rename.end(),
+            Key::Character(text) => {
+                for c in text.chars() {
+                    rename.insert(c);
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// A knob, turned to wherever the pointer has got to.
+    ///
+    /// Measured from the press and against the value the track had
+    /// THEN, so the same movement always means the same change however
+    /// it was made. `fine` is the modified drag: the same distance
+    /// worth a fraction as much.
+    fn turn(&mut self, y: f64, fine: bool) {
+        let Some(turn) = self.turning.as_ref() else {
+            return;
+        };
+        let control = match turn.spot.control {
+            crate::row::Control::Volume => crate::mcp::Control::Volume,
+            crate::row::Control::Pan => crate::mcp::Control::Pan,
+            _ => return,
+        };
+        let dy = y - turn.from;
+        let dy = if fine { dy * crate::gesture::FINE } else { dy };
+        let fraction = crate::gesture::drag_fraction(dy, KNOB_TRAVEL);
+        let Some(edit) = crate::engine::drag(control, &turn.was.guid, &turn.was, fraction) else {
+            return;
+        };
+        self.assume(&edit);
+        self.edits.borrow_mut().push(edit);
+    }
+
     /// Apply an edit to the widget's own copy of the tracks.
     ///
     /// Only the ones a control can make, and only the fields a control
@@ -334,10 +468,16 @@ impl ArrangementWidget {
     /// of truth — see [`ArrangementWidget::act`].
     fn assume(&mut self, edit: &crate::engine::Edit) {
         use crate::engine::Edit;
-        let (guid, change): (&str, fn(&mut daw_proto::Track)) = match edit {
-            Edit::ToggleMute(guid) => (guid, |t| t.muted = !t.muted),
-            Edit::ToggleSolo(guid) => (guid, |t| t.soloed = !t.soloed),
-            Edit::ToggleArm(guid) => (guid, |t| t.armed = !t.armed),
+        // A toggle flips what it finds; the others carry the value they
+        // mean. Both shapes, one walk.
+        let (guid, change): (&str, &dyn Fn(&mut daw_proto::Track)) = match edit {
+            Edit::ToggleMute(guid) => (guid, &|t| t.muted = !t.muted),
+            Edit::ToggleSolo(guid) => (guid, &|t| t.soloed = !t.soloed),
+            Edit::ToggleArm(guid) => (guid, &|t| t.armed = !t.armed),
+            Edit::SetPhase(guid, on) => (guid, &|t| t.phase_inverted = *on),
+            Edit::SetVolume(guid, gain) => (guid, &|t| t.volume = *gain),
+            Edit::SetPan(guid, pan) => (guid, &|t| t.pan = *pan),
+            Edit::Rename(guid, name) => (guid, &|t| t.name.clone_from(name)),
             _ => return,
         };
         for track in self
@@ -347,18 +487,6 @@ impl ArrangementWidget {
             .filter(|track| track.guid == guid)
         {
             change(track);
-        }
-        // Polarity carries its value rather than toggling, so it cannot
-        // share the closure above.
-        if let Edit::SetPhase(guid, on) = edit {
-            for track in self
-                .tracks
-                .iter_mut()
-                .chain(self.rows.iter_mut().map(|(track, _)| track))
-                .filter(|track| track.guid == *guid)
-            {
-                track.phase_inverted = *on;
-            }
         }
         self.values_changed();
     }
@@ -382,6 +510,13 @@ impl Widget for ArrangementWidget {
         match event {
             UiEvent::PointerMove(e) => {
                 let (x, y) = at(e);
+                // A knob mid-turn keeps the pointer: the hand can leave
+                // the control and the drag goes on, which is what makes
+                // a fine adjustment possible at all.
+                if self.turning.is_some() {
+                    self.turn(y, e.mods.contains(Modifiers::CONTROL));
+                    return true;
+                }
                 let spot = self.spot_at(x, y);
                 self.pointer.hover(spot)
             }
@@ -390,10 +525,34 @@ impl Widget for ArrangementWidget {
                 let spot = self.spot_at(x, y);
                 self.pointer.hover(spot);
                 self.pointer.press();
+                self.turning = spot
+                    .filter(|spot| {
+                        matches!(
+                            spot.control,
+                            crate::row::Control::Volume | crate::row::Control::Pan
+                        )
+                    })
+                    .and_then(|spot| {
+                        let (was, _) = self.rows.get(spot.row)?;
+                        Some(Turn {
+                            spot,
+                            from: y,
+                            was: was.clone(),
+                        })
+                    });
                 true
             }
             UiEvent::PointerUp(e) => {
                 let (x, y) = at(e);
+                // A turn ends where it ends. It has already been sent,
+                // every move of it, so there is nothing to do on
+                // release but stop — and NOT to treat it as a click,
+                // which would re-fire the control it was turning.
+                if self.turning.take().is_some() {
+                    self.pointer.release();
+                    self.pointer.hover(self.spot_at(x, y));
+                    return true;
+                }
                 // Acted on only if the release lands on the control the
                 // press did. Dragging off a button and letting go is
                 // how every toolkit says "no, cancel that", and the
@@ -408,7 +567,9 @@ impl Widget for ArrangementWidget {
                 self.pointer.hover(up);
                 true
             }
+            UiEvent::KeyDown(e) => self.typed(e),
             UiEvent::PointerCancel(_) => {
+                self.turning = None;
                 self.pointer.release();
                 true
             }
@@ -600,6 +761,22 @@ impl Widget for ArrangementWidget {
                 at,
             ),
         };
+        // An open rename, over the name it replaces. Last of the panel
+        // passes, because it is a field ON one and has to cover it.
+        if let Some(rename) = self.renaming.as_ref()
+            && let Some((top, height)) = self.scene.row_band(rename.row, view)
+            && let Some((track, depth)) = self.rows.get(rename.row)
+        {
+            let shape = crate::row::Row::new(
+                top,
+                height,
+                i32::try_from(*depth).unwrap_or(0),
+                track.is_folder,
+            );
+            if let Some(field) = shape.rect(crate::row::Control::Name) {
+                crate::rename::paint(&mut out, &self.palette, &self.font, rename, field, at);
+            }
+        }
         spent.controls = since(&mut mark);
         let _ = controls;
         self.spent = spent;
@@ -813,6 +990,105 @@ mod tests {
             "releasing somewhere else is how every toolkit says 'no'"
         );
         assert!(!widget.rows[1].0.soloed);
+    }
+
+    fn key(named: blitz_traits::events::Key) -> blitz_traits::events::BlitzKeyEvent {
+        use blitz_traits::events::{BlitzKeyEvent, Code, KeyState, Location, Modifiers};
+        BlitzKeyEvent {
+            key: named,
+            code: Code::Unidentified,
+            modifiers: Modifiers::default(),
+            location: Location::Standard,
+            is_auto_repeating: false,
+            is_composing: false,
+            state: KeyState::Pressed,
+            text: None,
+        }
+    }
+
+    #[test]
+    fn dragging_the_pan_knob_turns_it() {
+        use blitz_traits::events::Key;
+        let _ = Key::Escape;
+        let mut widget = widget();
+        let (x, y) = at(&widget, 2, C::Pan);
+        let before = widget.rows[2].0.pan;
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        // Up is more, so a drag UP raises the value.
+        widget.handle_event(&UiEvent::PointerMove(pointer(x, y - 30.0)));
+        let after = widget.rows[2].0.pan;
+        assert!(after > before, "{before} -> {after}");
+        assert!(matches!(
+            widget.edits.borrow().last(),
+            Some(Edit::SetPan(guid, _)) if guid == "t2"
+        ));
+
+        // Measured from the PRESS, not from the last frame: a second
+        // move to the same place must mean the same value, or a slow
+        // drag and a fast one over the same distance end up apart.
+        widget.handle_event(&UiEvent::PointerMove(pointer(x, y - 30.0)));
+        assert!((widget.rows[2].0.pan - after).abs() < f64::EPSILON);
+
+        // And the release is not also a click on the knob.
+        widget.handle_event(&UiEvent::PointerUp(pointer(x, y - 30.0)));
+        assert!(widget.turning.is_none());
+    }
+
+    #[test]
+    fn a_double_click_on_a_name_opens_a_rename_and_enter_commits_it() {
+        use blitz_traits::events::Key;
+        let mut widget = widget();
+        let (x, y) = at(&widget, 0, C::Name);
+        let click = |w: &mut ArrangementWidget| {
+            w.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+            w.handle_event(&UiEvent::PointerUp(pointer(x, y)));
+        };
+        click(&mut widget);
+        assert!(
+            widget.renaming.is_none(),
+            "one click selects, it does not rename"
+        );
+        click(&mut widget);
+        assert!(
+            widget.renaming.is_some(),
+            "the second click inside the window renames"
+        );
+
+        widget.handle_event(&UiEvent::KeyDown(key(Key::Backspace)));
+        widget.handle_event(&UiEvent::KeyDown(key(Key::Character("!".into()))));
+        widget.handle_event(&UiEvent::KeyDown(key(Key::Enter)));
+        assert!(widget.renaming.is_none(), "Enter closes the field");
+        // "Track 0" with the 0 backspaced away and a ! typed in.
+        assert_eq!(widget.rows[0].0.name, "Track !");
+        assert!(matches!(
+            widget.edits.borrow().last(),
+            Some(Edit::Rename(guid, name)) if guid == "t0" && name == "Track !"
+        ));
+        // The name is recorded chrome, so the row has to be cut again
+        // or the field closes on the old one.
+        assert!(widget.scene.panel_zoom.is_nan(), "the panel was forgotten");
+    }
+
+    #[test]
+    fn escape_abandons_a_rename() {
+        use blitz_traits::events::Key;
+        let mut widget = widget();
+        let (x, y) = at(&widget, 0, C::Name);
+        for _ in 0..2 {
+            widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+            widget.handle_event(&UiEvent::PointerUp(pointer(x, y)));
+        }
+        widget.handle_event(&UiEvent::KeyDown(key(Key::Character("z".into()))));
+        widget.handle_event(&UiEvent::KeyDown(key(Key::Escape)));
+        assert!(widget.renaming.is_none());
+        assert_eq!(widget.rows[0].0.name, "Track 0", "unchanged");
+        assert!(
+            !widget
+                .edits
+                .borrow()
+                .iter()
+                .any(|edit| matches!(edit, Edit::Rename(..)))
+        );
     }
 
     #[test]
