@@ -9,6 +9,7 @@ resolver = "3"
 
 members = [
     "apps/session-reaper-xtask",
+    "libs/razor",
     "libs/vendor/dioxus-native-dom",
     "features/expression-editor/expression-editor-audio",
     "features/expression-editor/expression-editor-core",
@@ -61,6 +62,10 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/FastTrackStudios/session"
 
 [workspace.dependencies]
+# Razor edit areas: a rectangle of time by row, and the set algebra over
+# it. Dependency-free and shared by the expression editor and the
+# arrangement, so the two cannot disagree about what an area is.
+razor = { path = "libs/razor" }
 # ── Internal — every moved crate, path declared ONCE here ─────────────
 fts-chrome = { git = "https://github.com/FastTrackStudios/daw", tag = "v0.0.23" }
 # These two moved from `daw` to `processor` on the September 2026 FX

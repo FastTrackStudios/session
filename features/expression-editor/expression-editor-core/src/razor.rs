@@ -1,4 +1,4 @@
-//! Razor edits — rectangular time × row areas.
+//! Razor edits over NOTES.
 //!
 //! REAPER's razor edit is the answer to "I want *this rectangle* of the
 //! part", independent of what is selected and independent of note
@@ -13,76 +13,9 @@
 //! usable for comping and for rhythmic rearrangement, and it is why the
 //! area — not the note — is the unit of operation.
 
-use crate::doc::{Dimension, ExpressionDoc, Note, NoteId};
+pub use razor::{RazorArea, RazorAxis, RazorSet};
 
-/// Which axis a razor drag is locked to.
-///
-/// MRE's `H` and `L`. One enum rather than two booleans because they are
-/// mutually exclusive there and two booleans would have a fourth state
-/// that means nothing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum RazorAxis {
-    /// Time only — the rows the area covers cannot change.
-    Horizontal,
-    /// Rows only — the span of time cannot change.
-    Vertical,
-}
-
-/// A rectangular selection over time and rows.
-///
-/// Rows are inclusive on both ends: a razor over one row has
-/// `row_lo == row_hi`, not a zero-height rectangle.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RazorArea {
-    pub t0: f64,
-    pub t1: f64,
-    pub row_lo: i32,
-    pub row_hi: i32,
-}
-
-impl RazorArea {
-    pub fn new(t0: f64, t1: f64, row_a: i32, row_b: i32) -> Self {
-        Self {
-            t0: t0.min(t1),
-            t1: t0.max(t1),
-            row_lo: row_a.min(row_b),
-            row_hi: row_a.max(row_b),
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.t1 - self.t0 <= 0.0
-    }
-
-    pub fn width(&self) -> f64 {
-        self.t1 - self.t0
-    }
-
-    pub fn rows(&self) -> i32 {
-        self.row_hi - self.row_lo + 1
-    }
-
-    pub fn contains(&self, t: f64, row: i32) -> bool {
-        t >= self.t0 && t <= self.t1 && row >= self.row_lo && row <= self.row_hi
-    }
-
-    /// Does this area overlap any part of the note?
-    pub fn touches(&self, note: &Note) -> bool {
-        note.row >= self.row_lo
-            && note.row <= self.row_hi
-            && note.start < self.t1
-            && note.end > self.t0
-    }
-
-    pub fn translated(&self, dt: f64, drows: i32) -> Self {
-        Self {
-            t0: self.t0 + dt,
-            t1: self.t1 + dt,
-            row_lo: self.row_lo + drows,
-            row_hi: self.row_hi + drows,
-        }
-    }
-}
+use crate::doc::{Dimension, ExpressionDoc, NoteId};
 
 /// Split every note crossing `t` on rows the area covers, so the area's
 /// edge becomes a real note boundary.
@@ -139,7 +72,9 @@ pub fn carve(doc: &mut ExpressionDoc, area: RazorArea) -> Vec<NoteId> {
 pub fn peek(doc: &ExpressionDoc, area: RazorArea) -> Vec<NoteId> {
     doc.notes
         .iter()
-        .filter(|n| area.touches(n))
+        .filter(|n| {
+            n.row >= area.row_lo && n.row <= area.row_hi && n.start < area.t1 && n.end > area.t0
+        })
         .map(|n| n.id)
         .collect()
 }
@@ -381,70 +316,4 @@ pub fn clear_lane(doc: &mut ExpressionDoc, area: RazorArea, dimension: Dimension
         ok = true;
     }
     ok
-}
-
-/// The razor areas currently active, plus which one the pointer grabbed.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct RazorSet {
-    pub areas: Vec<RazorArea>,
-}
-
-impl RazorSet {
-    pub fn is_empty(&self) -> bool {
-        self.areas.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.areas.clear();
-    }
-
-    /// Add an area, merging it into any it overlaps on the same rows.
-    ///
-    /// Merging keeps the set canonical: two adjacent razors over the
-    /// same rows behave as one, so an operation cannot slice a note
-    /// twice at an interior seam.
-    pub fn add(&mut self, area: RazorArea) {
-        if area.is_empty() {
-            return;
-        }
-        let mut merged = area;
-        self.areas.retain(|a| {
-            let same_rows = a.row_lo == merged.row_lo && a.row_hi == merged.row_hi;
-            let overlaps = a.t0 <= merged.t1 && merged.t0 <= a.t1;
-            if same_rows && overlaps {
-                merged.t0 = merged.t0.min(a.t0);
-                merged.t1 = merged.t1.max(a.t1);
-                false
-            } else {
-                true
-            }
-        });
-        self.areas.push(merged);
-    }
-
-    /// The area under a point, if any. Later areas win, matching draw
-    /// order.
-    pub fn at(&self, t: f64, row: i32) -> Option<(usize, RazorArea)> {
-        self.areas
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, a)| a.contains(t, row))
-            .map(|(i, a)| (i, *a))
-    }
-
-    pub fn remove_at(&mut self, t: f64, row: i32) -> bool {
-        match self.at(t, row) {
-            Some((i, _)) => {
-                self.areas.remove(i);
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Total time span covered, for a readout.
-    pub fn total_span(&self) -> f64 {
-        self.areas.iter().map(|a| a.width()).sum()
-    }
 }

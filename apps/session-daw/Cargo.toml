@@ -124,6 +124,10 @@ image = { workspace = true }
 dirs = "6"
 skrifa = "0.42"
 adaptive-grid = { workspace = true }
+# Razor areas, the same ones the expression editor uses — see the
+# `razor` crate for why the rectangle is shared and the operations on
+# its contents are not.
+razor = { workspace = true }
 winit = "0.31.0-beta.2"
 
 eyre = { workspace = true }
