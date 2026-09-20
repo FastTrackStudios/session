@@ -82,6 +82,15 @@ pub struct View {
     pub zoom_y: f64,
 }
 
+/// Blitz's modifier set, as the mouse map's.
+fn mods(from: Modifiers) -> crate::mousemap::Mods {
+    crate::mousemap::Mods {
+        shift: from.contains(Modifiers::SHIFT),
+        ctrl: from.contains(Modifiers::CONTROL),
+        alt: from.contains(Modifiers::ALT),
+    }
+}
+
 /// A knob under the pointer, mid-turn.
 struct Turn {
     spot: crate::pointer::RowSpot,
@@ -150,6 +159,34 @@ pub struct ArrangementWidget {
     /// over the recording, in its hover cell — one control a frame
     /// instead of a panel a mouse move.
     pointer: crate::pointer::Pointer<crate::pointer::RowSpot>,
+    /// Items, fades, the ruler and the time selection.
+    ///
+    /// The whole arrangement-editing state machine, which the direct
+    /// window has had from the start — moves, trims, fades, marker
+    /// drags, region edges, the zoom tool. Not reimplemented here: the
+    /// widget hands it hits and paints what it says is in flight.
+    editor: crate::arrange_edit::Editor,
+    /// The widget's own copy of the project, which the editor moves
+    /// before the engine has.
+    ///
+    /// The same bargain as the tracks — see
+    /// [`ArrangementWidget::assume`]. An item that jumps back to where
+    /// it was for two frames after you drop it reads as a failed drag.
+    project: daw_ui::studio::project::Project,
+    /// What is needed to cut the recording again when an edit changes
+    /// what it holds.
+    previews: crate::midi::Previews,
+    /// The ruler's own furniture, for hit testing.
+    sections: Vec<daw_ui::studio::project::Section>,
+    markers: Vec<daw_ui::studio::project::Marker>,
+    /// Whether the last event changed the picture, for
+    /// `Widget::needs_redraw`. A `Cell` because that question is asked
+    /// through `&self`.
+    dirty: std::cell::Cell<bool>,
+    /// The item under the pointer, so its fade handles are drawn —
+    /// REAPER puts them in the top corners and only shows them on the
+    /// item you are over.
+    hovered_item: Option<usize>,
     /// An open rename, and the row it belongs to.
     ///
     /// The field draws over the name it replaces and takes the keyboard
@@ -238,6 +275,8 @@ impl ArrangementWidget {
         pps: f64,
         rows: Vec<(daw_proto::Track, u32)>,
         layout: crate::layout::Layout,
+        project: daw_ui::studio::project::Project,
+        previews: crate::midi::Previews,
         view: Shared,
         readout: bool,
     ) -> Self {
@@ -259,6 +298,13 @@ impl ArrangementWidget {
             drawn: Rc::new(RefCell::new(Drawn::default())),
             size: (0.0, 0.0),
             pointer: crate::pointer::Pointer::default(),
+            editor: crate::arrange_edit::Editor::default(),
+            hovered_item: None,
+            dirty: std::cell::Cell::new(false),
+            sections: project.sections.clone(),
+            markers: project.markers.clone(),
+            project,
+            previews,
             renaming: None,
             last_name: None,
             turning: None,
@@ -384,6 +430,80 @@ impl ArrangementWidget {
         self.edits.borrow_mut().push(edit);
     }
 
+    /// Where a point in the widget falls, as the window's hit test
+    /// sees it.
+    ///
+    /// The widget's coordinates start where the rails end, which is
+    /// exactly the offset `hit::arrangement` expects to subtract — so
+    /// the tested hit test is reused rather than a second one written
+    /// that could disagree with it.
+    fn hit(&self, x: f64, y: f64) -> Option<crate::hit::Hit> {
+        let view = self.viewport(self.size.0, self.size.1);
+        Some(crate::hit::arrangement(
+            &self.scene,
+            view,
+            0,
+            &self.sections,
+            &self.markers,
+            x + crate::rails::SIDE,
+            y + crate::rails::TOP,
+        ))
+    }
+
+    /// The item under a point, for the fade handles.
+    fn item_under(&self, x: f64, y: f64) -> Option<usize> {
+        match self.hit(x, y)?.target {
+            crate::hit::Target::Item { index, .. } => Some(index),
+            _ => None,
+        }
+    }
+
+    /// The time under an x in the widget's coordinates.
+    fn seconds_at(&self, x: f64, view: Viewport) -> f64 {
+        ((x - TCP_WIDTH + view.scroll_x) / view.pps.max(f64::EPSILON)).max(0.0)
+    }
+
+    /// What the editor asked for, carried out.
+    ///
+    /// `ReRecord` is the expensive one and the reason edits are
+    /// predicted rather than awaited: the recording is cut again from
+    /// the widget's own project, so the picture is right on the next
+    /// frame instead of whenever the engine gets round to it.
+    fn settle(&mut self, effects: Vec<crate::arrange_edit::Effect>) {
+        use crate::arrange_edit::Effect;
+        let mut recut = false;
+        for effect in effects {
+            match effect {
+                Effect::Send(edit) => self.edits.borrow_mut().push(edit),
+                Effect::ReRecord => recut = true,
+                // The transport and the playhead are the window's, and
+                // a notice has nowhere to go yet — see `Effect`.
+                Effect::Transport(..) | Effect::Playhead(_) => {}
+                Effect::Refused(why) => tracing::warn!(why, "the edit was refused"),
+            }
+        }
+        if recut {
+            self.recut();
+        }
+    }
+
+    /// Cut the whole recording again, from the widget's own project.
+    fn recut(&mut self) {
+        let rows = daw_ui::studio::RowsRef(std::sync::Arc::new(self.rows.clone()));
+        let project = daw_ui::studio::ProjectRef(std::sync::Arc::new(self.project.clone()));
+        self.scene = Arrangement::build(
+            &self.palette,
+            &self.font,
+            &project,
+            &rows,
+            self.layout,
+            &self.previews,
+        );
+        self.sections = self.project.sections.clone();
+        self.markers = self.project.markers.clone();
+        self.controls = None;
+    }
+
     /// One key, into an open rename.
     ///
     /// `false` when there is no rename open, which is how a key that is
@@ -493,6 +613,33 @@ impl ArrangementWidget {
 }
 
 impl Widget for ArrangementWidget {
+    /// Whether the last event changed the picture.
+    ///
+    /// Most moves do not: a pointer crossing the panel raises an event
+    /// per pixel and changes which control it is on perhaps twice.
+    fn needs_redraw(&self) -> bool {
+        self.dirty.get()
+    }
+
+    fn handle_event(&mut self, event: &UiEvent) {
+        let changed = self.took(event);
+        self.dirty.set(changed);
+    }
+
+    fn paint(
+        &mut self,
+        render_ctx: &mut dyn RenderContext,
+        styles: &ComputedStyles,
+        width: u32,
+        height: u32,
+        scale: f64,
+    ) -> Scene {
+        self.dirty.set(false);
+        self.draw(render_ctx, styles, width, height, scale)
+    }
+}
+
+impl ArrangementWidget {
     /// Pointer events, already in the widget's own coordinates.
     ///
     /// Blitz makes them relative to the node before handing them over,
@@ -503,13 +650,24 @@ impl Widget for ArrangementWidget {
     /// The answer is whether the picture changed. Most moves do not: a
     /// pointer crossing the panel raises an event per pixel and changes
     /// which control it is on perhaps twice.
-    fn handle_event(&mut self, event: &UiEvent) -> bool {
+    fn took(&mut self, event: &UiEvent) -> bool {
         let at = |e: &blitz_traits::events::BlitzPointerEvent| {
             (f64::from(e.coords.client_x), f64::from(e.coords.client_y))
         };
         match event {
             UiEvent::PointerMove(e) => {
                 let (x, y) = at(e);
+                // The editor owns the gesture once it has taken a
+                // press: an item being dragged follows the pointer off
+                // the lane it started on, which is what dragging is.
+                if self.editor.dragging() || self.editor.zoom.is_some() {
+                    let view = self.viewport(self.size.0, self.size.1);
+                    let seconds = self.seconds_at(x, view);
+                    let bpm = self.scene.bpm;
+                    return self
+                        .editor
+                        .moved(Some(seconds), view.pps, bpm, mods(e.mods));
+                }
                 // A knob mid-turn keeps the pointer: the hand can leave
                 // the control and the drag goes on, which is what makes
                 // a fine adjustment possible at all.
@@ -518,13 +676,29 @@ impl Widget for ArrangementWidget {
                     return true;
                 }
                 let spot = self.spot_at(x, y);
-                self.pointer.hover(spot)
+                let over = self.item_under(x, y);
+                let moved = self.hovered_item != over;
+                self.hovered_item = over;
+                self.pointer.hover(spot) || moved
             }
             UiEvent::PointerDown(e) => {
                 let (x, y) = at(e);
                 let spot = self.spot_at(x, y);
                 self.pointer.hover(spot);
                 self.pointer.press();
+                // Nothing in the panel: the arrangement and the ruler
+                // are the editor's.
+                if spot.is_none() {
+                    let hit = self.hit(x, y);
+                    let mut effects = Vec::new();
+                    let took = self
+                        .editor
+                        .press(hit, mods(e.mods), &self.scene, &mut effects);
+                    self.settle(effects);
+                    if took {
+                        return true;
+                    }
+                }
                 self.turning = spot
                     .filter(|spot| {
                         matches!(
@@ -553,6 +727,17 @@ impl Widget for ArrangementWidget {
                     self.pointer.hover(self.spot_at(x, y));
                     return true;
                 }
+                if self.editor.dragging() || self.editor.zoom.is_some() {
+                    let view = self.viewport(self.size.0, self.size.1);
+                    let seconds = self.seconds_at(x, view);
+                    let mut effects = Vec::new();
+                    let mut project = core::mem::take(&mut self.project);
+                    self.editor
+                        .release(Some(seconds), mods(e.mods), &mut project, &mut effects);
+                    self.project = project;
+                    self.settle(effects);
+                    return true;
+                }
                 // Acted on only if the release lands on the control the
                 // press did. Dragging off a button and letting go is
                 // how every toolkit says "no, cancel that", and the
@@ -577,7 +762,7 @@ impl Widget for ArrangementWidget {
         }
     }
 
-    fn paint(
+    fn draw(
         &mut self,
         _render_ctx: &mut dyn RenderContext,
         _styles: &ComputedStyles,
@@ -640,6 +825,29 @@ impl Widget for ArrangementWidget {
             &self.scene,
             view,
             (TCP_WIDTH - view.scroll_x, below),
+        );
+        // What the editor has in flight, over the recorded items: the
+        // fade handles on the item under the pointer and a fade being
+        // dragged, then the selection's outlines and the ghost of an
+        // item being moved or trimmed.
+        let lanes_at = (TCP_WIDTH - view.scroll_x, below);
+        crate::arrangement::fade_overlay(
+            &mut out,
+            &self.palette,
+            &self.scene,
+            view,
+            lanes_at,
+            self.hovered_item,
+            self.editor.fade_in_flight(),
+        );
+        crate::arrangement::selection_overlay(
+            &mut out,
+            &self.palette,
+            &self.scene,
+            view,
+            lanes_at,
+            &self.editor.selected,
+            self.editor.ghost(),
         );
         spent.titles = since(&mut mark);
         let panel = self
@@ -881,7 +1089,17 @@ mod tests {
             zoom_y: 1.0,
         }));
         let mut widget = ArrangementWidget::new(
-            scene, palette, font, 120.0, 100.0, rows, layout, view, false,
+            scene,
+            palette,
+            font,
+            120.0,
+            100.0,
+            rows,
+            layout,
+            daw_ui::studio::project::Project::default(),
+            crate::midi::Previews::default(),
+            view,
+            false,
         );
         widget.size = (1600.0, 900.0);
         widget
@@ -943,7 +1161,7 @@ mod tests {
         let mut widget = widget();
         let (x, y) = at(&widget, 2, C::Mute);
         assert!(
-            widget.handle_event(&UiEvent::PointerMove(pointer(x, y))),
+            widget.took(&UiEvent::PointerMove(pointer(x, y))),
             "moving onto a control is a change worth redrawing"
         );
         assert_eq!(
@@ -957,7 +1175,7 @@ mod tests {
         // crossing a panel raises an event per pixel, and redrawing for
         // each of them is the thing hover state exists to avoid.
         assert!(
-            !widget.handle_event(&UiEvent::PointerMove(pointer(x + 1.0, y))),
+            !widget.took(&UiEvent::PointerMove(pointer(x + 1.0, y))),
             "staying on one control changes nothing"
         );
     }

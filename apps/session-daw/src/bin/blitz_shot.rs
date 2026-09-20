@@ -245,6 +245,10 @@ fn main() {
             PPS,
             rows.as_slice().to_vec(),
             layout,
+            // The widget's own copy, which its editor moves before the
+            // engine has — see `ArrangementWidget::project`.
+            (*project.0).clone(),
+            previews.clone(),
             shared,
             readout,
         );
