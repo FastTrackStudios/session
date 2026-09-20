@@ -31,6 +31,24 @@ pub enum Gesture {
     Drag,
 }
 
+/// What a gesture does, and whether the grid applies to it.
+///
+/// Two answers and not one, because "move the item" and "move the item
+/// off the grid" are the same verb done differently — pairing them as
+/// separate actions doubles the table for every draggable thing and
+/// then doubles it again for the next modifier. The verb is what the
+/// gesture MEANS; the snap is how precisely it is meant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bound {
+    pub action: Action,
+    /// Whether the result lands on the grid. Off is the fine gesture:
+    /// REAPER spells it "ignoring snap" and puts it on Shift for
+    /// everything that can be dragged, which is the one convention
+    /// worth keeping wholesale — a modifier that means different
+    /// things on different objects is a modifier nobody learns.
+    pub snap: bool,
+}
+
 /// What a gesture does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -50,8 +68,11 @@ pub enum Action {
     TrimLeft,
     /// Trim the item's right edge.
     TrimRight,
-    /// Select the item.
+    /// Select the item, and nothing else.
     SelectItem,
+    /// Add the item to the selection, or take it out again — the
+    /// modified click, for building a selection up a piece at a time.
+    ToggleItemSelection,
     /// Nothing bound here.
     Nothing,
 }
@@ -62,7 +83,18 @@ pub enum Action {
 /// become, and so a profile override is a row that wins over one of
 /// these rather than a branch somewhere in the window.
 #[must_use]
-pub fn resolve(context: Context, gesture: Gesture, mods: Mods) -> Action {
+pub fn resolve(context: Context, gesture: Gesture, mods: Mods) -> Bound {
+    Bound {
+        action: verb(context, gesture, mods),
+        // Shift is the fine gesture everywhere something can be
+        // dragged. On a click there is nothing to snap, so the answer
+        // is the harmless one.
+        snap: !mods.shift,
+    }
+}
+
+/// What the gesture means, before the question of precision.
+fn verb(context: Context, gesture: Gesture, mods: Mods) -> Action {
     use Gesture as G;
     match (context, gesture) {
         // The ruler: a click places the cursor, a drag selects time.
@@ -72,13 +104,20 @@ pub fn resolve(context: Context, gesture: Gesture, mods: Mods) -> Action {
         // where the numbers are.
         (Context::ArrangeView, G::Click) => Action::SetEditCursor,
         (Context::ArrangeView, G::Drag) => Action::TimeSelection,
-        // A fade's handle: drag its length; with Shift, its shape.
-        (Context::MediaItemFade, G::Drag) if mods.shift => Action::FadeShape,
+        // A fade's handle: drag its length; with Ctrl, its shape.
+        //
+        // Ctrl and not Shift, which is where this started: Shift is
+        // "ignore the grid" on every other draggable thing, and a
+        // modifier that means one thing on six objects and something
+        // else on the seventh is a modifier nobody learns. REAPER puts
+        // the curve on Ctrl for the same reason.
+        (Context::MediaItemFade, G::Drag) if mods.ctrl => Action::FadeShape,
         (Context::MediaItemFade, G::Drag) => Action::FadeIn,
         // An item (REAPER calls the body its bottom half): click selects,
         // drag moves, its edges trim. The
         // moves and trims are bound here and not yet built — the
         // window says so rather than doing something else.
+        (Context::MediaItemBottomHalf, G::Click) if mods.ctrl => Action::ToggleItemSelection,
         (Context::MediaItemBottomHalf, G::Click) => Action::SelectItem,
         (Context::MediaItemBottomHalf, G::Drag) => Action::MoveItem,
         (Context::MediaItemLeftEdge, G::Drag) => Action::TrimLeft,
@@ -91,23 +130,89 @@ pub fn resolve(context: Context, gesture: Gesture, mods: Mods) -> Action {
 mod tests {
     use super::*;
 
+    fn with(shift: bool, ctrl: bool, alt: bool) -> Mods {
+        Mods { shift, ctrl, alt }
+    }
+
     #[test]
-    fn a_fade_handle_drags_the_fade_and_shift_drags_its_shape() {
+    fn a_fade_handle_drags_the_fade_and_ctrl_drags_its_shape() {
         assert_eq!(
-            resolve(Context::MediaItemFade, Gesture::Drag, Mods::default()),
+            resolve(Context::MediaItemFade, Gesture::Drag, Mods::default()).action,
             Action::FadeIn
         );
-        let shift = Mods {
-            shift: true,
-            ..Mods::default()
-        };
         assert_eq!(
-            resolve(Context::MediaItemFade, Gesture::Drag, shift),
+            resolve(
+                Context::MediaItemFade,
+                Gesture::Drag,
+                with(false, true, false)
+            )
+            .action,
             Action::FadeShape
         );
+        // And NOT on shift, which means something else everywhere else.
         assert_eq!(
-            resolve(Context::MediaItemFade, Gesture::Click, Mods::default()),
+            resolve(
+                Context::MediaItemFade,
+                Gesture::Drag,
+                with(true, false, false)
+            )
+            .action,
+            Action::FadeIn
+        );
+        assert_eq!(
+            resolve(Context::MediaItemFade, Gesture::Click, Mods::default()).action,
             Action::Nothing
+        );
+    }
+
+    /// Shift is "ignore the grid", on everything that can be dragged.
+    ///
+    /// The point of it being in the table rather than read off the keys
+    /// wherever a drag happens to be handled: one rule, stated once,
+    /// and the same answer for an item, an edge, a fade and a region.
+    #[test]
+    fn shift_takes_everything_off_the_grid() {
+        let draggable = [
+            Context::MediaItemBottomHalf,
+            Context::MediaItemLeftEdge,
+            Context::MediaItemRightEdge,
+            Context::MediaItemFade,
+            Context::Ruler,
+            Context::ArrangeView,
+        ];
+        for context in draggable {
+            assert!(
+                resolve(context, Gesture::Drag, Mods::default()).snap,
+                "{context:?} should snap by default"
+            );
+            assert!(
+                !resolve(context, Gesture::Drag, with(true, false, false)).snap,
+                "{context:?} should ignore the grid with shift"
+            );
+        }
+    }
+
+    /// A plain click selects one item; the modified click builds a
+    /// selection up.
+    #[test]
+    fn ctrl_click_adds_to_the_selection_instead_of_replacing_it() {
+        assert_eq!(
+            resolve(
+                Context::MediaItemBottomHalf,
+                Gesture::Click,
+                Mods::default()
+            )
+            .action,
+            Action::SelectItem
+        );
+        assert_eq!(
+            resolve(
+                Context::MediaItemBottomHalf,
+                Gesture::Click,
+                with(false, true, false)
+            )
+            .action,
+            Action::ToggleItemSelection
         );
     }
 
@@ -115,11 +220,11 @@ mod tests {
     fn the_ruler_and_the_empty_area_agree() {
         for context in [Context::Ruler, Context::ArrangeView] {
             assert_eq!(
-                resolve(context, Gesture::Click, Mods::default()),
+                resolve(context, Gesture::Click, Mods::default()).action,
                 Action::SetEditCursor
             );
             assert_eq!(
-                resolve(context, Gesture::Drag, Mods::default()),
+                resolve(context, Gesture::Drag, Mods::default()).action,
                 Action::TimeSelection
             );
         }
@@ -128,7 +233,7 @@ mod tests {
     #[test]
     fn a_mixer_strip_is_not_in_the_map() {
         assert_eq!(
-            resolve(Context::MixerStrip, Gesture::Drag, Mods::default()),
+            resolve(Context::MixerStrip, Gesture::Drag, Mods::default()).action,
             Action::Nothing
         );
     }

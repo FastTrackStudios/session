@@ -93,6 +93,9 @@ pub struct ItemPress {
     pub from: f64,
     /// Where it would land, once the press has become a drag.
     pub ghost: Option<(f64, f64)>,
+    /// Whether the drop lands on the grid, as the mouse map resolved
+    /// it when the press landed.
+    pub snap: bool,
     /// The other edges that were sitting exactly where this one was,
     /// and which of their own edges it is.
     ///
@@ -153,6 +156,9 @@ struct RulerPress {
     was: (f64, f64),
     /// Where it would land, once the press has become a drag.
     ghost: Option<(f64, f64)>,
+    /// Whether it lands on the grid, as the mouse map resolved it when
+    /// the press landed — see `ItemPress::snap`.
+    snap: bool,
 }
 
 impl Editor {
@@ -173,7 +179,8 @@ impl Editor {
                 seconds,
                 ..
             } => {
-                let action = mousemap::resolve(hit.context, Gesture::Drag, keys);
+                let bound = mousemap::resolve(hit.context, Gesture::Drag, keys);
+                let action = bound.action;
                 let Some(item) = scene.item(index) else {
                     return false;
                 };
@@ -209,6 +216,12 @@ impl Editor {
                             from: seconds,
                             ghost: None,
                             joined,
+                            // Resolved at the PRESS and obeyed for the
+                            // rest of the gesture. A modifier let go of
+                            // halfway through a drag must not change
+                            // what the drag is — you would be holding
+                            // one thing and dropping another.
+                            snap: bound.snap,
                         });
                         true
                     }
@@ -233,6 +246,7 @@ impl Editor {
                     from: seconds,
                     was,
                     ghost: None,
+                    snap: mousemap::resolve(hit.context, Gesture::Drag, keys).snap,
                 });
                 // The bars are the timeline, so a press there still
                 // means what a press on a timeline has always meant.
@@ -247,7 +261,7 @@ impl Editor {
                 true
             }
             Target::Lane { seconds, .. } => {
-                if mousemap::resolve(hit.context, Gesture::Click, keys)
+                if mousemap::resolve(hit.context, Gesture::Click, keys).action
                     != mousemap::Action::SetEditCursor
                 {
                     return false;
@@ -276,11 +290,12 @@ impl Editor {
                 return false;
             }
             let beat = 60.0 / bpm.max(1.0);
+            let on_grid = press.snap;
             let snap = |t: f64| {
-                if keys.shift {
-                    t
-                } else {
+                if on_grid {
                     (t / beat).round() * beat
+                } else {
+                    t
                 }
             };
             press.ghost = Some(match press.zone {
@@ -301,14 +316,16 @@ impl Editor {
                 return false;
             }
             let beat = 60.0 / bpm.max(1.0);
-            // Shift means "exactly here", the same as it does for an
-            // item. A section boundary that is a hair off the bar is
-            // one REAPER will draw a hair off the bar forever.
+            // Off the grid means "exactly here", the same as it does
+            // for an item, and it is the map that says so. A section
+            // boundary that is a hair off the bar is one REAPER will
+            // draw a hair off the bar forever.
+            let on_grid = press.snap;
             let snap = |t: f64| {
-                if keys.shift {
-                    t.max(0.0)
-                } else {
+                if on_grid {
                     ((t / beat).round() * beat).max(0.0)
+                } else {
+                    t.max(0.0)
                 }
             };
             let (was0, was1) = press.was;
