@@ -278,7 +278,7 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
     let surface = palette.surface;
     // An open rename, over the name it replaces.
     if let Some(open) = rename.filter(|r| r.surface == crate::rename::Surface::Arrange)
-        && let Some((top, height)) = scene.row_box(open.row)
+        && let Some((top, height)) = scene.row_band(open.row, view)
     {
         let depth = rows
             .get(open.row)

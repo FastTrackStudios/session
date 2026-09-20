@@ -281,7 +281,36 @@ impl Arrangement {
         Some((top, (bottom - top - DIVIDER).max(0.5)))
     }
 
+    /// A row's band ON SCREEN: where [`Self::row_box`] puts it, after
+    /// the vertical zoom.
+    ///
+    /// The difference matters to everything drawn OVER the panel
+    /// rather than recorded into it. The recording is replayed under a
+    /// transform that already carries `zoom_y`, so session coordinates
+    /// are all it needs. The live controls — the knob, the arm, the
+    /// name, mute and solo — are drawn fresh every frame under a plain
+    /// translate, because they must not stretch when the rows get
+    /// taller. That leaves them to do the placing themselves, and not
+    /// doing it is why they walked off their own rows the moment
+    /// anybody zoomed.
+    ///
+    /// The height is scaled too, and deliberately: it is what decides
+    /// which tier of controls a row shows, and the answer has to be
+    /// about the row on screen rather than the row in the session.
+    /// What does NOT scale is the art inside the band — see
+    /// `crate::art::squashed`, which clamps at 1.
+    #[must_use]
+    pub fn row_band(&self, row: usize, view: Viewport) -> Option<(f64, f64)> {
+        let (top, height) = self.row_box(row)?;
+        let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+        Some((top * zoom, height * zoom))
+    }
+
     /// Which row is at a content y, if any.
+    ///
+    /// `content_y` is in SESSION units — divide a screen offset by the
+    /// vertical zoom before asking, or use [`Self::row_at_screen`],
+    /// which does it for you.
     ///
     /// The same binary search `visible_rows` uses, over the same
     /// cumulative offsets — so a hit and a draw cannot disagree about
@@ -297,6 +326,20 @@ impl Arrangement {
             .partition_point(|&y| y <= content_y)
             .checked_sub(1)?;
         (row < self.rows).then_some(row)
+    }
+
+    /// Which row is under a y measured in SCREEN pixels from the top
+    /// of the lanes.
+    ///
+    /// The pair to [`Self::row_band`], and the reason both exist: a
+    /// hit arrives in screen pixels and the offsets are in session
+    /// units, so something has to divide — and for a while nothing
+    /// did, which meant that at any zoom but 1 the pointer reported a
+    /// row it was not over.
+    #[must_use]
+    pub fn row_at_screen(&self, screen_y: f64, view: Viewport) -> Option<usize> {
+        let zoom = if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
+        self.row_at(screen_y / zoom)
     }
 
     /// The rows that intersect `view`, clamped to what exists.

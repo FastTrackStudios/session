@@ -1433,7 +1433,10 @@ pub fn panel_controls(
         let (Some((track, depth)), Some(live)) = (rows.get(index), map.live(tracks, index)) else {
             continue;
         };
-        let Some((top, height)) = scene.row_box(index) else {
+        // The band on SCREEN, not in the session: these are drawn
+        // under a translate so that the art keeps its own size, which
+        // leaves the placing to `row_band`. See it for why.
+        let Some((top, height)) = scene.row_band(index, view) else {
             continue;
         };
         let row = Row::new(

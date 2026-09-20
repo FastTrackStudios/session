@@ -160,10 +160,14 @@ pub fn arrangement(
         );
     }
 
-    let content_y = y - rail_y - crate::ruler::RULER_H + view.scroll_y;
-    let Some(row) = scene.row_at(content_y) else {
+    // In screen pixels from the top of the lanes. `row_at_screen`
+    // divides by the vertical zoom; `item_at` below wants the same
+    // number in session units, which is that divided again.
+    let screen_y = y - rail_y - crate::ruler::RULER_H + view.scroll_y;
+    let Some(row) = scene.row_at_screen(screen_y, view) else {
         return Hit::empty();
     };
+    let content_y = screen_y / if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
     if x < rail_x + crate::arrangement::TCP_WIDTH {
         return Hit::new(Target::Track { row }, Context::TrackControlPanel);
     }
