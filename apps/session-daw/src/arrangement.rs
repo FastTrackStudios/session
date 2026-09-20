@@ -768,6 +768,38 @@ impl Arrangement {
         self.items.get(index)
     }
 
+    /// Every other edge sitting at `at` on the same row.
+    ///
+    /// Two items butted together share a boundary: one ends where the
+    /// next begins. Grabbing it and moving only one of them opens a gap
+    /// or an overlap, which is never what was meant — what the hand is
+    /// on is the SEAM, and a seam moves as one thing.
+    ///
+    /// Answered in seconds with a tolerance, because the times came
+    /// from a file and two edges written to be equal are equal to
+    /// within a rounding. Returns each neighbour's guid and which of
+    /// its own edges is the one that touches.
+    #[must_use]
+    pub fn edges_at(&self, row: usize, at: f64, except: &str) -> Vec<(String, ItemZone)> {
+        /// A millisecond. Below a millisecond two edges are the same
+        /// edge however they were written down, and above it they are
+        /// two edges somebody meant to put near each other.
+        const SAME: f64 = 0.001;
+        self.items
+            .iter()
+            .filter(|item| item.row == row && item.guid != except)
+            .filter_map(|item| {
+                if (item.x0 - at).abs() <= SAME {
+                    Some((item.guid.clone(), ItemZone::LeftEdge))
+                } else if (item.x1 - at).abs() <= SAME {
+                    Some((item.guid.clone(), ItemZone::RightEdge))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// An item's box, by its guid.
     #[must_use]
     pub fn item_by_guid(&self, guid: &str) -> Option<&ItemBox> {

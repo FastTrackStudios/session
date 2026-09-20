@@ -93,6 +93,13 @@ pub struct ItemPress {
     pub from: f64,
     /// Where it would land, once the press has become a drag.
     pub ghost: Option<(f64, f64)>,
+    /// The other edges that were sitting exactly where this one was,
+    /// and which of their own edges it is.
+    ///
+    /// Worked out at PRESS and not at release, because by release the
+    /// edge has moved and nothing is sitting there any more. See
+    /// [`Arrangement::edges_at`] for why a seam moves as one thing.
+    pub joined: Vec<(String, ItemZone)>,
 }
 
 /// A fade taken hold of by its handle.
@@ -185,6 +192,14 @@ impl Editor {
                     mousemap::Action::MoveItem
                     | mousemap::Action::TrimLeft
                     | mousemap::Action::TrimRight => {
+                        // A trim takes the seam with it; a move does
+                        // not — sliding an item along its lane is
+                        // meant to leave its neighbours alone.
+                        let joined = match zone {
+                            ItemZone::LeftEdge => scene.edges_at(item.row, item.x0, &item.guid),
+                            ItemZone::RightEdge => scene.edges_at(item.row, item.x1, &item.guid),
+                            _ => Vec::new(),
+                        };
                         self.item_press = Some(ItemPress {
                             index,
                             guid: item.guid.clone(),
@@ -193,6 +208,7 @@ impl Editor {
                             x1: item.x1,
                             from: seconds,
                             ghost: None,
+                            joined,
                         });
                         true
                     }
@@ -415,7 +431,52 @@ impl Editor {
                             item.length = daw_proto::primitives::Duration::from_seconds(x1 - x0);
                         },
                     );
-                    if made {
+                    // And every edge that was sitting on the one just
+                    // moved goes with it, or a trim opens a gap where
+                    // two items were butted together.
+                    let mut moved_any = made;
+                    if trimming {
+                        let to = if matches!(press.zone, ItemZone::LeftEdge) {
+                            x0
+                        } else {
+                            x1
+                        };
+                        for (guid, edge) in &press.joined {
+                            let start = matches!(edge, ItemZone::LeftEdge);
+                            // Read the span before the walk, because
+                            // the walk holds `project.items` mutably
+                            // and the edit has to name the whole span:
+                            // there is no "move this edge" edit, only
+                            // "this item is now here, this long".
+                            let Some((was0, was1)) = project
+                                .items
+                                .values()
+                                .flatten()
+                                .find(|item| item.guid == *guid)
+                                .map(|item| {
+                                    let at = item.position.as_seconds();
+                                    (at, at + item.length.as_seconds())
+                                })
+                            else {
+                                continue;
+                            };
+                            let (a, b) = if start { (to, was1) } else { (was0, to) };
+                            let (a, b) = (a.min(b), a.max(b));
+                            moved_any |= spread_item_edit(
+                                project,
+                                guid,
+                                effects,
+                                |guid| Edit::TrimItem(guid.to_owned(), a, b - a),
+                                |item| {
+                                    item.position =
+                                        daw_proto::primitives::PositionInSeconds::from_seconds(a);
+                                    item.length =
+                                        daw_proto::primitives::Duration::from_seconds(b - a);
+                                },
+                            );
+                        }
+                    }
+                    if moved_any {
                         effects.push(Effect::ReRecord);
                     }
                 }
@@ -1219,6 +1280,71 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Two items butted together share a boundary, and it moves as one
+    /// thing.
+    ///
+    /// Grabbing the seam and moving only one of them opens a gap or an
+    /// overlap, which is never what the hand meant — what it is on is
+    /// the join.
+    #[test]
+    fn trimming_a_seam_moves_both_items() {
+        let mut rig = Stage::new();
+        // Butt the kick's second item up against the first: k1 runs
+        // 2..6, so k2 starts where it ends.
+        for item in rig.project.items.get_mut("kick").expect("the lane") {
+            if item.guid == "k2" {
+                item.position = PositionInSeconds::from_seconds(6.0);
+            }
+        }
+        rig.rerecord();
+
+        // Take hold of k1's right edge, which is the seam, and pull it
+        // left by a second.
+        let (x, y) = rig.point(0, 6.0, 20.0);
+        let (taken, _) = rig.press(x, y, Mods::default());
+        assert!(taken, "the seam is a hit");
+        let to = crate::rails::SIDE + TCP_WIDTH + 5.0 * PPS;
+        rig.drag_to(to, Mods::default());
+        rig.release(to, Mods::default());
+
+        let k1 = rig.item("k1");
+        let k2 = rig.item("k2");
+        let end = k1.position.as_seconds() + k1.length.as_seconds();
+        assert!((end - 5.0).abs() < 0.01, "k1 ends at {end}");
+        assert!(
+            (k2.position.as_seconds() - 5.0).abs() < 0.01,
+            "k2 starts at {}",
+            k2.position.as_seconds()
+        );
+        // And they are still touching, which is the whole point.
+        assert!((k2.position.as_seconds() - end).abs() < 0.01);
+    }
+
+    /// A MOVE is not a trim: sliding an item along its lane leaves its
+    /// neighbours where they were.
+    #[test]
+    fn moving_an_item_leaves_the_one_it_touches_alone() {
+        let mut rig = Stage::new();
+        for item in rig.project.items.get_mut("kick").expect("the lane") {
+            if item.guid == "k2" {
+                item.position = PositionInSeconds::from_seconds(6.0);
+            }
+        }
+        rig.rerecord();
+
+        // The middle of k1, well inside its body.
+        let (x, y) = rig.point(0, 4.0, 20.0);
+        rig.press(x, y, Mods::default());
+        let to = crate::rails::SIDE + TCP_WIDTH + 3.0 * PPS;
+        rig.drag_to(to, Mods::default());
+        rig.release(to, Mods::default());
+
+        assert!(
+            (rig.item("k2").position.as_seconds() - 6.0).abs() < 0.01,
+            "k2 moved when only k1 was dragged"
+        );
     }
 
     /// The point of the whole thing: a drag on a folded row moves every
