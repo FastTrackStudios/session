@@ -597,16 +597,38 @@ pub fn ink_on(background: Color) -> Color {
 /// REAPER tints the whole row rather than showing a colour chip, which
 /// is what makes a session readable by section at a glance. The strength
 /// is the theme's, not a number chosen here.
+/// A selected row is the same colour, LIT — the tint mixed further
+/// toward the track's own colour, not washed toward white.
+///
+/// Toward its own colour and not toward a highlight, because the colour
+/// is what identifies the track: a selection that greyed or blued it
+/// would take away the one thing the tint is for. Lighter and more
+/// saturated reads as "this one", and still reads as the same track.
+const SELECTED_LIFT: f32 = 0.45;
+
 #[must_use]
 pub fn row_tint(palette: &Palette, track: &Track) -> Color {
-    if track.color.is_none() {
-        return palette.tcp_tint;
-    }
-    mix(
-        palette.tcp_tint,
-        track_color(palette, track),
-        palette.track_tint,
-    )
+    let Some(_) = track.color else {
+        // A track with no colour of its own still has to be able to
+        // show that it is selected, and it has no colour to lift, so
+        // it lifts toward the panel's own ink instead.
+        return if track.selected {
+            mix(palette.tcp_tint, palette.text_faint, SELECTED_LIFT)
+        } else {
+            palette.tcp_tint
+        };
+    };
+    let strength = if track.selected {
+        // Past 1 would be past the track's own colour and into a
+        // colour it is not, so the lift is what is left of the way
+        // there rather than a constant added on.
+        palette
+            .track_tint
+            .mul_add(1.0 - SELECTED_LIFT, SELECTED_LIFT)
+    } else {
+        palette.track_tint
+    };
+    mix(palette.tcp_tint, track_color(palette, track), strength)
 }
 
 /// Blend `b` into `a` by `t`.

@@ -607,6 +607,29 @@ impl ArrangementWidget {
     /// of truth — see [`ArrangementWidget::act`].
     fn assume(&mut self, edit: &crate::engine::Edit) {
         use crate::engine::Edit;
+        // Selection is not a field on one track: selecting one
+        // DESELECTS the rest, which is a walk over all of them and not
+        // a change to the one named. Handled before the rest.
+        if let Edit::Select(guid) | Edit::AddToSelection(guid) = edit {
+            let only = matches!(edit, Edit::Select(_));
+            for track in self
+                .tracks
+                .iter_mut()
+                .chain(self.rows.iter_mut().map(|(track, _)| track))
+            {
+                if track.guid == *guid {
+                    track.selected = true;
+                } else if only {
+                    track.selected = false;
+                }
+            }
+            // A row's tint carries its selection, and a tint is
+            // recorded — the same reason a rename has to forget the
+            // cut.
+            self.scene.forget_panel();
+            self.values_changed();
+            return;
+        }
         // A toggle flips what it finds; the others carry the value they
         // mean. Both shapes, one walk.
         let (guid, change): (&str, &dyn Fn(&mut daw_proto::Track)) = match edit {
