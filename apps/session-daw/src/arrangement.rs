@@ -814,6 +814,64 @@ impl Arrangement {
             .collect()
     }
 
+    /// Every region edge and marker sitting at `at`, except the one
+    /// being dragged.
+    ///
+    /// The ruler's [`Self::edges_at`], and the same reason for
+    /// existing: two regions that meet share a boundary, and a marker
+    /// written on that boundary is part of it. Dragging one and leaving
+    /// the others behind opens a gap between sections that were meant
+    /// to be contiguous — a song with a hole between the verse and the
+    /// chorus.
+    ///
+    /// The same millisecond, too. Below it two marks are the same
+    /// moment however they were written down; above it they are two
+    /// moments somebody meant to put near each other.
+    ///
+    /// `except` is what the hand has hold of. A region is excluded
+    /// whole rather than by the edge pressed: a zero-length region has
+    /// both its bounds at one time, and dragging its end must not drag
+    /// its own start along.
+    #[must_use]
+    pub fn marks_at(
+        &self,
+        at: f64,
+        except: Option<crate::ruler::On>,
+    ) -> Vec<crate::ruler::MarkEdge> {
+        use crate::ruler::{MarkEdge, On};
+        /// A millisecond — see [`Self::edges_at`].
+        const SAME: f64 = 0.001;
+        let (skip_region, skip_marker) = match except {
+            Some(On::Region { id, .. }) => (Some(id), None),
+            Some(On::Marker { id }) => (None, Some(id)),
+            _ => (None, None),
+        };
+        let mut found = Vec::new();
+        for section in &self.sections {
+            if skip_region == Some(section.id) {
+                continue;
+            }
+            if (section.start - at).abs() <= SAME {
+                found.push(MarkEdge::RegionStart {
+                    id: section.id,
+                    end: section.end,
+                });
+            }
+            if (section.end - at).abs() <= SAME {
+                found.push(MarkEdge::RegionEnd {
+                    id: section.id,
+                    start: section.start,
+                });
+            }
+        }
+        for marker in &self.markers {
+            if skip_marker != Some(marker.idx) && (marker.at - at).abs() <= SAME {
+                found.push(MarkEdge::Marker { id: marker.idx });
+            }
+        }
+        found
+    }
+
     /// An item's box, by its guid.
     #[must_use]
     pub fn item_by_guid(&self, guid: &str) -> Option<&ItemBox> {
