@@ -64,6 +64,8 @@ pub enum Action {
     FadeShape,
     /// Move the item along its lane.
     MoveItem,
+    /// Leave the item where it is and drag a copy of it.
+    CopyItem,
     /// Trim the item's left edge.
     TrimLeft,
     /// Trim the item's right edge.
@@ -164,6 +166,15 @@ fn verb(context: Context, gesture: Gesture, mods: Mods) -> Action {
         // window says so rather than doing something else.
         (Context::MediaItemBottomHalf, G::Click) if mods.ctrl => Action::ToggleItemSelection,
         (Context::MediaItemBottomHalf, G::Click) => Action::SelectItem,
+        // Copy on Alt, not on Ctrl.
+        //
+        // REAPER copies on Ctrl-drag; here Ctrl is the razor, and the
+        // razor has the better claim on it — it is the gesture that
+        // needs to start anywhere over the lanes, including on an
+        // item's edges, where copy only ever needs the body. Alt is
+        // free on an item: the zoom tool's Alt sweep only exists while
+        // `z` is held, which is a mode and not a modifier.
+        (Context::MediaItemBottomHalf, G::Drag) if mods.alt => Action::CopyItem,
         (Context::MediaItemBottomHalf, G::Drag) => Action::MoveItem,
         (Context::MediaItemLeftEdge, G::Drag) => Action::TrimLeft,
         (Context::MediaItemRightEdge, G::Drag) => Action::TrimRight,
@@ -259,6 +270,31 @@ mod tests {
             resolve(Context::MediaItemBottomHalf, Gesture::Click, ctrl).action,
             Action::ToggleItemSelection
         );
+    }
+
+    /// Alt copies, Ctrl razors, and a plain drag still moves.
+    ///
+    /// The three that share an item's body, stated together: a modifier
+    /// budget is only legible as a whole, and the one this window has
+    /// left is small.
+    #[test]
+    fn an_items_body_spends_its_modifiers_on_copy_and_razor() {
+        let body = Context::MediaItemBottomHalf;
+        assert_eq!(
+            resolve(body, Gesture::Drag, Mods::default()).action,
+            Action::MoveItem
+        );
+        assert_eq!(
+            resolve(body, Gesture::Drag, with(false, false, true)).action,
+            Action::CopyItem,
+            "Alt should copy — REAPER puts this on Ctrl, which is the razor here"
+        );
+        assert_eq!(
+            resolve(body, Gesture::Drag, with(false, true, false)).action,
+            Action::RazorArea
+        );
+        // Shift is the grid, on the copy as much as on the move.
+        assert!(!resolve(body, Gesture::Drag, with(true, false, true)).snap);
     }
 
     /// An area already drawn answers for itself, without a modifier.

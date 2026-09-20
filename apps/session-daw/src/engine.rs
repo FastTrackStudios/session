@@ -195,6 +195,13 @@ pub enum Edit {
     SetFadeOut(String, f64, daw_proto::item::FadeShape),
     /// Select an item — alone, or added to the selection.
     SelectItem(String, bool),
+    /// Take one item back OUT of the selection.
+    ///
+    /// The other half of the modified click. `SelectItem(_, false)`
+    /// adds and `DeselectAllItems` empties; neither can remove one,
+    /// which is why a Ctrl-click used to be a one-way gesture — you
+    /// could build a selection up a piece at a time and not correct it.
+    DeselectItem(String),
     /// Nothing selected. Carries no guid; the string is empty.
     DeselectAllItems(String),
     /// Everything selected. The same.
@@ -206,6 +213,14 @@ pub enum Edit {
     /// Split an item at a time: the item keeps the left, and a new one
     /// on the same track (its guid is the third field) takes the right.
     SplitItem(String, f64, String),
+    /// Copy an item to a position on its own track, leaving the
+    /// original where it is. The third field is the copy's guid.
+    ///
+    /// Invented by the window, the way `SplitItem`'s is, and local to
+    /// it: the engine makes its own and the next read replaces the
+    /// prediction. What the guid buys is a picture that is right on the
+    /// next frame rather than whenever the session answers.
+    CopyItem(String, f64, String),
     DeleteItem(String),
 }
 
@@ -252,11 +267,13 @@ impl Edit {
             | Self::SetFadeIn(g, ..)
             | Self::SetFadeOut(g, ..)
             | Self::SelectItem(g, _)
+            | Self::DeselectItem(g)
             | Self::DeselectAllItems(g)
             | Self::SelectAllItems(g)
             | Self::MoveItem(g, _)
             | Self::TrimItem(g, ..)
             | Self::SplitItem(g, ..)
+            | Self::CopyItem(g, ..)
             | Self::DeleteItem(g) => g,
         }
     }
@@ -287,11 +304,13 @@ impl Edit {
             Self::SetFadeIn(..)
                 | Self::SetFadeOut(..)
                 | Self::SelectItem(..)
+                | Self::DeselectItem(_)
                 | Self::DeselectAllItems(_)
                 | Self::SelectAllItems(_)
                 | Self::MoveItem(..)
                 | Self::TrimItem(..)
                 | Self::SplitItem(..)
+                | Self::CopyItem(..)
                 | Self::DeleteItem(_)
         )
     }
@@ -894,6 +913,7 @@ async fn apply(edit: &Edit) {
                 }
                 item.select().await
             }
+            Edit::DeselectItem(_) => item.deselect().await,
             Edit::MoveItem(_, position) => item.set_position(at(*position)).await,
             Edit::TrimItem(_, position, length) => match item.set_position(at(*position)).await {
                 Ok(()) => item.set_length(secs(*length)).await,
@@ -935,6 +955,13 @@ async fn apply(edit: &Edit) {
                     Err(error) => Err(error),
                 }
             }
+            // The copy the engine makes is its own, with its own guid:
+            // the one in the edit was the window's prediction and has
+            // already done its job on screen.
+            Edit::CopyItem(_, to, _) => match item.duplicate().await {
+                Ok(copy) => copy.set_position(at(*to)).await,
+                Err(error) => Err(error),
+            },
             Edit::DeleteItem(_) => item.delete().await,
             _ => Ok(()),
         };
@@ -1050,11 +1077,13 @@ async fn apply(edit: &Edit) {
         Edit::SetFadeIn(..)
         | Edit::SetFadeOut(..)
         | Edit::SelectItem(..)
+        | Edit::DeselectItem(_)
         | Edit::DeselectAllItems(_)
         | Edit::SelectAllItems(_)
         | Edit::MoveItem(..)
         | Edit::TrimItem(..)
         | Edit::SplitItem(..)
+        | Edit::CopyItem(..)
         | Edit::DeleteItem(_)
         // Already handled above, where they did not need a track.
         | Edit::AddMarker(..)
