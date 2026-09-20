@@ -1079,6 +1079,14 @@ impl ArrangementWidget {
             // say which is being shown rather than letting the two be
             // mistaken for each other.
             let shell = blitz_traits::LAST_FRAME_MICROS.load(core::sync::atomic::Ordering::Relaxed);
+            // The same frame split at the hand-off to the GPU. A window
+            // that draws too much and a window that draws little and
+            // waits on the compositor to take it are the same frame
+            // time and want opposite fixes; these say which one this is.
+            let encode =
+                blitz_traits::LAST_ENCODE_MICROS.load(core::sync::atomic::Ordering::Relaxed);
+            let present =
+                blitz_traits::LAST_PRESENT_MICROS.load(core::sync::atomic::Ordering::Relaxed);
             let source = if shell > 0 { "frame" } else { "paint" };
             let micros = if shell > 0 {
                 shell
@@ -1103,6 +1111,11 @@ impl ArrangementWidget {
                         "titles {:.1}  controls {:.1}  ({source})",
                         ms(spent.titles),
                         ms(spent.controls)
+                    ),
+                    format!(
+                        "encode {:.1}  present {:.1}",
+                        ms(u128::from(encode)),
+                        ms(u128::from(present))
                     ),
                 ],
             );

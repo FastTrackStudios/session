@@ -10,6 +10,7 @@ resolver = "3"
 members = [
     "apps/session-reaper-xtask",
     "libs/razor",
+    "libs/vendor/anyrender_vello",
     "libs/vendor/dioxus-native-dom",
     "features/expression-editor/expression-editor-audio",
     "features/expression-editor/expression-editor-core",
@@ -786,11 +787,32 @@ baseview = { git = "https://github.com/FastTrackStudios/processor", tag = "v0.2.
 libspa-sys = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git", rev = "9b54509e848e53ffa971ace15d7adf4908c09358" }
 pipewire-sys = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git", rev = "9b54509e848e53ffa971ace15d7adf4908c09358" }
 # Blitz from the FTS fork (0.3.0-beta.1 line, upstream 02523b83 +
-# fts-focus: focus-follows-pointerdown for all focusable content —
-# upstream only click-focuses text inputs, leaving the editor's
-# tabindex div unfocusable by mouse). dioxus git pins `=0.3.0-beta.1`
-# and the vendored dioxus-test needs post-beta.1 APIs
+# fts-focus, also tagged `fts-focus-2026-09`). dioxus git pins
+# `=0.3.0-beta.1` and the vendored dioxus-test needs post-beta.1 APIs
 # (Node::outer_html_pretty). One rev across all blitz crates.
+#
+# What the branch carries on top of upstream:
+#
+# - focus-follows-pointerdown for all focusable content — upstream only
+#   click-focuses text inputs, leaving the editor's tabindex div
+#   unfocusable by mouse.
+# - hit testing skips stale ids instead of unwrapping them. `hit_inner`
+#   walks lists filled during layout, and anything removed before the
+#   next one leaves a dangling id; virtualised rows and re-layout under
+#   a drag do this constantly.
+# - a custom widget's scene is MOVED into the frame, not cloned. This is
+#   the expensive one: a deep copy of every path a widget drew, once per
+#   frame. Removing it took an arrangement pan from 9.08 ms to 3.91.
+# - `needs_redraw`, a defaulted method a widget can answer rather than a
+#   new return value on `handle_event`. Deliberately additive: two crates
+#   here pinned different blitz revs, and a signature change left no
+#   version of `eq_graph_painter.rs` that satisfied both — two agents
+#   reverted each other over it twice. Keep it additive.
+# - `keyboard_types` re-exported from blitz-traits, so a crate
+#   implementing `Widget` can name the types its events carry.
+# - the frame's two halves recorded as `LAST_ENCODE_MICROS` /
+#   `LAST_PRESENT_MICROS` beside `LAST_FRAME_MICROS`, which is what the
+#   arrangement's fps overlay reads.
 #
 # 02523b83 is the CEILING, and the blocker is dioxus, not us. Our four
 # patches rebase cleanly onto current upstream main — that part is
@@ -807,12 +829,18 @@ pipewire-sys = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git"
 # Rebased branches are parked on the fork at fts-focus-2026-08 (onto
 # main) and fts-focus-2026-08b (onto db12391a, the last commit with
 # the `incremental` feature) so the rebase does not have to be redone.
-blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "c82dd238000515c44c758845b9a17e9b48eb0087" }
-blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "c82dd238000515c44c758845b9a17e9b48eb0087" }
-blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "c82dd238000515c44c758845b9a17e9b48eb0087" }
-blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "c82dd238000515c44c758845b9a17e9b48eb0087" }
-blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "c82dd238000515c44c758845b9a17e9b48eb0087" }
-blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "c82dd238000515c44c758845b9a17e9b48eb0087" }
+blitz-dom = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
+blitz-traits = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
+blitz-paint = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
+blitz-shell = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
+blitz-net = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
+blitz-html = { git = "https://github.com/FastTrackStudios/blitz", rev = "db4318a9e635973b01ce1500203592d34f12b4bb" }
+# Vendored in-tree rather than patched to a sibling checkout, because a
+# path outside this repo builds on one machine and nowhere else. Three
+# measured changes to the present path — the GPU barrier removed, frame
+# latency 1 instead of 2, a switchable present mode — each reversible
+# from the environment. See libs/vendor/anyrender_vello/UPSTREAM.md.
+anyrender_vello = { path = "libs/vendor/anyrender_vello" }
 # Vendored one-line fix: quote scalars containing `<`/`>` — upstream
 # (facet-rs/facet) styx-format emits them bare but styx-parse rejects
 # them, so serialized keybind configs (`keys "<C-s>"`) could not be
