@@ -104,6 +104,12 @@ pub struct ItemPress {
     /// Whether the drop lands on the grid, as the mouse map resolved
     /// it when the press landed.
     pub snap: bool,
+    /// Whether the drop leaves the original behind.
+    ///
+    /// Resolved at the press like `snap`, and for the same reason: a
+    /// modifier let go of halfway through must not change what the drag
+    /// is. You would be holding a copy and dropping a move.
+    pub copy: bool,
     /// The other edges that were sitting exactly where this one was,
     /// and which of their own edges it is.
     ///
@@ -322,6 +328,7 @@ impl Editor {
                         true
                     }
                     mousemap::Action::MoveItem
+                    | mousemap::Action::CopyItem
                     | mousemap::Action::TrimLeft
                     | mousemap::Action::TrimRight => {
                         // A trim takes the seam with it; a move does
@@ -347,6 +354,7 @@ impl Editor {
                             // what the drag is — you would be holding
                             // one thing and dropping another.
                             snap: bound.snap,
+                            copy: action == mousemap::Action::CopyItem,
                         });
                         true
                     }
@@ -778,6 +786,26 @@ impl Editor {
                     // of them — that is what `Span::whole` guarantees
                     // and why a ragged one is refused instead.
                     let trimming = matches!(press.zone, ItemZone::LeftEdge | ItemZone::RightEdge);
+                    // A copy leaves the original where it is, so it is
+                    // not an edit to the item at all — it is a new one.
+                    // Separate from the move for that reason rather
+                    // than as a flag through it: nothing about the
+                    // original changes, including the edges joined to
+                    // it, which is why this returns early.
+                    if press.copy && !trimming {
+                        let made = spread_item_copy(project, &press.guid, x0, effects);
+                        if !made {
+                            self.snapback = Some(Snapback {
+                                index: press.index,
+                                from: (x0, x1),
+                                to: (press.x0, press.x1),
+                                started: std::time::Instant::now(),
+                            });
+                        } else {
+                            effects.push(Effect::ReRecord);
+                        }
+                        return true;
+                    }
                     let made = spread_item_edit(
                         project,
                         &press.guid,
@@ -1053,6 +1081,22 @@ impl Editor {
         // sounding under it is unambiguous, and refusing a click would
         // make the row feel broken rather than careful.
         let real = targets(project, guid, false, effects).unwrap_or_default();
+        // The modified click TOGGLES. It used to only ever add, which
+        // made building a selection up a piece at a time a one-way
+        // gesture: the way to correct an over-click was to start again.
+        // Exclusive is not a toggle — a plain click on the selected
+        // item means "just this one", not "none".
+        if !exclusive && self.selected.contains(guid) {
+            self.selected.remove(guid);
+            let selected = &self.selected;
+            for item in project.items.values_mut().flatten() {
+                item.selected = selected.contains(&item.guid);
+            }
+            for target in real {
+                effects.push(Effect::Send(Edit::DeselectItem(target)));
+            }
+            return;
+        }
         self.selected.insert(guid.to_owned());
         let selected = &self.selected;
         for item in project.items.values_mut().flatten() {
@@ -1494,6 +1538,56 @@ fn targets(
             None
         }
     }
+}
+
+/// Copy an item to `at`, on every real item it stands for.
+///
+/// Through [`targets`] like every other edit, so a copy of a folded row
+/// copies every mic under it and a ragged one refuses — the row says it
+/// is one take, and a copy that took only some of the mics would make
+/// that a lie.
+///
+/// The copies are predicted into the window's own project with invented
+/// guids, the way a split's right-hand half is. The engine makes its
+/// own; the next read replaces both.
+fn spread_item_copy(project: &mut Project, guid: &str, at: f64, effects: &mut Vec<Effect>) -> bool {
+    let Some(targets) = targets(project, guid, true, effects) else {
+        return false;
+    };
+    let wanted: std::collections::HashSet<&String> = targets.iter().collect();
+    let mut made = Vec::new();
+    for lane in project.items.values_mut() {
+        let mut copies = Vec::new();
+        for item in lane.iter() {
+            if !wanted.contains(&item.guid) {
+                continue;
+            }
+            let mut copy = item.clone();
+            copy.guid = format!("{}-copy@{at:.3}", item.guid);
+            copy.position = daw_proto::primitives::PositionInSeconds::from_seconds(at);
+            copy.selected = false;
+            made.push(Edit::CopyItem(item.guid.clone(), at, copy.guid.clone()));
+            copies.push(copy);
+        }
+        if copies.is_empty() {
+            continue;
+        }
+        lane.extend(copies);
+        lane.sort_by(|a, b| {
+            a.position
+                .as_seconds()
+                .partial_cmp(&b.position.as_seconds())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+    if made.is_empty() {
+        return false;
+    }
+    project.item_count = project.items.values().map(Vec::len).sum();
+    for edit in made {
+        effects.push(Effect::Send(edit));
+    }
+    true
 }
 
 /// Make one item edit, on every item it really belongs to.
@@ -2320,6 +2414,151 @@ mod tests {
         s.release(x2, ctrl);
         assert!(s.item("k1").selected && s.item("s1").selected);
         assert_eq!(s.editor.selected.len(), 2);
+    }
+
+    /// The modified click TOGGLES: a second one takes the item back
+    /// out. Building a selection up a piece at a time is no use if the
+    /// only way to correct an over-click is to start again.
+    #[test]
+    fn a_modified_click_takes_an_item_back_out() {
+        let mut s = Stage::new();
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        let (x, y) = s.point(0, 4.0, 15.0);
+        s.press(x, y, ctrl);
+        s.release(x, ctrl);
+        let (x2, y2) = s.point(1, 8.0, 15.0);
+        s.press(x2, y2, ctrl);
+        s.release(x2, ctrl);
+        assert_eq!(s.editor.selected.len(), 2, "both should be in");
+        assert!(s.item("k1").selected && s.item("s1").selected);
+
+        // And the same click again takes the first one out, leaving
+        // the second where it was.
+        s.press(x, y, ctrl);
+        let effects = s.release(x, ctrl);
+        assert_eq!(
+            s.editor.selected.iter().collect::<Vec<_>>(),
+            vec![&"s1".to_owned()],
+            "the second click did not take it out: {:?}",
+            s.editor.selected
+        );
+        assert!(!s.item("k1").selected, "the window still draws it selected");
+        assert!(s.item("s1").selected, "it took the wrong one out");
+        assert_eq!(
+            sends(&effects),
+            vec![&Edit::DeselectItem("k1".into())],
+            "the engine was told the wrong thing: {effects:?}"
+        );
+    }
+
+    /// A PLAIN click on an already-selected item still means "just this
+    /// one", not "none" — exclusive is not a toggle.
+    #[test]
+    fn a_plain_click_on_a_selected_item_keeps_it() {
+        let mut s = Stage::new();
+        let (x, y) = s.point(0, 4.0, 15.0);
+        s.press(x, y, Mods::default());
+        s.release(x, Mods::default());
+        s.press(x, y, Mods::default());
+        s.release(x, Mods::default());
+        assert!(
+            s.item("k1").selected,
+            "a plain click deselected what it landed on"
+        );
+        assert_eq!(s.editor.selected.len(), 1);
+    }
+
+    /// Alt-drag leaves the original where it is and drops a copy.
+    #[test]
+    fn alt_drag_copies_the_item_instead_of_moving_it() {
+        let mut s = Stage::new();
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
+        let (x, y) = s.point(0, 3.0, 15.0);
+        assert!(s.press(x, y, alt).0, "the body did not take the press");
+        assert!(s.drag_to(x + 4.0 * PPS, alt));
+        let effects = s.release(x + 4.0 * PPS, alt);
+
+        // k1 runs 2..6; dragged 4 s to the right it lands on 6.0.
+        assert_eq!(
+            s.spans("kick"),
+            vec![(2.0, 6.0), (6.0, 10.0), (10.0, 14.0)],
+            "the original did not stay put, or the copy landed wrong"
+        );
+        assert!(
+            sends(&effects)
+                .iter()
+                .any(|e| matches!(e, Edit::CopyItem(g, at, _)
+                    if g == "k1" && (*at - 6.0).abs() < 1e-9)),
+            "the engine was not told to copy: {effects:?}"
+        );
+        assert!(
+            !sends(&effects)
+                .iter()
+                .any(|e| matches!(e, Edit::MoveItem(..))),
+            "a copy moved the original as well: {effects:?}"
+        );
+    }
+
+    /// And the negative control: without Alt the same drag still MOVES.
+    #[test]
+    fn a_plain_drag_still_moves_rather_than_copying() {
+        let mut s = Stage::new();
+        let (x, y) = s.point(0, 3.0, 15.0);
+        s.press(x, y, Mods::default());
+        s.drag_to(x + 4.0 * PPS, Mods::default());
+        let effects = s.release(x + 4.0 * PPS, Mods::default());
+        assert_eq!(
+            s.spans("kick"),
+            vec![(6.0, 10.0), (10.0, 14.0)],
+            "a plain drag left a copy behind"
+        );
+        assert!(
+            sends(&effects)
+                .iter()
+                .any(|e| matches!(e, Edit::MoveItem(g, _) if g == "k1")),
+            "{effects:?}"
+        );
+    }
+
+    /// A copy of a folded row copies every mic under it. The row says
+    /// it is one take, and a copy that took only some of the mics would
+    /// make that a lie.
+    #[test]
+    fn copying_a_folded_row_copies_every_mic() {
+        let mut s = Stage::folded();
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
+        let (x, y) = s.point(0, 3.0, 15.0);
+        assert!(s.press(x, y, alt).0);
+        assert!(s.drag_to(x + 4.0 * PPS, alt));
+        let effects = s.release(x + 4.0 * PPS, alt);
+        // Sorted: the lanes come out of a map, and which mic is copied
+        // first is not a thing this test is about.
+        let mut copied: Vec<&String> = sends(&effects)
+            .iter()
+            .filter_map(|e| match e {
+                Edit::CopyItem(g, ..) => Some(g),
+                _ => None,
+            })
+            .collect();
+        copied.sort();
+        assert_eq!(
+            copied,
+            vec![&"in1".to_owned(), &"out1".to_owned()],
+            "the mics did not both get copied: {copied:?}"
+        );
+        assert!(
+            copied.iter().all(|g| !g.starts_with("folded:")),
+            "a view coordinate reached the engine: {copied:?}"
+        );
     }
 
     /// A drag on the body moves the item, snapped to the beat, with a

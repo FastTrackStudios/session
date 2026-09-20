@@ -4661,6 +4661,8 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         Edit::SetFadeIn(..)
         | Edit::SetFadeOut(..)
         | Edit::SelectItem(..)
+        | Edit::DeselectItem(_)
+        | Edit::CopyItem(..)
         | Edit::DeselectAllItems(_)
         | Edit::SelectAllItems(_)
         | Edit::MoveItem(..)
