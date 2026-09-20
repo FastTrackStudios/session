@@ -1732,6 +1732,13 @@ struct AtRest {
     palette: Palette,
 }
 
+/// No razor areas, for the bench.
+///
+/// The bench measures the picture the window draws at rest; a razor is
+/// something a hand puts there. A static rather than a field because
+/// there is nothing to vary.
+static EMPTY_RAZOR: razor::RazorSet = razor::RazorSet { areas: Vec::new() };
+
 impl AtRest {
     fn new(frame: session_daw::rails::Frame, palette: &Palette) -> Self {
         let (rows, tracks) = panel_rows();
@@ -1789,6 +1796,7 @@ impl AtRest {
             in_flight: None,
             selected: &self.selected,
             ghost: None,
+            razor: (&EMPTY_RAZOR, None),
             scroll_bars: None,
             bar_held: None,
             dock,

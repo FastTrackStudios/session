@@ -768,6 +768,20 @@ impl Arrangement {
         self.items.get(index)
     }
 
+    /// Every item's box, in the order they were recorded.
+    ///
+    /// For the operations that are about a REGION rather than about a
+    /// thing the pointer is on — a razor area asks "what is inside this
+    /// rectangle", which no amount of hit testing answers.
+    ///
+    /// Named for the boxes and not for the items because `items()`
+    /// already answers how many the scene draws, which is a different
+    /// question with the same noun in it.
+    #[must_use]
+    pub fn item_boxes(&self) -> &[ItemBox] {
+        &self.items
+    }
+
     /// Every other edge sitting at `at` on the same row.
     ///
     /// Two items butted together share a boundary: one ends where the
@@ -1031,6 +1045,75 @@ pub fn fade_overlay(
 /// shows where it will land as an outline at the new place, over the
 /// recorded item where it still is — the recording catches up on the
 /// release.
+/// The razor areas, over the lanes.
+///
+/// Drawn as a filled rectangle with a hard edge down each side,
+/// because the EDGES are the operative part: an area slices there, and
+/// a soft-edged wash would be a marquee — a thing that selects what it
+/// covers rather than cutting where it stops. The fill is the accent
+/// at low alpha so the waveform under it stays readable; you are
+/// choosing a piece of that waveform and need to see which piece.
+///
+/// `in_flight` is the area being drawn right now, which is not in the
+/// set yet — a drag that added to the set every frame would merge with
+/// itself and grow in one direction only.
+pub fn razor_overlay(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+    set: &razor::RazorSet,
+    in_flight: Option<razor::RazorArea>,
+) {
+    let (ox, oy) = origin;
+    let x_of = |t: f64| t.mul_add(view.pps, ox);
+    let visible = scene.visible_rows(view);
+    for area in set.areas.iter().copied().chain(in_flight) {
+        if area.is_empty() {
+            continue;
+        }
+        // Row by row rather than one rectangle from the first row's top
+        // to the last row's bottom: rows are not all the same height,
+        // and a rectangle drawn between two of them would cover the
+        // ones between at whatever height the maths happened to give.
+        let (lo, hi) = (area.row_lo.max(0), area.row_hi.max(0));
+        for row in lo..=hi {
+            let Ok(row) = usize::try_from(row) else {
+                continue;
+            };
+            if !visible.contains(&row) {
+                continue;
+            }
+            let Some((top, height)) = scene.row_box(row) else {
+                continue;
+            };
+            let r = Rect::new(
+                x_of(area.t0),
+                top.mul_add(view.zoom_y, oy),
+                x_of(area.t1),
+                (top + height).mul_add(view.zoom_y, oy),
+            );
+            painter.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                palette.accent.multiply_alpha(0.18),
+                None,
+                &r,
+            );
+            for edge in [r.x0, r.x1] {
+                painter.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    palette.accent,
+                    None,
+                    &Rect::new(edge - 0.5, r.y0, edge + 0.5, r.y1),
+                );
+            }
+        }
+    }
+}
+
 pub fn selection_overlay(
     painter: &mut impl PaintScene,
     palette: &Palette,

@@ -73,9 +73,25 @@ pub enum Action {
     /// Add the item to the selection, or take it out again — the
     /// modified click, for building a selection up a piece at a time.
     ToggleItemSelection,
+    /// Draw a razor area out of the drag.
+    RazorArea,
+    /// Move a razor area already drawn, by its edge or its middle.
+    MoveRazorArea,
+    /// Take a razor area out of the set.
+    RemoveRazorArea,
     /// Nothing bound here.
     Nothing,
 }
+
+/// The context for a razor area already on screen.
+///
+/// `Custom` rather than a new variant on `MouseModifierContext`: the
+/// enum lives in the daw repo and this is the arrangement's own
+/// surface, which is exactly the case `Custom` was added for. REAPER
+/// models razor areas as their own contexts too — area left drag, area
+/// click, area edge — so the shape matches what a profile will
+/// eventually load into.
+pub const RAZOR_AREA: Context = Context::Custom("razor-area");
 
 /// The FTS default: what each context does under each gesture.
 ///
@@ -97,6 +113,35 @@ pub fn resolve(context: Context, gesture: Gesture, mods: Mods) -> Bound {
 fn verb(context: Context, gesture: Gesture, mods: Mods) -> Action {
     use Gesture as G;
     match (context, gesture) {
+        // The razor, on Ctrl, and first in the table because a
+        // modifier that has to beat an unguarded default has to be
+        // asked about before it.
+        //
+        // Not the plain drag, which is a time selection and is worth
+        // keeping: the two gestures are the same shape and the razor is
+        // the rarer one. Not Alt either — that is the zoom tool's sweep
+        // in this window, and a modifier meaning two things depending
+        // on what else is held is what the table exists to prevent.
+        //
+        // Over an item's body and its edges as much as over empty
+        // ground. A razor with a dead zone at every item boundary would
+        // be one that depends on where items begin and end, which is
+        // the one thing it is defined as not doing.
+        //
+        // The fade handles are the exception, knowingly: Ctrl there is
+        // already the fade's SHAPE, bound below for a reason worth
+        // keeping. A handle is a small corner and a razor can start a
+        // pixel away from one, where a whole edge could not be worked
+        // around.
+        (Context::ArrangeView, G::Drag) if mods.ctrl => Action::RazorArea,
+        (Context::MediaItemBottomHalf, G::Drag) if mods.ctrl => Action::RazorArea,
+        (Context::MediaItemLeftEdge, G::Drag) if mods.ctrl => Action::RazorArea,
+        (Context::MediaItemRightEdge, G::Drag) if mods.ctrl => Action::RazorArea,
+        // An area already drawn answers for itself: drag moves it,
+        // click takes it out. No modifier on either — by the time the
+        // pointer is over an area there is nothing else it could mean.
+        (RAZOR_AREA, G::Drag) => Action::MoveRazorArea,
+        (RAZOR_AREA, G::Click) => Action::RemoveRazorArea,
         // The ruler: a click places the cursor, a drag selects time.
         (Context::Ruler, G::Click) => Action::SetEditCursor,
         (Context::Ruler, G::Drag) => Action::TimeSelection,
@@ -162,6 +207,70 @@ mod tests {
         assert_eq!(
             resolve(Context::MediaItemFade, Gesture::Click, Mods::default()).action,
             Action::Nothing
+        );
+    }
+
+    /// Ctrl draws a razor wherever the lanes are, and the plain drag
+    /// still means what it meant.
+    ///
+    /// The table is the authority, so the razor's reach is stated here
+    /// rather than discovered by dragging: a dead zone at an item
+    /// boundary would make the razor depend on where items begin and
+    /// end, which is the one thing it is defined as not doing.
+    #[test]
+    fn ctrl_draws_a_razor_over_everything_the_lanes_have() {
+        let ctrl = with(false, true, false);
+        for context in [
+            Context::ArrangeView,
+            Context::MediaItemBottomHalf,
+            Context::MediaItemLeftEdge,
+            Context::MediaItemRightEdge,
+        ] {
+            assert_eq!(
+                resolve(context, Gesture::Drag, ctrl).action,
+                Action::RazorArea,
+                "{context:?} has a hole in it"
+            );
+        }
+        // And without Ctrl, everything still means what it did.
+        assert_eq!(
+            resolve(Context::ArrangeView, Gesture::Drag, Mods::default()).action,
+            Action::TimeSelection
+        );
+        assert_eq!(
+            resolve(Context::MediaItemBottomHalf, Gesture::Drag, Mods::default()).action,
+            Action::MoveItem
+        );
+        assert_eq!(
+            resolve(Context::MediaItemLeftEdge, Gesture::Drag, Mods::default()).action,
+            Action::TrimLeft
+        );
+        // The fade's shape keeps Ctrl. Stated so that giving the razor
+        // the whole lane later is a deliberate change and not a
+        // surprise.
+        assert_eq!(
+            resolve(Context::MediaItemFade, Gesture::Drag, ctrl).action,
+            Action::FadeShape
+        );
+        // A ctrl CLICK on an item is still the selection toggle: the
+        // razor is a drag, and the press stands in for both until it
+        // is one or the other.
+        assert_eq!(
+            resolve(Context::MediaItemBottomHalf, Gesture::Click, ctrl).action,
+            Action::ToggleItemSelection
+        );
+    }
+
+    /// An area already drawn answers for itself, without a modifier.
+    #[test]
+    fn an_area_is_moved_by_a_drag_and_removed_by_a_click() {
+        assert_eq!(
+            resolve(RAZOR_AREA, Gesture::Drag, Mods::default()).action,
+            Action::MoveRazorArea
+        );
+        assert_eq!(
+            resolve(RAZOR_AREA, Gesture::Click, Mods::default()).action,
+            Action::RemoveRazorArea
         );
     }
 

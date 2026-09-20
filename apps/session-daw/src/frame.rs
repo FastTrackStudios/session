@@ -61,6 +61,8 @@ pub struct Arrange<'a> {
     pub in_flight: Option<(usize, Fades)>,
     pub selected: &'a HashSet<String>,
     pub ghost: Option<(usize, f64, f64)>,
+    /// The razor areas drawn, and the one being drawn right now.
+    pub razor: (&'a razor::RazorSet, Option<razor::RazorArea>),
     pub scroll_bars: Option<(crate::scrollbar::Bar, crate::scrollbar::Bar)>,
     pub bar_held: Option<crate::scrollbar::Axis>,
     /// The editor in the dock, if one is docked.
@@ -98,6 +100,7 @@ impl Arrange<'_> {
             in_flight,
             selected,
             ghost,
+            razor,
             scroll_bars,
             bar_held,
             dock,
@@ -142,6 +145,10 @@ impl Arrange<'_> {
             lanes_at,
             (hovered_item, in_flight),
             (selected, ghost),
+        );
+        // Over the items it cuts, under the ruler and the panel.
+        crate::arrangement::razor_overlay(
+            painter, palette, scene, view, lanes_at, razor.0, razor.1,
         );
         // The panel: the SAME vertical offset, which is the entire
         // point. It cannot drift from the lanes because there is

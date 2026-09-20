@@ -728,6 +728,16 @@ impl ArrangementWidget {
                     let view = self.viewport(self.size.0, self.size.1);
                     let seconds = self.seconds_at(x, view);
                     let bpm = self.scene.bpm;
+                    // A razor is the one drag here that is a rectangle,
+                    // so it is the one that needs the row as well as
+                    // the time.
+                    if self.editor.razor_in_flight().is_some() {
+                        let row = self
+                            .scene
+                            .row_at_screen(y - ruler::RULER_H + view.scroll_y, view)
+                            .unwrap_or(0);
+                        return self.editor.razor_moved(seconds, row, bpm);
+                    }
                     return self
                         .editor
                         .moved(Some(seconds), view.pps, bpm, mods(e.mods));
@@ -916,6 +926,18 @@ impl ArrangementWidget {
             lanes_at,
             &self.editor.selected,
             self.editor.ghost(),
+        );
+        // The razor's rectangles over the items they cut, and under
+        // nothing: they are the thing being aimed, so they go last of
+        // the lane passes.
+        crate::arrangement::razor_overlay(
+            &mut out,
+            &self.palette,
+            &self.scene,
+            view,
+            lanes_at,
+            &self.editor.razor,
+            self.editor.razor_in_flight(),
         );
         spent.titles = since(&mut mark);
         let panel = self

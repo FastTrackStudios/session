@@ -16,6 +16,7 @@ use std::collections::HashSet;
 
 use daw_proto::Track;
 use daw_ui::studio::project::Project;
+use razor::{RazorArea, RazorSet};
 
 use crate::arrangement::{Arrangement, Fades, ItemZone, Viewport};
 use crate::cursor;
@@ -147,6 +148,56 @@ pub struct Editor {
     pub ruler_span: Option<(f64, f64)>,
     /// A refused drag on its way back to where it started.
     snapback: Option<Snapback>,
+    /// The razor areas currently drawn.
+    ///
+    /// Public because the paint passes read it and the window owns no
+    /// copy: an area is editor state the way the selection is, and two
+    /// copies of it would be two answers to "what is the razor over".
+    pub razor: razor::RazorSet,
+    /// A razor area being drawn or moved.
+    razor_drag: Option<RazorDrag>,
+}
+
+/// A razor area under the hand.
+///
+/// One struct for drawing and for moving, because they are the same
+/// gesture with a different origin: drawing anchors the far corner at
+/// the press, moving carries a whole rectangle. `moving` says which,
+/// and is the index into the set so a move can take the original out
+/// rather than leaving a copy behind.
+#[derive(Clone, Debug)]
+struct RazorDrag {
+    /// Where the press landed — the anchored corner when drawing, the
+    /// grab point when moving.
+    from: (f64, i32),
+    /// The area as it stands this frame.
+    area: RazorArea,
+    /// The area as it was at the press, for a move to be relative to.
+    was: RazorArea,
+    /// `Some(index)` when an existing area is being moved.
+    moving: Option<usize>,
+    /// Whether the edges land on the grid — resolved at the press and
+    /// obeyed for the rest of the gesture, like every other drag here.
+    snap: bool,
+    /// What the press would have meant if it never becomes a drag.
+    ///
+    /// Ctrl on an item's body is a razor when the pointer moves and a
+    /// toggle of the selection when it does not, and a press cannot yet
+    /// tell which. The item press solves the same problem by growing a
+    /// ghost; a razor cannot, because it takes the press before the
+    /// item does — so it carries the other reading instead and performs
+    /// it on release if the drag never happened.
+    on_click: Option<ClickInstead>,
+}
+
+/// What a razor press meant, if it turned out to be a click.
+#[derive(Clone, Debug)]
+enum ClickInstead {
+    /// Select this item — alone, or added to what is selected.
+    Item { guid: String, add: bool },
+    /// Put the edit cursor here, which is what a click on empty lane
+    /// has always meant.
+    Cursor(f64),
 }
 
 /// The ghost of a refused drag, returning.
@@ -234,6 +285,9 @@ impl Editor {
         // answers for one drag, and the one being started now is it.
         self.snapback = None;
         let Some(hit) = hit else { return false };
+        if self.razor_pressed(hit, keys, scene) {
+            return true;
+        }
         match hit.target {
             Target::Item {
                 index,
@@ -341,6 +395,155 @@ impl Editor {
         }
     }
 
+    /// The razor's half of a press: an area grabbed, or a new one
+    /// started.
+    ///
+    /// Before the rest of `press` and not inside it, because an area
+    /// drawn over a take sits OVER that take: the pointer is on both,
+    /// and the one that was put there deliberately wins. Answering
+    /// `true` means the gesture has been taken and nothing else should
+    /// look at it.
+    fn razor_pressed(&mut self, hit: Hit, keys: Mods, scene: &Arrangement) -> bool {
+        let Some((at, row)) = Self::where_in_lanes(hit.target) else {
+            return false;
+        };
+        // An area already under the pointer answers for itself.
+        if let Some((index, area)) = self.razor.at(at, row) {
+            return match mousemap::resolve(mousemap::RAZOR_AREA, Gesture::Drag, keys).action {
+                mousemap::Action::MoveRazorArea => {
+                    self.razor_drag = Some(RazorDrag {
+                        from: (at, row),
+                        area,
+                        was: area,
+                        moving: Some(index),
+                        snap: mousemap::resolve(mousemap::RAZOR_AREA, Gesture::Drag, keys).snap,
+                        // A click on an area takes it out, which
+                        // `razor_released` does rather than this.
+                        on_click: None,
+                    });
+                    true
+                }
+                _ => false,
+            };
+        }
+        let bound = mousemap::resolve(hit.context, Gesture::Drag, keys);
+        if bound.action != mousemap::Action::RazorArea {
+            return false;
+        }
+        // Zero-width until the pointer moves. An area that sprang into
+        // existence a beat wide on mousedown would be a click that
+        // edits, and a razor is never that.
+        let area = RazorArea::new(at, at, row, row);
+        self.razor_drag = Some(RazorDrag {
+            from: (at, row),
+            area,
+            was: area,
+            moving: None,
+            snap: bound.snap,
+            on_click: Self::click_instead(hit, at, keys, scene),
+        });
+        true
+    }
+
+    /// What the press would have been without the drag.
+    fn click_instead(hit: Hit, at: f64, keys: Mods, scene: &Arrangement) -> Option<ClickInstead> {
+        let action = mousemap::resolve(hit.context, Gesture::Click, keys).action;
+        match (hit.target, action) {
+            (
+                Target::Item { index, .. },
+                mousemap::Action::SelectItem | mousemap::Action::ToggleItemSelection,
+            ) => scene.item(index).map(|item| ClickInstead::Item {
+                guid: item.guid.clone(),
+                add: action == mousemap::Action::ToggleItemSelection,
+            }),
+            (Target::Lane { .. }, mousemap::Action::SetEditCursor) => {
+                Some(ClickInstead::Cursor(at))
+            }
+            _ => None,
+        }
+    }
+
+    /// The row and time a hit landed on, for the two targets that have
+    /// both. `None` anywhere a razor cannot be.
+    fn where_in_lanes(target: Target) -> Option<(f64, i32)> {
+        let (row, seconds) = match target {
+            Target::Lane { row, seconds } | Target::Item { row, seconds, .. } => (row, seconds),
+            _ => return None,
+        };
+        Some((seconds, i32::try_from(row).unwrap_or(i32::MAX)))
+    }
+
+    /// A razor drag following the pointer. `true` when the picture
+    /// changed.
+    ///
+    /// Takes the row as well as the time, which is why it is not folded
+    /// into [`Self::moved`]: every other drag here is along one axis
+    /// and a razor is the only one that is a rectangle.
+    pub fn razor_moved(&mut self, at: f64, row: usize, bpm: f64) -> bool {
+        let Some(drag) = self.razor_drag.as_mut() else {
+            return false;
+        };
+        let row = i32::try_from(row).unwrap_or(i32::MAX);
+        let beat = 60.0 / bpm.max(1.0);
+        let on_grid = drag.snap;
+        let snapped = |t: f64| {
+            if on_grid {
+                (t / beat).round() * beat
+            } else {
+                t
+            }
+        };
+        let was = drag.area;
+        drag.area = match drag.moving {
+            // Drawing: the press is one corner, the pointer the other.
+            None => RazorArea::new(snapped(drag.from.0), snapped(at), drag.from.1, row),
+            // Moving: the whole rectangle travels, keeping its size.
+            // Measured from where it WAS rather than from the last
+            // frame, so a slow drag and a fast one land in the same
+            // place.
+            Some(_) => {
+                let dt = snapped(at) - snapped(drag.from.0);
+                drag.was.translated(dt, row - drag.from.1)
+            }
+        };
+        drag.area != was
+    }
+
+    /// Whether a razor drag is in flight, and the area it would leave.
+    #[must_use]
+    pub fn razor_in_flight(&self) -> Option<RazorArea> {
+        self.razor_drag.as_ref().map(|drag| drag.area)
+    }
+
+    /// The razor drag let go of. `true` when the set changed.
+    fn razor_released(&mut self) -> bool {
+        let Some(drag) = self.razor_drag.take() else {
+            return false;
+        };
+        // A press that never became a drag is a click, and a click on an
+        // area takes it out. On empty ground it is nothing — the press
+        // already did what a click there means.
+        if drag.area.is_empty() && drag.moving.is_none() {
+            return false;
+        }
+        if let Some(index) = drag.moving {
+            // Out before in, so `add`'s merging sees the set WITHOUT
+            // the area being moved. Leaving it in would merge the area
+            // with the hole it came from and undo the move.
+            if index < self.razor.areas.len() {
+                self.razor.areas.remove(index);
+            }
+            // A grab that went nowhere was a click, and a click on an
+            // area takes it out — the table says so, and it is the only
+            // way to be rid of one area without losing the rest.
+            if drag.area == drag.was {
+                return true;
+            }
+        }
+        self.razor.add(drag.area);
+        true
+    }
+
     /// The pointer moved to the time `at` (if it is over the timeline).
     /// `true` when the picture changed.
     pub fn moved(&mut self, at: Option<f64>, pps: f64, bpm: f64, keys: Mods) -> bool {
@@ -434,6 +637,28 @@ impl Editor {
         project: &mut Project,
         effects: &mut Vec<Effect>,
     ) -> bool {
+        // The razor took the press, so it answers for the release —
+        // but only as a razor if it actually drew something. An area
+        // still zero-wide means the press never became a drag, and then
+        // the gesture was the click the press was also standing in for.
+        if let Some(drag) = self.razor_drag.take() {
+            if drag.moving.is_some() || !drag.area.is_empty() {
+                self.razor_drag = Some(drag);
+                return self.razor_released();
+            }
+            return match drag.on_click {
+                Some(ClickInstead::Item { guid, add }) => {
+                    self.select(&guid, !add, project, effects);
+                    true
+                }
+                Some(ClickInstead::Cursor(at)) => {
+                    self.cursor.click(at);
+                    effects.push(Effect::Transport(Move::Seek, at));
+                    true
+                }
+                None => false,
+            };
+        }
         if let Some(press) = self.ruler_press.take() {
             use crate::ruler::{MARKS_ROW, On, Zone, lane_of};
             match (press.on, press.ghost) {
@@ -810,7 +1035,18 @@ impl Editor {
             }
             Action::SplitAtCursor => self.split_at(self.cursor.at, project, effects),
             Action::DeleteSelectedItems => {
-                // The ruler first, and exclusively: a mark or a band
+                // A razor area first of all. It is the most deliberate
+                // thing on screen — you drew a rectangle and it is
+                // still there — so while one exists it is what the key
+                // is about, and the areas go with their contents
+                // because an empty rectangle left behind would be a
+                // second press waiting to happen.
+                if !self.razor.is_empty() {
+                    self.razor_delete(scene, project, effects);
+                    self.razor.clear();
+                    return true;
+                }
+                // The ruler next, and exclusively: a mark or a band
                 // taken hold of is what the key means, and deleting
                 // items as well would take away a selection the user
                 // had stopped looking at.
@@ -937,6 +1173,188 @@ impl Editor {
         true
     }
 
+    /// The real items an area covers, with its edges made real first.
+    ///
+    /// Carving before answering is what makes every razor operation
+    /// exact: after it, "the items in the area" is a set with no
+    /// partial overlaps left to reason about, so the caller never has
+    /// to decide what a half-covered take means. It is the same order
+    /// `expression_editor_core::razor::carve` uses over notes, for the
+    /// same reason.
+    ///
+    /// The guids that come back are the session's own. A folded row's
+    /// items are views of the mics under them, so they go through
+    /// [`targets`] like every other edit — which also means a ragged
+    /// row refuses here, with the reason travelling the way it does
+    /// everywhere else.
+    fn razor_carve(
+        &mut self,
+        area: RazorArea,
+        scene: &Arrangement,
+        project: &mut Project,
+        effects: &mut Vec<Effect>,
+    ) -> Vec<String> {
+        // Which LANES the area covers, worked out once.
+        //
+        // Once because `targets` is also where a ragged row refuses,
+        // and asking twice would put the same refusal on screen twice.
+        // Lanes rather than items because the halves a carve is about
+        // to make do not exist yet: a lane is a row that will still
+        // mean the same thing afterwards, and an item is not.
+        let mut lanes: HashSet<String> = HashSet::new();
+        for item in Self::boxes_in(scene, area)
+            .map(|item| item.guid.clone())
+            .collect::<Vec<_>>()
+        {
+            let Some(reals) = targets(project, &item, true, effects) else {
+                continue;
+            };
+            for real in reals {
+                if let Some(lane) = project
+                    .items
+                    .iter()
+                    .find(|(_, items)| items.iter().any(|i| i.guid == real))
+                    .map(|(lane, _)| lane.clone())
+                {
+                    lanes.insert(lane);
+                }
+            }
+        }
+        if lanes.is_empty() {
+            return Vec::new();
+        }
+
+        // Both edges. Splitting at `t0` moves nothing at `t1`, so the
+        // order is only about reading clearly.
+        for edge in [area.t0, area.t1] {
+            let crossing: HashSet<String> = lanes
+                .iter()
+                .filter_map(|lane| project.items.get(lane))
+                .flatten()
+                .filter(|item| {
+                    let start = item.position.as_seconds();
+                    let end = start + item.length.as_seconds();
+                    start + 1e-3 < edge && end - 1e-3 > edge
+                })
+                .map(|item| item.guid.clone())
+                .collect();
+            Self::split_items(project, edge, &crossing, effects);
+        }
+
+        // And what is left inside, read from the project because that
+        // is where the new halves are.
+        lanes
+            .iter()
+            .filter_map(|lane| project.items.get(lane))
+            .flatten()
+            .filter(|item| {
+                let start = item.position.as_seconds();
+                let end = start + item.length.as_seconds();
+                start >= area.t0 - 1e-3 && end <= area.t1 + 1e-3
+            })
+            .map(|item| item.guid.clone())
+            .collect()
+    }
+
+    /// The scene's boxes the area touches.
+    fn boxes_in(
+        scene: &Arrangement,
+        area: RazorArea,
+    ) -> impl Iterator<Item = &crate::arrangement::ItemBox> {
+        scene.item_boxes().iter().filter(move |item| {
+            area.touches(
+                i32::try_from(item.row).unwrap_or(i32::MAX),
+                item.x0,
+                item.x1,
+            )
+        })
+    }
+
+    /// Clear an area: carve its edges, then delete what is inside.
+    ///
+    /// `true` when anything went. The carve happens whether or not
+    /// something is deleted, which is deliberate — an area over the
+    /// middle of a take leaves that take in three pieces and the middle
+    /// one gone, and the two survivors are the edges the area asked for.
+    pub fn razor_delete(
+        &mut self,
+        scene: &Arrangement,
+        project: &mut Project,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
+        let areas = self.razor.areas.clone();
+        let mut went = false;
+        for area in areas {
+            let doomed = self.razor_carve(area, scene, project, effects);
+            if doomed.is_empty() {
+                continue;
+            }
+            for guid in &doomed {
+                effects.push(Effect::Send(Edit::DeleteItem(guid.clone())));
+            }
+            let gone: HashSet<&String> = doomed.iter().collect();
+            for lane in project.items.values_mut() {
+                lane.retain(|item| !gone.contains(&item.guid));
+            }
+            went = true;
+        }
+        if went {
+            project.item_count = project.items.values().map(Vec::len).sum();
+            effects.push(Effect::ReRecord);
+        }
+        went
+    }
+
+    /// Split every item in `mine` that `at` falls inside.
+    ///
+    /// The half that [`Self::split_at`] and the razor both need. The
+    /// naming rule — `{guid}-split@{t}` — is the same in both because
+    /// the engine has to recognise the right-hand half whichever
+    /// gesture made it.
+    fn split_items(
+        project: &mut Project,
+        at: f64,
+        mine: &HashSet<String>,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
+        let mut splits = Vec::new();
+        for lane in project.items.values_mut() {
+            let mut halves = Vec::new();
+            for item in lane.iter_mut() {
+                let start = item.position.as_seconds();
+                let end = start + item.length.as_seconds();
+                if !mine.contains(&item.guid) || at <= start + 1e-3 || at >= end - 1e-3 {
+                    continue;
+                }
+                let mut right = item.clone();
+                right.guid = format!("{}-split@{at:.3}", item.guid);
+                right.position = daw_proto::primitives::PositionInSeconds::from_seconds(at);
+                right.length = daw_proto::primitives::Duration::from_seconds(end - at);
+                right.fade_in_length = daw_proto::primitives::Duration::from_seconds(0.0);
+                item.length = daw_proto::primitives::Duration::from_seconds(at - start);
+                item.fade_out_length = daw_proto::primitives::Duration::from_seconds(0.0);
+                splits.push(Edit::SplitItem(item.guid.clone(), at, right.guid.clone()));
+                halves.push(right);
+            }
+            lane.extend(halves);
+            lane.sort_by(|a, b| {
+                a.position
+                    .as_seconds()
+                    .partial_cmp(&b.position.as_seconds())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+        if splits.is_empty() {
+            return false;
+        }
+        project.item_count = project.items.values().map(Vec::len).sum();
+        for edit in splits {
+            effects.push(Effect::Send(edit));
+        }
+        effects.push(Effect::ReRecord);
+        true
+    }
+
     /// Split at a time: the selected items that contain it, or every
     /// item that does when nothing is selected — REAPER's rule for the
     /// split key. Each becomes two here, and the engine is told.
@@ -959,49 +1377,23 @@ impl Editor {
             })
             .flatten()
             .collect();
-        let mut splits = Vec::new();
-        for lane in project.items.values_mut() {
-            let mut halves = Vec::new();
-            for item in lane.iter_mut() {
-                let start = item.position.as_seconds();
-                let end = start + item.length.as_seconds();
-                // A mic is "mine" when it is selected itself or when the
-                // folded row over it is — splitting a folded item splits
-                // every mic under it, which is what the row says it is.
-                let mine = self.selected.is_empty()
+        // REAPER's rule for the split key: the selected items that
+        // contain the time, or every item that does when nothing is
+        // selected. A mic is "mine" when it is selected itself or when
+        // the folded row over it is — splitting a folded item splits
+        // every mic under it, which is what the row says it is.
+        let mine: HashSet<String> = project
+            .items
+            .values()
+            .flatten()
+            .filter(|item| {
+                self.selected.is_empty()
                     || self.selected.contains(&item.guid)
-                    || folded.contains(&item.guid);
-                if !mine || at <= start + 1e-3 || at >= end - 1e-3 {
-                    continue;
-                }
-                // Named after what it came from and where — stable
-                // whatever order the lanes come out of the map in.
-                let mut right = item.clone();
-                right.guid = format!("{}-split@{at:.3}", item.guid);
-                right.position = daw_proto::primitives::PositionInSeconds::from_seconds(at);
-                right.length = daw_proto::primitives::Duration::from_seconds(end - at);
-                right.fade_in_length = daw_proto::primitives::Duration::from_seconds(0.0);
-                item.length = daw_proto::primitives::Duration::from_seconds(at - start);
-                item.fade_out_length = daw_proto::primitives::Duration::from_seconds(0.0);
-                splits.push(Edit::SplitItem(item.guid.clone(), at, right.guid.clone()));
-                halves.push(right);
-            }
-            lane.extend(halves);
-            lane.sort_by(|a, b| {
-                a.position
-                    .as_seconds()
-                    .partial_cmp(&b.position.as_seconds())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-        if splits.is_empty() {
-            return;
-        }
-        project.item_count = project.items.values().map(Vec::len).sum();
-        for edit in splits {
-            effects.push(Effect::Send(edit));
-        }
-        effects.push(Effect::ReRecord);
+                    || folded.contains(&item.guid)
+            })
+            .map(|item| item.guid.clone())
+            .collect();
+        Self::split_items(project, at, &mine, effects);
     }
 }
 
@@ -1376,6 +1768,57 @@ mod tests {
         fn rerecord(&mut self) {
             self.scene = record(&self.project, &self.rows);
         }
+
+        /// Draw a razor from one point to another, the way a hand
+        /// would: ctrl-press, move, release.
+        fn razor(&mut self, from: (usize, f64), to: (usize, f64)) {
+            let ctrl = Mods {
+                ctrl: true,
+                ..Mods::default()
+            };
+            let (x, y) = self.point(from.0, from.1, 15.0);
+            assert!(self.press(x, y, ctrl).0, "the press was not taken at all");
+            assert!(
+                self.editor.razor_in_flight().is_some(),
+                "the press at {from:?} started {:?}, not a razor",
+                self.hit(x, y).context
+            );
+            self.editor.razor_moved(to.1, to.0, self.project.bpm);
+            let mut effects = Vec::new();
+            self.editor
+                .release(Some(to.1), ctrl, &mut self.project, &mut effects);
+        }
+
+        /// Carve the first area, the way the delete key would before
+        /// it removed anything.
+        fn carve(&mut self) -> Vec<String> {
+            let area = self.editor.razor.areas[0];
+            let mut effects = Vec::new();
+            let Self {
+                editor,
+                scene,
+                project,
+                ..
+            } = self;
+            editor.razor_carve(area, scene, project, &mut effects)
+        }
+
+        /// The spans on a lane, rounded, for comparing against what an
+        /// edit was meant to leave.
+        fn spans(&self, lane: &str) -> Vec<(f64, f64)> {
+            let mut out: Vec<(f64, f64)> = self.project.items[lane]
+                .iter()
+                .map(|i| {
+                    let at = i.position.as_seconds();
+                    (
+                        (at * 1000.0).round() / 1000.0,
+                        ((at + i.length.as_seconds()) * 1000.0).round() / 1000.0,
+                    )
+                })
+                .collect();
+            out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            out
+        }
     }
 
     pub(super) fn record(project: &Project, rows: &[(Track, u32)]) -> Arrangement {
@@ -1626,6 +2069,176 @@ mod tests {
         let (x2, y2) = s.point(0, 2.5, 15.0);
         s.press(x2, y2, Mods::default());
         assert!(!s.editor.settling(), "a press left the old ghost in flight");
+    }
+
+    /// A ctrl-drag over the lanes draws an area and leaves it in the
+    /// set. The plain drag it shares a shape with still selects time.
+    #[test]
+    fn a_ctrl_drag_draws_a_razor_area_and_a_plain_one_does_not() {
+        let mut s = Stage::new();
+        s.razor((0, 3.0), (0, 7.0));
+        assert_eq!(s.editor.razor.areas.len(), 1, "no area was left behind");
+        let area = s.editor.razor.areas[0];
+        assert!((area.t0 - 3.0).abs() < 1e-6 && (area.t1 - 7.0).abs() < 1e-6);
+        assert_eq!((area.row_lo, area.row_hi), (0, 0));
+
+        // And the unmodified drag is still a time selection.
+        let mut t = Stage::new();
+        let (x, y) = t.point(0, 20.0, 15.0);
+        t.press(x, y, Mods::default());
+        t.drag_to(x + 2.0 * PPS, Mods::default());
+        t.release(x + 2.0 * PPS, Mods::default());
+        assert!(
+            t.editor.razor.is_empty(),
+            "a plain drag drew a razor: {:?}",
+            t.editor.razor.areas
+        );
+    }
+
+    /// Areas over the same rows merge into one; areas over different
+    /// rows stay apart. Merging is what stops an interior seam being
+    /// sliced twice.
+    #[test]
+    fn areas_merge_on_the_same_rows_and_not_across_them() {
+        let mut s = Stage::new();
+        s.razor((0, 2.0), (0, 5.0));
+        // Drawn backwards, from 7 to 4: the press has to land OUTSIDE
+        // the first area or it grabs it and moves it instead, which is
+        // the behaviour `a_press_inside_an_area_moves_it` holds.
+        s.razor((0, 7.0), (0, 4.0));
+        assert_eq!(
+            s.editor.razor.areas.len(),
+            1,
+            "two overlapping areas on one row stayed two: {:?}",
+            s.editor.razor.areas
+        );
+        let merged = s.editor.razor.areas[0];
+        assert!(
+            (merged.t0 - 2.0).abs() < 1e-6 && (merged.t1 - 7.0).abs() < 1e-6,
+            "the merge did not cover both: {merged:?}"
+        );
+
+        s.razor((1, 4.0), (1, 8.0));
+        assert_eq!(
+            s.editor.razor.areas.len(),
+            2,
+            "an area on another row was merged into this one"
+        );
+    }
+
+    /// The defining property: an area SLICES at its edges. A razor over
+    /// the middle of a take leaves three pieces, and the middle one is
+    /// exactly the rectangle.
+    #[test]
+    fn an_area_slices_the_items_at_both_its_edges() {
+        let mut s = Stage::new();
+        // The kick's first item runs 2..6. Cut 3..5 out of the middle.
+        s.razor((0, 3.0), (0, 5.0));
+        let inside = s.carve();
+        assert_eq!(
+            s.spans("kick"),
+            vec![(2.0, 3.0), (3.0, 5.0), (5.0, 6.0), (10.0, 14.0)],
+            "the edges did not become real boundaries"
+        );
+        assert_eq!(
+            inside.len(),
+            1,
+            "the middle piece is what is inside: {inside:?}"
+        );
+        // No partial overlaps left: everything the area touches is now
+        // either wholly inside it or wholly outside.
+        for (start, end) in s.spans("kick") {
+            let straddles =
+                start < 3.0 - 1e-6 && end > 3.0 + 1e-6 || start < 5.0 - 1e-6 && end > 5.0 + 1e-6;
+            assert!(!straddles, "({start}, {end}) still straddles an edge");
+        }
+    }
+
+    /// Deleting an area's contents removes exactly what the rectangle
+    /// covered — the middle of the take, and neither shoulder.
+    #[test]
+    fn deleting_an_area_removes_exactly_what_it_covered() {
+        let mut s = Stage::new();
+        s.razor((0, 3.0), (0, 5.0));
+        let (handled, effects) = s.key(Action::DeleteSelectedItems);
+        assert!(handled);
+        assert_eq!(
+            s.spans("kick"),
+            vec![(2.0, 3.0), (5.0, 6.0), (10.0, 14.0)],
+            "the rectangle took more or less than it covered"
+        );
+        // The snare is on another row and the area never reached it.
+        assert_eq!(
+            s.spans("snare"),
+            vec![(4.0, 12.0)],
+            "a row outside the area lost something"
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::Send(Edit::DeleteItem(_)))),
+            "the engine was never told: {effects:?}"
+        );
+        assert!(s.editor.razor.is_empty(), "the area outlived its contents");
+    }
+
+    /// An area already on screen is grabbed and moved, rather than a
+    /// new one being started on top of it.
+    #[test]
+    fn a_press_inside_an_area_moves_it() {
+        let mut s = Stage::new();
+        s.razor((0, 3.0), (0, 5.0));
+        let (x, y) = s.point(0, 4.0, 15.0);
+        assert!(
+            s.press(x, y, Mods::default()).0,
+            "the area did not take the press"
+        );
+        s.editor.razor_moved(6.0, 0, s.project.bpm);
+        let mut effects = Vec::new();
+        s.editor
+            .release(Some(6.0), Mods::default(), &mut s.project, &mut effects);
+        assert_eq!(
+            s.editor.razor.areas.len(),
+            1,
+            "moving an area left two behind"
+        );
+        let moved = s.editor.razor.areas[0];
+        assert!(
+            (moved.t0 - 5.0).abs() < 1e-6 && (moved.t1 - 7.0).abs() < 1e-6,
+            "the area did not travel with the pointer: {moved:?}"
+        );
+    }
+
+    /// A click inside an area takes that one out and leaves the rest,
+    /// which is the only way to be rid of one without losing them all.
+    #[test]
+    fn a_click_inside_an_area_removes_it() {
+        let mut s = Stage::new();
+        s.razor((0, 2.5), (0, 5.0));
+        s.razor((1, 8.0), (1, 9.0));
+        assert_eq!(s.editor.razor.areas.len(), 2);
+
+        let (x, y) = s.point(0, 4.0, 15.0);
+        assert!(
+            s.press(x, y, Mods::default()).0,
+            "the area did not take the press"
+        );
+        // No move: press and release in the same place.
+        let mut effects = Vec::new();
+        s.editor
+            .release(Some(4.0), Mods::default(), &mut s.project, &mut effects);
+        assert_eq!(
+            s.editor.razor.areas.len(),
+            1,
+            "the click did not take the area out: {:?}",
+            s.editor.razor.areas
+        );
+        let left = s.editor.razor.areas[0];
+        assert_eq!(
+            (left.row_lo, left.row_hi),
+            (1, 1),
+            "it took the wrong one out"
+        );
     }
 
     /// A click on an item's body selects it, alone; with Ctrl it is
