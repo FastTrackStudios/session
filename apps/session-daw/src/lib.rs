@@ -41,6 +41,7 @@ pub mod open;
 pub mod overlay;
 pub mod patch_list;
 pub mod plan;
+pub mod prepare;
 pub mod pointer;
 pub mod profile;
 pub mod rails;

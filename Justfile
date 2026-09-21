@@ -1595,6 +1595,23 @@ daw-animate PROJECT="" SIZE="2560x1440":
 # Opens the arrangement and scrolls it hard in both axes while reporting
 # the rate it actually presents at. This is the one to watch when asking
 # "does scrolling ever stutter" — the headless bench cannot show you that.
+# The studio window (Blitz + the painted arrangement) on a real session,
+# prepared first: organize it, build the song from its keyflow chart
+# (tempo, markers, section regions, Keyflow folder), and generate the
+# click and guide — the multitrack's own click/guide stems are kept,
+# muted, beside them. Leave CHART empty to open the session as it is.
+studio-song PROJECT CHART="" SIZE="2560x1440":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p session-daw --bin blitz_shot
+    prep=()
+    if [[ -n "{{CHART}}" ]]; then
+        prep=(FTS_BLITZ_ORGANIZE=1 "FTS_BLITZ_CHART={{CHART}}" FTS_BLITZ_GUIDE=1)
+    fi
+    env FTS_BLITZ_WINDOW=1 FTS_BLITZ_SIZE="{{SIZE}}" ${prep[@]+"${prep[@]}"} \
+        RUST_LOG="${RUST_LOG:-warn,session_daw=info}" \
+        ./target/release/blitz_shot "{{PROJECT}}" /tmp/fts-studio.png
+
 daw-vello PROJECT="" SIZE="2560x1440":
     #!/usr/bin/env bash
     set -euo pipefail
