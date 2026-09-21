@@ -959,6 +959,14 @@ fn Fps(editor: Signal<Editor>) -> Element {
     // is rebuilding for events the screen never shows — which is what a
     // drag driven by a high-polling-rate mouse does.
     let ups = frames.as_ref().and_then(|f| f.builds_per_second());
+    // The count as well as the rate, as an attribute rather than as
+    // text: a rate needs two frames close enough together to mean
+    // something, and on a loaded machine there may be none — which is
+    // not the same as nothing having been painted. A test asking "did a
+    // frame reach the screen" should be able to ask that.
+    let painted = frames
+        .as_ref()
+        .map_or(0, super::roll_widget::Frames::painted);
 
     // Quiet while it is healthy, and only asks for attention when it is
     // not: dim above a screen refresh, gold where a drag starts to feel
@@ -974,6 +982,7 @@ fn Fps(editor: Signal<Editor>) -> Element {
     rsx! {
         div {
             "data-testid": "fps",
+            "data-painted": "{painted}",
             title: "Frames painted per second, and how much of a frame the roll itself takes",
             style: format!(
                 "min-width: 180px; text-align: right; font-size: 10px; \

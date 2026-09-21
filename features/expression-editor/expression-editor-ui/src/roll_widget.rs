@@ -101,6 +101,19 @@ pub struct FrameLog {
     /// `(fps, ms a frame)` as measured by a renderer that paints for
     /// us — see [`Frames::observe_rate`].
     reported: Option<(f64, f64)>,
+    /// How many frames have been painted, ever.
+    ///
+    /// Counted apart from `intervals` because the two answer different
+    /// questions and only one of them is about time. A RATE needs two
+    /// frames close enough together to mean something, and `tick` throws
+    /// away any gap over half a second — the first frame after a pause
+    /// is the start of a burst, not a 2 fps frame. On a machine loaded
+    /// enough that every gap is over that, the rate is correctly absent
+    /// and the meter has still painted every frame it was asked to.
+    ///
+    /// Which is what made `the_frame_meter_counts_painted_frames` flake
+    /// (session#96): it asserted the RATE to prove the COUNT.
+    painted: u64,
 }
 
 impl Frames {
@@ -133,6 +146,10 @@ impl Frames {
             return;
         };
         let now = std::time::Instant::now();
+        // Before the filter below, and unconditionally: a frame that was
+        // too far from the last one to say anything about a rate is
+        // still a frame that was painted.
+        log.painted = log.painted.saturating_add(1);
         if let Some(previous) = log.last.replace(now) {
             let ms = now.duration_since(previous).as_secs_f64() * 1000.0;
             // Drop the idle gaps: the first frame after a second of
@@ -144,6 +161,17 @@ impl Frames {
                 }
             }
         }
+    }
+
+    /// How many frames have been painted since this meter was made.
+    ///
+    /// The honest answer to "is anything reaching the screen", and the
+    /// one that does not depend on how long a frame took: a rate needs
+    /// two frames close together, and a loaded machine does not
+    /// guarantee any.
+    #[must_use]
+    pub fn painted(&self) -> u64 {
+        self.0.try_borrow().map_or(0, |log| log.painted)
     }
 
     /// Record that the roll rebuilt its scene — one dioxus render.
