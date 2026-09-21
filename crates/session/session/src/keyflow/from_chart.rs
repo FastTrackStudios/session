@@ -18,7 +18,10 @@
 //! at zero line up with that without being moved.
 
 use daw::service::transport::service::Transport as TransportService;
-use daw::service::{Markers, ProjectContext, Projects, Regions, TempoMap, Tracks};
+use daw::service::{
+    ItemRef, Items, Markers, Midi, MidiNoteCreate, PositionConversion, PositionInSeconds,
+    ProjectContext, Projects, Regions, TempoMap, TrackRef, Tracks,
+};
 
 use crate::setlist::chart_import::{ChartLayout, chart_to_layout};
 use crate::setlist::service::demo::{chart_layout_to_demo_song, stamp_song_with_default_tempo_native};
@@ -36,8 +39,22 @@ pub struct ChartBuilt {
 }
 
 /// The backend surface [`build_from_chart`] needs.
-pub trait ChartDaw: Projects + TransportService + Markers + Regions + TempoMap + Tracks {}
-impl<T: Projects + TransportService + Markers + Regions + TempoMap + Tracks> ChartDaw for T {}
+pub trait ChartDaw:
+    Projects + TransportService + Markers + Regions + TempoMap + Tracks + Items + Midi + PositionConversion
+{
+}
+impl<T> ChartDaw for T where
+    T: Projects
+        + TransportService
+        + Markers
+        + Regions
+        + TempoMap
+        + Tracks
+        + Items
+        + Midi
+        + PositionConversion
+{
+}
 
 /// Build the chart's structure into `project`.
 ///
@@ -82,7 +99,9 @@ pub fn build_from_chart<D: ChartDaw>(
     super::actions::ensure_core_lanes(daw);
     let stamped = stamp_song_with_default_tempo_native(daw, project, &song)
         .map_err(|e| eyre::eyre!("{e}"));
-    let folder = stamped.and_then(|_| super::scaffold::build_keyflow_folder(daw, project));
+    let folder = stamped
+        .and_then(|_| super::scaffold::build_keyflow_folder(daw, project))
+        .and_then(|()| stamp_keyflow_tracks(daw, project, chart_text, &layout));
     daw.end_undo_block(project.clone(), "Build song from chart", None);
     let _ = TransportService::set_position(daw, project.clone(), cursor);
     folder?;
@@ -96,3 +115,71 @@ pub fn build_from_chart<D: ChartDaw>(
         song_end_seconds: layout.song_end_seconds,
     })
 }
+
+/// The Keyflow folder's content from the chart: the KEY track gets one
+/// key item at the start (a label the rest of session reads back —
+/// `crate::key`), and CHORD one MIDI item per chord, named with the
+/// chord as written and holding its voicing. LINES and HITS stay empty;
+/// the chart says nothing about them yet.
+fn stamp_keyflow_tracks<D: ChartDaw>(
+    daw: &D,
+    project: &ProjectContext,
+    chart_text: &str,
+    layout: &ChartLayout,
+) -> eyre::Result<()> {
+    let chart = keyflow::text::chart::parse_chart(chart_text).map_err(|e| eyre::eyre!("chart: {e}"))?;
+    if let Some(key) = &chart.initial_key {
+        crate::key::set_key_at(daw, project.clone(), 0.0, key)?;
+    }
+
+    let Some(chord_track) = Tracks::all(daw, project.clone())
+        .into_iter()
+        .find(|t| t.name.trim().eq_ignore_ascii_case("CHORD") && t.folder_depth <= 0)
+    else {
+        return Ok(());
+    };
+    // The chart is laid out from zero at one tempo (`chart_to_layout`):
+    // a beat is a quarter at `tempo_bpm`, a bar is `time_sig_num` of them.
+    let beat = 60.0 / layout.tempo_bpm.max(1.0);
+    let bar = beat * f64::from(layout.time_sig_num.max(1));
+    let qn = |seconds: f64| {
+        daw.time_to_quarter_notes(project.clone(), PositionInSeconds::from_seconds(seconds))
+            .quarter_notes
+            .as_quarter_notes()
+    };
+    for chord in super::generate::voicings(&chart, CHORD_OCTAVE) {
+        #[expect(clippy::cast_precision_loss, reason = "a bar count")]
+        let start = (chord.measure as f64).mul_add(bar, chord.beat * beat);
+        let end = start + chord.beats * beat;
+        let Some(location) = daw.create_midi_item(
+            project.clone(),
+            TrackRef::Guid(chord_track.guid.clone()),
+            start,
+            end,
+        ) else {
+            eyre::bail!("could not create a chord item at {start:.3} s");
+        };
+        let item: ItemRef = location.item.clone();
+        let notes = chord
+            .pitches
+            .iter()
+            .map(|&pitch| MidiNoteCreate {
+                channel: 0,
+                pitch,
+                velocity: CHORD_VELOCITY,
+                // A project quarter-note position, as the guide writes
+                // them (see `Guide::note_create`); length in 960-PPQ ticks.
+                start_ppq: qn(start),
+                length_ppq: (chord.beats * 960.0).max(1.0),
+            })
+            .collect();
+        daw.add_notes(location, notes);
+        Items::set_label(daw, project.clone(), item, &chord.symbol)?;
+    }
+    Ok(())
+}
+
+/// Where the chord track's voicings sit: a reference to read, out of the
+/// way of anything played.
+const CHORD_OCTAVE: i32 = 4;
+const CHORD_VELOCITY: u8 = 85;

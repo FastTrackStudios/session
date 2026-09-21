@@ -79,6 +79,42 @@ fn a_chart_builds_tempo_markers_regions_and_the_keyflow_folder() {
     let at = names.iter().position(|n| n == "Keyflow").expect("Keyflow folder");
     assert_eq!(&names[at + 1..at + 5], ["KEY", "CHORD", "LINES", "HITS"]);
 
+    // KEY: one key item at the start, read back as the chart's key.
+    let changes = session::key::key_changes(&daw, &project);
+    assert_eq!(changes.len(), 1, "one key item: {changes:?}");
+    assert!(changes[0].seconds.abs() < 1e-6, "at the start");
+    assert!(
+        session::key::format_key(&changes[0].key).starts_with('F'),
+        "in F: {}",
+        session::key::format_key(&changes[0].key)
+    );
+
+    // CHORD: one MIDI item per chord, after the two count-in bars, named
+    // as written and holding notes. The verse's first chord (1 = F) is at
+    // bar 6 (2 count + 4 intro) — 16 s at 90.
+    let chord_track = Tracks::all(&daw, project.clone())
+        .into_iter()
+        .find(|t| t.name == "CHORD")
+        .expect("CHORD");
+    let items = daw::service::Items::get_items(&daw, project.clone(), daw::service::TrackRef::Guid(chord_track.guid));
+    // intro 4 bars + verse 4 bars x2 + chorus 4 bars x2, one chord a bar.
+    assert_eq!(items.len(), 20, "a chord item per chord");
+    let first = items
+        .iter()
+        .min_by(|a, b| a.position.as_seconds().total_cmp(&b.position.as_seconds()))
+        .expect("items");
+    assert!((first.position.as_seconds() - 2.0 * bar).abs() < 1e-6, "after the count-in");
+    let notes = daw::service::Midi::notes(
+        &daw,
+        daw::service::MidiTakeLocation::new(
+            project.clone(),
+            daw::service::ItemRef::Guid(first.guid.clone()),
+            daw::service::TakeRef::Active,
+        ),
+    );
+    assert_eq!(notes.len(), 3, "a triad");
+    assert_eq!(first.label.as_deref(), Some("1"), "named as the chart writes it");
+
     // A second build is refused rather than stamping everything twice.
     let again = build_from_chart(&daw, &project, CHART);
     assert!(again.is_err(), "a project with its structure built refuses a rebuild");
