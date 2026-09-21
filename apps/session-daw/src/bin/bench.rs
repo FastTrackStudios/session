@@ -1730,6 +1730,10 @@ struct AtRest {
     icons: session_daw::icons::Icons,
     selected: std::collections::HashSet<String>,
     palette: Palette,
+    /// An item being slipped, for the phase that measures what the live
+    /// pass costs. `None` everywhere else — the bench draws the picture
+    /// the window draws at rest.
+    slip: Option<(usize, f64)>,
 }
 
 /// No razor areas, for the bench.
@@ -1763,6 +1767,7 @@ impl AtRest {
             icons: session_daw::icons::Icons::none(),
             selected: std::collections::HashSet::new(),
             palette: palette.clone(),
+            slip: None,
         }
     }
 
@@ -1797,6 +1802,7 @@ impl AtRest {
             selected: &self.selected,
             ghost: None,
             razor: (&EMPTY_RAZOR, None),
+            slip: self.slip,
             scroll_bars: None,
             bar_held: None,
             dock,
@@ -1898,6 +1904,11 @@ fn studio(
         // the docked kit at once. The gesture's own outputs are the
         // view; this closure only says where the pointer is.
         ("zoom tool drag", Box::new(|t| (0.0, 0.3, 1.0, 1.0))),
+        // A slip drag: the view is still and one item's waveform is
+        // redrawn live at a moving offset. Measured because #130 says
+        // to measure it rather than assume one more item's worth of
+        // path a frame is free.
+        ("slip drag", Box::new(|_| (0.0, 0.3, 1.0, 1.0))),
     ];
     let lanes_origin = (
         session_daw::rails::SIDE + TCP_WIDTH,
@@ -1970,6 +1981,11 @@ fn studio(
                         dock_box.y0 + 26.0 + 120.0 - travel * 60.0,
                         Default::default(),
                     );
+                } else if *name == "slip drag" {
+                    // The offset sweeps a few seconds and back, so the
+                    // waveform is regenerated every frame rather than
+                    // landing on the same path twice.
+                    at_rest.slip = Some((0, tri(t) * 4.0));
                 } else {
                     // The playhead across the song, the camera following
                     // it a page at a time — the hits scroll past, and

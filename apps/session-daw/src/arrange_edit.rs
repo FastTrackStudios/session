@@ -16,7 +16,7 @@ use std::collections::HashSet;
 
 use daw_proto::Track;
 use daw_ui::studio::project::Project;
-use razor::{RazorArea, RazorSet};
+use razor::RazorArea;
 
 use crate::arrangement::{Arrangement, Fades, ItemZone, Viewport};
 use crate::cursor;
@@ -1084,6 +1084,11 @@ impl Editor {
         }
         self.item_press
             .as_ref()
+            // A slip has nothing to ghost. The item lands exactly where
+            // it is, so the ghost would be an outline and a pale wash
+            // over the item's own span — saying nothing, and dimming
+            // the one thing the gesture exists to let you read.
+            .filter(|p| p.slipped.is_none())
             .and_then(|p| p.ghost.map(|(x0, x1)| (p.index, x0, x1)))
     }
 
@@ -1094,6 +1099,17 @@ impl Editor {
         self.snapback
             .as_ref()
             .is_some_and(|back| back.progress().is_some())
+    }
+
+    /// The item being slipped and the offset the drag has reached.
+    ///
+    /// Separate from [`Self::ghost`] because a slip has no ghost worth
+    /// drawing — the item does not move, so its span is its own and the
+    /// thing that changes is inside it.
+    #[must_use]
+    pub fn slip_in_flight(&self) -> Option<(usize, f64)> {
+        let press = self.item_press.as_ref()?;
+        Some((press.index, press.slipped?))
     }
 
     /// The fade in flight: its item and where the fades are now.
@@ -2723,6 +2739,54 @@ mod tests {
             vec![&"in1".to_owned(), &"out1".to_owned()],
             "the mics did not both slip: {slipped:?}"
         );
+    }
+
+    /// A slip in flight is reported so the window can draw it, and it
+    /// is reported as an OFFSET rather than as a span: the item does
+    /// not move, so a ghost of its span would say nothing.
+    #[test]
+    fn a_slip_in_flight_reports_its_offset_not_a_span() {
+        let mut s = Stage::new();
+        let fine = Mods {
+            ctrl: true,
+            alt: true,
+            shift: true,
+        };
+        let (x, y) = s.point(0, 4.0, 15.0);
+        s.press(x, y, fine);
+        assert_eq!(
+            s.editor.slip_in_flight(),
+            None,
+            "a press that has not moved is not a slip yet"
+        );
+        assert!(s.drag_to(x - 0.6 * PPS, fine));
+        let (index, offset) = s.editor.slip_in_flight().expect("the slip is in flight");
+        assert_eq!(index, 0, "it named the wrong item");
+        assert!(
+            (offset - 0.6).abs() < 1e-6,
+            "the offset does not follow the pointer: {offset}"
+        );
+        // And no ghost, because the item lands where it already is: an
+        // outline and a pale wash over its own span would say nothing
+        // and dim the waveform the gesture exists to let you read.
+        assert_eq!(
+            s.editor.ghost(),
+            None,
+            "a slip drew a ghost over the item it is not moving"
+        );
+        // What was previewed is what is committed. The live pass draws
+        // `slip_in_flight` and the release writes `press.slipped`; if
+        // those two could differ the preview would be a lie, and the
+        // picture would jump when the button came up.
+        let previewed = offset;
+        s.release(x - 0.6 * PPS, fine);
+        let committed = s.item("k1").start_offset.as_seconds();
+        assert!(
+            (committed - previewed).abs() < 1e-9,
+            "the preview showed {previewed} and the release wrote {committed}"
+        );
+        // Nothing else in flight claims it.
+        assert_eq!(s.editor.slip_in_flight(), None, "it outlived the gesture");
     }
 
     /// A drag on the body moves the item, snapped to the beat, with a

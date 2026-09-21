@@ -965,6 +965,19 @@ impl ArrangementWidget {
                 * Affine::scale_non_uniform(view.pps, view.zoom_y),
         );
         spent.lanes = since(&mut mark);
+        // An item being slipped, redrawn at the offset the drag has
+        // reached. Immediately after the lanes and BEFORE the titles:
+        // it covers the recorded item to hide the old waveform, and a
+        // cover drawn after the titles takes the item's name with it —
+        // which reads as the label vanishing for the length of a drag.
+        crate::arrangement::slip_overlay(
+            &mut out,
+            &self.palette,
+            &self.scene,
+            view,
+            (TCP_WIDTH - view.scroll_x, below),
+            self.editor.slip_in_flight(),
+        );
         crate::arrangement::titles(
             &mut out,
             &self.palette,
