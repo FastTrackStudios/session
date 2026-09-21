@@ -16,12 +16,20 @@
 // REAPER FFI backend + the sync service traits it implements — used only by
 // the `*_native` builders below (the async builders drive the backend-agnostic
 // `daw::rpc::Project` handle). Native-only.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "reaper"))]
 use daw::reaper::Reaper;
 use daw::rpc::Project;
 use daw::service::{Marker, ProjectContext, Region};
 #[cfg(not(target_arch = "wasm32"))]
 use daw::service::{Markers, Projects, Regions, TempoMap};
+
+/// What [`SongBuilder::build_on`] reads from a backend: project info and
+/// ruler lanes, markers, regions, and the tempo map. REAPER and
+/// `daw-standalone` both provide it.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait SongDaw: Projects + Markers + Regions + TempoMap {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Projects + Markers + Regions + TempoMap> SongDaw for T {}
 use session_proto::{Comment, Section, SectionId, SectionType, Song, SongId};
 use tracing::{Level, debug, warn};
 
@@ -70,13 +78,16 @@ impl ResolvedLanes {
         resolved
     }
 
-    #[cfg(feature = "reaper")]
-    fn resolve_native(project: &ProjectContext) -> Self {
-        let count = Reaper.ruler_lane_count(project.clone());
+    #[cfg(not(target_arch = "wasm32"))]
+    fn resolve_on<D: SongDaw>(daw: &D, project: &ProjectContext) -> Self {
+        let count = daw.ruler_lane_count(project.clone());
         let mut resolved = Self::default();
 
-        for idx in 1..=count {
-            let name = Reaper.get_ruler_lane_name(project.clone(), idx);
+        // Lanes are numbered from 0 — `RULER_LANE_NAME:0` is the leftmost,
+        // and SONG is lane 0 (`CoreLane`). Starting at 1 never saw it, so
+        // the SONG region was never recognised as the song.
+        for idx in 0..count {
+            let name = daw.get_ruler_lane_name(project.clone(), idx);
             match name.to_uppercase().as_str() {
                 "SONG" => resolved.song = Some(idx),
                 "SECTIONS" => resolved.sections = Some(idx),
@@ -121,15 +132,26 @@ impl SongBuilder {
     /// Returns an error if querying the project's information, markers, regions, or tempo map fails.
     #[cfg(feature = "reaper")]
     pub fn build_native(project: ProjectContext) -> eyre::Result<Vec<Song>> {
-        let project_info = Reaper.info(project.clone())?;
+        Self::build_on(&Reaper, project)
+    }
+
+    /// Build one or more Songs from a project on any in-process backend —
+    /// REAPER or `daw-standalone` — through the sync service traits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if querying the project's information, markers, regions, or tempo map fails.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn build_on<D: SongDaw>(daw: &D, project: ProjectContext) -> eyre::Result<Vec<Song>> {
+        let project_info = daw.info(project.clone())?;
         debug!(
             "SongBuilder::build_native for project {}",
             project_info.guid
         );
 
-        let markers = <Reaper as Markers>::all(&Reaper, project.clone());
-        let regions = <Reaper as Regions>::all(&Reaper, project.clone());
-        let lanes = ResolvedLanes::resolve_native(&project);
+        let markers = Markers::all(daw, project.clone());
+        let regions = Regions::all(daw, project.clone());
+        let lanes = ResolvedLanes::resolve_on(daw, &project);
 
         let song_regions = Self::find_song_regions(&regions, &lanes);
         if song_regions.len() >= 2 {
@@ -141,6 +163,7 @@ impl SongBuilder {
             let mut songs = Vec::with_capacity(song_regions.len());
             for song_region in &song_regions {
                 let song = Self::build_song_from_region_native(
+                    daw,
                     project.clone(),
                     &project_info.guid,
                     song_region,
@@ -153,6 +176,7 @@ impl SongBuilder {
             Ok(songs)
         } else {
             let song = Self::build_single_song_native(
+                daw,
                 project,
                 &project_info.guid,
                 &project_info.name,
@@ -470,7 +494,8 @@ impl SongBuilder {
 
     /// Determine song boundaries by analyzing markers and regions (native version).
     #[cfg(not(target_arch = "wasm32"))]
-    fn determine_song_bounds_native(
+    fn determine_song_bounds_native<D: SongDaw>(
+        daw: &D,
         project: ProjectContext,
         markers: &[Marker],
         regions: &[Region],
@@ -495,7 +520,7 @@ impl SongBuilder {
                 absolute_end_marker.map_or(song_end, |m| position_to_seconds(&m.position));
             let outer_end =
                 postroll_marker.map_or(absolute_end, |m| position_to_seconds(&m.position));
-            let snapped_end = Self::snap_to_next_barline_native(project, outer_end);
+            let snapped_end = Self::snap_to_next_barline_native(daw, project, outer_end);
             (song_start, song_end, snapped_end)
         } else if let Some(song_region) = song_region {
             let end = song_region.time_range.end_seconds();
@@ -519,7 +544,8 @@ impl SongBuilder {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn build_single_song_native(
+    fn build_single_song_native<D: SongDaw>(
+        daw: &D,
         project: ProjectContext,
         project_guid: &str,
         project_name: &str,
@@ -527,11 +553,15 @@ impl SongBuilder {
         regions: &[Region],
         lanes: &ResolvedLanes,
     ) -> Song {
-        let (song_name, _artist) = Self::parse_project_name(project_name);
         let song_region = Self::find_song_region(regions, lanes);
+        // The SONG-lane region names the song when there is one; the
+        // project file's name is only the fallback. A project file is
+        // often named for where it lives, not for what it holds.
+        let (song_name, _artist) =
+            Self::parse_project_name(song_region.map_or(project_name, |r| r.name.as_str()));
 
         let (start_seconds, songend_seconds, end_seconds) =
-            Self::determine_song_bounds_native(project.clone(), markers, regions, song_region);
+            Self::determine_song_bounds_native(daw, project.clone(), markers, regions, song_region);
 
         let count_in_marker = markers.iter().find(|m| Self::is_count_in_marker(&m.name));
         let count_in_seconds = count_in_marker.and_then(|m| {
@@ -555,9 +585,9 @@ impl SongBuilder {
 
         Self::add_end_section(&mut sections, end_seconds, songend_seconds);
 
-        let tempo = Some(Reaper.get_tempo_at(project.clone(), start_seconds));
+        let tempo = Some(daw.get_tempo_at(project.clone(), start_seconds));
         let time_sig = {
-            let (num, denom) = Reaper.get_time_signature_at(project, start_seconds);
+            let (num, denom) = daw.get_time_signature_at(project, start_seconds);
             Some(daw::service::TimeSignature::new(
                 num.max(1).cast_unsigned(),
                 denom.max(1).cast_unsigned(),
@@ -722,7 +752,8 @@ impl SongBuilder {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn build_song_from_region_native(
+    fn build_song_from_region_native<D: SongDaw>(
+        daw: &D,
         project: ProjectContext,
         project_guid: &str,
         song_region: &Region,
@@ -770,9 +801,9 @@ impl SongBuilder {
 
         Self::add_end_section(&mut sections, end_seconds, songend_seconds);
 
-        let tempo = Some(Reaper.get_tempo_at(project.clone(), marker_songstart_seconds));
+        let tempo = Some(daw.get_tempo_at(project.clone(), marker_songstart_seconds));
         let time_sig = {
-            let (num, denom) = Reaper.get_time_signature_at(project, marker_songstart_seconds);
+            let (num, denom) = daw.get_time_signature_at(project, marker_songstart_seconds);
             Some(daw::service::TimeSignature::new(
                 num.max(1).cast_unsigned(),
                 denom.max(1).cast_unsigned(),
@@ -1079,13 +1110,13 @@ impl SongBuilder {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn snap_to_next_barline_native(project: ProjectContext, seconds: f64) -> f64 {
-        let (measure, beat, fraction) = Reaper.time_to_musical(project.clone(), seconds);
+    fn snap_to_next_barline_native<D: SongDaw>(daw: &D, project: ProjectContext, seconds: f64) -> f64 {
+        let (measure, beat, fraction) = daw.time_to_musical(project.clone(), seconds);
         if beat <= 1 && fraction < 0.001 {
             return seconds;
         }
         let next_measure = measure.saturating_add(1);
-        let snapped = Reaper.musical_to_time(project, next_measure, 1, 0.0);
+        let snapped = daw.musical_to_time(project, next_measure, 1, 0.0);
         debug!(
             "snap_to_next_barline_native: {:.3}s (m{}.{}.{:.3}) -> {:.3}s (m{})",
             seconds, measure, beat, fraction, snapped, next_measure

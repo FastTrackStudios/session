@@ -133,6 +133,7 @@ where
         + daw::service::TempoMap
         + daw::service::Tracks
         + daw::service::Items
+        + daw::service::Takes
         + daw::service::Midi
         + daw::service::PositionConversion
         + daw::service::UiDialogs
@@ -436,6 +437,7 @@ pub mod host {
             + daw::service::TempoMap
             + daw::service::Tracks
             + daw::service::Items
+        + daw::service::Takes
             + daw::service::Midi
             + daw::service::PositionConversion
             + daw::service::UiDialogs

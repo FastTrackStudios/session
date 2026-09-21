@@ -22,8 +22,8 @@
 //! actions people will hit repeatedly while arranging.
 
 use daw::service::{
-    Items, Midi, MidiNoteCreate, PositionConversion, PositionInSeconds, ProjectContext, Projects,
-    TempoMap, TrackRef, Tracks,
+    ItemRef, Items, Markers, Midi, MidiNoteCreate, PositionConversion, PositionInSeconds,
+    ProjectContext, Projects, Regions, Takes, TempoMap, TrackRef, Tracks,
 };
 use daw_proto::{DawError, DawResult};
 use session_guide::midi::{ClickSubdivision, GuideMidiNote, TempoSegment, click_notes, cue_notes};
@@ -60,6 +60,9 @@ impl GuideScope {
     }
 }
 
+/// The organizer's folder for click and guide material.
+const CLICK_GUIDE_FOLDER: &str = "CLICK + GUIDE BUS";
+
 /// Serves [`session_proto::guide::GuideActions`] against a DAW backend.
 pub struct Guide<D> {
     daw: D,
@@ -73,12 +76,34 @@ impl<D> Guide<D> {
 
 /// The backend capabilities guide generation needs.
 pub trait GuideDaw:
-    Projects + Tracks + Items + TempoMap + PositionConversion + Midi + Send + Sync + 'static
+    Projects
+    + Tracks
+    + Items
+    + Takes
+    + Markers
+    + Regions
+    + TempoMap
+    + PositionConversion
+    + Midi
+    + Send
+    + Sync
+    + 'static
 {
 }
 
 impl<T> GuideDaw for T where
-    T: Projects + Tracks + Items + TempoMap + PositionConversion + Midi + Send + Sync + 'static
+    T: Projects
+        + Tracks
+        + Items
+        + Takes
+        + Markers
+        + Regions
+        + TempoMap
+        + PositionConversion
+        + Midi
+        + Send
+        + Sync
+        + 'static
 {
 }
 
@@ -116,7 +141,7 @@ impl<D: GuideDaw> Guide<D> {
     /// or if a required track cannot be created or found.
     pub fn generate(&self, scope: GuideScope) -> DawResult<()> {
         let project = ProjectContext::Current;
-        let song = Self::current_song()?;
+        let song = self.current_song()?;
         let timing = GuideSongTiming::from_song(&song);
         let sections = sections_from_song(&song);
         let (start, end) = self.song_span(project.clone())?;
@@ -134,12 +159,102 @@ impl<D: GuideDaw> Guide<D> {
             notes.extend(cue_notes(&schedule));
         }
 
+        // A multitrack's own click and guide are audio stems that share
+        // these names. They are kept — muted, so the generated guide is
+        // the one heard — and never written over: `find_track` only
+        // answers with tracks that carry no audio.
+        self.mute_stems(&project);
+
         // Clear first, then write — and only the roles this scope owns.
         for role in scope.roles() {
             let track = self.ensure_track(project.clone(), *role)?;
             self.clear_span(&project, &track, start, end);
         }
-        self.stamp(&project, &notes, start, end)
+        self.stamp(&project, &notes, start, end)?;
+        self.file_into_click_guide_folder(&project)
+    }
+
+    /// Put every click and guide track — the multitrack's muted stems and
+    /// the generated ones — inside the CLICK + GUIDE folder, so the
+    /// reference and its replacement sit together. On a session the
+    /// organizer found existing tracks in, the bus is a flat track fed by
+    /// sends; this makes it the folder. Idempotent: tracks already inside
+    /// are left where they are.
+    fn file_into_click_guide_folder(&self, project: &ProjectContext) -> DawResult<()> {
+        let roles = [
+            GuideTrackRole::Click,
+            GuideTrackRole::Loop,
+            GuideTrackRole::Count,
+            GuideTrackRole::Guide,
+        ];
+        let is_guide_track = |name: &str| {
+            roles
+                .iter()
+                .any(|role| name.trim().eq_ignore_ascii_case(role.name()))
+        };
+
+        let folder = match Tracks::all(&self.daw, project.clone())
+            .into_iter()
+            .find(|t| t.name.trim().eq_ignore_ascii_case(CLICK_GUIDE_FOLDER))
+        {
+            Some(folder) => folder.guid,
+            None => Tracks::add(&self.daw, project.clone(), CLICK_GUIDE_FOLDER, None)?,
+        };
+
+        // Only top-level, plain tracks move: one inside another folder
+        // belongs to it, and one carrying folder structure would strand
+        // what it holds — the organizer's gather rule.
+        let all = Tracks::all(&self.daw, project.clone());
+        let mut running = 0i32;
+        let mut moving = Vec::new();
+        for track in &all {
+            if track.guid != folder
+                && running == 0
+                && track.folder_depth == 0
+                && is_guide_track(&track.name)
+            {
+                moving.push(track.guid.clone());
+            }
+            running = running.saturating_add(track.folder_depth);
+        }
+        if moving.is_empty() {
+            return Ok(());
+        }
+        let before = Tracks::all(&self.daw, project.clone());
+        let Some(folder_index) = before.iter().position(|t| t.guid == folder) else {
+            return Ok(());
+        };
+        let was_folder = before[folder_index].folder_depth > 0;
+
+        Tracks::clear_selection(&self.daw, project.clone())?;
+        for guid in &moving {
+            Tracks::set_selected(&self.daw, project.clone(), TrackRef::Guid(guid.clone()), true)?;
+        }
+        Tracks::reorder_selected(
+            &self.daw,
+            project.clone(),
+            u32::try_from(folder_index + 1).unwrap_or(u32::MAX),
+            daw_proto::ReorderTracksBehavior::MakeChildOfPreviousTrack,
+        )?;
+        Tracks::clear_selection(&self.daw, project.clone())?;
+
+        // A bus that was not a folder had nothing to close. The moved
+        // tracks now sit right after it, so the last of them closes the
+        // new folder — or everything below would fall into it.
+        if !was_folder {
+            let after = Tracks::all(&self.daw, project.clone());
+            if let Some(folder_at) = after.iter().position(|t| t.guid == folder)
+                && let Some(last) = after.get(folder_at + moving.len())
+            {
+                Tracks::set_folder_depth(
+                    &self.daw,
+                    project.clone(),
+                    TrackRef::Guid(last.guid.clone()),
+                    last.folder_depth - 1,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     /// Read the project tempo map as the segment list the click grid
@@ -246,7 +361,7 @@ impl<D: GuideDaw> Guide<D> {
     /// The song's extent. Falls back to the project's own bounds when the
     /// song carries no explicit end.
     fn song_span(&self, project: ProjectContext) -> DawResult<(f64, f64)> {
-        let song = Self::current_song()?;
+        let song = self.current_song()?;
         let start = song.start_seconds;
         let end = if song.end_seconds > start {
             song.end_seconds
@@ -267,8 +382,12 @@ impl<D: GuideDaw> Guide<D> {
         Ok((start, end))
     }
 
-    fn current_song() -> DawResult<session_proto::Song> {
-        SongBuilder::build_native(ProjectContext::Current)
+    /// The song the guide is built for, read from this backend's own
+    /// markers and regions — not REAPER's: this used to call
+    /// `SongBuilder::build_native`, which only exists with the `reaper`
+    /// feature, so guide generation failed on `daw-standalone`.
+    fn current_song(&self) -> DawResult<session_proto::Song> {
+        SongBuilder::build_on(&self.daw, ProjectContext::Current)
             .map_err(|err| DawError::OperationFailed(format!("could not build song: {err}")))?
             .into_iter()
             .next()
@@ -281,11 +400,37 @@ impl<D: GuideDaw> Guide<D> {
     }
 
     fn find_track(&self, project: ProjectContext, role: GuideTrackRole) -> Option<TrackRef> {
-        self.daw
-            .all(project)
+        Tracks::all(&self.daw, project.clone())
             .into_iter()
-            .find(|track| track.name.eq_ignore_ascii_case(role.name()))
+            .filter(|track| track.name.eq_ignore_ascii_case(role.name()))
+            .find(|track| !self.has_audio(&project, &track.guid))
             .map(|track| TrackRef::Guid(track.guid))
+    }
+
+    /// Whether a track carries recorded audio — which makes a track named
+    /// "Click" or "Guide" a multitrack's stem, not the generator's own.
+    fn has_audio(&self, project: &ProjectContext, track_guid: &str) -> bool {
+        Items::get_items(&self.daw, project.clone(), TrackRef::Guid(track_guid.to_owned()))
+            .iter()
+            .any(|item| {
+                Takes::get_active_take(&self.daw, project.clone(), ItemRef::Guid(item.guid.clone()))
+                    .is_some_and(|take| !take.is_midi)
+            })
+    }
+
+    /// Mute every audio stem named for a guide role (Click, Count, Guide),
+    /// so the generated guide replaces it rather than doubling it. The
+    /// stems stay where the organizer put them — the CLICK + GUIDE folder.
+    fn mute_stems(&self, project: &ProjectContext) {
+        let roles = [GuideTrackRole::Click, GuideTrackRole::Count, GuideTrackRole::Guide];
+        for track in Tracks::all(&self.daw, project.clone()) {
+            let named_for_a_role = roles
+                .iter()
+                .any(|role| track.name.trim().eq_ignore_ascii_case(role.name()));
+            if named_for_a_role && !track.muted && self.has_audio(project, &track.guid) {
+                let _ = Tracks::set_muted(&self.daw, project.clone(), TrackRef::Guid(track.guid), true);
+            }
+        }
     }
 
     /// Find the role's track, creating it if absent. Creating is the
@@ -295,7 +440,14 @@ impl<D: GuideDaw> Guide<D> {
         if let Some(track) = self.find_track(project.clone(), role) {
             return Ok(track);
         }
-        let guid = self.daw.add(project, role.name(), None)?;
+        // Inside the CLICK + GUIDE folder when the session has one (the
+        // organizer builds it), as its first child — which keeps the
+        // folder's own close on its last child intact.
+        let at = Tracks::all(&self.daw, project.clone())
+            .into_iter()
+            .find(|t| t.name.trim().eq_ignore_ascii_case(CLICK_GUIDE_FOLDER) && t.folder_depth > 0)
+            .map(|folder| folder.index + 1);
+        let guid = Tracks::add(&self.daw, project, role.name(), at)?;
         Ok(TrackRef::Guid(guid))
     }
 

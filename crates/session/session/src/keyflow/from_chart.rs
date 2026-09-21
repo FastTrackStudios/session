@@ -77,6 +77,9 @@ pub fn build_from_chart<D: ChartDaw>(
 
     let cursor = TransportService::get_position(daw, project.clone());
     daw.begin_undo_block(project.clone(), "Build song from chart");
+    // SONG / SECTIONS / MARKS, named and flagged, before anything lands
+    // on them — what the insert actions do in REAPER.
+    super::actions::ensure_core_lanes(daw);
     let stamped = stamp_song_with_default_tempo_native(daw, project, &song)
         .map_err(|e| eyre::eyre!("{e}"));
     let folder = stamped.and_then(|_| super::scaffold::build_keyflow_folder(daw, project));

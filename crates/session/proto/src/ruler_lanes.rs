@@ -105,19 +105,23 @@ impl CoreLane {
     /// - `4` = default marker lane
     /// - `0` = normal
     ///
-    /// Observed reality: `RULER_LANE_FLAGS:N` project-info writes do
-    /// **not** actually apply at the REAPER side (the saved RPP keeps
-    /// `RULERLANE` flags wherever REAPER's position-based defaults
-    /// put them, regardless of what we wrote). So these values are
-    /// documentation of intent: which slot REAPER will treat as
-    /// default-marker (slot 0) vs default-region (slot 1). We arrange
-    /// `all()` so MARKS occupies slot 0 and SONG occupies slot 1,
-    /// and let REAPER's intrinsic defaults do the routing.
+    /// SECTIONS is the default region lane — a fresh region is a section
+    /// until something pins it elsewhere — and SONG the default marker
+    /// lane, the convention the golden session's `RULERLANE` rows record
+    /// (`RULERLANE 1 4 SONG`, `RULERLANE 2 8 SECTIONS`). The song region
+    /// and the structural markers are pinned explicitly either way.
+    ///
+    /// REAPER does not apply `RULER_LANE_FLAGS:N` writes (the saved RPP
+    /// keeps its own position-based defaults), so there these are intent;
+    /// `daw-standalone` honours them, as REAPER honours the flags a saved
+    /// file carries. They had drifted to SONG = 8, which REAPER ignored
+    /// and standalone obeyed: every fresh section landed on the SONG lane
+    /// and was read back as a song of its own.
     #[must_use]
     pub const fn flags(&self) -> i32 {
         match self {
-            Self::Marks => 4, // documented: default marker lane (slot 0)
-            Self::Song => 8,  // documented: default region lane (slot 1)
+            Self::Sections => 8, // default region lane
+            Self::Song => 4,     // default marker lane
             _ => 0,
         }
     }
@@ -385,7 +389,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pre-existing: ruler-lane indices shifted after KEY-lane retirement; expectations stale — revisit"]
     fn default_region_and_marker_lanes() {
         let region_defaults: Vec<_> = CoreLane::all()
             .iter()
