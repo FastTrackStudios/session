@@ -126,7 +126,7 @@ fn a_multitrack_is_organized_built_and_guided() {
         depth += t.folder_depth;
     }
 
-    for stem in ["Click", "Guide"] {
+    for stem in ["Click Audio", "Guide Audio"] {
         let t = tracks
             .iter()
             .find(|t| t.name == stem && has_audio(&t.guid))
@@ -144,18 +144,14 @@ fn a_multitrack_is_organized_built_and_guided() {
         assert!(
             daw::service::Effects::list(&daw, project.clone(), chain)
                 .iter()
-                .any(|f| f.name == session_daw::guide_instrument::IDENT),
+                .any(|f| f.name == format!("{}:{}", session_daw::guide_instrument::IDENT, role.to_lowercase())),
             "the generated {role} is played by the guide instrument"
         );
     }
-    let names = |n: &str| inside_click_guide.iter().filter(|x| **x == n).count();
-    assert_eq!(names("Click"), 2, "stem + generated Click in the folder: {inside_click_guide:?}");
-    assert_eq!(names("Guide"), 2, "stem + generated Guide in the folder: {inside_click_guide:?}");
-    assert_eq!(names("Count"), 1);
     assert_eq!(
-        inside_click_guide.len(),
-        5,
-        "only the click and guide tracks are in the folder — the folder closes: {inside_click_guide:?}"
+        inside_click_guide,
+        ["Click", "Shaker", "Count", "Guide", "Click Audio", "Guide Audio"],
+        "the Guide folder, in order, and it closes after them"
     );
     let total: i32 = tracks.iter().map(|t| t.folder_depth).sum();
     assert_eq!(total, 0, "every folder in the session closes");

@@ -477,31 +477,21 @@ impl<D: Tracks + Routing + Items> DawTarget<D> {
         self.apply_layout(&layout)
     }
 
-    /// Hide the named top-level folder and everything inside it from the
-    /// track panel (the mixer keeps it). For the MIX BUS tree: it is
-    /// routing, not something to look at while playing.
+    /// Hide the named folder track from the track panel (the mixer keeps
+    /// it). Only the folder itself: a panel hides what a hidden folder
+    /// holds, so unhiding this one track brings the whole tree back. For
+    /// the MIX BUS — routing, not something to look at while playing.
     ///
     /// # Errors
     ///
     /// A backend call failed.
     pub fn hide_in_tcp(&mut self, folder: &str) -> eyre::Result<()> {
         let project = self.project.clone();
-        let all = Tracks::all(&self.daw, project.clone());
-        let mut running = 0i32;
-        let mut hiding: Option<i32> = None;
-        for t in &all {
-            if let Some(level) = hiding {
-                if running <= level {
-                    hiding = None;
-                }
-            }
-            if hiding.is_none() && t.name.trim().eq_ignore_ascii_case(folder) {
-                hiding = Some(running);
-            }
-            if hiding.is_some() {
-                Tracks::set_visibility(&self.daw, project.clone(), TrackRef::Guid(t.guid.clone()), false, true)?;
-            }
-            running += t.folder_depth;
+        if let Some(track) = Tracks::all(&self.daw, project.clone())
+            .into_iter()
+            .find(|t| t.name.trim().eq_ignore_ascii_case(folder))
+        {
+            Tracks::set_visibility(&self.daw, project, TrackRef::Guid(track.guid), false, true)?;
         }
         Ok(())
     }

@@ -307,7 +307,7 @@ mod tests {
 
         for (group, expected) in [
             ("Drums", bus::DRUM),
-            ("Percussion", bus::DRUM),
+            ("Percussion", bus::PERC),
             ("Bass", bus::BASS),
             ("Guitars", bus::GUITAR),
             ("Keys", bus::KEYS),

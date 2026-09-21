@@ -117,6 +117,29 @@ pub struct GuideMidiNote {
     pub velocity: u8,
 }
 
+/// The velocity a count note carries when a spoken cue lands on it.
+///
+/// Both notes stay in the MIDI; the cue takes the count's place in the
+/// AUDIO, so muting the Guide track brings the count back. This is how the
+/// Count track's instrument knows which of its notes to give way — a mark
+/// in its own notes, which it can read in any track order.
+pub const COUNT_UNDER_CUE_VELOCITY: u8 = 1;
+
+/// Mark every Count note that a Guide cue lands on (within a
+/// millisecond) with [`COUNT_UNDER_CUE_VELOCITY`].
+pub fn mark_counts_under_cues(notes: &mut [GuideMidiNote]) {
+    let cues: Vec<f64> = notes
+        .iter()
+        .filter(|n| n.role == GuideTrackRole::Guide)
+        .map(|n| n.time_seconds)
+        .collect();
+    for note in notes.iter_mut().filter(|n| n.role == GuideTrackRole::Count) {
+        if cues.iter().any(|at| (at - note.time_seconds).abs() < 0.001) {
+            note.velocity = COUNT_UNDER_CUE_VELOCITY;
+        }
+    }
+}
+
 /// A constant-tempo stretch of the timeline.
 ///
 /// The click grid is the one part of the guide that isn't in

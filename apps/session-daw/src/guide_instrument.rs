@@ -10,12 +10,12 @@
 //!
 //! A spoken cue and the count note under it are both in the MIDI — on
 //! the Guide and Count tracks — and the cue takes the count's place in the
-//! audio: "Verse, 2, 3, 4". The instruments share a [`CueGate`]: the one
-//! playing a cue marks where, the one playing a count skips a note on the
-//! same spot. So muting the Guide track (its instrument never runs) brings
-//! the "1" back. The Guide track must render before the Count track in a
-//! block, which the renderer does for siblings in track order — and the
-//! generator puts Guide above Count.
+//! audio: "Verse, 2, 3, 4". The generator tags each count note a cue lands
+//! on (`COUNT_UNDER_CUE_VELOCITY`); the instrument on the Guide track
+//! (`fts.guide:guide`) reports every block that it is playing unmuted, and
+//! the Count track's instrument skips a tagged note while it is. Mute the
+//! Guide track and the "1" is back. Mute is a slow fact, so reading the
+//! last block's report is enough — which makes it hold in any track order.
 //!
 //! Samples come from the FTS-GUIDE library at
 //! `~/.config/fts/guide-samples/{Click,Counts,Guide}`; anything missing is
@@ -48,34 +48,48 @@ pub fn samples_dir() -> PathBuf {
     )
 }
 
-/// Where cues sounded in the block being rendered — shared by the guide
-/// instruments of one engine.
+/// Whether the Guide track's instrument is playing unmuted — shared by the
+/// guide instruments of one engine.
 #[derive(Default)]
 pub struct CueGate {
-    /// `(render cycle, offsets of cues in that block)` — keyed by the
-    /// renderer's cycle, never the timeline position: a loop renders the
-    /// same frames again, and a mark left from the last pass would silence
-    /// a count whose Guide has since been muted.
-    cues: std::sync::Mutex<(Option<u64>, Vec<u32>)>,
+    /// The last render cycle the Guide track's instrument ran unmuted in.
+    guide_alive: std::sync::atomic::AtomicU64,
 }
 
 impl CueGate {
-    /// How close a count note has to be to a cue to give way to it.
-    const SAME_SPOT: u32 = 64;
-
-    fn mark(&self, block: u64, offset: u32) {
-        if let Ok(mut cues) = self.cues.try_lock() {
-            if cues.0 != Some(block) {
-                *cues = (Some(block), Vec::new());
-            }
-            cues.1.push(offset);
-        }
+    fn guide_playing_in(&self, cycle: u64) {
+        // +1 so zero means "never".
+        self.guide_alive
+            .fetch_max(cycle + 1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    fn taken(&self, block: u64, offset: u32) -> bool {
-        self.cues.try_lock().is_ok_and(|cues| {
-            cues.0 == Some(block) && cues.1.iter().any(|at| at.abs_diff(offset) <= Self::SAME_SPOT)
-        })
+    /// Whether the Guide track played this block or the one before —
+    /// whichever order the two tracks render in.
+    fn guide_is_playing(&self, cycle: u64) -> bool {
+        let seen = self.guide_alive.load(std::sync::atomic::Ordering::Relaxed);
+        seen != 0 && seen + 1 >= cycle
+    }
+}
+
+/// Which guide track an instrument plays for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Click,
+    Count,
+    Guide,
+    /// Named plainly (`fts.guide`): plays whatever it is given.
+    Any,
+}
+
+impl Role {
+    fn of(fx_name: &str) -> Option<Self> {
+        match fx_name.strip_prefix(IDENT)? {
+            "" => Some(Self::Any),
+            ":click" => Some(Self::Click),
+            ":count" => Some(Self::Count),
+            ":guide" => Some(Self::Guide),
+            _ => None,
+        }
     }
 }
 
@@ -84,21 +98,23 @@ pub struct GuideInstrument {
     engine: Option<GuideEngine>,
     sample_rate: f64,
     gate: Arc<CueGate>,
+    role: Role,
 }
 
 impl GuideInstrument {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_gate(Arc::new(CueGate::default()))
+        Self::for_role(Role::Any, Arc::new(CueGate::default()))
     }
 
-    /// An instrument that yields its count notes to cues the others play.
+    /// An instrument for one guide track, sharing `gate` with the others.
     #[must_use]
-    pub fn with_gate(gate: Arc<CueGate>) -> Self {
+    pub fn for_role(role: Role, gate: Arc<CueGate>) -> Self {
         Self {
             engine: None,
             sample_rate: 48_000.0,
             gate,
+            role,
         }
     }
 }
@@ -184,7 +200,15 @@ impl PluginInstance for GuideInstrument {
         let Some(engine) = self.engine.as_mut() else {
             return Ok(());
         };
-        let block = daw::plugin::render_cycle();
+        let cycle = daw::plugin::render_cycle();
+        // The Guide track's instrument says it is being heard.
+        if self.role == Role::Guide
+            && !daw::plugin::track_muted()
+            && let Some(cycle) = cycle
+        {
+            self.gate.guide_playing_in(cycle);
+        }
+        let guide_playing = cycle.is_some_and(|c| self.gate.guide_is_playing(c));
         for event in events.midi {
             // Note-on with velocity: status 0x9n, velocity > 0.
             let Some((status, key, velocity)) = event.message.to_raw_bytes() else {
@@ -196,18 +220,9 @@ impl PluginInstance for GuideInstrument {
             let Some(trigger) = session_guide::midi::trigger_for_midi_note(key) else {
                 continue;
             };
-            match (&trigger, block) {
-                // A muted Guide track's instrument still runs (mute is at
-                // the fader); its cue is not heard, so it claims nothing.
-                (session_guide::GuideTrigger::Guide(_), Some(block)) if !daw::plugin::track_muted() => {
-                    self.gate.mark(block, event.offset);
-                }
-                (session_guide::GuideTrigger::Count(_), Some(block))
-                    if self.gate.taken(block, event.offset) =>
-                {
-                    continue; // the cue says it instead
-                }
-                _ => {}
+            let under_cue = velocity == session_guide::midi::COUNT_UNDER_CUE_VELOCITY;
+            if matches!(trigger, session_guide::GuideTrigger::Count(_)) && under_cue && guide_playing {
+                continue; // the cue says it instead
             }
             engine.trigger(event.offset as usize, trigger);
         }
@@ -243,14 +258,12 @@ impl FxFactory for GuideFxFactory {
     }
 
     fn create(&self, name_or_ident: &str, sample_rate: f64) -> Option<Box<dyn PluginInstance>> {
-        if name_or_ident != IDENT {
-            return None;
-        }
+        let role = Role::of(name_or_ident)?;
         // Prepared here, on the thread adding the FX — loading ~20 MB of
         // samples. The renderer only prepares a plugin that is not
         // prepared yet, and it does that on the AUDIO thread: left to it,
         // the first block after pressing play took 40-60 ms, a dropout.
-        let mut guide = GuideInstrument::with_gate(self.gate.clone());
+        let mut guide = GuideInstrument::for_role(role, self.gate.clone());
         guide.prepare(sample_rate, 512).ok()?;
         Some(Box::new(guide))
     }

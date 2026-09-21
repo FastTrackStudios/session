@@ -838,6 +838,7 @@ mod tests {
                 (names::MIX, 0, 1),
                 (names::INST, 1, 1),
                 (names::DRUM, 2, 0),
+                (names::PERC, 2, 0),
                 (names::BASS, 2, 0),
                 (names::GUITAR, 2, 1),
                 (names::ACOUSTIC, 3, 0),

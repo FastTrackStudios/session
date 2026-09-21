@@ -34,9 +34,17 @@ impl FolderState {
                 hidden_below = None;
             }
             if hidden_below.is_none() {
-                visible.push(track.clone());
-                depths.push(depth);
-                if track.folder_depth > 0 && self.is_collapsed(&track.guid) {
+                if track.visible_in_tcp {
+                    visible.push(track.clone());
+                    depths.push(depth);
+                    if track.folder_depth > 0 && self.is_collapsed(&track.guid) {
+                        hidden_below = Some(depth);
+                    }
+                } else if track.folder_depth > 0 {
+                    // Hidden from the track panel, and a folder: hiding it
+                    // hides what it holds, so unhiding the one track (the
+                    // MIX BUS) brings the whole tree back. The mixer does
+                    // not read this — it shows them all.
                     hidden_below = Some(depth);
                 }
             }

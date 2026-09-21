@@ -60,6 +60,21 @@ impl GuideScope {
     }
 }
 
+/// The Guide folder's order: the generated tracks, then the multitrack's
+/// own audio as reference.
+const GUIDE_FOLDER_ORDER: [&str; 7] = [
+    "Click",
+    SHAKER,
+    "Count",
+    "Guide",
+    "Click Audio",
+    "Guide Audio",
+    "Count Audio",
+];
+
+/// An empty track beside the click, for a shaker loop.
+const SHAKER: &str = "Shaker";
+
 /// The template's group folder for click and guide material — the
 /// `Guide/` a session opens with at the top. (The CLICK + GUIDE BUS is
 /// its bus: routing, fed by sends, not where the tracks live.)
@@ -182,24 +197,92 @@ impl<D: GuideDaw> Guide<D> {
             };
             let schedule = CueSchedule::build(&sections, &timing, &options);
             notes.extend(cue_notes(&schedule));
+            // Tag the count notes a cue lands on, so the Count track's
+            // instrument knows which to give way — in any track order.
+            session_guide::midi::mark_counts_under_cues(&mut notes);
         }
 
         // A multitrack's own click and guide are audio stems that share
-        // these names. They are kept — muted, as a reference beside the
-        // generated tracks in the Guide folder — and never written over:
-        // `find_track` only answers with tracks that carry no audio. The
-        // generated tracks, played by the guide instrument, are the ones
-        // heard.
-        self.mute_stems(&project);
+        // these names. They are kept — muted and renamed "Click Audio" /
+        // "Guide Audio", as a reference beside the generated tracks — and
+        // never written over. The generated tracks, played by the guide
+        // instrument, are the ones heard.
+        self.adopt_stems(&project);
 
         // Clear first, then write — and only the roles this scope owns.
         for role in scope.roles() {
             let track = self.ensure_track(project.clone(), *role)?;
             self.clear_span(&project, &track, start, end);
-            self.ensure_instrument(&project, &track);
+            self.ensure_instrument(&project, &track, *role);
         }
         self.stamp(&project, &notes, start, end)?;
-        self.file_into_click_guide_folder(&project)
+        if matches!(scope, GuideScope::All) && self.named(&project, SHAKER).is_none() {
+            // A slot for a shaker loop beside the click; empty for now.
+            Tracks::add(&self.daw, project.clone(), SHAKER, None)?;
+        }
+        self.file_into_click_guide_folder(&project)?;
+        self.order_click_guide_folder(&project)
+    }
+
+    /// A plain (non-folder) track with exactly this name.
+    fn named(&self, project: &ProjectContext, name: &str) -> Option<String> {
+        Tracks::all(&self.daw, project.clone())
+            .into_iter()
+            .find(|t| t.folder_depth <= 0 && t.name.trim().eq_ignore_ascii_case(name))
+            .map(|t| t.guid)
+    }
+
+    /// Put the Guide folder's tracks in the session's order: Click,
+    /// Shaker, Count, Guide, then the multitrack's audio references.
+    /// Anything else in the folder keeps its place after them.
+    fn order_click_guide_folder(&self, project: &ProjectContext) -> DawResult<()> {
+        let all = Tracks::all(&self.daw, project.clone());
+        let Some(folder_at) = all
+            .iter()
+            .position(|t| t.name.trim().eq_ignore_ascii_case(CLICK_GUIDE_FOLDER) && t.folder_depth > 0)
+        else {
+            return Ok(());
+        };
+        // The folder's direct children: everything until it closes.
+        let mut children = Vec::new();
+        let mut running = 1i32;
+        for t in &all[folder_at + 1..] {
+            children.push(t.clone());
+            running += t.folder_depth;
+            if running <= 0 {
+                break;
+            }
+        }
+        let rank = |name: &str| {
+            GUIDE_FOLDER_ORDER
+                .iter()
+                .position(|n| n.eq_ignore_ascii_case(name.trim()))
+                .unwrap_or(GUIDE_FOLDER_ORDER.len())
+        };
+        let mut ordered = children.clone();
+        ordered.sort_by_key(|t| rank(&t.name)); // stable for the rest
+        let unchanged = ordered.iter().map(|t| &t.guid).eq(children.iter().map(|t| &t.guid));
+        if unchanged {
+            return Ok(());
+        }
+        for (i, t) in ordered.iter().enumerate() {
+            Tracks::clear_selection(&self.daw, project.clone())?;
+            Tracks::set_selected(&self.daw, project.clone(), TrackRef::Guid(t.guid.clone()), true)?;
+            Tracks::reorder_selected(
+                &self.daw,
+                project.clone(),
+                u32::try_from(folder_at + 1 + i).unwrap_or(u32::MAX),
+                daw_proto::ReorderTracksBehavior::Normal,
+            )?;
+        }
+        Tracks::clear_selection(&self.daw, project.clone())?;
+        // Plain children, the last one closing the folder.
+        let last = ordered.len().saturating_sub(1);
+        for (i, t) in ordered.iter().enumerate() {
+            let depth = if i == last { -1 } else { 0 };
+            Tracks::set_folder_depth(&self.daw, project.clone(), TrackRef::Guid(t.guid.clone()), depth)?;
+        }
+        Tracks::set_folder_depth(&self.daw, project.clone(), TrackRef::Guid(all[folder_at].guid.clone()), 1)
     }
 
     /// Put every click and guide track — the multitrack's muted stems and
@@ -219,6 +302,9 @@ impl<D: GuideDaw> Guide<D> {
             roles
                 .iter()
                 .any(|role| name.trim().eq_ignore_ascii_case(role.name()))
+                || GUIDE_FOLDER_ORDER
+                    .iter()
+                    .any(|n| name.trim().eq_ignore_ascii_case(n))
         };
 
         // The folder, not a track that shares its name: the generated
@@ -451,34 +537,42 @@ impl<D: GuideDaw> Guide<D> {
             })
     }
 
-    /// Mute every audio stem named for a guide role (Click, Count, Guide):
-    /// the generated tracks replace them, and both playing would double
-    /// the click.
-    fn mute_stems(&self, project: &ProjectContext) {
+    /// The multitrack's own click / count / guide audio: muted (the
+    /// generated tracks replace it, and both would double the click) and
+    /// renamed "<Role> Audio", so it can never be taken for the generated
+    /// track of the same role. Idempotent.
+    fn adopt_stems(&self, project: &ProjectContext) {
         let roles = [GuideTrackRole::Click, GuideTrackRole::Count, GuideTrackRole::Guide];
         for track in Tracks::all(&self.daw, project.clone()) {
-            let named_for_a_role = roles
+            let Some(role) = roles
                 .iter()
-                .any(|role| track.name.trim().eq_ignore_ascii_case(role.name()));
-            if named_for_a_role
-                && track.folder_depth <= 0
-                && !track.muted
-                && self.has_audio(project, &track.guid)
-            {
-                let _ = Tracks::set_muted(&self.daw, project.clone(), TrackRef::Guid(track.guid), true);
+                .find(|role| track.name.trim().eq_ignore_ascii_case(role.name()))
+            else {
+                continue;
+            };
+            if track.folder_depth > 0 || !self.has_audio(project, &track.guid) {
+                continue;
             }
+            let at = TrackRef::Guid(track.guid.clone());
+            if !track.muted {
+                let _ = Tracks::set_muted(&self.daw, project.clone(), at.clone(), true);
+            }
+            let _ = Tracks::rename(&self.daw, project.clone(), at, &format!("{} Audio", role.name()));
         }
     }
 
-    /// Put the instrument on a generated track, once.
-    fn ensure_instrument(&self, project: &ProjectContext, track: &TrackRef) {
-        let (Some(fx), TrackRef::Guid(guid)) = (&self.instrument, track) else {
+    /// Put the instrument on a generated track, once — named for the
+    /// track's role (`fts.guide:count`), so it knows from its first block
+    /// which track it plays for.
+    fn ensure_instrument(&self, project: &ProjectContext, track: &TrackRef, role: GuideTrackRole) {
+        let (Some(base), TrackRef::Guid(guid)) = (&self.instrument, track) else {
             return;
         };
+        let fx = &format!("{base}:{}", role.name().to_ascii_lowercase());
         let chain = FxChainContext::Track(guid.clone());
         let present = Effects::list(&self.daw, project.clone(), chain.clone())
             .iter()
-            .any(|f| f.name == *fx);
+            .any(|f| f.name == *fx || f.name == *base);
         if !present && Effects::add(&self.daw, project.clone(), chain, fx).is_none() {
             tracing::warn!(fx, track = guid, "guide: could not add the instrument");
         }

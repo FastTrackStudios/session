@@ -18,7 +18,8 @@
 //! ```text
 //! MIX BUS                            (always present)
 //! ├─ INST BUS
-//! │  ├─ DRUM BUS      ← Drums, Percussion
+//! │  ├─ DRUM BUS      ← Drums
+//! │  ├─ PERC BUS      ← Percussion
 //! │  ├─ BASS BUS      ← Bass
 //! │  ├─ GUITAR BUS    ← Guitars (steel, banjo, mandolin)
 //! │  │  ├─ ACOUSTIC BUS ← Guitars/Acoustic
@@ -85,8 +86,11 @@ pub mod names {
     pub const INST: &str = "INST BUS";
     /// The vocal stem: lead and background vocals.
     pub const VOX: &str = "VOX BUS";
-    /// Drums and percussion.
+    /// The drum kit.
     pub const DRUM: &str = "DRUM BUS";
+    /// Percussion — its own bus, so it can be balanced (or muted) apart
+    /// from the kit.
+    pub const PERC: &str = "PERC BUS";
     /// Bass in all its forms (electric, synth, upright).
     pub const BASS: &str = "BASS BUS";
     /// Every guitar. Acoustics and electrics sum through their own buses
@@ -212,10 +216,12 @@ pub const BUS_TREE: &[BusSpec] = &[
     bus(names::MIX, None, &[]),
     // The instrumental stem and the group buses feeding it.
     bus(names::INST, Some(names::MIX), &[]),
-    bus(
-        names::DRUM,
+    bus(names::DRUM, Some(names::INST), &[&["Drums"]]),
+    aliased(
+        names::PERC,
         Some(names::INST),
-        &[&["Drums"], &["Percussion"]],
+        &[&["Percussion"]],
+        &["PERCUSSION BUS"],
     ),
     bus(names::BASS, Some(names::INST), &[&["Bass"]]),
     aliased(
@@ -598,6 +604,7 @@ mod tests {
     fn group_buses_sum_through_a_stem_bus() {
         for name in [
             names::DRUM,
+            names::PERC,
             names::BASS,
             names::GUITAR,
             names::KEYS,
@@ -775,6 +782,7 @@ mod tests {
             groups,
             vec![
                 names::DRUM,
+                names::PERC,
                 names::BASS,
                 names::GUITAR,
                 names::KEYS,
