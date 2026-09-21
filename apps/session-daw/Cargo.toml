@@ -170,6 +170,9 @@ frame-times = ["anyrender_vello/log_frame_times"]
 # scratch directory the golden scene renders (`tests/golden_scenes.rs`)
 # draw into before comparing with the committed pictures.
 tempfile = { workspace = true }
+# The file backend of the organize pass, to hold the live one to it
+# (`tests/organize_live.rs`).
+dawfile-reaper = { workspace = true }
 
 [lints]
 workspace = true

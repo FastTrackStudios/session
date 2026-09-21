@@ -1,12 +1,9 @@
 use std::collections::BTreeMap;
 
 use dynamic_template::apply::chunk::RChunkTarget;
-use dynamic_template::apply::{
-    apply_colors, apply_routing, gather_unsorted, normalize_folder_depths, TemplateTarget,
-    UNSORTED_FOLDER,
-};
+use dynamic_template::apply::{organize, UNSORTED_FOLDER};
 use dynamic_template::{
-    apply_buses, bus_nodes, buses_for_paths, default_config, golden_template, ItemMetadata,
+    bus_nodes, default_config, golden_template, ItemMetadata,
     OrganizeIntoTracks,
 };
 use dynamic_template_proto::{NodeKind, TemplateNode};
@@ -529,76 +526,31 @@ fn apply_buses_to_rpp(input: &str, output: &str) -> Result<(), Box<dyn std::erro
     // leaves every untouched line byte-identical. See `apply::chunk`.
     let source = std::fs::read_to_string(input)?;
     let mut project = dawfile_reaper::read_rpp_chunk(&source)?;
-    let existing = RChunkTarget::new(&mut project).track_count();
-
-    // Classify every track name, then keep the group paths that resolve to a
-    // bus. `matched_groups` is the canonical path, top-level first. A bus is
-    // only built when at least one real track lands on it, so this also
-    // records *which* tracks justified each one.
-    let mut justified: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
-    let mut group_paths: Vec<Vec<String>> = Vec::new();
-    let mut unclassified: Vec<String> = Vec::new();
-    {
-        let probe = RChunkTarget::new(&mut project);
-        let entries = dynamic_template::apply::reclassify_stem_splits(
-            dynamic_template::apply::contextual_paths(&probe),
-        );
-        for entry in entries {
-            // Never let a bus track justify a bus: their names classify as the
-            // content they carry ("VOX BUS" reads as a vocal).
-            if dynamic_template::buses::is_bus_name(&entry.name) {
-                continue;
-            }
-            match dynamic_template::bus_for_path(&entry.path) {
-                Some(bus) => {
-                    justified.entry(bus).or_default().push(entry.name.clone());
-                    group_paths.push(entry.path);
-                }
-                None => unclassified.push(entry.name.clone()),
-            }
+    // The shared pipeline (`dynamic_template::apply::organize`) — the same
+    // pass the Session window and the REAPER action run live.
+    let organized = {
+        let mut target = RChunkTarget::new(&mut project);
+        match organize(&mut target) {
+            Ok(organized) => organized,
+            Err(never) => match never {},
         }
-    }
+    };
 
-    let buses = buses_for_paths(group_paths.iter().map(Vec::as_slice));
-
-    print_bus_summary(input, existing, unclassified.len(), &buses, &justified);
-
-    let mut target = RChunkTarget::new(&mut project);
-
-    // Repair the folder structure before anything reasons about folders. A
-    // project whose depths go negative is not describing a tree, so bus
-    // placement and the unsorted gather would both be working from nonsense.
-    let broken = target.negative_depths().len();
-    let fixes = normalize_folder_depths(&mut target)?;
-    print_folder_repair(broken, &fixes);
-
-    let painted = apply_colors(&mut target)?;
-    println!("  {painted} tracks coloured by classification");
+    print_bus_summary(
+        input,
+        organized.existing,
+        organized.unclassified.len(),
+        &organized.buses,
+        &organized.justified,
+    );
+    print_folder_repair(organized.broken_depths, &organized.folder_fixes);
+    println!("  {} tracks coloured by classification", organized.painted);
     println!();
+    print_bus_application(&organized.applied);
+    print_routing_report(&organized.routing);
 
-    let applied = apply_buses(&mut target, &buses)?;
-    print_bus_application(&applied);
-
-    // Route content into the buses. Before the gather, which renumbers tracks.
-    let routing = apply_routing(&mut target, &applied)?;
-    print_routing_report(&routing);
-
-    target.nest_secondary_mics();
-
-    // Park whatever classified to nothing where it can be looked at, rather
-    // than guessing a bus for it. Last, because gathering renumbers tracks.
-    // Gather from the *routing* report, not the earlier per-track pass. Only
-    // the routing walk knows which tracks reach a bus through a parent folder
-    // (leave those alone) and which are control-only VCAs (finished, not
-    // unsorted). Feeding it the raw unclassified list swept every VCA into
-    // UNSORTED.
-    let unclassified = routing.unrouted;
-    if !unclassified.is_empty() {
-        let ids: Vec<usize> = unclassified
-            .iter()
-            .filter_map(|name| target.find_track(name))
-            .collect();
-        match gather_unsorted(&mut target, &ids)? {
+    if !organized.unsorted.is_empty() {
+        match &organized.gathered {
             Some(g) => {
                 println!("  {} moved into {UNSORTED_FOLDER}", g.moved.len());
                 if !g.skipped.is_empty() {
@@ -629,7 +581,7 @@ fn apply_buses_to_rpp(input: &str, output: &str) -> Result<(), Box<dyn std::erro
             }
             None => println!(
                 "  {} unsorted, none movable — all are inside a folder or carry one",
-                ids.len()
+                organized.unsorted.len()
             ),
         }
     }

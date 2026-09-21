@@ -8,7 +8,8 @@
 //! | backend | target | when |
 //! |---|---|---|
 //! | [`dawfile`] | `dawfile_reaper::types::Project` | offline, batch — organize a folder of projects without opening REAPER |
-//! | [`reaper`] | `daw_reaper::Reaper` via [`daw::service`] | live, in a REAPER extension action |
+//! | [`chunk`] | the raw `.RPP` chunk tree | offline — the `--apply-buses` CLI; edits leave untouched lines byte-identical |
+//! | [`live`] | any `daw::service` backend: REAPER, or `daw-standalone` | live — an extension action, or the Session window |
 //!
 //! The trait is the *primitive* surface — create a track, nest it, color it,
 //! send it somewhere. Everything template-shaped lives in [`apply_buses`],
@@ -31,7 +32,11 @@ use crate::buses::bus_nodes;
 
 pub mod chunk;
 pub mod dawfile;
-pub mod reaper;
+pub mod live;
+mod organize;
+
+pub use live::{DawTarget, ReaperTarget};
+pub use organize::{organize, Organized};
 
 /// A project a session template can be materialized into.
 ///
@@ -134,6 +139,30 @@ pub trait TemplateTarget {
         folder: &str,
         tracks: &[Self::TrackId],
     ) -> Result<Option<Gathered<Self::TrackId>>, Self::Error>;
+
+    /// Nest a "DI" capture under its sibling primary track, for any group
+    /// that opts in via [`monarchy::Group::nest_secondary_mics`]. Changes
+    /// folder nesting and mute only — no track moves. Idempotent. Backends
+    /// that cannot do it leave the tracks as they are.
+    fn nest_secondary_mics(&mut self) {}
+}
+
+/// Find a group by name anywhere in the config's tree (recursing into nested
+/// groups).
+pub(crate) fn find_group<'a>(
+    config: &'a crate::DynamicTemplateConfig,
+    name: &str,
+) -> Option<&'a monarchy::Group<crate::ItemMetadata>> {
+    fn search<'a>(
+        group: &'a monarchy::Group<crate::ItemMetadata>,
+        name: &str,
+    ) -> Option<&'a monarchy::Group<crate::ItemMetadata>> {
+        if group.name == name {
+            return Some(group);
+        }
+        group.groups.iter().find_map(|g| search(g, name))
+    }
+    config.groups.iter().find_map(|g| search(g, name))
 }
 
 /// What [`apply_buses`] created: every bus by name, so callers can wire

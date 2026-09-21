@@ -247,16 +247,24 @@ fn selected_or_all_tracks(selected_only: bool) -> Vec<daw::service::Track> {
 }
 
 fn sort_tracks(selected_only: bool) -> eyre::Result<()> {
-    let source = selected_or_all_tracks(selected_only);
-    if source.is_empty() {
+    if selected_only {
+        // The organize pass reasons about the whole project (buses, routing,
+        // the UNSORTED gather), so a selection-scoped run is its own feature.
+        // Say so rather than quietly reorganizing everything.
+        tracing::warn!(
+            "[dynamic-template] sorting only the selected tracks is not supported yet; \
+             use Sort All"
+        );
         return Ok(());
     }
-    let names: Vec<String> = source.iter().map(|t| t.name.clone()).collect();
-    let config = default_config();
-    let hierarchy = names.organize_into_tracks(&config, None)?;
-    tracing::warn!(
-        "[dynamic-template] sort skipped for {} tracks; current DAW facade no longer exposes hierarchy apply",
-        hierarchy.tracks.len()
+    let mut target = crate::apply::ReaperTarget::new(project());
+    let organized = crate::apply::organize(&mut target)?;
+    tracing::info!(
+        tracks = organized.existing,
+        buses = organized.buses.len(),
+        painted = organized.painted,
+        unsorted = organized.unsorted.len(),
+        "[dynamic-template] session organized"
     );
     Ok(())
 }
