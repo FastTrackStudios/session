@@ -405,14 +405,27 @@ fn the_roll_follows_the_space_it_is_given() {
 #[test]
 fn the_frame_meter_counts_painted_frames() {
     let doc = mounted();
+    let painted = |d: &dioxus_test::DocumentTester| -> u64 {
+        d.query(by_testid("fps"))
+            .immediately()
+            .expect("no meter")
+            .attribute("data-painted")
+            .and_then(|value| value.parse().ok())
+            .expect("the meter does not report a count")
+    };
     let read = |d: &dioxus_test::DocumentTester| {
         d.query(by_testid("fps"))
             .immediately()
             .expect("no meter")
             .inner_html()
     };
+    assert_eq!(
+        painted(&doc),
+        0,
+        "something was painted before the test ran"
+    );
     assert!(
-        read(&doc).contains('—'),
+        read(&doc).contains('\u{2014}'),
         "the meter reported a rate before anything had been painted"
     );
 
@@ -420,13 +433,7 @@ fn the_frame_meter_counts_painted_frames() {
     // window does, so the roll widget's `paint` — and its counter — run
     // exactly as they do on screen.
     let shot = std::env::temp_dir().join("expression-editor-frame-meter.png");
-    // Six rather than the two an interval needs. The meter throws away
-    // gaps over half a second — the first frame after a pause is the
-    // start of a burst, not a 2 fps frame — and the FIRST render here
-    // carries the whole warm-up, which on a loaded box is over that on
-    // its own. The later ones are warm and close together, which is
-    // what the meter is being asked about.
-    for _ in 0..6 {
+    for _ in 0..3 {
         doc.render_png(&shot);
     }
 
@@ -437,10 +444,18 @@ fn the_frame_meter_counts_painted_frames() {
         .click();
     doc.drain();
 
-    let got = read(&doc);
+    // The COUNT, not the rate.
+    //
+    // This used to assert the meter reported a rate, which made it a
+    // frame-timing test measuring wall clock while 2700 other tests ran
+    // beside it — `tick` throws away any gap over half a second, and on
+    // a loaded box every gap is over it. The rate was correctly absent
+    // and every frame had still been painted, so the test failed for
+    // being right. See session#96.
+    let after = painted(&doc);
     assert!(
-        !got.contains('—'),
-        "three painted frames and the meter still reports nothing: {got:?}"
+        after >= 3,
+        "three painted frames and the meter counted {after}"
     );
 }
 
