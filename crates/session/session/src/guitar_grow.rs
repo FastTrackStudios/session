@@ -226,78 +226,10 @@ impl<D: Tracks + Items + Projects> GuitarGrow<D> {
             })?;
 
         let children = Self::new_member_children(&self.track_tree(), &first, dimension, name);
-        self.append_member(container_guid, &TrackShape::with_children(name, children))
-    }
-
-    /// Create `shape` as the last child of `container_guid`.
-    ///
-    /// `TracksExt::append_shape` is the usual way to do this, but it
-    /// assumes the track terminating the container's subtree closes
-    /// exactly one level — the container. That does not hold here: a part
-    /// grown depth-first ends on a mic closing its amp, its channel and
-    /// the part all at once, and appending onto such a container with
-    /// `append_shape` silently closes the folder early and leaves the
-    /// newcomer outside it. So the depths are worked out from the tree:
-    /// the old terminator keeps only the levels it closed *inside* the
-    /// container, and the newcomer takes over the container and every
-    /// ancestor that ended there too.
-    fn append_member(&self, container_guid: &str, shape: &TrackShape) -> DawResult<()> {
-        let tree = self.track_tree();
-        let container = tree
-            .get(container_guid)
-            .ok_or_else(|| DawError::invalid_object("track", container_guid))?
-            .clone();
-        let end = tree
-            .subtree_end_index(container_guid)
-            .unwrap_or_else(|| container.index.saturating_add(1));
-        let terminator = tree
-            .at_index(end.saturating_sub(1))
-            .filter(|t| t.guid != container.guid)
-            .cloned();
-
-        // How many levels above the container the old terminator was also
-        // closing — the ones the newcomer inherits.
-        let mut outer = 0i32;
-        if let Some(terminator) = &terminator {
-            let inner = Self::folders_between(&tree, terminator, container_guid);
-            outer = terminator
-                .folder_depth
-                .saturating_neg()
-                .saturating_sub(inner)
-                .saturating_sub(1)
-                .max(0);
-            self.set_depth(&terminator.guid, inner.saturating_neg())?;
-        }
-
-        self.set_depth(container_guid, 1)?;
-        let flattened = TrackShape::flatten(std::slice::from_ref(shape));
-        let last_depth = flattened.last().map_or(-1, |(_, depth)| *depth);
-        let count = u32::try_from(flattened.len()).unwrap_or(u32::MAX);
-        self.insert_shape_at(std::slice::from_ref(shape), end)?;
-
-        if outer > 0
-            && let Some(last) = self
-                .track_tree()
-                .at_index(end.saturating_add(count).saturating_sub(1))
-        {
-            self.set_depth(&last.guid, last_depth.saturating_sub(outer))?;
-        }
-        Ok(())
-    }
-
-    /// How many folder levels sit strictly between `track` and the
-    /// ancestor `container_guid`.
-    fn folders_between(tree: &TrackTree, track: &Track, container_guid: &str) -> i32 {
-        let mut levels = 0i32;
-        let mut current = track.clone();
-        while let Some(parent) = tree.parent_of(&current) {
-            if parent.guid == container_guid {
-                return levels;
-            }
-            levels = levels.saturating_add(1);
-            current = parent.clone();
-        }
-        levels
+        self.append_shape(
+            container_guid,
+            std::slice::from_ref(&TrackShape::with_children(name, children)),
+        )
     }
 
     /// The subtree a newly added member arrives with.
