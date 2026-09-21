@@ -238,14 +238,6 @@ const fn project() -> ProjectContext {
     ProjectContext::Current
 }
 
-fn selected_or_all_tracks(selected_only: bool) -> Vec<daw::service::Track> {
-    if selected_only {
-        daw_reaper::Reaper.selected(project())
-    } else {
-        daw_reaper::Reaper.all(project())
-    }
-}
-
 fn sort_tracks(selected_only: bool) -> eyre::Result<()> {
     if selected_only {
         // The organize pass reasons about the whole project (buses, routing,

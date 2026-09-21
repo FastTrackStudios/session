@@ -74,7 +74,7 @@ fn scaffold<D: ScaffoldDaw>(daw: &D, text: &str) -> eyre::Result<()> {
 ///
 /// Bound to `Tracks` alone so `daw.add(..)` resolves unambiguously to
 /// `Tracks::add` (both `Tracks` and `Regions` expose an `add`).
-fn build_keyflow_folder<D: Tracks>(daw: &D, project: &ProjectContext) -> eyre::Result<()> {
+pub(crate) fn build_keyflow_folder<D: Tracks>(daw: &D, project: &ProjectContext) -> eyre::Result<()> {
     let folder = daw.add(project.clone(), "Keyflow", None)?;
     daw.set_folder_depth(project.clone(), TrackRef::Guid(folder), 1)?; // open folder
 
