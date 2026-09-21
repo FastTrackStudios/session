@@ -212,6 +212,16 @@ pub struct ArrangementWidget {
     /// the focused node, and a pointer-down on a widget focuses it, so
     /// the double-click that opens this has already done the focusing.
     renaming: Option<crate::rename::Rename>,
+    /// What a key means here.
+    ///
+    /// The window used to have no answer at all: `typed` served the
+    /// rename field and dropped everything else, so on the blitz path
+    /// Delete, Home and every bound action did nothing — the gesture
+    /// reached the widget and the widget threw it away. Loaded here
+    /// rather than in the binary because the EDITOR is here, and a key
+    /// that acts on the arrangement has to arrive where the arrangement
+    /// is. See #124.
+    keys: crate::keys::Keys,
     /// The last refused edit, until it has had its say.
     ///
     /// One at a time and the newest wins: refusals arrive in answer to
@@ -332,6 +342,7 @@ impl ArrangementWidget {
             project,
             previews,
             renaming: None,
+            keys: crate::keys::Keys::load(),
             notice: None,
             last_name: None,
             turning: None,
@@ -490,6 +501,61 @@ impl ArrangementWidget {
         ((x - TCP_WIDTH + view.scroll_x) / view.pps.max(f64::EPSILON)).max(0.0)
     }
 
+    /// A key that is not going into a text field: what it is bound to,
+    /// done.
+    ///
+    /// `true` when something happened, which is what tells the shell to
+    /// draw again — a key that changed nothing must not cost a frame.
+    fn acted(&mut self, event: &blitz_traits::events::BlitzKeyEvent) -> bool {
+        use blitz_traits::events::Key;
+        // `keyboard_types::Key` is flat: a character carries its text
+        // and everything else displays as the W3C name the profile
+        // writes ("Delete", "ArrowLeft"). `key_code` wants them apart.
+        let named;
+        let (named, text) = match &event.key {
+            Key::Character(text) => (None, Some(text.as_str())),
+            other => {
+                named = other.to_string();
+                (Some(named.as_str()), None)
+            }
+        };
+        let Some(code) = crate::keys::key_code(named, text) else {
+            return false;
+        };
+        let held = mods(event.modifiers);
+        let actions = self.keys.press(
+            code,
+            input::Modifiers {
+                ctrl: held.ctrl,
+                alt: held.alt,
+                shift: held.shift,
+                meta: false,
+            },
+        );
+        if actions.is_empty() {
+            return false;
+        }
+        let mut effects = Vec::new();
+        let mut handled = false;
+        let mut tracks = self.tracks.clone();
+        let bpm = self.scene.bpm;
+        for action in actions {
+            handled |= self.editor.key(
+                action,
+                &mut self.project,
+                &self.scene,
+                &self.rows,
+                &mut tracks,
+                &self.map,
+                bpm,
+                &mut effects,
+            );
+        }
+        self.tracks = tracks;
+        self.settle(effects);
+        handled
+    }
+
     /// What the editor asked for, carried out.
     ///
     /// `ReRecord` is the expensive one and the reason edits are
@@ -548,7 +614,10 @@ impl ArrangementWidget {
         // beside it.
         use blitz_traits::events::Key;
         let Some(rename) = self.renaming.as_mut() else {
-            return false;
+            // No field open, so the key is the session's rather than a
+            // letter. While one IS open the keyboard belongs to it —
+            // `d` must type a d, not delete what is selected.
+            return self.acted(event);
         };
         match &event.key {
             Key::Enter => {
@@ -1357,6 +1426,64 @@ mod tests {
             "releasing somewhere else is how every toolkit says 'no'"
         );
         assert!(!widget.rows[1].0.soloed);
+    }
+
+    /// A bound key acts on the session, with no rename field open.
+    ///
+    /// The window used to drop every key that was not going into a
+    /// rename: `typed` returned false the moment `renaming` was `None`,
+    /// so Delete, Home and every other binding reached the widget and
+    /// died there. It looked exactly like a window that was not
+    /// receiving keyboard events at all, which is what made it take a
+    /// day to find — see #124.
+    #[test]
+    fn a_bound_key_reaches_the_session() {
+        let mut widget = widget();
+        // Delete, which the built-in profile binds to 40697. With
+        // nothing selected it has nothing to remove and still answers
+        // for itself, which is the whole point: the question here is
+        // whether the key ARRIVES, not what it does when it does.
+        let acted = widget.took(&UiEvent::KeyDown(key(blitz_traits::events::Key::Delete)));
+        assert!(acted, "a bound key did nothing at all");
+    }
+
+    /// And a key with nothing behind it still does nothing, so the
+    /// window does not spend a frame on every keystroke.
+    #[test]
+    fn an_unbound_key_costs_nothing() {
+        let mut widget = widget();
+        let acted = widget.took(&UiEvent::KeyDown(key(
+            blitz_traits::events::Key::Character("§".into()),
+        )));
+        assert!(!acted, "an unbound key asked for a frame");
+    }
+
+    /// While a rename IS open the keyboard belongs to it: `d` types a
+    /// d rather than deleting what is selected.
+    #[test]
+    fn a_rename_keeps_the_keyboard() {
+        let mut widget = widget();
+        let (x, y) = at(&widget, 1, C::Name);
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        widget.handle_event(&UiEvent::PointerUp(pointer(x, y)));
+        widget.handle_event(&UiEvent::PointerDown(pointer(x, y)));
+        widget.handle_event(&UiEvent::PointerUp(pointer(x, y)));
+        assert!(
+            widget.renaming.is_some(),
+            "the double click did not open one"
+        );
+        widget.handle_event(&UiEvent::KeyDown(key(
+            blitz_traits::events::Key::Character("d".into()),
+        )));
+        let typed = widget
+            .renaming
+            .as_ref()
+            .map(|r| r.text().to_owned())
+            .unwrap_or_default();
+        assert!(
+            typed.ends_with('d'),
+            "the letter went to the session instead of the field: {typed:?}"
+        );
     }
 
     fn key(named: blitz_traits::events::Key) -> blitz_traits::events::BlitzKeyEvent {
