@@ -73,6 +73,8 @@ pub fn midi_note_for_section(section_type: &SectionType) -> Option<u8> {
         SectionType::Vamp => 97,
         SectionType::Turnaround => 98,
         SectionType::Refrain => 99,
+        // The legacy table's "Tag" sample, now that Tag is a variant.
+        SectionType::Tag => 94,
         // Pre-/Post- have their own notes only for Chorus, which is all
         // the legacy plugin ever had; anything else takes the inner
         // section's note so a Pre-Verse still announces as a Verse.
@@ -84,7 +86,7 @@ pub fn midi_note_for_section(section_type: &SectionType) -> Option<u8> {
             SectionType::Chorus => 91,
             ref other => return midi_note_for_section(other),
         },
-        // Names the enum doesn't model (Tag, Rap, Acapella, Exhortation)
+        // Names the enum doesn't model (Rap, Acapella, Exhortation)
         // still resolve through the legacy table.
         SectionType::Custom(name) => return get_midi_note_for_section_type(name),
         // Count-ins are Count-track material; Opening and Hits had no

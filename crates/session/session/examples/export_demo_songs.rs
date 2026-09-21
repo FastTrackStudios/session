@@ -211,6 +211,7 @@ const fn section_base_name(kind: SectionKind) -> &'static str {
         SectionKind::Breakdown => "Breakdown",
         SectionKind::Vamp => "Vamp",
         SectionKind::Refrain => "Refrain",
+        SectionKind::Tag => "Tag",
         SectionKind::Turnaround => "Turnaround",
         SectionKind::CountIn => "Count-In",
         SectionKind::End => "End",

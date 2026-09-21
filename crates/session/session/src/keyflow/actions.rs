@@ -929,6 +929,7 @@ impl SectionKind {
             Self::Breakdown => SectionType::Breakdown,
             Self::Vamp => SectionType::Vamp,
             Self::Refrain => SectionType::Refrain,
+            Self::Tag => SectionType::Tag,
             Self::Turnaround => SectionType::Turnaround,
             Self::CountIn => SectionType::CountIn,
             Self::End => SectionType::End,
@@ -957,6 +958,7 @@ impl SectionKind {
             SectionType::Breakdown => Self::Breakdown,
             SectionType::Vamp => Self::Vamp,
             SectionType::Refrain => Self::Refrain,
+            SectionType::Tag => Self::Tag,
             SectionType::Turnaround => Self::Turnaround,
             SectionType::Pre(_) => Self::PreChorus,
         }
@@ -970,7 +972,7 @@ impl SectionKind {
         match self {
             Self::CountIn | Self::Turnaround => Some(2),
             Self::Verse | Self::Chorus | Self::Bridge | Self::Refrain => Some(8),
-            Self::Intro | Self::Outro | Self::Instrumental => Some(4),
+            Self::Intro | Self::Outro | Self::Instrumental | Self::Tag => Some(4),
             Self::PreChorus
             | Self::Solo
             | Self::Hits

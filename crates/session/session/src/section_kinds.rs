@@ -42,6 +42,7 @@ pub enum SectionKind {
     Breakdown,
     Vamp,
     Refrain,
+    Tag,
     Turnaround,
     CountIn,
     End,

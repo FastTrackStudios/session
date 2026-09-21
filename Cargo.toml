@@ -1150,6 +1150,12 @@ world-sys = { path = "../daw/libs/vendor/world" }
 # friction with no benefit. Every crate the Tone rack reaches, direct or
 # transitive, is patched — one unpatched copy of a crate that is also
 # patched is the lockfile collision that cost a day last time.
+[patch."https://github.com/FastTrackStudios/keyflow"]
+# SectionType::Tag (daw's keyflow-proto) needs an arm in the engraver's
+# section theme. Sibling checkout, branch `tag-section` off v0.2.1, until
+# keyflow tags a release with it and the pin moves.
+engraver-proto = { path = "../keyflow/features/engraver/proto" }
+
 [patch."https://github.com/FastTrackStudios/processor"]
 # baseview lives in the processor repo's own `vendor/`, which is why it
 # is patched from here rather than from a fork's URL — see the

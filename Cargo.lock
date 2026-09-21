@@ -4824,7 +4824,6 @@ dependencies = [
 [[package]]
 name = "engraver-proto"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1#1b8ae02cf2f9f9941136b1adfb61c51c8300f83f"
 dependencies = [
  "anyrender",
  "bitflags 2.13.1",
@@ -4838,7 +4837,7 @@ dependencies = [
  "keyflow-midi",
  "keyflow-proto",
  "keyflow-syntax",
- "keyflow-text",
+ "keyflow-text 0.1.0",
  "kurbo 0.13.1",
  "lyon",
  "macro_rules_attribute",
@@ -7945,11 +7944,15 @@ dependencies = [
  "getrandom 0.2.17",
  "helgoboss-midi",
  "keyflow-proto",
- "keyflow-text",
+ "keyflow-text 0.1.0 (git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1)",
  "regex",
  "tracing",
  "uuid",
 ]
+
+[[package]]
+name = "keyflow-chordpro"
+version = "0.1.0"
 
 [[package]]
 name = "keyflow-chordpro"
@@ -7973,10 +7976,9 @@ dependencies = [
 [[package]]
 name = "keyflow-midi"
 version = "0.1.0"
-source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1#1b8ae02cf2f9f9941136b1adfb61c51c8300f83f"
 dependencies = [
  "keyflow-proto",
- "keyflow-text",
+ "keyflow-text 0.1.0",
  "midly",
 ]
 
@@ -8022,9 +8024,19 @@ dependencies = [
 [[package]]
 name = "keyflow-text"
 version = "0.1.0"
+dependencies = [
+ "keyflow-chordpro 0.1.0",
+ "keyflow-proto",
+ "keyflow-syntax",
+ "tracing",
+]
+
+[[package]]
+name = "keyflow-text"
+version = "0.1.0"
 source = "git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1#1b8ae02cf2f9f9941136b1adfb61c51c8300f83f"
 dependencies = [
- "keyflow-chordpro",
+ "keyflow-chordpro 0.1.0 (git+https://github.com/FastTrackStudios/keyflow?tag=v0.2.1)",
  "keyflow-proto",
  "keyflow-syntax",
  "tracing",
@@ -18068,19 +18080,6 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "phon"
-version = "0.2.0-rc.5"
-source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
-
-[[patch.unused]]
-name = "baseview"
-version = "0.3.3"
-
-[[patch.unused]]
-name = "dsp-golden"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "audio-controls"
 version = "0.1.0"
 
@@ -18182,4 +18181,17 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "reaper-kbd"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "phon"
+version = "0.2.0-rc.5"
+source = "git+https://github.com/FastTrackStudios/vendor?tag=v0.1.0#85c1a4b85a316b39a61c156127d61c05bf25fd9f"
+
+[[patch.unused]]
+name = "baseview"
+version = "0.3.3"
+
+[[patch.unused]]
+name = "dsp-golden"
 version = "0.1.0"
