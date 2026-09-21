@@ -610,6 +610,10 @@ impl Arrangement {
             for item in project.lane(&track.guid) {
                 let x0 = item.position.as_seconds();
                 let x1 = x0 + item.length.as_seconds().max(0.001);
+                // How far into the source this item starts. Zero for
+                // everything that has not been slipped, which is why
+                // adding it moves no picture that was right before.
+                let slip = item.start_offset.as_seconds();
                 let color = item.color.map_or(track_color, |rgb| {
                     rgb24(rgb, if item.muted { 0x66 } else { 0xff })
                 });
@@ -644,7 +648,7 @@ impl Arrangement {
                         }
                     }
                     None if !project.is_midi(&item.guid) => {
-                        if let Some(wave) = waveform(track_index, x0, x1, top, bottom) {
+                        if let Some(wave) = waveform(track_index, x0, x1, top, bottom, slip) {
                             lanes.fill(Fill::NonZero, Affine::IDENTITY, color, None, &wave);
                             index.x.push((x0, x1));
                         }
@@ -663,6 +667,7 @@ impl Arrangement {
                 boxes.push(ItemBox {
                     row,
                     guid: item.guid.clone(),
+                    slip,
                     x0,
                     x1,
                     fades,
@@ -941,6 +946,10 @@ pub enum ItemZone {
 pub struct ItemBox {
     pub row: usize,
     pub guid: String,
+    /// How far into its source the item starts, in seconds — the active
+    /// take's offset. What a slip edit changes, and what the waveform
+    /// is drawn from.
+    pub slip: f64,
     /// Its span, in seconds.
     pub x0: f64,
     pub x1: f64,
@@ -1316,9 +1325,15 @@ const WAVE_HOLD: usize = 4;
 /// An item's waveform as one closed path: the envelope forward along
 /// the top, back along the bottom, mirrored about the lane's middle.
 ///
+/// `slip` is how far into the source the item starts, and it shifts
+/// which part of the source each column shows — the item stays where it
+/// is and the audio inside it moves, which is what a slip edit is.
+/// Added to the timeline position rather than replacing it, so an
+/// unslipped item draws exactly what it drew before this existed.
+///
 /// From the simulation until the engine streams peaks — see
 /// `simulate::waveform` — and `None` for a lane too short to show one.
-fn waveform(track: usize, x0: f64, x1: f64, top: f64, bottom: f64) -> Option<BezPath> {
+fn waveform(track: usize, x0: f64, x1: f64, top: f64, bottom: f64, slip: f64) -> Option<BezPath> {
     let half = (bottom - top) / 2.0;
     if half < 1.5 {
         return None;
@@ -1333,7 +1348,9 @@ fn waveform(track: usize, x0: f64, x1: f64, top: f64, bottom: f64) -> Option<Bez
     let step = 1.0 / WAVE_POINTS_PER_SECOND / crate::num::coord(WAVE_HOLD);
     let amp = |t: f64| {
         (0..WAVE_HOLD)
-            .map(|k| crate::simulate::waveform(track, crate::num::coord(k).mul_add(-step, t)))
+            .map(|k| {
+                crate::simulate::waveform(track, crate::num::coord(k).mul_add(-step, t + slip))
+            })
             .fold(0.0_f64, f64::max)
             .mul_add(half - 1.0, 0.6)
     };

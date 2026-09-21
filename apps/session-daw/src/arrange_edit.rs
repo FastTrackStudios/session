@@ -104,6 +104,12 @@ pub struct ItemPress {
     /// Whether the drop lands on the grid, as the mouse map resolved
     /// it when the press landed.
     pub snap: bool,
+    /// The slip this drag is changing, when it is a slip: how far into
+    /// the source the item started at the press. `None` for every other
+    /// drag, which is what tells the release which edit it is making.
+    pub slip: Option<f64>,
+    /// Where the slip has got to, once the pointer has moved.
+    pub slipped: Option<f64>,
     /// Whether the drop leaves the original behind.
     ///
     /// Resolved at the press like `snap`, and for the same reason: a
@@ -329,6 +335,7 @@ impl Editor {
                     }
                     mousemap::Action::MoveItem
                     | mousemap::Action::CopyItem
+                    | mousemap::Action::SlipItem
                     | mousemap::Action::TrimLeft
                     | mousemap::Action::TrimRight => {
                         // A trim takes the seam with it; a move does
@@ -355,6 +362,8 @@ impl Editor {
                             // one thing and dropping another.
                             snap: bound.snap,
                             copy: action == mousemap::Action::CopyItem,
+                            slip: (action == mousemap::Action::SlipItem).then_some(item.slip),
+                            slipped: None,
                         });
                         true
                     }
@@ -622,7 +631,13 @@ impl Editor {
                     t
                 }
             };
+            // A slip does not move the item, so its ghost is the item's
+            // own span: what changes is which part of the source is
+            // under it, and that is carried in `slip` rather than here.
+            // Dragging the contents right shows EARLIER source under the
+            // left edge, so the offset goes down as `dx` goes up.
             press.ghost = Some(match press.zone {
+                _ if press.slip.is_some() => (press.x0, press.x1),
                 ItemZone::LeftEdge => (snap(press.x0 + dx).clamp(0.0, press.x1 - 0.01), press.x1),
                 ItemZone::RightEdge => (press.x0, snap(press.x1 + dx).max(press.x0 + 0.01)),
                 _ => {
@@ -630,6 +645,11 @@ impl Editor {
                     (x0, x0 + (press.x1 - press.x0))
                 }
             });
+            if let Some(base) = press.slip {
+                // Clamped at the source's start: there is nothing before
+                // the beginning of a file to show.
+                press.slipped = Some(snap(base - dx).max(0.0));
+            }
             return true;
         }
         if let Some(press) = self.ruler_press.as_mut() {
@@ -785,6 +805,25 @@ impl Editor {
                     // span carries the same position and length as each
                     // of them — that is what `Span::whole` guarantees
                     // and why a ragged one is refused instead.
+                    // A slip changes nothing about where the item IS, so
+                    // it is neither a move nor a trim and shares no code
+                    // with either. Its own branch, first, because both
+                    // of the others would otherwise move an item the
+                    // gesture was explicitly not moving.
+                    if let Some(to) = press.slipped {
+                        let made = spread_item_slip(project, &press.guid, to, effects);
+                        if made {
+                            effects.push(Effect::ReRecord);
+                        } else {
+                            self.snapback = Some(Snapback {
+                                index: press.index,
+                                from: (x0, x1),
+                                to: (press.x0, press.x1),
+                                started: std::time::Instant::now(),
+                            });
+                        }
+                        return true;
+                    }
                     let trimming = matches!(press.zone, ItemZone::LeftEdge | ItemZone::RightEdge);
                     // A copy leaves the original where it is, so it is
                     // not an edit to the item at all — it is a new one.
@@ -1538,6 +1577,32 @@ fn targets(
             None
         }
     }
+}
+
+/// Slip an item's contents to `to`, on every real item it stands for.
+///
+/// Through [`targets`] like every other edit: a slip on a folded row
+/// slips every mic under it, because on screen they are one take and
+/// slipping some of them would put the kit out of phase with itself —
+/// which is the one thing a multi-mic fold exists to prevent.
+fn spread_item_slip(project: &mut Project, guid: &str, to: f64, effects: &mut Vec<Effect>) -> bool {
+    let Some(targets) = targets(project, guid, true, effects) else {
+        return false;
+    };
+    let wanted: std::collections::HashSet<&String> = targets.iter().collect();
+    let mut made = false;
+    for item in project.items.values_mut().flatten() {
+        if !wanted.contains(&item.guid) {
+            continue;
+        }
+        // Predicted locally so the waveform is right on the next frame
+        // rather than whenever the session answers — the same bargain
+        // every other edit here makes.
+        item.start_offset = daw_proto::primitives::Duration::from_seconds(to);
+        effects.push(Effect::Send(Edit::SlipItem(item.guid.clone(), to)));
+        made = true;
+    }
+    made
 }
 
 /// Copy an item to `at`, on every real item it stands for.
@@ -2558,6 +2623,105 @@ mod tests {
         assert!(
             copied.iter().all(|g| !g.starts_with("folded:")),
             "a view coordinate reached the engine: {copied:?}"
+        );
+    }
+
+    /// Ctrl+Alt-drag slips the contents: the item does not move, and
+    /// the offset into its source does.
+    #[test]
+    fn ctrl_alt_drag_slips_the_contents_and_leaves_the_item() {
+        let mut s = Stage::new();
+        let slip = Mods {
+            ctrl: true,
+            alt: true,
+            ..Mods::default()
+        };
+        let (x, y) = s.point(0, 3.0, 15.0);
+        assert!(s.press(x, y, slip).0, "the body did not take the press");
+        // Half a second to the right, off the grid so the number is the
+        // drag's own rather than the beat's.
+        let fine = Mods {
+            shift: true,
+            ..slip
+        };
+        s.press(x, y, fine);
+        assert!(s.drag_to(x + 0.5 * PPS, fine));
+        let effects = s.release(x + 0.5 * PPS, fine);
+
+        // The item is exactly where it was.
+        assert_eq!(
+            s.spans("kick"),
+            vec![(2.0, 6.0), (10.0, 14.0)],
+            "a slip moved the item"
+        );
+        // Dragging the contents right shows EARLIER source under the
+        // left edge, so an item that started at the source's beginning
+        // clamps there rather than going negative.
+        let sent = sends(&effects);
+        assert!(
+            sent.iter()
+                .any(|e| matches!(e, Edit::SlipItem(g, at) if g == "k1" && *at == 0.0)),
+            "no slip reached the engine: {sent:?}"
+        );
+        assert!(
+            !sent.iter().any(|e| matches!(e, Edit::MoveItem(..))),
+            "a slip moved the item as well: {sent:?}"
+        );
+    }
+
+    /// Dragging the contents LEFT moves further into the source, and
+    /// the window's own copy follows so the waveform is right on the
+    /// next frame.
+    #[test]
+    fn dragging_the_contents_left_goes_further_into_the_source() {
+        let mut s = Stage::new();
+        let fine = Mods {
+            ctrl: true,
+            alt: true,
+            shift: true,
+        };
+        let (x, y) = s.point(0, 4.0, 15.0);
+        s.press(x, y, fine);
+        assert!(s.drag_to(x - 0.75 * PPS, fine));
+        s.release(x - 0.75 * PPS, fine);
+        let slipped = s.item("k1").start_offset.as_seconds();
+        assert!(
+            (slipped - 0.75).abs() < 1e-6,
+            "the offset went the wrong way or the wrong distance: {slipped}"
+        );
+        assert!(
+            (s.item("k1").position.as_seconds() - 2.0).abs() < 1e-9,
+            "the item moved"
+        );
+    }
+
+    /// A slip on a folded row slips every mic under it. Slipping some
+    /// of them would put the kit out of phase with itself, which is the
+    /// one thing a multi-mic fold exists to prevent.
+    #[test]
+    fn slipping_a_folded_row_slips_every_mic() {
+        let mut s = Stage::folded();
+        let fine = Mods {
+            ctrl: true,
+            alt: true,
+            shift: true,
+        };
+        let (x, y) = s.point(0, 3.0, 15.0);
+        assert!(s.press(x, y, fine).0);
+        assert!(s.drag_to(x - 0.5 * PPS, fine));
+        let effects = s.release(x - 0.5 * PPS, fine);
+        let mut slipped: Vec<&String> = sends(&effects)
+            .iter()
+            .filter_map(|e| match e {
+                Edit::SlipItem(g, _) => Some(g),
+                _ => None,
+            })
+            .collect();
+        slipped.sort();
+        assert_eq!(
+            slipped,
+            vec![&"in1".to_owned(), &"out1".to_owned()],
+            "the mics did not both slip: {slipped:?}"
         );
     }
 
