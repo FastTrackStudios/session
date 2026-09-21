@@ -381,11 +381,15 @@ pub fn paint_edit(
     painter.fill(
         Fill::NonZero,
         Affine::IDENTITY,
-        palette.text,
+        EDIT_CURSOR,
         None,
         &Rect::new(x, top, x + 1.0, bottom),
     );
 }
+
+/// The edit cursor's colour: blue (blue-500), where YOU are — against the
+/// play cursor's yellow, where the audio is.
+pub const EDIT_CURSOR: vello::peniko::Color = vello::peniko::Color::from_rgba8(0x3b, 0x82, 0xf6, 0xff);
 
 /// How the play cursor looks.
 ///
@@ -412,16 +416,26 @@ pub struct Look {
     pub shadow: f64,
     /// How far the glow bleeds either side of the line.
     pub glow: f64,
+    /// Opacity at the head of the trail (it falls off from there).
+    pub trail_strength: f32,
+    /// Opacity at the centre of the glow.
+    pub glow_strength: f32,
 }
 
 impl Default for Look {
     fn default() -> Self {
         Self {
-            line: vello::peniko::Color::from_rgba8(0xff, 0x4a, 0x3d, 0xff),
+            // Yellow: where the audio is. The edit cursor is blue — see
+            // `EDIT_CURSOR` — so the two never read as one another.
+            line: vello::peniko::Color::from_rgba8(0xfa, 0xcc, 0x15, 0xff),
             width: 2.0,
-            trail: 120.0,
+            // A hint of where the audio has been, not a bar following
+            // the line around.
+            trail: 90.0,
             shadow: 0.0,
             glow: 6.0,
+            trail_strength: 0.28,
+            glow_strength: 0.5,
         }
     }
 }
@@ -520,12 +534,12 @@ pub fn paint(
         ramp(x, x - look.shadow, 0.35);
     }
     if look.trail > 0.0 {
-        ramp(x, x - look.trail, 0.55);
+        ramp(x, x - look.trail, look.trail_strength);
     }
     // The glow is symmetric, so it is two ramps rather than one.
     if look.glow > 0.0 {
-        ramp(x, x - look.glow, 0.9);
-        ramp(x, x + look.glow, 0.9);
+        ramp(x, x - look.glow, look.glow_strength);
+        ramp(x, x + look.glow, look.glow_strength);
     }
 
     let line_left = (x - look.width / 2.0).max(left_bound);

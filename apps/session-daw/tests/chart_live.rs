@@ -23,6 +23,11 @@ ch 8
 4 1 5 6 x2
 ";
 
+/// Opening a project stands up the window's process-wide engine (the
+/// facade, the "current" project), so two tests opening at once step on
+/// each other. One at a time.
+static ENGINE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn build(project_file: &Path, chart: &str) -> (daw::standalone::Standalone, ProjectContext, session::keyflow::from_chart::ChartBuilt) {
     let opened = session_daw::open::open_silent(project_file).expect("open");
     // The transport engine spawns on the window's runtime; so must we.
@@ -34,6 +39,7 @@ fn build(project_file: &Path, chart: &str) -> (daw::standalone::Standalone, Proj
 
 #[test]
 fn a_chart_builds_tempo_markers_regions_and_the_keyflow_folder() {
+    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("empty.rpp");
     std::fs::write(&file, EMPTY).expect("write project");
@@ -82,6 +88,7 @@ fn a_chart_builds_tempo_markers_regions_and_the_keyflow_folder() {
 /// not for CI: `FTS_CHART_PROJECT=song.rpp FTS_CHART=song.kf`.
 #[test]
 fn a_real_chart_when_one_is_given() {
+    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (Some(project_file), Some(chart)) = (
         std::env::var_os("FTS_CHART_PROJECT"),
         std::env::var_os("FTS_CHART"),
@@ -94,7 +101,7 @@ fn a_real_chart_when_one_is_given() {
     let mut regions = Regions::all(&daw, project.clone());
     regions.sort_by(|a, b| a.start_seconds().total_cmp(&b.start_seconds()));
     for r in regions {
-        eprintln!("  region {:>8.3} – {:>8.3}  {}", r.start_seconds(), r.end_seconds(), r.name);
+        eprintln!("  region {:>8.3} – {:>8.3}  lane {:?} color {:?}  {}", r.start_seconds(), r.end_seconds(), r.lane, r.color.map(|c| format!("{c:#08x}")), r.name);
     }
     let mut markers = Markers::all(&daw, project);
     markers.sort_by(|a, b| a.position_seconds().total_cmp(&b.position_seconds()));

@@ -3,9 +3,8 @@
 //! generate the click and guide.
 //!
 //! The multitrack brings its own `Click` and `Guide` audio stems. They
-//! must survive as muted references in the CLICK + GUIDE folder — never
-//! written over — while the generated Click / Count / Guide tracks are
-//! MIDI, sit in the same folder, and are what plays.
+//! must survive as references in the Guide folder — never written over —
+//! beside the generated Click / Count / Guide tracks, which are MIDI.
 
 use daw::service::{ItemRef, Items, ProjectContext, Takes, TrackRef, Tracks};
 use dynamic_template::apply::{organize, DawTarget};
@@ -61,8 +60,14 @@ ch 4
 4 1 5 6
 ";
 
+/// Opening a project stands up the window's process-wide engine (the
+/// facade, the "current" project), so two tests opening at once step on
+/// each other. One at a time.
+static ENGINE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn a_multitrack_is_organized_built_and_guided() {
+    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("song.rpp");
     std::fs::write(&file, RPP).expect("write");
@@ -113,7 +118,7 @@ fn a_multitrack_is_organized_built_and_guided() {
                 open_at = None;
             }
         }
-        if t.name == "CLICK + GUIDE BUS" {
+        if t.name == "Guide" && t.folder_depth > 0 {
             open_at = Some(depth);
         }
         depth += t.folder_depth;
@@ -124,12 +129,12 @@ fn a_multitrack_is_organized_built_and_guided() {
             .iter()
             .find(|t| t.name == stem && has_audio(&t.guid))
             .unwrap_or_else(|| panic!("the {stem} stem is still there, with its audio"));
-        assert!(t.muted, "the {stem} stem is muted as a reference");
+        assert!(!t.muted, "the {stem} stem is left as it was (unmuted, for now)");
     }
     for role in ["Click", "Count", "Guide"] {
         let generated = tracks
             .iter()
-            .find(|t| t.name == role && !has_audio(&t.guid))
+            .find(|t| t.name == role && t.folder_depth <= 0 && !has_audio(&t.guid))
             .unwrap_or_else(|| panic!("a generated {role} track"));
         assert!(item_count(&generated.guid) > 0, "the generated {role} has MIDI in it");
         assert!(!generated.muted, "the generated {role} plays");
@@ -150,4 +155,43 @@ fn a_multitrack_is_organized_built_and_guided() {
     Guide::new(daw.clone()).generate(GuideScope::All).expect("regenerate");
     let again = Tracks::all(&daw, project.clone());
     assert_eq!(again.len(), tracks.len(), "no tracks added the second time");
+}
+
+/// The real song, prepared the way the window prepares it — for looking
+/// at: `FTS_CHART_PROJECT=song.rpp FTS_CHART=song.kf`.
+#[test]
+fn a_real_session_prepared_when_one_is_given() {
+    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (Some(project_file), Some(chart)) = (
+        std::env::var_os("FTS_CHART_PROJECT"),
+        std::env::var_os("FTS_CHART"),
+    ) else {
+        return;
+    };
+    let opened = session_daw::open::open_silent(std::path::Path::new(&project_file)).expect("open");
+    session_daw::prepare::Prepare {
+        organize: true,
+        chart: Some(chart.into()),
+        guide: true,
+    }
+    .run(&opened)
+    .expect("prepare");
+    let project = ProjectContext::Project(opened.project_guid.clone());
+    let mut depth = 0i32;
+    for t in Tracks::all(&opened.daw, project) {
+        eprintln!(
+            "{}{}{}{}",
+            "    ".repeat(usize::try_from(depth.max(0)).unwrap_or(0)),
+            t.name,
+            if t.folder_depth > 0 { "/" } else { "" },
+            match (t.muted, t.visible_in_tcp) {
+                (true, false) => "  [muted, hidden]",
+                (true, true) => "  [muted]",
+                (false, false) => "  [hidden]",
+                (false, true) => "",
+            }
+        );
+        depth += t.folder_depth;
+    }
+    assert_eq!(depth, 0, "every folder closes");
 }

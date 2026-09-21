@@ -38,10 +38,10 @@ pub const LANE_H: f64 = 15.0;
 
 /// How many ruler lanes there are, over the bars.
 ///
-/// The FTS convention (REAPER 7.62's ruler lanes): lane 1 is the SONG,
-/// one region over the whole song; lane 2 the SECTIONS, a region per
-/// verse and chorus; lane 3 the MARKS — SONGSTART, SONGEND and the
-/// like. Always three, so a session with fewer still lays its rows out
+/// The FTS convention (REAPER 7.62's ruler lanes, numbered from 0 as
+/// REAPER's API and the daw service do): lane 0 is the SONG, one region
+/// over the whole song; lane 1 the SECTIONS, a region per verse and
+/// chorus; lane 2 the MARKS — SONGSTART, SONGEND and the like. Always three, so a session with fewer still lays its rows out
 /// where every other session does.
 pub const LANES: usize = 3;
 
@@ -559,12 +559,14 @@ pub fn lane_lines(
     }
 }
 
-/// Which lane row a REAPER lane index lands on: lanes are numbered from
-/// one, the default lane is the first, and anything past the last row
-/// is drawn on it rather than off the strip.
+/// Which lane row a lane index lands on. Lanes are numbered from 0, as
+/// REAPER's API and the daw service number them (`CoreLane`: SONG 0,
+/// SECTIONS 1, MARKS 2) — the `.rpp` file's own 1-based rows are
+/// converted where it is read. Anything past the last row is drawn on it
+/// rather than off the strip.
 #[must_use]
 pub fn lane_row(lane: u32) -> usize {
-    usize::try_from(lane.saturating_sub(1))
+    usize::try_from(lane)
         .unwrap_or(0)
         .min(LANES.saturating_sub(1))
 }
@@ -832,11 +834,10 @@ pub const SECTIONS_ROW: usize = 1;
 
 /// The lane number to store for a row.
 ///
-/// The inverse of `lane_row`: REAPER counts ruler lanes from one, with
-/// zero meaning the default lane, and the rows here count from zero.
+/// The inverse of `lane_row`: rows and lanes both count from 0.
 #[must_use]
 pub const fn lane_of(row: usize) -> u32 {
-    row as u32 + 1
+    row as u32
 }
 
 // ─── Counting through tempo and signature changes ───────────────────

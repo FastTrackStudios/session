@@ -60,8 +60,10 @@ impl GuideScope {
     }
 }
 
-/// The organizer's folder for click and guide material.
-const CLICK_GUIDE_FOLDER: &str = "CLICK + GUIDE BUS";
+/// The template's group folder for click and guide material — the
+/// `Guide/` a session opens with at the top. (The CLICK + GUIDE BUS is
+/// its bus: routing, fed by sends, not where the tracks live.)
+const CLICK_GUIDE_FOLDER: &str = "Guide";
 
 /// Serves [`session_proto::guide::GuideActions`] against a DAW backend.
 pub struct Guide<D> {
@@ -160,10 +162,9 @@ impl<D: GuideDaw> Guide<D> {
         }
 
         // A multitrack's own click and guide are audio stems that share
-        // these names. They are kept — muted, so the generated guide is
-        // the one heard — and never written over: `find_track` only
-        // answers with tracks that carry no audio.
-        self.mute_stems(&project);
+        // these names. They are kept as they are — beside the generated
+        // tracks in the Guide folder, as a reference — and never written
+        // over: `find_track` only answers with tracks that carry no audio.
 
         // Clear first, then write — and only the roles this scope owns.
         for role in scope.roles() {
@@ -193,9 +194,11 @@ impl<D: GuideDaw> Guide<D> {
                 .any(|role| name.trim().eq_ignore_ascii_case(role.name()))
         };
 
+        // The folder, not a track that shares its name: the generated
+        // Guide track is called "Guide" too.
         let folder = match Tracks::all(&self.daw, project.clone())
             .into_iter()
-            .find(|t| t.name.trim().eq_ignore_ascii_case(CLICK_GUIDE_FOLDER))
+            .find(|t| t.name.trim().eq_ignore_ascii_case(CLICK_GUIDE_FOLDER) && t.folder_depth > 0)
         {
             Some(folder) => folder.guid,
             None => Tracks::add(&self.daw, project.clone(), CLICK_GUIDE_FOLDER, None)?,
@@ -403,6 +406,9 @@ impl<D: GuideDaw> Guide<D> {
         Tracks::all(&self.daw, project.clone())
             .into_iter()
             .filter(|track| track.name.eq_ignore_ascii_case(role.name()))
+            // Not a folder: the `Guide` group folder carries the role's
+            // name and no audio, and is not a track to write notes into.
+            .filter(|track| track.folder_depth <= 0)
             .find(|track| !self.has_audio(&project, &track.guid))
             .map(|track| TrackRef::Guid(track.guid))
     }
@@ -416,21 +422,6 @@ impl<D: GuideDaw> Guide<D> {
                 Takes::get_active_take(&self.daw, project.clone(), ItemRef::Guid(item.guid.clone()))
                     .is_some_and(|take| !take.is_midi)
             })
-    }
-
-    /// Mute every audio stem named for a guide role (Click, Count, Guide),
-    /// so the generated guide replaces it rather than doubling it. The
-    /// stems stay where the organizer put them — the CLICK + GUIDE folder.
-    fn mute_stems(&self, project: &ProjectContext) {
-        let roles = [GuideTrackRole::Click, GuideTrackRole::Count, GuideTrackRole::Guide];
-        for track in Tracks::all(&self.daw, project.clone()) {
-            let named_for_a_role = roles
-                .iter()
-                .any(|role| track.name.trim().eq_ignore_ascii_case(role.name()));
-            if named_for_a_role && !track.muted && self.has_audio(project, &track.guid) {
-                let _ = Tracks::set_muted(&self.daw, project.clone(), TrackRef::Guid(track.guid), true);
-            }
-        }
     }
 
     /// Find the role's track, creating it if absent. Creating is the

@@ -247,3 +247,262 @@ impl<D: Tracks + Routing> TemplateTarget for DawTarget<D> {
         }))
     }
 }
+
+// ── Folder layout, live ─────────────────────────────────────────────────
+//
+// The bus pass (`organize`) wires a session into the mix; these give it
+// the folder shape the template describes — Guide, Keyflow, Drums, Bass,
+// Guitars … — which the file backends leave to REAPER's own user.
+
+use daw::service::Items;
+
+/// What [`DawTarget::arrange_into_groups`] did.
+#[derive(Debug, Default)]
+pub struct Arranged {
+    /// Wrapper folders removed (their tracks kept).
+    pub unwrapped: Vec<String>,
+    /// Group folders created.
+    pub created: Vec<String>,
+    /// Tracks placed inside a group.
+    pub placed: usize,
+}
+
+impl<D: Tracks + Routing + Items> DawTarget<D> {
+    fn has_items(&self, guid: &str) -> bool {
+        !Items::get_items(&self.daw, self.project.clone(), TrackRef::Guid(guid.to_owned())).is_empty()
+    }
+
+    /// Put every content track into the group folder the template's
+    /// grouping engine (`organize_into_tracks`) assigns it — Drums, Bass,
+    /// Guitars / Electric, Keys, Guide … — creating the folders it needs,
+    /// and take apart any folder that only wrapped a multitrack (no media
+    /// of its own, not a bus or a group). Tracks keep their own names.
+    ///
+    /// Buses, the Keyflow folder and anything the engine does not place
+    /// keep their order, after the groups. Idempotent: a second run finds
+    /// every track already in its group.
+    ///
+    /// # Errors
+    ///
+    /// The grouping engine, or a backend call, failed.
+    pub fn arrange_into_groups(&mut self) -> eyre::Result<Arranged> {
+        use crate::OrganizeIntoTracks;
+
+        let mut arranged = Arranged::default();
+        let project = self.project.clone();
+        let all = Tracks::all(&self.daw, project.clone());
+
+        // Groups the template knows, so a folder named for one is kept.
+        let config = crate::default_config();
+        let is_known_folder = |name: &str| {
+            let n = name.trim();
+            crate::buses::is_bus_name(n)
+                || super::find_group(&config, n).is_some()
+                || n.eq_ignore_ascii_case("Keyflow")
+                || n.eq_ignore_ascii_case(super::UNSORTED_FOLDER)
+        };
+
+        // 1. Unwrap: a folder with no media that is not a bus or a group
+        //    only held a multitrack together. Its children stay.
+        for track in &all {
+            if track.folder_depth > 0 && !is_known_folder(&track.name) && !self.has_items(&track.guid) {
+                Tracks::remove(&self.daw, project.clone(), TrackRef::Guid(track.guid.clone()))?;
+                arranged.unwrapped.push(track.name.clone());
+            }
+        }
+        let all = Tracks::all(&self.daw, project.clone());
+
+        // 2. Content: tracks with media, outside the bus / Keyflow tree.
+        let keyflow_children: std::collections::HashSet<String> = {
+            let mut inside = std::collections::HashSet::new();
+            let mut depth: Option<i32> = None;
+            let mut running = 0i32;
+            for t in &all {
+                if let Some(d) = depth {
+                    if running > d {
+                        inside.insert(t.guid.clone());
+                    } else {
+                        depth = None;
+                    }
+                }
+                if t.name.trim().eq_ignore_ascii_case("Keyflow") && t.folder_depth > 0 {
+                    depth = Some(running);
+                }
+                running += t.folder_depth;
+            }
+            inside
+        };
+        let content: Vec<&daw::service::Track> = all
+            .iter()
+            .filter(|t| {
+                !crate::buses::is_bus_name(&t.name)
+                    && !keyflow_children.contains(&t.guid)
+                    && self.has_items(&t.guid)
+            })
+            .collect();
+        if content.is_empty() {
+            return Ok(arranged);
+        }
+        let names: Vec<String> = content.iter().map(|t| t.name.clone()).collect();
+        let hierarchy = names
+            .clone()
+            .organize_into_tracks(&config, None)
+            .map_err(|e| eyre::eyre!("grouping: {e}"))?;
+
+        // 3. The desired layout: (guid, depth change) in order.
+        let mut unused: Vec<(String, String)> =
+            content.iter().map(|t| (t.name.clone(), t.guid.clone())).collect();
+        let mut claim = |name: &str| -> Option<String> {
+            let at = unused.iter().position(|(n, _)| n == name)?;
+            Some(unused.remove(at).1)
+        };
+        let mut layout: Vec<(String, i32)> = Vec::new();
+        let mut folders_in_use: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for node in &hierarchy.tracks {
+            let depth = node.folder_depth_change.to_raw_value();
+            if node.is_folder || node.items.is_empty() {
+                // Reuse a folder of this name, or make one.
+                let existing = Tracks::all(&self.daw, project.clone())
+                    .into_iter()
+                    .find(|t| {
+                        t.name.trim().eq_ignore_ascii_case(node.name.trim())
+                            && !self.has_items(&t.guid)
+                            && !folders_in_use.contains(&t.guid)
+                    })
+                    .map(|t| t.guid);
+                let guid = match existing {
+                    Some(g) => g,
+                    None => {
+                        arranged.created.push(node.name.clone());
+                        Tracks::add(&self.daw, project.clone(), &node.name, None)?
+                    }
+                };
+                folders_in_use.insert(guid.clone());
+                layout.push((guid, depth));
+            } else {
+                // A leaf: the original track its item names. The engine
+                // may give a leaf more than one item; the first names it.
+                let Some(guid) = node.items.first().and_then(|n| claim(n)) else {
+                    continue;
+                };
+                arranged.placed += 1;
+                layout.push((guid, depth));
+            }
+        }
+
+        // 4. Everything else keeps its order and depth, after the groups.
+        let placed: std::collections::HashSet<&str> = layout.iter().map(|(g, _)| g.as_str()).collect();
+        let rest: Vec<(String, i32)> = Tracks::all(&self.daw, project.clone())
+            .into_iter()
+            .filter(|t| !placed.contains(t.guid.as_str()))
+            .map(|t| (t.guid, t.folder_depth))
+            .collect();
+        layout.extend(rest);
+
+        self.apply_layout(&layout)?;
+        Ok(arranged)
+    }
+
+    /// Reorder the whole project to `layout` and set every depth from it.
+    fn apply_layout(&mut self, layout: &[(String, i32)]) -> eyre::Result<()> {
+        let project = self.project.clone();
+        for (i, (guid, _)) in layout.iter().enumerate() {
+            let current = Tracks::all(&self.daw, project.clone())
+                .iter()
+                .position(|t| &t.guid == guid);
+            if current == Some(i) {
+                continue;
+            }
+            Tracks::clear_selection(&self.daw, project.clone())?;
+            Tracks::set_selected(&self.daw, project.clone(), TrackRef::Guid(guid.clone()), true)?;
+            Tracks::reorder_selected(&self.daw, 
+                project.clone(),
+                u32::try_from(i).unwrap_or(u32::MAX),
+                ReorderTracksBehavior::Normal,
+            )?;
+        }
+        Tracks::clear_selection(&self.daw, project.clone())?;
+        // The order is right; now say exactly where every folder opens
+        // and closes, whatever the moves did to it on the way.
+        for (guid, depth) in layout {
+            Tracks::set_folder_depth(&self.daw, project.clone(), TrackRef::Guid(guid.clone()), *depth)?;
+        }
+        Ok(())
+    }
+
+    /// Put the top level in the template's order: `first` (by folder
+    /// name, in that order), then everything else as it stands, then
+    /// `last`. Each top-level track moves with everything inside it.
+    ///
+    /// # Errors
+    ///
+    /// A backend call failed.
+    pub fn order_top_level(&mut self, first: &[&str], last: &[&str]) -> eyre::Result<()> {
+        let project = self.project.clone();
+        let all = Tracks::all(&self.daw, project.clone());
+        // Top-level blocks: a track at depth 0 and everything it opens.
+        let mut blocks: Vec<Vec<(String, i32)>> = Vec::new();
+        let mut running = 0i32;
+        for t in &all {
+            if running == 0 {
+                blocks.push(Vec::new());
+            }
+            if let Some(block) = blocks.last_mut() {
+                block.push((t.guid.clone(), t.folder_depth));
+            }
+            running += t.folder_depth;
+        }
+        let name_of = |block: &Vec<(String, i32)>| {
+            all.iter()
+                .find(|t| t.guid == block[0].0)
+                .map(|t| t.name.trim().to_owned())
+                .unwrap_or_default()
+        };
+        let rank = |block: &Vec<(String, i32)>| {
+            let name = name_of(block);
+            if let Some(i) = first.iter().position(|n| n.eq_ignore_ascii_case(&name)) {
+                (0, i)
+            } else if let Some(i) = last.iter().position(|n| n.eq_ignore_ascii_case(&name)) {
+                (2, i)
+            } else {
+                (1, 0)
+            }
+        };
+        let mut ordered = blocks.clone();
+        ordered.sort_by_key(|b| rank(b)); // stable: the middle keeps its order
+        if ordered == blocks {
+            return Ok(());
+        }
+        let layout: Vec<(String, i32)> = ordered.into_iter().flatten().collect();
+        self.apply_layout(&layout)
+    }
+
+    /// Hide the named top-level folder and everything inside it from the
+    /// track panel (the mixer keeps it). For the MIX BUS tree: it is
+    /// routing, not something to look at while playing.
+    ///
+    /// # Errors
+    ///
+    /// A backend call failed.
+    pub fn hide_in_tcp(&mut self, folder: &str) -> eyre::Result<()> {
+        let project = self.project.clone();
+        let all = Tracks::all(&self.daw, project.clone());
+        let mut running = 0i32;
+        let mut hiding: Option<i32> = None;
+        for t in &all {
+            if let Some(level) = hiding {
+                if running <= level {
+                    hiding = None;
+                }
+            }
+            if hiding.is_none() && t.name.trim().eq_ignore_ascii_case(folder) {
+                hiding = Some(running);
+            }
+            if hiding.is_some() {
+                Tracks::set_visibility(&self.daw, project.clone(), TrackRef::Guid(t.guid.clone()), false, true)?;
+            }
+            running += t.folder_depth;
+        }
+        Ok(())
+    }
+}

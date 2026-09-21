@@ -53,9 +53,18 @@ impl Prepare {
         let _entered = runtime.enter();
         let project = ProjectContext::Project(opened.project_guid.clone());
 
+        let mut target = dynamic_template::apply::DawTarget::on(opened.daw.clone(), project.clone());
         if self.organize {
-            let mut target =
-                dynamic_template::apply::DawTarget::on(opened.daw.clone(), project.clone());
+            // Folders first — Drums, Bass, Guitars … with any wrapper the
+            // multitrack came in taken apart — so the bus pass routes
+            // groups rather than loose tracks.
+            let arranged = target.arrange_into_groups()?;
+            tracing::info!(
+                unwrapped = ?arranged.unwrapped,
+                folders = ?arranged.created,
+                placed = arranged.placed,
+                "prepare: arranged into groups"
+            );
             let organized = dynamic_template::apply::organize(&mut target)
                 .map_err(|e| eyre::eyre!("organize: {e}"))?;
             tracing::info!(
@@ -82,6 +91,17 @@ impl Prepare {
                 .generate(session::guide::GuideScope::All)
                 .map_err(|e| eyre::eyre!("guide: {e}"))?;
             tracing::info!("prepare: click and guide generated");
+        }
+        if self.organize {
+            // The template's top-level order — what is played to first,
+            // then the song, then the instruments, routing last — and the
+            // routing out of the track panel.
+            target.order_top_level(
+                &["Guide", "Keyflow"],
+                &["CLICK + GUIDE BUS", "MIX BUS", "UNSORTED"],
+            )?;
+            target.hide_in_tcp("CLICK + GUIDE BUS")?;
+            target.hide_in_tcp("MIX BUS")?;
         }
         Ok(())
     }
