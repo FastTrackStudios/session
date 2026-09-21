@@ -204,6 +204,17 @@ pub enum Edit {
     DeselectItem(String),
     /// Nothing selected. Carries no guid; the string is empty.
     DeselectAllItems(String),
+    /// Open an undo step. Everything between this and `EndUndo` is ONE
+    /// entry in the session's undo history.
+    ///
+    /// Carries the label the history will show. A gesture on a folded
+    /// row is one gesture however many mics it reaches, and an undo
+    /// that took back a third of it would be worse than one that took
+    /// back none.
+    BeginUndo(String),
+    /// Close the undo step `BeginUndo` opened. Same label — REAPER's
+    /// block API takes it at both ends.
+    EndUndo(String),
     /// Everything selected. The same.
     SelectAllItems(String),
     /// Move an item to a position, in seconds.
@@ -272,6 +283,8 @@ impl Edit {
             | Self::SelectItem(g, _)
             | Self::DeselectItem(g)
             | Self::DeselectAllItems(g)
+            | Self::BeginUndo(g)
+            | Self::EndUndo(g)
             | Self::SelectAllItems(g)
             | Self::MoveItem(g, _)
             | Self::TrimItem(g, ..)
@@ -892,6 +905,24 @@ async fn apply(edit: &Edit) {
     let Ok(project) = daw.current_project().await else {
         return;
     };
+    // The brackets first: they are about the history rather than about
+    // anything in the session, so they belong to neither the item path
+    // nor the track one.
+    match edit {
+        Edit::BeginUndo(label) => {
+            if let Err(error) = project.begin_undo_block(label).await {
+                tracing::warn!(error = %error, "the engine refused to open an undo step");
+            }
+            return;
+        }
+        Edit::EndUndo(label) => {
+            if let Err(error) = project.end_undo_block(label).await {
+                tracing::warn!(error = %error, "the engine refused to close an undo step");
+            }
+            return;
+        }
+        _ => {}
+    }
     if edit.is_item() {
         if let Edit::DeselectAllItems(_) = edit {
             if let Err(error) = project.items().deselect_all().await {
@@ -1108,7 +1139,10 @@ async fn apply(edit: &Edit) {
         | Edit::SetRegionBounds(..)
         | Edit::RenameRegion(..)
         | Edit::RemoveRegion(..)
-        | Edit::SetTempo(..) => Ok(()),
+        | Edit::SetTempo(..)
+        // Already handled above, where they needed no track either.
+        | Edit::BeginUndo(_)
+        | Edit::EndUndo(_) => Ok(()),
     };
     if let Err(error) = outcome {
         // One line, because a failed edit is a thing the user did that

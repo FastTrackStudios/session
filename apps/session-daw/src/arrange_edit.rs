@@ -1244,9 +1244,11 @@ impl Editor {
                     lane.retain(|i| !real.contains(&i.guid));
                 }
                 project.item_count = project.items.values().map(Vec::len).sum();
+                let from = effects.len();
                 for guid in real {
                     effects.push(Effect::Send(Edit::DeleteItem(guid)));
                 }
+                as_one_step("Delete items", from, effects);
                 effects.push(Effect::ReRecord);
             }
             Action::SelectAllItems => {
@@ -1442,6 +1444,11 @@ impl Editor {
         effects: &mut Vec<Effect>,
     ) -> bool {
         let areas = self.razor.areas.clone();
+        // The bracket spans every area, not one each: pressing Delete
+        // with three areas drawn is one gesture, and an undo that took
+        // back the third of them would leave a session nobody asked
+        // for.
+        let from = effects.len();
         let mut went = false;
         for area in areas {
             let doomed = self.razor_carve(area, scene, project, effects);
@@ -1459,6 +1466,7 @@ impl Editor {
         }
         if went {
             project.item_count = project.items.values().map(Vec::len).sum();
+            as_one_step("Delete razor contents", from, effects);
             effects.push(Effect::ReRecord);
         }
         went
@@ -1507,9 +1515,11 @@ impl Editor {
             return false;
         }
         project.item_count = project.items.values().map(Vec::len).sum();
+        let from = effects.len();
         for edit in splits {
             effects.push(Effect::Send(edit));
         }
+        as_one_step("Split items", from, effects);
         effects.push(Effect::ReRecord);
         true
     }
@@ -1595,6 +1605,30 @@ fn targets(
     }
 }
 
+/// Bracket the sends added since `from` so the undo history sees them
+/// as one step.
+///
+/// Only when there is more than one. A single edit is already one step,
+/// and an empty block is a step that undoes nothing — both of which
+/// would put a stop in the history that the hand never made.
+///
+/// This is what #114 meant by "undo is one action, not N": a drag on a
+/// folded row moves three mics, and an undo that took back one of them
+/// would leave the take out of phase with itself.
+fn as_one_step(label: &str, from: usize, effects: &mut Vec<Effect>) {
+    let sends = effects.get(from..).map_or(0, |added| {
+        added
+            .iter()
+            .filter(|effect| matches!(effect, Effect::Send(_)))
+            .count()
+    });
+    if sends < 2 {
+        return;
+    }
+    effects.insert(from, Effect::Send(Edit::BeginUndo(label.to_owned())));
+    effects.push(Effect::Send(Edit::EndUndo(label.to_owned())));
+}
+
 /// Slip an item's contents to `to`, on every real item it stands for.
 ///
 /// Through [`targets`] like every other edit: a slip on a folded row
@@ -1606,6 +1640,7 @@ fn spread_item_slip(project: &mut Project, guid: &str, to: f64, effects: &mut Ve
         return false;
     };
     let wanted: std::collections::HashSet<&String> = targets.iter().collect();
+    let from = effects.len();
     let mut made = false;
     for item in project.items.values_mut().flatten() {
         if !wanted.contains(&item.guid) {
@@ -1618,6 +1653,7 @@ fn spread_item_slip(project: &mut Project, guid: &str, to: f64, effects: &mut Ve
         effects.push(Effect::Send(Edit::SlipItem(item.guid.clone(), to)));
         made = true;
     }
+    as_one_step("Slip item contents", from, effects);
     made
 }
 
@@ -1636,6 +1672,7 @@ fn spread_item_copy(project: &mut Project, guid: &str, at: f64, effects: &mut Ve
         return false;
     };
     let wanted: std::collections::HashSet<&String> = targets.iter().collect();
+    let from = effects.len();
     let mut made = Vec::new();
     for lane in project.items.values_mut() {
         let mut copies = Vec::new();
@@ -1668,6 +1705,7 @@ fn spread_item_copy(project: &mut Project, guid: &str, at: f64, effects: &mut Ve
     for edit in made {
         effects.push(Effect::Send(edit));
     }
+    as_one_step("Copy item", from, effects);
     true
 }
 
@@ -1675,9 +1713,10 @@ fn spread_item_copy(project: &mut Project, guid: &str, at: f64, effects: &mut Ve
 ///
 /// Predicts locally and sends, in that order and for the same targets,
 /// so the window and the session cannot disagree about what a drag did.
-/// Every target in one call is one gesture; grouping them into one undo
-/// step is the engine's to do and it has no verb for it yet — noted on
-/// issue #114 rather than faked here.
+/// Every target in one call is one gesture, and the sends are bracketed
+/// so the history sees one step — see [`as_one_step`]. The verb this
+/// once said the engine lacked has been there all along:
+/// `Projects::begin_undo_block`.
 fn spread_item_edit(
     project: &mut Project,
     guid: &str,
@@ -1688,10 +1727,12 @@ fn spread_item_edit(
     let Some(targets) = targets(project, guid, true, effects) else {
         return false;
     };
+    let from = effects.len();
     for target in targets {
         edit_item(project, &target, &change);
         effects.push(Effect::Send(make(&target)));
     }
+    as_one_step("Edit item", from, effects);
     true
 }
 
@@ -2069,6 +2110,19 @@ mod tests {
         )
     }
 
+    /// The edits, without the undo brackets.
+    ///
+    /// For the tests that are about WHAT the session was told, which is
+    /// a different question from how the history groups it — that one
+    /// has its own tests, and they would be worth nothing if every
+    /// other test quietly asserted the grouping too.
+    pub(super) fn content(effects: &[Effect]) -> Vec<&Edit> {
+        sends(effects)
+            .into_iter()
+            .filter(|edit| !matches!(edit, Edit::BeginUndo(_) | Edit::EndUndo(_)))
+            .collect()
+    }
+
     pub(super) fn sends(effects: &[Effect]) -> Vec<&Edit> {
         effects
             .iter()
@@ -2156,7 +2210,7 @@ mod tests {
         );
         assert!(s.drag_to(x + 1.3 * PPS, Mods::default()));
         let effects = s.release(x + 1.3 * PPS, Mods::default());
-        let sent = sends(&effects);
+        let sent = content(&effects);
         assert_eq!(
             sent,
             vec![
@@ -2186,7 +2240,7 @@ mod tests {
         s.press(x - 2.0, y, Mods::default());
         s.drag_to(x - 2.0 + 1.0 * PPS, Mods::default());
         let effects = s.release(x - 2.0 + 1.0 * PPS, Mods::default());
-        let sent = sends(&effects);
+        let sent = content(&effects);
         assert_eq!(sent.len(), 2, "{sent:?}");
         assert!(
             sent.iter()
@@ -2204,7 +2258,7 @@ mod tests {
         s.press(x, y, Mods::default());
         s.release(x, Mods::default());
         let (_, effects) = s.key(Action::DeleteSelectedItems);
-        let sent = sends(&effects);
+        let sent = content(&effects);
         assert_eq!(
             sent,
             vec![
@@ -2789,6 +2843,80 @@ mod tests {
         assert_eq!(s.editor.slip_in_flight(), None, "it outlived the gesture");
     }
 
+    /// A drag on a folded row is ONE undo step, however many mics it
+    /// reaches. An undo that took back a third of it would leave the
+    /// take out of phase with itself.
+    #[test]
+    fn a_folded_drag_is_one_undo_step() {
+        let mut s = Stage::folded();
+        let (x, y) = s.point(0, 3.0, 15.0);
+        s.press(x, y, Mods::default());
+        s.drag_to(x + 1.3 * PPS, Mods::default());
+        let effects = s.release(x + 1.3 * PPS, Mods::default());
+        let sent = sends(&effects);
+        // Open, two moves, close — in that order and nothing outside.
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [
+                    Edit::BeginUndo(open),
+                    Edit::MoveItem(a, _),
+                    Edit::MoveItem(b, _),
+                    Edit::EndUndo(close),
+                ] if open == close && a == "in1" && b == "out1"
+            ),
+            "the mics did not move inside one step: {sent:?}"
+        );
+    }
+
+    /// And a drag on an ordinary row is not bracketed. One edit is
+    /// already one step, and an empty-ish block would put a stop in the
+    /// history the hand never made.
+    #[test]
+    fn a_plain_drag_opens_no_undo_step() {
+        let mut s = Stage::new();
+        let (x, y) = s.point(0, 3.0, 15.0);
+        s.press(x, y, Mods::default());
+        s.drag_to(x + 1.3 * PPS, Mods::default());
+        let effects = s.release(x + 1.3 * PPS, Mods::default());
+        let sent = sends(&effects);
+        assert!(
+            !sent
+                .iter()
+                .any(|e| matches!(e, Edit::BeginUndo(_) | Edit::EndUndo(_))),
+            "a single edit was wrapped in a step of its own: {sent:?}"
+        );
+    }
+
+    /// Deleting a folded item is one step too, and so is a razor delete
+    /// that reaches more than one item.
+    #[test]
+    fn deleting_across_several_items_is_one_step() {
+        let mut s = Stage::folded();
+        let (x, y) = s.point(0, 3.0, 15.0);
+        s.press(x, y, Mods::default());
+        s.release(x, Mods::default());
+        let (_, effects) = s.key(Action::DeleteSelectedItems);
+        let sent = sends(&effects);
+        let opens = sent
+            .iter()
+            .filter(|e| matches!(e, Edit::BeginUndo(_)))
+            .count();
+        let closes = sent
+            .iter()
+            .filter(|e| matches!(e, Edit::EndUndo(_)))
+            .count();
+        assert_eq!((opens, closes), (1, 1), "not one step: {sent:?}");
+        assert!(
+            matches!(sent.first(), Some(Edit::BeginUndo(_))),
+            "the step opened after the first delete: {sent:?}"
+        );
+        assert!(
+            matches!(sent.last(), Some(Edit::EndUndo(_))),
+            "the step closed before the last delete: {sent:?}"
+        );
+    }
+
     /// A drag on the body moves the item, snapped to the beat, with a
     /// ghost on the way and one edit and one re-record at the end.
     #[test]
@@ -2898,7 +3026,7 @@ mod tests {
         s.editor.cursor.click(5.0);
         let (handled, effects) = s.key(Action::SplitAtCursor);
         assert!(handled);
-        assert_eq!(sends(&effects).len(), 2, "k1 and s1 both contain 5.0");
+        assert_eq!(content(&effects).len(), 2, "k1 and s1 both contain 5.0");
         assert_eq!(s.project.item_count, 5);
         let k1 = s.item("k1");
         assert!((k1.position.as_seconds() + k1.length.as_seconds() - 5.0).abs() < 1e-9);
@@ -2911,7 +3039,7 @@ mod tests {
         s.editor.select("s1", true, &mut s.project, &mut effects);
         s.editor.cursor.click(5.0);
         let (_, effects) = s.key(Action::SplitAtCursor);
-        assert_eq!(sends(&effects).len(), 1);
+        assert_eq!(content(&effects).len(), 1);
         assert_eq!(s.item("k1").length.as_seconds(), 4.0);
     }
 
