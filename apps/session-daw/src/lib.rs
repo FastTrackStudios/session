@@ -14,13 +14,16 @@ pub mod arrange_edit;
 pub mod arrangement;
 pub mod art;
 pub mod balance;
-#[cfg(target_os = "linux")]
 pub mod cursor;
 pub mod engine;
 pub mod expression;
 pub mod folder_item;
 pub mod fps;
 pub mod frame;
+/// Lifts WebKitGTK's 60 fps rAF cap. Linux-only: it binds `webkit2gtk`.
+/// (WKWebView on macOS has its own cap — 72 fps on a 144 Hz panel — and
+/// its own switch; not done yet.)
+#[cfg(target_os = "linux")]
 pub mod frame_rate;
 pub mod gesture;
 pub mod headless;
