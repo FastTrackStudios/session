@@ -66,6 +66,8 @@ pub enum Action {
     MoveItem,
     /// Leave the item where it is and drag a copy of it.
     CopyItem,
+    /// Leave the item where it is and drag its CONTENTS inside it.
+    SlipItem,
     /// Trim the item's left edge.
     TrimLeft,
     /// Trim the item's right edge.
@@ -135,6 +137,15 @@ fn verb(context: Context, gesture: Gesture, mods: Mods) -> Action {
         // keeping. A handle is a small corner and a razor can start a
         // pixel away from one, where a whole edge could not be worked
         // around.
+        // Slip on Ctrl+Alt, which is what is left.
+        //
+        // REAPER slips on plain Alt-drag. Alt is copy here and Ctrl is
+        // the razor, both deliberate and both confirmed, so slip takes
+        // the pair. It has to be tested before either of them: a guard
+        // that checks one modifier matches a chord containing it, and
+        // the more specific row has to be asked first or it is
+        // unreachable.
+        (Context::MediaItemBottomHalf, G::Drag) if mods.ctrl && mods.alt => Action::SlipItem,
         (Context::ArrangeView, G::Drag) if mods.ctrl => Action::RazorArea,
         (Context::MediaItemBottomHalf, G::Drag) if mods.ctrl => Action::RazorArea,
         (Context::MediaItemLeftEdge, G::Drag) if mods.ctrl => Action::RazorArea,

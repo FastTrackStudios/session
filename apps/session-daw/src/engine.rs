@@ -213,6 +213,9 @@ pub enum Edit {
     /// Split an item at a time: the item keeps the left, and a new one
     /// on the same track (its guid is the third field) takes the right.
     SplitItem(String, f64, String),
+    /// Slip an item's contents: how far into the source it starts, in
+    /// seconds. The item does not move; the audio inside it does.
+    SlipItem(String, f64),
     /// Copy an item to a position on its own track, leaving the
     /// original where it is. The third field is the copy's guid.
     ///
@@ -274,6 +277,7 @@ impl Edit {
             | Self::TrimItem(g, ..)
             | Self::SplitItem(g, ..)
             | Self::CopyItem(g, ..)
+            | Self::SlipItem(g, _)
             | Self::DeleteItem(g) => g,
         }
     }
@@ -311,6 +315,7 @@ impl Edit {
                 | Self::TrimItem(..)
                 | Self::SplitItem(..)
                 | Self::CopyItem(..)
+                | Self::SlipItem(..)
                 | Self::DeleteItem(_)
         )
     }
@@ -333,6 +338,7 @@ impl Edit {
                 | Self::SetFadeOut(..)
                 | Self::MoveItem(..)
                 | Self::TrimItem(..)
+                | Self::SlipItem(..)
         )
     }
 
@@ -913,6 +919,13 @@ async fn apply(edit: &Edit) {
                 }
                 item.select().await
             }
+            // The active take's offset into its source. Addressed
+            // through the take because that is where the offset lives —
+            // `Item::start_offset` is the read side of the same value.
+            Edit::SlipItem(_, offset) => match item.takes().active().await {
+                Ok(take) => take.set_start_offset(secs(*offset)).await,
+                Err(error) => Err(error),
+            },
             Edit::DeselectItem(_) => item.deselect().await,
             Edit::MoveItem(_, position) => item.set_position(at(*position)).await,
             Edit::TrimItem(_, position, length) => match item.set_position(at(*position)).await {
@@ -1084,6 +1097,7 @@ async fn apply(edit: &Edit) {
         | Edit::TrimItem(..)
         | Edit::SplitItem(..)
         | Edit::CopyItem(..)
+        | Edit::SlipItem(..)
         | Edit::DeleteItem(_)
         // Already handled above, where they did not need a track.
         | Edit::AddMarker(..)
