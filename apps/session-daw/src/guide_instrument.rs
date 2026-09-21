@@ -172,8 +172,17 @@ impl FxFactory for GuideFxFactory {
         Vec::new()
     }
 
-    fn create(&self, name_or_ident: &str, _sample_rate: f64) -> Option<Box<dyn PluginInstance>> {
-        (name_or_ident == IDENT).then(|| Box::new(GuideInstrument::new()) as Box<dyn PluginInstance>)
+    fn create(&self, name_or_ident: &str, sample_rate: f64) -> Option<Box<dyn PluginInstance>> {
+        if name_or_ident != IDENT {
+            return None;
+        }
+        // Prepared here, on the thread adding the FX — loading ~20 MB of
+        // samples. The renderer only prepares a plugin that is not
+        // prepared yet, and it does that on the AUDIO thread: left to it,
+        // the first block after pressing play took 40-60 ms, a dropout.
+        let mut guide = GuideInstrument::new();
+        guide.prepare(sample_rate, 512).ok()?;
+        Some(Box::new(guide))
     }
 }
 

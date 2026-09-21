@@ -208,6 +208,9 @@ fn attach_audio(opened: &Opened) {
     let _guard = rt.enter();
     match opened.daw.attach_audio_engine(&opened.project_guid) {
         Ok(engine) => {
+            if let Some(stats) = engine.stats() {
+                log_audio_health(stats, engine.sample_rate());
+            }
             Box::leak(Box::new(engine));
         }
         Err(e) => tracing::warn!(error = %e, "no audio engine; the transport will run silent"),
@@ -407,4 +410,52 @@ pub fn reattach() -> eyre::Result<Attached> {
 #[must_use]
 pub fn is_attached() -> bool {
     ATTACHED_TO.read().is_ok_and(|slot| slot.is_some())
+}
+
+/// Every two seconds, how the audio callback is keeping up: the block the
+/// device runs at, render time (mean and worst in the interval) against
+/// that block's budget, and blocks that overran it or that the device
+/// reported as xruns. Logged as `session_daw::audio` — the numbers to read
+/// when playback stutters.
+fn log_audio_health(stats: std::sync::Arc<daw::standalone::audio_engine::EngineStats>, rate: u32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let spawned = std::thread::Builder::new()
+        .name("session-daw-audio-health".into())
+        .spawn(move || {
+            let (mut calls, mut total, mut over, mut xruns) = (0u64, 0u64, 0u64, 0u64);
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let now_calls = stats.calls.load(Relaxed);
+                let now_total = stats.total_render_ns.load(Relaxed);
+                let now_over = stats.over_budget.load(Relaxed);
+                let now_xruns = stats.xruns.load(Relaxed);
+                let blocks = now_calls.saturating_sub(calls);
+                if blocks > 0 {
+                    let frames = stats.block_frames.load(Relaxed);
+                    let budget_ms = f64::from(frames) * 1000.0 / f64::from(rate.max(1));
+                    let mean_ms = now_total.saturating_sub(total) as f64 / blocks as f64 / 1e6;
+                    let peak_ms = stats.peak_render_ns.swap(0, Relaxed) as f64 / 1e6;
+                    let over_now = now_over.saturating_sub(over);
+                    let xruns_now = now_xruns.saturating_sub(xruns);
+                    if over_now > 0 || xruns_now > 0 {
+                        tracing::warn!(
+                            target: "session_daw::audio",
+                            blocks, frames, budget_ms, mean_ms, peak_ms,
+                            over_budget = over_now, xruns = xruns_now,
+                            "audio: blocks missed their deadline"
+                        );
+                    } else {
+                        tracing::info!(
+                            target: "session_daw::audio",
+                            blocks, frames, budget_ms, mean_ms, peak_ms,
+                            "audio: keeping up"
+                        );
+                    }
+                }
+                (calls, total, over, xruns) = (now_calls, now_total, now_over, now_xruns);
+            }
+        });
+    if let Err(e) = spawned {
+        tracing::warn!(error = %e, "audio health logging not started");
+    }
 }
