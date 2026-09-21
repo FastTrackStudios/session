@@ -1562,9 +1562,24 @@ fn WindowSize(
                 // a log nobody reads.
                 if (middle - last.get()).abs() > 0.5 {
                     last.set(middle);
+                    // Split at the hand-off to the GPU. A window that
+                    // draws too much and a window that draws little and
+                    // waits on the compositor to take it are the same
+                    // frame time and want opposite fixes; without these
+                    // two a report of "3.4 ms" says nothing about which
+                    // half to go after. See #119.
+                    let ms =
+                        |micros: u64| f64::from(u32::try_from(micros).unwrap_or(u32::MAX)) / 1000.0;
+                    let encode =
+                        ms(blitz_traits::LAST_ENCODE_MICROS
+                            .load(std::sync::atomic::Ordering::Relaxed));
+                    let present = ms(blitz_traits::LAST_PRESENT_MICROS
+                        .load(std::sync::atomic::Ordering::Relaxed));
                     tracing::info!(
                         frame_ms = format!("{middle:.1}"),
                         worst_ms = format!("{worst:.1}"),
+                        encode_ms = format!("{encode:.2}"),
+                        present_ms = format!("{present:.2}"),
                         "presented"
                     );
                 }
