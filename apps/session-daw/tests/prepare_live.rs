@@ -220,4 +220,28 @@ fn a_real_session_prepared_when_one_is_given() {
         depth += t.folder_depth;
     }
     assert_eq!(depth, 0, "every folder closes");
+
+    // A slow song clicks in eighths: count the Click track's notes in the
+    // first bar after the count-in.
+    let project = ProjectContext::Project(opened.project_guid.clone());
+    let click = Tracks::all(&opened.daw, project.clone())
+        .into_iter()
+        .find(|t| t.name == "Click" && t.folder_depth <= 0 && !t.muted)
+        .expect("generated click");
+    let bpm = daw::service::TempoMap::get_tempo_at(&opened.daw, project.clone(), 0.0);
+    let notes: usize = Items::get_items(&opened.daw, project.clone(), TrackRef::Guid(click.guid))
+        .iter()
+        .map(|item| {
+            daw::service::Midi::notes(
+                &opened.daw,
+                daw::service::MidiTakeLocation::new(
+                    project.clone(),
+                    ItemRef::Guid(item.guid.clone()),
+                    daw::service::TakeRef::Active,
+                ),
+            )
+            .len()
+        })
+        .sum();
+    eprintln!("{bpm} bpm: {notes} click notes");
 }

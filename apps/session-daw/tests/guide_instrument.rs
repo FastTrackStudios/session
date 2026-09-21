@@ -40,7 +40,7 @@ fn peak_of(note: u8) -> f32 {
 
 #[test]
 fn the_click_and_count_sound() {
-    for (what, note) in [("accent", 60), ("beat", 61), ("count 1", 72), ("count 4", 75)] {
+    for (what, note) in [("accent", 60), ("beat", 61), ("eighth", 62), ("count 1", 72), ("count 4", 75)] {
         assert!(peak_of(note) > 0.01, "{what} (note {note}) is silent");
     }
 }
