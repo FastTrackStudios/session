@@ -215,10 +215,33 @@ impl WindowRenderer for VelloWindowRenderer {
                 .expect("Error creating DeviceHandle"),
             };
 
+            // FTS: render straight into the swapchain, when the driver
+            // will have it.
+            //
+            // Vello's compute path needs `STORAGE_BINDING` on whatever
+            // it renders into, and a surface is normally only a
+            // `RENDER_ATTACHMENT` — so the default here is to render to
+            // an intermediate texture and then BLIT it to the surface,
+            // a full-screen copy every frame. At 5120x1440 that is 7.4
+            // Mpx of pure overhead on the critical path.
+            //
+            // `FTS_DIRECT_SURFACE=1` asks for a storage-capable surface
+            // and drops the intermediate, which removes the blit
+            // entirely. Off by default because it is a driver
+            // capability and not a preference: a surface that cannot be
+            // a storage texture will refuse the configuration rather
+            // than fall back, and the blit is the thing that makes this
+            // work everywhere.
+            let direct = std::env::var_os("FTS_DIRECT_SURFACE").is_some();
+            let surface_usage = if direct {
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::STORAGE_BINDING
+            } else {
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+            };
             let render_surface = SurfaceRenderer::new(
                 surface,
                 SurfaceRendererConfiguration {
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    usage: surface_usage,
                     formats: vec![TextureFormat::Rgba8Unorm, TextureFormat::Bgra8Unorm],
                     width,
                     height,
@@ -254,9 +277,17 @@ impl WindowRenderer for VelloWindowRenderer {
                     alpha_mode: wgpu::CompositeAlphaMode::Auto,
                     view_formats: vec![],
                 },
-                Some(TextureConfiguration {
-                    usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
-                }),
+                // `None` means no intermediate texture, so
+                // `target_texture_view` hands back the surface's own
+                // view and `maybe_blit_and_present` has nothing to
+                // copy — it just presents.
+                if direct {
+                    None
+                } else {
+                    Some(TextureConfiguration {
+                        usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+                    })
+                },
                 device_handle,
             )
             .expect("Error creating SurfaceRenderer");
@@ -371,12 +402,21 @@ impl WindowRenderer for VelloWindowRenderer {
             static SAID: AtomicBool = AtomicBool::new(false);
             if !SAID.swap(true, Ordering::Relaxed) {
                 println!(
-                    "vello: surface {:?} {}x{}, present {:?}, latency {}",
+                    "vello: surface {:?} {}x{}, present {:?}, latency {}, blit {}",
                     render_surface.config.format,
                     render_surface.config.width,
                     render_surface.config.height,
                     render_surface.config.present_mode,
                     render_surface.config.desired_maximum_frame_latency,
+                    // Which of the two paths this run is actually on.
+                    // Without it a direct-surface measurement and a
+                    // blitting one are two numbers with nothing to say
+                    // which is which — see `FTS_DIRECT_SURFACE`.
+                    if std::env::var_os("FTS_DIRECT_SURFACE").is_some() {
+                        "no"
+                    } else {
+                        "yes"
+                    },
                 );
             }
         }

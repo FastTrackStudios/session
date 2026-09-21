@@ -16,6 +16,17 @@ these numbers:
   what the queue released — without the fence. `FTS_GPU_BARRIER=1` puts
   the wait back for a driver that needs it.
 
+  **Re-measured 2026-09-20 and it now buys nothing.** A/B at 5120x1440
+  on an idle box, 4400 frames an arm: 4.10 ms p50 with the barrier and
+  4.10 ms without, and `wait` itself is 0.02–0.03 ms either way. By the
+  time the poll happens the GPU has already finished — present is
+  1.3 ms and the CPU spends 2.6 ms building the next frame, so there is
+  no fence left to remove. The original measurement was taken at a frame
+  latency of two, where `get_current_texture` blocked and the barrier
+  compounded it; at one it does not. Kept because it costs nothing and a
+  different driver may not agree, but do not expect it to show up in a
+  number.
+
 - **`desired_maximum_frame_latency` is 1, not 2.** Two lets the CPU run a
   frame ahead, which is right for something that can always fill the
   pipeline; here it meant `get_current_texture` blocked until the queue
@@ -28,8 +39,35 @@ these numbers:
   in or out by measurement. Under `AutoVsync` a slow frame and a frame
   that is merely WAITING are the same number from outside.
 
+- **`FTS_DIRECT_SURFACE=1` renders straight into the swapchain.**
+  Vello's compute path needs `STORAGE_BINDING` on whatever it renders
+  into, and a surface is normally only a `RENDER_ATTACHMENT` — so the
+  default is to render to an intermediate texture and then BLIT it to
+  the surface, a full-screen copy every frame. At 5120x1440 that is
+  7.4 Mpx of apparent overhead on the critical path.
+
+  **Measured, and the copy is not where the time goes.** Asking for a
+  storage-capable surface and dropping the intermediate works on this
+  driver (the one-shot line reports `blit no`), and `present` stays at
+  1.30 ms p50 either way — identical totals, 4.10 ms. What `present`
+  actually costs is the swapchain ACQUIRE, not the copy. The thread
+  worth pulling is `wgpu_context`'s own TODO on
+  `blit_from_intermediate_texture_to_surface`, which asks whether
+  acquiring AFTER the render improves throughput; that is upstream's to
+  answer, and it would help the acquire rather than the blit.
+
+  Off by default deliberately. It is a driver capability, not a
+  preference: a surface that cannot be a storage texture refuses the
+  configuration rather than falling back, and the blit is what makes
+  this work everywhere. On a GPU with less bandwidth to spare than an
+  RTX 4080 the copy may well show up, which is why the knob stays.
+
 Plus a one-shot surface-configuration line behind the crate's existing
-opt-in `log_frame_times` feature, which is `println`-based upstream.
+opt-in `log_frame_times` feature, which is `println`-based upstream —
+extended to say which of the two present paths the run is on, because
+otherwise a direct-surface measurement and a blitting one are two
+numbers with nothing to tell them apart. `--features frame-times` on
+`session-daw` turns it on.
 
 Drop the vendor if upstream takes the barrier and latency changes. See
 the root `[patch.crates-io]` entry and issue #119.

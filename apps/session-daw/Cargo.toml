@@ -154,6 +154,16 @@ reaper-tests = ["daw/test-harness"]
 #
 # with `FTS_BLITZ_PROFILE=/tmp/frame.svg`.
 profile = ["dep:pprof"]
+# Vello's own per-frame split — `cmd / render / present / wait` — on
+# stdout, one line a frame. Behind a feature because that is a line a
+# frame, which is a log nobody reads and a cost nobody wants in a
+# window somebody is using; turned on to answer "which half of the
+# frame is this" when the two atomics the shell records are not enough.
+#
+#   cargo run --release -p session-daw --bin blitz_shot --features frame-times
+#
+# See #119, and libs/vendor/anyrender_vello/UPSTREAM.md.
+frame-times = ["anyrender_vello/log_frame_times"]
 
 [dev-dependencies]
 # Temp project trees for the Patch List view's discovery tests, and the
