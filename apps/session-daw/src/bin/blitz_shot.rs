@@ -141,7 +141,14 @@ fn main() {
         frame_height(height)
     };
 
-    session_daw::open::open_silent(std::path::Path::new(&project_path)).expect("open project");
+    // A window plays the session; a shot only draws it. `open_silent`
+    // exists so a render never waits on a sound server — see its docs.
+    let project_file = std::path::Path::new(&project_path);
+    if std::env::var_os("FTS_BLITZ_WINDOW").is_some() {
+        session_daw::open::open_and_serve(project_file).expect("open project");
+    } else {
+        session_daw::open::open_silent(project_file).expect("open project");
+    }
     // A window opens the session the way the visual track manager lays
     // it out; a comparison shot does not, because the reference it is
     // compared against does not either.

@@ -569,9 +569,12 @@ impl ArrangementWidget {
             match effect {
                 Effect::Send(edit) => self.edits.borrow_mut().push(edit),
                 Effect::ReRecord => recut = true,
-                // The transport and the playhead are the window's, and
-                // a notice has nowhere to go yet — see `Effect`.
-                Effect::Transport(..) | Effect::Playhead(_) => {}
+                // Straight to the engine, fire and forget, as the
+                // painted window does: dropping this is why space did
+                // nothing in the Blitz window. The play cursor needs no
+                // telling — the window polls it from the engine.
+                Effect::Transport(command, at) => crate::engine::transport(command, at),
+                Effect::Playhead(_) => {}
                 // The warn line stays: a refusal is alertable, and the
                 // log is where a session nobody was watching gets read
                 // back. The notice is for the person who IS watching.
