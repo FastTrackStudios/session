@@ -647,11 +647,11 @@ fn count_in_attaches_to_first_musical_section() {
 }
 
 #[test]
-fn count_in_song_schedules_full_count_into_the_downbeat() {
+fn count_in_song_announces_on_the_count_bars_one() {
     let song = count_in_song();
     let sections = session_guide::sections_from_song(&song);
     let timing = GuideSongTiming::from_song(&song);
-    // Pins the "Announce, rest, full count" count-IN layout in isolation:
+    // Pins the "Intro, 2, 3, 4" count-IN layout in isolation:
     // disable the SONGEND count-out AND the per-section count-in (both emit
     // Count cues) so only the first section's explicit count-in remains.
     let options = ScheduleOptions {
@@ -673,17 +673,16 @@ fn count_in_song_schedules_full_count_into_the_downbeat() {
         })
         .collect();
 
-    // The bug produced ZERO counts. The default now counts ONLY the final
-    // measure — a clean "1 2 3 4" at 2.0/2.5/3.0/3.5 into the 4.0 s downbeat —
-    // with the first measure left silent for the announcement to breathe.
+    // The count is the final measure into the 4.0 s downbeat, and the
+    // section's name takes its "1": "Intro, 2, 3, 4" — beats 2-4 at
+    // 2.5/3.0/3.5, the announcement on 2.0.
     assert_eq!(
         counts,
-        vec![(2.0, 0), (2.5, 1), (3.0, 2), (3.5, 3)],
-        "count-in should be a single full measure into the downbeat"
+        vec![(2.5, 1), (3.0, 2), (3.5, 3)],
+        "the count bar is the announcement, then 2 3 4"
     );
 
-    // The Intro is announced up front, at the START of the count-in (2
-    // measures / 4.0 s before its 4.0 s downbeat → t = 0.0).
+    // One measure (2.0 s at this tempo) before the 4.0 s downbeat.
     let intro_guide_time = schedule.cues.iter().find_map(|c| match &c.event {
         CueEvent::Guide { keys, .. } if keys.iter().any(|k| k.contains("Intro")) => {
             Some(c.time_seconds)
@@ -692,8 +691,8 @@ fn count_in_song_schedules_full_count_into_the_downbeat() {
     });
     assert_eq!(
         intro_guide_time,
-        Some(0.0),
-        "Intro should be announced at the start of the count-in"
+        Some(2.0),
+        "Intro should be announced on the count bar's downbeat"
     );
 }
 

@@ -8,6 +8,15 @@
 //! plugin wraps — running in-process as a native `PluginInstance`, so the
 //! renderer feeds it each track's notes like any hosted synth.
 //!
+//! A spoken cue and the count note under it are both in the MIDI — on
+//! the Guide and Count tracks — and the cue takes the count's place in the
+//! audio: "Verse, 2, 3, 4". The instruments share a [`CueGate`]: the one
+//! playing a cue marks where, the one playing a count skips a note on the
+//! same spot. So muting the Guide track (its instrument never runs) brings
+//! the "1" back. The Guide track must render before the Count track in a
+//! block, which the renderer does for siblings in track order — and the
+//! generator puts Guide above Count.
+//!
 //! Samples come from the FTS-GUIDE library at
 //! `~/.config/fts/guide-samples/{Click,Counts,Guide}`; anything missing is
 //! synthesized (clicks and count beeps), except spoken cues, which need
@@ -39,18 +48,57 @@ pub fn samples_dir() -> PathBuf {
     )
 }
 
+/// Where cues sounded in the block being rendered — shared by the guide
+/// instruments of one engine.
+#[derive(Default)]
+pub struct CueGate {
+    /// `(render cycle, offsets of cues in that block)` — keyed by the
+    /// renderer's cycle, never the timeline position: a loop renders the
+    /// same frames again, and a mark left from the last pass would silence
+    /// a count whose Guide has since been muted.
+    cues: std::sync::Mutex<(Option<u64>, Vec<u32>)>,
+}
+
+impl CueGate {
+    /// How close a count note has to be to a cue to give way to it.
+    const SAME_SPOT: u32 = 64;
+
+    fn mark(&self, block: u64, offset: u32) {
+        if let Ok(mut cues) = self.cues.try_lock() {
+            if cues.0 != Some(block) {
+                *cues = (Some(block), Vec::new());
+            }
+            cues.1.push(offset);
+        }
+    }
+
+    fn taken(&self, block: u64, offset: u32) -> bool {
+        self.cues.try_lock().is_ok_and(|cues| {
+            cues.0 == Some(block) && cues.1.iter().any(|at| at.abs_diff(offset) <= Self::SAME_SPOT)
+        })
+    }
+}
+
 /// One guide engine, fed from its track's MIDI.
 pub struct GuideInstrument {
     engine: Option<GuideEngine>,
     sample_rate: f64,
+    gate: Arc<CueGate>,
 }
 
 impl GuideInstrument {
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        Self::with_gate(Arc::new(CueGate::default()))
+    }
+
+    /// An instrument that yields its count notes to cues the others play.
+    #[must_use]
+    pub fn with_gate(gate: Arc<CueGate>) -> Self {
         Self {
             engine: None,
             sample_rate: 48_000.0,
+            gate,
         }
     }
 }
@@ -108,6 +156,9 @@ impl PluginInstance for GuideInstrument {
         let rate = sample_rate.round() as u32;
         let bank = engine.bank_mut();
         bank.load_click(&dir.join("Click"), ClickSound::Cowbell, rate);
+        // On-beats high, off-beat eighths low, the bar's one the same as
+        // any other beat — see `SampleBank::beats_high_offbeats_low`.
+        bank.beats_high_offbeats_low();
         bank.load_counts(&dir.join("Counts"), "English Female", rate);
         bank.load_guide_dir(&dir.join("Guide"), rate);
         bank.synthesize_defaults(rate);
@@ -133,6 +184,7 @@ impl PluginInstance for GuideInstrument {
         let Some(engine) = self.engine.as_mut() else {
             return Ok(());
         };
+        let block = daw::plugin::render_cycle();
         for event in events.midi {
             // Note-on with velocity: status 0x9n, velocity > 0.
             let Some((status, key, velocity)) = event.message.to_raw_bytes() else {
@@ -141,9 +193,23 @@ impl PluginInstance for GuideInstrument {
             if status & 0xF0 != 0x90 || velocity == 0 {
                 continue;
             }
-            if let Some(trigger) = session_guide::midi::trigger_for_midi_note(key) {
-                engine.trigger(event.offset as usize, trigger);
+            let Some(trigger) = session_guide::midi::trigger_for_midi_note(key) else {
+                continue;
+            };
+            match (&trigger, block) {
+                // A muted Guide track's instrument still runs (mute is at
+                // the fader); its cue is not heard, so it claims nothing.
+                (session_guide::GuideTrigger::Guide(_), Some(block)) if !daw::plugin::track_muted() => {
+                    self.gate.mark(block, event.offset);
+                }
+                (session_guide::GuideTrigger::Count(_), Some(block))
+                    if self.gate.taken(block, event.offset) =>
+                {
+                    continue; // the cue says it instead
+                }
+                _ => {}
             }
+            engine.trigger(event.offset as usize, trigger);
         }
         // MIDI mode ignores the transport; the rate is all it reads.
         let clock = BlockClock {
@@ -164,8 +230,12 @@ impl PluginInstance for GuideInstrument {
     }
 }
 
-/// Makes guide instruments for `Effects::add(.., "fts.guide")`.
-pub struct GuideFxFactory;
+/// Makes guide instruments for `Effects::add(.., "fts.guide")`, all sharing
+/// one [`CueGate`].
+#[derive(Default)]
+pub struct GuideFxFactory {
+    gate: Arc<CueGate>,
+}
 
 impl FxFactory for GuideFxFactory {
     fn installed(&self) -> Vec<daw_proto::fx::InstalledFx> {
@@ -180,7 +250,7 @@ impl FxFactory for GuideFxFactory {
         // samples. The renderer only prepares a plugin that is not
         // prepared yet, and it does that on the AUDIO thread: left to it,
         // the first block after pressing play took 40-60 ms, a dropout.
-        let mut guide = GuideInstrument::new();
+        let mut guide = GuideInstrument::with_gate(self.gate.clone());
         guide.prepare(sample_rate, 512).ok()?;
         Some(Box::new(guide))
     }
@@ -188,5 +258,5 @@ impl FxFactory for GuideFxFactory {
 
 /// Install the guide instrument's factory on `daw`.
 pub fn install(daw: &daw::standalone::Standalone) {
-    daw.set_fx_factory(Arc::new(GuideFxFactory));
+    daw.set_fx_factory(Arc::new(GuideFxFactory::default()));
 }

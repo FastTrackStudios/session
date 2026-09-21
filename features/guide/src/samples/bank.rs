@@ -242,6 +242,23 @@ impl SampleBank {
         self.measure_accent = load(&paths.accent_path);
     }
 
+    /// Re-voice the loaded click so the beat leads: on-beats take the
+    /// kit's higher tick, off-beat eighths its lower one, and the bar's
+    /// first beat plays the same on-beat tick rather than the kit's
+    /// (much higher) accent.
+    ///
+    /// The FTS-GUIDE kits name their files by legacy slot, not pitch; in
+    /// Cowbell the `eighth` tick (~2.2 kHz) sits above the `quarter` one
+    /// (~1.8 kHz) and `accents` far above both (~4.5 kHz, measured) — so
+    /// as loaded, beats were the low tick and off-beats the high one.
+    pub fn beats_high_offbeats_low(&mut self) {
+        let (quarter, eighth) = (self.beat.take(), self.eighth.take());
+        self.beat = eighth.or_else(|| quarter.clone());
+        self.eighth = quarter;
+        self.triplet = self.eighth.clone();
+        self.measure_accent = self.beat.clone();
+    }
+
     /// Load count voices 1-8 from the counts directory
     /// (`"{voice_prefix} - {n}.wav"`, legacy prefix `"English Female"`).
     pub fn load_counts(&mut self, counts_base_path: &Path, voice_prefix: &str, sample_rate: u32) {

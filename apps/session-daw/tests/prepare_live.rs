@@ -245,3 +245,88 @@ fn a_real_session_prepared_when_one_is_given() {
         .sum();
     eprintln!("{bpm} bpm: {notes} click notes");
 }
+
+/// Where a spoken cue lands on a count note, the cue takes its place in
+/// the audio: "Intro, 2, 3, 4". Mute the Guide track and the "1" is back.
+#[test]
+fn a_cue_takes_the_counts_one_unless_the_guide_is_muted() {
+    let _engine = ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !session_daw::guide_instrument::samples_dir().join("Guide").is_dir() {
+        return; // cues are silent without the library
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("song.rpp");
+    std::fs::write(&file, RPP).expect("write");
+    let opened = session_daw::open::open_silent(&file).expect("open");
+    session_daw::prepare::Prepare {
+        organize: true,
+        chart: Some({
+            let chart = dir.path().join("song.kf");
+            std::fs::write(&chart, CHART).expect("chart");
+            chart
+        }),
+        guide: true,
+    }
+    .run(&opened)
+    .expect("prepare");
+    let _rt = session_daw::open::runtime().expect("runtime").enter();
+    let daw = opened.daw.clone();
+    let project = ProjectContext::Project(opened.project_guid.clone());
+    let role = |name: &str| {
+        Tracks::all(&daw, project.clone())
+            .into_iter()
+            .find(|t| t.name == name && t.folder_depth <= 0 && Items::get_items(&daw, project.clone(), TrackRef::Guid(t.guid.clone())).iter().all(|i| Takes::get_active_take(&daw, project.clone(), ItemRef::Guid(i.guid.clone())).is_some_and(|t| t.is_midi)))
+            .map(|t| t.guid)
+            .unwrap_or_else(|| panic!("generated {name}"))
+    };
+    let (click, count, guide) = (role("Click"), role("Count"), role("Guide"));
+    let mute = |guid: &str, on: bool| {
+        Tracks::set_muted(&daw, project.clone(), TrackRef::Guid(guid.to_owned()), on).expect("mute");
+    };
+    // Only the count and the cues: everything with audio off.
+    mute(&click, true);
+    for t in Tracks::all(&daw, project.clone()) {
+        let audio = Items::get_items(&daw, project.clone(), TrackRef::Guid(t.guid.clone()))
+            .iter()
+            .any(|i| Takes::get_active_take(&daw, project.clone(), ItemRef::Guid(i.guid.clone())).is_some_and(|t| !t.is_midi));
+        if audio {
+            mute(&t.guid, true);
+        }
+    }
+
+    // The Intro follows two bars of count-in at 90: its cue is on the
+    // downbeat of the second bar, 8/3 s in. Render that beat.
+    const RATE: u32 = 48_000;
+    let beat_at = |seconds: f64| (seconds * f64::from(RATE)) as u64;
+    let (from, to) = (beat_at(8.0 / 3.0), beat_at(8.0 / 3.0 + 60.0 / 90.0));
+    let render = || {
+        let renderer = daw::standalone::audio_engine::render::ProjectRenderer::new(&daw, &opened.project_guid, RATE);
+        // Exactly the frames [from, to), interleaved stereo.
+        let mut out = Vec::new();
+        let mut at = 0u64;
+        while at < to {
+            let block = renderer.render_block(at, 512);
+            for f in 0..512u64 {
+                let frame = at + f;
+                if (from..to).contains(&frame) {
+                    let i = usize::try_from(f).unwrap_or(0) * 2;
+                    out.extend_from_slice(&block.samples[i..i + 2]);
+                }
+            }
+            at += 512;
+        }
+        out
+    };
+    let both = render();
+    mute(&count, true);
+    let cue_only = render();
+    mute(&count, false);
+    mute(&guide, true);
+    let count_only = render();
+
+    let loud = |x: &[f32]| x.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    let diff = both.iter().zip(&cue_only).fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+    assert!(loud(&cue_only) > 0.01, "the Intro cue sounds");
+    assert!(diff < 1e-4, "with both playing it is the cue alone — the count's 1 gave way (diff {diff})");
+    assert!(loud(&count_only) > 0.01, "with the Guide muted, the count's 1 is back");
+}

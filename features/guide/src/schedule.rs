@@ -254,11 +254,11 @@ pub struct ScheduleOptions {
     /// Legacy "Guide Replaces Beat 1": drop the count voice that coincides
     /// with a guide announcement.
     pub guide_replace_beat1: bool,
-    /// Speak the section-name cue this many beat units before the section
-    /// starts ("Chorus in 2..." style). Announced at the start of the
-    /// count-in; two measures (8 beats in 4/4) is the default so the name
-    /// lands clearly before the count.
-    pub speak_lead_beats: f64,
+    /// Speak the section-name cue this many measures before the section
+    /// starts. One (the default) puts it on the downbeat of the count bar,
+    /// where it takes the count's "1": "Verse, 2, 3, 4". It used to be
+    /// eight beats — two bars in 4/4 — which read as "Verse … 1 2 3 4".
+    pub speak_lead_measures: f64,
 }
 
 impl Default for ScheduleOptions {
@@ -267,7 +267,7 @@ impl Default for ScheduleOptions {
             count_in: CountInOptions::default(),
             extend_songend_count: true,
             guide_replace_beat1: true,
-            speak_lead_beats: 8.0,
+            speak_lead_measures: 1.0,
         }
     }
 }
@@ -286,7 +286,7 @@ impl CueSchedule {
     ///   measure count comes from `CountInCalculator` and the per-beat
     ///   count pattern from `CountInPattern` (both ported verbatim).
     /// - Section guides: each section gets a guide announcement
-    ///   `speak_lead_beats` beat units before its start (clamped to the
+    ///   `speak_lead_measures` measures before its start (clamped to the
     ///   count-in start, if any).
     /// - SONGEND: with `extend_songend_count`, a 2-measure full count into
     ///   the SONGEND position plus an "Ending" announcement.
@@ -326,7 +326,7 @@ impl CueSchedule {
             );
 
             let guide_time =
-                Self::process_section_guide(section, is_change, options, beat_secs, &mut cues);
+                Self::process_section_guide(section, is_change, options, measure_secs, &mut cues);
             if let Some(gt) = guide_time {
                 guide_times.push(gt);
             }
@@ -407,14 +407,14 @@ impl CueSchedule {
         section: &GuideSection,
         is_change: bool,
         options: &ScheduleOptions,
-        beat_secs: f64,
+        measure_secs: f64,
         cues: &mut Vec<ScheduledCue>,
     ) -> Option<f64> {
         if !is_change {
             return None;
         }
 
-        let mut lead = options.speak_lead_beats * beat_secs;
+        let mut lead = options.speak_lead_measures * measure_secs;
         if let Some(count_pos) = section.count_in_position {
             // Never announce before the count-in marker.
             lead = lead.min(section.start_seconds - count_pos);

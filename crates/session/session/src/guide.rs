@@ -173,7 +173,14 @@ impl<D: GuideDaw> Guide<D> {
             ));
         }
         if matches!(scope, GuideScope::Cues | GuideScope::All) {
-            let schedule = CueSchedule::build(&sections, &timing, &ScheduleOptions::default());
+            // Both notes stay in the MIDI where a cue lands on a count:
+            // the cue takes the count's place in the AUDIO (the guide
+            // instrument), so muting the Guide track brings the "1" back.
+            let options = ScheduleOptions {
+                guide_replace_beat1: false,
+                ..ScheduleOptions::default()
+            };
+            let schedule = CueSchedule::build(&sections, &timing, &options);
             notes.extend(cue_notes(&schedule));
         }
 
