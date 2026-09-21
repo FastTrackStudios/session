@@ -4074,6 +4074,7 @@ impl App {
             selected: &self.editor.selected,
             ghost: self.editor.ghost(),
             razor: (&self.editor.razor, self.editor.razor_in_flight()),
+            slip: self.editor.slip_in_flight(),
             scroll_bars,
             bar_held,
             dock: self.expression.as_mut().filter(|_| frame.dock > 0.0),

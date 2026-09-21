@@ -667,6 +667,8 @@ impl Arrangement {
                 boxes.push(ItemBox {
                     row,
                     guid: item.guid.clone(),
+                    track: track_index,
+                    color,
                     slip,
                     x0,
                     x1,
@@ -946,6 +948,12 @@ pub enum ItemZone {
 pub struct ItemBox {
     pub row: usize,
     pub guid: String,
+    /// The simulation's index for the lane this sits on, which is what
+    /// its waveform is generated from. Carried so a live pass can draw
+    /// the same waveform the recorded one drew — see `slip_overlay`.
+    pub track: usize,
+    /// The colour the item was recorded in, for the same reason.
+    pub color: Color,
     /// How far into its source the item starts, in seconds — the active
     /// take's offset. What a slip edit changes, and what the waveform
     /// is drawn from.
@@ -1112,6 +1120,68 @@ pub fn fade_overlay(
 /// shows where it will land as an outline at the new place, over the
 /// recorded item where it still is — the recording catches up on the
 /// release.
+/// The item being slipped, redrawn at the offset the drag has reached.
+///
+/// A slip changes which part of the source is under the item, and the
+/// source lives in the RECORDED scene — so following the pointer would
+/// otherwise mean re-cutting that scene every frame, which is the cost
+/// the zoom-y gesture already pays and the one this window is trying
+/// not to add to. One item's worth of path a frame instead: the lane
+/// under it, the body over that, and the waveform at the new offset,
+/// which together are exactly what the recorded pass drew and so cover
+/// it completely.
+///
+/// Drawn under the LANES transform rather than in pixel space, because
+/// the waveform is generated from the source's own time — handing it
+/// pixels would sample the simulation at pixel numbers.
+pub fn slip_overlay(
+    painter: &mut impl PaintScene,
+    palette: &Palette,
+    scene: &Arrangement,
+    view: Viewport,
+    origin: (f64, f64),
+    in_flight: Option<(usize, f64)>,
+) {
+    let Some((index, slip)) = in_flight else {
+        return;
+    };
+    let Some(item) = scene.item(index) else {
+        return;
+    };
+    let Some((top, height)) = scene.row_box(item.row) else {
+        return;
+    };
+    // The same three numbers the record pass works from, so the cover
+    // lands on the recorded item rather than near it.
+    let body = (height - DIVIDER).max(0.5);
+    let inset = (body * 0.05).clamp(0.0, 2.0);
+    let stripe = if item.row % 2 == 0 {
+        palette.row_a
+    } else {
+        palette.row_b
+    };
+    let at = Affine::scale_non_uniform(view.pps, view.zoom_y).then_translate(origin.into());
+    let lane = Rect::new(item.x0, top, item.x1, top + body);
+    painter.fill(Fill::NonZero, at, stripe, None, &lane);
+    let (y0, y1) = (top + inset, top + body - inset);
+    painter.fill(
+        Fill::NonZero,
+        at,
+        item.color.multiply_alpha(0.42),
+        None,
+        &Rect::new(item.x0, y0, item.x1, y1),
+    );
+    if let Some(wave) = waveform(item.track, item.x0, item.x1, y0, y1, slip) {
+        painter.fill(Fill::NonZero, at, item.color, None, &wave);
+    }
+    // And the fades back over it. The cover took them with the rest of
+    // the recorded item, and an item that lost its fade shading for the
+    // length of a drag would be telling you the fades had gone.
+    if let Some(path) = item.fades.path(item.x0, item.x1, y0, y1, 1.0) {
+        painter.fill(Fill::NonZero, at, FADE_SHADE, None, &path);
+    }
+}
+
 /// The razor areas, over the lanes.
 ///
 /// Drawn as a filled rectangle with a hard edge down each side,

@@ -63,6 +63,8 @@ pub struct Arrange<'a> {
     pub ghost: Option<(usize, f64, f64)>,
     /// The razor areas drawn, and the one being drawn right now.
     pub razor: (&'a razor::RazorSet, Option<razor::RazorArea>),
+    /// An item being slipped, and how far into its source it has got.
+    pub slip: Option<(usize, f64)>,
     pub scroll_bars: Option<(crate::scrollbar::Bar, crate::scrollbar::Bar)>,
     pub bar_held: Option<crate::scrollbar::Axis>,
     /// The editor in the dock, if one is docked.
@@ -101,6 +103,7 @@ impl Arrange<'_> {
             selected,
             ghost,
             razor,
+            slip,
             scroll_bars,
             bar_held,
             dock,
@@ -138,6 +141,9 @@ impl Arrange<'_> {
             view,
             Affine::scale_non_uniform(pps, zoom_y).then_translate(lanes_at.into()),
         );
+        // Before the titles `items_over` draws, so the cover that hides
+        // the old waveform does not take the item's name with it.
+        crate::arrangement::slip_overlay(painter, palette, scene, view, lanes_at, slip);
         items_over(
             painter,
             (palette, font, scene),
