@@ -4665,6 +4665,8 @@ fn apply_locally(tracks: &mut [daw_proto::Track], row: usize, edit: &session_daw
         | Edit::DeselectItem(_)
         | Edit::CopyItem(..)
         | Edit::SlipItem(..)
+        | Edit::BeginUndo(_)
+        | Edit::EndUndo(_)
         | Edit::DeselectAllItems(_)
         | Edit::SelectAllItems(_)
         | Edit::MoveItem(..)
