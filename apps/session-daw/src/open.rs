@@ -96,6 +96,8 @@ fn parse(path: &Path) -> eyre::Result<Opened> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| eyre::eyre!("could not read {}: {e}", path.display()))?;
     let daw = Standalone::new();
+    // The instrument the Click / Count / Guide MIDI tracks play through.
+    crate::guide_instrument::install(&daw);
     let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
     daw.media_bay().set_file_resolver(Box::new(
         daw::standalone::media_bay::ProjectRelativeResolver::new(dir),

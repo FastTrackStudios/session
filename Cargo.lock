@@ -13091,6 +13091,7 @@ dependencies = [
  "saturate-dsp",
  "saturate-profiles",
  "session",
+ "session-guide",
  "skrifa 0.42.1",
  "tempfile",
  "tokio",

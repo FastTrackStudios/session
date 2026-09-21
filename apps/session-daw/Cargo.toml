@@ -50,6 +50,9 @@ daw-proto = { workspace = true }
 daw-theme-art = { workspace = true }
 # The mix phases the mixer's left rail lists.
 session = { workspace = true }
+# The guide engine the Click / Count / Guide MIDI tracks play through —
+# see `src/guide_instrument.rs`.
+session-guide = { workspace = true }
 # The visual presets. Which tracks a preset shows, and how large, is a
 # rule resolved against the session's own taxonomy — not a list of GUIDs
 # this window keeps. See `src/plan.rs`.

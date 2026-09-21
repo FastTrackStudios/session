@@ -134,6 +134,7 @@ where
         + daw::service::Tracks
         + daw::service::Items
         + daw::service::Takes
+        + daw::service::Effects
         + daw::service::Midi
         + daw::service::PositionConversion
         + daw::service::UiDialogs
@@ -438,6 +439,7 @@ pub mod host {
             + daw::service::Tracks
             + daw::service::Items
         + daw::service::Takes
+        + daw::service::Effects
             + daw::service::Midi
             + daw::service::PositionConversion
             + daw::service::UiDialogs

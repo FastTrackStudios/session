@@ -88,6 +88,7 @@ impl Prepare {
         }
         if self.guide {
             session::guide::Guide::new(opened.daw.clone())
+                .with_instrument(crate::guide_instrument::IDENT)
                 .generate(session::guide::GuideScope::All)
                 .map_err(|e| eyre::eyre!("guide: {e}"))?;
             tracing::info!("prepare: click and guide generated");

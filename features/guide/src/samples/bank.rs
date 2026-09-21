@@ -160,7 +160,19 @@ pub fn section_to_guide_filename(
 #[must_use]
 pub fn get_guide_key(section_type_name: &str, section_number: Option<u32>) -> String {
     let number_str = section_number.map_or_else(|| "None".to_string(), |n| n.to_string());
-    format!("{section_type_name}_{number_str}")
+    format!("{}_{number_str}", sample_name(section_type_name))
+}
+
+/// A section's name as the sample library spells it: words separated by
+/// spaces (`Pre-Chorus` is the file `Pre Chorus`), and `End` is the
+/// library's `Ending`.
+fn sample_name(section_type_name: &str) -> String {
+    let spaced = section_type_name.replace('-', " ");
+    if spaced.eq_ignore_ascii_case("end") {
+        "Ending".to_string()
+    } else {
+        spaced
+    }
 }
 
 /// Convert a guide filename to its lookup key.
@@ -174,14 +186,16 @@ fn filename_to_key(filename: &str) -> String {
         .strip_suffix(".wav")
         .unwrap_or(without_prefix);
 
-    let parts: Vec<&str> = without_ext.split(' ').collect();
-    match parts.as_slice() {
-        [single] => format!("{single}_None"),
-        [first, second] => format!("{first}_{second}"),
-        [type_parts @ .., number] => {
-            format!("{}_{}", type_parts.join(" "), number)
+    // Only a trailing NUMBER is a section number: "Verse 2" is Verse #2,
+    // but "Pre Chorus" is one two-word name. The legacy port split any
+    // two words as type + number, so "Pre Chorus" became type "Pre" and
+    // the Pre-Chorus cue never found its sample.
+    match without_ext.rsplit_once(' ') {
+        Some((name, number)) if number.chars().all(|c| c.is_ascii_digit()) => {
+            format!("{name}_{number}")
         }
-        _ => "None_None".to_string(),
+        _ if without_ext.is_empty() => "None_None".to_string(),
+        _ => format!("{without_ext}_None"),
     }
 }
 
@@ -377,5 +391,26 @@ mod tests {
             Some("English Female - Pre Chorus.wav".to_string())
         );
         assert_eq!(section_to_guide_filename("Zebra", None), None);
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::{filename_to_key, get_guide_key};
+
+    #[test]
+    fn two_word_sections_are_one_name_and_only_numbers_number() {
+        assert_eq!(filename_to_key("English Female - Pre Chorus.wav"), "Pre Chorus_None");
+        assert_eq!(filename_to_key("English Female - Pre Chorus 2.wav"), "Pre Chorus_2");
+        assert_eq!(filename_to_key("English Female - Verse 3.wav"), "Verse_3");
+        assert_eq!(filename_to_key("English Female - Tag.wav"), "Tag_None");
+    }
+
+    #[test]
+    fn a_cues_key_finds_the_librarys_file() {
+        assert_eq!(get_guide_key("Pre-Chorus", None), filename_to_key("English Female - Pre Chorus.wav"));
+        assert_eq!(get_guide_key("Post-Chorus", None), filename_to_key("English Female - Post Chorus.wav"));
+        assert_eq!(get_guide_key("End", None), filename_to_key("English Female - Ending.wav"));
+        assert_eq!(get_guide_key("Tag", None), filename_to_key("English Female - Tag.wav"));
     }
 }

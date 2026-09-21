@@ -3,8 +3,9 @@
 //! generate the click and guide.
 //!
 //! The multitrack brings its own `Click` and `Guide` audio stems. They
-//! must survive as references in the Guide folder — never written over —
-//! beside the generated Click / Count / Guide tracks, which are MIDI.
+//! must survive as muted references in the Guide folder — never written
+//! over — while the generated Click / Count / Guide tracks are MIDI,
+//! played by the guide instrument, and are what is heard.
 
 use daw::service::{ItemRef, Items, ProjectContext, Takes, TrackRef, Tracks};
 use dynamic_template::apply::{organize, DawTarget};
@@ -85,6 +86,7 @@ fn a_multitrack_is_organized_built_and_guided() {
     assert_eq!(songs[0].name, "Test Song");
 
     Guide::new(daw.clone())
+        .with_instrument(session_daw::guide_instrument::IDENT)
         .generate(GuideScope::All)
         .expect("generate guide");
 
@@ -129,7 +131,7 @@ fn a_multitrack_is_organized_built_and_guided() {
             .iter()
             .find(|t| t.name == stem && has_audio(&t.guid))
             .unwrap_or_else(|| panic!("the {stem} stem is still there, with its audio"));
-        assert!(!t.muted, "the {stem} stem is left as it was (unmuted, for now)");
+        assert!(t.muted, "the {stem} stem is muted as a reference");
     }
     for role in ["Click", "Count", "Guide"] {
         let generated = tracks
@@ -138,6 +140,13 @@ fn a_multitrack_is_organized_built_and_guided() {
             .unwrap_or_else(|| panic!("a generated {role} track"));
         assert!(item_count(&generated.guid) > 0, "the generated {role} has MIDI in it");
         assert!(!generated.muted, "the generated {role} plays");
+        let chain = daw::service::FxChainContext::Track(generated.guid.clone());
+        assert!(
+            daw::service::Effects::list(&daw, project.clone(), chain)
+                .iter()
+                .any(|f| f.name == session_daw::guide_instrument::IDENT),
+            "the generated {role} is played by the guide instrument"
+        );
     }
     let names = |n: &str| inside_click_guide.iter().filter(|x| **x == n).count();
     assert_eq!(names("Click"), 2, "stem + generated Click in the folder: {inside_click_guide:?}");
@@ -151,8 +160,25 @@ fn a_multitrack_is_organized_built_and_guided() {
     let total: i32 = tracks.iter().map(|t| t.folder_depth).sum();
     assert_eq!(total, 0, "every folder in the session closes");
 
+    // And it is heard: render the first bars — the stems are muted and
+    // their media is missing here, so any sound is the guide's.
+    let renderer = daw::standalone::audio_engine::render::ProjectRenderer::new(
+        &daw,
+        &opened.project_guid,
+        48_000,
+    );
+    let mut peak = 0.0f32;
+    for block in 0..(48_000 * 4 / 512) {
+        let out = renderer.render_block(block * 512, 512);
+        peak = out.samples.iter().fold(peak, |m, s| m.max(s.abs()));
+    }
+    assert!(peak > 0.01, "the click and count are audible (peak {peak})");
+
     // Generating again rewrites the generated tracks, not the stems.
-    Guide::new(daw.clone()).generate(GuideScope::All).expect("regenerate");
+    Guide::new(daw.clone())
+        .with_instrument(session_daw::guide_instrument::IDENT)
+        .generate(GuideScope::All)
+        .expect("regenerate");
     let again = Tracks::all(&daw, project.clone());
     assert_eq!(again.len(), tracks.len(), "no tracks added the second time");
 }

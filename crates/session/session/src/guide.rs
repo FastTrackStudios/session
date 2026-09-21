@@ -22,8 +22,8 @@
 //! actions people will hit repeatedly while arranging.
 
 use daw::service::{
-    ItemRef, Items, Markers, Midi, MidiNoteCreate, PositionConversion, PositionInSeconds,
-    ProjectContext, Projects, Regions, Takes, TempoMap, TrackRef, Tracks,
+    Effects, FxChainContext, ItemRef, Items, Markers, Midi, MidiNoteCreate, PositionConversion,
+    PositionInSeconds, ProjectContext, Projects, Regions, Takes, TempoMap, TrackRef, Tracks,
 };
 use daw_proto::{DawError, DawResult};
 use session_guide::midi::{ClickSubdivision, GuideMidiNote, TempoSegment, click_notes, cue_notes};
@@ -68,11 +68,25 @@ const CLICK_GUIDE_FOLDER: &str = "Guide";
 /// Serves [`session_proto::guide::GuideActions`] against a DAW backend.
 pub struct Guide<D> {
     daw: D,
+    /// The instrument that plays the generated notes, by FX name —
+    /// `fts.guide` on daw-standalone (the native guide engine), the FTS
+    /// Guide plugin on a host that loads it. `None` writes the notes only.
+    instrument: Option<String>,
 }
 
 impl<D> Guide<D> {
     pub const fn new(daw: D) -> Self {
-        Self { daw }
+        Self {
+            daw,
+            instrument: None,
+        }
+    }
+
+    /// Put `fx` on every track this generates, so its notes are heard.
+    #[must_use]
+    pub fn with_instrument(mut self, fx: impl Into<String>) -> Self {
+        self.instrument = Some(fx.into());
+        self
     }
 }
 
@@ -82,6 +96,7 @@ pub trait GuideDaw:
     + Tracks
     + Items
     + Takes
+    + Effects
     + Markers
     + Regions
     + TempoMap
@@ -98,6 +113,7 @@ impl<T> GuideDaw for T where
         + Tracks
         + Items
         + Takes
+        + Effects
         + Markers
         + Regions
         + TempoMap
@@ -162,14 +178,18 @@ impl<D: GuideDaw> Guide<D> {
         }
 
         // A multitrack's own click and guide are audio stems that share
-        // these names. They are kept as they are — beside the generated
-        // tracks in the Guide folder, as a reference — and never written
-        // over: `find_track` only answers with tracks that carry no audio.
+        // these names. They are kept — muted, as a reference beside the
+        // generated tracks in the Guide folder — and never written over:
+        // `find_track` only answers with tracks that carry no audio. The
+        // generated tracks, played by the guide instrument, are the ones
+        // heard.
+        self.mute_stems(&project);
 
         // Clear first, then write — and only the roles this scope owns.
         for role in scope.roles() {
             let track = self.ensure_track(project.clone(), *role)?;
             self.clear_span(&project, &track, start, end);
+            self.ensure_instrument(&project, &track);
         }
         self.stamp(&project, &notes, start, end)?;
         self.file_into_click_guide_folder(&project)
@@ -422,6 +442,39 @@ impl<D: GuideDaw> Guide<D> {
                 Takes::get_active_take(&self.daw, project.clone(), ItemRef::Guid(item.guid.clone()))
                     .is_some_and(|take| !take.is_midi)
             })
+    }
+
+    /// Mute every audio stem named for a guide role (Click, Count, Guide):
+    /// the generated tracks replace them, and both playing would double
+    /// the click.
+    fn mute_stems(&self, project: &ProjectContext) {
+        let roles = [GuideTrackRole::Click, GuideTrackRole::Count, GuideTrackRole::Guide];
+        for track in Tracks::all(&self.daw, project.clone()) {
+            let named_for_a_role = roles
+                .iter()
+                .any(|role| track.name.trim().eq_ignore_ascii_case(role.name()));
+            if named_for_a_role
+                && track.folder_depth <= 0
+                && !track.muted
+                && self.has_audio(project, &track.guid)
+            {
+                let _ = Tracks::set_muted(&self.daw, project.clone(), TrackRef::Guid(track.guid), true);
+            }
+        }
+    }
+
+    /// Put the instrument on a generated track, once.
+    fn ensure_instrument(&self, project: &ProjectContext, track: &TrackRef) {
+        let (Some(fx), TrackRef::Guid(guid)) = (&self.instrument, track) else {
+            return;
+        };
+        let chain = FxChainContext::Track(guid.clone());
+        let present = Effects::list(&self.daw, project.clone(), chain.clone())
+            .iter()
+            .any(|f| f.name == *fx);
+        if !present && Effects::add(&self.daw, project.clone(), chain, fx).is_none() {
+            tracing::warn!(fx, track = guid, "guide: could not add the instrument");
+        }
     }
 
     /// Find the role's track, creating it if absent. Creating is the
