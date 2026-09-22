@@ -445,16 +445,24 @@ async fn fetch_text(url: &str) -> Result<String, String> {
 /// The web demo: fetch a session's project (and chart), open it in the
 /// page, and show it.
 #[component]
-pub fn WebDemo(name: String, rpp_url: String, chart_url: Option<String>) -> Element {
+pub fn WebDemo(
+    name: String,
+    rpp_url: String,
+    chart_url: Option<String>,
+    /// Where the takes' audio streams from — a Task share link to the
+    /// session's folder. `None` opens it silent.
+    media: Option<String>,
+) -> Element {
     let opened = use_resource(move || {
-        let (name, rpp_url, chart_url) = (name.clone(), rpp_url.clone(), chart_url.clone());
+        let (name, rpp_url, chart_url, media) =
+            (name.clone(), rpp_url.clone(), chart_url.clone(), media.clone());
         async move {
             let rpp = fetch_text(&rpp_url).await?;
             let chart = match &chart_url {
                 Some(url) => Some(fetch_text(url).await?),
                 None => None,
             };
-            crate::web_engine::open(&name, &rpp, chart.as_deref())
+            crate::web_engine::open(&name, &rpp, chart.as_deref(), media.as_deref())
                 .await
                 .map_err(|e| e.to_string())
         }
@@ -504,6 +512,9 @@ impl View {
 fn DemoView(engine: crate::web_engine::EngineRef, session: crate::studio::StudioSession) -> Element {
     use session::modes::Mode;
     use_context_provider(|| session.clone());
+    // Audio starts on the page's first press or key: the only place a
+    // browser allows it.
+    use_hook(crate::web_audio::unlock_on_first_gesture);
     let mut view = use_signal(|| View::Daw);
     let mut mode = use_signal(|| Mode::Live);
     use_context_provider(|| mode);

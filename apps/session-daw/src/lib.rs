@@ -102,4 +102,6 @@ pub mod zoom;
 #[cfg(feature = "web")]
 pub mod web_engine;
 #[cfg(feature = "web")]
+pub mod web_audio;
+#[cfg(feature = "web")]
 pub mod web_host;

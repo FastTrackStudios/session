@@ -16,6 +16,9 @@ tracing = { workspace = true }
 tracing-wasm = "0.2"
 console_error_panic_hook = "0.1"
 getrandom = { version = "0.3", features = ["wasm_js"] }
+# The page's query: which share link to open (`main::source`).
+web-sys = { workspace = true, features = ["Window", "Location", "UrlSearchParams"] }
+js-sys = { workspace = true }
 
 [lints]
 workspace = true

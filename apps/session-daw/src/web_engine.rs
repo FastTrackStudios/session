@@ -55,10 +55,14 @@ impl EngineRef {
 ///
 /// The project did not parse, the facade did not come up, or the project
 /// could not be read back.
+/// `media` is where the takes' audio streams from: a Task share link to the
+/// session's folder, whose `rendition/audio/<path>` answers each take's
+/// source with its proxy ([`crate::web_audio`]). `None` opens it silent.
 pub async fn open(
     name: &str,
     rpp_text: &str,
     chart_text: Option<&str>,
+    media: Option<&str>,
 ) -> eyre::Result<(EngineRef, StudioSession)> {
     let standalone = daw_standalone::sync::Standalone::new();
     let summary = daw_standalone::project_loader::load_rpp_text(
@@ -78,6 +82,10 @@ pub async fn open(
     daw::init_from_parts(bundle.daw.clone());
     // The facade and the engine live as long as the page.
     std::mem::forget(bundle);
+    crate::web_audio::install(standalone.clone(), &summary.project_guid);
+    if let Some(base) = media {
+        stream_stems(&standalone, &summary.project_guid, base);
+    }
 
     // Say which step fails: `fetch` answers only yes or no.
     let facade = daw_control::Daw::try_get().ok_or_else(|| eyre::eyre!("the daw facade is not up"))?;
@@ -131,4 +139,63 @@ pub async fn open(
             planner,
         },
     ))
+}
+
+/// Fetch every take's proxy from `base` and attach it as it arrives — all
+/// at once, so the stems fill in together rather than one after another.
+fn stream_stems(standalone: &daw_standalone::sync::Standalone, project: &str, base: &str) {
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let _ = standalone.read_project(project, |p| {
+        for list in p.takes.values() {
+            for take in &list.takes {
+                if let Some(path) = take.source_file_path.as_deref()
+                    && !path.is_empty()
+                    && !take.is_midi
+                {
+                    sources.push((take.guid.clone(), path.to_owned()));
+                }
+            }
+        }
+    });
+    tracing::info!(stems = sources.len(), "audio: streaming the stems");
+    for (take, path) in sources {
+        let url = format!("{}/rendition/audio/{}", base.trim_end_matches('/'), url_path(&path));
+        let project = project.to_owned();
+        wasm_bindgen_futures::spawn_local(async move {
+            match fetch_bytes(&url).await {
+                Ok(bytes) => {
+                    if let Err(e) = crate::web_audio::add_stem(&project, &take, bytes) {
+                        tracing::warn!(path, error = %e, "audio: a stem did not open");
+                    }
+                }
+                Err(e) => tracing::warn!(path, error = %e, "audio: a stem did not arrive"),
+            }
+        });
+    }
+}
+
+/// A root-relative path as a URL path: each segment encoded.
+fn url_path(path: &str) -> String {
+    path.split('/')
+        .map(|segment| String::from(js_sys::encode_uri_component(segment)))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// A URL's whole body.
+async fn fetch_bytes(url: &str) -> Result<Arc<[u8]>, String> {
+    use wasm_bindgen::JsCast as _;
+    let window = web_sys::window().ok_or("no window")?;
+    let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    let response: web_sys::Response = response.dyn_into().map_err(|_| "not a response")?;
+    if !response.ok() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+    let body = response.array_buffer().map_err(|e| format!("{e:?}"))?;
+    let body = wasm_bindgen_futures::JsFuture::from(body)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(js_sys::Uint8Array::new(&body).to_vec().into())
 }

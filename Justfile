@@ -1837,6 +1837,12 @@ web-daw SESSION="../sessions/Always On Time" RPP="Always On Time.RPP" CHART="Alw
     dir=$([ "{{PROFILE}}" = "dev" ] && echo debug || echo "{{PROFILE}}")
     wasm-bindgen --target web --no-typescript --out-dir "$out" \
         "target/wasm32-unknown-unknown/$dir/session-daw-web.wasm"
+    # 26 MB → 19 MB (7 MB gzipped). Release only: it takes half a minute.
+    if [ "{{PROFILE}}" != "dev" ] && command -v wasm-opt >/dev/null; then
+        wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
+            --enable-sign-ext --enable-mutable-globals --enable-reference-types \
+            --enable-multivalue "$out/session-daw-web_bg.wasm" -o "$out/session-daw-web_bg.wasm"
+    fi
     cp apps/session-daw-web/www/index.html "$out/"
     cp "{{SESSION}}/{{RPP}}" "$out/session/demo.RPP"
     cp "{{SESSION}}/{{CHART}}" "$out/session/demo.kf"

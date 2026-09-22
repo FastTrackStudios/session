@@ -561,9 +561,15 @@ impl Transport {
         let writer = std::sync::Arc::clone(&state);
         wasm_bindgen_futures::spawn_local(async move {
             loop {
-                if let Some(read) = read_transport().await
+                if let Some(mut read) = read_transport().await
                     && let Ok(mut slot) = writer.lock()
                 {
+                    // The engine renders ahead of the device; the playhead
+                    // drawn is the one heard.
+                    #[cfg(feature = "web")]
+                    if read.playing {
+                        read.at = (read.at - crate::web_audio::latency_seconds()).max(0.0);
+                    }
                     *slot = read;
                 }
                 gloo_timers::future::TimeoutFuture::new(16).await;

@@ -152,6 +152,12 @@ web-sys = { workspace = true, optional = true, features = [
     "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement",
     "DomRect", "CssStyleDeclaration", "console", "Response", "PointerEvent",
     "EventTarget",
+    # The audio out (`web_audio`): a worklet the page posts rendered blocks to.
+    "AudioContext", "AudioContextOptions", "BaseAudioContext", "AudioContextState",
+    "AudioWorklet", "AudioWorkletNode", "AudioWorkletNodeOptions",
+    "AudioNode", "AudioDestinationNode", "MessagePort", "MessageEvent",
+    "Blob", "BlobPropertyBag", "Url", "Worklet", "WorkletOptions",
+    "KeyboardEvent", "Event", "AddEventListenerOptions",
 ] }
 wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
@@ -164,6 +170,8 @@ gloo-timers = { workspace = true, optional = true }
 # The engine, in the page (the native build reaches it through `daw`'s
 # standalone features instead).
 daw-standalone = { workspace = true, features = ["bootstrap", "rpp-project-wasm"] }
+# The web demo's stems: Ogg proxies decoded a window at a time (`web_audio`).
+fts-sample = { workspace = true, optional = true, features = ["engine-core"] }
 
 [features]
 default = ["native"]
@@ -199,7 +207,7 @@ web = [
     "dep:vello_hybrid",
     "dep:vello_common",
     "dep:rustc-hash",
-    "dep:gloo-timers",
+    "dep:gloo-timers", "daw-standalone/stream-ogg", "dep:fts-sample",
 ]
 # The `#[reaper_test]` suites, which need a REAPER to talk to. Behind a
 # feature so an ordinary `cargo nextest run --workspace` does not try to
