@@ -135,8 +135,10 @@ pub fn section_to_guide_filename(
         "Intro" => "Intro",
         "Outro" => "Outro",
         "Instrumental" => "Instrumental",
-        "Pre-Chorus" | "Pre Chorus" | "Pre chorus" => "Pre Chorus",
-        "Post-Chorus" | "Post Chorus" | "Post chorus" => "Post Chorus",
+        // Capitalizing lowercased the rest, so a hyphenated name arrives
+        // as `Pre-chorus`.
+        "Pre-Chorus" | "Pre-chorus" | "Pre Chorus" | "Pre chorus" => "Pre Chorus",
+        "Post-Chorus" | "Post-chorus" | "Post Chorus" | "Post chorus" => "Post Chorus",
         "Breakdown" => "Breakdown",
         "Interlude" => "Interlude",
         "Tag" => "Tag",
@@ -166,7 +168,7 @@ pub fn get_guide_key(section_type_name: &str, section_number: Option<u32>) -> St
 /// A section's name as the sample library spells it: words separated by
 /// spaces (`Pre-Chorus` is the file `Pre Chorus`), and `End` is the
 /// library's `Ending`.
-fn sample_name(section_type_name: &str) -> String {
+pub(super) fn sample_name(section_type_name: &str) -> String {
     let spaced = section_type_name.replace('-', " ");
     if spaced.eq_ignore_ascii_case("end") {
         "Ending".to_string()
@@ -178,7 +180,7 @@ fn sample_name(section_type_name: &str) -> String {
 /// Convert a guide filename to its lookup key.
 ///
 /// Ported verbatim from the legacy `GuideSampleLoader::filename_to_key`.
-fn filename_to_key(filename: &str) -> String {
+pub(super) fn filename_to_key(filename: &str) -> String {
     let without_prefix = filename
         .strip_prefix("English Female - ")
         .unwrap_or(filename);
@@ -405,6 +407,10 @@ mod tests {
         );
         assert_eq!(
             section_to_guide_filename("pre chorus", None),
+            Some("English Female - Pre Chorus.wav".to_string())
+        );
+        assert_eq!(
+            section_to_guide_filename("Pre-Chorus", None),
             Some("English Female - Pre Chorus.wav".to_string())
         );
         assert_eq!(section_to_guide_filename("Zebra", None), None);
