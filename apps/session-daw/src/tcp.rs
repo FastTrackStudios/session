@@ -307,7 +307,7 @@ pub fn draw_row(
         palette.tcp_gutter,
         tcp.tint_w(),
         y,
-        f64::from(g::ROW_W),
+        tcp.width(),
         y + h,
     );
 
@@ -450,7 +450,11 @@ pub fn draw_row(
         Density::Full => {
             let (band_top, band_h) = band(y, h, density);
             row_one(scene, palette, font, track, indent, band_top, band_h, tcp);
-            row_two(scene, palette, font, track, y);
+            // Recording's row — the input FX and the input — which the
+            // compact panel leaves out with the arm.
+            if !tcp.compact {
+                row_two(scene, palette, font, track, y);
+            }
         }
         // The same band as a full row, never taller: a taller row is a
         // taller lane beside the same controls, not a stretched name.

@@ -93,6 +93,9 @@ struct ChartWidget {
     /// ([`Live::paged`]) — the Overview's chart, and any pane too small
     /// to be read by scrolling.
     paged: bool,
+    /// The page a paged panel is showing (1-indexed), kept between frames
+    /// so a playhead outside the chart leaves the page where it was.
+    page: u32,
 }
 
 impl ChartWidget {
@@ -130,13 +133,20 @@ impl ChartWidget {
     /// corner, so there is no paper showing beside it and no gap above it.
     /// A page is A4-ish and a panel rarely is, so one axis has room left
     /// over; nothing is cropped to take it.
+    ///
+    /// Before the downbeat (the count-in, or stopped at zero) that is the
+    /// first page; past the chart's end, the page it ended on stays up.
     fn fit_page(&mut self, w: f64, h: f64, scale: f64, chart_secs: Option<f64>) {
-        // Which page: the one the playhead is on, else the one showing.
-        let live_y = self.live.borrow().scroll_pt.1;
-        let at = chart_secs
-            .and_then(|secs| self.view.cursor_y_pt(secs))
-            .unwrap_or(live_y);
-        let Some((x, y, page_w, page_h)) = self.view.page_at_pt(at) else {
+        match chart_secs {
+            Some(secs) if secs < 0.0 => self.page = 1,
+            Some(secs) => {
+                if let Some(number) = self.view.page_number_at_time(secs) {
+                    self.page = number;
+                }
+            }
+            None => {}
+        }
+        let Some((x, y, page_w, page_h)) = self.view.page(self.page) else {
             return;
         };
         let per_pt = points_to_px(scale);
@@ -190,6 +200,7 @@ fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> 
         live: Rc::clone(&live),
         songstart: songstart_secs(&session.project),
         paged,
+        page: 1,
     };
     Some((widget, live))
 }
@@ -422,4 +433,34 @@ pub fn Chart(
 /// chart's own time zero. `None` when the session has no such marker.
 fn songstart_secs(project: &daw_ui::studio::project::Project) -> Option<f64> {
     project.markers.iter().find(|m| m.name == "SONGSTART").map(|m| m.at)
+}
+
+#[cfg(test)]
+mod tests {
+    use keyflow::engraver::renderer::ChartView;
+
+    /// A chart long enough for several pages: the page the playhead is on
+    /// moves with it. The pages sit side by side — every one at the same
+    /// `y` — which is why the page is found by the cursor's own number;
+    /// found by position, it was always the last.
+    #[test]
+    fn the_page_follows_the_playhead_across_pages() {
+        let chart = keyflow::parse("Song - Artist\n120bpm 4/4 #C\n\nvs 160\nC G Am F x40\n")
+            .expect("parses");
+        let mut view = ChartView::new().expect("the fonts load");
+        let mut scene = anyrender::Scene::new();
+        view.paint(&mut scene, &chart, 1, 800.0, 1.0, 1.0, (0.0, 0.0), None);
+        assert!(view.pages() > 1, "{} page(s): not long enough", view.pages());
+
+        assert_eq!(view.page_number_at_time(0.5), Some(1));
+        let last = view
+            .page_number_at_time(310.0)
+            .expect("310 s is inside 160 bars at 120");
+        assert!(last > 1, "the end of the chart is still on page {last}");
+
+        let (first_x, first_y, ..) = view.page(1).expect("page one");
+        let (last_x, last_y, ..) = view.page(last).expect("the last page");
+        assert!(last_x > first_x, "pages sit side by side");
+        assert!((last_y - first_y).abs() < f64::EPSILON);
+    }
 }
