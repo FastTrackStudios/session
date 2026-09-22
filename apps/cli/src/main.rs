@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
+mod multitracks;
 mod proxies;
 use session::SetlistServiceClient;
 
@@ -81,6 +82,19 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Turn folders of multitracks into sessions on the grid: the click
+    /// stem gives the tempo and where bar one is, every stem is trimmed to
+    /// it, and the guide's cues become regions and a chart to start from.
+    Import {
+        /// A song's folder, or one holding several.
+        folders: Vec<PathBuf>,
+        /// Where the sessions are written.
+        #[arg(long, default_value = "../sessions")]
+        out: PathBuf,
+        /// Write over a session that is already there.
+        #[arg(long)]
+        force: bool,
+    },
     /// Write an Ogg Vorbis copy of the FTS-GUIDE sample library — the
     /// same layout, each `.wav` a `.ogg` — for a browser to stream the
     /// click, the count and the cues from.
@@ -121,6 +135,7 @@ async fn run(command: Command) -> eyre::Result<()> {
             out,
             quality,
         } => proxies::guide_library(&library, &out, quality),
+        Command::Import { folders, out, force } => import(&folders, &out, force),
     }
 }
 
@@ -356,4 +371,40 @@ async fn status() -> eyre::Result<()> {
         Err(_) => println!("cursor: nowhere yet — `session seek <song>`"),
     }
     Ok(())
+}
+
+/// `session import`: each folder named, or each song folder inside one.
+fn import(folders: &[PathBuf], out: &Path, force: bool) -> eyre::Result<()> {
+    let mut songs: Vec<PathBuf> = Vec::new();
+    for folder in folders {
+        // A folder of folders (the downloads directory) imports each song
+        // in it; a folder with stems in it is one song.
+        let holds_stems = std::fs::read_dir(folder)?.flatten().any(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("wav"))
+        });
+        if holds_stems {
+            songs.push(folder.clone());
+        } else {
+            let mut inside: Vec<PathBuf> = std::fs::read_dir(folder)?
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect();
+            inside.sort();
+            songs.extend(inside);
+        }
+    }
+    let mut failed = Vec::new();
+    for song in &songs {
+        if let Err(e) = multitracks::import(song, out, force) {
+            failed.push(format!("{}: {e}", song.display()));
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(eyre::eyre!("{} did not import:\n{}", failed.len(), failed.join("\n")))
+    }
 }

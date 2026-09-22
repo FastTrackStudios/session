@@ -96,9 +96,18 @@ impl Links {
 /// it is open.
 #[cfg(feature = "native")]
 #[component]
-pub fn DawPanels() -> Element {
+pub fn DawPanels(
+    /// Open the mixer from the start — the Overview, where the two are one
+    /// docked pair rather than a panel `x` summons.
+    #[props(default)]
+    docked: bool,
+) -> Element {
     let session: StudioSession = use_context();
-    let links = use_context_provider(|| Links::new(session.rows.as_slice().to_vec()));
+    let links = use_context_provider(|| {
+        let mut links = Links::new(session.rows.as_slice().to_vec());
+        links.open = Signal::new(docked);
+        links
+    });
     let open = (links.open)();
     let arrange_bottom = if open { HEIGHT } else { 0.0 };
     let mixer_display = if open { "block" } else { "none" };
@@ -227,9 +236,19 @@ pub fn Mixer() -> Element {
 /// canvases.
 #[cfg(feature = "web")]
 #[component]
-pub fn WebDawPanels(engine: crate::web_engine::EngineRef) -> Element {
+pub fn WebDawPanels(
+    engine: crate::web_engine::EngineRef,
+    /// Open the mixer from the start — the Overview, where the two are one
+    /// docked pair rather than a panel `x` summons.
+    #[props(default)]
+    docked: bool,
+) -> Element {
     let session: StudioSession = use_context();
-    let links = use_context_provider(|| Links::new(session.rows.as_slice().to_vec()));
+    let links = use_context_provider(|| {
+        let mut links = Links::new(session.rows.as_slice().to_vec());
+        links.open = Signal::new(docked);
+        links
+    });
     let open = (links.open)();
     let arrange_bottom = if open { HEIGHT } else { 0.0 };
     // Hidden rather than removed: kept at its size, the mixer builds its

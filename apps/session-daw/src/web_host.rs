@@ -509,133 +509,69 @@ pub fn WebDemo(
     }
 }
 
-const BAR_H: f64 = 40.0;
-const BAR_BG: &str = "#17181b";
-const RULE: &str = "#2a2c31";
-const TEXT: &str = "#e5e7eb";
-const DIM: &str = "#8b9099";
-const ACCENT: &str = "#3aa0ff";
-
-/// The views the demo's top bar switches between (the desktop app's).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum View {
-    Performance,
-    Daw,
-}
-
-impl View {
-    const ALL: [Self; 2] = [Self::Performance, Self::Daw];
-
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Performance => "Performance",
-            Self::Daw => "DAW",
-        }
-    }
-}
-
-/// The opened demo: the desktop app's frame — a top bar with the views,
-/// the transport and the mode — over the view that is up.
+/// The opened demo: the app's frame — the views, the setlist, the
+/// transport and the mode — over whichever view is up.
 #[component]
 fn DemoView(engine: crate::web_engine::EngineRef, session: crate::studio::StudioSession) -> Element {
+    use crate::shell::{OverviewLayout, TopBar, View};
     use session::modes::Mode;
+
     use_context_provider(|| session.clone());
     // Audio starts on the page's first press or key: the only place a
     // browser allows it.
     use_hook(crate::web_audio::unlock_on_first_gesture);
-    let mut view = use_signal(|| View::Daw);
-    let mut mode = use_signal(|| Mode::Live);
+    let view = use_signal(|| View::Daw);
+    let mode = use_signal(|| Mode::Live);
     use_context_provider(|| mode);
-    let mut picking = use_signal(|| false);
-    let segment = |on: bool| {
-        let (bg, fg) = if on { (ACCENT, "#0b0c0e") } else { ("transparent", DIM) };
-        format!(
-            "height:24px; padding:0 12px; border:none; border-radius:5px; cursor:pointer; \
-             background:{bg}; color:{fg}; font-size:12px; font-weight:600;"
-        )
-    };
-    let option = |on: bool| {
-        let (bg, fg) = if on { ("#23262c", TEXT) } else { ("transparent", DIM) };
-        format!(
-            "padding:6px 10px; border-radius:5px; cursor:pointer; background:{bg}; \
-             color:{fg}; font-size:12px;"
-        )
-    };
+    let engine_for = engine.clone();
     rsx! {
         div {
             style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; \
-                    flex-direction:column; background:#0f1012; color:{TEXT}; \
+                    flex-direction:column; background:#0f1012; color:#e5e7eb; \
                     font-family:system-ui, sans-serif;",
-            div {
-                style: "position:relative; height:{BAR_H}px; flex:none; display:flex; \
-                        align-items:center; gap:8px; padding:0 10px 0 12px; \
-                        background:{BAR_BG}; border-bottom:1px solid {RULE};",
-                span {
-                    style: "font-size:13px; font-weight:600; color:{TEXT}; margin-right:8px;",
-                    "Session"
-                }
-                div {
-                    style: "display:flex; gap:2px; padding:2px; background:#0f1012; \
-                            border:1px solid {RULE}; border-radius:7px;",
-                    for each in View::ALL {
-                        button {
-                            style: segment(view() == each),
-                            onclick: move |_| view.set(each),
-                            "{each.name()}"
-                        }
-                    }
-                }
-                div { style: "flex:1;" }
-                crate::transport_bar::WebTransportBar {}
-                div {
-                    style: "position:relative;",
-                    button {
-                        style: "display:flex; align-items:center; gap:6px; height:26px; \
-                                padding:0 10px; border-radius:6px; border:1px solid {RULE}; \
-                                background:#0f1012; color:{TEXT}; font-size:12px; cursor:pointer;",
-                        onclick: move |_| picking.toggle(),
-                        span { style: "color:{DIM};", "Mode" }
-                        span { style: "font-weight:600;", "{mode().display_name()}" }
-                    }
-                    if picking() {
-                        div {
-                            style: "position:absolute; right:0; top:30px; z-index:10; \
-                                    min-width:160px; padding:4px; background:{BAR_BG}; \
-                                    border:1px solid {RULE}; border-radius:8px; \
-                                    box-shadow:0 8px 24px rgba(0,0,0,0.5);",
-                            for each in Mode::ALL {
-                                div {
-                                    style: option(mode() == each),
-                                    onclick: move |_| {
-                                        mode.set(each);
-                                        picking.set(false);
-                                    },
-                                    "{each.display_name()}"
-                                }
-                            }
-                        }
-                    }
-                }
+            TopBar {
+                view,
+                mode,
+                transport: rsx! { crate::transport_bar::WebTransportBar {} },
             }
             div {
                 style: "position:relative; flex:1; min-height:0;",
                 match view() {
-                    View::Daw => rsx! { crate::mixer_panel::WebDawPanels { engine } },
-                    View::Performance => rsx! {
-                        div {
-                            style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex; \
-                                    flex-direction:column; gap:16px; padding:16px;",
-                            crate::progress::ProgressBar {}
-                            div {
-                                style: "position:relative; flex:1; min-height:0; border-radius:8px; \
-                                        overflow:hidden; border:1px solid {RULE};",
-                                crate::chart_panel::WebChart {}
-                            }
-                            crate::progress::TransportButtons {}
+                    View::Setup => rsx! { crate::setup::SetupView {} },
+                    View::Performance => rsx! { WebPerformance {} },
+                    View::Daw => rsx! { crate::mixer_panel::WebDawPanels { engine: engine_for.clone() } },
+                    View::Overview => rsx! {
+                        OverviewLayout {
+                            progress: rsx! { crate::progress::ProgressBar {} },
+                            chart: rsx! { crate::chart_panel::WebChart {} },
+                            panels: rsx! {
+                                crate::mixer_panel::WebDawPanels {
+                                    engine: engine_for.clone(),
+                                    docked: true,
+                                }
+                            },
                         }
                     },
                 }
             }
+        }
+    }
+}
+
+/// The performance view: the progress, the chart, the transport buttons.
+#[component]
+fn WebPerformance() -> Element {
+    rsx! {
+        div {
+            style: "position:absolute; top:0; left:0; right:0; bottom:0; display:flex; \
+                    flex-direction:column; gap:16px; padding:16px;",
+            crate::progress::ProgressBar {}
+            div {
+                style: "position:relative; flex:1; min-height:0; border-radius:8px; \
+                        overflow:hidden; border:1px solid #2a2c31;",
+                crate::chart_panel::WebChart {}
+            }
+            crate::progress::TransportButtons {}
         }
     }
 }

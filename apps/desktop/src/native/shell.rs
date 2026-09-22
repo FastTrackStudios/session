@@ -19,45 +19,25 @@ use session::modes::Mode;
 /// `document::Style` goes through a window head (see `docs/app-on-blitz.md`).
 const TAILWIND: &str = include_str!("../../assets/tailwind-signal.css");
 
-/// How tall the top bar is — room for the traffic lights with air around.
-const BAR_H: f64 = 40.0;
-
 /// How much of the bar's left end the traffic lights take on macOS.
 #[cfg(target_os = "macos")]
 const LIGHTS_W: f64 = 78.0;
 #[cfg(not(target_os = "macos"))]
 const LIGHTS_W: f64 = 12.0;
 
-const BAR_BG: &str = "#17181b";
 const RULE: &str = "#2a2c31";
 const TEXT: &str = "#e5e7eb";
-const DIM: &str = "#8b9099";
-const ACCENT: &str = "#3aa0ff";
-
-/// The views the top bar switches between.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum View {
-    Performance,
-    Daw,
-}
-
-impl View {
-    const ALL: [Self; 2] = [Self::Performance, Self::Daw];
-
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Performance => "Performance",
-            Self::Daw => "DAW",
-        }
-    }
-}
 
 /// The whole window.
 #[component]
 pub fn Shell() -> Element {
-    // `FTS_SESSION_VIEW=performance` opens on the performance view.
+    use session_daw::shell::{OverviewLayout, TopBar, View};
+
+    // `FTS_SESSION_VIEW` opens on a view other than the DAW.
     let view = use_signal(|| match std::env::var("FTS_SESSION_VIEW").as_deref() {
         Ok("performance") => View::Performance,
+        Ok("overview") => View::Overview,
+        Ok("setup") => View::Setup,
         _ => View::Daw,
     });
     // Live for now: the docked mixer's compact strips are the Live ones.
@@ -65,17 +45,40 @@ pub fn Shell() -> Element {
     // The mode, for the panels that change with it (the mixer's strips
     // are live-mode strips in Live).
     use_context_provider(|| mode);
+    let window = dioxus_native::use_window();
+    let (dragging, zooming) = (window.clone(), window);
     rsx! {
         style { {TAILWIND} }
         div {
             style: "position:absolute; top:0; left:0; width:100vw; height:100vh; display:flex; flex-direction:column; \
                     background:#0f1012; color:{TEXT}; font-family:system-ui, sans-serif;",
-            TopBar { view, mode }
+            TopBar {
+                view,
+                mode,
+                lights: LIGHTS_W,
+                transport: rsx! { session_daw::transport_bar::TransportBar {} },
+                // Anywhere on the bar that is not a control drags the
+                // window; a double click zooms it.
+                on_drag: move |()| {
+                    if let Err(e) = dragging.drag_window() {
+                        tracing::debug!(error = %e, "window drag refused");
+                    }
+                },
+                on_zoom: move |()| zooming.set_maximized(!zooming.is_maximized()),
+            }
             div {
                 style: "position:relative; flex:1; min-height:0;",
                 match view() {
+                    View::Setup => rsx! { session_daw::setup::SetupView {} },
                     View::Daw => rsx! { DawView {} },
                     View::Performance => rsx! { PerformanceView {} },
+                    View::Overview => rsx! {
+                        OverviewLayout {
+                            progress: rsx! { session_daw::progress::ProgressBar {} },
+                            chart: rsx! { session_daw::chart_panel::Chart {} },
+                            panels: rsx! { session_daw::mixer_panel::DawPanels { docked: true } },
+                        }
+                    },
                 }
             }
         }
@@ -109,104 +112,4 @@ fn PerformanceView() -> Element {
             session_daw::progress::TransportButtons {}
         }
     }
-}
-
-/// The top bar: the lights' corner, the views, the mode, settings. Anywhere
-/// that is not a control drags the window; a double click zooms it.
-#[component]
-fn TopBar(view: Signal<View>, mode: Signal<Mode>) -> Element {
-    let window = dioxus_native::use_window();
-    let dragging = window.clone();
-    let zooming = window;
-    let mut picking = use_signal(|| false);
-    rsx! {
-        div {
-            style: "position:relative; height:{BAR_H}px; flex:none; display:flex; \
-                    align-items:center; gap:8px; padding-left:{LIGHTS_W}px; \
-                    padding-right:10px; background:{BAR_BG}; \
-                    border-bottom:1px solid {RULE};",
-            // The drag surface: the bar itself. Controls stop the press
-            // from reaching it.
-            onmousedown: move |_| {
-                if let Err(e) = dragging.drag_window() {
-                    tracing::debug!(error = %e, "window drag refused");
-                }
-            },
-            ondoubleclick: move |_| zooming.set_maximized(!zooming.is_maximized()),
-            span {
-                style: "font-size:13px; font-weight:600; color:{TEXT}; margin-right:8px;",
-                "Session"
-            }
-            // The views, as a segmented control.
-            div {
-                style: "display:flex; gap:2px; padding:2px; background:#0f1012; \
-                        border:1px solid {RULE}; border-radius:7px;",
-                for each in View::ALL {
-                    button {
-                        style: segment(view() == each),
-                        onmousedown: move |event| event.stop_propagation(),
-                        onclick: move |_| view.set(each),
-                        "{each.name()}"
-                    }
-                }
-            }
-            div { style: "flex:1;" }
-            // The transport, right-aligned with the mode and Settings —
-            // one cluster at the end of the bar, rather than the bar's own
-            // title/view switch. In the bar rather than along the foot of
-            // a view: one place for it whatever the view, and no bottom
-            // rail.
-            session_daw::transport_bar::TransportBar {}
-            // The mode, visible in every view.
-            div {
-                style: "position:relative;",
-                onmousedown: move |event| event.stop_propagation(),
-                button {
-                    style: "display:flex; align-items:center; gap:6px; height:26px; \
-                            padding:0 10px; border-radius:6px; border:1px solid {RULE}; \
-                            background:#0f1012; color:{TEXT}; font-size:12px;",
-                    onclick: move |_| picking.toggle(),
-                    span { style: "color:{DIM};", "Mode" }
-                    span { style: "font-weight:600;", "{mode().display_name()}" }
-                }
-                if picking() {
-                    div {
-                        style: "position:absolute; right:0; top:30px; z-index:10; \
-                                min-width:160px; padding:4px; background:{BAR_BG}; \
-                                border:1px solid {RULE}; border-radius:8px; \
-                                box-shadow:0 8px 24px rgba(0,0,0,0.5);",
-                        for each in Mode::ALL {
-                            div {
-                                style: option(mode() == each),
-                                onclick: move |_| {
-                                    mode.set(each);
-                                    picking.set(false);
-                                },
-                                "{each.display_name()}"
-                            }
-                        }
-                    }
-                }
-            }
-            button {
-                style: "height:26px; padding:0 10px; border-radius:6px; border:1px solid {RULE}; \
-                        background:#0f1012; color:{DIM}; font-size:12px;",
-                onmousedown: move |event| event.stop_propagation(),
-                "Settings"
-            }
-        }
-    }
-}
-
-fn segment(on: bool) -> String {
-    let (bg, fg) = if on { (ACCENT, "#0b0c0e") } else { ("transparent", DIM) };
-    format!(
-        "height:24px; padding:0 12px; border:none; border-radius:5px; \
-         background:{bg}; color:{fg}; font-size:12px; font-weight:600;"
-    )
-}
-
-fn option(on: bool) -> String {
-    let (bg, fg) = if on { ("#23262c", TEXT) } else { ("transparent", DIM) };
-    format!("padding:6px 10px; border-radius:5px; background:{bg}; color:{fg}; font-size:12px;")
 }

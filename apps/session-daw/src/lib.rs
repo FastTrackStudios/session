@@ -68,6 +68,9 @@ pub mod open {
 pub mod overlay;
 pub mod panel;
 pub mod progress;
+pub mod setlist;
+pub mod setup;
+pub mod shell;
 #[cfg(feature = "native")]
 pub mod patch_list;
 pub mod plan;

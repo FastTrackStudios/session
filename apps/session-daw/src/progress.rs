@@ -75,7 +75,7 @@ impl Song {
 /// The transport's reading, republished when the position moves a
 /// twentieth of a second or a flag changes — enough for a song-wide bar,
 /// where a frame's travel is under a pixel.
-fn use_reading() -> Signal<Reading> {
+pub(crate) fn use_reading() -> Signal<Reading> {
     let mut reading = use_signal(Reading::default);
     let mut publish = move || {
         let Some(now) = Transport::shared().map(Transport::reading) else {
