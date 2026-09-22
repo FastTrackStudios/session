@@ -158,9 +158,9 @@ impl Tcp {
     pub const FULL: Self = Self { compact: false };
     pub const COMPACT: Self = Self { compact: true };
 
-    /// The shape a window opens in: `FTS_TCP_COMPACT=1` for compact,
-    /// full otherwise. A stand-in for the settings store, as
-    /// [`crate::layout::Layout::from_env`] is.
+    /// The shape a screenshot opens in: `FTS_TCP_COMPACT=1` for compact,
+    /// full otherwise. The app does not read this — its views decide
+    /// (see `panel::use_arrangement_panel`).
     #[must_use]
     pub fn from_env() -> Self {
         let on = std::env::var("FTS_TCP_COMPACT")

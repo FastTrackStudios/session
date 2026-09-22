@@ -1028,6 +1028,7 @@ impl Editor {
             zoom_y,
             width: view.width,
             height: view.height,
+            panel_w: view.panel_w,
         })
     }
 
@@ -1063,6 +1064,7 @@ impl Editor {
             zoom_y: zoom,
             width: view.width,
             height: view.height,
+            panel_w: view.panel_w,
         })
     }
 
@@ -1774,6 +1776,7 @@ mod zoom_tests {
             zoom_y: 1.0,
             width: 2000.0,
             height: 1000.0,
+            panel_w: crate::arrangement::TCP_WIDTH,
         }
     }
     const LANES: LanesOrigin = (387.0, 103.0);
@@ -1983,6 +1986,7 @@ mod tests {
             Viewport {
                 scroll_x: 0.0,
                 scroll_y: 0.0,
+                panel_w: crate::arrangement::TCP_WIDTH,
                 pps: PPS,
                 zoom_y: 1.0,
                 width: 2000.0,

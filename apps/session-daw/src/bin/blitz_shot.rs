@@ -2114,6 +2114,7 @@ fn marks_of(project: &ProjectRef) -> Marks {
         zoom_y: 1.0,
         width: f64::MAX / 4.0,
         height: 0.0,
+        panel_w: session_daw::arrangement::TCP_WIDTH,
     };
     let bars = session_daw::ruler::Bars::at(project.bpm);
     let step = session_daw::ruler::step_beats(

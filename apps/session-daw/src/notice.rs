@@ -146,7 +146,7 @@ pub fn area(
     const INSET: f64 = 8.0;
     const WIDEST: f64 = 360.0;
 
-    let room = (view.width - crate::arrangement::TCP_WIDTH - INSET * 2.0).clamp(80.0, WIDEST);
+    let room = (view.width - view.panel_w - INSET * 2.0).clamp(80.0, WIDEST);
     let tall = height(font, notice.why, room);
     // The row's top in the same space the panel passes draw in —
     // `below` has already been folded into the transform, so this is
@@ -164,7 +164,7 @@ pub fn area(
     let first = view.scroll_y + INSET;
     let last = (view.scroll_y + view.height - crate::ruler::ruler_h() - tall - INSET).max(first);
     let top = (top + 2.0).clamp(first, last);
-    let x0 = crate::arrangement::TCP_WIDTH + INSET;
+    let x0 = view.panel_w + INSET;
     Rect::new(x0, top, x0 + room, top + tall)
 }
 

@@ -436,6 +436,12 @@ pub struct Viewport {
     pub zoom_y: f64,
     pub width: f64,
     pub height: f64,
+    /// Where the lanes start: the track panel's width, in whichever
+    /// shape it is in. The ONE number every pass that places something
+    /// against time reads — the lanes, the ruler, the cursors, the hit
+    /// test — so a narrower panel cannot move some of them and not
+    /// others.
+    pub panel_w: f64,
 }
 
 impl Viewport {
@@ -444,9 +450,7 @@ impl Viewport {
     #[must_use]
     pub fn secs(self) -> (f64, f64) {
         let pps = self.pps.max(1e-9);
-        // The widest panel, rather than whichever is up: this is a bleed,
-        // and reading a screen too far left costs nothing.
-        let left = (self.scroll_x - TCP_WIDTH) / pps;
+        let left = (self.scroll_x - self.panel_w) / pps;
         let right = (self.scroll_x + self.width) / pps;
         (left - 1.0, right + 1.0)
     }

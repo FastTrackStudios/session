@@ -2096,6 +2096,7 @@ impl App {
             zoom_y: self.zoom_y,
             width: frame.content_width(),
             height: frame.content_height(),
+            panel_w: session_daw::arrangement::TCP_WIDTH,
         }
     }
 

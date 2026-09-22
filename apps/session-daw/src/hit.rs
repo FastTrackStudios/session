@@ -123,9 +123,8 @@ pub fn arrangement(
     y: f64,
 ) -> Hit {
     let (rail_x, rail_y) = (crate::rails::SIDE, crate::rails::TOP);
-    // Where the lanes start: the panel's width in the shape it was
-    // recorded at, which is where the lanes were drawn.
-    let panel_w = scene.tcp.width();
+    // Where the lanes start — the view says, in the panel's shape.
+    let panel_w = view.panel_w;
 
     // The corner above the track panel, before the ruler — it is drawn
     // over it, so it is hit before it too.

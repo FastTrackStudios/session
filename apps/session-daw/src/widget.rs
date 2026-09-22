@@ -667,6 +667,7 @@ impl ArrangementWidget {
             zoom_y: at.zoom_y,
             width,
             height,
+            panel_w: self.scene.tcp.width(),
         }
     }
 
@@ -1630,7 +1631,6 @@ impl ArrangementWidget {
             &self.editor.cursor,
             view,
             (0.0, 0.0),
-            self.scene.tcp.width(),
             0.0,
             view.height,
         );

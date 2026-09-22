@@ -91,6 +91,7 @@ pub fn viewport(
         zoom_y,
         width,
         height,
+        panel_w: crate::arrangement::TCP_WIDTH,
     }
 }
 

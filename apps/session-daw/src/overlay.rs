@@ -1927,6 +1927,7 @@ mod panel_tests {
             zoom_y: 1.0,
             width: 1600.0,
             height: 900.0,
+            panel_w: crate::arrangement::TCP_WIDTH,
         };
         let mut out = anyrender::Scene::new();
         panel_controls(
@@ -1957,6 +1958,7 @@ mod panel_tests {
         ));
         let view = crate::arrangement::Viewport {
             scroll_x: 0.0,
+            panel_w: crate::arrangement::TCP_WIDTH,
             scroll_y: 0.0,
             pps: 1.0,
             zoom_y: 1.0,

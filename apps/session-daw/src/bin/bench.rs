@@ -329,6 +329,7 @@ fn main() {
                     zoom_y: zy,
                     width: f64::from(width),
                     height: f64::from(height),
+                    panel_w: TCP_WIDTH,
                 };
                 let mut drawn = Counts::default();
                 painted += renderer
@@ -1019,6 +1020,7 @@ fn verify(
                 zoom_y: zy,
                 width: f64::from(width),
                 height: f64::from(height),
+                panel_w: TCP_WIDTH,
             };
             let lanes = Affine::translate((TCP_WIDTH - scroll_x, -scroll_y))
                 * Affine::scale_non_uniform(PPS * zx, zy);
@@ -1170,6 +1172,7 @@ fn shot(
             zoom_y,
             width: frame.content_width(),
             height: frame.content_height(),
+            panel_w: TCP_WIDTH,
         },
     };
     let rail_x = session_daw::rails::SIDE;
@@ -1299,7 +1302,6 @@ fn shot(
                 &session_daw::cursor::Edit::default(),
                 view,
                 (rail_x, rail_y),
-                scene.tcp.width(),
                 rail_y,
                 rail_y + view.height,
             );

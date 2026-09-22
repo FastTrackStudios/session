@@ -48,6 +48,10 @@ type Queue = Rc<RefCell<Vec<Edit>>>;
 pub struct Links {
     /// Whether the mixer is showing.
     pub open: Signal<bool>,
+    /// Docked: the arrangement and the mixer are one pair in a view that
+    /// shares its window with more (the Overview), so the arrangement
+    /// opens with the compact track panel. The DAW view's is full.
+    pub docked: bool,
     /// Asked for by a widget's key (`x`), carried out by the arrangement
     /// panel once a frame, since a widget cannot set a signal.
     pub toggle: Rc<Cell<bool>>,
@@ -81,6 +85,7 @@ impl Links {
     fn new(rows: Rows) -> Self {
         Self {
             open: Signal::new(false),
+            docked: false,
             toggle: Rc::new(Cell::new(false)),
             rows: Rc::new(RefCell::new((0, rows))),
             from_mixer: Queue::default(),
@@ -106,6 +111,7 @@ pub fn DawPanels(
     let links = use_context_provider(|| {
         let mut links = Links::new(session.rows.as_slice().to_vec());
         links.open = Signal::new(docked);
+        links.docked = docked;
         links
     });
     let open = (links.open)();
@@ -247,6 +253,7 @@ pub fn WebDawPanels(
     let links = use_context_provider(|| {
         let mut links = Links::new(session.rows.as_slice().to_vec());
         links.open = Signal::new(docked);
+        links.docked = docked;
         links
     });
     let open = (links.open)();

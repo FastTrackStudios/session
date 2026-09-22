@@ -60,13 +60,14 @@ fn label(
     painter: &mut impl PaintScene,
     font: &Font,
     color: Color,
-    ox: f64,
+    // Where the lanes start: the label column is the LABEL_W before it.
+    left: f64,
     name: &str,
     baseline: f64,
     size: f32,
 ) {
     let (name, size) = font.fit(name, size, 5.0, LABEL_W - 4.0);
-    let x = ox + TCP_WIDTH - LABEL_W / 2.0 - font.width(&name, size) / 2.0;
+    let x = left - LABEL_W / 2.0 - font.width(&name, size) / 2.0;
     crate::tcp::glyphs(painter, font, color, &name, x, baseline, size);
 }
 
@@ -347,8 +348,8 @@ pub fn ruler(
             if t < from || t > to {
                 continue;
             }
-            let x = t.mul_add(view.pps, TCP_WIDTH - view.scroll_x);
-            if x < TCP_WIDTH - 1.0 || x > view.width {
+            let x = t.mul_add(view.pps, view.panel_w - view.scroll_x);
+            if x < view.panel_w - 1.0 || x > view.width {
                 continue;
             }
             fill(
@@ -475,7 +476,7 @@ pub fn lanes(
 ) {
     const SIZE: f32 = 8.0;
     let (ox, oy) = origin;
-    let left = ox + TCP_WIDTH;
+    let left = ox + view.panel_w;
     let right = ox + view.width;
     let x_of = |t: f64| t.mul_add(view.pps, left - view.scroll_x);
     for (row, name) in LANE_NAMES.iter().enumerate() {
@@ -484,9 +485,9 @@ pub fn lanes(
         fill(
             painter,
             palette.tcp_rule,
-            Rect::new(ox + TCP_WIDTH - LABEL_W, top + LANE_H - 1.0, right, top + LANE_H),
+            Rect::new(left - LABEL_W, top + LANE_H - 1.0, right, top + LANE_H),
         );
-        label(painter, font, palette.text_faint, ox, name, top + LANE_H - 4.0, SIZE);
+        label(painter, font, palette.text_faint, left, name, top + LANE_H - 4.0, SIZE);
     }
     // Regions: a band, clipped to the timeline, named where it starts
     // — or where the view starts, if the band began off screen, so a
@@ -593,15 +594,15 @@ pub fn chord_lane(
     let (ox, oy) = origin;
     // Under SECTIONS, over MARKS — see `row_top`.
     let top = oy + row_top(MARKS_ROW) - CHORD_H;
-    let left = ox + TCP_WIDTH;
+    let left = ox + view.panel_w;
     let right = ox + view.width;
     let x_of = |t: f64| t.mul_add(view.pps, left - view.scroll_x);
     fill(
         painter,
         palette.tcp_rule,
-        Rect::new(ox + TCP_WIDTH - LABEL_W, top + CHORD_H - 1.0, right, top + CHORD_H),
+        Rect::new(left - LABEL_W, top + CHORD_H - 1.0, right, top + CHORD_H),
     );
-    label(painter, font, palette.text_faint, ox, "CHORDS", top + CHORD_H - 4.0, 8.0);
+    label(painter, font, palette.text_faint, left, "CHORDS", top + CHORD_H - 4.0, 8.0);
     // Where each key tag ends, so a chord starting under one is written
     // after it rather than through it.
     let tags: Vec<(f64, f64, &str)> = chart
@@ -693,7 +694,7 @@ pub fn lane_lines(
     bottom: f64,
 ) {
     let (ox, oy) = origin;
-    let left = ox + TCP_WIDTH;
+    let left = ox + view.panel_w;
     let right = ox + view.width;
     let x_of = |t: f64| t.mul_add(view.pps, left - view.scroll_x);
     // Every line, with what decides between two on one pixel: the lane
@@ -828,8 +829,8 @@ fn line_every(
         if t > to {
             break;
         }
-        let x = t.mul_add(view.pps, TCP_WIDTH - view.scroll_x);
-        if x >= TCP_WIDTH {
+        let x = t.mul_add(view.pps, view.panel_w - view.scroll_x);
+        if x >= view.panel_w {
             painter.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
@@ -913,7 +914,7 @@ const EDGE_GRIP: f64 = 4.0;
 pub fn field(view: Viewport, origin: (f64, f64), row: usize, at: f64) -> Rect {
     const WIDTH: f64 = 140.0;
     let (ox, oy) = origin;
-    let left = ox + TCP_WIDTH;
+    let left = ox + view.panel_w;
     let right = ox + view.width;
     let top = oy + row_top(row);
     let x0 = at
@@ -1179,18 +1180,18 @@ pub fn tempo(
     const SIZE: f32 = 8.0;
     let (ox, oy) = origin;
     let top = oy + ruler_h() - BARS_H - TEMPO_H;
-    let left = ox + TCP_WIDTH;
+    let left = ox + view.panel_w;
     let right = ox + view.width;
     fill(
         painter,
         palette.tcp_rule,
-        Rect::new(ox + TCP_WIDTH - LABEL_W, top + TEMPO_H - 1.0, right, top + TEMPO_H),
+        Rect::new(left - LABEL_W, top + TEMPO_H - 1.0, right, top + TEMPO_H),
     );
     label(
         painter,
         font,
         palette.text_faint,
-        ox,
+        left,
         "TEMPO",
         top + TEMPO_H - 3.0,
         SIZE,
@@ -1277,6 +1278,7 @@ mod tests {
             zoom_y: 1.0,
             width: 1000.0,
             height: 600.0,
+            panel_w: crate::arrangement::TCP_WIDTH,
         }
     }
 

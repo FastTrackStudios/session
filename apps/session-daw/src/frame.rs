@@ -267,6 +267,7 @@ pub fn viewport(frame: Frame, scroll: (f64, f64), pps: f64, zoom_y: f64) -> View
         zoom_y,
         width: frame.content_width(),
         height: frame.content_height(),
+        panel_w: crate::arrangement::TCP_WIDTH,
     }
 }
 
@@ -375,8 +376,8 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
     let top = rail.1 + ruler_h();
     // The cursors last, over the lanes and under nothing: a
     // playhead behind an item is a playhead you cannot follow.
-    let panel_w = scene.tcp.width();
-    crate::cursor::paint_edit(painter, palette, &edit, view, rail, panel_w, top, bottom);
+    let panel_w = view.panel_w;
+    crate::cursor::paint_edit(painter, palette, &edit, view, rail, top, bottom);
     let x = play_at.mul_add(view.pps, rail.0 + panel_w - view.scroll_x);
     crate::cursor::paint(
         painter,

@@ -183,8 +183,11 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     let pointing = use_hook(|| crate::tool::Pointing::shared(cursor));
     let which = use_hook(crate::which_key::Shared::default);
     let zooms = use_hook(crate::zoom::Requests::default);
-    // The panel's shape, shared with the toolbar that toggles it.
-    let compact = use_hook(|| Rc::new(Cell::new(crate::tcp::Tcp::from_env().compact)));
+    // The panel's shape, shared with the toolbar that toggles it. The
+    // view decides where it starts: compact where the arrangement is
+    // docked beside more (the Overview), full in the DAW view.
+    let docked = mixer.as_ref().is_some_and(|links| links.docked);
+    let compact = use_hook(|| Rc::new(Cell::new(docked)));
     let shape = use_signal(|| compact.get());
     let history = use_hook(|| Rc::new(RefCell::new(crate::zoom::History::default())));
     let which_shown = use_signal(|| None::<crate::which_key::WhichKey>);
