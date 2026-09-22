@@ -89,18 +89,24 @@ struct ChartWidget {
     /// from the transport's read to get chart time. `None` with no such
     /// marker (an unprepared session, or one opened without a chart).
     songstart: Option<f64>,
+    /// One page at a time, filled to the panel and following the song
+    /// ([`Live::paged`]) — the Overview's chart, and any pane too small
+    /// to be read by scrolling.
+    paged: bool,
 }
 
 impl ChartWidget {
     /// The picture: what Blitz's `Widget::paint` returns, and what the web
     /// host draws into its canvas.
     pub fn paint_scene(&mut self, width: u32, height: u32, scale: f64) -> Scene {
-        let _ = height;
-        let w = f64::from(width);
+        let (w, h) = (f64::from(width), f64::from(height));
         let chart_secs = self
             .songstart
             .zip(crate::engine::Transport::shared())
             .map(|(songstart, t)| t.read().0 - songstart);
+        if self.paged {
+            self.fit_page(w, h, scale, chart_secs);
+        }
         let (zoom, scroll_pt) = {
             let live = self.live.borrow();
             (live.zoom, live.scroll_pt)
@@ -114,6 +120,33 @@ impl ChartWidget {
         live.content_pt = content_pt;
         live.px_per_pt = points_to_px(scale) * zoom;
         out
+    }
+
+    /// Put ONE page on the panel: the page the playhead is on, its corners
+    /// on the panel's corners.
+    ///
+    /// The zoom is whatever makes the page fit — by its width or its
+    /// height, whichever runs out first — and the scroll is the page's own
+    /// corner, so there is no paper showing beside it and no gap above it.
+    /// A page is A4-ish and a panel rarely is, so one axis has room left
+    /// over; nothing is cropped to take it.
+    fn fit_page(&mut self, w: f64, h: f64, scale: f64, chart_secs: Option<f64>) {
+        // Which page: the one the playhead is on, else the one showing.
+        let live_y = self.live.borrow().scroll_pt.1;
+        let at = chart_secs
+            .and_then(|secs| self.view.cursor_y_pt(secs))
+            .unwrap_or(live_y);
+        let Some((x, y, page_w, page_h)) = self.view.page_at_pt(at) else {
+            return;
+        };
+        let per_pt = points_to_px(scale);
+        if page_w <= 0.0 || page_h <= 0.0 || per_pt <= 0.0 {
+            return;
+        }
+        let zoom = (w / (page_w * per_pt)).min(h / (page_h * per_pt));
+        let mut live = self.live.borrow_mut();
+        live.zoom = zoom;
+        live.scroll_pt = (x, y);
     }
 }
 
@@ -134,7 +167,7 @@ impl Widget for ChartWidget {
 /// has none it says so rather than showing an empty page.
 /// The chart widget for the session's chart, and the view state its input
 /// drives. `None` without a chart (or with the fonts failing to build).
-fn build(session: &StudioSession) -> Option<(ChartWidget, Shared)> {
+fn build(session: &StudioSession, paged: bool) -> Option<(ChartWidget, Shared)> {
     let chart = session.chart.clone()?;
     let view = match ChartView::new() {
         Ok(view) => view,
@@ -156,6 +189,7 @@ fn build(session: &StudioSession) -> Option<(ChartWidget, Shared)> {
         view,
         live: Rc::clone(&live),
         songstart: songstart_secs(&session.project),
+        paged,
     };
     Some((widget, live))
 }
@@ -200,11 +234,15 @@ fn NoChart() -> Element {
 /// zooms, a middle-drag pans.
 #[cfg(feature = "web")]
 #[component]
-pub fn WebChart() -> Element {
+pub fn WebChart(
+    /// One page at a time, filled to the panel and following the song.
+    #[props(default)]
+    paged: bool,
+) -> Element {
     use crate::panel::{Button, PanelEvent};
     let session: StudioSession = use_context();
     let built = use_hook(|| {
-        build(&session).map(|(widget, live)| {
+        build(&session, paged).map(|(widget, live)| {
             (
                 crate::web_host::HostedRef(Rc::new(RefCell::new(widget))),
                 live,
@@ -259,10 +297,14 @@ impl crate::web_host::Hosted for ChartWidget {
 
 #[cfg(feature = "native")]
 #[component]
-pub fn Chart() -> Element {
+pub fn Chart(
+    /// One page at a time, filled to the panel and following the song.
+    #[props(default)]
+    paged: bool,
+) -> Element {
     let session: StudioSession = use_context();
     let built = use_hook(|| {
-        build(&session)
+        build(&session, paged)
             .map(|(widget, live)| (dioxus_native_dom::CustomWidgetAttr::new(widget), live))
     });
     let Some((widget, live)) = built else {

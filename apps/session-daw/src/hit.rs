@@ -123,6 +123,9 @@ pub fn arrangement(
     y: f64,
 ) -> Hit {
     let (rail_x, rail_y) = (crate::rails::SIDE, crate::rails::TOP);
+    // Where the lanes start: the panel's width in the shape it was
+    // recorded at, which is where the lanes were drawn.
+    let panel_w = scene.tcp.width();
 
     // The corner above the track panel, before the ruler — it is drawn
     // over it, so it is hit before it too.
@@ -144,12 +147,12 @@ pub fn arrangement(
     if y >= rail_y && y < rail_y + crate::ruler::ruler_h() {
         return Hit::new(
             Target::Ruler {
-                seconds: seconds_at(x - rail_x, view),
+                seconds: seconds_at(x - rail_x, panel_w, view),
                 on: crate::ruler::on(
                     x,
                     y,
                     rail_y,
-                    rail_x + crate::arrangement::TCP_WIDTH,
+                    rail_x + panel_w,
                     view.pps,
                     view.scroll_x,
                     sections,
@@ -168,16 +171,16 @@ pub fn arrangement(
         return Hit::empty();
     };
     let content_y = screen_y / if view.zoom_y > 0.0 { view.zoom_y } else { 1.0 };
-    if x < rail_x + crate::arrangement::TCP_WIDTH {
+    if x < rail_x + panel_w {
         return Hit::new(Target::Track { row }, Context::TrackControlPanel);
     }
-    let seconds = seconds_at(x - rail_x, view);
+    let seconds = seconds_at(x - rail_x, panel_w, view);
     // An item under the pointer narrows the empty arrange area to one
     // of the item contexts: its body, an edge, a fade's handle.
     if let Some((index, zone)) = scene.item_at(
         view,
         row,
-        x - rail_x - crate::arrangement::TCP_WIDTH,
+        x - rail_x - panel_w,
         content_y,
     ) {
         use crate::arrangement::ItemZone as Z;
@@ -213,11 +216,11 @@ pub fn mixer(mixer: &crate::mcp::Mixer, scroll_x: f64, x: f64, y: f64) -> Hit {
 }
 
 /// The time at a horizontal position in the content.
-fn seconds_at(content_x: f64, view: crate::arrangement::Viewport) -> f64 {
+fn seconds_at(content_x: f64, panel_w: f64, view: crate::arrangement::Viewport) -> f64 {
     if view.pps <= 0.0 {
         return 0.0;
     }
-    ((content_x - crate::arrangement::TCP_WIDTH + view.scroll_x) / view.pps).max(0.0)
+    ((content_x - panel_w + view.scroll_x) / view.pps).max(0.0)
 }
 
 const fn contains(rect: vello::kurbo::Rect, x: f64, y: f64) -> bool {

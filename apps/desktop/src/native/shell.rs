@@ -75,7 +75,7 @@ pub fn Shell() -> Element {
                     View::Overview => rsx! {
                         OverviewLayout {
                             progress: rsx! { session_daw::progress::ProgressBar {} },
-                            chart: rsx! { session_daw::chart_panel::Chart {} },
+                            chart: rsx! { session_daw::chart_panel::Chart { paged: true } },
                             panels: rsx! { session_daw::mixer_panel::DawPanels { docked: true } },
                         }
                     },

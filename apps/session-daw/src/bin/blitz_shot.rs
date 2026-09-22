@@ -233,6 +233,7 @@ fn main() {
                 play_at: 0.0,
             }));
         WIDGET_VIEW.with(|slot| *slot.borrow_mut() = Some(std::rc::Rc::clone(&shared)));
+        let tcp = session_daw::tcp::Tcp::from_env();
         let recorded = session_daw::arrangement::Arrangement::build(
             &session_daw::arrangement::Palette::from_theme(&theme),
             &session_daw::text::Font::embedded().expect("the embedded font"),
@@ -240,6 +241,7 @@ fn main() {
             &rows,
             layout,
             &previews,
+            tcp,
         );
         let bpm = recorded.bpm;
         let built = session_daw::widget::ArrangementWidget::new(
@@ -256,7 +258,8 @@ fn main() {
             previews.clone(),
             shared,
             readout,
-        );
+        )
+        .with_compact(std::rc::Rc::new(std::cell::Cell::new(tcp.compact)));
         // What the widget wants done to the session. It queues an
         // `Edit`; the window owns the connection that can carry one
         // out. See `session_daw::widget::ArrangementWidget::act`.

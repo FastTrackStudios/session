@@ -14,7 +14,7 @@
 use daw_theme_art::geometry::tcp as g;
 use vello::kurbo::Rect;
 
-use crate::tcp::{BUTTON, BUTTON_GAP, Density, INDENT, KNOB_LEGIBLE, MAX_INDENT};
+use crate::tcp::{BUTTON, BUTTON_GAP, Density, KNOB_LEGIBLE, Tcp};
 
 /// A control on a track panel row.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -59,6 +59,8 @@ pub struct Row {
     pub height: f64,
     pub indent: f64,
     pub density: Density,
+    /// The panel this row is in — full, or compact.
+    pub tcp: Tcp,
     /// The row's control band — where the name, knobs and arm sit.
     field_top: f64,
     field_h: f64,
@@ -68,8 +70,8 @@ pub struct Row {
 impl Row {
     /// Resolve a row.
     #[must_use]
-    pub fn new(y: f64, height: f64, depth: i32, is_folder: bool) -> Self {
-        let indent = (f64::from(depth.max(0)) * INDENT).min(MAX_INDENT);
+    pub fn new(y: f64, height: f64, depth: i32, is_folder: bool, tcp: Tcp) -> Self {
+        let indent = (f64::from(depth.max(0)) * tcp.indent()).min(tcp.max_indent());
         let density = Density::at(height);
         // The control band, as `draw_row` lays it out (`tcp::band`).
         let (field_top, field_h) = crate::tcp::band(y, height, density);
@@ -79,6 +81,7 @@ impl Row {
             height,
             indent,
             density,
+            tcp,
             field_top,
             field_h,
             band: field_h,
@@ -119,9 +122,12 @@ impl Row {
             // coloured. Nothing to hit.
             return None;
         }
+        if !self.tcp.shows(control) {
+            return None;
+        }
         let rail = f64::from(g::COLUMN_RULE_X);
-        let field_x = f64::from(g::NAME_FIELD_X) + self.indent;
-        let volume_x = f64::from(g::NAME_FIELD_X) + f64::from(g::NAME_FIELD_W);
+        let field_x = self.tcp.name_field().0 + self.indent;
+        let volume_x = self.tcp.volume_x();
         match control {
             Control::Folder => Some(Rect::new(
                 self.indent,
@@ -135,7 +141,7 @@ impl Row {
             // are what a row is scanned for — and the routing and FX
             // that share the band at full height are the ones that go.
             Control::Mute | Control::Solo => {
-                let x = f64::from(g::TINT_W)
+                let x = self.tcp.tint_w()
                     + 2.0
                     + if control == Control::Mute {
                         0.0
@@ -192,7 +198,7 @@ impl Row {
             // Hidden on rows too short for it, by the theme's own
             // formula — the row's shape must not depend on its height.
             Control::Phase => (self.height >= f64::from(g::PHASE_HIDE_H)).then(|| {
-                let x = f64::from(g::TINT_W) + f64::from(g::GUTTER_BUTTON_X) + 3.0;
+                let x = self.tcp.tint_w() + f64::from(g::GUTTER_BUTTON_X) + 3.0;
                 let y = self.y + self.height - f64::from(g::PHASE_FROM_FLOOR);
                 Some(Rect::new(
                     x,
@@ -214,7 +220,7 @@ impl Row {
                 ))
             })?,
             Control::Name => {
-                let x = 58.0 + self.indent;
+                let x = self.tcp.name_x() + self.indent;
                 Some(Rect::new(
                     x,
                     self.field_top,
@@ -253,9 +259,10 @@ impl Row {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tcp::Tcp;
 
     fn tall() -> Row {
-        Row::new(100.0, 70.0, 0, false)
+        Row::new(100.0, 70.0, 0, false, Tcp::FULL)
     }
 
     /// What is drawn is what is hit, for every control the row shows.
@@ -290,13 +297,13 @@ mod tests {
     /// same place from its top.
     #[test]
     fn the_name_and_its_buttons_keep_their_size_at_every_height() {
-        let name_at = |h: f64| Row::new(100.0, h, 1, false).rect(Control::Name).unwrap();
+        let name_at = |h: f64| Row::new(100.0, h, 1, false, Tcp::FULL).rect(Control::Name).unwrap();
         let reference = name_at(70.0);
         for h in [40.0, 57.0, 58.0, 70.0, 120.0, 300.0] {
             let name = name_at(h);
             assert!((name.height() - reference.height()).abs() < 1e-9, "{h}: {name:?}");
             assert!((name.y0 - reference.y0).abs() < 1e-9, "{h}: {name:?}");
-            let row = Row::new(100.0, h, 1, false);
+            let row = Row::new(100.0, h, 1, false, Tcp::FULL);
             let mute = row.rect(Control::Mute).unwrap();
             let solo = row.rect(Control::Solo).unwrap();
             let middle = |r: Rect| (r.y0 + r.y1) / 2.0;
@@ -305,13 +312,13 @@ mod tests {
         }
         // A row too short for the whole band shrinks it, and keeps it
         // inside the row.
-        let short = Row::new(100.0, 20.0, 0, false).rect(Control::Name).unwrap();
+        let short = Row::new(100.0, 20.0, 0, false, Tcp::FULL).rect(Control::Name).unwrap();
         assert!(short.y0 >= 101.0 && short.y1 <= 119.0, "{short:?}");
     }
 
     #[test]
     fn a_short_row_swaps_knobs_for_bars_and_drops_the_arm() {
-        let short = Row::new(0.0, 16.0, 0, false);
+        let short = Row::new(0.0, 16.0, 0, false, Tcp::FULL);
         assert_eq!(short.indicator(), Indicator::Bar);
         assert!(short.rect(Control::RecArm).is_none());
         // The value indicators are still there — they are what a
@@ -324,12 +331,12 @@ mod tests {
     /// the same width at every height, so a compact row has the space.
     #[test]
     fn a_compact_row_keeps_routing_and_fx() {
-        let compact = Row::new(0.0, 40.0, 0, false);
+        let compact = Row::new(0.0, 40.0, 0, false, Tcp::FULL);
         assert_eq!(compact.density, Density::Compact);
         assert!(compact.rect(Control::Routing).is_some());
         assert!(compact.rect(Control::Fx).is_some());
         // Too short for a button that size: they go, as the arm does.
-        let short = Row::new(0.0, 16.0, 0, false);
+        let short = Row::new(0.0, 16.0, 0, false, Tcp::FULL);
         assert!(short.rect(Control::Routing).is_none());
         assert!(short.rect(Control::Fx).is_none());
     }
@@ -337,7 +344,7 @@ mod tests {
     /// A row drawn as a band has nothing to hit at all.
     #[test]
     fn a_band_has_no_controls() {
-        let band = Row::new(0.0, 4.0, 0, false);
+        let band = Row::new(0.0, 4.0, 0, false, Tcp::FULL);
         assert_eq!(band.density, Density::Bar);
         for control in [
             Control::Mute,
@@ -355,8 +362,8 @@ mod tests {
     /// offsets from the panel's right, not from the row's content.
     #[test]
     fn indent_moves_the_name_but_not_the_knobs() {
-        let flat = Row::new(0.0, 70.0, 0, false);
-        let deep = Row::new(0.0, 70.0, 3, false);
+        let flat = Row::new(0.0, 70.0, 0, false, Tcp::FULL);
+        let deep = Row::new(0.0, 70.0, 3, false, Tcp::FULL);
         assert!(
             deep.rect(Control::Name).unwrap().x0 > flat.rect(Control::Name).unwrap().x0,
             "the name should move with the indent"

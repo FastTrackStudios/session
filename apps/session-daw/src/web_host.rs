@@ -543,7 +543,7 @@ fn DemoView(engine: crate::web_engine::EngineRef, session: crate::studio::Studio
                     View::Overview => rsx! {
                         OverviewLayout {
                             progress: rsx! { crate::progress::ProgressBar {} },
-                            chart: rsx! { crate::chart_panel::WebChart {} },
+                            chart: rsx! { crate::chart_panel::WebChart { paged: true } },
                             panels: rsx! {
                                 crate::mixer_panel::WebDawPanels {
                                     engine: engine_for.clone(),

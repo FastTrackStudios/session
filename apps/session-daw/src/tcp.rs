@@ -135,6 +135,113 @@ impl Density {
     }
 }
 
+/// The panel's shape: how wide it is, what it shows, and how far it
+/// indents.
+///
+/// Two of them. **Full** is the measured REAPER panel — the name with the
+/// record arm on it, volume, pan, routing, the FX pill. **Compact** keeps
+/// what a row is scanned for while a session is being arranged (its
+/// colour, its name, its mute and solo, its level) and drops what is set
+/// once and then left alone: the record arm, pan, routing, FX. It is a
+/// little over half the width, and the width it gives up goes to the
+/// arrangement, which is the thing being looked at.
+///
+/// A value rather than a constant because both panels are drawn from the
+/// same code: the recorded row, the live controls over it, and the hit
+/// test all read this, so they cannot disagree about where anything is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Tcp {
+    pub compact: bool,
+}
+
+impl Tcp {
+    pub const FULL: Self = Self { compact: false };
+    pub const COMPACT: Self = Self { compact: true };
+
+    /// The shape a window opens in: `FTS_TCP_COMPACT=1` for compact,
+    /// full otherwise. A stand-in for the settings store, as
+    /// [`crate::layout::Layout::from_env`] is.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let on = std::env::var("FTS_TCP_COMPACT")
+            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        Self { compact: on }
+    }
+
+    /// The panel's width.
+    #[must_use]
+    pub fn width(self) -> f64 {
+        if self.compact {
+            // The gutter's buttons, after the name and its level.
+            self.tint_w() + f64::from(g::GUTTER_W)
+        } else {
+            f64::from(g::ROW_W)
+        }
+    }
+
+    /// Where the gutter starts — the tinted part's width.
+    #[must_use]
+    pub fn tint_w(self) -> f64 {
+        if self.compact {
+            self.volume_x() + 18.0
+        } else {
+            f64::from(g::TINT_W)
+        }
+    }
+
+    /// The name field: where it starts, and how wide.
+    #[must_use]
+    pub fn name_field(self) -> (f64, f64) {
+        let x = f64::from(g::NAME_FIELD_X);
+        let w = if self.compact { 84.0 } else { f64::from(g::NAME_FIELD_W) };
+        (x, w)
+    }
+
+    /// Where the name's own text starts: after the record arm where there
+    /// is one, a hair inside the field where there is not.
+    #[must_use]
+    pub fn name_x(self) -> f64 {
+        let (x, _) = self.name_field();
+        if self.compact { x + 8.0 } else { 58.0 }
+    }
+
+    /// The volume knob's centre — the field's right end, either way.
+    #[must_use]
+    pub fn volume_x(self) -> f64 {
+        let (x, w) = self.name_field();
+        x + w
+    }
+
+    /// Whether this panel shows a control at all.
+    #[must_use]
+    pub fn shows(self, control: crate::row::Control) -> bool {
+        use crate::row::Control;
+        !self.compact
+            || !matches!(
+                control,
+                Control::Pan | Control::Routing | Control::Fx | Control::RecArm
+            )
+    }
+
+    /// How far a folder's children are indented per level, and at most.
+    #[must_use]
+    pub fn indent(self) -> f64 {
+        if self.compact { 6.0 } else { INDENT }
+    }
+
+    #[must_use]
+    pub fn max_indent(self) -> f64 {
+        if self.compact { 24.0 } else { MAX_INDENT }
+    }
+
+    /// The name's type size for a field of `height`.
+    #[must_use]
+    pub fn name_size(self, height: f64) -> f32 {
+        let size = name_size(height);
+        if self.compact { size - 1.0 } else { size }
+    }
+}
+
 /// How far a folder's children are indented per level.
 ///
 /// REAPER indents the row's CONTENT, not the row, so the tint still
@@ -182,8 +289,9 @@ pub fn draw_row(
     y: f64,
     h: f64,
     ancestors: &[Color],
+    tcp: Tcp,
 ) {
-    let indent = (f64::from(depth.max(0)) * INDENT).min(MAX_INDENT);
+    let indent = (f64::from(depth.max(0)) * tcp.indent()).min(tcp.max_indent());
     let tint = row_tint(palette, track);
     let density = Density::at(h);
     let rail = f64::from(g::COLUMN_RULE_X);
@@ -193,11 +301,11 @@ pub fn draw_row(
     // The tint runs the full width and the meter section is painted over
     // its right end, which is how REAPER's `meterRight` reads: one row,
     // with a gutter at the end of it, not two panels side by side.
-    rect(scene, tint, 0.0, y, f64::from(g::ROW_W), y + h);
+    rect(scene, tint, 0.0, y, tcp.width(), y + h);
     rect(
         scene,
         palette.tcp_gutter,
-        f64::from(g::TINT_W),
+        tcp.tint_w(),
         y,
         f64::from(g::ROW_W),
         y + h,
@@ -285,9 +393,9 @@ pub fn draw_row(
     rect(
         scene,
         palette.tcp_rule,
-        f64::from(g::ROW_W) - 2.0,
+        tcp.width() - 2.0,
         y,
-        f64::from(g::ROW_W) - 1.0,
+        tcp.width() - 1.0,
         y + h,
     );
 
@@ -341,14 +449,14 @@ pub fn draw_row(
     match density {
         Density::Full => {
             let (band_top, band_h) = band(y, h, density);
-            row_one(scene, palette, font, track, indent, band_top, band_h);
+            row_one(scene, palette, font, track, indent, band_top, band_h, tcp);
             row_two(scene, palette, font, track, y);
         }
         // The same band as a full row, never taller: a taller row is a
         // taller lane beside the same controls, not a stretched name.
         Density::Compact => {
             let (band_top, band_h) = band(y, h, density);
-            row_one(scene, palette, font, track, indent, band_top, band_h);
+            row_one(scene, palette, font, track, indent, band_top, band_h, tcp);
         }
         Density::Bar => {}
     }
@@ -397,6 +505,7 @@ fn row_one(
     indent: f64,
     y: f64,
     band: f64,
+    tcp: Tcp,
 ) {
     /// The height row one is authored at — the name field's.
     const AUTHORED: f64 = 24.0;
@@ -409,8 +518,9 @@ fn row_one(
     let field_h = band;
     let control_top = y + (band - AUTHORED) / 2.0;
     let field_top = y;
-    let field_x = f64::from(g::NAME_FIELD_X) + indent;
-    let field_w = (f64::from(g::NAME_FIELD_W) - indent).max(0.0);
+    let (field_x, field_w) = tcp.name_field();
+    let field_x = field_x + indent;
+    let field_w = (field_w - indent).max(0.0);
     scene_fill(
         scene,
         palette.tcp_field,
@@ -436,14 +546,14 @@ fn row_one(
     // wrapped or shrunk — REAPER truncates here too. The type shrinks
     // with the row rather than being squashed with it: a flattened glyph
     // is unreadable where a smaller one is merely small.
-    let name_x = 58.0 + indent;
-    let name_w = (f64::from(g::NAME_FIELD_X) + f64::from(g::NAME_FIELD_W) - 58.0 - indent).max(0.0);
+    let name_x = tcp.name_x() + indent;
+    let name_w = (tcp.volume_x() - tcp.name_x() - indent).max(0.0);
     let ink = if track.selected {
         palette.text
     } else {
         palette.text_dim
     };
-    let size = name_size(field_h);
+    let size = tcp.name_size(field_h);
     glyphs(
         scene,
         font,

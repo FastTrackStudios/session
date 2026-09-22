@@ -2121,6 +2121,7 @@ mod tests {
             &RowsRef(std::sync::Arc::new(rows.to_vec())),
             crate::layout::Layout::default(),
             &crate::midi::Previews::default(),
+            crate::tcp::Tcp::FULL,
         )
     }
 

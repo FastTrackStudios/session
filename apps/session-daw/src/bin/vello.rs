@@ -1391,7 +1391,7 @@ impl App {
         let index = scene.row_at(content_y)?;
         let (top, height) = scene.row_box(index)?;
         let (track, depth) = self.rows_at(index)?;
-        let row = session_daw::row::Row::new(top, height, depth, track.is_folder);
+        let row = session_daw::row::Row::new(top, height, depth, track.is_folder, scene.tcp);
         let control = row.control_at(panel_x, content_y)?;
         Some((index, control))
     }
@@ -3976,6 +3976,7 @@ impl App {
             &planned,
             self.layout,
             &self.midi,
+            session_daw::tcp::Tcp::FULL,
         ));
         self.arrange_rows = planned;
         // The mixer is recorded lazily against the window's height, so
@@ -4518,6 +4519,7 @@ fn build_scene(
             &planned,
             layout,
             &session_daw::midi::Previews::default(),
+            session_daw::tcp::Tcp::FULL,
         ),
         project,
         rows,

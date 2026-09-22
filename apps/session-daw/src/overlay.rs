@@ -1495,7 +1495,7 @@ pub fn row_meters(
         let Some((top, height)) = scene.row_band(index, view) else {
             continue;
         };
-        let row = Row::new(top, height, i32::try_from(*depth).unwrap_or(0), track.is_folder);
+        let row = Row::new(top, height, i32::try_from(*depth).unwrap_or(0), track.is_folder, scene.tcp);
         let Some(field) = row.rect(Control::Name) else {
             continue;
         };
@@ -1679,6 +1679,7 @@ fn control_row(
         height,
         i32::try_from(*depth).unwrap_or(0),
         track.is_folder,
+        scene.tcp,
     );
     if row.density == crate::tcp::Density::Bar {
         return;
@@ -1906,6 +1907,7 @@ mod panel_tests {
             &rows,
             crate::layout::Layout::default(),
             &crate::midi::Previews::default(),
+            crate::tcp::Tcp::FULL,
         );
         (scene, palette, font, tracks, rows)
     }

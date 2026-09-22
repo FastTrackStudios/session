@@ -19,7 +19,6 @@ use std::rc::Rc;
 
 use dioxus::prelude::*;
 
-use crate::arrangement::TCP_WIDTH;
 use crate::studio::{PPS, StudioSession};
 
 /// The scrollbar's thickness.
@@ -139,6 +138,11 @@ pub struct ArrangementPanel {
     input: Rc<RefCell<Input>>,
     engine: Engine,
     mixer: Option<crate::mixer_panel::Links>,
+    /// The panel's shape, toggled by the toolbar and read by the widget.
+    pub compact: Rc<Cell<bool>>,
+    /// The same, as a signal: what re-renders the chrome over the panel
+    /// (the toolbar's width, the scrollbar's left end) when it changes.
+    pub shape: Signal<bool>,
     /// The panel's outer node (measured) and the widget's (focused).
     pub mounted: Rc<RefCell<Option<Rc<MountedData>>>>,
     pub focus_node: Rc<RefCell<Option<Rc<MountedData>>>>,
@@ -179,6 +183,9 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
     let pointing = use_hook(|| crate::tool::Pointing::shared(cursor));
     let which = use_hook(crate::which_key::Shared::default);
     let zooms = use_hook(crate::zoom::Requests::default);
+    // The panel's shape, shared with the toolbar that toggles it.
+    let compact = use_hook(|| Rc::new(Cell::new(crate::tcp::Tcp::from_env().compact)));
+    let shape = use_signal(|| compact.get());
     let history = use_hook(|| Rc::new(RefCell::new(crate::zoom::History::default())));
     let which_shown = use_signal(|| None::<crate::which_key::WhichKey>);
     let focus_node = use_hook(|| {
@@ -196,6 +203,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         let palette = crate::arrangement::Palette::from_theme(&theme);
         let font = crate::text::Font::embedded().expect("the embedded font");
         let layout = crate::layout::Layout::from_env();
+        let tcp = crate::tcp::Tcp { compact: compact.get() };
         let scene = crate::arrangement::Arrangement::build(
             &palette,
             &font,
@@ -203,6 +211,7 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
             &session.rows,
             layout,
             &session.previews,
+            tcp,
         );
         let bpm = scene.bpm;
         let view: crate::widget::Shared = Rc::new(RefCell::new(crate::widget::View {
@@ -227,7 +236,8 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         )
         .with_pointing(Rc::clone(&pointing))
         .with_view_links(Rc::clone(&which), Rc::clone(&zooms))
-        .with_planner(session.planner.clone(), Rc::clone(&content_h));
+        .with_planner(session.planner.clone(), Rc::clone(&content_h))
+        .with_compact(Rc::clone(&compact));
         let built = match &mixer {
             Some(links) => built.with_mixer(crate::widget::MixerLinks {
                 toggle: Rc::clone(&links.toggle),
@@ -274,6 +284,8 @@ pub fn use_arrangement_panel<H: Clone + 'static>(
         input,
         engine,
         mixer,
+        compact,
+        shape,
         mounted,
         focus_node,
         measured,
@@ -288,7 +300,7 @@ impl ArrangementPanel {
     #[must_use]
     pub fn frame(&self, r: (f64, f64, f64, f64)) -> (f64, f64) {
         (
-            (r.2 - TCP_WIDTH - BAR).max(1.0),
+            (r.2 - self.tcp().width() - BAR).max(1.0),
             (r.3 - crate::ruler::ruler_h() - BAR).max(1.0),
         )
     }
@@ -341,7 +353,7 @@ impl ArrangementPanel {
         let (mut zoom, mut scroll, mut down) = (self.zoom, self.scroll, self.down);
         let (was_x, was_y) = *zoom.peek();
         let (fw, fh) = self.frame(r);
-        let ax = (about.0 - r.0 - TCP_WIDTH).clamp(0.0, fw);
+        let ax = (about.0 - r.0 - self.tcp().width()).clamp(0.0, fw);
         let ay = (about.1 - r.1 - crate::ruler::ruler_h()).clamp(0.0, fh);
         let (ex, ey) = self.extent(r, to.0, to.1);
         let across = zoom_about(ax, *scroll.peek(), was_x, to.0);
@@ -582,6 +594,12 @@ impl ArrangementPanel {
         }
     }
 
+    /// The track panel's shape, as the widget is drawing it.
+    #[must_use]
+    pub fn tcp(&self) -> crate::tcp::Tcp {
+        crate::tcp::Tcp { compact: self.compact.get() }
+    }
+
     /// The toolbar's edits: the same queue the widget's go on.
     #[must_use]
     pub fn edits(&self) -> crate::studio::Edits {
@@ -601,13 +619,19 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
     let ruler = crate::ruler::ruler_h();
     let (mut scroll, mut down) = (panel.scroll, panel.down);
     let (click, click_muted) = panel.click.clone();
+    // Read as a signal so a toggle re-renders what is sized to the panel.
+    let tcp_w = crate::tcp::Tcp { compact: (panel.shape)() }.width();
     rsx! {
         // The main toolbar, in the corner left of the ruler's lane names.
         crate::toolbar::MainToolbar {
             click,
             click_muted,
             edits: panel.edits(),
-            width: TCP_WIDTH - crate::ruler::LABEL_W,
+            // The toolbar sits over the panel, so it is as wide as
+            // whichever shape the panel is in.
+            width: tcp_w - crate::ruler::LABEL_W,
+            compact: Rc::clone(&panel.compact),
+            shape: panel.shape,
         }
         crate::which_key::Panel { showing: (panel.which_shown)(), colors: colors.clone() }
         crate::studio::ScrollBar {
@@ -615,7 +639,7 @@ pub fn PanelChrome(panel: ArrangementPanel) -> Element {
             at: scroll(),
             travel: travel.0,
             window: fw,
-            left: TCP_WIDTH,
+            left: tcp_w,
             top: (r.3 - BAR).max(0.0),
             length: fw,
             colors: colors.clone(),

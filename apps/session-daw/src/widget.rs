@@ -60,7 +60,7 @@ use blitz_traits::events::{Modifiers, MouseEventButton, UiEvent};
 
 use vello::kurbo::Affine;
 
-use crate::arrangement::{Arrangement, Palette, TCP_WIDTH, Viewport};
+use crate::arrangement::{Arrangement, Palette, Viewport};
 use crate::mousemap::Gesture;
 use crate::profile::Counts;
 use crate::ruler::{self, Bars};
@@ -229,6 +229,10 @@ pub struct ArrangementWidget {
     /// whether any was lit last frame, so a falling meter keeps redrawing.
     meters: Option<crate::engine::Meters>,
     meters_lit: Cell<bool>,
+    /// Whether the panel is in its compact shape — shared with the
+    /// toolbar that toggles it, read each paint (a change re-cuts the
+    /// recorded panel, which is drawn to the shape).
+    compact: Rc<Cell<bool>>,
     /// Whether the editor took the last press and has not been let go
     /// of yet.
     ///
@@ -387,6 +391,7 @@ impl ArrangementWidget {
             trail: crate::cursor::Trail::default(),
             meters: crate::engine::Meters::start(),
             meters_lit: Cell::new(false),
+            compact: Rc::new(Cell::new(false)),
             sections: project.sections.clone(),
             markers: project.markers.clone(),
             project,
@@ -402,6 +407,13 @@ impl ArrangementWidget {
             stats: readout.then(crate::fps::Stats::new),
             spent: Passes::default(),
         }
+    }
+
+    /// Share the panel's shape with whoever toggles it.
+    #[must_use]
+    pub fn with_compact(mut self, compact: Rc<Cell<bool>>) -> Self {
+        self.compact = compact;
+        self
     }
 
     /// Share the panel's tool state and window, so a tool can take the
@@ -761,7 +773,7 @@ impl ArrangementWidget {
 
     /// The time under an x in the widget's coordinates.
     fn seconds_at(&self, x: f64, view: Viewport) -> f64 {
-        ((x - TCP_WIDTH + view.scroll_x) / view.pps.max(f64::EPSILON)).max(0.0)
+        ((x - self.scene.tcp.width() + view.scroll_x) / view.pps.max(f64::EPSILON)).max(0.0)
     }
 
     /// A key that is not going into a text field: what it is bound to,
@@ -910,6 +922,7 @@ impl ArrangementWidget {
             &rows,
             self.layout,
             &self.previews,
+            crate::tcp::Tcp { compact: self.compact.get() },
         );
         self.scene.lettering = lettering;
         self.sections = self.project.sections.clone();
@@ -1107,6 +1120,9 @@ impl Widget for ArrangementWidget {
             // picture every frame with nothing else moving.
             || self.trail.alive(web_time::Instant::now())
             || self.meters_lit.get()
+            // The toolbar changed the panel's shape: nothing else will
+            // ask for the frame that re-cuts it.
+            || self.scene.tcp.compact != self.compact.get()
     }
 
     fn handle_event(&mut self, event: &UiEvent) {
@@ -1352,6 +1368,11 @@ impl ArrangementWidget {
 
     fn draw(&mut self, width: u32, height: u32, _scale: f64) -> Scene {
         self.echoes();
+        // The panel's shape, if the toolbar has changed it: the rows are
+        // RECORDED to it, so this re-cuts rather than re-scales.
+        if self.scene.tcp.compact != self.compact.get() {
+            self.recut();
+        }
         let began = web_time::Instant::now();
         let at_now = *self.view.borrow();
         let view = self.viewport(f64::from(width), f64::from(height));
@@ -1397,7 +1418,7 @@ impl ArrangementWidget {
         let lanes = self.scene.replay_lanes(
             &mut out,
             view,
-            Affine::translate((TCP_WIDTH - view.scroll_x, below))
+            Affine::translate((self.scene.tcp.width() - view.scroll_x, below))
                 * Affine::scale_non_uniform(view.pps, view.zoom_y),
         );
         spent.lanes = since(&mut mark);
@@ -1411,7 +1432,7 @@ impl ArrangementWidget {
             &self.palette,
             &self.scene,
             view,
-            (TCP_WIDTH - view.scroll_x, below),
+            (self.scene.tcp.width() - view.scroll_x, below),
             self.editor.slip_in_flight(),
         );
         crate::arrangement::titles(
@@ -1420,13 +1441,13 @@ impl ArrangementWidget {
             &self.font,
             &self.scene,
             view,
-            (TCP_WIDTH - view.scroll_x, below),
+            (self.scene.tcp.width() - view.scroll_x, below),
         );
         // What the editor has in flight, over the recorded items: the
         // fade handles on the item under the pointer and a fade being
         // dragged, then the selection's outlines and the ghost of an
         // item being moved or trimmed.
-        let lanes_at = (TCP_WIDTH - view.scroll_x, below);
+        let lanes_at = (self.scene.tcp.width() - view.scroll_x, below);
         crate::arrangement::fade_overlay(
             &mut out,
             &self.palette,
@@ -1609,6 +1630,7 @@ impl ArrangementWidget {
             &self.editor.cursor,
             view,
             (0.0, 0.0),
+            self.scene.tcp.width(),
             0.0,
             view.height,
         );
@@ -1623,10 +1645,10 @@ impl ArrangementWidget {
                 let look = crate::cursor::Look::default();
                 look.trailing(self.trail.length(now, view.pps, look.trail))
             },
-            at_now.play_at.mul_add(view.pps, TCP_WIDTH - view.scroll_x),
+            at_now.play_at.mul_add(view.pps, self.scene.tcp.width() - view.scroll_x),
             0.0,
             view.height,
-            TCP_WIDTH,
+            self.scene.tcp.width(),
         );
         // An open rename, over the name it replaces. Last of the panel
         // passes, because it is a field ON one and has to cover it.
@@ -1639,6 +1661,7 @@ impl ArrangementWidget {
                 height,
                 i32::try_from(*depth).unwrap_or(0),
                 track.is_folder,
+                self.scene.tcp,
             );
             if let Some(field) = shape.rect(crate::row::Control::Name) {
                 crate::rename::paint(&mut out, &self.palette, &self.font, rename, field, at);
@@ -1743,7 +1766,7 @@ fn ms(micros: u128) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArrangementWidget, Shared, TCP_WIDTH, View};
+    use super::{ArrangementWidget, Shared, View};
     use crate::engine::Edit;
     use crate::row::Control as C;
     use blitz_dom::node::Widget as _;
@@ -1775,6 +1798,7 @@ mod tests {
             &refs,
             layout,
             &crate::midi::Previews::default(),
+            crate::tcp::Tcp::FULL,
         );
         let view: Shared = std::rc::Rc::new(std::cell::RefCell::new(View {
             scroll_x: 0.0,
@@ -1811,6 +1835,7 @@ mod tests {
             height,
             i32::try_from(*depth).unwrap_or(0),
             track.is_folder,
+            widget.scene.tcp,
         );
         let r = shape.rect(control).expect("a control with somewhere to be");
         (
@@ -1936,7 +1961,7 @@ mod tests {
         assert_eq!(widget.pointing.borrow().over, Over::Button);
 
         // The empty lanes, with Ctrl held: a drag there is a razor.
-        let mut lane = pointer(TCP_WIDTH + 400.0, y);
+        let mut lane = pointer(widget.scene.tcp.width() + 400.0, y);
         lane.mods = blitz_traits::events::Modifiers::CONTROL;
         widget.handle_event(&UiEvent::PointerMove(lane));
         assert!(
@@ -2228,10 +2253,37 @@ mod tests {
         );
     }
 
+    /// The lanes start where the panel ends, in either shape: a point
+    /// just past the compact panel is lane, not track, and reads the
+    /// same time a point the same distance past the full one does.
+    #[test]
+    fn the_lanes_start_where_the_compact_panel_ends() {
+        use crate::hit::Target;
+        let mut widget = widget();
+        let (_, y) = at(&widget, 0, C::Name);
+        let lane_at = |widget: &ArrangementWidget, past: f64| {
+            match widget.hit(widget.scene.tcp.width() + past, y).expect("a hit").target {
+                Target::Lane { row, seconds } => (row, seconds),
+                other => panic!("{past} px past the panel is {other:?}"),
+            }
+        };
+        let full = lane_at(&widget, 50.0);
+
+        widget.compact.set(true);
+        widget.recut();
+        assert!(widget.scene.tcp.compact, "the toggle re-cuts the panel");
+        assert!(widget.scene.tcp.width() < crate::arrangement::TCP_WIDTH);
+        let compact = lane_at(&widget, 50.0);
+        assert_eq!(full.0, compact.0);
+        assert!((full.1 - compact.1).abs() < 1e-9, "{full:?} vs {compact:?}");
+        // The width the panel gave up is lane now, not panel.
+        let _ = lane_at(&widget, 1.0);
+    }
+
     #[test]
     fn a_click_outside_the_panel_asks_for_nothing() {
         let mut widget = widget();
-        let past = crate::arrangement::TCP_WIDTH + 200.0;
+        let past = widget.scene.tcp.width() + 200.0;
         widget.handle_event(&UiEvent::PointerDown(pointer(past, 300.0)));
         widget.handle_event(&UiEvent::PointerUp(pointer(past, 300.0)));
         assert!(widget.edits.borrow().is_empty());

@@ -22,6 +22,7 @@ const HOVER_RULE: &str = "#3a3f47";
 /// Which toggle a button is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Toggle {
+    Compact,
     Metronome,
     AutoCrossfade,
     Grouping,
@@ -34,7 +35,7 @@ enum Toggle {
 impl Toggle {
     const ROWS: [&'static [Self]; 2] = [
         &[Self::Metronome, Self::AutoCrossfade, Self::Grouping, Self::Ripple],
-        &[Self::Grid, Self::Snap, Self::Lock],
+        &[Self::Grid, Self::Snap, Self::Lock, Self::Compact],
     ];
 
     const fn title(self) -> &'static str {
@@ -46,12 +47,14 @@ impl Toggle {
             Self::Grid => "Grid lines",
             Self::Snap => "Snapping",
             Self::Lock => "Locking",
+            Self::Compact => "Compact track panel — more room for the arrangement",
         }
     }
 
     const fn option(self) -> Option<&'static options::Option> {
         match self {
-            Self::Metronome => None,
+            // Both of these are the window's, not the session's.
+            Self::Compact | Self::Metronome => None,
             Self::AutoCrossfade => Some(&options::AUTO_CROSSFADE),
             Self::Grouping => Some(&options::GROUPING),
             Self::Ripple => Some(&options::RIPPLE),
@@ -91,6 +94,14 @@ impl Toggle {
             ],
             // A padlock.
             Self::Lock => &["M6 11 H18 V20 H6 Z", "M8.5 11 V8 A3.5 3.5 0 0 1 15.5 8 V11"],
+            // A panel squeezed from the right: its edge, and an arrow
+            // pushing into it.
+            Self::Compact => &[
+                "M4 4 V20",
+                "M20 4 V20",
+                "M9 12 H16",
+                "M12.5 8.5 L9 12 L12.5 15.5",
+            ],
         }
     }
 }
@@ -103,6 +114,10 @@ pub fn MainToolbar(
     click_muted: bool,
     edits: crate::studio::Edits,
     width: f64,
+    /// The panel's shape, shared with the arrangement widget.
+    compact: std::rc::Rc<std::cell::Cell<bool>>,
+    /// The same, as the signal the chrome over the panel re-renders on.
+    shape: Signal<bool>,
 ) -> Element {
     // Each option's state as last set here; the options themselves are the
     // truth, this is what re-renders the button.
@@ -116,6 +131,7 @@ pub fn MainToolbar(
     let mut metronome = use_signal(|| !click_muted);
     let is_on = move |t: Toggle| match t {
         Toggle::Metronome => metronome(),
+        Toggle::Compact => shape(),
         other => shown.read().iter().any(|(each, on)| *each == other && *on),
     };
     rsx! {
@@ -133,12 +149,19 @@ pub fn MainToolbar(
                             onclick: {
                                 let edits = edits.clone();
                                 let click = click.clone();
+                                let compact = std::rc::Rc::clone(&compact);
                                 move |_| match toggle {
                                     Toggle::Metronome => {
                                         if let Some(guid) = click.clone() {
                                             edits.0.borrow_mut().push(crate::engine::Edit::ToggleMute(guid));
                                             metronome.toggle();
                                         }
+                                    }
+                                    Toggle::Compact => {
+                                        let now = !compact.get();
+                                        compact.set(now);
+                                        let mut shape = shape;
+                                        shape.set(now);
                                     }
                                     other => {
                                         if let Some(option) = other.option() {

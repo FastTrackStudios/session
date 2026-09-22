@@ -339,6 +339,8 @@ pub fn paint_edit(
     edit: &Edit,
     view: crate::arrangement::Viewport,
     origin: (f64, f64),
+    // The track panel's width — the lanes start after it.
+    panel_w: f64,
     top: f64,
     bottom: f64,
 ) {
@@ -349,7 +351,7 @@ pub fn paint_edit(
     // The lanes' left edge. Nothing here draws past it: scrolled right,
     // the cursor and the selection are off the left of the lanes, and
     // without the clamp they painted over the track panel instead.
-    let left = ox + crate::arrangement::TCP_WIDTH;
+    let left = ox + panel_w;
     let at = |seconds: f64| seconds.mul_add(view.pps, left - view.scroll_x);
 
     // The selection first, as a wash — it is a region, and a region

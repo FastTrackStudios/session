@@ -170,6 +170,9 @@ impl Palette {
 
 /// Everything drawn, recorded in content space.
 pub struct Arrangement {
+    /// The panel's shape — full, or compact. What it was RECORDED at:
+    /// changing it re-cuts the panel, because the rows are drawn to it.
+    pub tcp: crate::tcp::Tcp,
     /// The lanes and their items, at x = seconds * 1.0. The zoom is
     /// applied by the replay transform, so this is recorded at one
     /// pixel per second and scaled at draw time.
@@ -372,7 +375,7 @@ impl Arrangement {
         x: f64,
         y: f64,
     ) -> Option<(usize, crate::row::Control)> {
-        if x < 0.0 || x >= TCP_WIDTH {
+        if x < 0.0 || x >= self.tcp.width() {
             return None;
         }
         let index = self.row_at_screen(y, view)?;
@@ -383,6 +386,7 @@ impl Arrangement {
             height,
             i32::try_from(*depth).unwrap_or(0),
             track.is_folder,
+            self.tcp,
         );
         // In the band's own frame, which is what `Row` measures from.
         Some((index, row.control_at(x, y)?))
@@ -440,6 +444,8 @@ impl Viewport {
     #[must_use]
     pub fn secs(self) -> (f64, f64) {
         let pps = self.pps.max(1e-9);
+        // The widest panel, rather than whichever is up: this is a bleed,
+        // and reading a screen too far left costs nothing.
         let left = (self.scroll_x - TCP_WIDTH) / pps;
         let right = (self.scroll_x + self.width) / pps;
         (left - 1.0, right + 1.0)
@@ -466,6 +472,7 @@ fn record_panel(
     rows: &[(daw_proto::Track, u32)],
     layout: crate::layout::Layout,
     zoom: f64,
+    tcp: crate::tcp::Tcp,
 ) -> Panels {
     let mut panel = Scene::new();
     let mut bar = Scene::new();
@@ -493,13 +500,14 @@ fn record_panel(
             y,
             body,
             &ancestors,
+            tcp,
         );
         panel.fill(
             Fill::NonZero,
             Affine::IDENTITY,
             palette.divider,
             None,
-            &Rect::new(0.0, y + body, TCP_WIDTH, y + h),
+            &Rect::new(0.0, y + body, tcp.width(), y + h),
         );
 
         // The same row as a band, for when it is too short on screen to
@@ -509,14 +517,14 @@ fn record_panel(
             Affine::IDENTITY,
             crate::tcp::row_tint(palette, track),
             None,
-            &Rect::new(0.0, y, TCP_WIDTH, y + body),
+            &Rect::new(0.0, y, tcp.width(), y + body),
         );
         bar.fill(
             Fill::NonZero,
             Affine::IDENTITY,
             palette.divider,
             None,
-            &Rect::new(0.0, y + body, TCP_WIDTH, y + h),
+            &Rect::new(0.0, y + body, tcp.width(), y + h),
         );
 
         spans.push(from..command_index(&panel));
@@ -551,6 +559,7 @@ impl Arrangement {
         rows: &RowsRef,
         layout: crate::layout::Layout,
         previews: &crate::midi::Previews,
+        tcp: crate::tcp::Tcp,
     ) -> Self {
         let mut lanes = Scene::new();
         let mut index = Index::default();
@@ -706,11 +715,12 @@ impl Arrangement {
 
         // The panel, cut at zoom 1 to start with. `repanel` re-cuts it
         // whenever the vertical zoom moves.
-        let cut = record_panel(palette, font, rows.as_slice(), layout, 1.0);
+        let cut = record_panel(palette, font, rows.as_slice(), layout, 1.0, tcp);
         index.panel = cut.spans;
         index.panel_bar = cut.bar_spans;
 
         Self {
+            tcp,
             lanes,
             panel: cut.panel,
             panel_bar: cut.bar,
@@ -1836,7 +1846,7 @@ impl Arrangement {
         if (zoom - self.panel_zoom).abs() < f64::EPSILON {
             return false;
         }
-        let cut = record_panel(palette, font, rows, layout, zoom);
+        let cut = record_panel(palette, font, rows, layout, zoom, self.tcp);
         self.panel = cut.panel;
         self.panel_bar = cut.bar;
         self.index.panel = cut.spans;

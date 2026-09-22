@@ -18,7 +18,7 @@ use anyrender::PaintScene;
 use vello::kurbo::{Affine, Rect};
 use vello::peniko::Fill;
 
-use crate::arrangement::{Arrangement, Fades, Palette, TCP_WIDTH, Viewport};
+use crate::arrangement::{Arrangement, Fades, Palette, Viewport};
 use crate::expression::Expression;
 use crate::profile::Counts;
 use crate::rails::{self, Frame};
@@ -135,7 +135,7 @@ impl Arrange<'_> {
         // The lanes: scrolled both ways, and scaled horizontally by the
         // zoom. Recorded at one pixel per second, so the scale IS the
         // zoom — no rebuild, no re-record.
-        let lanes_at = (rail.0 + TCP_WIDTH - sx, rail.1 + ruler_h() - sy);
+        let lanes_at = (rail.0 + scene.tcp.width() - sx, rail.1 + ruler_h() - sy);
         let a = scene.replay_lanes(
             painter,
             view,
@@ -316,7 +316,7 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
             .get(open.row)
             .map_or(0, |(_, d)| i32::try_from(*d).unwrap_or(0));
         let is_folder = rows.get(open.row).is_some_and(|(t, _)| t.is_folder);
-        let row = crate::row::Row::new(top, height, depth, is_folder);
+        let row = crate::row::Row::new(top, height, depth, is_folder, scene.tcp);
         if let Some(field) = row.rect(crate::row::Control::Name) {
             crate::rename::paint(painter, palette, font, open, field, panel_at);
         }
@@ -375,15 +375,16 @@ fn chrome(painter: &mut impl PaintScene, parts: Chrome<'_>, panel_at: Affine) {
     let top = rail.1 + ruler_h();
     // The cursors last, over the lanes and under nothing: a
     // playhead behind an item is a playhead you cannot follow.
-    crate::cursor::paint_edit(painter, palette, &edit, view, rail, top, bottom);
-    let x = play_at.mul_add(view.pps, rail.0 + TCP_WIDTH - view.scroll_x);
+    let panel_w = scene.tcp.width();
+    crate::cursor::paint_edit(painter, palette, &edit, view, rail, panel_w, top, bottom);
+    let x = play_at.mul_add(view.pps, rail.0 + panel_w - view.scroll_x);
     crate::cursor::paint(
         painter,
         crate::cursor::Look::default(),
         x,
         top,
         bottom,
-        rail.0 + TCP_WIDTH,
+        rail.0 + panel_w,
     );
     // The zoom tool's sweep: the box that will fill the lanes on
     // release.

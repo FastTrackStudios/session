@@ -1299,6 +1299,7 @@ fn shot(
                 &session_daw::cursor::Edit::default(),
                 view,
                 (rail_x, rail_y),
+                scene.tcp.width(),
                 rail_y,
                 rail_y + view.height,
             );
@@ -1438,7 +1439,8 @@ fn build_scene(palette: &Palette, layout: session_daw::layout::Layout) -> Option
         &rows,
         layout,
         &previews,
-    ))
+            session_daw::tcp::Tcp::FULL,
+        ))
 }
 
 /// The mixer window as the stress tests drive it: the recorded chrome,
