@@ -79,6 +79,8 @@ const SHAKER: &str = "Shaker";
 /// `Guide/` a session opens with at the top. (The CLICK + GUIDE BUS is
 /// its bus: routing, fed by sends, not where the tracks live.)
 const CLICK_GUIDE_FOLDER: &str = "Guide";
+/// Where a new Guide folder's fader starts, in dB.
+const GUIDE_FOLDER_DB: f64 = -6.0;
 
 /// Serves [`session_proto::guide::GuideActions`] against a DAW backend.
 pub struct Guide<D> {
@@ -87,6 +89,30 @@ pub struct Guide<D> {
     /// `fts.guide` on daw-standalone (the native guide engine), the FTS
     /// Guide plugin on a host that loads it. `None` writes the notes only.
     instrument: Option<String>,
+}
+
+/// How long every stamped click, count and cue note is: a sixteenth,
+/// in quarter notes. The instruments are one-shot triggers, so the
+/// length is only what the MIDI SHOWS — short enough that the space
+/// between two clicks is plain to see, long enough to see the note.
+const TRIGGER_QN: f64 = 0.25;
+
+/// A guide note as the DAW takes it: at `start_qn`, a sixteenth long —
+/// or half the way to `next`, the next note on its track, if that is
+/// closer, so a sixteenth-note click still shows its gaps.
+fn note_create(note: &GuideMidiNote, start_qn: f64, next: Option<f64>) -> MidiNoteCreate {
+    let room = next.map_or(TRIGGER_QN, |next| ((next - start_qn) / 2.0).max(0.0));
+    let length_qn = TRIGGER_QN.min(room);
+    MidiNoteCreate {
+        channel: 0,
+        pitch: note.pitch,
+        velocity: note.velocity,
+        // `start_ppq` is a project quarter-note position; the REAPER
+        // backend converts it with MIDI_GetPPQPosFromProjQN on the way in.
+        start_ppq: start_qn,
+        // The length is a raw tick delta at REAPER's 960 a quarter.
+        length_ppq: (length_qn * 960.0).max(1.0),
+    }
 }
 
 impl<D> Guide<D> {
@@ -221,7 +247,24 @@ impl<D: GuideDaw> Guide<D> {
             Tracks::add(&self.daw, project.clone(), SHAKER, None)?;
         }
         self.file_into_click_guide_folder(&project)?;
-        self.order_click_guide_folder(&project)
+        self.order_click_guide_folder(&project)?;
+        self.guide_folder_headroom(&project)
+    }
+
+    /// The Guide folder at [`GUIDE_FOLDER_DB`], for headroom: the click,
+    /// count and cues are all summed there. Only while it is still at
+    /// unity, so a level someone has set is never written over.
+    fn guide_folder_headroom(&self, project: &ProjectContext) -> DawResult<()> {
+        let Some(folder) = Tracks::all(&self.daw, project.clone()).into_iter().find(|t| {
+            t.folder_depth > 0 && t.name.trim().eq_ignore_ascii_case(CLICK_GUIDE_FOLDER)
+        }) else {
+            return Ok(());
+        };
+        if (folder.volume - 1.0).abs() > 1e-6 {
+            return Ok(());
+        }
+        let gain = 10f64.powf(GUIDE_FOLDER_DB / 20.0);
+        Tracks::set_volume(&self.daw, project.clone(), TrackRef::Guid(folder.guid), gain)
     }
 
     /// A plain (non-folder) track with exactly this name.
@@ -442,36 +485,30 @@ impl<D: GuideDaw> Guide<D> {
                         role.name()
                     ))
                 })?;
+            let starts: Vec<f64> = for_role
+                .iter()
+                .map(|note| self.qn(project, note.time_seconds))
+                .collect();
             let creates: Vec<MidiNoteCreate> = for_role
                 .iter()
-                .map(|note| self.note_create(project, note))
+                .zip(&starts)
+                .enumerate()
+                .map(|(i, (note, &start_qn))| {
+                    let next = starts.get(i.saturating_add(1)).copied();
+                    note_create(note, start_qn, next)
+                })
                 .collect();
             self.daw.add_notes(location, creates);
         }
         Ok(())
     }
 
-    fn note_create(&self, project: &ProjectContext, note: &GuideMidiNote) -> MidiNoteCreate {
-        let qn = |seconds: f64| {
-            self.daw
-                .time_to_quarter_notes(project.clone(), PositionInSeconds::from_seconds(seconds))
-                .quarter_notes
-                .as_quarter_notes()
-        };
-        let start_qn = qn(note.time_seconds);
-        let end_qn = qn(note.time_seconds + note.length_seconds);
-        MidiNoteCreate {
-            channel: 0,
-            pitch: note.pitch,
-            velocity: note.velocity,
-            // `start_ppq` is re-read as a project quarter-note position by
-            // the REAPER backend (see `daw_reaper::midi`), which converts
-            // it with MIDI_GetPPQPosFromProjQN on the way in.
-            start_ppq: start_qn,
-            // Length, though, is a raw PPQ delta. 960 ticks per quarter is
-            // REAPER's default MIDI resolution.
-            length_ppq: ((end_qn - start_qn) * 960.0).max(1.0),
-        }
+    /// A time as a project quarter-note position.
+    fn qn(&self, project: &ProjectContext, seconds: f64) -> f64 {
+        self.daw
+            .time_to_quarter_notes(project.clone(), PositionInSeconds::from_seconds(seconds))
+            .quarter_notes
+            .as_quarter_notes()
     }
 
     /// The song's extent. Falls back to the project's own bounds when the
@@ -618,4 +655,30 @@ where
     B: architect::action::ActionBackend + ?Sized,
 {
     session_proto::guide::register_guide_actions(backend, std::sync::Arc::new(Guide::new(daw)));
+}
+
+#[cfg(test)]
+mod note_length_tests {
+    use super::note_create;
+    use session_guide::midi::GuideMidiNote;
+
+    fn note() -> GuideMidiNote {
+        GuideMidiNote {
+            role: session_proto::GuideTrackRole::Click,
+            time_seconds: 0.0,
+            length_seconds: 0.1,
+            pitch: 60,
+            velocity: 96,
+        }
+    }
+
+    /// A sixteenth, whatever the note said — and at most half the way to
+    /// the next, so notes a sixteenth apart still have a gap between.
+    #[test]
+    fn a_sixteenth_or_half_the_gap() {
+        assert_eq!(note_create(&note(), 4.0, None).length_ppq, 240.0);
+        assert_eq!(note_create(&note(), 4.0, Some(4.5)).length_ppq, 240.0);
+        assert_eq!(note_create(&note(), 4.0, Some(4.25)).length_ppq, 120.0);
+        assert_eq!(note_create(&note(), 4.0, Some(4.5)).start_ppq, 4.0);
+    }
 }
