@@ -75,7 +75,7 @@ daw-synchronization = { workspace = true, optional = true }
 reaper-high = { workspace = true, optional = true }
 reaper-low = { workspace = true, optional = true }
 reaper-medium = { workspace = true, optional = true }
-dynamic-template.workspace = true
+dynamic-template = { workspace = true, features = ["reaper"] }
 vox = { workspace = true, features = ["transport-local"] }
 
 # Wasm-only: the browser setlist pump drives its single-threaded reactive loop

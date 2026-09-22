@@ -35,7 +35,9 @@ pub mod dawfile;
 pub mod live;
 mod organize;
 
-pub use live::{DawTarget, ReaperTarget};
+pub use live::DawTarget;
+#[cfg(feature = "reaper")]
+pub use live::ReaperTarget;
 pub use organize::{organize, Organized};
 
 /// A project a session template can be materialized into.

@@ -131,40 +131,29 @@ impl<D> Guide<D> {
     }
 }
 
-/// The backend capabilities guide generation needs.
-pub trait GuideDaw:
-    Projects
-    + Tracks
-    + Items
-    + Takes
-    + Effects
-    + Markers
-    + Regions
-    + TempoMap
-    + PositionConversion
-    + Midi
-    + Send
-    + Sync
-    + 'static
-{
-}
+/// Everything guide generation calls, besides the thread bounds.
+macro_rules! guide_daw_bounds {
+    ($($extra:tt)*) => {
+        /// The backend capabilities guide generation needs. `Send + Sync`
+        /// natively (the RPC service shares it); a browser has one thread,
+        /// and its in-process engine is neither.
+        pub trait GuideDaw:
+            Projects + Tracks + Items + Takes + Effects + Markers + Regions + TempoMap
+            + PositionConversion + Midi $($extra)* + 'static
+        {
+        }
 
-impl<T> GuideDaw for T where
-    T: Projects
-        + Tracks
-        + Items
-        + Takes
-        + Effects
-        + Markers
-        + Regions
-        + TempoMap
-        + PositionConversion
-        + Midi
-        + Send
-        + Sync
-        + 'static
-{
+        impl<T> GuideDaw for T where
+            T: Projects + Tracks + Items + Takes + Effects + Markers + Regions + TempoMap
+                + PositionConversion + Midi $($extra)* + 'static
+        {
+        }
+    };
 }
+#[cfg(not(target_arch = "wasm32"))]
+guide_daw_bounds!(+ Send + Sync);
+#[cfg(target_arch = "wasm32")]
+guide_daw_bounds!();
 
 impl<D: GuideDaw> session_proto::guide::GuideActions for Guide<D> {
     fn generate_guide_tracks(&self) -> DawResult<()> {
@@ -649,6 +638,7 @@ impl<D: GuideDaw> Guide<D> {
 }
 
 /// Register the guide-generation actions with `backend`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn register_actions<D, B>(backend: &B, daw: D)
 where
     D: GuideDaw,

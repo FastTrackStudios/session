@@ -14,6 +14,7 @@
 
 use daw::service::{Routing, Tracks};
 use daw_proto::{FolderDepthChange, ProjectContext, ReorderTracksBehavior, TrackRef};
+#[cfg(feature = "reaper")]
 use daw_reaper::Reaper;
 
 use super::TemplateTarget;
@@ -26,6 +27,7 @@ pub struct DawTarget<D> {
 }
 
 /// A live REAPER project — the extension actions' target.
+#[cfg(feature = "reaper")]
 pub type ReaperTarget = DawTarget<Reaper>;
 
 impl<D> DawTarget<D> {
@@ -35,6 +37,7 @@ impl<D> DawTarget<D> {
     }
 }
 
+#[cfg(feature = "reaper")]
 impl ReaperTarget {
     /// Target the project REAPER currently has in front.
     #[must_use]

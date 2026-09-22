@@ -52,9 +52,7 @@ pub mod strip_width;
 // also drives `dynamic-template` (the native template engine).
 #[cfg(all(not(target_arch = "wasm32"), feature = "reaper"))]
 pub mod color;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod guide;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod key;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod key_actions;
@@ -65,7 +63,6 @@ pub mod key_actions;
 // wasm-gated it and broke the task-web image build — so keep a
 // non-attribute line between this and any gated module added above.
 pub mod keyflow;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod mix_phases;
 pub mod modes;
 pub mod playback;

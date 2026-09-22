@@ -11,6 +11,7 @@ use monarchy::{
 pub mod apply;
 pub mod buses;
 pub mod colors;
+#[cfg(feature = "reaper")]
 pub mod daw_module;
 pub mod equipment;
 mod error;

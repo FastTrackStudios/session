@@ -20,15 +20,12 @@
 use daw::reaper::Reaper;
 use daw::rpc::Project;
 use daw::service::{Marker, ProjectContext, Region};
-#[cfg(not(target_arch = "wasm32"))]
 use daw::service::{Markers, Projects, Regions, TempoMap};
 
 /// What [`SongBuilder::build_on`] reads from a backend: project info and
 /// ruler lanes, markers, regions, and the tempo map. REAPER and
 /// `daw-standalone` both provide it.
-#[cfg(not(target_arch = "wasm32"))]
 pub trait SongDaw: Projects + Markers + Regions + TempoMap {}
-#[cfg(not(target_arch = "wasm32"))]
 impl<T: Projects + Markers + Regions + TempoMap> SongDaw for T {}
 use session_proto::{Comment, Section, SectionId, SectionType, Song, SongId};
 use tracing::{Level, debug, warn};
@@ -78,7 +75,6 @@ impl ResolvedLanes {
         resolved
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn resolve_on<D: SongDaw>(daw: &D, project: &ProjectContext) -> Self {
         let count = daw.ruler_lane_count(project.clone());
         let mut resolved = Self::default();
@@ -141,7 +137,6 @@ impl SongBuilder {
     /// # Errors
     ///
     /// Returns an error if querying the project's information, markers, regions, or tempo map fails.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn build_on<D: SongDaw>(daw: &D, project: ProjectContext) -> eyre::Result<Vec<Song>> {
         let project_info = daw.info(project.clone())?;
         debug!(
@@ -493,7 +488,6 @@ impl SongBuilder {
     }
 
     /// Determine song boundaries by analyzing markers and regions (native version).
-    #[cfg(not(target_arch = "wasm32"))]
     fn determine_song_bounds_native<D: SongDaw>(
         daw: &D,
         project: ProjectContext,
@@ -543,7 +537,6 @@ impl SongBuilder {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn build_single_song_native<D: SongDaw>(
         daw: &D,
         project: ProjectContext,
@@ -751,7 +744,6 @@ impl SongBuilder {
         })
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn build_song_from_region_native<D: SongDaw>(
         daw: &D,
         project: ProjectContext,
@@ -1109,7 +1101,6 @@ impl SongBuilder {
         Ok(snapped)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn snap_to_next_barline_native<D: SongDaw>(daw: &D, project: ProjectContext, seconds: f64) -> f64 {
         let (measure, beat, fraction) = daw.time_to_musical(project.clone(), seconds);
         if beat <= 1 && fraction < 0.001 {
